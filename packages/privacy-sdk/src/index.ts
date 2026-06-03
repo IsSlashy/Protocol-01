@@ -34,40 +34,6 @@ export {
   IDENTITY_KEY_LENGTH,
 } from './identity/constants';
 
-// ─── Device Pairing (extension ⇄ mobile, 2-QR handshake) ──────────────────────
-export {
-  // box
-  generateEphemeralPairingKeys,
-  encryptToPairingBundle,
-  decryptWithEphemeral,
-  parsePairingBlob,
-  PAIR_ENC_PREFIX,
-  KEM_PUBLIC_LEN,
-  KEM_CIPHERTEXT_LEN,
-  // protocol
-  buildPairingQr1,
-  parsePairingQr1,
-  encodePairingPayload,
-  decodePairingPayload,
-  computeSAS,
-  sasEqual,
-  chunkPairingCiphertext,
-  parsePairingChunk,
-  reassemblePairingChunks,
-  ConsumedNonceSet,
-  PAIRING_TTL_SECS,
-  PAIR_QR1_PREFIX,
-  PAIR_CHUNK_PREFIX,
-  PAIRING_WALLET_KIND_SEED,
-  MAX_PAIRING_INPUT_CHARS,
-  type PairingEphemeralKeys,
-  type PairingReceiveBundle,
-  type ParsedPairingBlob,
-  type PairingQr1,
-  type PairingPayload,
-  type PairingChunk,
-} from './pairing';
-
 // ─── Modules ──────────────────────────────────────────────────────────────────
 export { ShieldModule } from './modules/shield';
 export { StealthModule } from './modules/stealth';

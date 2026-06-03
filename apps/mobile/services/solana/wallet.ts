@@ -29,15 +29,7 @@ const STORAGE_KEYS = {
   PRIVATE_KEY: 'p01_private_key',
   PUBLIC_KEY: 'p01_public_key',
   WALLET_EXISTS: 'p01_wallet_exists',
-  // Phase 4 (hardware): the active wallet kind + Ledger pubkey. A 'hardware'
-  // wallet has NO local keypair/mnemonic; its note spending seed lives in the
-  // dedicated hardware-seed store (services/ledger/spendingSeed.ts).
-  WALLET_KIND: 'p01_wallet_kind',
-  HW_PUBLIC_KEY: 'p01_hw_public_key',
 };
-
-/** The kind of active wallet. 'seed' = local mnemonic keypair; 'hardware' = Ledger. */
-export type WalletKind = 'seed' | 'hardware';
 
 // Shared secure options for consistent read/write
 const SECURE_OPTIONS = {
@@ -334,58 +326,16 @@ export async function deriveLocalNoteSeed(): Promise<LocalNoteSeed> {
 }
 
 /**
- * Read the active wallet kind. Defaults to 'seed' (the historical local-keypair
- * wallet) when unset, so all existing installs are unaffected.
- */
-export async function getWalletKind(): Promise<WalletKind> {
-  const k = await SecureStore.getItemAsync(STORAGE_KEYS.WALLET_KIND, SECURE_OPTIONS);
-  return k === 'hardware' ? 'hardware' : 'seed';
-}
-
-/** Persist the active wallet kind. */
-export async function setWalletKind(kind: WalletKind): Promise<void> {
-  await SecureStore.setItemAsync(STORAGE_KEYS.WALLET_KIND, kind, SECURE_OPTIONS);
-}
-
-/** Read the persisted Ledger (hardware) pubkey, if any. */
-export async function getHardwarePublicKey(): Promise<string | null> {
-  return SecureStore.getItemAsync(STORAGE_KEYS.HW_PUBLIC_KEY, SECURE_OPTIONS);
-}
-
-/**
- * Persist a hardware (Ledger) wallet: sets kind='hardware', stores the device
- * pubkey, and marks WALLET_EXISTS so boot flows treat it as a real wallet. Does
- * NOT write a mnemonic/private key (a Ledger has none on this device).
- */
-export async function setHardwareWallet(publicKeyBase58: string): Promise<void> {
-  await secureSetWithRetry(STORAGE_KEYS.HW_PUBLIC_KEY, publicKeyBase58);
-  await secureSetWithRetry(STORAGE_KEYS.PUBLIC_KEY, publicKeyBase58);
-  await secureSetWithRetry(STORAGE_KEYS.WALLET_KIND, 'hardware');
-  await secureSetWithRetry(STORAGE_KEYS.WALLET_EXISTS, 'true');
-}
-
-/**
  * Phase 4 seam: returns the spending seed for the active wallet.
  *
  * For local/seed wallets this is the gold-path `noteSeed` (`secretKey[0..32)`).
- * For hardware (Ledger) wallets it is a random, CSPRNG-generated 32-byte seed
- * persisted in SecureStore (never signature-derived; see spec §0 / §1.2 / R-02).
- *
- * CANONICAL INVARIANT (spec §0): the returned bytes are RAW — they are fed in the
- * SAME position to the SAME note consumers as the local raw slice. We MUST NOT
- * pre-HKDF the hardware seed here (else hardware notes are unspendable).
+ * For hardware (Ledger) wallets — wired in Phase 4 — this will return a random,
+ * CSPRNG-generated seed encrypted at rest in SecureStore (never signature-derived;
+ * see spec §1.2 / R-02 / R-04). Today it always resolves the local keypair path.
  */
 export async function getSpendingSeed(): Promise<Uint8Array> {
-  const kind = await getWalletKind();
-  if (kind === 'hardware') {
-    const hwPubkey = await getHardwarePublicKey();
-    if (!hwPubkey) {
-      throw new Error('Hardware wallet active but no Ledger pubkey persisted.');
-    }
-    // Lazy import to avoid any chance of a require cycle through the ledger stack.
-    const { getOrCreateHardwareSpendingSeed } = await import('../ledger/spendingSeed');
-    return getOrCreateHardwareSpendingSeed(hwPubkey);
-  }
+  // TODO(Phase4-Hardware): branch on persisted walletKind; for 'hardware' decrypt
+  // and return the random local spending seed instead of the keypair-derived one.
   const { noteSeed } = await deriveLocalNoteSeed();
   return noteSeed;
 }
@@ -402,23 +352,10 @@ export async function getMnemonic(): Promise<string | null> {
  * Also resets onboarding state so user can start fresh
  */
 export async function deleteWallet(): Promise<void> {
-  // If a hardware wallet is active, drop its spending seed too (storage wipe =
-  // total note loss unless the user backed up — they were warned at connect).
-  try {
-    const hwPubkey = await SecureStore.getItemAsync(STORAGE_KEYS.HW_PUBLIC_KEY, SECURE_OPTIONS);
-    if (hwPubkey) {
-      const { deleteHardwareSpendingSeed } = await import('../ledger/spendingSeed');
-      await deleteHardwareSpendingSeed(hwPubkey);
-    }
-  } catch {
-    // Non-fatal — seed store may be empty.
-  }
   await SecureStore.deleteItemAsync(STORAGE_KEYS.MNEMONIC, SECURE_OPTIONS);
   await SecureStore.deleteItemAsync(STORAGE_KEYS.PRIVATE_KEY, SECURE_OPTIONS);
   await SecureStore.deleteItemAsync(STORAGE_KEYS.PUBLIC_KEY, SECURE_OPTIONS);
   await SecureStore.deleteItemAsync(STORAGE_KEYS.WALLET_EXISTS, SECURE_OPTIONS);
-  await SecureStore.deleteItemAsync(STORAGE_KEYS.WALLET_KIND, SECURE_OPTIONS);
-  await SecureStore.deleteItemAsync(STORAGE_KEYS.HW_PUBLIC_KEY, SECURE_OPTIONS);
   // Reset onboarding state for fresh start
   await SecureStore.deleteItemAsync('p01_onboarded');
   // Clean up any temp data

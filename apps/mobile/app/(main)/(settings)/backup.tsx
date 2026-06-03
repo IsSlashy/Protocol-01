@@ -29,7 +29,6 @@ import {
   decryptBackup,
   parseBackupMetadata,
   restoreNotes,
-  restoreHardwareWallet,
   getBackupStatus,
   setBackupStatus,
   BackupMetadata,
@@ -315,15 +314,7 @@ export default function BackupRecoveryScreen() {
               style: 'destructive',
               onPress: async () => {
                 try {
-                  if (payload.kind === 'hardware') {
-                    // Hardware backup: restore the RAW spending seed + mark the
-                    // wallet hardware. The user reconnects the Ledger to sign.
-                    await restoreHardwareWallet(payload);
-                  } else if (payload.mnemonic) {
-                    await importWallet(payload.mnemonic);
-                  } else {
-                    throw new Error('Backup has no recoverable wallet material.');
-                  }
+                  await importWallet(payload.mnemonic);
                   const imported = restoreNotes(payload);
                   setShowImportModal(false);
                   p01Alert(

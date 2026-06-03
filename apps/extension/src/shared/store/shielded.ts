@@ -400,18 +400,6 @@ function getWalletData() {
     throw new Error('Wallet not unlocked. Please unlock your wallet first.');
   }
 
-  // The LEGACY shielded (zkSPL) on-chain path signs with the local keypair and
-  // is not wired for Ledger co-signing (it is marked "Legacy / withdraw
-  // recommended" in Settings). Hardware wallets should use the denominated
-  // Privacy Pool instead. `getSeedPhrase()` (ZK note derivation) IS hardware-aware
-  // so shielded note *identity* still resolves; only on-chain signing is gated.
-  if (walletState.walletKind === 'hardware') {
-    throw new Error(
-      'The legacy Shielded Wallet does not support hardware (Ledger) signing. ' +
-        'Use the Privacy Pool (denominated shield/unshield) instead.',
-    );
-  }
-
   const keypair = walletState._keypair;
   if (!keypair) {
     throw new Error('Wallet not unlocked. Please unlock your wallet first.');
@@ -445,44 +433,16 @@ function getWalletData() {
 // still has a `p01_privy_zk_seed_*` entry in chrome.storage.local.
 
 /**
- * Helper to get the ZK seed (hex) from the active wallet.
- *
- *   - local-seed → the keypair's `secretKey.slice(0,32)`, hex-encoded. The ZK
- *     derivation in zk.ts runs `SHA-256(hex + ':spending_key')` over this, so it
- *     is deterministic across sessions / re-imports.
- *   - hardware   → the SEPARATE CSPRNG spending seed (services/ledger/
- *     spendingSeed.ts), hex-encoded, so the SAME `SHA-256(hex + ':spending_key')`
- *     runs over the RAW random seed (docs/pairing-ledger-spec.md §0 / Finding #7).
- *     The Ledger has no exportable seed phrase; without this branch the shielded /
- *     subscribe flows would throw on `_keypair === null`.
+ * Helper to get the ZK seed from the wallet store.
+ * Derives deterministically from the local keypair's secret key so the ZK
+ * address is consistent across sessions and re-imports.
  *
  * NOTE: the cleartext-seed fallback that previously persisted a derived seed to
- * chrome.storage.local (Privy path) has been REMOVED (R-10). The local-seed path
- * derives in-memory from the unlocked keypair; the hardware path decrypts the
- * spending seed at rest with the cached session password.
+ * chrome.storage.local (Privy path) has been REMOVED (R-10). The seed is only
+ * ever derived in-memory from the unlocked keypair.
  */
 async function getSeedPhrase(): Promise<string> {
   const walletState = useWalletStore.getState();
-
-  // Hardware wallet: no keypair — use the separate device-encrypted spending
-  // seed, fed RAW (hex) into the SAME zk.ts SHA-256 derivation (§0).
-  if (walletState.walletKind === 'hardware') {
-    if (!walletState.publicKey) {
-      throw new Error('Wallet not unlocked');
-    }
-    const { getSpendingSeed } = await import('../services/ledger');
-    const { getSessionPassword } = await import('../services/sessionCrypto');
-    const password = getSessionPassword();
-    if (!password) {
-      throw new Error('Wallet locked. Unlock and try again.');
-    }
-    const seed = await getSpendingSeed(walletState.publicKey, password);
-    const seedHex = Array.from(seed)
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-    seed.fill(0);
-    return seedHex;
-  }
 
   if (!walletState._keypair) {
     throw new Error('Wallet not unlocked');

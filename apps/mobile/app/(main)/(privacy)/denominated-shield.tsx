@@ -37,7 +37,7 @@ import {
   pubkeyToField,
 } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
-import { getSpendingSeed } from '@/services/solana/wallet';
+import { getKeypair } from '@/services/solana/wallet';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { Buffer } from 'buffer';
 import { withKeepAwake } from '@/utils/keepAwakeDuring';
@@ -158,10 +158,10 @@ export default function DenominatedShieldScreen() {
           // 2. Derive deterministic note material from wallet seed.
           // Use the same `deterministic` mechanic as v2 so V3 notes are
           // recoverable from seed via rescanPool.
-          // §0: getSpendingSeed() returns the RAW slice for seed wallets and the
-          // app-managed random seed for hardware (Ledger) — fed RAW (never pre-HKDF'd)
-          // to deriveNoteMaterial / findSafeShieldCounter.
-          const walletSeed = await getSpendingSeed();
+          // Local keypair is the only seed source (Privy removed — spec §3 Phase 1).
+          const localKp = await getKeypair().catch(() => null);
+          const walletSeed: Uint8Array | null = localKp ? localKp.secretKey.slice(0, 32) : null;
+          if (!walletSeed) throw new Error('No wallet seed available — cannot derive V3 note');
 
           // V3 uses the SAME shieldCounters store entry as v2 — the derived
           // nullifier PDAs differ by hash function, so a counter shared between

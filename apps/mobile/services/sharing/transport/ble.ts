@@ -12,7 +12,6 @@
 import { BleManager, Device, State } from 'react-native-ble-plx';
 import { Platform, PermissionsAndroid, NativeModules, NativeEventEmitter, Linking } from 'react-native';
 import { Buffer } from 'buffer';
-import { acquireBleLock } from '../../ledger/bleLock';
 import {
   BLE_SERVICE_UUID,
   BLE_PUBKEY_CHAR_UUID,
@@ -47,21 +46,6 @@ function getManager(): BleManager {
     _manager = new BleManager();
   }
   return _manager;
-}
-
-/**
- * The shared process-wide ble-plx BleManager (note-sharing central mode).
- *
- * Exported so the Ledger path (and any future BLE consumer) can reason about /
- * reuse the single native manager instead of constructing its own. The Ledger
- * transport rides ble-plx's NATIVE singleton via @ledgerhq, so it does NOT need
- * this JS instance to function — coexistence is enforced by `bleLock` (the async
- * mutex), not by manager injection (spec §1C, Finding #12). NEVER `.destroy()`
- * this manager from any consumer; it is owned by the note-sharing subsystem for
- * the process lifetime.
- */
-export function getSharedBleManager(): BleManager {
-  return getManager();
 }
 
 // ---------------------------------------------------------------------------
@@ -134,27 +118,6 @@ export class BleTransport {
   /** Session nonce for replay prevention (M12) — exchanged with peer during handshake */
   private localNonce: Uint8Array = generateSessionNonce();
   private remoteNonce: Uint8Array | null = null;
-  /**
-   * Held BLE-radio lock release fn (spec §1C, Finding #12). Acquired before the
-   * first scan/peripheral start of a session so a Ledger sign cannot race the
-   * note-share over the shared native GATT queue. Released in `disconnect()`.
-   * Null when this transport does not currently hold the radio.
-   */
-  private _bleLockRelease: (() => void) | null = null;
-
-  /** Acquire the shared BLE radio lock once per session (idempotent). */
-  private async acquireRadio(): Promise<void> {
-    if (this._bleLockRelease) return;
-    this._bleLockRelease = await acquireBleLock('note-sharing');
-  }
-
-  /** Release the shared BLE radio lock if we hold it. */
-  private releaseRadio(): void {
-    if (this._bleLockRelease) {
-      try { this._bleLockRelease(); } catch { /* idempotent */ }
-      this._bleLockRelease = null;
-    }
-  }
 
   constructor(callbacks: BleTransportCallbacks) {
     this.manager = getManager();
@@ -216,69 +179,56 @@ export class BleTransport {
   async startScanning(): Promise<void> {
     if (this.isScanning) return;
 
-    // Acquire the shared BLE radio before any scan/connect (mutual exclusion
-    // with the Ledger path — spec §1C, Finding #12). Serializes against a
-    // concurrent Ledger sign rather than racing the native GATT queue.
-    await this.acquireRadio();
+    const hasPerms = await this.requestPermissions();
+    if (!hasPerms) throw new Error('BLE permissions denied');
 
-    try {
-      const hasPerms = await this.requestPermissions();
-      if (!hasPerms) throw new Error('BLE permissions denied');
-
-      // On Android <12, BLE scanning requires Location Services to be ON
-      // (not just the permission — the actual GPS/Location toggle in quick settings)
-      if (Platform.OS === 'android' && Platform.Version < 31) {
-        try {
-          const { LocationServicesModule } = NativeModules;
-          if (LocationServicesModule) {
-            const enabled = await LocationServicesModule.isEnabled();
-            if (!enabled) {
-              throw new Error(
-                'Location Services must be enabled for Bluetooth scanning. ' +
-                'Please turn on Location in your phone settings.',
-              );
-            }
+    // On Android <12, BLE scanning requires Location Services to be ON
+    // (not just the permission — the actual GPS/Location toggle in quick settings)
+    if (Platform.OS === 'android' && Platform.Version < 31) {
+      try {
+        const { LocationServicesModule } = NativeModules;
+        if (LocationServicesModule) {
+          const enabled = await LocationServicesModule.isEnabled();
+          if (!enabled) {
+            throw new Error(
+              'Location Services must be enabled for Bluetooth scanning. ' +
+              'Please turn on Location in your phone settings.',
+            );
           }
-        } catch (e: any) {
-          // If the native module doesn't exist, just warn in console
-          if (e.message?.includes('Location Services')) throw e;
-          console.log('[BLE-DBG] Location check skipped (no native module)');
         }
+      } catch (e: any) {
+        // If the native module doesn't exist, just warn in console
+        if (e.message?.includes('Location Services')) throw e;
+        console.log('[BLE-DBG] Location check skipped (no native module)');
       }
-
-      await this.waitForPoweredOn();
-      this.isScanning = true;
-
-      this.manager.startDeviceScan(
-        [BLE_SERVICE_UUID],
-        { allowDuplicates: false },
-        (error, device) => {
-          if (error) {
-            this.callbacks.onError(error as Error);
-            return;
-          }
-          if (!device) return;
-
-          const peer: PeerInfo = {
-            id: device.id,
-            publicKey: '',
-            displayName: device.localName || device.name || 'P01 Device',
-            transport: 'ble',
-            rssi: device.rssi ?? undefined,
-            lastSeen: Date.now(),
-          };
-
-          this.discoveredPeers.set(device.id, peer);
-          this.callbacks.onPeerDiscovered(peer);
-        },
-      );
-    } catch (e) {
-      // Setup failed after acquiring the radio — release it so a later Ledger sign
-      // or note-share isn't deadlocked waiting on the lock (Finding #2).
-      this.isScanning = false;
-      this.releaseRadio();
-      throw e;
     }
+
+    await this.waitForPoweredOn();
+    this.isScanning = true;
+
+    this.manager.startDeviceScan(
+      [BLE_SERVICE_UUID],
+      { allowDuplicates: false },
+      (error, device) => {
+        if (error) {
+          this.callbacks.onError(error as Error);
+          return;
+        }
+        if (!device) return;
+
+        const peer: PeerInfo = {
+          id: device.id,
+          publicKey: '',
+          displayName: device.localName || device.name || 'P01 Device',
+          transport: 'ble',
+          rssi: device.rssi ?? undefined,
+          lastSeen: Date.now(),
+        };
+
+        this.discoveredPeers.set(device.id, peer);
+        this.callbacks.onPeerDiscovered(peer);
+      },
+    );
   }
 
   stopScanning(): void {
@@ -551,27 +501,17 @@ export class BleTransport {
       throw new Error('BLE peripheral mode not available on this platform');
     }
 
-    // Acquire the shared BLE radio before advertising (mutual exclusion with
-    // the Ledger path — spec §1C, Finding #12).
-    await this.acquireRadio();
+    const hasPerms = await this.requestPermissions();
+    if (!hasPerms) throw new Error('BLE permissions denied');
 
-    try {
-      const hasPerms = await this.requestPermissions();
-      if (!hasPerms) throw new Error('BLE permissions denied');
+    await this.waitForPoweredOn();
 
-      await this.waitForPoweredOn();
+    // Set up native event listeners
+    this.setupPeripheralListeners();
 
-      // Set up native event listeners
-      this.setupPeripheralListeners();
-
-      // Start native GATT server + advertising
-      await BlePeripheralModule.startPeripheral();
-      this._isPeripheralActive = true;
-    } catch (e) {
-      // Release the radio if advertising setup fails after acquiring it (Finding #2).
-      this.releaseRadio();
-      throw e;
-    }
+    // Start native GATT server + advertising
+    await BlePeripheralModule.startPeripheral();
+    this._isPeripheralActive = true;
   }
 
   async stopPeripheral(): Promise<void> {
@@ -846,9 +786,6 @@ export class BleTransport {
     // M12: Regenerate session nonce for next session (prevents replay)
     this.localNonce = generateSessionNonce();
     this.remoteNonce = null;
-    // Release the shared BLE radio so the Ledger path (or a new note-share
-    // session) can acquire it (spec §1C, Finding #12).
-    this.releaseRadio();
   }
 
   async destroy(): Promise<void> {

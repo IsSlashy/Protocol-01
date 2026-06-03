@@ -30,24 +30,6 @@ export default function ImportWalletScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Pairing — RECEIVER flow. Lets an empty device import a wallet from another P01
-  // device (phone or extension) over an encrypted 2-QR handshake instead of typing
-  // the recovery phrase. The pairing screen lives in the (main) group, which is
-  // auth-gated; a brand-new device has no PIN yet, so we mark the session unlocked
-  // before navigating. The screen routes into normal onboarding once the wallet is
-  // imported (the user sets a PIN at /(onboarding)/security).
-  const handlePairDevice = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await SecureStore.setItemAsync('p01_session_unlocked', 'true');
-    router.push({
-      // Cast: expo-router's generated typed-routes union is regenerated on
-      // dev/build; new screens (see denominated-* routes) use this same cast until
-      // the codegen catches up. The path is valid at runtime.
-      pathname: '/(main)/(settings)/pair-device' as any,
-      params: { mode: 'receive' },
-    });
-  };
-
   const handleImport = async () => {
     const normalizedMnemonic = mnemonic.trim().toLowerCase().replace(/\s+/g, ' ');
     const words = normalizedMnemonic.split(' ').filter(w => w.length > 0);
@@ -198,18 +180,6 @@ export default function ImportWalletScreen() {
               <Text style={styles.importButtonText}>{t('onboarding.importWallet')}</Text>
             )}
           </TouchableOpacity>
-
-          {/* Pairing — RECEIVER entry. Scan another P01 device instead of typing. */}
-          <TouchableOpacity
-            onPress={handlePairDevice}
-            disabled={isLoading}
-            style={styles.pairButton}
-            accessibilityRole="button"
-            accessibilityLabel="Pair with another device"
-          >
-            <Ionicons name="qr-code-outline" size={18} color="#39c5bb" />
-            <Text style={styles.pairButtonText}>Pair with another device</Text>
-          </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -356,18 +326,5 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
-  },
-  pairButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    marginTop: 12,
-  },
-  pairButtonText: {
-    color: '#39c5bb',
-    fontSize: 15,
-    fontWeight: '500',
   },
 });

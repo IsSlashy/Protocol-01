@@ -69,7 +69,7 @@ export default function SettingsScreen() {
   const t = useT();
   const router = useRouter();
   // Local wallet only (Privy removed — spec §3 Phase 1).
-  const { publicKey, logout: walletLogout, hasWallet: hasLocalWallet, balance, walletKind, ledgerConnected } = useWalletStore();
+  const { publicKey, logout: walletLogout, hasWallet: hasLocalWallet, balance } = useWalletStore();
   const {
     currency,
     setCurrency,
@@ -288,32 +288,6 @@ export default function SettingsScreen() {
             label={t('settings.backup')}
             leftIcon="key-outline"
             onPress={() => router.push('/(main)/(settings)/backup')}
-          />
-          <GlassDivider />
-          {/* Pairing — SENDER flow. Moves this wallet's seed to another P01 device
-              (phone or extension) over an encrypted 2-QR handshake. */}
-          <SettingsRow
-            label="Link another device"
-            leftIcon="qr-code-outline"
-            onPress={() =>
-              router.push({
-                // Cast: expo-router typed-routes codegen is regenerated on
-                // dev/build; new screens use this cast until it catches up
-                // (mirrors the (privacy)/denominated-* routes).
-                pathname: '/(main)/(settings)/pair-device' as any,
-                params: { mode: 'send' },
-              })
-            }
-          />
-          <GlassDivider />
-          {/* Hardware wallet — connect a Ledger Nano X over Bluetooth (spec §3 S5).
-              Hardware wallets co-sign on-chain; their private-note key is a
-              device-local random seed (see connect-ledger backup prompt). */}
-          <SettingsRow
-            label={walletKind === 'hardware' ? 'Ledger' : 'Connect Ledger'}
-            value={walletKind === 'hardware' ? (ledgerConnected ? 'Connected' : 'Reconnect') : undefined}
-            leftIcon="hardware-chip-outline"
-            onPress={() => router.push('/(main)/(settings)/connect-ledger' as any)}
           />
         </GlassCard>
 

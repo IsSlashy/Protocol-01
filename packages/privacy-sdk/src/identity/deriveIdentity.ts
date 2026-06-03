@@ -78,22 +78,9 @@ function hkdfIdentity(ikm: Uint8Array): P01Identity {
 /**
  * Derive a P01 identity directly from 32 bytes of high-entropy seed material.
  *
- * ⚠️ SDK-IDENTITY-API ONLY — NOT THE NOTE PATH. (docs/pairing-ledger-spec.md §0)
- * ----------------------------------------------------------------------------
- * The live note pipelines (denominated + shielded, in apps/extension &
- * apps/mobile) DO NOT call this function. They consume the RAW 32-byte seed
- * (`keypair.secretKey.slice(0, 32)`) DIRECTLY:
- *   - denominated → `deriveNoteMaterial` / `noteCrypto.deriveNoteEncryptionKeys`
- *     (each runs its OWN internal HKDF with IKM = the raw slice), and
- *   - shielded    → `SHA-256(hex(rawSlice) + ':spending_key')` (zk.ts).
- *
- * This helper applies an EXTRA HKDF on top (a DIFFERENT 32 bytes). For a
- * HARDWARE wallet, the CSPRNG spending seed MUST be fed RAW to those same
- * consumers — never pre-run through this function — or the hardware notes are
- * unspendable by the local/paired clients. The canonical invariant is pinned by
- * `seedParity.test.ts` (a regression there will turn RED if this is ever wired
- * into the note path). Use this only for the SDK's separate identity/spend-view
- * API (`deriveP01Identity`).
+ * Used for:
+ *   - the local-seed gold path (ikm = `keypair.secretKey.slice(0, 32)`), and
+ *   - the hardware tier (ikm = an app-managed, CSPRNG, encrypted-at-rest seed).
  *
  * Deterministic and offline. The caller owns `seed`; this function does not
  * mutate or retain it (it is copied into the HKDF input).

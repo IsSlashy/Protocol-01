@@ -16,10 +16,6 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
-    "@ledgerhq/errors": "^6.35.0",
-    "@ledgerhq/hw-app-solana": "^7.10.2",
-    "@ledgerhq/hw-transport-webhid": "^6.35.2",
-    "@ledgerhq/hw-transport-webusb": "^6.34.2",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "@noble/post-quantum": "^0.6.1",

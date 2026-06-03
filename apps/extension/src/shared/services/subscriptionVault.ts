@@ -37,7 +37,8 @@ import {
 } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { getActiveSigner } from './signer';
+import { useWalletStore } from '../store/wallet';
+import { getConnection } from './wallet';
 import type { VaultInfo, SubscribeNormalParams, SubscribePrivateParams, ProofData } from './subscriptionVault.types';
 import type { WalletSigner } from './stark';
 import {
@@ -93,18 +94,36 @@ const SUBSCRIBER_VK_DATA_SEED = 'vk_data_subscriber';
 const NATIVE_SOL_MINT = SystemProgram.programId;
 
 // ---------------------------------------------------------------------------
-// Wallet adapter — builds a WalletSigner from the current wallet store state.
-// Delegates to the centralized signer seam (services/signer.ts) so the
-// local-seed vs hardware (Ledger) branch lives in ONE place (Finding #8). For a
-// hardware wallet the returned signer co-signs the subscribe tx on the connected
-// device; the proof → assemble → fresh-blockhash → device-sign ordering holds
-// because subscribe's submit helper sets a fresh blockhash and calls
-// signTransaction LAST, after the C1 proof is generated.
+// Wallet adapter — builds a WalletSigner from the current wallet store state
 // ---------------------------------------------------------------------------
 
 function createWalletSigner(): { signer: WalletSigner; connection: Connection } {
-  const { signer, connection } = getActiveSigner();
-  return { signer, connection: connection as Connection };
+  const walletState = useWalletStore.getState();
+
+  if (!walletState.publicKey) {
+    throw new Error('Wallet not unlocked. Please unlock your wallet first.');
+  }
+
+  const walletPublicKey = new PublicKey(walletState.publicKey);
+  const connection = getConnection(walletState.network);
+  const keypair = walletState._keypair;
+
+  if (!keypair) {
+    throw new Error('Wallet not unlocked. Please unlock your wallet first.');
+  }
+
+  const signer: WalletSigner = {
+    publicKey: walletPublicKey,
+    signTransaction: async (tx: Transaction): Promise<Transaction> => {
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
+      if (!tx.recentBlockhash) tx.recentBlockhash = blockhash;
+      if (!tx.feePayer) tx.feePayer = walletPublicKey;
+      tx.sign(keypair);
+      return tx;
+    },
+  };
+
+  return { signer, connection };
 }
 
 // ---------------------------------------------------------------------------

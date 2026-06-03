@@ -11,7 +11,7 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { hmac } from '@noble/hashes/hmac.js';
 import { vaultEncrypt, vaultDecrypt, isVaultUnlocked } from '../utils/crypto/noteVault';
 import { getConnection, getCluster } from '../services/solana/connection';
-import { getKeypair, deriveLocalNoteSeed, getSpendingSeed, getWalletKind } from '../services/solana/wallet';
+import { getKeypair, deriveLocalNoteSeed } from '../services/solana/wallet';
 import {
   type PoolConfig,
   type ShieldReceipt,
@@ -308,21 +308,6 @@ interface DenominatedPoolState {
 let _noteEncryptionKey: Uint8Array | null = null;
 
 let _starkOpInFlight = false;
-
-/**
- * Resolve the active WalletSigner for STARK/note flows (spec §3 S5 / Finding #6,
- * #13). For a HARDWARE (Ledger) wallet this returns the live Ledger WalletSigner
- * so on-chain ix are co-signed by the device; the proof is built and the ix
- * assembled with a FRESH blockhash BEFORE signAndSend prompts the device (that
- * ordering already lives in signAndSend → walletSigner). For a seed wallet it
- * returns undefined and the flows sign with the local keypair directly.
- *
- * Throws (via getActiveWalletSigner) if a hardware wallet is active but the
- * Ledger is not currently connected — the caller surfaces a "reconnect" prompt.
- */
-function resolveActiveWalletSigner(): WalletSigner | undefined {
-  return useWalletStore.getState().getActiveWalletSigner();
-}
 
 async function getNoteEncryptionKey(): Promise<Uint8Array> {
   if (_noteEncryptionKey) return _noteEncryptionKey;
@@ -780,7 +765,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         set({ isLoading: true, error: null, progress: 'Preparing...' });
 
         try {
-          const walletSigner: WalletSigner | undefined = resolveActiveWalletSigner(); // hardware → Ledger signer; seed → undefined (local keypair)
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const walletPubkey = walletSigner
             ? walletSigner.publicKey
             : (await getKeypair())?.publicKey;
@@ -846,11 +831,6 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             let walletSeed: Uint8Array | null = null;
             if (localKp) {
               walletSeed = localKp.secretKey.slice(0, 32);
-            } else if ((await getWalletKind()) === 'hardware') {
-              // Hardware (Ledger) wallet: no local keypair. The note spending
-              // seed is the RAW CSPRNG hardware seed (spec §0 / Finding #6) —
-              // fed in the SAME position as the local raw slice would be.
-              walletSeed = await getSpendingSeed();
             }
             // If the counter was wiped (AsyncStorage decrypt failure, wallet
             // switch, fresh install) it could collide with a previously-spent
@@ -900,9 +880,6 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             let walletSeed: Uint8Array | null = null;
             if (directKp) {
               walletSeed = directKp.secretKey.slice(0, 32);
-            } else if ((await getWalletKind()) === 'hardware') {
-              // Hardware (Ledger): RAW CSPRNG spending seed (spec §0 / Finding #6).
-              walletSeed = await getSpendingSeed();
             }
             let counter = storedCounter;
             if (walletSeed) {
@@ -1008,7 +985,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         set({ isLoading: true, isProving: false, error: null, progress: 'Preparing V3 shield...' });
 
         try {
-          const walletSigner: WalletSigner | undefined = resolveActiveWalletSigner(); // hardware → Ledger signer; seed → undefined (local keypair)
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const walletPubkey = walletSigner
             ? walletSigner.publicKey
             : (await getKeypair())?.publicKey;
@@ -1152,7 +1129,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         let stealthKp: SolKeypair | null = null;
 
         try {
-          const walletSigner: WalletSigner | undefined = resolveActiveWalletSigner(); // hardware → Ledger signer; seed → undefined (local keypair)
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const PK = PublicKey;
 
           // Full stealth unshield: BOTH signer AND recipient are ephemeral.
@@ -1455,7 +1432,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         let stealthKp: SolKeypair | null = null;
 
         try {
-          const walletSigner: WalletSigner | undefined = resolveActiveWalletSigner(); // hardware → Ledger signer; seed → undefined (local keypair)
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const PK = PublicKey;
 
           // Derive ECDH stealth recipient from user's meta-address
@@ -1711,7 +1688,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         let stealthKp: SolKeypair | null = null;
 
         try {
-          const walletSigner: WalletSigner | undefined = resolveActiveWalletSigner(); // hardware → Ledger signer; seed → undefined (local keypair)
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const walletAddr = walletSigner?.publicKey.toBase58()
             || useWalletStore.getState().publicKey || '';
 
@@ -1854,7 +1831,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         let stealthKp: SolKeypair | null = null;
 
         try {
-          const walletSigner: WalletSigner | undefined = resolveActiveWalletSigner(); // hardware → Ledger signer; seed → undefined (local keypair)
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const walletAddr = walletSigner?.publicKey.toBase58()
             || useWalletStore.getState().publicKey || '';
 
@@ -2010,7 +1987,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         set({ isLoading: true, isProving: false, error: null, progress: 'Preparing STARK split...' });
 
         try {
-          const walletSigner: WalletSigner | undefined = resolveActiveWalletSigner(); // hardware → Ledger signer; seed → undefined (local keypair)
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
           const { txSignature, outputCommitments, outputNullifierPreimages } = await serviceSplitNoteStark(
             sourcePool,
             targetPool,

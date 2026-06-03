@@ -36,21 +36,13 @@ import DenominatedShield from './pages/DenominatedShield';
 import DenominatedUnshield from './pages/DenominatedUnshield';
 import DenominatedTransfer from './pages/DenominatedTransfer';
 import DenominatedImport from './pages/DenominatedImport';
-import PairDevice from './pages/PairDevice';
-import ConnectLedger from './pages/ConnectLedger';
 
 function App() {
   const [isHydrated, setIsHydrated] = useState(false);
   const [pendingPath, setPendingPath] = useState<string | null>(null);
-  const { isInitialized, isUnlocked, encryptedSeedPhrase, walletKind, ledgerPath, reset, tryAutoUnlock } = useWalletStore();
+  const { isInitialized, isUnlocked, encryptedSeedPhrase, reset, tryAutoUnlock } = useWalletStore();
   const navigate = useNavigate();
   const location = useLocation();
-
-  // A wallet is "onboarded" if it has signing material: a seed-phrase blob for
-  // local-seed wallets, OR a persisted Ledger path for hardware wallets (which
-  // intentionally have NO seed phrase, Finding #14).
-  const hasSigningMaterial =
-    walletKind === 'hardware' ? !!ledgerPath : !!encryptedSeedPhrase;
 
   // Check for pending approval requests when popup opens
   useEffect(() => {
@@ -119,25 +111,19 @@ function App() {
         const parsed = storedData ? JSON.parse(storedData) : null;
         const hasEncryptedSeed = parsed?.state?.encryptedSeedPhrase;
         const storedIsInit = parsed?.state?.isInitialized;
-        const storedKind = parsed?.state?.walletKind ?? 'local-seed';
-        const storedLedgerPath = parsed?.state?.ledgerPath;
-        // Hardware wallets legitimately have no seed phrase; their signing
-        // material is the persisted Ledger path + on-device key.
-        const storedHasSigningMaterial =
-          storedKind === 'hardware' ? !!storedLedgerPath : !!hasEncryptedSeed;
 
         console.log('[Popup] Storage check:', {
           hasData: !!storedData,
           isInit: storedIsInit,
-          kind: storedKind,
-          hasSigningMaterial: storedHasSigningMaterial,
+          hasSeed: !!hasEncryptedSeed,
         });
 
-        // Reset if wallet claims initialized but has NO signing material. This
+        // Reset if wallet claims initialized but has NO seed phrase. Post
+        // Privy-removal the seed phrase is the only signing material, so this
         // catches genuinely corrupted (or orphaned ex-Privy) state without
-        // nuking valid local-seed OR hardware wallets.
-        if (storedIsInit && !storedHasSigningMaterial) {
-          console.log('[Popup] Reset: Corrupted state — initialized without signing material');
+        // nuking valid local wallets.
+        if (storedIsInit && !hasEncryptedSeed) {
+          console.log('[Popup] Reset: Corrupted state — initialized without seed');
           await reset();
         }
       } catch (e) {
@@ -195,21 +181,10 @@ function App() {
         <Route path="/import-wallet" element={<ImportWallet />} />
         <Route path="/unlock" element={<Unlock />} />
 
-        {/* Device pairing — opened in a dedicated TAB (popup.html#/pair-device).
-            Standalone (full-screen) layout; reachable both with a wallet (SEND)
-            and on an empty device (RECEIVE), so it sits outside the unlock guard. */}
-        <Route path="/pair-device" element={<PairDevice />} />
-
-        {/* Connect a Ledger — opened in a dedicated TAB (popup.html#/connect-ledger
-            via chrome.tabs.create). WebHID requestDevice() needs a tab (it dies in
-            the popup / cannot run in the SW or offscreen). Standalone, outside the
-            unlock guard so it can ONBOARD a hardware wallet on an empty device. */}
-        <Route path="/connect-ledger" element={<ConnectLedger />} />
-
         {/* Main app routes - protected, require unlock */}
         <Route element={<MainLayout />}>
           <Route path="/" element={
-            !isInitialized || !hasSigningMaterial ? <Navigate to="/welcome" replace /> :
+            !isInitialized || !encryptedSeedPhrase ? <Navigate to="/welcome" replace /> :
             !isUnlocked ? <Navigate to="/unlock" replace /> :
             <Home />
           } />
@@ -244,7 +219,7 @@ function App() {
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to={
-          !isInitialized || !hasSigningMaterial ? "/welcome" :
+          !isInitialized || !encryptedSeedPhrase ? "/welcome" :
           isUnlocked ? "/" : "/unlock"
         } replace />} />
       </Routes>
