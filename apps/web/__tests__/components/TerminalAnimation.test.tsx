@@ -54,7 +54,7 @@ describe('TerminalAnimation -- CLI-style protocol demonstration', () => {
     it('shows initialization output after two ticks', () => {
       render(<TerminalAnimation />);
       advanceSteps(2);
-      expect(screen.getByText('Initializing Prox...')).toBeInTheDocument();
+      expect(screen.getByText('Initializing Protocol 01...')).toBeInTheDocument();
     });
 
     it('shows ZK circuits loaded success message after three ticks', () => {

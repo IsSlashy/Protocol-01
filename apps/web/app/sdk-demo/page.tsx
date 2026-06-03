@@ -213,7 +213,7 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
 
   const connect = useCallback(async () => {
     if (!window.protocol01) {
-      throw new Error("Prox wallet not installed");
+      throw new Error("Protocol 01 wallet not installed");
     }
 
     setConnecting(true);
@@ -243,7 +243,7 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
 
   const signMessage = useCallback(async (message: string): Promise<string | null> => {
     if (!window.protocol01) {
-      throw new Error("Prox wallet not installed");
+      throw new Error("Protocol 01 wallet not installed");
     }
 
     try {
@@ -263,7 +263,7 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
 
   const signAndSendTransaction = useCallback(async (transaction: unknown): Promise<string | null> => {
     if (!window.protocol01) {
-      throw new Error("Prox wallet not installed");
+      throw new Error("Protocol 01 wallet not installed");
     }
 
     try {
@@ -277,7 +277,7 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
 
   const subscribe = useCallback(async (options: SubscriptionOptions): Promise<{ subscriptionId: string; address: string } | null> => {
     if (!window.protocol01) {
-      throw new Error("Prox wallet not installed");
+      throw new Error("Protocol 01 wallet not installed");
     }
 
     try {
@@ -760,7 +760,7 @@ function DevnetSection() {
     try {
       // Use signMessage to simulate a simple interaction
       const message = new TextEncoder().encode(
-        `Prox Payment Test\nTimestamp: ${new Date().toISOString()}\nAmount: 0.001 SOL`
+        `Protocol 01 Payment Test\nTimestamp: ${new Date().toISOString()}\nAmount: 0.001 SOL`
       );
 
       const result = await window.protocol01.signMessage(message, 'utf8');
@@ -2175,7 +2175,7 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
       // 3. Enable automatic recurring payments
       const result = await subscribe({
         recipient: P01_TREASURY,
-        merchantName: `Prox - ${tierName}`,
+        merchantName: `Protocol 01 - ${tierName}`,
         amountPerPeriod: amountLamports,
         periodSeconds: periodSeconds,
         maxPeriods: 0, // Unlimited until cancelled

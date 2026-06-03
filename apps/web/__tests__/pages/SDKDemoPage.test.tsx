@@ -71,8 +71,8 @@ describe('SDKDemoPage -- Developer SDK playground and widget showcase', () => {
       expect(screen.getByText('1. Connect Wallet')).toBeInTheDocument();
     });
 
-    it('shows "Prox wallet not detected" when extension is not installed', () => {
-      expect(screen.getByText('Prox wallet not detected')).toBeInTheDocument();
+    it('shows "Protocol 01 wallet not detected" when extension is not installed', () => {
+      expect(screen.getByText('Protocol 01 wallet not detected')).toBeInTheDocument();
     });
 
     it('shows installation hint when wallet is not available', () => {

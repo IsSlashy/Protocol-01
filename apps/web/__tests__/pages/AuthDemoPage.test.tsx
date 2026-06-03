@@ -21,8 +21,8 @@ describe.skip('AuthDemoPage -- QR-based wallet authentication flow', () => {
       expect(screen.getByText('P01 Auth Demo')).toBeInTheDocument();
     });
 
-    it('shows "Login with Prox" subtitle', () => {
-      expect(screen.getByText('Login with Prox')).toBeInTheDocument();
+    it('shows "Login with Protocol 01" subtitle', () => {
+      expect(screen.getByText('Login with Protocol 01')).toBeInTheDocument();
     });
 
     it('has a link back to the homepage', () => {

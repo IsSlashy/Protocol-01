@@ -34,9 +34,9 @@ const notoSansJP = Noto_Sans_JP({
 });
 
 export const metadata: Metadata = {
-  title: "Prox — post-quantum private payments (by Protocol 01)",
+  title: "PROTOCOL-01",
   description:
-    "Prox is the privacy-first wallet for secure transactions and anonymous interactions on Solana. Powered by post-quantum zero-knowledge proofs. Built by Protocol 01.",
+    "The ultimate privacy-first protocol for secure transactions and anonymous interactions. Powered by zero-knowledge proofs.",
   keywords: [
     "privacy",
     "blockchain",
@@ -45,7 +45,6 @@ export const metadata: Metadata = {
     "secure",
     "wallet",
     "stealth",
-    "prox",
     "protocol 01",
     "p01",
   ],
@@ -55,9 +54,9 @@ export const metadata: Metadata = {
     apple: "/01-miku.png",
   },
   openGraph: {
-    title: "Prox — post-quantum private payments (by Protocol 01)",
+    title: "PROTOCOL-01",
     description:
-      "Prox is the privacy-first wallet for secure transactions and anonymous interactions on Solana.",
+      "The ultimate privacy-first protocol for secure transactions and anonymous interactions.",
     type: "website",
     locale: "en_US",
     images: [
@@ -65,15 +64,15 @@ export const metadata: Metadata = {
         url: "/01-miku.png",
         width: 512,
         height: 512,
-        alt: "Prox",
+        alt: "Protocol-01",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Prox — post-quantum private payments (by Protocol 01)",
+    title: "PROTOCOL-01",
     description:
-      "Prox is the privacy-first wallet for secure transactions and anonymous interactions on Solana.",
+      "The ultimate privacy-first protocol for secure transactions and anonymous interactions.",
     images: ["/01-miku.png"],
   },
 };

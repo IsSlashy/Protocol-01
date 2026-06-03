@@ -44,12 +44,12 @@ describe('Problem -- Why privacy matters on blockchain', () => {
   });
 
   describe('Before/After Comparison', () => {
-    it('shows the "WITHOUT PROX" exposed state', () => {
-      expect(screen.getByText('WITHOUT PROX')).toBeInTheDocument();
+    it('shows the "WITHOUT PROTOCOL 01" exposed state', () => {
+      expect(screen.getByText('WITHOUT PROTOCOL 01')).toBeInTheDocument();
     });
 
-    it('shows the "WITH PROX" protected state', () => {
-      expect(screen.getByText('WITH PROX')).toBeInTheDocument();
+    it('shows the "WITH PROTOCOL 01" protected state', () => {
+      expect(screen.getByText('WITH PROTOCOL 01')).toBeInTheDocument();
     });
 
     it('demonstrates exposed transaction data in "without" scenario', () => {

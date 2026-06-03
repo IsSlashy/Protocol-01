@@ -12,8 +12,8 @@ describe('Footer -- Site navigation and community links', () => {
       expect(screen.getByText('P01')).toBeInTheDocument();
     });
 
-    it('displays the "PROX" brand name', () => {
-      expect(screen.getAllByText('PROX').length).toBeGreaterThanOrEqual(1);
+    it('displays the "PROTOCOL 01" brand name', () => {
+      expect(screen.getByText('PROTOCOL 01')).toBeInTheDocument();
     });
 
     it('presents the privacy manifesto tagline', () => {
@@ -109,7 +109,7 @@ describe('Footer -- Site navigation and community links', () => {
   describe('Bottom Bar', () => {
     it('displays the copyright notice with current year', () => {
       const currentYear = new Date().getFullYear().toString();
-      expect(screen.getByText(new RegExp(`${currentYear} PROX`))).toBeInTheDocument();
+      expect(screen.getByText(new RegExp(`${currentYear} PROTOCOL 01`))).toBeInTheDocument();
     });
 
     it('has a bottom bar link to Twitter/X', () => {

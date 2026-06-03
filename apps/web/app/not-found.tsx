@@ -78,7 +78,7 @@ export default function NotFound() {
           className="mt-16 font-mono text-xs"
           style={{ color: "#555560" }}
         >
-          <span style={{ color: "#39c5bb" }}>{">"}</span> PROX // ERROR
+          <span style={{ color: "#39c5bb" }}>{">"}</span> PROTOCOL 01 // ERROR
           404
         </div>
       </div>

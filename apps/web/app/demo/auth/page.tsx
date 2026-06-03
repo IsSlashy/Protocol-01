@@ -187,10 +187,10 @@ export default function AuthDemoPage() {
       {/* Hero */}
       <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-8 text-center">
         <p className="text-xs font-mono tracking-[0.2em] text-[#39c5bb] mb-4">
-          {"> PROX // QR AUTH"}
+          {"> PROTOCOL 01 // QR AUTH"}
         </p>
         <h2 className="text-3xl sm:text-4xl font-bold font-display tracking-wide mb-4">
-          Login with Prox
+          Login with Protocol 01
         </h2>
         <p className="text-base max-w-2xl mx-auto text-[#888892]">
           Scan a QR code with the P01 mobile app to authenticate. No passwords, no email — just your wallet.
@@ -327,7 +327,7 @@ export default function AuthDemoPage() {
               {session && session.status === 'pending' && (
                 <div className="text-center">
                   <p className="text-sm text-[#888892] mb-2 font-mono">
-                    Scan with Prox app
+                    Scan with Protocol 01 app
                   </p>
                   <div className="flex items-center justify-center gap-2 text-xs text-[#555560]">
                     <div className="w-2 h-2 bg-[#39c5bb] animate-pulse" />

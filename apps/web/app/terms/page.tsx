@@ -4,7 +4,7 @@ import SiteHeader from "@/components/SiteHeader";
 import Footer from "@/components/Footer";
 
 export const metadata: Metadata = {
-  title: "Terms of Service | Prox (by Protocol 01)",
+  title: "Terms of Service | PROTOCOL-01",
   description:
     "Terms of Service for Protocol 01 — conditions governing use of our privacy-first Solana wallet and protocol.",
 };

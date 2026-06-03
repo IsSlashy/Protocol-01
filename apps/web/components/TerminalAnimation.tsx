@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 
 const terminalLines = [
   { type: "command", text: "$ p01 init --stealth" },
-  { type: "output", text: "Initializing Prox..." },
+  { type: "output", text: "Initializing Protocol 01..." },
   { type: "success", text: "[OK] Zero-knowledge circuits loaded" },
   { type: "success", text: "[OK] Stealth address generated" },
   { type: "success", text: "[OK] Private relay connected" },

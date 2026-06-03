@@ -4,7 +4,7 @@ import SiteHeader from "@/components/SiteHeader";
 import Footer from "@/components/Footer";
 
 export const metadata: Metadata = {
-  title: "Open Source Licenses | Prox (by Protocol 01)",
+  title: "Open Source Licenses | PROTOCOL-01",
   description:
     "Open source licenses and attributions for Protocol 01 and its dependencies.",
 };

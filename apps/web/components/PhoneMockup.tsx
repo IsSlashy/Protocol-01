@@ -902,13 +902,13 @@ function PhoneMockup() {
               <div className="flex items-center gap-2.5">
                 <img
                   src="/01-miku.png"
-                  alt="Prox"
+                  alt="Protocol 01"
                   className="h-7 w-auto object-contain"
                   style={{ filter: "drop-shadow(0 0 8px rgba(255,119,168,0.25))" }}
                 />
                 <div>
                   <p className="text-white font-bold text-[12px] tracking-[0.08em]">
-                    PROX
+                    PROTOCOL 01
                   </p>
                   <span className="inline-block mt-0.5 px-1.5 py-[1px] bg-[#ff77a8]/15 text-[#ff77a8] text-[7px] rounded font-bold tracking-wider">
                     DEVNET
