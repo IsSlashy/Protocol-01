@@ -8,6 +8,7 @@ import Animated, {
   FadeInUp,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { Logo } from '../../components/onboarding';
 import { useWalletStore } from '@/stores/walletStore';
 import { useT } from '@/i18n';
@@ -30,11 +31,19 @@ export default function WelcomeScreen() {
   }, [initialized, hasWallet, router]);
 
   const handleGetStarted = () => {
-    router.replace('/(auth)/login');
+    // Single-screen onboarding: this welcome IS the chooser, so "Get Started"
+    // goes straight to wallet creation. Previously it pushed to /(auth)/login,
+    // a second near-identical hero that asked the same create/import choice again.
+    router.replace('/(onboarding)/create-wallet');
   };
 
   const handleImportWallet = () => {
     router.replace('/(auth)/import');
+  };
+
+  const handleScanConnect = () => {
+    // Import this wallet from the browser extension by scanning its pairing QR.
+    router.push('/(auth)/scan-connect');
   };
 
   return (
@@ -91,6 +100,15 @@ export default function WelcomeScreen() {
             <Text style={{ color: '#a0a0a0', fontSize: 16 }}>
               {t('onboarding.alreadyHaveWallet')}{' '}
               <Text style={{ color: '#39c5bb', fontWeight: '500' }}>{t('onboarding.import')}</Text>
+            </Text>
+          </TouchableOpacity>
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.delay(1250).duration(600)} style={{ marginTop: 16, alignItems: 'center' }}>
+          <TouchableOpacity onPress={handleScanConnect} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Ionicons name="qr-code-outline" size={15} color="#39c5bb" />
+            <Text style={{ color: '#39c5bb', fontSize: 15, fontWeight: '500' }}>
+              {t('onboarding.scanToConnect')}
             </Text>
           </TouchableOpacity>
         </Animated.View>

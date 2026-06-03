@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
 import * as Linking from 'expo-linking';
 import Constants from 'expo-constants';
 import Animated, { FadeInDown } from 'react-native-reanimated';
@@ -23,7 +24,8 @@ import { useSettingsStore, Currency, CURRENCY_SYMBOLS } from '../../../stores/se
 import { useShieldedStore } from '../../../stores/shieldedStore';
 import { useConfidentialStore } from '../../../stores/confidentialStore';
 import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
-import { resetAllPrivacyStores } from '../../../stores/resetStores';
+import { useSubscriptionVaultStore } from '../../../stores/subscriptionVaultStore';
+import { useStreamStore } from '../../../stores/streamStore';
 import { lockVault } from '../../../utils/crypto/noteVault';
 import { getCluster } from '../../../services/solana/connection';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
@@ -125,25 +127,65 @@ export default function SettingsScreen() {
   };
 
   const handleDisconnect = () => {
+    // Disconnect = full sign-out. It ERASES this wallet's keypair from the device
+    // (walletLogout -> deleteWallet) so hasWallet becomes false; router.replace('/')
+    // then hits the boot router which lands the user on /(onboarding) — the welcome
+    // menu (create / import seed). This is destructive, but it is reversible with the
+    // recovery phrase: re-importing the same seed re-derives the same address (SOL is
+    // on-chain) and the seed-derived notes (re-import on this device restores the local
+    // archive; otherwise an on-chain rescan recovers them). So we do NOT hard-block on
+    // funds the way Delete Wallet does — that would stop a normal (fee-funded) wallet
+    // from ever reaching the welcome menu, which is exactly what the user asked for.
+    // Instead: informed consent — list what is at stake, name the seed-only recovery,
+    // and offer a one-tap backup escape before the irreversible delete.
+    const activeVaults = useSubscriptionVaultStore.getState().vaults.length;
+    const activeStreams = useStreamStore.getState().streams.filter((s) => s.status === 'active').length;
+
+    const stakes: string[] = [];
+    if (solBalance > 0) stakes.push(`${solBalance.toFixed(4)} SOL`);
+    if (hasDenominatedFunds) stakes.push(`${denominatedNotes.length} shielded note${denominatedNotes.length !== 1 ? 's' : ''}`);
+    if (hasShieldedFunds) stakes.push('shielded balance');
+    if (hasConfidentialFunds) stakes.push('confidential balance');
+    if (activeVaults > 0) stakes.push(`${activeVaults} subscription${activeVaults !== 1 ? 's' : ''}`);
+    if (activeStreams > 0) stakes.push(`${activeStreams} payment stream${activeStreams !== 1 ? 's' : ''}`);
+
+    // Subscriptions can hold a device-local subscriber secret that is NOT seed-derived,
+    // so if any exist, steer the user to cancel/move first rather than risk stranding them.
+    const message = stakes.length > 0
+      ? `${t('settings.disconnectConfirm')}\n\n${t('settings.disconnectStillHolds')}\n${stakes.join('\n')}`
+      : t('settings.disconnectConfirm');
+
     p01Alert(
       t('settings.disconnect'),
-      t('settings.disconnectConfirm'),
+      message,
       [
         { text: t('common.cancel'), style: 'cancel' },
+        { text: t('settings.backupPhraseFirst'), onPress: () => router.push('/(main)/(settings)/backup') },
         {
           text: t('settings.disconnect'),
+          style: 'destructive',
           onPress: async () => {
-            // Archive notes before disconnecting so they persist across sessions
-            const currentAddress = publicKey;
-            if (currentAddress) {
-              await resetAllPrivacyStores(currentAddress);
+            try {
+              lockVault(); // wipe vault key from memory
+              await SecureStore.deleteItemAsync('p01_session_unlocked');
+              // walletLogout() deletes the keypair, archives notes by pubkey, and
+              // sets hasWallet=false. Navigate to the welcome menu with the EXPLICIT
+              // group path: this handler is 3 navigators deep (root Stack > (main)
+              // Tabs > (settings) Stack), and a bare router.replace('/') does not
+              // escape that nesting — it gets applied inside the (settings) stack and
+              // leaves the user stuck on Settings. '/(onboarding)' resolves to the
+              // root sibling and unwinds cleanly (same call the wallet fallback uses).
+              await walletLogout();
+              await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              router.replace('/(onboarding)');
+            } catch (error) {
+              await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              p01Alert(t('common.error'), t('alerts.errorGeneric'));
             }
-            lockVault(); // Wipe vault key from memory
-            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            router.replace('/(auth)/login');
           },
         },
-      ]
+      ],
+      'warning',
     );
   };
 
@@ -206,7 +248,9 @@ export default function SettingsScreen() {
                     try {
                       await walletLogout();
                       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-                      router.replace('/');
+                      // Explicit group path — '/' does not escape the nested
+                      // root Stack > (main) Tabs > (settings) Stack (see handleDisconnect).
+                      router.replace('/(onboarding)');
                     } catch (error) {
                       p01Alert(t('common.error'), t('alerts.errorGeneric'));
                     }

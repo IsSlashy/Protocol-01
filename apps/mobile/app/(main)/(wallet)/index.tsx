@@ -129,6 +129,16 @@ export default function WalletHomeScreen() {
     setLoadTimeout(false);
   }, [initialized, hasWallet]);
 
+  // No wallet after init (e.g. just after Disconnect / Delete Wallet) → return to
+  // the welcome menu automatically instead of stranding the user on a manual
+  // "set up" button. Guarded by !loading so a transient boot frame can't fire it
+  // (at boot, reaching the wallet tab always means hasWallet is true).
+  useEffect(() => {
+    if (initialized && !loading && !hasWallet) {
+      router.replace('/(onboarding)');
+    }
+  }, [initialized, loading, hasWallet, router]);
+
   if ((!initialized || (loading && !hasWallet)) && !loadTimeout) {
     return (
       <SafeAreaView style={styles.container}>

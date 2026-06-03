@@ -463,7 +463,9 @@ export default {
     resetWallet: 'Reset Wallet',
     resetConfirm: 'This will delete all data. Are you sure?',
     disconnect: 'Disconnect',
-    disconnectConfirm: 'Disconnect your wallet?',
+    disconnectConfirm: 'Removes this wallet from this device and returns to the welcome screen. Only your recovery phrase can restore it — re-importing it brings back your address and notes (on this device, or via on-chain rescan). Make sure your phrase is saved.',
+    disconnectStillHolds: 'This wallet still holds:',
+    backupPhraseFirst: 'Back up phrase first',
     cluster: 'Cluster',
     rpcEndpoint: 'RPC Endpoint',
     devnet: 'Devnet',
@@ -566,6 +568,7 @@ export default {
     ready: 'READY',
     alreadyHaveWallet: 'Already have a wallet?',
     import: 'Import',
+    scanToConnect: 'Scan to connect from extension',
     // Create wallet screen
     creatingWallet: 'Creating Your Wallet',
     creatingWalletDesc: 'Please wait while we set up your secure wallet',
