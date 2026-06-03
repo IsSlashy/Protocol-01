@@ -85,9 +85,19 @@ config.resolver.extraNodeModules = {
   '@scure/bip39/wordlists/english': path.join(scureBip39Path, 'esm/wordlists/english.js'),
 };
 
-// Find jose browser base path
-const joseBasePath = path.dirname(require.resolve('jose/package.json', { paths: [projectRoot] }));
-const joseBrowserDir = path.join(joseBasePath, 'dist', 'browser');
+// Find jose browser base path.
+// Optional: jose was only ever pulled in transitively by @privy-io/react-auth.
+// With Privy removed (spec §3 Phase 1) jose is no longer in the tree, so guard
+// the resolve like the @noble/@scure blocks above — an unguarded require.resolve
+// here throws MODULE_NOT_FOUND and Metro's config loader masks it as a bogus
+// "ERR_UNSUPPORTED_ESM_URL_SCHEME" on Windows. Re-shims automatically if jose returns.
+let joseBrowserDir = null;
+try {
+  const joseBasePath = path.dirname(require.resolve('jose/package.json', { paths: [projectRoot] }));
+  joseBrowserDir = path.join(joseBasePath, 'dist', 'browser');
+} catch (e) {
+  joseBrowserDir = null;
+}
 
 // Helper to find a file in node_modules directories
 const fs = require('fs');
@@ -207,8 +217,9 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     }
   }
 
-  // Force jose to use browser version (not Node.js version)
-  if (moduleName === 'jose') {
+  // Force jose to use browser version (not Node.js version).
+  // Only active when jose is present (joseBrowserDir resolved above).
+  if (joseBrowserDir && moduleName === 'jose') {
     return {
       filePath: path.join(joseBrowserDir, 'index.js'),
       type: 'sourceFile',
@@ -216,7 +227,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
 
   // Redirect any import coming FROM jose/dist/node to jose/dist/browser
-  if (context.originModulePath && context.originModulePath.includes('jose') &&
+  if (joseBrowserDir && context.originModulePath && context.originModulePath.includes('jose') &&
       context.originModulePath.includes(path.join('dist', 'node'))) {
     // Rewrite the origin path to browser version
     const browserOrigin = context.originModulePath
