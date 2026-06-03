@@ -42,6 +42,7 @@ import {
   detectServiceFromOrigin,
   getCategoryColor,
   getCategoryLabel,
+  getPopularServices,
   CATEGORY_CONFIG,
   type ServiceInfo,
   type ServiceCategory,
@@ -64,15 +65,30 @@ const CATEGORY_ICONS: Record<string, React.ComponentType<{ className?: string; s
   MessageCircle,
 };
 
-// Mock SDK Services - In production, these come from SDK providers
-const SDK_SERVICES = [
-  { id: 'netflix', name: 'Netflix', icon: Play, price: 0.15, frequency: 'monthly' as const, category: 'Entertainment' },
-  { id: 'spotify', name: 'Spotify', icon: Music, price: 0.08, frequency: 'monthly' as const, category: 'Music' },
-  { id: 'chatgpt', name: 'ChatGPT Plus', icon: Bot, price: 0.18, frequency: 'monthly' as const, category: 'AI' },
-  { id: 'github', name: 'GitHub Pro', icon: Cloud, price: 0.04, frequency: 'monthly' as const, category: 'Dev Tools' },
-  { id: 'figma', name: 'Figma', icon: Palette, price: 0.12, frequency: 'monthly' as const, category: 'Design' },
-  { id: 'notion', name: 'Notion', icon: Briefcase, price: 0.07, frequency: 'monthly' as const, category: 'Productivity' },
-];
+// Subscribe tiles are driven by the SHARED service registry (same catalog mobile
+// uses — includes Disney+ etc.), NOT a separate hardcoded list, so both apps show
+// the same merchants. Suggested monthly prices below; the real price comes from the
+// on-chain service registry once classic subscribe is wired to it.
+const SERVICE_PRICES: Record<string, number> = {
+  netflix: 0.15,
+  spotify: 0.08,
+  openai: 0.18,
+  'disney-plus': 0.1,
+  'youtube-premium': 0.09,
+  anthropic: 0.18,
+  'github-copilot': 0.04,
+  notion: 0.07,
+};
+
+const SDK_SERVICES = getPopularServices().map((svc) => ({
+  id: svc.id,
+  name: svc.name,
+  logo: svc.logo,
+  icon: CATEGORY_ICONS[CATEGORY_CONFIG[svc.category].icon] ?? CreditCard,
+  price: SERVICE_PRICES[svc.id] ?? 0.1,
+  frequency: 'monthly' as const,
+  category: CATEGORY_CONFIG[svc.category].label,
+}));
 
 type SectionType = 'personal' | 'services';
 
@@ -479,6 +495,7 @@ function ServiceCard({
   isSubscribed: boolean;
 }) {
   const Icon = service.icon;
+  const [logoError, setLogoError] = useState(false);
 
   return (
     <motion.button
@@ -494,14 +511,24 @@ function ServiceCard({
           : 'border border-p01-border hover:bg-p01-elevated'
       )}
     >
-      {/* Icon */}
+      {/* Logo (falls back to the category icon if the CDN image fails to load) */}
       <div
         className={cn(
           'w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0',
           isSubscribed ? 'bg-p01-cyan/10' : 'bg-p01-pink/10'
         )}
       >
-        <Icon className={cn('w-5 h-5', isSubscribed ? 'text-p01-cyan' : 'text-p01-pink')} />
+        {service.logo && !logoError ? (
+          <img
+            src={service.logo}
+            alt={service.name}
+            onError={() => setLogoError(true)}
+            className="w-5 h-5"
+            style={{ filter: 'brightness(0) invert(1)', opacity: isSubscribed ? 0.95 : 0.85 }}
+          />
+        ) : (
+          <Icon className={cn('w-5 h-5', isSubscribed ? 'text-p01-cyan' : 'text-p01-pink')} />
+        )}
       </div>
 
       {/* Info */}
