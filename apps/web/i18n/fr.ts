@@ -562,10 +562,6 @@ const fr: Translations = {
         title: 'Cover Traffic (dummies self-loop)',
         desc: 'Transactions dummies cote user, byte-identiques a un round-trip shield vers unshield reel, qui noient l\'activite reelle dans du bruit indistinguable. Ferme la correlation timing (L20) et degrade le signal programs-touched (L11). Plafond d\'indistinguishability 5/5. Zero surface protocole, zero cout infra.',
       },
-      feederPool: {
-        title: 'Feeder Pool (Phase A.5)',
-        desc: 'Ferme le leak depositor-visible-sur-shield (L1/L2). L\'implementation honnete requiert soit attestation TEE (Marlin Oyster) soit N >= 3 relayers geo-distribues avec stake/slashing. Sans l\'un des deux, ce serait trust-shift, pas privacy-gain. Gate sur disponibilite infra.',
-      },
       colosseumFrontier: {
         title: 'Colosseum Frontier 2026',
         desc: 'Soumis le 23/04/2026 dans la région Irlande (affiliation Superteam IE). Track accelerator activé. Tagged publiquement par Superteam Ireland comme une des 5 équipes irlandaises actives sur Arcium.',
@@ -597,10 +593,6 @@ const fr: Translations = {
       iosBuild: {
         title: 'Build & Tests iOS',
         desc: 'Build et tests iOS \u2014 seul Android est v\u00e9rifi\u00e9 actuellement. N\u00e9cessite la configuration CocoaPods, la signature de code et le d\u00e9ploiement TestFlight.',
-      },
-      defiComposability: {
-        title: 'Composabilit\u00e9 DeFi',
-        desc: 'Permettre aux soldes confidentiels et pools blind\u00e9s d\u2019interagir avec les protocoles DeFi Solana. Confidentialit\u00e9 composable pour le pr\u00eat, l\u2019\u00e9change et le staking.',
       },
       desktopApp: {
         title: 'Application de bureau',

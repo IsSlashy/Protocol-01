@@ -562,10 +562,6 @@ const ja: Translations = {
         title: 'Cover Traffic (セルフループダミー)',
         desc: 'ユーザー側ダミートランザクション、実際のshield → unshieldラウンドトリップとバイト同一で、実際のアクティビティを区別不可能なノイズで覆い隠す。タイミング相関（L20）を閉じ、touched-program信号（L11）を低下。区別不可能性上限5/5。プロトコル表面ゼロ、インフラコストゼロ。',
       },
-      feederPool: {
-        title: 'Feeder Pool (Phase A.5)',
-        desc: 'depositor-visible-on-shieldリーク（L1/L2）を閉じる。誠実な実装にはTEE attestation（Marlin Oyster）またはステーク/スラッシング付きN ≥ 3地理分散リレイヤーのいずれかが必要。どちらもなければtrust-shiftであってprivacy-gainではない。インフラ可用性にゲート。',
-      },
       colosseumFrontier: {
         title: 'Colosseum Frontier 2026',
         desc: '2026年4月23日、アイルランドチームリージョン（Superteam IEアフィリエーション）で提出。アクセラレータートラック有効。Superteam Irelandから、Arcium上で活動中のアイルランドの5チームの一つとして公に認識されました。',
@@ -597,10 +593,6 @@ const ja: Translations = {
       iosBuild: {
         title: 'iOS\u30d3\u30eb\u30c9 & \u30c6\u30b9\u30c8',
         desc: 'iOS\u30d3\u30eb\u30c9\u3068\u30c6\u30b9\u30c8 \u2014 \u73fe\u5728\u306fAndroid\u306e\u307f\u691c\u8a3c\u6e08\u307f\u3002CocoaPods\u30bb\u30c3\u30c8\u30a2\u30c3\u30d7\u3001\u30b3\u30fc\u30c9\u7f72\u540d\u3001TestFlight\u30c7\u30d7\u30ed\u30a4\u304c\u5fc5\u8981\u3002',
-      },
-      defiComposability: {
-        title: 'DeFi\u30b3\u30f3\u30dd\u30fc\u30b6\u30d3\u30ea\u30c6\u30a3',
-        desc: '\u6a5f\u5bc6\u6b8b\u9ad8\u3068\u30b7\u30fc\u30eb\u30c9\u30d7\u30fc\u30eb\u304cSolana DeFi\u30d7\u30ed\u30c8\u30b3\u30eb\u3068\u76f8\u4e92\u4f5c\u7528\u3067\u304d\u308b\u3088\u3046\u306b\u3002\u30ec\u30f3\u30c7\u30a3\u30f3\u30b0\u3001\u30b9\u30ef\u30c3\u30d7\u3001\u30b9\u30c6\u30fc\u30ad\u30f3\u30b0\u306e\u305f\u3081\u306e\u30b3\u30f3\u30dd\u30fc\u30b6\u30d6\u30eb\u306a\u30d7\u30e9\u30a4\u30d0\u30b7\u30fc\u3002',
       },
       desktopApp: {
         title: '\u30c7\u30b9\u30af\u30c8\u30c3\u30d7\u30a2\u30d7\u30ea',

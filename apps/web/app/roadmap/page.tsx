@@ -421,6 +421,17 @@ const roadmap: RoadmapPhase[] = [
         description: "roadmap.items.v102Release.desc",
         icon: <Download className="w-5 h-5" />,
       },
+      // ── Reconciled from "Next" — verified shipped in code ─────
+      {
+        title: "roadmap.items.leafInsertedCanonical.title",
+        description: "roadmap.items.leafInsertedCanonical.desc",
+        icon: <Code className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.fiatOnRamp.title",
+        description: "roadmap.items.fiatOnRamp.desc",
+        icon: <CreditCard className="w-5 h-5" />,
+      },
     ],
   },
   {
@@ -435,19 +446,9 @@ const roadmap: RoadmapPhase[] = [
         icon: <Globe className="w-5 h-5" />,
       },
       {
-        title: "roadmap.items.fiatOnRamp.title",
-        description: "roadmap.items.fiatOnRamp.desc",
-        icon: <CreditCard className="w-5 h-5" />,
-      },
-      {
         title: "roadmap.items.securityAudit.title",
         description: "roadmap.items.securityAudit.desc",
         icon: <Shield className="w-5 h-5" />,
-      },
-      {
-        title: "roadmap.items.leafInsertedCanonical.title",
-        description: "roadmap.items.leafInsertedCanonical.desc",
-        icon: <Code className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.mainnetLaunch.title",
@@ -458,11 +459,6 @@ const roadmap: RoadmapPhase[] = [
         title: "roadmap.items.iosBuild.title",
         description: "roadmap.items.iosBuild.desc",
         icon: <Wallet className="w-5 h-5" />,
-      },
-      {
-        title: "roadmap.items.defiComposability.title",
-        description: "roadmap.items.defiComposability.desc",
-        icon: <Layers className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.cancelPrivateV3.title",
@@ -491,11 +487,6 @@ const roadmap: RoadmapPhase[] = [
         title: "roadmap.items.coverTraffic.title",
         description: "roadmap.items.coverTraffic.desc",
         icon: <EyeOff className="w-5 h-5" />,
-      },
-      {
-        title: "roadmap.items.feederPool.title",
-        description: "roadmap.items.feederPool.desc",
-        icon: <Shield className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.desktopApp.title",

@@ -566,10 +566,6 @@ const en = {
         title: 'Cover Traffic (Self-Loop Dummies)',
         desc: 'User-side dummy transactions that are byte-identical to a real round-trip shield → unshield, drowning real activity in indistinguishable noise. Closes timing correlation (L20) and degrades program-touched signal (L11). Indistinguishability ceiling 5/5. Zero protocol surface, zero infra cost.',
       },
-      feederPool: {
-        title: 'Feeder Pool (Phase A.5)',
-        desc: 'Closes the depositor-visible-on-shield leak (L1/L2). Honest implementation requires either TEE attestation (Marlin Oyster) or N ≥ 3 geo-distributed relayers with stake/slashing. Without one of those, would be trust-shift, not privacy gain. Gated on infra availability.',
-      },
       networkMapping: {
         title: 'P-01 Internal Network Mapping',
         desc: 'Map internal transaction flows to optimize privacy routing and reduce on-chain fingerprinting across the P-01 network.',
@@ -597,10 +593,6 @@ const en = {
       iosBuild: {
         title: 'iOS Build & Testing',
         desc: 'iOS build and testing \u2014 currently only Android is verified. Requires CocoaPods setup, code signing, and TestFlight deployment.',
-      },
-      defiComposability: {
-        title: 'DeFi Composability',
-        desc: 'Enable confidential balances and shielded pools to interact with Solana DeFi protocols. Composable privacy for lending, swapping, and staking.',
       },
       desktopApp: {
         title: 'Desktop App',
