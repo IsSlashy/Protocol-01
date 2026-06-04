@@ -901,13 +901,7 @@ export async function subscribePrivate(params: {
     publicInputs,
     proofSize: c1Result.proofSize,
   };
-  let proofBufferPubkey: PublicKey;
-  try {
-    const { proofBuffer } = await submitAndVerifyStarkProof(proof, signer, connection, onProgress);
-    proofBufferPubkey = proofBuffer;
-  } catch (err) {
-    throw err;
-  }
+  const { proofBuffer: proofBufferPubkey } = await submitAndVerifyStarkProof(proof, signer, connection, onProgress);
 
   // Step 2: Build + send subscribe_private_stark.
   onProgress?.('Building subscription transaction...');

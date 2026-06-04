@@ -34,7 +34,6 @@ describe('pairCrypto', () => {
 
   it('matches the cross-platform known vector', async () => {
     const qr = await encryptPairingWith(MNEMONIC, CODE, SALT, NONCE, EXPIRY);
-    // eslint-disable-next-line no-console
     console.log('PAIR_VECTOR=' + qr);
     expect(qr).toBe(VECTOR);
   });
