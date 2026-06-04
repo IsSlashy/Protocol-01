@@ -91,7 +91,11 @@ export function encodeSubscription(sub: StreamSubscription): OnChainSubscription
     id: sub.id,
     n: sub.name.substring(0, 32), // Limit name length
     r: sub.recipient,
-    a: sub.amount,
+    // `a` is the amount in the token's SMALLEST unit (lamports for SOL) per the
+    // OnChainSubscription spec — the mobile reader divides by 10^decimals. The
+    // extension stores sub.amount in whole tokens (SOL), so scale it up here;
+    // otherwise mobile would read a 1e9-too-small amount (and vice-versa).
+    a: Math.round(sub.amount * Math.pow(10, sub.tokenMint ? (sub.tokenDecimals ?? 6) : 9)),
     i: INTERVAL_MAP[sub.interval],
     s: STATUS_MAP[sub.status] || 'a',
     np: Math.floor(sub.nextPayment / 1000),
@@ -118,7 +122,9 @@ export function decodeSubscription(encoded: OnChainSubscription, _walletAddress?
     id: encoded.id,
     name: encoded.n,
     recipient: encoded.r,
-    amount: encoded.a,
+    // `a` is in smallest units (lamports for SOL) — scale back to whole tokens
+    // for the extension's internal model (matches mobile's reader).
+    amount: encoded.a / Math.pow(10, encoded.t ? 6 : 9),
     tokenMint: encoded.t,
     tokenSymbol: encoded.t ? 'TOKEN' : 'SOL',
     tokenDecimals: encoded.t ? 6 : 9,
@@ -146,6 +152,22 @@ function createMemoInstruction(data: string, signer: PublicKey): TransactionInst
     programId: MEMO_PROGRAM_ID,
     data: Buffer.from(data, 'utf-8'),
   });
+}
+
+/**
+ * Build the `P01_SUB_V1` memo instruction for a subscription, to ATTACH to the
+ * subscribe payment tx (atomic with the transfer, same as the mobile app). This
+ * is what makes a subscription discoverable cross-device — the extension's tile
+ * subscribe previously paid the merchant with NO memo, so the phone could never
+ * see it. Returns null if the encoded memo would exceed the Solana memo limit.
+ */
+export function buildSubscriptionMemoIx(
+  subscription: StreamSubscription,
+  signer: PublicKey,
+): TransactionInstruction | null {
+  const memoData = MEMO_PREFIX + JSON.stringify(encodeSubscription(subscription));
+  if (memoData.length > MAX_MEMO_LENGTH) return null;
+  return createMemoInstruction(memoData, signer);
 }
 
 // ============ On-Chain Operations ============

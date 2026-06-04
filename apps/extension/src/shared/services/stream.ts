@@ -9,6 +9,7 @@
 
 import { Keypair, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { getConnection, NetworkType, sendSplToken } from './wallet';
+import { buildSubscriptionMemoIx } from './onchain-sync';
 import nacl from 'tweetnacl';
 import { Buffer } from 'buffer';
 
@@ -425,6 +426,16 @@ export async function executeSubscriptionPayment(
         lamports,
       })
     );
+
+    // On the INITIAL subscribe payment, attach the P01_SUB_V1 memo so the
+    // subscription is discoverable cross-device (the mobile app reads these
+    // memos). Without this the extension's tile-subscribe was invisible to the
+    // phone. Only on the first payment — recurring charges don't need to
+    // re-announce the subscription (the scan dedups by id anyway).
+    if (sub.paymentsMade === 0) {
+      const memoIx = buildSubscriptionMemoIx(sub, signer.publicKey);
+      if (memoIx) transaction.add(memoIx);
+    }
 
     // Sign with the local keypair and send.
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
