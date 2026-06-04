@@ -9,9 +9,11 @@ import { makeConnectToken } from '@/shared/services/connectPair';
 import { cn } from '@/shared/utils';
 
 // Where the phone uploads its (encrypted) seed and where this extension polls it
-// back. MUST be the deployed apps/web origin that hosts /api/pair/:id. Set
-// VITE_PAIR_API_BASE to your web deployment URL.
-const API_BASE = ((import.meta.env.VITE_PAIR_API_BASE as string | undefined) || 'https://protocol01.app').replace(/\/$/, '');
+// back. Any host serving /api/pair/:id works — both the durable apps/web
+// (Vercel + Upstash) and the relayer's in-memory channel expose the same path.
+// Default = the live relayer (works out of the box, single-process in-memory);
+// set VITE_PAIR_API_BASE to your apps/web origin for the durable production path.
+const API_BASE = ((import.meta.env.VITE_PAIR_API_BASE as string | undefined) || 'https://p01-relayer-node-production.up.railway.app').replace(/\/$/, '');
 
 const POLL_MS = 2500;
 
