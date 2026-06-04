@@ -52,7 +52,6 @@ const updates: WeekUpdate[] = [
     title: "Colosseum Submitted & v0.9.9 Shipped",
     date: "April 20 - 26, 2026",
     status: "published",
-    video: "/videos/week3.mp4",
     highlights: [
       "Colosseum Frontier hackathon submitted — accelerator track, ~7% / ~$250K target",
       "Pitch deck + economic charter PDFs published on the marketing site",
@@ -69,7 +68,6 @@ const updates: WeekUpdate[] = [
     title: "Five Days in Dublin & ZK End-to-End",
     date: "April 27 - May 3, 2026",
     status: "published",
-    video: "/videos/week4.mp4",
     highlights: [
       "Five days in Dublin with Superteam Ireland — face-to-face with builders, founders, and investors",
       "Met Diarmuid (Superteam IE) and Alejandro Gutierrez (Lead Superteam IE / Blockchain Ireland)",
@@ -85,7 +83,6 @@ const updates: WeekUpdate[] = [
     title: "V3 End-to-End, Tx-Opacity & Multi-Relayer",
     date: "May 4 - May 10, 2026",
     status: "published",
-    video: "/videos/week5.mp4",
     highlights: [
       "V3 STARK transfer end-to-end live on devnet — sender → encoded → import → maturation → unshield, +0.995 SOL net",
       "Sprint 2 Tx-Opacity shipped: p01_relayer wired into V3 (Phase A), event scrubbing on-chain (Phase B), uniform 145 KB STARK proofs (Phase C), fee_escrow PDAs (Phase E)",
