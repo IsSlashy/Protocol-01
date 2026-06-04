@@ -2,7 +2,7 @@
   "expo": {
     "name": "Protocol 01",
     "slug": "protocol-01",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "scheme": "p01",
     "userInterfaceStyle": "dark",

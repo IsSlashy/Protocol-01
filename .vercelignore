@@ -34,9 +34,18 @@ services/
 **/.cxx
 **/.gradle
 apps/mobile/android/app/build
+apps/mobile/android/app/build2
 apps/mobile/android/build
+**/build2
 apps/mobile/ios/build
 apps/mobile/ios/Pods
+
+# Heavy media / release artifacts (over Vercel's 100 MB CLI upload limit)
+apps/weekly-update/out
+**/*.mp4
+**/*.wav
+**/*.apk
+**/*.aab
 
 # Secrets / keypairs (never deploy)
 **/.secrets/
