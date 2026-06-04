@@ -20,7 +20,6 @@ const brands: Brand[] = [
   { name: "Solana", logo: "/logos/solana.png", h: "h-12" },
   { name: "Helius", logo: "/logos/helius.png", h: "h-12" },
   { name: "Jupiter", logo: "/logos/jupiter.png", h: "h-16" },
-  { name: "Arcium", logo: "/logos/arcium.png", h: "h-8" },
   { name: "Superteam Ireland", logo: "/logos/superteam.png", h: "h-14" },
   { name: "Dev3pack", logo: "/logos/dev3pack.png", h: "h-14" },
   { name: "Colosseum Frontier", logo: "/logos/colosseum.png", h: "h-12" },
