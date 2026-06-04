@@ -17,7 +17,7 @@ import { useT } from "@/i18n";
 type Brand = { name: string; logo: string; h: string };
 
 const brands: Brand[] = [
-  { name: "Solana", logo: "/logos/solana.png", h: "h-12" },
+  { name: "Solana Foundation", logo: "/logos/solana-foundation.png", h: "h-8" },
   { name: "Helius", logo: "/logos/helius.png", h: "h-12" },
   { name: "Jupiter", logo: "/logos/jupiter.png", h: "h-16" },
   { name: "Superteam Ireland", logo: "/logos/superteam.png", h: "h-14" },
