@@ -285,27 +285,32 @@ export async function fetchSubscriptionsFromChain(
 
         if (!tx?.transaction?.message?.instructions) continue;
 
-        // Look for memo instructions
+        // Look for memo instructions. getParsedTransaction returns the spl-memo
+        // program in PARSED form ({program:'spl-memo', parsed:'<text>'}). The old
+        // code did `if ('parsed' in instruction) continue` and only handled the
+        // RAW shape — so it skipped EVERY memo and always returned 0 subs (the
+        // bug that made cross-device sync silently find nothing). Handle both
+        // shapes, same as the mobile onchainSync reader.
         for (const instruction of tx.transaction.message.instructions) {
-          // Check if it's a memo instruction
-          if ('parsed' in instruction) continue;
+          let memoText: string | null = null;
 
-          const rawInstruction = instruction as {
-            programId: PublicKey;
-            data: string;
-          };
-
-          if (!rawInstruction.programId.equals(MEMO_PROGRAM_ID)) continue;
-
-          // Decode memo data
-          let memoText: string;
-          try {
-            // Data is base58 encoded
-            const dataBuffer = Buffer.from(rawInstruction.data, 'base64');
-            memoText = dataBuffer.toString('utf-8');
-          } catch {
-            continue;
+          if ('parsed' in instruction) {
+            const pi = instruction as unknown as { program?: string; programId?: string; parsed?: unknown };
+            if (pi.program === 'spl-memo' || pi.programId === MEMO_PROGRAM_ID.toString()) {
+              memoText = typeof pi.parsed === 'string' ? pi.parsed : JSON.stringify(pi.parsed);
+            }
+          } else {
+            const rawInstruction = instruction as { programId: PublicKey; data: string };
+            if (rawInstruction.programId.equals(MEMO_PROGRAM_ID)) {
+              try {
+                memoText = Buffer.from(rawInstruction.data, 'base64').toString('utf-8');
+              } catch {
+                memoText = null;
+              }
+            }
           }
+
+          if (!memoText) continue;
 
           // Check for subscription memo
           if (memoText.startsWith(MEMO_PREFIX)) {
