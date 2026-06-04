@@ -8,7 +8,7 @@ import { Github, Chrome, Download } from "lucide-react";
 import { useT } from "@/i18n";
 
 const APK_URL =
-  "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v1.0.2/protocol-01-v1.0.2.apk";
+  "https://github.com/IsSlashy/Protocol-01/releases/download/v1.0.2/protocol-01-v1.0.2.apk";
 
 
 export default function CTA() {
@@ -137,7 +137,7 @@ export default function CTA() {
               className="flex flex-col sm:flex-row items-center justify-center gap-4"
             >
               <a
-                href="https://github.com/IsSlashy/Protocol-01-releases"
+                href="https://github.com/IsSlashy/Protocol-01"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 text-p01-text-muted hover:text-white transition-colors"
