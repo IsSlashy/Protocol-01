@@ -6,10 +6,19 @@ import { Week4 } from './Week4';
 import { PitchVideo } from './PitchVideo';
 import { FrostIntro } from './FrostIntro';
 import { ExtensionLaunch } from './ExtensionLaunch';
+import { ReleaseUpdate } from './ReleaseUpdate';
 
 export const RemotionRoot: React.FC = () => {
   return (
     <>
+      <Composition
+        id="ReleaseUpdate"
+        component={ReleaseUpdate}
+        durationInFrames={3060}
+        fps={60}
+        width={3840}
+        height={2160}
+      />
       <Composition
         id="ExtensionLaunch"
         component={ExtensionLaunch}
