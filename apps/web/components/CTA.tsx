@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
+import Link from "next/link";
 import { Github, Chrome, Download } from "lucide-react";
 import { useT } from "@/i18n";
 
@@ -106,13 +107,26 @@ export default function CTA() {
                 <Download size={20} className="text-p01-cyan shrink-0" />
               </a>
 
-              <div className="mt-3 flex items-center justify-center gap-2 text-sm text-p01-text-dim">
-                <Chrome size={15} className="shrink-0" />
-                <span>{t('cta.chromeExtension')}</span>
-                <span className="text-[10px] font-mono text-[#ffcc00] border border-[#ffcc00]/30 bg-[#ffcc00]/10 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                  {t('cta.soon')}
-                </span>
-              </div>
+              <Link
+                href="/extension"
+                className="group mt-3 flex items-center gap-4 p-5 rounded-2xl border border-p01-pink/40 bg-p01-pink/[0.06] hover:bg-p01-pink/[0.12] hover:border-p01-pink/70 transition-all duration-300 no-underline"
+              >
+                <div className="w-12 h-12 rounded-xl bg-p01-pink/15 flex items-center justify-center text-p01-pink shrink-0">
+                  <Chrome size={24} />
+                </div>
+                <div className="text-left flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold font-display text-white group-hover:text-p01-pink transition-colors">
+                      {t('cta.chromeExtension')}
+                    </span>
+                    <span className="text-[10px] font-mono text-[#ffcc00] border border-[#ffcc00]/30 bg-[#ffcc00]/10 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                      Beta
+                    </span>
+                  </div>
+                  <div className="text-sm text-p01-text-dim">Chrome · Opera · Edge · Brave · Devnet</div>
+                </div>
+                <Download size={20} className="text-p01-pink shrink-0" />
+              </Link>
             </motion.div>
 
             {/* Secondary Actions */}
