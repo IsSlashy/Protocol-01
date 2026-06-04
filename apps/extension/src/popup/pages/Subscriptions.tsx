@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -122,6 +122,26 @@ export default function Subscriptions() {
   useEffect(() => {
     refreshComputedValues();
   }, [refreshComputedValues]);
+
+  // Auto-sync from chain once a wallet is connected, so subscriptions made on
+  // ANOTHER device with the SAME wallet (e.g. on the phone) surface without the
+  // user having to hit the Sync button. Runs once per mount; the connected
+  // wallet's on-chain P01_SUB_V1 memos are the source.
+  const autoSyncedRef = useRef(false);
+  useEffect(() => {
+    if (!publicKey || autoSyncedRef.current) return;
+    autoSyncedRef.current = true;
+    (async () => {
+      setIsSyncing(true);
+      try {
+        await syncFromChain(publicKey, network);
+      } catch (error) {
+        console.error('[Streams] auto-sync failed:', error);
+      } finally {
+        setIsSyncing(false);
+      }
+    })();
+  }, [publicKey, network, syncFromChain]);
 
   // Filter out cancelled subscriptions
   const activeSubscriptions = subscriptions.filter(s => s.status !== 'cancelled');
