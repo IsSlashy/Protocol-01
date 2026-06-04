@@ -88,7 +88,7 @@ export default function Welcome() {
             transition={{ delay: 0.7 }}
             className="text-center text-[10px] text-[#555560] font-mono mt-4 tracking-wider"
           >
-            PROTOCOL v0.1.0 • DEVNET
+            PROTOCOL v0.5.0 • DEVNET
           </motion.p>
         </div>
       </motion.div>
