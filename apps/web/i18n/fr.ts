@@ -1035,7 +1035,7 @@ const fr: Translations = {
       },
       arciumMpc: {
         title: 'Calcul multi-parties (Arcium)',
-        desc: 'Les preuves ZK cachent les montants et rompent le lien exp\u00e9diteur-destinataire. Mais certaines m\u00e9tadonn\u00e9es subsistent : le relayeur voit votre transaction, les nullifieurs sont publi\u00e9s en clair, et les recherches de registre sont observables. Le MPC Arcium \u00e9limine ces fuites r\u00e9siduelles en distribuant chaque op\u00e9ration sensible sur un r\u00e9seau d\u00e9centralis\u00e9 de n\u0153uds \u2014 aucun n\u0153ud ne voit jamais le texte en clair. C\u2019est une couche optionnelle que les utilisateurs activent pour une confidentialit\u00e9 maximale.',
+        desc: 'Les preuves ZK cachent les montants et rompent le lien exp\u00e9diteur-destinataire. Mais certaines m\u00e9tadonn\u00e9es subsistent : le relayeur voit votre transaction, les nullifieurs sont publi\u00e9s en clair, et les recherches de registre sont observables. Le MPC Arcium est une couche pr\u00e9vue qui distribuerait ces op\u00e9rations sensibles sur un r\u00e9seau d\u00e9centralis\u00e9 de n\u0153uds afin qu\u2019aucun n\u0153ud ne voie le texte en clair. Elle n\u2019est pas encore active dans l\u2019app.',
         detail1: 'Masquage de nullifieur : les n\u0153uds MPC calculent conjointement SHA3(nullifieur) \u2014 seul le hash va on-chain, le nullifieur r\u00e9el reste chiffr\u00e9',
         detail2: 'Relais confidentiel : votre transaction est chiffr\u00e9e et r\u00e9partie entre les n\u0153uds MPC (Rescue-CTR). Ils reconstruisent et ex\u00e9cutent ensemble \u2014 aucun relayeur ne voit le contenu',
         detail3: 'Recherche de registre anonyme : interrogez une m\u00e9ta-adresse furtive via MPC \u2014 personne ne sait qui vous avez cherch\u00e9',
@@ -1055,7 +1055,7 @@ const fr: Translations = {
         detail5: 'R\u00e8glement sans permission : write_escrow_outcome lit le PDA Auction, escrow_release ins\u00e8re le bon commitment dans l\u2019arbre de Merkle. N\u2019importe qui peut ex\u00e9cuter.',
         detail6: 'Anti-rejeu : auction_id est une entr\u00e9e publique dans la preuve ZK, liant chaque escrow \u00e0 une ench\u00e8re sp\u00e9cifique.',
         detail7: 'Circuit : escrow_bid.circom \u2014 4 954 contraintes, 7 entr\u00e9es publiques, Groth16 sur BN254 (legacy, migration STARK pr\u00e9vue).',
-        detail8: 'D\u00e9ploy\u00e9 sur devnet : p01_arcium + zk_shielded avec comp defs initialis\u00e9s et VK upload\u00e9.',
+        detail8: 'Sur devnet : p01_arcium est d\u00e9ploy\u00e9, mais les comp defs MPC ne sont pas encore initialis\u00e9s et le build de circuits est inachev\u00e9 \u2014 int\u00e9gration en attente.',
       },
       streamsPrivacy: {
         title: 'Confidentialit\u00e9 des flux & abonnements',

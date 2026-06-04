@@ -1036,7 +1036,7 @@ const en = {
       },
       arciumMpc: {
         title: 'Multi-Party Computation (Arcium)',
-        desc: 'ZK proofs hide amounts and break the sender-receiver link. But some metadata remains: the relayer sees your transaction, nullifiers are posted in the clear, and registry lookups are observable. Arcium MPC eliminates these residual leaks by distributing every sensitive operation across a decentralized network of nodes — no single node ever sees the plaintext. It is an optional layer that users toggle on for maximum privacy.',
+        desc: 'ZK proofs hide amounts and break the sender-receiver link. But some metadata remains: the relayer sees your transaction, nullifiers are posted in the clear, and registry lookups are observable. Arcium MPC is a planned layer that would distribute these sensitive operations across a decentralized network of nodes so that no single node sees the plaintext. It is not yet active in the app.',
         detail1: 'Nullifier hiding: MPC nodes jointly compute SHA3(nullifier) — only the hash goes on-chain, the actual nullifier stays encrypted',
         detail2: 'Confidential relay: your transaction is encrypted and split across MPC nodes (Rescue-CTR). They reconstruct and execute it together — no single relayer sees the content',
         detail3: 'Anonymous registry lookup: query a stealth meta-address through MPC — nobody knows who you looked up',
@@ -1056,7 +1056,7 @@ const en = {
         detail5: 'Permissionless settlement: write_escrow_outcome reads the Auction PDA, escrow_release inserts the correct commitment into the Merkle tree. Anyone can crank — no cooperation needed.',
         detail6: 'Anti-replay: auction_id is a public input in the ZK proof, binding each escrow to a specific auction. Proofs cannot be reused across auctions.',
         detail7: 'Circuit: escrow_bid.circom — 4,954 constraints, 7 public inputs, Groth16 over BN254 (legacy, scheduled for STARK migration). Proves note ownership, Merkle membership, maturity, and dual commitment correctness.',
-        detail8: 'Deployed on devnet: p01_arcium (FH1Ji...) + zk_shielded (GbVM5...) with comp defs initialized and VK uploaded. Ready for integration.',
+        detail8: 'On devnet, p01_arcium (FH1Ji...) is deployed, but the MPC comp-defs are not yet initialized and the circuit build is unfinished — integration pending.',
       },
       streamsPrivacy: {
         title: 'Streams & Subscriptions Privacy',
