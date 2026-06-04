@@ -42,11 +42,11 @@ import {
   detectServiceFromOrigin,
   getCategoryColor,
   getCategoryLabel,
-  getPopularServices,
   CATEGORY_CONFIG,
   type ServiceInfo,
   type ServiceCategory,
 } from '@/shared/services/serviceRegistry';
+import { fetchAllServices, type OnchainServiceEntry } from '@/shared/services/onchainServiceRegistry';
 
 // Map category icon names to Lucide components
 const CATEGORY_ICONS: Record<string, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
@@ -65,30 +65,49 @@ const CATEGORY_ICONS: Record<string, React.ComponentType<{ className?: string; s
   MessageCircle,
 };
 
-// Subscribe tiles are driven by the SHARED service registry (same catalog mobile
-// uses — includes Disney+ etc.), NOT a separate hardcoded list, so both apps show
-// the same merchants. Suggested monthly prices below; the real price comes from the
-// on-chain service registry once classic subscribe is wired to it.
-const SERVICE_PRICES: Record<string, number> = {
-  netflix: 0.15,
-  spotify: 0.08,
-  openai: 0.18,
-  'disney-plus': 0.1,
-  'youtube-premium': 0.09,
-  anthropic: 0.18,
-  'github-copilot': 0.04,
-  notion: 0.07,
+// Subscribe tiles come from the ON-CHAIN service registry (p01_registry, devnet)
+// — the SAME source the mobile app reads — so both apps show identical merchants,
+// real prices, and the retailer needed to subscribe. (Previously a hardcoded list
+// with invented prices, which diverged from the phone: Disney+ showed 0.1 here but
+// 0.06 on-chain.) Fetched at runtime into component state; see the effect below.
+type DisplayService = {
+  id: string;
+  name: string;
+  logo?: string;
+  icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
+  price: number; // SOL
+  frequency: 'monthly';
+  category: string;
+  retailer?: string;
+  serviceId?: string;
 };
 
-const SDK_SERVICES = getPopularServices().map((svc) => ({
-  id: svc.id,
-  name: svc.name,
-  logo: svc.logo,
-  icon: CATEGORY_ICONS[CATEGORY_CONFIG[svc.category].icon] ?? CreditCard,
-  price: SERVICE_PRICES[svc.id] ?? 0.1,
-  frequency: 'monthly' as const,
-  category: CATEGORY_CONFIG[svc.category].label,
-}));
+const CATEGORY_ICON: Record<string, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
+  streaming: Play,
+  music: Music,
+  ai: Bot,
+  'ai services': Bot,
+  saas: Cloud,
+  cloud: Cloud,
+  gaming: Gamepad2,
+  news: Newspaper,
+  fitness: Dumbbell,
+};
+function iconForCategory(cat: string): React.ComponentType<{ className?: string; style?: React.CSSProperties }> {
+  return CATEGORY_ICON[(cat || '').toLowerCase()] ?? CreditCard;
+}
+function mapOnchainService(e: OnchainServiceEntry): DisplayService {
+  return {
+    id: e.slug,
+    name: e.name,
+    icon: iconForCategory(e.category),
+    price: e.priceAtomic / 1e9,
+    frequency: 'monthly',
+    category: e.category || 'Service',
+    retailer: e.retailer,
+    serviceId: e.slug,
+  };
+}
 
 type SectionType = 'personal' | 'services';
 
@@ -97,6 +116,7 @@ export default function Subscriptions() {
   const [activeSection, setActiveSection] = useState<SectionType>('personal');
   const [showPrivacyInfo, setShowPrivacyInfo] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [services, setServices] = useState<DisplayService[]>([]);
 
   const { subscriptions, refreshComputedValues, syncFromChain } = useSubscriptionsStore();
   const { publicKey, network } = useWalletStore();
@@ -143,6 +163,21 @@ export default function Subscriptions() {
     })();
   }, [publicKey, network, syncFromChain]);
 
+  // Load the merchant catalog from the ON-CHAIN registry (same source as mobile)
+  // so prices/merchants match across devices. Devnet-only; [] elsewhere.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const entries = await fetchAllServices(network, { activeOnly: true });
+        if (!cancelled) setServices(entries.map(mapOnchainService));
+      } catch (error) {
+        console.error('[Subscriptions] fetchAllServices failed:', error);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [network]);
+
   // Filter out cancelled subscriptions
   const activeSubscriptions = subscriptions.filter(s => s.status !== 'cancelled');
 
@@ -155,10 +190,10 @@ export default function Subscriptions() {
 
   // Separate streams by type (SDK services vs personal)
   const serviceStreams = sortedSubs.filter(s =>
-    SDK_SERVICES.some(svc => s.name.toLowerCase().includes(svc.name.toLowerCase()))
+    services.some(svc => s.name.toLowerCase().includes(svc.name.toLowerCase()))
   );
   const personalStreams = sortedSubs.filter(s =>
-    !SDK_SERVICES.some(svc => s.name.toLowerCase().includes(svc.name.toLowerCase()))
+    !services.some(svc => s.name.toLowerCase().includes(svc.name.toLowerCase()))
   );
 
   // Graded privacy score per subscription, averaged over active ones.
@@ -187,7 +222,7 @@ export default function Subscriptions() {
     ? Math.min(...activeStreams.map(s => s.nextPayment))
     : null;
 
-  const handleSubscribeService = (service: typeof SDK_SERVICES[0]) => {
+  const handleSubscribeService = (service: DisplayService) => {
     // Navigate to subscribe flow with pre-filled service data
     navigate('/subscriptions/new', {
       state: {
@@ -373,7 +408,7 @@ export default function Subscriptions() {
               <span className="text-sm font-semibold text-white">Available Services</span>
             </div>
             <span className="text-xs text-p01-chrome/60">
-              {SDK_SERVICES.length} services
+              {services.length} services
             </span>
           </div>
 
@@ -387,7 +422,7 @@ export default function Subscriptions() {
 
           {/* Services Grid */}
           <div className="space-y-2">
-            {SDK_SERVICES.map((service, index) => (
+            {services.map((service, index) => (
               <ServiceCard
                 key={service.id}
                 service={service}
@@ -509,7 +544,7 @@ function ServiceCard({
   onSubscribe,
   isSubscribed,
 }: {
-  service: typeof SDK_SERVICES[0];
+  service: DisplayService;
   index: number;
   onSubscribe: () => void;
   isSubscribed: boolean;
