@@ -34,12 +34,8 @@ import {
 // ============ P-01 Theme Constants ============
 const THEME = {
   primaryColor: "#39c5bb",
-  primaryBright: "#00ffe5",
   secondaryColor: "#ff77a8",
-  pinkHot: "#ff2d7a",
   backgroundColor: "#0a0a0c",
-  surfaceColor: "#151518",
-  elevatedColor: "#1f1f24",
   textColor: "#ffffff",
   mutedColor: "#888892",
   dimColor: "#555560",

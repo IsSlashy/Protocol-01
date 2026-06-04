@@ -53,10 +53,10 @@ export default function ExtensionPage() {
           <h1 className="text-3xl sm:text-4xl font-bold text-center font-display mb-3">
             Install Protocol 01
           </h1>
-          <p className="text-center text-p01-chrome/70 max-w-xl mx-auto mb-2">
+          <p className="text-center text-p01-text-muted/70 max-w-xl mx-auto mb-2">
             Privacy-first Solana wallet — stealth addresses, shielded notes, and cross-device recurring subscriptions, right in your browser.
           </p>
-          <p className="text-center text-xs font-mono text-p01-chrome/50 mb-10">
+          <p className="text-center text-xs font-mono text-p01-text-muted/50 mb-10">
             v{VERSION} · works on Chrome, Opera, Edge & Brave
           </p>
 
@@ -70,7 +70,7 @@ export default function ExtensionPage() {
               <Download className="w-5 h-5" />
               Download extension (.zip)
             </a>
-            <span className="text-[11px] font-mono text-p01-chrome/50">protocol01-extension-{VERSION}.zip</span>
+            <span className="text-[11px] font-mono text-p01-text-muted/50">protocol01-extension-{VERSION}.zip</span>
           </div>
 
           {/* Steps */}
@@ -84,7 +84,7 @@ export default function ExtensionPage() {
                   </div>
                   <div>
                     <h3 className="font-display font-semibold text-white">{step.title}</h3>
-                    <p className="text-sm text-p01-chrome/70 mt-0.5">{step.body}</p>
+                    <p className="text-sm text-p01-text-muted/70 mt-0.5">{step.body}</p>
                   </div>
                 </div>
               );
@@ -101,7 +101,7 @@ export default function ExtensionPage() {
           </div>
 
           {/* Trust line */}
-          <div className="mt-6 flex items-center justify-center gap-2 text-xs text-p01-chrome/50">
+          <div className="mt-6 flex items-center justify-center gap-2 text-xs text-p01-text-muted/50">
             <ShieldCheck className="w-4 h-4 text-p01-cyan" />
             Your seed phrase is encrypted and stays on your device. It never leaves your browser.
           </div>

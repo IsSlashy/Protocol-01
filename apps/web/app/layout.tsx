@@ -35,6 +35,7 @@ const notoSansJP = Noto_Sans_JP({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://protocol-01.dev"),
   title: "PROTOCOL-01",
   description:
     "The ultimate privacy-first protocol for secure transactions and anonymous interactions. Powered by zero-knowledge proofs.",

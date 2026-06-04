@@ -121,7 +121,7 @@ export default function PitchDeck() {
           <button
             onClick={prev}
             disabled={idx === 0}
-            className="rounded border border-p01-border p-1.5 transition hover:border-p01-cyan hover:text-p01-cyan disabled:opacity-30"
+            className="rounded border border-p01-border p-1.5 transition hover:border-p01-cyan hover:text-p01-cyan focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-p01-cyan/60 disabled:opacity-30"
             aria-label="Previous slide"
           >
             <ChevronLeft size={14} />
@@ -132,7 +132,7 @@ export default function PitchDeck() {
           <button
             onClick={next}
             disabled={idx === total - 1}
-            className="rounded border border-p01-border p-1.5 transition hover:border-p01-cyan hover:text-p01-cyan disabled:opacity-30"
+            className="rounded border border-p01-border p-1.5 transition hover:border-p01-cyan hover:text-p01-cyan focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-p01-cyan/60 disabled:opacity-30"
             aria-label="Next slide"
           >
             <ChevronRight size={14} />

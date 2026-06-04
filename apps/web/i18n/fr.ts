@@ -332,7 +332,7 @@ const fr: Translations = {
     shapeFuture: 'Fa\u00e7onnez l\u2019avenir de la confidentialit\u00e9',
     joinCommunity: 'Rejoignez la communaut\u00e9. Testez, sugg\u00e9rez des fonctionnalit\u00e9s, ou suivez notre progression.',
     designDoc: 'Document de conception & architecture',
-    lastRevision: 'MIS \u00c0 JOUR PROGRESSIVEMENT \u00b7 DERNI\u00c8RE R\u00c9VISION MAI 2026',
+    lastRevision: 'MIS \u00c0 JOUR PROGRESSIVEMENT \u00b7 DERNI\u00c8RE R\u00c9VISION JUIN 2026',
     devnetOnly: 'Devnet uniquement',
     builtFromScratch: 'Construit de z\u00e9ro pour la confidentialit\u00e9',
     disclaimer: 'Ce logiciel est en d\u00e9veloppement actif. Non audit\u00e9. Utilisez \u00e0 vos propres risques.',

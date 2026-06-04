@@ -6,7 +6,7 @@ import { useT } from "@/i18n";
 import PhoneMockup from "./PhoneMockup";
 
 const APK_URL =
-  "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v1.0.1/protocol-01-v1.0.1.apk";
+  "https://github.com/IsSlashy/Protocol-01-releases/releases/download/v1.0.2/protocol-01-v1.0.2.apk";
 
 /**
  * Hero - Optimized version

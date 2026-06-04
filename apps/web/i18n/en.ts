@@ -331,7 +331,7 @@ const en = {
     shapeFuture: 'Shape the Future of Privacy',
     joinCommunity: 'Join the community. Test, suggest features, or follow our progress.',
     designDoc: 'Design & Architecture Document',
-    lastRevision: 'PROGRESSIVELY UPDATED \u00b7 LAST REVISION MAY 2026',
+    lastRevision: 'PROGRESSIVELY UPDATED \u00b7 LAST REVISION JUNE 2026',
     devnetOnly: 'Devnet Only',
     builtFromScratch: 'Built from scratch for privacy',
     disclaimer: 'This software is in active development. Not audited. Use at your own risk.',

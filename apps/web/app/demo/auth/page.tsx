@@ -233,6 +233,7 @@ export default function AuthDemoPage() {
                     onClick={() => setRequireSubscription(!requireSubscription)}
                     className="w-12 h-6 transition-colors relative"
                     style={{ backgroundColor: requireSubscription ? '#39c5bb' : '#2a2a30' }}
+                    aria-label={`${requireSubscription ? 'Disable' : 'Enable'} subscription requirement`}
                   >
                     <div
                       className="w-5 h-5 bg-white transition-transform absolute top-0.5"

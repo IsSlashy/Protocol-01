@@ -221,7 +221,7 @@ export default function UpdatesPage() {
                   {/* Content */}
                   {update.status === "published" && (
                     <div className="p-6">
-                      <div className="grid md:grid-cols-2 gap-6">
+                      <div className={update.video ? "grid md:grid-cols-2 gap-6" : "grid grid-cols-1 gap-6"}>
                         {/* Video */}
                         {update.video && (
                           <div className="relative rounded-xl overflow-hidden bg-p01-void border border-p01-border aspect-video">
@@ -236,6 +236,7 @@ export default function UpdatesPage() {
                               <button
                                 onClick={() => setPlayingVideo(update.week)}
                                 className="w-full h-full flex items-center justify-center group cursor-pointer"
+                                aria-label={`Play video — Week ${update.week}: ${update.title}`}
                               >
                                 <video
                                   src={update.video}

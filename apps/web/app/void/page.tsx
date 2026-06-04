@@ -536,7 +536,7 @@ export default function VoidPage() {
 
           {/* ── Screen tear — displaces top/bottom halves ── */}
           {screenTear !== 0 && (
-            <div className="absolute inset-0 z-15 pointer-events-none" style={{
+            <div className="absolute inset-0 z-[15] pointer-events-none" style={{
               clipPath: 'inset(0 0 50% 0)',
               transform: `translateX(${screenTear}px)`,
             }}>
@@ -548,7 +548,7 @@ export default function VoidPage() {
 
           {/* ── Glitch blocks — displaced color rectangles ── */}
           {glitchBlocks.map((block, i) => (
-            <div key={`gb${i}`} className="absolute z-22 pointer-events-none" style={{
+            <div key={`gb${i}`} className="absolute z-[22] pointer-events-none" style={{
               left: `${block.x}%`,
               top: `${block.y}%`,
               width: `${block.w}%`,
@@ -562,7 +562,7 @@ export default function VoidPage() {
 
           {/* ── Blood drips — dark red streaks ── */}
           {bloodDrips.map((drip, i) => (
-            <div key={`bd${i}`} className="absolute z-18 pointer-events-none" style={{
+            <div key={`bd${i}`} className="absolute z-[18] pointer-events-none" style={{
               left: `${drip.x}%`,
               top: 0,
               width: '3px',
@@ -575,7 +575,7 @@ export default function VoidPage() {
 
           {/* ── Ghost echoes — scattered text copies ── */}
           {ghosts.map((g, i) => (
-            <div key={`ghost${i}`} className="absolute inset-0 z-8 pointer-events-none flex items-center justify-center" style={{
+            <div key={`ghost${i}`} className="absolute inset-0 z-[8] pointer-events-none flex items-center justify-center" style={{
               transform: `translate(${g.x}%, ${g.y}%)`,
               mixBlendMode: g.blend as any,
             }}>
@@ -594,7 +594,7 @@ export default function VoidPage() {
 
           {/* ── Double vision layer ── */}
           {(doubleVision.x !== 0 || doubleVision.y !== 0) && (
-            <div className="absolute inset-0 z-9 pointer-events-none flex items-center justify-center" style={{
+            <div className="absolute inset-0 z-[9] pointer-events-none flex items-center justify-center" style={{
               transform: `translate(${shake.x + doubleVision.x}px, ${shake.y + doubleVision.y}px)`,
               opacity: 0.3 + corruption * 0.3,
               mixBlendMode: 'screen',
@@ -690,7 +690,7 @@ export default function VoidPage() {
 
           {/* ── Fragmented mini-copies at high corruption ── */}
           {corruption > 0.5 && Array.from({ length: Math.floor(corruption * 8) }, (_, i) => (
-            <div key={`frag${i}`} className="absolute z-12 pointer-events-none" style={{
+            <div key={`frag${i}`} className="absolute z-[12] pointer-events-none" style={{
               left: `${Math.random() * 90}%`,
               top: `${Math.random() * 90}%`,
               fontSize: `${8 + Math.random() * 20}px`,
@@ -742,7 +742,7 @@ export default function VoidPage() {
 
           {/* ── Horizontal interlace jitter ── */}
           {corruption > 0.4 && (
-            <div className="absolute inset-0 z-28 pointer-events-none" style={{
+            <div className="absolute inset-0 z-[28] pointer-events-none" style={{
               backgroundImage: `repeating-linear-gradient(
                 0deg,
                 transparent 0px,
@@ -768,7 +768,6 @@ export default function VoidPage() {
             transition: 'none',
           }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/kangel.gif"
