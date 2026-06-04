@@ -5,10 +5,19 @@ import { Week3 } from './Week3';
 import { Week4 } from './Week4';
 import { PitchVideo } from './PitchVideo';
 import { FrostIntro } from './FrostIntro';
+import { ExtensionLaunch } from './ExtensionLaunch';
 
 export const RemotionRoot: React.FC = () => {
   return (
     <>
+      <Composition
+        id="ExtensionLaunch"
+        component={ExtensionLaunch}
+        durationInFrames={2100}
+        fps={60}
+        width={3840}
+        height={2160}
+      />
       <Composition
         id="Week4"
         component={Week4}
