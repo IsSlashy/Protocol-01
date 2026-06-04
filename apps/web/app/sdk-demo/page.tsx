@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, createContext, useContext } from "react";
 import { motion } from "framer-motion";
-import { LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { useT } from "@/i18n";
 import {
   Link2,
@@ -461,7 +461,6 @@ function PrivacySDKSection() {
           { name: "@protocol-01/specter-sdk", desc: t('sdkDemo.sdkSpecterDesc'), color: "cyan" },
           { name: "@protocol-01/zk-sdk", desc: t('sdkDemo.sdkZkDesc'), color: "cyan" },
           { name: "@protocol-01/zkspl-sdk", desc: t('sdkDemo.sdkZksplDesc'), color: "pink" },
-          { name: "@protocol-01/arcium-sdk", desc: t('sdkDemo.sdkArciumDesc'), color: "pink" },
           { name: "@protocol-01/privacy-toolkit", desc: t('sdkDemo.sdkPrivacyToolkitDesc'), color: "cyan" },
           { name: "@protocol-01/auth-sdk", desc: t('sdkDemo.sdkAuthDesc'), color: "cyan" },
           { name: "@protocol-01/p01-js", desc: t('sdkDemo.sdkP01JsDesc'), color: "pink" },
@@ -582,39 +581,13 @@ const valid = WOTSKeypair.verify(wots.publicKey, messageHash, signature);`}
         />
       </div>
 
-      {/* Arcium MPC */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.arciumTitle')}</h3>
-        <p className="text-p01-text-muted text-sm mb-4">
-          {t('sdkDemo.arciumDesc')}
-        </p>
-        <CodeBlock
-          title={t('sdkDemo.arciumCodeTitle')}
-          code={`import { ArciumClient, COMP_DEFS } from '@protocol-01/arcium-sdk';
-
-const arcium = new ArciumClient({
-  connection,
-  wallet,
-  mxeAccount: MXE_ACCOUNT,
-  cluster: 456,
-});
-
-// Submit encrypted transfer for MPC processing
-// The MPC nodes process without seeing plaintext
-const result = await arcium.execute({
-  compDef: COMP_DEFS.CONFIDENTIAL_RELAY,
-  inputs: encryptedTransferData,
-});`}
-        />
-      </div>
-
       {/* Architecture callout */}
       <div className="bg-p01-elevated/50 rounded-2xl p-6 border border-p01-border/50">
         <h4 className="text-white font-semibold mb-4 font-display text-center">{t('sdkDemo.archTitle')}</h4>
         <div className="flex items-center justify-center gap-4 text-center py-4 flex-wrap">
           {[
             { label: t('sdkDemo.archClientSdks'), sub: "specter · zk · zkspl", icon: Wallet },
-            { label: t('sdkDemo.archProofLayer'), sub: "STARK · MPC", icon: Shield },
+            { label: t('sdkDemo.archProofLayer'), sub: "STARK · ZK", icon: Shield },
             { label: t('sdkDemo.archOnChain'), sub: "14 Anchor Programs", icon: Boxes },
           ].map((item, i) => (
             <React.Fragment key={item.label}>
@@ -650,8 +623,8 @@ pnpm add @protocol-01/p01-js @protocol-01/rpc-config
 # Privacy layer
 pnpm add @protocol-01/specter-sdk @protocol-01/zk-sdk @protocol-01/zkspl-sdk @protocol-01/privacy-toolkit
 
-# Optional: MPC + Auth
-pnpm add @protocol-01/arcium-sdk @protocol-01/auth-sdk`}
+# Optional: Auth
+pnpm add @protocol-01/auth-sdk`}
         />
       </div>
     </div>
@@ -751,28 +724,32 @@ function DevnetSection() {
     }
   };
 
-  const simulatePayment = async () => {
-    if (!window.protocol01 || !connected) return;
+  const sendTestPayment = async () => {
+    if (!window.protocol01 || !connected || !publicKey) return;
 
     setPaymentLoading(true);
     setPaymentStatus(null);
 
     try {
-      // Use signMessage to simulate a simple interaction
-      const message = new TextEncoder().encode(
-        `Protocol 01 Payment Test\nTimestamp: ${new Date().toISOString()}\nAmount: 0.001 SOL`
+      // Build and send a REAL 0.001 SOL self-transfer on devnet, signed and
+      // broadcast through the Protocol 01 extension (window.protocol01
+      // .signAndSendTransaction) — a genuine on-chain interaction, not a mock.
+      const connection = new Connection("https://api.devnet.solana.com", "confirmed");
+      const owner = new PublicKey(publicKey);
+      const { blockhash } = await connection.getLatestBlockhash("confirmed");
+
+      const tx = new Transaction({ feePayer: owner, recentBlockhash: blockhash }).add(
+        SystemProgram.transfer({
+          fromPubkey: owner,
+          toPubkey: owner,
+          lamports: Math.round(0.001 * LAMPORTS_PER_SOL),
+        })
       );
 
-      const result = await window.protocol01.signMessage(message, 'utf8');
-
-      // Convert signature to hex for display
-      const signatureHex = Array.from(result.signature.slice(0, 8))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-
-      setPaymentStatus(`SUCCESS: Message signed! Signature: ${signatureHex}...`);
+      const { signature } = await window.protocol01.signAndSendTransaction(tx);
+      setPaymentStatus(`SUCCESS: Sent on devnet. TX: ${signature.slice(0, 24)}...`);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Unknown error';
+      const msg = error instanceof Error ? error.message : "Unknown error";
       setPaymentStatus(`ERROR: ${msg}`);
     } finally {
       setPaymentLoading(false);
@@ -889,7 +866,7 @@ function DevnetSection() {
         )}
       </div>
 
-      {/* Payment Simulation Card */}
+      {/* Real devnet payment via the extension */}
       <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
         <h3 className="text-lg font-semibold text-white mb-4">{t('sdkDemo.testSigningTitle')}</h3>
 
@@ -902,7 +879,7 @@ function DevnetSection() {
             </p>
 
             <button
-              onClick={simulatePayment}
+              onClick={sendTestPayment}
               disabled={paymentLoading}
               style={{
                 display: 'flex',

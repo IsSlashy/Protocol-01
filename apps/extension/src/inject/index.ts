@@ -549,38 +549,6 @@ const provider = {
   // ============ Protocol 01 Specific Methods ============
 
   /**
-   * Send a private transaction using stealth addresses
-   */
-  async sendPrivate(options: {
-    recipient: string;
-    amount: number;
-    tokenMint?: string;
-  }): Promise<{ signature: string }> {
-    if (!this._isConnected) {
-      throw new Error('Wallet not connected');
-    }
-
-    return sendMessage<{ signature: string }>('SEND_PRIVATE', {
-      origin: window.location.origin,
-      ...options,
-    });
-  },
-
-  /**
-   * Generate a stealth address for private receiving
-   */
-  async generateStealthAddress(): Promise<{ address: string; ephemeralPublicKey: string }> {
-    if (!this._isConnected) {
-      throw new Error('Wallet not connected');
-    }
-
-    return sendMessage<{ address: string; ephemeralPublicKey: string }>(
-      'GENERATE_STEALTH_ADDRESS',
-      { origin: window.location.origin }
-    );
-  },
-
-  /**
    * Create a subscription (Stream Secure)
    */
   async subscribe(options: {
