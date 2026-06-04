@@ -6,6 +6,7 @@ import "./globals.css";
 import DepthBackground from "@/components/DepthBackground";
 import CorruptionOverlay from "@/components/CorruptionOverlay";
 import RelayerHealthBadge from "@/components/RelayerHealthBadge";
+import SmoothScroll from "@/components/SmoothScroll";
 import { I18nProvider } from "@/i18n";
 
 const spaceGrotesk = Space_Grotesk({
@@ -89,17 +90,19 @@ export default function RootLayout({
       <body
         className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} ${inter.variable} ${notoSansJP.variable} font-sans antialiased bg-p01-void text-white`}
       >
-        <div className="relative min-h-screen overflow-hidden">
-          {/* Deep background with layers */}
-          <DepthBackground />
+        <SmoothScroll>
+          <div className="relative min-h-screen overflow-hidden">
+            {/* Deep background with layers */}
+            <DepthBackground />
 
-          {/* Main content */}
-          <I18nProvider>
-            <main className="relative z-10">{children}</main>
-          </I18nProvider>
-        </div>
-        <CorruptionOverlay />
-        <RelayerHealthBadge />
+            {/* Main content */}
+            <I18nProvider>
+              <main className="relative z-10">{children}</main>
+            </I18nProvider>
+          </div>
+          <CorruptionOverlay />
+          <RelayerHealthBadge />
+        </SmoothScroll>
         <Analytics />
         <SpeedInsights />
       </body>
