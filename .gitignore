@@ -34,7 +34,10 @@ docs/pitch-entrepreneur-go-2026.md
 *.apk
 *.apk.idsig
 *.exe
+# Ignore mp4 renders globally, but allow the website's content videos to be
+# committed (homepage demo + weekly update clips are served from /public).
 *.mp4
+!apps/web/public/**/*.mp4
 
 # Android build artifacts (build/ redirected to build2/ after NTFS corruption)
 apps/mobile/android/app/build2/

@@ -40,9 +40,12 @@ apps/mobile/android/build
 apps/mobile/ios/build
 apps/mobile/ios/Pods
 
-# Heavy media / release artifacts (over Vercel's 100 MB CLI upload limit)
+# Heavy media / release artifacts (over Vercel's 100 MB CLI upload limit).
+# Scope the .mp4 ignore to the weekly-update renders — a blanket **/*.mp4 also
+# stripped the website's own content videos (apps/web/public/*.mp4 + /videos),
+# which 404'd the homepage demo + update clips on production.
 apps/weekly-update/out
-**/*.mp4
+apps/weekly-update/**/*.mp4
 **/*.wav
 **/*.apk
 **/*.aab
