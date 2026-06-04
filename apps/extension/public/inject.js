@@ -368,30 +368,6 @@
     },
     // ============ Protocol 01 Specific Methods ============
     /**
-     * Send a private transaction using stealth addresses
-     */
-    async sendPrivate(options) {
-      if (!this._isConnected) {
-        throw new Error("Wallet not connected");
-      }
-      return sendMessage("SEND_PRIVATE", {
-        origin: window.location.origin,
-        ...options
-      });
-    },
-    /**
-     * Generate a stealth address for private receiving
-     */
-    async generateStealthAddress() {
-      if (!this._isConnected) {
-        throw new Error("Wallet not connected");
-      }
-      return sendMessage(
-        "GENERATE_STEALTH_ADDRESS",
-        { origin: window.location.origin }
-      );
-    },
-    /**
      * Create a subscription (Stream Secure)
      */
     async subscribe(options) {
