@@ -1,15 +1,13 @@
-import type { Metadata } from "next";
+"use client";
+
 import Link from "next/link";
 import SiteHeader from "@/components/SiteHeader";
 import Footer from "@/components/Footer";
-
-export const metadata: Metadata = {
-  title: "Privacy Policy | PROTOCOL-01",
-  description:
-    "Privacy Policy for Protocol 01 — how we handle your data with zero-knowledge principles.",
-};
+import { useT } from "@/i18n";
 
 export default function PrivacyPolicy() {
+  const t = useT();
+
   return (
     <div className="min-h-screen bg-p01-void">
       <SiteHeader />
@@ -19,14 +17,15 @@ export default function PrivacyPolicy() {
         <header className="mb-16 text-center">
           <div className="inline-block px-4 py-1.5 rounded-full bg-p01-cyan/10 border border-p01-cyan/20 mb-6">
             <span className="text-p01-cyan text-xs font-mono tracking-widest uppercase">
-              Legal
+              {t("privacyPolicy.legalBadge")}
             </span>
           </div>
           <h1 className="text-4xl sm:text-5xl font-display font-bold text-white mb-4">
-            Privacy Policy
+            {t("privacyPolicy.title")}
           </h1>
           <p className="text-p01-text-muted text-lg">
-            Last updated: February 23, 2026
+            {t("privacyPolicy.lastUpdatedLabel")}{" "}
+            {t("privacyPolicy.lastUpdatedDate")}
           </p>
         </header>
 
@@ -34,58 +33,42 @@ export default function PrivacyPolicy() {
           {/* 1 */}
           <section>
             <h2 className="text-2xl font-display font-bold text-white mb-4">
-              1. Our Commitment to Privacy
+              {t("privacyPolicy.s1.heading")}
             </h2>
-            <p>
-              Protocol 01 (&quot;P-01&quot;, &quot;we&quot;, &quot;us&quot;, or &quot;our&quot;) is a privacy-first
-              Solana wallet and protocol. Privacy is not a feature we added — it
-              is the foundation upon which every component of Protocol 01 is
-              built. This Privacy Policy explains what data we collect, what we
-              do not collect, and how we protect your information.
-            </p>
-            <p>
-              By using our mobile application, browser extension, SDK, or any
-              Protocol 01 service (collectively, the &quot;Services&quot;), you agree to
-              the practices described in this policy.
-            </p>
+            <p>{t("privacyPolicy.s1.p1")}</p>
+            <p>{t("privacyPolicy.s1.p2")}</p>
           </section>
 
           {/* 2 */}
           <section>
             <h2 className="text-2xl font-display font-bold text-white mb-4">
-              2. Information We Do NOT Collect
+              {t("privacyPolicy.s2.heading")}
             </h2>
             <p>
-              We have designed Protocol 01 to minimize data collection. We do
-              <strong className="text-white"> not</strong> collect, store, or
-              have access to:
+              {t("privacyPolicy.s2.introBefore")}
+              <strong className="text-white"> {t("privacyPolicy.s2.introWord")}</strong>{" "}
+              {t("privacyPolicy.s2.introAfter")}
             </p>
             <ul className="list-disc pl-6 space-y-2 mt-4">
               <li>
-                <strong className="text-white">Private keys or seed phrases</strong> —
-                your wallet keys are generated and encrypted locally on your
-                device. We never transmit or store them on any server.
+                <strong className="text-white">{t("privacyPolicy.s2.keys.k1.term")}</strong>{" "}
+                — {t("privacyPolicy.s2.keys.k1.desc")}
               </li>
               <li>
-                <strong className="text-white">Transaction history</strong> — we
-                do not maintain logs of your transactions. On-chain data is
-                publicly available on the Solana blockchain, but we do not
-                aggregate, index, or link it to your identity.
+                <strong className="text-white">{t("privacyPolicy.s2.keys.k2.term")}</strong>{" "}
+                — {t("privacyPolicy.s2.keys.k2.desc")}
               </li>
               <li>
-                <strong className="text-white">Personal identity information</strong> —
-                we do not require your name, email address, phone number, or any
-                government-issued identification to use the wallet.
+                <strong className="text-white">{t("privacyPolicy.s2.keys.k3.term")}</strong>{" "}
+                — {t("privacyPolicy.s2.keys.k3.desc")}
               </li>
               <li>
-                <strong className="text-white">IP addresses or geolocation</strong> —
-                Protocol 01 does not log IP addresses or track your physical
-                location.
+                <strong className="text-white">{t("privacyPolicy.s2.keys.k4.term")}</strong>{" "}
+                — {t("privacyPolicy.s2.keys.k4.desc")}
               </li>
               <li>
-                <strong className="text-white">Browsing activity</strong> — our
-                browser extension does not monitor, record, or transmit your
-                browsing history.
+                <strong className="text-white">{t("privacyPolicy.s2.keys.k5.term")}</strong>{" "}
+                — {t("privacyPolicy.s2.keys.k5.desc")}
               </li>
             </ul>
           </section>
@@ -93,88 +76,53 @@ export default function PrivacyPolicy() {
           {/* 3 */}
           <section>
             <h2 className="text-2xl font-display font-bold text-white mb-4">
-              3. Information We Collect
+              {t("privacyPolicy.s3.heading")}
             </h2>
             <h3 className="text-lg font-semibold text-white mt-6 mb-2">
-              3.1 Authentication Data (Optional)
+              {t("privacyPolicy.s3.sub31Title")}
             </h3>
-            <p>
-              If you choose to authenticate via Privy (Google, Apple, email, or
-              SMS), Privy Inc. processes your authentication credentials. We
-              receive a pseudonymous user identifier and, if applicable, an
-              embedded wallet address. We do not receive or store your OAuth
-              tokens, passwords, or full email/phone number.
-            </p>
+            <p>{t("privacyPolicy.s3.sub31p")}</p>
             <h3 className="text-lg font-semibold text-white mt-6 mb-2">
-              3.2 On-Chain Data
+              {t("privacyPolicy.s3.sub32Title")}
             </h3>
-            <p>
-              When you perform transactions, they are recorded on the Solana
-              blockchain. While Protocol 01 employs zero-knowledge proofs,
-              shielded pools, stealth addresses, and decoy mechanisms to obscure
-              transaction details, certain metadata (e.g., transaction
-              signatures, timestamps) is inherently public on the blockchain.
-            </p>
+            <p>{t("privacyPolicy.s3.sub32p")}</p>
             <h3 className="text-lg font-semibold text-white mt-6 mb-2">
-              3.3 Relayer Data
+              {t("privacyPolicy.s3.sub33Title")}
             </h3>
-            <p>
-              Our relayer service processes shielded transactions and
-              zero-knowledge proofs. The relayer temporarily handles proof data
-              required to submit transactions on-chain. This data is:
-            </p>
+            <p>{t("privacyPolicy.s3.sub33p")}</p>
             <ul className="list-disc pl-6 space-y-2 mt-2">
-              <li>Processed in memory only — never persisted to disk or database.</li>
-              <li>Discarded immediately after the transaction is confirmed.</li>
-              <li>
-                Not linked to any personal identifier — the relayer processes
-                cryptographic proofs, not identity data.
-              </li>
+              <li>{t("privacyPolicy.s3.sub33i1")}</li>
+              <li>{t("privacyPolicy.s3.sub33i2")}</li>
+              <li>{t("privacyPolicy.s3.sub33i3")}</li>
             </ul>
             <h3 className="text-lg font-semibold text-white mt-6 mb-2">
-              3.4 Crash Reports &amp; Diagnostics (Optional)
+              {t("privacyPolicy.s3.sub34Title")}
             </h3>
-            <p>
-              If you opt in to crash reporting, anonymized diagnostic data may
-              be sent to help us improve the application. This data does not
-              include wallet addresses, balances, transaction details, or any
-              personally identifiable information.
-            </p>
+            <p>{t("privacyPolicy.s3.sub34p")}</p>
           </section>
 
           {/* 4 */}
           <section>
             <h2 className="text-2xl font-display font-bold text-white mb-4">
-              4. Zero-Knowledge Privacy Architecture
+              {t("privacyPolicy.s4.heading")}
             </h2>
-            <p>
-              Protocol 01 uses advanced cryptographic techniques to protect your
-              financial privacy:
-            </p>
+            <p>{t("privacyPolicy.s4.intro")}</p>
             <ul className="list-disc pl-6 space-y-2 mt-4">
               <li>
-                <strong className="text-white">Shielded Pools</strong> — funds
-                are deposited into on-chain pools using quantum-resistant STARK
-                zero-knowledge proofs (Goldilocks field, hash-based, no trusted
-                setup). The link between depositor and withdrawer is
-                cryptographically broken.
+                <strong className="text-white">{t("privacyPolicy.s4.keys.k1.term")}</strong>{" "}
+                — {t("privacyPolicy.s4.keys.k1.desc")}
               </li>
               <li>
-                <strong className="text-white">Stealth Addresses</strong> —
-                recipients can generate one-time addresses, preventing observers
-                from linking payments to a single wallet.
+                <strong className="text-white">{t("privacyPolicy.s4.keys.k2.term")}</strong>{" "}
+                — {t("privacyPolicy.s4.keys.k2.desc")}
               </li>
               <li>
-                <strong className="text-white">Merkle Tree Commitments</strong> —
-                deposits are stored as hashed commitments in an on-chain Merkle
-                tree, making it computationally infeasible to determine which
-                commitment belongs to which user.
+                <strong className="text-white">{t("privacyPolicy.s4.keys.k3.term")}</strong>{" "}
+                — {t("privacyPolicy.s4.keys.k3.desc")}
               </li>
               <li>
-                <strong className="text-white">Client-Side Proof Generation</strong> —
-                zero-knowledge proofs are generated on your device or via our
-                Rust-native prover service. In both cases, your secret data
-                (nullifiers, note secrets) never leaves your control unencrypted.
+                <strong className="text-white">{t("privacyPolicy.s4.keys.k4.term")}</strong>{" "}
+                — {t("privacyPolicy.s4.keys.k4.desc")}
               </li>
             </ul>
           </section>
@@ -182,84 +130,65 @@ export default function PrivacyPolicy() {
           {/* 5 */}
           <section>
             <h2 className="text-2xl font-display font-bold text-white mb-4">
-              5. Third-Party Services
+              {t("privacyPolicy.s5.heading")}
             </h2>
-            <p>Protocol 01 integrates with the following third-party services:</p>
+            <p>{t("privacyPolicy.s5.intro")}</p>
             <ul className="list-disc pl-6 space-y-2 mt-4">
               <li>
-                <strong className="text-white">Privy</strong> — authentication
-                provider. Subject to{" "}
+                <strong className="text-white">{t("privacyPolicy.s5.privyTerm")}</strong>{" "}
+                — {t("privacyPolicy.s5.privyDescBefore")}{" "}
                 <a
                   href="https://privy.io/privacy"
                   className="text-p01-cyan hover:underline"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  Privy&apos;s Privacy Policy
+                  {t("privacyPolicy.s5.privyLink")}
                 </a>
                 .
               </li>
               <li>
-                <strong className="text-white">Helius / Solana RPC Providers</strong> —
-                blockchain data access. RPC requests contain your wallet address
-                when querying balances or submitting transactions.
+                <strong className="text-white">{t("privacyPolicy.s5.heliusTerm")}</strong>{" "}
+                — {t("privacyPolicy.s5.heliusDesc")}
               </li>
               <li>
-                <strong className="text-white">Jupiter</strong> — token price
-                data and swap aggregation. Price queries do not include personal
-                data.
+                <strong className="text-white">{t("privacyPolicy.s5.jupiterTerm")}</strong>{" "}
+                — {t("privacyPolicy.s5.jupiterDesc")}
               </li>
             </ul>
-            <p className="mt-4">
-              We encourage you to review the privacy policies of these
-              third-party services.
-            </p>
+            <p className="mt-4">{t("privacyPolicy.s5.outro")}</p>
           </section>
 
           {/* 6 */}
           <section>
             <h2 className="text-2xl font-display font-bold text-white mb-4">
-              6. Data Storage &amp; Security
+              {t("privacyPolicy.s6.heading")}
             </h2>
             <ul className="list-disc pl-6 space-y-2">
-              <li>
-                All sensitive data (private keys, seed phrases) is encrypted
-                using device-level secure storage (Android Keystore / iOS
-                Keychain) and never transmitted externally.
-              </li>
-              <li>
-                Cached data (balances, transaction history) is stored locally on
-                your device and can be cleared at any time.
-              </li>
-              <li>
-                We do not operate user databases. There are no accounts to
-                breach because we do not store account data.
-              </li>
+              <li>{t("privacyPolicy.s6.i1")}</li>
+              <li>{t("privacyPolicy.s6.i2")}</li>
+              <li>{t("privacyPolicy.s6.i3")}</li>
             </ul>
           </section>
 
           {/* 7 */}
           <section>
             <h2 className="text-2xl font-display font-bold text-white mb-4">
-              7. Your Rights
+              {t("privacyPolicy.s7.heading")}
             </h2>
-            <p>Because we collect minimal data, your rights are straightforward:</p>
+            <p>{t("privacyPolicy.s7.intro")}</p>
             <ul className="list-disc pl-6 space-y-2 mt-4">
               <li>
-                <strong className="text-white">Right to deletion</strong> —
-                uninstalling the application removes all locally stored data. If
-                you authenticated via Privy, you may request account deletion
-                through Privy&apos;s interface.
+                <strong className="text-white">{t("privacyPolicy.s7.keys.k1.term")}</strong>{" "}
+                — {t("privacyPolicy.s7.keys.k1.desc")}
               </li>
               <li>
-                <strong className="text-white">Right to portability</strong> —
-                you can export your seed phrase at any time and import it into
-                any compatible Solana wallet.
+                <strong className="text-white">{t("privacyPolicy.s7.keys.k2.term")}</strong>{" "}
+                — {t("privacyPolicy.s7.keys.k2.desc")}
               </li>
               <li>
-                <strong className="text-white">Right to transparency</strong> —
-                our smart contract source code is publicly verifiable on-chain
-                and on GitHub during the open-source phase of the project.
+                <strong className="text-white">{t("privacyPolicy.s7.keys.k3.term")}</strong>{" "}
+                — {t("privacyPolicy.s7.keys.k3.desc")}
               </li>
             </ul>
           </section>
@@ -267,36 +196,26 @@ export default function PrivacyPolicy() {
           {/* 8 */}
           <section>
             <h2 className="text-2xl font-display font-bold text-white mb-4">
-              8. Children&apos;s Privacy
+              {t("privacyPolicy.s8.heading")}
             </h2>
-            <p>
-              Protocol 01 is not directed at individuals under the age of 18. We
-              do not knowingly collect data from minors. If you believe a minor
-              has used our Services, please contact us so we can take
-              appropriate action.
-            </p>
+            <p>{t("privacyPolicy.s8.p")}</p>
           </section>
 
           {/* 9 */}
           <section>
             <h2 className="text-2xl font-display font-bold text-white mb-4">
-              9. Changes to This Policy
+              {t("privacyPolicy.s9.heading")}
             </h2>
-            <p>
-              We may update this Privacy Policy from time to time. Material
-              changes will be communicated through the application or on our
-              website. Continued use of the Services after changes constitutes
-              acceptance of the revised policy.
-            </p>
+            <p>{t("privacyPolicy.s9.p")}</p>
           </section>
 
           {/* 10 */}
           <section>
             <h2 className="text-2xl font-display font-bold text-white mb-4">
-              10. Contact
+              {t("privacyPolicy.s10.heading")}
             </h2>
             <p>
-              For privacy-related inquiries, contact us at:{" "}
+              {t("privacyPolicy.s10.contactBefore")}{" "}
               <a
                 href="mailto:privacy@protocol-01.com"
                 className="text-p01-cyan hover:underline"
@@ -305,23 +224,23 @@ export default function PrivacyPolicy() {
               </a>
             </p>
             <p className="mt-2">
-              You may also reach us through our{" "}
+              {t("privacyPolicy.s10.socialBefore")}{" "}
               <a
                 href="https://x.com/Protocol01_"
                 className="text-p01-cyan hover:underline"
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Twitter
+                {t("privacyPolicy.s10.socialTwitter")}
               </a>{" "}
-              or{" "}
+              {t("privacyPolicy.s10.socialOr")}{" "}
               <a
                 href="https://discord.gg/protocol01"
                 className="text-p01-cyan hover:underline"
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Discord
+                {t("privacyPolicy.s10.socialDiscord")}
               </a>
               .
             </p>
@@ -331,13 +250,13 @@ export default function PrivacyPolicy() {
         {/* Footer links */}
         <div className="mt-16 pt-8 border-t border-p01-border flex flex-wrap gap-6 justify-center text-sm text-p01-text-muted">
           <Link href="/terms" className="hover:text-white transition-colors">
-            Terms of Service
+            {t("privacyPolicy.footer.terms")}
           </Link>
           <Link href="/licenses" className="hover:text-white transition-colors">
-            Open Source Licenses
+            {t("privacyPolicy.footer.licenses")}
           </Link>
           <Link href="/" className="hover:text-white transition-colors">
-            Home
+            {t("privacyPolicy.footer.home")}
           </Link>
         </div>
       </article>

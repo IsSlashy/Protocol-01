@@ -1869,7 +1869,7 @@ function DemoSubscriptionWidget() {
       </div>
 
       {/* Tiers Grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "24px" }}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {tiers.map((tier) => (
           <div
             key={tier.id}
@@ -2424,7 +2424,7 @@ function DemoSubscriptionCard({
       </div>
 
       {/* Details Grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px", marginBottom: "16px" }}>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
         <div>
           <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "0 0 4px 0" }}>{t('sdkDemo.amountLabel')}</p>
           <p style={{ color: THEME.textColor, fontSize: "16px", fontWeight: 600, margin: 0 }}>{amount} USDC</p>
