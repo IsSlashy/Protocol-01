@@ -530,6 +530,26 @@ const en = {
         title: 'Subscribe_Private V3',
         desc: 'subscribe_private_stark ix ported V2 → V3 on-chain (Anchor discriminator mismatch fixed). Mobile ix builder placeholders for Option<Account>, stark_proof_buffer writable, isRelayCall ReferenceError closed, min_epoch semantics corrected. Vault PDA création validated live end-to-end on devnet.',
       },
+      privyRemoval: {
+        title: 'Privy Removal — Classic Wallet Default',
+        desc: 'Dropped the Privy dependency entirely. The classic local wallet is now the default signer across mobile and the extension, so spends, shields and subscriptions no longer hang on a remote-sign WebView. Recovery seed persisted offline; no boot-time sign ceremony.',
+      },
+      extensionParity: {
+        title: 'Browser Extension at Mobile Parity',
+        desc: 'The Chrome extension caught up to the mobile app: denominated note-to-note transfer (C1+C3+C6 → transfer_denominated_stark_v3 with encrypted note handoff), relayer-routed private unshield, anonymous license keys, Standard/ZK subscribe modes, scan-import device pairing, and phone-to-extension connect over an encrypted relay.',
+      },
+      licenseKeys: {
+        title: 'Anonymous Merchant License Keys',
+        desc: 'Subscribing mints a copy-pasteable license key derived from the on-chain subscription identity (the ZK subscriber commitment or a hashed classic identity, never the raw wallet). Merchants re-derive and match from on-chain state — no PII, no central database. Privacy modes simplified to Standard and ZK Private.',
+      },
+      relayerHealth: {
+        title: 'Multi-Relayer Health & Self-Healing',
+        desc: 'Two privacy relayers (Railway + Fly Frankfurt) with auto connection-recreate on the Helius devnet bad-slot wedge, plus a live traffic-light health indicator in the app and on the marketing site. Any relayer error falls back to a direct on-chain submit so withdrawals never stall.',
+      },
+      v102Release: {
+        title: 'v1.0.2 Mobile + Extension v0.5.0',
+        desc: 'Mobile app shipped at v1.0.2 (versionCode 29) with the Privy removal and stabilization work. The Chrome extension launched as a downloadable v0.5.0 beta with its own install page, and the site download now points at the v1.0.2 release.',
+      },
       cancelPrivateV3: {
         title: 'cancel_private_stark V3 Port',
         desc: 'Port the on-chain cancel ix to V3 — insert_with_root_v3 has a different signature (subtrees + c6_verified flag). Requires client-side computation of new subtrees per re-shielded note. Tracked separately from subscribe_private_stark V3.',

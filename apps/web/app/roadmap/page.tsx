@@ -395,6 +395,32 @@ const roadmap: RoadmapPhase[] = [
         description: "roadmap.items.subscribePrivateV3.desc",
         icon: <Zap className="w-5 h-5" />,
       },
+      // ── June 2026 — Privy removal & extension parity ──────────
+      {
+        title: "roadmap.items.privyRemoval.title",
+        description: "roadmap.items.privyRemoval.desc",
+        icon: <Wallet className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.extensionParity.title",
+        description: "roadmap.items.extensionParity.desc",
+        icon: <Code className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.licenseKeys.title",
+        description: "roadmap.items.licenseKeys.desc",
+        icon: <Key className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.relayerHealth.title",
+        description: "roadmap.items.relayerHealth.desc",
+        icon: <Server className="w-5 h-5" />,
+      },
+      {
+        title: "roadmap.items.v102Release.title",
+        description: "roadmap.items.v102Release.desc",
+        icon: <Download className="w-5 h-5" />,
+      },
     ],
   },
   {

@@ -526,6 +526,26 @@ const fr: Translations = {
         title: 'Subscribe_Private V3',
         desc: 'Ix subscribe_private_stark portee V2 vers V3 on-chain (mismatch discriminator Anchor fixe). Builder ix mobile : placeholders Option<Account>, stark_proof_buffer writable, ReferenceError isRelayCall ferme, semantique min_epoch corrigee. Creation vault PDA validee live bout en bout sur devnet.',
       },
+      privyRemoval: {
+        title: 'Suppression de Privy — Wallet Classique par defaut',
+        desc: 'Dependance Privy supprimee entierement. Le wallet local classique est desormais le signataire par defaut sur mobile et l\'extension, donc les depenses, shields et abonnements ne dependent plus d\'une WebView de signature distante. Seed de recovery persiste hors-ligne ; plus de ceremonie de signature au demarrage.',
+      },
+      extensionParity: {
+        title: 'Extension navigateur a parite mobile',
+        desc: 'L\'extension Chrome a rattrape l\'app mobile : transfert note-a-note denomine (C1+C3+C6 → transfer_denominated_stark_v3 avec handoff de note chiffree), unshield prive route par relayer, license keys anonymes, modes subscribe Standard/ZK, pairing d\'appareil scan-import, et connexion telephone-vers-extension via relais chiffre.',
+      },
+      licenseKeys: {
+        title: 'License Keys marchand anonymes',
+        desc: 'S\'abonner genere une license key copiable derivee de l\'identite d\'abonnement on-chain (le subscriber commitment ZK ou une identite classique hachee, jamais le wallet brut). Les marchands re-derivent et matchent depuis l\'etat on-chain — pas de PII, pas de base centrale. Modes de confidentialite simplifies a Standard et ZK Private.',
+      },
+      relayerHealth: {
+        title: 'Sante multi-relayer & auto-reparation',
+        desc: 'Deux relayers de confidentialite (Railway + Fly Frankfurt) avec recreation auto de connexion sur le blocage bad-slot du devnet Helius, plus un indicateur de sante en feu tricolore dans l\'app et sur le site. Toute erreur relayer bascule sur un envoi direct on-chain pour que les retraits ne bloquent jamais.',
+      },
+      v102Release: {
+        title: 'v1.0.2 Mobile + Extension v0.5.0',
+        desc: 'App mobile livree en v1.0.2 (versionCode 29) avec la suppression de Privy et le travail de stabilisation. L\'extension Chrome est lancee en beta v0.5.0 telechargeable avec sa propre page d\'installation, et le telechargement du site pointe maintenant vers la release v1.0.2.',
+      },
       cancelPrivateV3: {
         title: 'Port cancel_private_stark V3',
         desc: 'Porter l\'ix cancel on-chain vers V3 — insert_with_root_v3 a une signature differente (subtrees + flag c6_verified). Necessite le calcul cote client des nouveaux subtrees par re-shielded note. Tracke separement de subscribe_private_stark V3.',

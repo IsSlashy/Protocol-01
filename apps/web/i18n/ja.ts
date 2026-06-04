@@ -526,6 +526,26 @@ const ja: Translations = {
         title: 'Subscribe_Private V3',
         desc: 'subscribe_private_stark ixをV2→V3にオンチェーン移植（Anchor discriminator mismatchを修正）。モバイルix builder : Option<Account>用placeholders、stark_proof_buffer writable、isRelayCall ReferenceError解消、min_epochセマンティクス修正。devnetでvault PDA作成をlive end-to-end検証済み。',
       },
+      privyRemoval: {
+        title: 'Privy廃止 — クラシックウォレットをデフォルトに',
+        desc: 'Privy依存を完全に削除。クラシックローカルウォレットがモバイルと拡張機能のデフォルト署名者になり、送金・shield・サブスクがリモート署名WebViewで止まらなくなった。recovery seedはオフライン永続化され、起動時の署名セレモニーも不要。',
+      },
+      extensionParity: {
+        title: 'ブラウザ拡張機能がモバイルとパリティ達成',
+        desc: 'Chrome拡張機能がモバイルアプリに追いついた：denominated note間転送（C1+C3+C6 → transfer_denominated_stark_v3、暗号化noteハンドオフ付き）、relayer経由のプライベートunshield、匿名license key、Standard/ZKサブスクモード、scan-importデバイスペアリング、暗号化リレー経由のスマホ→拡張機能接続。',
+      },
+      licenseKeys: {
+        title: '匿名マーチャントlicense key',
+        desc: 'サブスク時にオンチェーンのサブスク識別子（ZK subscriber commitmentまたはハッシュ化したクラシック識別子、生ウォレットは決して使わない）から導出したコピー可能なlicense keyを発行。マーチャントはオンチェーン状態から再導出してマッチ — PIIなし、中央DBなし。プライバシーモードはStandardとZK Privateに簡素化。',
+      },
+      relayerHealth: {
+        title: 'マルチrelayerヘルス＆自己修復',
+        desc: '2つのプライバシーrelayer（Railway + Fly Frankfurt）がHelius devnetのbad-slotウェッジで接続を自動再生成、さらにアプリとマーケティングサイトにライブの信号機ヘルスインジケーター。relayerエラー時は直接オンチェーン送信にフォールバックし、出金が止まらない。',
+      },
+      v102Release: {
+        title: 'v1.0.2 モバイル + 拡張機能 v0.5.0',
+        desc: 'モバイルアプリをv1.0.2（versionCode 29）でリリース、Privy廃止と安定化作業を含む。Chrome拡張機能は専用インストールページ付きのダウンロード可能なv0.5.0ベータとして公開、サイトのダウンロードはv1.0.2リリースを指すようになった。',
+      },
       cancelPrivateV3: {
         title: 'cancel_private_stark V3 移植',
         desc: 'オンチェーンcancel ixをV3に移植 — insert_with_root_v3は異なるシグネチャ（subtrees + c6_verifiedフラグ）を持つ。再シールドされたnoteごとに新しいsubtreesをクライアント側で計算する必要あり。subscribe_private_stark V3とは別途追跡。',

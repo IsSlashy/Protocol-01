@@ -94,6 +94,52 @@ const updates: WeekUpdate[] = [
       "Quantum Wallet UX design doc shipped — cahier des charges for the post-judging 2-3 month execution",
     ],
   },
+  {
+    week: 6,
+    title: "Recognition — Dev3pack #2 & Demo Day Live",
+    date: "May 11 - May 17, 2026",
+    status: "published",
+    highlights: [
+      "Ranked #2 worldwide on the Solana track at the Dev3pack Global Hackathon",
+      "First project to go live on X during the Demo Day window — Disney+ subscribe flow as the headline",
+      "Marketing site and pitch materials refreshed off the back of both",
+    ],
+  },
+  {
+    week: 7,
+    title: "Device Builds & Hardening",
+    date: "May 18 - May 24, 2026",
+    status: "published",
+    highlights: [
+      "Android release build pipeline stabilized on Windows — two-step worklets-then-app, ~96 MB APK",
+      "Device smoke-test workflow via bundled release APK over adb",
+      "Roadmap re-shaped after Pete Townsend's 'Finding PMF in Web3' talk",
+    ],
+  },
+  {
+    week: 8,
+    title: "Stabilization — ZK Unshield & Relayers",
+    date: "May 25 - May 31, 2026",
+    status: "published",
+    highlights: [
+      "C3 merkle_path verifier fixed on devnet — every shielded note now unshields, including non-trivial paths",
+      "Fixed a Noble shim regression that had broken every transaction serialization",
+      "Second relayer brought online on Fly (Frankfurt) with the dormant-node self-heal",
+      "Privy recovery seed persisted offline — killed the boot-time sign hang",
+    ],
+  },
+  {
+    week: 9,
+    title: "Privy Removal & Extension Parity",
+    date: "June 1 - June 7, 2026",
+    status: "published",
+    highlights: [
+      "Removed Privy — the classic local wallet is now the default signer, no remote-sign dependency",
+      "Extension reached mobile parity — denominated note transfer, relayer-routed private unshield, anonymous license keys, Standard/ZK modes, scan-import device pairing, phone-to-extension connect",
+      "Relayer RPC bad-slot self-healing plus live health indicators in the app and on the site",
+      "v1.0.2 released; Chrome extension v0.5.0 published as a downloadable build",
+    ],
+  },
 ];
 
 export default function UpdatesPage() {
