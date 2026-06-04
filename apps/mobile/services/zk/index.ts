@@ -1756,7 +1756,7 @@ export class ZkService {
    * Privacy ceiling: this gives one-hop indirection — a chain
    * observer can still correlate `user → ephemeral → unshield`. A
    * stronger relay (funding ephemeral from an unrelated source) is
-   * future work; see confidentialRelay for the MPC path.
+   * future work.
    */
   async unshieldViaRelay(
     recipient: PublicKey,
@@ -1920,23 +1920,6 @@ export class ZkService {
    * @param signTransaction - Transaction signing function
    * @returns StealthUnshieldResult with info for recipient to find funds
    */
-  /**
-   * Resolve a wallet address to stealth meta-address via registry.
-   * Uses MPC private_lookup when enabled (hides the query from RPC).
-   */
-  async resolveRecipientStealth(
-    walletAddress: PublicKey
-  ): Promise<{ spendingPubKey: Uint8Array; viewingPubKey: Uint8Array; wasMpcProtected: boolean } | null> {
-    const { lookupMetaAddress } = await import('../arcium/privateLookup');
-    const result = await lookupMetaAddress(walletAddress);
-    if (!result.isRegistered || !result.spendingPubKey || !result.viewingPubKey) return null;
-    return {
-      spendingPubKey: result.spendingPubKey,
-      viewingPubKey: result.viewingPubKey,
-      wasMpcProtected: result.wasMpcProtected,
-    };
-  }
-
   async unshieldStealth(
     recipientSpendingPubKey: string,
     recipientViewingPubKey: string,

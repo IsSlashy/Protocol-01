@@ -213,7 +213,8 @@ export async function sendSol(
  *
  * The user's real wallet only appears in the funding tx to the ephemeral address.
  * The actual payment is signed by the ephemeral and submitted through the
- * confidential relay (MPC threshold decryption when available).
+ * p01_relayer (the relayer node is the apparent fee-payer; falls back to a
+ * direct send if no relayer is reachable).
  *
  * On-chain footprint:
  *   Tx1: UserWallet → EphemeralA  (funding, looks like any transfer)
@@ -292,16 +293,14 @@ export async function sendSolPrivate(
     // 4. Submit: try confidential relay first, fall back to direct send
     let finalSignature: string;
     try {
-      const { confidentialRelay } = await import('../arcium/confidentialRelay');
-      const relayResult = await confidentialRelay(
+      const { relayTransaction } = await import('../relay');
+      finalSignature = await relayTransaction(
         payTx.serialize(),
         walletPublicKey,
         signTransaction,
       );
-      finalSignature = relayResult.signature;
       console.log(
-        '[Private Send] Relayed successfully',
-        relayResult.wasMpcProtected ? '(MPC)' : '(standard)',
+        '[Private Send] Relayed successfully (standard)',
         finalSignature.slice(0, 20) + '...',
       );
     } catch (relayErr: any) {

@@ -19,8 +19,6 @@ import { useConfidentialStore } from '@/stores/confidentialStore';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { useArcium } from '@/providers/ArciumProvider';
-import { useArciumStore } from '@/stores/arciumStore';
 import { Colors, FontFamily, Spacing, P01Colors } from '@/constants/theme';
 import { useT } from '@/i18n';
 
@@ -78,8 +76,6 @@ export default function PrivacyDashboard() {
     confidentialBalanceEnabled,
     initialize: initSettings,
   } = useSettingsStore();
-  const { isMpcActive } = useArcium();
-  const { } = useArciumStore();
 
   useEffect(() => { initSettings(); }, []);
 
@@ -321,7 +317,6 @@ export default function PrivacyDashboard() {
           <View style={s.badgesRow}>
             <ProtectionBadge icon="hardware-chip" label="On-device proofs" active />
             <ProtectionBadge icon="lock-closed" label="Encrypted" active />
-            <ProtectionBadge icon="people" label="MPC" active={isMpcActive} />
           </View>
           <Text style={s.protectionHint}>
             All proofs are generated on your phone. No private data ever leaves your device.

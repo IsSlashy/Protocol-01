@@ -280,7 +280,6 @@ export default {
     invalidRecipient: '無効なSolanaアドレスです。',
     emergencyComplete: '緊急引出完了',
     unshieldComplete: '引出完了',
-    nullifierHidden: 'MPCでヌリファイア隠蔽 — 引出追跡不可。',
   },
 
   // ── Denominated Transfer ────────────────────────────────────

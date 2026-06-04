@@ -221,7 +221,7 @@ export default function AboutScreen() {
             <View style={{ padding: 16 }}>
               <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '600', marginBottom: 12 }}>{t('settings.builtWith')}</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                {['Solana', 'React Native', 'Expo', 'Groth16', 'STARKs', 'Arcium MPC', 'Poseidon', 'ML-KEM'].map((tech) => (
+                {['Solana', 'React Native', 'Expo', 'STARKs', 'Poseidon', 'ML-KEM'].map((tech) => (
                   <View key={tech} style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: 'rgba(255, 255, 255, 0.06)', borderRadius: 9999 }}>
                     <Text style={{ color: Colors.textSecondary, fontSize: 12 }}>{tech}</Text>
                   </View>

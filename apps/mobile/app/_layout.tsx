@@ -19,7 +19,6 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import React from 'react';
 import { StarkProverProvider } from '../providers/StarkProverProvider';
 import { AlertProvider } from '../providers/AlertProvider';
-import { ArciumProvider } from '../providers/ArciumProvider';
 import { useLoadFonts } from '../hooks/useLoadFonts';
 
 // Prevent splash screen from auto-hiding
@@ -88,25 +87,23 @@ export default function RootLayout() {
       <SafeAreaProvider>
         {/* P01PrivyProvider removed — Privy is gone (spec §3 Phase 1). */}
         <StarkProverProvider>
-          <ArciumProvider>
-            <AlertProvider>
-              <View style={{ flex: 1, backgroundColor: '#050505' }}>
-                <StatusBar style="light" />
-                <Stack
-                  screenOptions={{
-                    headerShown: false,
-                    contentStyle: { backgroundColor: '#050505' },
-                    animation: 'fade',
-                  }}
-                >
-                  <Stack.Screen name="index" />
-                  <Stack.Screen name="(onboarding)" />
-                  <Stack.Screen name="(auth)" />
-                  <Stack.Screen name="(main)" />
-                </Stack>
-              </View>
-            </AlertProvider>
-          </ArciumProvider>
+          <AlertProvider>
+            <View style={{ flex: 1, backgroundColor: '#050505' }}>
+              <StatusBar style="light" />
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  contentStyle: { backgroundColor: '#050505' },
+                  animation: 'fade',
+                }}
+              >
+                <Stack.Screen name="index" />
+                <Stack.Screen name="(onboarding)" />
+                <Stack.Screen name="(auth)" />
+                <Stack.Screen name="(main)" />
+              </Stack>
+            </View>
+          </AlertProvider>
         </StarkProverProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

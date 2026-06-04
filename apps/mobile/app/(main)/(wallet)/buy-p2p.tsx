@@ -6,7 +6,7 @@
 //      a taker-nonce keypair (the ephemeral MPC anchor for this session).
 //   2. User fills the "Find my match" form (desired crypto, max fiat, rails).
 //   3. Submit → client.blindTake(...) with a 2-step pill
-//      (Step 1/2 FROST quorum → Step 2/2 MPC match).
+//      (Step 1/2 FROST quorum → Step 2/2 settling; matching runs off-chain).
 //   4. PrivacyReceiptRN renders the 4-layer receipt + claim card (if matched).
 //   5. claim wires to client.claimMatch(...); on tokenEscrow=true the
 //      TradeLifecycleCardRN mounts below with injected network layer props.
@@ -376,9 +376,9 @@ export default function BuyP2PScreen(): React.ReactElement {
         <View style={styles.infoCard}>
           <MaterialIcons name="shield" size={16} color={GojoColors.violetLight} />
           <Text style={styles.infoText}>
-            Your terms never leave the device in plaintext. Matches are resolved
-            inside Arcium MPC after a FROST 2-of-3 quorum approves the encrypted
-            transaction.
+            Your terms never leave the device in plaintext. A FROST 2-of-3 quorum
+            approves the encrypted order before a relayer settles it on-chain.
+            Order matching runs off-chain.
           </Text>
         </View>
 
@@ -578,7 +578,7 @@ export default function BuyP2PScreen(): React.ReactElement {
                     {phase === 'threshold'
                       ? 'STEP 1/2 · FROST QUORUM…'
                       : phase === 'mpc'
-                        ? 'STEP 2/2 · MPC MATCH…'
+                        ? 'STEP 2/2 · SETTLING…'
                         : 'DONE'}
                   </Text>
                 </>
@@ -605,7 +605,7 @@ export default function BuyP2PScreen(): React.ReactElement {
             <Text style={styles.progressText}>
               {phase === 'threshold'
                 ? 'Step 1/2 · FROST quorum approving…'
-                : 'Step 2/2 · MPC match in flight…'}
+                : 'Step 2/2 · settling in flight…'}
             </Text>
           </View>
         ) : null}

@@ -68,7 +68,7 @@ config.resolver.extraNodeModules = {
   stream: require.resolve('readable-stream'),
   crypto: path.resolve(projectRoot, 'polyfills/crypto-shim.js'),
   buffer: require.resolve('buffer'),
-  // Shims for @coral-xyz/anchor and @arcium-hq/client
+  // Shims for @coral-xyz/anchor (Node core modules unavailable in RN)
   path: path.resolve(projectRoot, 'polyfills/empty.js'),
   fs: path.resolve(projectRoot, 'polyfills/empty.js'),
   os: path.resolve(projectRoot, 'polyfills/empty.js'),

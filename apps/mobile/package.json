@@ -26,7 +26,6 @@
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "@noble/post-quantum": "^0.6.1",
-    "@protocol-01/arcium-sdk": "workspace:*",
     "@protocol-01/specter-sdk": "workspace:*",
     "@protocol-01/stark-prover": "workspace:*",
     "@react-native-async-storage/async-storage": "2.2.0",

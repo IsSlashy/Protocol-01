@@ -24,7 +24,6 @@ import {
   getPrivacyLevelDescription,
   type PrivacyLevel,
 } from '../../../services/solana/decoyTransactions';
-import { useArcium } from '@/providers/ArciumProvider';
 import { useAutoShieldStore } from '@/stores/autoShieldStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useT } from '@/i18n';
@@ -94,7 +93,6 @@ export default function PrivacySettingsScreen() {
   const [autoScanInterval, setAutoScanInterval] = useState(300);
   const [hideAmounts, setHideAmounts] = useState(false);
   const [privateByDefault, setPrivateByDefault] = useState(true);
-  const { } = useArcium(); // MPC always on
   const autoShieldEnabled = useAutoShieldStore((s) => s.enabled);
   const setAutoShieldEnabled = useAutoShieldStore((s) => s.setEnabled);
   const relayerV3Enabled = useSettingsStore((s) => s.relayerV3Enabled);
@@ -321,30 +319,6 @@ export default function PrivacySettingsScreen() {
             }}
           />
         </GlassCard>
-
-        {/* MPC PRIVACY (ARCIUM) — always on */}
-        <SectionTitle title="MULTI-PARTY COMPUTATION" delay={340} />
-        <Animated.View entering={FadeInDown.delay(360).duration(350)} style={styles.privacyInfoOuter}>
-          <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-            <LinearGradient
-              colors={['rgba(16, 185, 129, 0.06)', 'rgba(16, 185, 129, 0.02)', 'transparent']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
-              pointerEvents="none"
-            />
-            <View style={styles.privacyInfoContent}>
-              <View style={styles.privacyInfoHeader}>
-                <Ionicons name="shield-checkmark" size={18} color="#10b981" />
-                <Text style={[styles.privacyInfoTitle, { color: '#10b981' }]}>Arcium MPC Active</Text>
-              </View>
-              <Text style={styles.privacyInfoDesc}>
-                Stealth lookups, nullifier commits, and relay jobs are processed through Arcium's
-                distributed MPC network. No single node sees your data.
-              </Text>
-            </View>
-          </BlurView>
-        </Animated.View>
 
         {/* How Decoys Work */}
         <Animated.View entering={FadeInDown.delay(430).duration(350)} style={styles.infoOuter}>

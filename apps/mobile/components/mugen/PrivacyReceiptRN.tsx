@@ -413,13 +413,13 @@ export default function PrivacyReceiptRN({
     operation === 'submit'
       ? 'Plaintext terms never left your device. Here is the privacy receipt:'
       : matched
-        ? 'A match was found inside MPC. Neither side learned the other party\u2019s terms.'
+        ? 'A match was found. Your terms stayed encrypted on the device.'
         : 'No compatible encrypted order existed. Nothing was revealed about your search.';
 
   const l8Description =
     operation === 'submit'
       ? 'Plaintext amount, fiat, and rails were encrypted on device before hitting Arcium.'
-      : 'Your desired terms were matched against encrypted orders inside MPC — zero leakage.';
+      : 'Your terms were encrypted on the device and submitted as a blind order.';
 
   return (
     <ScrollView

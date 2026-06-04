@@ -280,7 +280,6 @@ export default {
     invalidRecipient: 'Please enter a valid Solana address.',
     emergencyComplete: 'Emergency Unshield Complete',
     unshieldComplete: 'Unshielded',
-    nullifierHidden: 'Nullifier hidden via MPC — withdrawal unlinkable.',
   },
 
   // ── Denominated Transfer ────────────────────────────────────

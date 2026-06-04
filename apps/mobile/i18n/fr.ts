@@ -280,7 +280,6 @@ export default {
     invalidRecipient: 'Adresse Solana invalide.',
     emergencyComplete: 'Retrait d\'urgence terminé',
     unshieldComplete: 'Retrait effectué',
-    nullifierHidden: 'Nullificateur masqué via MPC — retrait non-traçable.',
   },
 
   // ── Denominated Transfer ────────────────────────────────────

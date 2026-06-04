@@ -1641,23 +1641,9 @@ export async function shield(
 
   tx.add(ix);
 
-  // Privacy: commit nullifier via Arcium MPC (hides the spent-note link)
-  // The shield TX itself goes through direct submit — the wallet link is
-  // broken by using stealth intermediaries in the Privacy Router flow.
+  // The shield TX goes through direct submit — the wallet link is broken by
+  // using stealth intermediaries in the Privacy Router flow.
   let sig: string;
-  try {
-    const { useArciumStore } = await import('../../stores/arciumStore');
-    const { mpcEnabled } = useArciumStore.getState();
-    const { isMpcClientReady } = await import('../arcium/mpcClient');
-
-    if (mpcEnabled && isMpcClientReady()) {
-      onProgress?.('MPC nullifier commit (hiding note link)...');
-      console.log('[DenomPool] Arcium MPC active — nullifier commits will be hidden');
-      // MPC protects the nullifier commit (small payload, fits RescueCipher)
-      // The shield TX uses direct submit — origin privacy handled by stealth intermediary
-    }
-  } catch {}
-
   console.log('[DenomPool] Shield TX submitting...');
   sig = await signAndSend(connection, tx, keypair, walletSigner);
   console.log(`[DenomPool] Shield TX confirmed: ${sig.slice(0, 20)}...`);
@@ -1801,18 +1787,6 @@ export async function unshieldStark(
   void emergency;
   void poolInfo;
   const minEpoch = currentEpoch;
-
-  // MPC: Try hidden nullifier commitment (prevents on-chain nullifier linkage)
-  let mpcNullifierResult: any = null;
-  try {
-    const { commitNullifier: mpcCommit } = await import('../arcium/nullifierCommit');
-    mpcNullifierResult = await mpcCommit(poolConfig.poolPDA, new Uint8Array(nullifierBytes), ZK_SHIELDED_PROGRAM_ID);
-    if (mpcNullifierResult.wasMpcProtected) {
-      onProgress?.('Nullifier committed via MPC (hidden)');
-    }
-  } catch {
-    // MPC not available — standard nullifier PDA used below
-  }
 
   // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
   // Use stealth keypair if available (overrideKeypair), otherwise walletSigner

@@ -13,7 +13,6 @@ import {
   useDenominatedPoolStore, type StoredNote, type NoteStatus,
 } from '@/stores/denominatedPoolStore';
 import { useStarkProver } from '@/providers/StarkProverProvider';
-import { useArcium } from '@/providers/ArciumProvider';
 import {
   receiptFromJSON,
   ALL_POOLS_V3,
@@ -52,7 +51,6 @@ export default function DenominatedUnshieldScreen() {
     generatePoolCommitmentProof,
     generateMerklePathProof,
   } = useStarkProver();
-  const { isMpcActive } = useArcium();
 
   const [selectedNote, setSelectedNote] = useState<StoredNote | null>(null);
   const [recipient, setRecipient] = useState('');
@@ -279,12 +277,10 @@ export default function DenominatedUnshieldScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       useWalletStore.getState().refreshBalance();
       setTimeout(() => useWalletStore.getState().refreshTransactions(), 5000);
-      const proofLabel = isMpcActive ? 'STARK + MPC' : 'STARK';
-      const mpcNote = isMpcActive ? `\n\n${t('shieldUnshield.nullifierHidden')}` : '';
       const stealthNote = stealthUsed ? `\n\nStealth → ${finalRecipient.slice(0, 8)}...` : '';
       p01Alert(
-        emergency ? t('shieldUnshield.emergencyComplete') : `${t('shieldUnshield.unshieldComplete')} (${proofLabel})`,
-        `${selectedNote.denomination} ${selectedNote.token} → ${finalRecipient.slice(0, 8)}...${mpcNote}${stealthNote}\n\nTx: ${sig.slice(0, 16)}...`,
+        emergency ? t('shieldUnshield.emergencyComplete') : `${t('shieldUnshield.unshieldComplete')} (STARK)`,
+        `${selectedNote.denomination} ${selectedNote.token} → ${finalRecipient.slice(0, 8)}...${stealthNote}\n\nTx: ${sig.slice(0, 16)}...`,
         [{ text: 'OK', onPress: () => router.back() }],
       );
     } catch (err: any) {
@@ -294,7 +290,7 @@ export default function DenominatedUnshieldScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [selectedNote, recipient, unshieldNoteStark, unshieldNoteStarkV3, starkReady, generatePoolCommitmentProof, generateMerklePathProof, router, t, isMpcActive, submitting]);
+  }, [selectedNote, recipient, unshieldNoteStark, unshieldNoteStarkV3, starkReady, generatePoolCommitmentProof, generateMerklePathProof, router, t, submitting]);
 
   const handleUnshield = useCallback(() => {
     if (emergencyToggle) {
