@@ -49,15 +49,16 @@ const PREFUND_MIN_LEN: usize = 273;
 const PREFUND_SEED_PREFIX: &[u8] = b"prefund";
 
 /// ProofBuffer layout offsets (must match p01_stark_verifier::ProofBuffer).
-/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash = 82
+/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash + 1 deep_ali_verified = 83
 const PROOF_BUF_AUTHORITY: usize = 8;
 const PROOF_BUF_CIRCUIT_ID: usize = 40; // 8 + 32
 const PROOF_BUF_VERIFIED: usize = 49;   // 8 + 32 + 1 + 4 + 4
 const PROOF_BUF_INPUTS_HASH: usize = 50; // 8 + 32 + 1 + 4 + 4 + 1
-const PROOF_BUF_MIN_LEN: usize = 82;    // 8 + 32 + 1 + 4 + 4 + 1 + 32
+const PROOF_BUF_DEEP_ALI_VERIFIED: usize = 82; // 8 + 32 + 1 + 4 + 4 + 1 + 32
+const PROOF_BUF_MIN_LEN: usize = 83;    // 8 + 32 + 1 + 4 + 4 + 1 + 32 + 1
 
 /// Parse a verified STARK proof buffer.
-fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])> {
+fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32], bool)> {
     require!(data.len() >= PROOF_BUF_MIN_LEN, ZkShieldedError::InvalidProof);
     require!(
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
@@ -68,8 +69,9 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])>
     let circuit_id = data[PROOF_BUF_CIRCUIT_ID];
     let verified = data[PROOF_BUF_VERIFIED] == 1;
     let mut public_inputs_hash = [0u8; 32];
-    public_inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_MIN_LEN]);
-    Ok((authority, circuit_id, verified, public_inputs_hash))
+    public_inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_DEEP_ALI_VERIFIED]);
+    let deep_ali_verified = data[PROOF_BUF_DEEP_ALI_VERIFIED] == 1;
+    Ok((authority, circuit_id, verified, public_inputs_hash, deep_ali_verified))
 }
 
 /// Unshield from denominated pool using STARK proof verification.
@@ -231,7 +233,8 @@ pub fn handler(
     );
 
     let proof_data = proof_info.try_borrow_data()?;
-    let (authority, circuit_id, verified, stored_inputs_hash) = parse_stark_proof_buffer(&proof_data)?;
+    let (authority, circuit_id, verified, stored_inputs_hash, deep_ali_verified) =
+        parse_stark_proof_buffer(&proof_data)?;
 
     // Two auth paths:
     //   A) Classic: payer == proof.authority — user-driven unshield.
@@ -300,6 +303,15 @@ pub fn handler(
 
     // Must be verified
     require!(verified, ZkShieldedError::InvalidProof);
+
+    // Circuit 1 ships phase-2 DEEP-ALI from the client; require it.
+    require!(deep_ali_verified, ZkShieldedError::InvalidProof);
+
+    // Nullifier canonicalization: the PDA is seeded on the full 32-byte
+    // `nullifier`, but the proof only binds the low 8 bytes. Reject any
+    // non-canonical nullifier whose high 24 bytes are non-zero, else a single
+    // proof could be spent under multiple distinct nullifier PDAs (double-spend).
+    require!(nullifier[8..] == [0u8; 24], ZkShieldedError::InvalidProof);
 
     // Verify the proof was generated for THIS nullifier by checking the public inputs hash.
     // The STARK verifier stores sha256(public_inputs_le_bytes) when it verifies via

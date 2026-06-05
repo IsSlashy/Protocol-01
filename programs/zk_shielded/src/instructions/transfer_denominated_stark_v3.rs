@@ -177,6 +177,12 @@ pub fn handler(
     nullifier_record.pool = pool.key();
     nullifier_record.bump = ctx.bumps.nullifier_record;
 
+    // Nullifier canonicalization: the PDA is seeded on the full 32-byte
+    // `nullifier`, but the proof only binds the low 8 bytes. Reject any
+    // non-canonical nullifier whose high 24 bytes are non-zero, else a single
+    // proof could be spent under multiple distinct nullifier PDAs (double-spend).
+    require!(nullifier[8..] == [0u8; 24], ZkShieldedError::InvalidProof);
+
     // -----------------------------------------------------------------------
     // C1 (pool_commitment) verification — proves ownership of OLD note.
     // public_inputs = [nullifier_u64, commitment_u64], hashed as
@@ -189,12 +195,14 @@ pub fn handler(
             ZkShieldedError::InvalidProof
         );
         let c1_data = c1_info.try_borrow_data()?;
-        let (c1_authority, c1_circuit_id, c1_verified, _c1_deep, c1_inputs_hash) =
+        let (c1_authority, c1_circuit_id, c1_verified, c1_deep, c1_inputs_hash) =
             parse_stark_proof_buffer(&c1_data)?;
 
         require!(c1_authority == payer_key, ZkShieldedError::InvalidProof);
         require!(c1_circuit_id == 1, ZkShieldedError::InvalidProof);
         require!(c1_verified, ZkShieldedError::InvalidProof);
+        // Circuit 1 ships phase-2 DEEP-ALI from the client; require it.
+        require!(c1_deep, ZkShieldedError::InvalidProof);
 
         let nullifier_u64 = u64::from_le_bytes(nullifier[..8].try_into().unwrap());
         let mut pub_buf = [0u8; 16];
@@ -217,12 +225,14 @@ pub fn handler(
             ZkShieldedError::InvalidProof
         );
         let c3_data = c3_info.try_borrow_data()?;
-        let (c3_authority, c3_circuit_id, c3_verified, _c3_deep, c3_inputs_hash) =
+        let (c3_authority, c3_circuit_id, c3_verified, c3_deep, c3_inputs_hash) =
             parse_stark_proof_buffer(&c3_data)?;
 
         require!(c3_authority == payer_key, ZkShieldedError::InvalidProof);
         require!(c3_circuit_id == 3, ZkShieldedError::InvalidProof);
         require!(c3_verified, ZkShieldedError::InvalidProof);
+        // Circuit 3 ships phase-2 DEEP-ALI from the client; require it.
+        require!(c3_deep, ZkShieldedError::InvalidProof);
 
         let mut pub_buf = [0u8; 16];
         pub_buf[..8].copy_from_slice(&stark_commitment.to_le_bytes());

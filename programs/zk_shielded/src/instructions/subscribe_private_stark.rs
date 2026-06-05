@@ -27,10 +27,11 @@ const PROOF_BUF_AUTHORITY: usize = 8;
 const PROOF_BUF_CIRCUIT_ID: usize = 40;
 const PROOF_BUF_VERIFIED: usize = 49;
 const PROOF_BUF_INPUTS_HASH: usize = 50;
-const PROOF_BUF_MIN_LEN: usize = 82;
+const PROOF_BUF_DEEP_ALI_VERIFIED: usize = 82;
+const PROOF_BUF_MIN_LEN: usize = 83;
 
 /// Parse a verified STARK proof buffer.
-fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])> {
+fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32], bool)> {
     require!(data.len() >= PROOF_BUF_MIN_LEN, ZkShieldedError::InvalidProof);
     require!(
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
@@ -41,8 +42,9 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])>
     let circuit_id = data[PROOF_BUF_CIRCUIT_ID];
     let verified = data[PROOF_BUF_VERIFIED] == 1;
     let mut public_inputs_hash = [0u8; 32];
-    public_inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_MIN_LEN]);
-    Ok((authority, circuit_id, verified, public_inputs_hash))
+    public_inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_DEEP_ALI_VERIFIED]);
+    let deep_ali_verified = data[PROOF_BUF_DEEP_ALI_VERIFIED] == 1;
+    Ok((authority, circuit_id, verified, public_inputs_hash, deep_ali_verified))
 }
 
 /// Create a private (ZK-based) subscription vault by unshielding a denomination
@@ -215,7 +217,8 @@ pub fn handler(
     );
 
     let proof_data = proof_info.try_borrow_data()?;
-    let (authority, circuit_id, verified, stored_inputs_hash) = parse_stark_proof_buffer(&proof_data)?;
+    let (authority, circuit_id, verified, stored_inputs_hash, deep_ali_verified) =
+        parse_stark_proof_buffer(&proof_data)?;
 
     // Authority must be the payer (prevents using someone else's proof)
     require!(
@@ -228,6 +231,15 @@ pub fn handler(
 
     // Must be verified
     require!(verified, ZkShieldedError::InvalidProof);
+
+    // Circuit 1 ships phase-2 DEEP-ALI from the client; require it.
+    require!(deep_ali_verified, ZkShieldedError::InvalidProof);
+
+    // Nullifier canonicalization: the PDA is seeded on the full 32-byte
+    // `nullifier`, but the proof only binds the low 8 bytes. Reject any
+    // non-canonical nullifier whose high 24 bytes are non-zero, else a single
+    // proof could be spent under multiple distinct nullifier PDAs (double-spend).
+    require!(nullifier[8..] == [0u8; 24], ZkShieldedError::InvalidProof);
 
     // Verify the proof was generated for THIS nullifier + commitment by checking
     // the public inputs hash. The STARK verifier v2 stores
