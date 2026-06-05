@@ -276,7 +276,7 @@ class StarkProverService {
 
   /** Circuit 3 (merkle_path) — proves `leaf` is at the position given by
    * pathElements/pathIndices, yielding the tree root. Used by unshield/transfer.
-   * publicInputs layout: [leaf, root]. */
+   * publicInputs layout: [leaf, root, depth]. depth is bound on-chain (=15). */
   async generateMerklePathProof(
     leaf: string,
     pathElements: string[], pathIndices: number[],

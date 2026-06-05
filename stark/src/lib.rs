@@ -244,10 +244,11 @@ mod wasm_api {
             .collect::<String>();
 
         format!(
-            r#"{{"circuit_id":{},"leaf":"{}","root":"{}","proof_hex":"{}","proof_size":{}}}"#,
+            r#"{{"circuit_id":{},"leaf":"{}","root":"{}","depth":{},"proof_hex":"{}","proof_size":{}}}"#,
             proof_data.circuit_id,
             proof_data.public_inputs[0],
             proof_data.public_inputs[1],
+            proof_data.public_inputs[2],
             proof_hex,
             proof_data.proof_bytes.len()
         )

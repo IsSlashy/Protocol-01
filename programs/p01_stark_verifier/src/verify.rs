@@ -2174,6 +2174,15 @@ pub fn verify_deep_ali_circuit_3(
         C3_HASH_START_COEFFS, C3_IS_BOUNDARY_COEFFS, C3_IS_INTERIOR_COEFFS,
     };
 
+    // [C3 depth binding] Periodic polynomials are depth-dependent
+    // (active_rows = depth*32) and baked for depth=15, the canonical production
+    // depth. depth is the 3rd public input; any other value silently desyncs
+    // the constraint system, so reject up-front. Mirrors verify_deep_ali_circuit_6.
+    const CANONICAL_DEPTH: u64 = 15;
+    if public_inputs.len() != 3 || public_inputs[2] != CANONICAL_DEPTH {
+        return Err(VerifyError::DeepAliFailed);
+    }
+
     let z = proof.ood_z;
 
     // Evaluate the 7 periodic columns at z via Horner (~512 muls each).
@@ -4008,6 +4017,39 @@ mod merkle_update_e2e {
         assert!(
             matches!(res, Err(VerifyError::DeepAliFailed)),
             "DEEP-ALI must reject wrong public inputs: got {:?}", res
+        );
+    }
+
+    /// [C3 depth binding] Negative: the depth guard must reject any depth !=
+    /// CANONICAL_DEPTH (15) and any public-input vector that is not exactly 3
+    /// elements, since the C3 periodic columns are baked for depth=15.
+    #[test]
+    fn merkle_path_deep_ali_rejects_non_canonical_depth() {
+        use crate::compact_proof::get_circuit_config;
+
+        let proof_data = c3_sample_proof(11u64);
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+            &proof_data.proof_bytes, config,
+        ).expect("deserialize");
+
+        // Honest proof is depth-15 with 3 public inputs.
+        assert_eq!(proof_data.public_inputs.len(), 3);
+        assert_eq!(proof_data.public_inputs[2], 15);
+
+        // Wrong depth value.
+        let mut wrong_depth = proof_data.public_inputs.clone();
+        wrong_depth[2] = 14;
+        assert!(
+            matches!(verify_deep_ali_circuit_3(&parsed, &wrong_depth), Err(VerifyError::DeepAliFailed)),
+            "depth guard must reject depth != 15"
+        );
+
+        // Wrong length (legacy 2-element vector) must also be rejected up-front.
+        let two_elem = vec![proof_data.public_inputs[0], proof_data.public_inputs[1]];
+        assert!(
+            matches!(verify_deep_ali_circuit_3(&parsed, &two_elem), Err(VerifyError::DeepAliFailed)),
+            "depth guard must reject a 2-element public-input vector"
         );
     }
 

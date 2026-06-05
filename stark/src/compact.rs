@@ -2829,7 +2829,7 @@ mod tests {
         let proof =
             generate_merkle_path_compact_proof(leaf, &path_elements, &path_indices);
         assert_eq!(proof.circuit_id, CIRCUIT_MERKLE_PATH);
-        assert_eq!(proof.public_inputs.len(), 2);
+        assert_eq!(proof.public_inputs.len(), 3);
 
         // Parse header fields deterministically from the wire format.
         let bytes = &proof.proof_bytes;
@@ -2858,9 +2858,11 @@ mod tests {
         // Reconstruct public input bytes exactly as the prover built them.
         let leaf_u64 = proof.public_inputs[0];
         let root_u64 = proof.public_inputs[1];
+        let depth_u64 = proof.public_inputs[2];
         let mut pub_bytes = Vec::new();
         pub_bytes.extend_from_slice(&leaf_u64.to_le_bytes());
         pub_bytes.extend_from_slice(&root_u64.to_le_bytes());
+        pub_bytes.extend_from_slice(&depth_u64.to_le_bytes());
 
         // Derive α with circuit-3 domain tag.
         let alpha = derive_rlc_alpha_with_tag(&trace_root, &pub_bytes, b"rlc-c3\0\0");
@@ -3942,9 +3944,15 @@ pub fn generate_merkle_path_compact_proof(
     let root = crate::air::merkle_path::compute_merkle_root(leaf_felt, &elems, path_indices);
 
     let root_u64 = root.as_int();
+    // [C3 depth binding] depth is the 3rd public input. It MUST be folded into
+    // the Fiat-Shamir transcript (pub_bytes) so the on-chain verifier — which
+    // recomputes the transcript from its `public_inputs` — stays byte-for-byte
+    // consistent and can reject any depth != CANONICAL_DEPTH. Mirrors C6.
+    let depth = path_elements.len() as u64;
     let mut pub_bytes = Vec::new();
     pub_bytes.extend_from_slice(&leaf.to_le_bytes());
     pub_bytes.extend_from_slice(&root_u64.to_le_bytes());
+    pub_bytes.extend_from_slice(&depth.to_le_bytes());
 
     let (proof_bytes, merkle_root) = generate_compact_proof_from_trace(
         &trace,
@@ -3958,7 +3966,7 @@ pub fn generate_merkle_path_compact_proof(
     GenericCompactProofData {
         proof_bytes,
         circuit_id: CIRCUIT_MERKLE_PATH,
-        public_inputs: vec![leaf, root_u64],
+        public_inputs: vec![leaf, root_u64, depth],
         root: merkle_root,
     }
 }

@@ -214,7 +214,11 @@ pub fn handler(
 
     // -----------------------------------------------------------------------
     // C3 (merkle_path) verification — proves OLD commitment is at merkle_root.
-    // public_inputs = [leaf_u64, root_u64], hashed as 16 bytes.
+    // public_inputs = [leaf_u64, root_u64, depth], hashed as 24 bytes.
+    // [C3 depth binding] depth is the 3rd public input, folded into the prover
+    // transcript; bound here so an attacker cannot supply a mismatched depth
+    // (C3 periodic columns are baked for depth=15 → any other depth desyncs
+    // the constraint system). MUST match the prover's `pub_bytes` byte-for-byte.
     // The `is_valid_root(&merkle_root)` constraint above already ties
     // merkle_root to the pool ring; this check ties it to the C3 proof.
     // -----------------------------------------------------------------------
@@ -234,9 +238,15 @@ pub fn handler(
         // Circuit 3 ships phase-2 DEEP-ALI from the client; require it.
         require!(c3_deep, ZkShieldedError::InvalidProof);
 
-        let mut pub_buf = [0u8; 16];
+        // The pool's canonical tree depth must match the depth the C3 periodic
+        // columns + verifier guard are baked for (15).
+        let tree_depth = pool.tree_depth as u64;
+        require!(tree_depth == 15, ZkShieldedError::InvalidProof);
+
+        let mut pub_buf = [0u8; 24];
         pub_buf[..8].copy_from_slice(&stark_commitment.to_le_bytes());
         pub_buf[8..16].copy_from_slice(&_merkle_root[..8]);
+        pub_buf[16..24].copy_from_slice(&tree_depth.to_le_bytes());
         let expected = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
         require!(c3_inputs_hash == expected, ZkShieldedError::InvalidProof);
     }

@@ -269,21 +269,26 @@ pub fn handler(
     require!(c3_deep_ali_verified, ZkShieldedError::InvalidProof);
 
     // Reconstruct C3 expected hash. The merkle_path PROVER
-    // (`stark/src/compact.rs::generate_merkle_path_compact_proof`, line 3961)
-    // stores `public_inputs: vec![leaf, root_u64]` — exactly TWO u64 felts.
-    // (Note: the AIR's `MerklePathPublicInputs::to_elements` returns THREE
-    // including depth, but only the first two are exposed via the prover's
-    // `public_inputs` field that the mobile sends to the verifier.)
+    // (`stark/src/compact.rs::generate_merkle_path_compact_proof`) stores
+    // `public_inputs: vec![leaf, root_u64, depth]` — THREE u64 felts — and
+    // folds all three into the Fiat-Shamir transcript. depth is bound here so
+    // a prover cannot swap in an attacker-chosen depth (the C3 periodic columns
+    // are baked for depth=15, so a mismatched depth desyncs the constraint
+    // system). This MUST match the prover's `pub_bytes` byte-for-byte.
     //
-    // The verifier (`p01_stark_verifier::verify_stark_proof_v2`, lines
-    // 182-186) hashes them as `concat(u64.to_le_bytes() for each input)`
-    // = 16 bytes. The V3 leaf format packs the Goldilocks felt into bytes
-    // 0..8 of the 32-byte buffer, so we extract the low 8 bytes for the
-    // root.
+    // The verifier hashes the public inputs as
+    // `concat(u64.to_le_bytes() for each input)` = 24 bytes. The V3 leaf
+    // format packs the Goldilocks felt into bytes 0..8 of the 32-byte buffer,
+    // so we extract the low 8 bytes for the root.
+    let tree_depth = pool.tree_depth as u64;
+    // The pool's canonical tree depth must be the depth the C3 periodic
+    // columns + verifier guard are baked for (15). Reject otherwise.
+    require!(tree_depth == 15, ZkShieldedError::InvalidProof);
     {
-        let mut pub_buf = [0u8; 16]; // 2 × u64 LE: leaf, root
+        let mut pub_buf = [0u8; 24]; // 3 × u64 LE: leaf, root, depth
         pub_buf[..8].copy_from_slice(&stark_commitment.to_le_bytes());
         pub_buf[8..16].copy_from_slice(&merkle_root[..8]);
+        pub_buf[16..24].copy_from_slice(&tree_depth.to_le_bytes());
         let expected_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
         require!(
             c3_inputs_hash == expected_hash,
