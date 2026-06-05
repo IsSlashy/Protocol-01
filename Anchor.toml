@@ -6,6 +6,13 @@ solana_version = "3.1.9"
 resolution = true
 skip-lint = false
 
+# Scope `anchor build` to skip p01_arcium. Anchor scans programs/* by default;
+# p01_arcium needs Arcium's .arcis artifacts (produced by `arcium build`, not in
+# CI) so a bare `anchor build` fails to expand its macros. It is already excluded
+# from the Cargo workspace; this mirrors that for Anchor's program discovery.
+[workspace]
+exclude = ["programs/p01_arcium", "programs/p01_arcium/encrypted-ixs"]
+
 # p01_arcium is excluded from the Cargo workspace (see Cargo.toml [workspace.exclude])
 # because arcium-primitives → time 0.3.47 requires edition2024 and the .arcis MPC
 # circuits need a separate Arcium toolchain build step. Build it standalone via
