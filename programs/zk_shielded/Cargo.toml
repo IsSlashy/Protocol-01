@@ -20,10 +20,9 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
 anchor-spl = "0.32.1"
 
-# BN254 alt_bn128 operations for Groth16 verification (syscalls).
-# Retained for compliance attestations + sealed-bid auction escrow ONLY —
-# base-pool shield/transfer/unshield migrated to STARK in P9.
-solana-bn254 = "2"
+# solana-bn254 / Groth16 alt_bn128 removed: no SNARKs in the production flow.
+# Everything is STARK over Goldilocks + Poseidon (hash-based, post-quantum,
+# no elliptic curves). The retired Groth16 verifier file was deleted.
 
 # Hash function for verification key hashing
 sha3 = "0.10"
