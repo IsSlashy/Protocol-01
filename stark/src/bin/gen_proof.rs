@@ -49,7 +49,10 @@ fn main() {
             let proof = p01_stark::compact::generate_merkle_path_compact_proof(leaf, &elements, &indices);
             println!("{{");
             println!("  \"circuit_id\": {},", proof.circuit_id);
-            println!("  \"public_inputs\": [{}, {}],", proof.public_inputs[0], proof.public_inputs[1]);
+            println!(
+                "  \"public_inputs\": [{}, {}, {}],",
+                proof.public_inputs[0], proof.public_inputs[1], proof.public_inputs[2],
+            );
             println!("  \"proof_size\": {},", proof.proof_bytes.len());
             println!("  \"proof_hex\": \"{}\"", hex::encode(&proof.proof_bytes));
             println!("}}");

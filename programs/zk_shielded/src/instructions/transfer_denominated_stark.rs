@@ -1,3 +1,9 @@
+// === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
+// v2 transfer_denominated_stark: verifies only circuit 1 (pool_commitment),
+// never proves the old commitment is a member of the pool's Merkle tree
+// on-chain. Superseded by transfer_denominated_stark_v3 (adds C3 + C6).
+// Commented out wholesale (handler + Accounts struct + event + helpers).
+/*
 use anchor_lang::prelude::*;
 
 use crate::errors::ZkShieldedError;
@@ -19,9 +25,10 @@ const PROOF_BUF_AUTHORITY: usize = 8;
 const PROOF_BUF_CIRCUIT_ID: usize = 40;
 const PROOF_BUF_VERIFIED: usize = 49;
 const PROOF_BUF_INPUTS_HASH: usize = 50;
-const PROOF_BUF_MIN_LEN: usize = 82;
+const PROOF_BUF_DEEP_ALI_VERIFIED: usize = 82;
+const PROOF_BUF_MIN_LEN: usize = 83;
 
-fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])> {
+fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32], bool)> {
     require!(data.len() >= PROOF_BUF_MIN_LEN, ZkShieldedError::InvalidProof);
     require!(
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
@@ -32,8 +39,9 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])>
     let circuit_id = data[PROOF_BUF_CIRCUIT_ID];
     let verified = data[PROOF_BUF_VERIFIED] == 1;
     let mut public_inputs_hash = [0u8; 32];
-    public_inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_MIN_LEN]);
-    Ok((authority, circuit_id, verified, public_inputs_hash))
+    public_inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_DEEP_ALI_VERIFIED]);
+    let deep_ali_verified = data[PROOF_BUF_DEEP_ALI_VERIFIED] == 1;
+    Ok((authority, circuit_id, verified, public_inputs_hash, deep_ali_verified))
 }
 
 /// Transfer a note within a denominated pool using STARK proof verification.
@@ -159,7 +167,7 @@ pub fn handler(
     );
 
     let proof_data = proof_info.try_borrow_data()?;
-    let (authority, circuit_id, verified, stored_inputs_hash) =
+    let (authority, circuit_id, verified, stored_inputs_hash, deep_ali_verified) =
         parse_stark_proof_buffer(&proof_data)?;
 
     require!(
@@ -168,6 +176,14 @@ pub fn handler(
     );
     require!(circuit_id == 1, ZkShieldedError::InvalidProof);
     require!(verified, ZkShieldedError::InvalidProof);
+    // Circuit 1 ships phase-2 DEEP-ALI from the client; require it.
+    require!(deep_ali_verified, ZkShieldedError::InvalidProof);
+
+    // Nullifier canonicalization: the PDA is seeded on the full 32-byte
+    // `nullifier`, but the proof only binds the low 8 bytes. Reject any
+    // non-canonical nullifier whose high 24 bytes are non-zero, else a single
+    // proof could be spent under multiple distinct nullifier PDAs (double-spend).
+    require!(nullifier[8..] == [0u8; 24], ZkShieldedError::InvalidProof);
 
     // Verify the proof binds to THIS nullifier + stark_commitment.
     // For pool_commitment (circuit 1), public inputs = [nullifier_u64, commitment_u64].
@@ -231,3 +247,5 @@ pub struct TransferDenominatedStarkEvent {
     pub mature_note_count: u64,
     pub timestamp: i64,
 }
+*/
+// === end Deprecated v2 block (transfer_denominated_stark) ===

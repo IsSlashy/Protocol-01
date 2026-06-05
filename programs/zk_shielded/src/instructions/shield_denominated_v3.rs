@@ -27,6 +27,7 @@ const STARK_VERIFIER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
 /// `ProofBuffer` layout offsets (must match `p01_stark_verifier::ProofBuffer`).
 /// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written
 ///       + 1 verified + 32 public_inputs_hash + 1 deep_ali_verified = 83
+const PROOF_BUF_AUTHORITY_OFF: usize = 8;
 const PROOF_BUF_CIRCUIT_ID_OFF: usize = 40;
 const PROOF_BUF_VERIFIED_OFF: usize = 49;
 const PROOF_BUF_INPUTS_HASH_OFF: usize = 50;
@@ -42,6 +43,7 @@ const CIRCUIT_MERKLE_UPDATE: u8 = 6;
 /// Returns Ok(()) iff all of the following hold:
 ///   - `proof_buffer.owner == STARK_VERIFIER_PROGRAM_ID`
 ///   - discriminator matches `STARK_PROOF_BUFFER_DISCRIMINATOR`
+///   - `proof_buffer.authority == depositor` (binds the proof to this signer)
 ///   - `circuit_id == 6`
 ///   - `verified == true` AND `deep_ali_verified == true`
 ///   - `public_inputs_hash == sha256(0_u64_le || leaf_u64_le ||
@@ -53,6 +55,7 @@ const CIRCUIT_MERKLE_UPDATE: u8 = 6;
 /// `cancel_private_stark::handler` and `unshield_denominated_stark`).
 fn verify_c6_proof_buffer(
     proof_info: &AccountInfo,
+    depositor: &Pubkey,
     leaf: &[u8; 32],
     old_root: &[u8; 32],
     new_root: &[u8; 32],
@@ -68,6 +71,13 @@ fn verify_c6_proof_buffer(
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
         ZkShieldedError::InvalidProof
     );
+
+    // Authority binding: the proof buffer must have been created by the
+    // depositor (matches `shield_stark.rs`). Without this any verified C6
+    // buffer could be replayed by an unrelated signer.
+    let authority = Pubkey::try_from(&data[PROOF_BUF_AUTHORITY_OFF..PROOF_BUF_CIRCUIT_ID_OFF])
+        .map_err(|_| ZkShieldedError::InvalidProof)?;
+    require!(authority == *depositor, ZkShieldedError::InvalidProof);
 
     let circuit_id = data[PROOF_BUF_CIRCUIT_ID_OFF];
     require!(circuit_id == CIRCUIT_MERKLE_UPDATE, ZkShieldedError::InvalidProof);
@@ -325,6 +335,7 @@ pub fn handler(
     // ------------------------------------------------------------------
     verify_c6_proof_buffer(
         &ctx.accounts.c6_proof_buffer,
+        &ctx.accounts.depositor.key(),
         &commitment,
         &merkle_tree.root,
         &new_root,

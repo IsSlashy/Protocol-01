@@ -484,7 +484,7 @@ pub fn verify_subscriber_ownership(
     // [P1.1 PR 4 DEEP-ALI] Quotient check at OOD: ties prover's Q(z) to
     // the AIR evaluation on opened OOD trace values. FRI (below) enforces
     // the low-degree bound on the committed quotient LDE.
-    verify_deep_ali_legacy(proof)?;
+    verify_deep_ali_legacy(proof, commitment)?;
 
     // [P1.1 PR 3] FRI fold consistency + final_poly check (legacy path)
     verify_fri_legacy(proof, commitment)?;
@@ -1356,6 +1356,83 @@ fn vanishing_poly_trace_length(z: Felt, trace_length: usize) -> Felt {
     zn.add(Felt::new(crate::goldilocks::MODULUS - 1)) // zn + (-1) = zn - 1
 }
 
+// ============================================================================
+// [C2] Boundary public-input binding at the OOD point z
+// ============================================================================
+//
+// The prover folds, into the committed quotient Q, a boundary contribution
+//   Q_bnd(x) = Σ_j alpha_bnd^j · (T_col_j(x) − v_j) / (x − g^{r_j})
+// (a true polynomial, since `T_col_j(g^{r_j}) = v_j` for an honest trace).
+// The DEEP-ALI identity the verifier checks is `C(z) == Q(z) · Z_T(z)`, so the
+// matching boundary term that must be ADDED to the transition C(z) is
+//   C_bnd(z) = Z_T(z) · Σ_j alpha_bnd^j · (ood_current[col_j] − v_j) · inv(z − g^{r_j}).
+//
+// This makes the public-input binding (commitment / nullifier / root → trace)
+// fail at the random OOD point z on EVERY tampered proof, instead of only when
+// a query happens to land on a trace-aligned row (~1/blowup of the time). The
+// per-query `verify_boundary_constraints` stays as cheap defense-in-depth, but
+// the OOD fold is the real security boundary.
+//
+// CU: one `batch_inverse` over the assertions (1 inv + 2(k-1) muls) plus a few
+// muls per assertion. Worst case is circuit 5 with 24 assertions ≈ ~20-30K CU.
+
+/// [C2] Compute `C_bnd(z) = z_t · Σ_j alpha_bnd^j · (ood_current[col_j] − v_j)
+/// · inv(z − g^{r_j})`, the boundary contribution to the DEEP-ALI numerator at
+/// the OOD point `z`. `z_t` is the transition-vanishing value `Z_T(z)`, `g` is
+/// the per-circuit trace-domain generator. Returns `None` (caller must reject)
+/// if `z` coincides with any boundary row `g^{r_j}` — a degenerate OOD that is
+/// vanishingly rare over a random `z`.
+///
+/// The assertion list MUST be byte-identical (same order) to the prover's
+/// `boundary_assertions_for_circuit`, so the `alpha_bnd^j` powers line up.
+fn boundary_fold_at_ood(
+    ood_current: &[Felt],
+    assertions: &[BoundaryAssertion],
+    z: Felt,
+    z_t: Felt,
+    g: Felt,
+    alpha_bnd: Felt,
+) -> Option<Felt> {
+    let k = assertions.len();
+    if k == 0 {
+        return Some(Felt::ZERO);
+    }
+    // denoms[j] = z − g^{r_j}
+    let mut denoms = [Felt::ZERO; 32]; // max assertions across circuits ≤ 24
+    if k > denoms.len() {
+        return None;
+    }
+    let neg = Felt::new(crate::goldilocks::MODULUS - 1);
+    for (j, a) in assertions.iter().enumerate() {
+        let g_r = g.exp(a.row as u64);
+        let d = z.add(g_r.mul(neg)); // z − g^{r_j}
+        if d == Felt::ZERO {
+            return None; // OOD landed on a boundary row: reject.
+        }
+        denoms[j] = d;
+    }
+    let mut inv_denoms = [Felt::ZERO; 32];
+    if !batch_inverse(&denoms[..k], &mut inv_denoms[..k]) {
+        return None;
+    }
+
+    let mut acc = Felt::ZERO;
+    let mut alpha_pow = Felt::ONE;
+    for (j, a) in assertions.iter().enumerate() {
+        if a.col >= ood_current.len() {
+            return None;
+        }
+        // (T_col(z) − v) · inv(z − g^{r})
+        let num = ood_current[a.col].add(a.value.mul(neg));
+        let term = num.mul(inv_denoms[j]);
+        acc = acc.add(alpha_pow.mul(term));
+        alpha_pow = alpha_pow.mul(alpha_bnd);
+    }
+    // Multiply the whole boundary sum by Z_T(z) so it joins the transition
+    // numerator C(z) on the LHS of `C(z) == Q(z) · Z_T(z)`.
+    Some(acc.mul(z_t))
+}
+
 /// [P1.1 PR 4] Evaluate circuit 0 (subscriber_ownership) transition constraint
 /// at the OOD point z. Matches prover's `evaluate_transition_constraint` in
 /// `stark/src/compact.rs`: for each column i,
@@ -1401,7 +1478,7 @@ fn evaluate_transition_at_ood_circuit_0(
 /// Tied with FRI's low-degree guarantee on the committed quotient LDE,
 /// DEEP-ALI binds quotient correctness to the AIR evaluated on the
 /// opened OOD trace (Schwartz–Zippel over a random z).
-fn verify_deep_ali_legacy(proof: &CompactStarkProof) -> Result<(), VerifyError> {
+fn verify_deep_ali_legacy(proof: &CompactStarkProof, commitment: Felt) -> Result<(), VerifyError> {
     let z = proof.ood_z;
     let c_at_z = evaluate_transition_at_ood_circuit_0(&proof.ood_current, &proof.ood_next, z);
     // Z_T(z) = (z^n - 1) / (z - g^(n-1))
@@ -1418,8 +1495,21 @@ fn verify_deep_ali_legacy(proof: &CompactStarkProof) -> Result<(), VerifyError> 
         return Err(VerifyError::DeepAliFailed);
     }
     let z_t = z_d.mul(z_minus_last.inv());
+
+    // [C2] Add the boundary public-input binding to the numerator at z. This is
+    // what forces a tampered commitment (or capacity zeros) to be rejected at
+    // the OOD point on every proof — the live exploit for circuit 0. The prover
+    // (`generate_compact_proof`) folds the matching boundary quotient into Q.
+    let assertions = get_boundary_assertions(0, &[commitment.as_u64()]);
+    let alpha_bnd =
+        derive_rlc_alpha_with_tag(&proof.trace_root, &commitment.to_le_bytes(), b"bnd-c0\0\0");
+    let ood_current: [Felt; 3] = [proof.ood_current[0], proof.ood_current[1], proof.ood_current[2]];
+    let c_bnd = boundary_fold_at_ood(&ood_current, &assertions, z, z_t, g, alpha_bnd)
+        .ok_or(VerifyError::DeepAliFailed)?;
+    let c_total = c_at_z.add(c_bnd);
+
     let rhs = proof.ood_quotient.mul(z_t);
-    if c_at_z != rhs {
+    if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
     Ok(())
@@ -1700,8 +1790,17 @@ pub fn verify_deep_ali_circuit_6(
     }
     let z_t = z_d.mul(z_minus_last.inv());
 
+    // [C2] Boundary public-input binding at z (old/new leaf carries @row0,
+    // old/new root @output_row). Uses a fresh `bnd-c6` tag so its α is
+    // independent of the transition RLC α (`rlc-v1`).
+    let assertions = get_boundary_assertions(6, public_inputs);
+    let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c6\0\0");
+    let c_bnd = boundary_fold_at_ood(&ood_current, &assertions, z, z_t, g, alpha_bnd)
+        .ok_or(VerifyError::DeepAliFailed)?;
+    let c_total = c_at_z.add(c_bnd);
+
     let rhs = proof.ood_quotient.mul(z_t);
-    if c_at_z != rhs {
+    if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
     Ok(())
@@ -1870,11 +1969,18 @@ pub fn verify_deep_ali_circuit_1(
     }
     let z_t = z_d.mul(z_minus_last.inv());
 
+    // [C2] Boundary public-input binding at z (nullifier@row30, commitment@row94,
+    // chain nullifier@row64, capacity zeros). Same domain generator as the AIR.
+    let assertions = get_boundary_assertions(1, public_inputs);
+    let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c1\0\0");
+    let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
+        .ok_or(VerifyError::DeepAliFailed)?;
+    let c_total = c_at_z.add(c_bnd);
+
     let rhs = proof.ood_quotient.mul(z_t);
-    if c_at_z != rhs {
+    if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
-    let _ = public_inputs; // pub inputs enter α derivation only
     Ok(())
 }
 
@@ -2174,6 +2280,15 @@ pub fn verify_deep_ali_circuit_3(
         C3_HASH_START_COEFFS, C3_IS_BOUNDARY_COEFFS, C3_IS_INTERIOR_COEFFS,
     };
 
+    // [C3 depth binding] Periodic polynomials are depth-dependent
+    // (active_rows = depth*32) and baked for depth=15, the canonical production
+    // depth. depth is the 3rd public input; any other value silently desyncs
+    // the constraint system, so reject up-front. Mirrors verify_deep_ali_circuit_6.
+    const CANONICAL_DEPTH: u64 = 15;
+    if public_inputs.len() != 3 || public_inputs[2] != CANONICAL_DEPTH {
+        return Err(VerifyError::DeepAliFailed);
+    }
+
     let z = proof.ood_z;
 
     // Evaluate the 7 periodic columns at z via Horner (~512 muls each).
@@ -2223,8 +2338,15 @@ pub fn verify_deep_ali_circuit_3(
     }
     let z_t = z_d.mul(z_minus_last.inv());
 
+    // [C2] Boundary public-input binding at z (leaf@row0 col5, root@output_row col0).
+    let assertions = get_boundary_assertions(3, public_inputs);
+    let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c3\0\0");
+    let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
+        .ok_or(VerifyError::DeepAliFailed)?;
+    let c_total = c_at_z.add(c_bnd);
+
     let rhs = proof.ood_quotient.mul(z_t);
-    if c_at_z != rhs {
+    if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
     Ok(())
@@ -2721,8 +2843,19 @@ pub fn verify_deep_ali_circuit_5(
     }
     let z_t = z_d.mul(z_minus_last.inv());
 
+    // [C2] Boundary public-input binding at z. Circuit 5 has 24 assertions:
+    // 16 capacity zeros (rows 0,32,…,480), col1@row0=0, token_mint at rows
+    // 32/256/352, and the 4 output public inputs (nullifiers + commitments) at
+    // the cycle-output rows. This binds nullifier_1/2 and output_commitment_1/2
+    // (and token_mint) to the trace at the OOD point.
+    let assertions = get_boundary_assertions(5, public_inputs);
+    let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c5\0\0");
+    let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
+        .ok_or(VerifyError::DeepAliFailed)?;
+    let c_total = c_at_z.add(c_bnd);
+
     let rhs = proof.ood_quotient.mul(z_t);
-    if c_at_z != rhs {
+    if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
     Ok(())
@@ -4011,6 +4144,39 @@ mod merkle_update_e2e {
         );
     }
 
+    /// [C3 depth binding] Negative: the depth guard must reject any depth !=
+    /// CANONICAL_DEPTH (15) and any public-input vector that is not exactly 3
+    /// elements, since the C3 periodic columns are baked for depth=15.
+    #[test]
+    fn merkle_path_deep_ali_rejects_non_canonical_depth() {
+        use crate::compact_proof::get_circuit_config;
+
+        let proof_data = c3_sample_proof(11u64);
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+            &proof_data.proof_bytes, config,
+        ).expect("deserialize");
+
+        // Honest proof is depth-15 with 3 public inputs.
+        assert_eq!(proof_data.public_inputs.len(), 3);
+        assert_eq!(proof_data.public_inputs[2], 15);
+
+        // Wrong depth value.
+        let mut wrong_depth = proof_data.public_inputs.clone();
+        wrong_depth[2] = 14;
+        assert!(
+            matches!(verify_deep_ali_circuit_3(&parsed, &wrong_depth), Err(VerifyError::DeepAliFailed)),
+            "depth guard must reject depth != 15"
+        );
+
+        // Wrong length (legacy 2-element vector) must also be rejected up-front.
+        let two_elem = vec![proof_data.public_inputs[0], proof_data.public_inputs[1]];
+        assert!(
+            matches!(verify_deep_ali_circuit_3(&parsed, &two_elem), Err(VerifyError::DeepAliFailed)),
+            "depth guard must reject a 2-element public-input vector"
+        );
+    }
+
     // ========================================================================
     // [P2.2d-C4] Circuit-4 (confidential_balance) positive + negative tests.
     //
@@ -4270,6 +4436,85 @@ mod merkle_update_e2e {
         assert!(
             matches!(res, Err(VerifyError::DeepAliFailed)),
             "DEEP-ALI must reject wrong public inputs: got {:?}", res
+        );
+    }
+}
+
+/// [C2] Circuit-0 boundary-fold parity + auth-forgery rejection.
+///
+/// Circuit 0 (subscriber_ownership) is the live legacy path
+/// (`verify_stark_proof` → `verify_subscriber_ownership` → `verify_deep_ali_legacy`,
+/// prover `stark::compact::generate_compact_proof`). Before the boundary fold,
+/// the only binding of the public `commitment` to the trace was the per-query
+/// `verify_boundary_constraints_legacy` check, which fires only when a query
+/// lands on a trace-aligned row (~1/blowup ≈ 6%). A subscriber could forge
+/// ownership of an arbitrary commitment with ~95% success by reusing an honest
+/// proof under a different claimed commitment.
+///
+/// With the OOD boundary fold the binding is enforced at the random OOD point z
+/// on EVERY proof: tampering the commitment must fail 100% of the time.
+#[cfg(test)]
+mod boundary_c0_tests {
+    use super::*;
+
+    /// Positive: an honest legacy circuit-0 proof still verifies end-to-end
+    /// (the boundary fold must not break honest proofs).
+    #[test]
+    fn c0_honest_proof_verifies_with_boundary_fold() {
+        for secret in [42u64, 7, 1_000_003, 0xDEAD_BEEF] {
+            let pd = p01_stark::compact::generate_compact_proof(secret);
+            let parsed = crate::compact_proof::CompactStarkProof::from_bytes(&pd.proof_bytes)
+                .expect("deserialize legacy proof");
+            verify_deep_ali_legacy(&parsed, Felt::new(pd.commitment))
+                .unwrap_or_else(|e| panic!("honest C0 DEEP-ALI must pass (secret={secret}): {e:?}"));
+            // Full legacy verification path too.
+            verify_subscriber_ownership(&parsed, Felt::new(pd.commitment))
+                .unwrap_or_else(|e| panic!("honest C0 full verify must pass (secret={secret}): {e:?}"));
+        }
+    }
+
+    /// Negative: take an honest proof, tamper the claimed public commitment
+    /// (commitment += 1) WITHOUT touching the proof bytes, and assert DEEP-ALI
+    /// rejects it for EVERY secret (i.e. every Fiat-Shamir seed / query layout).
+    /// Pre-fix this passed ~95% of the time (only caught when a query landed on
+    /// the trace-aligned commitment row); post-fix it must fail every time.
+    #[test]
+    fn c0_tampered_commitment_rejected_every_seed() {
+        let mut tested = 0;
+        for secret in 1u64..=40 {
+            let pd = p01_stark::compact::generate_compact_proof(secret);
+            let parsed = crate::compact_proof::CompactStarkProof::from_bytes(&pd.proof_bytes)
+                .expect("deserialize legacy proof");
+            // Sanity: honest commitment passes.
+            verify_deep_ali_legacy(&parsed, Felt::new(pd.commitment))
+                .expect("honest commitment must pass");
+            // Forge: claim ownership of commitment+1 with the same proof bytes.
+            let forged = Felt::new((pd.commitment).wrapping_add(1) % crate::goldilocks::MODULUS);
+            let res = verify_deep_ali_legacy(&parsed, forged);
+            assert!(
+                matches!(res, Err(VerifyError::DeepAliFailed)),
+                "forged commitment must be rejected at OOD (secret={secret}): got {res:?}"
+            );
+            tested += 1;
+        }
+        assert_eq!(tested, 40, "should have exercised 40 distinct FS seeds");
+    }
+
+    /// Negative: tamper an OOD trace value (the opened `current[0]`) without
+    /// recomputing the quotient. The boundary + transition numerator at z
+    /// diverges from `Q(z)·Z_T(z)` and DEEP-ALI must fail.
+    #[test]
+    fn c0_tampered_ood_current_rejected() {
+        let pd = p01_stark::compact::generate_compact_proof(42);
+        // ood_current[0] lives at offset 64 (trace_root 32 + quotient_root 32).
+        let mut tampered = pd.proof_bytes.clone();
+        tampered[64] ^= 0x01;
+        let parsed = crate::compact_proof::CompactStarkProof::from_bytes(&tampered)
+            .expect("deserialize");
+        let res = verify_deep_ali_legacy(&parsed, Felt::new(pd.commitment));
+        assert!(
+            matches!(res, Err(VerifyError::DeepAliFailed)),
+            "tampered ood_current must be rejected: got {res:?}"
         );
     }
 }

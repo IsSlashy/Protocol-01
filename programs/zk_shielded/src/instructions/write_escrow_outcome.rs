@@ -1,3 +1,8 @@
+// === PoW & research — Groth16/SNARK path, removed from production (STARK-only flow). Re-enable requires a real ceremony + VK pinning. ===
+// Sealed-bid auction write_escrow_outcome: part of the Arcium auction escrow
+// cohort (paired with escrow_shield / escrow_release). Commented out wholesale
+// (handler + Accounts struct + event). Not part of the v3 production path.
+/*
 use anchor_lang::prelude::*;
 
 use crate::errors::ZkShieldedError;
@@ -107,3 +112,5 @@ pub struct EscrowOutcomeEvent {
     pub outcome: u8,
     pub winner_nullifier: [u8; 32],
 }
+*/
+// === end Groth16/SNARK removed block (write_escrow_outcome) ===

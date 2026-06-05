@@ -166,6 +166,13 @@ pub fn handler(
     nullifier_record_2.pool = pool.key();
     nullifier_record_2.bump = ctx.bumps.nullifier_record_2;
 
+    // Nullifier canonicalization: each PDA is seeded on the full 32-byte
+    // nullifier, but the proof only binds the low 8 bytes. Reject any
+    // non-canonical nullifier whose high 24 bytes are non-zero, else a single
+    // proof could be spent under multiple distinct nullifier PDAs (double-spend).
+    require!(nullifier_1[8..] == [0u8; 24], ZkShieldedError::InvalidProof);
+    require!(nullifier_2[8..] == [0u8; 24], ZkShieldedError::InvalidProof);
+
     // -----------------------------------------------------------------------
     // STARK proof verification (circuit 5: transfer, negative public_amount)
     // -----------------------------------------------------------------------

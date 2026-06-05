@@ -177,6 +177,12 @@ pub fn handler(
     nullifier_record.pool = pool.key();
     nullifier_record.bump = ctx.bumps.nullifier_record;
 
+    // Nullifier canonicalization: the PDA is seeded on the full 32-byte
+    // `nullifier`, but the proof only binds the low 8 bytes. Reject any
+    // non-canonical nullifier whose high 24 bytes are non-zero, else a single
+    // proof could be spent under multiple distinct nullifier PDAs (double-spend).
+    require!(nullifier[8..] == [0u8; 24], ZkShieldedError::InvalidProof);
+
     // -----------------------------------------------------------------------
     // C1 (pool_commitment) verification — proves ownership of OLD note.
     // public_inputs = [nullifier_u64, commitment_u64], hashed as
@@ -189,12 +195,14 @@ pub fn handler(
             ZkShieldedError::InvalidProof
         );
         let c1_data = c1_info.try_borrow_data()?;
-        let (c1_authority, c1_circuit_id, c1_verified, _c1_deep, c1_inputs_hash) =
+        let (c1_authority, c1_circuit_id, c1_verified, c1_deep, c1_inputs_hash) =
             parse_stark_proof_buffer(&c1_data)?;
 
         require!(c1_authority == payer_key, ZkShieldedError::InvalidProof);
         require!(c1_circuit_id == 1, ZkShieldedError::InvalidProof);
         require!(c1_verified, ZkShieldedError::InvalidProof);
+        // Circuit 1 ships phase-2 DEEP-ALI from the client; require it.
+        require!(c1_deep, ZkShieldedError::InvalidProof);
 
         let nullifier_u64 = u64::from_le_bytes(nullifier[..8].try_into().unwrap());
         let mut pub_buf = [0u8; 16];
@@ -206,7 +214,11 @@ pub fn handler(
 
     // -----------------------------------------------------------------------
     // C3 (merkle_path) verification — proves OLD commitment is at merkle_root.
-    // public_inputs = [leaf_u64, root_u64], hashed as 16 bytes.
+    // public_inputs = [leaf_u64, root_u64, depth], hashed as 24 bytes.
+    // [C3 depth binding] depth is the 3rd public input, folded into the prover
+    // transcript; bound here so an attacker cannot supply a mismatched depth
+    // (C3 periodic columns are baked for depth=15 → any other depth desyncs
+    // the constraint system). MUST match the prover's `pub_bytes` byte-for-byte.
     // The `is_valid_root(&merkle_root)` constraint above already ties
     // merkle_root to the pool ring; this check ties it to the C3 proof.
     // -----------------------------------------------------------------------
@@ -217,16 +229,24 @@ pub fn handler(
             ZkShieldedError::InvalidProof
         );
         let c3_data = c3_info.try_borrow_data()?;
-        let (c3_authority, c3_circuit_id, c3_verified, _c3_deep, c3_inputs_hash) =
+        let (c3_authority, c3_circuit_id, c3_verified, c3_deep, c3_inputs_hash) =
             parse_stark_proof_buffer(&c3_data)?;
 
         require!(c3_authority == payer_key, ZkShieldedError::InvalidProof);
         require!(c3_circuit_id == 3, ZkShieldedError::InvalidProof);
         require!(c3_verified, ZkShieldedError::InvalidProof);
+        // Circuit 3 ships phase-2 DEEP-ALI from the client; require it.
+        require!(c3_deep, ZkShieldedError::InvalidProof);
 
-        let mut pub_buf = [0u8; 16];
+        // The pool's canonical tree depth must match the depth the C3 periodic
+        // columns + verifier guard are baked for (15).
+        let tree_depth = pool.tree_depth as u64;
+        require!(tree_depth == 15, ZkShieldedError::InvalidProof);
+
+        let mut pub_buf = [0u8; 24];
         pub_buf[..8].copy_from_slice(&stark_commitment.to_le_bytes());
         pub_buf[8..16].copy_from_slice(&_merkle_root[..8]);
+        pub_buf[16..24].copy_from_slice(&tree_depth.to_le_bytes());
         let expected = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
         require!(c3_inputs_hash == expected, ZkShieldedError::InvalidProof);
     }

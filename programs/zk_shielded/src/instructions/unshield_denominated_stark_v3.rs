@@ -20,15 +20,16 @@ const STARK_VERIFIER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
 ]);
 
 /// ProofBuffer layout offsets (must match p01_stark_verifier::ProofBuffer).
-/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash = 82
+/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written + 1 verified + 32 public_inputs_hash + 1 deep_ali_verified = 83
 const PROOF_BUF_AUTHORITY: usize = 8;
 const PROOF_BUF_CIRCUIT_ID: usize = 40; // 8 + 32
 const PROOF_BUF_VERIFIED: usize = 49;   // 8 + 32 + 1 + 4 + 4
 const PROOF_BUF_INPUTS_HASH: usize = 50; // 8 + 32 + 1 + 4 + 4 + 1
-const PROOF_BUF_MIN_LEN: usize = 82;    // 8 + 32 + 1 + 4 + 4 + 1 + 32
+const PROOF_BUF_DEEP_ALI_VERIFIED: usize = 82; // 8 + 32 + 1 + 4 + 4 + 1 + 32
+const PROOF_BUF_MIN_LEN: usize = 83;    // 8 + 32 + 1 + 4 + 4 + 1 + 32 + 1
 
 /// Parse a verified STARK proof buffer.
-fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])> {
+fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32], bool)> {
     require!(data.len() >= PROOF_BUF_MIN_LEN, ZkShieldedError::InvalidProof);
     require!(
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
@@ -39,8 +40,9 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])>
     let circuit_id = data[PROOF_BUF_CIRCUIT_ID];
     let verified = data[PROOF_BUF_VERIFIED] == 1;
     let mut public_inputs_hash = [0u8; 32];
-    public_inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_MIN_LEN]);
-    Ok((authority, circuit_id, verified, public_inputs_hash))
+    public_inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_DEEP_ALI_VERIFIED]);
+    let deep_ali_verified = data[PROOF_BUF_DEEP_ALI_VERIFIED] == 1;
+    Ok((authority, circuit_id, verified, public_inputs_hash, deep_ali_verified))
 }
 
 /// V3 unshield from a denominated pool.
@@ -213,7 +215,7 @@ pub fn handler(
         ZkShieldedError::InvalidProof
     );
     let c1_data = c1_info.try_borrow_data()?;
-    let (c1_authority, c1_circuit_id, c1_verified, c1_inputs_hash) =
+    let (c1_authority, c1_circuit_id, c1_verified, c1_inputs_hash, c1_deep_ali_verified) =
         parse_stark_proof_buffer(&c1_data)?;
 
     require!(
@@ -222,6 +224,14 @@ pub fn handler(
     );
     require!(c1_circuit_id == 1, ZkShieldedError::InvalidProof);
     require!(c1_verified, ZkShieldedError::InvalidProof);
+    // Circuit 1 ships phase-2 DEEP-ALI from the client; require it.
+    require!(c1_deep_ali_verified, ZkShieldedError::InvalidProof);
+
+    // Nullifier canonicalization: the PDA is seeded on the full 32-byte
+    // `nullifier`, but the proof only binds the low 8 bytes. Reject any
+    // non-canonical nullifier whose high 24 bytes are non-zero, else a single
+    // proof could be spent under multiple distinct nullifier PDAs (double-spend).
+    require!(nullifier[8..] == [0u8; 24], ZkShieldedError::InvalidProof);
 
     // Reconstruct C1 expected hash: sha256(nullifier_u64_le || commitment_u64_le)
     {
@@ -246,7 +256,7 @@ pub fn handler(
         ZkShieldedError::InvalidProof
     );
     let c3_data = c3_info.try_borrow_data()?;
-    let (c3_authority, c3_circuit_id, c3_verified, c3_inputs_hash) =
+    let (c3_authority, c3_circuit_id, c3_verified, c3_inputs_hash, c3_deep_ali_verified) =
         parse_stark_proof_buffer(&c3_data)?;
 
     require!(
@@ -255,23 +265,30 @@ pub fn handler(
     );
     require!(c3_circuit_id == 3, ZkShieldedError::InvalidProof);
     require!(c3_verified, ZkShieldedError::InvalidProof);
+    // Circuit 3 ships phase-2 DEEP-ALI from the client; require it.
+    require!(c3_deep_ali_verified, ZkShieldedError::InvalidProof);
 
     // Reconstruct C3 expected hash. The merkle_path PROVER
-    // (`stark/src/compact.rs::generate_merkle_path_compact_proof`, line 3961)
-    // stores `public_inputs: vec![leaf, root_u64]` — exactly TWO u64 felts.
-    // (Note: the AIR's `MerklePathPublicInputs::to_elements` returns THREE
-    // including depth, but only the first two are exposed via the prover's
-    // `public_inputs` field that the mobile sends to the verifier.)
+    // (`stark/src/compact.rs::generate_merkle_path_compact_proof`) stores
+    // `public_inputs: vec![leaf, root_u64, depth]` — THREE u64 felts — and
+    // folds all three into the Fiat-Shamir transcript. depth is bound here so
+    // a prover cannot swap in an attacker-chosen depth (the C3 periodic columns
+    // are baked for depth=15, so a mismatched depth desyncs the constraint
+    // system). This MUST match the prover's `pub_bytes` byte-for-byte.
     //
-    // The verifier (`p01_stark_verifier::verify_stark_proof_v2`, lines
-    // 182-186) hashes them as `concat(u64.to_le_bytes() for each input)`
-    // = 16 bytes. The V3 leaf format packs the Goldilocks felt into bytes
-    // 0..8 of the 32-byte buffer, so we extract the low 8 bytes for the
-    // root.
+    // The verifier hashes the public inputs as
+    // `concat(u64.to_le_bytes() for each input)` = 24 bytes. The V3 leaf
+    // format packs the Goldilocks felt into bytes 0..8 of the 32-byte buffer,
+    // so we extract the low 8 bytes for the root.
+    let tree_depth = pool.tree_depth as u64;
+    // The pool's canonical tree depth must be the depth the C3 periodic
+    // columns + verifier guard are baked for (15). Reject otherwise.
+    require!(tree_depth == 15, ZkShieldedError::InvalidProof);
     {
-        let mut pub_buf = [0u8; 16]; // 2 × u64 LE: leaf, root
+        let mut pub_buf = [0u8; 24]; // 3 × u64 LE: leaf, root, depth
         pub_buf[..8].copy_from_slice(&stark_commitment.to_le_bytes());
         pub_buf[8..16].copy_from_slice(&merkle_root[..8]);
+        pub_buf[16..24].copy_from_slice(&tree_depth.to_le_bytes());
         let expected_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
         require!(
             c3_inputs_hash == expected_hash,

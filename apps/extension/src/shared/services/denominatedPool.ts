@@ -1544,7 +1544,7 @@ export async function prepareUnshield(
   );
 
   // --- Generate C3 (merkle_path) proof ---
-  // publicInputs layout: [leaf_u64, root_u64]
+  // publicInputs layout: [leaf_u64, root_u64, depth] — depth bound on-chain.
   // starkProver.generateMerklePathProof(leaf, pathElements, pathIndices)
   onProgress?.('Generating C3 (merkle_path) STARK proof (~60s)...');
   const c3Raw = await prover.generateMerklePathProof(

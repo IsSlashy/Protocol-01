@@ -319,10 +319,14 @@ function generateMerklePathProof(id: string, leaf: string, pathElements: string[
     const jsonStr = readStringReturn(ret);
     const elapsed = Math.round(performance.now() - started);
     const result = JSON.parse(jsonStr);
+    // [C3 depth binding] depth is the 3rd public input, bound on-chain
+    // (verifier rejects depth != 15). Fall back to the path length for older
+    // WASM that does not emit `depth`.
+    const depth = (typeof result.depth === 'number') ? result.depth : pathIndices.length;
     post({
       type: 'proof', id,
       circuitId: result.circuit_id,
-      publicInputs: [result.leaf, result.root],
+      publicInputs: [result.leaf, result.root, String(depth)],
       proofHex: result.proof_hex,
       proofSize: result.proof_size,
       durationMs: elapsed,

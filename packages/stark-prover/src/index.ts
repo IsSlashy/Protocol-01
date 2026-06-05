@@ -174,6 +174,8 @@ interface MerklePathProofJson {
   circuit_id: 3;
   leaf: string;
   root: string;
+  /** Merkle tree depth — 3rd public input, bound on-chain (CANONICAL_DEPTH=15). */
+  depth: number;
   proof_hex: string;
   proof_size: number;
 }
@@ -272,9 +274,13 @@ export function generateProofBytes(
         leaf, elemHandle.ptr, elemHandle.len, idxHandle.ptr, idxHandle.len,
       );
       const json = JSON.parse(readStringReturn(exports, ret)) as MerklePathProofJson;
+      // [C3 depth binding] depth is the 3rd public input. It is folded into the
+      // prover's Fiat-Shamir transcript and bound on-chain (the verifier rejects
+      // depth != 15). Older WASM that omits `depth` falls back to the path length.
+      const depth = typeof json.depth === 'number' ? json.depth : indices.length;
       return {
         proofBytes: hexToBytes(json.proof_hex),
-        publicInputs: [BigInt(json.leaf), BigInt(json.root)],
+        publicInputs: [BigInt(json.leaf), BigInt(json.root), BigInt(depth)],
       };
     }
     case STARK_CIRCUITS.CONFIDENTIAL_BALANCE: {
