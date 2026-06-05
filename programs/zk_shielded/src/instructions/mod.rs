@@ -24,19 +24,23 @@ pub mod claim_period;
 pub mod pause_normal;
 pub mod resume_normal;
 pub mod cancel_normal;
-pub mod unshield_denominated_stark;
+// === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
+// pub mod unshield_denominated_stark;
 pub mod subscribe_private_stark;
 pub mod pause_private_stark;
 pub mod resume_private_stark;
 pub mod cancel_private_stark;
-pub mod transfer_denominated_stark;
+// === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
+// pub mod transfer_denominated_stark;
 pub mod transfer_denominated_stark_v3;
 pub mod split_note_stark;
 pub mod propose_authority_transfer;
 pub mod accept_authority_transfer;
-pub mod escrow_shield;
-pub mod escrow_release;
-pub mod write_escrow_outcome;
+// === PoW & research — Groth16/SNARK path, removed from production (STARK-only flow). Re-enable requires a real ceremony + VK pinning. ===
+// pub mod escrow_shield;
+// pub mod escrow_release;
+// pub mod write_escrow_outcome;
+// === end Groth16/SNARK removed block (auction escrow modules) ===
 pub mod update_escrow_vk;
 pub mod store_escrow_vk_data;
 pub mod sweep_fee_escrow;
@@ -57,19 +61,23 @@ pub use claim_period::*;
 pub use pause_normal::*;
 pub use resume_normal::*;
 pub use cancel_normal::*;
-pub use unshield_denominated_stark::*;
+// === Deprecated v2 (circuit-1 only, no C3 membership proof). Production is v3-only. ===
+// pub use unshield_denominated_stark::*;
 pub use subscribe_private_stark::*;
 pub use pause_private_stark::*;
 pub use resume_private_stark::*;
 pub use cancel_private_stark::*;
-pub use transfer_denominated_stark::*;
+// === Deprecated v2 (circuit-1 only, no C3 membership proof). Production is v3-only. ===
+// pub use transfer_denominated_stark::*;
 pub use transfer_denominated_stark_v3::*;
 pub use split_note_stark::*;
 pub use propose_authority_transfer::*;
 pub use accept_authority_transfer::*;
-pub use escrow_shield::*;
-pub use escrow_release::*;
-pub use write_escrow_outcome::*;
+// === PoW & research — Groth16/SNARK path, removed from production (STARK-only flow). ===
+// pub use escrow_shield::*;
+// pub use escrow_release::*;
+// pub use write_escrow_outcome::*;
+// === end Groth16/SNARK removed block (auction escrow re-exports) ===
 pub use update_escrow_vk::*;
 pub use store_escrow_vk_data::*;
 pub use sweep_fee_escrow::*;

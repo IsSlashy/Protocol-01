@@ -1,8 +1,13 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::ZkShieldedError;
-use crate::verifier::Groth16Verifier;
-use crate::Groth16Proof;
+// === PoW & research — Groth16/SNARK path, removed from production (STARK-only flow). Re-enable requires a real ceremony + VK pinning. ===
+// Groth16-backed compliance imports disabled with verify_compliance_range /
+// verify_compliance_innocence below. revoke_attestation + check_compliance
+// stay live (they do not use Groth16).
+// use crate::verifier::Groth16Verifier;
+// use crate::Groth16Proof;
+// === end Groth16/SNARK removed block (compliance imports) ===
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -138,6 +143,10 @@ pub struct ComplianceRevokedEvent {
     pub revoked_at: i64,
 }
 
+// === PoW & research — Groth16/SNARK path, removed from production (STARK-only flow). Re-enable requires a real ceremony + VK pinning. ===
+// VerifyComplianceRange + VerifyComplianceInnocence account contexts (both take
+// a Groth16Proof). Commented out with their handler fns below.
+/*
 // ---------------------------------------------------------------------------
 // Accounts validation: VerifyComplianceRange
 // ---------------------------------------------------------------------------
@@ -237,6 +246,8 @@ pub struct VerifyComplianceInnocence<'info> {
 
     pub system_program: Program<'info, System>,
 }
+*/
+// === end Groth16/SNARK removed block (compliance account contexts) ===
 
 // ---------------------------------------------------------------------------
 // Accounts validation: RevokeAttestation
@@ -268,6 +279,11 @@ pub struct CheckCompliance<'info> {
     pub attestation: Account<'info, ComplianceAttestation>,
 }
 
+// === PoW & research — Groth16/SNARK path, removed from production (STARK-only flow). Re-enable requires a real ceremony + VK pinning. ===
+// verify_compliance_range + verify_compliance_innocence handlers (inline
+// Groth16 alt_bn128 verification). Commented out with their account contexts
+// above. revoke_attestation + check_compliance below stay live.
+/*
 // ---------------------------------------------------------------------------
 // Instruction: verify_compliance_range
 // ---------------------------------------------------------------------------
@@ -461,6 +477,8 @@ pub fn verify_compliance_innocence(
 
     Ok(())
 }
+*/
+// === end Groth16/SNARK removed block (compliance handlers) ===
 
 // ---------------------------------------------------------------------------
 // Instruction: revoke_attestation

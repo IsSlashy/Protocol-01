@@ -1,3 +1,9 @@
+// === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
+// v2 transfer_denominated_stark: verifies only circuit 1 (pool_commitment),
+// never proves the old commitment is a member of the pool's Merkle tree
+// on-chain. Superseded by transfer_denominated_stark_v3 (adds C3 + C6).
+// Commented out wholesale (handler + Accounts struct + event + helpers).
+/*
 use anchor_lang::prelude::*;
 
 use crate::errors::ZkShieldedError;
@@ -241,3 +247,5 @@ pub struct TransferDenominatedStarkEvent {
     pub mature_note_count: u64,
     pub timestamp: i64,
 }
+*/
+// === end Deprecated v2 block (transfer_denominated_stark) ===

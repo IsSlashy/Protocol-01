@@ -1,3 +1,9 @@
+// === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
+// v2 unshield_denominated_stark: verifies only circuit 1 (pool_commitment),
+// never proves the commitment is a member of the pool's Merkle tree on-chain.
+// Superseded by unshield_denominated_stark_v3 (adds C3 membership). Commented
+// out wholesale (handler + Accounts struct + event + constants/helpers).
+/*
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
@@ -446,3 +452,5 @@ pub struct UnshieldDenominatedStarkEvent {
     pub mature_note_count: u64,
     pub timestamp: i64,
 }
+*/
+// === end Deprecated v2 block (unshield_denominated_stark) ===

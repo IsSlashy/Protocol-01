@@ -1,3 +1,8 @@
+// === PoW & research — Groth16/SNARK path, removed from production (STARK-only flow). Re-enable requires a real ceremony + VK pinning. ===
+// Entire Groth16Verifier module (alt_bn128 pairing verifier + escrow-bid verify
+// + helpers + tests). No production v3 instruction references it. Commented out
+// wholesale; `mod groth16;` is also disabled in verifier/mod.rs.
+/*
 use anchor_lang::prelude::*;
 use crate::{errors::ZkShieldedError, Groth16Proof};
 
@@ -446,3 +451,5 @@ mod tests {
         assert_eq!(bytes[31], 0x30);
     }
 }
+*/
+// === end Groth16/SNARK removed block (verifier::groth16) ===

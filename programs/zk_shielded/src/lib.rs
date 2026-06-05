@@ -149,6 +149,9 @@ pub mod zk_shielded {
         instructions::shield_denominated::handler(ctx, commitment, new_root)
     }
 
+    // === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
+    // unshield_denominated_stark — superseded by unshield_denominated_stark_v3.
+    /*
     /// Unshield from denominated pool using STARK proof (quantum-resistant).
     /// Requires a pre-verified STARK proof buffer from p01_stark_verifier.
     /// The STARK proof replaces Groth16 — no elliptic curve pairings needed.
@@ -165,6 +168,8 @@ pub mod zk_shielded {
     ) -> Result<()> {
         instructions::unshield_denominated_stark::handler(ctx, nullifier, merkle_root, min_epoch, stark_commitment)
     }
+    */
+    // === end Deprecated v2 block (unshield_denominated_stark registration) ===
 
     /// Resize an existing denominated pool to accommodate new fields
     pub fn resize_denominated_pool(ctx: Context<ResizeDenominatedPool>) -> Result<()> {
@@ -276,6 +281,9 @@ pub mod zk_shielded {
         instructions::cancel_private_stark::handler(ctx, new_commitments, new_roots)
     }
 
+    // === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
+    // transfer_denominated_stark — superseded by transfer_denominated_stark_v3.
+    /*
     /// Transfer a note within a denominated pool using STARK proof (quantum-resistant).
     /// The old note is nullified and a new commitment is inserted into the tree.
     /// No funds move — same pool, same denomination.
@@ -298,6 +306,8 @@ pub mod zk_shielded {
             new_root,
         )
     }
+    */
+    // === end Deprecated v2 block (transfer_denominated_stark registration) ===
 
     /// Phase E v1 — drain a per-pool fee_escrow PDA into an arbitrary
     /// destination. Only `fee::TREASURY_AUTHORITY` can sign. Records each
@@ -382,6 +392,11 @@ pub mod zk_shielded {
     // Sealed-Bid Auction Escrow instructions
     // -----------------------------------------------------------------------
 
+    // === PoW & research — Groth16/SNARK path, removed from production (STARK-only flow). Re-enable requires a real ceremony + VK pinning. ===
+    // Sealed-bid auction escrow trio (escrow_shield is Groth16-backed; the
+    // release/outcome cranks belong to the same Arcium auction flow). Not part
+    // of the v3 production path. update_escrow_vk / *_escrow_vk_data below stay.
+    /*
     /// Lock a denominated pool note into escrow for a sealed-bid auction.
     /// Consumes the old note (nullifier) and stores two conditional commitments:
     /// pay_commitment (seller wins) and refund_commitment (bidder loses).
@@ -413,6 +428,8 @@ pub mod zk_shielded {
     pub fn write_escrow_outcome(ctx: Context<WriteEscrowOutcome>) -> Result<()> {
         instructions::write_escrow_outcome::handler(ctx)
     }
+    */
+    // === end Groth16/SNARK removed block (escrow registrations) ===
 
     /// Update the escrow bid verification key hash on a denominated pool (admin only).
     pub fn update_escrow_vk(ctx: Context<UpdateEscrowVk>, new_vk_hash: [u8; 32]) -> Result<()> {
@@ -453,6 +470,10 @@ pub mod zk_shielded {
     // Compliance instructions (ZK-attested range proofs + sanctions innocence)
     // -----------------------------------------------------------------------
 
+    // === PoW & research — Groth16/SNARK path, removed from production (STARK-only flow). Re-enable requires a real ceremony + VK pinning. ===
+    // Groth16-backed compliance verifiers. revoke_attestation / check_compliance
+    // below do not use Groth16 and stay live.
+    /*
     /// Verify a Groth16 range proof and create a ComplianceAttestation.
     /// Proves: min_bound <= secret_balance <= max_bound
     pub fn verify_compliance_range(
@@ -478,6 +499,8 @@ pub mod zk_shielded {
     ) -> Result<()> {
         compliance::verify_compliance_innocence(ctx, proof, sanctions_root, user_commitment, attestation_nonce, expires_in_seconds)
     }
+    */
+    // === end Groth16/SNARK removed block (compliance registrations) ===
 
     /// Revoke a previously issued compliance attestation (authority only).
     pub fn revoke_attestation(ctx: Context<RevokeAttestation>) -> Result<()> {
@@ -491,6 +514,10 @@ pub mod zk_shielded {
     }
 }
 
+// === PoW & research — Groth16/SNARK path, removed from production (STARK-only flow). Re-enable requires a real ceremony + VK pinning. ===
+// Groth16Proof proof type — only referenced by the now-disabled escrow/compliance
+// Groth16 instructions and the Groth16Verifier module.
+/*
 /// Groth16 proof structure for on-chain verification
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct Groth16Proof {
@@ -498,3 +525,5 @@ pub struct Groth16Proof {
     pub pi_b: [u8; 128], // G2 point (compressed)
     pub pi_c: [u8; 64],  // G1 point (compressed)
 }
+*/
+// === end Groth16/SNARK removed block (Groth16Proof type) ===
