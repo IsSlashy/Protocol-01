@@ -70,6 +70,23 @@ interface SubscriptionOptions {
   periodSeconds: number;
   maxPeriods?: number;
   description?: string;
+  // Privacy preferences selected on the site. Forwarded to the wallet so the
+  // approval popup mirrors them (it shows them read-only — see ApproveSubscription).
+  amountNoise?: number;        // +/-% variance on each charge
+  timingNoise?: number;        // +/-hours jitter on payment time
+  useStealthAddress?: boolean; // unique receiving address per payment
+}
+
+// Tolerant shape — the wallet returns its raw stored subscriptions, whose field
+// names have varied across versions (name vs merchantName, status vs isActive).
+interface WalletSubscription {
+  id: string;
+  name?: string;
+  merchantName?: string;
+  recipient: string;
+  status?: 'active' | 'paused' | 'cancelled';
+  isActive?: boolean;
+  origin?: string;
 }
 
 interface P01WalletContextType {
@@ -82,6 +99,7 @@ interface P01WalletContextType {
   signMessage: (message: string) => Promise<string | null>;
   signAndSendTransaction: (transaction: unknown) => Promise<string | null>;
   subscribe: (options: SubscriptionOptions) => Promise<{ subscriptionId: string; address: string } | null>;
+  getSubscriptions: () => Promise<WalletSubscription[]>;
 }
 
 const P01WalletContext = createContext<P01WalletContextType>({
@@ -94,6 +112,7 @@ const P01WalletContext = createContext<P01WalletContextType>({
   signMessage: async () => null,
   signAndSendTransaction: async () => null,
   subscribe: async () => null,
+  getSubscriptions: async () => [],
 });
 
 export const useP01Wallet = () => useContext(P01WalletContext);
@@ -117,7 +136,19 @@ interface Protocol01Provider {
     periodSeconds: number;
     maxPeriods?: number;
     description?: string;
+    amountNoise?: number;
+    timingNoise?: number;
+    useStealthAddress?: boolean;
   }) => Promise<{ subscriptionId: string; address: string }>;
+  getSubscriptions: () => Promise<Array<{
+    id: string;
+    name?: string;
+    merchantName?: string;
+    recipient: string;
+    status?: 'active' | 'paused' | 'cancelled';
+    isActive?: boolean;
+    origin?: string;
+  }>>;
   on: (event: string, callback: (...args: unknown[]) => void) => void;
   off: (event: string, callback: (...args: unknown[]) => void) => void;
 }
@@ -173,6 +204,26 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener("protocol01#initialized", handleInit);
     };
   }, []);
+
+  // Eager (trusted-only) reconnect on load. Already-approved sites restore the
+  // connection without a manual click — and with it, the "already subscribed"
+  // button state. Throws (caught) if the site was never approved.
+  useEffect(() => {
+    if (!walletAvailable || connected) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await window.protocol01?.connect({ onlyIfTrusted: true });
+        if (!cancelled && result?.publicKey) {
+          setConnected(true);
+          setPublicKey(result.publicKey.toBase58());
+        }
+      } catch {
+        // Not previously approved — stay disconnected; user can click Connect.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [walletAvailable, connected]);
 
   // Listen for wallet events
   useEffect(() => {
@@ -289,6 +340,17 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const getSubscriptions = useCallback(async (): Promise<WalletSubscription[]> => {
+    if (!window.protocol01?.getSubscriptions) return [];
+    try {
+      const subs = await window.protocol01.getSubscriptions();
+      return Array.isArray(subs) ? (subs as WalletSubscription[]) : [];
+    } catch (error) {
+      console.error("Failed to fetch subscriptions:", error);
+      return [];
+    }
+  }, []);
+
   return (
     <P01WalletContext.Provider
       value={{
@@ -301,6 +363,7 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
         signMessage,
         signAndSendTransaction,
         subscribe,
+        getSubscriptions,
       }}
     >
       {children}
@@ -1921,7 +1984,7 @@ function DemoSubscriptionWidget() {
             </ul>
 
             {/* Button */}
-            <TierWalletButton popular={tier.popular} tierName={tier.name} price={tier.price} interval={tier.interval} />
+            <TierWalletButton popular={tier.popular} tierName={tier.name} price={tier.price} interval={tier.interval} privacyEnabled={enablePrivacy} />
           </div>
         ))}
       </div>
@@ -2098,6 +2161,12 @@ function LoadingSpinner({ color }: { color: string }) {
 // Protocol 01 Treasury address for demo subscriptions (devnet)
 const P01_TREASURY = "7YttLkHDoNj9wyDur5pM1ejNaAvT9X4eqaYcHQqtj2G5";
 
+// Privacy preset applied when the on-page "Enable Privacy" toggle is on. These
+// are the values the wallet's approval popup will display (read-only). Keep in
+// sync with the extension's ApproveSubscription defaults.
+const PRIVACY_PRESET = { amountNoise: 5, timingNoise: 2, useStealthAddress: true } as const;
+const PRIVACY_OFF = { amountNoise: 0, timingNoise: 0, useStealthAddress: false } as const;
+
 // Convert interval string to seconds
 function intervalToSeconds(interval: string): number {
   switch (interval) {
@@ -2111,12 +2180,40 @@ function intervalToSeconds(interval: string): number {
   }
 }
 
-function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, interval = "monthly" }: { popular?: boolean; tierName?: string; price?: number; interval?: string }) {
+function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, interval = "monthly", privacyEnabled = true }: { popular?: boolean; tierName?: string; price?: number; interval?: string; privacyEnabled?: boolean }) {
   const t = useT();
-  const { publicKey, connected, connecting, walletAvailable, connect, subscribe } = useP01Wallet();
+  const { publicKey, connected, connecting, walletAvailable, connect, subscribe, getSubscriptions } = useP01Wallet();
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [subscribed, setSubscribed] = useState(false);
   const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
+
+  // Restore the "already subscribed" state on load / reconnect. Subscriptions
+  // live in the wallet (chrome.storage), so a page reload loses our local
+  // `subscribed` flag — re-derive it from the wallet instead of letting the
+  // button reset to green/clickable and allow a duplicate subscription.
+  const tierLabel = `Protocol 01 - ${tierName}`;
+  useEffect(() => {
+    if (!connected || !walletAvailable) {
+      setSubscribed(false);
+      setSubscriptionId(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const subs = await getSubscriptions();
+      if (cancelled) return;
+      const match = subs.find((s) => {
+        const isActive = s.status ? s.status === 'active' : s.isActive !== false;
+        const label = s.name || s.merchantName || '';
+        return isActive && label === tierLabel && s.recipient === P01_TREASURY;
+      });
+      if (match) {
+        setSubscribed(true);
+        setSubscriptionId(match.id);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [connected, walletAvailable, getSubscriptions, tierLabel]);
 
   const handleClick = async () => {
     if (!walletAvailable) {
@@ -2157,6 +2254,8 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
         periodSeconds: periodSeconds,
         maxPeriods: 0, // Unlimited until cancelled
         description: `${tierName} Plan - ${price} SOL/${interval} (Demo: 0.01 SOL)`,
+        // Forward the on-page privacy selection so the wallet popup mirrors it.
+        ...(privacyEnabled ? PRIVACY_PRESET : PRIVACY_OFF),
       });
 
       if (result) {
@@ -2173,6 +2272,9 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
         // User rejected - no error alert needed
       } else if (errorMessage.includes("permission")) {
         alert(t('sdkDemo.alertMissingPermission'));
+      } else if (/refresh this page|was updated|context invalidated/i.test(errorMessage)) {
+        // Extension was reloaded; this tab's bridge is stale until a page reload.
+        alert(errorMessage);
       } else {
         alert(`Subscription failed: ${errorMessage}\n\nPlease try again.`);
       }

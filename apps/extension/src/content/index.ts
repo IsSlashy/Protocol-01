@@ -99,6 +99,18 @@ async function forwardToBackground(
   requestId: string,
   origin: string
 ): Promise<void> {
+  // When the extension is reloaded/updated, tabs opened beforehand keep running
+  // this (now-orphaned) content script while chrome.runtime is dead. Detect that
+  // up front via the missing runtime id and return an actionable message — a
+  // page refresh re-injects a fresh script. Otherwise chrome.runtime.sendMessage
+  // throws the cryptic "Extension context invalidated".
+  const STALE_CONTEXT_MSG =
+    'Protocol 01 was updated. Please refresh this page, then try again.';
+  if (!chrome.runtime?.id) {
+    sendToInject(type + '_RESPONSE', null, requestId, STALE_CONTEXT_MSG);
+    return;
+  }
+
   try {
     // Add origin to payload for security validation in background
     const enrichedPayload = {
@@ -130,7 +142,12 @@ async function forwardToBackground(
       sendToInject(type + '_RESPONSE', response, requestId);
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    let errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    // Same orphaned-context case, but the runtime died mid-flight (the id check
+    // above passed but the call still threw). Map it to the actionable message.
+    if (/context invalidated|message port closed|receiving end does not exist/i.test(errorMessage)) {
+      errorMessage = STALE_CONTEXT_MSG;
+    }
     console.error(`[Protocol 01] Error forwarding ${type}:`, errorMessage);
     sendToInject(type + '_RESPONSE', null, requestId, errorMessage);
   }

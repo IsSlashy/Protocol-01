@@ -560,6 +560,11 @@ const provider = {
     periodSeconds: number;
     maxPeriods?: number;
     description?: string;
+    // Privacy preferences chosen on the dApp. Forwarded as-is to the background
+    // (handleCreateSubscription), which surfaces them in the approval popup.
+    amountNoise?: number;
+    timingNoise?: number;
+    useStealthAddress?: boolean;
   }): Promise<{ subscriptionId: string; address: string }> {
     if (!this._isConnected) {
       throw new Error('Wallet not connected');

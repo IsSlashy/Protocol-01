@@ -11,7 +11,6 @@ import {
   ExternalLink,
   Shuffle,
   EyeOff,
-  ChevronDown,
   Play,
   Music,
   Bot,
@@ -112,16 +111,20 @@ function formatPeriodSeconds(seconds: number): string {
 export default function ApproveSubscription() {
   const [isApproving, setIsApproving] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showPrivacyOptions, setShowPrivacyOptions] = useState(true);
   const [request, setRequest] = useState<SubscriptionRequestData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
 
-  // Privacy options (user can adjust)
+  // Privacy is applied AUTOMATICALLY, never picked manually here. The wallet
+  // mirrors whatever privacy the website/dApp enabled (passed in the request),
+  // matching the in-app stealth behavior. Stealth addresses are on by default
+  // (app parity) and only overridden if the site explicitly opts out.
   const [amountNoise, setAmountNoise] = useState(5);    // Default 5%
   const [timingNoise, setTimingNoise] = useState(2);    // Default 2h
-  const [useStealthAddress, setUseStealthAddress] = useState(false);
-  const [syncToChain, setSyncToChain] = useState(true); // Default to sync on-chain
+  const [useStealthAddress, setUseStealthAddress] = useState(true);
+  // Cross-device sync is always on — subscriptions must be reachable from mobile
+  // and any other device on this wallet. Not a user choice.
+  const syncToChain = true;
 
   const { addSubscription } = useSubscriptionsStore();
   const { _keypair } = useWalletStore();
@@ -229,7 +232,8 @@ export default function ApproveSubscription() {
         originIcon,
       });
 
-      // Publish to blockchain for cross-device sync (if enabled and wallet unlocked)
+      // Cross-device sync is always on; only skips if the wallet is locked (no
+      // keypair in memory). Local subscription is created either way.
       if (syncToChain && _keypair) {
         setSyncStatus('syncing');
         try {
@@ -241,7 +245,6 @@ export default function ApproveSubscription() {
           setSyncStatus('error');
           // Don't fail the whole operation, local subscription is still created
         }
-      } else {
       }
 
       // Notify background of approval
@@ -431,135 +434,82 @@ export default function ApproveSubscription() {
           </div>
         </motion.div>
 
-        {/* Privacy Options - User Adjustable */}
+        {/* Privacy - Applied automatically (read-only). Mirrors the privacy the
+            site enabled + the wallet's stealth defaults; not user-editable. */}
         <div className="bg-p01-surface rounded-xl overflow-hidden">
-          <button
-            onClick={() => setShowPrivacyOptions(!showPrivacyOptions)}
-            className="w-full flex items-center justify-between p-4"
-            aria-expanded={showPrivacyOptions}
-            aria-label="Privacy options"
-          >
+          <div className="flex items-center justify-between p-4 pb-3">
             <div className="flex items-center gap-2">
               <Shield className="w-4 h-4 text-p01-cyan" />
-              <span className="text-sm font-medium text-white">Privacy Options</span>
+              <span className="text-sm font-medium text-white">Privacy</span>
             </div>
-            <ChevronDown
-              className={cn(
-                'w-4 h-4 text-p01-chrome transition-transform',
-                showPrivacyOptions && 'rotate-180'
-              )}
-            />
-          </button>
+            <span className="text-[10px] font-mono uppercase tracking-wider text-p01-cyan/80 bg-p01-cyan/10 px-2 py-0.5 rounded-full">
+              Automatic
+            </span>
+          </div>
 
-          {showPrivacyOptions && (
-            <div className="px-4 pb-4 space-y-4">
-              {/* Amount Noise */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <Shuffle className="w-4 h-4 text-p01-cyan" />
-                    <span className="text-xs text-p01-chrome">Amount Noise</span>
-                  </div>
-                  <span className="text-xs font-mono text-p01-cyan">+/-{amountNoise}%</span>
+          <div className="px-4 pb-4 space-y-3">
+            {/* Stealth Addresses */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <EyeOff className="w-4 h-4 text-p01-cyan" />
+                <div>
+                  <span className="text-xs text-p01-chrome">Stealth Addresses</span>
+                  <p className="text-[10px] text-p01-chrome/40">
+                    Each payment to a unique address
+                  </p>
                 </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="20"
-                  value={amountNoise}
-                  onChange={(e) => setAmountNoise(parseInt(e.target.value))}
-                  aria-label="Amount noise percentage"
-                  className="w-full accent-p01-cyan h-1"
-                />
-                <p className="text-[10px] text-p01-chrome/40 mt-1">
-                  Vary amounts to prevent pattern detection
-                </p>
               </div>
-
-              {/* Timing Noise */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-streams" />
-                    <span className="text-xs text-p01-chrome">Timing Noise</span>
-                  </div>
-                  <span className="text-xs font-mono text-streams">+/-{timingNoise}h</span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="24"
-                  value={timingNoise}
-                  onChange={(e) => setTimingNoise(parseInt(e.target.value))}
-                  aria-label="Timing noise hours"
-                  className="w-full accent-streams h-1"
-                />
-                <p className="text-[10px] text-p01-chrome/40 mt-1">
-                  Randomize payment times within window
-                </p>
-              </div>
-
-              {/* Stealth Address */}
-              <div className="flex items-center justify-between py-2">
-                <div className="flex items-center gap-2">
-                  <EyeOff className="w-4 h-4 text-p01-cyan" />
-                  <div>
-                    <span className="text-xs text-p01-chrome">Stealth Addresses</span>
-                    <p className="text-[10px] text-p01-chrome/40">
-                      Each payment to unique address
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setUseStealthAddress(!useStealthAddress)}
-                  role="switch"
-                  aria-checked={useStealthAddress}
-                  aria-label="Stealth addresses"
-                  className={cn(
-                    'w-10 h-5 rounded-full transition-colors relative',
-                    useStealthAddress ? 'bg-p01-cyan' : 'bg-p01-border'
-                  )}
-                >
-                  <div
-                    className={cn(
-                      'w-4 h-4 rounded-full bg-white absolute top-0.5 transition-transform',
-                      useStealthAddress ? 'translate-x-5' : 'translate-x-0.5'
-                    )}
-                  />
-                </button>
-              </div>
-
-              {/* On-Chain Sync */}
-              <div className="flex items-center justify-between py-2 border-t border-p01-border pt-3 mt-2">
-                <div className="flex items-center gap-2">
-                  <Link className="w-4 h-4 text-p01-cyan" />
-                  <div>
-                    <span className="text-xs text-p01-chrome">Sync to Blockchain</span>
-                    <p className="text-[10px] text-p01-chrome/40">
-                      Access on all devices with this wallet
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setSyncToChain(!syncToChain)}
-                  role="switch"
-                  aria-checked={syncToChain}
-                  aria-label="Sync to blockchain"
-                  className={cn(
-                    'w-10 h-5 rounded-full transition-colors relative',
-                    syncToChain ? 'bg-p01-cyan' : 'bg-p01-border'
-                  )}
-                >
-                  <div
-                    className={cn(
-                      'w-4 h-4 rounded-full bg-white absolute top-0.5 transition-transform',
-                      syncToChain ? 'translate-x-5' : 'translate-x-0.5'
-                    )}
-                  />
-                </button>
-              </div>
+              <span className={cn('text-xs font-mono', useStealthAddress ? 'text-p01-cyan' : 'text-p01-chrome/40')}>
+                {useStealthAddress ? 'On' : 'Off'}
+              </span>
             </div>
-          )}
+
+            {/* Amount Noise */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Shuffle className="w-4 h-4 text-p01-cyan" />
+                <div>
+                  <span className="text-xs text-p01-chrome">Amount Noise</span>
+                  <p className="text-[10px] text-p01-chrome/40">
+                    Varies amounts to prevent pattern detection
+                  </p>
+                </div>
+              </div>
+              <span className={cn('text-xs font-mono', amountNoise > 0 ? 'text-p01-cyan' : 'text-p01-chrome/40')}>
+                {amountNoise > 0 ? `+/-${amountNoise}%` : 'Off'}
+              </span>
+            </div>
+
+            {/* Timing Noise */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-streams" />
+                <div>
+                  <span className="text-xs text-p01-chrome">Timing Noise</span>
+                  <p className="text-[10px] text-p01-chrome/40">
+                    Randomizes payment times within a window
+                  </p>
+                </div>
+              </div>
+              <span className={cn('text-xs font-mono', timingNoise > 0 ? 'text-streams' : 'text-p01-chrome/40')}>
+                {timingNoise > 0 ? `+/-${timingNoise}h` : 'Off'}
+              </span>
+            </div>
+
+            {/* On-Chain Sync (always on) */}
+            <div className="flex items-center justify-between border-t border-p01-border pt-3 mt-1">
+              <div className="flex items-center gap-2">
+                <Link className="w-4 h-4 text-p01-cyan" />
+                <div>
+                  <span className="text-xs text-p01-chrome">Sync to Blockchain</span>
+                  <p className="text-[10px] text-p01-chrome/40">
+                    Access on all devices with this wallet
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs font-mono text-p01-cyan">On</span>
+            </div>
+          </div>
         </div>
 
         {/* What you're approving */}

@@ -419,6 +419,17 @@ const TRUSTED_ORIGINS = [
   'http://localhost:3001',
 ];
 
+// Permissions granted to trusted P01 origins on auto-connect. Must include
+// requestSubscription — the subscription widget lives on these very origins, and
+// omitting it left every "Subscribe" attempt failing with "missing subscription
+// permission". Granting the permission only lets the site *ask*; each individual
+// subscription is still explicitly approved by the user in the popup.
+const TRUSTED_PERMISSIONS: DappPermission[] = [
+  'viewBalance',
+  'requestTransaction',
+  'requestSubscription',
+];
+
 async function handleConnect(
   payload: MessagePayload,
   sender: chrome.runtime.MessageSender
@@ -483,17 +494,32 @@ async function handleConnect(
     });
   }
 
+  const isTrusted = TRUSTED_ORIGINS.some(t => origin === t || origin.startsWith(t));
+
   // Check if already connected
   const isConnected = await isSiteConnected(origin);
   if (isConnected) {
     const publicKey = await getWalletPublicKey();
     if (publicKey) {
+      // Self-heal stale trusted connections. Sites that connected before
+      // requestSubscription was granted to trusted origins would otherwise be
+      // stuck forever — reconnecting early-returns here and never upgrades the
+      // stored permission set, so the subscription widget kept failing with
+      // "missing subscription permission". Re-register with the full set.
+      if (isTrusted && !(await siteHasPermission(origin, 'requestSubscription'))) {
+        await addConnectedSite({
+          origin,
+          name: payload.title || 'Protocol 01',
+          icon: payload.icon,
+          connectedAt: Date.now(),
+          permissions: TRUSTED_PERMISSIONS,
+        });
+      }
       return { publicKey };
     }
   }
 
   // Auto-connect trusted P01 domains without approval popup
-  const isTrusted = TRUSTED_ORIGINS.some(t => origin === t || origin.startsWith(t));
   if (isTrusted) {
     const publicKey = await getWalletPublicKey();
     if (publicKey) {
@@ -503,7 +529,7 @@ async function handleConnect(
         name: payload.title || 'Protocol 01',
         icon: payload.icon,
         connectedAt: Date.now(),
-        permissions: ['viewBalance', 'requestTransaction'],
+        permissions: TRUSTED_PERMISSIONS,
       });
       return { publicKey };
     }
