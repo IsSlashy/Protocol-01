@@ -85,7 +85,22 @@ pub fn generate_compact_proof(subscriber_secret: u64) -> CompactProofData {
     }).collect();
     let c_poly = inverse_ntt(&c_lde, lde_g);
     let c_poly_scaled = multiply_by_x_minus_a(&c_poly, last_row_x);
-    let q_poly = divide_by_vanishing(&c_poly_scaled, TRACE_LENGTH);
+    let mut q_poly = divide_by_vanishing(&c_poly_scaled, TRACE_LENGTH);
+
+    // [C2] Fold the boundary quotient into the committed quotient so the
+    // public-input binding (commitment at row 30, capacity zeros at row 0) is
+    // enforced at the OOD point on EVERY proof — not just when a query lands on
+    // a trace-aligned row. The verifier recomputes the matching boundary term
+    // at z via `verify_boundary_at_ood_circuit_0`. Trace interpolants are
+    // reused below for the OOD evaluation.
+    let trace_polys: Vec<Vec<BaseElement>> =
+        (0..TRACE_WIDTH).map(|col| interpolate_poly(&trace[col])).collect();
+    let boundary_assertions =
+        boundary_assertions_for_circuit(CIRCUIT_SUBSCRIBER_OWNERSHIP, &[commitment]);
+    let alpha_bnd =
+        derive_rlc_alpha_with_tag(&root, &commitment.to_le_bytes(), b"bnd-c0\0\0");
+    fold_boundary_quotient(&mut q_poly, &trace_polys, &boundary_assertions, trace_g, alpha_bnd);
+
     let all_quotient_values: Vec<u64> = (0..LDE_SIZE).map(|pos| {
         let x = lde_g.exp(pos as u64);
         evaluate_poly(&q_poly, x).as_int()
@@ -1160,6 +1175,155 @@ fn divide_by_vanishing(poly: &[BaseElement], n: usize) -> Vec<BaseElement> {
         c[i - n] = c[i - n] + c[i];
     }
     q
+}
+
+/// [C2] Divide polynomial `poly` (coefficients low-to-high) by the linear
+/// factor `(x - a)`, assuming `poly(a) == 0` so the division is exact.
+///
+/// Synthetic (Ruffini) division: for `poly = Σ c_i x^i` of degree L-1, the
+/// quotient `q = poly / (x - a)` has degree L-2 and is computed by the
+/// recurrence walking from the high coefficient down:
+///   q_{L-2} = c_{L-1}
+///   q_{i-1} = c_i + a · q_i        (i = L-2 .. 1)
+/// The remainder `c_0 + a · q_0` is dropped (zero when `poly(a)=0`).
+///
+/// Used for the boundary quotient `(T_col(x) - v) / (x - g^r)`, which is an
+/// exact polynomial because `T_col(g^r) = v` for an honest trace.
+fn divide_by_x_minus_a(poly: &[BaseElement], a: BaseElement) -> Vec<BaseElement> {
+    let l = poly.len();
+    if l == 0 {
+        return Vec::new();
+    }
+    let mut q = vec![BaseElement::ZERO; l - 1];
+    let mut carry = BaseElement::ZERO;
+    // Walk from the highest coefficient downward.
+    for i in (1..l).rev() {
+        let coeff = poly[i] + carry;
+        q[i - 1] = coeff;
+        carry = coeff * a;
+    }
+    q
+}
+
+/// [C2] Boundary assertions for a circuit, mirroring the on-chain verifier's
+/// `get_boundary_assertions` in `programs/p01_stark_verifier/src/verify.rs`.
+/// Each tuple is `(col, row, value)`: the trace cell `trace[col]` at trace-row
+/// `row` must equal `value`. These bind the public inputs to the trace.
+///
+/// The prover folds the matching boundary quotient
+///   Σ_j alpha_bnd^j · (T_col_j(x) - v_j) / (x - g^{r_j})
+/// into the committed quotient (see `fold_boundary_quotient`), and the verifier
+/// checks the same sum at the OOD point z. The ordering here is byte-identical
+/// to the verifier so the `alpha_bnd^j` powers line up exactly.
+fn boundary_assertions_for_circuit(
+    circuit_id: u8,
+    public_inputs: &[u64],
+) -> Vec<(usize, usize, BaseElement)> {
+    const HASH_CYCLE_LEN: usize = 32;
+    const NUM_ROUNDS_B: usize = 30;
+    let pi = |i: usize| -> BaseElement {
+        if i < public_inputs.len() { BaseElement::new(public_inputs[i]) } else { BaseElement::ZERO }
+    };
+    match circuit_id {
+        0 => vec![
+            (1, 0, BaseElement::ZERO),
+            (2, 0, BaseElement::ZERO),
+            (0, NUM_ROUNDS_B, pi(0)),
+        ],
+        1 => vec![
+            (0, NUM_ROUNDS_B, pi(0)),
+            (0, 2 * HASH_CYCLE_LEN + NUM_ROUNDS_B, pi(1)),
+            (2, 0, BaseElement::ZERO),
+            (2, HASH_CYCLE_LEN, BaseElement::ZERO),
+            (2, 2 * HASH_CYCLE_LEN, BaseElement::ZERO),
+            (0, 2 * HASH_CYCLE_LEN, pi(0)),
+        ],
+        3 => {
+            let leaf = pi(0);
+            let root = pi(1);
+            let depth = if public_inputs.len() > 2 { public_inputs[2] as usize } else { 0 };
+            if depth > 0 && depth <= 32 {
+                let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS_B;
+                vec![(5, 0, leaf), (0, output_row, root)]
+            } else {
+                vec![(5, 0, leaf)]
+            }
+        }
+        5 => {
+            let mut a: Vec<(usize, usize, BaseElement)> = Vec::new();
+            for cycle in 0..16usize {
+                a.push((2, cycle * HASH_CYCLE_LEN, BaseElement::ZERO));
+            }
+            a.push((1, 0, BaseElement::ZERO));
+            a.push((1, HASH_CYCLE_LEN, pi(5)));
+            a.push((1, 8 * HASH_CYCLE_LEN, pi(5)));
+            a.push((1, 11 * HASH_CYCLE_LEN, pi(5)));
+            a.push((0, 4 * HASH_CYCLE_LEN + NUM_ROUNDS_B, pi(0)));
+            a.push((0, 7 * HASH_CYCLE_LEN + NUM_ROUNDS_B, pi(1)));
+            a.push((0, 10 * HASH_CYCLE_LEN + NUM_ROUNDS_B, pi(2)));
+            a.push((0, 13 * HASH_CYCLE_LEN + NUM_ROUNDS_B, pi(3)));
+            a
+        }
+        6 => {
+            let old_leaf = pi(0);
+            let new_leaf = pi(1);
+            let old_root = pi(2);
+            let new_root = pi(3);
+            let depth = if public_inputs.len() > 4 { public_inputs[4] as usize } else { 0 };
+            if depth > 0 && depth <= 16 {
+                let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS_B;
+                vec![
+                    (8, 0, old_leaf),
+                    (9, 0, new_leaf),
+                    (0, output_row, old_root),
+                    (3, output_row, new_root),
+                ]
+            } else {
+                vec![(8, 0, old_leaf), (9, 0, new_leaf)]
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// [C2] Fold the boundary quotient into `q_poly` (coefficients low-to-high).
+///
+/// For each boundary assertion `(col, row, v)` with trace-domain generator `g`,
+/// compute the boundary quotient polynomial
+///   Qb(x) = (T_col(x) - v) / (x - g^{row})
+/// (an exact polynomial because `T_col(g^{row}) = v` for an honest trace) and
+/// add `alpha_bnd^j · Qb(x)` to `q_poly`. `trace_polys[col]` are the per-column
+/// trace interpolants (coefficients low-to-high, length = trace_length).
+///
+/// The verifier recomputes the same sum at the OOD point z via
+/// `C_bnd(z) = Z_T(z) · Σ_j alpha_bnd^j · (ood_current[col_j] - v_j) / (z - g^{r_j})`,
+/// so the committed quotient must include exactly this boundary contribution.
+fn fold_boundary_quotient(
+    q_poly: &mut Vec<BaseElement>,
+    trace_polys: &[Vec<BaseElement>],
+    assertions: &[(usize, usize, BaseElement)],
+    trace_g: BaseElement,
+    alpha_bnd: BaseElement,
+) {
+    let mut alpha_pow = BaseElement::ONE;
+    for &(col, row, v) in assertions {
+        // numerator = T_col(x) - v
+        let mut num = trace_polys[col].clone();
+        if num.is_empty() {
+            num.push(BaseElement::ZERO);
+        }
+        num[0] = num[0] - v;
+        let g_r = trace_g.exp(row as u64);
+        let qb = divide_by_x_minus_a(&num, g_r);
+        // q_poly += alpha_pow * qb
+        if q_poly.len() < qb.len() {
+            q_poly.resize(qb.len(), BaseElement::ZERO);
+        }
+        for (i, &c) in qb.iter().enumerate() {
+            q_poly[i] = q_poly[i] + alpha_pow * c;
+        }
+        alpha_pow = alpha_pow * alpha_bnd;
+    }
 }
 
 /// Inverse NTT for interpolation.
@@ -2614,9 +2778,16 @@ mod tests {
         let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
         let z_t = z_d * (z - last_row_x).inv();
 
+        // [C2] Add the boundary contribution that the prover folded into Q.
+        let c_bnd = boundary_c_at_ood(
+            CIRCUIT_MERKLE_UPDATE, &proof.public_inputs, &trace_root, &pub_bytes,
+            b"bnd-c6\0\0", &ood_current, z, z_t, trace_g,
+        );
+        let c_total = c_at_z + c_bnd;
+
         let q_at_z = BaseElement::new(ood_quotient);
         assert_eq!(
-            c_at_z,
+            c_total,
             q_at_z * z_t,
             "end-to-end DEEP-ALI on generated circuit-6 proof failed"
         );
@@ -2705,12 +2876,49 @@ mod tests {
         let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
         let z_t = z_d * (z - last_row_x).inv();
 
+        // [C2] Add the boundary contribution that the prover folded into Q.
+        let c_bnd = boundary_c_at_ood(
+            CIRCUIT_POOL_COMMITMENT, &proof.public_inputs, &trace_root, &pub_bytes,
+            b"bnd-c1\0\0", &ood_current, z, z_t, trace_g,
+        );
+        let c_total = c_at_z + c_bnd;
+
         let q_at_z = BaseElement::new(ood_quotient);
         assert_eq!(
-            c_at_z,
+            c_total,
             q_at_z * z_t,
             "end-to-end DEEP-ALI on generated circuit-1 proof failed"
         );
+    }
+
+    /// [C2] Test-side mirror of the verifier's `boundary_fold_at_ood`:
+    /// returns `z_t · Σ_j alpha_bnd^j (ood_current[col_j] − v_j)/(z − g^{r_j})`.
+    fn boundary_c_at_ood(
+        circuit_id: u8,
+        public_inputs: &[u64],
+        trace_root: &[u8; 32],
+        pub_bytes: &[u8],
+        tag: &[u8; 8],
+        ood_current: &[u64],
+        z: BaseElement,
+        z_t: BaseElement,
+        trace_g: BaseElement,
+    ) -> BaseElement {
+        let assertions = boundary_assertions_for_circuit(circuit_id, public_inputs);
+        if assertions.is_empty() {
+            return BaseElement::ZERO;
+        }
+        let alpha_bnd = derive_rlc_alpha_with_tag(trace_root, pub_bytes, tag);
+        let mut acc = BaseElement::ZERO;
+        let mut alpha_pow = BaseElement::ONE;
+        for (col, row, v) in assertions {
+            let g_r = trace_g.exp(row as u64);
+            let denom = z - g_r;
+            let num = BaseElement::new(ood_current[col]) - v;
+            acc = acc + alpha_pow * (num * denom.inv());
+            alpha_pow = alpha_pow * alpha_bnd;
+        }
+        acc * z_t
     }
 
     /// [P2.2d-C2] End-to-end: a proof produced by `generate_balance_compact_proof`
@@ -2893,9 +3101,16 @@ mod tests {
         let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
         let z_t = z_d * (z - last_row_x).inv();
 
+        // [C2] Add the boundary contribution that the prover folded into Q.
+        let c_bnd = boundary_c_at_ood(
+            CIRCUIT_MERKLE_PATH, &proof.public_inputs, &trace_root, &pub_bytes,
+            b"bnd-c3\0\0", &ood_current, z, z_t, trace_g,
+        );
+        let c_total = c_at_z + c_bnd;
+
         let q_at_z = BaseElement::new(ood_quotient);
         assert_eq!(
-            c_at_z,
+            c_total,
             q_at_z * z_t,
             "end-to-end DEEP-ALI on generated circuit-3 proof failed"
         );
@@ -3083,9 +3298,16 @@ mod tests {
         let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
         let z_t = z_d * (z - last_row_x).inv();
 
+        // [C2] Add the boundary contribution that the prover folded into Q.
+        let c_bnd = boundary_c_at_ood(
+            CIRCUIT_TRANSFER, &proof.public_inputs, &trace_root, &pub_bytes,
+            b"bnd-c5\0\0", &ood_current, z, z_t, trace_g,
+        );
+        let c_total = c_at_z + c_bnd;
+
         let q_at_z = BaseElement::new(ood_quotient);
         assert_eq!(
-            c_at_z,
+            c_total,
             q_at_z * z_t,
             "end-to-end DEEP-ALI on generated circuit-5 proof failed"
         );
@@ -3627,6 +3849,24 @@ pub(crate) enum QuotientSpec {
     Circuit6 { depth: usize },
 }
 
+/// [C2] Map a `QuotientSpec` to its boundary-fold parameters
+/// `(circuit_id, alpha_tag)`, or `None` for circuits whose boundary fold is not
+/// yet wired. The `alpha_tag` MUST match the verifier's
+/// `derive_rlc_alpha_with_tag` tag used in `verify_deep_ali_circuit_N`'s
+/// boundary section, so the per-assertion `alpha_bnd^j` powers are identical.
+fn boundary_spec_for_quotient(spec: &QuotientSpec) -> Option<(u8, [u8; 8])> {
+    match spec {
+        QuotientSpec::Circuit1 => Some((1, *b"bnd-c1\0\0")),
+        QuotientSpec::Circuit3 { .. } => Some((3, *b"bnd-c3\0\0")),
+        QuotientSpec::Circuit5 => Some((5, *b"bnd-c5\0\0")),
+        QuotientSpec::Circuit6 { .. } => Some((6, *b"bnd-c6\0\0")),
+        // Circuits 2 and 4 boundary folds are deferred (no live exploit + extra
+        // CU budget review needed). LegacyGeneric (C0) folds in the dedicated
+        // legacy path, not here.
+        _ => None,
+    }
+}
+
 /// Generate a compact proof from an already-built trace.
 ///
 /// [P2.2] `fri_final_poly_size` threads through to `fri_commit_phase`; see
@@ -3660,7 +3900,7 @@ fn generate_compact_proof_from_trace(
     // challenges. DEEP-ALI circuits derive α from trace_root first, so
     // quotient_root also binds α implicitly.
     let lde_g = get_domain_generator_generic(lde_size);
-    let all_quotient_values: Vec<u64> = match quotient_spec {
+    let mut all_quotient_values: Vec<u64> = match quotient_spec {
         QuotientSpec::Circuit6 { depth } => {
             let alpha = derive_rlc_alpha(&root, pub_input_bytes);
             compute_quotient_lde_circuit_6(&lde, blowup, trace_length, depth, alpha)
@@ -3693,6 +3933,37 @@ fn generate_compact_proof_from_trace(
             })
             .collect(),
     };
+
+    // [C2] Fold the boundary public-input binding into the committed quotient.
+    //
+    // For circuits with a defined boundary-assertion set, build the boundary
+    // quotient polynomial Q_bnd(x) = Σ_j alpha_bnd^j (T_col_j(x) − v_j)/(x − g^{r_j})
+    // (each term an exact polynomial), evaluate it on the LDE domain, and add to
+    // the committed quotient values. The verifier recomputes the matching term
+    // at the OOD point z. Public-input binding is then enforced at z on every
+    // proof instead of only at trace-aligned query positions.
+    if let Some((circuit_id, alpha_tag)) = boundary_spec_for_quotient(&quotient_spec) {
+        let public_inputs: Vec<u64> = pub_input_bytes
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let assertions = boundary_assertions_for_circuit(circuit_id, &public_inputs);
+        if !assertions.is_empty() {
+            let trace_g_b = get_domain_generator_generic(trace_length);
+            let trace_polys: Vec<Vec<BaseElement>> =
+                (0..trace_width).map(|col| inverse_ntt(&trace[col], trace_g_b)).collect();
+            let alpha_bnd = derive_rlc_alpha_with_tag(&root, pub_input_bytes, &alpha_tag);
+            let mut qb_poly: Vec<BaseElement> = Vec::new();
+            fold_boundary_quotient(&mut qb_poly, &trace_polys, &assertions, trace_g_b, alpha_bnd);
+            // Evaluate Q_bnd on the LDE domain and add to the committed quotient.
+            for (pos, qv) in all_quotient_values.iter_mut().enumerate() {
+                let x = lde_g.exp(pos as u64);
+                let add = evaluate_poly(&qb_poly, x);
+                *qv = (BaseElement::new(*qv) + add).as_int();
+            }
+        }
+    }
+
     let (quotient_root, quotient_tree) = build_quotient_merkle_tree(&all_quotient_values);
 
     // 4. [H10] Derive OOD point from transcript (trace_root || quotient_root || pub_bytes)
