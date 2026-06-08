@@ -68,7 +68,8 @@ function hostOf(url: string): string {
  *  32 root + 1 tree_depth + 8 next_leaf_index. */
 function parsePool(data: Buffer, address: string): PoolMetric | null {
   try {
-    if (data.length < 8 + 121 + 8) return null;
+    // note_count is the last field we read (8 bytes ending at offset 129).
+    if (data.length < 129) return null;
     if (!data.subarray(0, 8).equals(DENOM_POOL_DISC)) return null;
     const mintBuf = data.subarray(8 + 32, 8 + 64);
     const mint = mintBuf.equals(ZERO_MINT)
@@ -115,7 +116,7 @@ export async function readNetworkMetrics(): Promise<NetworkMetrics> {
     // Fetch only the bytes we parse (no leaf data) for every program account,
     // then keep the DenominatedPool ones. dataSlice keeps the payload tiny.
     const accounts = await conn.getProgramAccounts(ZK_SHIELDED, {
-      dataSlice: { offset: 0, length: 130 },
+      dataSlice: { offset: 0, length: 160 },
     });
 
     // Collapse seed variants: keep the most-populated pool per (token, denom).
