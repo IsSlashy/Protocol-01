@@ -43,13 +43,24 @@ const STD_DENOMS: Record<Token, Set<number>> = {
 const DENOM_POOL_DISC = createHash('sha256').update('account:DenominatedPool').digest().subarray(0, 8);
 
 function rpcUrl(): string {
+  // The shielded program is devnet-only, so we must hit a DEVNET endpoint.
+  // A dedicated override wins; otherwise prefer Helius devnet (reliable for
+  // getProgramAccounts from serverless), else the public devnet RPC. We do NOT
+  // fall back to a generic SOLANA_RPC_URL here — it may point at mainnet, where
+  // the devnet program has zero accounts (the exact 0-pool bug we hit).
+  const heliusKey = process.env.HELIUS_API_KEY || process.env.NEXT_PUBLIC_HELIUS_API_KEY;
   return (
-    process.env.SOLANA_RPC_URL ||
-    process.env.NEXT_PUBLIC_SOLANA_RPC_URL ||
-    (process.env.HELIUS_API_KEY
-      ? `https://devnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`
-      : 'https://api.devnet.solana.com')
+    process.env.EXPLORER_RPC_URL ||
+    (heliusKey ? `https://devnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.devnet.solana.com')
   );
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return 'unknown';
+  }
 }
 
 /** DenominatedPool layout after the 8-byte discriminator:
@@ -96,8 +107,10 @@ function empty(live: boolean): NetworkMetrics {
 }
 
 export async function readNetworkMetrics(): Promise<NetworkMetrics> {
+  const url = rpcUrl();
+  const rpcHost = hostOf(url);
   try {
-    const conn = new Connection(rpcUrl(), 'confirmed');
+    const conn = new Connection(url, 'confirmed');
 
     // Fetch only the bytes we parse (no leaf data) for every program account,
     // then keep the DenominatedPool ones. dataSlice keeps the payload tiny.
@@ -107,8 +120,11 @@ export async function readNetworkMetrics(): Promise<NetworkMetrics> {
 
     // Collapse seed variants: keep the most-populated pool per (token, denom).
     const best = new Map<string, PoolMetric>();
+    let denomPools = 0;
     for (const { pubkey, account } of accounts) {
-      const metric = parsePool(Buffer.from(account.data), pubkey.toBase58());
+      const buf = Buffer.from(account.data);
+      if (buf.length >= 8 && buf.subarray(0, 8).equals(DENOM_POOL_DISC)) denomPools++;
+      const metric = parsePool(buf, pubkey.toBase58());
       if (!metric) continue;
       const key = `${metric.token}:${metric.denomination}`;
       const prev = best.get(key);
@@ -134,8 +150,11 @@ export async function readNetworkMetrics(): Promise<NetworkMetrics> {
       pools,
       circuits: STARK_CIRCUIT_LIST,
       relayer: null,
+      debug: { rpcHost, scanned: accounts.length, denomPools, withNotes: pools.length },
     };
-  } catch {
-    return empty(false);
+  } catch (e) {
+    const r = empty(false);
+    r.debug = { rpcHost, scanned: 0, denomPools: 0, withNotes: 0, error: (e as Error)?.message ?? 'unknown' };
+    return r;
   }
 }

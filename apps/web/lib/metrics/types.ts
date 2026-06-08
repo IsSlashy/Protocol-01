@@ -49,6 +49,14 @@ export interface NetworkMetrics {
   circuits: CircuitInfo[];
   /** Relayer rollup status (from /api/relayer-health), or null if not probed. */
   relayer: 'green' | 'orange' | 'red' | null;
+  /** Optional diagnostics — how the snapshot was produced (no secrets). */
+  debug?: {
+    rpcHost: string;
+    scanned: number;
+    denomPools: number;
+    withNotes: number;
+    error?: string;
+  };
 }
 
 export const STARK_CIRCUIT_LIST: CircuitInfo[] = [

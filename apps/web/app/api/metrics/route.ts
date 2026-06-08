@@ -18,7 +18,7 @@ const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
 const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
 const kv: VercelKV | null = url && token ? createClient({ url, token }) : null;
 
-const CACHE_KEY = 'metrics:network:v1';
+const CACHE_KEY = 'metrics:network:v2';
 const TTL_SEC = 60;
 
 export async function GET() {
@@ -33,8 +33,10 @@ export async function GET() {
 
   const metrics = await readNetworkMetrics();
 
-  // Only cache real reads; never pin an honest-zero fallback for a full minute.
-  if (kv && metrics.live) {
+  // Only cache real, non-empty reads. Never pin an honest-zero fallback (or a
+  // transient empty result) for a full minute — that's how a stale "0 pools"
+  // snapshot got stuck before.
+  if (kv && metrics.live && metrics.activePools > 0) {
     await kv.set(CACHE_KEY, metrics, { ex: TTL_SEC });
   }
 
