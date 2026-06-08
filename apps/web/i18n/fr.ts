@@ -21,7 +21,7 @@ const fr: Translations = {
     title: "L'explorateur qui",
     titleAccent: 'ne peut pas vous voir.',
     subtitle:
-      "Une activit\u00e9 r\u00e9elle et v\u00e9rifiable sur le r\u00e9seau shield\u00e9, prouv\u00e9e on-chain, non reliable par construction. Chaque chiffre ci-dessous est public. Aucun ne r\u00e9v\u00e8le qui, quoi, ni combien.",
+      "Une activit\u00e9 r\u00e9elle et v\u00e9rifiable sur le r\u00e9seau shield\u00e9, prouv\u00e9e on-chain, non reliable par construction.\nChaque chiffre ci-dessous est public.\nAucun ne r\u00e9v\u00e8le qui, quoi, ni combien.",
     stat: {
       tvl: 'Valeur totale shield\u00e9e',
       tvlHint: 'tous les pools de d\u00e9nomination',

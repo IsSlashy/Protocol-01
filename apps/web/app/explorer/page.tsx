@@ -139,7 +139,7 @@ export default function ExplorerPage() {
           <h1 className="text-3xl sm:text-5xl font-bold font-display tracking-tight mb-3">
             {t("explorer.title")} <span className="text-cyan">{t("explorer.titleAccent")}</span>
           </h1>
-          <p className="text-base sm:text-lg text-p01-text-muted max-w-2xl">
+          <p className="text-base sm:text-lg text-p01-text-muted max-w-2xl whitespace-pre-line">
             {t("explorer.subtitle")}
           </p>
         </motion.div>

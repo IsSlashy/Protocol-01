@@ -19,7 +19,7 @@ const en = {
     title: 'The explorer that',
     titleAccent: "can't see you.",
     subtitle:
-      'Real, verifiable activity on the shielded network — proven on-chain, unlinkable by design. Every number below is public. None of them reveal who, what, or how much.',
+      'Real, verifiable activity on the shielded network, proven on-chain, unlinkable by design.\nEvery number below is public.\nNone of them reveal who, what, or how much.',
     stat: {
       tvl: 'Total Value Shielded',
       tvlHint: 'across all denomination pools',
@@ -45,7 +45,7 @@ const en = {
       memo: 'Memo',
       proof: 'Proof',
       footnote:
-        'A standard explorer would print the sender, recipient, amount and memo here. We cannot — by design. Only the proof is public.',
+        'A standard explorer would print the sender, recipient, amount and memo here. We cannot, by design. Only the proof is public.',
     },
     anon: {
       badge: 'ANONYMITY SETS',

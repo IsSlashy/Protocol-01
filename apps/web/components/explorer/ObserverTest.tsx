@@ -48,8 +48,10 @@ function Redacted({ reveal, plain, label }: { reveal: boolean; plain: string; la
 
 function ObserverTest() {
   const t = useT();
-  // reveal = true shows the "transparent chain" view (the scary one).
-  const [reveal, setReveal] = useState(false);
+  // Default to the revealed (transparent-chain) view so the contrast is
+  // immediate: plaintext leak on the left vs redacted blocks on the right.
+  // Otherwise both columns show blue blocks and look identical.
+  const [reveal, setReveal] = useState(true);
 
   return (
     <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-md p-6 sm:p-8">
