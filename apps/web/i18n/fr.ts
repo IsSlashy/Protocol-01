@@ -9,6 +9,66 @@ const fr: Translations = {
     roadmap: 'Feuille de route',
     sdkPreview: 'SDK Preview',
     back: 'Retour',
+    explorer: 'Explorer',
+    live: 'Live',
+  },
+
+  // \u2500\u2500 Explorer \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  explorer: {
+    badge: 'EXPLORATEUR R\u00c9SEAU',
+    statusLive: 'en direct',
+    statusOffline: 'reconnexion',
+    title: "L'explorateur qui",
+    titleAccent: 'ne peut pas vous voir.',
+    subtitle:
+      "Une activit\u00e9 r\u00e9elle et v\u00e9rifiable sur le r\u00e9seau shield\u00e9, prouv\u00e9e on-chain, non reliable par construction. Chaque chiffre ci-dessous est public. Aucun ne r\u00e9v\u00e8le qui, quoi, ni combien.",
+    stat: {
+      tvl: 'Valeur totale shield\u00e9e',
+      tvlHint: 'tous les pools de d\u00e9nomination',
+      anonSet: "Ensemble d'anonymat",
+      anonSetHint: 'notes shield\u00e9es o\u00f9 vous vous fondez',
+      pools: 'Pools actifs',
+      poolsHint: 'd\u00e9nominations avec d\u00e9p\u00f4ts',
+      circuits: 'Circuits STARK',
+      circuitsHint: 'post-quantique, sans trusted setup',
+    },
+    observer: {
+      badge: "LE TEST DE L'OBSERVATEUR",
+      title: 'M\u00eame paiement. Deux cha\u00eenes.',
+      subtitle:
+        "Ce qu'une cha\u00eene transparente laisse fuiter face \u00e0 ce que Protocol 01 r\u00e9v\u00e8le. Basculez et voyez la diff\u00e9rence.",
+      toggleShow: 'R\u00e9v\u00e9ler comme une cha\u00eene normale',
+      toggleHide: 'Masquer comme Protocol 01',
+      standardChain: 'Cha\u00eene standard',
+      protocol01: 'Protocol 01',
+      from: 'De',
+      to: '\u00c0',
+      amount: 'Montant',
+      memo: 'M\u00e9mo',
+      proof: 'Preuve',
+      footnote:
+        "Un explorateur classique afficherait ici l'exp\u00e9diteur, le destinataire, le montant et le m\u00e9mo. Nous ne pouvons pas, par design. Seule la preuve est publique.",
+    },
+    anon: {
+      badge: "ENSEMBLES D'ANONYMAT",
+      title: 'La foule dans laquelle vous dispara\u00eessez',
+      subtitle:
+        'Chaque pool est un ensemble de notes identiques. Plus il est grand, plus il est difficile de vous isoler. Vous \u00eates un des points.',
+      of: 'sur',
+      empty: 'Aucun d\u00e9p\u00f4t pour le moment sur devnet. Soyez la premi\u00e8re note.',
+      loading: 'Lecture du r\u00e9seau\u2026',
+    },
+    circuits: {
+      badge: 'SYST\u00c8ME DE PREUVE',
+      title: 'Sept circuits STARK',
+      subtitle:
+        "Bas\u00e9 sur le hachage, post-quantique, sans trusted setup ni courbes elliptiques. Chaque op\u00e9ration est v\u00e9rifi\u00e9e on-chain par l'un d'eux.",
+    },
+    net: {
+      relayer: 'Relayer',
+      snapshot: 'Snapshot',
+      program: 'Programme shield\u00e9',
+    },
   },
 
   // ── Demo ───────────────────────────────────────────────────

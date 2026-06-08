@@ -26,6 +26,7 @@ const LINKS: { href: string; i18nKey?: string; label?: string; dim?: boolean; gl
   { href: "/roadmap", i18nKey: "nav.roadmap" },
   // Updates page kept at /updates but removed from the nav (replaced by SDK).
   // { href: "/updates", label: "Updates" },
+  { href: "/explorer", i18nKey: "nav.explorer" },
   { href: "/sdk-demo", label: "SDK" },
   { href: "/founder", label: "Founder", glow: true },
 ];
@@ -93,6 +94,18 @@ function SiteHeader() {
 
           {/* Right cluster */}
           <div className="flex items-center gap-3 shrink-0">
+            {/* Live network pulse — strategic spot next to the languages */}
+            <a
+              href="/explorer"
+              title={t("nav.explorer")}
+              className="hidden sm:inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-p01-text-muted hover:text-[#39c5bb] transition-colors"
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-[#39c5bb] opacity-60 animate-ping" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#39c5bb]" />
+              </span>
+              {t("nav.live")}
+            </a>
             <LanguageSwitcher className="hidden sm:flex" />
             <a href="/#download" className="btn-primary text-xs px-4 py-1.5">
               {t("nav.download")}

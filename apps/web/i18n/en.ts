@@ -7,6 +7,66 @@ const en = {
     roadmap: 'Roadmap',
     sdkPreview: 'SDK Preview',
     back: 'Back',
+    explorer: 'Explorer',
+    live: 'Live',
+  },
+
+  // ── Explorer ───────────────────────────────────────────────
+  explorer: {
+    badge: 'NETWORK EXPLORER',
+    statusLive: 'live',
+    statusOffline: 'reconnecting',
+    title: 'The explorer that',
+    titleAccent: "can't see you.",
+    subtitle:
+      'Real, verifiable activity on the shielded network — proven on-chain, unlinkable by design. Every number below is public. None of them reveal who, what, or how much.',
+    stat: {
+      tvl: 'Total Value Shielded',
+      tvlHint: 'across all denomination pools',
+      anonSet: 'Anonymity Set',
+      anonSetHint: 'shielded notes you blend into',
+      pools: 'Active Pools',
+      poolsHint: 'denominations with deposits',
+      circuits: 'STARK Circuits',
+      circuitsHint: 'post-quantum, no trusted setup',
+    },
+    observer: {
+      badge: 'THE OBSERVER TEST',
+      title: 'Same payment. Two chains.',
+      subtitle:
+        'What a transparent chain leaks vs what Protocol 01 reveals. Flip it and see the difference.',
+      toggleShow: 'Reveal as a normal chain',
+      toggleHide: 'Hide like Protocol 01',
+      standardChain: 'Standard chain',
+      protocol01: 'Protocol 01',
+      from: 'From',
+      to: 'To',
+      amount: 'Amount',
+      memo: 'Memo',
+      proof: 'Proof',
+      footnote:
+        'A standard explorer would print the sender, recipient, amount and memo here. We cannot — by design. Only the proof is public.',
+    },
+    anon: {
+      badge: 'ANONYMITY SETS',
+      title: 'The crowd you disappear into',
+      subtitle:
+        'Each pool is a set of identical notes. The bigger the set, the harder you are to single out. You are one of the dots.',
+      of: 'of',
+      empty: 'No deposits yet on devnet. Be the first note in the set.',
+      loading: 'Reading the network…',
+    },
+    circuits: {
+      badge: 'PROOF SYSTEM',
+      title: 'Seven STARK circuits',
+      subtitle:
+        'Hash-based, post-quantum, no trusted setup, no elliptic curves. Each operation is verified on-chain by one of these.',
+    },
+    net: {
+      relayer: 'Relayer',
+      snapshot: 'Snapshot',
+      program: 'Shielded program',
+    },
   },
 
   // ── Demo ───────────────────────────────────────────────────
