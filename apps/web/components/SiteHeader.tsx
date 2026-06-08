@@ -26,7 +26,8 @@ const LINKS: { href: string; i18nKey?: string; label?: string; dim?: boolean; gl
   { href: "/roadmap", i18nKey: "nav.roadmap" },
   // Updates page kept at /updates but removed from the nav (replaced by SDK).
   // { href: "/updates", label: "Updates" },
-  { href: "/explorer", i18nKey: "nav.explorer" },
+  // /explorer is reached via the animated "Live" pulse in the right cluster,
+  // so it intentionally has no separate nav link here.
   { href: "/sdk-demo", label: "SDK" },
   { href: "/founder", label: "Founder", glow: true },
 ];
