@@ -1,50 +1,46 @@
 /**
  * Live, privacy-safe on-chain reader for the explorer.
  *
- * Strategy (robust, no `getProgramAccounts` dependency): we derive the PDA of
- * every *known* denomination pool (token × denomination × candidate seed
- * version) and batch-read them with a single getMultipleAccounts. This works on
- * plain public RPC and survives seed bumps because we try every historical seed
- * and keep whichever account actually exists.
+ * We enumerate the shielded program's DenominatedPool accounts directly via
+ * getProgramAccounts (filtered to the account discriminator) and aggregate
+ * their public, fixed fields: denomination + note_count. note_count is the
+ * anonymity-set size; TVL = note_count × denomination. We never read note
+ * contents, owners, or anything linkable — that's the whole point.
  *
- * Only aggregate counts/sums are returned. We read `note_count` (anonymity set)
- * and multiply by the fixed denomination for TVL — no note contents, no owners,
- * nothing linkable.
+ * Pools from superseded seed versions (v2/v3/v4) can coexist on-chain for the
+ * same (token, denomination); we keep the one with the most notes (the active
+ * pool) rather than summing distinct, unrelated anonymity sets.
  */
+import { createHash } from 'crypto';
 import { Connection, PublicKey } from '@solana/web3.js';
 import type { NetworkMetrics, PoolMetric, Token } from './types';
 import { STARK_CIRCUIT_LIST } from './types';
 
-const ZK_SHIELDED = new PublicKey('2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms');
+// The deployed (declare_id) shielded program on devnet — NOT the Anchor.toml
+// dev alias, which is empty. Verified on-chain: 46 DenominatedPool accounts.
+const ZK_SHIELDED = new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c');
 
-const MINTS: Record<Token, PublicKey> = {
-  SOL: new PublicKey('So11111111111111111111111111111111111111112'),
-  USDC: new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'),
-  USDT: new PublicKey('EJwZgeZrdC8TXTQbQBoL6bfuAnFUQQRb18wrLowMGerG'),
+// Native-SOL pools store token_mint = Pubkey::default (32 zero bytes), NOT the
+// wrapped-SOL mint. Map both forms to SOL.
+const ZERO_MINT = Buffer.alloc(32);
+
+const MINT_INFO: Record<string, { token: Token; decimals: number }> = {
+  '11111111111111111111111111111111': { token: 'SOL', decimals: 9 },
+  So11111111111111111111111111111111111111112: { token: 'SOL', decimals: 9 },
+  '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU': { token: 'USDC', decimals: 6 },
+  EJwZgeZrdC8TXTQbQBoL6bfuAnFUQQRb18wrLowMGerG: { token: 'USDT', decimals: 6 },
 };
 
-const DECIMALS: Record<Token, number> = { SOL: 9, USDC: 6, USDT: 6 };
-
-// Base-unit denominations per token.
-const DENOMS: Record<Token, number[]> = {
-  SOL: [0.1e9, 1e9, 10e9, 100e9],
-  USDC: [10e6, 100e6, 1000e6, 10000e6],
-  USDT: [10e6, 100e6, 1000e6, 10000e6],
+// Standard product denominations, in base units. Non-standard (test) pools with
+// arbitrary amounts are excluded — they aren't part of the denomination product
+// and a 1-note "0.008 SOL" pool only adds noise (and zero anonymity).
+const STD_DENOMS: Record<Token, Set<number>> = {
+  SOL: new Set([0.1e9, 1e9, 10e9, 100e9]),
+  USDC: new Set([10e6, 100e6, 1000e6, 10000e6]),
+  USDT: new Set([10e6, 100e6, 1000e6, 10000e6]),
 };
 
-// Try newest seed first; keep whichever PDA actually exists on-chain.
-const POOL_SEEDS = [
-  'denominated_pool_v4',
-  'denominated_pool_v3',
-  'denominated_pool_v2',
-  'denominated_pool',
-];
-
-function u64le(n: number): Buffer {
-  const b = Buffer.alloc(8);
-  b.writeBigUInt64LE(BigInt(Math.round(n)));
-  return b;
-}
+const DENOM_POOL_DISC = createHash('sha256').update('account:DenominatedPool').digest().subarray(0, 8);
 
 function rpcUrl(): string {
   return (
@@ -56,34 +52,30 @@ function rpcUrl(): string {
   );
 }
 
-interface Candidate {
-  token: Token;
-  denomination: number; // base units
-  pda: PublicKey;
-}
-
-function buildCandidates(): Candidate[] {
-  const out: Candidate[] = [];
-  for (const token of Object.keys(MINTS) as Token[]) {
-    for (const denom of DENOMS[token]) {
-      for (const seed of POOL_SEEDS) {
-        const [pda] = PublicKey.findProgramAddressSync(
-          [Buffer.from(seed), MINTS[token].toBuffer(), u64le(denom)],
-          ZK_SHIELDED,
-        );
-        out.push({ token, denomination: denom, pda });
-      }
-    }
-  }
-  return out;
-}
-
-/** DenominatedPool layout after 8-byte discriminator: 32 authority + 32 mint +
- *  8 denomination + 8 epoch_delay + 32 root + 1 tree_depth + 8 next_leaf_index. */
-function parseNoteCount(data: Buffer): number | null {
+/** DenominatedPool layout after the 8-byte discriminator:
+ *  32 authority + 32 token_mint + 8 denomination + 8 epoch_delay +
+ *  32 root + 1 tree_depth + 8 next_leaf_index. */
+function parsePool(data: Buffer, address: string): PoolMetric | null {
   try {
     if (data.length < 8 + 121 + 8) return null;
-    return Number(data.readBigUInt64LE(8 + 113));
+    if (!data.subarray(0, 8).equals(DENOM_POOL_DISC)) return null;
+    const mintBuf = data.subarray(8 + 32, 8 + 64);
+    const mint = mintBuf.equals(ZERO_MINT)
+      ? '11111111111111111111111111111111'
+      : new PublicKey(mintBuf).toBase58();
+    const info = MINT_INFO[mint];
+    if (!info) return null; // only surface known tokens
+    const denomBase = Number(data.readBigUInt64LE(8 + 64));
+    const noteCount = Number(data.readBigUInt64LE(8 + 113));
+    if (!STD_DENOMS[info.token].has(denomBase)) return null; // standard denoms only
+    const denomination = denomBase / 10 ** info.decimals;
+    return {
+      token: info.token,
+      denomination,
+      noteCount,
+      tvl: noteCount * denomination,
+      address,
+    };
   } catch {
     return null;
   }
@@ -106,36 +98,22 @@ function empty(live: boolean): NetworkMetrics {
 export async function readNetworkMetrics(): Promise<NetworkMetrics> {
   try {
     const conn = new Connection(rpcUrl(), 'confirmed');
-    const candidates = buildCandidates();
 
-    // getMultipleAccounts caps at 100 keys per call; chunk to be safe.
-    const infos: (Awaited<ReturnType<Connection['getMultipleAccountsInfo']>>[number])[] = [];
-    for (let i = 0; i < candidates.length; i += 100) {
-      const chunk = candidates.slice(i, i + 100).map((c) => c.pda);
-      const res = await conn.getMultipleAccountsInfo(chunk);
-      infos.push(...res);
-    }
-
-    // Collapse seed variants: keep the existing account per (token, denomination).
-    const best = new Map<string, PoolMetric>();
-    candidates.forEach((c, i) => {
-      const acc = infos[i];
-      if (!acc?.data) return;
-      const noteCount = parseNoteCount(Buffer.from(acc.data));
-      if (noteCount == null) return;
-      const denomUnits = c.denomination / 10 ** DECIMALS[c.token];
-      const key = `${c.token}:${c.denomination}`;
-      const metric: PoolMetric = {
-        token: c.token,
-        denomination: denomUnits,
-        noteCount,
-        tvl: noteCount * denomUnits,
-        address: c.pda.toBase58(),
-      };
-      const prev = best.get(key);
-      // Prefer the variant with notes; otherwise keep the first that exists.
-      if (!prev || noteCount > prev.noteCount) best.set(key, metric);
+    // Fetch only the bytes we parse (no leaf data) for every program account,
+    // then keep the DenominatedPool ones. dataSlice keeps the payload tiny.
+    const accounts = await conn.getProgramAccounts(ZK_SHIELDED, {
+      dataSlice: { offset: 0, length: 130 },
     });
+
+    // Collapse seed variants: keep the most-populated pool per (token, denom).
+    const best = new Map<string, PoolMetric>();
+    for (const { pubkey, account } of accounts) {
+      const metric = parsePool(Buffer.from(account.data), pubkey.toBase58());
+      if (!metric) continue;
+      const key = `${metric.token}:${metric.denomination}`;
+      const prev = best.get(key);
+      if (!prev || metric.noteCount > prev.noteCount) best.set(key, metric);
+    }
 
     const pools = [...best.values()].filter((p) => p.noteCount > 0);
     const tvlByToken: Record<Token, number> = { SOL: 0, USDC: 0, USDT: 0 };
