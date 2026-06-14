@@ -13,17 +13,17 @@ pub struct ReleaseEscrow<'info> {
         seeds = [CONFIG_SEED],
         bump = config.bump,
     )]
-    pub config: Account<'info, MugenConfig>,
+    pub config: Box<Account<'info, MugenConfig>>,
 
     #[account(
         mut,
         constraint = escrow.status == ESCROW_PAYMENT_CONFIRMED @ MugenError::EscrowNotPaymentConfirmed,
     )]
-    pub escrow: Account<'info, MugenEscrow>,
+    pub escrow: Box<Account<'info, MugenEscrow>>,
 
     /// The parent order — needed to derive the seller role from order_type.
     #[account(constraint = order.key() == escrow.order @ MugenError::UnauthorizedParticipant)]
-    pub order: Account<'info, MugenOrder>,
+    pub order: Box<Account<'info, MugenOrder>>,
 
     /// The escrow vault token account holding the crypto.
     #[account(
@@ -32,7 +32,7 @@ pub struct ReleaseEscrow<'info> {
         bump = escrow.vault_bump,
         token::authority = escrow,
     )]
-    pub escrow_vault: Account<'info, TokenAccount>,
+    pub escrow_vault: Box<Account<'info, TokenAccount>>,
 
     /// The buyer's token account (receives the crypto minus fees).
     /// Must match the token account bound at escrow creation.
@@ -40,23 +40,23 @@ pub struct ReleaseEscrow<'info> {
         mut,
         constraint = buyer_token_account.key() == escrow.buyer_token_account @ MugenError::UnauthorizedBuyer,
     )]
-    pub buyer_token_account: Account<'info, TokenAccount>,
+    pub buyer_token_account: Box<Account<'info, TokenAccount>>,
 
     /// P01 Protocol fee wallet token account.
     #[account(mut)]
-    pub p01_fee_account: Account<'info, TokenAccount>,
+    pub p01_fee_account: Box<Account<'info, TokenAccount>>,
 
     /// Mugen Exchange fee wallet token account.
     #[account(mut)]
-    pub mugen_fee_account: Account<'info, TokenAccount>,
+    pub mugen_fee_account: Box<Account<'info, TokenAccount>>,
 
     /// Treasury fee wallet token account.
     #[account(mut)]
-    pub treasury_fee_account: Account<'info, TokenAccount>,
+    pub treasury_fee_account: Box<Account<'info, TokenAccount>>,
 
     /// Noise fund token account (auto-feeds noise engine wallets).
     #[account(mut)]
-    pub noise_fund_account: Account<'info, TokenAccount>,
+    pub noise_fund_account: Box<Account<'info, TokenAccount>>,
 
     /// Maker reputation PDA (gets updated on completion).
     #[account(
@@ -64,7 +64,7 @@ pub struct ReleaseEscrow<'info> {
         seeds = [REPUTATION_SEED, maker_reputation.commitment.as_ref()],
         bump = maker_reputation.bump,
     )]
-    pub maker_reputation: Account<'info, MugenReputation>,
+    pub maker_reputation: Box<Account<'info, MugenReputation>>,
 
     /// Taker reputation PDA (gets updated on completion).
     #[account(
@@ -72,7 +72,7 @@ pub struct ReleaseEscrow<'info> {
         seeds = [REPUTATION_SEED, taker_reputation.commitment.as_ref()],
         bump = taker_reputation.bump,
     )]
-    pub taker_reputation: Account<'info, MugenReputation>,
+    pub taker_reputation: Box<Account<'info, MugenReputation>>,
 
     pub token_program: Program<'info, Token>,
 }

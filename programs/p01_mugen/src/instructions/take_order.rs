@@ -14,14 +14,14 @@ pub struct TakeOrder<'info> {
         bump = config.bump,
         constraint = config.is_active @ MugenError::ExchangeNotActive,
     )]
-    pub config: Account<'info, MugenConfig>,
+    pub config: Box<Account<'info, MugenConfig>>,
 
     #[account(
         mut,
         constraint = order.status == STATUS_OPEN @ MugenError::OrderNotOpen,
         constraint = order.maker != taker.key() @ MugenError::CannotTakeOwnOrder,
     )]
-    pub order: Account<'info, MugenOrder>,
+    pub order: Box<Account<'info, MugenOrder>>,
 
     #[account(
         init,
@@ -30,7 +30,7 @@ pub struct TakeOrder<'info> {
         seeds = [ESCROW_SEED, order.key().as_ref(), taker.key().as_ref()],
         bump,
     )]
-    pub escrow: Account<'info, MugenEscrow>,
+    pub escrow: Box<Account<'info, MugenEscrow>>,
 
     /// The PDA-owned token account to hold escrowed crypto.
     #[account(
@@ -41,7 +41,7 @@ pub struct TakeOrder<'info> {
         seeds = [VAULT_SEED, escrow.key().as_ref()],
         bump,
     )]
-    pub escrow_vault: Account<'info, TokenAccount>,
+    pub escrow_vault: Box<Account<'info, TokenAccount>>,
 
     /// The seller's token account (source of crypto to escrow).
     /// Bound to the `seller` signer below so a caller cannot pass an unrelated
@@ -51,19 +51,19 @@ pub struct TakeOrder<'info> {
         token::mint = token_mint,
         token::authority = seller,
     )]
-    pub seller_token_account: Account<'info, TokenAccount>,
+    pub seller_token_account: Box<Account<'info, TokenAccount>>,
 
     /// The buyer's token account (destination for `release_escrow` / `resolve_dispute`).
     /// Captured at escrow creation so later finalization cannot be redirected.
     #[account(
         token::mint = token_mint,
     )]
-    pub buyer_token_account: Account<'info, TokenAccount>,
+    pub buyer_token_account: Box<Account<'info, TokenAccount>>,
 
     /// The seller must sign if they are depositing crypto.
     pub seller: Signer<'info>,
 
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: Box<Account<'info, Mint>>,
 
     /// Taker's compliance attestation.
     /// CHECK: validated in handler via raw byte reading.
@@ -74,14 +74,14 @@ pub struct TakeOrder<'info> {
         seeds = [REPUTATION_SEED, maker_reputation.commitment.as_ref()],
         bump = maker_reputation.bump,
     )]
-    pub maker_reputation: Account<'info, MugenReputation>,
+    pub maker_reputation: Box<Account<'info, MugenReputation>>,
 
     /// Taker reputation PDA — snapshotted into escrow at trade time.
     #[account(
         seeds = [REPUTATION_SEED, taker_reputation.commitment.as_ref()],
         bump = taker_reputation.bump,
     )]
-    pub taker_reputation: Account<'info, MugenReputation>,
+    pub taker_reputation: Box<Account<'info, MugenReputation>>,
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,

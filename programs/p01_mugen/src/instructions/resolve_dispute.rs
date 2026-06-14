@@ -13,13 +13,13 @@ pub struct ResolveDispute<'info> {
         bump = config.bump,
         constraint = config.authority == authority.key() @ MugenError::UnauthorizedAuthority,
     )]
-    pub config: Account<'info, MugenConfig>,
+    pub config: Box<Account<'info, MugenConfig>>,
 
     #[account(
         mut,
         constraint = escrow.status == ESCROW_DISPUTED @ MugenError::EscrowNotDisputed,
     )]
-    pub escrow: Account<'info, MugenEscrow>,
+    pub escrow: Box<Account<'info, MugenEscrow>>,
 
     /// The escrow vault holding the crypto.
     #[account(
@@ -28,7 +28,7 @@ pub struct ResolveDispute<'info> {
         bump = escrow.vault_bump,
         token::authority = escrow,
     )]
-    pub escrow_vault: Account<'info, TokenAccount>,
+    pub escrow_vault: Box<Account<'info, TokenAccount>>,
 
     /// Recipient of the resolved funds (buyer or seller depending on outcome).
     /// Must match one of the token accounts bound at escrow creation — prevents
@@ -40,7 +40,7 @@ pub struct ResolveDispute<'info> {
             recipient_token_account.key() == escrow.seller_token_account
         ) @ MugenError::UnauthorizedParticipant,
     )]
-    pub recipient_token_account: Account<'info, TokenAccount>,
+    pub recipient_token_account: Box<Account<'info, TokenAccount>>,
 
     /// Loser reputation PDA (gets dispute count incremented).
     #[account(
@@ -48,7 +48,7 @@ pub struct ResolveDispute<'info> {
         seeds = [REPUTATION_SEED, loser_reputation.commitment.as_ref()],
         bump = loser_reputation.bump,
     )]
-    pub loser_reputation: Account<'info, MugenReputation>,
+    pub loser_reputation: Box<Account<'info, MugenReputation>>,
 
     pub token_program: Program<'info, Token>,
 }
