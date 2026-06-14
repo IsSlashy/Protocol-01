@@ -65,11 +65,6 @@ const TARGETS = {
     docsPdf: resolve(DOCS, 'project-tree.pdf'),
     webPdf: null,
   },
-  'subscribe-tx': {
-    html: resolve(DOCS, 'subscribe-tx-anatomy-2026-05-23.html'),
-    docsPdf: resolve(DOCS, 'subscribe-tx-anatomy-2026-05-23.pdf'),
-    webPdf: null,
-  },
 };
 
 const arg = process.argv[2];

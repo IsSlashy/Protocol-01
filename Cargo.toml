@@ -12,20 +12,10 @@ members = [
     "programs/p01_quantum_vault",
     "programs/p01_quantum_wallet",
     "programs/p01_registry",
-    "programs/p01_bundler",
     "programs/p01_mugen",
     "programs/p01_liquidity",
     "stark",
 ]
-# p01_arcium pulls arcium-primitives → serde_with 3.18 → time 0.3.47 which
-# requires edition2024, incompatible with Solana SBF cargo 1.84. The program
-# is not on the critical path; build it standalone with its own toolchain
-# via `cd programs/p01_arcium && cargo build` if needed.
-exclude = [
-    "programs/p01_arcium",
-    "programs/p01_arcium/encrypted-ixs",
-]
-
 resolver = "2"
 
 [workspace.package]
