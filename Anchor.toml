@@ -6,6 +6,13 @@ solana_version = "3.1.9"
 resolution = true
 skip-lint = false
 
+# Scope `anchor build` to skip p01_arcium. Anchor scans programs/* by default;
+# p01_arcium needs Arcium's .arcis artifacts (produced by `arcium build`, not in
+# CI) so a bare `anchor build` fails to expand its macros. It is already excluded
+# from the Cargo workspace; this mirrors that for Anchor's program discovery.
+[workspace]
+exclude = ["programs/p01_arcium", "programs/p01_arcium/encrypted-ixs"]
+
 [programs.devnet]
 p01_fee_splitter = "UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM"
 p01_quantum_vault = "9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv"
