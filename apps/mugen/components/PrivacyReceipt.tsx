@@ -442,8 +442,8 @@ export default function PrivacyReceipt({
       prominent: true,
       description:
         operation === 'submit'
-          ? 'Plaintext crypto amount, fiat amount, and payment methods were encrypted in your browser before hitting the MPC network.'
-          : 'Your desired amount and max fiat were matched against encrypted orders inside MPC — neither side learned the other’s terms.',
+          ? 'Plaintext crypto amount, fiat amount, and payment methods were encrypted in your browser before being submitted. Target: matching runs inside MPC. Today (MVP) a trusted server-side index holds the terms in the clear to perform the match.'
+          : 'Your desired amount and max fiat were matched against submitted orders. Target: the match runs blind inside MPC. Today (MVP) the match runs server-side, so a trusted server transiently sees both sides’ terms.',
       detail: (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
           {computationOffset && (
@@ -493,7 +493,7 @@ export default function PrivacyReceipt({
       accent: '#93c5fd',
       icon: <Network size={14} aria-hidden="true" />,
       description:
-        'A 2-of-3 distributed signer network approved the MPC transaction before the relayer signed it. No single node can front-run or censor.',
+        'A 2-of-3 (MVP) signer quorum approved the MPC transaction before the relayer signed it. MVP uses independent keypairs, not yet aggregated FROST-Ed25519. A single signer cannot unilaterally front-run or censor.',
       detail: threshold ? (
         <div
           style={{
@@ -630,10 +630,10 @@ export default function PrivacyReceipt({
 
   const subheading =
     operation === 'submit'
-      ? 'Plaintext terms never left your browser. Here is the privacy receipt:'
+      ? 'Terms were encrypted in your browser before submission. MVP note: a trusted server-side index still holds them in the clear to run the match. Here is the privacy receipt:'
       : matched
-        ? 'A match was found inside MPC. Neither side learned the other party’s terms.'
-        : 'No compatible encrypted order existed. Nothing was revealed about your search parameters.';
+        ? 'A compatible order was matched. MVP note: matching runs server-side today, so a trusted server transiently sees both sides’ terms.'
+        : 'No compatible order existed. Your search parameters were not surfaced to a counterparty.';
 
   return (
     <section
@@ -815,7 +815,7 @@ export default function PrivacyReceipt({
                       }}
                     >
                       <CheckCircle2 size={9} aria-hidden="true" />
-                      On-chain proof
+                      MPC submit tx (queued)
                     </span>
                   )}
                 </div>
@@ -865,15 +865,17 @@ export default function PrivacyReceipt({
             lineHeight: 1.5,
           }}
         >
-          To defeat this transaction, an attacker would need to simultaneously
-          compromise <strong style={{ color: '#ffffff' }}>Arcium MPC</strong>{' '}
+          Target architecture: defeating a trade requires compromising{' '}
+          <strong style={{ color: '#ffffff' }}>Arcium MPC</strong>{' '}
           (multi-party computation),{' '}
           <strong style={{ color: '#ffffff' }}>
-            2 of 3 geodistributed FROST signers
+            2 of 3 FROST signers
           </strong>
-          , AND break{' '}
+          , AND breaking{' '}
           <strong style={{ color: '#ffffff' }}>post-quantum STARK commitments</strong>.
-          Each layer failing alone leaks nothing.
+          MVP status today: the FROST quorum uses independent keypairs (not yet
+          aggregated FROST-Ed25519), and trade terms transit a trusted server-side
+          index between submit and match, so that server currently sees them.
         </p>
       </div>
 

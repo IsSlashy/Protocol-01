@@ -373,7 +373,7 @@ export default function ExchangePage() {
                         marginTop: '0.15rem',
                       }}
                     >
-                      Encrypted orderbook + MPC matching + threshold signing. Nobody sees your terms.
+                      Terms are encrypted in your browser before they leave. MVP note: a server-side index still holds them in the clear between submit and match.
                     </div>
                   </div>
                 </div>

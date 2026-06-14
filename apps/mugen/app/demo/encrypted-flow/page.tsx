@@ -183,7 +183,7 @@ export default function EncryptedFlowDemoPage() {
                     marginBottom: '0.3rem',
                   }}
                 >
-                  L8 ⟷ L9 · Wired
+                  L8 ⟷ L9 · In progress
                 </div>
                 <p
                   style={{
@@ -364,10 +364,11 @@ export default function EncryptedFlowDemoPage() {
                   margin: '0 0 0.9rem 0',
                 }}
               >
-                Your encrypted offer is sent to the Arcium MPC network. The matching circuit runs
-                over encrypted data — no node, including ours, sees your amounts or payment
-                methods until a match is confirmed. When a match happens, only the maker and taker
-                learn the details, via their nonces.
+                Your offer is encrypted client-side before it leaves your browser. The Arcium MPC
+                matching circuits are built and deployed on devnet, but on-chain blind matching is
+                still in progress: today matching runs through a server-side index that briefly
+                holds the terms in the clear. Once the on-chain match is wired, no node (including
+                ours) would see your amounts or payment methods until a match is confirmed.
               </p>
               <Link
                 href="/how-it-works#layer-8"

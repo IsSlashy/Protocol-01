@@ -56,8 +56,8 @@ export default function CompliancePage() {
       { at: 75, msg: 'Building proof (alt_bn128 pairing)...' },
       { at: 85, msg: 'Proof generated — pi_a, pi_b, pi_c computed' },
       { at: 92, msg: 'Verifying proof locally...' },
-      { at: 96, msg: 'Submitting attestation to Solana devnet...' },
-      { at: 100, msg: 'ComplianceAttestation PDA created — tx: 4vdE...V7mM' },
+      { at: 96, msg: 'Building attestation payload (simulated, no on-chain tx)...' },
+      { at: 100, msg: 'Demo complete (simulated, no on-chain tx submitted)' },
     ];
 
     for (const step of steps) {
@@ -93,9 +93,21 @@ export default function CompliancePage() {
               ZK Compliance
             </h1>
             <p style={{ color: '#8888aa', maxWidth: '32rem', margin: '0 auto', fontSize: '0.9rem', lineHeight: 1.7 }}>
-              Prove you&apos;re not sanctioned — without revealing who you are.
+              Prove you&apos;re not sanctioned, without revealing who you are.
               One proof, valid 90 days, enables unlimited trading.
             </p>
+            <div style={{ marginTop: '0.9rem' }}>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                padding: '0.25rem 0.7rem', borderRadius: '999px',
+                background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)',
+                color: '#fcd34d', fontFamily: "'JetBrains Mono', monospace",
+                fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.12em',
+              }}>
+                <AlertCircle size={11} />
+                Simulated demo (no on-chain tx)
+              </span>
+            </div>
           </div>
 
           {/* Main card */}
@@ -159,7 +171,7 @@ export default function CompliancePage() {
                   }}
                 >
                   {logs.map((log, i) => (
-                    <div key={i} style={{ color: log.includes('✓') ? '#22c55e' : log.includes('tx:') ? '#3b82f6' : '#8888aa' }}>
+                    <div key={i} style={{ color: log.includes('✓') ? '#22c55e' : '#8888aa' }}>
                       {log}
                     </div>
                   ))}
@@ -184,15 +196,15 @@ export default function CompliancePage() {
                   <CheckCircle size={28} style={{ color: '#22c55e' }} />
                 </div>
                 <h3 style={{ fontFamily: "'Orbitron',sans-serif", fontSize: '1.1rem', fontWeight: 700, color: '#22c55e', marginBottom: '0.5rem' }}>
-                  Attestation Active
+                  Attestation Active (Demo)
                 </h3>
                 <p style={{ color: '#8888aa', fontSize: '0.8rem', marginBottom: '1.5rem' }}>
-                  ZK compliance proof verified and stored on-chain.
+                  ZK proof simulated locally. No on-chain attestation tx was submitted in this demo.
                 </p>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem', maxWidth: '20rem', margin: '0 auto' }}>
                   {[
-                    { label: 'Status', value: 'Verified', color: '#22c55e' },
+                    { label: 'Status', value: 'Simulated', color: '#fcd34d' },
                     { label: 'Type', value: 'Innocence', color: '#8b5cf6' },
                     { label: 'Issued', value: new Date().toLocaleDateString(), color: '#f0f0ff' },
                     { label: 'Expires', value: attestationExpiry.toLocaleDateString(), color: '#f0f0ff' },

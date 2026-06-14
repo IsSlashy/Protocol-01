@@ -303,6 +303,7 @@ export async function POST(request: NextRequest) {
       seller: relayer.publicKey,
       configPDA,
       escrowPDA,
+      orderPDA: escrow.order,
       vaultPDA: escrow.vault,
       buyerTokenAccount: buyerATA,
       p01FeeAccount: p01ATA,

@@ -688,12 +688,12 @@ export default function HowItWorksPage() {
                     margin: 0,
                   }}
                 >
-                  Every private trade composes four live layers into a single cryptographic receipt:{' '}
+                  Every private trade composes several privacy layers into a single cryptographic receipt:{' '}
                   <strong style={{ color: '#3b82f6' }}>L1</strong> (natural-variance fiat denomination),{' '}
-                  <strong style={{ color: '#8b5cf6' }}>L8</strong> (Arcium MPC blind matching — three circuits on
-                  devnet),{' '}
-                  <strong style={{ color: '#22c55e' }}>L9</strong> (FROST 3-of-3 threshold approval gating every MPC
-                  submit), and <strong style={{ color: '#a78bfa' }}>L11</strong> (STARK + ML-KEM-768 post-quantum
+                  <strong style={{ color: '#8b5cf6' }}>L8</strong> (Arcium MPC blind matching: circuits deployed on
+                  devnet, on-chain matching in progress),{' '}
+                  <strong style={{ color: '#22c55e' }}>L9</strong> (FROST 2-of-3 (MVP) threshold approval gating every
+                  MPC submit), and <strong style={{ color: '#a78bfa' }}>L11</strong> (STARK + ML-KEM-768 post-quantum
                   primitives). The match is committed on-chain as a{' '}
                   <code style={{ color: '#eab308', fontFamily: "'JetBrains Mono',monospace" }}>MugenReputation</code>{' '}
                   PDA — a verifiable, auditable receipt of the trade, without ever revealing its contents.

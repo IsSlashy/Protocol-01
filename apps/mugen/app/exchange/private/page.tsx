@@ -122,7 +122,7 @@ export default function PrivateExchangePage() {
                   color: '#8888aa',
                 }}
               >
-                Fully encrypted orderbook — plaintext never leaves your browser
+                Client-side encrypted orders (MVP: a trusted server index holds terms until match)
               </span>
             </div>
             <h1
@@ -150,9 +150,9 @@ export default function PrivateExchangePage() {
                 lineHeight: 1.55,
               }}
             >
-              Your terms stay encrypted until a match is found. Powered by
-              <strong style={{ color: '#c4b5fd' }}> Arcium MPC</strong> +
-              <strong style={{ color: '#93c5fd' }}> FROST quorum</strong> +
+              Your terms are encrypted in your browser before submission. Built on
+              <strong style={{ color: '#c4b5fd' }}> Arcium MPC</strong> (circuits deployed on devnet, on-chain blind matching in progress) +
+              <strong style={{ color: '#93c5fd' }}> FROST 2-of-3 quorum (MVP)</strong> +
               <strong style={{ color: '#60a5fa' }}> STARK post-quantum</strong>.
             </p>
 
@@ -269,8 +269,8 @@ export default function PrivateExchangePage() {
                 }}
               >
                 {tab === 'create'
-                  ? 'Amounts and payment methods are encrypted locally and submitted to the Arcium MPC network. The relayer signature is gated behind a 2-of-3 FROST quorum.'
-                  : 'Your desired amount and max fiat are matched against encrypted orders inside MPC. If nothing compatible exists, nothing is revealed.'}
+                  ? 'Amounts and payment methods are encrypted locally before submission, and the relayer signature is gated behind a 2-of-3 FROST quorum (MVP: independent keypairs). MVP: a trusted server-side index holds the terms in the clear to run the match; on-chain blind matching is in progress.'
+                  : 'Your desired amount and max fiat are matched against submitted orders. Target: the match runs blind inside MPC. Today (MVP) the match runs server-side, so a trusted server transiently sees both sides’ terms.'}
               </p>
             </div>
 
@@ -465,7 +465,7 @@ export default function PrivateExchangePage() {
               href="/exchange"
               style={{ color: '#93c5fd', textDecoration: 'none' }}
             >
-              standard exchange →
+              standard exchange.
             </a>
           </p>
         </div>

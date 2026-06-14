@@ -83,14 +83,14 @@ const LAYERS: LayerSpec[] = [
   {
     id: 'L8',
     title: 'Arcium MPC',
-    desc: 'Encrypted orderbook + blind matching, gated by a distributed FROST quorum (L9). Three circuits live on devnet.',
+    desc: 'Encrypted maker offers, gated by a FROST quorum (L9). MPC circuits built and deployed on devnet. Today matching still runs through a server-side index; on-chain blind matching is in progress.',
     icon: Brain,
-    status: 'live',
+    status: 'soon',
   },
   {
     id: 'L9',
     title: 'FROST Relayers',
-    desc: '3-of-3 geodistributed threshold signing gates every MPC submission. No single node can front-run or censor.',
+    desc: '2-of-3 (MVP) signer quorum gates every MPC submission. MVP uses independent keypairs, not yet aggregated FROST-Ed25519. A single signer cannot unilaterally front-run or censor.',
     icon: Users,
     status: 'live',
   },

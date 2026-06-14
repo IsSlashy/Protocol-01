@@ -409,7 +409,7 @@ export default function ThresholdRelayerDemoPage() {
               letterSpacing: '0.02em',
             }}
           >
-            Demo: Threshold Relayer (FROST 3-of-5)
+            Demo: Threshold Relayer (FROST 2-of-3, MVP)
           </h1>
           <p
             style={{

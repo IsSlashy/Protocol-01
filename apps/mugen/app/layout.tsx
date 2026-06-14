@@ -10,7 +10,7 @@ const jetbrains = JetBrains_Mono({ subsets: ['latin'], variable: '--font-jetbrai
 const SITE_URL = 'https://mugen-exchange.vercel.app';
 const SITE_TITLE = 'Mugen Exchange | 無限 — No KYC, ZK-Powered P2P Exchange';
 const SITE_DESCRIPTION =
-  'Fiat-to-crypto exchange with zero-knowledge compliance. No KYC required. Untraceable stealth settlement. Quantum-proof infrastructure.';
+  'Fiat-to-crypto exchange with zero-knowledge compliance. No KYC required. Post-quantum (ML-KEM-768) key exchange makes on-chain linkage hard. On-chain escrow settlement on Solana.';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

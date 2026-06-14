@@ -285,6 +285,24 @@ export default function LandingPage() {
                   How it works
                   <ArrowRight size={16} />
                 </Link>
+                <Link
+                  href="/demo"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                    padding: '0.9rem 2rem',
+                    background: 'rgba(255,255,255,0.03)',
+                    backdropFilter: 'blur(12px)',
+                    border: '1px solid rgba(59,130,246,0.25)',
+                    color: '#60a5fa', fontFamily: "'Orbitron',sans-serif", fontWeight: 600,
+                    fontSize: '0.85rem', borderRadius: '12px',
+                    textTransform: 'uppercase', letterSpacing: '0.05em',
+                    textDecoration: 'none',
+                    transition: 'all 0.3s',
+                  }}
+                >
+                  <ExternalLink size={14} />
+                  See a real on-chain trade
+                </Link>
                 <a
                   href="https://protocol-01.dev"
                   target="_blank"
@@ -355,7 +373,7 @@ export default function LandingPage() {
                 { step: '01', title: 'P2P Matching', desc: 'The system matches buyers and sellers automatically. No middleman. No account needed.', color: '#3b82f6', icon: Users },
                 { step: '02', title: 'On-Chain Escrow', desc: 'Crypto is locked in a Solana smart contract. Neither party — nor Mugen — can touch it.', color: '#8b5cf6', icon: Lock },
                 { step: '03', title: 'Direct Fiat', desc: 'Fiat is sent directly between users via standard banking (Revolut, SEPA, Wise). Mugen never handles money.', color: '#60a5fa', icon: TrendingUp },
-                { step: '04', title: 'Stealth Delivery', desc: 'Crypto arrives at a one-time stealth address. Untraceable, even with quantum computers.', color: '#7c3aed', icon: Zap },
+                { step: '04', title: 'Stealth Delivery', desc: 'Crypto arrives at a one-time stealth address. Post-quantum (ML-KEM-768) key exchange makes on-chain linkage hard.', color: '#7c3aed', icon: Zap },
               ].map((item, i) => (
                 <GlassCard key={i} glow={i % 2 === 0 ? 'blue' : 'violet'} style={{ padding: '2rem 1.5rem', textAlign: 'center' }}>
                   <div style={{

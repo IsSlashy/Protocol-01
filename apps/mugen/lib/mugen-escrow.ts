@@ -328,12 +328,15 @@ export interface BuildTakeOrderArgs {
   taker: PublicKey;
   seller: PublicKey;
   sellerTokenAccount: PublicKey;
+  buyerTokenAccount: PublicKey;
   orderPDA: PublicKey;
   escrowPDA: PublicKey;
   vaultPDA: PublicKey;
   configPDA: PublicKey;
   configAuthority: PublicKey;
   tokenMint: PublicKey;
+  makerReputationPDA: PublicKey;
+  takerReputationPDA: PublicKey;
   stealthRecipient: [number, number] | null; // Option<[u8;32]>
   paymentMethod: number;
 }
@@ -360,19 +363,22 @@ export function buildTakeOrderIx(
 
   const data = Buffer.concat([disc, stealthBuf, u16LE(args.paymentMethod)]);
 
-  // Account order MUST match TakeOrder<'info> in take_order.rs:
-  //   0. taker (signer, mut)
-  //   1. config
-  //   2. order (mut)
-  //   3. escrow (mut, init)
-  //   4. escrow_vault (mut, init)  — PDA token account
-  //   5. seller_token_account (mut)
-  //   6. seller (signer)
-  //   7. token_mint
-  //   8. taker_attestation       ← bypass = config.authority
-  //   9. token_program
-  //   10. system_program
-  //   11. rent sysvar
+  // Account order MUST match TakeOrder<'info> in take_order.rs (15 accounts):
+  //   0.  taker (signer, mut)
+  //   1.  config
+  //   2.  order (mut)
+  //   3.  escrow (mut, init)
+  //   4.  escrow_vault (mut, init)  — PDA token account
+  //   5.  seller_token_account (mut)
+  //   6.  buyer_token_account
+  //   7.  seller (signer)
+  //   8.  token_mint
+  //   9.  taker_attestation       ← bypass = config.authority
+  //   10. maker_reputation
+  //   11. taker_reputation
+  //   12. token_program
+  //   13. system_program
+  //   14. rent sysvar
   const keys = [
     { pubkey: args.taker, isSigner: true, isWritable: true },
     { pubkey: args.configPDA, isSigner: false, isWritable: false },
@@ -380,9 +386,12 @@ export function buildTakeOrderIx(
     { pubkey: args.escrowPDA, isSigner: false, isWritable: true },
     { pubkey: args.vaultPDA, isSigner: false, isWritable: true },
     { pubkey: args.sellerTokenAccount, isSigner: false, isWritable: true },
+    { pubkey: args.buyerTokenAccount, isSigner: false, isWritable: false },
     { pubkey: args.seller, isSigner: true, isWritable: false },
     { pubkey: args.tokenMint, isSigner: false, isWritable: false },
     { pubkey: args.configAuthority, isSigner: false, isWritable: false },
+    { pubkey: args.makerReputationPDA, isSigner: false, isWritable: false },
+    { pubkey: args.takerReputationPDA, isSigner: false, isWritable: false },
     { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
@@ -431,12 +440,28 @@ export function deriveReputationPDA(
   );
 }
 
+/**
+ * Reputation commitment = sha256("mugen:<role>-rep|" + signer.pubkey.base58).
+ *
+ * MUST stay byte-identical across the claim-match (setup) and release-escrow
+ * routes and the run-devnet-trade.mjs script, since the reputation PDA is
+ * seeded by this commitment and both take_order and release_escrow re-derive
+ * the same PDA from it.
+ */
+export function reputationCommitment(
+  role: 'maker' | 'taker',
+  signer: PublicKey,
+): Uint8Array {
+  return sha256(utf8ToBytes(`mugen:${role}-rep|${signer.toBase58()}`));
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Account decoders
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface MugenEscrowState {
   status: number;
+  order: PublicKey;
   maker: PublicKey;
   taker: PublicKey;
   cryptoAmount: bigint;
@@ -469,7 +494,8 @@ export async function readMugenEscrow(
   if (data.length < 312) return null;
 
   let offset = 8; // skip Anchor discriminator
-  /* order */ offset += 32;
+  const order = new PublicKey(data.subarray(offset, offset + 32));
+  offset += 32;
   const maker = new PublicKey(data.subarray(offset, offset + 32));
   offset += 32;
   const taker = new PublicKey(data.subarray(offset, offset + 32));
@@ -499,6 +525,7 @@ export async function readMugenEscrow(
 
   return {
     status,
+    order,
     maker,
     taker,
     cryptoAmount,
@@ -624,19 +651,20 @@ export function buildDisputeEscrowIx(
 // ═══════════════════════════════════════════════════════════════════════════
 // release_escrow instruction builder
 //
-// ReleaseEscrow<'info> (release_escrow.rs):
-//   0. seller (signer)
-//   1. config (mut)
-//   2. escrow (mut)
-//   3. escrow_vault (mut)
-//   4. buyer_token_account (mut)
-//   5. p01_fee_account (mut)
-//   6. mugen_fee_account (mut)
-//   7. treasury_fee_account (mut)
-//   8. noise_fund_account (mut)
-//   9. maker_reputation (mut)
-//   10. taker_reputation (mut)
-//   11. token_program
+// ReleaseEscrow<'info> (release_escrow.rs) — 13 accounts:
+//   0.  seller (signer)
+//   1.  config (mut)
+//   2.  escrow (mut)
+//   3.  order               ← parent order; constraint order.key() == escrow.order
+//   4.  escrow_vault (mut)
+//   5.  buyer_token_account (mut)
+//   6.  p01_fee_account (mut)
+//   7.  mugen_fee_account (mut)
+//   8.  treasury_fee_account (mut)
+//   9.  noise_fund_account (mut)
+//   10. maker_reputation (mut)
+//   11. taker_reputation (mut)
+//   12. token_program
 // Args: none.
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -644,6 +672,7 @@ export interface BuildReleaseEscrowArgs {
   seller: PublicKey;
   configPDA: PublicKey;
   escrowPDA: PublicKey;
+  orderPDA: PublicKey;
   vaultPDA: PublicKey;
   buyerTokenAccount: PublicKey;
   p01FeeAccount: PublicKey;
@@ -664,6 +693,7 @@ export function buildReleaseEscrowIx(
       { pubkey: args.seller, isSigner: true, isWritable: false },
       { pubkey: args.configPDA, isSigner: false, isWritable: true },
       { pubkey: args.escrowPDA, isSigner: false, isWritable: true },
+      { pubkey: args.orderPDA, isSigner: false, isWritable: false },
       { pubkey: args.vaultPDA, isSigner: false, isWritable: true },
       { pubkey: args.buyerTokenAccount, isSigner: false, isWritable: true },
       { pubkey: args.p01FeeAccount, isSigner: false, isWritable: true },

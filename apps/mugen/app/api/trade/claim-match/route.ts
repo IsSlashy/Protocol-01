@@ -28,15 +28,19 @@ import {
   deriveConfigPDA,
   deriveEscrowPDA,
   deriveOrderPDA,
+  deriveReputationPDA,
   deriveVaultPDA,
   ensureRelayerWrappedSol,
   getTakerKeypair,
   buildCreateOrderIx,
+  buildInitReputationIx,
   buildTakeOrderIx,
   makerNonceToOrderNonce,
+  reputationCommitment,
 } from '@/lib/mugen-escrow';
 import {
   getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountInstruction,
 } from '@solana/spl-token';
 import type { FiatCurrency } from '@/lib/mpc-types';
 
@@ -201,6 +205,73 @@ async function tryCreateTokenEscrow(
     throw new Error('relayer wSOL ATA mismatch');
   }
 
+  // 4b. Ensure the accounts the DEPLOYED take_order requires already exist
+  //     (the program validates them, it does NOT init them):
+  //       - taker's wSOL ATA (buyer_token_account, owner = taker)
+  //       - maker_reputation PDA (commitment = sha256("mugen:maker-rep|"+relayer))
+  //       - taker_reputation PDA (commitment = sha256("mugen:taker-rep|"+taker))
+  //     Mirrors run-devnet-trade.mjs's setup step. Rent paid by the relayer.
+  const buyerTokenAccount = getAssociatedTokenAddressSync(
+    WSOL_MINT,
+    takerKp.publicKey,
+    false,
+  );
+  const makerCommitment = reputationCommitment('maker', relayer.publicKey);
+  const takerCommitment = reputationCommitment('taker', takerKp.publicKey);
+  const [makerReputationPDA] = deriveReputationPDA(makerCommitment);
+  const [takerReputationPDA] = deriveReputationPDA(takerCommitment);
+
+  const [buyerAtaInfo, makerRepInfo, takerRepInfo] =
+    await connection.getMultipleAccountsInfo(
+      [buyerTokenAccount, makerReputationPDA, takerReputationPDA],
+      'confirmed',
+    );
+
+  const setupIxs: TransactionInstruction[] = [];
+  if (!buyerAtaInfo) {
+    setupIxs.push(
+      createAssociatedTokenAccountInstruction(
+        relayer.publicKey, // payer
+        buyerTokenAccount,
+        takerKp.publicKey, // owner
+        WSOL_MINT,
+      ),
+    );
+  }
+  if (!makerRepInfo) {
+    setupIxs.push(
+      buildInitReputationIx({
+        payer: relayer.publicKey,
+        reputationPDA: makerReputationPDA,
+        commitment: makerCommitment,
+      }),
+    );
+  }
+  if (!takerRepInfo) {
+    setupIxs.push(
+      buildInitReputationIx({
+        payer: relayer.publicKey,
+        reputationPDA: takerReputationPDA,
+        commitment: takerCommitment,
+      }),
+    );
+  }
+
+  if (setupIxs.length > 0) {
+    const setupTx = new Transaction();
+    for (const ix of setupIxs) setupTx.add(ix);
+    setupTx.feePayer = relayer.publicKey;
+    const { blockhash: setupBh } =
+      await connection.getLatestBlockhash('confirmed');
+    setupTx.recentBlockhash = setupBh;
+    setupTx.sign(relayer);
+    const setupSig = await connection.sendRawTransaction(setupTx.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+    await connection.confirmTransaction(setupSig, 'confirmed');
+  }
+
   // 5. Build transaction:
   //    - create_order (only if order PDA doesn't exist)
   //    - take_order
@@ -231,12 +302,15 @@ async function tryCreateTokenEscrow(
       taker: takerKp.publicKey,
       seller: relayer.publicKey,
       sellerTokenAccount,
+      buyerTokenAccount,
       orderPDA,
       escrowPDA,
       vaultPDA,
       configPDA,
       configAuthority,
       tokenMint: WSOL_MINT,
+      makerReputationPDA,
+      takerReputationPDA,
       stealthRecipient: null,
       paymentMethod: entry.paymentMethods,
     }),
