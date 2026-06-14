@@ -65,21 +65,6 @@ const TARGETS = {
     docsPdf: resolve(DOCS, 'project-tree.pdf'),
     webPdf: null,
   },
-  plugstart: {
-    html: resolve(DOCS, 'pitch-deck-plugstart.html'),
-    docsPdf: resolve(DOCS, 'pitch-deck-plugstart.pdf'),
-    webPdf: null,
-  },
-  'plugstart-finance': {
-    html: resolve(DOCS, 'plan-financier-plugstart.html'),
-    docsPdf: resolve(DOCS, 'plan-financier-plugstart.pdf'),
-    webPdf: null,
-  },
-  onboarding: {
-    html: resolve(DOCS, 'onboarding-cryptography.html'),
-    docsPdf: resolve(DOCS, 'onboarding-cryptography.pdf'),
-    webPdf: null,
-  },
   'subscribe-tx': {
     html: resolve(DOCS, 'subscribe-tx-anatomy-2026-05-23.html'),
     docsPdf: resolve(DOCS, 'subscribe-tx-anatomy-2026-05-23.pdf'),
