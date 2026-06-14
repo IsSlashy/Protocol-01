@@ -1,3 +1,6 @@
+[workspace]
+members = ["encrypted-ixs"]
+
 [package]
 name = "p01-arcium"
 version = "0.1.0"
