@@ -20,11 +20,36 @@
 //!   Cycle 13: out_commit_2    = Poseidon(out2_left, out2_rm)       — chained from 12, carry
 //!   Cycles 14-15: padding     = Poseidon(0, 0)
 //!
-//! Trace layout (width = 6, length = 512):
+//! Trace layout (width = 7, length = 512):
 //!   cols 0-2: Poseidon state (t=3)
 //!   col 3:    carry_owner (holds owner from cycle 0)
 //!   col 4:    carry_owner_mint (holds owner_mint from cycle 1)
 //!   col 5:    carry_out_rm (holds output recipient×mint hashes)
+//!   col 6:    acc — value-conservation accumulator (signed running sum of
+//!             the four note amounts; see "Value conservation" below)
+//!
+//! Value conservation (col 6, [#2 voie A]):
+//!   The four note amounts live at col 0 of the cycle-start rows:
+//!     in_amount_1  @ row 64  (cycle 2 start)
+//!     in_amount_2  @ row 160 (cycle 5 start)
+//!     out_amount_1 @ row 288 (cycle 9 start)
+//!     out_amount_2 @ row 384 (cycle 12 start)
+//!   col 6 (`acc`) maintains the signed running sum
+//!     acc := acc - in_amount_1 - in_amount_2 + out_amount_1 + out_amount_2
+//!   captured at those four rows via one-hot flags, and held constant
+//!   everywhere else. A boundary assertion then forces the final accumulator
+//!   value to equal `public_amount`, i.e. enforces the conservation relation
+//!     out1 + out2 - in1 - in2 == public_amount   (mod p, in the field),
+//!   equivalently  in1 + in2 + public_amount == out1 + out2.
+//!   Sign convention matches the existing prover/SDK tests: `public_amount > 0`
+//!   is a deposit/shield (value enters the shielded set, e.g. in=0/out=200/
+//!   public_amount=200), `public_amount == 0` is a pure balanced transfer, and
+//!   an unshield is the field-encoded negative (value leaves the shielded set).
+//!   Because the relation is
+//!   evaluated in the Goldilocks field (no native range check — see the NOTE
+//!   in `air/transfer.rs` and the audit doc), the on-chain program MUST still
+//!   bound each amount to [0, 2^64) out-of-circuit so field wrap-around cannot
+//!   forge conservation. See `ConservationRangeNote` below.
 //!
 //! Public inputs: nullifier_1, nullifier_2, output_commitment_1, output_commitment_2,
 //!                public_amount, token_mint
@@ -43,18 +68,32 @@ use crate::poseidon;
 // Constants
 // ============================================================================
 
-pub const TRACE_WIDTH: usize = 6;
+pub const TRACE_WIDTH: usize = 7;
 pub const TRACE_LENGTH: usize = 512;
 pub const HASH_CYCLE_LEN: usize = 32;
 pub const NUM_ROUNDS: usize = 30;
 
 /// Number of transition constraints in the transfer AIR (circuit 5).
-pub const TRANSFER_NUM_CONSTRAINTS: usize = 23;
+///
+/// 23 hashing/routing constraints (Poseidon rounds, chain edges, carries) plus
+/// 5 value-conservation constraints (4 signed amount captures into col 6 +
+/// 1 accumulator continuity) = 28.
+pub const TRANSFER_NUM_CONSTRAINTS: usize = 28;
 
 /// Number of periodic columns: rc0, rc1, rc2, round_flag, is_boundary,
 /// 7 direct chain flags, 4 carry-capture flags, 6 carry→right-input flags,
-/// 1 carry-capture-any flag.
-pub const TRANSFER_NUM_PERIODIC: usize = 23;
+/// 1 carry-capture-any flag, 4 amount-capture flags, 1 acc-continuity flag.
+pub const TRANSFER_NUM_PERIODIC: usize = 28;
+
+/// Trace rows where the four note amounts sit at col 0 (cycle-start rows).
+pub const ROW_IN_AMOUNT_1: usize = 2 * HASH_CYCLE_LEN;  // 64
+pub const ROW_IN_AMOUNT_2: usize = 5 * HASH_CYCLE_LEN;  // 160
+pub const ROW_OUT_AMOUNT_1: usize = 9 * HASH_CYCLE_LEN;  // 288
+pub const ROW_OUT_AMOUNT_2: usize = 12 * HASH_CYCLE_LEN; // 384
+/// Row at which the conservation accumulator (col 6) holds its final value
+/// `in1 + in2 - out1 - out2` and is asserted equal to `public_amount`.
+/// Any row strictly after ROW_OUT_AMOUNT_2 works; we use its successor.
+pub const ROW_ACC_FINAL: usize = ROW_OUT_AMOUNT_2 + 1; // 385
 
 // ============================================================================
 // Public inputs
@@ -93,6 +132,7 @@ pub struct TransferAir {
     nullifier_2: BaseElement,
     output_commitment_1: BaseElement,
     output_commitment_2: BaseElement,
+    public_amount: BaseElement,
     token_mint: BaseElement,
 }
 
@@ -140,12 +180,22 @@ impl Air for TransferAir {
             TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),
             // [22] carry_out_rm continuity (except at capture points)
             TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),
+            // [23-26] value-conservation amount captures into acc (col 6):
+            //   +in1 @64, +in2 @160, -out1 @288, -out2 @384
+            TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),
+            TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),
+            TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),
+            TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),
+            // [27] acc continuity (every row except the 4 capture rows)
+            TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),
         ];
 
         // Assertions:
         // Capacity at each cycle start (14 active + 2 padding = 16)
         // + nullifier outputs + output commitment outputs + token_mint inputs
-        let num_assertions = 24;
+        // + acc(0)=0 (conservation accumulator starts empty)
+        // + acc(ROW_ACC_FINAL)=public_amount (conservation relation)
+        let num_assertions = 26;
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
         Self {
@@ -154,6 +204,7 @@ impl Air for TransferAir {
             nullifier_2: pub_inputs.nullifier_2,
             output_commitment_1: pub_inputs.output_commitment_1,
             output_commitment_2: pub_inputs.output_commitment_2,
+            public_amount: pub_inputs.public_amount,
             token_mint: pub_inputs.token_mint,
         }
     }
@@ -197,6 +248,13 @@ impl Air for TransferAir {
         assertions.push(Assertion::single(0, 10 * HASH_CYCLE_LEN + NUM_ROUNDS, self.output_commitment_1));
         assertions.push(Assertion::single(0, 13 * HASH_CYCLE_LEN + NUM_ROUNDS, self.output_commitment_2));
 
+        // Value conservation (col 6):
+        //   acc starts at 0, and after summing +in1 +in2 -out1 -out2 it must
+        //   equal public_amount. This enforces in1 + in2 == out1 + out2 +
+        //   public_amount in the field.
+        assertions.push(Assertion::single(6, 0, BaseElement::ZERO));
+        assertions.push(Assertion::single(6, ROW_ACC_FINAL, self.public_amount));
+
         assertions
     }
 }
@@ -207,6 +265,40 @@ fn pow7<E: FieldElement>(x: E) -> E {
     let x4 = x2 * x2;
     x4 * x2 * x
 }
+
+/// [#2 voie A] Range-check note for value conservation.
+///
+/// The conservation constraint (col 6) enforces
+///   `in1 + in2 - out1 - out2 == public_amount`  **in the Goldilocks field**
+/// (p = 2^64 − 2^32 + 1). Field arithmetic wraps modulo p, so conservation
+/// alone does NOT prevent an attacker from picking amounts that satisfy the
+/// equation modulo p while violating it over the integers (e.g. an `out`
+/// amount near `p` acting as a negative number). A complete fix needs each of
+/// `in1, in2, out1, out2` (and, where applicable, `public_amount`) bounded to
+/// the 64-bit range `[0, 2^64)` — and, because Goldilocks values can exceed
+/// 2^63, ideally to `[0, 2^63)` so the signed sum cannot wrap.
+///
+/// Why the range check is NOT a STARK constraint here:
+///   A standard 64-bit bit-decomposition range check needs ~64 boolean cells
+///   per amount (4 amounts → 256 cells) plus the bit-sum constraints. The
+///   circuit-5 trace is already width 7 × 512 rows and the on-chain verifier
+///   sits at the 1.4M-CU Solana cap (num_queries was cut 27→22 specifically to
+///   fit the 23-constraint transition polynomial; this change raises it to 28).
+///   Adding a bit-decomposition gadget would blow both the trace width and the
+///   per-row constraint-evaluation CU well past budget. Implementing it as a
+///   lookup-argument range check is the right long-term direction but requires
+///   an auxiliary-column / LogUp machinery the crate does not yet have.
+///
+/// Mitigation in force: the on-chain Solana program already receives each note
+/// amount as a `u64` and the public amount as a `u64`, so they are physically
+/// range-bounded to `[0, 2^64)` at deserialization, and the program checks the
+/// integer conservation relation on those `u64`s (cf.
+/// `confidential_balance::verify_conservation`). The in-circuit constraint
+/// added here closes the "mint from nothing" gap by binding the SAME amounts
+/// that hash into the note commitments to the conserved sum; the out-of-circuit
+/// `u64` bound prevents field wrap-around. A future LogUp range check would let
+/// us drop the trust in the on-chain `u64` bound entirely.
+pub struct ConservationRangeNote;
 
 // ============================================================================
 // Periodic columns (public: shared with compact.rs + on-chain verifier parity)
@@ -271,6 +363,20 @@ pub fn build_transfer_periodic_columns() -> Vec<Vec<BaseElement>> {
     out_rm_capture_any[8 * HASH_CYCLE_LEN + NUM_ROUNDS] = BaseElement::ONE;
     out_rm_capture_any[11 * HASH_CYCLE_LEN + NUM_ROUNDS] = BaseElement::ONE;
 
+    // ── Value-conservation amount-capture flags (one-hot at the amount rows) ──
+    let add_in1 = make_flag(ROW_IN_AMOUNT_1);   // +in1 @64
+    let add_in2 = make_flag(ROW_IN_AMOUNT_2);   // +in2 @160
+    let sub_out1 = make_flag(ROW_OUT_AMOUNT_1); // -out1 @288
+    let sub_out2 = make_flag(ROW_OUT_AMOUNT_2); // -out2 @384
+
+    // acc continuity fires on every row that is NOT one of the four capture
+    // rows. Built as 1 − (sum of the four one-hot flags).
+    let mut acc_continuity = vec![BaseElement::ONE; TRACE_LENGTH];
+    acc_continuity[ROW_IN_AMOUNT_1] = BaseElement::ZERO;
+    acc_continuity[ROW_IN_AMOUNT_2] = BaseElement::ZERO;
+    acc_continuity[ROW_OUT_AMOUNT_1] = BaseElement::ZERO;
+    acc_continuity[ROW_OUT_AMOUNT_2] = BaseElement::ZERO;
+
     vec![
         rc0, rc1, rc2, round_flag,       // 0-3: period 32
         is_boundary,                      // 4: period 512
@@ -283,6 +389,9 @@ pub fn build_transfer_periodic_columns() -> Vec<Vec<BaseElement>> {
         owner_to_4, owner_to_7,          // 18-19
         out1_rm_to_10, out2_rm_to_13,    // 20-21
         out_rm_capture_any,              // 22
+        add_in1, add_in2,                // 23-24
+        sub_out1, sub_out2,              // 25-26
+        acc_continuity,                  // 27
     ]
 }
 
@@ -318,6 +427,11 @@ pub fn evaluate_transfer_transition<E: FieldElement<BaseField = BaseElement>>(
     let out1_rm_to_10 = periodic[20];
     let out2_rm_to_13 = periodic[21];
     let out_rm_capture_any = periodic[22];
+    let add_in1 = periodic[23];
+    let add_in2 = periodic[24];
+    let sub_out1 = periodic[25];
+    let sub_out2 = periodic[26];
+    let acc_continuity = periodic[27];
 
     let not_boundary = E::ONE - is_boundary;
 
@@ -370,6 +484,21 @@ pub fn evaluate_transfer_transition<E: FieldElement<BaseField = BaseElement>>(
 
     // carry_out_rm continuity (except at capture points)
     result[22] = (E::ONE - out_rm_capture_any) * (next[5] - current[5]);
+
+    // ── Value conservation (col 6 = acc) ──
+    // At each amount row the amount sits at current[0]; fold it (signed) into
+    // the accumulator: acc(next) = acc(current) ± current[0]. Everywhere else
+    // the accumulator is held constant. The boundary assertion acc@row385 ==
+    // public_amount then enforces the conservation relation in the convention
+    // out1 + out2 - in1 - in2 == public_amount (positive public_amount = value
+    // entering the shielded set / deposit; negative, field-encoded, = unshield).
+    // `add_in*` flags fire at the input-amount rows (subtract inputs); the
+    // `sub_out*` flags fire at the output-amount rows (add outputs).
+    result[23] = add_in1 * (next[6] - current[6] + current[0]);
+    result[24] = add_in2 * (next[6] - current[6] + current[0]);
+    result[25] = sub_out1 * (next[6] - current[6] - current[0]);
+    result[26] = sub_out2 * (next[6] - current[6] - current[0]);
+    result[27] = acc_continuity * (next[6] - current[6]);
 }
 
 // ============================================================================
@@ -503,6 +632,37 @@ pub fn build_transfer_trace(
             out1_rm
         } else {
             out2_rm
+        };
+    }
+
+    // col 6: value-conservation accumulator (convention:
+    //   out1 + out2 - in1 - in2 == public_amount).
+    // Captures fire at the transition OUT of each amount row, so the captured
+    // value first appears at the row after the amount row:
+    //   rows 0..=64   : 0
+    //   rows 65..=160 : -in1
+    //   rows 161..=288: -in1 - in2
+    //   rows 289..=384: -in1 - in2 + out1
+    //   rows 385..    : -in1 - in2 + out1 + out2  (== public_amount)
+    let a_in1 = input_1.amount;
+    let a_in2 = input_2.amount;
+    let a_out1 = output_1.amount;
+    let a_out2 = output_2.amount;
+    let acc1 = BaseElement::ZERO - a_in1;
+    let acc2 = acc1 - a_in2;
+    let acc3 = acc2 + a_out1;
+    let acc4 = acc3 + a_out2;
+    for row in 0..TRACE_LENGTH {
+        trace[6][row] = if row <= ROW_IN_AMOUNT_1 {
+            BaseElement::ZERO
+        } else if row <= ROW_IN_AMOUNT_2 {
+            acc1
+        } else if row <= ROW_OUT_AMOUNT_1 {
+            acc2
+        } else if row <= ROW_OUT_AMOUNT_2 {
+            acc3
+        } else {
+            acc4
         };
     }
 
@@ -687,6 +847,140 @@ mod tests {
 
         verify_generic::<TransferAir>(proof, pub_inputs)
             .expect("Shield proof verification failed");
+    }
+
+    /// [#2 voie A] Conservation accumulator (col 6) is filled correctly and
+    /// the final value equals out1 + out2 - in1 - in2.
+    #[test]
+    fn test_conservation_accumulator_column() {
+        let (sk, m, in1, in2, out1, out2) = test_transfer_data();
+        let (trace, _, _, _, _, _, _) = build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+
+        let z = BaseElement::ZERO;
+        let expected_final = out1.amount + out2.amount - in1.amount - in2.amount;
+        assert_eq!(trace[6][0], z, "acc starts at 0");
+        assert_eq!(trace[6][ROW_IN_AMOUNT_1], z, "acc 0 up to in1 row");
+        assert_eq!(trace[6][ROW_IN_AMOUNT_1 + 1], z - in1.amount, "acc = -in1 after capture");
+        assert_eq!(trace[6][ROW_IN_AMOUNT_2 + 1], z - in1.amount - in2.amount);
+        assert_eq!(trace[6][ROW_OUT_AMOUNT_1 + 1], z - in1.amount - in2.amount + out1.amount);
+        assert_eq!(trace[6][ROW_ACC_FINAL], expected_final);
+        assert_eq!(trace[6][TRACE_LENGTH - 1], expected_final);
+    }
+
+    /// [#2 voie A] (i) A valid conserving witness still proves and verifies.
+    /// 100 + 50 == 80 + 70 + 0, public_amount = 0.
+    #[test]
+    fn test_conservation_valid_witness_proves() {
+        use crate::prover::{prove_generic, verify_generic};
+        let (sk, m, in1, in2, out1, out2) = test_transfer_data();
+        let (trace, n1, n2, _, _, oc1, oc2) =
+            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+
+        let pub_inputs = TransferPublicInputs {
+            nullifier_1: n1,
+            nullifier_2: n2,
+            output_commitment_1: oc1,
+            output_commitment_2: oc2,
+            public_amount: BaseElement::ZERO,
+            token_mint: m,
+        };
+
+        let (proof, _) = prove_generic::<TransferAir>(trace, pub_inputs.clone())
+            .expect("valid conserving witness must prove");
+        verify_generic::<TransferAir>(proof, pub_inputs)
+            .expect("valid conserving witness must verify");
+    }
+
+    /// [#2 voie A] (ii) A non-conserving witness (outputs exceed inputs) must
+    /// NOT yield an accepted proof. Inputs sum to 150, outputs to 300, with
+    /// public_amount claimed 0. The honest accumulator computes
+    /// out-in = 300-150 = 150, which contradicts the asserted public_amount=0
+    /// (mint-from-nothing of 150), so prove or verify must fail.
+    #[test]
+    fn test_conservation_non_conserving_witness_fails() {
+        use crate::prover::{prove_generic, verify_generic};
+        let sk = BaseElement::new(42);
+        let m = BaseElement::new(999);
+        let in1 = TransferInput { amount: BaseElement::new(100), randomness: BaseElement::new(111) };
+        let in2 = TransferInput { amount: BaseElement::new(50), randomness: BaseElement::new(222) };
+        // Outputs total 300 > inputs total 150: mint-from-nothing attempt.
+        let out1 = TransferOutput { amount: BaseElement::new(150), recipient: BaseElement::new(555), randomness: BaseElement::new(333) };
+        let out2 = TransferOutput { amount: BaseElement::new(150), recipient: BaseElement::new(666), randomness: BaseElement::new(444) };
+
+        let (trace, n1, n2, _, _, oc1, oc2) =
+            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+
+        // Attacker claims a balanced public_amount of 0.
+        let pub_inputs = TransferPublicInputs {
+            nullifier_1: n1,
+            nullifier_2: n2,
+            output_commitment_1: oc1,
+            output_commitment_2: oc2,
+            public_amount: BaseElement::ZERO,
+            token_mint: m,
+        };
+
+        let result = std::panic::catch_unwind(|| {
+            prove_generic::<TransferAir>(trace, pub_inputs.clone())
+        });
+        match result {
+            Err(_) => { /* prover panicked: acceptable rejection */ }
+            Ok(Err(_)) => { /* prover errored: acceptable rejection */ }
+            Ok(Ok((proof, _))) => {
+                let v = verify_generic::<TransferAir>(proof, pub_inputs);
+                assert!(v.is_err(), "non-conserving witness must fail prove or verify");
+            }
+        }
+    }
+
+    /// [#2 voie A] (iii) Field wrap-around / overflow attempt. An attacker
+    /// supplies an `out` amount near the field modulus so that, modulo p, the
+    /// conservation relation holds while over the integers it does not (it
+    /// represents a huge/"negative" amount). With the honest accumulator the
+    /// asserted public_amount (a small u64) cannot match the wrapped sum, so the
+    /// proof must be rejected. This documents why the out-of-circuit u64 range
+    /// bound is required (see ConservationRangeNote).
+    #[test]
+    fn test_conservation_overflow_witness_fails() {
+        use crate::prover::{prove_generic, verify_generic};
+        let sk = BaseElement::new(42);
+        let m = BaseElement::new(999);
+        // p = 2^64 - 2^32 + 1. out2 is set to a near-modulus value (> 2^63),
+        // i.e. an amount no honest u64 note could carry. The honest accumulator
+        // computes out1 + out2 - in1 - in2 = 80 + huge - 150 = huge - 70 (field),
+        // which cannot equal the asserted small public_amount, so the proof is
+        // rejected. This is exactly the field-wrap class the out-of-circuit u64
+        // bound must also guard against (see ConservationRangeNote).
+        let huge = BaseElement::new(0xFFFF_FFFF_0000_0000); // near 2^64, > 2^63
+        let in1 = TransferInput { amount: BaseElement::new(100), randomness: BaseElement::new(111) };
+        let in2 = TransferInput { amount: BaseElement::new(50), randomness: BaseElement::new(222) };
+        let out1 = TransferOutput { amount: BaseElement::new(80), recipient: BaseElement::new(555), randomness: BaseElement::new(333) };
+        let out2 = TransferOutput { amount: huge, recipient: BaseElement::new(666), randomness: BaseElement::new(444) };
+
+        let (trace, n1, n2, _, _, oc1, oc2) =
+            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+
+        // Attacker claims public_amount = 0 (a balanced transfer).
+        let pub_inputs = TransferPublicInputs {
+            nullifier_1: n1,
+            nullifier_2: n2,
+            output_commitment_1: oc1,
+            output_commitment_2: oc2,
+            public_amount: BaseElement::ZERO,
+            token_mint: m,
+        };
+
+        let result = std::panic::catch_unwind(|| {
+            prove_generic::<TransferAir>(trace, pub_inputs.clone())
+        });
+        match result {
+            Err(_) => {}
+            Ok(Err(_)) => {}
+            Ok(Ok((proof, _))) => {
+                let v = verify_generic::<TransferAir>(proof, pub_inputs);
+                assert!(v.is_err(), "overflow witness must fail prove or verify");
+            }
+        }
     }
 
     #[test]

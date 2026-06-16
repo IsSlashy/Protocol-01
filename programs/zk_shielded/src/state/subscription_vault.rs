@@ -66,6 +66,15 @@ pub struct SubscriptionVault {
     /// path in `cancel_private_stark`. Appended at the end so existing
     /// vaults decode as `None` from trailing zero padding.
     pub client_stealth_meta: Option<[u8; 64]>,
+
+    /// License commitment = Poseidon(licenseSecret), posted by the subscriber
+    /// at subscribe time so a merchant can later verify a presented license key
+    /// by checking Poseidon(decode(key)) == license_commitment OFF-CHAIN.
+    /// The chain only stores the 32 raw bytes — no Poseidon/verification runs
+    /// on-chain. `None` for vaults created before this field existed; appended
+    /// at the very end so existing vault accounts decode it as `None` from
+    /// trailing zero padding (same backward-compat trick as `client_stealth_meta`).
+    pub license_commitment: Option<[u8; 32]>,
 }
 
 impl SubscriptionVault {
@@ -93,7 +102,8 @@ impl SubscriptionVault {
         + 32   // vk_hash_subscriber
         + 33   // source_pool: Option<Pubkey>
         + 1    // bump
-        + 65;  // client_stealth_meta: Option<[u8; 64]> (1 tag + 64 value)
+        + 65   // client_stealth_meta: Option<[u8; 64]> (1 tag + 64 value)
+        + 33;  // license_commitment: Option<[u8; 32]> (1 tag + 32 value)
 
     /// Returns the subscriber ID bytes used in the PDA seed.
     /// Normal mode: subscriber pubkey bytes

@@ -34,6 +34,18 @@ const RELAYERS: { label: string; url: string }[] = [
   { label: 'Fly', url: 'https://p01-relayer-r2-fra.fly.dev' },
 ];
 
+/**
+ * The web app already proxies + rolls up relayer /health server-side at
+ * `/api/relayer-health`. Mobile reads that SAME endpoint so the in-app dot
+ * matches the website by construction (was diverging: device-direct probes to
+ * the relayer hosts could fail on some networks → false "red" while the site
+ * showed green). Bonus: the device no longer hits relayer infra directly, so it
+ * doesn't leak its IP to the operators just for a health check. Falls back to
+ * direct probing if the proxy is unreachable (e.g. web origin down / offline).
+ */
+const WEB_ORIGIN = (process.env.EXPO_PUBLIC_WEB_ORIGIN ?? 'https://protocol-01.dev').replace(/\/$/, '');
+const PROXY_HEALTH_URL = `${WEB_ORIGIN}/api/relayer-health`;
+
 /** lastPollAt older than this ⇒ the poll loop is likely stuck (degraded). */
 const FRESH_MS = 60_000;
 const PROBE_TIMEOUT_MS = 6_000;
@@ -63,13 +75,51 @@ async function probe(r: { label: string; url: string }): Promise<RelayerNodeHeal
   }
 }
 
-/** Probe all relayers and roll up: green (≥1 healthy), orange (reachable but degraded), red (all down). */
-export async function fetchRelayerHealth(): Promise<RelayerHealth> {
-  const relayers = await Promise.all(RELAYERS.map(probe));
+/** Roll up per-node states into a single traffic-light: green (≥1 healthy), orange (reachable but degraded), red (all down). */
+function rollup(relayers: RelayerNodeHealth[]): RelayerStatusLevel {
   const healthy = relayers.filter((r) => r.state === 'healthy').length;
   const reachable = relayers.filter((r) => r.reachable).length;
-  const status: RelayerStatusLevel = healthy >= 1 ? 'green' : reachable >= 1 ? 'orange' : 'red';
-  return { status, relayers, checkedAt: Date.now() };
+  return healthy >= 1 ? 'green' : reachable >= 1 ? 'orange' : 'red';
+}
+
+/** Read the web app's server-side rollup. Throws on any failure so the caller can fall back to direct probing. */
+async function fetchViaProxy(): Promise<RelayerHealth> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const res = await fetch(PROXY_HEALTH_URL, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`proxy HTTP ${res.status}`);
+    const j: any = await res.json();
+    if (!Array.isArray(j?.relayers) || typeof j?.status !== 'string') throw new Error('proxy bad shape');
+    // Re-attach the host URL by label (the proxy omits it) so the breakdown UI stays complete.
+    const urlByLabel = new Map(RELAYERS.map((r) => [r.label, r.url]));
+    const relayers: RelayerNodeHealth[] = j.relayers.map((r: any) => ({
+      label: String(r.label ?? ''),
+      url: urlByLabel.get(r.label) ?? '',
+      reachable: r.reachable === true,
+      ok: r.ok === true,
+      lastError: r.lastError ?? null,
+      lastPollAgeMs: typeof r.lastPollAgeMs === 'number' ? r.lastPollAgeMs : null,
+      state: r.state === 'healthy' || r.state === 'degraded' ? r.state : 'down',
+    }));
+    return { status: rollup(relayers), relayers, checkedAt: Date.now() };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Resolve relayer health for the UI. Prefers the web proxy (so the in-app dot
+ * matches the website exactly); falls back to direct per-relayer probing if the
+ * proxy can't be reached.
+ */
+export async function fetchRelayerHealth(): Promise<RelayerHealth> {
+  try {
+    return await fetchViaProxy();
+  } catch {
+    const relayers = await Promise.all(RELAYERS.map(probe));
+    return { status: rollup(relayers), relayers, checkedAt: Date.now() };
+  }
 }
 
 /** Poll relayer health on an interval. Returns null until the first probe resolves. */

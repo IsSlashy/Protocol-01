@@ -1337,7 +1337,7 @@ const fr: Translations = {
     quickNav: 'Navigation rapide',
     designDoc: 'Document de conception & architecture',
     designDocMeta: 'PDF \u00b7 18 pages',
-    designDocRevision: 'MIS \u00c0 JOUR PROGRESSIVEMENT \u00b7 DERNI\u00c8RE R\u00c9VISION MAI 2026',
+    designDocRevision: 'MIS \u00c0 JOUR PROGRESSIVEMENT \u00b7 DERNI\u00c8RE R\u00c9VISION JUIN 2026',
     footerBeta: 'B\u00eata',
     footerDevnet: 'Devnet uniquement',
     footerBuilt: 'Construit de z\u00e9ro pour la confidentialit\u00e9',

@@ -276,6 +276,12 @@ function SubscribeContent() {
         const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
         const subscriberSecret = receipt.secret;
 
+        // C3 (merkle_path) proof — NEW on-chain hardening requirement for
+        // subscribe_private_stark (proves the C1 commitment is a leaf in the
+        // tree at `merkle_root`). Generated inside the V3 block below once the
+        // fresh merkle path is rebuilt; the action ships it as a second buffer.
+        let c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number } | null = null;
+
         // V3 receipts don't carry merkle proof data (built fresh from chain
         // each time). subscribe_private_stark on-chain ix needs the current
         // root + path embedded in the receipt → rebuild here.
@@ -326,6 +332,33 @@ function SubscribeContent() {
           receipt.merkleRoot = merkleProof.root;
           receipt.merklePathElements = merkleProof.pathElements;
           receipt.merklePathIndices = merkleProof.pathIndices;
+
+          // Generate the C3 (merkle_path) proof against the freshly-rebuilt
+          // path. publicInputs = [leaf_u64, root_u64, depth(=15)]; the service
+          // derives the ix `merkle_root` from publicInputs[1]. Mirrors the C3
+          // flow in (privacy)/denominated-unshield.tsx so the public-inputs
+          // hashing matches the on-chain sha256(leaf || root[..8] || depth=15).
+          setProgressStep(1, 4, 'Generating Merkle path proof (C3)');
+          const U64 = (1n << 64n) - 1n;
+          const c3Result = await generateMerklePathProof(
+            (receipt.commitment & U64).toString(),
+            merkleProof.pathElements.map(e => (e & U64).toString()),
+            merkleProof.pathIndices,
+          );
+          c3ProofData = {
+            proofBytes: Buffer.from(c3Result.proofHex, 'hex'),
+            publicInputs: c3Result.publicInputs.map((s: string) => BigInt(s)),
+            proofSize: c3Result.proofSize,
+          };
+        }
+
+        if (!c3ProofData) {
+          // subscribe_private_stark is V3-only (DenominatedPoolV3 / MerkleTreeStateV3
+          // + merkle_path C3 gate). A non-V3 note can't satisfy the on-chain C3
+          // requirement, so fail fast instead of reverting after burning proof rent.
+          throw new Error(
+            'Private subscribe requires a V3 pool note (merkle_path C3 proof). This note is not V3.',
+          );
         }
 
         setProgressStep(2, 4, 'Generating ownership proof (STARK)');
@@ -364,7 +397,13 @@ function SubscribeContent() {
             publicInputs: poolProof.publicInputs.map((s: string) => BigInt(s)),
             proofSize: poolProof.proofSize,
           },
+          c3ProofData,
           clientStealthMeta,
+          // serviceId for the license-key commitment (HKDF info). Registered
+          // services pass their slug; fall back to the retailer address when a
+          // free-form recipient has no slug, so the commitment is always
+          // service-scoped and the LicenseKeyCard can re-derive the same key.
+          serviceId || retailerPubkey.toBase58(),
         );
         sig = subscribeResult.signature;
         vaultAddress = subscribeResult.vaultAddress;

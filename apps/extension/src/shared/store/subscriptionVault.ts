@@ -26,6 +26,13 @@ import {
 } from '../services/subscriptionVault';
 import type { VaultInfo } from '../services/subscriptionVault.types';
 import type { ShieldReceipt } from '../services/denominatedPool';
+import {
+  encryptForSession,
+  decryptFromSession,
+  isEncryptedBlob,
+  getSessionPassword,
+  type EncryptedBlob,
+} from '../services/sessionCrypto';
 
 // Re-export for convenience so pages that import from the store get the type
 export type { VaultInfo };
@@ -38,11 +45,14 @@ interface SubscriptionVaultState {
   /** List of vaults */
   vaults: VaultInfo[];
   /**
-   * Encrypted subscriber secrets for private vaults (vaultAddress -> encrypted secret).
-   * Secrets are stored as plaintext bigint strings here; for production,
-   * wrap with the wallet's session password via the crypto service.
+   * Subscriber secrets for private vaults (vaultAddress -> secret).
+   *
+   * Stored ENCRYPTED at rest: each value is an AES-256-GCM EncryptedBlob keyed
+   * by the in-memory session password (sessionCrypto). Legacy entries may still
+   * be plaintext bigint strings — getSecret tolerates both and re-encrypts is
+   * not auto-triggered (the secret is only read on pause/resume/cancel).
    */
-  subscriberSecrets: Record<string, string>;
+  subscriberSecrets: Record<string, EncryptedBlob | string>;
   /** Loading indicator */
   loading: boolean;
   /** Error message */
@@ -62,8 +72,14 @@ interface SubscriptionVaultState {
   setCurrentSlot: (slot: number) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
-  saveSecret: (vaultAddress: string, secret: string) => void;
-  getSecret: (vaultAddress: string) => string | null;
+  /**
+   * Encrypt + persist a subscriber secret. Async because encryption uses
+   * WebCrypto + PBKDF2. Throws if the wallet is locked (no session password) —
+   * we must never write the secret to disk in plaintext.
+   */
+  saveSecret: (vaultAddress: string, secret: string) => Promise<void>;
+  /** Decrypt + return a subscriber secret (or null if absent / undecryptable). */
+  getSecret: (vaultAddress: string) => Promise<string | null>;
   reset: () => void;
 
   // -------------------------------------------------------------------
@@ -115,6 +131,8 @@ interface SubscriptionVaultState {
     intervalSlots: bigint;
     subscriberOwnershipCommitment: bigint;
     vkHashSubscriber?: Uint8Array;
+    /** Service id for the license-key HKDF info (slug, else retailer base58). */
+    serviceId?: string;
     onProgress?: (step: string) => void;
   }) => Promise<string>;
 
@@ -214,17 +232,42 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       setLoading: (loading: boolean) => set({ loading }),
       setError: (error: string | null) => set({ error }),
 
-      saveSecret: (vaultAddress: string, secret: string) => {
+      saveSecret: async (vaultAddress: string, secret: string) => {
+        // Encrypt at rest with the in-memory session password (AES-256-GCM).
+        // The subscribe flow runs while the wallet is unlocked, so the password
+        // is available. Refuse to persist plaintext — an uncontrollable-but-
+        // private vault is preferable to leaking the controlling secret.
+        const password = getSessionPassword();
+        if (!password) {
+          throw new Error(
+            'Wallet is locked — cannot encrypt the subscriber secret. Unlock and retry.',
+          );
+        }
+        const blob = await encryptForSession(secret, password);
         set((state) => ({
           subscriberSecrets: {
             ...state.subscriberSecrets,
-            [vaultAddress]: secret,
+            [vaultAddress]: blob,
           },
         }));
       },
 
-      getSecret: (vaultAddress: string) => {
-        return get().subscriberSecrets[vaultAddress] || null;
+      getSecret: async (vaultAddress: string) => {
+        const stored = get().subscriberSecrets[vaultAddress];
+        if (!stored) return null;
+        // Legacy plaintext entry (pre-encryption): return as-is.
+        if (typeof stored === 'string') return stored;
+        if (isEncryptedBlob(stored)) {
+          const password = getSessionPassword();
+          if (!password) return null; // locked — caller surfaces "unlock first"
+          try {
+            return await decryptFromSession(stored, password);
+          } catch (e) {
+            console.warn('[SubscriptionVaultStore] getSecret decrypt failed:', e);
+            return null;
+          }
+        }
+        return null;
       },
 
       reset: () => {
@@ -332,6 +375,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             intervalSlots: params.intervalSlots,
             subscriberOwnershipCommitment: params.subscriberOwnershipCommitment,
             vkHashSubscriber: params.vkHashSubscriber ?? new Uint8Array(32),
+            serviceId: params.serviceId,
             onProgress: params.onProgress,
           });
           // Reload vaults after successful subscription.
@@ -347,7 +391,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
       pausePrivateVault: async (vaultAddress: string, onProgress?: (step: string) => void) => {
         set({ loading: true, error: null });
-        const secret = get().getSecret(vaultAddress);
+        const secret = await get().getSecret(vaultAddress);
         if (!secret) {
           set({ loading: false, error: 'Subscriber secret not found. Cannot generate ZK proof.' });
           throw new Error('Subscriber secret not found for vault ' + vaultAddress);
@@ -365,7 +409,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
       resumePrivateVault: async (vaultAddress: string, onProgress?: (step: string) => void) => {
         set({ loading: true, error: null });
-        const secret = get().getSecret(vaultAddress);
+        const secret = await get().getSecret(vaultAddress);
         if (!secret) {
           set({ loading: false, error: 'Subscriber secret not found. Cannot generate ZK proof.' });
           throw new Error('Subscriber secret not found for vault ' + vaultAddress);
@@ -383,7 +427,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
 
       cancelPrivateVault: async (vaultAddress: string, onProgress?: (step: string) => void) => {
         set({ loading: true, error: null });
-        const secret = get().getSecret(vaultAddress);
+        const secret = await get().getSecret(vaultAddress);
         if (!secret) {
           set({ loading: false, error: 'Subscriber secret not found. Cannot generate ZK proof.' });
           throw new Error('Subscriber secret not found for vault ' + vaultAddress);

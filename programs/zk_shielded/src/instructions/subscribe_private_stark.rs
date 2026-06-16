@@ -70,7 +70,8 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32], 
     interval_slots: u64,
     vk_hash_subscriber: [u8; 32],
     stark_commitment: u64,
-    client_stealth_meta: Option<[u8; 64]>
+    client_stealth_meta: Option<[u8; 64]>,
+    license_commitment: Option<[u8; 32]>
 )]
 pub struct SubscribePrivateStark<'info> {
     /// Transaction payer
@@ -134,18 +135,21 @@ pub struct SubscribePrivateStark<'info> {
     )]
     pub nullifier_record: Box<Account<'info, NullifierRecord>>,
 
-    /// STARK proof buffer from p01_stark_verifier (circuit 1: pool_commitment).
-    /// Must be verified (verified == true) and owned by the payer.
-    /// CHECK: Validated manually by reading account data and checking:
-    /// - Owner is p01_stark_verifier program
-    /// - Discriminator matches ProofBuffer
-    /// - Authority matches payer
-    /// - Circuit ID is 1 (pool_commitment)
-    /// - Verified flag is true
-    /// - Public inputs hash matches expected value
-    /// Marked mut because we invalidate (set verified=false) after use.
-    #[account(mut)]
-    pub stark_proof_buffer: AccountInfo<'info>,
+    /// C1 (pool_commitment) STARK proof buffer — proves knowledge of secret +
+    /// nullifier_preimage hashing to the nullifier and commitment.
+    /// CHECK: Validated manually (owner, discriminator, authority, circuit_id=1,
+    /// verified, deep_ali_verified, public_inputs_hash).
+    pub c1_proof_buffer: AccountInfo<'info>,
+
+    /// C3 (merkle_path) STARK proof buffer — proves the commitment from C1 is a
+    /// leaf at the supplied merkle root. Without this, subscribe verifies only
+    /// C1 (knowledge of a well-formed note) and never that the note was ever
+    /// deposited — a quantum/forging attacker could synthesize a valid C1 proof
+    /// for any commitment and drain `denomination` per call. Mirrors the C3
+    /// gate added to unshield_denominated_stark_v3.
+    /// CHECK: Validated manually (owner, discriminator, authority, circuit_id=3,
+    /// verified, deep_ali_verified, public_inputs_hash).
+    pub c3_proof_buffer: AccountInfo<'info>,
 
     pub system_program: Program<'info, System>,
 
@@ -164,7 +168,7 @@ pub struct SubscribePrivateStark<'info> {
 pub fn handler(
     ctx: Context<SubscribePrivateStark>,
     nullifier: [u8; 32],
-    _merkle_root: [u8; 32],
+    merkle_root: [u8; 32],
     min_epoch: u64,
     subscriber_commitment: [u8; 32],
     rate: u64,
@@ -172,6 +176,7 @@ pub fn handler(
     vk_hash_subscriber: [u8; 32],
     stark_commitment: u64,
     client_stealth_meta: Option<[u8; 64]>,
+    license_commitment: Option<[u8; 32]>,
 ) -> Result<()> {
     require!(rate > 0, ZkShieldedError::InvalidRate);
     require!(interval_slots > 0, ZkShieldedError::InvalidInterval);
@@ -206,34 +211,34 @@ pub fn handler(
     nullifier_record.bump = ctx.bumps.nullifier_record;
 
     // -----------------------------------------------------------------------
-    // STARK proof verification (replaces Groth16 inline verify)
+    // C1 (pool_commitment) verification
     // -----------------------------------------------------------------------
-    let proof_info = &ctx.accounts.stark_proof_buffer;
+    let c1_info = &ctx.accounts.c1_proof_buffer;
 
     // Must be owned by the STARK verifier program
     require!(
-        *proof_info.owner == STARK_VERIFIER_PROGRAM_ID,
+        *c1_info.owner == STARK_VERIFIER_PROGRAM_ID,
         ZkShieldedError::InvalidProof
     );
 
-    let proof_data = proof_info.try_borrow_data()?;
-    let (authority, circuit_id, verified, stored_inputs_hash, deep_ali_verified) =
-        parse_stark_proof_buffer(&proof_data)?;
+    let c1_data = c1_info.try_borrow_data()?;
+    let (c1_authority, c1_circuit_id, c1_verified, c1_inputs_hash, c1_deep_ali_verified) =
+        parse_stark_proof_buffer(&c1_data)?;
 
     // Authority must be the payer (prevents using someone else's proof)
     require!(
-        authority == ctx.accounts.payer.key(),
+        c1_authority == ctx.accounts.payer.key(),
         ZkShieldedError::InvalidProof
     );
 
     // Must be pool_commitment circuit (ID 1)
-    require!(circuit_id == 1, ZkShieldedError::InvalidProof);
+    require!(c1_circuit_id == 1, ZkShieldedError::InvalidProof);
 
     // Must be verified
-    require!(verified, ZkShieldedError::InvalidProof);
+    require!(c1_verified, ZkShieldedError::InvalidProof);
 
     // Circuit 1 ships phase-2 DEEP-ALI from the client; require it.
-    require!(deep_ali_verified, ZkShieldedError::InvalidProof);
+    require!(c1_deep_ali_verified, ZkShieldedError::InvalidProof);
 
     // Nullifier canonicalization: the PDA is seeded on the full 32-byte
     // `nullifier`, but the proof only binds the low 8 bytes. Reject any
@@ -253,15 +258,64 @@ pub fn handler(
         pub_buf[8..].copy_from_slice(&stark_commitment.to_le_bytes());
         let expected_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
         require!(
-            stored_inputs_hash == expected_hash,
+            c1_inputs_hash == expected_hash,
             ZkShieldedError::InvalidProof
         );
     }
 
-    drop(proof_data);
+    drop(c1_data);
 
-    // NOTE: Replay prevention handled by subscription state. Proof buffer owned by
-    // p01_stark_verifier — cannot write to it from zk_shielded. Caller closes it.
+    // -----------------------------------------------------------------------
+    // C3 (merkle_path) verification — proves the C1 commitment is a leaf in the
+    // pool's tree at `merkle_root`. Without this, an attacker can synthesize a
+    // valid C1 proof for a never-deposited commitment and drain `denomination`.
+    // Mirrors unshield_denominated_stark_v3.
+    // -----------------------------------------------------------------------
+    let c3_info = &ctx.accounts.c3_proof_buffer;
+    require!(
+        *c3_info.owner == STARK_VERIFIER_PROGRAM_ID,
+        ZkShieldedError::InvalidProof
+    );
+    let c3_data = c3_info.try_borrow_data()?;
+    let (c3_authority, c3_circuit_id, c3_verified, c3_inputs_hash, c3_deep_ali_verified) =
+        parse_stark_proof_buffer(&c3_data)?;
+
+    require!(
+        c3_authority == ctx.accounts.payer.key(),
+        ZkShieldedError::InvalidProof
+    );
+    require!(c3_circuit_id == 3, ZkShieldedError::InvalidProof);
+    require!(c3_verified, ZkShieldedError::InvalidProof);
+    // Circuit 3 ships phase-2 DEEP-ALI from the client; require it.
+    require!(c3_deep_ali_verified, ZkShieldedError::InvalidProof);
+
+    // Reconstruct C3 expected hash. The merkle_path prover stores
+    //   public_inputs: vec![leaf, root_u64, depth]  (three u64 felts)
+    // hashed as concat(u64.to_le_bytes()) = 24 bytes. The V3 leaf format packs
+    // the Goldilocks felt into bytes 0..8, so we extract the low 8 bytes for the
+    // root. depth must be 15 (the depth the C3 periodic columns are baked for).
+    // c3.leaf ↔ c1.commitment is tied implicitly: both reconstruct from the same
+    // `stark_commitment` arg, so lying about either fails one of the two hashes.
+    // c3.root ↔ pool ring is tied by the `is_valid_root(&merkle_root)` account
+    // constraint on `denominated_pool` above.
+    let tree_depth = pool.tree_depth as u64;
+    require!(tree_depth == 15, ZkShieldedError::InvalidProof);
+    {
+        let mut pub_buf = [0u8; 24]; // 3 × u64 LE: leaf, root, depth
+        pub_buf[..8].copy_from_slice(&stark_commitment.to_le_bytes());
+        pub_buf[8..16].copy_from_slice(&merkle_root[..8]);
+        pub_buf[16..24].copy_from_slice(&tree_depth.to_le_bytes());
+        let expected_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
+        require!(
+            c3_inputs_hash == expected_hash,
+            ZkShieldedError::InvalidProof
+        );
+    }
+    drop(c3_data);
+
+    // NOTE: Replay prevention handled by the nullifier PDA + subscription state.
+    // Proof buffers owned by p01_stark_verifier — cannot write to them from
+    // zk_shielded. Caller closes them.
 
     // -----------------------------------------------------------------------
     // Transfer funds from pool to vault (identical to Groth16 version)
@@ -346,6 +400,7 @@ pub fn handler(
     vault.source_pool = Some(pool_key);
     vault.bump = ctx.bumps.vault;
     vault.client_stealth_meta = client_stealth_meta;
+    vault.license_commitment = license_commitment;
 
     let has_stealth_meta = client_stealth_meta.is_some();
 

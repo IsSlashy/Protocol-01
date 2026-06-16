@@ -319,6 +319,12 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
             const r = await generatePoolCommitmentProof(np, secret, epoch, mint);
             return { proofHex: r.proofHex, proofSize: r.proofSize, publicInputs: r.publicInputs };
           },
+          // C3 (merkle_path) — required by the split hop now that
+          // split_note_stark proves source-note membership.
+          generateMerklePathProof: async (leaf, pathElements, pathIndices) => {
+            const r = await generateMerklePathProof(leaf, pathElements, pathIndices);
+            return { proofHex: r.proofHex, proofSize: r.proofSize, publicInputs: r.publicInputs };
+          },
         });
         return () => clearForegroundProver();
       } catch {
@@ -326,7 +332,7 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
       }
     })();
     return () => { cancelled = true; };
-  }, [isReady, generatePoolCommitmentProof]);
+  }, [isReady, generatePoolCommitmentProof, generateMerklePathProof]);
 
   // Wire circuit 6 (merkle_update) + circuit 5 (transfer) provers into
   // ZkService so shield/transfer/unshield can generate STARK proofs without

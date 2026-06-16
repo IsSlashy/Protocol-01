@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#0a0a0c; --surface:#151518; --surface2:#1a1a1e; --border:#2a2a30;
+    --cyan:#39c5bb; --cyan-bright:#00ffe5; --cyan-dim:rgba(57,197,187,.12);
+    --pink:#ff77a8; --pink-hot:#ff2d7a; --yellow:#ffcc00; --red:#ff3366;
+    --text:#ffffff; --muted:#888892; --dim:#555560;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  body{
+    width:1600px;height:900px;overflow:hidden;background:var(--void);color:var(--text);
+    font-family:'Inter',system-ui,sans-serif;font-size:14px;padding:54px 60px 44px;
+  }
+  .orb{font-family:'Orbitron',sans-serif;}
+  .mono{font-family:'JetBrains Mono',monospace;}
+
+  .head{display:flex;justify-content:space-between;align-items:flex-start;}
+  .eyebrow{font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:.22em;color:var(--cyan);text-transform:uppercase;}
+  h1{font-family:'Orbitron',sans-serif;font-weight:800;font-size:40px;letter-spacing:.01em;margin-top:14px;line-height:1.06;}
+  h1 .c{color:var(--cyan);}
+  .sub{font-size:17px;color:var(--muted);margin-top:12px;max-width:1050px;line-height:1.45;}
+
+  .logo{display:flex;align-items:center;gap:13px;}
+  .logo .mark{width:54px;height:54px;border-radius:12px;object-fit:cover;box-shadow:0 0 26px rgba(57,197,187,.40);}
+  .logo .wm{font-family:'Orbitron',sans-serif;font-weight:700;font-size:15px;letter-spacing:.18em;color:#fff;}
+  .logo .wm small{display:block;font-size:10px;letter-spacing:.16em;color:var(--muted);font-weight:500;margin-top:2px;}
+
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:40px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:26px 24px;position:relative;overflow:hidden;}
+  .card::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;}
+  .card.cn::before{background:var(--red);} .card.st::before{background:var(--cyan);} .card.zk::before{background:var(--pink);}
+
+  .ctop{display:flex;justify-content:space-between;align-items:center;}
+  .mode{font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.2em;text-transform:uppercase;}
+  .cn .mode{color:var(--red);} .st .mode{color:var(--cyan);} .zk .mode{color:var(--pink);}
+  .badge{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding:5px 11px;border-radius:3px;border:1px solid;}
+  .cn .badge{color:var(--red);border-color:rgba(255,51,102,.4);background:rgba(255,51,102,.08);}
+  .st .badge{color:var(--cyan);border-color:rgba(57,197,187,.4);background:var(--cyan-dim);}
+  .zk .badge{color:var(--pink);border-color:rgba(255,119,168,.4);background:rgba(255,119,168,.08);}
+
+  .card h2{font-family:'Orbitron',sans-serif;font-weight:700;font-size:21px;margin-top:16px;letter-spacing:.01em;}
+  .desc{font-size:14px;color:var(--muted);margin-top:8px;min-height:40px;line-height:1.4;}
+
+  .rows{margin-top:18px;border-top:1px solid var(--border);}
+  .r{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #202026;font-size:15px;}
+  .r .k{color:#a6a6b2;}
+  .r .v{font-family:'JetBrains Mono',monospace;font-weight:500;font-size:14px;display:flex;align-items:center;gap:8px;}
+  .v.bad{color:#ff6b8a;} .v.good{color:var(--cyan-bright);}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+  .dot.bad{background:var(--red);box-shadow:0 0 8px rgba(255,51,102,.6);}
+  .dot.good{background:var(--cyan);box-shadow:0 0 8px rgba(57,197,187,.6);}
+
+  .chain{margin-top:16px;font-size:13.5px;line-height:1.42;color:#c9c9d2;background:var(--void);border:1px solid var(--border);border-radius:4px;padding:12px 14px;min-height:80px;}
+  .chain b{color:#fff;}
+  .tx{margin-top:13px;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--dim);letter-spacing:.04em;}
+  .tx .l{color:var(--cyan);}
+
+  .foot{position:absolute;left:60px;right:60px;bottom:30px;display:flex;justify-content:space-between;align-items:center;
+    font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:.1em;color:var(--dim);}
+  .foot b{color:#b8b8c2;}
+  .foot .cyan{color:var(--cyan);}
+</style>
+</head>
+<body>
+  <div class="head">
+    <div>
+      <div class="eyebrow">· On-chain proof ·</div>
+      <h1>One subscription, <span class="c">three privacy modes.</span></h1>
+      <div class="sub">What a blockchain observer actually sees. Every transaction below is finalized on Solana devnet.</div>
+    </div>
+    <div class="logo">
+      <img class="mark" src="app-icon.png" alt="Protocol 01">
+      <div class="wm">PROTOCOL&nbsp;01<small>privacy SDK · Solana</small></div>
+    </div>
+  </div>
+
+  <div class="cards">
+
+    <div class="card cn">
+      <div class="ctop"><span class="mode">Classic</span><span class="badge">Public</span></div>
+      <h2>Fully transparent</h2>
+      <div class="desc">A normal Solana transfer. Fast and cheap, the baseline every app gives you.</div>
+      <div class="rows">
+        <div class="r"><span class="k">Sender</span><span class="v bad"><span class="dot bad"></span>your wallet</span></div>
+        <div class="r"><span class="k">Merchant</span><span class="v bad"><span class="dot bad"></span>visible</span></div>
+        <div class="r"><span class="k">Amount</span><span class="v bad"><span class="dot bad"></span>0.05 SOL</span></div>
+      </div>
+      <div class="chain">The chain shows: <b>5sqPbBgJ to 7MMrAo4N, 0.05 SOL.</b> Anyone watching your wallet sees who, what and how much.</div>
+      <div class="tx"><span class="l">tx</span> 3ZetRSsUTX51gp5N…6FT5wji · finalized</div>
+    </div>
+
+    <div class="card st">
+      <div class="ctop"><span class="mode">Stealth</span><span class="badge">Private</span></div>
+      <h2>Merchant &amp; amount hidden</h2>
+      <div class="desc">Routed through a relayer as an encrypted job, signed by a one-time address.</div>
+      <div class="rows">
+        <div class="r"><span class="k">Sender</span><span class="v good"><span class="dot good"></span>one-time</span></div>
+        <div class="r"><span class="k">Merchant</span><span class="v good"><span class="dot good"></span>encrypted</span></div>
+        <div class="r"><span class="k">Amount</span><span class="v good"><span class="dot good"></span>encrypted</span></div>
+      </div>
+      <div class="chain">The chain shows: <b>an encrypted blob and a 0.01 SOL relay fee.</b> The merchant and the amount never touch the chain.</div>
+      <div class="tx"><span class="l">tx</span> 42pzrXXGWrZnGune…615RfXd · finalized</div>
+    </div>
+
+    <div class="card zk">
+      <div class="ctop"><span class="mode">ZK Pool</span><span class="badge">Private + shielded</span></div>
+      <h2>Even the funds are shielded</h2>
+      <div class="desc">Same encrypted relay, and the payment is drawn from a shielded pool note.</div>
+      <div class="rows">
+        <div class="r"><span class="k">Merchant</span><span class="v good"><span class="dot good"></span>encrypted</span></div>
+        <div class="r"><span class="k">Amount</span><span class="v good"><span class="dot good"></span>encrypted</span></div>
+        <div class="r"><span class="k">Source funds</span><span class="v good"><span class="dot good"></span>shielded pool</span></div>
+      </div>
+      <div class="chain">The chain shows: <b>an encrypted relay job, funded from a shielded ZK pool.</b> Merchant, amount and source balance stay private.</div>
+      <div class="tx"><span class="l">tx</span> 4eREn4kJaf1aCrdb…VFtDeGY · finalized</div>
+    </div>
+
+  </div>
+
+  <div class="foot">
+    <div>The same subscription paid 3 ways. <b>Open any signature in an explorer and verify it yourself.</b></div>
+    <div><span class="cyan">protocol-01.dev</span> · <b>@Protocol01_</b> · built solo</div>
+  </div>
+</body>
+</html>

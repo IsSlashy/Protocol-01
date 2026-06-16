@@ -238,8 +238,9 @@ pub mod zk_shielded {
         amount: u64,
         token_mint: Pubkey,
         vk_hash_subscriber: [u8; 32],
+        license_commitment: Option<[u8; 32]>,
     ) -> Result<()> {
-        instructions::subscribe_normal::handler(ctx, rate, interval_slots, amount, token_mint, vk_hash_subscriber)
+        instructions::subscribe_normal::handler(ctx, rate, interval_slots, amount, token_mint, vk_hash_subscriber, license_commitment)
     }
 
     /// Create a private subscription vault using STARK proof (quantum-resistant).
@@ -257,8 +258,9 @@ pub mod zk_shielded {
         vk_hash_subscriber: [u8; 32],
         stark_commitment: u64,
         client_stealth_meta: Option<[u8; 64]>,
+        license_commitment: Option<[u8; 32]>,
     ) -> Result<()> {
-        instructions::subscribe_private_stark::handler(ctx, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber, stark_commitment, client_stealth_meta)
+        instructions::subscribe_private_stark::handler(ctx, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber, stark_commitment, client_stealth_meta, license_commitment)
     }
 
     /// Pause a private subscription vault using STARK proof (quantum-resistant)

@@ -26,7 +26,7 @@ import * as path from 'path';
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const PROGRAM_ID = new PublicKey('EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z');
+const PROGRAM_ID = new PublicKey('DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs');
 const CIRCUIT_SUBSCRIBER_OWNERSHIP = 0;
 const CIRCUIT_POOL_COMMITMENT = 1;
 const CIRCUIT_BALANCE_PROOF = 2;
@@ -43,7 +43,7 @@ const MAX_CHUNK_SIZE = 900; // Safe chunk size for Solana tx
 // IDL (inline for devnet testing without anchor build)
 // ---------------------------------------------------------------------------
 const IDL = {
-  address: 'EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z',
+  address: 'DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs',
   metadata: {
     name: 'p01_stark_verifier',
     version: '0.1.0',
@@ -140,8 +140,9 @@ function generateCompactProof(secret: number): { commitment: bigint; proofBytes:
     { cwd: projectRoot, encoding: 'utf-8', timeout: 60000 }
   );
 
-  // Extract commitment as string first (u64 exceeds Number.MAX_SAFE_INTEGER)
-  const commitmentMatch = output.match(/"commitment":\s*(\d+)/);
+  // Extract commitment as string first (u64 exceeds Number.MAX_SAFE_INTEGER).
+  // gen_proof emits it as a quoted string ("commitment": "123"); tolerate both forms.
+  const commitmentMatch = output.match(/"commitment":\s*"?(\d+)"?/);
   if (!commitmentMatch) throw new Error('Could not parse commitment from gen_proof output');
 
   // Parse the rest via JSON
@@ -343,11 +344,23 @@ async function resizeProofBufferTo(
     if (!info) throw new Error('proof buffer missing');
     if (info.data.length >= targetAccountSize) break;
     const ix = buildResizeProofBufferIx(proofBuffer, authority.publicKey);
-    await sendAndConfirmTransaction(
-      connection, new Transaction().add(ix), [authority],
-      { commitment: 'confirmed', skipPreflight: true },
-    );
+    let attempt = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      try {
+        await sendAndConfirmTransaction(
+          connection, new Transaction().add(ix), [authority],
+          { commitment: 'confirmed', skipPreflight: true },
+        );
+        break;
+      } catch (err: any) {
+        attempt += 1;
+        if (attempt > 8) throw err;
+        await sleep(isRateLimit(err) ? 900 * attempt : 450 * attempt);
+      }
+    }
     calls += 1;
+    await sleep(300);
   }
   return calls;
 }
@@ -454,16 +467,29 @@ function getProofBufferPDA(authority: PublicKey, circuitId: number): [PublicKey,
   );
 }
 
-/** Upload proof in chunks with confirmation between each */
+const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
+
+/** Detect Helius devnet rate-limit, which arrives as HTTP 200 + JSON-RPC -32429. */
+function isRateLimit(err: any): boolean {
+  const s = (err?.message || err?.toString() || '') + ' ' + JSON.stringify(err?.logs || []);
+  return s.includes('-32429') || s.includes('429') || s.includes('Too Many Requests') ||
+    s.includes('rate limit') || s.includes('Rate limit');
+}
+
+/** Upload proof in chunks with confirmation between each.
+ *  Resilient to Helius 429-swarm: small inter-chunk delay + retry-on-(-32429)
+ *  with backoff. Resumes from `startOffset` so a partially-uploaded buffer does
+ *  not force a full re-upload. */
 async function uploadProofChunks(
   program: Program,
   proofBuffer: PublicKey,
   authority: Keypair,
   proofBytes: Buffer,
   connection: Connection,
+  startOffset = 0,
 ): Promise<void> {
   const chunks: { offset: number; data: Buffer }[] = [];
-  for (let offset = 0; offset < proofBytes.length; offset += MAX_CHUNK_SIZE) {
+  for (let offset = startOffset; offset < proofBytes.length; offset += MAX_CHUNK_SIZE) {
     chunks.push({
       offset,
       data: proofBytes.subarray(offset, Math.min(offset + MAX_CHUNK_SIZE, proofBytes.length)),
@@ -471,18 +497,57 @@ async function uploadProofChunks(
   }
 
   for (const chunk of chunks) {
-    const tx = await program.methods
-      .writeProofChunk(chunk.offset, chunk.data)
-      .accounts({
-        proofBuffer,
-        authority: authority.publicKey,
-      })
-      .signers([authority])
-      .rpc({ commitment: 'confirmed', skipPreflight: true });
+    let attempt = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      try {
+        const tx = await program.methods
+          .writeProofChunk(chunk.offset, chunk.data)
+          .accounts({
+            proofBuffer,
+            authority: authority.publicKey,
+          })
+          .signers([authority])
+          .rpc({ commitment: 'confirmed', skipPreflight: true });
 
-    // Wait for confirmation before sending next chunk
-    await connection.confirmTransaction(tx, 'confirmed');
+        // Wait for confirmation before sending next chunk
+        await connection.confirmTransaction(tx, 'confirmed');
+        break;
+      } catch (err: any) {
+        attempt += 1;
+        if (attempt > 8) throw err;
+        const backoff = isRateLimit(err) ? 900 * attempt : 450 * attempt;
+        await sleep(backoff);
+      }
+    }
+    // Small inter-chunk delay to avoid the Helius 429 swarm on ~155 sequential txs.
+    await sleep(350);
   }
+}
+
+/** Fetch a confirmed tx and return meta.computeUnitsConsumed.
+ *  Retries through indexer lag and Helius 429 (-32429). Returns null if the
+ *  tx never indexes (extremely rare) so the test can still assert on-chain state. */
+async function fetchComputeUnits(
+  connection: Connection,
+  signature: string,
+): Promise<number | null> {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      const tx = await connection.getTransaction(signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      });
+      const cu = tx?.meta?.computeUnitsConsumed;
+      if (typeof cu === 'number') return cu;
+    } catch (err: any) {
+      if (!isRateLimit(err)) {
+        // transient indexer error — fall through to backoff
+      }
+    }
+    await sleep(700 * (attempt + 1));
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1215,6 +1280,8 @@ describe('p01_stark_verifier', () => {
         { commitment: 'confirmed', skipPreflight: true },
       );
       console.log(`    verify_stark_proof_v2 tx (phase 1): ${sig}`);
+      const cuPhase1 = await fetchComputeUnits(provider.connection, sig);
+      console.log(`    >>> C5 PHASE-1 verify CU consumed: ${cuPhase1} (limit 1,400,000) <<<`);
 
       const account = await (program.account as any).proofBuffer.fetch(trPDA);
       expect(account.verified).to.be.true;
@@ -1232,10 +1299,22 @@ describe('p01_stark_verifier', () => {
         { commitment: 'confirmed', skipPreflight: true },
       );
       console.log(`    verify_deep_ali_phase2 tx (phase 2): ${deepSig}`);
+      const cuPhase2 = await fetchComputeUnits(provider.connection, deepSig);
+      console.log(`    >>> C5 PHASE-2 (DEEP-ALI) verify CU consumed: ${cuPhase2} (limit 1,400,000) <<<`);
 
       const account2 = await (program.account as any).proofBuffer.fetch(trPDA);
       expect(account2.deepAliVerified).to.be.true;
       console.log('    Phase 2 (DEEP-ALI at OOD) OK — C5 full 23-constraint soundness');
+      if (cuPhase1 !== null) {
+        expect(cuPhase1, 'phase-1 CU under 1.4M').to.be.lessThan(1_400_000);
+      }
+      if (cuPhase2 !== null) {
+        expect(cuPhase2, 'phase-2 CU under 1.4M').to.be.lessThan(1_400_000);
+      }
+      console.log(
+        `    === C5 TRANSFER VERIFY CU SUMMARY: phase1=${cuPhase1}, phase2=${cuPhase2}, ` +
+        `both < 1,400,000 ===`,
+      );
     });
 
     after('close transfer proof buffer', async () => {

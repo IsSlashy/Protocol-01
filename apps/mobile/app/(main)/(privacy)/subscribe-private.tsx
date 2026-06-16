@@ -19,7 +19,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
-import { receiptFromJSON, findPoolByPDA } from '@/services/denominatedPool';
+import {
+  receiptFromJSON,
+  findPoolByPDA,
+  ALL_POOLS_V3,
+  fetchPoolLeavesByIndex,
+  buildMerkleProofFromLeavesV3,
+} from '@/services/denominatedPool';
+import { getConnection } from '@/services/solana/connection';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
@@ -64,7 +71,7 @@ export default function SubscribePrivateScreen() {
     setProgress,
     resetOperationState,
   } = useSubscriptionVaultStore();
-  const { isReady: starkReady, generateProof: starkGenerate, generatePoolCommitmentProof } = useStarkProver();
+  const { isReady: starkReady, generateProof: starkGenerate, generatePoolCommitmentProof, generateMerklePathProof } = useStarkProver();
 
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [retailer, setRetailer] = useState(params.retailer ?? '');
@@ -209,6 +216,55 @@ export default function SubscribePrivateScreen() {
         });
       }
 
+      // C3 (merkle_path) proof — NEW on-chain hardening requirement.
+      // subscribe_private_stark now demands a second STARK buffer proving the
+      // C1 commitment is a leaf in the pool tree at `merkle_root`. We rebuild
+      // the merkle path fresh from the on-chain V3 leaves (the stored receipt
+      // root may be stale / missing for recovered notes), then prove it.
+      // Mirrors the C3 flow in (privacy)/denominated-unshield.tsx exactly so
+      // the public-inputs hashing matches the on-chain reconstruction
+      // sha256(leaf_u64_le || root[..8] || depth=15_u64_le).
+      setStarkStatus('Building Merkle proof (C3)...');
+      const poolV3 = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === poolConfig.poolPDA.toBase58());
+      if (!poolV3) {
+        throw new Error(
+          'Private subscribe requires a V3 pool (subscribe_private_stark uses V3 tree/merkle_path). ' +
+          'No V3 pool registered for this note.',
+        );
+      }
+      const conn = getConnection();
+      // 5000 sig limit — devnet Helius 429s truncate low limits; a missed
+      // LeafInserted event gap-fills with ZERO_VALUE and produces a root that
+      // doesn't exist on-chain → InvalidProof / InvalidMerkleRoot.
+      const SIG_SCAN_LIMIT = 5000;
+      const leafScan = await fetchPoolLeavesByIndex(conn, poolV3.poolPDA, { maxSignatures: SIG_SCAN_LIMIT });
+      const merkleProof = buildMerkleProofFromLeavesV3({
+        leavesByIndex: leafScan.leavesByIndex,
+        targetLeafIndex: receipt.leafIndex,
+      });
+      const { pathElements: c3Path, pathIndices: c3Indices } = merkleProof;
+
+      setStarkStatus('Generating Merkle path proof (C3)...');
+      const U64 = (1n << 64n) - 1n;
+      const c3Result = await generateMerklePathProof(
+        (receipt.commitment & U64).toString(),
+        c3Path.map(e => (e & U64).toString()),
+        c3Indices,
+      );
+      const c3Bytes = Buffer.from(c3Result.proofHex, 'hex');
+      const c3Inputs = c3Result.publicInputs.map((s: string) => BigInt(s));
+      if (__DEV__) {
+        console.log('[Sub:Create] merkle_path (C3) proof', {
+          circuitId: c3Result.circuitId,
+          proofSize: c3Result.proofSize,
+          publicInputsCount: c3Inputs.length,
+          // [leaf, root, depth] — root prefix safe to log (public on-chain).
+          rootPrefix: c3Inputs[1]?.toString(16).slice(0, 16) ?? 'none',
+          depth: c3Inputs[2]?.toString() ?? 'none',
+          durationMs: c3Result.durationMs,
+        });
+      }
+
       setStarkStatus('Submitting STARK subscription...');
       const { signature: sig } = await subscribePrivateStarkAction(
         receipt,
@@ -222,6 +278,17 @@ export default function SubscribePrivateScreen() {
           publicInputs,
           proofSize: starkResult.proofSize,
         },
+        {
+          proofBytes: c3Bytes,
+          publicInputs: c3Inputs,
+          proofSize: c3Result.proofSize,
+        },
+        undefined, // clientStealthMeta — not used on this direct private flow
+        // serviceId for the license-key commitment. This screen has no Service
+        // Registry slug (free-form retailer), so the retailer address is the
+        // stable service identifier. The LicenseKeyCard re-derives the key from
+        // the same (subscriberSecret, serviceId) pair.
+        retailerKey.toBase58(),
       );
 
       if (__DEV__) {

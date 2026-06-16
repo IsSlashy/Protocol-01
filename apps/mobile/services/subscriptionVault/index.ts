@@ -208,23 +208,33 @@ function buildSubscribeNormalIx(
   tokenProgram?: PublicKey,
   subscriberTokenAccount?: PublicKey,
   vaultTokenAccount?: PublicKey,
+  licenseCommitment?: Uint8Array,
 ): TransactionInstruction {
   const disc = getDiscriminator('subscribe_normal');
 
-  // On-chain arg order (subscribe_normal.rs:57-64):
-  //   rate | interval_slots | amount | token_mint(Pubkey/32) | vk_hash_subscriber([u8;32])
+  // On-chain arg order (subscribe_normal.rs:58-65):
+  //   rate | interval_slots | amount | token_mint(Pubkey/32) |
+  //   vk_hash_subscriber([u8;32]) | license_commitment: Option<[u8;32]> (arg #6, LAST)
   // token_mint is an ARGUMENT (native SOL ⇒ SystemProgram.programId), NOT an
-  // account. The previous builder serialized amount|rate|interval (wrong order),
-  // omitted token_mint entirely, and passed token_mint as a phantom account —
-  // every subscribe_normal tx failed before reaching the handler.
-  const data = Buffer.alloc(8 + 8 + 8 + 8 + 32 + 32);
+  // account. The trailing Option<[u8;32]> MUST be serialized (at minimum the
+  // None tag byte) — the upgraded program expects it, so omitting it fails
+  // Borsh arg deserialization. blake3(licenseSecret) when present; None otherwise.
+  const hasLicense = !!licenseCommitment && licenseCommitment.length === 32;
+  const data = Buffer.alloc(8 + 8 + 8 + 8 + 32 + 32 + 1 + (hasLicense ? 32 : 0));
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   data.writeBigUInt64LE(rate, offset); offset += 8;
   data.writeBigUInt64LE(intervalSlots, offset); offset += 8;
   data.writeBigUInt64LE(amount, offset); offset += 8;
   tokenMint.toBuffer().copy(data, offset); offset += 32;
-  Buffer.from(vkHashSubscriber).copy(data, offset);
+  Buffer.from(vkHashSubscriber).copy(data, offset); offset += 32;
+  // arg #6 (LAST) — Borsh Option<[u8;32]> license_commitment.
+  if (hasLicense) {
+    data.writeUInt8(1, offset); offset += 1;
+    Buffer.from(licenseCommitment!).copy(data, offset); offset += 32;
+  } else {
+    data.writeUInt8(0, offset); offset += 1;
+  }
 
   // Account order == SubscribeNormal struct field order (subscribe_normal.rs:19-40).
   // No token_mint account. Optional token accounts (token_program,
@@ -363,6 +373,17 @@ export async function subscribeNormal(
   vkHashSubscriber: Uint8Array,
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
+  /**
+   * Optional 32-byte `license_commitment = blake3(licenseSecret)` posted as the
+   * LAST subscribe_normal arg (#6). CLASSIC license keys are DEFERRED — see the
+   * note in `services/license/derive.ts#deriveClassicLicenseSecret`: a
+   * deterministic classic signer isn't reliably available across all wallet
+   * signers, so callers currently pass `undefined` and the builder serializes
+   * `None`. The on-chain program still requires the Option byte, which is why
+   * this is threaded through even while the value stays None. ZK private
+   * subscribe is the headline flow and ships its commitment fully.
+   */
+  licenseCommitment?: Uint8Array,
 ): Promise<string> {
   payLog('classic-recurring-p2b', 'subscribeNormal-start', {
     retailer: config.retailer.toBase58(),
@@ -404,6 +425,8 @@ export async function subscribeNormal(
     vkHashSubscriber,
     tokenProgram,
     subscriberTokenAccount,
+    undefined, // vaultTokenAccount
+    licenseCommitment, // DEFERRED for classic — None until a deterministic classic signer lands
   );
 
   onProgress?.('Sending transaction...');
@@ -558,11 +581,20 @@ export async function cancelNormal(
  * Create a private (ZK-authenticated) subscription from a denominated pool note
  * using STARK proof verification (quantum-resistant).
  *
- * Flow:
- *   1. Generate pool_commitment STARK proof on-device
- *   2. Submit + verify STARK proof on-chain (buffer stays open)
- *   3. Call subscribe_private_stark which reads the verified proof buffer
- *   4. Close proof buffer and recover rent
+ * Flow (mirrors unshield_denominated_stark_v3 — TWO proof buffers):
+ *   1. Submit + verify C1 (pool_commitment) STARK proof → c1ProofBuffer
+ *   2. Submit + verify C3 (merkle_path) STARK proof      → c3ProofBuffer
+ *   3. Call subscribe_private_stark referencing BOTH verified buffers
+ *   4. Close BOTH proof buffers and recover rent (handler does not touch them)
+ *
+ * The C3 (merkle_path) proof is a hardening requirement added on-chain: without
+ * it a quantum/forging attacker could synthesize a valid C1 proof for a
+ * never-deposited commitment and drain `denomination` per call. The handler
+ * reconstructs `sha256(stark_commitment_u64_le || merkle_root[..8] || depth=15_u64_le)`
+ * and compares it to the C3 buffer's stored public_inputs hash, so the
+ * `merkle_root` passed to the ix MUST be the root the C3 proof targeted —
+ * we therefore derive it from `c3ProofData.publicInputs[1]` (the Goldilocks
+ * root the prover witnessed), NOT from the possibly-stale receipt.
  */
 export async function subscribePrivateStark(
   receipt: ShieldReceipt,
@@ -571,9 +603,16 @@ export async function subscribePrivateStark(
   subscriberOwnershipCommitment: bigint,
   vkHashSubscriber: Uint8Array,
   starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
   clientStealthMeta?: Uint8Array,
+  /**
+   * 32-byte `license_commitment = blake3(licenseSecret)`, posted on-chain as
+   * the LAST subscribe arg (#10). Stored verbatim — no on-chain verification.
+   * Enables off-chain license-key verification by a merchant (no shared secret).
+   */
+  licenseCommitment?: Uint8Array,
 ): Promise<string> {
   payLog('zk-recurring', 'subscribePrivateStark-start', {
     retailer: vaultConfig.retailer.toBase58(),
@@ -588,6 +627,7 @@ export async function subscribePrivateStark(
     submitAndVerifyStarkProof,
     closeStarkProofBuffer,
     CIRCUIT_POOL_COMMITMENT,
+    CIRCUIT_MERKLE_PATH,
   } = await import('../stark');
 
   onProgress?.('Reading wallet...');
@@ -607,14 +647,6 @@ export async function subscribePrivateStark(
     poolConfig.tokenMint
   );
 
-  onProgress?.('Preparing unshield proof...');
-  const slot = await connection.getSlot('confirmed');
-  const currentEpoch = BigInt(Math.floor(slot / 7200));
-
-  if (!receipt.merklePathElements || !receipt.merklePathIndices || !receipt.merkleRoot) {
-    throw new Error('Receipt missing Merkle proof data');
-  }
-
   // subscribe_private_stark on-chain reads the nullifier as a Goldilocks u64
   // in bytes[0..8] and hashes it together with stark_commitment to match the
   // STARK verifier's stored inputs hash. Using a Groth16/BN254 Poseidon
@@ -623,7 +655,16 @@ export async function subscribePrivateStark(
   // nullifier — take it directly.
   const goldilocksNullifier = starkProofData.publicInputs[0] ?? 0n;
   const nullifierBytes = Array.from(goldilocksU64To32(goldilocksNullifier));
-  const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot);
+
+  // Derive the merkle_root from the C3 proof's public inputs (layout
+  // [leaf_u64, root_u64, depth] per stark/src/air/merkle_path.rs). This is
+  // the canonical source — the handler reconstructs the C3 expected hash from
+  // `merkle_root[..8]`, so the bytes we ship MUST equal `root_u64.to_le_bytes()`.
+  // `goldilocksU64To32` (and bigintToLeBytes32 on a u64-masked value) both put
+  // the u64 LE into bytes[0..8], so `merkleRootBytes[..8] == root_u64 LE`.
+  // Falling back to receipt.merkleRoot only if the proof omitted it (shouldn't).
+  const merkleRootGl = c3ProofData.publicInputs[1] ?? receipt.merkleRoot ?? 0n;
+  const merkleRootBytes = bigintToLeBytes32(merkleRootGl & 0xFFFFFFFFFFFFFFFFn);
   // min_epoch must satisfy: current_epoch >= min_epoch + dynamic_delay (where
   // dynamic_delay scales with pool activity, often 0..N). Setting min_epoch
   // to the note's deposit epoch lets the on-chain check evaluate as
@@ -633,81 +674,119 @@ export async function subscribePrivateStark(
   // active pools and surfaces as EpochDelayNotMet (6023 / 0x1787).
   const minEpoch = receipt.depositEpoch;
 
-  // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
-  onProgress?.('Submitting STARK proof on-chain...');
-  const { proofBuffer } = await submitAndVerifyStarkProof(
-    {
-      proofBytes: starkProofData.proofBytes,
-      circuitId: CIRCUIT_POOL_COMMITMENT,
-      publicInputs: starkProofData.publicInputs,
-      proofSize: starkProofData.proofSize,
-    },
-    walletSigner,
-    onProgress,
-    connection,
-  );
-
-  // Step 2: Build + send subscribe_private_stark instruction
-  onProgress?.('Building subscription transaction...');
-  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
-
-  const starkCommitment = starkProofData.publicInputs[1] ?? 0n;
-
   if (clientStealthMeta && clientStealthMeta.length !== 64) {
     throw new Error(
       `subscribePrivateStark: clientStealthMeta must be 64 bytes, got ${clientStealthMeta.length}`,
     );
   }
-
-  const ix = buildSubscribePrivateStarkIx(
-    walletPubkey,
-    vaultConfig.retailer,
-    vaultPDA,
-    poolConfig.poolPDA,
-    poolConfig.treePDA,
-    nullifierPDA,
-    proofBuffer,
-    Array.from(nullifierBytes),
-    merkleRootBytes,
-    minEpoch,
-    Array.from(subscriberCommitmentBytes),
-    vaultConfig.rate,
-    vaultConfig.intervalSlots,
-    vkHashSubscriber,
-    starkCommitment,
-    clientStealthMeta,
-  );
-
-  onProgress?.('Sending subscription transaction...');
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(300_000));
-  tx.add(ix);
-  let sig: string;
-  try {
-    // Route through p01_relayer (when `relayerV3Enabled`) so the on-chain
-    // tx fee payer is a relayer pubkey, NOT the subscriber's wallet. This
-    // closes the leak documented at the May-9 audit: the wallet pubkey
-    // appearing as Account #0 / fee payer of the subscribe tx — which let
-    // any chain-scanner correlate "wallet X created sub Y at time T".
-    // Falls back to direct on relayer error unless strict-mode is on.
-    const { signAndSendV3 } = await import('../denominatedPool');
-    sig = await signAndSendV3(connection, tx, keypair, walletSigner);
-  } catch (err: any) {
-    inspectPayError('zk-recurring', err?.message ?? String(err), 'subscribePrivateStark');
-    throw err;
+  if (licenseCommitment && licenseCommitment.length !== 32) {
+    throw new Error(
+      `subscribePrivateStark: licenseCommitment must be 32 bytes, got ${licenseCommitment.length}`,
+    );
   }
 
-  // Step 3: Close proof buffer (recover rent)
-  onProgress?.('Closing proof buffer...');
-  await closeStarkProofBuffer(proofBuffer, walletSigner, connection);
+  // TWO buffers — close both in `finally` regardless of whether the subscribe
+  // tx succeeds (rent recovery), mirroring unshield_denominated_stark_v3.
+  const createdBuffers: PublicKey[] = [];
+  try {
+    // Step 1: C1 (pool_commitment) — proves knowledge of secret + nullifier.
+    onProgress?.('Submitting C1 (pool_commitment) proof on-chain...');
+    const { proofBuffer: c1ProofBuffer } = await submitAndVerifyStarkProof(
+      {
+        proofBytes: starkProofData.proofBytes,
+        circuitId: CIRCUIT_POOL_COMMITMENT,
+        publicInputs: starkProofData.publicInputs,
+        proofSize: starkProofData.proofSize,
+      },
+      walletSigner,
+      onProgress,
+      connection,
+    );
+    createdBuffers.push(c1ProofBuffer);
 
-  onProgress?.('Done!');
-  markPayComplete('zk-recurring', {
-    signature: sig,
-    vault: vaultPDA.toBase58(),
-    pool: poolConfig.poolPDA.toBase58(),
-  });
-  return sig;
+    // Step 2: C3 (merkle_path) — NEW hardening requirement. Proves the C1
+    // commitment is a leaf at `merkle_root`. Distinct PDA from C1 (legacy
+    // buffer PDA seeds circuit_id, so id=1 and id=3 never collide).
+    onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
+    const { proofBuffer: c3ProofBuffer } = await submitAndVerifyStarkProof(
+      {
+        proofBytes: c3ProofData.proofBytes,
+        circuitId: CIRCUIT_MERKLE_PATH,
+        publicInputs: c3ProofData.publicInputs,
+        proofSize: c3ProofData.proofSize,
+      },
+      walletSigner,
+      onProgress,
+      connection,
+    );
+    createdBuffers.push(c3ProofBuffer);
+
+    // Step 3: Build + send subscribe_private_stark instruction (both buffers).
+    onProgress?.('Building subscription transaction...');
+    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+    const starkCommitment = starkProofData.publicInputs[1] ?? 0n;
+
+    const ix = buildSubscribePrivateStarkIx(
+      walletPubkey,
+      vaultConfig.retailer,
+      vaultPDA,
+      poolConfig.poolPDA,
+      poolConfig.treePDA,
+      nullifierPDA,
+      c1ProofBuffer,
+      c3ProofBuffer,
+      Array.from(nullifierBytes),
+      merkleRootBytes,
+      minEpoch,
+      Array.from(subscriberCommitmentBytes),
+      vaultConfig.rate,
+      vaultConfig.intervalSlots,
+      vkHashSubscriber,
+      starkCommitment,
+      clientStealthMeta,
+      licenseCommitment,
+    );
+
+    onProgress?.('Sending subscription transaction...');
+    const tx = new Transaction();
+    tx.add(...buildComputeBudgetIxs(300_000));
+    tx.add(ix);
+    let sig: string;
+    try {
+      // Route through p01_relayer (when `relayerV3Enabled`) so the on-chain
+      // tx fee payer is a relayer pubkey, NOT the subscriber's wallet. This
+      // closes the leak documented at the May-9 audit: the wallet pubkey
+      // appearing as Account #0 / fee payer of the subscribe tx — which let
+      // any chain-scanner correlate "wallet X created sub Y at time T".
+      // Falls back to direct on relayer error unless strict-mode is on.
+      const { signAndSendV3 } = await import('../denominatedPool');
+      sig = await signAndSendV3(connection, tx, keypair, walletSigner);
+    } catch (err: any) {
+      inspectPayError('zk-recurring', err?.message ?? String(err), 'subscribePrivateStark');
+      throw err;
+    }
+
+    onProgress?.('Done!');
+    markPayComplete('zk-recurring', {
+      signature: sig,
+      vault: vaultPDA.toBase58(),
+      pool: poolConfig.poolPDA.toBase58(),
+    });
+    return sig;
+  } finally {
+    // Step 4: Close BOTH proof buffers (recover rent). The on-chain handler
+    // explicitly does NOT write to the buffers ("Caller closes them"), so we
+    // always close every buffer we created, success or failure.
+    for (const buf of createdBuffers) {
+      try {
+        onProgress?.('Closing proof buffer...');
+        await closeStarkProofBuffer(buf, walletSigner, connection);
+      } catch (closeErr: any) {
+        console.warn('[SubscriptionVault] closeStarkProofBuffer failed:', closeErr?.message ?? String(closeErr));
+      }
+    }
+  }
 }
 
 /**
@@ -842,7 +921,8 @@ function buildSubscribePrivateStarkIx(
   poolPDA: PublicKey,
   treePDA: PublicKey,
   nullifierPDA: PublicKey,
-  starkProofBuffer: PublicKey,
+  c1ProofBuffer: PublicKey,
+  c3ProofBuffer: PublicKey,
   nullifierBytes: number[],
   merkleRootBytes: number[],
   minEpoch: bigint,
@@ -852,16 +932,20 @@ function buildSubscribePrivateStarkIx(
   vkHashSubscriber: Uint8Array,
   starkCommitment: bigint,
   clientStealthMeta?: Uint8Array,
+  licenseCommitment?: Uint8Array,
 ): TransactionInstruction {
   const disc = getDiscriminator('subscribe_private_stark');
 
-  // Args: nullifier: [u8;32], merkle_root: [u8;32], min_epoch: u64,
-  //       subscriber_commitment: [u8;32], rate: u64, interval_slots: u64,
-  //       vk_hash_subscriber: [u8;32], stark_commitment: u64,
-  //       client_stealth_meta: Option<[u8;64]> (1-byte tag + 64 bytes if Some)
+  // Args (in on-chain order): nullifier: [u8;32], merkle_root: [u8;32],
+  //   min_epoch: u64, subscriber_commitment: [u8;32], rate: u64,
+  //   interval_slots: u64, vk_hash_subscriber: [u8;32], stark_commitment: u64,
+  //   client_stealth_meta: Option<[u8;64]>  (arg #9, 1-byte tag + 64 if Some),
+  //   license_commitment:  Option<[u8;32]>  (arg #10 / LAST, 1-byte tag + 32 if Some)
   const hasMeta = !!clientStealthMeta && clientStealthMeta.length === 64;
-  const optionSize = 1 + (hasMeta ? 64 : 0);
-  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8 + optionSize);
+  const metaOptionSize = 1 + (hasMeta ? 64 : 0);
+  const hasLicense = !!licenseCommitment && licenseCommitment.length === 32;
+  const licenseOptionSize = 1 + (hasLicense ? 32 : 0);
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8 + metaOptionSize + licenseOptionSize);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
@@ -873,13 +957,24 @@ function buildSubscribePrivateStarkIx(
   Buffer.from(vkHashSubscriber).copy(data, offset); offset += 32;
   data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
 
-  // Borsh Option<[u8;64]>: tag (0=None, 1=Some) followed by 64 bytes if Some.
-  // Refund-via-relayer: when set, cancel routes residual through p01_relayer
-  // RefundJob instead of legacy reshield. Persisted on-chain in
-  // `vault.client_stealth_meta`.
+  // arg #9 — Borsh Option<[u8;64]> client_stealth_meta: tag (0=None, 1=Some)
+  // followed by 64 bytes if Some. Refund-via-relayer: when set, cancel routes
+  // residual through p01_relayer RefundJob instead of legacy reshield.
+  // Persisted on-chain in `vault.client_stealth_meta`.
   if (hasMeta) {
     data.writeUInt8(1, offset); offset += 1;
     Buffer.from(clientStealthMeta!).copy(data, offset); offset += 64;
+  } else {
+    data.writeUInt8(0, offset); offset += 1;
+  }
+
+  // arg #10 (LAST) — Borsh Option<[u8;32]> license_commitment: tag (0=None,
+  // 1=Some) followed by 32 bytes if Some. This is blake3(licenseSecret); the
+  // chain stores it verbatim with NO verification. A merchant later checks
+  // blake3(decode(presentedKey)) == vault.license_commitment off-chain.
+  if (hasLicense) {
+    data.writeUInt8(1, offset); offset += 1;
+    Buffer.from(licenseCommitment!).copy(data, offset); offset += 32;
   } else {
     data.writeUInt8(0, offset); offset += 1;
   }
@@ -891,11 +986,17 @@ function buildSubscribePrivateStarkIx(
     { pubkey: poolPDA, isSigner: false, isWritable: true },
     { pubkey: treePDA, isSigner: false, isWritable: false },
     { pubkey: nullifierPDA, isSigner: false, isWritable: true },
-    // stark_proof_buffer is `#[account(mut)]` in subscribe_private_stark
-    // (the handler invalidates it post-use by setting verified=false).
-    // Pass writable=true to match — otherwise Anchor throws ConstraintMut
-    // (2000 / 0x7d0).
-    { pubkey: starkProofBuffer, isSigner: false, isWritable: true },
+    // c1_proof_buffer is read-only here (the handler reads circuit_id=1 /
+    // verified / deep_ali / inputs_hash but never writes — the subscribe
+    // handler ends with "Caller closes them", so no on-chain invalidation).
+    { pubkey: c1ProofBuffer, isSigner: false, isWritable: false },
+    // c3_proof_buffer (merkle_path, circuit 3) — NEW hardening requirement.
+    // Goes IMMEDIATELY AFTER c1_proof_buffer to match the on-chain
+    // SubscribePrivateStark accounts struct order. Read-only for the same
+    // reason as c1 above. Without it the ix fails with AccountNotEnoughKeys
+    // (3005 / 0xbbd) before reaching the handler; with a bad C3 hash it
+    // reverts InvalidProof.
+    { pubkey: c3ProofBuffer, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     // Optional accounts for SPL-token pools (token_program, pool_vault,
     // vault_token_account). Anchor 0.32 requires placeholder accounts even

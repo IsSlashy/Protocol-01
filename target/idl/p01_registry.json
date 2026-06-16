@@ -1,0 +1,618 @@
+{
+  "address": "ET9NrX6RCaNi4Ghr5HsySxMpm4GXQSSw7qZByW5cpLnr",
+  "metadata": {
+    "name": "p01_registry",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Protocol 01 - Stealth meta-address registry (on-chain address book)"
+  },
+  "instructions": [
+    {
+      "name": "deregister",
+      "docs": [
+        "Close the registry entry and reclaim rent.",
+        "Only the owner can delete their own entry."
+      ],
+      "discriminator": [
+        161,
+        178,
+        39,
+        189,
+        231,
+        224,
+        13,
+        187
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "entry"
+          ]
+        },
+        {
+          "name": "entry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "register_v1",
+      "docs": [
+        "Register a v1 stealth meta-address (classical X25519 only).",
+        "",
+        "Creates a PDA keyed by the owner's wallet address, storing their",
+        "spending and viewing public keys. Anyone can look this up to send",
+        "the owner a stealth payment."
+      ],
+      "discriminator": [
+        164,
+        207,
+        179,
+        58,
+        126,
+        14,
+        192,
+        139
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "entry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "spending_pub_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "viewing_pub_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "register_v2",
+      "docs": [
+        "Register a v2 stealth meta-address (hybrid X25519 + ML-KEM-768).",
+        "",
+        "Same as v1 but also stores the ML-KEM-768 public key for",
+        "post-quantum-resistant stealth payments."
+      ],
+      "discriminator": [
+        225,
+        250,
+        193,
+        26,
+        37,
+        179,
+        205,
+        76
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "entry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "spending_pub_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "viewing_pub_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "kem_pub_key",
+          "type": "bytes"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "update_keys_v1",
+      "docs": [
+        "Update the stealth meta-address keys (v1).",
+        "Only the owner can update their own entry."
+      ],
+      "discriminator": [
+        180,
+        120,
+        213,
+        115,
+        213,
+        80,
+        165,
+        10
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "entry"
+          ]
+        },
+        {
+          "name": "entry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "spending_pub_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "viewing_pub_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_keys_v2",
+      "docs": [
+        "Update the stealth meta-address keys (v2 hybrid).",
+        "Only the owner can update their own entry."
+      ],
+      "discriminator": [
+        109,
+        4,
+        77,
+        151,
+        180,
+        92,
+        83,
+        101
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "entry"
+          ]
+        },
+        {
+          "name": "entry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "spending_pub_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "viewing_pub_key",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "kem_pub_key",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "update_name",
+      "docs": [
+        "Update the display name."
+      ],
+      "discriminator": [
+        70,
+        146,
+        141,
+        213,
+        58,
+        44,
+        119,
+        169
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "entry"
+          ]
+        },
+        {
+          "name": "entry",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  117,
+                  115,
+                  101,
+                  114,
+                  95,
+                  114,
+                  101,
+                  103,
+                  105,
+                  115,
+                  116,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "UserRegistry",
+      "discriminator": [
+        37,
+        84,
+        98,
+        14,
+        130,
+        63,
+        210,
+        138
+      ]
+    }
+  ],
+  "types": [
+    {
+      "name": "UserRegistry",
+      "docs": [
+        "UserRegistry entry — on-chain stealth meta-address record.",
+        "",
+        "Allows anyone to look up a user's stealth meta-address by their wallet",
+        "address, enabling private payments without out-of-band coordination.",
+        "",
+        "Supports both v1 (classical X25519 only) and v2 (hybrid X25519 + ML-KEM-768).",
+        "",
+        "# Account size breakdown",
+        "discriminator             8",
+        "owner                    32",
+        "spending_pub_key         32",
+        "viewing_pub_key          32",
+        "version                   1",
+        "has_kem_key               1",
+        "kem_pub_key            1184   (ML-KEM-768, zeroed if v1)",
+        "name_len                  4   (u32 Borsh length prefix)",
+        "name                     32   (max 32 bytes UTF-8)",
+        "created_at                8",
+        "updated_at                8",
+        "bump                      1",
+        "─────────────────────────────",
+        "total                  1343 bytes"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "docs": [
+              "The wallet that owns this registry entry"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "spending_pub_key",
+            "docs": [
+              "Spending public key (Ed25519, 32 bytes)",
+              "Used to derive stealth addresses for this recipient"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "viewing_pub_key",
+            "docs": [
+              "Viewing public key (X25519, 32 bytes)",
+              "Used in ECDH to derive shared secrets for stealth scanning"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "version",
+            "docs": [
+              "Meta-address version: 1 = classical, 2 = hybrid (X25519 + ML-KEM)"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "has_kem_key",
+            "docs": [
+              "Whether the KEM public key is populated"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "kem_pub_key",
+            "docs": [
+              "ML-KEM-768 public key (1184 bytes, FIPS 203)",
+              "Zeroed if version == 1"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                1184
+              ]
+            }
+          },
+          {
+            "name": "name",
+            "docs": [
+              "Optional display name (max 32 bytes UTF-8)"
+            ],
+            "type": "string"
+          },
+          {
+            "name": "created_at",
+            "docs": [
+              "Unix timestamp when this entry was first created"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "updated_at",
+            "docs": [
+              "Unix timestamp when this entry was last updated"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump seed"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ],
+  "constants": [],
+  "events": [],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidKey",
+      "msg": "Key must not be all zeros"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidKemKey",
+      "msg": "ML-KEM-768 public key must be exactly 1184 bytes"
+    },
+    {
+      "code": 6002,
+      "name": "NameTooLong",
+      "msg": "Display name exceeds 32 bytes"
+    }
+  ]
+}

@@ -49,6 +49,22 @@ export interface RouterProverFacade {
     proofSize: number;
     publicInputs: string[];
   }>;
+  /**
+   * C3 (merkle_path) prover — proves a leaf's membership at a merkle root.
+   * Needed by the split hop now that split_note_stark requires a C3 buffer
+   * (source-note membership), mirroring unshield/subscribe. Optional so an
+   * older provider registration that predates this field still type-checks;
+   * the split callback throws RETRY if it's missing.
+   */
+  generateMerklePathProof?: (
+    leaf: string,
+    pathElements: string[],
+    pathIndices: number[],
+  ) => Promise<{
+    proofHex: string;
+    proofSize: number;
+    publicInputs: string[];
+  }>;
 }
 
 let _foregroundProver: RouterProverFacade | null = null;
@@ -143,6 +159,13 @@ function buildCallbacks(): HopExecutionCallbacks {
       const targetPool = findPool('SOL', params.targetDenomination);
       if (!sourcePool) throw new Error(`No source pool for ${params.sourceDenomination} SOL`);
       if (!targetPool) throw new Error(`No target pool for ${params.targetDenomination} SOL`);
+      // NOTE (reachability): split is dormant — the route planner/scheduler
+      // never emit a `split` hop (scheduler.ts switch handles shield/unshield/
+      // reshield only), so this callback is currently unreachable. It is wired
+      // for correctness if a split hop is ever enabled. The C3 (merkle_path)
+      // proof below requires a V3 SOURCE pool/tree (Goldilocks); when enabling
+      // split, the source note + target pool MUST be V3 (see SOL_POOLS_V3) so
+      // the C3 root lands in source_pool.historical_roots on-chain.
 
       const prover = getReadyProver();
       if (!prover) {
@@ -163,14 +186,28 @@ function buildCallbacks(): HopExecutionCallbacks {
         throw new Error(`RETRY: No mature note for ${params.sourceDenomination} SOL split`);
       }
 
+      // split_note_stark now requires a C3 (merkle_path) proof of the source
+      // note's membership, in addition to C1. The C3 prover must be registered
+      // on the foreground prover facade; bounce off if it isn't.
+      if (!prover.generateMerklePathProof) {
+        nudgeUserOpenApp();
+        throw new Error('RETRY: STARK merkle-path prover unavailable (open app to advance route)');
+      }
+
       // Derive deterministic output secrets from the parent note's secret so
       // the user can recover the children from seed alone (Phase 2 of the
       // note-secret fix — see bug-note-secret-nondeterministic memory).
-      const { receiptFromJSON } = await import('../denominatedPool');
+      const {
+        receiptFromJSON,
+        fetchPoolLeavesByIndex,
+        buildMerkleProofFromLeavesV3,
+        SOL_POOLS_V3,
+      } = await import('../denominatedPool');
       const { vaultDecrypt } = await import('../../utils/crypto/noteVault');
       const receipt = receiptFromJSON(vaultDecrypt(matureNote.receiptJSON));
       const outputSecrets = deriveSplitOutputSecrets(receipt.secret, params.numOutputs);
 
+      // C1 (pool_commitment) — proves knowledge of the source note.
       const proofResult = await prover.generatePoolCommitmentProof(
         receipt.nullifierPreimage.toString(),
         receipt.secret.toString(),
@@ -181,12 +218,45 @@ function buildCallbacks(): HopExecutionCallbacks {
       const proofBytes = Buffer.from(proofResult.proofHex, 'hex');
       const publicInputs = proofResult.publicInputs.map((s: string) => BigInt(s));
 
+      // C3 (merkle_path) — proves the C1 commitment is a leaf in the SOURCE
+      // pool tree at `merkle_root`. The on-chain hash uses the Goldilocks leaf
+      // (= C1.publicInputs[1]) + Goldilocks root, so the path MUST be built from
+      // the V3 (Goldilocks) tree of the source pool. Mirrors the C3 flow in
+      // (privacy)/subscribe-private.tsx and denominated-unshield.tsx exactly.
+      const sourcePoolV3 = SOL_POOLS_V3.find(
+        p => p.denomination === params.sourceDenomination && p.token === 'SOL',
+      );
+      if (!sourcePoolV3) {
+        throw new Error(
+          `Split requires a V3 source pool (split_note_stark uses the V3 tree / merkle_path) ` +
+          `but no V3 SOL pool is registered for ${params.sourceDenomination} SOL.`,
+        );
+      }
+      const { getConnection } = await import('../solana/connection');
+      const conn = getConnection();
+      // 5000-sig limit — devnet Helius 429s truncate low limits; a missed
+      // LeafInserted event gap-fills with ZERO and yields a non-existent root.
+      const leafScan = await fetchPoolLeavesByIndex(conn, sourcePoolV3.poolPDA, { maxSignatures: 5000 });
+      const merkleProof = buildMerkleProofFromLeavesV3({
+        leavesByIndex: leafScan.leavesByIndex,
+        targetLeafIndex: receipt.leafIndex,
+      });
+      const U64 = (1n << 64n) - 1n;
+      const c3Result = await prover.generateMerklePathProof(
+        (receipt.commitment & U64).toString(),
+        merkleProof.pathElements.map(e => (e & U64).toString()),
+        merkleProof.pathIndices,
+      );
+      const c3Bytes = Buffer.from(c3Result.proofHex, 'hex');
+      const c3Inputs = c3Result.publicInputs.map((s: string) => BigInt(s));
+
       try {
         const { txSignature, outputCommitments } = await store.splitNoteStark(
           matureNote.id,
           targetPool.poolPDA.toBase58(),
           outputSecrets,
           { proofBytes, publicInputs, proofSize: proofResult.proofSize },
+          { proofBytes: c3Bytes, publicInputs: c3Inputs, proofSize: c3Result.proofSize },
         );
         console.log(`[AutoRunner] ✂️ Split confirmed: ${txSignature.slice(0, 16)}...`);
         return {

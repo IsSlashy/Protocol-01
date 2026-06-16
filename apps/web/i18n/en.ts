@@ -1338,7 +1338,7 @@ const en = {
     quickNav: 'Quick Navigation',
     designDoc: 'Design & Architecture Document',
     designDocMeta: 'PDF · 18 pages',
-    designDocRevision: 'PROGRESSIVELY UPDATED · LAST REVISION MAY 2026',
+    designDocRevision: 'PROGRESSIVELY UPDATED · LAST REVISION JUNE 2026',
     footerBeta: 'Beta',
     footerDevnet: 'Devnet Only',
     footerBuilt: 'Built from scratch for privacy',

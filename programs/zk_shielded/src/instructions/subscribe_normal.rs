@@ -14,7 +14,8 @@ use crate::state::SubscriptionVault;
     interval_slots: u64,
     amount: u64,
     token_mint: Pubkey,
-    vk_hash_subscriber: [u8; 32]
+    vk_hash_subscriber: [u8; 32],
+    license_commitment: Option<[u8; 32]>
 )]
 pub struct SubscribeNormal<'info> {
     /// Subscriber depositing funds
@@ -61,6 +62,7 @@ pub fn handler(
     amount: u64,
     token_mint: Pubkey,
     vk_hash_subscriber: [u8; 32],
+    license_commitment: Option<[u8; 32]>,
 ) -> Result<()> {
     require!(rate > 0, ZkShieldedError::InvalidRate);
     require!(interval_slots > 0, ZkShieldedError::InvalidInterval);
@@ -122,6 +124,7 @@ pub fn handler(
     vault.vk_hash_subscriber = vk_hash_subscriber;
     vault.source_pool = None;
     vault.bump = ctx.bumps.vault;
+    vault.license_commitment = license_commitment;
 
     emit!(SubscribeNormalEvent {
         vault: vault.key(),

@@ -8,7 +8,7 @@ import { Github, Chrome, Download } from "lucide-react";
 import { useT } from "@/i18n";
 
 const APK_URL =
-  "https://github.com/IsSlashy/Protocol-01/releases/download/v1.0.2/protocol-01-v1.0.2.apk";
+  "https://github.com/IsSlashy/Protocol-01/releases/download/v1.0.3/protocol-01-v1.0.3.apk";
 
 
 export default function CTA() {

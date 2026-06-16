@@ -263,12 +263,16 @@ interface DenominatedPoolState {
       newLeafIndex: number;
     },
   ) => Promise<{ txSig: string; shareableNote: string }>;
-  /** Quantum-resistant STARK split across denominations (same token) */
+  /** Quantum-resistant STARK split across denominations (same token).
+   * Requires TWO proofs: C1 (pool_commitment) + C3 (merkle_path) — the latter
+   * is a hardening requirement added on-chain (split_note_stark now proves the
+   * source note's membership, mirroring unshield/subscribe). */
   splitNoteStark: (
     noteId: string,
     targetPoolPDA: string,
     outputSecrets: bigint[],
     starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+    c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
   ) => Promise<{ txSignature: string; outputCommitments: bigint[] }>;
   /**
    * Import fresh notes re-shielded during subscription cancellation. Takes
@@ -784,48 +788,12 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             const localKp = walletSigner ? null : await getKeypair();
             const srcPubkey = walletSigner ? walletSigner.publicKey : localKp!.publicKey;
             const walletAddr = srcPubkey.toBase58();
-            const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_shield_${Date.now()}`));
-            const stealthKp = SolKeypair.fromSeed(seed);
 
-            console.log(`[DenomStore] Stealth: ${stealthKp.publicKey.toBase58().slice(0, 12)}...`);
-
-            // Transfer denomination + rent + shield fee to stealth
-            const lamports = pool.denomination === 0.1 ? 100_000_000 : pool.denomination === 0.5 ? 500_000_000 : pool.denomination * 1_000_000_000;
-            const extra = 5_000_000; // 0.005 SOL for fees + rent
-            const transferAmount = lamports + extra;
-
-            set({ progress: 'Transferring to stealth address...' });
-            const transferTx = new Transaction().add(
-              SystemProgram.transfer({
-                fromPubkey: srcPubkey,
-                toPubkey: stealthKp.publicKey,
-                lamports: transferAmount,
-              })
-            );
-            const { blockhash } = await connection.getLatestBlockhash();
-            transferTx.recentBlockhash = blockhash;
-            transferTx.feePayer = srcPubkey;
-            let transferSig: string;
-            if (walletSigner) {
-              const signedTransfer = await walletSigner.signTransaction(transferTx);
-              transferSig = await connection.sendRawTransaction(signedTransfer.serialize());
-            } else {
-              transferTx.sign(localKp!);
-              transferSig = await connection.sendRawTransaction(transferTx.serialize());
-            }
-            await connection.confirmTransaction(transferSig, 'confirmed');
-            console.log(`[DenomStore] Stealth transfer confirmed: ${transferSig.slice(0, 16)}...`);
-
-            // Random delay 1-3s between transfer and shield (breaks timing correlation)
-            const delay = 1000 + Math.floor(Math.random() * 2000);
-            console.log(`[DenomStore] Timing jitter: ${delay}ms before shield`);
-            set({ progress: 'Waiting (timing privacy)...' });
-            await new Promise(r => setTimeout(r, delay));
-
-            // Deterministic note derivation — tied to USER's seed, not the
-            // ephemeral stealthKp, so the receipt is recoverable on any phone
-            // that imports the same seed. For Privy users (no local mnemonic)
-            // the seed is derived from a one-per-session signed message.
+            // ── Resolve the deterministic note counter FIRST ──
+            // The counter is the stable per-shield identity. We derive the
+            // stealth keypair from it (below), so it must be settled before
+            // the stealth address exists. Mirrors the note-derivation block
+            // that previously sat after the transfer.
             const poolKey = pool.poolPDA.toBase58();
             const storedCounter = get().shieldCounters[poolKey] ?? 0;
             let walletSeed: Uint8Array | null = null;
@@ -856,6 +824,86 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               console.warn('[DenomStore] No seed source available — note will NOT be seed-recoverable');
             }
 
+            // ── Stealth intermediary keypair — DETERMINISTIC ──
+            // Seeded from (walletAddr, poolKey, counter), NOT Date.now().
+            // This is the exact pattern the unshield/transfer flows use
+            // (see `stealth_unshield_${noteId}` ~L1167 and
+            // `stealth_transfer_v3_${noteId}` ~L1841): a stable per-operation
+            // identifier so a crashed attempt re-derives the SAME stealth
+            // address and previously-funded SOL is recoverable rather than
+            // stranded forever. Privacy is preserved because each (pool,
+            // counter) tuple is used at most once — the nullifier enforces
+            // single-spend on-chain, so no two shields share a stealth signer.
+            const stealthLabel = `stealth_shield_v1_${poolKey}_${counter}`;
+            const seed = hmac(
+              sha256,
+              new TextEncoder().encode(walletAddr),
+              new TextEncoder().encode(stealthLabel),
+            );
+            const stealthKp = SolKeypair.fromSeed(seed);
+
+            console.log(`[DenomStore] Stealth: ${stealthKp.publicKey.toBase58().slice(0, 12)}... (deterministic, counter=${counter})`);
+
+            // Transfer denomination + rent + shield fee to stealth
+            const lamports = pool.denomination === 0.1 ? 100_000_000 : pool.denomination === 0.5 ? 500_000_000 : pool.denomination * 1_000_000_000;
+            const extra = 5_000_000; // 0.005 SOL for fees + rent
+            const transferAmount = lamports + extra;
+
+            // ── Idempotent recovery ──
+            // If a prior attempt for this exact (pool, counter) crashed AFTER
+            // funding the stealth address but BEFORE shielding, the SOL is
+            // still sitting at this deterministic address. Re-derive, check the
+            // balance, and only fund the shortfall (or skip funding entirely)
+            // instead of double-funding from the main wallet.
+            set({ progress: 'Checking stealth balance...' });
+            let stealthBalance = 0;
+            try {
+              stealthBalance = await connection.getBalance(stealthKp.publicKey, 'confirmed');
+            } catch {
+              stealthBalance = 0; // RPC hiccup — treat as empty, fund full amount
+            }
+            if (stealthBalance >= transferAmount) {
+              console.log(
+                `[DenomStore] Stealth already funded (${(stealthBalance / 1e9).toFixed(4)} SOL >= ` +
+                  `${(transferAmount / 1e9).toFixed(4)} SOL) — resuming, skipping transfer`,
+              );
+            } else {
+              const fundShortfall = transferAmount - stealthBalance;
+              if (stealthBalance > 0) {
+                console.log(
+                  `[DenomStore] Stealth partially funded (${(stealthBalance / 1e9).toFixed(4)} SOL) — ` +
+                    `topping up shortfall ${(fundShortfall / 1e9).toFixed(4)} SOL`,
+                );
+              }
+              set({ progress: 'Transferring to stealth address...' });
+              const transferTx = new Transaction().add(
+                SystemProgram.transfer({
+                  fromPubkey: srcPubkey,
+                  toPubkey: stealthKp.publicKey,
+                  lamports: fundShortfall,
+                })
+              );
+              const { blockhash } = await connection.getLatestBlockhash();
+              transferTx.recentBlockhash = blockhash;
+              transferTx.feePayer = srcPubkey;
+              let transferSig: string;
+              if (walletSigner) {
+                const signedTransfer = await walletSigner.signTransaction(transferTx);
+                transferSig = await connection.sendRawTransaction(signedTransfer.serialize());
+              } else {
+                transferTx.sign(localKp!);
+                transferSig = await connection.sendRawTransaction(transferTx.serialize());
+              }
+              await connection.confirmTransaction(transferSig, 'confirmed');
+              console.log(`[DenomStore] Stealth transfer confirmed: ${transferSig.slice(0, 16)}...`);
+
+              // Random delay 1-3s between transfer and shield (breaks timing correlation)
+              const delay = 1000 + Math.floor(Math.random() * 2000);
+              console.log(`[DenomStore] Timing jitter: ${delay}ms before shield`);
+              set({ progress: 'Waiting (timing privacy)...' });
+              await new Promise(r => setTimeout(r, delay));
+            }
+
             // Now shield from the stealth keypair (not the user's wallet)
             set({ progress: 'Shielding from stealth address...' });
             console.log('[DenomStore] Shielding from stealth (wallet hidden on-chain)...');
@@ -872,11 +920,20 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
             console.log('[DenomStore] ✅ Shield via stealth — wallet NOT visible on-chain');
           } catch (stealthErr: any) {
-            // Stealth failed — fallback to direct (e.g., local keypair, no Privy signer)
-            console.warn('[DenomStore] Stealth shield failed, using direct:', stealthErr.message);
+            // Stealth failed — recover safely. Because the stealth keypair is
+            // deterministic (seeded from walletAddr + poolKey + counter), the
+            // failed attempt may have ALREADY moved SOL to the stealth address.
+            // A blind direct shield from the main wallet would strand that SOL
+            // forever AND double-spend. So: re-derive the stealth address, and
+            // if it already holds the funds, RESUME the stealth shield from it
+            // instead of paying again from the wallet.
+            console.warn('[DenomStore] Stealth shield failed, recovering:', stealthErr.message);
+            const connection = getConnection();
             const poolKey = pool.poolPDA.toBase58();
             const storedCounter = get().shieldCounters[poolKey] ?? 0;
             const directKp = walletSigner ? null : await getKeypair();
+            const srcPubkey = walletSigner ? walletSigner.publicKey : directKp!.publicKey;
+            const walletAddr = srcPubkey.toBase58();
             let walletSeed: Uint8Array | null = null;
             if (directKp) {
               walletSeed = directKp.secretKey.slice(0, 32);
@@ -884,7 +941,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             let counter = storedCounter;
             if (walletSeed) {
               counter = await findSafeShieldCounter(
-                getConnection(),
+                connection,
                 walletSeed,
                 pool.poolPDA,
                 storedCounter,
@@ -896,10 +953,49 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               }
             }
             const deterministic = walletSeed ? { walletSeed, counter } : undefined;
-            receipt = await shield(pool, (step) => {
-              console.log('[DenomStore] progress:', step);
-              set({ progress: step });
-            }, walletSigner, undefined, deterministic);
+
+            // Re-derive the SAME deterministic stealth keypair for this
+            // (pool, counter) and inspect its balance.
+            const stealthLabel = `stealth_shield_v1_${poolKey}_${counter}`;
+            const seed = hmac(
+              sha256,
+              new TextEncoder().encode(walletAddr),
+              new TextEncoder().encode(stealthLabel),
+            );
+            const stealthKp = SolKeypair.fromSeed(seed);
+            const lamports = pool.denomination === 0.1 ? 100_000_000 : pool.denomination === 0.5 ? 500_000_000 : pool.denomination * 1_000_000_000;
+            const transferAmount = lamports + 5_000_000;
+            let stealthBalance = 0;
+            try {
+              stealthBalance = await connection.getBalance(stealthKp.publicKey, 'confirmed');
+            } catch {
+              stealthBalance = 0;
+            }
+
+            if (stealthBalance >= transferAmount) {
+              // Funds are stranded at the stealth address from the failed
+              // attempt — resume the privacy-preserving shield from there.
+              // No new transfer from the wallet ⇒ no double-spend, no loss.
+              console.log(
+                `[DenomStore] Recovering: stealth holds ${(stealthBalance / 1e9).toFixed(4)} SOL — ` +
+                  `resuming shield from stealth (no re-funding)`,
+              );
+              set({ progress: 'Resuming shield from funded stealth...' });
+              receipt = await shield(pool, (step) => {
+                console.log('[DenomStore] progress:', step);
+                set({ progress: step });
+              }, undefined, stealthKp, deterministic);
+            } else {
+              // Stealth address is empty (failure happened before/at funding,
+              // or funds were never moved) — safe to shield directly from the
+              // wallet without risking a stranded-balance double-spend.
+              console.log('[DenomStore] Stealth empty — direct shield from wallet is safe');
+              receipt = await shield(pool, (step) => {
+                console.log('[DenomStore] progress:', step);
+                set({ progress: step });
+              }, walletSigner, undefined, deterministic);
+            }
+
             if (deterministic) {
               set(state => ({
                 shieldCounters: { ...state.shieldCounters, [poolKey]: counter + 1 },
@@ -1963,7 +2059,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       // STARK Split Note (quantum-resistant, cross-denomination)
       // ------------------------------------------------------------------
 
-      splitNoteStark: async (noteId, targetPoolPDA, outputSecrets, starkProofData) => {
+      splitNoteStark: async (noteId, targetPoolPDA, outputSecrets, starkProofData, c3ProofData) => {
         const note = get().notes.find(n => n.id === noteId);
         if (!note) throw new Error('Note not found');
         if (note.status === 'spent') throw new Error('Note already spent');
@@ -1971,8 +2067,15 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         if (note.status !== 'mature') throw new Error('Note must be mature for split');
 
         const receipt = readReceipt(note.receiptJSON);
-        const sourcePool = ALL_POOLS.find(p => p.poolPDA.toBase58() === note.poolPDA);
-        const targetPool = ALL_POOLS.find(p => p.poolPDA.toBase58() === targetPoolPDA);
+        // split_note_stark's C3 (merkle_path) proof binds the SOURCE note's
+        // Goldilocks commitment to a root in source_pool.historical_roots, so
+        // a V3 source note must resolve to its V3 pool (not just V2). Check
+        // both generations; V3 first (the future default).
+        const findAnyPool = (pda: string) =>
+          ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === pda)
+            ?? ALL_POOLS.find(p => p.poolPDA.toBase58() === pda);
+        const sourcePool = findAnyPool(note.poolPDA);
+        const targetPool = findAnyPool(targetPoolPDA);
         if (!sourcePool) throw new Error('Source pool config not found');
         if (!targetPool) throw new Error('Target pool config not found');
         if (!sourcePool.tokenMint.equals(targetPool.tokenMint)) {
@@ -1995,6 +2098,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             numOutputs,
             outputSecrets,
             starkProofData,
+            c3ProofData,
             walletSigner,
             (step) => {
               const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');

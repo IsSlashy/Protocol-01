@@ -2157,15 +2157,28 @@ export async function transferNoteStark(
 
 /**
  * Build split_note_stark instruction.
- * Consumes a pre-verified STARK proof buffer (circuit 1: pool_commitment for source note).
+ * Consumes TWO pre-verified STARK proof buffers:
+ *   - C1 (circuit 1, pool_commitment): proves knowledge of the source note.
+ *   - C3 (circuit 3, merkle_path): proves the C1 commitment is a leaf in the
+ *     SOURCE pool tree at `merkle_root`. NEW on-chain hardening requirement —
+ *     without it a forged C1 for a never-deposited commitment could split value
+ *     out of nothing (mirrors unshield_denominated_stark_v3 / subscribe).
  * output_commitments authenticated by payer signature on instruction data.
+ *
+ * Account order MUST match SplitNoteStark in
+ * programs/zk_shielded/src/instructions/split_note_stark.rs:
+ *   1 payer, 2 source_pool, 3 source_merkle_tree, 4 target_pool,
+ *   5 target_merkle_tree, 6 nullifier_record, 7 c1_proof_buffer,
+ *   8 c3_proof_buffer (NEW), 9 protocol_fee_wallet, 10 system_program,
+ *   11 token_program?, 12 source_pool_vault?, 13 target_pool_vault?.
  */
 function buildSplitNoteStarkIx(
   payer: PublicKey,
   sourcePool: PoolConfig,
   targetPool: PoolConfig,
   nullifierPDA: PublicKey,
-  starkProofBuffer: PublicKey,
+  c1ProofBuffer: PublicKey,
+  c3ProofBuffer: PublicKey,
   nullifierBytes: number[],
   merkleRootBytes: number[],
   minEpoch: bigint,
@@ -2209,7 +2222,8 @@ function buildSplitNoteStarkIx(
     { pubkey: targetPool.poolPDA, isSigner: false, isWritable: true },
     { pubkey: targetPool.treePDA, isSigner: false, isWritable: true },
     { pubkey: nullifierPDA, isSigner: false, isWritable: true },
-    { pubkey: starkProofBuffer, isSigner: false, isWritable: false },
+    { pubkey: c1ProofBuffer, isSigner: false, isWritable: false },
+    { pubkey: c3ProofBuffer, isSigner: false, isWritable: false },
     { pubkey: PROTOCOL_FEE_WALLET, isSigner: false, isWritable: true },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     { pubkey: sourcePool.vaultATA ? TOKEN_PROGRAM_ID : ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
@@ -2227,12 +2241,22 @@ function buildSplitNoteStarkIx(
  * Denomination conservation is enforced on-chain:
  *   source.denomination == num_outputs * target.denomination
  *
- * Flow:
- * 1. Generate pool_commitment STARK proof (circuit 1) for the source note
- * 2. Submit + verify STARK proof on-chain
+ * Flow (mirrors subscribe_private_stark / unshield_denominated_stark_v3 — TWO buffers):
+ * 1. Submit + verify C1 (pool_commitment, circuit 1) proof  → c1ProofBuffer
+ * 2. Submit + verify C3 (merkle_path, circuit 3) proof       → c3ProofBuffer
  * 3. Compute output commitments (Poseidon) + new Merkle roots
- * 4. Call split_note_stark (reads verified proof buffer)
- * 5. Close proof buffer (recover rent)
+ * 4. Call split_note_stark (reads BOTH verified proof buffers)
+ * 5. Close BOTH proof buffers (recover rent)
+ *
+ * The C3 proof is a hardening requirement added on-chain: without it a
+ * quantum/forging attacker could synthesize a valid C1 proof for a
+ * never-deposited commitment and split value out of nothing into the target
+ * pool. The on-chain handler reconstructs
+ *   sha256(stark_commitment_u64_le || merkle_root[..8] || depth=15_u64_le)
+ * and compares it to the C3 buffer's stored public_inputs hash, so the
+ * `merkle_root` shipped to the ix MUST be the root the C3 proof targeted — we
+ * derive it from `c3ProofData.publicInputs[1]` (the Goldilocks root the prover
+ * witnessed), NOT from the possibly-stale receipt.
  */
 export async function splitNoteStark(
   sourcePool: PoolConfig,
@@ -2241,11 +2265,18 @@ export async function splitNoteStark(
   numOutputs: number,
   outputSecrets: bigint[],
   starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
   walletSigner?: WalletSigner,
   onProgress?: (step: string) => void,
   stealthKeypair?: Keypair,
 ): Promise<{ txSignature: string; outputCommitments: bigint[]; outputNullifierPreimages: bigint[] }> {
-  const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_POOL_COMMITMENT, getProofBufferPDA } = await import('../stark');
+  const {
+    submitAndVerifyStarkProof,
+    closeStarkProofBuffer,
+    CIRCUIT_POOL_COMMITMENT,
+    CIRCUIT_MERKLE_PATH,
+    getProofBufferPDA,
+  } = await import('../stark');
   const connection = getConnection();
 
   onProgress?.('Validating split parameters...');
@@ -2307,7 +2338,18 @@ export async function splitNoteStark(
     nullifierBytes[i] = Number(_nv & 0xFFn);
     _nv >>= 8n;
   }
-  const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot!);
+  // Source-note merkle_root for the ix MUST be the root the C3 proof targeted
+  // (the on-chain handler reconstructs the C3 hash from `merkle_root[..8]`), so
+  // derive it from `c3ProofData.publicInputs[1]` — the Goldilocks root the C3
+  // prover witnessed (layout [leaf_u64, root_u64, depth] per
+  // stark/src/air/merkle_path.rs) — masked to its low 64 bits and packed LE
+  // into bytes 0..8. Falling back to the receipt root only if the proof somehow
+  // omitted it (shouldn't). `bigintToLeBytes32` on a u64-masked value puts the
+  // u64 LE into bytes[0..8] with bytes[8..32]=0, exactly what `is_valid_root`
+  // and the C3 hash expect.
+  const U64_MASK = (1n << 64n) - 1n;
+  const c3Root = (c3ProofData.publicInputs[1] ?? receipt.merkleRoot ?? 0n) & U64_MASK;
+  const merkleRootBytes = bigintToLeBytes32(c3Root);
   const outputCommitmentBytes = outputCommitments.map(c => Array.from(bigintToLeBytes32(c)));
   const newRootBytes = newRoots.map(r => Array.from(bigintToLeBytes32(r)));
 
@@ -2316,21 +2358,41 @@ export async function splitNoteStark(
   const totalDelay = sourcePoolInfo.epochDelay + BigInt(sourcePoolInfo.dynamicDelay);
   const minEpoch = currentEpoch - totalDelay;
 
-  onProgress?.('Submitting STARK proof on-chain...');
+  onProgress?.('Submitting STARK proofs on-chain...');
   const starkSigner: WalletSigner = keypair
     ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; } }
     : walletSigner!;
 
-  // Derive PDA upfront so finally can close even if submit throws mid-flight.
-  const [proofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_POOL_COMMITMENT);
+  // Derive PDAs upfront so finally can close both even if a submit throws
+  // mid-flight. C1 (id=1) and C3 (id=3) get distinct legacy PDAs (the buffer
+  // PDA seeds circuit_id, so they never collide).
+  const [c1ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_POOL_COMMITMENT);
+  const [c3ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_PATH);
 
   try {
+    // Step 1: C1 (pool_commitment) — proves knowledge of secret + nullifier.
+    onProgress?.('Submitting C1 (pool_commitment) proof on-chain...');
     await submitAndVerifyStarkProof(
       {
         proofBytes: starkProofData.proofBytes,
         circuitId: CIRCUIT_POOL_COMMITMENT,
         publicInputs: starkProofData.publicInputs,
         proofSize: starkProofData.proofSize,
+      },
+      starkSigner,
+      onProgress,
+      connection,
+    );
+
+    // Step 2: C3 (merkle_path) — NEW hardening requirement. Proves the C1
+    // source-note commitment is a leaf in the SOURCE pool tree at `merkle_root`.
+    onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
+    await submitAndVerifyStarkProof(
+      {
+        proofBytes: c3ProofData.proofBytes,
+        circuitId: CIRCUIT_MERKLE_PATH,
+        publicInputs: c3ProofData.publicInputs,
+        proofSize: c3ProofData.proofSize,
       },
       starkSigner,
       onProgress,
@@ -2346,7 +2408,8 @@ export async function splitNoteStark(
       sourcePool,
       targetPool,
       nullifierPDA,
-      proofBuffer,
+      c1ProofBuffer,
+      c3ProofBuffer,
       nullifierBytes,
       Array.from(merkleRootBytes),
       minEpoch,
@@ -2367,11 +2430,15 @@ export async function splitNoteStark(
     onProgress?.('Split confirmed!');
     return { txSignature, outputCommitments, outputNullifierPreimages };
   } finally {
-    try {
-      onProgress?.('Closing proof buffer...');
-      await closeStarkProofBuffer(proofBuffer, starkSigner, connection);
-    } catch (closeErr: any) {
-      console.warn('[DenomPool] closeStarkProofBuffer (split) failed (rent may be stranded):', closeErr.message);
+    // Close BOTH buffers (C1 + C3) regardless of whether the split tx
+    // succeeded — the handler does not touch them, so rent is ours to recover.
+    for (const buf of [c1ProofBuffer, c3ProofBuffer]) {
+      try {
+        onProgress?.('Closing proof buffer...');
+        await closeStarkProofBuffer(buf, starkSigner, connection);
+      } catch (closeErr: any) {
+        console.warn('[DenomPool] closeStarkProofBuffer (split) failed (rent may be stranded):', closeErr.message);
+      }
     }
   }
 }

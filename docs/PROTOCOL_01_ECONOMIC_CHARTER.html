@@ -51,17 +51,9 @@
   }
   .page:last-child { page-break-after: avoid; }
 
-  .page::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background:
-      linear-gradient(to right, rgba(57,197,187,0.03) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(57,197,187,0.03) 1px, transparent 1px);
-    background-size: 30px 30px;
-    pointer-events: none;
-    z-index: 0;
-  }
+  /* Decorative grid removed — a masked grid forces every page to rasterize to
+     a high-res bitmap, bloating the PDF and making it scroll-sluggishly.
+     Flat void background reads cleaner (matches the design doc + pitch deck). */
   .page > * { position: relative; z-index: 1; }
 
   .page-footer {
@@ -136,10 +128,12 @@
     padding: 14px;
     margin-bottom: 10px;
   }
-  .card-cyan { border-color: rgba(57,197,187,0.3); background: linear-gradient(135deg, rgba(57,197,187,0.05), transparent); }
-  .card-pink { border-color: rgba(255,119,168,0.3); background: linear-gradient(135deg, rgba(255,119,168,0.05), transparent); }
-  .card-yellow { border-color: rgba(255,204,0,0.3); background: linear-gradient(135deg, rgba(255,204,0,0.05), transparent); }
-  .card-green { border-color: rgba(74,222,128,0.3); background: linear-gradient(135deg, rgba(74,222,128,0.05), transparent); }
+  /* Flat tinted fills (no gradients) — matches the design doc and keeps each
+     PDF page light instead of rasterizing a gradient per card. */
+  .card-cyan { border-color: rgba(57,197,187,0.3); background: #12211e; }
+  .card-pink { border-color: rgba(255,119,168,0.3); background: #1f141a; }
+  .card-yellow { border-color: rgba(255,204,0,0.3); background: #1c1a0e; }
+  .card-green { border-color: rgba(74,222,128,0.3); background: #102015; }
 
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
@@ -259,6 +253,19 @@
   }
 
   .no-break { page-break-inside: avoid; }
+
+  /* Dense pages (worked example) — tighter rhythm so the bottom-line cards
+     stay inside the printable area instead of clipping past the footer. */
+  .page.compact .lead { font-size: 10.5pt; margin-bottom: 10px; }
+  .page.compact h2 { font-size: 13pt; margin-top: 12px; margin-bottom: 6px; }
+  .page.compact table { font-size: 8pt; margin-bottom: 6px; }
+  .page.compact th { padding: 4px 8px; }
+  .page.compact td { padding: 3px 8px; }
+  .page.compact .card { padding: 8px 10px; margin-bottom: 6px; }
+  .page.compact .stat-box { padding: 6px; }
+  .page.compact .stat-number { font-size: 17pt; }
+  .page.compact .stat-label { font-size: 7pt; margin-top: 2px; }
+  .grid-6 { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
 </style>
 </head>
 <body>
@@ -276,9 +283,9 @@
     Fee schedule &middot; system costs &middot; revenue model
   </div>
   <div style="font-family: 'JetBrains Mono', monospace; font-size: 9pt; color: var(--text-muted); letter-spacing: 0.08em; line-height: 1.8;">
-    v0.9.9 &middot; FROST RELEASE<br>
+    v1.0.2 &middot; TX-OPACITY RELEASE<br>
     Devnet live &middot; Mainnet pending audit<br>
-    Effective 2026-04-27
+    Effective 2026-06-11
   </div>
 
   <div style="position: absolute; bottom: 60px; left: 0; right: 0; text-align: center;">
@@ -367,7 +374,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v0.9.9 FROST &middot; PAGE 01</span>
+    <span>v1.0.2 TX-OPACITY &middot; PAGE 01</span>
   </div>
 </div>
 
@@ -476,7 +483,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v0.9.9 FROST &middot; PAGE 02</span>
+    <span>v1.0.2 TX-OPACITY &middot; PAGE 02</span>
   </div>
 </div>
 
@@ -553,7 +560,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v0.9.9 FROST &middot; PAGE 03</span>
+    <span>v1.0.2 TX-OPACITY &middot; PAGE 03</span>
   </div>
 </div>
 
@@ -629,7 +636,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v0.9.9 FROST &middot; PAGE 04</span>
+    <span>v1.0.2 TX-OPACITY &middot; PAGE 04</span>
   </div>
 </div>
 
@@ -709,7 +716,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v0.9.9 FROST &middot; PAGE 05</span>
+    <span>v1.0.2 TX-OPACITY &middot; PAGE 05</span>
   </div>
 </div>
 
@@ -800,12 +807,12 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v0.9.9 FROST &middot; PAGE 06</span>
+    <span>v1.0.2 TX-OPACITY &middot; PAGE 06</span>
   </div>
 </div>
 
 <!-- =================== PAGE 8: WORKED EXAMPLE =================== -->
-<div class="page">
+<div class="page compact">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
     <h1>Worked example.</h1>
     <span class="badge badge-cyan">07 / 09</span>
@@ -817,13 +824,13 @@
   </p>
 
   <h2>Cohort assumptions</h2>
-  <div class="grid-3">
-    <div class="card stat-box"><div class="stat-number">1,000</div><div class="stat-label">Subscribers month 1</div></div>
+  <div class="grid-6">
+    <div class="card stat-box"><div class="stat-number">1,000</div><div class="stat-label">Subs month 1</div></div>
     <div class="card stat-box"><div class="stat-number">&euro;19.99</div><div class="stat-label">Monthly price</div></div>
     <div class="card stat-box"><div class="stat-number">12</div><div class="stat-label">Months tracked</div></div>
-    <div class="card stat-box"><div class="stat-number">10 %</div><div class="stat-label">Monthly churn (illustrative)</div></div>
-    <div class="card stat-box"><div class="stat-number">&euro;0.025</div><div class="stat-label">Avg priority + base fee</div></div>
-    <div class="card stat-box"><div class="stat-number">100 %</div><div class="stat-label">Standard path (no LP)</div></div>
+    <div class="card stat-box"><div class="stat-number">10 %</div><div class="stat-label">Monthly churn</div></div>
+    <div class="card stat-box"><div class="stat-number">&euro;0.025</div><div class="stat-label">Avg network fee</div></div>
+    <div class="card stat-box"><div class="stat-number">100 %</div><div class="stat-label">Standard path</div></div>
   </div>
 
   <h2>Cash flow over 12 months</h2>
@@ -878,7 +885,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v0.9.9 FROST &middot; PAGE 07</span>
+    <span>v1.0.2 TX-OPACITY &middot; PAGE 07</span>
   </div>
 </div>
 
@@ -1006,7 +1013,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v0.9.9 FROST &middot; PAGE 08</span>
+    <span>v1.0.2 TX-OPACITY &middot; PAGE 08</span>
   </div>
 </div>
 
@@ -1060,13 +1067,13 @@
     <div class="cover-subtitle" style="font-size: 9pt; line-height: 1.8;">
       Volta Team &middot; Slashy Fx<br>
       Built on Solana &middot; Devnet live &middot; Mainnet pending audit<br>
-      protocol-01.dev &middot; v0.9.9 FROST &middot; 2026-04-27
+      protocol-01.dev &middot; v1.0.2 TX-OPACITY &middot; 2026-06-11
     </div>
   </div>
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v0.9.9 FROST &middot; END</span>
+    <span>v1.0.2 TX-OPACITY &middot; END</span>
   </div>
 </div>
 

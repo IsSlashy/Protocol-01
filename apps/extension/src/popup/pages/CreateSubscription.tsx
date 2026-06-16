@@ -30,7 +30,7 @@ import {
 } from '@/shared/services/denominatedPool';
 import { deriveVaultPDA } from '@/shared/services/subscriptionVault';
 import { starkProver } from '@/shared/services/starkProver';
-import { deriveLicenseKey, deriveClassicIdentity } from '@/shared/services/license';
+import { licenseKeyForPrivate } from '@/shared/services/license';
 import { noteMaturity } from '@/shared/services/maturity';
 import { useLicenseStore, type LicenseEntry } from '@/shared/store/license';
 
@@ -157,7 +157,7 @@ export default function CreateSubscription() {
   const { _keypair, network, isUnlocked } = useWalletStore();
   const { shieldedBalance } = useShieldedStore();
   const { getSpendableNote, getNotes, removeNote } = useDenominatedPoolStore();
-  const { createPrivateVault, saveSecret, addVault } = useSubscriptionVaultStore();
+  const { createPrivateVault, addVault } = useSubscriptionVaultStore();
   const { saveLicense } = useLicenseStore();
 
   // The recipient is already determined by how the user arrived here:
@@ -270,23 +270,22 @@ export default function CreateSubscription() {
   const activeAmount = isPersonal ? personalPerPayment : (parseFloat(prefillAmount) || 0);
 
   /**
-   * Mint + persist the license key for a completed subscription, and surface
-   * the success panel. Mirrors the mobile scheme (P01-XXXX-… BLAKE3/Crockford):
-   *   - identity = the SubscriptionVault PDA bytes (ZK) or
-   *     deriveClassicIdentity(wallet, streamId) (classic) — never the raw wallet.
-   *   - serviceId = the registry slug (or a stable per-subscription tag).
-   * The merchant re-derives this from the on-chain vault + serviceId and matches.
+   * Persist + surface a pre-computed license key for a completed subscription.
+   * Under the COMMITMENT scheme the key is `encodeLicenseKey(deriveLicenseSecret(
+   * masterNoteSecret, serviceId))` and the on-chain `license_commitment =
+   * blake3(licenseSecret)` was posted as the trailing subscribe arg #10 — so a
+   * merchant verifies `blake3(decode(presentedKey)) == vault.license_commitment`
+   * with NO shared secret. The caller derives the key from the SAME
+   * (noteSecret, serviceId) it handed to the subscribe builder.
    */
   const mintLicense = (params: {
-    serviceId: string;
-    identity: Uint8Array;
+    licenseKey: string;
     retailer: string;
     mode: 'standard' | 'zk';
   }) => {
     try {
-      const licenseKey = deriveLicenseKey({ serviceId: params.serviceId, identity: params.identity });
       const entry: LicenseEntry = {
-        licenseKey,
+        licenseKey: params.licenseKey,
         retailer: params.retailer,
         mode: params.mode,
         serviceName: activeName || undefined,
@@ -473,6 +472,13 @@ export default function CreateSubscription() {
         // (createNormalVault also passes new Uint8Array(32) by default).
         const vkHashSubscriber = new Uint8Array(32);
 
+        // serviceId for the license-key commitment (HKDF info). Registered
+        // services pass their slug; fall back to the retailer address for a
+        // free-form recipient, so the on-chain commitment is always
+        // service-scoped and the displayed key re-derives from the same pair.
+        // MUST match the value subscribePrivate hashes into license_commitment.
+        const licenseServiceId = svc?.serviceId || recipient;
+
         // ── Create private vault ───────────────────────────────────────────
         setProgressMsg('Creating private vault (C1 proof + on-chain)...');
         await createPrivateVault({
@@ -484,12 +490,16 @@ export default function CreateSubscription() {
           intervalSlots,
           subscriberOwnershipCommitment,
           vkHashSubscriber,
+          serviceId: licenseServiceId,
           onProgress: (step) => setProgressMsg(step),
         });
 
-        // ── Persist subscriber secret for pause/resume/cancel ─────────────
-        // Vault PDA is keyed by [retailer, subscriberCommitmentBytes, tokenMint].
-        // Mirrors mobile subscriptionVaultStore.ts lines 415-436.
+        // Subscriber secret is already persisted (encrypted, BEFORE creation)
+        // inside subscribePrivate → store.saveSecret, keyed by this same vault
+        // PDA. We only re-derive the PDA here to fetch + locally record the
+        // vault. Vault PDA is keyed by [retailer, subscriberCommitmentBytes,
+        // tokenMint]; for SOL the mint == SystemProgram.programId, identical to
+        // the value subscribePrivate uses for the persistence key.
         const { goldilocksU64To32 } = await import('@/shared/services/subscriptionVault');
         const subscriberCommitmentBytes = goldilocksU64To32(subscriberOwnershipCommitment);
         const vaultPDA = deriveVaultPDA(
@@ -497,7 +507,6 @@ export default function CreateSubscription() {
           subscriberCommitmentBytes,
           poolConfig.tokenMint, // SOL = SystemProgram.programId
         );
-        saveSecret(vaultPDA.toBase58(), subscriberSecret.toString());
 
         // Record the ZK vault LOCALLY (mirrors mobile subscriptionVaultStore).
         // A private vault is keyed on-chain by an anonymous commitment, so it is
@@ -518,11 +527,13 @@ export default function CreateSubscription() {
         // nullifier record on-chain).
         removeNote(note.commitment.toString());
 
-        // Mint the license key (mobile scheme): identity = the vault PDA bytes,
-        // serviceId = registry slug (or retailer as a stable tag for personal).
+        // Display the license key under the commitment scheme: derive it from
+        // the SAME (master note secret, serviceId) that produced the on-chain
+        // license_commitment = blake3(deriveLicenseSecret(note.secret, serviceId)).
+        // The merchant's verifyLicenseKey recomputes blake3(decode(key)) and
+        // matches — no shared secret, no wallet link.
         mintLicense({
-          serviceId: svc?.serviceId || recipient,
-          identity: vaultPDA.toBytes(),
+          licenseKey: licenseKeyForPrivate(note.secret, licenseServiceId),
           retailer: recipient,
           mode: 'zk',
         });
@@ -591,14 +602,13 @@ export default function CreateSubscription() {
       // Execute first payment (local keypair or Privy embedded wallet).
       await processPayment(subscription.id, signer, network);
 
-      // Mint the license key (mobile scheme). Classic identity = BLAKE3(wallet,
-      // streamId) — never the raw wallet — so the key can't be reversed to it.
-      mintLicense({
-        serviceId: svc?.serviceId || subscription.id,
-        identity: deriveClassicIdentity(signer.publicKey.toBytes(), subscription.id),
-        retailer: recipient,
-        mode: 'standard',
-      });
+      // CLASSIC license key is DEFERRED under the commitment scheme (mobile does
+      // the same): it needs a deterministic ed25519 signer to derive the
+      // licenseSecret, which our wallet/signMessage path does not yet guarantee.
+      // The standard subscribe_normal ix posts license_commitment = None (arg
+      // #6), so there is no on-chain commitment to verify a classic key against.
+      // Skip minting a key here rather than show one that wouldn't verify.
+      navigate('/subscriptions', { replace: true });
     } catch (err) {
       console.error('[Subscription] Create error:', err);
       setError((err as Error)?.message || 'Failed to start subscription.');

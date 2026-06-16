@@ -111,13 +111,26 @@ pub const CONFIG_CONFIDENTIAL_BALANCE: CircuitConfig = CircuitConfig {
     num_queries: NUM_QUERIES,
 };
 
-/// transfer: 6 cols, 512 rows (14 hash cycles of 32 + 2 padding cycles)
+/// transfer: 7 cols, 512 rows (14 hash cycles of 32 + 2 padding cycles)
 ///
 /// [P2.2g] num_queries dropped 27→22 for the same reason as merkle_path:
-/// LDE=8192 with 23-constraint transition polynomial pushes phase-1 FRI
-/// above 1.4M CU at 27 queries. Soundness: 104 bits via 22×4 + 16 grinding.
+/// LDE=8192 with the transition polynomial pushes phase-1 FRI above 1.4M CU
+/// at 27 queries. Soundness: 104 bits via 22×4 + 16 grinding.
+///
+/// [#2 voie A — REBAKE DONE] The prover/AIR side in
+/// `stark/src/air/transfer.rs` enforces value conservation: trace width is
+/// now **7** (col 6 = signed amount accumulator), transition constraints
+/// **28** (was 23: +4 amount captures +1 acc continuity), periodic columns
+/// **28** (was 23: +`add_in1`, `add_in2`, `sub_out1`, `sub_out2`,
+/// `acc_continuity`), and there are **26** boundary assertions (was 24:
+/// +`acc@row0 = 0`, +`acc@row385 = public_amount`). This `CONFIG_TRANSFER`
+/// and the C5 verifier routines (`evaluate_transition_at_ood_circuit_5`, the
+/// `[Felt; 28]` periodic array, the `[Felt; 7]` OOD arrays,
+/// `get_boundary_assertions(5, …)`, `verify_constraints_transfer`, and the
+/// baked `C5_*_COEFFS` set in `periodic_consts.rs`) were rebaked to the
+/// width-7 / 28-constraint format and re-validated under the 1.4M-CU SBF cap.
 pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
-    trace_width: 6,
+    trace_width: 7,
     trace_length: 512,
     blowup: 16,
     lde_size: 8192,

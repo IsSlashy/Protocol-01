@@ -37,6 +37,7 @@ import {
 } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { deriveLicenseSecret, licenseCommitment } from './license';
 import { useWalletStore } from '../store/wallet';
 import { getConnection } from './wallet';
 import type { VaultInfo, SubscribeNormalParams, SubscribePrivateParams, ProofData } from './subscriptionVault.types';
@@ -51,8 +52,13 @@ import {
 import { starkProver } from './starkProver';
 import {
   deriveNullifierPDA,
-  bigintToLeBytes32,
+  goldilocksToLeBytes32,
   isNullifierSpent,
+  prepareUnshield,
+  findPoolV3,
+  CIRCUIT_MERKLE_PATH,
+  type ShieldReceipt,
+  type PoolConfig,
 } from './denominatedPool';
 
 /**
@@ -358,11 +364,17 @@ export function parseVaultAccount(data: Buffer, address: string): VaultInfo {
 
 /**
  * Build subscribe_normal instruction.
- * On-chain arg order (subscribe_normal.rs:57-64):
+ * On-chain arg order (subscribe_normal.rs:12-18):
  *   rate | interval_slots | amount | token_mint(Pubkey/32) | vk_hash_subscriber([u8;32])
+ *   | license_commitment: Option<[u8;32]>   (arg #6, LAST — 1-byte tag + 32 if Some)
  * token_mint is an ARGUMENT (native SOL ⇒ SystemProgram.programId), NOT an account.
  * Accounts == SubscribeNormal struct field order; optional token accounts use the
  * program ID as Anchor 0.32's None sentinel. (Mirrors mobile buildSubscribeNormalIx.)
+ *
+ * CLASSIC license is DEFERRED (no deterministic signer yet), so license_commitment
+ * is always serialized as None here — matching mobile, which passes None for the
+ * classic path too. The trailing Option byte is REQUIRED regardless: the on-chain
+ * handler now declares the arg, so omitting it would mis-deserialize.
  */
 function buildSubscribeNormalIx(
   subscriber: PublicKey,
@@ -376,16 +388,26 @@ function buildSubscribeNormalIx(
   tokenProgram?: PublicKey,
   subscriberTokenAccount?: PublicKey,
   vaultTokenAccount?: PublicKey,
+  licenseCommitment?: Uint8Array,
 ): TransactionInstruction {
   const disc = getDiscriminator('subscribe_normal');
-  const data = Buffer.alloc(8 + 8 + 8 + 8 + 32 + 32);
+  const hasLicense = !!licenseCommitment && licenseCommitment.length === 32;
+  const licenseOptionSize = 1 + (hasLicense ? 32 : 0);
+  const data = Buffer.alloc(8 + 8 + 8 + 8 + 32 + 32 + licenseOptionSize);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   data.writeBigUInt64LE(rate, offset); offset += 8;
   data.writeBigUInt64LE(intervalSlots, offset); offset += 8;
   data.writeBigUInt64LE(amount, offset); offset += 8;
   tokenMint.toBuffer().copy(data, offset); offset += 32;
-  Buffer.from(vkHashSubscriber).copy(data, offset);
+  Buffer.from(vkHashSubscriber).copy(data, offset); offset += 32;
+  // arg #6 (LAST) — Borsh Option<[u8;32]> license_commitment. Classic deferred ⇒ None.
+  if (hasLicense) {
+    data.writeUInt8(1, offset); offset += 1;
+    Buffer.from(licenseCommitment!).copy(data, offset); offset += 32;
+  } else {
+    data.writeUInt8(0, offset); offset += 1;
+  }
 
   const keys = [
     { pubkey: subscriber, isSigner: true, isWritable: true },
@@ -723,9 +745,19 @@ export async function claimPeriod(vaultAddress: string): Promise<string> {
  * Args: nullifier[32], merkle_root[32], min_epoch u64,
  *       subscriber_commitment[32], rate u64, interval_slots u64,
  *       vk_hash_subscriber[32], stark_commitment u64,
- *       client_stealth_meta Option<[u8;64]>.
+ *       client_stealth_meta Option<[u8;64]>  (arg #9),
+ *       license_commitment  Option<[u8;32]>  (arg #10 / LAST).
  *
- * Account order mirrors subscribe_private_stark.rs + mobile lines 877-898.
+ * Account order mirrors subscribe_private_stark.rs (hardened 2026-06-13):
+ *   payer, retailer, vault, denominated_pool, merkle_tree, nullifier_record,
+ *   c1_proof_buffer, c3_proof_buffer, system_program, <SPL option tail×3>.
+ *
+ * The on-chain handler now REQUIRES a Circuit-3 (merkle_path) proof buffer
+ * immediately AFTER the C1 buffer. Without it the note membership is never
+ * proven — a forging attacker could synthesize a valid C1 for a never-deposited
+ * commitment and drain one denomination per call (mirrors the C3 gate already
+ * present on unshield_denominated_stark_v3). Both buffers are read-only here;
+ * the handler does not write to them (the caller closes them after).
  */
 function buildSubscribePrivateStarkIx(
   payer: PublicKey,
@@ -734,7 +766,8 @@ function buildSubscribePrivateStarkIx(
   poolPDA: PublicKey,
   treePDA: PublicKey,
   nullifierPDA: PublicKey,
-  starkProofBuffer: PublicKey,
+  c1ProofBuffer: PublicKey,
+  c3ProofBuffer: PublicKey,
   nullifierBytes: number[],
   merkleRootBytes: number[],
   minEpoch: bigint,
@@ -744,12 +777,19 @@ function buildSubscribePrivateStarkIx(
   vkHashSubscriber: Uint8Array,
   starkCommitment: bigint,
   clientStealthMeta?: Uint8Array,
+  licenseCommitment?: Uint8Array,
 ): TransactionInstruction {
   const disc = getDiscriminator('subscribe_private_stark');
 
+  // arg #9 — Borsh Option<[u8;64]> client_stealth_meta (1-byte tag + 64 if Some)
   const hasMeta = !!clientStealthMeta && clientStealthMeta.length === 64;
-  const optionSize = 1 + (hasMeta ? 64 : 0);
-  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8 + optionSize);
+  const metaOptionSize = 1 + (hasMeta ? 64 : 0);
+  // arg #10 (LAST) — Borsh Option<[u8;32]> license_commitment (1-byte tag + 32 if
+  // Some). This is blake3(licenseSecret); the chain stores it verbatim with NO
+  // verification. A merchant later checks blake3(decode(presentedKey)) == it.
+  const hasLicense = !!licenseCommitment && licenseCommitment.length === 32;
+  const licenseOptionSize = 1 + (hasLicense ? 32 : 0);
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8 + metaOptionSize + licenseOptionSize);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
@@ -760,11 +800,19 @@ function buildSubscribePrivateStarkIx(
   data.writeBigUInt64LE(intervalSlots, offset); offset += 8;
   Buffer.from(vkHashSubscriber).copy(data, offset); offset += 32;
   data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
+  // arg #9 — client_stealth_meta Option<[u8;64]>
   if (hasMeta) {
     data.writeUInt8(1, offset); offset += 1;
-    Buffer.from(clientStealthMeta!).copy(data, offset);
+    Buffer.from(clientStealthMeta!).copy(data, offset); offset += 64;
   } else {
-    data.writeUInt8(0, offset);
+    data.writeUInt8(0, offset); offset += 1;
+  }
+  // arg #10 (LAST) — license_commitment Option<[u8;32]>
+  if (hasLicense) {
+    data.writeUInt8(1, offset); offset += 1;
+    Buffer.from(licenseCommitment!).copy(data, offset); offset += 32;
+  } else {
+    data.writeUInt8(0, offset); offset += 1;
   }
 
   const keys = [
@@ -774,10 +822,14 @@ function buildSubscribePrivateStarkIx(
     { pubkey: poolPDA, isSigner: false, isWritable: true },
     { pubkey: treePDA, isSigner: false, isWritable: false },
     { pubkey: nullifierPDA, isSigner: false, isWritable: true },
-    // stark_proof_buffer is mut (handler invalidates it post-use). Must pass
-    // isWritable: true or Anchor throws ConstraintMut (0x7d0). Mirrors mobile
-    // lines 885-888.
-    { pubkey: starkProofBuffer, isSigner: false, isWritable: true },
+    // c1_proof_buffer + c3_proof_buffer are read-only `AccountInfo` on-chain
+    // (the handler only reads `verified`/`circuit_id`/`public_inputs_hash`; it
+    // can't write to a buffer owned by p01_stark_verifier). The caller closes
+    // them afterward. C3 MUST come immediately after C1 (struct field order in
+    // subscribe_private_stark.rs), before system_program. Mirrors the unshield
+    // v3 ix account order (denominatedPool.ts buildUnshieldDenominatedStarkV3Ix).
+    { pubkey: c1ProofBuffer, isSigner: false, isWritable: false },
+    { pubkey: c3ProofBuffer, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     // Optional SPL-token accounts — use program ID as Anchor None sentinel.
     // Without these, ix fails with AccountNotEnoughKeys (3005). Mirrors mobile
@@ -793,25 +845,33 @@ function buildSubscribePrivateStarkIx(
 /**
  * Create a private (ZK-based) subscription vault.
  *
- * Phase 1: C3-free. Shield receipt must come from the denominated pool store
- * (shielded via circuit 6). This function generates the circuit 1
- * (pool_commitment) STARK proof from the receipt's secret material, submits
- * it on-chain, then calls subscribe_private_stark.
+ * Shield receipt must come from the denominated pool store (shielded via
+ * circuit 6). This function generates BOTH STARK proofs the hardened on-chain
+ * `subscribe_private_stark` now requires:
+ *   - Circuit 1 (pool_commitment): proves knowledge of secret + nullifier
+ *     preimage hashing to the note's nullifier and commitment.
+ *   - Circuit 3 (merkle_path):     proves that commitment is a leaf in the
+ *     pool tree at `merkle_root` — i.e. the note was actually deposited.
  *
- * Mirrors mobile subscribePrivateStark lines 557-701.
+ * Both proofs (and the byte-identical Merkle-path / hashing) come from the same
+ * `prepareUnshield` helper the extension's own unshield-v3 flow uses, so the
+ * C3 public-inputs hash matches on-chain byte-for-byte:
+ *   C1 hash = sha256(nullifier_u64 LE || stark_commitment u64 LE)
+ *   C3 hash = sha256(leaf_u64 LE || root[..8] || depth(=15) u64 LE)
+ * where leaf == stark_commitment (both reconstruct from the same note) and
+ * root == merkle_root[..8] (bound by the pool's valid-root ring).
  *
+ * FIX B (#6a): the subscriber secret is encrypted (sessionCrypto / AES-256-GCM)
+ * and persisted to chrome.storage.local BEFORE the vault-creation tx is sent.
+ * If the popup closes mid-proof (~2 min) or the tx confirms but the page
+ * unmounts before the old post-creation save ran, the (encrypted) secret is
+ * already on disk, so the vault stays controllable (pause/resume/cancel).
+ *
+ * Mirrors mobile subscribePrivateStark + extension unshieldDenominatedStarkV3.
  * Adaptation: uses extension's legacy submitAndVerifyStarkProof (non-uniform).
  */
 export async function subscribePrivate(params: {
-  receipt: {
-    secret: bigint;
-    nullifierPreimage: bigint;
-    depositEpoch: bigint;
-    tokenMint: bigint;
-    commitment: bigint;
-    pool: string;
-    merkleRoot?: bigint;
-  };
+  receipt: ShieldReceipt;
   poolPDA: string;
   treePDA: string;
   retailer: string;
@@ -819,6 +879,14 @@ export async function subscribePrivate(params: {
   intervalSlots: bigint;
   subscriberOwnershipCommitment: bigint;
   vkHashSubscriber: Uint8Array;
+  /**
+   * Service identifier mixed into the license-key HKDF `info`. Mobile passes the
+   * registry slug when available, else `retailerKey.toBase58()`. When provided,
+   * the trailing Option<[u8;32]> arg #10 `license_commitment =
+   * blake3(deriveLicenseSecret(receipt.secret, serviceId))` is posted on-chain so
+   * a merchant can verify a presented license key. When omitted, None is posted.
+   */
+  serviceId?: string;
   onProgress?: (step: string) => void;
 }): Promise<string> {
   const {
@@ -830,6 +898,7 @@ export async function subscribePrivate(params: {
     intervalSlots,
     subscriberOwnershipCommitment,
     vkHashSubscriber,
+    serviceId,
     onProgress,
   } = params;
 
@@ -839,10 +908,19 @@ export async function subscribePrivate(params: {
   const poolPDA = new PublicKey(poolPDAStr);
   const treePDA = new PublicKey(treePDAStr);
 
+  // Resolve the pool config for prepareUnshield (needs treePDA + denomination).
+  const poolConfig: PoolConfig | undefined = findPoolV3(receipt.token, receipt.denominationHuman);
+  if (!poolConfig) {
+    throw new Error(
+      `subscribePrivate: no V3 pool registered for ${receipt.token} ${receipt.denominationHuman}. ` +
+      'Reshield with a current denomination.',
+    );
+  }
+
   // Fail-fast: a note is single-use. If its nullifier record already exists
   // on-chain (prior subscribe/unshield), subscribe_private_stark will reject
   // it with "Allocate ... already in use" — but only AFTER we've spent ~2min
-  // generating + uploading the C1 proof. Check the (cheap) nullifier PDA first.
+  // generating + uploading the proofs. Check the (cheap) nullifier PDA first.
   onProgress?.('Checking note is unspent...');
   const alreadySpent = await isNullifierSpent(
     connection,
@@ -857,6 +935,20 @@ export async function subscribePrivate(params: {
   onProgress?.('Encoding subscriber commitment...');
   const subscriberCommitmentBytes = goldilocksU64To32(subscriberOwnershipCommitment);
 
+  // License-key commitment (commitment scheme): derive a per-subscriber 128-bit
+  // licenseSecret from the SAME master note secret the vault's
+  // subscriber_commitment is derived from (receipt.secret), scoped by serviceId,
+  // then post blake3(licenseSecret) on-chain as the trailing Option<[u8;32]>
+  // (arg #10, LAST). The chain stores it verbatim (no verification); a merchant
+  // later checks blake3(decode(presentedKey)) against it off-chain. The displayed
+  // key is encodeLicenseKey(licenseSecret) from the same inputs (CreateSubscription).
+  let licenseCommitmentBytes: Uint8Array | undefined;
+  if (serviceId) {
+    licenseCommitmentBytes = licenseCommitment(
+      deriveLicenseSecret(receipt.secret, serviceId),
+    );
+  }
+
   onProgress?.('Deriving vault PDA...');
   const [vaultPDA] = PublicKey.findProgramAddressSync(
     [
@@ -868,76 +960,121 @@ export async function subscribePrivate(params: {
     ZK_SHIELDED_PROGRAM_ID,
   );
 
-  if (!receipt.merkleRoot) {
-    throw new Error('subscribePrivate: receipt missing merkleRoot. Rescan receipt before subscribing.');
+  // ── FIX B: persist the (encrypted) subscriber secret BEFORE creation ──────
+  // The subscriber secret == the note's own Goldilocks secret (mobile parity).
+  // If we only saved it after the tx (the old flow), a popup-close during the
+  // ~2-min proof/creation window stranded the vault forever. Persist now, while
+  // we still hold both the secret and the derived vault PDA. saveSecret encrypts
+  // with the in-memory session password (sessionCrypto) so nothing lands at rest
+  // in plaintext.
+  onProgress?.('Securing subscriber key...');
+  try {
+    const { useSubscriptionVaultStore } = await import('../store/subscriptionVault');
+    await useSubscriptionVaultStore.getState().saveSecret(
+      vaultPDA.toBase58(),
+      receipt.secret.toString(),
+    );
+  } catch (e) {
+    // Never proceed to burn proof rent + create an uncontrollable vault if we
+    // could not stash the controlling secret first.
+    throw new Error(
+      'Could not securely save the subscriber key before creating the vault ' +
+      '(wallet may be locked). Aborting to avoid an uncontrollable vault. ' +
+      `Cause: ${(e as Error)?.message ?? String(e)}`,
+    );
   }
 
-  // C1 proof inputs: nullifier_preimage, secret, epoch, tokenMint.
-  onProgress?.('Generating C1 (pool_commitment) STARK proof (30-60s)...');
-  await starkProver.start();
-  const c1Result = await starkProver.generatePoolCommitmentProof(
-    receipt.nullifierPreimage.toString(),
-    receipt.secret.toString(),
-    receipt.depositEpoch.toString(),
-    receipt.tokenMint.toString(),
-  );
+  // ── Generate C1 (pool_commitment) + C3 (merkle_path) via the shared
+  // unshield-v3 preparer. This fetches pool leaves, rebuilds the Merkle path,
+  // root-preflights against the pool ring, and produces both proofs with the
+  // exact public-input layout the on-chain handler reconstructs. ──
+  onProgress?.('Generating C1 + C3 STARK proofs (~2 min)...');
+  const prepared = await prepareUnshield(receipt, poolConfig, connection, onProgress);
+  const { c1ProofResult, c3ProofResult, merkleRoot, nullifierGoldilocks, starkCommitment } = prepared;
 
-  const proofBytes = hexToBytes(c1Result.proofHex);
-  const publicInputs = c1Result.publicInputs.map(s => BigInt(s));
-
-  // C1 publicInputs: [nullifier_u64, commitment_u64] (matches mobile line 614)
-  const goldilocksNullifier = publicInputs[0] ?? 0n;
-  const starkCommitment = publicInputs[1] ?? 0n;
-
-  const nullifierBytes = Array.from(goldilocksU64To32(goldilocksNullifier));
-  const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot);
+  const nullifierBytes = goldilocksToLeBytes32(nullifierGoldilocks);
+  // merkle_root arg: low 8 bytes carry the Goldilocks root felt the C3 hash
+  // binds (root[..8]); high 24 bytes zero. Must reproduce a root in the pool's
+  // valid-root ring (is_valid_root account constraint).
+  const merkleRootBytes = goldilocksToLeBytes32(merkleRoot);
   const minEpoch = receipt.depositEpoch;
 
-  // Step 1: Submit + verify C1 proof on-chain.
-  onProgress?.('Submitting C1 proof on-chain...');
-  const proof: GenericStarkProof = {
-    proofBytes,
-    circuitId: CIRCUIT_POOL_COMMITMENT,
-    publicInputs,
-    proofSize: c1Result.proofSize,
-  };
-  const { proofBuffer: proofBufferPubkey } = await submitAndVerifyStarkProof(proof, signer, connection, onProgress);
+  const createdBuffers: PublicKey[] = [];
+  let c1ProofBuffer: PublicKey | undefined;
+  let c3ProofBuffer: PublicKey | undefined;
 
-  // Step 2: Build + send subscribe_private_stark.
-  onProgress?.('Building subscription transaction...');
-  const [nullifierPDA] = deriveNullifierPDA(poolPDA, Buffer.from(nullifierBytes));
+  try {
+    // Step 1: Submit + verify C1 (pool_commitment).
+    onProgress?.('Submitting C1 (pool_commitment) proof on-chain...');
+    const c1Proof: GenericStarkProof = {
+      proofBytes: c1ProofResult.proofBytes,
+      circuitId: CIRCUIT_POOL_COMMITMENT,
+      publicInputs: c1ProofResult.publicInputs,
+      proofSize: c1ProofResult.proofSize,
+    };
+    const c1Res = await submitAndVerifyStarkProof(c1Proof, signer, connection, onProgress);
+    c1ProofBuffer = c1Res.proofBuffer;
+    createdBuffers.push(c1ProofBuffer);
 
-  const ix = buildSubscribePrivateStarkIx(
-    signer.publicKey,
-    retailerPubkey,
-    vaultPDA,
-    poolPDA,
-    treePDA,
-    nullifierPDA,
-    proofBufferPubkey,
-    nullifierBytes,
-    Array.from(merkleRootBytes),
-    minEpoch,
-    Array.from(subscriberCommitmentBytes),
-    rate,
-    intervalSlots,
-    vkHashSubscriber,
-    starkCommitment,
-    // clientStealthMeta: omit (None) for Phase 1.
-  );
+    // Step 2: Submit + verify C3 (merkle_path).
+    onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
+    const c3Proof: GenericStarkProof = {
+      proofBytes: c3ProofResult.proofBytes,
+      circuitId: CIRCUIT_MERKLE_PATH,
+      publicInputs: c3ProofResult.publicInputs,
+      proofSize: c3ProofResult.proofSize,
+    };
+    const c3Res = await submitAndVerifyStarkProof(c3Proof, signer, connection, onProgress);
+    c3ProofBuffer = c3Res.proofBuffer;
+    createdBuffers.push(c3ProofBuffer);
 
-  onProgress?.('Sending subscription transaction...');
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(300_000));
-  tx.add(ix);
-  const sig = await signSendConfirmTx(connection, tx, signer);
+    // Step 3: Build + send subscribe_private_stark (C1 then C3 buffer).
+    onProgress?.('Building subscription transaction...');
+    const [nullifierPDA] = deriveNullifierPDA(poolPDA, Buffer.from(nullifierBytes));
 
-  // Step 3: Close C1 proof buffer.
-  onProgress?.('Closing proof buffer...');
-  await closeStarkProofBuffer(proofBufferPubkey, signer, connection);
+    const ix = buildSubscribePrivateStarkIx(
+      signer.publicKey,
+      retailerPubkey,
+      vaultPDA,
+      poolPDA,
+      treePDA,
+      nullifierPDA,
+      c1ProofBuffer,
+      c3ProofBuffer,
+      nullifierBytes,
+      merkleRootBytes,
+      minEpoch,
+      Array.from(subscriberCommitmentBytes),
+      rate,
+      intervalSlots,
+      vkHashSubscriber,
+      starkCommitment,
+      undefined, // clientStealthMeta: omit (None) for Phase 1 (arg #9).
+      licenseCommitmentBytes, // arg #10 (LAST) — Option<[u8;32]> license_commitment.
+    );
 
-  onProgress?.('Done!');
-  return sig;
+    onProgress?.('Sending subscription transaction...');
+    const tx = new Transaction();
+    tx.add(...buildComputeBudgetIxs(300_000));
+    tx.add(ix);
+    const sig = await signSendConfirmTx(connection, tx, signer);
+
+    onProgress?.('Done!');
+    return sig;
+  } finally {
+    // Close both proof buffers (rent recovery), same as unshield v3.
+    for (const buf of createdBuffers) {
+      try {
+        onProgress?.('Closing proof buffer (rent recovery)...');
+        await closeStarkProofBuffer(buf, signer, connection);
+      } catch (closeErr: unknown) {
+        console.warn(
+          '[SubscriptionVault] closeStarkProofBuffer failed:',
+          closeErr instanceof Error ? closeErr.message : String(closeErr),
+        );
+      }
+    }
+  }
 }
 
 /**

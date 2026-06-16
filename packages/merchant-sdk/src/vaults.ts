@@ -21,10 +21,24 @@ export const SUBSCRIPTION_VAULT_DISCRIMINATOR = Buffer.from([
 
 /**
  * Offset where `retailer: Pubkey` starts within the account body.
- * See `programs/zk_shielded/src/state/subscription_vault.rs`:
- *   8 disc + 33 (Option<Pubkey>) + 33 (Option<[u8;32]>) = 74.
+ *
+ * Borsh serializes `Option<T>` VARIABLE-width: `None` is a single `0` tag byte
+ * (NO value bytes), `Some` is a `1` tag byte + `sizeof(T)`. The two leading
+ * options — `subscriber_pubkey: Option<Pubkey>` and
+ * `subscriber_commitment: Option<[u8;32]>` — are MUTUALLY EXCLUSIVE: exactly one
+ * is `Some(33 bytes)` and the other is `None(1 byte)`, in BOTH vault modes:
+ *   • normal  : pubkey Some(33) + commitment None(1) = 34
+ *   • private : pubkey None(1)  + commitment Some(33) = 34
+ * So `retailer` sits at a mode-INVARIANT offset:
+ *   8 (disc) + 34 = 42.
+ *
+ * The old value `74` assumed both options were FIXED 33-byte fields
+ * (8 + 33 + 33), which is wrong for Borsh — it read 32 bytes of zero padding
+ * for `retailer` on every real account, so the memcmp filter never matched and
+ * `listVaultsForRetailer` returned 0 vaults. Verified empirically against 15
+ * live devnet vaults (both modes) — `retailer` is valid at 42, all-zero at 74.
  */
-export const SUBSCRIPTION_VAULT_RETAILER_OFFSET = 74;
+export const SUBSCRIPTION_VAULT_RETAILER_OFFSET = 42;
 
 /** Decoded `SubscriptionVault` snapshot. */
 export interface SubscriptionVaultAccount {
@@ -47,6 +61,17 @@ export interface SubscriptionVaultAccount {
   vkHashSubscriber: Uint8Array;
   sourcePool: PublicKey | null;
   bump: number;
+  /**
+   * v1 stealth meta address (`[spending_pub(32) | viewing_pub(32)]`), or `null`
+   * for vaults created before the field existed. Appended after `bump`.
+   */
+  clientStealthMeta: Uint8Array | null;
+  /**
+   * `license_commitment = blake3(licenseSecret)` (32 bytes), or `null` for
+   * vaults created before license keys existed. Appended at the very end. Used
+   * by `verifyLicenseKey` to match a presented key without any merchant secret.
+   */
+  licenseCommitment: Uint8Array | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,20 +97,44 @@ class VaultReader {
     this.offset += n;
     return out;
   }
+  // Borsh `Option<T>` is VARIABLE-width: `None` is exactly ONE byte (the `0`
+  // tag, no value bytes); `Some` is `1` tag + `sizeof(T)`. The previous decoder
+  // advanced past `sizeof(T)` on `None` too (fixed-width), which desynced every
+  // field after the first `None` — reading `retailer`/`token_mint` from the
+  // wrong offset (zeros). These readers only consume value bytes on `Some`.
   readOptionPubkey(): PublicKey | null {
     const tag = this.readU8();
-    if (tag === 0) { this.offset += 32; return null; }
+    if (tag === 0) return null;
     return this.readPubkey();
   }
   readOption32(): Uint8Array | null {
     const tag = this.readU8();
-    if (tag === 0) { this.offset += 32; return null; }
+    if (tag === 0) return null;
     return this.readBytes(32);
   }
   readOptionI64(): bigint | null {
     const tag = this.readU8();
-    if (tag === 0) { this.offset += 8; return null; }
+    if (tag === 0) return null;
     return this.readI64();
+  }
+  /** Remaining unread bytes in the buffer. */
+  remaining(): number { return this.buf.length - this.offset; }
+  /**
+   * Read a trailing `Option<[u8; N]>` (Borsh: 1-byte tag, then N bytes if Some).
+   *
+   * Real vault accounts are init'd at a fixed `space` but Borsh-serialized
+   * variable-width, so after the struct body there is trailing ZERO padding.
+   * That means even a `None` trailing field is materialized as a `0` tag byte
+   * (then zero padding). Legacy accounts written before a field existed simply
+   * lack the tag byte — `remaining() < 1` returns `null`. On `Some` we require
+   * the full N value bytes to be present.
+   */
+  readTrailingOptionBytes(n: number): Uint8Array | null {
+    if (this.remaining() < 1) return null;
+    const tag = this.readU8();
+    if (tag === 0) return null; // None — variable-width: no value bytes follow
+    if (this.remaining() < n) return null;
+    return this.readBytes(n);
   }
 }
 
@@ -120,6 +169,14 @@ export function decodeSubscriptionVault(
   const vkHashSubscriber = r.readBytes(32);
   const sourcePool = r.readOptionPubkey();
   const bump = r.readU8();
+  // Trailing Option fields, appended in this order on the program side:
+  //   client_stealth_meta: Option<[u8; 64]>   (1 tag + 64 value)
+  //   license_commitment:  Option<[u8; 32]>   (1 tag + 32 value)
+  // Legacy vaults written before each field existed simply lack the trailing
+  // bytes; `readTrailingOptionBytes` returns null in that case (same as the
+  // program reading trailing zero padding as `None`).
+  const clientStealthMeta = r.readTrailingOptionBytes(64);
+  const licenseCommitment = r.readTrailingOptionBytes(32);
 
   return {
     pda,
@@ -139,6 +196,8 @@ export function decodeSubscriptionVault(
     vkHashSubscriber,
     sourcePool,
     bump,
+    clientStealthMeta,
+    licenseCommitment,
   };
 }
 
@@ -171,8 +230,10 @@ export interface ListVaultsOptions {
 
 /**
  * Fetch every `SubscriptionVault` whose `retailer` field equals the given
- * pubkey. Uses an RPC `memcmp` filter at `offset=74` so each merchant only
- * hydrates their own vaults.
+ * pubkey. Uses an RPC `memcmp` filter at the mode-invariant retailer offset
+ * (`SUBSCRIPTION_VAULT_RETAILER_OFFSET` = 42) so each merchant only hydrates
+ * their own vaults. (The pre-fix offset 74 assumed fixed-width Borsh Options
+ * and never matched — see the constant's doc.)
  *
  * ⚠ On busy clusters `getProgramAccounts` is expensive. Merchants should
  * cache and throttle (call every 30–60s in a background worker).

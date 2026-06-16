@@ -7,14 +7,14 @@
  * on-chain identifiers, so there is no local state to keep in sync.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import { PublicKey } from '@solana/web3.js';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
-import { deriveLicenseKey, deriveClassicIdentity } from '@/services/license/derive';
+import { deriveLicenseSecret, encodeLicenseKey } from '@/services/license/derive';
+import { loadVaultSubscriberSecret } from '@/stores/subscriptionVaultStore';
 
 export interface LicenseKeyCardProps {
   status: 'active' | 'paused' | 'completed' | 'cancelled';
@@ -33,31 +33,39 @@ export interface LicenseKeyCardProps {
 
 export function LicenseKeyCard(props: LicenseKeyCardProps) {
   const [copied, setCopied] = useState(false);
+  const [licenseKey, setLicenseKey] = useState<string | null>(null);
 
-  const licenseKey = useMemo(() => {
-    let identity: Uint8Array;
-    if (props.vaultAddress) {
-      // Private path — the vault PDA bytes are already opaque.
-      try {
-        identity = new PublicKey(props.vaultAddress).toBuffer();
-      } catch {
-        return null;
+  // Commitment scheme: the displayed key is encodeLicenseKey(licenseSecret),
+  // where licenseSecret = HKDF(subscriber master note secret, serviceId). The
+  // chain only holds blake3(licenseSecret); the key is the preimage, so it must
+  // be re-derived locally from the SecureStore-held note secret (NOT from the
+  // public vault PDA). Private (ZK) vaults only — classic license keys are
+  // deferred (no deterministic classic signer wired yet).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // Private path requires the per-vault subscriber secret.
+      if (!props.vaultAddress) {
+        // Classic path is deferred under the commitment scheme — no key shown.
+        if (!cancelled) setLicenseKey(null);
+        return;
       }
-    } else if (props.walletPubkey) {
-      // Classic path — pre-hash wallet + streamId so the key cannot be
-      // reversed to the raw wallet.
       try {
-        const walletBytes = new PublicKey(props.walletPubkey).toBuffer();
-        identity = deriveClassicIdentity(walletBytes, props.streamId);
+        const secretDecimal = await loadVaultSubscriberSecret(props.vaultAddress);
+        if (!secretDecimal) {
+          if (!cancelled) setLicenseKey(null);
+          return;
+        }
+        const serviceTag = props.serviceId || props.streamId;
+        const licenseSecret = deriveLicenseSecret(secretDecimal, serviceTag);
+        const key = encodeLicenseKey(licenseSecret);
+        if (!cancelled) setLicenseKey(key);
       } catch {
-        return null;
+        if (!cancelled) setLicenseKey(null);
       }
-    } else {
-      return null;
-    }
-    const serviceTag = props.serviceId || props.streamId;
-    return deriveLicenseKey({ serviceId: serviceTag, identity });
-  }, [props.vaultAddress, props.walletPubkey, props.streamId, props.serviceId]);
+    })();
+    return () => { cancelled = true; };
+  }, [props.vaultAddress, props.streamId, props.serviceId]);
 
   if (!licenseKey) return null;
 

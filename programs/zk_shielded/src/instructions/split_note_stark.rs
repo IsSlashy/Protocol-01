@@ -132,9 +132,23 @@ pub struct SplitNoteStark<'info> {
     )]
     pub nullifier_record: Account<'info, NullifierRecord>,
 
-    /// STARK proof buffer from p01_stark_verifier (circuit 1: pool_commitment).
-    /// CHECK: Validated manually by reading account data.
-    pub stark_proof_buffer: AccountInfo<'info>,
+    /// C1 (pool_commitment) STARK proof buffer from p01_stark_verifier — proves
+    /// knowledge of secret + nullifier_preimage hashing to the nullifier and the
+    /// source-note commitment.
+    /// CHECK: Validated manually (owner, discriminator, authority, circuit_id=1,
+    /// verified, deep_ali_verified, public_inputs_hash).
+    pub c1_proof_buffer: AccountInfo<'info>,
+
+    /// C3 (merkle_path) STARK proof buffer — proves the source-note commitment
+    /// from C1 is actually a leaf in the SOURCE pool's tree at `merkle_root`.
+    /// Without this, split verifies only C1 (knowledge of a well-formed note)
+    /// and never that the note was ever deposited — a quantum/forging attacker
+    /// could synthesize a valid C1 proof for any commitment and split value out
+    /// of nothing into the target pool. Mirrors the C3 gate added to
+    /// unshield_denominated_stark_v3 / subscribe_private_stark.
+    /// CHECK: Validated manually (owner, discriminator, authority, circuit_id=3,
+    /// verified, deep_ali_verified, public_inputs_hash).
+    pub c3_proof_buffer: AccountInfo<'info>,
 
     /// Protocol fee wallet — receives split fee (0.3%).
     /// CHECK: Validated against hardcoded PROTOCOL_FEE_WALLET constant.
@@ -157,7 +171,7 @@ pub struct SplitNoteStark<'info> {
 pub fn handler(
     ctx: Context<SplitNoteStark>,
     nullifier: [u8; 32],
-    _merkle_root: [u8; 32],
+    merkle_root: [u8; 32],
     min_epoch: u64,
     stark_commitment: u64,
     num_outputs: u8,
@@ -231,27 +245,29 @@ pub fn handler(
     nullifier_record.bump = ctx.bumps.nullifier_record;
 
     // -----------------------------------------------------------------------
-    // 5. STARK proof verification (circuit 1: pool_commitment)
+    // 5. STARK proof verification — C1 (pool_commitment) + C3 (merkle_path)
     // -----------------------------------------------------------------------
-    let proof_info = &ctx.accounts.stark_proof_buffer;
+    // C1 (pool_commitment): proves knowledge of secret + nullifier_preimage
+    // hashing to the nullifier and the source-note commitment.
+    let c1_info = &ctx.accounts.c1_proof_buffer;
 
     require!(
-        *proof_info.owner == STARK_VERIFIER_PROGRAM_ID,
+        *c1_info.owner == STARK_VERIFIER_PROGRAM_ID,
         ZkShieldedError::InvalidProof
     );
 
-    let proof_data = proof_info.try_borrow_data()?;
-    let (authority, circuit_id, verified, stored_inputs_hash, deep_ali_verified) =
-        parse_stark_proof_buffer(&proof_data)?;
+    let c1_data = c1_info.try_borrow_data()?;
+    let (c1_authority, c1_circuit_id, c1_verified, c1_inputs_hash, c1_deep_ali_verified) =
+        parse_stark_proof_buffer(&c1_data)?;
 
     require!(
-        authority == ctx.accounts.payer.key(),
+        c1_authority == ctx.accounts.payer.key(),
         ZkShieldedError::InvalidProof
     );
-    require!(circuit_id == 1, ZkShieldedError::InvalidProof);
-    require!(verified, ZkShieldedError::InvalidProof);
+    require!(c1_circuit_id == 1, ZkShieldedError::InvalidProof);
+    require!(c1_verified, ZkShieldedError::InvalidProof);
     // Circuit 1 ships phase-2 DEEP-ALI from the client; require it.
-    require!(deep_ali_verified, ZkShieldedError::InvalidProof);
+    require!(c1_deep_ali_verified, ZkShieldedError::InvalidProof);
 
     // Nullifier canonicalization: the PDA is seeded on the full 32-byte
     // `nullifier`, but the proof only binds the low 8 bytes. Reject any
@@ -266,12 +282,69 @@ pub fn handler(
         pub_buf[8..].copy_from_slice(&stark_commitment.to_le_bytes());
         let expected_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
         require!(
-            stored_inputs_hash == expected_hash,
+            c1_inputs_hash == expected_hash,
             ZkShieldedError::InvalidProof
         );
     }
 
-    drop(proof_data);
+    drop(c1_data);
+
+    // -----------------------------------------------------------------------
+    // C3 (merkle_path) verification — proves the C1 source-note commitment is a
+    // leaf in the SOURCE pool's tree at `merkle_root`. Without this, an attacker
+    // can synthesize a valid C1 proof for a never-deposited commitment and split
+    // value out of nothing into the target pool. Mirrors
+    // unshield_denominated_stark_v3 / subscribe_private_stark.
+    //
+    // Topology: split consumes ONE input note (from source_pool) and creates
+    // `num_outputs` output commitments in target_pool. Only the single input
+    // note needs a membership proof, so one C3 suffices. The output commitments
+    // are freshly inserted leaves — they don't (and can't) prove membership.
+    // -----------------------------------------------------------------------
+    let c3_info = &ctx.accounts.c3_proof_buffer;
+    require!(
+        *c3_info.owner == STARK_VERIFIER_PROGRAM_ID,
+        ZkShieldedError::InvalidProof
+    );
+    let c3_data = c3_info.try_borrow_data()?;
+    let (c3_authority, c3_circuit_id, c3_verified, c3_inputs_hash, c3_deep_ali_verified) =
+        parse_stark_proof_buffer(&c3_data)?;
+
+    require!(
+        c3_authority == ctx.accounts.payer.key(),
+        ZkShieldedError::InvalidProof
+    );
+    require!(c3_circuit_id == 3, ZkShieldedError::InvalidProof);
+    require!(c3_verified, ZkShieldedError::InvalidProof);
+    // Circuit 3 ships phase-2 DEEP-ALI from the client; require it.
+    require!(c3_deep_ali_verified, ZkShieldedError::InvalidProof);
+
+    // Reconstruct C3 expected hash. The merkle_path prover stores
+    //   public_inputs: vec![leaf, root_u64, depth]  (three u64 felts)
+    // hashed as concat(u64.to_le_bytes()) = 24 bytes. The V3 leaf format packs
+    // the Goldilocks felt into bytes 0..8, so we extract the low 8 bytes for the
+    // root. depth must be 15 (the depth the C3 periodic columns are baked for).
+    //
+    // c3.leaf ↔ c1.commitment binding: both `pub_buf[..8]` here and the C1 hash
+    // above are built from the SAME `stark_commitment` arg, so lying about
+    // either fails one of the two hash checks.
+    // c3.root ↔ source pool binding: `merkle_root[..8]` is fed here, and the
+    // full 32-byte `merkle_root` is constrained to the source pool's historical
+    // ring by `source_pool.is_valid_root(&merkle_root)` on the account above.
+    let tree_depth = ctx.accounts.source_pool.tree_depth as u64;
+    require!(tree_depth == 15, ZkShieldedError::InvalidProof);
+    {
+        let mut pub_buf = [0u8; 24]; // 3 × u64 LE: leaf, root, depth
+        pub_buf[..8].copy_from_slice(&stark_commitment.to_le_bytes());
+        pub_buf[8..16].copy_from_slice(&merkle_root[..8]);
+        pub_buf[16..24].copy_from_slice(&tree_depth.to_le_bytes());
+        let expected_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
+        require!(
+            c3_inputs_hash == expected_hash,
+            ZkShieldedError::InvalidProof
+        );
+    }
+    drop(c3_data);
 
     // -----------------------------------------------------------------------
     // 6. Transfer funds: source pool -> target pool (SOL or SPL)

@@ -1001,7 +1001,7 @@ fn compute_quotient_lde_circuit_5(
     };
 
     let trace_width = trace_lde.len();
-    assert_eq!(trace_width, TRACE_WIDTH, "circuit 5 trace width is 6");
+    assert_eq!(trace_width, TRACE_WIDTH, "circuit 5 trace width is 7");
     let lde_size = trace_length * blowup;
     assert_eq!(trace_lde[0].len(), lde_size);
 
@@ -1262,6 +1262,16 @@ fn boundary_assertions_for_circuit(
             a.push((0, 7 * HASH_CYCLE_LEN + NUM_ROUNDS_B, pi(1)));
             a.push((0, 10 * HASH_CYCLE_LEN + NUM_ROUNDS_B, pi(2)));
             a.push((0, 13 * HASH_CYCLE_LEN + NUM_ROUNDS_B, pi(3)));
+            // [#2 voie A] Value-conservation accumulator (col 6) boundary.
+            // MUST match the AIR's `get_assertions` AND the on-chain verifier's
+            // `get_boundary_assertions(5, …)` order exactly (acc@row0 = 0, then
+            // acc@row385 = public_amount = pi(4)) so the boundary quotient folded
+            // here is the same polynomial the verifier reconstructs at the OOD
+            // point. Without these two terms the compact quotient would not bind
+            // col 6 at all and the conservation relation would be unenforced
+            // on-chain (24 → 26 boundary assertions for circuit 5).
+            a.push((6, 0, BaseElement::ZERO));
+            a.push((6, 12 * HASH_CYCLE_LEN + 1, pi(4))); // row 385
             a
         }
         6 => {
@@ -1695,14 +1705,17 @@ mod tests {
 
     #[test]
     fn test_wire_size_transfer_circuit_5() {
-        // Circuit 5: tw=6, trace=512, blowup=16, md=13 (LDE=8192), num_queries=22
-        // [P2.2g] Dropped from 27→22 to fit phase-1 FRI under 1.4M CU.
+        // Circuit 5: tw=7, trace=512, blowup=16, md=13 (LDE=8192), num_queries=22
+        // [P2.2g] num_queries dropped from 27→22 to fit phase-1 FRI under 1.4M CU.
+        // [#2 voie A] trace width 6→7: added the value-conservation accumulator
+        // column (col 6), which widens each OOD frame and per-query trace
+        // opening — hence the larger wire size.
         let proof = generate_transfer_compact_proof(
             42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
         );
         assert_eq!(
             proof.proof_bytes.len(),
-            expected_wire_size(6, 13, 22, 8192, FRI_FINAL_POLY_SIZE),
+            expected_wire_size(7, 13, 22, 8192, FRI_FINAL_POLY_SIZE),
             "transfer wire size drift",
         );
     }
@@ -2202,6 +2215,24 @@ mod tests {
         assert_eq!(c[21][511], 0x10F31CBF85B4AC62);
         assert_eq!(c[22][0], 0xFEFFFFFF01000001);
         assert_eq!(c[22][511], 0x8A14455498F377A3);
+
+        // [#2 voie A] Value-conservation columns (indices 23-27): add_in1,
+        // add_in2, sub_out1, sub_out2 (single-hot at rows 64/160/288/384) and
+        // acc_continuity (508-hot). Must match the `C5_ADD_IN1_COEFFS` …
+        // `C5_ACC_CONTINUITY_COEFFS` arrays appended to
+        // `p01_stark_verifier/src/periodic_consts.rs`. All four single-hots
+        // share constant term 1/N = 0xFF7FFFFF00800001; acc_continuity's is
+        // 1 - 4/N = 0x01FFFFFFFE000001.
+        assert_eq!(c[23][0], 0xFF7FFFFF00800001); // C5_ADD_IN1
+        assert_eq!(c[23][511], 0xFFFFFFFEFFFF8001);
+        assert_eq!(c[24][0], 0xFF7FFFFF00800001); // C5_ADD_IN2
+        assert_eq!(c[24][511], 0x0000000000000008);
+        assert_eq!(c[25][0], 0xFF7FFFFF00800001); // C5_SUB_OUT1
+        assert_eq!(c[25][511], 0x0008000000000000);
+        assert_eq!(c[26][0], 0xFF7FFFFF00800001); // C5_SUB_OUT2
+        assert_eq!(c[26][511], 0xFFFFFF7F00000001);
+        assert_eq!(c[27][0], 0x01FFFFFFFE000001); // C5_ACC_CONTINUITY
+        assert_eq!(c[27][511], 0xFFF8007F00007FF9);
     }
 
     /// [P1.1 PR 4] Sanity check: re-emitting coefficients via inverse_ntt matches
@@ -2610,6 +2641,12 @@ mod tests {
             "C5_OUT1_RM_TO_10_COEFFS",
             "C5_OUT2_RM_TO_13_COEFFS",
             "C5_OUT_RM_CAPTURE_ANY_COEFFS",
+            // [#2 voie A] Value-conservation columns (indices 23-27).
+            "C5_ADD_IN1_COEFFS",
+            "C5_ADD_IN2_COEFFS",
+            "C5_SUB_OUT1_COEFFS",
+            "C5_SUB_OUT2_COEFFS",
+            "C5_ACC_CONTINUITY_COEFFS",
         ];
 
         // Period-32 columns get tiled to full trace length before inverse NTT so

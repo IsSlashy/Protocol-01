@@ -59,6 +59,16 @@ export interface VaultInfo {
   totalPausedSlots: number;
   /** Source pool for private mode (base58) */
   sourcePool: string | null;
+  /**
+   * v1 stealth meta address (`[spending_pub(32) | viewing_pub(32)]`, hex), or
+   * `null` for vaults created before the field existed. Appended after `bump`.
+   */
+  clientStealthMeta?: string | null;
+  /**
+   * `license_commitment = blake3(licenseSecret)` (32 bytes, hex), or `null` for
+   * vaults created before license keys existed. Appended at the very end.
+   */
+  licenseCommitment?: string | null;
   /** Whether this is a normal (wallet) vault */
   isNormalMode: boolean;
   /** Whether this is a private (ZK) vault */
@@ -223,27 +233,35 @@ export function nextClaimableSlot(vault: VaultInfo): number | null {
 
 /**
  * Parse a vault account from raw on-chain data.
- * This is a basic deserialization — in practice, use Anchor's coder.
+ *
+ * Borsh serializes `Option<T>` VARIABLE-width: `None` is a single `0` tag byte
+ * (no value bytes follow), `Some` is a `1` tag + `sizeof(T)`. Earlier this
+ * decoder advanced past `sizeof(T)` on `None` too (fixed-width), which desynced
+ * every field after the first `None` — `retailer` and `token_mint` were read
+ * from the wrong offset (zeros). All Option reads below only consume value bytes
+ * on `Some`. Verified against live devnet vaults: `retailer` lands at offset 42
+ * (mode-invariant) — the two leading mutually-exclusive options total 34 bytes
+ * (one Some=33 + one None=1) in both modes.
  */
 export function parseVaultAccount(data: Buffer, address: string): VaultInfo {
   // Skip 8-byte discriminator
   let offset = 8;
 
-  // Option<Pubkey> subscriber_pubkey
+  // Option<Pubkey> subscriber_pubkey — Borsh: 1-byte tag, then 32 bytes only if Some
   const hasSubscriberPubkey = data[offset] === 1;
   offset += 1;
   const subscriberPubkey = hasSubscriberPubkey
     ? data.slice(offset, offset + 32).toString('hex')
     : null;
-  offset += 32;
+  if (hasSubscriberPubkey) offset += 32;
 
-  // Option<[u8;32]> subscriber_commitment
+  // Option<[u8;32]> subscriber_commitment — Borsh: 1-byte tag, then 32 bytes only if Some
   const hasCommitment = data[offset] === 1;
   offset += 1;
   const subscriberCommitment = hasCommitment
     ? data.slice(offset, offset + 32).toString('hex')
     : null;
-  offset += 32;
+  if (hasCommitment) offset += 32;
 
   // Pubkey retailer
   const retailer = data.slice(offset, offset + 32).toString('hex');
@@ -281,26 +299,54 @@ export function parseVaultAccount(data: Buffer, address: string): VaultInfo {
   const isPaused = data[offset] === 1;
   offset += 1;
 
-  // Option<i64> pause_slot
+  // Option<i64> pause_slot — Borsh: 1-byte tag, then 8 bytes only if Some
   const hasPauseSlot = data[offset] === 1;
   offset += 1;
   const pauseSlot = hasPauseSlot ? Number(data.readBigInt64LE(offset)) : null;
-  offset += 8;
+  if (hasPauseSlot) offset += 8;
 
   // i64 total_paused_slots
   const totalPausedSlots = Number(data.readBigInt64LE(offset));
   offset += 8;
 
-  // [u8;32] vk_hash_subscriber (skip for now)
+  // [u8;32] vk_hash_subscriber (skip)
   offset += 32;
 
-  // Option<Pubkey> source_pool
+  // Option<Pubkey> source_pool — Borsh: 1-byte tag, then 32 bytes only if Some
   const hasSourcePool = data[offset] === 1;
   offset += 1;
   const sourcePool = hasSourcePool
     ? data.slice(offset, offset + 32).toString('hex')
     : null;
-  offset += 32;
+  if (hasSourcePool) offset += 32;
+
+  // u8 bump
+  if (offset < data.length) offset += 1;
+
+  // Trailing Option fields, appended in program order (each: 1-byte tag, then
+  // value bytes only if Some). Legacy accounts written before a field existed
+  // simply lack the tag byte; real accounts are init'd at a fixed `space` so
+  // the tag (and zero padding) is present even for None.
+  //   client_stealth_meta: Option<[u8;64]>
+  let clientStealthMeta: string | null = null;
+  if (offset + 1 <= data.length) {
+    const tag = data[offset];
+    offset += 1;
+    if (tag === 1 && offset + 64 <= data.length) {
+      clientStealthMeta = data.slice(offset, offset + 64).toString('hex');
+      offset += 64;
+    }
+  }
+  //   license_commitment: Option<[u8;32]>
+  let licenseCommitment: string | null = null;
+  if (offset + 1 <= data.length) {
+    const tag = data[offset];
+    offset += 1;
+    if (tag === 1 && offset + 32 <= data.length) {
+      licenseCommitment = data.slice(offset, offset + 32).toString('hex');
+      offset += 32;
+    }
+  }
 
   return {
     address,
@@ -318,6 +364,8 @@ export function parseVaultAccount(data: Buffer, address: string): VaultInfo {
     pauseSlot,
     totalPausedSlots,
     sourcePool,
+    clientStealthMeta,
+    licenseCommitment,
     isNormalMode: hasSubscriberPubkey,
     isPrivateMode: hasCommitment,
   };
