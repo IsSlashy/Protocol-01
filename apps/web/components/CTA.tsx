@@ -89,7 +89,7 @@ export default function CTA() {
             >
               <a
                 href={APK_URL}
-                download="protocol-01-v1.0.2.apk"
+                download="protocol-01-v1.0.3.apk"
                 className="group flex items-center gap-4 p-5 rounded-2xl border border-p01-cyan/40 bg-p01-cyan/[0.06] hover:bg-p01-cyan/[0.12] hover:border-p01-cyan/70 transition-all duration-300 no-underline"
               >
                 <div className="w-12 h-12 rounded-xl bg-p01-cyan/15 flex items-center justify-center text-p01-cyan shrink-0">
