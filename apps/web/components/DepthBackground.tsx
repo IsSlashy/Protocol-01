@@ -55,11 +55,6 @@ function DepthBackground() {
           50% { transform: translateY(-20px) rotate(5deg); opacity: 0.3; }
         }
 
-        @keyframes scanline-move {
-          0% { transform: translateY(-100%); }
-          100% { transform: translateY(100vh); }
-        }
-
         @keyframes shimmer {
           0% { background-position: 200% 0%; }
           100% { background-position: -200% 0%; }
@@ -71,7 +66,7 @@ function DepthBackground() {
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .animate-float, .animate-scanline, .animate-shimmer, .animate-pulse {
+          .animate-float, .animate-shimmer, .animate-pulse {
             animation: none !important;
           }
         }
@@ -167,20 +162,6 @@ function DepthBackground() {
           {p.symbol}
         </span>
       ))}
-
-      {/* LAYER 5 - Single cyan scanline sweeping top → bottom. Previously
-          removed together with the diagonal shimmer, but kept being liked
-          on the quieter pages (founder, docs) where it reads as a subtle
-          terminal-style scan rather than TV-style surveillance. 2px tall,
-          10s period, opacity ~0.1 — barely visible but gives life. */}
-      <div
-        className="absolute left-0 right-0 h-[2px] pointer-events-none"
-        style={{
-          background: "linear-gradient(90deg, transparent, rgba(57, 197, 187, 0.1), transparent)",
-          animation: "scanline-move 10s linear infinite",
-          willChange: "transform",
-        }}
-      />
 
       {/* LAYER 6 - Vignette (static) */}
       <div

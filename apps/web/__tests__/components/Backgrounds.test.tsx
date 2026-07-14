@@ -37,21 +37,19 @@ describe('DepthBackground -- Multi-layered cyberpunk atmosphere', () => {
     expect(circles.length).toBe(9); // 9 mesh points
   });
 
-  it('includes a scanline effect for retro CRT aesthetic', () => {
+  it('does not render a scanline effect', () => {
     const { container } = render(<DepthBackground />);
-    const scanline = container.querySelector('[style*="scanline-move"]') ||
-      Array.from(container.querySelectorAll('div')).find(
-        el => el.style.animation?.includes('scanline-move')
-      );
-    expect(scanline).toBeTruthy();
+    const scanline = Array.from(container.querySelectorAll('div')).find(
+      el => el.style.animation?.includes('scanline-move')
+    );
+    expect(scanline).toBeFalsy();
   });
 
-  it('injects CSS keyframes for float and scanline animations', () => {
+  it('injects CSS keyframes for float and shimmer animations', () => {
     const { container } = render(<DepthBackground />);
     const style = container.querySelector('style');
     expect(style).toBeTruthy();
     expect(style?.innerHTML).toContain('float-particle');
-    expect(style?.innerHTML).toContain('scanline-move');
     expect(style?.innerHTML).toContain('shimmer');
   });
 
