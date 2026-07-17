@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/zk-sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "STARK-native, quantum-resistant ZK SDK for Protocol 01 shielded transactions on Solana",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -63,7 +63,7 @@
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
     "@noble/hashes": "^2.2.0",
-    "@protocol-01/stark-prover": "workspace:*",
+    "@protocol-01/stark-prover": "workspace:^",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "bn.js": "^5.2.3",
@@ -80,7 +80,7 @@
     "vitest": "^3.2.4"
   },
   "peerDependencies": {
-    "@protocol-01/privacy-sdk": "workspace:*",
+    "@protocol-01/privacy-sdk": "workspace:^",
     "@solana/web3.js": "^1.98.0"
   },
   "engines": {

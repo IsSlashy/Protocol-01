@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/p01-js",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Drop-in merchant SDK for Protocol 01 — privacy-first crypto payments (post-quantum STARK proofs), Stream Secure subscriptions, vanilla JS + React widgets. Zero-config pay button.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -74,7 +74,7 @@
     "node": ">=22"
   },
   "peerDependencies": {
-    "@protocol-01/privacy-sdk": "workspace:*",
+    "@protocol-01/privacy-sdk": "workspace:^",
     "react": ">=17.0.0"
   },
   "peerDependenciesMeta": {
@@ -108,7 +108,7 @@
     "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
-    "@protocol-01/stark-prover": "workspace:*"
+    "@protocol-01/stark-prover": "workspace:^"
   },
   "publishConfig": {
     "access": "public"
