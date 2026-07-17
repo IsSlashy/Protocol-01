@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>JP Translate</title>
+  </head>
+  <body>
+    <div class="card">
+      <header class="head">
+        <div class="logo" aria-hidden="true">あ<span>€</span></div>
+        <div class="titles">
+          <h1>JP Translate</h1>
+          <p>Pages japonaises → traduites · prix en USD/EUR</p>
+        </div>
+      </header>
+
+      <button id="power" class="power" type="button" role="switch" aria-checked="false">
+        <span class="power-knob"></span>
+        <span class="power-text">OFF</span>
+      </button>
+      <p id="status" class="status">Désactivé</p>
+
+      <div class="rows">
+        <label class="row">
+          <span>Traduire vers</span>
+          <select id="target">
+            <option value="en">English</option>
+            <option value="fr">Français</option>
+            <option value="es">Español</option>
+            <option value="de">Deutsch</option>
+            <option value="it">Italiano</option>
+            <option value="pt">Português</option>
+            <option value="zh-CN">中文 (简体)</option>
+            <option value="ko">한국어</option>
+          </select>
+        </label>
+
+        <label class="row">
+          <span>Devise affichée</span>
+          <select id="currency">
+            <option value="both">USD + EUR</option>
+            <option value="usd">USD seulement</option>
+            <option value="eur">EUR seulement</option>
+          </select>
+        </label>
+      </div>
+
+      <p class="hint" id="hint">
+        S'applique automatiquement à la page ouverte. Idéal pour Rakuten Travel,
+        Jalan et autres sites japonais.
+      </p>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
