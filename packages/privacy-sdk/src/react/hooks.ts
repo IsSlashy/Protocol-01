@@ -31,9 +31,6 @@ import type {
   RegistryEntry,
   RelayJobParams,
   RelayJobReceipt,
-  MPCVoteParams,
-  MPCCreateProposalParams,
-  MPCSealedBidParams,
   TxResult,
   TokenSymbol,
 } from '../types';
@@ -279,27 +276,3 @@ export function useRelay() {
   };
 }
 
-/** Arcium MPC hooks */
-export function useMPC() {
-  const sdk = useSDK();
-
-  const [createProposal, proposalState] = useAsyncAction(
-    useCallback((params: MPCCreateProposalParams) => sdk.mpc.createProposal(params), [sdk]),
-  );
-  const [vote, voteState] = useAsyncAction(
-    useCallback((params: MPCVoteParams) => sdk.mpc.vote(params), [sdk]),
-  );
-  const [submitBid, bidState] = useAsyncAction(
-    useCallback((params: MPCSealedBidParams) => sdk.mpc.submitSealedBid(params), [sdk]),
-  );
-  const [isAvailable, availableState] = useAsyncAction(
-    useCallback(() => sdk.mpc.isAvailable(), [sdk]),
-  );
-
-  return {
-    createProposal, proposalState,
-    vote, voteState,
-    submitBid, bidState,
-    isAvailable, availableState,
-  };
-}

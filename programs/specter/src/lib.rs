@@ -8,7 +8,7 @@ pub mod state;
 use instructions::*;
 pub use airdrop::*;
 
-declare_id!("8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh");
+declare_id!("FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL");
 
 #[program]
 pub mod p01 {
@@ -51,52 +51,42 @@ pub mod p01 {
     }
 
     // =========================================================================
-    // Stealth Payments — v2 (hybrid X25519 + ML-KEM-768)
+    // Stealth Payments — v2 (hybrid X25519 + ML-KEM-768), chunked transport
     // =========================================================================
+    // The single-shot `send_private_v2` was removed: passing the 1088-byte KEM
+    // ciphertext as one instruction arg overflowed both the 1232-byte tx cap and
+    // the 4096-byte SBF stack. The chunked init + write pair below replaces it.
 
-    /// Send a hybrid quantum-resistant stealth payment (v2).
+    /// Initialize a v2 hybrid stealth announcement (native SOL), header only.
     ///
-    /// Stores both an X25519 ephemeral public key (32 bytes) and an
-    /// ML-KEM-768 ciphertext (1088 bytes) on-chain. The recipient uses
-    /// both to derive the stealth private key, ensuring security against
-    /// both classical and quantum adversaries.
-    ///
-    /// PDA size: ~1220 bytes (~0.0093 SOL rent).
-    /// The account can be closed after claiming to reclaim rent.
-    ///
-    /// Emits: `StealthPaymentCreatedV2` event for client-side indexing.
-    pub fn send_private_v2(
-        ctx: Context<SendPrivateV2>,
+    /// Replaces the uncallable single-shot `send_private_v2`: the 1088-byte KEM
+    /// ciphertext is too large for one transaction, so it is streamed with
+    /// `write_stealth_kem_chunk` after this creates the PDA. The payment funds
+    /// are a separate `SystemProgram::transfer` to `stealth_address`.
+    pub fn init_stealth_v2(
+        ctx: Context<InitStealthV2>,
         amount: u64,
         ephemeral_pub_key: [u8; 32],
         stealth_address: Pubkey,
         view_tag: u8,
-        kem_ciphertext: [u8; 1088],
     ) -> Result<()> {
-        instructions::send_private_v2::handler(
-            ctx,
-            amount,
-            ephemeral_pub_key,
-            stealth_address,
-            view_tag,
-            kem_ciphertext,
-        )
+        instructions::init_stealth_v2::handler(ctx, amount, ephemeral_pub_key, stealth_address, view_tag)
     }
 
-    /// Claim a v2 hybrid stealth payment and close the announcement account.
-    ///
-    /// After the recipient decapsulates the ML-KEM-768 shared secret and
-    /// derives the stealth private key, they call this instruction to:
-    /// 1. Transfer escrowed tokens to their wallet
-    /// 2. Close the 1220-byte PDA and reclaim ~0.0093 SOL rent
-    ///
-    /// Emits: `StealthPaymentClaimed` event.
-    pub fn claim_stealth_v2(
-        ctx: Context<ClaimStealthV2>,
-        proof: [u8; 64],
+    /// Write a slice of the ML-KEM-768 ciphertext into a v2 announcement PDA.
+    pub fn write_stealth_kem_chunk(
+        ctx: Context<WriteStealthKemChunk>,
+        stealth_address: Pubkey,
+        offset: u16,
+        chunk: Vec<u8>,
     ) -> Result<()> {
-        instructions::claim_stealth_v2::handler(ctx, proof)
+        instructions::write_stealth_kem_chunk::handler(ctx, stealth_address, offset, chunk)
     }
+
+    // Native-SOL v2 claim needs no program instruction: the recipient derives
+    // the stealth keypair and signs a SystemProgram::transfer out of the
+    // one-time address. (Rent reclaim / close of the announcement PDA is a
+    // follow-up.)
 
     // =========================================================================
     // Streaming Payments

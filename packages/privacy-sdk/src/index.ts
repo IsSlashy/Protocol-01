@@ -43,7 +43,6 @@ export { SubscriptionsModule } from './modules/subscriptions';
 export { VaultModule } from './modules/vault';
 export { RegistryModule } from './modules/registry';
 export { RelayModule } from './modules/relay';
-export { MPCModule } from './modules/mpc';
 export { ComplianceModule } from './modules/compliance';
 export type {
   ComplianceRangeParams,
@@ -233,14 +232,6 @@ export type {
   RelayerInfo,
   RelayJobReceipt,
   RelayJobStatus,
-
-  // MPC
-  MPCVoteParams,
-  MPCCreateProposalParams,
-  MPCAuditParams,
-  MPCSealedBidParams,
-  MPCProposalInfo,
-  MPCAuctionInfo,
 
   // Events
   PrivacyEventType,

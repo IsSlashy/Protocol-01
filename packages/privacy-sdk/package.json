@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/privacy-sdk",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Unified privacy SDK for Solana — shield, stealth, confidential balances, streams, MPC in one import",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -51,11 +51,6 @@
       "import": "./dist/modules/relay.mjs",
       "require": "./dist/modules/relay.js"
     },
-    "./mpc": {
-      "types": "./dist/modules/mpc.d.ts",
-      "import": "./dist/modules/mpc.mjs",
-      "require": "./dist/modules/mpc.js"
-    },
     "./compliance": {
       "types": "./dist/modules/compliance.d.ts",
       "import": "./dist/modules/compliance.mjs",
@@ -105,8 +100,6 @@
     "zk-snark",
     "stealth-address",
     "confidential",
-    "mpc",
-    "arcium",
     "stark",
     "quantum-resistant",
     "protocol-01",

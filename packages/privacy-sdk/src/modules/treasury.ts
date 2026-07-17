@@ -13,7 +13,6 @@ import type {
 import { PrivacyError, PrivacyErrorCode } from '../errors';
 
 import { ShieldModule } from './shield';
-import { MPCModule } from './mpc';
 import { ComplianceModule } from './compliance';
 import { RelayModule } from './relay';
 import type { SpendingKey } from '../identity/spendingKey';
@@ -143,7 +142,6 @@ export class TreasuryModule {
 
   /** Internal module instances for orchestration. */
   private readonly shield: ShieldModule;
-  private readonly mpc: MPCModule;
   private readonly compliance: ComplianceModule;
   private readonly relay: RelayModule;
 
@@ -168,7 +166,6 @@ export class TreasuryModule {
     this.resolveToken = resolveToken;
 
     this.shield = new ShieldModule(connection, wallet, network, programIds, resolveToken, spendingKey);
-    this.mpc = new MPCModule(connection, wallet, network, programIds, resolveToken);
     this.compliance = new ComplianceModule(connection, wallet, network, programIds, resolveToken);
     this.relay = new RelayModule(connection, wallet, network, programIds, resolveToken);
   }
@@ -231,28 +228,12 @@ export class TreasuryModule {
    * @throws {PrivacyError} INVALID_CONFIG if proposal parameters are invalid.
    */
   async proposeSpend(proposal: TreasurySpendProposal): Promise<TxResult> {
-    try {
-      this.validateProposal(proposal);
-
-      // Store proposal locally for later execution
-      this.proposals.set(proposal.proposalId, proposal);
-
-      // Create the binary MPC voting proposal on-chain
-      const result = await this.mpc.createProposal({
-        proposalId: proposal.proposalId,
-        optionCount: BINARY_OPTION_COUNT,
-        deadline: proposal.deadline,
-      });
-
-      return result;
-    } catch (err) {
-      if (err instanceof PrivacyError) throw err;
-      throw new PrivacyError(
-        PrivacyErrorCode.MPC_VOTE_FAILED,
-        `Treasury spend proposal failed: ${(err as Error).message}`,
-        err as Error,
-      );
-    }
+    this.validateProposal(proposal);
+    throw new PrivacyError(
+      PrivacyErrorCode.MPC_NOT_AVAILABLE,
+      'Private treasury governance (Arcium MPC voting) has been removed from ' +
+        `Protocol 01; cannot create proposal "${proposal.proposalId}".`,
+    );
   }
 
   /**
@@ -269,23 +250,11 @@ export class TreasuryModule {
    * @throws {PrivacyError} MPC_ALREADY_VOTED if this wallet already voted.
    */
   async voteOnSpend(proposalId: string, approve: boolean): Promise<TxResult> {
-    try {
-      const choice = approve ? VOTE_YES : VOTE_NO;
-
-      const result = await this.mpc.vote({
-        proposalId,
-        choice,
-      });
-
-      return result;
-    } catch (err) {
-      if (err instanceof PrivacyError) throw err;
-      throw new PrivacyError(
-        PrivacyErrorCode.MPC_VOTE_FAILED,
-        `Treasury vote failed: ${(err as Error).message}`,
-        err as Error,
-      );
-    }
+    throw new PrivacyError(
+      PrivacyErrorCode.MPC_NOT_AVAILABLE,
+      'Private treasury governance (Arcium MPC voting) has been removed from ' +
+        `Protocol 01; cannot vote on "${proposalId}" (approve=${approve}).`,
+    );
   }
 
   /**
@@ -302,55 +271,11 @@ export class TreasuryModule {
    * @throws {PrivacyError} INVALID_CONFIG if the proposal is not found locally.
    */
   async executeSpend(proposalId: string): Promise<TreasurySpendResult> {
-    try {
-      const proposal = this.proposals.get(proposalId);
-      if (!proposal) {
-        throw new PrivacyError(
-          PrivacyErrorCode.INVALID_CONFIG,
-          `Proposal "${proposalId}" not found. Was it created via this treasury instance?`,
-        );
-      }
-
-      // Finalize the tally via MPC
-      const tally = await this.mpc.finalizeTally(proposalId);
-      const results = tally.results;
-
-      const yesVotes = results[VOTE_YES] ?? 0;
-      const noVotes = results[VOTE_NO] ?? 0;
-      const approved = yesVotes > noVotes;
-
-      const voteTally = { yes: yesVotes, no: noVotes };
-
-      if (!approved) {
-        return { proposalId, approved: false, voteTally };
-      }
-
-      // Approved: unshield and send the funds
-      const recipient =
-        typeof proposal.recipient === 'string'
-          ? new PublicKey(proposal.recipient)
-          : proposal.recipient;
-
-      const unshieldReceipt = await this.shield.unshield({
-        amount: proposal.amount,
-        token: proposal.token,
-        recipient,
-      });
-
-      return {
-        proposalId,
-        approved: true,
-        tx: unshieldReceipt.tx,
-        voteTally,
-      };
-    } catch (err) {
-      if (err instanceof PrivacyError) throw err;
-      throw new PrivacyError(
-        PrivacyErrorCode.MPC_VOTE_FAILED,
-        `Treasury spend execution failed: ${(err as Error).message}`,
-        err as Error,
-      );
-    }
+    throw new PrivacyError(
+      PrivacyErrorCode.MPC_NOT_AVAILABLE,
+      'Private treasury governance (Arcium MPC voting) has been removed from ' +
+        `Protocol 01; cannot execute "${proposalId}".`,
+    );
   }
 
   /**

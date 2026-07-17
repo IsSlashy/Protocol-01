@@ -13,7 +13,8 @@ import {
 } from '../utils/crypto';
 import { verifyStealthOwnership } from './derive';
 import { parseStealthAnnouncement } from './generate';
-import { StealthIndexer } from '../indexing/stealth-indexer';
+import { fetchV2Announcements } from './announcement-v2';
+import { DEFAULT_PROGRAM_ID } from '../constants';
 
 /**
  * Scanner for detecting incoming stealth payments (supports v1 and v2 hybrid)
@@ -23,6 +24,7 @@ export class StealthScanner {
   private viewingPrivateKey: Uint8Array;
   private spendingPubKey: Uint8Array;
   private kemSecretKey?: Uint8Array;
+  private programId: PublicKey;
   private lastScannedSlot: number = 0;
 
   /**
@@ -30,17 +32,20 @@ export class StealthScanner {
    * @param viewingPrivateKey - Viewing private key for scanning
    * @param spendingPubKey - Spending public key for verification
    * @param kemSecretKey - ML-KEM-768 secret key for v2 hybrid payments (optional)
+   * @param programId - Specter program to scan (defaults to the devnet program)
    */
   constructor(
     connection: Connection,
     viewingPrivateKey: Uint8Array,
     spendingPubKey: Uint8Array,
-    kemSecretKey?: Uint8Array
+    kemSecretKey?: Uint8Array,
+    programId: PublicKey = DEFAULT_PROGRAM_ID
   ) {
     this.connection = connection;
     this.viewingPrivateKey = viewingPrivateKey;
     this.spendingPubKey = spendingPubKey;
     this.kemSecretKey = kemSecretKey;
+    this.programId = programId;
   }
 
   /**
@@ -163,39 +168,29 @@ export class StealthScanner {
   // ============================================================================
 
   /**
-   * Fetch stealth announcements from the blockchain.
+   * Fetch v2 hybrid stealth announcements from the program's announcement PDAs.
    *
-   * Uses the StealthIndexer to scan on-chain transactions directly,
-   * bypassing any relayer dependency. The indexer handles batched fetching,
-   * rate-limit retries, and parses both log messages and instruction data.
+   * Reads the program-owned `StealthAccountV2` accounts directly via
+   * `getProgramAccounts` (filtered by size + discriminator). This is the
+   * transport that actually carries the 1088-byte ML-KEM ciphertext on-chain;
+   * no memo parsing and no external indexer are involved.
    */
   private async fetchAnnouncements(
-    fromSlot: number,
+    _fromSlot: number,
     _toSlot: number | undefined,
     limit: number
   ): Promise<AnnouncementData[]> {
-    const SPECTER_PROGRAM_ID = new PublicKey(
-      '2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp',
-    );
+    const decoded = await fetchV2Announcements(this.connection, this.programId);
 
-    const indexer = new StealthIndexer(this.connection, SPECTER_PROGRAM_ID, {
-      maxSignatures: limit * 10,
-    });
-
-    const payments = await indexer.scanPayments(
-      this.viewingPrivateKey,
-      this.spendingPubKey,
-      { fromSlot: fromSlot > 0 ? fromSlot : undefined },
-    );
-
-    return payments.slice(0, limit).map((p) => ({
-      stealthAddress: p.stealthAddress,
-      ephemeralPubKey: p.ephemeralPubKey,
-      viewTag: p.viewTag,
-      amount: p.amount,
-      tokenMint: p.tokenMint,
-      signature: p.signature,
-      blockTime: p.blockTime,
+    return decoded.slice(0, limit).map((a) => ({
+      stealthAddress: a.stealthAddress,
+      ephemeralPubKey: a.ephemeralPubKey,
+      viewTag: a.viewTag,
+      amount: a.amount,
+      tokenMint: a.tokenMint.equals(PublicKey.default) ? null : a.tokenMint,
+      signature: '',
+      blockTime: Number(a.createdAt),
+      kemCiphertext: a.kemCiphertext,
     }));
   }
 
@@ -334,9 +329,10 @@ export async function scanForPayments(
   viewingPrivateKey: Uint8Array,
   spendingPubKey: Uint8Array,
   options: ScanOptions = {},
-  kemSecretKey?: Uint8Array
+  kemSecretKey?: Uint8Array,
+  programId?: PublicKey
 ): Promise<StealthPayment[]> {
-  const scanner = new StealthScanner(connection, viewingPrivateKey, spendingPubKey, kemSecretKey);
+  const scanner = new StealthScanner(connection, viewingPrivateKey, spendingPubKey, kemSecretKey, programId);
   return scanner.scan(options);
 }
 
@@ -347,9 +343,10 @@ export function createScanner(
   connection: Connection,
   viewingPrivateKey: Uint8Array,
   spendingPubKey: Uint8Array,
-  kemSecretKey?: Uint8Array
+  kemSecretKey?: Uint8Array,
+  programId?: PublicKey
 ): StealthScanner {
-  return new StealthScanner(connection, viewingPrivateKey, spendingPubKey, kemSecretKey);
+  return new StealthScanner(connection, viewingPrivateKey, spendingPubKey, kemSecretKey, programId);
 }
 
 /**
@@ -360,9 +357,10 @@ export function subscribeToPayments(
   viewingPrivateKey: Uint8Array,
   spendingPubKey: Uint8Array,
   callback: (payment: StealthPayment) => void,
-  kemSecretKey?: Uint8Array
+  kemSecretKey?: Uint8Array,
+  programId?: PublicKey
 ): { unsubscribe: () => void } {
-  const scanner = new StealthScanner(connection, viewingPrivateKey, spendingPubKey, kemSecretKey);
+  const scanner = new StealthScanner(connection, viewingPrivateKey, spendingPubKey, kemSecretKey, programId);
   let isActive = true;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 

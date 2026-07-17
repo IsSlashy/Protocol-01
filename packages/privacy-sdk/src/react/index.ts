@@ -9,5 +9,4 @@ export {
   useVault,
   useRegistry,
   useRelay,
-  useMPC,
 } from './hooks';

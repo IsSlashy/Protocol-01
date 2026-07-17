@@ -13,7 +13,9 @@ import type { Cluster } from './types';
 export const PROGRAM_IDS: Record<Cluster, PublicKey> = {
   'mainnet-beta': new PublicKey('2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp'),
   'testnet': PublicKey.default,
-  'devnet': new PublicKey('8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh'),
+  // devnet runs the reworked v2 stealth program (chunked KEM announcement +
+  // getProgramAccounts scan). See specter-stealth-onchain-transport notes.
+  'devnet': new PublicKey('FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL'),
   'localnet': new PublicKey('2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp'),
 };
 

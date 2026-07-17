@@ -22,7 +22,6 @@ import { SubscriptionsModule } from './modules/subscriptions';
 import { VaultModule } from './modules/vault';
 import { RegistryModule } from './modules/registry';
 import { RelayModule } from './modules/relay';
-import { MPCModule } from './modules/mpc';
 import { ComplianceModule } from './modules/compliance';
 import { AirdropModule } from './modules/airdrop';
 import { OTCModule } from './modules/otc';
@@ -76,8 +75,6 @@ export class PrivacySDK {
   readonly registry: RegistryModule;
   /** Privacy relay for transaction submission */
   readonly relay: RelayModule;
-  /** Arcium MPC operations (voting, audits, sealed-bid auctions) */
-  readonly mpc: MPCModule;
   /** Compliance gateway (range proofs, sanctions innocence) */
   readonly compliance: ComplianceModule;
   /** Stealth airdrops (Merkle-based private token distribution) */
@@ -152,7 +149,6 @@ export class PrivacySDK {
     this.vault = new VaultModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.registry = new RegistryModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.relay = new RelayModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
-    this.mpc = new MPCModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.compliance = new ComplianceModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.airdrop = new AirdropModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.otc = new OTCModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);

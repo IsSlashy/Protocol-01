@@ -29,10 +29,15 @@ import {
   createStealthAnnouncement,
 } from '../stealth/generate';
 import {
+  buildInitStealthV2Ix,
+  buildKemChunkIxs,
+} from '../stealth/announcement-v2';
+import {
   PRIVACY_CONFIG,
   DEFAULT_SPLIT_COUNT,
   MIN_SPLIT_AMOUNT,
   LAMPORTS_PER_SOL,
+  DEFAULT_PROGRAM_ID,
 } from '../constants';
 import {
   isValidPublicKey,
@@ -77,6 +82,7 @@ export async function sendPrivate(options: SendOptions): Promise<TransferResult>
     tokenMint,
     privacyOptions = {},
     skipPreflight = false,
+    programId = DEFAULT_PROGRAM_ID,
   } = options;
 
   // Validate recipient
@@ -130,7 +136,8 @@ export async function sendPrivate(options: SendOptions): Promise<TransferResult>
       tokenMint,
       splitCount,
       privacyOptions.splitDelay || (config.useDelay ? config.delayMs : 0),
-      skipPreflight
+      skipPreflight,
+      programId
     );
   }
 
@@ -141,7 +148,8 @@ export async function sendPrivate(options: SendOptions): Promise<TransferResult>
     recipientMetaAddress,
     amountLamports,
     tokenMint,
-    skipPreflight
+    skipPreflight,
+    programId
   );
 }
 
@@ -154,88 +162,57 @@ async function sendSingleTransfer(
   recipientMetaAddress: StealthMetaAddress,
   amount: bigint,
   tokenMint: PublicKey | undefined,
-  skipPreflight: boolean
+  skipPreflight: boolean,
+  programId: PublicKey
 ): Promise<TransferResult> {
-  // Generate stealth address for this transfer
-  const stealth = generateStealthAddress(recipientMetaAddress);
-
-  // Create transaction
-  const transaction = new Transaction();
-
-  // Add compute budget for complex operations
-  transaction.add(
-    ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 })
-  );
-
   if (tokenMint) {
-    // SPL Token transfer
-    const senderPubKey =
-      sender.publicKey;
-    const senderAta = await getAssociatedTokenAddress(tokenMint, senderPubKey);
-    const stealthAta = await getAssociatedTokenAddress(
-      tokenMint,
-      stealth.address
-    );
-
-    transaction.add(
-      createTransferInstruction(
-        senderAta,
-        stealthAta,
-        senderPubKey,
-        amount,
-        [],
-        TOKEN_PROGRAM_ID
-      )
-    );
-  } else {
-    // SOL transfer
-    const senderPubKey =
-      sender.publicKey;
-
-    transaction.add(
-      SystemProgram.transfer({
-        fromPubkey: senderPubKey,
-        toPubkey: stealth.address,
-        lamports: amount,
-      })
+    // The v2 hybrid announcement account path is native-SOL only for now.
+    throw new SpecterError(
+      SpecterErrorCode.INVALID_RECIPIENT,
+      'SPL-token v2 hybrid stealth is not yet supported. Send native SOL, ' +
+        'or use @protocol-01/privacy-sdk for token flows.',
     );
   }
 
-  // Add stealth announcement memo
-  const announcement = createStealthAnnouncement(
-    stealth.address,
-    stealth.ephemeralPubKey,
-    stealth.viewTag
+  // Derive the one-time stealth address (hybrid X25519 + ML-KEM-768).
+  const stealth = generateStealthAddress(recipientMetaAddress);
+  if (!stealth.kemCiphertext) {
+    throw new SpecterError(
+      SpecterErrorCode.STEALTH_KEY_GENERATION_FAILED,
+      'Recipient meta-address is not v2 hybrid (missing KEM ciphertext).',
+    );
+  }
+  const senderPubKey = sender.publicKey;
+
+  // TX 1 — create the announcement PDA (header) and fund the stealth address.
+  // The 1088-byte KEM ciphertext is streamed separately (it cannot fit here).
+  const tx1 = new Transaction().add(
+    ComputeBudgetProgram.setComputeUnitLimit({ units: 250_000 }),
+    buildInitStealthV2Ix({
+      programId,
+      sender: senderPubKey,
+      stealthAddress: stealth.address,
+      amount,
+      ephemeralPubKey: stealth.ephemeralPubKey,
+      viewTag: stealth.viewTag,
+    }),
+    SystemProgram.transfer({
+      fromPubkey: senderPubKey,
+      toPubkey: stealth.address,
+      lamports: amount,
+    }),
   );
+  const signature = await signAndSend(connection, tx1, sender, skipPreflight);
 
-  // Add memo instruction with announcement data
-  transaction.add(
-    createMemoInstruction(announcement)
-  );
-
-  // Get recent blockhash
-  const { blockhash, lastValidBlockHeight } =
-    await connection.getLatestBlockhash();
-  transaction.recentBlockhash = blockhash;
-  transaction.feePayer =
-    sender.publicKey;
-
-  // Sign and send
-  let signature: string;
-  if ('secretKey' in sender) {
-    signature = await sendAndConfirmTransaction(connection, transaction, [sender], {
-      skipPreflight,
-    });
-  } else {
-    const signedTx = await sender.signTransaction(transaction);
-    signature = await connection.sendRawTransaction(signedTx.serialize(), {
-      skipPreflight,
-    });
-    await connection.confirmTransaction({
-      signature,
-      blockhash,
-      lastValidBlockHeight,
-    });
+  // TX 2..N — stream the KEM ciphertext into the announcement PDA.
+  const chunkIxs = buildKemChunkIxs({
+    programId,
+    sender: senderPubKey,
+    stealthAddress: stealth.address,
+    kemCiphertext: stealth.kemCiphertext,
+  });
+  for (const ix of chunkIxs) {
+    await signAndSend(connection, new Transaction().add(ix), sender, skipPreflight);
   }
 
   return {
@@ -243,8 +220,28 @@ async function sendSingleTransfer(
     stealthAddress: stealth.address,
     ephemeralPubKey: stealth.ephemeralPubKey,
     confirmed: true,
-    fee: 5000n, // Base fee, actual may vary
+    fee: 5000n * BigInt(1 + chunkIxs.length),
   };
+}
+
+/** Sign + send a transaction with either a Keypair or a WalletAdapter. */
+async function signAndSend(
+  connection: Connection,
+  transaction: Transaction,
+  sender: Keypair | WalletAdapter,
+  skipPreflight: boolean,
+): Promise<string> {
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+  transaction.recentBlockhash = blockhash;
+  transaction.feePayer = sender.publicKey;
+
+  if ('secretKey' in sender) {
+    return sendAndConfirmTransaction(connection, transaction, [sender as Keypair], { skipPreflight });
+  }
+  const signedTx = await sender.signTransaction(transaction);
+  const signature = await connection.sendRawTransaction(signedTx.serialize(), { skipPreflight });
+  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight });
+  return signature;
 }
 
 /**
@@ -258,7 +255,8 @@ async function sendSplitTransfer(
   tokenMint: PublicKey | undefined,
   splitCount: number,
   delayMs: number,
-  skipPreflight: boolean
+  skipPreflight: boolean,
+  programId: PublicKey
 ): Promise<TransferResult> {
   const amountPerSplit = totalAmount / BigInt(splitCount);
   const remainder = totalAmount % BigInt(splitCount);
@@ -277,7 +275,8 @@ async function sendSplitTransfer(
           recipientMetaAddress,
           amount,
           tokenMint,
-          skipPreflight
+          skipPreflight,
+          programId
         ),
       3,
       1000

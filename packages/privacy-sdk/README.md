@@ -78,7 +78,6 @@ await sdk.shield.unshield({
 | **Vault** | Quantum-safe key storage (WOTS+) | `@protocol-01/privacy-sdk/vault` |
 | **Registry** | On-chain stealth address directory | `@protocol-01/privacy-sdk/registry` |
 | **Relay** | Transaction relay for sender privacy | `@protocol-01/privacy-sdk/relay` |
-| **MPC** | Multi-party computation via Arcium | `@protocol-01/privacy-sdk/mpc` |
 | **Compliance** | ZK-KYC proofs (range proofs, sanctions innocence) -- *optional Groth16 overlay, not on the post-quantum hot path* | `@protocol-01/privacy-sdk/compliance` |
 | **Airdrop** | Private token distribution (Merkle-based) | `@protocol-01/privacy-sdk/airdrop` |
 | **OTC** | Private OTC trading desk (atomic P2P swaps) | `@protocol-01/privacy-sdk/otc` |
@@ -97,7 +96,6 @@ sdk.subscriptions.create(...)
 sdk.vault.create(...)
 sdk.registry.register(...)
 sdk.relay.submitJob(...)
-sdk.mpc.vote(...)
 sdk.compliance.proveRange(...)
 sdk.airdrop.create(...)
 sdk.otc.createOrder(...)
@@ -212,7 +210,6 @@ function MyComponent() {
 | `useVault()` | Vault | `create`, `deposit`, `withdraw` |
 | `useRegistry()` | Registry | `register`, `lookup`, `isRegistered` |
 | `useRelay()` | Relay | `submitJob`, `listRelayers` |
-| `useMPC()` | MPC | `createProposal`, `vote`, `submitBid`, `isAvailable` |
 
 Each hook returns action functions with an associated state object (`{ data, loading, error }`).
 
@@ -297,7 +294,6 @@ sdk.on('error', (event) => {
 | Registry | Deployed | Not yet deployed |
 | Quantum Vault | Deployed | Not yet deployed |
 | STARK Verifier | Deployed | Not yet deployed |
-| Arcium MPC | Deployed | Not yet deployed |
 | Bundler | Deployed | Not yet deployed |
 | Mugen Exchange | Deployed | Not yet deployed |
 
@@ -325,7 +321,6 @@ The SDK will throw `PrivacyError(INVALID_CONFIG)` if you try to use mainnet with
   |     |-- vault       (VaultModule)
   |     |-- registry    (RegistryModule)
   |     |-- relay       (RelayModule)
-  |     |-- mpc         (MPCModule)
   |     |-- compliance  (ComplianceModule)
   |     |-- airdrop     (AirdropModule)
   |     |-- otc         (OTCModule)

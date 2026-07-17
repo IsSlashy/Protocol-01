@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/specter-sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "TypeScript SDK for interacting with Protocol 01 - Privacy-preserving payments on Solana",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

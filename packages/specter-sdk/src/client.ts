@@ -198,7 +198,8 @@ export class P01Client {
         this.connection,
         ed25519SecretKeyToX25519(this.walletState.viewingKeypair.secretKey.slice(0, 32)),
         this.walletState.spendingKeypair.publicKey.toBytes(),
-        this.walletState.kemSecretKey
+        this.walletState.kemSecretKey,
+        this.config.programId
       );
     }
 
@@ -365,7 +366,8 @@ export class P01Client {
       ed25519SecretKeyToX25519(this.walletState.viewingKeypair.secretKey.slice(0, 32)),
       this.walletState.spendingKeypair.publicKey.toBytes(),
       callback,
-      this.walletState.kemSecretKey
+      this.walletState.kemSecretKey,
+      this.config.programId
     );
 
     this.scanSubscription = subscription;

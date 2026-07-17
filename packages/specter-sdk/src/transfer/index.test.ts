@@ -104,6 +104,7 @@ vi.mock('../stealth/generate', () => ({
     address: MOCK_STEALTH_ADDRESS,
     ephemeralPubKey: MOCK_EPHEMERAL_PUB,
     viewTag: 42,
+    kemCiphertext: new Uint8Array(1088).fill(0x56),
     createdAt: new Date(),
     ephemeralPrivateKey: new Uint8Array(32).fill(0x34),
   }),

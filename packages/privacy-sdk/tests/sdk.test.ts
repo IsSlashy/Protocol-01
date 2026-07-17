@@ -187,12 +187,8 @@ describe('PrivacySDK', () => {
       expect(typeof sdk.relay.getJobStatus).toBe('function');
     });
 
-    it('should expose mpc module', () => {
-      expect(sdk.mpc).toBeDefined();
-      expect(typeof sdk.mpc.createProposal).toBe('function');
-      expect(typeof sdk.mpc.vote).toBe('function');
-      expect(typeof sdk.mpc.submitSealedBid).toBe('function');
-      expect(typeof sdk.mpc.isAvailable).toBe('function');
+    it('does not expose an mpc module (Arcium removed from Protocol 01)', () => {
+      expect((sdk as unknown as { mpc?: unknown }).mpc).toBeUndefined();
     });
   });
 
@@ -460,7 +456,7 @@ describe('Exports', () => {
     expect(mod.VaultModule).toBeDefined();
     expect(mod.RegistryModule).toBeDefined();
     expect(mod.RelayModule).toBeDefined();
-    expect(mod.MPCModule).toBeDefined();
+    expect((mod as unknown as { MPCModule?: unknown }).MPCModule).toBeUndefined();
   });
 
   it('should export error system', async () => {

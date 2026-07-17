@@ -202,14 +202,18 @@ export async function claimStealth(options: ClaimOptions): Promise<ClaimResult> 
         balance
       );
     } else {
-      // Claim SOL
-      // Leave minimum for rent if not closing account
-      const amountToClaim = balance - MIN_RENT_EXEMPTION;
+      // Claim SOL. The stealth address is the fee payer, so move everything
+      // except the transaction fee — the account drains to exactly 0 and is
+      // closed (a leftover sub-rent balance would fail with "insufficient funds
+      // for rent"). Fee for this 1-signature, no-priority tx is the 5000-lamport
+      // base fee.
+      const BASE_TX_FEE = 5000n;
+      const amountToClaim = balance - BASE_TX_FEE;
 
       if (amountToClaim <= 0n) {
         throw new SpecterError(
           SpecterErrorCode.CLAIM_FAILED,
-          'Balance too low to claim (below rent exemption)'
+          'Balance too low to claim (below transaction fee)'
         );
       }
 

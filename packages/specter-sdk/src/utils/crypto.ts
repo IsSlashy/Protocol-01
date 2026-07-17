@@ -88,11 +88,22 @@ export function computeViewTag(sharedSecret: Uint8Array): number {
 // ============================================================================
 
 /**
- * Generate an ML-KEM-768 keypair for post-quantum hybrid stealth addresses
+ * Generate an ML-KEM-768 keypair for post-quantum hybrid stealth addresses.
+ *
+ * Pass a 64-byte `seed` to derive the keypair deterministically — required for
+ * HD wallets so the KEM secret key is recoverable from the mnemonic (without a
+ * seed the keypair is random and the recipient could never decapsulate later).
+ *
+ * @param seed - optional 64-byte deterministic seed (d || z per FIPS 203)
  * @returns publicKey (1184 bytes) and secretKey (2400 bytes)
  */
-export function kemGenerateKeypair(): { publicKey: Uint8Array; secretKey: Uint8Array } {
-  return ml_kem768.keygen();
+export function kemGenerateKeypair(seed?: Uint8Array): { publicKey: Uint8Array; secretKey: Uint8Array } {
+  return seed ? ml_kem768.keygen(seed) : ml_kem768.keygen();
+}
+
+/** Derive a deterministic 64-byte ML-KEM seed from a wallet seed. */
+export function deriveKemSeed(walletSeed: Uint8Array): Uint8Array {
+  return hkdf(sha256, walletSeed, undefined, utf8ToBytes('p01:stealth:kem:v2'), 64);
 }
 
 /**

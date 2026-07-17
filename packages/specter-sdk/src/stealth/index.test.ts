@@ -16,6 +16,7 @@ vi.mock('@solana/web3.js', async () => {
       getBalance: vi.fn().mockResolvedValue(1_000_000_000),
       getParsedTransaction: vi.fn().mockResolvedValue(null),
       getSignaturesForAddress: vi.fn().mockResolvedValue([]),
+      getProgramAccounts: vi.fn().mockResolvedValue([]),
     })),
   };
 });

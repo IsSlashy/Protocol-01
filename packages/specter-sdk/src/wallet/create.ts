@@ -10,7 +10,7 @@ import {
   STEALTH_DERIVATION,
 } from '../constants';
 import { encodeStealthMetaAddress } from '../utils/helpers';
-import { kemGenerateKeypair, ed25519PublicKeyToX25519 } from '../utils/crypto';
+import { kemGenerateKeypair, deriveKemSeed, ed25519PublicKeyToX25519 } from '../utils/crypto';
 
 /**
  * Derive a keypair from seed using HD derivation
@@ -63,7 +63,11 @@ function generateStealthKeys(
   const viewingPubKey = ed25519PublicKeyToX25519(viewingKeypair.publicKey.toBytes());
 
   if (enableHybrid) {
-    const kem = kemGenerateKeypair();
+    // Derive the ML-KEM keypair deterministically from the wallet seed so the
+    // secret key is recoverable from the mnemonic (createWallet and
+    // createWalletState must produce the identical keypair, or the recipient
+    // can never decapsulate the KEM ciphertext to scan).
+    const kem = kemGenerateKeypair(deriveKemSeed(seed));
     const stealthMetaAddress: StealthMetaAddress = {
       spendingPubKey,
       viewingPubKey,

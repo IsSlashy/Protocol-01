@@ -11,7 +11,6 @@ export default defineConfig({
     'modules/vault': 'src/modules/vault.ts',
     'modules/registry': 'src/modules/registry.ts',
     'modules/relay': 'src/modules/relay.ts',
-    'modules/mpc': 'src/modules/mpc.ts',
     'modules/compliance': 'src/modules/compliance.ts',
     'modules/airdrop': 'src/modules/airdrop.ts',
     'modules/otc': 'src/modules/otc.ts',
@@ -29,7 +28,7 @@ export default defineConfig({
   splitting: true,
   target: 'es2020',
   outDir: 'dist',
-  external: ['react', '@arcium-hq/client', '@arcium-hq/reader'],
+  external: ['react'],
   esbuildOptions(options) {
     options.jsx = 'automatic';
   },
