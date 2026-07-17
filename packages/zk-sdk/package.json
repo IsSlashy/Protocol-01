@@ -30,11 +30,6 @@
       "import": "./dist/merkle/index.mjs",
       "require": "./dist/merkle/index.js",
       "types": "./dist/merkle/index.d.ts"
-    },
-    "./client": {
-      "import": "./dist/client/index.mjs",
-      "require": "./dist/client/index.js",
-      "types": "./dist/client/index.d.ts"
     }
   },
   "files": [
@@ -42,8 +37,8 @@
     "src"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "build": "tsup src/index.ts src/circuits/index.ts src/notes/index.ts src/merkle/index.ts src/prover/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts src/circuits/index.ts src/notes/index.ts src/merkle/index.ts src/prover/index.ts --format cjs,esm --dts --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

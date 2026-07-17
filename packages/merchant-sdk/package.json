@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/merchant-sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Server-side SDK for merchants integrating Protocol 01 subscriptions — register a service, detect incoming payments, watch vault subscriptions.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

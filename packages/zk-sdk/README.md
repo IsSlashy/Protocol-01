@@ -15,67 +15,39 @@ Requires Node.js >= 22.0.0 and `@solana/web3.js` ^1.98.0 as a peer dependency.
 
 ## Quick Start
 
-```typescript
-import { ShieldedClient } from '@protocol-01/zk-sdk';
-import { Connection } from '@solana/web3.js';
+> **1.0.0 changed the surface.** The all-in-one `ShieldedClient` (Groth16) was
+> removed when this package migrated to STARKs. `@protocol-01/zk-sdk` now ships
+> the note/Merkle/commitment primitives plus a thin re-export of the STARK
+> prover. For a full high-level client (shield/transfer/unshield end-to-end),
+> use [`@protocol-01/privacy-sdk`](../privacy-sdk/). Use this package when you
+> want the primitives directly.
 
-// Create and initialize the client
-const client = new ShieldedClient({
+```typescript
+import {
+  createNote,
+  computeCommitment,
+  computeNullifier,
+  MerkleTree,
+  createStarkProver,
+  STARK_CIRCUITS,
+} from '@protocol-01/zk-sdk';
+import { Connection, Keypair } from '@solana/web3.js';
+
+// 1. Build a shielded note and its Poseidon commitment.
+const note = createNote({ amount: 100_000_000n, ownerPubkey, tokenMint });
+const commitment = computeCommitment(note.amount, note.ownerPubkey, note.randomness, note.tokenMint);
+
+// 2. Track notes in a Poseidon Merkle tree (depth 20, ~1M leaves).
+const tree = new MerkleTree(20);
+const leafIndex = tree.insert(commitment);
+const proof = tree.generateProof(leafIndex);
+
+// 3. Generate + submit a post-quantum STARK proof on-chain.
+const prover = createStarkProver({
   connection: new Connection('https://api.devnet.solana.com'),
-  wallet: yourAnchorWallet,
-  network: 'devnet',
-  wasmPath: './circuits/transfer.wasm',
-  zkeyPath: './circuits/transfer_final.zkey',
+  payer: Keypair.fromSecretKey(/* ... */),
 });
-
-await client.initialize('your seed phrase');
-
-// Get your ZK address to receive shielded payments
-const zkAddr = client.getZkAddress();
-console.log('Share this address:', zkAddr.encoded); // "zk:base64..."
-
-// Shield 0.1 SOL into the shielded pool
-const shieldTx = await client.shield(100_000_000n);
-
-// Transfer privately within the pool
-const recipient = ShieldedClient.decodeZkAddress('zk:...');
-const transferTx = await client.transfer(recipient, 50_000_000n);
-
-// Unshield back to a public address
-const unshieldTx = await client.unshield(recipientPublicKey, 50_000_000n);
-```
-
-## Configuration
-
-### Basic (devnet)
-
-```typescript
-const client = new ShieldedClient({
-  connection: new Connection('https://api.devnet.solana.com'),
-  wallet: anchorWallet,
-  // Defaults: network='devnet', uses the deployed devnet program ID
-});
-```
-
-### Custom program ID
-
-```typescript
-const client = new ShieldedClient({
-  connection,
-  wallet,
-  programId: 'YourCustomProgramId11111111111111111111111111',
-});
-```
-
-### Hosted circuit files
-
-```typescript
-const client = new ShieldedClient({
-  connection,
-  wallet,
-  circuitBaseUrl: 'https://cdn.example.com/circuits/v1',
-  // Prover will load transfer.wasm and transfer_final.zkey from this URL
-});
+const { proofBuffer } = await prover.generateStarkProof(STARK_CIRCUITS.transfer, privateInputs);
 ```
 
 ### Network selection
@@ -94,8 +66,6 @@ getProgramId('mainnet-beta'); // throws: not yet deployed
 
 | Export | Type | Description |
 |---|---|---|
-| `ShieldedClient` | class | High-level client for shield/transfer/unshield operations |
-| `ShieldedClientConfig` | type | Configuration interface for `ShieldedClient` |
 | `Note` | class | Represents a shielded UTXO note |
 | `EncryptedNote` | class | Encrypted note for storage/transmission |
 | `createNote` | function | Create a new shielded note with Poseidon commitment |
@@ -104,14 +74,15 @@ getProgramId('mainnet-beta'); // throws: not yet deployed
 | `MerkleTree` | class | Sparse Merkle tree with Poseidon hashing |
 | `generateMerkleProof` | function | Generate a Merkle inclusion proof |
 | `verifyMerkleProof` | function | Verify a Merkle proof against a root |
-| `ZkProver` | class | Groth16 proof generation engine |
-| `generateProof` | function | Convenience wrapper for proof generation |
+| `createStarkProver` | function | Build a post-quantum STARK prover (re-exported from `@protocol-01/stark-prover`) |
+| `STARK_CIRCUITS` | constant | Circuit-id enum for the STARK prover |
+| `requestTransferProof` / `requestMerkleUpdateProof` | function | Circuit-specific proof helpers |
 | `poseidonHash` | function | Poseidon hash over field elements |
 | `computeCommitment` | function | Compute `Poseidon(amount, owner, randomness, mint)` |
 | `computeNullifier` | function | Compute `Poseidon(commitment, spendingKeyHash)` |
 | `deriveOwnerPubkey` | function | Derive owner public key from spending key |
 | `computeSpendingKeyHash` | function | Derive spending key hash for nullifiers |
-| `FIELD_MODULUS` | constant | BN254 field modulus |
+| `FIELD_MODULUS` | constant | Field modulus |
 | `ZK_SHIELDED_PROGRAM_ID` | constant | Default devnet program ID |
 | `PROGRAM_IDS` | constant | Program IDs by network |
 | `getProgramId` | function | Get program ID for a network (with validation) |
@@ -119,33 +90,13 @@ getProgramId('mainnet-beta'); // throws: not yet deployed
 ### Sub-path Imports
 
 ```typescript
-import { ShieldedClient } from '@protocol-01/zk-sdk/client';
 import { createNote, encryptNote } from '@protocol-01/zk-sdk/notes';
 import { MerkleTree } from '@protocol-01/zk-sdk/merkle';
-import { ZkProver } from '@protocol-01/zk-sdk/prover';
+import { createStarkProver } from '@protocol-01/zk-sdk/prover';
 import { poseidonHash, computeCommitment } from '@protocol-01/zk-sdk/circuits';
 ```
 
 ## Modules
-
-### ShieldedClient
-
-The main entry point for most users. Manages spending keys, note selection, proof generation, and transaction building.
-
-```typescript
-const client = new ShieldedClient(config);
-await client.initialize(seedPhrase);
-
-// Core operations
-await client.shield(amount);                       // deposit to shielded pool
-await client.transfer(recipientZkAddress, amount); // private transfer
-await client.unshield(recipientPubkey, amount);    // withdraw to public
-
-// State
-const balance = await client.getShieldedBalance();
-const zkAddr = client.getZkAddress();
-client.destroy(); // securely wipe keys from memory
-```
 
 ### Notes
 
@@ -174,40 +125,16 @@ const proof = tree.generateProof(leafIndex);
 const valid = tree.verifyProof(proof, noteCommitment, tree.root);
 ```
 
-### ZK Prover
+### STARK Prover
 
-Generate Groth16 proofs client-side using snarkjs.
-
-```typescript
-import { ZkProver, generateProof } from '@protocol-01/zk-sdk';
-
-// Class-based
-const prover = new ZkProver('./transfer.wasm', './transfer_final.zkey');
-const { proof, publicSignals } = await prover.generateTransferProof(pubInputs, privInputs);
-
-// Function-based
-const result = await generateProof(fullInputs, wasmPath, zkeyPath);
-
-// With hosted circuits
-const prover = new ZkProver(undefined, undefined, {
-  circuitBaseUrl: 'https://cdn.example.com/circuits/v1',
-});
-```
-
-### Viewing Keys
-
-Zcash-style viewing key hierarchy for selective disclosure.
+Generate post-quantum STARK proofs and submit them on-chain. This re-exports
+`@protocol-01/stark-prover`; see that package for the full circuit reference.
 
 ```typescript
-import {
-  generateSpendingKey,
-  deriveFullViewingKey,
-  deriveIncomingViewingKey,
-} from '@protocol-01/zk-sdk/keys/viewKeys';
+import { createStarkProver, STARK_CIRCUITS } from '@protocol-01/zk-sdk';
 
-const sk = generateSpendingKey(entropy);
-const fvk = deriveFullViewingKey(sk);         // view all transactions
-const ivk = deriveIncomingViewingKey(fvk);    // view incoming only
+const prover = createStarkProver({ connection, payer });
+const { proofBuffer } = await prover.generateStarkProof(STARK_CIRCUITS.transfer, privateInputs);
 ```
 
 ### Circuits (Poseidon)
@@ -222,49 +149,13 @@ const commitment = await computeCommitment(amount, owner, randomness, tokenMint)
 const nullifier = await computeNullifier(commitment, spendingKeyHash);
 ```
 
-## Circuit Files
+## Proving
 
-The prover requires two circuit files to generate Groth16 proofs:
-
-| File | Description | Size |
-|---|---|---|
-| `transfer.wasm` | Compiled circuit (WebAssembly) | ~11 MB |
-| `transfer_final.zkey` | Proving key (Groth16) | ~24 MB |
-| `verification_key.json` | Verification key (for local verify) | ~2 KB |
-
-### Where to get them
-
-Download pre-built circuit files from: https://github.com/protocol-01/circuits
-
-### How to configure
-
-```typescript
-// Option 1: Local file paths (Node.js)
-new ZkProver('./circuits/transfer.wasm', './circuits/transfer_final.zkey');
-
-// Option 2: Hosted URL
-new ZkProver(undefined, undefined, {
-  circuitBaseUrl: 'https://cdn.example.com/circuits/v1',
-});
-
-// Option 3: Via ShieldedClient config
-new ShieldedClient({
-  connection,
-  wallet,
-  circuitBaseUrl: 'https://cdn.example.com/circuits/v1',
-});
-```
-
-### Building circuits from source
-
-```bash
-# Requires circom v2.2.2 and snarkjs v0.7.5
-cd circuits/
-circom transfer.circom --wasm --r1cs
-snarkjs groth16 setup transfer.r1cs pot20_final.ptau transfer_0000.zkey
-echo "random entropy" | snarkjs zkey contribute transfer_0000.zkey transfer_final.zkey
-snarkjs zkey export verificationkey transfer_final.zkey verification_key.json
-```
+Proof generation runs through `@protocol-01/stark-prover` (Goldilocks field,
+Blake3 Merkle, DEEP-ALI — no trusted setup, no `.wasm`/`.zkey` ceremony files).
+The bundled `p01_stark_bg.wasm` ships inside that package and loads automatically
+in Node and the browser. See [`@protocol-01/stark-prover`](../stark-prover/) for
+the circuit-id table and runtime notes.
 
 ## Error Handling
 
@@ -272,8 +163,6 @@ snarkjs zkey export verificationkey transfer_final.zkey verification_key.json
 
 | Error | Cause | Fix |
 |---|---|---|
-| `Circuit file not found` | WASM/zkey files missing | Set `circuitBaseUrl`, or pass explicit `wasmPath`/`zkeyPath` |
-| `Client not initialized` | Called methods before `initialize()` | Call `await client.initialize(seed)` first |
 | `getProgramId: unknown network` | Invalid network name | Use `'devnet'`, `'mainnet-beta'`, or `'localnet'` |
 | `getProgramId: not yet deployed on 'mainnet-beta'` | Mainnet not available | Use `'devnet'` for testing, or pass a custom `programId` |
 | `Proof generation timeout` | Proof took > 2 minutes | Ensure circuit files are correct; check available memory |

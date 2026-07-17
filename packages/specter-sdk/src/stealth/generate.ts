@@ -5,7 +5,7 @@ import type {
   StealthAddressOptions,
 } from '../types';
 import { SpecterError, SpecterErrorCode } from '../types';
-import { generateEphemeralKeypair, kemGenerateKeypair } from '../utils/crypto';
+import { generateEphemeralKeypair, kemGenerateKeypair, ed25519PublicKeyToX25519 } from '../utils/crypto';
 import { encodeStealthMetaAddress, decodeStealthMetaAddress } from '../utils/helpers';
 import { KEM_CIPHERTEXT_SIZE } from '../constants';
 import {
@@ -32,7 +32,9 @@ export function generateStealthMetaAddress(
   options: { allowLegacyV1?: boolean } = {},
 ): StealthMetaAddress & { kemSecretKey?: Uint8Array } {
   const spendingPubKey = spendingKeypair.publicKey.toBytes();
-  const viewingPubKey = viewingKeypair.publicKey.toBytes();
+  // Publish the X25519 (Montgomery) form of the Ed25519 viewing key so stealth
+  // ECDH is consistent between sender and recipient. See wallet/create.ts.
+  const viewingPubKey = ed25519PublicKeyToX25519(viewingKeypair.publicKey.toBytes());
 
   if (!enableHybrid) {
     if (!options.allowLegacyV1) {

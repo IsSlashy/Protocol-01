@@ -58,7 +58,8 @@ import {
   subscribeToPayments,
 } from './scan';
 import { encodeStealthMetaAddress } from '../utils/helpers';
-import { kemGenerateKeypair } from '../utils/crypto';
+import { kemGenerateKeypair, ed25519PublicKeyToX25519, ed25519SecretKeyToX25519 } from '../utils/crypto';
+import { createWalletState } from '../wallet/create';
 import type { StealthMetaAddress } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -97,14 +98,20 @@ describe('stealth/generate', () => {
       expect(meta.encoded.startsWith('st')).toBe(true);
     });
 
-    it('spending key matches the input keypair public key bytes', () => {
+    it('spending key matches the input keypair, viewing key is X25519-converted', () => {
       const { spending, viewing } = makeKeypairPair();
       const meta = generateStealthMetaAddress(spending, viewing);
 
       expect(Buffer.from(meta.spendingPubKey)).toEqual(
         Buffer.from(spending.publicKey.toBytes())
       );
+      // The viewing key is published in Montgomery (X25519) form so that stealth
+      // ECDH is consistent between sender and recipient. It must NOT equal the raw
+      // Ed25519 public key (doing so was the pre-fix bug that broke scanning).
       expect(Buffer.from(meta.viewingPubKey)).toEqual(
+        Buffer.from(ed25519PublicKeyToX25519(viewing.publicKey.toBytes()))
+      );
+      expect(Buffer.from(meta.viewingPubKey)).not.toEqual(
         Buffer.from(viewing.publicKey.toBytes())
       );
     });
@@ -528,6 +535,68 @@ describe('stealth/derive', () => {
       expect(stealthKeypair.publicKey.toBase58()).toBe(
         stealth.address.toBase58()
       );
+    });
+
+    // Regression guard for the pre-fix stealth bug: the HD wallet derives an
+    // Ed25519 viewing keypair, but stealth ECDH is X25519. Before the fix the
+    // meta stored the raw Ed25519 viewing pubkey and the client scanned with the
+    // raw Ed25519 seed, so sender and recipient derived DIFFERENT addresses and a
+    // real user never matched their own incoming payments. This exercises the
+    // exact shipped wallet + client path.
+    it('REAL wallet flow: sender address == recipient-derived address (X25519 conversion)', async () => {
+      const wallet = await createWalletState(
+        'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+      );
+
+      // Sender derives a one-time address to the wallet's published meta-address.
+      const stealth = generateStealthAddress(wallet.stealthMetaAddress);
+
+      // Recipient recovers the key exactly as P01Client does: convert the Ed25519
+      // viewing seed to its X25519 scalar and pass the KEM secret for v2 hybrid.
+      const viewingX25519 = ed25519SecretKeyToX25519(
+        wallet.viewingKeypair.secretKey.slice(0, 32),
+      );
+
+      const owns = verifyStealthOwnership(
+        stealth.address,
+        stealth.ephemeralPubKey,
+        viewingX25519,
+        wallet.spendingKeypair.publicKey.toBytes(),
+        stealth.viewTag,
+        wallet.kemSecretKey,
+        stealth.kemCiphertext,
+      );
+      expect(owns).toBe(true);
+
+      const derived = deriveStealthPrivateKey(
+        wallet.spendingKeypair.publicKey.toBytes(),
+        viewingX25519,
+        stealth.ephemeralPubKey,
+        wallet.kemSecretKey,
+        stealth.kemCiphertext,
+      );
+      expect(derived.publicKey.toBase58()).toBe(stealth.address.toBase58());
+    });
+
+    it('REAL wallet flow: wrong viewing key cannot recognize the payment', async () => {
+      const wallet = await createWalletState(
+        'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+      );
+      const attacker = await createWalletState(
+        'legal winner thank year wave sausage worth useful legal winner thank yellow',
+      );
+      const stealth = generateStealthAddress(wallet.stealthMetaAddress);
+
+      const owns = verifyStealthOwnership(
+        stealth.address,
+        stealth.ephemeralPubKey,
+        ed25519SecretKeyToX25519(attacker.viewingKeypair.secretKey.slice(0, 32)),
+        wallet.spendingKeypair.publicKey.toBytes(),
+        stealth.viewTag,
+        attacker.kemSecretKey,
+        stealth.kemCiphertext,
+      );
+      expect(owns).toBe(false);
     });
 
     it('different recipients produce different stealth addresses from same ephemeral', () => {

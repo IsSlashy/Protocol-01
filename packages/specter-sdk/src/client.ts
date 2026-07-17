@@ -30,6 +30,7 @@ import {
   setFeature,
 } from './constants';
 import { createConnection, formatSol, solToLamports } from './utils/helpers';
+import { ed25519SecretKeyToX25519 } from './utils/crypto';
 
 // Wallet operations
 import { createWallet, createWalletState } from './wallet/create';
@@ -188,12 +189,16 @@ export class P01Client {
       this.walletState = null;
     }
 
-    // Initialize scanner if we have stealth keys
+    // Initialize scanner if we have stealth keys.
+    // The viewing key is HD-derived as an Ed25519 keypair; stealth ECDH is X25519,
+    // so convert the seed to the matching Montgomery scalar. The KEM secret key is
+    // required to decapsulate v2 hybrid announcements.
     if (this.walletState) {
       this.scanner = new StealthScanner(
         this.connection,
-        this.walletState.viewingKeypair.secretKey.slice(0, 32),
-        this.walletState.spendingKeypair.publicKey.toBytes()
+        ed25519SecretKeyToX25519(this.walletState.viewingKeypair.secretKey.slice(0, 32)),
+        this.walletState.spendingKeypair.publicKey.toBytes(),
+        this.walletState.kemSecretKey
       );
     }
 
@@ -357,9 +362,10 @@ export class P01Client {
 
     const subscription = subscribeToPayments(
       this.connection,
-      this.walletState.viewingKeypair.secretKey.slice(0, 32),
+      ed25519SecretKeyToX25519(this.walletState.viewingKeypair.secretKey.slice(0, 32)),
       this.walletState.spendingKeypair.publicKey.toBytes(),
-      callback
+      callback,
+      this.walletState.kemSecretKey
     );
 
     this.scanSubscription = subscription;
@@ -461,7 +467,8 @@ export class P01Client {
       connection: this.connection,
       payment,
       spendingPubKey: this.walletState.spendingKeypair.publicKey.toBytes(),
-      viewingPrivateKey: this.walletState.viewingKeypair.secretKey.slice(0, 32),
+      viewingPrivateKey: ed25519SecretKeyToX25519(this.walletState.viewingKeypair.secretKey.slice(0, 32)),
+      kemSecretKey: this.walletState.kemSecretKey,
       destination: this.walletState.keypair.publicKey,
     });
 

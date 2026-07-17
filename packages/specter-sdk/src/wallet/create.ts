@@ -10,7 +10,7 @@ import {
   STEALTH_DERIVATION,
 } from '../constants';
 import { encodeStealthMetaAddress } from '../utils/helpers';
-import { kemGenerateKeypair } from '../utils/crypto';
+import { kemGenerateKeypair, ed25519PublicKeyToX25519 } from '../utils/crypto';
 
 /**
  * Derive a keypair from seed using HD derivation
@@ -57,7 +57,10 @@ function generateStealthKeys(
   const viewingKeypair = viewingResult.keypair;
 
   const spendingPubKey = spendingKeypair.publicKey.toBytes();
-  const viewingPubKey = viewingKeypair.publicKey.toBytes();
+  // The viewing keypair is HD-derived as Ed25519, but stealth ECDH is X25519.
+  // Publish the Montgomery form so senders derive the same shared secret the
+  // recipient recovers with `ed25519SecretKeyToX25519(viewing seed)`.
+  const viewingPubKey = ed25519PublicKeyToX25519(viewingKeypair.publicKey.toBytes());
 
   if (enableHybrid) {
     const kem = kemGenerateKeypair();
