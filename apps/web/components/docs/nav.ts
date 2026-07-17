@@ -37,10 +37,7 @@ export const NAV_GROUPS: NavGroupDef[] = [
     ids: [
       "solana-integration",
       "private-relay",
-      "arcium-mpc",
-      "sealed-bid-auctions",
       "privacy-router",
-      "mpc-comparison",
     ],
   },
   {
@@ -66,5 +63,4 @@ export const TOPIC_ORDER: string[] = NAV_GROUPS.flatMap((g) => g.ids);
 export const SPECIAL_TITLE_KEYS: Record<string, string> = {
   architecture: "docs.archSectionTitle",
   security: "docs.securityTitle",
-  "mpc-comparison": "docs.mpcTitle",
 };

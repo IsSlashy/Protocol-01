@@ -15,7 +15,6 @@ import {
   GitBranch,
   Cpu,
   CheckCircle,
-  Network,
   Download,
   FileText,
   Archive,
@@ -190,51 +189,6 @@ await program.methods.unshieldDenominatedStark(...)
 // Legacy snarkjs.groth16 path fully retired — see Migration History`,
   },
   {
-    id: "arcium-mpc",
-    i18nKey: "arciumMpc",
-    icon: <Network className="w-6 h-6" />,
-    detailCount: 8,
-    codeExample: `// @protocol-01/arcium-sdk — MPC confidential compute
-import { ArciumClient } from '@protocol-01/arcium-sdk';
-
-const mpc = new ArciumClient({ connection, wallet, programId });
-await mpc.initialize(); // X25519 key exchange + Rescue cipher setup
-
-// Without MPC: nullifier posted in the clear on-chain
-// With MPC:    nodes compute SHA3(nullifier) together, only hash goes on-chain
-await mpc.commitNullifier(nullifierPreimage, secret);
-
-// Without MPC: relayer sees full transaction content
-// With MPC:    transaction split across nodes, nobody sees the plaintext
-await mpc.confidentialRelay(encryptedTransaction);
-
-// Without MPC: RPC lookup reveals who you searched for
-// With MPC:    query goes through MPC, target stays anonymous
-const metaAddress = await mpc.privateLookup(targetHash);`,
-  },
-  {
-    id: "sealed-bid-auctions",
-    i18nKey: "sealedBidAuctions",
-    icon: <Lock className="w-6 h-6" />,
-    detailCount: 8,
-    codeExample: `// Sealed-Bid Auction — Arcium MPC + ZK Escrow
-import { createAuction, submitSealedBid, finalizeAuction } from '@protocol-01/arcium-sdk';
-
-// 1. Seller creates auction
-await createAuction(client, program, { auctionId, pool, deadline });
-
-// 2. Bidder locks funds in escrow (Groth16 proof pre-authorizes both outcomes)
-//    Note: escrow surface still uses Groth16 — STARK migration scheduled.
-await escrowShield(proof, nullifier, merkleRoot, auctionId, payCommit, refundCommit);
-
-// 3. Bidder submits encrypted bid (MPC — no one sees the amount)
-await submitSealedBid(client, program, auctionId, bidAmount, escrowNullifier);
-
-// 4. After deadline: MPC reveals winner, escrow auto-settles
-const result = await finalizeAuction(client, program, auctionId);
-// Winner's funds → seller | Losers' funds → refunded. No trust needed.`,
-  },
-  {
     id: "streams-privacy",
     i18nKey: "streamsPrivacy",
     icon: <Layers className="w-6 h-6" />,
@@ -351,10 +305,6 @@ await zkClient.shield(1_000_000_000n, notes);
 import { ZkSplClient } from '@protocol-01/zkspl-sdk';
 await zkspl.deposit(amount, proof);   // Public → confidential
 await zkspl.send(amount, recipient);  // Confidential transfer
-
-// === @protocol-01/arcium-sdk — MPC Compute ===
-import { ArciumClient } from '@protocol-01/arcium-sdk';
-await mpc.commitNullifier(preimage);  // SHA3 via MPC nodes
 
 // === @protocol-01/p01-js — Merchant Integration ===
 import { Protocol01 } from '@protocol-01/p01-js';
@@ -527,7 +477,6 @@ const docsArchLayers = [
       { labelKey: "docs.nodeSpecterSdk", subKey: "docs.nodeSpecterSub" },
       { labelKey: "docs.nodeZkSdk", subKey: "docs.nodeZkSub" },
       { labelKey: "docs.nodeZksplSdk", subKey: "docs.nodeZksplSub" },
-      { labelKey: "docs.nodeArciumSdk", subKey: "docs.nodeArciumSub" },
       { labelKey: "docs.nodeP01Js", subKey: "docs.nodeP01JsSub" },
       { labelKey: "docs.nodePrivacyToolkit", subKey: "docs.nodePrivacyToolkitSub" },
       { labelKey: "docs.nodeAuthSdk", subKey: "docs.nodeAuthSub" },
@@ -888,109 +837,10 @@ function SecurityTopic({ t }: { t: (k: string) => string }) {
   );
 }
 
-function MpcTopic({ t }: { t: (k: string) => string }) {
-  return (
-    <article>
-      <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2 flex items-center gap-3 tracking-tight">
-        <Network className="w-7 h-7 text-[#f59e0b]" />
-        {t('docs.mpcTitle')}
-      </h1>
-      <p className="text-[#888892] mb-8 max-w-3xl">
-        {t('docs.mpcDesc')}{' '}
-        {t('docs.mpcArciumIs')} <strong className="text-white">{t('docs.mpcDescUpgrade')}</strong> {t('docs.mpcDescRest')}
-      </p>
-
-      <div className="overflow-x-auto bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] rounded-2xl">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-[#2a2a30]">
-              <th className="text-left py-3 px-4 text-[#555560] font-mono uppercase tracking-wider text-xs">{t('docs.mpcTableOperation')}</th>
-              <th className="text-left py-3 px-4 text-[#39c5bb] font-mono uppercase tracking-wider text-xs">{t('docs.mpcTableWithout')}</th>
-              <th className="text-left py-3 px-4 text-[#f59e0b] font-mono uppercase tracking-wider text-xs">{t('docs.mpcTableWith')}</th>
-            </tr>
-          </thead>
-          <tbody className="text-[#888892]">
-            <tr className="border-b border-[#2a2a30]/50">
-              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowAmounts')}</td>
-              <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowAmountsVal')}</td>
-              <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowAmountsVal')}</td>
-            </tr>
-            <tr className="border-b border-[#2a2a30]/50">
-              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowLink')}</td>
-              <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowLinkVal')}</td>
-              <td className="py-3 px-4"><CheckCircle className="w-4 h-4 text-[#39c5bb] inline mr-2" />{t('docs.mpcRowLinkVal')}</td>
-            </tr>
-            <tr className="border-b border-[#2a2a30]/50">
-              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowNullifier')}</td>
-              <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />{t('docs.mpcRowNullifierWithout')}</td>
-              <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowNullifierWith')}</td>
-            </tr>
-            <tr className="border-b border-[#2a2a30]/50">
-              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowRelay')}</td>
-              <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />{t('docs.mpcRowRelayWithout')}</td>
-              <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowRelayWith')}</td>
-            </tr>
-            <tr className="border-b border-[#2a2a30]/50">
-              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowRegistry')}</td>
-              <td className="py-3 px-4"><Eye className="w-4 h-4 text-[#ff2d7a] inline mr-2" />{t('docs.mpcRowRegistryWithout')}</td>
-              <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowRegistryWith')}</td>
-            </tr>
-            <tr className="border-b border-[#2a2a30]/50">
-              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowAudit')}</td>
-              <td className="py-3 px-4"><span className="text-[#555560]">—</span> {t('docs.mpcRowAuditWithout')}</td>
-              <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowAuditWith')}</td>
-            </tr>
-            <tr className="border-b border-[#2a2a30]/50">
-              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowVote')}</td>
-              <td className="py-3 px-4"><span className="text-[#555560]">—</span> {t('docs.mpcRowVoteWithout')}</td>
-              <td className="py-3 px-4"><EyeOff className="w-4 h-4 text-[#f59e0b] inline mr-2" />{t('docs.mpcRowVoteWith')}</td>
-            </tr>
-            <tr>
-              <td className="py-3 px-4 font-medium text-white">{t('docs.mpcRowTrust')}</td>
-              <td className="py-3 px-4 text-[#888892]">{t('docs.mpcRowTrustWithout')}</td>
-              <td className="py-3 px-4 text-[#888892]">{t('docs.mpcRowTrustWith')}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div className="grid md:grid-cols-2 gap-6 mt-8">
-        <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl">
-          <div className="flex items-center gap-3 mb-4">
-            <Shield className="w-5 h-5 text-[#39c5bb]" />
-            <h2 className="text-lg font-bold text-white">{t('docs.mpcOffTitle')}</h2>
-          </div>
-          <ul className="space-y-2 text-sm text-[#888892]">
-            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOffItem1')}</span></li>
-            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOffItem2')}</span></li>
-            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOffItem3')}</span></li>
-            <li className="flex items-start gap-2"><Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOffItem4')}</span></li>
-          </ul>
-        </div>
-        <div className="bg-white/[0.03] backdrop-blur-sm border border-white/[0.08] p-6 rounded-2xl">
-          <div className="flex items-center gap-3 mb-4">
-            <Network className="w-5 h-5 text-[#f59e0b]" />
-            <h2 className="text-lg font-bold text-white">{t('docs.mpcOnTitle')}</h2>
-          </div>
-          <ul className="space-y-2 text-sm text-[#888892]">
-            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOnItem1')}</span></li>
-            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOnItem2')}</span></li>
-            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOnItem3')}</span></li>
-            <li className="flex items-start gap-2"><CheckCircle className="w-4 h-4 text-[#f59e0b] flex-shrink-0 mt-0.5" /><span>{t('docs.mpcOnItem4')}</span></li>
-          </ul>
-        </div>
-      </div>
-
-      <p className="text-xs text-[#555560] mt-6 font-mono">{t('docs.mpcFootnote')}</p>
-    </article>
-  );
-}
-
 // Resolve which component renders a given topic id.
 function TopicContent({ id, t }: { id: string; t: (k: string) => string }) {
   if (id === 'architecture') return <ArchitectureTopic t={t} />;
   if (id === 'security') return <SecurityTopic t={t} />;
-  if (id === 'mpc-comparison') return <MpcTopic t={t} />;
   const tech = technologies.find((x) => x.id === id);
   return tech ? <TechTopic tech={tech} t={t} /> : null;
 }

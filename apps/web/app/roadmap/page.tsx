@@ -487,28 +487,6 @@ const roadmap: RoadmapPhase[] = [
   },
 ];
 
-// ── Retired — shipped as code ─────────────────────────────────
-// Honest archive: real, committed (some deployed to devnet) but NOT wired
-// into the live product. Surfaced for transparency rather than hidden or
-// falsely listed as a live feature.
-const retiredItems: RoadmapItem[] = [
-  {
-    title: "roadmap.items.arciumMpc.title",
-    description: "roadmap.items.arciumMpc.desc",
-    icon: <Network className="w-5 h-5" />,
-  },
-  {
-    title: "roadmap.items.sealedBidAuctions.title",
-    description: "roadmap.items.sealedBidAuctions.desc",
-    icon: <Lock className="w-5 h-5" />,
-  },
-  {
-    title: "roadmap.items.arciumConfidentialRelay.title",
-    description: "roadmap.items.arciumConfidentialRelay.desc",
-    icon: <Cpu className="w-5 h-5" />,
-  },
-];
-
 function ItemCard({
   item,
   status,
@@ -754,22 +732,6 @@ export default function RoadmapPage() {
             ))}
           </div>
         )}
-      </section>
-
-      {/* Retired — shipped as code (honest archive of built-but-parked work) */}
-      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-2">
-        <div className="flex items-center gap-3 mb-2 flex-wrap">
-          <span className="text-[11px] font-mono px-2.5 py-1 rounded-full border text-[#b08d57] bg-[#b08d57]/[0.12] border-[#b08d57]/25">
-            {t('roadmap.retiredBadge')}
-          </span>
-          <h3 className="text-lg font-bold font-display tracking-wide">{t('roadmap.retiredTitle')}</h3>
-        </div>
-        <p className="text-sm mb-5 max-w-2xl" style={{ color: THEME.mutedColor }}>{t('roadmap.retiredSub')}</p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {retiredItems.map((it) => (
-            <ItemCard key={it.title} item={it} status="future" t={t} />
-          ))}
-        </div>
       </section>
 
       {/* CTA */}
