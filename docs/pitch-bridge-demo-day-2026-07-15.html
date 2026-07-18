@@ -469,6 +469,12 @@
       animation: none;
     }
     .slide-footer { left: .9in; right: .9in; bottom: .38in; }
+    .grid-2 { grid-template-columns: 1fr 1fr !important; }
+    .grid-3, .steps, .timeline { grid-template-columns: repeat(3, 1fr) !important; }
+    .grid-4 { grid-template-columns: repeat(4, 1fr) !important; }
+    .team-wrap { grid-template-columns: 320px 1fr !important; }
+    div[style*="overflow-x"] { overflow: visible !important; }
+    .slide { justify-content: center !important; padding-top: .55in !important; }
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   }
 </style>
@@ -715,7 +721,7 @@
         <tr><td>Recurring billing</td><td class="col-p01 yes">Yes, native</td><td class="yes">Yes, since June 2026</td><td class="no">No, transfers only</td><td class="no">n/a</td></tr>
         <tr><td>Hides the payment graph</td><td class="col-p01 yes">Yes</td><td class="no">No, delegation links payer to merchant</td><td class="yes">Yes</td><td class="no">n/a</td></tr>
         <tr><td>Private subscriptions</td><td class="col-p01 yes">Yes, the combination</td><td class="no">No, relationship public</td><td class="no">No</td><td class="no">n/a</td></tr>
-        <tr><td>Mobile app, on-device proving</td><td class="col-p01 yes">Yes</td><td class="no">No</td><td class="no">No</td><td class="no">n/a</td></tr>
+        <tr><td>Mobile app, on-device proving</td><td class="col-p01 yes">Yes</td><td class="no">No</td><td class="part">App in beta; encrypted state needs the MPC cluster</td><td class="no">n/a</td></tr>
         <tr><td>Post-quantum design</td><td class="col-p01 yes">Yes, hash-based</td><td class="no">No</td><td class="no">No</td><td class="no">n/a</td></tr>
         <tr><td>Status</td><td class="col-p01 part">Devnet, audit gates mainnet</td><td class="yes">Mainnet, audited</td><td class="yes">Mainnet</td><td class="no">Dead</td></tr>
       </tbody>
