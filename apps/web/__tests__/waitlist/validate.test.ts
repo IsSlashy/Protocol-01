@@ -65,13 +65,15 @@ describe('normalizeEmail() -- waitlist email validation', () => {
 
 describe('sanitizeInterest() -- enum guard', () => {
   it('passes through each known interest', () => {
-    for (const i of ['mobile', 'extension', 'sdk', 'merchant']) {
+    for (const i of ['mobile', 'extension', 'sdk']) {
       expect(sanitizeInterest(i)).toBe(i);
     }
   });
 
   it('drops an unknown interest', () => {
     expect(sanitizeInterest('gaming')).toBeUndefined();
+    // 'merchant' was removed from the offer (no consumable API/merchant tools)
+    expect(sanitizeInterest('merchant')).toBeUndefined();
   });
 
   it('drops non-string input', () => {

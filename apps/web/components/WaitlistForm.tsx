@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Check } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { useT, useLocale } from "@/i18n";
 
 type WaitlistSource = "hero" | "cta" | "extension-page";
-type Interest = "mobile" | "extension" | "sdk" | "merchant";
+type Interest = "mobile" | "extension" | "sdk";
 type Status = "idle" | "submitting" | "success" | "error";
 type ErrorKey = "errorInvalid" | "errorRateLimited" | "errorServer";
 
@@ -13,8 +13,25 @@ type ErrorKey = "errorInvalid" | "errorRateLimited" | "errorServer";
 // the source of truth, this only catches obvious typos before a round-trip.
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
-const inputCls =
-  "w-full bg-[#0a0a0c] border border-[#2a2a30] focus:border-[#39c5bb] focus:outline-none text-white font-mono px-4 py-3 transition-colors";
+// Shared field chrome: sharp corners, dark well, cyan focus glow. The pink
+// error variant is applied on the email input only (the field that can fail).
+const fieldBase =
+  "w-full bg-[#0a0a0c] border font-mono text-sm px-4 py-3.5 transition-all duration-200 focus:outline-none caret-[#39c5bb] placeholder:text-[#555560]";
+const fieldIdle =
+  "border-[#2a2a30] hover:border-[#3a3a42] focus:border-[#39c5bb] focus:shadow-[0_0_0_1px_rgba(57,197,187,0.35),0_0_18px_rgba(57,197,187,0.12)]";
+const fieldError =
+  "border-[#ff2d7a]/70 focus:border-[#ff2d7a] focus:shadow-[0_0_0_1px_rgba(255,45,122,0.35),0_0_18px_rgba(255,45,122,0.12)]";
+
+function FieldLabel({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
+  return (
+    <label htmlFor={htmlFor} className="flex items-center gap-2 mb-2">
+      <span className="w-1.5 h-1.5 bg-[#39c5bb]" aria-hidden />
+      <span className="text-[11px] font-mono uppercase tracking-[0.2em] text-[#888892]">
+        {children}
+      </span>
+    </label>
+  );
+}
 
 export default function WaitlistForm({ source = "cta" }: { source?: WaitlistSource }) {
   const t = useT();
@@ -27,6 +44,7 @@ export default function WaitlistForm({ source = "cta" }: { source?: WaitlistSour
   const [errorKey, setErrorKey] = useState<ErrorKey>("errorServer");
 
   const submitting = status === "submitting";
+  const hasError = status === "error";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -81,11 +99,20 @@ export default function WaitlistForm({ source = "cta" }: { source?: WaitlistSour
       <div
         role="status"
         aria-live="polite"
-        className="max-w-md mx-auto rounded-2xl border border-[#39c5bb]/40 bg-[#39c5bb]/[0.06] p-6 text-center"
+        className="max-w-md mx-auto border border-[#39c5bb]/40 bg-[#39c5bb]/[0.06] p-6 text-center relative overflow-hidden"
       >
-        <div className="w-12 h-12 rounded-xl bg-[#39c5bb]/15 flex items-center justify-center text-[#39c5bb] mx-auto mb-4">
+        {/* corner ticks — terminal frame feel */}
+        <span className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-[#39c5bb]" aria-hidden />
+        <span className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-[#39c5bb]" aria-hidden />
+        <span className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-[#39c5bb]" aria-hidden />
+        <span className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-[#39c5bb]" aria-hidden />
+
+        <div className="w-12 h-12 bg-[#39c5bb]/15 flex items-center justify-center text-[#39c5bb] mx-auto mb-4">
           <Check className="w-6 h-6" />
         </div>
+        <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-[#39c5bb] mb-2">
+          {t("waitlist.badge")}
+        </p>
         <h3 className="font-display font-bold text-white text-lg mb-2">{t("waitlist.successTitle")}</h3>
         <p className="text-sm text-p01-text-muted">{t("waitlist.successBody")}</p>
         <p className="text-xs text-p01-text-dim mt-3">{t("waitlist.successNote")}</p>
@@ -95,12 +122,7 @@ export default function WaitlistForm({ source = "cta" }: { source?: WaitlistSour
 
   return (
     <form onSubmit={handleSubmit} noValidate className="max-w-md mx-auto text-left">
-      <label
-        htmlFor="waitlist-email"
-        className="block text-xs font-mono uppercase tracking-wider text-p01-text-dim mb-2"
-      >
-        {t("waitlist.emailLabel")}
-      </label>
+      <FieldLabel htmlFor="waitlist-email">{t("waitlist.emailLabel")}</FieldLabel>
       <input
         id="waitlist-email"
         type="email"
@@ -110,9 +132,9 @@ export default function WaitlistForm({ source = "cta" }: { source?: WaitlistSour
         onChange={(e) => setEmail(e.target.value)}
         placeholder={t("waitlist.emailPlaceholder")}
         aria-label={t("waitlist.emailLabel")}
-        aria-invalid={status === "error"}
+        aria-invalid={hasError}
         disabled={submitting}
-        className={`${inputCls} placeholder:text-p01-text-dim`}
+        className={`${fieldBase} text-white ${hasError ? fieldError : fieldIdle}`}
       />
 
       {/* Honeypot — off-screen (not display:none, which some bots skip) and
@@ -128,43 +150,58 @@ export default function WaitlistForm({ source = "cta" }: { source?: WaitlistSour
         style={{ position: "absolute", left: "-9999px", width: "1px", height: "1px", overflow: "hidden" }}
       />
 
-      <label
-        htmlFor="waitlist-interest"
-        className="block text-xs font-mono uppercase tracking-wider text-p01-text-dim mb-2 mt-4"
-      >
-        {t("waitlist.interestLabel")}
-      </label>
-      <select
-        id="waitlist-interest"
-        value={interest}
-        onChange={(e) => setInterest(e.target.value as Interest | "")}
-        aria-label={t("waitlist.interestLabel")}
-        disabled={submitting}
-        className={inputCls}
-      >
-        <option value="">{t("waitlist.interestNone")}</option>
-        <option value="mobile">{t("waitlist.interestMobile")}</option>
-        <option value="extension">{t("waitlist.interestExtension")}</option>
-        <option value="sdk">{t("waitlist.interestSdk")}</option>
-        <option value="merchant">{t("waitlist.interestMerchant")}</option>
-      </select>
+      <div className="mt-5">
+        <FieldLabel htmlFor="waitlist-interest">{t("waitlist.interestLabel")}</FieldLabel>
+        <div className="relative">
+          <select
+            id="waitlist-interest"
+            value={interest}
+            onChange={(e) => setInterest(e.target.value as Interest | "")}
+            aria-label={t("waitlist.interestLabel")}
+            disabled={submitting}
+            className={`${fieldBase} ${fieldIdle} appearance-none pr-10 cursor-pointer ${
+              interest === "" ? "text-[#888892]" : "text-white"
+            }`}
+          >
+            <option value="">{t("waitlist.interestNone")}</option>
+            <option value="mobile">{t("waitlist.interestMobile")}</option>
+            <option value="extension">{t("waitlist.interestExtension")}</option>
+            <option value="sdk">{t("waitlist.interestSdk")}</option>
+          </select>
+          <ChevronDown
+            size={16}
+            className="absolute right-4 top-1/2 -translate-y-1/2 text-[#39c5bb] pointer-events-none"
+            aria-hidden
+          />
+        </div>
+      </div>
 
       {/* Status region — always present so screen readers announce changes. */}
-      <div aria-live="polite" className="min-h-[1.25rem] mt-3">
-        {status === "error" && (
-          <p className="text-sm font-mono text-[#ff2d7a]">{t(`waitlist.${errorKey}`)}</p>
+      <div aria-live="polite" className="min-h-[1.5rem] mt-3">
+        {hasError && (
+          <p className="flex items-center gap-2 text-sm font-mono text-[#ff2d7a]">
+            <span className="w-1.5 h-1.5 bg-[#ff2d7a] shrink-0" aria-hidden />
+            {t(`waitlist.${errorKey}`)}
+          </p>
         )}
       </div>
 
       <button
         type="submit"
         disabled={submitting}
-        className="w-full mt-2 px-6 py-3 bg-[#39c5bb] text-[#0a0a0c] font-bold uppercase tracking-wider hover:bg-[#2a9d95] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        className="w-full mt-2 px-6 py-3.5 bg-[#39c5bb] text-[#0a0a0c] font-bold uppercase tracking-wider transition-all duration-200 hover:bg-[#2a9d95] hover:shadow-[0_0_24px_rgba(57,197,187,0.3)] active:translate-y-px disabled:opacity-60 disabled:cursor-not-allowed disabled:shadow-none"
       >
-        {submitting ? t("waitlist.submitting") : t("waitlist.submit")}
+        {submitting ? (
+          <span className="inline-flex items-center gap-2">
+            <span className="w-2 h-2 bg-[#0a0a0c] animate-pulse" aria-hidden />
+            {t("waitlist.submitting")}
+          </span>
+        ) : (
+          t("waitlist.submit")
+        )}
       </button>
 
-      <p className="text-xs text-p01-text-dim mt-3">{t("waitlist.consent")}</p>
+      <p className="text-xs text-p01-text-dim mt-3 leading-relaxed">{t("waitlist.consent")}</p>
     </form>
   );
 }

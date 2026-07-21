@@ -8,7 +8,7 @@
  */
 import { createHash } from 'node:crypto';
 
-export const INTERESTS = ['mobile', 'extension', 'sdk', 'merchant'] as const;
+export const INTERESTS = ['mobile', 'extension', 'sdk'] as const;
 export type Interest = (typeof INTERESTS)[number];
 
 export const LOCALES = ['en', 'fr', 'ja'] as const;
