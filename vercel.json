@@ -3,5 +3,11 @@
   "buildCommand": "pnpm --filter @protocol-01/web build",
   "outputDirectory": "apps/web/.next",
   "installCommand": "pnpm install --ignore-scripts",
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "crons": [
+    {
+      "path": "/api/waitlist/remind",
+      "schedule": "0 10 * * *"
+    }
+  ]
 }
