@@ -21,6 +21,25 @@ export async function GET(req: Request) {
   }
 
   const records = await collectAllRecords(getStore());
+
+  // ?format=json feeds the /admin/waitlist dashboard; tokenHash stays private.
+  const { searchParams } = new URL(req.url);
+  if (searchParams.get('format') === 'json') {
+    const safe = records.map((r) => ({
+      email: r.email,
+      status: r.status,
+      interest: r.interest ?? null,
+      locale: r.locale,
+      source: r.source ?? null,
+      createdAt: r.createdAt,
+      confirmedAt: r.confirmedAt ?? null,
+    }));
+    return new Response(JSON.stringify({ ok: true, records: safe }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    });
+  }
+
   const rows = records.map((r) =>
     [r.email, r.status, r.interest, r.locale, r.source, r.createdAt, r.confirmedAt]
       .map(csvField)
