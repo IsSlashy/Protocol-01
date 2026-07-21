@@ -60,9 +60,9 @@ describe('CTA -- Waitlist conversion funnel', () => {
   });
 
   describe('Secondary actions still present', () => {
-    it('renders a link to the GitHub repository', () => {
-      const githubLink = screen.getByText('View on GitHub');
-      expect(githubLink.closest('a')).toHaveAttribute('href', 'https://github.com/IsSlashy/Protocol-01');
+    // WAITLIST MODE: the GitHub CTA is hidden while access runs through the waitlist
+    it('does not render the GitHub repository link', () => {
+      expect(screen.queryByText('View on GitHub')).toBeNull();
     });
 
     it('renders a link to the Discord community', () => {

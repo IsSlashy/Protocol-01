@@ -97,8 +97,9 @@ describe('Footer -- Site navigation and community links', () => {
       expect(screen.getByLabelText('Twitter/X')).toBeInTheDocument();
     });
 
-    it('renders the GitHub social icon with aria-label', () => {
-      expect(screen.getByLabelText('GitHub')).toBeInTheDocument();
+    // WAITLIST MODE: the GitHub social icon is hidden while access runs through the waitlist
+    it('does not render the GitHub social icon', () => {
+      expect(screen.queryByLabelText('GitHub')).toBeNull();
     });
 
     it('renders the Discord social icon with aria-label', () => {
@@ -117,9 +118,9 @@ describe('Footer -- Site navigation and community links', () => {
       expect(bottomLinks.length).toBeGreaterThanOrEqual(1);
     });
 
-    it('has a bottom bar link to GitHub', () => {
-      const allGithub = screen.getAllByText('GitHub');
-      expect(allGithub.length).toBeGreaterThanOrEqual(1);
+    // WAITLIST MODE: the community GitHub link is hidden while access runs through the waitlist
+    it('does not link to GitHub anywhere', () => {
+      expect(screen.queryByText('GitHub')).toBeNull();
     });
 
     it('has a bottom bar link to Discord', () => {

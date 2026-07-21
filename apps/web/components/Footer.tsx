@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Github, MessageCircle, ScanEye } from "lucide-react";
+// WAITLIST MODE: Github icon unused while the GitHub links are hidden (restore at launch)
+import { MessageCircle, ScanEye } from "lucide-react";
 import { useT } from "@/i18n";
 
 // Hides the progressive-glitch easter egg that routes to /void. Flip back to
@@ -68,7 +69,8 @@ const footerLinks: Record<string, FooterSection> = {
     links: [
       { name: "Discord", href: "https://discord.gg/KfmhPFAHNH", external: true },
       { name: "Twitter / X", href: "https://x.com/Protocol01_", external: true },
-      { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01-releases", external: true },
+      // WAITLIST MODE: GitHub de-emphasized while access runs through the waitlist, restore at launch:
+      // { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01-releases", external: true },
     ],
   },
 };
@@ -81,12 +83,14 @@ const XIcon = () => (
 );
 
 // Wrapper for Lucide icons to match size
-const GithubIcon = () => <Github size={18} />;
+// WAITLIST MODE: GithubIcon unused while the GitHub social link is hidden, restore at launch:
+// const GithubIcon = () => <Github size={18} />;
 const DiscordIcon = () => <MessageCircle size={18} />;
 
 const socialLinks = [
   { icon: XIcon, href: "https://x.com/Protocol01_", label: "Twitter/X" },
-  { icon: GithubIcon, href: "https://github.com/IsSlashy/Protocol-01-releases", label: "GitHub" },
+  // WAITLIST MODE: restore at launch:
+  // { icon: GithubIcon, href: "https://github.com/IsSlashy/Protocol-01-releases", label: "GitHub" },
   { icon: DiscordIcon, href: "https://discord.gg/KfmhPFAHNH", label: "Discord" },
 ];
 

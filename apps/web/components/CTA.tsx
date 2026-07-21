@@ -3,7 +3,8 @@
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
-import { Github } from "lucide-react";
+// WAITLIST MODE: Github icon unused while the GitHub CTA is hidden, restore at launch
+// import { Github } from "lucide-react";
 import { useT } from "@/i18n";
 import WaitlistForm from "./WaitlistForm";
 // WAITLIST MODE: the download cards below are disabled. To restore at public
@@ -154,6 +155,9 @@ export default function CTA() {
               transition={{ duration: 0.5, delay: 0.6 }}
               className="flex flex-col sm:flex-row items-center justify-center gap-4"
             >
+              {/* WAITLIST MODE: GitHub de-emphasized while access runs through the
+                  waitlist (repo stays public; licenses/terms keep their links).
+                  Restore at public launch:
               <a
                 href="https://github.com/IsSlashy/Protocol-01"
                 target="_blank"
@@ -164,6 +168,7 @@ export default function CTA() {
                 <span>{t('cta.viewOnGithub')}</span>
               </a>
               <span className="hidden sm:block text-p01-border">|</span>
+              WAITLIST MODE end */}
               <a
                 href="https://discord.gg/KfmhPFAHNH"
                 target="_blank"
