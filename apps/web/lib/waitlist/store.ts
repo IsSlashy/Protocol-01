@@ -37,6 +37,8 @@ export interface WaitlistRecord {
   confirmedAt?: string;
   lastSentAt: string;
   resendCount: number;
+  /** Set once when the single 24h "confirm your spot" reminder goes out. */
+  remindedAt?: string;
 }
 
 // --- Minimal KV surface ----------------------------------------------------

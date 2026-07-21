@@ -229,19 +229,37 @@ function renderText(copy: Copy, confirmUrl: string, unsubscribeUrl: string): str
 }
 
 /**
- * Send the double opt-in confirmation email. Returns true on a successful send,
- * false when Resend is not configured or the send throws. Callers treat false
- * as a mail failure but keep the stored signup either way.
+ * Copy overrides for the single 24h reminder. Everything not listed here
+ * (link help, disclaimer, unsubscribe label) is inherited from COPY.
  */
-export async function sendConfirmationEmail(params: {
-  email: string;
-  token: string;
-  locale: Locale;
-}): Promise<boolean> {
+const REMINDER_COPY: Record<Locale, Pick<Copy, 'subject' | 'preheader' | 'heading' | 'body'>> = {
+  en: {
+    subject: 'Your spot on the Protocol 01 waitlist is still open',
+    preheader: 'One click left to lock your spot. This is the only reminder.',
+    heading: 'Still there?',
+    body: 'You asked for a spot on the Protocol 01 waitlist but your email was never confirmed. One click and it is locked. This is the only reminder we will send.',
+  },
+  fr: {
+    subject: 'Votre place sur la liste d’attente Protocol 01 attend toujours',
+    preheader: 'Un clic pour réserver votre place. C’est le seul rappel.',
+    heading: 'Toujours là ?',
+    body: 'Vous avez demandé une place sur la liste d’attente Protocol 01 mais votre e-mail n’a jamais été confirmé. Un clic et elle est réservée. C’est le seul rappel que nous enverrons.',
+  },
+  ja: {
+    subject: 'Protocol 01 ウェイトリストの確認がまだ完了していません',
+    preheader: 'ワンクリックで登録が完了します。リマインダーは今回限りです。',
+    heading: 'まだ間に合います',
+    body: 'Protocol 01 のウェイトリストにご登録いただきましたが、メールアドレスの確認がまだ完了していません。ワンクリックで登録が確定します。このリマインダーは今回限りです。',
+  },
+};
+
+async function sendWaitlistEmail(
+  copy: Copy,
+  params: { email: string; token: string },
+): Promise<boolean> {
   const client = getResend();
   if (!client) return false;
 
-  const copy = COPY[params.locale];
   const confirmUrl = `${SITE_URL}/api/waitlist/confirm?token=${params.token}`;
   const unsubscribeUrl = `${SITE_URL}/api/waitlist/unsubscribe?token=${params.token}`;
 
@@ -259,7 +277,30 @@ export async function sendConfirmationEmail(params: {
     }
     return true;
   } catch (err) {
-    console.error('[waitlist] Failed to send confirmation email:', err);
+    console.error('[waitlist] Failed to send waitlist email:', err);
     return false;
   }
+}
+
+/**
+ * Send the double opt-in confirmation email. Returns true on a successful send,
+ * false when Resend is not configured or the send throws. Callers treat false
+ * as a mail failure but keep the stored signup either way.
+ */
+export function sendConfirmationEmail(params: {
+  email: string;
+  token: string;
+  locale: Locale;
+}): Promise<boolean> {
+  return sendWaitlistEmail(COPY[params.locale], params);
+}
+
+/** Send the one-and-only 24h reminder for a still-pending signup. */
+export function sendReminderEmail(params: {
+  email: string;
+  token: string;
+  locale: Locale;
+}): Promise<boolean> {
+  const copy: Copy = { ...COPY[params.locale], ...REMINDER_COPY[params.locale] };
+  return sendWaitlistEmail(copy, params);
 }

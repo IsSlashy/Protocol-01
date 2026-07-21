@@ -13,6 +13,13 @@ a dump of KV cannot be replayed into working confirm or unsubscribe links.
 3. Every email also carries an unsubscribe link. `GET /api/waitlist/unsubscribe`
    hard-deletes the record and redirects to `/waitlist/removed`.
 4. `GET /api/waitlist/stats` and `GET /api/waitlist/export` are admin-only.
+5. `GET /api/waitlist/remind` runs daily (Vercel Cron, 10:00 UTC): sends the
+   single reminder to signups pending for more than 24h (max one reminder ever
+   per address, only within the first 7 days, 50 per run), and hard-deletes
+   pending signups older than 30 days (counted as unsubscribed so the derived
+   pending total stays honest). Auth: `Bearer CRON_SECRET` (what Vercel Cron
+   sends) or the admin credentials. `?dryRun=1` lists what it would do without
+   sending or deleting anything.
 
 ## Environment variables
 
@@ -27,6 +34,8 @@ a dump of KV cannot be replayed into working confirm or unsubscribe links.
 | `SITE_URL` | no | Absolute base for links in emails. Defaults to `https://protocol-01.dev`. |
 | `WAITLIST_STATS_TOKEN` | yes | Bearer token for `/stats` and `/export`. Also the salt for per-IP rate-limit hashing. |
 | `ADMIN_PASSWORD` | alt | Existing admin secret; accepted via `x-admin-password` on `/stats` and `/export`. |
+| `CRON_SECRET` | prod | Auth for the daily `/remind` cron. Vercel sends it automatically as a bearer token when set. |
+| `WAITLIST_REMINDER_DELAY_HOURS` | no | Hours a signup must stay pending before the single reminder goes out. Defaults to 24. |
 
 Stats and export need at least one of `WAITLIST_STATS_TOKEN` or `ADMIN_PASSWORD`
 set server-side, otherwise they return 503.
