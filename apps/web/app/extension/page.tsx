@@ -5,6 +5,8 @@ import { Download, ShieldCheck, Puzzle, FolderOpen, ToggleRight, MousePointerCli
 import { useT } from "@/i18n";
 
 const VERSION = "0.5.0";
+// WAITLIST MODE: direct .zip download disabled, restore at public launch.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const ZIP = `/protocol01-extension-${VERSION}.zip`;
 const FOLDER = `protocol01-extension-${VERSION}`;
 const codeCls = "text-p01-cyan";
@@ -83,7 +85,21 @@ export default function ExtensionPage() {
             v{VERSION} · {t("extensionPage.compat")}
           </p>
 
-          {/* Download */}
+          {/* Waitlist notice — beta downloads are paused, route people to signup */}
+          <div className="mb-12 p-5 rounded-xl border border-p01-cyan/40 bg-p01-cyan/[0.06]">
+            <h2 className="font-display font-semibold text-white mb-1">{t("waitlist.extensionNoticeTitle")}</h2>
+            <p className="text-sm text-p01-text-muted/80 mb-4">{t("waitlist.extensionNoticeBody")}</p>
+            <Link
+              href="/#download"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-p01-cyan text-p01-void font-display font-bold tracking-wide hover:bg-p01-cyan-dim transition-colors"
+            >
+              {t("waitlist.extensionNoticeCta")}
+            </Link>
+          </div>
+
+          {/* WAITLIST MODE: direct .zip download disabled, restore at public launch.
+              Re-enable this block (and remove the notice above) to bring back the
+              one-click extension download.
           <div className="flex flex-col items-center gap-3 mb-12">
             <a
               href={ZIP}
@@ -95,6 +111,7 @@ export default function ExtensionPage() {
             </a>
             <span className="text-[11px] font-mono text-p01-text-muted/50">{FOLDER}.zip</span>
           </div>
+          WAITLIST MODE end */}
 
           {/* Steps */}
           <div className="space-y-3">

@@ -35,12 +35,12 @@ describe('Homepage -- Protocol 01 main landing page', () => {
       expect(featureNavLink).toBeDefined();
     });
 
-    it('has a "Download" navigation link pointing to #download', () => {
-      const navLinks = screen.getAllByText('Download');
-      const downloadNavLink = navLinks.find(
-        el => el.closest('a')?.getAttribute('href') === '#download'
+    it('has a "Waitlist" navigation link pointing to /#download', () => {
+      const navLinks = screen.getAllByText('Waitlist');
+      const waitlistNavLink = navLinks.find(
+        el => el.closest('a')?.getAttribute('href') === '/#download'
       );
-      expect(downloadNavLink).toBeDefined();
+      expect(waitlistNavLink).toBeDefined();
     });
 
     it('has an "SDK Demo" navigation link pointing to /sdk-demo', () => {
@@ -116,11 +116,11 @@ describe('Homepage -- Protocol 01 main landing page', () => {
     });
   });
 
-  describe('Download Button in Navigation', () => {
-    it('has a prominent "Download" CTA button in the nav', () => {
-      const downloadButtons = screen.getAllByRole('link', { name: 'Download' });
-      const ctaButton = downloadButtons.find(
-        el => el.getAttribute('href') === '#download' && el.className.includes('btn-primary')
+  describe('Waitlist Button in Navigation', () => {
+    it('has a prominent "Waitlist" CTA button in the nav', () => {
+      const waitlistButtons = screen.getAllByRole('link', { name: 'Waitlist' });
+      const ctaButton = waitlistButtons.find(
+        el => el.getAttribute('href') === '/#download' && el.className.includes('btn-primary')
       );
       expect(ctaButton).toBeDefined();
     });

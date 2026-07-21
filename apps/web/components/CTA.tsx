@@ -3,10 +3,15 @@
 import { motion } from "framer-motion";
 import { useInView } from "framer-motion";
 import { useRef } from "react";
-import Link from "next/link";
-import { Github, Chrome, Download } from "lucide-react";
+import { Github } from "lucide-react";
 import { useT } from "@/i18n";
+import WaitlistForm from "./WaitlistForm";
+// WAITLIST MODE: the download cards below are disabled. To restore at public
+// launch, re-add `Chrome, Download` to the lucide-react import and
+// `import Link from "next/link";`, then un-comment the download block.
 
+// WAITLIST MODE: download CTA disabled, restore at public launch.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const APK_URL =
   "https://github.com/IsSlashy/Protocol-01/releases/download/v1.0.3/protocol-01-v1.0.3.apk";
 
@@ -54,7 +59,7 @@ export default function CTA() {
             >
               <span className="w-2 h-2 bg-[#39c5bb]" />
               <span className="text-[#39c5bb] text-sm font-medium font-mono uppercase tracking-wider">
-                {t('cta.badge')}
+                {t('waitlist.badge')}
               </span>
             </motion.div>
 
@@ -76,11 +81,24 @@ export default function CTA() {
               transition={{ duration: 0.5, delay: 0.4 }}
               className="text-lg text-p01-text-muted max-w-2xl mx-auto mb-12 space-y-1"
             >
-              <p>{t('cta.subtitle1')}</p>
-              <p>{t('cta.subtitle2')}</p>
+              <p>{t('waitlist.subtitle1')}</p>
+              <p>{t('waitlist.subtitle2')}</p>
             </motion.div>
 
-            {/* Download — Android is the primary action, Chrome is a discreet "soon" line */}
+            {/* Waitlist — public downloads are paused, visitors leave their email */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={isInView ? { opacity: 1, y: 0 } : {}}
+              transition={{ duration: 0.5, delay: 0.5 }}
+              className="mb-10"
+            >
+              <WaitlistForm source="cta" />
+            </motion.div>
+
+            {/* WAITLIST MODE: download CTA disabled, restore at public launch.
+                The Android APK card + Chrome extension card below are paused
+                while we run double opt-in signups. Restore this block (and the
+                Chrome/Download/Link imports) to bring back direct downloads.
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={isInView ? { opacity: 1, y: 0 } : {}}
@@ -93,7 +111,6 @@ export default function CTA() {
                 className="group flex items-center gap-4 p-5 rounded-2xl border border-p01-cyan/40 bg-p01-cyan/[0.06] hover:bg-p01-cyan/[0.12] hover:border-p01-cyan/70 transition-all duration-300 no-underline"
               >
                 <div className="w-12 h-12 rounded-xl bg-p01-cyan/15 flex items-center justify-center text-p01-cyan shrink-0">
-                  {/* Android robot — rendered in cyan to respect the no-green palette */}
                   <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor" aria-hidden>
                     <path d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85a.637.637 0 0 0-.83.22l-1.88 3.24a11.46 11.46 0 0 0-8.94 0L5.65 5.67a.643.643 0 0 0-.87-.2c-.28.18-.37.54-.22.83L6.4 9.48A10.78 10.78 0 0 0 1 18h22a10.78 10.78 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z" />
                   </svg>
@@ -128,6 +145,7 @@ export default function CTA() {
                 <Download size={20} className="text-p01-pink shrink-0" />
               </Link>
             </motion.div>
+            WAITLIST MODE end */}
 
             {/* Secondary Actions */}
             <motion.div

@@ -109,7 +109,7 @@ function SiteHeader() {
             </a>
             <LanguageSwitcher className="hidden sm:flex" />
             <a href="/#download" className="btn-primary text-xs px-4 py-1.5">
-              {t("nav.download")}
+              {t("waitlist.navLabel")}
             </a>
           </div>
         </div>

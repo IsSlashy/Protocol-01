@@ -1,91 +1,73 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { I18nProvider } from '@/i18n';
 import CTA from '@/components/CTA';
 
-describe('CTA -- Download section and conversion funnel', () => {
+// Renders inside the i18n provider so t() resolves real (English) copy instead
+// of raw keys. Default locale is 'en'.
+function renderCTA() {
+  return render(
+    <I18nProvider>
+      <CTA />
+    </I18nProvider>,
+  );
+}
+
+describe('CTA -- Waitlist conversion funnel', () => {
   beforeEach(() => {
-    render(<CTA />);
+    renderCTA();
   });
 
-  describe('Availability Badge', () => {
-    it('displays "Now Available" badge indicating launch status', () => {
-      expect(screen.getByText('Now Available')).toBeInTheDocument();
+  describe('Early-access badge and messaging', () => {
+    it('shows the early-access badge', () => {
+      expect(screen.getByText('Early access')).toBeInTheDocument();
     });
-  });
 
-  describe('Headline and Messaging', () => {
-    it('renders the compelling headline "Ready to become invisible?"', () => {
+    it('renders the "Ready to become invisible?" heading', () => {
       expect(screen.getByText(/Ready to become/)).toBeInTheDocument();
       expect(screen.getByText('invisible')).toBeInTheDocument();
     });
 
-    it('displays the subtitle about taking back financial privacy', () => {
-      expect(screen.getByText(/Download Protocol 01 and take back control/)).toBeInTheDocument();
-    });
-
-    it('emphasizes the product is free, self-custody, and built for everyone', () => {
-      expect(screen.getByText(/Free to use\. Self-custody\. Built for everyone\./)).toBeInTheDocument();
+    it('uses the waitlist subtitles about opening in waves', () => {
+      expect(screen.getByText(/Protocol 01 opens in waves/)).toBeInTheDocument();
     });
   });
 
-  describe('Download Options', () => {
-    it('renders the Android APK download option', () => {
-      expect(screen.getByText('Android')).toBeInTheDocument();
+  describe('Waitlist form', () => {
+    it('renders the email input', () => {
+      expect(screen.getByRole('textbox', { name: 'Email address' })).toBeInTheDocument();
     });
 
-    it('displays Android APK file details with size', () => {
-      expect(screen.getByText(/Instant Download APK/)).toBeInTheDocument();
-      expect(screen.getByText(/231 MB/)).toBeInTheDocument();
+    it('renders the "Join the waitlist" submit button', () => {
+      expect(screen.getByRole('button', { name: 'Join the waitlist' })).toBeInTheDocument();
     });
 
-    it('links to the correct Android APK file', () => {
-      const androidLink = screen.getByText('Android').closest('a');
-      expect(androidLink).toHaveAttribute('href', 'https://github.com/IsSlashy/Protocol-01/releases/download/v0.5.0/P01-Mobile-v0.5.1.apk');
-      expect(androidLink).toHaveAttribute('download', 'P01-Mobile-v0.5.1.apk');
-    });
-
-    it('renders the Chrome Extension download option', () => {
-      expect(screen.getByText('Chrome Extension')).toBeInTheDocument();
-    });
-
-    it('displays Chrome Extension file details with size', () => {
-      expect(screen.getByText(/Instant Download ZIP/)).toBeInTheDocument();
-      expect(screen.getByText(/10 MB/)).toBeInTheDocument();
-    });
-
-    it('links to the correct Chrome Extension ZIP file', () => {
-      const chromeLink = screen.getByText('Chrome Extension').closest('a');
-      expect(chromeLink).toHaveAttribute('href', 'https://github.com/IsSlashy/Protocol-01/releases/download/v0.5.0/P01-Extension-v0.3.0.zip');
-      expect(chromeLink).toHaveAttribute('download', 'P01-Extension-v0.3.0.zip');
+    it('renders the interest select', () => {
+      expect(screen.getByRole('combobox', { name: 'What do you want first?' })).toBeInTheDocument();
     });
   });
 
-  describe('Secondary Actions', () => {
+  describe('Download CTAs are disabled (waitlist mode)', () => {
+    it('does not render the Android APK card', () => {
+      expect(screen.queryByText('Android')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Instant Download APK/)).not.toBeInTheDocument();
+    });
+
+    it('does not render a direct APK download link', () => {
+      const apkLink = document.querySelector('a[download]');
+      expect(apkLink).toBeNull();
+    });
+  });
+
+  describe('Secondary actions still present', () => {
     it('renders a link to the GitHub repository', () => {
       const githubLink = screen.getByText('View on GitHub');
       expect(githubLink.closest('a')).toHaveAttribute('href', 'https://github.com/IsSlashy/Protocol-01');
-      expect(githubLink.closest('a')).toHaveAttribute('target', '_blank');
     });
 
     it('renders a link to the Discord community', () => {
       const discordLink = screen.getByText('Join Discord');
       expect(discordLink.closest('a')).toHaveAttribute('href', 'https://discord.gg/KfmhPFAHNH');
-      expect(discordLink.closest('a')).toHaveAttribute('target', '_blank');
-    });
-  });
-
-  describe('Trust Statistics', () => {
-    it('displays "100%" for Self-Custody -- full user control', () => {
-      // CTA has its own stats
-      expect(screen.getByText('Self-Custody')).toBeInTheDocument();
-    });
-
-    it('displays "0" for KYC Required -- no identity verification needed', () => {
-      expect(screen.getByText('KYC Required')).toBeInTheDocument();
-    });
-
-    it('displays infinity for Privacy -- unlimited privacy guarantees', () => {
-      expect(screen.getByText('Privacy')).toBeInTheDocument();
     });
   });
 });

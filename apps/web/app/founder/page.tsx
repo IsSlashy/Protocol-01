@@ -217,8 +217,9 @@ export default function FounderPage() {
                 className="btn-primary text-xs px-6 py-2.5">
                 {t('founder.ctaTwitter')}
               </a>
+              {/* WAITLIST MODE: label switched from founder.ctaDownload ("Try the App") to the waitlist CTA, restore at public launch */}
               <a href="/#download" className="px-6 py-2.5 border border-p01-border rounded-lg text-xs text-p01-text-muted hover:text-white hover:border-p01-cyan/40 transition-all">
-                {t('founder.ctaDownload')}
+                {t('waitlist.heroCta')}
               </a>
             </motion.div>
           </motion.section>
