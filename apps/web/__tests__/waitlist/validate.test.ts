@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizeEmail,
+  sanitizeCountry,
   sanitizeInterest,
   sanitizeLocale,
   sanitizeSource,
@@ -8,6 +9,23 @@ import {
   tokenHash,
   isTokenShape,
 } from '@/lib/waitlist/validate';
+
+describe('sanitizeCountry() -- ISO alpha-2 guard', () => {
+  it('uppercases and accepts a two-letter code', () => {
+    expect(sanitizeCountry('fr')).toBe('FR');
+    expect(sanitizeCountry('JP')).toBe('JP');
+    expect(sanitizeCountry(' us ')).toBe('US');
+  });
+
+  it('drops anything that is not exactly two letters', () => {
+    expect(sanitizeCountry('FRA')).toBeUndefined();
+    expect(sanitizeCountry('F')).toBeUndefined();
+    expect(sanitizeCountry('12')).toBeUndefined();
+    expect(sanitizeCountry('')).toBeUndefined();
+    expect(sanitizeCountry(null)).toBeUndefined();
+    expect(sanitizeCountry(undefined)).toBeUndefined();
+  });
+});
 
 describe('normalizeEmail() -- waitlist email validation', () => {
   it('accepts a plain valid email unchanged', () => {

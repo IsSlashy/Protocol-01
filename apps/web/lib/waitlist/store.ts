@@ -33,6 +33,8 @@ export interface WaitlistRecord {
   interest?: Interest;
   locale: Locale;
   source?: string;
+  /** ISO 3166-1 alpha-2 from Vercel's geo header; the IP is never stored. */
+  country?: string;
   createdAt: string;
   confirmedAt?: string;
   lastSentAt: string;
@@ -205,6 +207,7 @@ const K = {
   token: (hash: string) => `wl:tok:${hash}`,
   emails: 'wl:emails',
   sources: 'wl:sources',
+  countries: 'wl:countries',
   cntTotal: 'wl:cnt:total',
   cntConfirmed: 'wl:cnt:confirmed',
   cntUnsub: 'wl:cnt:unsub',
@@ -214,10 +217,12 @@ const K = {
   interest: (i: string) => `wl:int:${i}`,
   locale: (l: string) => `wl:loc:${l}`,
   source: (s: string) => `wl:src:${s}`,
+  country: (c: string) => `wl:ctry:${c}`,
   rate: (hash12: string, hour: string) => `wl:rl:${hash12}:${hour}`,
 } as const;
 
 const SOURCE_CAP = 50;
+const COUNTRY_CAP = 150;
 
 // --- Date helpers ----------------------------------------------------------
 
@@ -306,6 +311,12 @@ export async function recordSignupCounters(kv: KvLike, record: WaitlistRecord): 
       await kv.sadd(K.sources, record.source);
     }
   }
+  if (record.country) {
+    await kv.incr(K.country(record.country));
+    if ((await kv.scard(K.countries)) < COUNTRY_CAP) {
+      await kv.sadd(K.countries, record.country);
+    }
+  }
 }
 
 /** Bump the confirmed counters for a record confirmed at the given ISO time. */
@@ -358,6 +369,7 @@ export interface WaitlistStats {
     interest: Record<string, number>;
     locale: Record<string, number>;
     source: Record<string, number>;
+    country: Record<string, number>;
   };
 }
 
@@ -372,6 +384,7 @@ function emptyStats(dates: string[]): WaitlistStats {
       interest: Object.fromEntries(INTERESTS.map((i) => [i, 0])),
       locale: Object.fromEntries(LOCALES.map((l) => [l, 0])),
       source: {},
+      country: {},
     },
   };
 }
@@ -402,10 +415,11 @@ export async function collectStats(kv: KvLike | null): Promise<WaitlistStats> {
   const sumTail = (key: 'signups' | 'confirmed', n: number): number =>
     daily.slice(-n).reduce((acc, d) => acc + d[key], 0);
 
-  const [intVals, locVals, sources] = await Promise.all([
+  const [intVals, locVals, sources, countries] = await Promise.all([
     kv.mget(INTERESTS.map(K.interest)),
     kv.mget(LOCALES.map(K.locale)),
     kv.smembers(K.sources),
+    kv.smembers(K.countries),
   ]);
 
   const interest: Record<string, number> = {};
@@ -425,6 +439,14 @@ export async function collectStats(kv: KvLike | null): Promise<WaitlistStats> {
     });
   }
 
+  const country: Record<string, number> = {};
+  if (countries.length > 0) {
+    const ctryVals = await kv.mget(countries.map(K.country));
+    countries.forEach((c, idx) => {
+      country[c] = Number(ctryVals[idx] ?? 0) || 0;
+    });
+  }
+
   const pending = Math.max(0, signups - confirmed - unsubscribed);
   const confirmationRate = signups > 0 ? Math.round((confirmed / signups) * 1000) / 1000 : 0;
 
@@ -434,7 +456,7 @@ export async function collectStats(kv: KvLike | null): Promise<WaitlistStats> {
     last7d: { signups: sumTail('signups', 7), confirmed: sumTail('confirmed', 7) },
     last30d: { signups: sumTail('signups', 30), confirmed: sumTail('confirmed', 30) },
     daily,
-    breakdown: { interest, locale, source },
+    breakdown: { interest, locale, source, country },
   };
 }
 

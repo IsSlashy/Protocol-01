@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   normalizeEmail,
+  sanitizeCountry,
   sanitizeInterest,
   sanitizeLocale,
   sanitizeSource,
@@ -65,6 +66,8 @@ export async function POST(req: NextRequest) {
     const interest = sanitizeInterest(body.interest);
     const locale = sanitizeLocale(body.locale);
     const source = sanitizeSource(body.source);
+    // Vercel sets this at the edge from the client IP; the IP itself is never stored.
+    const country = sanitizeCountry(req.headers.get('x-vercel-ip-country'));
 
     const existing = await readRecord(kv, email);
     const now = new Date().toISOString();
@@ -109,6 +112,7 @@ export async function POST(req: NextRequest) {
       interest,
       locale,
       source,
+      country,
       createdAt: now,
       lastSentAt: now,
       resendCount: 0,

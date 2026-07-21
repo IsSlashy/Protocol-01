@@ -40,6 +40,13 @@ a dump of KV cannot be replayed into working confirm or unsubscribe links.
 Stats and export need at least one of `WAITLIST_STATS_TOKEN` or `ADMIN_PASSWORD`
 set server-side, otherwise they return 503.
 
+## Country attribution
+
+Each signup stores the ISO 3166-1 alpha-2 country code taken from Vercel's
+`x-vercel-ip-country` header at the edge. The IP address itself is never
+stored. Exposed in `/stats` under `breakdown.country`, in the export (CSV and
+JSON) and as a dashboard column.
+
 ## Rate limiting
 
 Per IP, 20 signups per rolling hour. The IP is taken from `x-real-ip` or the

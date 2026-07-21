@@ -58,6 +58,17 @@ export function sanitizeSource(raw: unknown): string | undefined {
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
+/**
+ * ISO 3166-1 alpha-2 country code from Vercel's x-vercel-ip-country header.
+ * Two ASCII letters, uppercased; anything else is dropped. The IP itself is
+ * never stored, only this coarse country tag.
+ */
+export function sanitizeCountry(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const cc = raw.trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(cc) ? cc : undefined;
+}
+
 /** Hex-encoded SHA-256 of the input. Used for token and IP hashing. */
 export function sha256Hex(input: string): string {
   return createHash('sha256').update(input).digest('hex');

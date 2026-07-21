@@ -35,6 +35,7 @@ interface WaitlistRecordRow {
   interest: "mobile" | "extension" | "sdk" | null;
   locale: string;
   source: string | null;
+  country: string | null;
   createdAt: string;
   confirmedAt: string | null;
 }
@@ -63,6 +64,7 @@ interface StatsPayload {
     interest: Record<string, number>;
     locale: Record<string, number>;
     source: Record<string, number>;
+    country: Record<string, number>;
   };
 }
 
@@ -79,6 +81,11 @@ const INTEREST_LABELS: Record<string, string> = {
 
 function authHeaders(secret: string): HeadersInit {
   return { Authorization: `Bearer ${secret}`, "x-admin-password": secret };
+}
+
+/** "FR" -> the 🇫🇷 regional-indicator pair (renders as plain letters on Windows). */
+function ccToFlag(cc: string): string {
+  return String.fromCodePoint(...[...cc].map((ch) => 0x1f1e6 + ch.charCodeAt(0) - 65));
 }
 
 function fmtDate(iso: string | null): string {
@@ -348,7 +355,13 @@ export default function WaitlistAdminPage() {
       if (interestFilter === "none" && r.interest !== null) return false;
       if (interestFilter !== "all" && interestFilter !== "none" && r.interest !== interestFilter) return false;
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
-      if (q && !r.email.includes(q) && !(r.source ?? "").includes(q)) return false;
+      if (
+        q &&
+        !r.email.includes(q) &&
+        !(r.source ?? "").includes(q) &&
+        !(r.country ?? "").toLowerCase().includes(q)
+      )
+        return false;
       return true;
     });
     rows.sort((a, b) =>
@@ -503,13 +516,14 @@ export default function WaitlistAdminPage() {
 
         {/* table */}
         <div className="overflow-x-auto border border-[#2a2a30]">
-          <table className="w-full text-left text-sm min-w-[720px]">
+          <table className="w-full text-left text-sm min-w-[800px]">
             <thead>
               <tr className="bg-[#0f0f12] text-[10px] font-mono uppercase tracking-[0.18em] text-[#555560]">
                 <th className="px-4 py-3 font-normal">Email</th>
                 <th className="px-4 py-3 font-normal">Status</th>
                 <th className="px-4 py-3 font-normal">Interest</th>
                 <th className="px-4 py-3 font-normal">Locale</th>
+                <th className="px-4 py-3 font-normal">Country</th>
                 <th className="px-4 py-3 font-normal">Source</th>
                 <th
                   className="px-4 py-3 font-normal cursor-pointer select-none hover:text-[#888892]"
@@ -540,6 +554,9 @@ export default function WaitlistAdminPage() {
                     {r.interest ? INTEREST_LABELS[r.interest] : <span className="text-[#555560]">–</span>}
                   </td>
                   <td className="px-4 py-3 text-xs font-mono text-[#888892] uppercase">{r.locale}</td>
+                  <td className="px-4 py-3 text-xs font-mono text-[#888892]">
+                    {r.country ? `${ccToFlag(r.country)} ${r.country}` : <span className="text-[#555560]">–</span>}
+                  </td>
                   <td className="px-4 py-3 text-xs font-mono text-[#888892]">{r.source ?? ""}</td>
                   <td className="px-4 py-3 text-xs font-mono text-[#888892]">{fmtDate(r.createdAt)}</td>
                   <td className="px-4 py-3 text-xs font-mono text-[#888892]">{fmtDate(r.confirmedAt)}</td>
@@ -547,7 +564,7 @@ export default function WaitlistAdminPage() {
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-xs font-mono text-[#555560]">
+                  <td colSpan={8} className="px-4 py-10 text-center text-xs font-mono text-[#555560]">
                     No entries match the current filters.
                   </td>
                 </tr>

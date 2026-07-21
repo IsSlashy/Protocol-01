@@ -3,7 +3,7 @@ import { getStore, collectAllRecords } from '@/lib/waitlist/store';
 
 export const dynamic = 'force-dynamic';
 
-const HEADER = 'email,status,interest,locale,source,createdAt,confirmedAt';
+const HEADER = 'email,status,interest,locale,source,country,createdAt,confirmedAt';
 
 /** Quote a field only when it contains a comma, quote, or newline. */
 function csvField(value: string | undefined): string {
@@ -31,6 +31,7 @@ export async function GET(req: Request) {
       interest: r.interest ?? null,
       locale: r.locale,
       source: r.source ?? null,
+      country: r.country ?? null,
       createdAt: r.createdAt,
       confirmedAt: r.confirmedAt ?? null,
     }));
@@ -41,7 +42,7 @@ export async function GET(req: Request) {
   }
 
   const rows = records.map((r) =>
-    [r.email, r.status, r.interest, r.locale, r.source, r.createdAt, r.confirmedAt]
+    [r.email, r.status, r.interest, r.locale, r.source, r.country, r.createdAt, r.confirmedAt]
       .map(csvField)
       .join(','),
   );
