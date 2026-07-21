@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Github, MessageCircle } from "lucide-react";
+import { Github, MessageCircle, ScanEye } from "lucide-react";
 import { useT } from "@/i18n";
 
 // Hides the progressive-glitch easter egg that routes to /void. Flip back to
@@ -250,6 +250,15 @@ export default function Footer() {
             <a href="/privacy" className="hover:text-p01-cyan transition-colors">{t('footer.privacy')}</a>
             <a href="/terms" className="hover:text-p01-cyan transition-colors">{t('footer.terms')}</a>
             <a href="/licenses" className="hover:text-p01-cyan transition-colors">{t('footer.licenses')}</a>
+            {/* Discreet founder entry to the waitlist dashboard (token-gated page) */}
+            <a
+              href="/admin/waitlist"
+              aria-label="Waitlist admin"
+              title="Waitlist admin"
+              className="text-p01-text-dim/40 hover:text-p01-cyan transition-colors"
+            >
+              <ScanEye size={13} aria-hidden />
+            </a>
           </div>
         </div>
         <p className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-5 text-[10px] text-p01-text-dim/70 font-mono">
