@@ -83,9 +83,22 @@ function authHeaders(secret: string): HeadersInit {
   return { Authorization: `Bearer ${secret}`, "x-admin-password": secret };
 }
 
-/** "FR" -> the 🇫🇷 regional-indicator pair (renders as plain letters on Windows). */
-function ccToFlag(cc: string): string {
-  return String.fromCodePoint(...[...cc].map((ch) => 0x1f1e6 + ch.charCodeAt(0) - 65));
+/**
+ * Flag image for an ISO alpha-2 code. Emoji flags do not render on Windows,
+ * so this uses flagcdn's tiny PNGs (admin-only page, external fetch is fine).
+ */
+function Flag({ cc }: { cc: string }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={`https://flagcdn.com/w20/${cc.toLowerCase()}.png`}
+      alt={cc}
+      title={cc}
+      width={20}
+      height={14}
+      className="inline-block border border-[#2a2a30] align-[-2px]"
+    />
+  );
 }
 
 function fmtDate(iso: string | null): string {
@@ -555,7 +568,7 @@ export default function WaitlistAdminPage() {
                   </td>
                   <td className="px-4 py-3 text-xs font-mono text-[#888892] uppercase">{r.locale}</td>
                   <td className="px-4 py-3 text-xs font-mono text-[#888892]">
-                    {r.country ? `${ccToFlag(r.country)} ${r.country}` : <span className="text-[#555560]">–</span>}
+                    {r.country ? <Flag cc={r.country} /> : <span className="text-[#555560]">–</span>}
                   </td>
                   <td className="px-4 py-3 text-xs font-mono text-[#888892]">{r.source ?? ""}</td>
                   <td className="px-4 py-3 text-xs font-mono text-[#888892]">{fmtDate(r.createdAt)}</td>
