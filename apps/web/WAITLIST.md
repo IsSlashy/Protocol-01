@@ -36,9 +36,22 @@ a dump of KV cannot be replayed into working confirm or unsubscribe links.
 | `ADMIN_PASSWORD` | alt | Existing admin secret; accepted via `x-admin-password` on `/stats` and `/export`. |
 | `CRON_SECRET` | prod | Auth for the daily `/remind` cron. Vercel sends it automatically as a bearer token when set. |
 | `WAITLIST_REMINDER_DELAY_HOURS` | no | Hours a signup must stay pending before the single reminder goes out. Defaults to 24. |
+| `REPORT_EMAIL_TO` | prod | Operator address for the recurring digest. Without it `/report` returns 503; never hardcoded, the repo is public. |
+| `WAITLIST_REPORT_INTERVAL_DAYS` | no | Days between digests. Defaults to 14. |
 
 Stats and export need at least one of `WAITLIST_STATS_TOKEN` or `ADMIN_PASSWORD`
 set server-side, otherwise they return 503.
+
+## Recurring digest
+
+`GET /api/waitlist/report` emails a digest to `REPORT_EMAIL_TO`: signups and
+confirmations for the period, delta against the previous period, a daily bar
+chart, and the interest / country / source breakdowns. Vercel Cron hits it
+daily at 07:00 UTC but the route gates itself on a `wl:report:lastSentAt`
+anchor, so a digest actually goes out every `WAITLIST_REPORT_INTERVAL_DAYS`
+(default 14). A failed send does not move the anchor, so the next daily run
+retries. `?dryRun=1` renders the email in the browser without sending;
+`?force=1` sends immediately and resets the clock.
 
 ## Country attribution
 

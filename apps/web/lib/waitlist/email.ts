@@ -295,6 +295,39 @@ export function sendConfirmationEmail(params: {
   return sendWaitlistEmail(COPY[params.locale], params);
 }
 
+/**
+ * Send an already-rendered internal email (the recurring waitlist digest).
+ * Not localized and never sent to a subscriber, so it carries no unsubscribe
+ * link: the only recipient is the operator address in REPORT_EMAIL_TO.
+ */
+export async function sendReportEmail(params: {
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+}): Promise<boolean> {
+  const client = getResend();
+  if (!client) return false;
+
+  try {
+    const { error } = await client.emails.send({
+      from: emailFrom(),
+      to: params.to,
+      subject: params.subject,
+      html: params.html,
+      text: params.text,
+    });
+    if (error) {
+      console.error('[waitlist] Resend returned an error on the digest:', error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('[waitlist] Failed to send the digest:', err);
+    return false;
+  }
+}
+
 /** Send the one-and-only 24h reminder for a still-pending signup. */
 export function sendReminderEmail(params: {
   email: string;
