@@ -17,7 +17,7 @@
 //!
 //! Balance range check: NOT done in the AIR — the on-chain program verifies
 //! balance >= threshold directly (it knows the claimed balance from the
-//! confidential account state). The ZK proof only proves commitment validity.
+//! confidential account state). The proof only proves commitment validity.
 
 use winterfell::{
     Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,

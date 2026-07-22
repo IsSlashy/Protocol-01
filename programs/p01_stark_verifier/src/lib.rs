@@ -225,7 +225,7 @@ pub mod p01_stark_verifier {
     /// exceeds Solana's 1.4M CU per-instruction cap for width=6 trace=512
     /// and width=10 circuits.
     ///
-    /// DEEP-ALI binds the full AIR's transition constraints (10-23 depending
+    /// DEEP-ALI binds the full AIR's transition constraints (3-28 depending
     /// on circuit) to the opened OOD trace via Schwartz–Zippel over a random
     /// z, closing the soundness gap left by trace-aligned-only per-query
     /// checks (only ~24% of blowup-16 query positions land on trace-aligned

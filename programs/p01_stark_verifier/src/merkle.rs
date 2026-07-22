@@ -51,7 +51,7 @@ fn hash_pair(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     hashv(&[left, right]).to_bytes()
 }
 
-/// Compute Blake3 Merkle root from an array of field element rows.
+/// Compute the SHA-256 Merkle root from an array of field element rows.
 /// Each leaf is the hash of a row of field elements.
 pub fn compute_root(leaves: &[Vec<Felt>]) -> [u8; 32] {
     let leaf_hashes: Vec<[u8; 32]> = leaves

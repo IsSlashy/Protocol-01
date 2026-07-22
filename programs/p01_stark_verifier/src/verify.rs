@@ -775,8 +775,9 @@ fn verify_fri_generic(
     config: &CircuitConfig,
     pub_bytes: &[u8],
 ) -> Result<(), VerifyError> {
-    // [P2.2] FRI_FINAL_POLY_SIZE is per-circuit (see CircuitConfig). Circuits 0-5
-    // use 16; circuit 6 uses 64 to fit the wider trace's verify cost under 1.4M CU.
+    // [P2.2] FRI_FINAL_POLY_SIZE is 16 for ALL circuits (see CircuitConfig). An
+    // earlier experiment raising it (64/256) was reverted: the extra on-chain
+    // Horner evaluation cost outweighed the fewer FRI layers.
     let num_folds = (config.lde_size / config.fri_final_poly_size).trailing_zeros() as usize;
     let num_fri_layers = num_folds - 1;
     if proof.num_fri_layers() != num_fri_layers {

@@ -144,12 +144,12 @@ pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
 /// old_carry 8, new_carry 9), 512 rows (max depth 16 ≤ 16 * 32 = 512).
 ///
 /// The 10-col trace inflates per-query merkle + constraint-eval CU relative
-/// to every other circuit (3–6 cols). Two knobs were tuned to fit the 1.4M
+/// to every other circuit (3–7 cols). The query count was cut to fit the 1.4M
 /// BPF CU cap:
 ///
-/// - `fri_final_poly_size = 256`: 4 committed FRI layers instead of 8 —
-///   saves ~150k CU in FRI merkle hashing, costs ~104k CU in extra Horner
-///   (256-coeff final poly). Net ~46k CU saved.
+/// - `fri_final_poly_size = 16` (same as every circuit): an earlier experiment
+///   raising it to 256 (fewer FRI layers) was reverted — the extra Horner cost
+///   on the 256-coeff final poly outweighed the saved merkle hashing.
 /// - `num_queries = 22` (vs 27 for circuits 0-5): 18.5% fewer per-query
 ///   merkle paths, constraint evaluations, and Horner calls. Saves ~200k CU.
 ///   Soundness drops from 27×4+16 = 124 bits to 22×4+16 = 104 bits, still

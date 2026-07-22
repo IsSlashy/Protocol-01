@@ -1,6 +1,9 @@
 //! Protocol 01 STARK Proof System
 //!
-//! Quantum-resistant zero-knowledge proofs using Winterfell STARKs.
+//! Quantum-resistant STARK proofs of knowledge using Winterfell (transparent,
+//! no trusted setup). NOTE: the current construction is a proof of computational
+//! integrity, NOT zero-knowledge — the witness is not blinded, so it must not be
+//! described as "zero-knowledge" externally (see audit-zk-pq-gaps-2026-07-22).
 //! No trusted setup required — security based on hash functions (collision-resistant),
 //! not elliptic curve pairings (vulnerable to Shor's algorithm).
 //!
