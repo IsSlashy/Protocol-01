@@ -65,6 +65,16 @@ const TARGETS = {
     docsPdf: resolve(DOCS, 'project-tree.pdf'),
     webPdf: null,
   },
+  strk20: {
+    html: resolve(DOCS, 'strk20-vs-protocol01-technique-2026-07-22.html'),
+    docsPdf: resolve(DOCS, 'strk20-vs-protocol01-technique-2026-07-22.pdf'),
+    webPdf: null,
+  },
+  'strk20-en': {
+    html: resolve(DOCS, 'strk20-protocol01-technical-analysis-2026-07-22.html'),
+    docsPdf: resolve(DOCS, 'strk20-protocol01-technical-analysis-2026-07-22.pdf'),
+    webPdf: null,
+  },
 };
 
 const arg = process.argv[2];

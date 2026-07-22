@@ -255,6 +255,10 @@ docs/migration-plan.md
 docs/on-chain-migration.md
 docs/stark-migration-assessment.md
 docs/assets/screenshots/SCREENSHOTS_A_PRENDRE.md
+# STRK20 comparison — FR version carries internal pitch coaching; keep local (repo is public)
+docs/strk20-vs-protocol01-technique-2026-07-22.md
+docs/strk20-vs-protocol01-technique-2026-07-22.html
+docs/strk20-vs-protocol01-technique-2026-07-22.pdf
 
 # Demo service retailer keypairs — regenerated per env, never commit
 scripts/seed-services/keypairs/
