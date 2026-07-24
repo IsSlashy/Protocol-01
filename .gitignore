@@ -258,3 +258,7 @@ docs/assets/screenshots/SCREENSHOTS_A_PRENDRE.md
 
 # Demo service retailer keypairs — regenerated per env, never commit
 scripts/seed-services/keypairs/
+
+# session/browser artifacts
+.playwright-mcp/
+.snfoundry_cache/

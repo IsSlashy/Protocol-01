@@ -7,6 +7,7 @@ export {
   deriveStealthSeed,
   computeViewTag,
   kemGenerateKeypair,
+  deriveKemSeed,
   kemEncapsulate,
   kemDecapsulate,
   deriveHybridSharedSecret,
