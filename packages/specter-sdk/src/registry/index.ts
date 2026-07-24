@@ -172,12 +172,13 @@ function parseRegistryEntry(
     const name = data.subarray(offset, offset + nameLen).toString('utf8');
     offset += MAX_NAME_LEN;
 
-    // created_at: i64
-    const createdAt = Number(data.readBigInt64LE(offset));
+    // created_at / updated_at: i64 — DataView, not Buffer.readBigInt64LE
+    // (absent from browser/Hermes Buffer polyfills; throws at runtime).
+    const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const createdAt = Number(dv.getBigInt64(offset, true));
     offset += 8;
 
-    // updated_at: i64
-    const updatedAt = Number(data.readBigInt64LE(offset));
+    const updatedAt = Number(dv.getBigInt64(offset, true));
     offset += 8;
 
     // Encode the meta-address string

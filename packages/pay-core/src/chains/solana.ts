@@ -45,20 +45,36 @@ import { configureWorkerCore, handleWorkerRequest } from '../worker/workerCore';
 // Injectable transport + signer wiring (set by the per-app worker entry / UI)
 // ---------------------------------------------------------------------------
 
-/** Default in-process client — routes straight to the worker core. Replaced by
- *  a postMessage bridge when the app calls `setSolanaWorkerClient`. */
-const inProcessClient: SolanaWorkerClient = {
-  request<R extends WorkerRequest>(req: R): Promise<ResponseFor<R>> {
-    return handleWorkerRequest(req);
-  },
-};
-
-let client: SolanaWorkerClient = inProcessClient;
+/** The injected postMessage bridge to the Worker. There is deliberately NO
+ *  in-process fallback: a silent fallback would run all secret crypto on the
+ *  main thread whenever injection is missed (e.g. after an HMR module swap),
+ *  and its workerCore would be unconfigured anyway. Tests that want the
+ *  in-process core call `handleWorkerRequest` directly. */
+let client: SolanaWorkerClient | null = null;
 let signer: SolanaSignerRuntime | null = null;
+
+function requireClient(): SolanaWorkerClient {
+  if (!client) {
+    throw new Error(
+      'The stealth worker is not initialized. Reload the page (the app must call ' +
+        'setSolanaWorkerClient from its worker bootstrap before using the Solana adapter).',
+    );
+  }
+  return client;
+}
 
 /** Inject the real (postMessage) worker client so secrets stay off the main thread. */
 export function setSolanaWorkerClient(next: SolanaWorkerClient): void {
   client = next;
+}
+
+/** Test-only: route requests to an in-process worker core. */
+export function useInProcessSolanaClientForTests(): void {
+  client = {
+    request<R extends WorkerRequest>(req: R): Promise<ResponseFor<R>> {
+      return handleWorkerRequest(req);
+    },
+  };
 }
 
 /** Configure the connected wallet runtime used to sign+submit sends/registration. */
@@ -99,7 +115,7 @@ export const solanaAdapter: ChainStealthAdapter = {
     if (!signer) {
       throw new Error('Connect a wallet before deriving keys.');
     }
-    const res = await client.request({
+    const res = await requireClient().request({
       kind: 'deriveMeta',
       signature,
       ownerWallet: signer.senderPubkey,
@@ -108,7 +124,7 @@ export const solanaAdapter: ChainStealthAdapter = {
   },
 
   async resolveRecipient(input: string): Promise<ResolvedRecipient> {
-    const res = await client.request({ kind: 'resolveRecipient', input });
+    const res = await requireClient().request({ kind: 'resolveRecipient', input });
     return res.recipient;
   },
 
@@ -141,7 +157,7 @@ export const solanaAdapter: ChainStealthAdapter = {
     const base = 10 ** params.asset.decimals;
     const amountLamports = BigInt(Math.round(params.amount * base)).toString();
 
-    const built = await client.request({
+    const built = await requireClient().request({
       kind: 'buildSend',
       senderPubkey: wallet.senderPubkey,
       recipientMeta: params.recipient.meta,
@@ -157,12 +173,12 @@ export const solanaAdapter: ChainStealthAdapter = {
   },
 
   async scan(identity: DerivedIdentity): Promise<StealthPayment[]> {
-    const res = await client.request({ kind: 'scan', meta: identity.meta });
+    const res = await requireClient().request({ kind: 'scan', meta: identity.meta });
     return res.payments;
   },
 
   async claim(payment: StealthPayment, identity: DerivedIdentity, destination: string): Promise<TxRef> {
-    const res = await client.request({
+    const res = await requireClient().request({
       kind: 'claim',
       meta: identity.meta,
       paymentId: payment.id,
@@ -184,5 +200,5 @@ export const solanaAdapter: ChainStealthAdapter = {
 
 /** Forget every secret session held by the worker (call on wallet disconnect/switch). */
 export async function clearStealthSessions(): Promise<void> {
-  await client.request({ kind: 'clearSessions' });
+  await requireClient().request({ kind: 'clearSessions' });
 }

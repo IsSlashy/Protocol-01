@@ -35,7 +35,7 @@ export default function ChainCoinSelector({
       </button>
 
       {open && (
-        <div className="glass absolute z-20 mt-2 w-full overflow-hidden shadow-2xl">
+        <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-xl border border-p01-border bg-p01-surface shadow-2xl">
           {assets.map((a) => {
             const disabled = a.status === "coming-soon";
             return (

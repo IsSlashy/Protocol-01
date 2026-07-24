@@ -386,7 +386,17 @@ async function handleScan(req: ScanRequest): Promise<ScanResponse> {
   );
   // Default limit is 100 announcements program-wide — raise it so payments
   // don't silently fall off the end as the program grows.
-  const found = await scanner.scan({ includeClaimed: false, limit: 5000 });
+  let found;
+  try {
+    found = await scanner.scan({ includeClaimed: false, limit: 5000 });
+  } catch (err) {
+    // The SDK wraps the underlying failure in a generic SpecterError — surface
+    // the real cause for diagnosis (public message stays generic), then retry
+    // once: public devnet RPC rate limits burst traffic from browsers.
+    console.warn('[stealth-worker] scan failed, retrying once:', err, (err as { cause?: unknown }).cause);
+    await new Promise((r) => setTimeout(r, 1500));
+    found = await scanner.scan({ includeClaimed: false, limit: 5000 });
+  }
 
   session.scanCache.clear();
   const payments: StealthPayment[] = await Promise.all(

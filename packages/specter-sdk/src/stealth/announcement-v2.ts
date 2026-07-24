@@ -150,21 +150,24 @@ export interface DecodedStealthV2 {
   kemCiphertext: Uint8Array;
 }
 
-/** Decode a `StealthAccountV2` account buffer (discriminator already present). */
+/** Decode a `StealthAccountV2` account buffer (discriminator already present).
+ *  DataView for the 64-bit fields: browser/Hermes Buffer polyfills lack
+ *  readBig[U]Int64LE and throw at runtime (see service-registry/account.ts). */
 export function decodeStealthV2(data: Uint8Array): DecodedStealthV2 {
-  const buf = Buffer.from(data);
+  const buf = Uint8Array.from(data);
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   let o = 8; // discriminator
-  const version = buf.readUInt8(o); o += 1;
-  const ephemeralPubKey = Uint8Array.from(buf.subarray(o, o + 32)); o += 32;
+  const version = dv.getUint8(o); o += 1;
+  const ephemeralPubKey = buf.subarray(o, o + 32).slice(); o += 32;
   const stealthAddress = new PublicKey(buf.subarray(o, o + 32)); o += 32;
-  const viewTag = buf.readUInt8(o); o += 1;
-  const amount = buf.readBigUInt64LE(o); o += 8;
+  const viewTag = dv.getUint8(o); o += 1;
+  const amount = dv.getBigUint64(o, true); o += 8;
   const tokenMint = new PublicKey(buf.subarray(o, o + 32)); o += 32;
-  const slot = buf.readBigUInt64LE(o); o += 8;
-  const claimed = buf.readUInt8(o) === 1; o += 1;
-  const createdAt = buf.readBigInt64LE(o); o += 8;
-  const bump = buf.readUInt8(o); o += 1;
-  const kemCiphertext = Uint8Array.from(buf.subarray(o, o + MLKEM768_CIPHERTEXT_LEN));
+  const slot = dv.getBigUint64(o, true); o += 8;
+  const claimed = dv.getUint8(o) === 1; o += 1;
+  const createdAt = dv.getBigInt64(o, true); o += 8;
+  const bump = dv.getUint8(o); o += 1;
+  const kemCiphertext = buf.subarray(o, o + MLKEM768_CIPHERTEXT_LEN).slice();
   return { version, ephemeralPubKey, stealthAddress, viewTag, amount, tokenMint, slot, claimed, createdAt, bump, kemCiphertext };
 }
 

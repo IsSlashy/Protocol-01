@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import QRCode from "react-qr-code";
-import { Check, Copy, Download, Loader2, RefreshCw, Radio } from "lucide-react";
+import { Check, Copy, Download, Loader2, RefreshCw } from "lucide-react";
 import type {
   ChainStealthAdapter,
   DerivedIdentity,
@@ -70,12 +70,6 @@ export default function ReceivePanel({
       <div className="card p-4">
         <div className="flex items-center justify-between">
           <p className="font-display text-sm text-p01-text">Your private address</p>
-          <span
-            className="inline-flex items-center gap-1.5 rounded-md border border-p01-border px-2.5 py-1 text-[11px] uppercase tracking-wider text-p01-text-dim"
-            title="The 1184-byte post-quantum key does not fit in a single Solana transaction; a chunked on-chain directory is on the roadmap."
-          >
-            <Radio className="h-3 w-3" /> Directory soon
-          </span>
         </div>
         <p className="mt-1 text-xs text-p01-text-muted">
           Share this meta-address (or the QR) with anyone who wants to pay you privately.
