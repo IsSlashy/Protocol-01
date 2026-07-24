@@ -1,0 +1,41 @@
+{
+  "name": "@protocol-01/pay-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts",
+    "./assets": "./src/assets.ts",
+    "./chains/solana": "./src/chains/solana.ts",
+    "./chains/starknet": "./src/chains/starknet.ts",
+    "./worker/workerCore": "./src/worker/workerCore.ts",
+    "./worker/messages": "./src/worker/messages.ts"
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@protocol-01/specter-sdk": "workspace:*",
+    "@protocol-01/privacy-sdk": "workspace:*",
+    "@noble/hashes": "^2.2.0",
+    "@noble/post-quantum": "^0.6.1",
+    "tweetnacl": "^1.0.3",
+    "@solana/web3.js": "^1.98.4",
+    "@solana/spl-token": "^0.4.14",
+    "starknet": "^10.0.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
+  }
+}
