@@ -61,6 +61,7 @@ import {
   markPendingRelayErrored,
   removePendingRelay,
 } from './relayEphemeralRecovery';
+import { deriveNoteBlinding } from './noteBlinding';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
@@ -203,7 +204,18 @@ export async function prepareShield(
   onProgress?.('Reading the pool tree...');
   const counter = await readTreeLeafCount(connection, poolConfig);
 
-  const prepared = await prepareShieldInsert(poolConfig, connection, walletSeed, counter, onProgress);
+  // Occupy the commitment's deposit_epoch slot with a secret blinding instead of
+  // the real epoch, so the published nullifier no longer reveals the commitment.
+  // Derived from the seed, so recovery still needs no stored state.
+  const blinding = deriveNoteBlinding(walletSeed, poolConfig.poolPDA, counter);
+  const prepared = await prepareShieldInsert(
+    poolConfig,
+    connection,
+    walletSeed,
+    counter,
+    onProgress,
+    blinding,
+  );
 
   // prepareShieldInsert re-reads the tree; if another shield landed in between,
   // our note secrets would be keyed to a leaf index this insert no longer

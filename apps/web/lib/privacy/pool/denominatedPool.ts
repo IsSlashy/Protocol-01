@@ -869,6 +869,13 @@ export async function prepareShieldInsert(
   walletSeed: Uint8Array,
   counter: number,
   onProgress?: (step: string) => void,
+  /**
+   * Value to occupy the commitment's `deposit_epoch` slot. Defaults to the real
+   * epoch (legacy behaviour). Callers pass a secret blinding instead so the
+   * commitment cannot be recomputed from the published nullifier — nothing
+   * on-chain reads this value, see noteBlinding.ts.
+   */
+  depositEpochOverride?: bigint,
 ): Promise<{
   c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number; circuitId: number };
   insertParams: {
@@ -898,9 +905,10 @@ export async function prepareShieldInsert(
   onProgress?.('Deriving note material...');
   const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolConfig.poolPDA, counter);
 
-  // 3. Get current epoch for depositEpoch.
-  const slot = await connection.getSlot('confirmed');
-  const depositEpoch = slotToEpoch(slot);
+  // 3. deposit_epoch slot of the commitment: a caller-supplied secret blinding
+  // when given, otherwise the real epoch (legacy notes).
+  const depositEpoch =
+    depositEpochOverride ?? slotToEpoch(await connection.getSlot('confirmed'));
 
   // 4. Compute Goldilocks commitment.
   const tokenMintField = pubkeyToField(poolConfig.tokenMint);

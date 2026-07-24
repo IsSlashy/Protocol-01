@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { deriveNoteBlinding } from './noteBlinding';
 import { PublicKey, Keypair, SystemProgram } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
@@ -498,5 +499,70 @@ describe('importNote integrity', () => {
   it('rejects a note from an unknown pool', () => {
     const fakePool = Keypair.generate().publicKey.toBase58();
     expect(() => importNote(makeNote({ pool: fakePool }))).toThrow(/unknown pool/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Note blinding — the secret that stops a published nullifier from revealing
+// which deposit it spends.
+// ---------------------------------------------------------------------------
+
+describe('note blinding', () => {
+  const seedA = new Uint8Array(32).fill(7);
+  const seedB = new Uint8Array(32).fill(9);
+  const pool = SOL_POOLS_V3[0].poolPDA;
+
+  it('is deterministic in (seed, pool, leafIndex)', () => {
+    expect(deriveNoteBlinding(seedA, pool, 12)).toBe(deriveNoteBlinding(seedA, pool, 12));
+  });
+
+  it('differs across leaf index, pool and seed', () => {
+    expect(deriveNoteBlinding(seedA, pool, 12)).not.toBe(deriveNoteBlinding(seedA, pool, 13));
+    expect(deriveNoteBlinding(seedA, pool, 12)).not.toBe(deriveNoteBlinding(seedB, pool, 12));
+    expect(deriveNoteBlinding(seedA, pool, 12)).not.toBe(
+      deriveNoteBlinding(seedA, SOL_POOLS_V3[1].poolPDA, 12),
+    );
+  });
+
+  it('stays below 2^63 so the Goldilocks reduction is injective', () => {
+    for (let i = 0; i < 200; i++) {
+      const b = deriveNoteBlinding(seedA, pool, i);
+      expect(b).toBeLessThan(1n << 63n);
+      expect(b).toBeGreaterThan(0n);
+    }
+  });
+
+  // The whole point: with the real epoch, an observer who sees the published
+  // nullifier can brute-force a few thousand epochs and recover the commitment.
+  // With blinding they cannot — this asserts the search fails.
+  it('defeats the epoch-enumeration attack that the old scheme allowed', () => {
+    const { secret, nullifierPreimage } = deriveNoteMaterial(seedA, pool, 30);
+    const mint = pubkeyToField(SOL_POOLS_V3[0].tokenMint);
+
+    const legacyEpoch = 66_500n;
+    const legacy = createCommitmentV3(nullifierPreimage, secret, legacyEpoch, mint);
+    let foundLegacy = false;
+    for (let e = legacyEpoch - 3000n; e <= legacyEpoch + 3000n; e++) {
+      if (createCommitmentV3(nullifierPreimage, secret, e, mint) === legacy) {
+        foundLegacy = true;
+        break;
+      }
+    }
+    expect(foundLegacy).toBe(true); // the attack works against the old scheme
+
+    const blinded = createCommitmentV3(
+      nullifierPreimage,
+      secret,
+      deriveNoteBlinding(seedA, pool, 30),
+      mint,
+    );
+    let foundBlinded = false;
+    for (let e = 0n; e <= 20000n; e++) {
+      if (createCommitmentV3(nullifierPreimage, secret, e, mint) === blinded) {
+        foundBlinded = true;
+        break;
+      }
+    }
+    expect(foundBlinded).toBe(false); // and fails against the new one
   });
 });

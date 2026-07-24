@@ -18,16 +18,20 @@
  * HOW RECOVERY WORKS WITHOUT STORED STATE
  * ───────────────────────────────────────
  * The commitment is
- *   `poseidon(poseidon(np, secret), poseidon(depositEpoch, tokenMint))`
- * — everything but `depositEpoch` is derivable from the seed. `depositEpoch` is
- * `slot / 7200` at shield time, so we simply enumerate candidate epochs and test
- * each resulting commitment against the pool's on-chain leaf set. A match
- * recovers both the epoch and the leaf index, which is exactly what an unshield
- * needs. No note storage is required for this to work.
+ *   `poseidon(poseidon(np, secret), poseidon(blinding, tokenMint))`
+ * and every input is derivable from the wallet seed (see noteBlinding.ts), so a
+ * note is identified by recomputing its commitment and looking for it among the
+ * pool's on-chain leaves. One hash per candidate leaf, no stored state.
+ *
+ * Legacy notes put the real deposit epoch where the blinding now goes, so they
+ * fall back to enumerating candidate epochs. That fallback is exactly the attack
+ * blinding closes — it only works here because the owner knows the nullifier
+ * before it is ever published.
  */
 
 import type { Connection } from '@solana/web3.js';
 
+import { deriveNoteBlinding } from './noteBlinding';
 import {
   createCommitmentV3,
   deriveNoteMaterial,
@@ -99,14 +103,28 @@ export async function recoverNotes(
   for (const counter of candidates) {
     const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolConfig.poolPDA, counter);
 
-    // Walk epochs newest-first: a wallet's most recent note is the common case.
     let hit: { epoch: bigint; commitment: bigint; leafIndex: number } | null = null;
-    for (let epoch = currentEpoch; epoch >= lowestEpoch; epoch--) {
-      const commitment = createCommitmentV3(nullifierPreimage, secret, epoch, tokenMintField);
-      const onChain = commitments.get(commitment.toString());
-      if (onChain && onChain.leafIndex === counter) {
-        hit = { epoch, commitment, leafIndex: onChain.leafIndex };
-        break;
+
+    // Current scheme: the commitment's third input is a seed-derived blinding, so
+    // the note is identified with ONE hash and no search at all.
+    const blinding = deriveNoteBlinding(walletSeed, poolConfig.poolPDA, counter);
+    const blinded = createCommitmentV3(nullifierPreimage, secret, blinding, tokenMintField);
+    const blindedOnChain = commitments.get(blinded.toString());
+    if (blindedOnChain && blindedOnChain.leafIndex === counter) {
+      hit = { epoch: blinding, commitment: blinded, leafIndex: blindedOnChain.leafIndex };
+    }
+
+    // Legacy notes (shielded before blinding landed) put the real deposit epoch
+    // there, so they still need the search. Kept so notes already on-chain stay
+    // spendable — there is an unspent one at leaf 30 of the 0.1 SOL pool.
+    if (!hit) {
+      for (let epoch = currentEpoch; epoch >= lowestEpoch; epoch--) {
+        const commitment = createCommitmentV3(nullifierPreimage, secret, epoch, tokenMintField);
+        const onChain = commitments.get(commitment.toString());
+        if (onChain && onChain.leafIndex === counter) {
+          hit = { epoch, commitment, leafIndex: onChain.leafIndex };
+          break;
+        }
       }
     }
     if (!hit) continue;

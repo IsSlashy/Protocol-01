@@ -204,6 +204,11 @@ export async function executeUnshield(
       eSigner,
       connection,
       onProgress,
+      // min_epoch = 0. The handler ignores this field entirely
+      // (unshield_denominated_stark_v3.rs:387), and passing receipt.depositEpoch
+      // would publish the note's secret blinding in the clear — defeating the
+      // whole point of blinding the commitment.
+      true,
     );
     return { txSig };
   } finally {
