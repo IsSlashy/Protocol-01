@@ -18,22 +18,30 @@ import {
   setStarknetSignerRuntime,
   STARKNET_TOKENS,
 } from './starknet';
-import { STRK_STARKNET } from '../assets';
+import { ETH_STARKNET, STRK_STARKNET } from '../assets';
 
+// Defaults target the local starknet-devnet (seed 42). Every knob overrides
+// via env so the same test proves the flow on Sepolia:
+//   DEVNET_URL, PQ_ANNOUNCER_ADDRESS, ACCOUNT_CLASS_HASH,
+//   SENDER_ADDRESS, SENDER_PK, DEST_ADDRESS, SKIP_ETH_LEG=1
 const NODE_URL = process.env.DEVNET_URL ?? 'http://127.0.0.1:5050/rpc';
 const ANNOUNCER = process.env.PQ_ANNOUNCER_ADDRESS ??
   '0x04caeeea34729eae3f6ad58cafd21fad5f65d6e33d1375a62a187a95c00f3534';
-/** Devnet (seed 42) predeployed account class — used for stealth accounts too. */
-const DEVNET_ACCOUNT_CLASS =
+/** OZ account class (predeployed on devnet seed 42, declared on Sepolia). */
+const DEVNET_ACCOUNT_CLASS = process.env.ACCOUNT_CLASS_HASH ??
   '0x05b4b537eaa2399e3aa99c4e2e0208ebd6c71bc1467938cd52c798c601e43564';
 
 const SENDER = {
-  address: '0x034ba56f92265f0868c57d3fe72ecab144fc96f97954bbbc4252cef8e8a979ba',
-  privateKey: '0x00000000000000000000000000000000b137668388dbe9acdfa3bc734cc2c469',
+  address: process.env.SENDER_ADDRESS ??
+    '0x034ba56f92265f0868c57d3fe72ecab144fc96f97954bbbc4252cef8e8a979ba',
+  privateKey: process.env.SENDER_PK ??
+    '0x00000000000000000000000000000000b137668388dbe9acdfa3bc734cc2c469',
 };
-const DEST = '0x02939f2dc3f80cc7d620e8a86f2e69c1e187b7ff44b74056647368b5c49dc370';
+const DEST = process.env.DEST_ADDRESS ??
+  '0x02939f2dc3f80cc7d620e8a86f2e69c1e187b7ff44b74056647368b5c49dc370';
 
 const gate = process.env.PQ_E2E === '1' ? describe : describe.skip;
+const ethGate = process.env.SKIP_ETH_LEG === '1' ? it.skip : it;
 
 gate('Starknet PQ stealth — full flow on local devnet', () => {
   it('send → announce → scan → decapsulate → deploy → sweep', async () => {
@@ -96,5 +104,60 @@ gate('Starknet PQ stealth — full flow on local devnet', () => {
 
     // Destination received at least 5 STRK (cushion minus fees may add more).
     expect(afterBal - beforeBal).toBeGreaterThanOrEqual(5n * 10n ** 18n);
+  }, 180_000);
+
+  ethGate('ETH leg: send → announce → scan → deploy → sweep (two-transfer branch)', async () => {
+    const provider = new RpcProvider({ nodeUrl: NODE_URL });
+    const sender = new Account({
+      provider,
+      address: SENDER.address,
+      signer: SENDER.privateKey,
+    });
+
+    configureStarknet({
+      nodeUrl: NODE_URL,
+      announcerAddress: ANNOUNCER,
+      accountClassHash: DEVNET_ACCOUNT_CLASS,
+      claimCushionWei: 10n ** 18n, // 1 STRK for the claim fees
+    });
+    setStarknetSignerRuntime({ account: sender, address: SENDER.address });
+
+    const fakeSig = crypto.getRandomValues(new Uint8Array(64));
+    const identity = await starknetAdapter.deriveMeta(fakeSig);
+
+    // SEND: 0.01 ETH — exercises the non-STRK branch (asset transfer + a
+    // separate STRK cushion transfer in the same multicall).
+    const sendRef = await starknetAdapter.send({
+      recipient: { meta: identity.meta, version: 2, label: 'eth e2e recipient' },
+      asset: ETH_STARKNET,
+      amount: 0.01,
+    });
+    await provider.waitForTransaction(sendRef.signature);
+
+    const payments = await starknetAdapter.scan(identity);
+    const ethPayment = payments.find((p) => p.assetSymbol === 'ETH');
+    expect(ethPayment).toBeDefined();
+    expect(ethPayment!.amount).toBeCloseTo(0.01, 6);
+
+    const before = await provider.callContract({
+      contractAddress: STARKNET_TOKENS.ETH!,
+      entrypoint: 'balanceOf',
+      calldata: [DEST],
+    });
+    const beforeBal = BigInt(before[0]!) + (BigInt(before[1]!) << 128n);
+
+    // CLAIM: deploy the counterfactual account (fees from the STRK cushion),
+    // sweep the WHOLE ETH balance to the destination.
+    const claimRef = await starknetAdapter.claim(ethPayment!, identity, DEST);
+    await provider.waitForTransaction(claimRef.signature);
+
+    const after = await provider.callContract({
+      contractAddress: STARKNET_TOKENS.ETH!,
+      entrypoint: 'balanceOf',
+      calldata: [DEST],
+    });
+    const afterBal = BigInt(after[0]!) + (BigInt(after[1]!) << 128n);
+
+    expect(afterBal - beforeBal).toBe(10n ** 16n); // exactly 0.01 ETH
   }, 180_000);
 });
