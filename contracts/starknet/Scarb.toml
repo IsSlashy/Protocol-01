@@ -1,0 +1,25 @@
+# Protocol-01 Starknet shielded pool — Phase 0 skeleton.
+# Versions are placeholders; pin them in task #11 (toolchain setup) once
+# scarb + starknet-foundry are installed and a Cairo version is chosen.
+[package]
+name = "protocol01_starknet"
+version = "0.1.0"
+edition = "2024_07"
+
+[dependencies]
+starknet = ">=2.9.0"
+# openzeppelin_token = "..."   # ERC-20 dispatcher for ETH/STRK (add in P3)
+
+[dev-dependencies]
+snforge_std = ">=0.34.0"
+assert_macros = ">=2.9.0"
+
+[[target.starknet-contract]]
+sierra = true
+casm = true
+
+[scripts]
+test = "snforge test"
+
+[tool.fmt]
+sort-module-level-items = true
