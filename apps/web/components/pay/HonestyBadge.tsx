@@ -39,11 +39,8 @@ export default function HonestyBadge({ chain }: { chain: ChainId }) {
       <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-p01-cyan" />
       <p className="text-p01-text-muted">
         <span className="text-p01-cyan">Recipient hidden</span> by a one-time post-quantum
-        stealth address.{" "}
-        <span className="inline-flex items-center gap-1 text-p01-yellow">
-          <Eye className="h-3.5 w-3.5" /> Sender visible in v1.
-        </span>{" "}
-        The funding transaction links your wallet on-chain. Sender unlinkability is coming.
+        stealth address. Your funding transfer stays public{" "}
+        <span className="text-p01-yellow">(sender unlinkability is on the roadmap)</span>.
       </p>
     </div>
   );
