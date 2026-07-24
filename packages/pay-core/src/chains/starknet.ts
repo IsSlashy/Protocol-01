@@ -60,7 +60,11 @@ import {
   DEFAULT_OZ_ACCOUNT_CLASS_HASH,
   type StarknetStealthKey,
 } from './starknetStealth';
-import getStarknet from 'get-starknet-core';
+// get-starknet-core is loaded lazily inside connectStarknetWallet (below).
+// Its pre-minified ESM dist declares top-level `var x` etc. that collide when
+// a bundler scope-hoists it into a shared client chunk ("Identifier 'x' has
+// already been declared"). A dynamic import keeps it in its own chunk, loaded
+// only when the user actually connects a Starknet wallet.
 import type {
   Asset,
   ChainStealthAdapter,
@@ -234,6 +238,7 @@ const PREFERRED_WALLET_IDS = ['argentX', 'braavos'];
  * message that seeds meta derivation.
  */
 export async function connectStarknetWallet(): Promise<ConnectedStarknet> {
+  const getStarknet = (await import('get-starknet-core')).default;
   const available = await getStarknet.getAvailableWallets();
   if (!available.length) {
     throw new Error('No Starknet wallet found. Install ArgentX or Braavos.');
