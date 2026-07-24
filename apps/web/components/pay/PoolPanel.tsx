@@ -106,6 +106,8 @@ export default function PoolPanel({
     setResult(null);
     setBusyNote(`${note.pool}:${note.leafIndex}`);
     try {
+      // The worker picks the blob whose commitment matches and uses its Merkle
+      // path; anything that does not decrypt or match is ignored there.
       const out = await unshieldFromPool({
         meta,
         token: "SOL",
@@ -113,6 +115,7 @@ export default function PoolPanel({
         leafIndex: note.leafIndex,
         recipient: owner,
         owner,
+        encryptedNotes: loadEncryptedNotes(owner.toBase58()),
         connection,
         signOne,
         onProgress: setStep,

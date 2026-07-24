@@ -881,6 +881,7 @@ export async function prepareShieldInsert(
     leafIndex: number;
   };
   newLeaf: bigint;
+  merklePath: { pathElements: bigint[]; pathIndices: number[]; root: bigint };
 }> {
   // 1. Read tree account.
   onProgress?.('Reading on-chain tree state...');
@@ -973,6 +974,12 @@ export async function prepareShieldInsert(
       leafIndex: leafCount,
     },
     newLeaf,
+    // The siblings that fold THIS leaf up to `newRoot` — i.e. exactly the C3
+    // merkle_path witness a later unshield needs. Surfaced (additively, no math
+    // touched) so a withdrawal can reuse it instead of rebuilding every leaf
+    // from transaction history, which an RPC may no longer serve. Valid while
+    // `newRoot` remains in the pool's 100-entry historical root ring.
+    merklePath: { pathElements, pathIndices, root: newRoot },
   };
 }
 

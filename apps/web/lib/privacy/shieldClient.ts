@@ -103,6 +103,9 @@ export interface UnshieldParams {
   recipient: PublicKey;
   /** Wallet paying the proof float; receives the swept residual. */
   owner: PublicKey;
+  /** Note blobs stored at shield time. The worker picks the one matching this
+   *  note and uses its Merkle path, skipping the history rebuild. */
+  encryptedNotes?: string[];
   connection: Connection;
   signOne: SignOne;
   onProgress?: (step: string) => void;
@@ -120,7 +123,14 @@ export async function unshieldFromPool(
     params;
 
   const prep = await poolRequest(
-    { kind: 'poolUnshieldPrepare', meta, token, denomination, leafIndex },
+    {
+      kind: 'poolUnshieldPrepare',
+      meta,
+      token,
+      denomination,
+      leafIndex,
+      encryptedNotes: params.encryptedNotes,
+    },
     onProgress,
   );
 

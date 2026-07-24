@@ -48,6 +48,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
+import { prepareUnshieldFromPath, type StoredMerklePath } from './unshieldFromPath';
 import {
   isNullifierSpent,
   prepareUnshield,
@@ -108,6 +109,7 @@ export async function prepareUnshieldJob(
   connection: Connection,
   walletSeed: Uint8Array,
   onProgress?: (step: string) => void,
+  storedPath?: StoredMerklePath,
 ): Promise<PreparedUnshield> {
   // Fail fast and free if this note is already spent — otherwise the on-chain
   // NullifierRecord init would reject after the whole upload.
@@ -122,7 +124,19 @@ export async function prepareUnshieldJob(
     throw new Error('This note has already been withdrawn.');
   }
 
-  const prepared = await prepareUnshield(receipt, poolConfig, connection, onProgress);
+  // Prefer the path captured when this note was shielded: it needs no
+  // transaction history, which an RPC may no longer serve. Returns null if its
+  // root has aged out of the pool's 100-root ring, in which case we rebuild
+  // from history as before.
+  let prepared = storedPath
+    ? await prepareUnshieldFromPath(receipt, poolConfig, connection, storedPath, onProgress)
+    : null;
+  if (storedPath && !prepared) {
+    onProgress?.('Stored Merkle root has aged out — rebuilding from history...');
+  }
+  if (!prepared) {
+    prepared = await prepareUnshield(receipt, poolConfig, connection, onProgress);
+  }
 
   onProgress?.('Pricing the withdrawal...');
   const [r1, r3] = await Promise.all([

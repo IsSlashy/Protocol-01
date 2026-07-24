@@ -33,8 +33,10 @@ import {
 } from '../pool/denominatedPool';
 import {
   createNoteEncryptionAddress,
+  decryptNote,
   encryptNote,
 } from '../pool/noteCrypto';
+import type { StoredMerklePath } from '../pool/unshieldFromPath';
 import { recoverNotes, scanPoolForSeed, type RecoveredNote } from '../pool/poolNotes';
 import { recoverStuckFloat } from '../pool/recoverFloat';
 import { createPacedFetch } from './pacedFetch';
@@ -88,6 +90,11 @@ export interface PoolUnshieldPrepareRequest {
   token: 'SOL';
   denomination: number;
   leafIndex: number;
+  /** Note blobs stored at shield time. The one whose commitment matches this
+   *  note supplies the Merkle path, letting the withdrawal skip the history
+   *  rebuild. Untrusted: each is authenticated by decryption and cross-checked
+   *  against the derived note, and anything that fails is ignored. */
+  encryptedNotes?: string[];
 }
 
 export interface PoolUnshieldExecuteRequest {
@@ -383,6 +390,11 @@ async function handlePoolShieldExecute(
         token_mint: receipt.tokenMint.toString(),
         commitment: receipt.commitment.toString(),
         leafIndex: receipt.leafIndex,
+        merklePath: {
+          pathElements: job.ctx.prepared.merklePath.pathElements.map((e) => e.toString()),
+          pathIndices: job.ctx.prepared.merklePath.pathIndices,
+          root: job.ctx.prepared.merklePath.root.toString(),
+        },
         token: receipt.token,
         denominationHuman: receipt.denominationHuman,
         shieldedAt: receipt.shieldedAt,
@@ -427,7 +439,8 @@ async function handlePoolUnshieldPrepare(
   }
   if (note.spent) throw new Error('This note has already been withdrawn.');
 
-  const ctx = await prepareUnshieldJob(note.receipt, pool, conn, seed, onProgress);
+  const storedPath = extractStoredPath(seed, req.encryptedNotes, note.receipt.commitment);
+  const ctx = await prepareUnshieldJob(note.receipt, pool, conn, seed, onProgress, storedPath);
   preparedUnshields.set(ctx.jobId, { ctx, meta: req.meta });
 
   return {
@@ -437,6 +450,36 @@ async function handlePoolUnshieldPrepare(
     requiredLamports: ctx.requiredLamports,
     denomination: pool.denomination,
   };
+}
+
+/**
+ * Pull the Merkle path out of a stored note blob, if it is genuinely ours and
+ * describes this exact note. Anything unparseable or mismatched is ignored —
+ * the caller then rebuilds from history, which is always correct.
+ */
+function extractStoredPath(
+  seed: Uint8Array,
+  blobs: string[] | undefined,
+  expectedCommitment: bigint,
+): StoredMerklePath | undefined {
+  for (const blob of blobs ?? []) {
+    try {
+      const note = JSON.parse(new TextDecoder().decode(decryptNote(seed, blob)));
+      if (String(note.commitment) !== expectedCommitment.toString()) continue;
+      const p = note.merklePath;
+      if (!p || !Array.isArray(p.pathElements) || !Array.isArray(p.pathIndices) || !p.root) {
+        continue;
+      }
+      return {
+        pathElements: p.pathElements.map(String),
+        pathIndices: p.pathIndices.map(Number),
+        root: String(p.root),
+      };
+    } catch {
+      // Not ours, or from a different seed — try the next.
+    }
+  }
+  return undefined;
 }
 
 async function handlePoolUnshieldExecute(
