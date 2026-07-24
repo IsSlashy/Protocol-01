@@ -22,6 +22,7 @@ import { useT, LanguageSwitcher } from "@/i18n";
  * primary button.
  */
 const LINKS: { href: string; i18nKey?: string; label?: string; dim?: boolean; glow?: boolean }[] = [
+  { href: "/pay", label: "Pay" },
   { href: "/docs", i18nKey: "nav.docs" },
   { href: "/roadmap", i18nKey: "nav.roadmap" },
   // Updates page kept at /updates but removed from the nav (replaced by SDK).

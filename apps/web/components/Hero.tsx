@@ -309,10 +309,10 @@ function Hero() {
                 opacity: 0,
               }}
             >
-              <button
-                onClick={() => {
-                  document.getElementById('problem')?.scrollIntoView({ behavior: 'smooth' });
-                }}
+              {/* Primary CTA — straight into the live /pay demo so visitors
+                  taste the protocol before joining the waitlist. */}
+              <a
+                href="/pay"
                 className="px-6 py-3 bg-[#39c5bb] text-[#0a0a0c] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#2a9d95] transition-colors"
               >
                 <svg
@@ -325,7 +325,7 @@ function Hero() {
                   <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                 </svg>
                 {t('hero.initProtocol')}
-              </button>
+              </a>
               {/* WAITLIST MODE: direct APK download disabled, restore at public launch.
               <a href={APK_URL} className="px-6 py-3 bg-transparent border border-[#39c5bb] text-[#39c5bb] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#39c5bb]/10 transition-colors">
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>

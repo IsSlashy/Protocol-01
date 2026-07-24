@@ -56,14 +56,9 @@ describe('Hero -- Privacy-first landing section', () => {
       expect(docsLink.closest('a')).toHaveAttribute('href', '/docs');
     });
 
-    it('scrolls to the problem section when "Initialize Protocol" is clicked', () => {
-      const scrollIntoViewMock = vi.fn();
-      const mockElement = document.createElement('div');
-      mockElement.scrollIntoView = scrollIntoViewMock;
-      vi.spyOn(document, 'getElementById').mockReturnValue(mockElement);
-
-      fireEvent.click(screen.getByText('Initialize Protocol'));
-      expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: 'smooth' });
+    it('links "Initialize Protocol" to the live /pay demo', () => {
+      const cta = screen.getByText('Initialize Protocol');
+      expect(cta.closest('a')).toHaveAttribute('href', '/pay');
     });
   });
 
