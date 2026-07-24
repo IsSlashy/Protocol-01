@@ -4,6 +4,10 @@
 > denominated pool is wired into /pay and **proven end-to-end on devnet**: shield,
 > storage-free note recovery, and unshield all land on-chain. Read §10 at the
 > bottom FIRST; it supersedes §4 and parts of §5/§9.
+>
+> **Correction to §3's premise:** routing through the pool does NOT deliver
+> funding↔claim unlinkability. The V3 unshield publishes the note commitment in
+> cleartext, so deposits and withdrawals are publicly matchable — see §10.
 
 
 Session date: 2026-07-24. Author: Fable 5. Everything below is committed to `origin/master`
@@ -335,8 +339,15 @@ to the browser** — fine for devnet, do not reuse for a paid mainnet quota.
 
 ### Honest state after Step 1 — claims did NOT change
 The site's privacy copy is **unchanged**, deliberately. What is true now:
-- The **Pool tab** can shield and withdraw a denominated note on devnet, so amount
-  quantisation and deposit↔withdrawal unlinkability exist **there**.
+- The **Pool tab** can shield and withdraw a denominated note on devnet, so **amount
+  quantisation** exists there. That is the only privacy property it adds.
+- **The pool does NOT make a withdrawal unlinkable to its deposit.** The V3 unshield
+  instruction takes the note commitment as a public argument (instruction bytes
+  80..88) and the deposit emitted that same value in `LeafInserted`, so a public
+  scan matches them. Verified on devnet: unshield `2FhzBLHc…` carries
+  1126946528953530644, the commitment the shield logged for leaf 28. **The
+  effective anonymity set is ONE.** Fixing it needs a program change — the C3
+  proof already proves membership, so publishing the leaf defeats the point.
 - **The send flow still does not route through the pool.** A /pay send is the same
   stealth-address path as before, amounts public.
 - The anonymity set is tiny and stated in the UI from tree leaf count (28 in the
