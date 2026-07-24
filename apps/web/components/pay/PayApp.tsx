@@ -7,6 +7,7 @@ import { Keypair, Transaction } from "@solana/web3.js";
 import { Buffer } from "buffer";
 import nacl from "tweetnacl";
 import {
+  Coins,
   KeyRound,
   Loader2,
   Send,
@@ -37,6 +38,7 @@ import { initStealthWorker } from "@/lib/privacy/workerClient";
 import ChainCoinSelector from "./ChainCoinSelector";
 import SendForm from "./SendForm";
 import ReceivePanel from "./ReceivePanel";
+import PoolPanel from "./PoolPanel";
 import P01ConnectModal from "./P01ConnectModal";
 import Stepper from "./Stepper";
 import { truncate } from "./util";
@@ -44,10 +46,11 @@ import { truncate } from "./util";
 const CHAIN_TAG = "solana:devnet";
 const firstLive = ALL_ASSETS.find((a) => a.status === "live") ?? ALL_ASSETS[0];
 
-type Tab = "send" | "receive";
+type Tab = "send" | "receive" | "pool";
 
 export default function PayApp() {
-  const { publicKey, connected, signMessage, signAllTransactions, disconnect } = useWallet();
+  const { publicKey, connected, signMessage, signTransaction, signAllTransactions, disconnect } =
+    useWallet();
   const { setVisible } = useWalletModal();
   const { connection } = useConnection();
 
@@ -157,6 +160,20 @@ export default function PayApp() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [solWalletKey]);
+
+  // Single-transaction signer for the pool shield's pre-fund — the ONLY thing
+  // the user's wallet signs in a shield. The paired P01 keypair signs locally;
+  // a watch-only wallet has no signer and the panel says so instead of failing
+  // halfway through.
+  const signSolanaTx = useMemo(() => {
+    if (p01Keypair) {
+      return async (tx: Transaction) => {
+        tx.partialSign(p01Keypair);
+        return tx;
+      };
+    }
+    return signTransaction ?? null;
+  }, [p01Keypair, signTransaction]);
 
   const chainConnected = chain === "solana" ? solConnected : !!snWallet;
   const step: 0 | 1 | 2 = !chainConnected ? 0 : !identity ? 1 : 2;
@@ -390,7 +407,7 @@ export default function PayApp() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="inline-flex rounded-lg border border-p01-border bg-p01-surface p-1">
-              {(["send", "receive"] as Tab[]).map((t) => (
+              {((chain === "solana" ? ["send", "receive", "pool"] : ["send", "receive"]) as Tab[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -399,7 +416,13 @@ export default function PayApp() {
                     tab === t ? "bg-p01-cyan text-p01-void" : "text-p01-text-muted hover:text-p01-text"
                   )}
                 >
-                  {t === "send" ? <Send className="h-3.5 w-3.5" /> : <InboxIcon className="h-3.5 w-3.5" />}
+                  {t === "send" ? (
+                    <Send className="h-3.5 w-3.5" />
+                  ) : t === "receive" ? (
+                    <InboxIcon className="h-3.5 w-3.5" />
+                  ) : (
+                    <Coins className="h-3.5 w-3.5" />
+                  )}
                   {t}
                 </button>
               ))}
@@ -418,6 +441,13 @@ export default function PayApp() {
             <div className="card p-6 text-center text-sm text-p01-text-muted">
               {asset.name} private transactions are coming soon.
             </div>
+          ) : tab === "pool" && chain === "solana" && solPub ? (
+            <PoolPanel
+              meta={identity.meta}
+              owner={solPub}
+              connection={connection}
+              signOne={signSolanaTx}
+            />
           ) : tab === "send" ? (
             <SendForm adapter={adapter} asset={asset} />
           ) : (

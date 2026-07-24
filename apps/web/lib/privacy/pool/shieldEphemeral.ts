@@ -44,6 +44,7 @@ import {
 } from '@solana/web3.js';
 
 import {
+  parseFilledSubtrees,
   prepareShieldInsert,
   shieldV3,
   type PoolConfig,
@@ -124,6 +125,20 @@ export interface ShieldResult {
   receipt: ShieldReceipt;
 }
 
+/**
+ * Number of leaves currently in the pool's Merkle tree, straight from the tree
+ * account. This is the pool's real note count — and the real anonymity set —
+ * regardless of how much transaction history the RPC still serves.
+ */
+export async function readTreeLeafCount(
+  connection: Connection,
+  poolConfig: PoolConfig,
+): Promise<number> {
+  const info = await connection.getAccountInfo(poolConfig.treePDA);
+  if (!info) throw new Error(`Tree account not found: ${poolConfig.treePDA.toBase58()}`);
+  return parseFilledSubtrees(Buffer.from(info.data)).leafCount;
+}
+
 // ---------------------------------------------------------------------------
 // Phase 1 — prove (no funds move)
 // ---------------------------------------------------------------------------
@@ -139,7 +154,6 @@ export async function prepareShield(
   poolConfig: PoolConfig,
   connection: Connection,
   walletSeed: Uint8Array,
-  counter: number,
   onProgress?: (step: string) => void,
 ): Promise<PreparedShield> {
   if (poolConfig.token !== 'SOL') {
@@ -148,7 +162,33 @@ export async function prepareShield(
     throw new Error('Only SOL denominations can be shielded from /pay today.');
   }
 
+  // The note counter is the leaf index this shield will occupy.
+  //
+  // It CANNOT come from scanning past notes: a note's insert event lives in
+  // transaction history, and public devnet RPC prunes that (the 0.1 SOL pool
+  // reports 27 leaves in its tree account but retains 1 signature). A scan
+  // would miss existing notes and hand back a counter already in use — and
+  // since the nullifier is poseidon(np, secret) with no epoch input, that
+  // collision would strand the older note permanently.
+  //
+  // The tree account's leaf count is authoritative and never pruned, and leaf
+  // indices are unique by construction, so deriving from it makes a collision
+  // structurally impossible without depending on history at all.
+  onProgress?.('Reading the pool tree...');
+  const counter = await readTreeLeafCount(connection, poolConfig);
+
   const prepared = await prepareShieldInsert(poolConfig, connection, walletSeed, counter, onProgress);
+
+  // prepareShieldInsert re-reads the tree; if another shield landed in between,
+  // our note secrets would be keyed to a leaf index this insert no longer
+  // occupies — which is exactly the collision the derivation is meant to
+  // exclude. Refuse rather than shield into an ambiguous slot.
+  if (prepared.insertParams.leafIndex !== counter) {
+    throw new Error(
+      `The pool advanced while preparing (leaf ${counter} → ${prepared.insertParams.leafIndex}). ` +
+        'Nothing was spent — try again.',
+    );
+  }
 
   // Price the pre-fund from the ACTUAL proof size (83-byte header + proof), the
   // same way the transfer path does — no hard-coded worst case.

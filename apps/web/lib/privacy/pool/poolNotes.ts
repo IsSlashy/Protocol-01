@@ -137,28 +137,20 @@ export async function recoverNotes(
 }
 
 /**
- * Pick a counter that has never been used in this pool by this seed.
+ * Best-effort note discovery for display.
  *
- * Takes the highest counter that matched on-chain and returns the next one, so
- * a gap (a note recovered outside the epoch window, say) can never cause reuse
- * of a lower counter. Callers MUST use this rather than counting local notes.
- */
-export function nextFreeCounter(notes: RecoveredNote[]): number {
-  let highest = -1;
-  for (const n of notes) if (n.counter > highest) highest = n.counter;
-  return highest + 1;
-}
-
-/**
- * Full pre-shield check: scan the pool, then return the safe next counter plus
- * the notes already held. One RPC sweep, reused by the balance display.
+ * NOT a source of truth for counter allocation. This can only see notes whose
+ * insert event the RPC still serves, and public devnet RPC prunes aggressively
+ * (observed 2026-07-24: the 0.1 SOL pool's tree account reports 27 leaves while
+ * the RPC retains one signature for it). A counter chosen from these results
+ * would collide with a pruned note and strand it — see `shieldEphemeral.ts`,
+ * which derives the counter from the tree's leaf index instead.
  */
 export async function scanPoolForSeed(
   connection: Connection,
   poolConfig: PoolConfig,
   walletSeed: Uint8Array,
   opts: RecoverNotesOptions = {},
-): Promise<{ notes: RecoveredNote[]; nextCounter: number }> {
-  const notes = await recoverNotes(connection, poolConfig, walletSeed, opts);
-  return { notes, nextCounter: nextFreeCounter(notes) };
+): Promise<{ notes: RecoveredNote[] }> {
+  return { notes: await recoverNotes(connection, poolConfig, walletSeed, opts) };
 }

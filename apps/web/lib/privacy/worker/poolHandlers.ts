@@ -26,6 +26,7 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import {
+  fetchPoolCommitments,
   findPoolV3,
   getPoolsForTokenV3,
   type PoolConfig,
@@ -35,9 +36,11 @@ import {
   encryptNote,
 } from '../pool/noteCrypto';
 import { scanPoolForSeed, type RecoveredNote } from '../pool/poolNotes';
+import { createPacedFetch } from './pacedFetch';
 import {
   executeShield,
   prepareShield,
+  readTreeLeafCount,
   recordShieldBreadcrumb,
   type PreparedShield,
 } from '../pool/shieldEphemeral';
@@ -101,11 +104,27 @@ export interface PoolNoteView {
   spent: boolean;
 }
 
+/**
+ * How many notes exist in a pool overall — the anonymity set a withdrawal from
+ * it hides in. Surfaced so the UI can state it instead of implying the pool is
+ * private in the abstract: a pool with two notes hides almost nothing.
+ */
+export interface PoolSizeView {
+  denomination: number;
+  /** Leaves in the tree account — authoritative, unaffected by RPC pruning. */
+  totalNotes: number;
+  /** Leaves whose insert event the RPC still serves. Recovery-by-scan can only
+   *  see these, so a large gap means notes are only findable from local
+   *  storage until an archival RPC is available. */
+  discoverableNotes: number;
+}
+
 export interface PoolScanResponse {
   kind: 'poolScan';
   notes: PoolNoteView[];
   /** Unspent total, in whole tokens. */
   shieldedBalance: number;
+  poolSizes: PoolSizeView[];
 }
 
 export type PoolResponse = PoolShieldPrepareResponse | PoolShieldExecuteResponse | PoolScanResponse;
@@ -125,7 +144,12 @@ const poolSeeds = new Map<string, Uint8Array>();
 const prepared = new Map<string, { ctx: PreparedShield; meta: string; counter: number }>();
 
 export function configurePoolHandlers(rpcUrl: string): void {
-  connection = new Connection(rpcUrl, 'confirmed');
+  // Paced transport: a shield is ~150 chunk uploads plus polling, which public
+  // devnet RPC answers with 429 if fired at full speed. See pacedFetch.ts.
+  connection = new Connection(rpcUrl, {
+    commitment: 'confirmed',
+    fetch: createPacedFetch(),
+  });
 }
 
 /**
@@ -183,18 +207,26 @@ async function handlePoolScan(
     : getPoolsForTokenV3(req.token);
 
   const notes: PoolNoteView[] = [];
+  const poolSizes: PoolSizeView[] = [];
   let shieldedBalance = 0;
 
   for (const pool of pools) {
     onProgress?.(`Scanning the ${pool.denomination} ${pool.token} pool...`);
-    const { notes: found } = await scanPoolForSeed(conn, pool, seed, { onProgress });
+    const commitments = await fetchPoolCommitments(conn, pool.poolPDA);
+    poolSizes.push({
+      denomination: pool.denomination,
+      totalNotes: await readTreeLeafCount(conn, pool),
+      discoverableNotes: commitments.size,
+    });
+
+    const { notes: found } = await scanPoolForSeed(conn, pool, seed, { commitments, onProgress });
     for (const n of found) {
       notes.push(toNoteView(n));
       if (!n.spent) shieldedBalance += pool.denomination;
     }
   }
 
-  return { kind: 'poolScan', notes, shieldedBalance };
+  return { kind: 'poolScan', notes, shieldedBalance, poolSizes };
 }
 
 function toNoteView(n: RecoveredNote): PoolNoteView {
@@ -217,19 +249,17 @@ async function handlePoolShieldPrepare(
   const seed = requireSeed(req.meta);
   const pool = requirePool(req.token, req.denomination);
 
-  // The counter MUST come from the chain, never from local bookkeeping: two
-  // notes under one counter share a nullifier, and spending either would strand
-  // the other permanently. See poolNotes.ts.
-  onProgress?.('Checking which notes you already hold...');
-  const { nextCounter } = await scanPoolForSeed(conn, pool, seed, { onProgress });
-
-  const ctx = await prepareShield(pool, conn, seed, nextCounter, onProgress);
+  // The counter is the tree's leaf index, read inside prepareShield from the
+  // tree account — see the comment there for why scanning past notes would be
+  // a fund-loss bug on a pruning RPC.
+  const ctx = await prepareShield(pool, conn, seed, onProgress);
 
   // Breadcrumb before the caller funds anything, so a crash between the
   // pre-fund and execute still leaves a record pointing at a re-derivable key.
   await recordShieldBreadcrumb(ctx);
 
-  prepared.set(ctx.jobId, { ctx, meta: req.meta, counter: nextCounter });
+  const counter = ctx.prepared.insertParams.leafIndex;
+  prepared.set(ctx.jobId, { ctx, meta: req.meta, counter });
 
   return {
     kind: 'poolShieldPrepare',
@@ -237,7 +267,7 @@ async function handlePoolShieldPrepare(
     ephemeralPubkey: ctx.ephemeral.publicKey.toBase58(),
     requiredLamports: ctx.requiredLamports,
     denomination: pool.denomination,
-    counter: nextCounter,
+    counter,
   };
 }
 
