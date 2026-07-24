@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { useT, useLocale } from "@/i18n";
 
@@ -37,6 +37,14 @@ export default function WaitlistForm({ source = "cta" }: { source?: WaitlistSour
   const t = useT();
   const { locale } = useLocale();
 
+  // A campaign link (protocol-01.dev/?src=x) overrides the on-page origin so a
+  // channel can be measured on its own. The server sanitizes it again.
+  const [campaign, setCampaign] = useState<string | null>(null);
+  useEffect(() => {
+    const raw = new URLSearchParams(window.location.search).get("src");
+    if (raw) setCampaign(raw.toLowerCase().replace(/[^a-z0-9_.:/-]/g, "").slice(0, 32) || null);
+  }, []);
+
   const [email, setEmail] = useState("");
   const [interest, setInterest] = useState<Interest | "">("");
   const [website, setWebsite] = useState(""); // honeypot — stays empty for humans
@@ -64,7 +72,7 @@ export default function WaitlistForm({ source = "cta" }: { source?: WaitlistSour
         body: JSON.stringify({
           email: email.trim(),
           ...(interest ? { interest } : {}),
-          source,
+          source: campaign ?? source,
           locale,
           website,
         }),
