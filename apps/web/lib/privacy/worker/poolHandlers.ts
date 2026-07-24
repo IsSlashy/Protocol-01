@@ -36,6 +36,7 @@ import {
   encryptNote,
 } from '../pool/noteCrypto';
 import { recoverNotes, scanPoolForSeed, type RecoveredNote } from '../pool/poolNotes';
+import { recoverStuckFloat } from '../pool/recoverFloat';
 import { createPacedFetch } from './pacedFetch';
 import { usePollingConfirmation } from './pollingConfirm';
 import {
@@ -98,7 +99,16 @@ export interface PoolUnshieldExecuteRequest {
   ownerPubkey: string;
 }
 
+export interface PoolRecoverRequest {
+  kind: 'poolRecover';
+  meta: string;
+  token: 'SOL';
+  denomination: number;
+  ownerPubkey: string;
+}
+
 export type PoolRequest =
+  | PoolRecoverRequest
   | PoolShieldPrepareRequest
   | PoolShieldExecuteRequest
   | PoolScanRequest
@@ -172,7 +182,16 @@ export interface PoolUnshieldExecuteResponse {
   denomination: number;
 }
 
+export interface PoolRecoverResponse {
+  kind: 'poolRecover';
+  /** Total lamports swept back to the owner. */
+  lamports: number;
+  closedBuffers: number;
+  keys: number;
+}
+
 export type PoolResponse =
+  | PoolRecoverResponse
   | PoolShieldPrepareResponse
   | PoolShieldExecuteResponse
   | PoolScanResponse
@@ -393,8 +412,10 @@ async function handlePoolUnshieldPrepare(
 
   // Rebuild the note from the seed: its secrets come from (seed, pool, leaf
   // index) and its deposit epoch is recovered by matching the derived
-  // commitment against the on-chain leaf. Nothing secret is accepted from the
-  // caller — a page cannot ask us to spend a note we did not derive.
+  // commitment against the on-chain leaf. No secret crosses the wire — but note
+  // this is NOT an authorization boundary: the caller picks the leaf index, so
+  // same-origin script can ask to spend any note this seed owns. What it cannot
+  // do is learn the secrets or redirect funds outside the recipient it names.
   onProgress?.('Locating your note on-chain...');
   const notes = await recoverNotes(conn, pool, seed, { onProgress });
   const note = notes.find((n) => n.receipt.leafIndex === req.leafIndex);
@@ -446,6 +467,36 @@ async function handlePoolUnshieldExecute(
   }
 }
 
+/**
+ * Reclaim SOL stranded on ephemerals from earlier failed runs. Refuses while a
+ * job is in flight for safety — it closes proof buffers, and a live upload is
+ * writing into one.
+ */
+async function handlePoolRecover(
+  req: PoolRecoverRequest,
+  onProgress?: (step: string) => void,
+): Promise<PoolRecoverResponse> {
+  const conn = requireConnection();
+  const seed = requireSeed(req.meta);
+  const pool = requirePool(req.token, req.denomination);
+
+  if (prepared.size > 0 || preparedUnshields.size > 0) {
+    throw new Error('A shield or withdrawal is still in progress — finish it before recovering.');
+  }
+
+  onProgress?.('Looking for funds left on earlier attempts...');
+  const found = await recoverStuckFloat(conn, pool, seed, new PublicKey(req.ownerPubkey), {
+    onProgress,
+  });
+
+  return {
+    kind: 'poolRecover',
+    lamports: found.reduce((n, f) => n + f.lamports, 0),
+    closedBuffers: found.reduce((n, f) => n + f.closedBuffers, 0),
+    keys: found.length,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
@@ -464,6 +515,9 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolShieldExecute':
       res = await handlePoolShieldExecute(req, onProgress);
+      break;
+    case 'poolRecover':
+      res = await handlePoolRecover(req, onProgress);
       break;
     case 'poolUnshieldPrepare':
       res = await handlePoolUnshieldPrepare(req, onProgress);

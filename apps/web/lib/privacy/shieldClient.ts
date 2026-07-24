@@ -159,6 +159,23 @@ export async function unshieldFromPool(
   return { txSig: done.txSig, denomination: done.denomination };
 }
 
+/**
+ * Reclaim SOL left on ephemerals by earlier failed runs. Proof-buffer rent can
+ * only be released by the ephemeral that created it, so this is the only way
+ * that money comes back.
+ */
+export function recoverStuckFunds(
+  meta: string,
+  denomination: number,
+  owner: PublicKey,
+  onProgress?: (step: string) => void,
+) {
+  return poolRequest(
+    { kind: 'poolRecover', meta, token: 'SOL', denomination, ownerPubkey: owner.toBase58() },
+    onProgress,
+  );
+}
+
 /** Read the shielded balance + note list for this identity. */
 export function scanPool(
   meta: string,
@@ -176,9 +193,14 @@ const NOTE_STORE_KEY = 'p01_pay_notes_v1';
 
 /**
  * Persist an encrypted note blob. The main thread cannot read these — only the
- * worker, holding the pool seed, can decrypt them. Losing this store does NOT
- * lose funds: notes are re-derivable from the wallet signature by scanning the
- * pool (see `pool/poolNotes.ts`); the store is only the fast path.
+ * worker, holding the pool seed, can decrypt them.
+ *
+ * NOTE ON WHAT THIS IS AND IS NOT: nothing currently reads these blobs back.
+ * `loadEncryptedNotes` is used only to show a count, and `decryptNote` has no
+ * caller. Discovery and withdrawal both work from the pool seed plus on-chain
+ * event history (`pool/poolNotes.ts`), so the blob is a forward-looking record,
+ * not a recovery path — and it could not be one anyway while withdrawal needs
+ * event history to rebuild the Merkle proof. Do not describe it as a fallback.
  */
 export function storeEncryptedNote(walletPubkey: string, blob: string): void {
   if (typeof localStorage === 'undefined') return;

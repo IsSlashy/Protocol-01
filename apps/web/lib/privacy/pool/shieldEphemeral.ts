@@ -19,20 +19,25 @@
  *
  * WHAT THIS DOES AND DOES NOT BUY
  * ───────────────────────────────
- * The pre-fund tx is a public `user → E` transfer, so the funding link is NOT
- * hidden yet; this is amount privacy + funding↔claim unlinkability inside the
- * pool, not sender anonymity. Breaking the user→E link is Step 2 (relayer).
- * Do not describe this as sender anonymity anywhere in the UI.
+ * Amount quantisation, and a post-quantum note. That is the whole list today.
+ *
+ * It does NOT buy unlinkability: the V3 withdrawal instruction publishes the
+ * note commitment in cleartext and the deposit emitted that same value, so an
+ * observer matches the two from public data alone (see the header of
+ * `unshieldEphemeral.ts` for the verified devnet evidence). It does not buy
+ * sender anonymity either — the pre-fund is a public `user → E` transfer, and
+ * breaking that link is Step 2 (the relayer).
  *
  * FUND SAFETY
  * ───────────
  *  - The C6 proof is generated BEFORE any lamport moves, so a proving failure
  *    costs nothing.
- *  - A recovery breadcrumb is written BEFORE the pre-fund, and E is derived
- *    deterministically (`deriveEphemeralForRelay`), so a crash mid-flight leaves
- *    funds sweepable rather than stranded.
+ *  - E is derived deterministically from (pool seed, pool, leaf index), so a
+ *    crash mid-flight leaves its float re-derivable — `recoverFloat.ts` closes
+ *    any orphaned proof buffer and sweeps it back.
  *  - The residual sweep runs in `finally`, on the success and failure paths
- *    alike.
+ *    alike, and deliberately leaves a small reserve so a later buffer close can
+ *    still be paid for.
  */
 
 import {
@@ -103,8 +108,29 @@ const E_TX_FEE_BUDGET = 3_000_000;
 /** Slack for the fee-escrow PDA the shield handler touches, plus rent drift. */
 const SHIELD_RENT_MARGIN = 2_000_000;
 
-/** Left on E so the sweep transaction can pay its own fee. */
-const SWEEP_FEE = 5_000;
+/**
+ * Protocol fee the shield handler charges the DEPOSITOR, on top of the
+ * denomination — `shield_denominated_v3.rs:218-220` with
+ * `fee::SHIELD_FEE_BPS = 30` (0.3%).
+ *
+ * It must be funded onto the ephemeral or the final shield transaction fails
+ * for insufficient lamports AFTER the whole ~140 KB proof has been uploaded and
+ * verified. A 0.1 SOL shield hides this (0.0003 fits inside the margin above);
+ * at 10 SOL the fee is 0.03 and the shield cannot land.
+ */
+const SHIELD_FEE_BPS = 30n;
+const BPS_DENOMINATOR = 10_000n;
+
+/**
+ * Left behind on E when sweeping.
+ *
+ * Not just the sweep's own fee: if a proof buffer close ever fails silently
+ * (`closeStarkProofBuffer` swallows its error), the buffer's ~1 SOL of rent can
+ * only ever be released by E signing a close — and a signer drained to zero
+ * cannot pay for that transaction. Leaving a few fees behind keeps that
+ * recovery possible. `recoverFloat.ts` is what spends it.
+ */
+const SWEEP_FEE = 25_000;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -196,8 +222,15 @@ export async function prepareShield(
   const bufferRent = await connection.getMinimumBalanceForRentExemption(
     83 + prepared.c6ProofResult.proofSize,
   );
+  const protocolFee = Number(
+    (poolConfig.denominationAtomic * SHIELD_FEE_BPS) / BPS_DENOMINATOR,
+  );
   const requiredLamports =
-    Number(poolConfig.denominationAtomic) + bufferRent + E_TX_FEE_BUDGET + SHIELD_RENT_MARGIN;
+    Number(poolConfig.denominationAtomic) +
+    protocolFee +
+    bufferRent +
+    E_TX_FEE_BUDGET +
+    SHIELD_RENT_MARGIN;
 
   // Deterministic in (seed, pool, counter) — see deriveShieldEphemeral. The
   // job id is just a stable label for the breadcrumb, derived from the same
@@ -240,17 +273,20 @@ export async function executeShield(
     },
   };
 
-  // Refuse to start if the pre-fund did not actually land — otherwise we burn
-  // through half the chunk uploads and strand the rest.
-  const funded = await connection.getBalance(ephemeral.publicKey, 'confirmed');
-  if (funded < ctx.requiredLamports) {
-    throw new Error(
-      `The shield signer is underfunded (${funded} of ${ctx.requiredLamports} lamports). ` +
-        'The pre-fund transaction may not have confirmed yet — retry in a moment.',
-    );
-  }
-
   try {
+    // Refuse to start if the pre-fund did not actually land — otherwise we burn
+    // through half the chunk uploads and strand the rest. This check lives
+    // INSIDE the try on purpose: a partially-landed pre-fund leaves lamports on
+    // E, and throwing before the try would skip the sweep in `finally` and
+    // strand exactly the funds the check is meant to protect.
+    const funded = await connection.getBalance(ephemeral.publicKey, 'confirmed');
+    if (funded < ctx.requiredLamports) {
+      throw new Error(
+        `The shield signer is underfunded (${funded} of ${ctx.requiredLamports} lamports). ` +
+          'The pre-fund transaction may not have confirmed yet — retry in a moment.',
+      );
+    }
+
     const { txSig, receipt } = await shieldV3(
       poolConfig,
       prepared.c6ProofResult,
@@ -297,9 +333,15 @@ export async function executeShield(
 }
 
 /**
- * Write the recovery breadcrumb for a prepared shield. MUST be called before
- * the pre-fund transaction is submitted, so a crash between funding and
- * `executeShield` still leaves E re-derivable and sweepable.
+ * Write a recovery breadcrumb for a prepared shield.
+ *
+ * CAVEAT — this is not what makes a crashed shield recoverable. Inside a Worker
+ * `relayEphemeralRecovery`'s store finds no localStorage and falls back to a
+ * module-scope Map, so the entry dies with the worker, and nothing in apps/web
+ * reads it back. What actually recovers a crashed shield is that
+ * `deriveShieldEphemeral` is deterministic in (seed, pool, leafIndex), which
+ * `recoverStuckFloat` uses to re-derive and drain the key. Kept because it is
+ * free and matches the format the extension-side tooling consumes.
  */
 export async function recordShieldBreadcrumb(ctx: PreparedShield): Promise<void> {
   await addPendingRelay({

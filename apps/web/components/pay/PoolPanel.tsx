@@ -7,6 +7,7 @@ import {
   loadEncryptedNotes,
   scanPool,
   shieldToPool,
+  recoverStuckFunds,
   storeEncryptedNote,
   unshieldFromPool,
   type ShieldOutcome,
@@ -44,6 +45,8 @@ export default function PoolPanel({
   const [result, setResult] = useState<ShieldOutcome | null>(null);
   const [busyNote, setBusyNote] = useState<string | null>(null);
   const [withdrawn, setWithdrawn] = useState<{ txSig: string; denomination: number } | null>(null);
+  const [recovering, setRecovering] = useState(false);
+  const [recovered, setRecovered] = useState<string | null>(null);
 
   const rescan = useCallback(async () => {
     setScanning(true);
@@ -124,6 +127,25 @@ export default function PoolPanel({
     }
   }
 
+  async function handleRecover() {
+    setError(null);
+    setRecovered(null);
+    setRecovering(true);
+    try {
+      const r = await recoverStuckFunds(meta, denomination, owner, setStep);
+      setRecovered(
+        r.keys === 0
+          ? "Nothing stranded — no funds to recover."
+          : `Recovered ${(r.lamports / 1e9).toFixed(4)} SOL from ${r.keys} key(s), closed ${r.closedBuffers} proof buffer(s).`,
+      );
+    } catch (e) {
+      setError((e as Error).message || "Recovery failed.");
+    } finally {
+      setRecovering(false);
+      setStep(null);
+    }
+  }
+
   const unspent = notes.filter((n) => !n.spent);
   const selectedSize = poolSizes.find((p) => p.denomination === denomination);
   const storedNotes = loadEncryptedNotes(owner.toBase58()).length;
@@ -146,7 +168,7 @@ export default function PoolPanel({
             {scanning ? "Scanning…" : "Rescan"}
           </button>
         </div>
-        <p className="mt-2 font-mono text-2xl text-p01-text">{balance} SOL</p>
+        <p className="mt-2 font-mono text-2xl text-p01-text">{Number(balance.toFixed(4))} SOL</p>
         <p className="mt-1 text-xs text-p01-text-muted">
           {unspent.length} unspent note{unspent.length === 1 ? "" : "s"}
           {storedNotes > 0 && <> · {storedNotes} stored locally</>}
@@ -178,26 +200,43 @@ export default function PoolPanel({
         </div>
         <p className="mt-2 text-xs text-p01-text-muted">
           {selectedSize
-            ? `${selectedSize.totalNotes} note${selectedSize.totalNotes === 1 ? "" : "s"} in this pool — a later withdrawal is indistinguishable among them, and no more than that.`
+            ? `${selectedSize.totalNotes} note${selectedSize.totalNotes === 1 ? "" : "s"} in this pool. Amounts snap to a denomination, so the amount you move is not distinctive — but see below for what withdrawal still reveals.`
             : "Amounts snap to a denomination; arbitrary amounts cannot be shielded."}
         </p>
         {selectedSize && selectedSize.discoverableNotes < selectedSize.totalNotes && (
           <p className="mt-1 text-xs text-p01-text-dim">
-            This RPC only serves history for {selectedSize.discoverableNotes} of them, so notes are
-            found from local storage rather than rediscovered by scanning.
+            This RPC serves history for only {selectedSize.discoverableNotes} of them. Withdrawal
+            rebuilds the Merkle proof from that history, so a note whose history is gone cannot be
+            withdrawn from this endpoint.
           </p>
         )}
       </div>
 
-      {/* What this does and does not hide — keep this honest. */}
-      <div className="rounded-lg border border-p01-yellow/30 bg-p01-yellow/5 p-3 text-xs text-p01-yellow">
-        <p className="font-medium">Devnet. What a shield actually hides</p>
-        <ul className="mt-1.5 list-disc space-y-1 pl-4 text-p01-yellow/90">
-          <li>The deposit itself is public: this wallet funds a one-time key that deposits into the pool.</li>
-          <li>Hidden is the link between that deposit and a later withdrawal — only as strong as the note count above.</li>
+      {/* What this does and does not hide. This product's first rule is that
+          copy never claims more than the shipped path provides — and the V3
+          withdrawal instruction publishes the note commitment in cleartext, so
+          it must NOT be described as unlinkable. Verified on devnet
+          2026-07-25: tx 2FhzBLHc… carries stark_commitment
+          1126946528953530644 at instruction bytes 80..88, the exact value the
+          deposit emitted for leaf 28. */}
+      <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
+        <p className="font-medium">Devnet. This does NOT yet make you anonymous</p>
+        <ul className="mt-1.5 list-disc space-y-1 pl-4 text-p01-red/90">
           <li>
-            A shield needs roughly {denomination + 1.1} SOL for a moment: the denomination plus ~1 SOL of
-            proof-buffer rent, which is returned to you when the proof buffer closes.
+            <strong>Withdrawal reveals which deposit it spends.</strong> The withdrawal transaction
+            includes the note commitment in the clear, and the deposit published that same value —
+            so anyone can match the two. The anonymity set is effectively one, not the note count
+            above.
+          </li>
+          <li>The deposit is public too: this wallet funds a one-time key that deposits into the pool.</li>
+          <li>
+            What you do get today: the amount is quantised to a denomination, and the note itself is
+            post-quantum encrypted. That is all.
+          </li>
+          <li>
+            A shield needs about {(denomination * 1.003 + 1.006).toFixed(3)} SOL for a few minutes —
+            the denomination, a 0.3% protocol fee, and ~1 SOL of proof-buffer rent that is returned
+            when the buffer closes. Withdrawal charges 0.5%.
           </li>
         </ul>
       </div>
@@ -233,8 +272,8 @@ export default function PoolPanel({
             Withdrew {withdrawn.denomination} SOL
           </p>
           <p className="mt-1 text-xs text-p01-text-muted">
-            Sent to your connected wallet. Withdrawing to the same wallet that funded the deposit
-            lets an observer correlate the two — use a different address to actually benefit.
+            Sent to your connected wallet. This withdrawal is publicly matchable to the deposit it
+            spends (the commitment appears in both), so treat it as a transparent transfer.
           </p>
           <a
             href={`https://explorer.solana.com/tx/${withdrawn.txSig}?cluster=devnet`}
@@ -261,6 +300,17 @@ export default function PoolPanel({
           <>Shield {denomination} SOL</>
         )}
       </button>
+
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <button
+          onClick={handleRecover}
+          disabled={recovering || shielding || !!busyNote}
+          className="text-p01-text-muted underline-offset-2 hover:text-p01-cyan hover:underline disabled:opacity-50"
+        >
+          {recovering ? "Checking for stranded funds…" : "Recover funds from a failed attempt"}
+        </button>
+        {recovered && <span className="text-p01-cyan">{recovered}</span>}
+      </div>
 
       {step && (
         <p className="text-center text-xs text-p01-text-dim">

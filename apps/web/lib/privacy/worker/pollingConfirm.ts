@@ -55,7 +55,14 @@ export function usePollingConfirmation(connection: Connection): Connection {
       const status = value[0];
       if (status) {
         if (status.err) {
-          return { context, value: { err: status.err } };
+          // THROW rather than return the error. web3.js resolves with
+          // `{err}` here, and the extracted upload/shield code calls
+          // `await connection.confirmTransaction(...)` without inspecting the
+          // result — so a transaction that failed on-chain would otherwise be
+          // reported to the user as a successful shield.
+          throw new Error(
+            `Transaction ${signature} failed on-chain: ${JSON.stringify(status.err)}`,
+          );
         }
         const level = status.confirmationStatus;
         if (

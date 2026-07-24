@@ -16,13 +16,25 @@
  * exists to provide. The derivation is domain-separated so the two can never
  * coincide.
  *
- * What is still linkable
- * ──────────────────────
- * The user's wallet funds the ephemeral, and (unless told otherwise) receives
- * the withdrawn funds. An observer watching that wallet sees money go toward a
- * pool deposit and later come back. What the pool breaks is WHICH deposit
- * corresponds to which withdrawal, among the notes in that pool. Breaking the
- * funding link needs the relayer (Step 2). The UI must say so.
+ * WHAT THIS DOES NOT HIDE — read before writing any copy about it
+ * ────────────────────────────────────────────────────────────────
+ * The V3 withdrawal instruction takes the note commitment as a PUBLIC argument
+ * (`buildUnshieldDenominatedStarkV3Ix` writes `starkCommitment` at instruction
+ * byte offset 80), and the deposit emitted that identical value in its
+ * `LeafInserted` event. So an observer with only public data matches a
+ * withdrawal to its exact deposit. Verified on devnet 2026-07-25: unshield
+ * `2FhzBLHc…` carries 1126946528953530644, the commitment the shield logged for
+ * leaf 28.
+ *
+ * The effective anonymity set is therefore ONE, regardless of how many notes
+ * the pool holds. The domain separation below removes the signer correlation,
+ * which is necessary but nowhere near sufficient; it does nothing about the
+ * commitment argument. Fixing this needs a program change so membership is
+ * proven without revealing which leaf — the C3 proof already proves membership,
+ * so publishing the leaf defeats the point of proving it.
+ *
+ * Until that lands, this path buys amount quantisation and a post-quantum note,
+ * NOT unlinkability. Do not describe it as unlinkable anywhere.
  */
 
 import {
@@ -55,7 +67,8 @@ const NULLIFIER_RENT = 2_000_000;
 /** Fee headroom for ~2 proofs' worth of chunk uploads plus the inner tx. */
 const E_TX_FEE_BUDGET = 4_000_000;
 
-const SWEEP_FEE = 5_000;
+/** See shieldEphemeral.ts — leaves enough for a later buffer close. */
+const SWEEP_FEE = 25_000;
 
 /**
  * Derive the withdrawal ephemeral from the pool seed and the note's leaf index.
