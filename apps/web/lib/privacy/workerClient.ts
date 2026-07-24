@@ -19,15 +19,26 @@ import {
   type ResponseFor,
 } from '@protocol-01/pay-core';
 import type { StealthWorkerIn, StealthWorkerOut } from './worker/stealth.worker';
+import type { PoolRequest, PoolResponseFor } from './worker/poolHandlers';
 
 interface Pending {
   resolve: (res: never) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  /** Re-armed on every progress message so a long job never trips the timeout. */
+  rearm?: () => void;
+  onProgress?: (step: string) => void;
 }
 
 /** Claims submit + confirm a transaction from inside the worker — allow for slow devnet. */
 const REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * Pool jobs upload ~150 proof chunks and can legitimately run for minutes, so
+ * they use a WATCHDOG instead of a deadline: the timer resets on every progress
+ * message, and only real silence from the worker is treated as a hang.
+ */
+const POOL_SILENCE_TIMEOUT_MS = 180_000;
 
 let worker: Worker | null = null;
 let lastCfg: SolanaWorkerConfig | null = null;
@@ -60,6 +71,11 @@ function ensureWorker(): Worker {
     const out = e.data;
     const p = pending.get(out.id);
     if (!p) return;
+    if ('progress' in out) {
+      p.onProgress?.(out.progress);
+      p.rearm?.();
+      return;
+    }
     pending.delete(out.id);
     clearTimeout(p.timer);
     if (out.ok) (p.resolve as (res: unknown) => void)(out.res);
@@ -77,17 +93,45 @@ function ensureWorker(): Worker {
   return worker;
 }
 
-function post<T>(msg: DistributiveOmit<StealthWorkerIn, 'id'>): Promise<T> {
+function post<T>(
+  msg: DistributiveOmit<StealthWorkerIn, 'id'>,
+  opts: { timeoutMs?: number; onProgress?: (step: string) => void } = {},
+): Promise<T> {
   const w = ensureWorker();
   const id = nextId++;
+  const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
+    const fire = () => {
       pending.delete(id);
       reject(new Error('The private-payment worker timed out. Please retry.'));
-    }, REQUEST_TIMEOUT_MS);
-    pending.set(id, { resolve: resolve as Pending['resolve'], reject, timer });
+    };
+    const entry: Pending = {
+      resolve: resolve as Pending['resolve'],
+      reject,
+      timer: setTimeout(fire, timeoutMs),
+      onProgress: opts.onProgress,
+    };
+    entry.rearm = () => {
+      clearTimeout(entry.timer);
+      entry.timer = setTimeout(fire, timeoutMs);
+    };
+    pending.set(id, entry);
     w.postMessage({ ...msg, id } as StealthWorkerIn);
   });
+}
+
+/**
+ * Run a denominated-pool job in the worker. Long by nature (proof upload), so
+ * it streams progress and uses a silence watchdog rather than a hard deadline.
+ */
+export function poolRequest<R extends PoolRequest>(
+  req: R,
+  onProgress?: (step: string) => void,
+): Promise<PoolResponseFor<R>> {
+  return post<PoolResponseFor<R>>(
+    { type: 'pool', req },
+    { timeoutMs: POOL_SILENCE_TIMEOUT_MS, onProgress },
+  );
 }
 
 /**

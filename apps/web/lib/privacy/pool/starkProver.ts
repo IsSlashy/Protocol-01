@@ -57,9 +57,12 @@ class StarkProverService {
     if (this.ready) return this.ready;
 
     this.ready = new Promise<void>((resolve, reject) => {
-      // Vite (@crxjs) and Vitest both accept this module-worker shape.
+      // Turbopack (Next 16), Vite (@crxjs) and Vitest all accept this
+      // module-worker shape. The URL is relative to THIS file: in apps/web the
+      // prover worker is a sibling in `lib/privacy/pool/` (the extension kept it
+      // under `../workers/`), and a wrong specifier here fails only at runtime.
       const worker = new Worker(
-        new URL('../workers/starkProver.worker.ts', import.meta.url),
+        new URL('./starkProver.worker.ts', import.meta.url),
         { type: 'module' },
       );
 
