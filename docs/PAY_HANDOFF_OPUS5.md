@@ -1,4 +1,10 @@
-# /pay Private Payments — Handoff (for Opus 5)
+# /pay Private Payments — Handoff
+
+> **UPDATE 2026-07-25 (Opus 5 session).** Step 1 is no longer "in progress" — the
+> denominated pool is wired into /pay and **proven end-to-end on devnet**: shield,
+> storage-free note recovery, and unshield all land on-chain. Read §10 at the
+> bottom FIRST; it supersedes §4 and parts of §5/§9.
+
 
 Session date: 2026-07-24. Author: Fable 5. Everything below is committed to `origin/master`
 (IsSlashy/Protocol-01, **public repo**) unless explicitly marked otherwise. Read this whole file
@@ -255,3 +261,99 @@ feb3ee60 feat(web): campaign source tracking on the waitlist form
 Relevant memory files: `pay-full-opacity-roadmap-2026-07-24`, `session-2026-07-24-pay-page-build`,
 `buffer-polyfill-gap-web-worker-2026-07-24`, `audit-claims-vs-reality-2026-07-23`,
 `stealth-view-spend-coupling`, `starknet-buildathon-paris-2026-07-22`.
+
+---
+
+## 10. STEP 1 IS DONE — pool wired into /pay, proven on devnet (2026-07-25)
+
+### What shipped
+A **Pool tab** in /pay (Solana only): shielded balance, denomination selector,
+shield, and per-note withdraw. New files:
+
+- `apps/web/lib/privacy/pool/shieldEphemeral.ts` — prepare (prove) / execute (spend).
+- `apps/web/lib/privacy/pool/unshieldEphemeral.ts` — same shape for withdrawal.
+- `apps/web/lib/privacy/pool/poolNotes.ts` — note discovery + recovery.
+- `apps/web/lib/privacy/worker/poolHandlers.ts` — pool RPC inside the stealth worker.
+- `apps/web/lib/privacy/worker/pacedFetch.ts`, `pollingConfirm.ts` — transport fixes.
+- `apps/web/lib/privacy/shieldClient.ts` — main-thread driver.
+- `apps/web/components/pay/PoolPanel.tsx` — the UI.
+
+### The design constraint that shaped everything
+`shield_denominated_v3.rs:80` requires `proof_buffer.authority == depositor`, and
+a C6 proof is ~140KB uploaded in 1000-byte chunks → **~150 signatures**. Free for
+the extension (local keypair), unusable with Phantom. So both shield and unshield
+use the **ephemeral-depositor** pattern `transferDenominatedStarkV3` already
+shipped: the wallet signs ONE pre-fund, a deterministic ephemeral signs the rest,
+residual swept back. Hence the two-phase worker API (prepare → wallet funds →
+execute).
+
+**The shield and unshield ephemerals are domain-separated on purpose.** If one key
+did both, deposit and withdrawal would share a signer and the pool would hide
+nothing.
+
+### PROVEN ON DEVNET (real transactions, this session)
+- **Shield** `34kkaMxk…` → `ShieldDenominatedV3`, log "V3 commitment added at index: 27", tree 27→28.
+- **Recovery** — a scan found that note from the wallet signature alone, with **no local
+  state** (the run that created it crashed before returning anything).
+- **Unshield** `5Gt7ey5F…` → `UnshieldDenominatedStarkV3`.
+- **Clean round trip** after the fixes: shield `nB9gVPXs…` (leaf 28, **75 seconds**) →
+  withdraw `2FhzBLHc…` (~3 min). Deltas: 0.1 SOL out of the vault, 0.0995 to the
+  wallet, 0.0005 protocol fee. Ephemerals swept to 0 every time.
+- Pool parity 33/33, main suite 52/52, production build green.
+
+### Four bugs this found — two were fund-loss
+1. **Stark worker specifier.** The extraction kept `../workers/starkProver.worker.ts`;
+   in apps/web the prover is a sibling. Runtime-only failure — typecheck and the
+   33/33 parity tests both pass with it broken.
+2. **Buffer polyfill, 4th instance of the class.** `parseFilledSubtrees` calls
+   `treeData.readBigUInt64LE`. The polyfill patched only the prototype of the
+   `buffer` package copy it imports; a bare `Buffer` inside a bundled module
+   resolves to a **different copy reachable by no name**. Now patched on
+   `Uint8Array.prototype`, which every Buffer copy inherits from. **Rule stands and
+   is now enforced one level up.**
+3. **Counter allocation was a fund-loss bug.** Picking the next counter by scanning
+   past notes fails because insert events live in transaction history and public
+   devnet RPC prunes it — the 0.1 SOL pool's tree reports 27 leaves while the RPC
+   serves **1 signature**. The scan misses notes, reuses a counter, and since the
+   nullifier is `poseidon(np, secret)` with no epoch input, spending one strands
+   the other. **The counter is now the tree's leaf index** (authoritative, never
+   pruned, unique by construction) with a re-read guard if the pool advances
+   mid-prepare.
+4. **Confirmation was broken in the Worker.** web3.js `confirmTransaction`
+   subscribes over a WebSocket whose client throws `window is not defined` there,
+   so every confirmation waited out the blockhash — a uniform ~58s, ~14 per shield
+   (~13 min wasted), **and it reported a LANDED shield as "block height exceeded."**
+   Replaced with status polling on the Connection instance, leaving the extracted
+   proof code untouched.
+
+### RPC is now a hard requirement, not a nicety
+Public devnet RPC cannot do this at all: it 429s the chunk uploads and serves too
+little history to rebuild a Merkle proof. Helius devnet works (46 signatures back
+to 2026-05 for the 0.1 pool). Key is in `apps/web/.env.local` as
+`NEXT_PUBLIC_HELIUS_API_KEY` (gitignored). **Note it is `NEXT_PUBLIC_`, so it ships
+to the browser** — fine for devnet, do not reuse for a paid mainnet quota.
+
+### Honest state after Step 1 — claims did NOT change
+The site's privacy copy is **unchanged**, deliberately. What is true now:
+- The **Pool tab** can shield and withdraw a denominated note on devnet, so amount
+  quantisation and deposit↔withdrawal unlinkability exist **there**.
+- **The send flow still does not route through the pool.** A /pay send is the same
+  stealth-address path as before, amounts public.
+- The anonymity set is tiny and stated in the UI from tree leaf count (28 in the
+  0.1 SOL pool). A pool that small hides very little.
+- The user's wallet funds the ephemeral and receives the withdrawal, so an
+  observer watching that wallet still correlates both sides. **Breaking that needs
+  the relayer (Step 2).**
+So: do NOT upgrade the marketing copy to "amount + funding-graph hidden" yet. The
+honest upgrade is available only once sends route through the pool AND the
+funding link is broken.
+
+### Known gaps / next
+- ~1 SOL of proof-buffer rent is needed transiently per shield. Fine on devnet,
+  a real UX problem for mainnet.
+- USDC pools are wired in config but `prepareShield` refuses non-SOL: the SPL leg
+  would need funding onto the ephemeral's ATA.
+- Notes are found by enumerating candidate deposit epochs (6000-epoch window). If
+  history is unavailable the local encrypted blob is the fallback; both paths exist.
+- Next: Step 2 (relayer), then dual-key stealth (§3 item 4) which fixes a
+  currently-false safety property.
