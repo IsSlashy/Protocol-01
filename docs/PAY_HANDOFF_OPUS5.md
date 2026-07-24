@@ -368,3 +368,32 @@ funding link is broken.
   history is unavailable the local encrypted blob is the fallback; both paths exist.
 - Next: Step 2 (relayer), then dual-key stealth (§3 item 4) which fixes a
   currently-false safety property.
+
+---
+
+## 11. WHERE THIS STANDS AT END OF SESSION (2026-07-25)
+
+Nine commits on `master`, **not pushed** (push auto-deploys, and Vercel has no
+`NEXT_PUBLIC_HELIUS_API_KEY` — the Pool tab would ship broken on public RPC).
+
+Shipped and proven on devnet this session:
+1. Pool shield + withdraw wired into /pay (Pool tab), full round trip on-chain.
+2. Storage-free note recovery from the wallet signature alone.
+3. `recoverFloat.ts` — recovered 1.81 + 5.58 SOL of really-stranded rent.
+4. Withdrawal from a stored Merkle path — no transaction-history dependency.
+5. **Commitment blinding** (`fc6591ee`) — half the unlinkability fix.
+
+Read next, in this order:
+- `docs/C7_SPEND_CIRCUIT_PLAN.md` — the other half. **Start at Step 0** (the CU
+  probe); it is cheap and it gates the whole design.
+- §10 above — the four build bugs and the linkability evidence.
+
+Do NOT claim the pool is unlinkable. A withdrawal still passes the note
+commitment as a public instruction argument; blinding only closed the
+nullifier-enumeration path. Both are required.
+
+Operational notes: Helius devnet is mandatory (public RPC 429s the ~150-tx proof
+upload); the key lives in `apps/web/.env.local`, is gitignored, and is
+`NEXT_PUBLIC_`, so it reaches the browser — do not reuse it for a paid mainnet
+quota. The local test harness under `app/(pay)/pay/devshield/` is deleted at the
+end of every run on purpose: it takes a pasted private key and must never ship.
