@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "pnpm --filter @protocol-01/rpc-config build && pnpm --filter @protocol-01/specter-sdk build && next build",
+    "build": "pnpm --filter @protocol-01/rpc-config build && pnpm --filter @protocol-01/specter-sdk build:core && next build",
     "start": "next start",
     "test": "vitest run"
   },
