@@ -40,12 +40,6 @@ import {
 } from './denominatedPool';
 
 /**
- * How many counters to probe per pool. Each is a handful of hashes per epoch,
- * so this is cheap; it caps how many notes one wallet can hold in one pool.
- */
-const DEFAULT_MAX_COUNTER = 32;
-
-/**
  * How far back to search for a note's deposit epoch, in epochs (7200 slots
  * each — roughly an hour of devnet per epoch). The V4 pools were deployed in
  * 2026-05, so this window covers every note that can exist in them while
@@ -61,7 +55,6 @@ export interface RecoveredNote {
 }
 
 export interface RecoverNotesOptions {
-  maxCounter?: number;
   epochWindow?: number;
   /** Reuse a commitment map from a previous scan of the same pool. */
   commitments?: Map<string, { commitment: bigint; leafIndex: number }>;
@@ -81,7 +74,6 @@ export async function recoverNotes(
   walletSeed: Uint8Array,
   opts: RecoverNotesOptions = {},
 ): Promise<RecoveredNote[]> {
-  const maxCounter = opts.maxCounter ?? DEFAULT_MAX_COUNTER;
   const epochWindow = opts.epochWindow ?? DEFAULT_EPOCH_WINDOW;
 
   opts.onProgress?.('Reading pool history...');
@@ -96,7 +88,15 @@ export async function recoverNotes(
   opts.onProgress?.('Matching notes...');
   const found: RecoveredNote[] = [];
 
-  for (let counter = 0; counter < maxCounter; counter++) {
+  // The counter IS the leaf index (see shieldEphemeral.ts), so probe exactly the
+  // leaf indices the pool actually contains rather than a blind 0..N range —
+  // that both covers pools of any size and skips indices
+  // that cannot match anything.
+  const candidates = [...commitments.values()]
+    .map((c) => c.leafIndex)
+    .sort((a, b) => a - b);
+
+  for (const counter of candidates) {
     const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolConfig.poolPDA, counter);
 
     // Walk epochs newest-first: a wallet's most recent note is the common case.
@@ -104,7 +104,7 @@ export async function recoverNotes(
     for (let epoch = currentEpoch; epoch >= lowestEpoch; epoch--) {
       const commitment = createCommitmentV3(nullifierPreimage, secret, epoch, tokenMintField);
       const onChain = commitments.get(commitment.toString());
-      if (onChain) {
+      if (onChain && onChain.leafIndex === counter) {
         hit = { epoch, commitment, leafIndex: onChain.leafIndex };
         break;
       }

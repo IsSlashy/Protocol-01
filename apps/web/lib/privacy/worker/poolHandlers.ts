@@ -35,8 +35,14 @@ import {
   createNoteEncryptionAddress,
   encryptNote,
 } from '../pool/noteCrypto';
-import { scanPoolForSeed, type RecoveredNote } from '../pool/poolNotes';
+import { recoverNotes, scanPoolForSeed, type RecoveredNote } from '../pool/poolNotes';
 import { createPacedFetch } from './pacedFetch';
+import { usePollingConfirmation } from './pollingConfirm';
+import {
+  executeUnshield,
+  prepareUnshieldJob,
+  type PreparedUnshield,
+} from '../pool/unshieldEphemeral';
 import {
   executeShield,
   prepareShield,
@@ -72,7 +78,32 @@ export interface PoolScanRequest {
   denomination?: number;
 }
 
-export type PoolRequest = PoolShieldPrepareRequest | PoolShieldExecuteRequest | PoolScanRequest;
+/** Withdraw a note. The note is identified by the pool + leaf index it occupies;
+ *  its secrets are re-derived in here from the pool seed, so no secret crosses
+ *  the wire in either direction. */
+export interface PoolUnshieldPrepareRequest {
+  kind: 'poolUnshieldPrepare';
+  meta: string;
+  token: 'SOL';
+  denomination: number;
+  leafIndex: number;
+}
+
+export interface PoolUnshieldExecuteRequest {
+  kind: 'poolUnshieldExecute';
+  jobId: string;
+  /** Address that receives the withdrawn funds. */
+  recipient: string;
+  /** Wallet that pre-funded the ephemeral; receives the swept residual. */
+  ownerPubkey: string;
+}
+
+export type PoolRequest =
+  | PoolShieldPrepareRequest
+  | PoolShieldExecuteRequest
+  | PoolScanRequest
+  | PoolUnshieldPrepareRequest
+  | PoolUnshieldExecuteRequest;
 
 export interface PoolShieldPrepareResponse {
   kind: 'poolShieldPrepare';
@@ -127,7 +158,26 @@ export interface PoolScanResponse {
   poolSizes: PoolSizeView[];
 }
 
-export type PoolResponse = PoolShieldPrepareResponse | PoolShieldExecuteResponse | PoolScanResponse;
+export interface PoolUnshieldPrepareResponse {
+  kind: 'poolUnshieldPrepare';
+  jobId: string;
+  ephemeralPubkey: string;
+  requiredLamports: number;
+  denomination: number;
+}
+
+export interface PoolUnshieldExecuteResponse {
+  kind: 'poolUnshieldExecute';
+  txSig: string;
+  denomination: number;
+}
+
+export type PoolResponse =
+  | PoolShieldPrepareResponse
+  | PoolShieldExecuteResponse
+  | PoolScanResponse
+  | PoolUnshieldPrepareResponse
+  | PoolUnshieldExecuteResponse;
 
 export type PoolResponseFor<R extends PoolRequest> = Extract<PoolResponse, { kind: R['kind'] }>;
 
@@ -143,13 +193,22 @@ const poolSeeds = new Map<string, Uint8Array>();
 /** In-flight shields, awaiting their pre-fund. */
 const prepared = new Map<string, { ctx: PreparedShield; meta: string; counter: number }>();
 
+/** In-flight withdrawals, awaiting their pre-fund. */
+const preparedUnshields = new Map<string, { ctx: PreparedUnshield; meta: string }>();
+
 export function configurePoolHandlers(rpcUrl: string): void {
   // Paced transport: a shield is ~150 chunk uploads plus polling, which public
   // devnet RPC answers with 429 if fired at full speed. See pacedFetch.ts.
-  connection = new Connection(rpcUrl, {
-    commitment: 'confirmed',
-    fetch: createPacedFetch(),
-  });
+  // Polling confirmation: a Worker has no working WebSocket subscription client
+  // for web3.js, so the default confirmTransaction waits out the blockhash on
+  // EVERY transaction (~58s each, ~14 per shield) and reports a landed
+  // transaction as expired. See pollingConfirm.ts.
+  connection = usePollingConfirmation(
+    new Connection(rpcUrl, {
+      commitment: 'confirmed',
+      fetch: createPacedFetch(),
+    }),
+  );
 }
 
 /**
@@ -168,6 +227,7 @@ export function setPoolSeed(meta: string, signature: Uint8Array): void {
 export function clearPoolState(): void {
   poolSeeds.clear();
   prepared.clear();
+  preparedUnshields.clear();
 }
 
 function requireSeed(meta: string): Uint8Array {
@@ -323,6 +383,69 @@ async function handlePoolShieldExecute(
   }
 }
 
+async function handlePoolUnshieldPrepare(
+  req: PoolUnshieldPrepareRequest,
+  onProgress?: (step: string) => void,
+): Promise<PoolUnshieldPrepareResponse> {
+  const conn = requireConnection();
+  const seed = requireSeed(req.meta);
+  const pool = requirePool(req.token, req.denomination);
+
+  // Rebuild the note from the seed: its secrets come from (seed, pool, leaf
+  // index) and its deposit epoch is recovered by matching the derived
+  // commitment against the on-chain leaf. Nothing secret is accepted from the
+  // caller — a page cannot ask us to spend a note we did not derive.
+  onProgress?.('Locating your note on-chain...');
+  const notes = await recoverNotes(conn, pool, seed, { onProgress });
+  const note = notes.find((n) => n.receipt.leafIndex === req.leafIndex);
+  if (!note) {
+    throw new Error(
+      `No note of yours found at leaf #${req.leafIndex} in the ${pool.denomination} ` +
+        `${pool.token} pool. If it was just shielded, wait for the RPC to index it.`,
+    );
+  }
+  if (note.spent) throw new Error('This note has already been withdrawn.');
+
+  const ctx = await prepareUnshieldJob(note.receipt, pool, conn, seed, onProgress);
+  preparedUnshields.set(ctx.jobId, { ctx, meta: req.meta });
+
+  return {
+    kind: 'poolUnshieldPrepare',
+    jobId: ctx.jobId,
+    ephemeralPubkey: ctx.ephemeral.publicKey.toBase58(),
+    requiredLamports: ctx.requiredLamports,
+    denomination: pool.denomination,
+  };
+}
+
+async function handlePoolUnshieldExecute(
+  req: PoolUnshieldExecuteRequest,
+  onProgress?: (step: string) => void,
+): Promise<PoolUnshieldExecuteResponse> {
+  const conn = requireConnection();
+  const job = preparedUnshields.get(req.jobId);
+  if (!job) {
+    throw new Error('Unknown withdrawal job — prepare it again (the worker was restarted).');
+  }
+
+  try {
+    const { txSig } = await executeUnshield(
+      job.ctx,
+      conn,
+      new PublicKey(req.recipient),
+      new PublicKey(req.ownerPubkey),
+      onProgress,
+    );
+    return {
+      kind: 'poolUnshieldExecute',
+      txSig,
+      denomination: job.ctx.poolConfig.denomination,
+    };
+  } finally {
+    preparedUnshields.delete(req.jobId);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
@@ -341,6 +464,12 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolShieldExecute':
       res = await handlePoolShieldExecute(req, onProgress);
+      break;
+    case 'poolUnshieldPrepare':
+      res = await handlePoolUnshieldPrepare(req, onProgress);
+      break;
+    case 'poolUnshieldExecute':
+      res = await handlePoolUnshieldExecute(req, onProgress);
       break;
     default: {
       const _exhaustive: never = req;

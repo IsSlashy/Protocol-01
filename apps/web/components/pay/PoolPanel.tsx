@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Connection, PublicKey, Transaction } from "@solana/web3.js";
-import { Coins, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
+import { Coins, Download, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import {
   loadEncryptedNotes,
   scanPool,
   shieldToPool,
   storeEncryptedNote,
+  unshieldFromPool,
   type ShieldOutcome,
 } from "@/lib/privacy/shieldClient";
 import type { PoolNoteView, PoolSizeView } from "@/lib/privacy/worker/poolHandlers";
@@ -41,6 +42,8 @@ export default function PoolPanel({
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ShieldOutcome | null>(null);
+  const [busyNote, setBusyNote] = useState<string | null>(null);
+  const [withdrawn, setWithdrawn] = useState<{ txSig: string; denomination: number } | null>(null);
 
   const rescan = useCallback(async () => {
     setScanning(true);
@@ -87,6 +90,36 @@ export default function PoolPanel({
       setError((e as Error).message || "Shield failed.");
     } finally {
       setShielding(false);
+      setStep(null);
+    }
+  }
+
+  async function handleUnshield(note: PoolNoteView) {
+    if (!signOne) {
+      setError("This wallet cannot sign transactions.");
+      return;
+    }
+    setError(null);
+    setResult(null);
+    setBusyNote(`${note.pool}:${note.leafIndex}`);
+    try {
+      const out = await unshieldFromPool({
+        meta,
+        token: "SOL",
+        denomination: note.denomination,
+        leafIndex: note.leafIndex,
+        recipient: owner,
+        owner,
+        connection,
+        signOne,
+        onProgress: setStep,
+      });
+      setWithdrawn(out);
+      void rescan();
+    } catch (e) {
+      setError((e as Error).message || "Withdrawal failed.");
+    } finally {
+      setBusyNote(null);
       setStep(null);
     }
   }
@@ -194,10 +227,30 @@ export default function PoolPanel({
         </div>
       )}
 
+      {withdrawn && (
+        <div className="card p-4">
+          <p className="font-display text-sm text-p01-text">
+            Withdrew {withdrawn.denomination} SOL
+          </p>
+          <p className="mt-1 text-xs text-p01-text-muted">
+            Sent to your connected wallet. Withdrawing to the same wallet that funded the deposit
+            lets an observer correlate the two — use a different address to actually benefit.
+          </p>
+          <a
+            href={`https://explorer.solana.com/tx/${withdrawn.txSig}?cluster=devnet`}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 inline-block font-mono text-xs text-p01-cyan hover:underline"
+          >
+            {truncate(withdrawn.txSig, 10, 8)} ↗
+          </a>
+        </div>
+      )}
+
       <button
         type="button"
         onClick={handleShield}
-        disabled={shielding || !signOne}
+        disabled={shielding || !!busyNote || !signOne}
         className="btn-primary flex w-full items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {shielding ? (
@@ -234,7 +287,18 @@ export default function PoolPanel({
                     leaf #{n.leafIndex} · {truncate(n.commitment, 6, 4)}
                   </p>
                 </div>
-                <span className="text-xs text-p01-text-dim">unshield: next step</span>
+                <button
+                  onClick={() => handleUnshield(n)}
+                  disabled={!!busyNote || shielding || !signOne}
+                  className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
+                >
+                  {busyNote === `${n.pool}:${n.leafIndex}` ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" />
+                  )}
+                  Withdraw
+                </button>
               </li>
             ))}
           </ul>
