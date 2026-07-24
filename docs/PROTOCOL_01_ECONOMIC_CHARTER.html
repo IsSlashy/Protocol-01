@@ -162,7 +162,7 @@
     vertical-align: top;
   }
   tr:last-child td { border-bottom: none; }
-  td.num, th.num { text-align: right; font-family: 'JetBrains Mono', monospace; }
+  td.num, th.num { text-align: right; font-family: 'JetBrains Mono', monospace; white-space: nowrap; }
 
   .code-block {
     background: var(--dark);
@@ -283,9 +283,9 @@
     Fee schedule &middot; system costs &middot; revenue model
   </div>
   <div style="font-family: 'JetBrains Mono', monospace; font-size: 9pt; color: var(--text-muted); letter-spacing: 0.08em; line-height: 1.8;">
-    v1.0.2 &middot; TX-OPACITY RELEASE<br>
+    v1.0.3 &middot; TX-OPACITY RELEASE<br>
     Devnet live &middot; Mainnet pending audit<br>
-    Effective 2026-06-11
+    Effective 2026-06-11 &middot; Updated 2026-07-20
   </div>
 
   <div style="position: absolute; bottom: 60px; left: 0; right: 0; text-align: center;">
@@ -294,7 +294,7 @@
 </div>
 
 <!-- =================== PAGE 2: ONE-PAGE SUMMARY =================== -->
-<div class="page">
+<div class="page compact">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
     <h1>The numbers.</h1>
     <span class="badge badge-cyan">01 / 09</span>
@@ -372,9 +372,20 @@
     </div>
   </div>
 
+  <div class="card card-cyan" style="margin-top: 8px;">
+    <h4 class="cyan">Extension premium tiers &mdash; separate, off-chain</h4>
+    <p class="small muted">
+      The Chrome extension sells Standard and ZK tiers through anonymous
+      <span class="mono">p01lic_</span> license keys, verifiable via the
+      merchant SDK without any PII. This is product revenue, not a protocol
+      fee: it never touches the on-chain fee schedule above, and the free
+      tier keeps full self-custody functionality.
+    </p>
+  </div>
+
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.2 TX-OPACITY &middot; PAGE 01</span>
+    <span>v1.0.3 TX-OPACITY &middot; PAGE 01</span>
   </div>
 </div>
 
@@ -483,12 +494,12 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.2 TX-OPACITY &middot; PAGE 02</span>
+    <span>v1.0.3 TX-OPACITY &middot; PAGE 02</span>
   </div>
 </div>
 
 <!-- =================== PAGE 4: SOLANA NETWORK COST =================== -->
-<div class="page">
+<div class="page compact">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
     <h1>Solana network cost.</h1>
     <span class="badge badge-cyan">03 / 09</span>
@@ -514,7 +525,6 @@
     <tr><td>Stealth send / claim</td><td class="num mono cyan">200,000</td><td class="num mono">0.000005 SOL</td><td class="small dim">COMPUTE_UNITS.STEALTH_*</td></tr>
     <tr><td>Stream create</td><td class="num mono cyan">200,000</td><td class="num mono">0.000005 SOL</td><td class="small dim">COMPUTE_UNITS.STREAM_CREATE</td></tr>
     <tr><td>Subscription create</td><td class="num mono cyan">300,000</td><td class="num mono">0.000008 SOL</td><td class="small dim">COMPUTE_UNITS.SUBSCRIPTION_CREATE</td></tr>
-    <tr><td>MPC vote (Arcium)</td><td class="num mono cyan">300,000</td><td class="num mono">0.000008 SOL</td><td class="small dim">COMPUTE_UNITS.MPC_VOTE</td></tr>
     <tr><td>Instant unshield prefund</td><td class="num mono cyan">200,000</td><td class="num mono">0.000005 SOL</td><td class="small dim">PREFUND_CU</td></tr>
   </table>
   <p class="small dim">
@@ -541,6 +551,7 @@
     <tr><td>Subscription vault</td><td class="num mono">~190 B</td><td class="num mono">~0.00146 SOL</td><td class="small">Cancel returns rent</td></tr>
     <tr><td>Service registry entry</td><td class="num mono">~417 B</td><td class="num mono">~0.00302 SOL</td><td class="small">Deregister returns rent</td></tr>
     <tr><td>STARK proof buffer</td><td class="num mono">~120 KB</td><td class="num mono">~0.85 SOL</td><td class="small">Auto-closed at unshield (or on crash-sweep)</td></tr>
+    <tr><td>PQ stealth announcement (ML-KEM-768, V2)</td><td class="num mono">~1,220 B</td><td class="num mono">~0.0094 SOL</td><td class="small">Close instruction planned (roadmap P2)</td></tr>
     <tr><td>Liquidity pool prefund record</td><td class="num mono">~80 B</td><td class="num mono">~0.00111 SOL</td><td class="small">Settle returns rent</td></tr>
   </table>
 
@@ -560,7 +571,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.2 TX-OPACITY &middot; PAGE 03</span>
+    <span>v1.0.3 TX-OPACITY &middot; PAGE 03</span>
   </div>
 </div>
 
@@ -636,7 +647,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.2 TX-OPACITY &middot; PAGE 04</span>
+    <span>v1.0.3 TX-OPACITY &middot; PAGE 04</span>
   </div>
 </div>
 
@@ -699,7 +710,7 @@
   <table>
     <tr><th>Recipient</th><th class="num">Share</th><th>Use</th></tr>
     <tr><td><span class="badge badge-cyan">Protocol 01</span></td><td class="num mono cyan">20 %</td><td class="small">SDK, mobile, extension, infra hosting, audits</td></tr>
-    <tr><td><span class="badge badge-pink">Mugen</span></td><td class="num mono pink">65 %</td><td class="small">Fiat rail ops, escrow management, KYC partner, support</td></tr>
+    <tr><td><span class="badge badge-pink">Mugen</span></td><td class="num mono pink">65 %</td><td class="small">Fiat rail ops, escrow management, dispute mediation, support</td></tr>
     <tr><td><span class="badge badge-yellow">Treasury</span></td><td class="num mono yellow">15 %</td><td class="small">DAO grants, governance staking, community programs</td></tr>
   </table>
 
@@ -716,7 +727,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.2 TX-OPACITY &middot; PAGE 05</span>
+    <span>v1.0.3 TX-OPACITY &middot; PAGE 05</span>
   </div>
 </div>
 
@@ -763,7 +774,7 @@
     <tr>
       <td><span class="badge badge-cyan">Engineering &amp; infrastructure</span></td>
       <td class="num mono cyan">50 %</td>
-      <td class="small">Devs, RPC nodes, prover compute, MPC clusters, CI / CD, mobile / extension upkeep</td>
+      <td class="small">Devs, RPC nodes, prover compute, relay nodes, CI / CD, mobile / extension upkeep</td>
     </tr>
     <tr>
       <td><span class="badge badge-pink">Audit &amp; security</span></td>
@@ -787,8 +798,8 @@
     <div class="card">
       <h4 class="cyan">50% to engineering</h4>
       <p class="small muted">
-        Solana-native crypto infra is compute-expensive. The shielded pool
-        program alone spans ~14 Anchor programs and ~340 tests. STARK proof
+        Solana-native crypto infra is compute-expensive. The stack
+        spans ~15 Anchor programs and ~340 tests. STARK proof
         generation runs on user devices but the verifier and prover state
         live on chain. The 50% cut keeps the build velocity sustainable
         through mainnet and beyond.
@@ -807,7 +818,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.2 TX-OPACITY &middot; PAGE 06</span>
+    <span>v1.0.3 TX-OPACITY &middot; PAGE 06</span>
   </div>
 </div>
 
@@ -885,7 +896,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.2 TX-OPACITY &middot; PAGE 07</span>
+    <span>v1.0.3 TX-OPACITY &middot; PAGE 07</span>
   </div>
 </div>
 
@@ -1013,7 +1024,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.2 TX-OPACITY &middot; PAGE 08</span>
+    <span>v1.0.3 TX-OPACITY &middot; PAGE 08</span>
   </div>
 </div>
 
@@ -1063,17 +1074,26 @@
     </ul>
   </div>
 
-  <div style="margin-top: 30px; text-align: center;">
+  <div class="card" style="margin-top: 10px;">
+    <h4>Changelog &mdash; v1.0.3 (2026-07-20)</h4>
+    <ul class="small muted">
+      <li>Arcium MPC removed from Protocol 01 (module retired; Mugen governance only) &mdash; MPC vote row dropped from the compute table</li>
+      <li>PQ stealth announcement account added to the rent table (ML-KEM-768 V2 transport, live on devnet; close instruction on the roadmap)</li>
+      <li>Extension Standard / ZK license tiers documented as off-chain product revenue, zero PII</li>
+    </ul>
+  </div>
+
+  <div style="margin-top: 18px; text-align: center;">
     <div class="cover-subtitle" style="font-size: 9pt; line-height: 1.8;">
       Volta Team &middot; Slashy Fx<br>
       Built on Solana &middot; Devnet live &middot; Mainnet pending audit<br>
-      protocol-01.dev &middot; v1.0.2 TX-OPACITY &middot; 2026-06-11
+      protocol-01.dev &middot; v1.0.3 TX-OPACITY &middot; 2026-07-20
     </div>
   </div>
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.2 TX-OPACITY &middot; END</span>
+    <span>v1.0.3 TX-OPACITY &middot; END</span>
   </div>
 </div>
 

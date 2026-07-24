@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Protocol 01 — Manifesto</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  @page { size: A4; margin: 0; }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --void: #0a0a0c;
+    --dark: #0f0f12;
+    --surface: #151518;
+    --surface2: #1a1a1e;
+    --border: #2a2a30;
+    --cyan: #39c5bb;
+    --cyan-bright: #00ffe5;
+    --pink: #ff77a8;
+    --pink-hot: #ff2d7a;
+    --yellow: #ffcc00;
+    --green: #4ade80;
+    --red: #ff3366;
+    --text: #ffffff;
+    --text-muted: #888892;
+    --text-dim: #555560;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--void);
+    color: var(--text);
+    font-size: 10pt;
+    line-height: 1.6;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .page {
+    width: 210mm;
+    height: 297mm;
+    max-height: 297mm;
+    padding: 18mm 20mm;
+    margin: 0 auto;
+    position: relative;
+    page-break-after: always;
+    background: var(--void);
+    overflow: hidden;
+  }
+  .page:last-child { page-break-after: avoid; }
+  .page > * { position: relative; z-index: 1; }
+
+  .page-footer {
+    position: absolute;
+    bottom: 10mm;
+    left: 20mm;
+    right: 20mm;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+
+  h1 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 28pt;
+    letter-spacing: 0.05em;
+    line-height: 1.15;
+    margin-bottom: 12px;
+  }
+  h2 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-size: 16pt;
+    letter-spacing: 0.03em;
+    color: var(--cyan);
+    margin-bottom: 10px;
+    margin-top: 20px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+  }
+  h2:first-child { margin-top: 0; }
+  h3 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 600;
+    font-size: 11pt;
+    letter-spacing: 0.02em;
+    color: var(--pink);
+    margin-bottom: 6px;
+    margin-top: 14px;
+  }
+
+  p { margin-bottom: 8px; }
+  .lead { font-size: 11.5pt; color: var(--text-muted); line-height: 1.55; margin-bottom: 14px; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .small { font-size: 8pt; }
+  .muted { color: var(--text-muted); }
+  .dim { color: var(--text-dim); }
+  .cyan { color: var(--cyan); }
+  .pink { color: var(--pink); }
+  .yellow { color: var(--yellow); }
+  .green { color: var(--green); }
+
+  .tag {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7.5pt;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    border: 1px solid var(--cyan);
+    border-radius: 3px;
+    padding: 3px 10px;
+    margin-bottom: 18px;
+  }
+
+  .cover {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    height: 100%;
+    padding-bottom: 30mm;
+  }
+  .cover h1 {
+    font-size: 40pt;
+    margin-bottom: 20px;
+  }
+  .cover .subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10pt;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--pink);
+    margin-bottom: 30px;
+  }
+  .cover .oneliner {
+    border-left: 3px solid var(--cyan);
+    padding-left: 16px;
+    font-size: 12pt;
+    color: var(--text-muted);
+    max-width: 150mm;
+  }
+
+  .belief {
+    display: flex;
+    gap: 14px;
+    margin-bottom: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+  }
+  .belief .num {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 20pt;
+    color: var(--cyan);
+    line-height: 1;
+    min-width: 34px;
+  }
+  .belief h3 { margin-top: 0; }
+  .belief p { margin-bottom: 0; color: var(--text-muted); }
+
+  .face {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--pink);
+    border-radius: 4px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .face .face-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 9.5pt;
+    color: var(--cyan);
+    margin-bottom: 3px;
+  }
+  .face p { margin-bottom: 0; color: var(--text-muted); font-size: 9.5pt; }
+
+  .flow-step {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .flow-step .marker {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 9pt;
+    color: var(--pink);
+    min-width: 70px;
+    padding-top: 2px;
+  }
+  .flow-step p { margin-bottom: 0; color: var(--text-muted); font-size: 9.5pt; }
+  .flow-step .k { color: var(--text); font-weight: 600; }
+
+  .refuse-list p {
+    border-left: 3px solid var(--red);
+    padding-left: 14px;
+    margin-bottom: 12px;
+    color: var(--text-muted);
+  }
+  .refuse-list .k { color: var(--text); font-weight: 600; }
+
+  .stat-row {
+    display: flex;
+    gap: 10px;
+    margin: 16px 0;
+  }
+  .stat {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    text-align: center;
+  }
+  .stat .v {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 800;
+    font-size: 15pt;
+    color: var(--cyan-bright);
+  }
+  .stat .l {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  .closing {
+    margin-top: 26px;
+    border: 1px solid var(--cyan);
+    border-radius: 6px;
+    padding: 18px 20px;
+    background: var(--surface);
+  }
+  .closing p {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 600;
+    font-size: 12pt;
+    line-height: 1.5;
+    margin-bottom: 0;
+  }
+
+  table.circuits {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8pt;
+    margin: 10px 0 14px;
+  }
+  table.circuits th {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    text-align: left;
+    border-bottom: 1px solid var(--cyan);
+    padding: 6px 8px;
+  }
+  table.circuits td {
+    border-bottom: 1px solid var(--border);
+    padding: 6px 8px;
+    color: var(--text-muted);
+    vertical-align: top;
+  }
+  table.circuits td:first-child {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .badge {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 6.5pt;
+    letter-spacing: 0.05em;
+    border-radius: 3px;
+    padding: 1px 6px;
+  }
+  .badge.active { color: var(--green); border: 1px solid var(--green); }
+  .badge.legacy { color: var(--yellow); border: 1px solid var(--yellow); }
+
+  .formula {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8.5pt;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--cyan);
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin: 8px 0 12px;
+    color: var(--text-muted);
+  }
+  .formula .fn { color: var(--cyan-bright); }
+  .formula .var { color: var(--pink); }
+
+  .pipe {
+    margin: 10px 0;
+  }
+  .pipe-step {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 10px 14px;
+  }
+  .pipe-step .n {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 800;
+    font-size: 12pt;
+    color: var(--pink);
+    min-width: 24px;
+    line-height: 1.3;
+  }
+  .pipe-step .body { flex: 1; }
+  .pipe-step .t {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 8.5pt;
+    color: var(--cyan);
+    margin-bottom: 2px;
+  }
+  .pipe-step p { margin-bottom: 0; color: var(--text-muted); font-size: 9pt; line-height: 1.5; }
+
+  .tree {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    line-height: 1.7;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 12px 16px;
+    margin: 10px 0;
+    color: var(--text-muted);
+    white-space: pre;
+  }
+  .tree .d { color: var(--cyan); font-weight: 700; }
+  .tree .c { color: var(--text-dim); }
+
+  .guide-step {
+    display: flex;
+    gap: 14px;
+    margin-bottom: 13px;
+  }
+  .guide-step .gnum {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 14pt;
+    color: var(--cyan);
+    min-width: 30px;
+    text-align: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    height: 34px;
+    line-height: 34px;
+  }
+  .guide-step .body { flex: 1; }
+  .guide-step h3 { margin-top: 0; margin-bottom: 3px; font-size: 10pt; }
+  .guide-step p { margin-bottom: 0; color: var(--text-muted); font-size: 9.5pt; }
+</style>
+</head>
+<body>
+
+<!-- PAGE 1 — COVER -->
+<div class="page">
+  <div class="cover">
+    <div class="tag">MANIFESTO / 2026</div>
+    <h1>THE<br>PROTOCOL 01<br>MANIFESTO</h1>
+    <div class="subtitle">Privacy layer for Solana</div>
+    <div class="oneliner">
+      <p>Every transaction you make on a public blockchain is a confession. Who paid you, who you paid, how much you hold, what you subscribe to, when you wake up and when you sleep. Solana settles in 400 milliseconds and remembers forever.</p>
+      <p>We think that is backwards. Cash never asked for your identity. Your bank statement was never a public document. Privacy is not a feature you bolt on for criminals, it is the default state of money that every ledger before the blockchain simply had.</p>
+      <p style="margin-bottom:0" class="cyan">Protocol 01 exists to give Solana that default back.</p>
+    </div>
+  </div>
+  <div class="page-footer">
+    <span>PROTOCOL 01 // MANIFESTO</span>
+    <span>protocol-01.dev</span>
+    <span>01 / 09</span>
+  </div>
+</div>
+
+<!-- PAGE 2 — BELIEFS -->
+<div class="page">
+  <h2>What we believe</h2>
+  <p class="lead">Five convictions. Everything in the stack follows from them.</p>
+
+  <div class="belief">
+    <div class="num">1</div>
+    <div>
+      <h3>Privacy is normal</h3>
+      <p>Wanting your salary, your savings, and your spending habits off a public feed is not suspicious. It is how money has always worked.</p>
+    </div>
+  </div>
+
+  <div class="belief">
+    <div class="num">2</div>
+    <div>
+      <h3>Privacy must be usable</h3>
+      <p>A privacy tool that requires a desktop, a command line, and a cryptography degree protects nobody. If it does not run on a phone with one tap, it does not exist.</p>
+    </div>
+  </div>
+
+  <div class="belief">
+    <div class="num">3</div>
+    <div>
+      <h3>Privacy must be durable</h3>
+      <p>A quantum computer built in 2035 can decrypt everything recorded in 2026. Privacy that expires is not privacy, it is a time bomb. That is why we build on hash-based cryptography that quantum computers do not break.</p>
+    </div>
+  </div>
+
+  <div class="belief">
+    <div class="num">4</div>
+    <div>
+      <h3>Trust nothing you can verify</h3>
+      <p>No trusted setup ceremonies, no coordinator secrets, no "trust our server". Proofs are generated on your device and verified on-chain by open-source programs.</p>
+    </div>
+  </div>
+
+  <div class="belief">
+    <div class="num">5</div>
+    <div>
+      <h3>Ship real things</h3>
+      <p>Devnet programs you can call today, an APK you can install today, SDKs you can npm install today. A manifesto without running code is a poem.</p>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 // MANIFESTO</span>
+    <span>protocol-01.dev</span>
+    <span>02 / 09</span>
+  </div>
+</div>
+
+<!-- PAGE 3 — WHAT IT IS -->
+<div class="page">
+  <h2>What Protocol 01 is</h2>
+  <p class="lead">A privacy layer for Solana. Hold, send, and spend money without publishing your identity, your balance, or your transaction graph, while keeping the speed and cost of Solana underneath. One stack, several faces.</p>
+
+  <div class="face">
+    <div class="face-title">THE MOBILE APP</div>
+    <p>An Android wallet (Expo / React Native) with on-device proof generation, biometric unlock, shielding, private transfers, subscriptions, and unshielding. Privacy that fits in a pocket.</p>
+  </div>
+
+  <div class="face">
+    <div class="face-title">THE CHROME EXTENSION</div>
+    <p>The same shielded engine in a browser (Manifest V3), with license-key gated tiers and pairing with the phone by QR scan.</p>
+  </div>
+
+  <div class="face">
+    <div class="face-title">THE WEB APP</div>
+    <p>Next.js site at protocol-01.dev: docs, downloads, demos, weekly build-in-public videos.</p>
+  </div>
+
+  <div class="face">
+    <div class="face-title">THE SDKS</div>
+    <p>A family of TypeScript packages on npm so any developer can add private payments to their own product: zk-sdk (shielded pools), zkspl-sdk (confidential balances), specter-sdk (post-quantum stealth addresses), auth-sdk, merchant-sdk (subscriptions and license verification without PII), privacy-toolkit, p01-js, and more.</p>
+  </div>
+
+  <div class="face">
+    <div class="face-title">THE PROGRAMS</div>
+    <p>Around 15 Anchor programs on Solana devnet: the shielded pool, the zkSPL confidential-balance program, the specter stealth-address transport, subscriptions, streaming payments, the on-chain relayer, the STARK verifier, the quantum vault, the service registry, the fee splitter, liquidity.</p>
+  </div>
+
+  <div class="face">
+    <div class="face-title">MUGEN EXCHANGE</div>
+    <p>A peer-to-peer, no-KYC fiat-to-crypto exchange built on top of the same privacy stack, proving the layer can carry a real product.</p>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 // MANIFESTO</span>
+    <span>protocol-01.dev</span>
+    <span>03 / 09</span>
+  </div>
+</div>
+
+<!-- PAGE 4 — THE JOURNEY OF A NOTE -->
+<div class="page">
+  <h2>How it works: the journey of a note</h2>
+  <p class="lead">The core object is a note. Everything else is proving things about notes without revealing them.</p>
+
+  <div class="flow-step">
+    <div class="marker">SHIELD</div>
+    <p><span class="k">A note is born.</span> Your device creates a secret note and publishes only its commitment, a Poseidon hash of the note's secrets. The commitment goes into a Merkle tree on-chain. The chain knows a deposit happened, but not which future spend it belongs to.</p>
+  </div>
+
+  <div class="flow-step">
+    <div class="marker">SPEND</div>
+    <p><span class="k">Three proofs in one.</span> Your device proves in zero knowledge that your note is in the tree (Merkle inclusion), that you know its secrets, and that you have never spent it before (a nullifier, a one-way tag the program records to prevent double spends). The verifier learns that some valid note was spent. It cannot tell which one. In a pool of fixed denominations, every note looks identical, so the anonymity set is the whole pool.</p>
+  </div>
+
+  <div class="flow-step">
+    <div class="marker">TRANSFER</div>
+    <p><span class="k">Note to note.</span> Spending one note privately mints a commitment for the recipient. Value moves without any public link between sender and receiver. Subscriptions prove note ownership to a merchant program: the merchant sees a payment, never a wallet.</p>
+  </div>
+
+  <div class="flow-step">
+    <div class="marker">UNSHIELD</div>
+    <p><span class="k">Back to public.</span> A note converts to public SOL at any address, with a relayer submitting the transaction so your public wallet never signs it.</p>
+  </div>
+
+  <div class="flow-step">
+    <div class="marker">RECEIVE</div>
+    <p><span class="k">Stealth by default.</span> Specter stealth addresses combine ECDH with ML-KEM, a NIST post-quantum key encapsulation, and announce payments through chunked on-chain program accounts. A sender derives a one-time address only the recipient can detect and spend. A quantum adversary replaying the chain later still cannot link it.</p>
+  </div>
+
+  <div class="flow-step">
+    <div class="marker">PROVE</div>
+    <p><span class="k">SNARKs to STARKs.</span> Proofs are moving from Groth16 (elliptic curves, trusted setup) to STARKs: a Winterfell prover over the Goldilocks field with Poseidon AIR, verified on-chain by our own multi-circuit FRI verifier. STARKs need no ceremony and rest on hash functions, the piece of cryptography quantum computers only dent instead of shatter. The prover compiles to WASM and runs on the phone.</p>
+  </div>
+
+  <div class="flow-step">
+    <div class="marker">RELAY</div>
+    <p><span class="k">Honest necessities.</span> An on-chain relayer program with independent relay nodes so users do not doxx themselves paying fees, a refund keeper, event-scrubbed programs so even metadata leaks less, and a registry for services that accept shielded payments.</p>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 // MANIFESTO</span>
+    <span>protocol-01.dev</span>
+    <span>04 / 09</span>
+  </div>
+</div>
+
+<!-- PAGE 5 — THE CIRCUITS -->
+<div class="page">
+  <h2>The circuits</h2>
+  <p class="lead">Five production Circom circuits, each one a small mathematical contract. A proof convinces the on-chain verifier that the contract holds, without revealing the inputs.</p>
+
+  <table class="circuits">
+    <tr>
+      <th>Circuit</th><th>Model</th><th>Constraints</th><th>Capacity</th><th>Status</th>
+    </tr>
+    <tr>
+      <td>denominated_pool</td>
+      <td>Fixed-denomination shielded pool (Tornado Cash model). All notes in a pool share one value, so every withdrawal is indistinguishable.</td>
+      <td>~4,273</td>
+      <td>32K notes<br>(depth 15)</td>
+      <td><span class="badge active">ACTIVE</span></td>
+    </tr>
+    <tr>
+      <td>denominated_transfer</td>
+      <td>P2P note transfer inside a pool. Spends one note, mints a fresh commitment for the recipient. Maturity delay always enforced.</td>
+      <td>~4,400</td>
+      <td>32K notes</td>
+      <td><span class="badge active">ACTIVE</span></td>
+    </tr>
+    <tr>
+      <td>confidential_balance</td>
+      <td>zkSPL account model. One circuit handles deposit, withdraw, send, and receive via selector flags, with a conservation law binding old and new balances.</td>
+      <td>1,382</td>
+      <td>account-based</td>
+      <td><span class="badge active">ACTIVE</span></td>
+    </tr>
+    <tr>
+      <td>balance_proof</td>
+      <td>Range proof: committed balance meets a threshold. Lets you prove solvency or eligibility without showing the number.</td>
+      <td>644</td>
+      <td>account-based</td>
+      <td><span class="badge active">ACTIVE</span></td>
+    </tr>
+    <tr>
+      <td>transfer</td>
+      <td>Zcash-style 2-in-2-out shielded transfer with arbitrary amounts and full Merkle inclusion.</td>
+      <td>~3.4M</td>
+      <td>1M notes<br>(depth 20)</td>
+      <td><span class="badge legacy">LEGACY</span></td>
+    </tr>
+  </table>
+
+  <h3>The two formulas that carry everything</h3>
+  <div class="formula">
+    <span class="var">commitment</span> = <span class="fn">Poseidon</span>(nullifier_preimage, secret, deposit_epoch, token_mint)<br>
+    <span class="var">nullifier</span>&nbsp;&nbsp;= <span class="fn">Poseidon</span>(nullifier_preimage, secret)
+  </div>
+  <p class="muted small">The commitment is what the chain stores: it hides the note behind a hash. The nullifier is what you reveal when spending: it is derived from the same secrets, but the chain cannot connect the two without inverting Poseidon. Publish the nullifier once and the note is dead forever, which is what makes double spending impossible.</p>
+
+  <h3>zkSPL conservation law</h3>
+  <div class="formula">
+    old_balance + private_credit + public_credit === new_balance + private_debit + public_debit
+  </div>
+  <p class="muted small">Every confidential balance update must satisfy this equation inside the proof. Money cannot be created or destroyed, only moved, and the amounts stay hidden behind Poseidon commitments salted per update.</p>
+
+  <p class="muted small">Groth16 proving keys come from a Powers of Tau ceremony (pot20, 1.2 GB). This is exactly the trusted-setup dependency the STARK migration removes: the Winterfell prover needs no ceremony at all.</p>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 // MANIFESTO</span>
+    <span>protocol-01.dev</span>
+    <span>05 / 09</span>
+  </div>
+</div>
+
+<!-- PAGE 6 — THE PROOF PIPELINE -->
+<div class="page">
+  <h2>The proof pipeline</h2>
+  <p class="lead">What actually happens between the tap and the confirmation. Seven steps, and the secrets never leave the device.</p>
+
+  <div class="pipe">
+    <div class="pipe-step">
+      <div class="n">1</div>
+      <div class="body">
+        <div class="t">NOTE GENERATION — on device</div>
+        <p>The app draws fresh randomness for the note secrets (secret, nullifier preimage) and computes the Poseidon commitment locally with poseidon-lite. Nothing has touched the network yet.</p>
+      </div>
+    </div>
+    <div class="pipe-step">
+      <div class="n">2</div>
+      <div class="body">
+        <div class="t">MERKLE PATH — rebuilt from events</div>
+        <p>To spend, the circuit needs the note's path to the current Merkle root. The client rebuilds the tree from on-chain LeafInserted events, so it never has to ask a server "where is my note", which would leak exactly what privacy is supposed to hide.</p>
+      </div>
+    </div>
+    <div class="pipe-step">
+      <div class="n">3</div>
+      <div class="body">
+        <div class="t">WITNESS — private inputs assembled</div>
+        <p>Secrets, Merkle path, epochs, and amounts are packed into the circuit's witness. This is the sensitive object: it exists only in device memory, for seconds.</p>
+      </div>
+    </div>
+    <div class="pipe-step">
+      <div class="n">4</div>
+      <div class="body">
+        <div class="t">PROVE — WASM prover on the phone</div>
+        <p>The prover runs as WebAssembly inside the app (snarkjs for Groth16 circuits, Winterfell for STARK). Out comes a proof plus public inputs: root, nullifier, new commitment. The witness is discarded. The proof reveals nothing beyond "the contract holds".</p>
+      </div>
+    </div>
+    <div class="pipe-step">
+      <div class="n">5</div>
+      <div class="body">
+        <div class="t">RELAY — no signature from your wallet</div>
+        <p>The proof goes to an independent relay node (Railway, Fly.io), which submits it through the on-chain relayer program and pays the transaction fee. Your public wallet never signs, so the transaction cannot be attributed to you by its fee payer.</p>
+      </div>
+    </div>
+    <div class="pipe-step">
+      <div class="n">6</div>
+      <div class="body">
+        <div class="t">VERIFY — on-chain, trustless</div>
+        <p>The Solana program verifies the proof natively: Groth16 through alt_bn128 syscalls, STARK through the multi-circuit FRI verifier program. It checks the Merkle root against recent history, rejects any already-seen nullifier, then records the nullifier and inserts the new commitment.</p>
+      </div>
+    </div>
+    <div class="pipe-step">
+      <div class="n">7</div>
+      <div class="body">
+        <div class="t">SETTLE — the tree grows</div>
+        <p>The new commitment becomes a leaf, the root updates, and every client watching events can extend its local tree. Your note is now one anonymous leaf among thousands. Total time on a recent phone: a few seconds.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 // MANIFESTO</span>
+    <span>protocol-01.dev</span>
+    <span>06 / 09</span>
+  </div>
+</div>
+
+<!-- PAGE 7 — THE ARCHITECTURE -->
+<div class="page">
+  <h2>The architecture</h2>
+  <p class="lead">One monorepo (pnpm + Turborepo, strict TypeScript), every layer open. This is the whole machine.</p>
+
+  <div class="tree"><span class="d">Protocol-01/</span>
+├─ <span class="d">apps/</span>
+│  ├─ mobile/      <span class="c">Android wallet — Expo / React Native, WASM prover in WebView</span>
+│  ├─ extension/   <span class="c">Chrome MV3 — shielded engine, license tiers, QR pairing</span>
+│  ├─ web/         <span class="c">Next.js — protocol-01.dev, docs, downloads, demos</span>
+│  └─ mugen/       <span class="c">Mugen Exchange — P2P no-KYC fiat-to-crypto</span>
+├─ <span class="d">packages/</span>     <span class="c">13 TypeScript SDKs on npm</span>
+│  ├─ zk-sdk/      <span class="c">shielded pools: shield, transfer, unshield</span>
+│  ├─ zkspl-sdk/   <span class="c">confidential balances (zkSPL account model)</span>
+│  ├─ specter-sdk/ <span class="c">post-quantum stealth addresses (ECDH + ML-KEM)</span>
+│  ├─ merchant-sdk/<span class="c">subscriptions + license verification, zero PII</span>
+│  └─ …            <span class="c">auth-sdk, p01-js, privacy-toolkit, ui, react-native-zk</span>
+├─ <span class="d">programs/</span>     <span class="c">~15 Anchor programs, Solana devnet</span>
+│  ├─ zk_shielded, p01_zkspl, specter, subscription, stream
+│  ├─ p01_relayer, p01_stark_verifier, p01_quantum_vault
+│  └─ p01_registry, p01-fee-splitter, p01_liquidity, whitelist
+├─ <span class="d">circuits/</span>     <span class="c">5 Circom circuits + Poseidon/Merkle templates, 73 tests</span>
+├─ <span class="d">stark/</span>        <span class="c">Winterfell STARK prover — Poseidon AIR, Goldilocks, WASM</span>
+└─ <span class="d">services/</span>     <span class="c">Rust prover service, relay nodes, refund keeper</span></div>
+
+  <h3>How the layers talk</h3>
+  <p class="muted small">Apps call SDKs. SDKs build witnesses, run provers, and talk to programs. Programs verify proofs and hold the trees, nullifier sets, and subscriptions. Relay nodes sit between SDKs and programs so no user wallet ever signs a private transaction. The same SDKs the apps use are the ones published on npm: there is no privileged internal API, a third-party developer has exactly the power the official apps have.</p>
+
+  <h3>Infrastructure honesty</h3>
+  <p class="muted small">Relay nodes run on Railway and Fly.io with self-healing RPC failover. They are a convenience, not a trust anchor: a relayer that turns malicious can censor a transaction but can never steal a note, forge a proof, or deanonymize a user. Anyone can run one.</p>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 // MANIFESTO</span>
+    <span>protocol-01.dev</span>
+    <span>07 / 09</span>
+  </div>
+</div>
+
+<!-- PAGE 8 — USING THE APP -->
+<div class="page">
+  <h2>Using the app</h2>
+  <p class="lead">The whole point: all the cryptography above disappears behind six taps. End to end, three to five minutes on a recent phone.</p>
+
+  <div class="guide-step">
+    <div class="gnum">1</div>
+    <div class="body">
+      <h3>Install</h3>
+      <p>Download the release-signed Android APK from protocol-01.dev (or the GitHub releases page) and install it. No store account, no waitlist.</p>
+    </div>
+  </div>
+
+  <div class="guide-step">
+    <div class="gnum">2</div>
+    <div class="body">
+      <h3>Create a wallet</h3>
+      <p>Sign in with Google (embedded wallet via Privy) or create a classic local keypair with a seed phrase. Biometric unlock protects the app either way. Keys live on the device.</p>
+    </div>
+  </div>
+
+  <div class="guide-step">
+    <div class="gnum">3</div>
+    <div class="body">
+      <h3>Fund it</h3>
+      <p>Receive some SOL: devnet faucet today, any wallet transfer tomorrow. This balance is still public, like any normal Solana wallet.</p>
+    </div>
+  </div>
+
+  <div class="guide-step">
+    <div class="gnum">4</div>
+    <div class="body">
+      <h3>Shield</h3>
+      <p>Tap Shield and pick a denomination (0.1 SOL to start). The phone generates the ZK proof on-device and submits it through a relayer. The note now lives in your private vault, indistinguishable from every other note in the pool.</p>
+    </div>
+  </div>
+
+  <div class="guide-step">
+    <div class="gnum">5</div>
+    <div class="body">
+      <h3>Spend privately</h3>
+      <p>Subscribe to a demo merchant (Netflix, Spotify, YouTube, Disney+ are attested on-chain): the merchant sees a valid payment, never your wallet. Or send the note peer to peer to another user's private address. Recurring billing pulls from shielded notes automatically.</p>
+    </div>
+  </div>
+
+  <div class="guide-step">
+    <div class="gnum">6</div>
+    <div class="body">
+      <h3>Unshield when you want out</h3>
+      <p>Convert any note back to public SOL at any address you choose, fresh or existing. The relayer submits it, so the receiving address has no on-chain link to the wallet that shielded.</p>
+    </div>
+  </div>
+
+  <p class="muted small" style="margin-top:14px">Developers get the same flow in code: npm install the SDK, call shield / transfer / unshield / subscribe, done. The Chrome extension mirrors the app for desktop, and pairs with the phone by QR scan so both share one private vault.</p>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 // MANIFESTO</span>
+    <span>protocol-01.dev</span>
+    <span>08 / 09</span>
+  </div>
+</div>
+
+<!-- PAGE 9 — REFUSALS + STATUS -->
+<div class="page">
+  <h2>What we refuse to do</h2>
+  <div class="refuse-list">
+    <p><span class="k">No custody.</span> We never hold user funds.</p>
+    <p><span class="k">No PII.</span> Not even for license keys, which are anonymous tokens verifiable without identity.</p>
+    <p><span class="k">No immunity claims.</span> The STARK migration is still under audit and we say so.</p>
+    <p><span class="k">No crime pitch.</span> Fixed denominations, maturity delays, and open verifiable code are chosen so the system defends ordinary people, not launderers.</p>
+    <p><span class="k">No waiting for permission.</span> We build what money should have had from the start.</p>
+  </div>
+
+  <h2>Where it stands</h2>
+  <p class="muted">Live on Solana devnet, pre-mainnet by design, third-party audit pending. Built solo since January 2026.</p>
+
+  <div class="stat-row">
+    <div class="stat"><div class="v">#2</div><div class="l">Dev3pack worldwide<br>Solana track</div></div>
+    <div class="stat"><div class="v">~15</div><div class="l">Anchor programs<br>on devnet</div></div>
+    <div class="stat"><div class="v">13</div><div class="l">TypeScript SDKs<br>on npm</div></div>
+    <div class="stat"><div class="v">1</div><div class="l">Builder<br>since Jan 2026</div></div>
+  </div>
+
+  <p class="muted small">Submitted to Colosseum Frontier 2026. Presented at The Bridge Demo Day. Selected for the Starknet Privacy Buildathon, Paris.</p>
+
+  <div class="closing">
+    <p>One person, one stack, one belief: <span class="cyan">the ledger should prove your transaction is valid, and know nothing else.</span><br><br>That is Protocol 01.</p>
+  </div>
+
+  <div class="page-footer">
+    <span>PROTOCOL 01 // MANIFESTO</span>
+    <span>protocol-01.dev</span>
+    <span>09 / 09</span>
+  </div>
+</div>
+
+</body>
+</html>
