@@ -59,8 +59,10 @@ export function buildInitStealthV2Ix(params: {
   const { programId, sender, stealthAddress, amount, ephemeralPubKey, viewTag } = params;
   const [pda] = deriveAnnouncementPda(sender, stealthAddress, programId);
 
-  const amt = Buffer.alloc(8);
-  amt.writeBigUInt64LE(amount);
+  // DataView, not Buffer.writeBigUInt64LE — the latter is absent from the
+  // browser / Hermes Buffer polyfills and throws at runtime.
+  const amt = new Uint8Array(8);
+  new DataView(amt.buffer).setBigUint64(0, amount, true);
   const data = Buffer.concat([
     IX_INIT_STEALTH_V2,
     amt,
