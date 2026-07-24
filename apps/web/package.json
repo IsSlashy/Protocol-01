@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "pnpm --filter @protocol-01/rpc-config build && pnpm --filter @protocol-01/specter-sdk build:core && next build",
     "start": "next start",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:pool": "vitest run --config vitest.pool.config.mts"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0",
