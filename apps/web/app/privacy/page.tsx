@@ -235,7 +235,7 @@ export default function PrivacyPolicy() {
               </a>{" "}
               {t("privacyPolicy.s10.socialOr")}{" "}
               <a
-                href="https://discord.gg/protocol01"
+                href="https://discord.gg/fShgQ5j6pE"
                 className="text-p01-cyan hover:underline"
                 target="_blank"
                 rel="noopener noreferrer"

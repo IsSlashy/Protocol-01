@@ -44,6 +44,49 @@ export class PublicKey {
   toBuffer(): Buffer {
     return Buffer.from(this._key);
   }
+
+  /**
+   * FAKE derivation — deterministic sha256 over the seeds + program id.
+   *
+   * This is NOT ed25519 off-curve PDA derivation and the addresses it returns
+   * do not match the real chain. It exists so that instruction builders which
+   * derive a PDA internally (e.g. `deriveFeeEscrowPDA` in
+   * services/denominatedPool/index.ts) can be called from unit tests that only
+   * assert on `ix.data`. Never assert on an address produced by this.
+   */
+  static findProgramAddressSync(
+    seeds: Array<Uint8Array | Buffer>,
+    programId: PublicKey,
+  ): [PublicKey, number] {
+    const h = createHash('sha256');
+    for (const s of seeds) h.update(Buffer.from(s));
+    h.update(programId.toBuffer());
+    return [new PublicKey(new Uint8Array(h.digest())), 255];
+  }
+}
+
+/**
+ * Minimal TransactionInstruction stub — a plain data carrier.
+ *
+ * Enough for tests that assert the serialized `data` buffer of an instruction
+ * builder. `keys` is stored verbatim and NOT validated; entries referencing
+ * mock globals this file does not implement (e.g. `SystemProgram.programId`)
+ * will be `undefined`, so account-order assertions do not belong here.
+ */
+export class TransactionInstruction {
+  programId: PublicKey;
+  keys: Array<{ pubkey: PublicKey; isSigner: boolean; isWritable: boolean }>;
+  data: Buffer;
+
+  constructor(opts: {
+    programId: PublicKey;
+    keys: Array<{ pubkey: PublicKey; isSigner: boolean; isWritable: boolean }>;
+    data: Buffer;
+  }) {
+    this.programId = opts.programId;
+    this.keys = opts.keys;
+    this.data = opts.data;
+  }
 }
 
 export class Keypair {

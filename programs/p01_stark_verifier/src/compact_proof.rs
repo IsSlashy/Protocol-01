@@ -216,14 +216,18 @@ fn felt_at(bytes: &[u8], i: usize) -> Felt {
     felt_from_slice(&bytes[i * 8..(i + 1) * 8])
 }
 
-/// Size of one FRI layer's Merkle path in bytes, given circuit depth and layer index.
-/// Layer 0 is the quotient LDE (depth = merkle_depth); committed FRI layer `i`
-/// (1-indexed here as `layer=i` in `fri_layer_roots[i-1]`) has depth
-/// `merkle_depth - i - 1` (the final fold targets `fri_final_poly` instead of
-/// a Merkle commit, so depths decrement by 1 per layer from the LDE).
+/// [B4] Size of one FRI layer's **pair-tree** Merkle path in bytes.
+///
+/// Committed FRI layer `i` holds `lde_size / 2^(i+1)` evaluations, i.e. a value
+/// tree of depth `merkle_depth - i - 1`. B4 commits pairs
+/// `H(v[j] ‖ v[j + N/2])`, halving the leaf count, so the tree the verifier
+/// walks is one level shallower: `merkle_depth - i - 2`.
+///
+/// The smallest committed layer is `2 * fri_final_poly_size` (32 for every
+/// shipping circuit) → 16 pair leaves → depth 4. Never degenerates to 0.
 #[inline]
-fn fri_layer_path_bytes(merkle_depth: usize, layer: usize) -> usize {
-    merkle_depth.saturating_sub(layer + 1) * 32
+fn fri_layer_pair_path_bytes(merkle_depth: usize, layer: usize) -> usize {
+    merkle_depth.saturating_sub(layer + 2) * 32
 }
 
 // (Previously `fri_paths_offset` lived here for a "flat paths buffer" layout —
@@ -236,23 +240,31 @@ fn fri_layer_path_bytes(merkle_depth: usize, layer: usize) -> usize {
 
 /// A single query proof with variable trace width and Merkle depth.
 /// All `*_bytes` fields are borrowed slices into the caller-provided proof
-/// buffer — no heap copies. FRI paths across all layers are stored flat in
-/// `fri_paths_bytes` / `fri_mirror_paths_bytes`; use `fri_path(i)` to slice
-/// the path for layer `i`.
+/// buffer — no heap copies.
+///
+/// [B4] The quotient LDE and every FRI layer are committed as **pair leaves**
+/// `H(v[j] ‖ v[j + N/2])`, so each carries ONE opening (of depth one less than
+/// the old value tree) instead of two: `quotient_pair_path_bytes` replaces the
+/// old `quotient_merkle_path_bytes` + `quotient_mirror_path_bytes`, and the
+/// FRI block carries `lo | hi | one path` per layer.
 #[derive(Clone, Debug)]
 pub struct QueryProof<'a> {
     pub position: u32,
+    /// Quotient LDE value at `position XOR (lde_size/2)`. Together with
+    /// `quotient_values[query_idx]` (the value at `position`) this is the pair
+    /// that `quotient_pair_path_bytes` authenticates.
     pub quotient_mirror_value: Felt,
 
     trace_values_bytes: &'a [u8],           // trace_width * 8
     next_trace_values_bytes: &'a [u8],      // trace_width * 8
     merkle_path_bytes: &'a [u8],            // merkle_depth * 32
     next_merkle_path_bytes: &'a [u8],       // merkle_depth * 32
-    quotient_merkle_path_bytes: &'a [u8],   // merkle_depth * 32
-    quotient_mirror_path_bytes: &'a [u8],   // merkle_depth * 32
-    /// Interleaved per-layer FRI block:
-    /// `value(8) | path(md-i-1)*32 | mirror_value(8) | mirror_path(md-i-1)*32`
-    /// for each layer `i` in `0..num_fri_layers`.
+    /// [B4] Path into the quotient **pair** tree: (merkle_depth - 1) * 32.
+    quotient_pair_path_bytes: &'a [u8],
+    /// [B4] Interleaved per-layer FRI block:
+    /// `lo(8) | hi(8) | pair_path((md-i-2)*32)` for each layer `i` in
+    /// `0..num_fri_layers`, where `lo = f_{i+1}[j]`,
+    /// `hi = f_{i+1}[j + size/2]`, `j = position mod (size/2)`.
     fri_block_bytes: &'a [u8],
 
     merkle_depth: u16,
@@ -304,40 +316,30 @@ impl<'a> QueryProof<'a> {
     #[inline]
     pub fn next_merkle_path(&self) -> &'a [u8] { self.next_merkle_path_bytes }
 
-    /// Quotient LDE Merkle path bytes.
+    /// [B4] Path into the quotient pair tree ((merkle_depth - 1) * 32 bytes).
+    /// Authenticates BOTH the value at `position` and the value at its mirror.
     #[inline]
-    pub fn quotient_merkle_path(&self) -> &'a [u8] { self.quotient_merkle_path_bytes }
-
-    /// Quotient LDE mirror opening Merkle path bytes.
-    #[inline]
-    pub fn quotient_mirror_path(&self) -> &'a [u8] { self.quotient_mirror_path_bytes }
+    pub fn quotient_pair_path(&self) -> &'a [u8] { self.quotient_pair_path_bytes }
 
     /// Number of committed FRI layers (excludes the final-poly layer).
     #[inline]
     pub fn num_fri_layers(&self) -> usize { self.num_fri_layers as usize }
 
-    /// FRI value at committed layer `i`. Underlying storage is an interleaved
-    /// block of `value | path | mirror_value | mirror_path` per layer, so we
-    /// must hop over earlier layers' (value+path+mirror_value+mirror_path).
+    /// [B4] Low half of the pair at committed layer `i` (`f_{i+1}[j]`).
     #[inline]
-    pub fn fri_value(&self, i: usize) -> Felt {
-        self.fri_block_value(i)
+    pub fn fri_lo_value(&self, i: usize) -> Felt {
+        self.fri_block_lo_value(i)
     }
 
-    /// FRI mirror value at committed layer `i`.
+    /// [B4] High half of the pair at committed layer `i` (`f_{i+1}[j + N/2]`).
     #[inline]
-    pub fn fri_mirror_value(&self, i: usize) -> Felt {
-        self.fri_block_mirror_value(i)
+    pub fn fri_hi_value(&self, i: usize) -> Felt {
+        self.fri_block_hi_value(i)
     }
 
-    /// Merkle path into `fri_layer_roots[i]` for the opened FRI value.
-    pub fn fri_path(&self, i: usize) -> &'a [u8] {
-        self.fri_block_path(i)
-    }
-
-    /// Merkle path into `fri_layer_roots[i]` for the opened FRI mirror value.
-    pub fn fri_mirror_path(&self, i: usize) -> &'a [u8] {
-        self.fri_block_mirror_path(i)
+    /// [B4] Pair-tree Merkle path into `fri_layer_roots[i]`.
+    pub fn fri_pair_path(&self, i: usize) -> &'a [u8] {
+        self.fri_block_pair_path(i)
     }
 }
 
@@ -540,29 +542,25 @@ impl<'a> GenericCompactProof<'a> {
             let next_merkle_path_bytes = &data[cursor..cursor + md * 32];
             cursor += md * 32;
 
-            // quotient_merkle_path: md * 32 bytes (P1.1)
-            if data.len() < cursor + md * 32 { return None; }
-            let quotient_merkle_path_bytes = &data[cursor..cursor + md * 32];
-            cursor += md * 32;
-
-            // quotient_mirror_value: 8 bytes, then quotient_mirror_path: md * 32 bytes
+            // [B4] quotient_mirror_value: 8 bytes, then ONE pair path:
+            // (md - 1) * 32 bytes. The old layout had two full md*32 paths here.
             if data.len() < cursor + 8 { return None; }
             let quotient_mirror_value = felt_from_slice(&data[cursor..cursor + 8]);
             cursor += 8;
-            if data.len() < cursor + md * 32 { return None; }
-            let quotient_mirror_path_bytes = &data[cursor..cursor + md * 32];
-            cursor += md * 32;
+            if md == 0 { return None; }
+            if data.len() < cursor + (md - 1) * 32 { return None; }
+            let quotient_pair_path_bytes = &data[cursor..cursor + (md - 1) * 32];
+            cursor += (md - 1) * 32;
 
-            // Per-FRI-layer openings: the wire format interleaves
-            // `value(8) | path(depth*32) | mirror_value(8) | mirror_path(depth*32)`
-            // per layer. We keep the whole interleaved block as one borrowed
-            // slice and translate in the accessors (`fri_value`, `fri_path`,
-            // …) — no per-query owned allocations.
+            // [B4] Per-FRI-layer pair openings: the wire format interleaves
+            // `lo(8) | hi(8) | pair_path((md-i-2)*32)` per layer. We keep the
+            // whole interleaved block as one borrowed slice and translate in
+            // the accessors — no per-query owned allocations.
             let fri_block_start = cursor;
             for i in 0..num_fri_layers {
-                let depth_bytes = fri_layer_path_bytes(md, i);
-                if data.len() < cursor + 8 + depth_bytes + 8 + depth_bytes { return None; }
-                cursor += 8 + depth_bytes + 8 + depth_bytes;
+                let depth_bytes = fri_layer_pair_path_bytes(md, i);
+                if data.len() < cursor + 16 + depth_bytes { return None; }
+                cursor += 16 + depth_bytes;
             }
             let fri_block_bytes = &data[fri_block_start..cursor];
 
@@ -573,8 +571,7 @@ impl<'a> GenericCompactProof<'a> {
                 next_trace_values_bytes,
                 merkle_path_bytes,
                 next_merkle_path_bytes,
-                quotient_merkle_path_bytes,
-                quotient_mirror_path_bytes,
+                quotient_pair_path_bytes,
                 fri_block_bytes,
                 merkle_depth: md as u16,
                 num_fri_layers: num_fri_layers as u16,
@@ -677,9 +674,9 @@ pub struct LegacyQueryProof<'a> {
     next_trace_values_bytes: &'a [u8],      // 24
     merkle_path_bytes: &'a [u8],            // MERKLE_DEPTH * 32 = 288
     next_merkle_path_bytes: &'a [u8],
-    quotient_merkle_path_bytes: &'a [u8],
-    quotient_mirror_path_bytes: &'a [u8],
-    fri_block_bytes: &'a [u8],              // interleaved value|path|mirror_value|mirror_path per layer
+    /// [B4] (MERKLE_DEPTH - 1) * 32 = 256
+    quotient_pair_path_bytes: &'a [u8],
+    fri_block_bytes: &'a [u8],              // [B4] interleaved lo|hi|pair_path per layer
 
     merkle_depth: u16,
     num_fri_layers: u16,
@@ -704,54 +701,39 @@ impl<'a> LegacyQueryProof<'a> {
 
     pub fn merkle_path(&self) -> &'a [u8] { self.merkle_path_bytes }
     pub fn next_merkle_path(&self) -> &'a [u8] { self.next_merkle_path_bytes }
-    pub fn quotient_merkle_path(&self) -> &'a [u8] { self.quotient_merkle_path_bytes }
-    pub fn quotient_mirror_path(&self) -> &'a [u8] { self.quotient_mirror_path_bytes }
+    /// [B4] Path into the quotient pair tree ((MERKLE_DEPTH - 1) * 32 bytes).
+    pub fn quotient_pair_path(&self) -> &'a [u8] { self.quotient_pair_path_bytes }
     pub fn num_fri_layers(&self) -> usize { self.num_fri_layers as usize }
 
-    pub fn fri_value(&self, i: usize) -> Felt {
+    /// [B4] Low half of the pair at committed layer `i`.
+    pub fn fri_lo_value(&self, i: usize) -> Felt {
         let md = self.merkle_depth as usize;
-        // Offset to layer i's value: sum of prior layers' (8 + path + 8 + path) + 0.
         let mut off = 0;
         for j in 0..i {
-            let dp = fri_layer_path_bytes(md, j);
-            off += 8 + dp + 8 + dp;
+            off += 16 + fri_layer_pair_path_bytes(md, j);
         }
         felt_from_slice(&self.fri_block_bytes[off..off + 8])
     }
 
-    pub fn fri_mirror_value(&self, i: usize) -> Felt {
+    /// [B4] High half of the pair at committed layer `i`.
+    pub fn fri_hi_value(&self, i: usize) -> Felt {
         let md = self.merkle_depth as usize;
-        let dp_i = fri_layer_path_bytes(md, i);
         let mut off = 0;
         for j in 0..i {
-            let dp = fri_layer_path_bytes(md, j);
-            off += 8 + dp + 8 + dp;
+            off += 16 + fri_layer_pair_path_bytes(md, j);
         }
-        off += 8 + dp_i;
-        felt_from_slice(&self.fri_block_bytes[off..off + 8])
+        felt_from_slice(&self.fri_block_bytes[off + 8..off + 16])
     }
 
-    pub fn fri_path(&self, i: usize) -> &'a [u8] {
+    /// [B4] Pair-tree Merkle path for committed layer `i`.
+    pub fn fri_pair_path(&self, i: usize) -> &'a [u8] {
         let md = self.merkle_depth as usize;
-        let dp_i = fri_layer_path_bytes(md, i);
+        let dp_i = fri_layer_pair_path_bytes(md, i);
         let mut off = 0;
         for j in 0..i {
-            let dp = fri_layer_path_bytes(md, j);
-            off += 8 + dp + 8 + dp;
+            off += 16 + fri_layer_pair_path_bytes(md, j);
         }
-        off += 8; // skip value
-        &self.fri_block_bytes[off..off + dp_i]
-    }
-
-    pub fn fri_mirror_path(&self, i: usize) -> &'a [u8] {
-        let md = self.merkle_depth as usize;
-        let dp_i = fri_layer_path_bytes(md, i);
-        let mut off = 0;
-        for j in 0..i {
-            let dp = fri_layer_path_bytes(md, j);
-            off += 8 + dp + 8 + dp;
-        }
-        off += 8 + dp_i + 8; // skip value, path, mirror_value
+        off += 16; // skip lo, hi
         &self.fri_block_bytes[off..off + dp_i]
     }
 
@@ -767,59 +749,41 @@ impl<'a> LegacyQueryProof<'a> {
     }
 }
 
-// Interleaved FRI block accessors for QueryProof. Wire layout per layer `i`:
-//   value(8) | path(depth_i*32) | mirror_value(8) | mirror_path(depth_i*32)
-// where depth_i = merkle_depth - i - 1. Accessors walk the prefix once per
-// call; call sites iterate i in order so this stays O(L) over a query,
-// matching the old Vec<Vec<…>> layout's work.
+// [B4] Interleaved FRI block accessors for QueryProof. Wire layout per layer `i`:
+//   lo(8) | hi(8) | pair_path(dp_i*32)
+// where dp_i = merkle_depth - i - 2 (pair tree, one level shallower than the
+// value tree). Accessors walk the prefix once per call; call sites iterate i
+// in order so this stays O(L) over a query.
 impl<'a> QueryProof<'a> {
     #[inline]
-    fn fri_block_value(&self, i: usize) -> Felt {
+    fn fri_block_lo_value(&self, i: usize) -> Felt {
         let md = self.merkle_depth as usize;
         let mut off = 0;
         for j in 0..i {
-            let dp = fri_layer_path_bytes(md, j);
-            off += 8 + dp + 8 + dp;
+            off += 16 + fri_layer_pair_path_bytes(md, j);
         }
         felt_from_slice(&self.fri_block_bytes[off..off + 8])
     }
 
     #[inline]
-    fn fri_block_mirror_value(&self, i: usize) -> Felt {
+    fn fri_block_hi_value(&self, i: usize) -> Felt {
         let md = self.merkle_depth as usize;
-        let dp_i = fri_layer_path_bytes(md, i);
         let mut off = 0;
         for j in 0..i {
-            let dp = fri_layer_path_bytes(md, j);
-            off += 8 + dp + 8 + dp;
+            off += 16 + fri_layer_pair_path_bytes(md, j);
         }
-        off += 8 + dp_i;
-        felt_from_slice(&self.fri_block_bytes[off..off + 8])
+        felt_from_slice(&self.fri_block_bytes[off + 8..off + 16])
     }
 
     #[inline]
-    fn fri_block_path(&self, i: usize) -> &'a [u8] {
+    fn fri_block_pair_path(&self, i: usize) -> &'a [u8] {
         let md = self.merkle_depth as usize;
-        let dp_i = fri_layer_path_bytes(md, i);
+        let dp_i = fri_layer_pair_path_bytes(md, i);
         let mut off = 0;
         for j in 0..i {
-            let dp = fri_layer_path_bytes(md, j);
-            off += 8 + dp + 8 + dp;
+            off += 16 + fri_layer_pair_path_bytes(md, j);
         }
-        off += 8;
-        &self.fri_block_bytes[off..off + dp_i]
-    }
-
-    #[inline]
-    fn fri_block_mirror_path(&self, i: usize) -> &'a [u8] {
-        let md = self.merkle_depth as usize;
-        let dp_i = fri_layer_path_bytes(md, i);
-        let mut off = 0;
-        for j in 0..i {
-            let dp = fri_layer_path_bytes(md, j);
-            off += 8 + dp + 8 + dp;
-        }
-        off += 8 + dp_i + 8;
+        off += 16;
         &self.fri_block_bytes[off..off + dp_i]
     }
 
@@ -838,8 +802,8 @@ impl<'a> QueryProof<'a> {
     }
 }
 
-/// Iterator yielding `(value, path, mirror_value, mirror_path)` for each FRI
-/// layer in order. O(1) per step via cursor. See `QueryProof::fri_block_iter`.
+/// [B4] Iterator yielding `(lo, hi, pair_path)` for each committed FRI layer in
+/// order. O(1) per step via cursor. See `QueryProof::fri_block_iter`.
 pub struct FriBlockIter<'a> {
     bytes: &'a [u8],
     merkle_depth: usize,
@@ -849,22 +813,21 @@ pub struct FriBlockIter<'a> {
 }
 
 impl<'a> Iterator for FriBlockIter<'a> {
-    type Item = (Felt, &'a [u8], Felt, &'a [u8]);
+    type Item = (Felt, Felt, &'a [u8]);
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.layer >= self.num_layers {
             return None;
         }
-        let dp = fri_layer_path_bytes(self.merkle_depth, self.layer);
+        let dp = fri_layer_pair_path_bytes(self.merkle_depth, self.layer);
         let c = self.cursor;
-        let value = felt_from_slice(&self.bytes[c..c + 8]);
-        let path = &self.bytes[c + 8..c + 8 + dp];
-        let mirror_value = felt_from_slice(&self.bytes[c + 8 + dp..c + 16 + dp]);
-        let mirror_path = &self.bytes[c + 16 + dp..c + 16 + 2 * dp];
-        self.cursor = c + 16 + 2 * dp;
+        let lo = felt_from_slice(&self.bytes[c..c + 8]);
+        let hi = felt_from_slice(&self.bytes[c + 8..c + 16]);
+        let path = &self.bytes[c + 16..c + 16 + dp];
+        self.cursor = c + 16 + dp;
         self.layer += 1;
-        Some((value, path, mirror_value, mirror_path))
+        Some((lo, hi, path))
     }
 }
 
@@ -961,23 +924,20 @@ impl<'a> CompactStarkProof<'a> {
             let next_merkle_path_bytes = &data[cursor..cursor + md * 32];
             cursor += md * 32;
 
-            if data.len() < cursor + md * 32 { return None; }
-            let quotient_merkle_path_bytes = &data[cursor..cursor + md * 32];
-            cursor += md * 32;
-
+            // [B4] quotient_mirror_value(8) + ONE pair path ((md-1)*32).
             if data.len() < cursor + 8 { return None; }
             let quotient_mirror_value = felt_from_slice(&data[cursor..cursor + 8]);
             cursor += 8;
-            if data.len() < cursor + md * 32 { return None; }
-            let quotient_mirror_path_bytes = &data[cursor..cursor + md * 32];
-            cursor += md * 32;
+            if data.len() < cursor + (md - 1) * 32 { return None; }
+            let quotient_pair_path_bytes = &data[cursor..cursor + (md - 1) * 32];
+            cursor += (md - 1) * 32;
 
-            // FRI block: interleaved per-layer value|path|mirror_value|mirror_path.
+            // [B4] FRI block: interleaved per-layer lo|hi|pair_path.
             let fri_block_start = cursor;
             for i in 0..num_fri_layers {
-                let dp = fri_layer_path_bytes(md, i);
-                if data.len() < cursor + 8 + dp + 8 + dp { return None; }
-                cursor += 8 + dp + 8 + dp;
+                let dp = fri_layer_pair_path_bytes(md, i);
+                if data.len() < cursor + 16 + dp { return None; }
+                cursor += 16 + dp;
             }
             let fri_block_bytes = &data[fri_block_start..cursor];
 
@@ -988,8 +948,7 @@ impl<'a> CompactStarkProof<'a> {
                 next_trace_values_bytes,
                 merkle_path_bytes,
                 next_merkle_path_bytes,
-                quotient_merkle_path_bytes,
-                quotient_mirror_path_bytes,
+                quotient_pair_path_bytes,
                 fri_block_bytes,
                 merkle_depth: md as u16,
                 num_fri_layers: num_fri_layers as u16,

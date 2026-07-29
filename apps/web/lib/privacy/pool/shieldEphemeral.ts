@@ -123,15 +123,26 @@ const SHIELD_FEE_BPS = 30n;
 const BPS_DENOMINATOR = 10_000n;
 
 /**
- * Left behind on E when sweeping.
+ * Left behind on E when sweeping: exactly the sweep transaction's own fee, so
+ * the account lands on zero.
  *
- * Not just the sweep's own fee: if a proof buffer close ever fails silently
- * (`closeStarkProofBuffer` swallows its error), the buffer's ~1 SOL of rent can
- * only ever be released by E signing a close — and a signer drained to zero
- * cannot pay for that transaction. Leaving a few fees behind keeps that
- * recovery possible. `recoverFloat.ts` is what spends it.
+ * It is tempting to leave more, so that E could later sign a close for a proof
+ * buffer that failed to close (the buffer's ~1 SOL of rent can only be released
+ * by E, since `CloseProofBuffer` is `close = authority`). That does not work at
+ * any small value. E is a 0-data system account, so it must end the transaction
+ * either rent-exempt or at exactly zero — the runtime rejects a
+ * RentExempt -> RentPaying transition with "insufficient funds for rent". The
+ * rule is written down in this repo at
+ * `apps/extension/src/shared/services/relay.ts:463-467`. Leaving 20,000
+ * lamports therefore did not preserve a recovery path, it made *every* sweep
+ * transaction fail, silently, while the worker still reported success.
+ *
+ * So: drain to zero, matching the proven extension implementation
+ * (`apps/extension/src/shared/services/denominatedPool.ts:2181`) and
+ * `recoverFloat.ts`. Orphaned buffers are recovered by `recoverFloat.ts`
+ * funding the close itself.
  */
-const SWEEP_FEE = 25_000;
+const SWEEP_FEE = 5_000;
 
 // ---------------------------------------------------------------------------
 // Types

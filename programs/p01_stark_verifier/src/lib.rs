@@ -27,6 +27,7 @@ pub mod compact_proof;
 pub mod goldilocks;
 mod merkle;
 pub mod periodic_consts;
+pub mod periodic_ext_consts;
 mod poseidon_consts;
 pub mod verify;
 

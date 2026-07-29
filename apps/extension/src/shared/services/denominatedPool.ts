@@ -1390,7 +1390,43 @@ export function buildMerkleProofFromLeavesV3(params: {
 // Args: nullifier[32] | merkle_root[32] | min_epoch u64 | stark_commitment u64 | recipient[32]
 // ---------------------------------------------------------------------------
 
-function buildUnshieldDenominatedStarkV3Ix(
+/**
+ * The ONLY value this client ever publishes in the `min_epoch` argument of an
+ * unshield instruction (byte offset 72 of `ix.data`, matching the web client).
+ *
+ * Why a constant and not the note's deposit epoch:
+ *
+ *  - It is dead on-chain. `unshield_denominated_stark_v3.rs:387` consumes it as
+ *    `let _ = (amount, unshield_fee, min_epoch, current_epoch, dynamic_delay,
+ *    nullifier);` — the handler provably never reads it. Passing the real
+ *    deposit epoch bought nothing and cost privacy.
+ *  - It narrows the anonymity set. The deposit epoch is a ~7200-slot bucket of
+ *    the deposit; publishing it in the clear lets any observer intersect the
+ *    withdrawal with the deposits made in that window, without even having to
+ *    match the commitment.
+ *  - It is a forward-compatibility landmine. Once this client adopts the PRF
+ *    commitment blinding already shipped in apps/web
+ *    (apps/web/lib/privacy/pool/noteBlinding.ts), the value stored in
+ *    `ShieldReceipt.depositEpoch` becomes a 63-bit SECRET. Publishing it here
+ *    would hand the blinding factor straight to the chain and make blinding
+ *    worthless. Pinning it to zero now means that migration cannot regress.
+ *  - Uniformity. A constant makes every unshield byte-identical in this field
+ *    across emergency / non-emergency and across web, extension and mobile, so
+ *    the field cannot be used to fingerprint which client produced the tx.
+ *
+ * See docs/C7_SPEND_CIRCUIT_PLAN.md Step 1.
+ *
+ * NOT safe to reuse for transfer/split/subscribe: `min_epoch` IS enforced on
+ * those handlers (e.g. `transfer_denominated_stark_v3.rs:167-173`
+ * `require!(current_epoch >= min_epoch + dynamic_delay, EpochDelayNotMet)`).
+ * This constant is for the unshield path only.
+ *
+ * Do not turn this back into a builder parameter. It is written inline below
+ * precisely so that no call site can reintroduce a note-derived value.
+ */
+export const UNSHIELD_MIN_EPOCH = 0n;
+
+export function buildUnshieldDenominatedStarkV3Ix(
   payer: PublicKey,
   recipient: PublicKey,
   poolPDA: PublicKey,
@@ -1400,7 +1436,6 @@ function buildUnshieldDenominatedStarkV3Ix(
   c3ProofBuffer: PublicKey,
   nullifierBytes: number[],
   merkleRootBytes: number[],
-  minEpoch: bigint,
   starkCommitment: bigint,
   tokenProgram?: PublicKey,
   poolVault?: PublicKey,
@@ -1413,7 +1448,8 @@ function buildUnshieldDenominatedStarkV3Ix(
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
   Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
-  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  // min_epoch @ byte 72 — pinned to 0 on every path. See UNSHIELD_MIN_EPOCH.
+  data.writeBigUInt64LE(UNSHIELD_MIN_EPOCH, offset); offset += 8;
   data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
   // recipient as 32-byte arg (matches `recipient: [u8; 32]` in Rust)
   Buffer.from(recipient.toBytes()).copy(data, offset);
@@ -1586,17 +1622,15 @@ export async function prepareUnshield(
 // instead of submitAndVerifyStarkProofUniform. The on-chain handler reads the
 // verified buffer PDA regardless of upload path.
 //
-// REGULAR vs EMERGENCY (per lib.rs:156 + unshield_denominated_stark_v3.rs
-// handler comment lines 197-199):
-//   Regular:   minEpoch = receipt.depositEpoch  — respects maturity gate.
-//              The V3 handler does NOT enforce this on-chain (maturity is
-//              UX-only in V3 — see handler line 198: "UX/SDK concern").
-//              We pass it anyway to mirror the mobile behaviour.
-//   Emergency: minEpoch = 0n                   — explicit bypass signal.
-//              Per lib.rs:156, min_epoch==0 is the emergency bypass.
-//              The V3 handler ignores min_epoch in its logic (line 370:
-//              `let _ = (..., min_epoch, ...)`) — passing 0 is safe and
-//              matches what a guardian/emergency path would pass.
+// REGULAR vs EMERGENCY — no longer distinguishable in the instruction bytes.
+// Both paths publish `min_epoch = UNSHIELD_MIN_EPOCH = 0`. The V3 handler
+// ignores the argument entirely (unshield_denominated_stark_v3.rs:387:
+// `let _ = (amount, unshield_fee, min_epoch, current_epoch, dynamic_delay,
+// nullifier);`), so this is purely a privacy change: it stops publishing the
+// note's deposit epoch and removes the emergency/regular fingerprint.
+// The `emergency` parameter is kept for call-site compatibility but no longer
+// affects any byte of the transaction. Maturity remains a UX-only concern
+// surfaced by `noteMaturity()` in the popup.
 // ---------------------------------------------------------------------------
 
 export async function unshieldDenominatedStarkV3(
@@ -1646,9 +1680,10 @@ export async function unshieldDenominatedStarkV3(
     const nullifierBytes = goldilocksToLeBytes32(nullifierGoldilocks);
     const merkleRootBytes = goldilocksToLeBytes32(merkleRoot);
 
-    // minEpoch: regular = depositEpoch, emergency = 0.
-    // V3 handler accepts both (maturity is UX-only on-chain in V3).
-    const minEpoch = emergency ? 0n : receipt.depositEpoch;
+    // min_epoch is no longer a parameter: the builder pins it to
+    // UNSHIELD_MIN_EPOCH (0). `emergency` is deliberately not consulted here —
+    // making the two paths produce different bytes was itself the fingerprint.
+    void emergency;
 
     const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
 
@@ -1674,7 +1709,6 @@ export async function unshieldDenominatedStarkV3(
       c3ProofBuffer,
       nullifierBytes,
       merkleRootBytes,
-      minEpoch,
       starkCommitment,
       tokenProgram,
       poolVault,

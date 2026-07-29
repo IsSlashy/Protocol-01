@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import Footer from '@/components/Footer';
 
 describe('Footer -- Site navigation and community links', () => {
@@ -8,12 +8,19 @@ describe('Footer -- Site navigation and community links', () => {
   });
 
   describe('Brand Identity', () => {
-    it('displays the P01 logo badge', () => {
-      expect(screen.getByText('P01')).toBeInTheDocument();
+    // The "P01" monospace text badge was replaced by the app icon in 6fb9d6b8
+    // ("replace P01 text badge with app icon across all headers").
+    it('displays the Protocol 01 app icon as the logo', () => {
+      const logo = screen.getByAltText('Protocol 01');
+      expect(logo).toHaveAttribute('src', '/icon.png');
     });
 
-    it('displays the "PROTOCOL 01" brand name', () => {
-      expect(screen.getByText('PROTOCOL 01')).toBeInTheDocument();
+    it('displays the "PROTOCOL 01" brand name beside the logo', () => {
+      const logo = screen.getByAltText('Protocol 01');
+      expect(within(logo.parentElement!).getByText('PROTOCOL 01')).toBeInTheDocument();
+      // Exactly two on the page: this wordmark, plus the oversized watermark
+      // strip above the bottom bar added in the 936e38d6 footer redesign.
+      expect(screen.getAllByText('PROTOCOL 01')).toHaveLength(2);
     });
 
     it('presents the privacy manifesto tagline', () => {
@@ -75,7 +82,7 @@ describe('Footer -- Site navigation and community links', () => {
     it('links to Discord community (external)', () => {
       const links = screen.getAllByRole('link', { name: /Discord/ });
       const externalDiscord = links.find(
-        l => l.getAttribute('href') === 'https://discord.gg/KfmhPFAHNH'
+        l => l.getAttribute('href') === 'https://discord.gg/fShgQ5j6pE'
       );
       expect(externalDiscord).toBeDefined();
       expect(externalDiscord).toHaveAttribute('target', '_blank');

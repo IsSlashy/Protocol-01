@@ -153,9 +153,15 @@ export interface PoolNoteView {
 }
 
 /**
- * How many notes exist in a pool overall — the anonymity set a withdrawal from
- * it hides in. Surfaced so the UI can state it instead of implying the pool is
- * private in the abstract: a pool with two notes hides almost nothing.
+ * How many notes exist in a pool overall. Surfaced so the UI can state a real
+ * number instead of implying the pool is private in the abstract.
+ *
+ * This is a pool SIZE, not the anonymity set a withdrawal hides in. The v3
+ * unshield passes the note commitment as a public instruction argument and the
+ * deposit emitted the same value, so a withdrawal is publicly matchable to its
+ * deposit and the effective set is ONE regardless of this count (verified on
+ * devnet, docs/PAY_HANDOFF_OPUS5.md §10). PoolPanel says so explicitly — keep
+ * it that way until the C7 spend circuit ships.
  */
 export interface PoolSizeView {
   denomination: number;
@@ -386,7 +392,11 @@ async function handlePoolShieldExecute(
         pool: receipt.pool,
         secret: receipt.secret.toString(),
         nullifier_preimage: receipt.nullifierPreimage.toString(),
-        deposit_epoch: receipt.depositEpoch.toString(),
+        // KEY IS LOAD-BEARING: `extractStoredPath` below matches previously
+        // stored blobs by parsing this exact shape, so `deposit_epoch` stays
+        // even though the field is now `receipt.noteBlinding`. Renaming it
+        // without a `version` bump silently drops the stored Merkle path.
+        deposit_epoch: receipt.noteBlinding.toString(),
         token_mint: receipt.tokenMint.toString(),
         commitment: receipt.commitment.toString(),
         leafIndex: receipt.leafIndex,

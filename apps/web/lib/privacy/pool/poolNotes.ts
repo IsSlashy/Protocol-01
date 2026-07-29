@@ -103,7 +103,7 @@ export async function recoverNotes(
   for (const counter of candidates) {
     const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolConfig.poolPDA, counter);
 
-    let hit: { epoch: bigint; commitment: bigint; leafIndex: number } | null = null;
+    let hit: { noteBlinding: bigint; commitment: bigint; leafIndex: number } | null = null;
 
     // Current scheme: the commitment's third input is a seed-derived blinding, so
     // the note is identified with ONE hash and no search at all.
@@ -111,18 +111,19 @@ export async function recoverNotes(
     const blinded = createCommitmentV3(nullifierPreimage, secret, blinding, tokenMintField);
     const blindedOnChain = commitments.get(blinded.toString());
     if (blindedOnChain && blindedOnChain.leafIndex === counter) {
-      hit = { epoch: blinding, commitment: blinded, leafIndex: blindedOnChain.leafIndex };
+      hit = { noteBlinding: blinding, commitment: blinded, leafIndex: blindedOnChain.leafIndex };
     }
 
     // Legacy notes (shielded before blinding landed) put the real deposit epoch
-    // there, so they still need the search. Kept so notes already on-chain stay
-    // spendable — there is an unspent one at leaf 30 of the 0.1 SOL pool.
+    // there, so they still need the search. DO NOT REMOVE THIS FALLBACK: there
+    // is an unspent legacy note at leaf 30 of the 0.1 SOL pool, and without the
+    // search it becomes invisible to scan and unwithdrawable through the UI.
     if (!hit) {
       for (let epoch = currentEpoch; epoch >= lowestEpoch; epoch--) {
         const commitment = createCommitmentV3(nullifierPreimage, secret, epoch, tokenMintField);
         const onChain = commitments.get(commitment.toString());
         if (onChain && onChain.leafIndex === counter) {
-          hit = { epoch, commitment, leafIndex: onChain.leafIndex };
+          hit = { noteBlinding: epoch, commitment, leafIndex: onChain.leafIndex };
           break;
         }
       }
@@ -137,7 +138,7 @@ export async function recoverNotes(
       receipt: {
         secret,
         nullifierPreimage,
-        depositEpoch: hit.epoch,
+        noteBlinding: hit.noteBlinding,
         tokenMint: tokenMintField,
         commitment: hit.commitment,
         leafIndex: hit.leafIndex,

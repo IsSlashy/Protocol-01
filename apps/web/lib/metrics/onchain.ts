@@ -3,13 +3,20 @@
  *
  * We enumerate the shielded program's DenominatedPool accounts directly via
  * getProgramAccounts (filtered to the account discriminator) and aggregate
- * their public, fixed fields: denomination + note_count. note_count is the
- * anonymity-set size; TVL = note_count × denomination. We never read note
- * contents, owners, or anything linkable — that's the whole point.
+ * their public, fixed fields: denomination + note_count. TVL = note_count ×
+ * denomination. We never read note contents, owners, or anything linkable —
+ * that's the whole point.
+ *
+ * note_count is a POOL SIZE, not a delivered anonymity set. The v3 unshield
+ * passes the note commitment as a public instruction argument (bytes 80..88)
+ * and the deposit emitted the same value, so a withdrawal is publicly matchable
+ * to its deposit and the effective anonymity set is ONE. Closing that needs the
+ * C7 spend circuit (docs/C7_SPEND_CIRCUIT_PLAN.md). Copy rendered from these
+ * numbers must not call them an anonymity set until it ships.
  *
  * Pools from superseded seed versions (v2/v3/v4) can coexist on-chain for the
  * same (token, denomination); we keep the one with the most notes (the active
- * pool) rather than summing distinct, unrelated anonymity sets.
+ * pool) rather than summing distinct, unrelated pools.
  */
 import { createHash } from 'crypto';
 import { Connection, PublicKey } from '@solana/web3.js';

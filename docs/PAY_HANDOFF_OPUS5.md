@@ -88,8 +88,8 @@ investigation of the actual code + on-chain probes.
 | Property | State | Notes |
 |---|---|---|
 | Recipient anonymity | HAVE* | one-time stealth address, PQ discovery proven e2e. *view/spend coupled — sender can race-reclaim until dual-key redesign; bearer-like, not sound. |
-| Funding↔claim unlinkable | HAVE on-chain / NOT in /pay | `zk_shielded` pool (`GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c`) exists; /pay doesn't route through it yet (Step 1). |
-| Amount confidential | PARTIAL | denominated pool exists (mobile/ext); /pay amounts fully public today. |
+| Funding↔claim unlinkable | MISSING everywhere | **Corrected 2026-07-25.** The `zk_shielded` pool (`GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c`) does NOT deliver it: the v3 unshield passes the note commitment as a public instruction argument (bytes 80..88) and the deposit emitted the same value, so the two are publicly matchable — effective anonymity set ONE. Needs the C7 spend circuit (`docs/C7_SPEND_CIRCUIT_PLAN.md`). |
+| Amount confidential | PARTIAL | The /pay **Pool tab** shields/withdraws denominated notes on devnet, so amounts there are quantised to a bucket. A /pay **send** does not route through the pool — those amounts are fully public. |
 | Sender anonymity | PARTIAL | `p01_relayer` (`2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW`, ~9 nodes) live but pay-core doesn't call it (Step 2). |
 | Timing / metadata | PARTIAL | event-scrub deployed; cover traffic parked. |
 | Token-type hiding | MISSING | commitments bake in the mint; universal pool = parked V4. |
@@ -106,8 +106,10 @@ denominations / split across pools (cannot send arbitrary amounts privately). Or
 privacy-gained-per-effort:
 
 **Solana (where the real primitives live):**
-1. **Route /pay through the denominated shielded pool** — flips amount + funding↔claim-unlink at
-   once. Pool deployed + audited (C1/C2/C3/C6) + device-proven. **← STEP 1, in progress, see §4.**
+1. **Route /pay through the denominated shielded pool** — flips **amount only**. It does NOT flip
+   funding↔claim-unlink: see §10, the v3 unshield publishes the note commitment. Pool deployed +
+   audited (C1/C2/C3/C6) + device-proven. **← STEP 1, DONE for the Pool tab (§10); sends still
+   bypass the pool. Unlinkability is a separate build — `docs/C7_SPEND_CIRCUIT_PLAN.md`.**
 2. **Relayer for sender anonymity** — needs Step 1 first (ephemeral funded from shielded funds) +
    a reliable in-repo worker (currently gitignored/degraded).
 3. **extDataHash recipient-in-proof** (~2-4h) — removes recipient from tx accounts.

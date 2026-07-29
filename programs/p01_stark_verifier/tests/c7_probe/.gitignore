@@ -1,0 +1,6 @@
+# Build outputs of the throwaway C7 shape probe. Regenerate with:
+#   cargo-build-sbf --manifest-path programs/p01_stark_verifier/tests/c7_probe/Cargo.toml \
+#                   --sbf-out-dir programs/p01_stark_verifier/tests/c7_probe/out
+out/
+target/
+Cargo.lock

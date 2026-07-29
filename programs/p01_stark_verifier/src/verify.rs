@@ -35,6 +35,17 @@ pub enum VerifyError {
     /// not equal `ood_quotient · Z_D(z)`. The prover's Q(z) claim is
     /// inconsistent with the opened OOD trace evaluations and the AIR.
     DeepAliFailed,
+    /// A domain-size lookup (`get_lde_generator` / `get_trace_generator`) was
+    /// asked for a size with no precomputed root-of-unity constant.
+    ///
+    /// Before this variant existed both lookups fell through to `Felt::ONE`,
+    /// i.e. a degenerate domain where every position maps to 1 — the whole LDE
+    /// collapses to a single point and FRI/quotient checks become vacuous.
+    /// That is not reachable from proof bytes today (`CircuitConfig` is a
+    /// program constant, see `compact_proof::get_circuit_config`), but it made
+    /// "add a circuit with a new domain size" a silently-unsound edit. Now it
+    /// fails closed.
+    UnsupportedDomainSize,
 }
 
 // ============================================================================
@@ -67,38 +78,183 @@ const GENERATOR_4096: u64 = 0xF2C35199959DFCB6;
 const GENERATOR_8192: u64 = 0x1544EF2335D17997;
 
 /// Get the LDE domain generator for a given LDE size.
-fn get_lde_generator(lde_size: usize) -> Felt {
+///
+/// **Fails closed.** An unlisted size is a build-time error in this crate, not
+/// something a proof can trigger — but returning `Felt::ONE` for it (as this
+/// did before) would make the whole LDE domain collapse to `{1}`, so FRI folds
+/// and quotient/vanishing evaluations would be checked against garbage while
+/// still reporting success. Any new circuit must add its generator constant
+/// here or it will be rejected outright.
+fn get_lde_generator(lde_size: usize) -> Result<Felt, VerifyError> {
     match lde_size {
-        512 => Felt::new(GENERATOR_512),
-        2048 => Felt::new(GENERATOR_2048),
-        4096 => Felt::new(GENERATOR_4096),
-        8192 => Felt::new(GENERATOR_8192),
-        _ => Felt::ONE, // Should never happen for supported circuits
+        512 => Ok(Felt::new(GENERATOR_512)),
+        2048 => Ok(Felt::new(GENERATOR_2048)),
+        4096 => Ok(Felt::new(GENERATOR_4096)),
+        8192 => Ok(Felt::new(GENERATOR_8192)),
+        _ => Err(VerifyError::UnsupportedDomainSize),
     }
 }
 
 /// Get the trace domain generator for a given trace length.
+///
+/// Fails closed for the same reason as [`get_lde_generator`]. Note the DEEP-ALI
+/// routines currently inline their per-circuit constant (`Felt::new(GENERATOR_512)`
+/// and friends) rather than calling this, so it has no live caller today; it is
+/// kept because a new circuit's DEEP-ALI path is the obvious place to use it.
 #[allow(dead_code)]
-fn get_trace_generator(trace_length: usize) -> Felt {
+fn get_trace_generator(trace_length: usize) -> Result<Felt, VerifyError> {
     match trace_length {
-        32 => Felt::new(GENERATOR_32),
-        128 => Felt::new(GENERATOR_128),
-        256 => Felt::new(GENERATOR_256),
-        512 => Felt::new(GENERATOR_512),
-        _ => Felt::ONE, // Should never happen for supported circuits
+        32 => Ok(Felt::new(GENERATOR_32)),
+        128 => Ok(Felt::new(GENERATOR_128)),
+        256 => Ok(Felt::new(GENERATOR_256)),
+        512 => Ok(Felt::new(GENERATOR_512)),
+        _ => Err(VerifyError::UnsupportedDomainSize),
     }
 }
 
 /// Compute the LDE domain element at a given position: lde_gen^pos
-fn get_lde_domain_element(pos: usize, config: &CircuitConfig) -> Felt {
-    let g = get_lde_generator(config.lde_size);
-    g.exp(pos as u64)
+fn get_lde_domain_element(pos: usize, config: &CircuitConfig) -> Result<Felt, VerifyError> {
+    let g = get_lde_generator(config.lde_size)?;
+    Ok(g.exp(pos as u64))
 }
 
 /// Compute the vanishing polynomial Z_D(x) = x^trace_length - 1
 fn vanishing_poly(x: Felt, trace_length: usize) -> Felt {
     let x_n = x.exp(trace_length as u64);
     x_n.sub(Felt::ONE)
+}
+
+/// Regression tests for the domain-generator lookups.
+///
+/// These pin two things at once:
+///  1. every size reachable today still returns the *exact* constant it
+///     returned before the fail-closed change (this program is deployed and
+///     verifies live C1/C3/C5/C6 proofs — any drift here invalidates them);
+///  2. an unlisted size now errors instead of silently returning `Felt::ONE`.
+#[cfg(test)]
+mod domain_generator_tests {
+    use super::*;
+    use crate::compact_proof::{get_circuit_config, LDE_SIZE};
+
+    /// Sizes reachable via `CircuitConfig.lde_size` for circuits 0..=6 plus the
+    /// legacy circuit-0 path, mapped to the constant each must keep returning.
+    const LISTED_LDE: [(usize, u64); 4] = [
+        (512, GENERATOR_512),
+        (2048, GENERATOR_2048),
+        (4096, GENERATOR_4096),
+        (8192, GENERATOR_8192),
+    ];
+
+    const LISTED_TRACE: [(usize, u64); 4] = [
+        (32, GENERATOR_32),
+        (128, GENERATOR_128),
+        (256, GENERATOR_256),
+        (512, GENERATOR_512),
+    ];
+
+    #[test]
+    fn lde_generator_listed_sizes_return_prior_constants() {
+        for (size, expected) in LISTED_LDE {
+            let g = get_lde_generator(size).expect("listed LDE size must resolve");
+            assert_eq!(g.as_u64(), expected, "generator drift for LDE size {size}");
+        }
+    }
+
+    #[test]
+    fn trace_generator_listed_sizes_return_prior_constants() {
+        for (size, expected) in LISTED_TRACE {
+            let g = get_trace_generator(size).expect("listed trace size must resolve");
+            assert_eq!(g.as_u64(), expected, "generator drift for trace length {size}");
+        }
+    }
+
+    /// The behaviour guarantee that matters for the deployed program: every
+    /// circuit config the on-chain dispatcher can select still resolves, and
+    /// resolves to the same constant as before.
+    #[test]
+    fn every_live_circuit_config_resolves_its_lde_generator() {
+        for circuit_id in 0u8..=6 {
+            let config = get_circuit_config(circuit_id).expect("circuit id 0..=6 has a config");
+            let g = get_lde_generator(config.lde_size)
+                .unwrap_or_else(|e| panic!("circuit {circuit_id} lde_size {} rejected: {e:?}", config.lde_size));
+            let expected = LISTED_LDE
+                .iter()
+                .find(|(s, _)| *s == config.lde_size)
+                .map(|(_, v)| *v)
+                .unwrap_or_else(|| panic!("circuit {circuit_id} uses unlisted lde_size {}", config.lde_size));
+            assert_eq!(g.as_u64(), expected);
+            assert_ne!(g.as_u64(), Felt::ONE.as_u64(), "a live generator must never be 1");
+        }
+        // Legacy circuit-0 path uses the bare constant, not a CircuitConfig.
+        assert_eq!(LDE_SIZE, 512);
+        assert_eq!(get_lde_generator(LDE_SIZE).unwrap().as_u64(), GENERATOR_512);
+    }
+
+    /// The footgun itself: previously each of these returned `Felt::ONE`.
+    /// 1024 / 16384 are the sizes a concatenated-trace C7 would have used.
+    #[test]
+    fn lde_generator_rejects_unlisted_sizes() {
+        for size in [0usize, 1, 2, 16, 32, 64, 128, 256, 1024, 16384, 65536, usize::MAX] {
+            match get_lde_generator(size) {
+                Err(VerifyError::UnsupportedDomainSize) => {}
+                Err(other) => panic!("LDE size {size}: wrong error {other:?}"),
+                Ok(g) => panic!("LDE size {size} silently resolved to {}", g.as_u64()),
+            }
+        }
+    }
+
+    #[test]
+    fn trace_generator_rejects_unlisted_sizes() {
+        for size in [0usize, 1, 2, 16, 64, 100, 1024, 2048, 8192, usize::MAX] {
+            match get_trace_generator(size) {
+                Err(VerifyError::UnsupportedDomainSize) => {}
+                Err(other) => panic!("trace length {size}: wrong error {other:?}"),
+                Ok(g) => panic!("trace length {size} silently resolved to {}", g.as_u64()),
+            }
+        }
+    }
+
+    /// Same failure class, second lookup: an unknown circuit id used to yield an
+    /// empty assertion list, which `verify_boundary_constraints` accepts as
+    /// "nothing to check".
+    #[test]
+    fn boundary_assertions_reject_unknown_circuit() {
+        for circuit_id in [7u8, 8, 100, 255] {
+            match get_boundary_assertions(circuit_id, &[1, 2, 3, 4, 5, 15]) {
+                Err(VerifyError::UnsupportedCircuit) => {}
+                Err(other) => panic!("circuit {circuit_id}: wrong error {other:?}"),
+                Ok(a) => panic!("circuit {circuit_id} silently produced {} assertions", a.len()),
+            }
+        }
+    }
+
+    /// Assertion counts for the live circuits are unchanged, and none of them is
+    /// empty — so the `assertions.is_empty()` early-out in
+    /// `verify_boundary_constraints` was only ever reachable through the old
+    /// `_ => Vec::new()` arm.
+    #[test]
+    fn boundary_assertions_listed_circuits_unchanged() {
+        // (circuit_id, public_inputs, expected assertion count)
+        let cases: [(u8, &[u64], usize); 7] = [
+            (0, &[42], 3),
+            (1, &[1, 2], 6),
+            (2, &[1, 2], 7),
+            (3, &[1, 2, 15], 2),
+            (4, &[1, 2, 3, 4], 12),
+            (5, &[1, 2, 3, 4, 5, 6], 26),
+            (6, &[1, 2, 3, 4, 15], 4),
+        ];
+        for (circuit_id, pub_inputs, expected) in cases {
+            let a = get_boundary_assertions(circuit_id, pub_inputs)
+                .unwrap_or_else(|e| panic!("circuit {circuit_id} must resolve: {e:?}"));
+            assert_eq!(a.len(), expected, "assertion-count drift for circuit {circuit_id}");
+            assert!(!a.is_empty());
+        }
+        // Circuit 3 / 6 out-of-range depth still degrades to the leaf-only form
+        // (unchanged behaviour, deliberately not touched by this fix).
+        assert_eq!(get_boundary_assertions(3, &[1, 2, 99]).unwrap().len(), 1);
+        assert_eq!(get_boundary_assertions(6, &[1, 2, 3, 4, 99]).unwrap().len(), 2);
+    }
 }
 
 // ============================================================================
@@ -116,7 +272,18 @@ struct BoundaryAssertion {
 ///
 /// These bind the proof to public inputs by requiring specific trace values
 /// at specific rows.
-fn get_boundary_assertions(circuit_id: u8, public_inputs: &[u64]) -> Vec<BoundaryAssertion> {
+///
+/// **Fails closed on an unknown `circuit_id`.** This used to return an empty
+/// `Vec`, and `verify_boundary_constraints` treats an empty assertion list as
+/// "nothing to check" — so a circuit added to the step-4 dispatch but forgotten
+/// here would have verified with *zero* public-input binding. Same failure
+/// class as the generator lookups above. Unreachable today (`verify_generic`
+/// rejects unknown ids at step 4 before step 5 runs, and every DEEP-ALI caller
+/// passes a hardcoded id in 0..=6), but it is a trap for the next circuit.
+fn get_boundary_assertions(
+    circuit_id: u8,
+    public_inputs: &[u64],
+) -> Result<Vec<BoundaryAssertion>, VerifyError> {
     const HASH_CYCLE_LEN: usize = 32;
     const NUM_ROUNDS: usize = 30;
     // [#2 voie A] Circuit-5 row where the conservation accumulator (col 6)
@@ -124,7 +291,7 @@ fn get_boundary_assertions(circuit_id: u8, public_inputs: &[u64]) -> Vec<Boundar
     // prover's `ROW_ACC_FINAL` = ROW_OUT_AMOUNT_2 + 1 = 12*32 + 1 = 385.
     const ROW_ACC_FINAL_C5: usize = 12 * HASH_CYCLE_LEN + 1;
 
-    match circuit_id {
+    let assertions = match circuit_id {
         // Circuit 0: subscriber_ownership
         // Public inputs: [commitment]
         // Assertions: state[1] at row 0 = 0, state[2] at row 0 = 0,
@@ -382,8 +549,9 @@ fn get_boundary_assertions(circuit_id: u8, public_inputs: &[u64]) -> Vec<Boundar
                 ]
             }
         }
-        _ => Vec::new(),
-    }
+        _ => return Err(VerifyError::UnsupportedCircuit),
+    };
+    Ok(assertions)
 }
 
 // ============================================================================
@@ -752,6 +920,34 @@ fn evaluate_poly_horner_bytes(coeffs_bytes: &[u8], x: Felt) -> Felt {
     result
 }
 
+/// [B4] Verify one **pair-leaf** Merkle opening.
+///
+/// The quotient LDE and every committed FRI layer are committed as
+/// `leaf[j] = SHA256(v[j].to_le_bytes() ‖ v[j + N/2].to_le_bytes())` over `N/2`
+/// leaves. A FRI fold at position `p` consumes exactly `v[j]` and `v[j + N/2]`
+/// with `j = p mod (N/2)` — both halves of one leaf — so a single depth-
+/// `(log2(N) - 1)` path authenticates both values. Pre-B4 this cost two
+/// depth-`log2(N)` paths plus two leaf hashes.
+///
+/// `lo` MUST be the low-half value and `hi` the high-half value: the leaf hash
+/// cannot depend on which side of the mirror the query landed on, or the tree
+/// would not be well defined. Any disagreement with the prover about the
+/// ordering or about `j` changes the leaf hash / the walked path and the root
+/// check fails — this function has no way to accept a mismatched indexing.
+#[inline]
+fn verify_pair_leaf(
+    root: &[u8; 32],
+    lo: Felt,
+    hi: Felt,
+    pair_index: usize,
+    path: &[u8],
+) -> bool {
+    let mut leaf = [0u8; 16];
+    leaf[..8].copy_from_slice(&lo.as_u64().to_le_bytes());
+    leaf[8..].copy_from_slice(&hi.as_u64().to_le_bytes());
+    merkle::verify_merkle_path(root, &leaf, pair_index, path)
+}
+
 /// [P1.1 PR 3] FRI query phase verification.
 ///
 /// For every query, walks the fold chain from the quotient LDE (f_0) through
@@ -823,7 +1019,7 @@ fn verify_fri_generic(
     // Net saving: ~342K CU. Circuits 0-5 (half_lde ≤ 2048) still pay the same
     // extra mul but their setup shrinks too — small net win or neutral.
     const INV_GEN_BASE_SIZE: usize = 256;
-    let gen_0 = get_lde_generator(config.lde_size);
+    let gen_0 = get_lde_generator(config.lde_size)?;
     let inv_gen_0 = gen_0.inv();
     let half_lde = config.lde_size / 2;
     let base_size = half_lde.min(INV_GEN_BASE_SIZE);
@@ -866,16 +1062,18 @@ fn verify_fri_generic(
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
 
-        // Quotient mirror at `pos XOR (lde_size/2)`.
-        let quotient_mirror_pos = pos ^ (config.lde_size / 2);
-        if !merkle::verify_merkle_path(
-            &proof.quotient_root,
-            &query.quotient_mirror_value.as_u64().to_le_bytes(),
-            quotient_mirror_pos,
-            query.quotient_mirror_path(),
-        ) {
-            return Err(VerifyError::MerkleProofFailed);
-        }
+        // [B4] Layer 0 (the quotient LDE) pair, in canonical (lo, hi) order.
+        // The pair leaf itself was Merkle-checked in `verify_merkle_proofs_generic`
+        // — one opening there now binds both halves, so there is no separate
+        // mirror path to check here any more.
+        let half0 = config.lde_size / 2;
+        let q_at_pos = proof.quotient_value(query_idx);
+        let q_mirror = query.quotient_mirror_value;
+        let (mut f_lo, mut f_hi) = if pos < half0 {
+            (q_at_pos, q_mirror)
+        } else {
+            (q_mirror, q_at_pos)
+        };
 
         // **[P1.6 CU fix]** Single-pass Merkle + fold verification.
         // The old two-loop form called `query.fri_value(i)`/etc inside each loop;
@@ -883,55 +1081,21 @@ fn verify_fri_generic(
         // per query. With ~12 layers × 27 queries that blew past the 1.4M CU cap.
         // Here `fri_block_iter()` hops one layer at a time via a cursor (O(1) per
         // step), and we merge the two loops so layer data is consumed exactly once.
-        let mut f_at_pos = proof.quotient_value(query_idx);
-        let mut f_at_mirror = query.quotient_mirror_value;
         let mut fri_iter = query.fri_block_iter();
 
         for i in 0..num_folds {
-            // Committed layers: verify Merkle openings and capture (value, mirror).
-            let committed = if i < num_fri_layers {
-                let (v, p, mv, mp) = fri_iter.next().ok_or(VerifyError::FriFoldCheckFailed)?;
-                let size_next = config.lde_size >> (i + 1);
-                let pos_next = pos & (size_next - 1);
-                let mirror_next = pos_next ^ (size_next / 2);
-                if !merkle::verify_merkle_path(
-                    proof.fri_layer_root(i),
-                    &v.as_u64().to_le_bytes(),
-                    pos_next,
-                    p,
-                ) {
-                    return Err(VerifyError::MerkleProofFailed);
-                }
-                if !merkle::verify_merkle_path(
-                    proof.fri_layer_root(i),
-                    &mv.as_u64().to_le_bytes(),
-                    mirror_next,
-                    mp,
-                ) {
-                    return Err(VerifyError::MerkleProofFailed);
-                }
-                Some((v, mv))
-            } else {
-                None
-            };
+            // Fold consistency at layer i. `j` is simultaneously the pair index
+            // of this query in layer i AND the exponent of y in the fold
+            // identity: `pos mod size_i` and its mirror both reduce to it.
+            let half_i = config.lde_size >> (i + 1);
+            let j = pos & (half_i - 1);
 
-            // Fold consistency at layer i.
-            let size_i = config.lde_size >> i;
-            let half_i = size_i / 2;
-            let pos_in_layer = pos & (size_i - 1);
-
-            let (pos_low, f_y, f_neg_y) = if pos_in_layer < half_i {
-                (pos_in_layer, f_at_pos, f_at_mirror)
-            } else {
-                (pos_in_layer - half_i, f_at_mirror, f_at_pos)
-            };
-
-            // [P2.2] Two-level inv_gen^k lookup. k = pos_low << i, guaranteed
+            // [P2.2] Two-level inv_gen^k lookup. k = j << i, guaranteed
             // < half_lde. Decompose as k = base_size·q + r, then
             //   inv_gen_0^k = inv_gen_0^r · (inv_gen_0^base_size)^q
             //             = base_table[r] · step_table[q]
             // For circuit 6 (base_size=256), ~94% of folds take the step path.
-            let k = pos_low << i;
+            let k = j << i;
             let r = k & (INV_GEN_BASE_SIZE - 1);
             let q = k >> INV_GEN_BASE_SIZE.trailing_zeros();
             let y_inv = if q == 0 {
@@ -939,28 +1103,43 @@ fn verify_fri_generic(
             } else {
                 inv_gen_0_powers[r].mul(inv_gen_step_table[q])
             };
-            let sum = f_y.add(f_neg_y);
-            let diff = f_y.sub(f_neg_y);
+            // f_lo = f_i(y), f_hi = f_i(-y) — canonical pair ordering means no
+            // swap is needed here.
+            let sum = f_lo.add(f_hi);
+            let diff = f_lo.sub(f_hi);
             let even = sum.mul(two_inv);
             let odd = diff.mul(two_inv).mul(y_inv);
             let expected_next = even.add(alphas[i].mul(odd));
 
-            let actual_next = if let Some((v, _)) = committed {
+            let actual_next = if i < num_fri_layers {
+                // [B4] ONE pair opening per committed layer yields both halves
+                // of the next layer's coset.
+                let (lo, hi, path) = fri_iter.next().ok_or(VerifyError::FriFoldCheckFailed)?;
+                let half_next = half_i / 2;
+                if !verify_pair_leaf(
+                    proof.fri_layer_root(i),
+                    lo,
+                    hi,
+                    pos & (half_next - 1),
+                    path,
+                ) {
+                    return Err(VerifyError::MerkleProofFailed);
+                }
+                // f_{i+1} at index `pos mod size_{i+1}` — and size_{i+1} = half_i,
+                // so that index is exactly `j`. It sits in the low half of the
+                // next layer iff j < half_next.
+                let v = if j < half_next { lo } else { hi };
+                f_lo = lo;
+                f_hi = hi;
                 v
             } else {
-                // Final layer only (i == num_folds - 1), pos_low < FRI_FINAL_POLY_SIZE (=16).
-                let x = gen_final.exp(pos_low as u64);
+                // Final layer only (i == num_folds - 1), j < fri_final_poly_size.
+                let x = gen_final.exp(j as u64);
                 evaluate_poly_horner_bytes(proof.fri_final_poly_bytes(), x)
             };
 
             if expected_next.as_u64() != actual_next.as_u64() {
                 return Err(VerifyError::FriFoldCheckFailed);
-            }
-
-            // Advance state for next layer.
-            if let Some((v, mv)) = committed {
-                f_at_pos = v;
-                f_at_mirror = mv;
             }
         }
     }
@@ -1000,7 +1179,7 @@ fn verify_fri_legacy(
     }
 
     // [P1.6] inv_gen_0 powers table — see generic version for derivation.
-    let gen_0 = get_lde_generator(LEGACY_LDE);
+    let gen_0 = get_lde_generator(LEGACY_LDE)?;
     let inv_gen_0 = gen_0.inv();
     let half_lde = LEGACY_LDE / 2;
     let mut inv_gen_0_powers: Vec<Felt> = Vec::with_capacity(half_lde);
@@ -1019,80 +1198,55 @@ fn verify_fri_legacy(
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
 
-        let quotient_mirror_pos = pos ^ (LEGACY_LDE / 2);
-        if !merkle::verify_merkle_path(
-            &proof.quotient_root,
-            &query.quotient_mirror_value.as_u64().to_le_bytes(),
-            quotient_mirror_pos,
-            query.quotient_mirror_path(),
-        ) {
-            return Err(VerifyError::MerkleProofFailed);
-        }
+        // [B4] Layer-0 pair in canonical (lo, hi) order. The quotient pair leaf
+        // is Merkle-checked in `verify_merkle_proofs_legacy`.
+        let half0 = LEGACY_LDE / 2;
+        let q_at_pos = proof.quotient_value(query_idx);
+        let q_mirror = query.quotient_mirror_value;
+        let (mut f_lo, mut f_hi) = if pos < half0 {
+            (q_at_pos, q_mirror)
+        } else {
+            (q_mirror, q_at_pos)
+        };
 
         // **[P1.6 CU fix]** Same single-pass pattern as `verify_fri_generic`.
-        let mut f_at_pos = proof.quotient_value(query_idx);
-        let mut f_at_mirror = query.quotient_mirror_value;
         let mut fri_iter = query.fri_block_iter();
 
         for i in 0..num_folds {
-            let committed = if i < num_fri_layers {
-                let (v, p, mv, mp) = fri_iter.next().ok_or(VerifyError::FriFoldCheckFailed)?;
-                let size_next = LEGACY_LDE >> (i + 1);
-                let pos_next = pos & (size_next - 1);
-                let mirror_next = pos_next ^ (size_next / 2);
-                if !merkle::verify_merkle_path(
-                    proof.fri_layer_root(i),
-                    &v.as_u64().to_le_bytes(),
-                    pos_next,
-                    p,
-                ) {
-                    return Err(VerifyError::MerkleProofFailed);
-                }
-                if !merkle::verify_merkle_path(
-                    proof.fri_layer_root(i),
-                    &mv.as_u64().to_le_bytes(),
-                    mirror_next,
-                    mp,
-                ) {
-                    return Err(VerifyError::MerkleProofFailed);
-                }
-                Some((v, mv))
-            } else {
-                None
-            };
+            let half_i = LEGACY_LDE >> (i + 1);
+            let j = pos & (half_i - 1);
 
-            let size_i = LEGACY_LDE >> i;
-            let half_i = size_i / 2;
-            let pos_in_layer = pos & (size_i - 1);
-
-            let (pos_low, f_y, f_neg_y) = if pos_in_layer < half_i {
-                (pos_in_layer, f_at_pos, f_at_mirror)
-            } else {
-                (pos_in_layer - half_i, f_at_mirror, f_at_pos)
-            };
-
-            // [P1.6] O(1) table lookup replaces inv_gen_per_layer[i].exp(pos_low).
-            let y_inv = inv_gen_0_powers[pos_low << i];
-            let sum = f_y.add(f_neg_y);
-            let diff = f_y.sub(f_neg_y);
+            // [P1.6] O(1) table lookup replaces inv_gen_per_layer[i].exp(j).
+            let y_inv = inv_gen_0_powers[j << i];
+            let sum = f_lo.add(f_hi);
+            let diff = f_lo.sub(f_hi);
             let even = sum.mul(two_inv);
             let odd = diff.mul(two_inv).mul(y_inv);
             let expected_next = even.add(alphas[i].mul(odd));
 
-            let actual_next = if let Some((v, _)) = committed {
+            let actual_next = if i < num_fri_layers {
+                let (lo, hi, path) = fri_iter.next().ok_or(VerifyError::FriFoldCheckFailed)?;
+                let half_next = half_i / 2;
+                if !verify_pair_leaf(
+                    proof.fri_layer_root(i),
+                    lo,
+                    hi,
+                    pos & (half_next - 1),
+                    path,
+                ) {
+                    return Err(VerifyError::MerkleProofFailed);
+                }
+                let v = if j < half_next { lo } else { hi };
+                f_lo = lo;
+                f_hi = hi;
                 v
             } else {
-                let x = gen_final.exp(pos_low as u64);
+                let x = gen_final.exp(j as u64);
                 evaluate_poly_horner_bytes(proof.fri_final_poly_bytes(), x)
             };
 
             if expected_next.as_u64() != actual_next.as_u64() {
                 return Err(VerifyError::FriFoldCheckFailed);
-            }
-
-            if let Some((v, mv)) = committed {
-                f_at_pos = v;
-                f_at_mirror = mv;
             }
         }
     }
@@ -1129,17 +1283,28 @@ fn verify_merkle_proofs_generic(
             return Err(VerifyError::MerkleProofFailed);
         }
 
-        // [P1.1] Verify quotient LDE membership for the claimed `quotient_values[query_idx]`.
+        // [B4] Verify quotient LDE membership for BOTH `quotient_values[query_idx]`
+        // (the value at `position`) and `quotient_mirror_value` (the value at
+        // `position ^ lde_size/2`) with ONE pair-leaf opening. Pre-B4 this was
+        // two full-depth openings — one here, one in `verify_fri_generic`.
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        let q_leaf_bytes = quotient_value.as_u64().to_le_bytes();
-        if !merkle::verify_merkle_path(
+        let pos = query.position as usize;
+        let half = config.lde_size / 2;
+        let q_at_pos = proof.quotient_value(query_idx);
+        let q_mirror = query.quotient_mirror_value;
+        let (lo, hi) = if pos < half {
+            (q_at_pos, q_mirror)
+        } else {
+            (q_mirror, q_at_pos)
+        };
+        if !verify_pair_leaf(
             &proof.quotient_root,
-            &q_leaf_bytes,
-            query.position as usize,
-            query.quotient_merkle_path(),
+            lo,
+            hi,
+            pos & (half - 1),
+            query.quotient_pair_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
         }
@@ -1176,7 +1341,7 @@ fn verify_boundary_constraints(
     config: &CircuitConfig,
     public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
-    let assertions = get_boundary_assertions(circuit_id, public_inputs);
+    let assertions = get_boundary_assertions(circuit_id, public_inputs)?;
     if assertions.is_empty() {
         return Ok(());
     }
@@ -1242,8 +1407,10 @@ fn verify_boundary_constraints_legacy(
 /// method. Coefficients are in ascending order (`c[0]` is the constant term);
 /// values stored as `u64` and lifted to `Felt` at evaluation time.
 ///
-/// `#[inline(never)]` — called 7× from `verify_deep_ali_circuit_6` on 512-long
-/// slices; keeping a dedicated frame avoids inlining 7 copies into the caller.
+/// `#[inline(never)]` — kept out of line because several callers pass long
+/// slices; a dedicated frame avoids inlining a copy per call site. Circuits 3
+/// and 6 no longer use it (see `eval_periodic_ext_at_z`); C0/C1/C2/C4/C5 still
+/// do, for the columns that are neither stride-sparse nor cheaply Lagrangeable.
 #[inline(never)]
 fn eval_periodic_at_z(coeffs: &[u64], z: Felt) -> Felt {
     let mut acc = Felt::ZERO;
@@ -1279,6 +1446,52 @@ fn eval_periodic_at_z(coeffs: &[u64], z: Felt) -> Felt {
 /// Callers must pass a polynomial that is genuinely stride-16 sparse. The
 /// `debug_assert` below catches accidental use against dense arrays in
 /// tests; production builds skip the check.
+///
+/// (Its `#[inline(never)]` sits directly above its own `fn` below. Do not park
+/// an attribute here: A3 inserted `eval_periodic_stride_at_z` between this doc
+/// comment and its function, which silently re-attached the attribute to the
+/// wrong item and left this one with none. rustc reports that as an unused
+/// attribute that will become a hard error.)
+/// Evaluate a stride-`s` periodic column at `z`, for any power-of-two stride.
+///
+/// Same idea as `eval_periodic_stride16_at_z`, generalised: when only indices
+/// divisible by `s` are non-zero, the polynomial is `Σ c[k·s]·x^(k·s)`, i.e. a
+/// polynomial in `y = z^s` with `len/s` coefficients. One `exp` plus `len/s - 1`
+/// Horner steps replaces `len - 1` steps.
+///
+/// # Safety of the sparsity assumption
+/// This does NOT check sparsity at runtime — a scan would cost exactly what the
+/// routine saves. The tables are compile-time constants, so the assumption is
+/// pinned by `periodic_stride_parity` in `tests/periodic_stride.rs`, which runs
+/// in **release** mode and compares against the dense evaluator.
+///
+/// That test exists because of a real hazard: `eval_periodic_stride16_at_z`
+/// guards its sparsity with `#[cfg(debug_assertions)]` only, so a release build
+/// handed a dense array silently evaluates a *different polynomial* with no
+/// error. Never wire a new table here without extending that test.
+#[inline]
+fn eval_periodic_stride_at_z(coeffs: &[u64], z: Felt, stride: usize) -> Felt {
+    debug_assert!(stride > 0 && coeffs.len() % stride == 0);
+    #[cfg(debug_assertions)]
+    {
+        for (i, &c) in coeffs.iter().enumerate() {
+            if i % stride != 0 {
+                debug_assert_eq!(c, 0, "stride-{} violation at index {}", stride, i);
+            }
+        }
+    }
+
+    let y = z.exp(stride as u64);
+    let compressed = coeffs.len() / stride;
+    let mut acc = Felt::ZERO;
+    let mut k = compressed;
+    while k > 0 {
+        k -= 1;
+        acc = acc.mul(y).add(Felt::new(coeffs[k * stride]));
+    }
+    acc
+}
+
 #[inline(never)]
 fn eval_periodic_stride16_at_z(coeffs: &[u64; 512], z: Felt) -> Felt {
     // Paranoia in tests: non-stride positions must be zero.
@@ -1366,6 +1579,126 @@ fn eval_one_hot_lagrange(
     inv_n: Felt,
 ) -> Felt {
     g_k.mul(z_n_minus_one).mul(inv_z_minus_g_k).mul(inv_n)
+}
+
+// ============================================================================
+// [A4] Periodic-extension evaluation for circuits 3 and 6
+// ============================================================================
+//
+// Both merkle AIRs gate every periodic column on `active_rows = depth * 32 =
+// 480`, zero-filling trace cycle 15 (rows 480..=511). That truncation destroys
+// 32-periodicity, so the baked interpolants are 512/512 dense (coefficient-index
+// gcd 1) and neither stride evaluator applies: 7 columns × 512 muls per circuit
+// dominates DEEP-ALI phase 2.
+//
+// The 32-periodic *extension* of each column IS stride-16 sparse (32 non-zero
+// coefficients, gcd 16 — verified against every table in
+// `tests/periodic_stride.rs`), and differs from the real column on exactly the
+// 32 rows 480..=511, which are shared by all seven columns. Hence
+//
+//     P_actual(z) = P_periodic(z) − Σ_{j=0}^{31} TAIL[j] · L_{480+j}(z)
+//     L_r(z)      = g^r · (z^N − 1) / (N · (z − g^r)),  N = 512
+//
+// an algebraic identity on the same polynomial: no AIR change, no trace change,
+// no wire-format change, zero soundness cost. One `batch_inverse(32)` produces
+// the Lagrange weights for the whole circuit; each column then costs a 32-step
+// Horner in `z^16` plus one mul-add per non-zero tail entry.
+
+/// `1/512` in Goldilocks. Baked rather than computed: `Felt::inv` is a
+/// Fermat exponentiation (~96 muls) and this value is constant. Pinned by
+/// `a4_inv_512_is_correct` in `tests/periodic_stride.rs`.
+const INV_512: u64 = 18_410_715_272_404_008_961;
+
+/// First row of the truncated cycle. `depth * 32` for the canonical depth 15,
+/// which both circuits reject any other value of before reaching here.
+const CYCLE15_START: u64 = 480;
+
+/// [A4] Lagrange weights `L_{480+j}(z)` for the 32 truncated rows, shared by
+/// all seven periodic columns of a merkle circuit.
+///
+/// `y16` must be `z^16`; `z^512` is recovered from it with 5 squarings rather
+/// than a second `exp`.
+///
+/// Returns `None` if `z` coincides with one of those 32 trace rows. The caller
+/// rejects, matching the existing degenerate-OOD policy in
+/// `boundary_fold_at_ood` and `compute_c5_periodic_at_z`: it can only reject
+/// proofs (never accept a bad one), and a random OOD hits the set with
+/// probability 32/2^64.
+#[inline(never)]
+fn cycle15_lagrange_weights(z: Felt, y16: Felt) -> Option<[Felt; 32]> {
+    let g = Felt::new(GENERATOR_512);
+
+    // z^512 = (z^16)^32
+    let mut z_n = y16;
+    for _ in 0..5 {
+        z_n = z_n.mul(z_n);
+    }
+    // k = (z^512 − 1) / 512, the factor common to every L_r.
+    let k = z_n
+        .sub(Felt::ONE)
+        .mul(Felt::new(INV_512));
+
+    let mut g_pows = [Felt::ZERO; 32];
+    let mut diffs = [Felt::ZERO; 32];
+    let mut g_r = g.exp(CYCLE15_START);
+    for j in 0..32 {
+        g_pows[j] = g_r;
+        let d = z.sub(g_r);
+        if d == Felt::ZERO {
+            return None;
+        }
+        diffs[j] = d;
+        g_r = g_r.mul(g);
+    }
+
+    let mut inv_diffs = [Felt::ZERO; 32];
+    if !batch_inverse(&diffs, &mut inv_diffs) {
+        return None;
+    }
+
+    let mut out = [Felt::ZERO; 32];
+    for j in 0..32 {
+        out[j] = k.mul(g_pows[j]).mul(inv_diffs[j]);
+    }
+    Some(out)
+}
+
+/// [A4] Evaluate one truncated periodic column at `z` from its periodic
+/// extension plus the shared Lagrange correction.
+///
+/// `periodic16` holds the 32 stride-16 compressed coefficients of the
+/// extension; `tail` holds the extension's values on rows 480..=511, which the
+/// real column zeroes. Zero tail entries are skipped — `HASH_START` and
+/// `IS_BOUNDARY` deviate on a single row each, so the branch pays for itself.
+///
+/// Like `eval_periodic_stride_at_z`, this performs no runtime validation of the
+/// constants: both arrays are re-derived from the dense tables and the identity
+/// re-checked at random `z` by `tests/periodic_stride.rs`, in release mode.
+#[inline(always)]
+fn eval_periodic_ext_at_z(
+    periodic16: &[u64; 32],
+    tail: &[u64; 32],
+    y16: Felt,
+    lagrange: &[Felt; 32],
+) -> Felt {
+    // P_periodic(z) = Σ_k periodic16[k] · (z^16)^k, Horner in y16.
+    let mut acc = Felt::ZERO;
+    let mut k = 32;
+    while k > 0 {
+        k -= 1;
+        acc = acc.mul(y16).add(Felt::new(periodic16[k]));
+    }
+
+    // − Σ_j TAIL[j] · L_{480+j}(z)
+    let mut corr = Felt::ZERO;
+    for j in 0..32 {
+        let t = tail[j];
+        if t != 0 {
+            corr = corr.add(lagrange[j].mul(Felt::new(t)));
+        }
+    }
+
+    acc.sub(corr)
 }
 
 /// Vanishing polynomial `Z_D(z) = z^trace_length - 1` for the trace domain.
@@ -1518,7 +1851,7 @@ fn verify_deep_ali_legacy(proof: &CompactStarkProof, commitment: Felt) -> Result
     // what forces a tampered commitment (or capacity zeros) to be rejected at
     // the OOD point on every proof — the live exploit for circuit 0. The prover
     // (`generate_compact_proof`) folds the matching boundary quotient into Q.
-    let assertions = get_boundary_assertions(0, &[commitment.as_u64()]);
+    let assertions = get_boundary_assertions(0, &[commitment.as_u64()])?;
     let alpha_bnd =
         derive_rlc_alpha_with_tag(&proof.trace_root, &commitment.to_le_bytes(), b"bnd-c0\0\0");
     let ood_current: [Felt; 3] = [proof.ood_current[0], proof.ood_current[1], proof.ood_current[2]];
@@ -1753,9 +2086,12 @@ pub fn verify_deep_ali_circuit_6(
     proof: &GenericCompactProof,
     public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
-    use crate::periodic_consts::{
-        C6_RC0_COEFFS, C6_RC1_COEFFS, C6_RC2_COEFFS, C6_ROUND_ACTIVE_COEFFS,
-        C6_HASH_START_COEFFS, C6_IS_BOUNDARY_COEFFS, C6_IS_INTERIOR_COEFFS,
+    use crate::periodic_ext_consts::{
+        C6_HASH_START_PERIODIC16, C6_HASH_START_TAIL, C6_IS_BOUNDARY_PERIODIC16,
+        C6_IS_BOUNDARY_TAIL, C6_IS_INTERIOR_PERIODIC16, C6_IS_INTERIOR_TAIL,
+        C6_RC0_PERIODIC16, C6_RC0_TAIL, C6_RC1_PERIODIC16, C6_RC1_TAIL,
+        C6_RC2_PERIODIC16, C6_RC2_TAIL, C6_ROUND_ACTIVE_PERIODIC16,
+        C6_ROUND_ACTIVE_TAIL,
     };
 
     // Periodic polynomials are depth-dependent (active_rows = depth*32). They
@@ -1768,15 +2104,31 @@ pub fn verify_deep_ali_circuit_6(
 
     let z = proof.ood_z;
 
-    // Evaluate the 7 periodic columns at z via Horner (~512 muls each).
+    // [A4] Evaluate the 7 periodic columns from their 32-periodic extension
+    // plus one shared Lagrange correction over the truncated rows 480..=511,
+    // instead of 7 dense 512-coefficient Horners.
+    let y16 = z.exp(16);
+    let lagrange = match cycle15_lagrange_weights(z, y16) {
+        Some(l) => l,
+        // OOD landed on a truncated row: degenerate sampling, reject.
+        None => return Err(VerifyError::DeepAliFailed),
+    };
     let periodic_at_z: [Felt; 7] = [
-        eval_periodic_at_z(&C6_RC0_COEFFS, z),
-        eval_periodic_at_z(&C6_RC1_COEFFS, z),
-        eval_periodic_at_z(&C6_RC2_COEFFS, z),
-        eval_periodic_at_z(&C6_ROUND_ACTIVE_COEFFS, z),
-        eval_periodic_at_z(&C6_HASH_START_COEFFS, z),
-        eval_periodic_at_z(&C6_IS_BOUNDARY_COEFFS, z),
-        eval_periodic_at_z(&C6_IS_INTERIOR_COEFFS, z),
+        eval_periodic_ext_at_z(&C6_RC0_PERIODIC16, &C6_RC0_TAIL, y16, &lagrange),
+        eval_periodic_ext_at_z(&C6_RC1_PERIODIC16, &C6_RC1_TAIL, y16, &lagrange),
+        eval_periodic_ext_at_z(&C6_RC2_PERIODIC16, &C6_RC2_TAIL, y16, &lagrange),
+        eval_periodic_ext_at_z(
+            &C6_ROUND_ACTIVE_PERIODIC16, &C6_ROUND_ACTIVE_TAIL, y16, &lagrange,
+        ),
+        eval_periodic_ext_at_z(
+            &C6_HASH_START_PERIODIC16, &C6_HASH_START_TAIL, y16, &lagrange,
+        ),
+        eval_periodic_ext_at_z(
+            &C6_IS_BOUNDARY_PERIODIC16, &C6_IS_BOUNDARY_TAIL, y16, &lagrange,
+        ),
+        eval_periodic_ext_at_z(
+            &C6_IS_INTERIOR_PERIODIC16, &C6_IS_INTERIOR_TAIL, y16, &lagrange,
+        ),
     ];
 
     // Collect OOD trace values. Circuit 6 is width-10.
@@ -1811,7 +2163,7 @@ pub fn verify_deep_ali_circuit_6(
     // [C2] Boundary public-input binding at z (old/new leaf carries @row0,
     // old/new root @output_row). Uses a fresh `bnd-c6` tag so its α is
     // independent of the transition RLC α (`rlc-v1`).
-    let assertions = get_boundary_assertions(6, public_inputs);
+    let assertions = get_boundary_assertions(6, public_inputs)?;
     let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c6\0\0");
     let c_bnd = boundary_fold_at_ood(&ood_current, &assertions, z, z_t, g, alpha_bnd)
         .ok_or(VerifyError::DeepAliFailed)?;
@@ -1989,7 +2341,7 @@ pub fn verify_deep_ali_circuit_1(
 
     // [C2] Boundary public-input binding at z (nullifier@row30, commitment@row94,
     // chain nullifier@row64, capacity zeros). Same domain generator as the AIR.
-    let assertions = get_boundary_assertions(1, public_inputs);
+    let assertions = get_boundary_assertions(1, public_inputs)?;
     let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c1\0\0");
     let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
         .ok_or(VerifyError::DeepAliFailed)?;
@@ -2111,17 +2463,24 @@ pub fn verify_deep_ali_circuit_2(
 
     let z = proof.ood_z;
 
-    // Evaluate the 8 periodic columns at z via Horner (~128 muls each).
-    let periodic_at_z: [Felt; 8] = [
-        eval_periodic_at_z(&C2_RC0_COEFFS, z),
-        eval_periodic_at_z(&C2_RC1_COEFFS, z),
-        eval_periodic_at_z(&C2_RC2_COEFFS, z),
-        eval_periodic_at_z(&C2_ROUND_FLAG_COEFFS, z),
+    // Evaluate the 8 periodic columns at z.
+    let mut periodic_at_z: [Felt; 8] = [
+        // A3: RC0/RC1/RC2/ROUND_FLAG are stride-4 sparse (measured: 32 of 128
+        // coefficients non-zero). 128 Horner steps -> 32, four times over.
+        eval_periodic_stride_at_z(&C2_RC0_COEFFS, z, 4),
+        eval_periodic_stride_at_z(&C2_RC1_COEFFS, z, 4),
+        eval_periodic_stride_at_z(&C2_RC2_COEFFS, z, 4),
+        eval_periodic_stride_at_z(&C2_ROUND_FLAG_COEFFS, z, 4),
         eval_periodic_at_z(&C2_CHAIN_01_COEFFS, z),
         eval_periodic_at_z(&C2_CARRY_CAPTURE_COEFFS, z),
         eval_periodic_at_z(&C2_CHAIN_CARRY_COEFFS, z),
-        eval_periodic_at_z(&C2_IS_BOUNDARY_COEFFS, z),
+        // A3: IS_BOUNDARY is coefficient-wise exactly CHAIN_01 + CARRY_CAPTURE
+        // + CHAIN_CARRY (verified over all 128 coefficients), so evaluating it
+        // is two field adds instead of 128 Horner steps. Filled in below, once
+        // the three summands exist.
+        Felt::ZERO,
     ];
+    periodic_at_z[7] = periodic_at_z[4].add(periodic_at_z[5]).add(periodic_at_z[6]);
 
     // Collect OOD trace values. Circuit 2 is width-4.
     let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
@@ -2293,9 +2652,12 @@ pub fn verify_deep_ali_circuit_3(
     proof: &GenericCompactProof,
     public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
-    use crate::periodic_consts::{
-        C3_RC0_COEFFS, C3_RC1_COEFFS, C3_RC2_COEFFS, C3_ROUND_ACTIVE_COEFFS,
-        C3_HASH_START_COEFFS, C3_IS_BOUNDARY_COEFFS, C3_IS_INTERIOR_COEFFS,
+    use crate::periodic_ext_consts::{
+        C3_HASH_START_PERIODIC16, C3_HASH_START_TAIL, C3_IS_BOUNDARY_PERIODIC16,
+        C3_IS_BOUNDARY_TAIL, C3_IS_INTERIOR_PERIODIC16, C3_IS_INTERIOR_TAIL,
+        C3_RC0_PERIODIC16, C3_RC0_TAIL, C3_RC1_PERIODIC16, C3_RC1_TAIL,
+        C3_RC2_PERIODIC16, C3_RC2_TAIL, C3_ROUND_ACTIVE_PERIODIC16,
+        C3_ROUND_ACTIVE_TAIL,
     };
 
     // [C3 depth binding] Periodic polynomials are depth-dependent
@@ -2309,15 +2671,31 @@ pub fn verify_deep_ali_circuit_3(
 
     let z = proof.ood_z;
 
-    // Evaluate the 7 periodic columns at z via Horner (~512 muls each).
+    // [A4] Evaluate the 7 periodic columns from their 32-periodic extension
+    // plus one shared Lagrange correction over the truncated rows 480..=511,
+    // instead of 7 dense 512-coefficient Horners.
+    let y16 = z.exp(16);
+    let lagrange = match cycle15_lagrange_weights(z, y16) {
+        Some(l) => l,
+        // OOD landed on a truncated row: degenerate sampling, reject.
+        None => return Err(VerifyError::DeepAliFailed),
+    };
     let periodic_at_z: [Felt; 7] = [
-        eval_periodic_at_z(&C3_RC0_COEFFS, z),
-        eval_periodic_at_z(&C3_RC1_COEFFS, z),
-        eval_periodic_at_z(&C3_RC2_COEFFS, z),
-        eval_periodic_at_z(&C3_ROUND_ACTIVE_COEFFS, z),
-        eval_periodic_at_z(&C3_HASH_START_COEFFS, z),
-        eval_periodic_at_z(&C3_IS_BOUNDARY_COEFFS, z),
-        eval_periodic_at_z(&C3_IS_INTERIOR_COEFFS, z),
+        eval_periodic_ext_at_z(&C3_RC0_PERIODIC16, &C3_RC0_TAIL, y16, &lagrange),
+        eval_periodic_ext_at_z(&C3_RC1_PERIODIC16, &C3_RC1_TAIL, y16, &lagrange),
+        eval_periodic_ext_at_z(&C3_RC2_PERIODIC16, &C3_RC2_TAIL, y16, &lagrange),
+        eval_periodic_ext_at_z(
+            &C3_ROUND_ACTIVE_PERIODIC16, &C3_ROUND_ACTIVE_TAIL, y16, &lagrange,
+        ),
+        eval_periodic_ext_at_z(
+            &C3_HASH_START_PERIODIC16, &C3_HASH_START_TAIL, y16, &lagrange,
+        ),
+        eval_periodic_ext_at_z(
+            &C3_IS_BOUNDARY_PERIODIC16, &C3_IS_BOUNDARY_TAIL, y16, &lagrange,
+        ),
+        eval_periodic_ext_at_z(
+            &C3_IS_INTERIOR_PERIODIC16, &C3_IS_INTERIOR_TAIL, y16, &lagrange,
+        ),
     ];
 
     // Collect OOD trace values. Circuit 3 is width-6.
@@ -2357,7 +2735,7 @@ pub fn verify_deep_ali_circuit_3(
     let z_t = z_d.mul(z_minus_last.inv());
 
     // [C2] Boundary public-input binding at z (leaf@row0 col5, root@output_row col0).
-    let assertions = get_boundary_assertions(3, public_inputs);
+    let assertions = get_boundary_assertions(3, public_inputs)?;
     let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c3\0\0");
     let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
         .ok_or(VerifyError::DeepAliFailed)?;
@@ -2496,18 +2874,28 @@ pub fn verify_deep_ali_circuit_4(
     let z = proof.ood_z;
 
     // Evaluate the 11 periodic columns at z via Horner (~256 muls each).
+    // A3: CHAIN_34 and CHAIN_CARRY_4 are the SAME table, as are CHAIN_56 and
+    // CHAIN_CARRY_6 (verified coefficient-wise). Evaluate each once and reuse —
+    // 512 duplicate Horner steps removed for free.
+    let chain_34_z = eval_periodic_at_z(&C4_CHAIN_34_COEFFS, z);
+    let chain_56_z = eval_periodic_at_z(&C4_CHAIN_56_COEFFS, z);
+    debug_assert_eq!(C4_CHAIN_34_COEFFS[..], C4_CHAIN_CARRY_4_COEFFS[..]);
+    debug_assert_eq!(C4_CHAIN_56_COEFFS[..], C4_CHAIN_CARRY_6_COEFFS[..]);
+
     let periodic_at_z: [Felt; 11] = [
-        eval_periodic_at_z(&C4_RC0_COEFFS, z),
-        eval_periodic_at_z(&C4_RC1_COEFFS, z),
-        eval_periodic_at_z(&C4_RC2_COEFFS, z),
-        eval_periodic_at_z(&C4_ROUND_FLAG_COEFFS, z),
+        // A3: stride-8 sparse (measured: 32 of 256 coefficients non-zero).
+        // 256 Horner steps -> 32, four times over.
+        eval_periodic_stride_at_z(&C4_RC0_COEFFS, z, 8),
+        eval_periodic_stride_at_z(&C4_RC1_COEFFS, z, 8),
+        eval_periodic_stride_at_z(&C4_RC2_COEFFS, z, 8),
+        eval_periodic_stride_at_z(&C4_ROUND_FLAG_COEFFS, z, 8),
         eval_periodic_at_z(&C4_IS_BOUNDARY_COEFFS, z),
         eval_periodic_at_z(&C4_CHAIN_01_COEFFS, z),
-        eval_periodic_at_z(&C4_CHAIN_34_COEFFS, z),
-        eval_periodic_at_z(&C4_CHAIN_56_COEFFS, z),
+        chain_34_z,
+        chain_56_z,
         eval_periodic_at_z(&C4_CARRY_CAPTURE_COEFFS, z),
-        eval_periodic_at_z(&C4_CHAIN_CARRY_4_COEFFS, z),
-        eval_periodic_at_z(&C4_CHAIN_CARRY_6_COEFFS, z),
+        chain_34_z,
+        chain_56_z,
     ];
 
     // Collect OOD trace values. Circuit 4 is width-4.
@@ -2927,7 +3315,7 @@ pub fn verify_deep_ali_circuit_5(
     // accumulator boundaries (acc@row0=0, acc@row385=public_amount). This binds
     // nullifier_1/2, output_commitment_1/2, token_mint, AND the conserved value
     // (public_amount) to the trace at the OOD point.
-    let assertions = get_boundary_assertions(5, public_inputs);
+    let assertions = get_boundary_assertions(5, public_inputs)?;
     let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c5\0\0");
     let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
         .ok_or(VerifyError::DeepAliFailed)?;
@@ -2956,41 +3344,33 @@ fn verify_quotient_at_query(
     config: &CircuitConfig,
     is_trace_aligned: bool,
 ) -> Result<(), VerifyError> {
-    let x = get_lde_domain_element(pos, config);
-    let z_d = vanishing_poly(x, config.trace_length);
-
-    if is_trace_aligned {
-        // At trace-aligned positions: Z_D(x) = 0, so Q * Z_D = 0.
-        // The constraint value should also be 0 (verified separately by
-        // the direct transition constraint check).
-        // Q * 0 = 0 is trivially true, but verify Z_D is indeed 0.
-        if z_d != Felt::ZERO {
-            return Err(VerifyError::QuotientCheckFailed);
-        }
-    } else {
-        // At non-trace-aligned positions: verify Q(x) * Z_D(x) is consistent.
-        // Since trace values are Merkle-verified, and the quotient values are
-        // provided by the prover, we verify that Q * Z_D matches the constraint
-        // evaluation derived from the committed trace.
-        //
-        // The prover computes Q(x) = C(x) / Z_D(x) at LDE points.
-        // We verify Q(x) * Z_D(x) = C(x).
-        let q_times_zd = quotient_value.mul(z_d);
-
-        // For non-aligned positions, we need the actual constraint evaluation.
-        // Since the trace polynomial is committed, the quotient relationship
-        // Q * Z_D should produce a low-degree polynomial. We verify the
-        // prover's quotient is consistent by checking the product against
-        // the Fiat-Shamir bound (FRI would verify the degree bound).
-        //
-        // With the Merkle-committed trace values and the quotient, we trust
-        // that the FRI/DEEP composition verifies the degree bound of Q.
-        // The quotient value just needs to be a valid field element.
-        if q_times_zd.as_u64() >= crate::goldilocks::MODULUS {
-            return Err(VerifyError::QuotientCheckFailed);
-        }
-    }
-
+    // ── 2026-07-27: body removed. It enforced nothing, and it was not cheap. ──
+    //
+    // `_constraint_value` is unused and all eight call sites pass `Felt::ZERO`,
+    // so this function structurally could not compare Q against anything. Both
+    // branches were tautologies of the verifier's own domain arithmetic rather
+    // than statements about the proof:
+    //
+    //   * trace-aligned: it computed `z_d = vanishing_poly(x, trace_length)` and
+    //     errored if `z_d != 0`. At a trace-aligned position `z_d` IS zero by
+    //     construction of the domain, so the branch could never fire.
+    //   * non-aligned: it errored if `q·z_d >= MODULUS`. `reduce128` returns a
+    //     canonical element for every input, so that could never fire either.
+    //
+    // The original comments admitted as much ("Q * 0 = 0 is trivially true",
+    // "we trust that the FRI/DEEP composition verifies the degree bound of Q").
+    //
+    // Cost removed: one `get_lde_domain_element` plus one `vanishing_poly`
+    // (an `exp` by trace_length) per query, on the phase-1 budget — the binding
+    // one. ~702 field muls on C4, ~616 on C3/C5/C6.
+    //
+    // The seam is deliberately kept. A real ALI check — comparing Q(x)·Z_D(x)
+    // against the constraint evaluation actually derived from the committed
+    // trace — belongs exactly here, and would need `_constraint_value` supplied
+    // by the callers instead of `Felt::ZERO`. Do NOT mistake this no-op for the
+    // DEEP binding: that is a separate, missing piece (FRI currently folds the
+    // quotient rather than a DEEP composition polynomial).
+    let _ = (quotient_value, pos, config, is_trace_aligned);
     Ok(())
 }
 
@@ -3565,17 +3945,26 @@ fn verify_merkle_proofs_legacy(proof: &CompactStarkProof) -> Result<(), VerifyEr
             return Err(VerifyError::MerkleProofFailed);
         }
 
-        // [P1.1] Verify quotient membership for the claimed quotient_values[query_idx].
+        // [B4] One pair-leaf opening binds both the quotient value at
+        // `position` and the mirror value at `position ^ LDE_SIZE/2`.
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        let q_leaf_bytes = quotient_value.as_u64().to_le_bytes();
-        if !merkle::verify_merkle_path(
+        let pos = query.position as usize;
+        let half = LDE_SIZE / 2;
+        let q_at_pos = proof.quotient_value(query_idx);
+        let q_mirror = query.quotient_mirror_value;
+        let (lo, hi) = if pos < half {
+            (q_at_pos, q_mirror)
+        } else {
+            (q_mirror, q_at_pos)
+        };
+        if !verify_pair_leaf(
             &proof.quotient_root,
-            &q_leaf_bytes,
-            query.position as usize,
-            query.quotient_merkle_path(),
+            lo,
+            hi,
+            pos & (half - 1),
+            query.quotient_pair_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
         }

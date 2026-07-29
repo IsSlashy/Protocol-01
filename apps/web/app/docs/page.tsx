@@ -494,7 +494,8 @@ const docsArchLayers = [
       { labelKey: "docs.nodeZkspl", subKey: "docs.nodeZksplProtoSub" },
       { labelKey: "docs.nodePayments", subKey: "docs.nodePaymentsSub" },
       { labelKey: "docs.nodeVaults", subKey: "docs.nodeVaultsSub" },
-      { labelKey: "docs.nodeMpc", subKey: "docs.nodeMpcSub" },
+      // "MPC / Arcium Cerberus" node removed 2026-07-27 — Arcium is not part of
+      // Protocol 01 any more. See the note on `guarantees` in SecurityTopic.
     ],
   },
   {
@@ -782,7 +783,11 @@ function ArchitectureTopic({ t }: { t: (k: string) => string }) {
 
 function SecurityTopic({ t }: { t: (k: string) => string }) {
   const threats = ['threatObservers', 'threatAmounts', 'threatPatterns', 'threatBalance'];
-  const guarantees = ['guaranteeSound', 'guaranteeComplete', 'guaranteeZk', 'guaranteeNoDouble', 'guaranteeMpc'];
+  // 'guaranteeMpc' removed 2026-07-27: it published "MPC threshold: 1-of-N honest
+  // node via Arcium Cerberus protocol" as a SECURITY GUARANTEE. Arcium was removed
+  // from Protocol 01 (privacy-sdk 1.0.2 dropped the mpc module), so nothing
+  // delivered that guarantee. Do not reinstate without a deployed MPC path.
+  const guarantees = ['guaranteeSound', 'guaranteeComplete', 'guaranteeZk', 'guaranteeNoDouble'];
   const harden = [
     ['hardenSpendingKey', 'hardenPin', 'hardenLockout'],
     ['hardenSecureStore', 'hardenClipboard', 'hardenBlur'],

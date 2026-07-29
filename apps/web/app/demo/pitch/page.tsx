@@ -336,15 +336,15 @@ function Slide4Notes() {
           </span>
         </h2>
         <p className="text-base text-p01-text-muted">
-          Every shielded note has a canonical denomination. Withdraw any one, and an
-          observer cannot tell which deposit funded it. Anonymity set grows with every
-          new user.
+          Every shielded note has a canonical denomination, so the amount you move carries
+          no signal. Hiding <em>which</em> deposit a withdrawal spends is the next circuit —
+          today the note commitment is still published.
         </p>
         <div className="flex flex-wrap gap-2">
-          <MonoPill>0.01 SOL</MonoPill>
           <MonoPill>0.1 SOL</MonoPill>
           <MonoPill>1 SOL</MonoPill>
           <MonoPill>10 SOL</MonoPill>
+          <MonoPill>100 SOL</MonoPill>
           <MonoPill tone="pink">+ SPL tokens</MonoPill>
         </div>
       </div>

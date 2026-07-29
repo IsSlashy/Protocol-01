@@ -170,7 +170,7 @@ export default function CTA() {
               <span className="hidden sm:block text-p01-border">|</span>
               WAITLIST MODE end */}
               <a
-                href="https://discord.gg/KfmhPFAHNH"
+                href="https://discord.gg/fShgQ5j6pE"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 text-p01-text-muted hover:text-white transition-colors"

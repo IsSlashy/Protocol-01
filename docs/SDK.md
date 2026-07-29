@@ -425,4 +425,4 @@ async function setupSubscription() {
 
 - Documentation: [docs.protocol01.xyz](https://docs.protocol01.xyz)
 - GitHub Issues: [github.com/protocol-01/sdk/issues](https://github.com/protocol-01/sdk/issues)
-- Discord: [discord.gg/protocol01](https://discord.gg/protocol01)
+- Discord: [discord.gg/fShgQ5j6pE](https://discord.gg/fShgQ5j6pE)

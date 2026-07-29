@@ -43,6 +43,19 @@ const NUM_ROUNDS: usize = 30;
 /// This builds the trace, creates a Merkle commitment, derives
 /// query positions via Fiat-Shamir, and returns the serialized compact proof.
 pub fn generate_compact_proof(subscriber_secret: u64) -> CompactProofData {
+    generate_compact_proof_with_pair_indexing(subscriber_secret, PairIndexing::Canonical)
+}
+
+/// [B4 fails-closed probe] `generate_compact_proof` with the pair-leaf layout
+/// selectable. Only `PairIndexing::Canonical` matches the on-chain verifier;
+/// the other variants produce a complete, internally consistent proof under a
+/// *different* pair indexing, which the verifier must reject. Test-only —
+/// nothing in production calls this with a non-canonical mode.
+#[doc(hidden)]
+pub fn generate_compact_proof_with_pair_indexing(
+    subscriber_secret: u64,
+    pair_indexing: PairIndexing,
+) -> CompactProofData {
     let secret = BaseElement::new(subscriber_secret);
 
     // 1. Build execution trace (32 rows × 3 columns)
@@ -105,7 +118,8 @@ pub fn generate_compact_proof(subscriber_secret: u64) -> CompactProofData {
         let x = lde_g.exp(pos as u64);
         evaluate_poly(&q_poly, x).as_int()
     }).collect();
-    let (quotient_root, quotient_tree) = build_quotient_merkle_tree(&all_quotient_values);
+    let (quotient_root, quotient_tree) =
+        build_pair_merkle_tree(&all_quotient_values, pair_indexing.quotient());
 
     // 5. [H10] Derive OOD point from Fiat-Shamir transcript (trace_root || quotient_root || pub_bytes)
     let commitment_bytes = commitment.to_le_bytes();
@@ -136,7 +150,13 @@ pub fn generate_compact_proof(subscriber_secret: u64) -> CompactProofData {
     let initial_fri_transcript = build_base_seed(
         &root, &quotient_root, &commitment_bytes, &ood_current, &ood_next, ood_quotient,
     );
-    let fri = fri_commit_phase(&quotient_felts, lde_g, &initial_fri_transcript, FRI_FINAL_POLY_SIZE);
+    let fri = fri_commit_phase(
+        &quotient_felts,
+        lde_g,
+        &initial_fri_transcript,
+        FRI_FINAL_POLY_SIZE,
+        pair_indexing,
+    );
 
     // 8. [H9] Grinding seed extends the FRI transcript with all layer roots
     // and the final poly so grinding binds the entire commitment phase.
@@ -162,15 +182,22 @@ pub fn generate_compact_proof(subscriber_secret: u64) -> CompactProofData {
 
         let merkle_path = get_merkle_proof(&tree, pos);
         let next_merkle_path = get_merkle_proof(&tree, next_pos);
-        let quotient_merkle_path = get_merkle_proof(&quotient_tree, pos);
 
-        // [P1.1 PR 3] Quotient mirror opening (first FRI fold input `f_0(-y)`).
+        // [B4] Quotient pair opening. `pos` and its mirror `pos ^ (LDE_SIZE/2)`
+        // live in the SAME pair leaf `j = pos mod (LDE_SIZE/2)`, so ONE
+        // depth-(MERKLE_DEPTH-1) path authenticates both `f_0(y)` and `f_0(-y)`.
+        // The mirror value still travels on the wire (the verifier needs the
+        // second field element; only the redundant path is gone).
         let quotient_mirror_pos = pos ^ (LDE_SIZE / 2);
         let quotient_mirror_value = all_quotient_values[quotient_mirror_pos];
-        let quotient_mirror_path = get_merkle_proof(&quotient_tree, quotient_mirror_pos);
+        let quotient_pair_j = pos & (LDE_SIZE / 2 - 1);
+        let quotient_pair_path = get_merkle_proof_pair(
+            &quotient_tree,
+            pair_slot(quotient_pair_j, LDE_SIZE / 2, pair_indexing.quotient()),
+        );
 
-        // [P1.1 PR 3] Per-FRI-layer openings at (pos, mirror) in each committed layer.
-        let fri_openings = extract_fri_query_openings(&fri, pos, LDE_SIZE);
+        // [B4] One pair opening per committed FRI layer.
+        let fri_openings = extract_fri_query_openings(&fri, pos, LDE_SIZE, pair_indexing);
 
         queries.push(CompactQuery {
             position: pos as u32,
@@ -186,13 +213,11 @@ pub fn generate_compact_proof(subscriber_secret: u64) -> CompactProofData {
             ],
             merkle_path,
             next_merkle_path,
-            quotient_merkle_path,
             quotient_mirror_value,
-            quotient_mirror_path,
-            fri_values: fri_openings.values,
-            fri_paths: fri_openings.paths,
-            fri_mirror_values: fri_openings.mirror_values,
-            fri_mirror_paths: fri_openings.mirror_paths,
+            quotient_pair_path,
+            fri_lo_values: fri_openings.lo_values,
+            fri_hi_values: fri_openings.hi_values,
+            fri_pair_paths: fri_openings.pair_paths,
         });
     }
 
@@ -233,22 +258,23 @@ struct CompactQuery {
     next_trace_values: [u64; 3],
     merkle_path: [[u8; 32]; MERKLE_DEPTH],
     next_merkle_path: [[u8; 32]; MERKLE_DEPTH],
-    /// [P1.1] Merkle path against the quotient LDE commitment.
-    quotient_merkle_path: [[u8; 32]; MERKLE_DEPTH],
     /// [P1.1 PR 3] Mirror opening of the quotient LDE at `position XOR (lde_size/2)`.
     /// Needed so the verifier can recompute the first fold `f_1(y²)` from
     /// `(f_0(y), f_0(-y))`, with `f_0 = quotient LDE`.
     quotient_mirror_value: u64,
-    quotient_mirror_path: [[u8; 32]; MERKLE_DEPTH],
-    /// [P1.1 PR 3] Per-FRI-layer openings. Each entry corresponds to one
+    /// [B4] ONE path into the quotient pair tree, depth `MERKLE_DEPTH - 1`.
+    /// Authenticates the leaf `H(q[j] ‖ q[j + LDE_SIZE/2])`, i.e. both the
+    /// value at `position` and the value at its mirror. Replaces the pre-B4
+    /// `quotient_merkle_path` + `quotient_mirror_path` pair.
+    quotient_pair_path: [[u8; 32]; MERKLE_DEPTH - 1],
+    /// [B4] Per-FRI-layer pair openings. Each entry corresponds to one
     /// committed layer (layer 1..L-1); the final layer is verified via
-    /// `final_poly` polynomial evaluation. `fri_values[i]` is f_{i+1} at
-    /// `pos mod size_{i+1}`, `fri_mirror_values[i]` at the mirror
-    /// `(pos mod size_{i+1}) XOR (size_{i+1}/2)`.
-    fri_values: Vec<u64>,
-    fri_paths: Vec<Vec<[u8; 32]>>,
-    fri_mirror_values: Vec<u64>,
-    fri_mirror_paths: Vec<Vec<[u8; 32]>>,
+    /// `final_poly` polynomial evaluation. `fri_lo_values[i]` is `f_{i+1}[j]`,
+    /// `fri_hi_values[i]` is `f_{i+1}[j + size_{i+1}/2]`, with
+    /// `j = pos mod (size_{i+1}/2)`, and `fri_pair_paths[i]` authenticates both.
+    fri_lo_values: Vec<u64>,
+    fri_hi_values: Vec<u64>,
+    fri_pair_paths: Vec<Vec<[u8; 32]>>,
 }
 
 /// [H10] Derive OOD evaluation point from Fiat-Shamir transcript.
@@ -1416,6 +1442,29 @@ fn build_merkle_tree(lde: &[Vec<BaseElement>]) -> ([u8; 32], Vec<Vec<[u8; 32]>>)
     (root, layers)
 }
 
+/// [B4] Get a Merkle proof for a leaf of a **pair** tree (circuit 0 / legacy).
+/// The pair tree has `LDE_SIZE / 2` leaves, so its depth is `MERKLE_DEPTH - 1`.
+fn get_merkle_proof_pair(
+    tree: &[Vec<[u8; 32]>],
+    index: usize,
+) -> [[u8; 32]; MERKLE_DEPTH - 1] {
+    let mut proof = [[0u8; 32]; MERKLE_DEPTH - 1];
+    let mut idx = index;
+
+    for (level, layer) in tree.iter().enumerate() {
+        if level >= MERKLE_DEPTH - 1 {
+            break;
+        }
+        let sibling_idx = idx ^ 1;
+        if sibling_idx < layer.len() {
+            proof[level] = layer[sibling_idx];
+        }
+        idx >>= 1;
+    }
+
+    proof
+}
+
 /// Get Merkle proof (siblings) for a leaf at the given index.
 fn get_merkle_proof(tree: &[Vec<[u8; 32]>], index: usize) -> [[u8; 32]; MERKLE_DEPTH] {
     let mut proof = [[0u8; 32]; MERKLE_DEPTH];
@@ -1511,25 +1560,20 @@ fn serialize_compact_proof(
         for path in &q.next_merkle_path {
             bytes.extend_from_slice(path);
         }
-        // [P1.1] quotient_merkle_path: md * 32 bytes
-        for path in &q.quotient_merkle_path {
-            bytes.extend_from_slice(path);
-        }
-        // [P1.1 PR 3] quotient mirror opening: value(8) + path(md * 32)
+        // [B4] quotient pair opening: mirror value(8) + ONE path((md-1) * 32).
+        // The value at `position` itself travels in the tail `quotient_values`
+        // array; the verifier orders the two into (lo, hi) and rehashes the leaf.
         bytes.extend_from_slice(&q.quotient_mirror_value.to_le_bytes());
-        for node in &q.quotient_mirror_path {
+        for node in &q.quotient_pair_path {
             bytes.extend_from_slice(node);
         }
-        // [P1.1 PR 3] per-FRI-layer openings.
-        // For each committed layer i (0-indexed in fri_values), layer depth is
-        // (log2(lde_size) - i - 1). Paths are written with that depth.
-        for i in 0..q.fri_values.len() {
-            bytes.extend_from_slice(&q.fri_values[i].to_le_bytes());
-            for node in &q.fri_paths[i] {
-                bytes.extend_from_slice(node);
-            }
-            bytes.extend_from_slice(&q.fri_mirror_values[i].to_le_bytes());
-            for node in &q.fri_mirror_paths[i] {
+        // [B4] per-FRI-layer pair openings.
+        // Committed layer i (0-indexed) has size lde_size / 2^(i+1), so its
+        // pair tree depth is (log2(lde_size) - i - 2).
+        for i in 0..q.fri_lo_values.len() {
+            bytes.extend_from_slice(&q.fri_lo_values[i].to_le_bytes());
+            bytes.extend_from_slice(&q.fri_hi_values[i].to_le_bytes());
+            for node in &q.fri_pair_paths[i] {
                 bytes.extend_from_slice(node);
             }
         }
@@ -1556,18 +1600,21 @@ mod tests {
     ///   fri_final_poly_size(2) | fri_final_poly(FINAL*8) |
     ///   grinding_nonce(8) | num_queries(2) |
     ///   per query [ position(4) | trace_values(tw*8) | next_trace_values(tw*8) |
-    ///     merkle_path(md*32) | next_merkle_path(md*32) | quotient_merkle_path(md*32) |
-    ///     quotient_mirror_value(8) | quotient_mirror_path(md*32) |
+    ///     merkle_path(md*32) | next_merkle_path(md*32) |
+    ///     quotient_mirror_value(8) | quotient_pair_path((md-1)*32) |
     ///     for each committed FRI layer i:
-    ///       fri_value(8) | fri_path(depth_i*32) |
-    ///       fri_mirror_value(8) | fri_mirror_path(depth_i*32)
+    ///       fri_lo(8) | fri_hi(8) | fri_pair_path((md-i-2)*32)
     ///   ] |
     ///   quotient_values(num_queries*8)
     ///
     /// PR 3: `L_commit = L - 1` where `L = log2(lde_size/fri_final_poly_size)`;
     /// the final fold lands on `final_poly` (coefficients), not a Merkle commit.
-    /// Layer i (0-indexed) has depth `md - i - 1` (size `lde_size / 2^(i+1)`).
     /// PR 4: 8 extra bytes for `ood_quotient` (Q(z)) right after `ood_z`.
+    ///
+    /// [B4] Layer i (0-indexed) has size `lde_size / 2^(i+1)`, hence a value
+    /// tree of depth `md - i - 1` and a **pair** tree of depth `md - i - 2`.
+    /// Both the quotient LDE and every FRI layer now carry ONE pair opening
+    /// instead of two single openings.
     ///
     /// [P2.2] `fri_final_poly_size` is a parameter so circuit 6 (which uses 64
     /// instead of 16) can assert its own wire size.
@@ -1580,9 +1627,9 @@ mod tests {
     ) -> usize {
         let num_folds = (lde_size / fri_final_poly_size).trailing_zeros() as usize;
         let num_fri_commits = num_folds - 1;
-        // Per-query FRI layer byte footprint: 2 * (value + depth_i * 32) summed over committed layers.
+        // [B4] Per-query FRI footprint: lo(8) + hi(8) + pair_path((md-i-2)*32).
         let fri_per_query: usize = (0..num_fri_commits)
-            .map(|i| 2 * (8 + (md - i - 1) * 32))
+            .map(|i| 16 + (md - i - 2) * 32)
             .sum();
         32 + 32
             + tw * 8 + tw * 8 + 8 + 8  // PR 4: +8 for ood_quotient
@@ -1591,8 +1638,8 @@ mod tests {
             + 8 + 2
             + num_queries * (
                 4 + tw * 8 + tw * 8
-                + md * 32 + md * 32 + md * 32
-                + 8 + md * 32
+                + md * 32 + md * 32
+                + 8 + (md - 1) * 32
                 + fri_per_query
             )
             + num_queries * 8
@@ -1639,7 +1686,7 @@ mod tests {
         let values: Vec<BaseElement> = (0..n).map(|i| BaseElement::new(i as u64 + 1)).collect();
 
         let transcript = [7u8; 32];
-        let fri = fri_commit_phase(&values, domain_gen, &transcript, FRI_FINAL_POLY_SIZE);
+        let fri = fri_commit_phase(&values, domain_gen, &transcript, FRI_FINAL_POLY_SIZE, PairIndexing::Canonical);
 
         // Starting at 512, folding to 16: 512→256→128→64→32→16 → 5 folds.
         let expected_folds = (n / FRI_FINAL_POLY_SIZE).trailing_zeros() as usize;
@@ -1661,8 +1708,8 @@ mod tests {
         let values: Vec<BaseElement> = (0..n).map(|i| BaseElement::new((i * 3 + 1) as u64)).collect();
         let transcript = [1u8; 32];
 
-        let a = fri_commit_phase(&values, gen, &transcript, FRI_FINAL_POLY_SIZE);
-        let b = fri_commit_phase(&values, gen, &transcript, FRI_FINAL_POLY_SIZE);
+        let a = fri_commit_phase(&values, gen, &transcript, FRI_FINAL_POLY_SIZE, PairIndexing::Canonical);
+        let b = fri_commit_phase(&values, gen, &transcript, FRI_FINAL_POLY_SIZE, PairIndexing::Canonical);
 
         assert_eq!(a.layer_roots, b.layer_roots);
         assert_eq!(a.final_poly, b.final_poly);
@@ -3474,15 +3521,101 @@ fn build_merkle_tree_generic(
     (root, layers)
 }
 
-/// [P1.1] Build a single-column SHA-256 Merkle tree over quotient values.
-/// Leaf at position `i` = `sha256(quotient_values[i].to_le_bytes())`.
-/// This matches the verifier's merkle::verify_merkle_path which takes raw
-/// leaf_bytes and applies SHA-256 internally.
-fn build_quotient_merkle_tree(quotient_values: &[u64]) -> ([u8; 32], Vec<Vec<[u8; 32]>>) {
-    let leaves: Vec<[u8; 32]> = quotient_values
-        .iter()
-        .map(|v| sha256(&v.to_le_bytes()))
-        .collect();
+/// [B4] Pair-leaf layout knob.
+///
+/// `Canonical` is the only variant a shipping prover ever uses; it is what the
+/// on-chain verifier reconstructs. The other two exist so tests can build a
+/// **complete, internally consistent** prover that disagrees with the verifier
+/// about pair indexing and assert that honest-looking proofs are rejected.
+/// They are never reachable from the public `generate_*` entry points except
+/// through the `#[doc(hidden)]` `*_with_pair_indexing` probes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PairIndexing {
+    /// `leaf[j] = H(v[j] ‖ v[j + N/2])` — the shipping layout.
+    Canonical,
+    /// `leaf[j] = H(v[j + N/2] ‖ v[j])` — halves swapped inside the leaf.
+    SwappedHalves,
+    /// `leaf[(j+1) mod N/2] = H(v[j] ‖ v[j + N/2])` — pair one slot over.
+    RotatedSlot,
+    /// `SwappedHalves` on the FRI layers only; the quotient tree stays
+    /// canonical. Lets a test reach the FRI-layer pair check, which the
+    /// quotient check would otherwise short-circuit.
+    SwappedHalvesFriOnly,
+    /// `RotatedSlot` on the FRI layers only; quotient tree canonical.
+    RotatedSlotFriOnly,
+}
+
+impl PairIndexing {
+    /// Layout applied to the quotient (layer-0) tree.
+    #[inline]
+    fn quotient(self) -> Self {
+        match self {
+            PairIndexing::SwappedHalvesFriOnly | PairIndexing::RotatedSlotFriOnly => {
+                PairIndexing::Canonical
+            }
+            other => other,
+        }
+    }
+
+    /// Layout applied to every committed FRI layer.
+    #[inline]
+    fn fri(self) -> Self {
+        match self {
+            PairIndexing::SwappedHalvesFriOnly => PairIndexing::SwappedHalves,
+            PairIndexing::RotatedSlotFriOnly => PairIndexing::RotatedSlot,
+            other => other,
+        }
+    }
+}
+
+/// [B4] Tree slot that holds the pair `{v[j], v[j + half]}`.
+#[inline]
+fn pair_slot(j: usize, half: usize, mode: PairIndexing) -> usize {
+    match mode {
+        PairIndexing::RotatedSlot => (j + 1) % half,
+        _ => j,
+    }
+}
+
+/// [B4] 16-byte leaf preimage for the pair `{v[j], v[j + half]}`.
+#[inline]
+fn pair_leaf_preimage(values: &[u64], j: usize, half: usize, mode: PairIndexing) -> [u8; 16] {
+    let (a, b) = match mode {
+        PairIndexing::SwappedHalves => (values[j + half], values[j]),
+        _ => (values[j], values[j + half]),
+    };
+    let mut buf = [0u8; 16];
+    buf[..8].copy_from_slice(&a.to_le_bytes());
+    buf[8..].copy_from_slice(&b.to_le_bytes());
+    buf
+}
+
+/// [B4] Build a SHA-256 Merkle tree over **pair leaves** of a single-column
+/// evaluation vector.
+///
+/// Leaf `j` (for `j` in `0..N/2`) commits BOTH halves of the FRI coset that a
+/// fold consumes: `sha256(v[j].to_le_bytes() ‖ v[j+N/2].to_le_bytes())`.
+/// The tree therefore has `N/2` leaves and depth `log2(N) - 1`; one opening
+/// yields both values every fold identity needs, replacing the two
+/// depth-`log2(N)` openings the pre-B4 format carried.
+///
+/// This replaces the former `build_quotient_merkle_tree` (one leaf per value)
+/// and is used for the quotient LDE *and* for every committed FRI layer, so
+/// prover and verifier can never drift apart between the two.
+///
+/// Precondition: `values.len()` is even and >= 2.
+fn build_pair_merkle_tree(
+    values: &[u64],
+    mode: PairIndexing,
+) -> ([u8; 32], Vec<Vec<[u8; 32]>>) {
+    let n = values.len();
+    assert!(n >= 2 && n % 2 == 0, "pair-leaf tree needs an even, non-empty vector");
+    let half = n / 2;
+
+    let mut leaves: Vec<[u8; 32]> = vec![[0u8; 32]; half];
+    for j in 0..half {
+        leaves[pair_slot(j, half, mode)] = sha256(&pair_leaf_preimage(values, j, half, mode));
+    }
 
     let mut layers = vec![leaves];
 
@@ -3641,11 +3774,19 @@ fn fri_fold_layer(
 /// `FRI_FINAL_POLY_SIZE`) — lets circuit 6 use a larger target (256) so the
 /// on-chain verifier hits fewer FRI merkle rounds. Must match the verifier's
 /// `CircuitConfig.fri_final_poly_size`.
+///
+/// [B4] Every committed layer is committed with `build_pair_merkle_tree`, so a
+/// layer of size `N` has `N/2` leaves and depth `log2(N) - 1`. The smallest
+/// committed layer is `2 * fri_final_poly_size` (= 32 for every shipping
+/// circuit), i.e. 16 pair leaves — the pairing never degenerates. The final
+/// layer is not committed at all (it is sent as `final_poly` coefficients), so
+/// it is unaffected.
 pub(crate) fn fri_commit_phase(
     initial_values: &[BaseElement],
     initial_domain_gen: BaseElement,
     initial_transcript: &[u8; 32],
     fri_final_poly_size: usize,
+    pair_indexing: PairIndexing,
 ) -> FriCommitData {
     let mut current = initial_values.to_vec();
     let mut current_gen = initial_domain_gen;
@@ -3671,7 +3812,7 @@ pub(crate) fn fri_commit_phase(
         // polynomial evaluation rather than Merkle opening.
         if folded.len() > fri_final_poly_size {
             let folded_u64: Vec<u64> = folded.iter().map(|f| f.as_int()).collect();
-            let (root, tree) = build_quotient_merkle_tree(&folded_u64);
+            let (root, tree) = build_pair_merkle_tree(&folded_u64, pair_indexing.fri());
             layer_roots.push(root);
             layer_trees.push(tree);
             layer_values.push(folded.clone());
@@ -3699,49 +3840,60 @@ pub(crate) fn fri_commit_phase(
     }
 }
 
-/// [P1.1 PR 3] Per-query FRI opening data. Contains, for each committed FRI
-/// layer, two Merkle openings: one at the position reached by reducing the
-/// original LDE query position into that layer's domain, and one at its
-/// mirror (`pos XOR size/2`). The fold identity
+/// [B4] Per-query FRI opening data. Contains, for each committed FRI layer,
+/// **one** Merkle opening: the pair leaf holding both halves of the coset the
+/// fold consumes. The fold identity
 /// `f_{i+1}(y²) = (f_i(y)+f_i(-y))/2 + α_i · (f_i(y)-f_i(-y))/(2y)`
-/// lets the verifier recompute each fold step from these openings.
+/// needs exactly `v[j]` and `v[j + N/2]`, which is exactly what one pair leaf
+/// holds — so the pre-B4 two-openings-per-layer layout was carrying a whole
+/// redundant path plus a redundant leaf hash.
+///
+/// `lo_values[i]` is `v[j]`, `hi_values[i]` is `v[j + N/2]`, with
+/// `j = pos mod (size_{i+1}/2)`. Note the ordering is **canonical**, not
+/// (at-pos, at-mirror): the leaf hash must not depend on which side of the
+/// mirror the query landed on, or the tree would not be well defined.
 pub(crate) struct FriQueryOpenings {
-    pub values: Vec<u64>,
-    pub paths: Vec<Vec<[u8; 32]>>,
-    pub mirror_values: Vec<u64>,
-    pub mirror_paths: Vec<Vec<[u8; 32]>>,
+    pub lo_values: Vec<u64>,
+    pub hi_values: Vec<u64>,
+    pub pair_paths: Vec<Vec<[u8; 32]>>,
 }
 
-/// [P1.1 PR 3] Extract per-query FRI openings from the commit phase data.
+/// [B4] Extract per-query FRI pair openings from the commit phase data.
 ///
-/// For each committed layer `i` (0-indexed; layer_roots[i] commits f_{i+1}
-/// of size `lde_size / 2^(i+1)`), open the value at `pos mod size_{i+1}` and
-/// its mirror `(pos mod size_{i+1}) XOR (size_{i+1}/2)` with the appropriate
-/// depth Merkle path.
+/// For each committed layer `i` (0-indexed; `layer_roots[i]` commits `f_{i+1}`
+/// of size `N = lde_size / 2^(i+1)`), open the single pair leaf
+/// `j = pos mod (N/2)` with a depth-`(log2(N) - 1)` path. Both `pos mod N` and
+/// its mirror `(pos mod N) XOR (N/2)` reduce to the same `j`, which is why one
+/// opening suffices.
 pub(crate) fn extract_fri_query_openings(
     fri: &FriCommitData,
     query_pos: usize,
     lde_size: usize,
+    mode: PairIndexing,
 ) -> FriQueryOpenings {
-    let mut values = Vec::with_capacity(fri.layer_roots.len());
-    let mut paths = Vec::with_capacity(fri.layer_roots.len());
-    let mut mirror_values = Vec::with_capacity(fri.layer_roots.len());
-    let mut mirror_paths = Vec::with_capacity(fri.layer_roots.len());
+    let mut lo_values = Vec::with_capacity(fri.layer_roots.len());
+    let mut hi_values = Vec::with_capacity(fri.layer_roots.len());
+    let mut pair_paths = Vec::with_capacity(fri.layer_roots.len());
 
     for (i, layer) in fri.layer_values.iter().enumerate() {
         let size = layer.len();
         debug_assert_eq!(size, lde_size / (1 << (i + 1)));
-        let pos_in_layer = query_pos & (size - 1);
-        let mirror = pos_in_layer ^ (size / 2);
-        let depth = (size as f64).log2() as usize;
+        let half = size / 2;
+        // pos mod N and (pos mod N) XOR N/2 both reduce to this pair index.
+        let j = query_pos & (half - 1);
+        // Pair tree has N/2 leaves => depth is one less than the value tree's.
+        let pair_depth = (size as f64).log2() as usize - 1;
 
-        values.push(layer[pos_in_layer].as_int());
-        paths.push(get_merkle_proof_generic(&fri.layer_trees[i], pos_in_layer, depth));
-        mirror_values.push(layer[mirror].as_int());
-        mirror_paths.push(get_merkle_proof_generic(&fri.layer_trees[i], mirror, depth));
+        lo_values.push(layer[j].as_int());
+        hi_values.push(layer[j + half].as_int());
+        pair_paths.push(get_merkle_proof_generic(
+            &fri.layer_trees[i],
+            pair_slot(j, half, mode.fri()),
+            pair_depth,
+        ));
     }
 
-    FriQueryOpenings { values, paths, mirror_values, mirror_paths }
+    FriQueryOpenings { lo_values, hi_values, pair_paths }
 }
 
 /// Get Merkle proof (siblings) for a leaf at the given index (generic depth).
@@ -3920,6 +4072,28 @@ fn generate_compact_proof_from_trace(
     fri_final_poly_size: usize,
     quotient_spec: QuotientSpec,
 ) -> (Vec<u8>, [u8; 32]) {
+    generate_compact_proof_from_trace_with_pair_indexing(
+        trace,
+        pub_input_bytes,
+        blowup,
+        num_queries,
+        fri_final_poly_size,
+        quotient_spec,
+        PairIndexing::Canonical,
+    )
+}
+
+/// [B4 fails-closed probe] `generate_compact_proof_from_trace` with the
+/// pair-leaf layout selectable. See `PairIndexing`.
+fn generate_compact_proof_from_trace_with_pair_indexing(
+    trace: &[Vec<BaseElement>],
+    pub_input_bytes: &[u8],
+    blowup: usize,
+    num_queries: usize,
+    fri_final_poly_size: usize,
+    quotient_spec: QuotientSpec,
+    pair_indexing: PairIndexing,
+) -> (Vec<u8>, [u8; 32]) {
     let trace_width = trace.len();
     let trace_length = trace[0].len();
     let lde_size = trace_length * blowup;
@@ -4001,7 +4175,8 @@ fn generate_compact_proof_from_trace(
         }
     }
 
-    let (quotient_root, quotient_tree) = build_quotient_merkle_tree(&all_quotient_values);
+    let (quotient_root, quotient_tree) =
+        build_pair_merkle_tree(&all_quotient_values, pair_indexing.quotient());
 
     // 4. [H10] Derive OOD point from transcript (trace_root || quotient_root || pub_bytes)
     let ood_z = derive_ood_point_generic(&root, &quotient_root, pub_input_bytes);
@@ -4032,7 +4207,13 @@ fn generate_compact_proof_from_trace(
     let initial_fri_transcript = build_base_seed(
         &root, &quotient_root, pub_input_bytes, &ood_current_vals, &ood_next_vals, ood_quotient,
     );
-    let fri = fri_commit_phase(&quotient_felts, lde_g, &initial_fri_transcript, fri_final_poly_size);
+    let fri = fri_commit_phase(
+        &quotient_felts,
+        lde_g,
+        &initial_fri_transcript,
+        fri_final_poly_size,
+        pair_indexing,
+    );
 
     // 7. [H9] Grinding seed binds trace + quotient + OOD + all FRI layers + final poly
     let mut grinding_transcript = initial_fri_transcript;
@@ -4103,27 +4284,29 @@ fn generate_compact_proof_from_trace(
         for node in &next_path {
             bytes.extend_from_slice(node);
         }
-        // [P1.1] quotient Merkle path at pos
-        let q_path = get_merkle_proof_generic(&quotient_tree, pos, merkle_depth);
-        for node in &q_path {
-            bytes.extend_from_slice(node);
-        }
-        // [P1.1 PR 3] quotient mirror opening (value + path)
+        // [B4] quotient pair opening: mirror value(8) + ONE path((md-1)*32).
+        // `pos` and `pos ^ (lde_size/2)` share the pair leaf
+        // `j = pos mod (lde_size/2)`, so one path authenticates both `f_0(y)`
+        // and `f_0(-y)`. The value at `pos` itself is in the tail
+        // `quotient_values` array (the constraint / DEEP-ALI code reads it
+        // from there), so only the mirror value is written here.
         let quotient_mirror_pos = pos ^ (lde_size / 2);
         bytes.extend_from_slice(&all_quotient_values[quotient_mirror_pos].to_le_bytes());
-        let q_mirror_path = get_merkle_proof_generic(&quotient_tree, quotient_mirror_pos, merkle_depth);
-        for node in &q_mirror_path {
+        let q_half = lde_size / 2;
+        let q_pair_path = get_merkle_proof_generic(
+            &quotient_tree,
+            pair_slot(pos & (q_half - 1), q_half, pair_indexing.quotient()),
+            merkle_depth - 1,
+        );
+        for node in &q_pair_path {
             bytes.extend_from_slice(node);
         }
-        // [P1.1 PR 3] FRI layer openings (value + path for pos and mirror at each committed layer)
-        let fri_openings = extract_fri_query_openings(&fri, pos, lde_size);
-        for i in 0..fri_openings.values.len() {
-            bytes.extend_from_slice(&fri_openings.values[i].to_le_bytes());
-            for node in &fri_openings.paths[i] {
-                bytes.extend_from_slice(node);
-            }
-            bytes.extend_from_slice(&fri_openings.mirror_values[i].to_le_bytes());
-            for node in &fri_openings.mirror_paths[i] {
+        // [B4] FRI layer openings: one pair (lo, hi) + one path per committed layer.
+        let fri_openings = extract_fri_query_openings(&fri, pos, lde_size, pair_indexing);
+        for i in 0..fri_openings.lo_values.len() {
+            bytes.extend_from_slice(&fri_openings.lo_values[i].to_le_bytes());
+            bytes.extend_from_slice(&fri_openings.hi_values[i].to_le_bytes());
+            for node in &fri_openings.pair_paths[i] {
                 bytes.extend_from_slice(node);
             }
         }
@@ -4163,6 +4346,27 @@ pub fn generate_pool_commitment_proof(
     deposit_epoch: u64,
     token_mint: u64,
 ) -> GenericCompactProofData {
+    generate_pool_commitment_proof_with_pair_indexing(
+        nullifier_preimage,
+        secret,
+        deposit_epoch,
+        token_mint,
+        PairIndexing::Canonical,
+    )
+}
+
+/// [B4 fails-closed probe] `generate_pool_commitment_proof` with the pair-leaf
+/// layout selectable. Only `PairIndexing::Canonical` matches the on-chain
+/// verifier; the other variants build a complete, internally consistent proof
+/// under a different pair indexing, which the verifier must reject. Test-only.
+#[doc(hidden)]
+pub fn generate_pool_commitment_proof_with_pair_indexing(
+    nullifier_preimage: u64,
+    secret: u64,
+    deposit_epoch: u64,
+    token_mint: u64,
+    pair_indexing: PairIndexing,
+) -> GenericCompactProofData {
     let np = BaseElement::new(nullifier_preimage);
     let s = BaseElement::new(secret);
     let epoch = BaseElement::new(deposit_epoch);
@@ -4178,13 +4382,14 @@ pub fn generate_pool_commitment_proof(
     pub_bytes.extend_from_slice(&null_u64.to_le_bytes());
     pub_bytes.extend_from_slice(&commit_u64.to_le_bytes());
 
-    let (proof_bytes, root) = generate_compact_proof_from_trace(
+    let (proof_bytes, root) = generate_compact_proof_from_trace_with_pair_indexing(
         &trace,
         &pub_bytes,
         GENERIC_BLOWUP,
         GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
         QuotientSpec::Circuit1,
+        pair_indexing,
     );
 
     GenericCompactProofData {

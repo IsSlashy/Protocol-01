@@ -14,7 +14,9 @@ export interface PoolMetric {
   token: Token;
   /** Human denomination, e.g. 0.1, 1, 10 (in token units, not base units). */
   denomination: number;
-  /** Number of shielded notes = the anonymity set size for this pool. */
+  /** Number of shielded notes in this pool. NOT a delivered anonymity set —
+   *  a v3 withdrawal publishes the commitment of the deposit it spends, so the
+   *  effective set is one until the C7 spend circuit ships. */
   noteCount: number;
   /** Total value locked in this pool, in token units (noteCount × denomination). */
   tvl: number;
@@ -39,7 +41,8 @@ export interface NetworkMetrics {
   snapshotAt: number;
   /** Total value shielded across all pools, keyed by token. */
   tvlByToken: Record<Token, number>;
-  /** Total shielded notes across all pools = the global anonymity set. */
+  /** Total shielded notes across all pools. A pool-size total, not an
+   *  anonymity set — see PoolMetric.noteCount. */
   totalNotes: number;
   /** Number of pools holding at least one note. */
   activePools: number;

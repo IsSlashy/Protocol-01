@@ -14,7 +14,7 @@ const terminalLines = [
   { type: "success", text: "[OK] Wallet created: 0x7f3a...8c2e" },
   { type: "command", text: "$ p01 send --private 100 USDC" },
   { type: "output", text: "Generating ZK proof..." },
-  { type: "success", text: "[OK] Transaction sent (untraceable)" },
+  { type: "success", text: "[OK] Transaction sent (recipient hidden)" },
   { type: "info", text: ">> The system cannot see you." },
 ];
 

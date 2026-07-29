@@ -263,9 +263,11 @@ export default function DenominatedUnshieldScreen() {
         );
         const proofBytes = Buffer.from(starkResult.proofHex, 'hex');
         const publicInputs = starkResult.publicInputs.map((s: string) => BigInt(s));
-        // Single unified call — `emergency` only flips min_epoch=0 on-chain; the
-        // privacy posture (ephemeral signer + ECDH stealth recipient + random sweep)
-        // is identical for both paths.
+        // Single unified call — `emergency` no longer changes any instruction
+        // byte: min_epoch is now always UNSHIELD_MIN_EPOCH (0) on both paths.
+        // It only relaxes the client-side maturity gate. Privacy posture
+        // (ephemeral signer + ECDH stealth recipient + random sweep) is
+        // identical for both paths.
         return unshieldNoteStark(
           selectedNote.id,
           finalRecipient,

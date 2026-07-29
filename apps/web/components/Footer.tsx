@@ -67,7 +67,7 @@ const footerLinks: Record<string, FooterSection> = {
   community: {
     title: "community",
     links: [
-      { name: "Discord", href: "https://discord.gg/KfmhPFAHNH", external: true },
+      { name: "Discord", href: "https://discord.gg/fShgQ5j6pE", external: true },
       { name: "Twitter / X", href: "https://x.com/Protocol01_", external: true },
       // WAITLIST MODE: GitHub de-emphasized while access runs through the waitlist, restore at launch:
       // { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01-releases", external: true },
@@ -91,7 +91,7 @@ const socialLinks = [
   { icon: XIcon, href: "https://x.com/Protocol01_", label: "Twitter/X" },
   // WAITLIST MODE: restore at launch:
   // { icon: GithubIcon, href: "https://github.com/IsSlashy/Protocol-01-releases", label: "GitHub" },
-  { icon: DiscordIcon, href: "https://discord.gg/KfmhPFAHNH", label: "Discord" },
+  { icon: DiscordIcon, href: "https://discord.gg/fShgQ5j6pE", label: "Discord" },
 ];
 
 export default function Footer() {

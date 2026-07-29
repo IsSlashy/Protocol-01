@@ -339,7 +339,7 @@ The post-quantum proof-system migration is complete. STARKs rely only on hash fu
 | `unshield_denominated_stark` | Groth16 → **removed** | STARK circuits 0-3 |
 | `transfer_denominated_stark` | Groth16 → **removed** | STARK (multi-circuit) |
 | `cancel_private_stark` | Groth16 → **removed** | STARK circuit 0 |
-| `emergency_unshield_denominated_stark` | **merged into `unshield_denominated_stark`** | `min_epoch == 0` bypasses maturity; ix/account/event layout identical to classic path so emergency is indistinguishable on-chain |
+| `emergency_unshield_denominated_stark` | **merged into `unshield_denominated_stark`** | `min_epoch == 0` bypasses maturity; ix/account/event layout identical to classic path. **Correction 2026-07-27:** `unshield_denominated_stark_v3` ignores `min_epoch` outright (`unshield_denominated_stark_v3.rs:387`, `let _ = (…, min_epoch, …)`), so there is no maturity to bypass; and because a non-emergency call writes the real epoch at instruction byte 72 while the emergency call writes 0, the two paths are **distinguishable** on-chain. Maturity is enforced only by `transfer_denominated_stark_v3` (`:167-173`). |
 | `split_note_stark` | Groth16 → **removed** | STARK circuit 6 (merkle_update — WIP P2.2 on-chain) |
 
 The original Groth16 analysis below is retained because it motivates the STARK migration, but the "BROKEN" status no longer applies to production code paths — only to historical on-chain proofs that have already been verified and cannot be forged retroactively.

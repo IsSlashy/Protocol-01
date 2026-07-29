@@ -114,38 +114,136 @@ mod parity_tests {
         let product = m1.mul(Felt::new(2));
         assert_eq!(product.as_u64(), MODULUS - 2);
     }
+
+    /// Reference reduction, deliberately slow and obviously correct.
+    fn reference_mul(a: u64, b: u64) -> u64 {
+        (((a as u128) * (b as u128)) % (MODULUS as u128)) as u64
+    }
+
+    /// The three witnesses that the previous `reduce128` got wrong, each by
+    /// exactly 2^32 - 1, with both operands canonical. Pinned so the defect
+    /// cannot come back silently.
+    #[test]
+    fn reduce128_known_counterexamples() {
+        const VECTORS: [(u64, u64); 3] = [
+            (4294967300, 18446744065119617031),
+            (4294967301, 18446744060824649742),
+            (4294967302, 18446744056529682455),
+        ];
+        for (a, b) in VECTORS {
+            assert!(a < MODULUS && b < MODULUS, "operands must be canonical");
+            let got = Felt::new(a).mul(Felt::new(b)).as_u64();
+            let want = reference_mul(a, b);
+            assert_eq!(got, want, "mul({a}, {b}) = {got}, expected {want}");
+        }
+    }
+
+    /// Structured differential test. Random sampling cannot reach this defect
+    /// (200M pairs found nothing), so walk the edges on purpose: values near 0,
+    /// near 2^32, near EPSILON, and near MODULUS, in every combination, plus a
+    /// deterministic pseudo-random sweep.
+    #[test]
+    fn reduce128_differential_against_u128() {
+        let mut edges: Vec<u64> = Vec::new();
+        for base in [0u64, 1, 2, EPSILON, EPSILON + 1, 1u64 << 32, MODULUS] {
+            for delta in 0..=4u64 {
+                edges.push(base.wrapping_add(delta) % MODULUS);
+                edges.push(base.wrapping_sub(delta) % MODULUS);
+            }
+        }
+        for &a in &edges {
+            for &b in &edges {
+                assert_eq!(
+                    Felt::new(a).mul(Felt::new(b)).as_u64(),
+                    reference_mul(a, b),
+                    "edge mul({a}, {b})"
+                );
+            }
+        }
+
+        // Deterministic sweep (xorshift64*), so a failure is reproducible.
+        let mut s: u64 = 0x2545F4914F6CDD1D;
+        let mut next = || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s % MODULUS
+        };
+        for _ in 0..200_000 {
+            let a = next();
+            let b = next();
+            assert_eq!(
+                Felt::new(a).mul(Felt::new(b)).as_u64(),
+                reference_mul(a, b),
+                "sweep mul({a}, {b})"
+            );
+        }
+    }
+
+    /// `pow7` is the Poseidon S-box and rides entirely on `reduce128`.
+    #[test]
+    fn pow7_matches_reference() {
+        let reference_pow7 = |x: u64| {
+            let mut acc: u128 = 1;
+            for _ in 0..7 {
+                acc = (acc * (x as u128)) % (MODULUS as u128);
+            }
+            acc as u64
+        };
+        for x in [0u64, 1, 2, EPSILON, EPSILON + 1, 1u64 << 32, MODULUS - 1, MODULUS - 2] {
+            assert_eq!(Felt::new(x).pow7().as_u64(), reference_pow7(x), "pow7({x})");
+        }
+    }
 }
 
+/// `2^64 mod p`. Also `2^64 - MODULUS`, which is why subtracting MODULUS and
+/// adding EPSILON are the same operation on a wrapped u64.
+const EPSILON: u64 = 0xFFFF_FFFF; // 2^32 - 1
+
 /// Reduce a 128-bit product modulo the Goldilocks prime.
-/// Uses the identity: 2^64 ≡ 2^32 - 1 (mod p)
+///
+/// Splits the high word, because the two halves have different weights:
+///   2^64 ≡ 2^32 - 1 = EPSILON   (mod p)
+///   2^96 ≡ 2^32·(2^32 - 1) = 2^64 - 2^32 ≡ -1   (mod p)
+/// so for `x = lo + hi_lo·2^64 + hi_hi·2^96`:
+///   x ≡ lo - hi_hi + hi_lo·EPSILON   (mod p)
+///
+/// The previous implementation multiplied the WHOLE high word by EPSILON and
+/// then folded the 128-bit result back with `sum.wrapping_sub(MODULUS)` guarded
+/// by `carry || sum >= MODULUS`. That guard is correct in `add`, where both
+/// operands are canonical and so `a + b - p < p`, but it is wrong here: neither
+/// `low` nor `reduced` is bounded by p, so a single correction can leave a value
+/// that is still >= p, and it was returned unreduced. The result was then short
+/// by exactly EPSILON. Three constructible witnesses, all with canonical
+/// operands, are pinned in `reduce128_known_counterexamples` below.
+///
+/// Random testing could not find this: 200M random canonical pairs and 36M
+/// near-maximal pairs produced zero mismatches. Do not "verify" this function by
+/// sampling — the differential test below walks structured edge cases on purpose.
 #[inline]
 fn reduce128(x: u128) -> u64 {
-    let low = x as u64;
-    let high = (x >> 64) as u64;
+    let x_lo = x as u64;
+    let x_hi = (x >> 64) as u64;
+    let x_hi_hi = x_hi >> 32; // weight 2^96 ≡ -1
+    let x_hi_lo = x_hi & EPSILON; // weight 2^64 ≡ EPSILON
 
-    // high * 2^64 ≡ high * (2^32 - 1) mod p
-    let (h_low, h_high) = high.overflowing_mul(0xFFFFFFFF); // 2^32 - 1
-    // If overflow, we need another reduction step
-    let reduced = if h_high {
-        // This shouldn't happen for our use case since high < 2^64
-        // and 0xFFFFFFFF < 2^32, so product < 2^96 which fits in u128
-        // but handle conservatively
-        let full = (high as u128) * (0xFFFFFFFF_u128);
-        let r = full as u64;
-        let carry = (full >> 64) as u64;
-        // carry * 2^64 mod p = carry * (2^32 - 1)
-        let extra = carry.wrapping_mul(0xFFFFFFFF);
-        let (s, c) = r.overflowing_add(extra);
-        if c { s.wrapping_sub(MODULUS) } else { s }
-    } else {
-        h_low
-    };
+    // lo - hi_hi (mod p). On borrow the wrapped value is 2^64 too large, and
+    // 2^64 ≡ EPSILON, so remove EPSILON rather than MODULUS.
+    let (t0, borrow) = x_lo.overflowing_sub(x_hi_hi);
+    let t0 = if borrow { t0.wrapping_sub(EPSILON) } else { t0 };
 
-    // low + reduced mod p
-    let (sum, carry) = low.overflowing_add(reduced);
-    if carry || sum >= MODULUS {
-        sum.wrapping_sub(MODULUS)
+    // hi_lo < 2^32 and EPSILON < 2^32, so this cannot overflow u64.
+    let t1 = x_hi_lo * EPSILON;
+
+    // On carry the wrapped sum is 2^64 too small; add EPSILON back.
+    let (t2, carry) = t0.overflowing_add(t1);
+    let t2 = if carry { t2.wrapping_add(EPSILON) } else { t2 };
+
+    // t2 < 2^64 and 2^64 - MODULUS = EPSILON, so one conditional subtraction is
+    // always sufficient to land in [0, MODULUS).
+    if t2 >= MODULUS {
+        t2 - MODULUS
     } else {
-        sum
+        t2
     }
 }
