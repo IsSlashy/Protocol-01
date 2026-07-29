@@ -1078,3 +1078,147 @@
 .founder-glow:hover {
   filter: drop-shadow(0 0 11px rgba(0, 255, 229, 0.6));
 }
+
+/* ===== Holographic foil =====
+   The rainbow-that-shifts-with-the-light seen on Intel i7/i9 chip stickers.
+   Those are diffraction gratings: fine parallel grooves split white light, so
+   the hue you see depends on the viewing angle. Reproduced with three stacked
+   layers, all driven by --mx/--my (pointer position, in %):
+
+     1. .holo-foil__spectrum  broad hue sweep, slides with the pointer
+     2. .holo-foil__grating   fine 3px grooves, slides the OPPOSITE way — the
+                              counter-motion is what reads as "angle", not "glow"
+     3. .holo-foil__glint     specular highlight sitting under the cursor
+
+   color-dodge is what makes it look like reflected light rather than a
+   coloured overlay: it brightens the photo underneath instead of tinting it.
+
+   Two variants. `spectrum` is the real Intel look (full RGB). `brand` stays
+   inside the site palette (cyan -> white -> violet) for the no-RGB rule this
+   file follows elsewhere. */
+
+.holo-foil {
+  --mx: 50;
+  --my: 50;
+  --holo: 0;
+  position: relative;
+  isolation: isolate;
+  transform: perspective(600px) rotateX(calc((var(--my) - 50) * -0.14deg))
+    rotateY(calc((var(--mx) - 50) * 0.14deg));
+  transition: transform 0.25s ease-out;
+  will-change: transform;
+}
+
+.holo-foil > :first-child {
+  position: relative;
+  z-index: 0;
+}
+
+.holo-foil__layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  /* Low at rest so the photo underneath stays readable; the effect earns its
+     intensity on hover. 0.32 at idle drowned the face. */
+  opacity: calc(0.15 + var(--holo) * 0.5);
+  transition: opacity 0.3s ease-out;
+}
+
+/* 1. Broad hue sweep. 300% background so there is travel to slide through. */
+.holo-foil__spectrum {
+  background-size: 300% 300%;
+  background-position: calc(var(--mx) * 1%) calc(var(--my) * 1%);
+  mix-blend-mode: color-dodge;
+  filter: brightness(1.05) contrast(1.5) saturate(1.35);
+}
+
+.holo-foil--spectrum .holo-foil__spectrum {
+  background-image: repeating-linear-gradient(
+    100deg,
+    #ff2d7a 0%,
+    #ff9d00 7%,
+    #ffe800 14%,
+    #38ff8e 22%,
+    #00e5ff 30%,
+    #7a5cff 38%,
+    #ff2d7a 46%
+  );
+}
+
+.holo-foil--brand .holo-foil__spectrum {
+  background-image: repeating-linear-gradient(
+    100deg,
+    #39c5bb 0%,
+    #00ffe5 10%,
+    #ffffff 20%,
+    #7a5cff 32%,
+    #39c5bb 44%
+  );
+}
+
+/* 2. The grating itself. Slides against the spectrum (100 - mx). */
+.holo-foil__grating {
+  background-image: repeating-linear-gradient(
+    -42deg,
+    transparent 0 2px,
+    rgba(255, 255, 255, 0.3) 2px 3px,
+    transparent 3px 6px
+  );
+  background-size: 200% 200%;
+  background-position: calc((100 - var(--mx)) * 1%) calc((100 - var(--my)) * 1%);
+  mix-blend-mode: overlay;
+}
+
+/* 3. The glint. Follows the cursor, sells "a light source is moving". */
+.holo-foil__glint {
+  background-image: radial-gradient(
+    circle at calc(var(--mx) * 1%) calc(var(--my) * 1%),
+    rgba(255, 255, 255, 0.5) 0%,
+    rgba(255, 255, 255, 0.1) 28%,
+    transparent 55%
+  );
+  mix-blend-mode: soft-light;
+  opacity: calc(var(--holo) * 0.9);
+}
+
+/* Idle drift so the effect is alive on touch devices and before first hover,
+   where there is no pointer to track. Stops as soon as --holo goes up. */
+@keyframes holo-drift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.holo-foil[data-idle="true"] .holo-foil__spectrum,
+.holo-foil[data-idle="true"] .holo-foil__grating {
+  animation: holo-drift 7s ease-in-out infinite;
+}
+
+/* Static sheen, no tilt, no drift. The effect is decorative, so removing the
+   motion entirely is correct here — unlike .founder-glow above, this one is
+   large enough that a moving rainbow could genuinely bother someone. */
+@media (prefers-reduced-motion: reduce) {
+  .holo-foil {
+    transform: none;
+    transition: none;
+  }
+  .holo-foil[data-idle="true"] .holo-foil__spectrum,
+  .holo-foil[data-idle="true"] .holo-foil__grating {
+    animation: none;
+  }
+  .holo-foil__layer {
+    opacity: 0.28;
+    transition: none;
+  }
+  .holo-foil__glint {
+    opacity: 0;
+  }
+}

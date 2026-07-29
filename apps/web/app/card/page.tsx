@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import QRCode from "react-qr-code";
+import HoloFoil from "@/components/HoloFoil";
 
 const VCARD = `BEGIN:VCARD
 VERSION:3.0
@@ -123,13 +124,16 @@ export default function CardPage() {
           {/* Identity */}
           <div className="flex items-center gap-4 mb-6">
             <div className="relative shrink-0">
-              <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-p01-cyan/40 shadow-[0_0_24px_rgba(57,197,187,0.25)]">
+              <HoloFoil
+                variant="spectrum"
+                className="w-20 h-20 rounded-xl overflow-hidden border-2 border-p01-cyan/40 shadow-[0_0_24px_rgba(57,197,187,0.25)]"
+              >
                 <img
                   src="/images/founder-slashy.png"
                   alt="Slashy"
                   className="w-full h-full object-cover"
                 />
-              </div>
+              </HoloFoil>
               <div className="absolute -bottom-1.5 -right-1.5 bg-p01-cyan text-p01-void text-[9px] font-mono font-bold px-1.5 py-0.5 rounded">
                 SOLO
               </div>
