@@ -75,7 +75,7 @@ describe('Footer -- Site navigation and community links', () => {
     it('links to Discord community (external)', () => {
       const links = screen.getAllByRole('link', { name: /Discord/ });
       const externalDiscord = links.find(
-        l => l.getAttribute('href') === 'https://discord.gg/KfmhPFAHNH'
+        l => l.getAttribute('href') === 'https://discord.gg/EfqnVmb2dV'
       );
       expect(externalDiscord).toBeDefined();
       expect(externalDiscord).toHaveAttribute('target', '_blank');

@@ -67,7 +67,7 @@ describe('CTA -- Waitlist conversion funnel', () => {
 
     it('renders a link to the Discord community', () => {
       const discordLink = screen.getByText('Join Discord');
-      expect(discordLink.closest('a')).toHaveAttribute('href', 'https://discord.gg/KfmhPFAHNH');
+      expect(discordLink.closest('a')).toHaveAttribute('href', 'https://discord.gg/EfqnVmb2dV');
     });
   });
 });

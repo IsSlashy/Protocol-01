@@ -105,7 +105,7 @@ export default function AboutScreen() {
     {
       icon: 'logo-discord' as const,
       label: 'Discord',
-      url: 'https://discord.gg/protocol01',
+      url: 'https://discord.gg/EfqnVmb2dV',
       color: '#5865F2',
     },
   ];

@@ -13,7 +13,7 @@
   <a href="https://protocol-01.dev">Website</a> &middot;
   <a href="https://protocol-01.dev/docs">Documentation</a> &middot;
   <a href="https://x.com/Protocol01_">Twitter/X</a> &middot;
-  <a href="https://discord.gg/KfmhPFAHNH">Discord</a>
+  <a href="https://discord.gg/EfqnVmb2dV">Discord</a>
 </p>
 
 <p align="center">
@@ -569,7 +569,7 @@ anchor test                           # on-chain programs (localnet)
 | Docs | [protocol-01.dev/docs](https://protocol-01.dev/docs) |
 | Weekly updates | [protocol-01.dev/updates](https://protocol-01.dev/updates) |
 | Twitter/X | [@Protocol01_](https://x.com/Protocol01_) |
-| Discord | [discord.gg/KfmhPFAHNH](https://discord.gg/KfmhPFAHNH) |
+| Discord | [discord.gg/EfqnVmb2dV](https://discord.gg/EfqnVmb2dV) |
 | GitHub | [IsSlashy/Protocol-01](https://github.com/IsSlashy/Protocol-01) |
 
 ---

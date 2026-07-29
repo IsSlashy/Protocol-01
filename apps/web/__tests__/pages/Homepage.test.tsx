@@ -80,7 +80,7 @@ describe('Homepage -- Protocol 01 main landing page', () => {
 
     it('has a Discord link in the navigation', () => {
       const discordLinks = screen.getAllByLabelText('Discord');
-      const navLink = discordLinks.find(l => l.getAttribute('href') === 'https://discord.gg/KfmhPFAHNH');
+      const navLink = discordLinks.find(l => l.getAttribute('href') === 'https://discord.gg/EfqnVmb2dV');
       expect(navLink).toBeDefined();
       expect(navLink).toHaveAttribute('target', '_blank');
     });

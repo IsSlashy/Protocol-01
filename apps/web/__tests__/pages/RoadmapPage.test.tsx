@@ -160,7 +160,7 @@ describe('RoadmapPage -- Protocol 01 development roadmap', () => {
 
     it('has a Discord CTA button', () => {
       const links = screen.getAllByRole('link', { name: 'Discord' });
-      const discordLink = links.find(l => l.getAttribute('href') === 'https://discord.gg/KfmhPFAHNH');
+      const discordLink = links.find((l) => l.getAttribute('href') === 'https://discord.gg/EfqnVmb2dV');
       expect(discordLink).toBeDefined();
     });
   });

@@ -1274,7 +1274,7 @@ function StreamSDKSection() {
                 </div>
                 <p className="text-p01-text-muted text-sm">
                   {t('sdkDemo.requestReviewMsg')}
-                  {' '}<a href="https://discord.gg/KfmhPFAHNH" target="_blank" rel="noopener noreferrer" className="text-p01-cyan hover:underline">{t('sdkDemo.fasterResponse')}</a>
+                  {' '}<a href="https://discord.gg/EfqnVmb2dV" target="_blank" rel="noopener noreferrer" className="text-p01-cyan hover:underline">{t('sdkDemo.fasterResponse')}</a>
                 </p>
               </div>
             ) : showRequestForm ? (

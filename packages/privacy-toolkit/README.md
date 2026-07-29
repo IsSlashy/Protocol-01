@@ -223,4 +223,4 @@ This library is extracted from [Protocol 01](https://github.com/IsSlashy/Protoco
 | **@protocol-01/privacy-toolkit** | Merkle trees, commitments, proof formatting |
 | **@protocol-01/zk-pipeline** | End-to-end guide: circuit -> mobile -> on-chain |
 
-[Website](https://protocol-01.dev) · [Twitter](https://twitter.com/Protocol01_) · [Discord](https://discord.gg/KfmhPFAHNH)
+[Website](https://protocol-01.dev) · [Twitter](https://twitter.com/Protocol01_) · [Discord](https://discord.gg/EfqnVmb2dV)

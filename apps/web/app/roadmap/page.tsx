@@ -766,7 +766,7 @@ export default function RoadmapPage() {
               GitHub
             </a>
             <a
-              href="https://discord.gg/KfmhPFAHNH"
+              href="https://discord.gg/EfqnVmb2dV"
               target="_blank"
               rel="noopener noreferrer"
               className="px-6 py-2.5 text-sm font-bold font-display tracking-wider rounded-2xl border transition-colors text-[#888892] hover:text-white bg-white/[0.02] backdrop-blur-sm border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]"
