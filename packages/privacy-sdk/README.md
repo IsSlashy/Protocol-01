@@ -345,4 +345,4 @@ MIT
 
 ---
 
-[Website](https://protocol-01.dev) · [Twitter](https://twitter.com/Protocol01_) · [Discord](https://discord.gg/KfmhPFAHNH) · [GitHub](https://github.com/IsSlashy/Protocol-01)
+[Website](https://protocol-01.dev) · [Twitter](https://twitter.com/Protocol01_) · [Discord](https://discord.gg/EfqnVmb2dV) · [GitHub](https://github.com/IsSlashy/Protocol-01)

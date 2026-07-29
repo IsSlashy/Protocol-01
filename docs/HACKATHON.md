@@ -148,7 +148,7 @@ Anything beyond evaluation (redistribution, derivative works, production deploym
 
 - Author: Slashy Fx (Volta Team)
 - Twitter / X: [@Protocol01_](https://x.com/Protocol01_)
-- Discord: [discord.gg/KfmhPFAHNH](https://discord.gg/KfmhPFAHNH)
+- Discord: [discord.gg/EfqnVmb2dV](https://discord.gg/EfqnVmb2dV)
 - GitHub: [IsSlashy/Protocol-01](https://github.com/IsSlashy/Protocol-01)
 - Website: [protocol-01.dev](https://protocol-01.dev)
 
