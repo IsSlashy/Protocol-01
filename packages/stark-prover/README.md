@@ -62,11 +62,30 @@ cp stark/wasm-out/p01_stark_bg.wasm stark/wasm-out/p01_stark.js packages/stark-p
 node packages/stark-prover/scripts/stark-wasm-twins.mjs --write   # the four inlined base64 twins
 ```
 
+Do **not** add `--features test-probes`. That feature compiles the fails-closed
+forgery knobs in `stark/src/compact.rs` (`OodForgery::Coordinated`, the
+`ood_quotient` re-solve, `TerminalPoly::AliasedFold`, `TraceLeaf::LegacyRowLeaf`,
+the non-canonical `PairIndexing` variants) into the artifact. It is off in
+`default`, and `cargo test` turns it on by itself through
+`programs/p01_stark_verifier`'s dev-dependency, so nothing you build by hand
+needs it.
+
 The wire format is agreed with the on-chain verifier and nothing on the wire
 declares which version produced a proof, so a stale blob here means every proof
-this package generates is rejected. Two CI gates cover it: `--check` above
-(partial reship) and `src/wireFormat.test.ts`, which pins all seven circuits'
-serialized proof length (stale reship).
+this package generates is rejected. Three CI gates cover it:
+
+- `stark-wasm-twins.mjs --check` — the five artifacts carry the same bytes
+  (partial reship).
+- `src/wireFormat.test.ts` — all seven circuits' serialized proof LENGTH matches
+  the Rust prover's literals, and all seven sha256 CONTENT digests match the
+  Rust prover (stale reship). The digests are the half that catches B1-class
+  skew, which is length-preserving by construction. MEASURED: restoring the
+  pre-B1 blob leaves every length assertion green and turns all seven digests
+  red.
+- `src/wasmProbeScan.test.ts` — no probe identifier survives in the blob or in
+  any twin (probe leak). MEASURED: the pre-gate 219,219-byte blob carried
+  `OodForgery`, `Coordinated`, `AliasedFold`, `LegacyRowLeaf`, `forgery column `
+  and `ood_quotient solve`; the gated 211,370-byte blob carries none of them.
 
 ## Runtime support
 

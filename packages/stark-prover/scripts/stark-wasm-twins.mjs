@@ -65,7 +65,13 @@ const TWINS = [
  *
  * The wire format is agreed with the on-chain verifier and NOTHING on the wire
  * declares which version produced a proof. A stale copy here means every proof
- * this client generates is rejected. Gated by \`--check\` in CI.
+ * this client generates is rejected. Gated by \`--check\` in CI, and by the seven
+ * per-circuit sha256 digests in \`packages/stark-prover/src/wireFormat.test.ts\`.
+ *
+ * NEVER rebuild the blob with \`--features test-probes\`: that compiles the
+ * fails-closed forgery knobs into the shipping prover.
+ * \`packages/stark-prover/src/wasmProbeScan.test.ts\` scans this file for them and
+ * fails.
  */
 `,
   },
@@ -85,7 +91,13 @@ const TWINS = [
  *
  * The wire format is agreed with the on-chain verifier and NOTHING on the wire
  * declares which version produced a proof. A stale copy here means every proof
- * this client generates is rejected. Gated by \`--check\` in CI.
+ * this client generates is rejected. Gated by \`--check\` in CI, and by the seven
+ * per-circuit sha256 digests in \`packages/stark-prover/src/wireFormat.test.ts\`.
+ *
+ * NEVER rebuild the blob with \`--features test-probes\`: that compiles the
+ * fails-closed forgery knobs into the shipping prover.
+ * \`packages/stark-prover/src/wasmProbeScan.test.ts\` scans this file for them and
+ * fails.
  */
 `,
   },
@@ -99,7 +111,13 @@ const TWINS = [
  *
  * The wire format is agreed with the on-chain verifier and NOTHING on the wire
  * declares which version produced a proof. A stale copy here means every proof
- * this client generates is rejected. Gated by \`--check\` in CI.
+ * this client generates is rejected. Gated by \`--check\` in CI, and by the seven
+ * per-circuit sha256 digests in \`packages/stark-prover/src/wireFormat.test.ts\`.
+ *
+ * NEVER rebuild the blob with \`--features test-probes\`: that compiles the
+ * fails-closed forgery knobs into the shipping prover.
+ * \`packages/stark-prover/src/wasmProbeScan.test.ts\` scans this file for them and
+ * fails.
  */
 `,
   },
@@ -120,7 +138,13 @@ const TWINS = [
  *
  * The wire format is agreed with the on-chain verifier and NOTHING on the wire
  * declares which version produced a proof. A stale copy here means every proof
- * this client generates is rejected. Gated by \`--check\` in CI.
+ * this client generates is rejected. Gated by \`--check\` in CI, and by the seven
+ * per-circuit sha256 digests in \`packages/stark-prover/src/wireFormat.test.ts\`.
+ *
+ * NEVER rebuild the blob with \`--features test-probes\`: that compiles the
+ * fails-closed forgery knobs into the shipping prover.
+ * \`packages/stark-prover/src/wasmProbeScan.test.ts\` scans this file for them and
+ * fails.
  */
 `,
   },
