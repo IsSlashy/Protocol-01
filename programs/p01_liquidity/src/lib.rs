@@ -35,9 +35,22 @@
 //!    as normal, authority = ephemeral signer E (single-use, HMAC-derived).
 //! 2. User signs `prefund(nullifier, merkle_root, min_epoch, stark_commitment, amount)`
 //!    with E. The tx:
-//!    - Validates the proof buffer (owner, discriminator, circuit, authority=E, verified, hash).
-//!    - Creates `PrefundRecord` PDA keyed by `(denominated_pool, nullifier)`.
+//!    - Validates the proof buffer (owner, discriminator, circuit, authority=E,
+//!      `verified` AND `deep_ali_verified`, hash).
+//!    - Requires `denominated_pool.authority == pool.admin` and
+//!      `amount == denominated_pool.denomination`.
+//!    - Creates `PrefundRecord` PDA keyed by `(denominated_pool, nullifier[..8])`.
 //!    - Pays the recipient `amount − prefund_fee − settler_reward` from the pool.
+//!
+//! ## `prefund` is OFF and must stay off
+//!
+//! `init_pool` creates the pool with `is_active = false`, and `prefund` requires
+//! `is_active`. Step 3 below cannot currently run: `settle` CPIs
+//! `zk_shielded::unshield_denominated_stark`, whose `#[program]` registration is
+//! commented out (`zk_shielded/src/lib.rs:152-172`) in favour of
+//! `unshield_denominated_stark_v3`. Until settle has a v3 path, every prefund is
+//! a permanent loss from the reserve and no admin should sign
+//! `update_params(is_active = Some(true))`.
 //! 3. Anyone calls `settle(…)` once the note matures. The tx:
 //!    - CPIs to `zk_shielded.unshield_denominated_stark` with `payer = settler`,
 //!      `recipient = pool`, and the `PrefundRecord` as the extra signer-bypass

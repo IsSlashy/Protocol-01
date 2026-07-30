@@ -4,9 +4,11 @@ use anchor_lang::prelude::*;
 /// when `settle` CPI-calls zk_shielded and receives the unshielded lamports
 /// back into the liquidity pool.
 ///
-/// Keyed by (pool, nullifier). Since nullifiers are globally unique within
-/// a pool, this PDA can't collide — and it mirrors the nullifier PDA that
-/// zk_shielded will create at settlement time.
+/// Keyed by `(denominated_pool, nullifier[..8])` — the 8 bytes the circuit-1
+/// public-inputs hash actually commits to. NOT the full 32: bytes 8..32 are
+/// unconstrained by the proof, and keying on them turned this account, the only
+/// anti-replay constraint in `prefund`, into 2^192 distinct PDAs per proof.
+/// See the `prefund_record` account doc in `instructions/prefund.rs`.
 #[account]
 pub struct PrefundRecord {
     /// Liquidity pool this prefund draws from.

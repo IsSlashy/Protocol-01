@@ -104,9 +104,13 @@ const deriveProofBufferPDA = (authority: PublicKey, circuitId: number) =>
 const deriveLiquidityPoolPDA = () =>
   PublicKey.findProgramAddressSync([SEEDS.LIQUIDITY_POOL], P01_LIQUIDITY_ID);
 
+// Seeds are [b"prefund", denominated_pool, nullifier[..8]] — the 8 bytes the
+// circuit-1 public-inputs hash commits to. Not all 32: bytes 8..32 are
+// unconstrained by the proof, and `init` on this PDA is prefund's only
+// anti-replay constraint.
 const derivePrefundRecordPDA = (denomPool: PublicKey, nullifier: Buffer) =>
   PublicKey.findProgramAddressSync(
-    [SEEDS.PREFUND, denomPool.toBuffer(), nullifier],
+    [SEEDS.PREFUND, denomPool.toBuffer(), nullifier.subarray(0, 8)],
     P01_LIQUIDITY_ID,
   );
 
@@ -453,6 +457,20 @@ describe('p01_liquidity instant-unshield (prefund → settle)', () => {
     // Liquidity pool must be initialized + have ≥ recipient_amount in reserve.
     const lp = await connection.getAccountInfo(liquidityPoolPDA);
     if (!lp) throw new Error('p01_liquidity pool not initialized — run scripts/init-liquidity-pool.ts first');
+    // `init_pool` creates the pool with `is_active = false` (prefund kill
+    // switch) because `settle` CPIs `zk_shielded::unshield_denominated_stark`,
+    // whose `#[program]` registration is commented out — so a prefund opened
+    // today can never be settled and its payout is a permanent loss from the
+    // reserve. This whole suite therefore requires a pool an admin has
+    // deliberately switched on with `update_params(is_active = Some(true))`,
+    // and that should not happen until settle has a v3 path.
+    if (lp.data[68] !== 1) {
+      throw new Error(
+        'p01_liquidity pool has is_active = 0 (prefund disabled). This is the shipped ' +
+        'default and it is correct: settle cannot reclaim a prefund while its CPI target ' +
+        'is unregistered. Do not enable it to make this test pass.',
+      );
+    }
     const { reserveLamports, feeBps, rewardBps } = parsePoolReserve(lp.data);
     expect(feeBps, 'pool prefund_fee_bps drifted').to.equal(EXPECTED_PREFUND_FEE_BPS);
     expect(rewardBps, 'pool settler_reward_bps drifted').to.equal(EXPECTED_SETTLER_REWARD_BPS);

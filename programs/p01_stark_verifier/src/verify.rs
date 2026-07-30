@@ -46,6 +46,28 @@ pub enum VerifyError {
     /// "add a circuit with a new domain size" a silently-unsound edit. Now it
     /// fails closed.
     UnsupportedDomainSize,
+    /// Circuit 0 (`subscriber_ownership`) was handed to the GENERIC verifier.
+    ///
+    /// C0 has one verifier — the legacy `verify_subscriber_ownership` path — and
+    /// the generic path cannot substitute for it:
+    ///
+    /// * `verify_deep_ali_generic` divides by the wrong vanishing polynomial for
+    ///   C0. C0's constraint is divisible by `Z_T(x) = (x^n - 1)/(x - g^(n-1))`,
+    ///   not by `Z_D(x) = x^n - 1`, because the wrap-around transition at row
+    ///   `n-1` does not vanish. The legacy path knows this; the generic one does
+    ///   not.
+    /// * C0's committed quotient carries a folded boundary term
+    ///   (`fold_boundary_quotient` with the `bnd-c0` tag). The generic path has no
+    ///   matching recomputation for circuit 0, so the OOD identity cannot close.
+    ///
+    /// The generic path therefore REJECTS honest C0 proofs. Before this variant
+    /// it rejected them as `DeepAliFailed` — indistinguishable from a forgery, and
+    /// one refactor away from being "fixed" into a silent mis-verification. Four
+    /// shipped instructions hard-require `circuit_id == 0`
+    /// (`zk_shielded::{pause,resume,cancel_private_stark}` and
+    /// `p01_quantum_wallet/src/stark.rs:42`), so the legacy path is load-bearing
+    /// and stays. This error says so out loud instead.
+    CircuitZeroIsLegacyOnly,
 }
 
 // ============================================================================
@@ -558,13 +580,32 @@ fn get_boundary_assertions(
 // Unified verification entry point
 // ============================================================================
 
-/// Verify a generic compact proof for any supported circuit.
+/// Verify a generic compact proof for any supported circuit **1..=6**.
+///
+/// # Circuit 0 is refused here, explicitly
+///
+/// `circuit_id == 0` returns [`VerifyError::CircuitZeroIsLegacyOnly`] before any
+/// work is done. C0 proofs are verified by [`verify_subscriber_ownership`], and
+/// only by it: the generic DEEP-ALI check uses the wrong vanishing polynomial for
+/// C0 and has no recomputation for C0's folded boundary term, so it cannot verify
+/// an honest C0 proof. A silent "it just fails" is the wrong shape for that — it
+/// reads as a forgery, and a future refactor could plausibly "fix" the failure
+/// into an acceptance. The refusal is the contract.
 pub fn verify_generic(
     proof: &GenericCompactProof,
     circuit_id: u8,
     public_inputs: &[u64],
     config: &CircuitConfig,
 ) -> Result<(), VerifyError> {
+    // Step 0: C0 hard gate. Must come before everything — the point is that the
+    // generic path never touches a C0 proof, not that it fails late.
+    if circuit_id == crate::CIRCUIT_SUBSCRIBER_OWNERSHIP {
+        anchor_lang::prelude::msg!(
+            "[verify] circuit 0 is legacy-only; use verify_stark_proof, not the generic path"
+        );
+        return Err(VerifyError::CircuitZeroIsLegacyOnly);
+    }
+
     // Step 1: Field range check on OOD values
     verify_ood_range(proof)?;
     anchor_lang::prelude::msg!("[verify] step1 ok");
@@ -609,7 +650,11 @@ pub fn verify_generic(
 
     // Step 4: Circuit-specific transition constraint + quotient verification
     match circuit_id {
-        0 => verify_constraints_subscriber_ownership(proof, config, public_inputs),
+        // 0 is unreachable — the step-0 gate above returned already. Left as an
+        // explicit arm so the refusal is visible at the dispatch too, and so a
+        // future edit that deletes the gate does not silently re-enable a path
+        // that cannot verify honest C0 proofs.
+        0 => Err(VerifyError::CircuitZeroIsLegacyOnly),
         1 => verify_constraints_pool_commitment(proof, config, public_inputs),
         2 => verify_constraints_balance_proof(proof, config, public_inputs),
         3 => verify_constraints_merkle_path(proof, config, public_inputs),
@@ -1258,26 +1303,77 @@ fn verify_merkle_proofs_generic(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
 ) -> Result<(), VerifyError> {
+    let half = config.lde_size / 2;
     for (query_idx, query) in proof.queries.iter().enumerate() {
-        // [P1.6] Hash trace row directly from its LE bytes in the proof buffer —
-        // no copy into a `Vec<u8>`. The prover serializes the trace leaves as
-        // flat LE felts exactly matching `query.trace_values_bytes()`, so Blake3
-        // over that slice is the same leaf hash as the old `felt_vec_to_bytes`
-        // round-trip.
-        if !merkle::verify_merkle_path(
+        // [ROUTE C] The trace tree is committed as PAIR leaves, exactly as B4 did
+        // for the quotient tree and every FRI layer:
+        //
+        //     leaf[j] = H(0x00 ‖ row[j] ‖ row[j + lde_size/2])   over lde_size/2 leaves
+        //
+        // ONE depth-(merkle_depth - 1) opening therefore authenticates the row at
+        // `position` AND the row at `position ^ (lde_size/2)`. Pre-Route-C this was
+        // a depth-merkle_depth opening that bound the row at `position` only.
+        //
+        // This changes NO soundness property: the mirror row is authenticated and
+        // then not read. It is the coset partner a later DEEP-composition
+        // recomputation needs, made available without a second opening.
+        //
+        // WARNING, two parts, and the second is the one that gets forgotten:
+        // Route C is format-breaking (old proofs do not verify here, new proofs do
+        // not verify on an old verifier — both fail closed, see
+        // `tests/route_c_trace_pair.rs`), AND it DOUBLES raw witness exposure on a
+        // trace-aligned query. `blowup` divides `lde/2`, so an aligned position has
+        // an aligned mirror: an unlucky query now puts FOUR genuine trace rows on
+        // the wire instead of two, and the extra two are different trace rows
+        // (`r + trace_length/2`), not copies. COMPUTED: ~82% of C0/C1/C2/C4 proofs
+        // and ~76% of C3/C5/C6 proofs contain at least one aligned query. The LDE
+        // has no coset offset yet, so that is a 2x amplification of a LIVE leak —
+        // the coset fix is a hard predecessor for Route C reaching a deployed
+        // verifier. See `build_trace_pair_merkle_tree` in stark/src/compact.rs.
+        //
+        // [P1.6] The rows are hashed straight out of the proof buffer — no copy
+        // into a Vec. `hash_leaf_2seg` concatenates the two segments inside the
+        // syscall, so the digest is bit-identical to the prover's contiguous
+        // `sha256_leaf(row_lo ‖ row_hi)`.
+        //
+        // `lo` MUST be the low-half row and `hi` the high-half row: the leaf hash
+        // cannot depend on which side of the mirror the query landed on. The wire
+        // always ships (row_at_pos, row_at_mirror) in that order, so the verifier
+        // swaps when `pos >= half`. `position` is transcript-bound, so a prover
+        // cannot choose which side it lands on.
+        let pos = query.position as usize;
+        let (lo, hi) = if pos < half {
+            (query.trace_values_bytes(), query.trace_mirror_values_bytes())
+        } else {
+            (query.trace_mirror_values_bytes(), query.trace_values_bytes())
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.trace_root,
-            query.trace_values_bytes(),
-            query.position as usize,
+            lo,
+            hi,
+            pos & (half - 1),
             query.merkle_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
         }
 
-        let next_pos = (query.position as usize + config.blowup) % config.lde_size;
-        if !merkle::verify_merkle_path(
+        // [ROUTE C] Same for the next row. `next_pos = pos + blowup` is never the
+        // mirror of `pos` (the mirror is `pos + lde_size/2`, and
+        // `lde_size/2 >= 16 * blowup` on every shipping config), so this is a
+        // genuinely different pair leaf and both openings are needed. It is,
+        // however, the SAME leaf that holds `next(mirror(pos))`, because
+        // `mirror(next_pos) = pos + blowup + lde/2 = next(mirror(pos))`.
+        let next_pos = (pos + config.blowup) % config.lde_size;
+        let (nlo, nhi) = if next_pos < half {
+            (query.next_trace_values_bytes(), query.next_trace_mirror_values_bytes())
+        } else {
+            (query.next_trace_mirror_values_bytes(), query.next_trace_values_bytes())
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.trace_root,
-            query.next_trace_values_bytes(),
-            next_pos,
+            nlo,
+            nhi,
+            next_pos & (half - 1),
             query.next_merkle_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
@@ -1290,19 +1386,17 @@ fn verify_merkle_proofs_generic(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let pos = query.position as usize;
-        let half = config.lde_size / 2;
         let q_at_pos = proof.quotient_value(query_idx);
         let q_mirror = query.quotient_mirror_value;
-        let (lo, hi) = if pos < half {
+        let (qlo, qhi) = if pos < half {
             (q_at_pos, q_mirror)
         } else {
             (q_mirror, q_at_pos)
         };
         if !verify_pair_leaf(
             &proof.quotient_root,
-            lo,
-            hi,
+            qlo,
+            qhi,
             pos & (half - 1),
             query.quotient_pair_path(),
         ) {
@@ -3378,7 +3472,16 @@ fn verify_quotient_at_query(
 // Circuit 0: subscriber_ownership
 // ============================================================================
 
-fn verify_constraints_subscriber_ownership(
+/// [C0 GATE] Unreachable from `verify_generic` — both the step-0 gate and the
+/// step-4 dispatch arm refuse `circuit_id == 0` before this can run.
+///
+/// It is kept, and kept compiling, for one reason: it is the evidence for the
+/// refusal. `c0_generic_path_cannot_verify_an_honest_c0_proof` calls it directly
+/// on an honest C0 proof and records the failure, so the claim "the generic path
+/// rejects honest C0 proofs" is a measurement in the test suite rather than a
+/// comment. Delete it and the gate becomes an unargued assertion.
+#[allow(dead_code)]
+pub(crate) fn verify_constraints_subscriber_ownership(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
     _public_inputs: &[u64],
@@ -3925,21 +4028,40 @@ fn verify_query_positions_legacy(
 }
 
 fn verify_merkle_proofs_legacy(proof: &CompactStarkProof) -> Result<(), VerifyError> {
+    let half = LDE_SIZE / 2;
     for (query_idx, query) in proof.queries.iter().enumerate() {
-        if !merkle::verify_merkle_path(
+        // [ROUTE C] Pair-leaf trace tree, identical rule to
+        // `verify_merkle_proofs_generic` — see the commentary there. The legacy C0
+        // path keeps its own parser and its own verifier entry point, but the
+        // trace COMMITMENT is now the same shape on both paths, so a drift between
+        // them cannot hide.
+        let pos = query.position as usize;
+        let (lo, hi) = if pos < half {
+            (query.trace_values_bytes(), query.trace_mirror_values_bytes())
+        } else {
+            (query.trace_mirror_values_bytes(), query.trace_values_bytes())
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.trace_root,
-            query.trace_values_bytes(),
-            query.position as usize,
+            lo,
+            hi,
+            pos & (half - 1),
             query.merkle_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
         }
 
-        let next_pos = (query.position as usize + BLOWUP) % LDE_SIZE;
-        if !merkle::verify_merkle_path(
+        let next_pos = (pos + BLOWUP) % LDE_SIZE;
+        let (nlo, nhi) = if next_pos < half {
+            (query.next_trace_values_bytes(), query.next_trace_mirror_values_bytes())
+        } else {
+            (query.next_trace_mirror_values_bytes(), query.next_trace_values_bytes())
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.trace_root,
-            query.next_trace_values_bytes(),
-            next_pos,
+            nlo,
+            nhi,
+            next_pos & (half - 1),
             query.next_merkle_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
@@ -3950,19 +4072,17 @@ fn verify_merkle_proofs_legacy(proof: &CompactStarkProof) -> Result<(), VerifyEr
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let pos = query.position as usize;
-        let half = LDE_SIZE / 2;
         let q_at_pos = proof.quotient_value(query_idx);
         let q_mirror = query.quotient_mirror_value;
-        let (lo, hi) = if pos < half {
+        let (qlo, qhi) = if pos < half {
             (q_at_pos, q_mirror)
         } else {
             (q_mirror, q_at_pos)
         };
         if !verify_pair_leaf(
             &proof.quotient_root,
-            lo,
-            hi,
+            qlo,
+            qhi,
             pos & (half - 1),
             query.quotient_pair_path(),
         ) {
@@ -4241,6 +4361,143 @@ mod merkle_update_e2e {
             matches!(res, Err(VerifyError::DeepAliFailed)),
             "phase 2 DEEP-ALI must reject wrong public inputs: got {:?}", res
         );
+    }
+
+    /// [ROUTE C] **The trace-commitment tripwire, inside `--lib`.**
+    ///
+    /// Route C's whole authentication surface — both `verify_merkle_path_2seg`
+    /// blocks in `verify_merkle_proofs_generic` and both in
+    /// `verify_merkle_proofs_legacy` — lived behind exactly ONE test file
+    /// (`tests/route_c_trace_pair.rs`). MEASURED during review: deleting all four
+    /// blocks and their now-unused locals left `cargo test -p p01_stark_verifier
+    /// --lib` at "54 passed; 0 failed", `--test periodic_stride`, `--test
+    /// fri_end_to_end`, `--test b4_pair_leaf` and `--test merkle_domain_sep` all
+    /// green, and `cargo clippy -- -D warnings` clean. A verifier that does not
+    /// check its trace commitment at all was invisible to every gate that existed
+    /// before Route C.
+    ///
+    /// This test closes that. It lives in `--lib`, which is the FIRST verifier
+    /// command CI runs and pre-dates Route C, so a partial or aborted edit that
+    /// removes the trace opening cannot reach a green build. It is a tamper test,
+    /// not a soundness test: it proves the mirror row is bound to `trace_root`,
+    /// and proves nothing whatsoever about DEEP binding.
+    #[test]
+    fn route_c_trace_commitment_is_checked_c6() {
+        let old_leaf = 111u64;
+        let new_leaf = 222u64;
+        let path_elements: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
+        let path_indices: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+
+        let proof_data = p01_stark::compact::generate_merkle_update_compact_proof(
+            old_leaf, new_leaf, &path_elements, &path_indices,
+        );
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+
+        // Positive control first: without it, "the tampered proof was rejected"
+        // could just mean the honest proof does not verify either.
+        let honest = crate::compact_proof::GenericCompactProof::from_bytes(
+            &proof_data.proof_bytes, config,
+        ).expect("deserialize");
+        verify_generic(&honest, proof_data.circuit_id, &proof_data.public_inputs, config)
+            .expect("honest C6 proof must verify — otherwise the negative half is vacuous");
+
+        let (base, row_len) = route_c_trace_block(config, &proof_data.proof_bytes, 0);
+
+        // Slot 1 is `trace_mirror_values` (the row at `pos ^ lde/2`), slot 3 is
+        // `next_trace_mirror_values`. Both exist ONLY because Route C pair-leafed
+        // the trace tree, and both are authenticated-and-then-unread, so nothing
+        // except the Merkle check can notice them changing.
+        for (label, slot) in [("mirror", 1usize), ("next-mirror", 3usize)] {
+            let mut tampered = proof_data.proof_bytes.clone();
+            tampered[base + slot * row_len] ^= 0x01;
+
+            let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+                &tampered, config,
+            ).expect("still parses — one value byte changed, no length change");
+
+            let res =
+                verify_generic(&parsed, proof_data.circuit_id, &proof_data.public_inputs, config);
+            assert!(
+                matches!(res, Err(VerifyError::MerkleProofFailed)),
+                "a corrupted trace {label} row must be rejected at the Merkle check. \
+                 Got {res:?}. If this is Ok(()), the trace commitment is not being \
+                 verified at all and the verifier accepts unauthenticated trace rows.",
+            );
+        }
+    }
+
+    /// [ROUTE C] The same tripwire for the LEGACY C0 path, which has its own
+    /// parser (`CompactStarkProof`), its own entry point
+    /// (`verify_subscriber_ownership`) and its own copy of the trace-opening code
+    /// in `verify_merkle_proofs_legacy`. The C6 test above exercises the GENERIC
+    /// path only, so without this one a deletion confined to the legacy path stays
+    /// invisible to `--lib` — and the legacy path is the sole verifier for four
+    /// SHIPPED instructions (`zk_shielded::{pause,resume,cancel_private_stark}`
+    /// and `p01_quantum_wallet/src/stark.rs:42` all hard-require `circuit_id == 0`).
+    #[test]
+    fn route_c_trace_commitment_is_checked_c0_legacy() {
+        use crate::compact_proof::{CompactStarkProof, CONFIG_SUBSCRIBER_OWNERSHIP};
+
+        let pd = p01_stark::compact::generate_compact_proof(42);
+        let commitment = crate::goldilocks::Felt::new(pd.commitment);
+
+        // Positive control.
+        let honest = CompactStarkProof::from_bytes(&pd.proof_bytes).expect("parse C0");
+        verify_subscriber_ownership(&honest, commitment)
+            .expect("honest C0 proof must verify — otherwise the negative half is vacuous");
+
+        let (base, row_len) =
+            route_c_trace_block(&CONFIG_SUBSCRIBER_OWNERSHIP, &pd.proof_bytes, 0);
+
+        for (label, slot) in [("mirror", 1usize), ("next-mirror", 3usize)] {
+            let mut tampered = pd.proof_bytes.clone();
+            tampered[base + slot * row_len] ^= 0x01;
+
+            let parsed = CompactStarkProof::from_bytes(&tampered)
+                .expect("still parses — one value byte changed");
+            let res = verify_subscriber_ownership(&parsed, commitment);
+            assert!(
+                matches!(res, Err(VerifyError::MerkleProofFailed)),
+                "a corrupted legacy-C0 trace {label} row must be rejected at the Merkle \
+                 check. Got {res:?}. If this is Ok(()), the C0 trace commitment is not \
+                 being verified and pause/resume/cancel_private_stark accept \
+                 unauthenticated trace rows.",
+            );
+        }
+    }
+
+    /// Byte offset of query `q`'s trace block plus the per-row stride, derived
+    /// from the config and cross-checked against the buffer length.
+    ///
+    /// The length assertion is the point: if the serializer layout drifts, this
+    /// panics instead of poking a stale offset and passing for the wrong reason.
+    fn route_c_trace_block(
+        cfg: &crate::compact_proof::CircuitConfig,
+        bytes: &[u8],
+        q: usize,
+    ) -> (usize, usize) {
+        let tw = cfg.trace_width;
+        let md = cfg.merkle_depth;
+        let num_commits = (cfg.lde_size / cfg.fri_final_poly_size).trailing_zeros() as usize - 1;
+
+        let mut off = 32 + 32 + tw * 8 + tw * 8 + 8 + 8;
+        assert_eq!(bytes[off] as usize, num_commits, "num_fri_layers byte drift");
+        off += 1 + num_commits * 32;
+        off += 2 + cfg.fri_final_poly_size * 8;
+        off += 8 + 2;
+
+        let fri_per_query: usize = (0..num_commits).map(|i| 16 + (md - i - 2) * 32).sum();
+        // [ROUTE C] four rows + two depth-(md - 1) pair paths.
+        let per_query =
+            4 + 4 * (tw * 8) + 2 * ((md - 1) * 32) + 8 + (md - 1) * 32 + fri_per_query;
+
+        assert_eq!(
+            off + per_query * cfg.num_queries + cfg.num_queries * 8,
+            bytes.len(),
+            "Route C serializer layout drift — this offset arithmetic is stale",
+        );
+
+        (off + q * per_query + 4, tw * 8)
     }
 
     // ------------------------------------------------------------------
@@ -5118,6 +5375,67 @@ mod boundary_c0_tests {
         assert!(
             matches!(res, Err(VerifyError::DeepAliFailed)),
             "tampered ood_current must be rejected: got {res:?}"
+        );
+    }
+
+    /// [C0 GATE] The generic dispatch REFUSES circuit 0, explicitly.
+    ///
+    /// An honest C0 proof parses cleanly as a `GenericCompactProof` (same header
+    /// layout, tw=3, md=9, 4 committed FRI layers), so nothing about the bytes
+    /// stops it reaching `verify_generic`. The gate is what stops it, and it must
+    /// return the named error rather than something that reads like a bad proof.
+    #[test]
+    fn c0_generic_dispatch_refuses_circuit_zero() {
+        let pd = p01_stark::compact::generate_compact_proof(42);
+        let cfg = crate::compact_proof::get_circuit_config(0).expect("C0 has a config");
+        let parsed = GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+            .expect("an honest C0 proof does parse under the generic parser");
+        let res = verify_generic(&parsed, 0, &[pd.commitment], cfg);
+        assert!(
+            matches!(res, Err(VerifyError::CircuitZeroIsLegacyOnly)),
+            "generic path must refuse circuit 0 by name, got {res:?}"
+        );
+    }
+
+    /// [C0 GATE] …and the refusal is not merely tidy: the generic path CANNOT
+    /// verify an honest C0 proof. This calls the C0 constraint body directly,
+    /// bypassing the gate, and records the failure.
+    ///
+    /// Two independent reasons, both structural:
+    ///   * `verify_deep_ali_circuit_0` is reached through generic machinery that
+    ///     divides by `Z_D(x) = x^n - 1`; C0's constraint is only divisible by
+    ///     `Z_T(x) = (x^n - 1)/(x - g^(n-1))` because the row-(n-1) wrap does not
+    ///     vanish.
+    ///   * C0's committed quotient carries a folded boundary term (`bnd-c0` tag)
+    ///     that the generic path never recomputes.
+    ///
+    /// If this test ever goes green-accepting, the gate above stops being a
+    /// safety property and becomes a policy choice — and this comment becomes a
+    /// lie. That is the point of asserting it.
+    #[test]
+    fn c0_generic_path_cannot_verify_an_honest_c0_proof() {
+        let pd = p01_stark::compact::generate_compact_proof(42);
+        let cfg = crate::compact_proof::get_circuit_config(0).expect("C0 has a config");
+        let parsed = GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+            .expect("parse honest C0 proof as generic");
+
+        // Sanity: the legacy path DOES verify this proof, so any failure below is
+        // about the generic path, not about the proof.
+        let legacy = crate::compact_proof::CompactStarkProof::from_bytes(&pd.proof_bytes)
+            .expect("parse honest C0 proof as legacy");
+        verify_subscriber_ownership(&legacy, Felt::new(pd.commitment))
+            .expect("honest C0 proof must verify on its own legacy path");
+
+        let res = verify_constraints_subscriber_ownership(&parsed, cfg, &[pd.commitment]);
+        assert!(
+            res.is_err(),
+            "the generic C0 constraint path accepted an honest C0 proof — the \
+             CircuitZeroIsLegacyOnly gate is then a policy choice, not a \
+             necessity, and its doc comment is wrong"
+        );
+        println!(
+            "[C0 GATE] MEASURED: generic C0 constraint path on an HONEST C0 proof -> {:?}",
+            res.unwrap_err()
         );
     }
 }

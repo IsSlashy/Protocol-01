@@ -2,6 +2,24 @@
  * InstantUnshieldFlow — high-level wrapper that bundles the full instant-unshield
  * orchestration into a single SDK-consumer-friendly API.
  *
+ * ---------------------------------------------------------------------------
+ * THIS FLOW IS CURRENTLY DISABLED ON CHAIN. Plans it builds will be rejected.
+ *
+ * `p01_liquidity::prefund` pays the recipient out of the LP reserve, and
+ * `settle` is supposed to reclaim that by CPI into
+ * `zk_shielded::unshield_denominated_stark`. That instruction's `#[program]`
+ * registration is commented out (`programs/zk_shielded/src/lib.rs:152-172`) in
+ * favour of `unshield_denominated_stark_v3`, so zk_shielded will not dispatch
+ * the discriminator `settle` sends and no prefund can ever be settled — the
+ * payout is a permanent loss from the reserve, valid STARK proof or not.
+ *
+ * `p01_liquidity::init_pool` therefore creates the pool with
+ * `is_active = false`, and `prefund` requires `is_active`, so the `prefundTx`
+ * in a plan fails with `LiquidityError::PoolInactive` (6000). The mobile
+ * `unshieldStark(..., instant = true)` path throws before doing any work for
+ * the same reason. Do not re-enable either until `settle` has a v3 path.
+ * ---------------------------------------------------------------------------
+ *
  * What this module does:
  *   1. Generates (or accepts) an ephemeral signer keypair that drives the entire
  *      multi-step STARK pipeline. The ephemeral pays its own STARK rent + the

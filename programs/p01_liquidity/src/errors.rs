@@ -45,4 +45,12 @@ pub enum LiquidityError {
     Unauthorized,
     #[msg("Pool already initialized")]
     AlreadyInitialized,
+
+    // Appended, not inserted: Anchor numbers `#[error_code]` variants by
+    // declaration order, so adding anywhere above would renumber every error
+    // below it and silently change what shipped clients decode.
+    #[msg("denominated_pool is not a zk_shielded DenominatedPool account")]
+    InvalidDenominatedPool,
+    #[msg("denominated_pool was not created by this pool's admin — zk_shielded pool creation is permissionless, so an unrecognised authority means an attacker-chosen denomination")]
+    UnsupportedDenominatedPool,
 }

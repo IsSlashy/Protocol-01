@@ -46,12 +46,23 @@ export function getLiquidityPoolPDA(): [PublicKey, number] {
   return PublicKey.findProgramAddressSync([POOL_SEED], P01_LIQUIDITY_PROGRAM_ID);
 }
 
+/**
+ * PrefundRecord PDA — seeds `[b"prefund", denominated_pool, nullifier[..8]]`.
+ *
+ * The seed is the FIRST 8 BYTES of the nullifier, not all 32. That is exactly
+ * what the circuit-1 public-inputs hash commits to
+ * (`sha256(u64::from_le_bytes(nullifier[..8]) || stark_commitment)`); bytes
+ * 8..32 are unconstrained by the proof. Keying the record on all 32 gave one
+ * verified proof buffer 2^192 distinct anti-replay slots, and `init` on this
+ * PDA is the only anti-replay constraint `prefund` has. See
+ * `programs/p01_liquidity/src/instructions/prefund.rs`.
+ */
 export function getPrefundRecordPDA(
   denominatedPool: PublicKey,
   nullifier: Uint8Array | number[],
 ): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
-    [PREFUND_SEED, denominatedPool.toBuffer(), Buffer.from(nullifier)],
+    [PREFUND_SEED, denominatedPool.toBuffer(), Buffer.from(nullifier).subarray(0, 8)],
     P01_LIQUIDITY_PROGRAM_ID,
   );
 }
