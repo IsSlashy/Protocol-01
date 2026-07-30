@@ -224,6 +224,15 @@ jobs:
           cargo test -p p01_stark_verifier --release --test b4_pair_leaf
           cargo test -p p01_stark_verifier --release --test merkle_domain_sep
           cargo test -p p01_stark_verifier --release --test route_c_trace_pair
+          # [B1] The coordinated-forgery suite. Listing it here is what makes it a
+          # gate: unfiltered `cargo test -p p01_stark_verifier` is never what CI
+          # runs (a4_probe.rs is in no workflow), and anchor-test.yml runs no
+          # p01_stark_verifier suite at all, so ci.yml is the only place it lands.
+          # It is the ONLY test in the repo that distinguishes a working DEEP
+          # binding from a broken one — the twelve existing tampered-OOD tests
+          # pass against a verifier with no binding whatsoever, because a byte
+          # patch desynchronises the grinding transcript before FRI is reached.
+          cargo test -p p01_stark_verifier --release --test b1_deep_binding
 
       # [PROVER] The prover half of every pin above, plus the LDE coset sequencing
       # companion (`compact::lde_coset_sequencing::lde_has_no_coset_offset_measured_today`).

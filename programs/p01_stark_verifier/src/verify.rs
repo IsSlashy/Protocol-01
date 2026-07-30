@@ -107,8 +107,8 @@ const GOLDILOCKS_PRIME: u64 = 0xFFFFFFFF00000001;
 
 // Precomputed N-th roots of unity: g_N = 7^((p-1)/N) mod p
 // Used for LDE domain element computation and boundary checks.
-#[allow(dead_code)]
-/// 32nd root of unity (trace domain for circuit 0)
+/// 32nd root of unity (trace domain for circuit 0).
+/// [B1] Live: `verify_fri_legacy` uses it for `zg = z * g`.
 const GENERATOR_32: u64 = 0x00003FFFFFFFC000;
 #[allow(dead_code)]
 /// 128th root of unity (trace domain for circuits 1,2)
@@ -145,11 +145,11 @@ fn get_lde_generator(lde_size: usize) -> Result<Felt, VerifyError> {
 
 /// Get the trace domain generator for a given trace length.
 ///
-/// Fails closed for the same reason as [`get_lde_generator`]. Note the DEEP-ALI
-/// routines currently inline their per-circuit constant (`Felt::new(GENERATOR_512)`
-/// and friends) rather than calling this, so it has no live caller today; it is
-/// kept because a new circuit's DEEP-ALI path is the obvious place to use it.
-#[allow(dead_code)]
+/// Fails closed for the same reason as [`get_lde_generator`].
+///
+/// [B1] This had no live caller until B1; the DEEP-ALI routines inline their
+/// per-circuit constant. `verify_fri_generic` now calls it for `zg = z * g`,
+/// which is the row shift the two-point linearisation is built around.
 fn get_trace_generator(trace_length: usize) -> Result<Felt, VerifyError> {
     match trace_length {
         32 => Ok(Felt::new(GENERATOR_32)),
@@ -941,7 +941,12 @@ fn verify_query_positions_generic(
     proof: &GenericCompactProof,
     expected: &[u32],
 ) -> Result<(), VerifyError> {
-    if proof.queries.len() < expected.len() {
+    // [B1] Was `<`. Free to tighten: an honest proof always emits exactly
+    // `config.num_queries`. `<` let a prover ship EXTRA queries, an
+    // attacker-chosen CU multiplier (the parser caps num_queries at 256) that the
+    // new per-query DEEP arithmetic amplifies. The legacy path already gates on
+    // the constant.
+    if proof.queries.len() != expected.len() {
         return Err(VerifyError::InsufficientQueries);
     }
     for (i, query) in proof.queries.iter().enumerate() {
@@ -3752,47 +3757,6 @@ pub fn verify_deep_ali_circuit_5(
 // [C4] + [C5] Quotient verification helper
 // ============================================================================
 
-/// [C4] Verify the quotient polynomial value at a query position.
-///
-/// Checks: Q(pos) * Z_D(pos) == C(pos) where C is the constraint evaluation.
-/// At trace-aligned positions this should be 0 == 0 (both sides vanish).
-/// At non-trace-aligned positions the quotient encodes the constraint polynomial.
-fn verify_quotient_at_query(
-    quotient_value: Felt,
-    _constraint_value: Felt,
-    pos: usize,
-    config: &CircuitConfig,
-    is_trace_aligned: bool,
-) -> Result<(), VerifyError> {
-    // ── 2026-07-27: body removed. It enforced nothing, and it was not cheap. ──
-    //
-    // `_constraint_value` is unused and all eight call sites pass `Felt::ZERO`,
-    // so this function structurally could not compare Q against anything. Both
-    // branches were tautologies of the verifier's own domain arithmetic rather
-    // than statements about the proof:
-    //
-    //   * trace-aligned: it computed `z_d = vanishing_poly(x, trace_length)` and
-    //     errored if `z_d != 0`. At a trace-aligned position `z_d` IS zero by
-    //     construction of the domain, so the branch could never fire.
-    //   * non-aligned: it errored if `q·z_d >= MODULUS`. `reduce128` returns a
-    //     canonical element for every input, so that could never fire either.
-    //
-    // The original comments admitted as much ("Q * 0 = 0 is trivially true",
-    // "we trust that the FRI/DEEP composition verifies the degree bound of Q").
-    //
-    // Cost removed: one `get_lde_domain_element` plus one `vanishing_poly`
-    // (an `exp` by trace_length) per query, on the phase-1 budget — the binding
-    // one. ~702 field muls on C4, ~616 on C3/C5/C6.
-    //
-    // The seam is deliberately kept. A real ALI check — comparing Q(x)·Z_D(x)
-    // against the constraint evaluation actually derived from the committed
-    // trace — belongs exactly here, and would need `_constraint_value` supplied
-    // by the callers instead of `Felt::ZERO`. Do NOT mistake this no-op for the
-    // DEEP binding: that is a separate, missing piece (FRI currently folds the
-    // quotient rather than a DEEP composition polynomial).
-    let _ = (quotient_value, pos, config, is_trace_aligned);
-    Ok(())
-}
 
 // ============================================================================
 // Circuit 0: subscriber_ownership
@@ -3852,15 +3816,6 @@ pub(crate) fn verify_constraints_subscriber_ownership(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-
-        verify_quotient_at_query(
-            quotient_value,
-            Felt::ZERO, // constraint is 0 at trace-aligned positions
-            pos,
-            config,
-            is_trace_aligned,
-        )?;
     }
     Ok(())
 }
@@ -3917,8 +3872,6 @@ fn verify_constraints_pool_commitment(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(quotient_value, Felt::ZERO, pos, config, is_trace_aligned)?;
     }
     Ok(())
 }
@@ -3985,8 +3938,6 @@ fn verify_constraints_balance_proof(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(quotient_value, Felt::ZERO, pos, config, is_trace_aligned)?;
     }
     Ok(())
 }
@@ -4067,8 +4018,6 @@ fn verify_constraints_merkle_path(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(quotient_value, Felt::ZERO, pos, config, is_trace_aligned)?;
     }
     Ok(())
 }
@@ -4134,8 +4083,6 @@ fn verify_constraints_confidential_balance(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(quotient_value, Felt::ZERO, pos, config, is_trace_aligned)?;
     }
     Ok(())
 }
@@ -4218,8 +4165,6 @@ fn verify_constraints_transfer(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(quotient_value, Felt::ZERO, pos, config, is_trace_aligned)?;
     }
     Ok(())
 }
@@ -4298,8 +4243,6 @@ fn verify_constraints_merkle_update(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(quotient_value, Felt::ZERO, pos, config, is_trace_aligned)?;
     }
     Ok(())
 }
@@ -4419,22 +4362,6 @@ fn verify_merkle_proofs_legacy(proof: &CompactStarkProof) -> Result<(), VerifyEr
 }
 
 fn verify_transition_legacy(proof: &CompactStarkProof) -> Result<(), VerifyError> {
-    // Legacy circuit config for quotient check
-    let legacy_config = CircuitConfig {
-        trace_width: TRACE_WIDTH,
-        trace_length: TRACE_LENGTH,
-        blowup: BLOWUP,
-        lde_size: LDE_SIZE,
-        merkle_depth: MERKLE_DEPTH,
-        num_rounds: NUM_ROUNDS,
-        // [P2.2] Legacy verifier uses the default 16 (pre-P2.2 circuits only).
-        fri_final_poly_size: FRI_FINAL_POLY_SIZE,
-        // [B1] Not read on this path — `verify_fri_legacy` uses the module const
-        // directly — but the field is mandatory and must not disagree with it.
-        fri_final_poly_degree_bound: crate::compact_proof::LEGACY_FRI_FINAL_POLY_DEGREE_BOUND,
-        num_queries: NUM_QUERIES,
-    };
-
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
         let trace_row = (pos / BLOWUP) % TRACE_LENGTH;
@@ -4472,14 +4399,6 @@ fn verify_transition_legacy(proof: &CompactStarkProof) -> Result<(), VerifyError
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(
-            quotient_value,
-            Felt::ZERO,
-            pos,
-            &legacy_config,
-            is_trace_aligned,
-        )?;
     }
     Ok(())
 }

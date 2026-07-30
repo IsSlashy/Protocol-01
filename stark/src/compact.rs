@@ -70,9 +70,21 @@ const TRACE_WIDTH: usize = 3;
 const TRACE_LENGTH: usize = 32;
 const BLOWUP: usize = 16;
 const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
-// Soundness: NUM_QUERIES × log2(BLOWUP) + grinding ≈ bits of security.
-// 27 × 4 + 16 = 124 bits > 100-bit target. Classical soundness.
-// For PQ-96 move to 40 queries + 32-bit grinding.
+// [B1] SOUNDNESS, HONESTLY. num_queries * log2(1/rho) + grinding_bits at the
+// MEASURED rho, NEVER num_queries * log2(blowup).
+//
+// The FRI rate is ~1/2, not 1/blowup: deg(Q) = 8n-8 on a 16n LDE, MEASURED as
+// 4088 at n = 512, so each query is worth 1.000 bit, not 4. That figure is
+// pinned as an observation by `t5_aliased_terminal_poly_agrees_at_exactly_the_even_indices` in programs/p01_stark_verifier/tests/b1_deep_binding.rs, which
+// shows an aliased degree-<8 terminal polynomial agreeing with the true 16-value
+// final layer at exactly 8 of 16 points.
+//
+// Post-B1: ~43 bits for circuits 0/1/2/4 (27 queries) and ~38 bits for circuits
+// 3/5/6 (22 queries). Pre-B1 a coordinated forgery was FREE, so this is a move
+// from zero to ~2^38 hashes, which is hours on a GPU. It is NOT 100 bits and NOT
+// the 124 this comment used to claim. Raising rho is B2 and is a wire-format
+// change. No README, CV, pitch or tweet number above ~43 bits until B2 lands and
+// is MEASURED.
 const NUM_QUERIES: usize = 27;
 /// Grinding factor in bits — proof-of-work over Fiat-Shamir seed adds
 /// `GRINDING_BITS` to classical soundness without additional queries.
@@ -4885,8 +4897,12 @@ fn build_pair_merkle_tree(
 // [P1.1 PR 2] FRI commit phase
 // ============================================================================
 
-/// Target size of the FRI final polynomial (coefficients). Lower = tighter
-/// degree bound but more folding layers. 16 is standard for STARK soundness.
+/// Target size of the FRI final polynomial (coefficients).
+///
+/// [B1] The published SIZE is not the degree bound. All 16 slots ship, but only
+/// the first `*_FRI_FINAL_POLY_DEGREE_BOUND` of them may be non-zero — that is
+/// what makes the terminal FRI test able to reject anything at all. See
+/// `CircuitConfig.fri_final_poly_degree_bound` in the verifier.
 pub(crate) const FRI_FINAL_POLY_SIZE: usize = 16;
 
 /// [P2.2] Circuit 6 (merkle_update) target size. Uses the default 16 (matching
@@ -5491,7 +5507,8 @@ fn boundary_spec_for_quotient(spec: &QuotientSpec) -> Option<(u8, [u8; 8])> {
 ///
 /// [P2.2] `fri_final_poly_size` threads through to `fri_commit_phase`; see
 /// the constants `FRI_FINAL_POLY_SIZE` (16 — circuits 0–5) and
-/// `MERKLE_UPDATE_FRI_FINAL_POLY_SIZE` (256 — circuit 6). Must match the
+/// `MERKLE_UPDATE_FRI_FINAL_POLY_SIZE` (also 16 — this comment said 256, which
+/// was never true against the constant). Must match the
 /// on-chain verifier's `CircuitConfig.fri_final_poly_size`. `num_queries` is
 /// also per-circuit (27 for circuits 0–5, 22 for circuit 6 — see
 /// `MERKLE_UPDATE_NUM_QUERIES`).
@@ -5898,13 +5915,16 @@ const GENERIC_BLOWUP: usize = 16;
 const GENERIC_FRI_FINAL_POLY_DEGREE_BOUND: usize = 8;
 const GENERIC_NUM_QUERIES: usize = 27;
 /// [P2.2] Circuit 6 uses fewer queries (22 vs 27) to fit its 10-col trace
-/// under the 1.4M Solana BPF CU cap. Soundness: 22×4 + 16 = 104 bits,
-/// still well above the 100-bit classical floor.
+/// under the 1.4M Solana BPF CU cap.
+///
+/// [B1] Soundness is ~38 bits (22 * 1.000 + 16), not the 22*4 + 16 = 104 this
+/// comment used to claim. See the soundness note at the top of this file.
 const MERKLE_UPDATE_NUM_QUERIES: usize = 22;
 /// [P2.2g] Circuits 3 and 5 (width=6, trace=512, lde=8192) also drop to 22
 /// queries so phase-1 FRI + per-query checks fits within 1.4M CU. DEEP-ALI
-/// still runs, but in phase 2 (`verify_deep_ali_phase2`). Soundness identical
-/// to C6: 22×4 + 16 = 104 bits.
+/// still runs, but in phase 2 (`verify_deep_ali_phase2`).
+///
+/// [B1] Soundness identical to C6: ~38 bits, not 104.
 const HEAVY_GENERIC_NUM_QUERIES: usize = 22;
 
 /// Generate compact proof for denominated pool commitment.

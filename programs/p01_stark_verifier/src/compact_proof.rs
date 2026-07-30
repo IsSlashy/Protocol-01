@@ -103,8 +103,11 @@ pub const CONFIG_BALANCE_PROOF: CircuitConfig = CircuitConfig {
 ///
 /// [P2.2g] num_queries dropped 27→22 so phase-1 FRI (LDE=8192, 13 merkle
 /// layers per query) fits under the 1.4M Solana BPF CU cap. DEEP-ALI is
-/// split off to `verify_deep_ali_phase2` (same as circuit 6). Soundness:
-/// 22×4 + 16 = 104 bits, comfortably above the 100-bit classical floor.
+/// split off to `verify_deep_ali_phase2` (same as circuit 6).
+///
+/// [B1] Soundness is 22 * 1.000 + 16 = ~38 bits at the MEASURED rate, not the
+/// 22*4 + 16 = 104 this comment used to claim. See `num_queries` on
+/// `CircuitConfig`.
 pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
     trace_width: 6,
     trace_length: 512, // depth 15: 15 * 32 = 480, next_pow2 = 512
@@ -134,7 +137,10 @@ pub const CONFIG_CONFIDENTIAL_BALANCE: CircuitConfig = CircuitConfig {
 ///
 /// [P2.2g] num_queries dropped 27→22 for the same reason as merkle_path:
 /// LDE=8192 with the transition polynomial pushes phase-1 FRI above 1.4M CU
-/// at 27 queries. Soundness: 104 bits via 22×4 + 16 grinding.
+/// at 27 queries.
+///
+/// [B1] Soundness is ~38 bits (22 * 1.000 + 16), not the 104 this comment used
+/// to claim.
 ///
 /// [#2 voie A — REBAKE DONE] The prover/AIR side in
 /// `stark/src/air/transfer.rs` enforces value conservation: trace width is
@@ -167,13 +173,15 @@ pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
 /// to every other circuit (3–6 cols). Two knobs were tuned to fit the 1.4M
 /// BPF CU cap:
 ///
-/// - `fri_final_poly_size = 256`: 4 committed FRI layers instead of 8 —
-///   saves ~150k CU in FRI merkle hashing, costs ~104k CU in extra Horner
-///   (256-coeff final poly). Net ~46k CU saved.
 /// - `num_queries = 22` (vs 27 for circuits 0-5): 18.5% fewer per-query
 ///   merkle paths, constraint evaluations, and Horner calls. Saves ~200k CU.
-///   Soundness drops from 27×4+16 = 124 bits to 22×4+16 = 104 bits, still
-///   comfortably above the 100-bit industry floor.
+///
+/// [B1] This block used to say `fri_final_poly_size = 256`, which was never true
+/// against the constant below (16), and to quote 124 -> 104 bits from
+/// `num_queries * log2(blowup)`, which is the wrong formula. The real figures are
+/// ~43 bits at 27 queries and ~38 at 22, at the MEASURED rate of 1.000 bits per
+/// query. verify.rs used to carry a THIRD number for the same 16 ("circuit 6
+/// uses 64"); that is gone too.
 pub const CONFIG_MERKLE_UPDATE: CircuitConfig = CircuitConfig {
     trace_width: 10,
     trace_length: 512,
@@ -207,9 +215,21 @@ pub const TRACE_WIDTH: usize = 3;
 pub const TRACE_LENGTH: usize = 32;
 pub const BLOWUP: usize = 16;
 pub const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
-// Soundness: NUM_QUERIES × log2(BLOWUP) + GRINDING_BITS.
-// 27 × 4 + 16 = 124 bits classical, > 100-bit target.
-// For PQ-96 move to 40 queries + 32-bit grinding.
+// [B1] SOUNDNESS, HONESTLY. num_queries * log2(1/rho) + grinding_bits at the
+// MEASURED rho, NEVER num_queries * log2(blowup).
+//
+// The FRI rate is ~1/2, not 1/blowup: deg(Q) = 8n-8 on a 16n LDE, MEASURED as
+// 4088 at n = 512, so each query is worth 1.000 bit, not 4. That figure is
+// pinned as an observation by `t5_aliased_terminal_poly_agrees_at_exactly_the_even_indices` in programs/p01_stark_verifier/tests/b1_deep_binding.rs, which
+// shows an aliased degree-<8 terminal polynomial agreeing with the true 16-value
+// final layer at exactly 8 of 16 points.
+//
+// Post-B1: ~43 bits for circuits 0/1/2/4 (27 queries) and ~38 bits for circuits
+// 3/5/6 (22 queries). Pre-B1 a coordinated forgery was FREE, so this is a move
+// from zero to ~2^38 hashes, which is hours on a GPU. It is NOT 100 bits and NOT
+// the 124 this comment used to claim. Raising rho is B2 and is a wire-format
+// change. No README, CV, pitch or tweet number above ~43 bits until B2 lands and
+// is MEASURED.
 pub const NUM_QUERIES: usize = 27;
 pub const GRINDING_BITS: u32 = 16;
 pub const MERKLE_DEPTH: usize = 9; // log2(512) = 9

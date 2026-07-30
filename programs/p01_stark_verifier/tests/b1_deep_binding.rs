@@ -530,3 +530,70 @@ fn t5_aliased_terminal_poly_agrees_at_exactly_the_even_indices() {
     );
     assert!(disagree.iter().all(|j| j % 2 == 1), "disagreement must be the odd indices");
 }
+
+// ============================================================================
+// One-sided-fix tripwire, in the style of `route_c_trace_pair.rs`.
+// ============================================================================
+
+const VERIFY_SRC_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/verify.rs");
+const EMBEDDED_VERIFY_SRC: &str = include_str!("../src/verify.rs");
+
+/// The DEEP derivation, as literal source text. TWO call sites, one per FRI
+/// function: `verify_fri_generic` and `verify_fri_legacy`.
+const DEEP_CALL_SITE: &str = "let gamma = derive_deep_coeff(&base_seed);";
+const DEEP_CALL_SITES_EXPECTED: usize = 2;
+
+/// The terminal degree bound, likewise. TWO call sites.
+const BOUND_CALL_SITE: &str = "check_final_poly_degree_bound(";
+/// One definition plus two call sites.
+const BOUND_OCCURRENCES_EXPECTED: usize = 3;
+
+/// A generic-only B1 must not be able to land silently.
+///
+/// The legacy C0 path is the SOLE verifier for four shipped instructions
+/// (`zk_shielded::{pause,resume,cancel_private_stark}` and
+/// `p01_quantum_wallet/src/stark.rs`). If the DEEP derivation were removed from
+/// it — or never added — those four would stay exactly as forgeable as they were
+/// before B1, and every honest-proof test in this repo would still be green,
+/// because the prover and verifier would simply agree to fold the quotient.
+///
+/// Same rationale as `all_four_trace_authentication_call_sites_are_present` in
+/// `route_c_trace_pair.rs`, which was MEASURED to catch a concurrent process
+/// deleting all four trace-authentication blocks: a source-text count is the one
+/// assertion that still means something when the crate does not compile, and it
+/// makes a half-restored tree legible rather than merely broken.
+#[test]
+fn both_fri_paths_derive_the_deep_coefficient_and_check_the_degree_bound() {
+    let on_disk = std::fs::read_to_string(VERIFY_SRC_PATH)
+        .unwrap_or_else(|e| panic!("cannot read {VERIFY_SRC_PATH}: {e}"));
+
+    assert_eq!(
+        on_disk, EMBEDDED_VERIFY_SRC,
+        "\n\n  >>> STALE TEST BINARY <<<\n  {VERIFY_SRC_PATH} on disk differs from the \
+         copy compiled into this exe ({} bytes on disk, {} compiled in). Rebuild and \
+         require a literal `Compiling p01_stark_verifier` line before believing any \
+         result from this file.\n",
+        on_disk.len(),
+        EMBEDDED_VERIFY_SRC.len(),
+    );
+
+    let deep = on_disk.matches(DEEP_CALL_SITE).count();
+    assert_eq!(
+        deep, DEEP_CALL_SITES_EXPECTED,
+        "\n\n  >>> DEEP BINDING MISSING FROM A FRI PATH <<<\n  {VERIFY_SRC_PATH} contains \
+         {deep} `{DEEP_CALL_SITE}` call sites, expected {DEEP_CALL_SITES_EXPECTED} (one in \
+         verify_fri_generic, one in verify_fri_legacy).\n  With one gone, that path folds \
+         the raw quotient again and a coordinated OOD forgery is ACCEPTED there. The \
+         legacy path is the sole verifier for four shipped instructions.\n",
+    );
+
+    let bound = on_disk.matches(BOUND_CALL_SITE).count();
+    assert_eq!(
+        bound, BOUND_OCCURRENCES_EXPECTED,
+        "\n\n  >>> TERMINAL DEGREE BOUND MISSING <<<\n  {VERIFY_SRC_PATH} contains {bound} \
+         `{BOUND_CALL_SITE}` occurrences, expected {BOUND_OCCURRENCES_EXPECTED} (the \
+         definition plus one call per FRI path).\n  Without it the DEEP binding buys \
+         EXACTLY ZERO bits: an adversary folds his own composition honestly and publishes \
+         its true 16-coefficient interpolant, and every check passes.\n",
+    );
+}
