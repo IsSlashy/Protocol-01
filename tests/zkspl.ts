@@ -313,6 +313,37 @@ function buildVerifyStarkProofV2Ix(
   });
 }
 
+/**
+ * Phase 2 — `verify_deep_ali_phase2`. Mandatory for circuits 1-6; it is what
+ * sets `ProofBuffer.deep_ali_verified` (byte 82).
+ *
+ * p01_zkspl requires that byte (`stark_proof.rs`), so a phase-1-only buffer is
+ * rejected. Phase 1 is not an AIR check on its own — `verify_quotient_at_query`
+ * enforces nothing, so a `verified`-only buffer does not bind the declared
+ * public inputs to the committed trace.
+ *
+ * Discriminator matches every shipped client, e.g.
+ * `apps/mobile/services/stark/index.ts:49`.
+ */
+function buildVerifyDeepAliPhase2Ix(
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+  publicInputs: bigint[],
+): TransactionInstruction {
+  const disc = Buffer.from([217, 239, 203, 65, 109, 182, 70, 115]);
+  const vecLen = Buffer.alloc(4);
+  vecLen.writeUInt32LE(publicInputs.length, 0);
+  const inputBufs = publicInputs.map(u64LeToBuffer);
+  return new TransactionInstruction({
+    programId: STARK_VERIFIER_ID,
+    keys: [
+      { pubkey: proofBuffer, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    data: Buffer.concat([disc, vecLen, ...inputBufs]),
+  });
+}
+
 function buildResizeProofBufferIx(
   proofBuffer: PublicKey,
   authority: PublicKey,
@@ -616,9 +647,32 @@ async function uploadAndVerifyProof(
     );
   });
 
+  // Phase 2 — DEEP-ALI at OOD. Every zkSPL circuit that reaches this helper is
+  // 2 or 4, both inside the 1-6 range `verify_deep_ali_phase2` accepts, and
+  // p01_zkspl now requires the flag it sets. Combined phase 1+2 exceeds the
+  // 1.4M CU per-instruction budget, so it is a separate transaction — same
+  // split every shipped client uses (e.g. apps/mobile/services/stark/index.ts).
+  await withRetry(async () => {
+    await sendAndConfirmTransaction(
+      connection,
+      new Transaction()
+        .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
+        .add(
+          buildVerifyDeepAliPhase2Ix(
+            proofBufferPDA,
+            authority.publicKey,
+            proof.publicInputs,
+          ),
+        ),
+      [authority],
+      { commitment: 'confirmed', skipPreflight: true },
+    );
+  });
+
   const info = await connection.getAccountInfo(proofBufferPDA);
   if (!info) throw new Error('Proof buffer missing after verify');
   if (info.data[49] !== 1) throw new Error('Proof buffer not marked verified');
+  if (info.data[82] !== 1) throw new Error('Proof buffer not marked deep_ali_verified');
 
   return proofBufferPDA;
 }

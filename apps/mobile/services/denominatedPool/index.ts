@@ -1790,6 +1790,30 @@ export async function unshieldStark(
 ): Promise<string> {
   const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_POOL_COMMITMENT, getProofBufferPDA } = await import('../stark');
 
+  // The instant path is closed, and it is closed here — before any proof work,
+  // any fee, and any on-chain write — rather than letting the user pay for a
+  // proof that ends in an unrecoverable transfer.
+  //
+  // `prefund` pays the user out of the LP reserve and `settle` is supposed to
+  // reclaim it by CPI into `zk_shielded::unshield_denominated_stark`. That
+  // instruction's `#[program]` registration is commented out
+  // (`programs/zk_shielded/src/lib.rs:152-172`) in favour of
+  // `unshield_denominated_stark_v3`, so zk_shielded will not dispatch the
+  // discriminator `settle` sends. Every prefund opened today is therefore a
+  // permanent loss from the reserve.
+  //
+  // The program side fails closed too: `init_pool` now creates the pool with
+  // `is_active = false` and `prefund` requires `is_active`. This throw exists
+  // so the app does not offer a button whose only outcome is an on-chain
+  // rejection. Re-enable both together, once `settle` has a v3 path.
+  if (instant) {
+    throw new Error(
+      'Instant unshield is disabled: p01_liquidity.settle still CPIs the retired ' +
+        'zk_shielded.unshield_denominated_stark, so a prefund could never be settled. ' +
+        'Use the standard unshield.',
+    );
+  }
+
   onProgress?.('Reading wallet...');
   const keypair = overrideKeypair || (walletSigner ? null : await getKeypair());
   if (!keypair && !walletSigner) throw new Error('Wallet not found');
@@ -1874,6 +1898,11 @@ export async function unshieldStark(
     // Step 2a: Instant path — route through p01_liquidity.prefund. The STARK
     // proof buffer remains open; settle() (keeper or later UI action) will
     // consume it via CPI into zk_shielded.unshield_denominated_stark.
+    //
+    // UNREACHABLE: the guard at the top of this function throws on
+    // `instant`, because that CPI target is no longer registered and a prefund
+    // could never be settled. Kept intact — not deleted — so re-enabling is one
+    // guard removal once `settle` has a v3 path.
     if (instant) {
       onProgress?.('Requesting instant liquidity prefund...');
       const { buildPrefundIx } = await import('../liquidity');

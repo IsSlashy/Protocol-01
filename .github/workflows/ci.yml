@@ -70,6 +70,40 @@ jobs:
       - name: Test
         run: pnpm turbo run test --continue
 
+      # [PROVER ARTIFACT SKEW] BLOCKING, and separate from `pnpm turbo run test`
+      # above because that runs with `--continue` and this must not be advisory.
+      #
+      # `packages/stark-prover/wasm/p01_stark_bg.wasm` is a git-tracked,
+      # npm-published, PREBUILT binary — the prover every client actually runs
+      # (extension service worker, mobile WebView, privacy-SDK loader), inlined as
+      # base64 into four more tracked files. Nothing in this repo rebuilt any of
+      # them: there is no `wasm-pack` step in any package.json or workflow.
+      #
+      # MEASURED before the Route C reship: the checked-in blob emitted a 79,993-byte
+      # circuit-0 proof while the Rust prover at the same commit emitted 45,001 —
+      # i.e. the shipped prover predated B4, the domain-separation tags AND Route C,
+      # so every client-generated proof was old-format against the on-chain verifier.
+      # It fails closed, so that was a functional break of the shipped proving path
+      # rather than a soundness hole. Nothing detected it: the only assertion on WASM
+      # output anywhere was `expect(proofBytes.length).toBeGreaterThan(1024)`.
+      #
+      # Two gates, because they catch different failures:
+      #   --check       every inlined twin carries the SAME bytes as the canonical
+      #                 blob (catches a PARTIAL reship)
+      #   wireFormat    the canonical blob's seven proof sizes equal the literals
+      #                 `route_c_trace_pair.rs` pins for the Rust prover (catches a
+      #                 STALE reship — all five copies agreeing on the wrong bytes)
+      #
+      # Regenerate with:
+      #   wasm-pack build stark --target web --out-dir wasm-out -- --features wasm
+      #   cp stark/wasm-out/p01_stark_bg.wasm packages/stark-prover/wasm/
+      #   cp stark/wasm-out/p01_stark.js      packages/stark-prover/wasm/
+      #   node packages/stark-prover/scripts/stark-wasm-twins.mjs --write
+      - name: WASM prover artifact skew (BLOCKING — twins + wire-format pin)
+        run: |
+          node packages/stark-prover/scripts/stark-wasm-twins.mjs --check
+          pnpm --filter @protocol-01/stark-prover test
+
   rust-programs-build:
     name: Rust — Programs cargo check
     runs-on: ubuntu-latest
@@ -83,6 +117,21 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+
+      # Needed by the proof-buffer gate step below: those tests build real SBF
+      # bytecode with cargo-build-sbf and execute it under litesvm. Without a
+      # Solana CLI here the harness panics (by design — it never skips and
+      # passes), so this install is part of the gate, not a convenience.
+      - name: Install Solana CLI (Agave) — required by the SBF gate tests
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v2.2.14/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      - name: Cache Solana platform-tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/solana
+          key: solana-platform-tools-2.2.14
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -132,16 +181,181 @@ jobs:
       # runs the prover under three deliberately different pair layouts and
       # asserts the verifier rejects each with MerkleProofFailed. If it is not
       # executed, a silent prover/verifier disagreement is possible.
-      - name: cargo test (verifier — the periodic-column, field and pair-leaf pins)
+      # [DOMAIN SEP] `tests/merkle_domain_sep.rs` is the fails-closed guard for
+      # Merkle leaf/node domain separation. Untagged, `leaf = SHA256(preimage)`
+      # and `node = SHA256(l ‖ r)` were the SAME function, so a genuine internal
+      # node could be re-presented as a leaf whose preimage is that node's own
+      # two children, with the node's real siblings as the path — and the walk
+      # landed on the real root. Nothing else in the suite catches that: every
+      # other test opens leaves the prover actually built, so it never asks the
+      # question. The test also pins the prover's tags against the verifier's;
+      # the two crates declare them independently and a one-sided edit breaks
+      # every honest proof.
+      # [ROUTE C] `tests/route_c_trace_pair.rs` is the fails-closed guard for the
+      # pair-leaf TRACE commitment. Two things need guarding that nothing else
+      # covers:
+      #   1. The version-skew seam. Prover and verifier must agree on the pair
+      #      index, which row is the low half, the path depth, and the fact that
+      #      the tree is pair-leafed at all — none of which travel on the wire. At
+      #      trace_width == 4 (C2, C4) the old and new wire formats are the SAME
+      #      NUMBER OF BYTES, so every length check passes and the Merkle check is
+      #      the only thing that rejects an old-format proof. Measured: with the
+      #      trace openings removed, an old-format C4 proof gets all the way to
+      #      TransitionConstraintFailed.
+      #   2. The mirror rows. Route C puts two extra trace rows per query on the
+      #      wire. They are authenticated and — in this revision — never read, so
+      #      no other test would notice if they stopped being bound to trace_root.
+      # It also pins the C0 gate: circuit 0 must be refused by name on the generic
+      # dispatch, because the generic path cannot verify an honest C0 proof
+      # (measured: DeepAliFailed) while four shipped instructions require id 0.
+      #
+      # `route_c_trace_pair::all_four_trace_authentication_call_sites_are_present`
+      # is the pre-land assertion. MEASURED during the round-3 review: a concurrent
+      # process deleted ALL FOUR `verify_merkle_path_2seg` blocks from verify.rs —
+      # both in `verify_merkle_proofs_generic` and both in the legacy C0 path — and
+      # `git status` read ` M verify.rs` before and after, identically. That test
+      # counts the call sites in the source on disk and names the missing surface,
+      # so a half-restored tree cannot be landed by someone who sees green elsewhere.
+      - name: cargo test (verifier — the periodic-column, field, pair-leaf, domain-sep and Route-C pins)
         run: |
           cargo test -p p01_stark_verifier --lib
           cargo test -p p01_stark_verifier --release --test periodic_stride
           cargo test -p p01_stark_verifier --release --test fri_end_to_end
           cargo test -p p01_stark_verifier --release --test b4_pair_leaf
+          cargo test -p p01_stark_verifier --release --test merkle_domain_sep
+          cargo test -p p01_stark_verifier --release --test route_c_trace_pair
 
-      - name: cargo clippy (warnings as errors on hot programs)
+      # [PROVER] The prover half of every pin above, plus the LDE coset sequencing
+      # companion (`compact::lde_coset_sequencing::lde_has_no_coset_offset_measured_today`).
+      # That test is GREEN today and goes RED the moment an LDE coset offset lands —
+      # deliberately, so the coset fix cannot be landed without touching the tripwire
+      # it unblocks. `aligned_hits_is_zero_once_the_domain_is_shifted` is its positive
+      # control, so `hits == checked` cannot be a predicate that is simply always true.
+      - name: cargo test (prover — p01-stark lib pins incl. the LDE coset companion)
+        run: cargo test -p p01-stark --lib --release
+
+      # [SEQUENCING] Route C's mirror rows are authenticated and NEVER READ in this
+      # revision (probed: 1,296 single-bit flips on C1 produced exactly one outcome,
+      # MerkleProofFailed — no constraint/DEEP/FRI step reads them). So on its own
+      # Route C buys +704/+1,056/+2,112 bytes on the three largest circuits and a 2x
+      # amplification of the LIVE raw-witness leak, with the soundness benefit arriving
+      # only when step 4's H recomputation consumes those rows.
+      #
+      # This step prints the verdict and does NOT fail the job. The tripwire test is
+      # RED when run, by design, and a permanently-red required step gets deleted
+      # rather than obeyed (see the clippy --all-targets note above for the same
+      # failure mode). The MECHANICAL enforcement is the companion test in the
+      # blocking step above, which goes red when the coset fix lands.
+      #
+      # Two ways to clear it: land the LDE coset offset, or hold the Route C wire
+      # change until step 4 ships with it.
+      - name: LDE coset sequencing tripwire (ADVISORY — RED BY DESIGN until the coset fix)
+        run: |
+          echo "::group::LDE coset sequencing verdict"
+          cargo test -p p01-stark --lib --release lde_coset_sequencing -- --ignored --nocapture \
+            || echo "::warning title=Route C sequencing::LDE has no coset offset — Route C must NOT reach a deployed verifier. Land the coset offset, or hold the Route C wire change until step 4."
+          echo "::endgroup::"
+        continue-on-error: true
+
+      # STARK verification of circuits 1-6 is two instructions:
+      #   verify_stark_proof_v2   -> ProofBuffer.verified          (byte 49)
+      #   verify_deep_ali_phase2  -> ProofBuffer.deep_ali_verified (byte 82)
+      # Phase 1 alone is not an AIR check — `verify_quotient_at_query` enforces
+      # nothing and boundary constraints fire only on a query that is both
+      # trace-aligned and on an assertion row — so a consumer gating on byte 49
+      # alone accepts a proof whose declared public inputs are bound to nothing.
+      # p01_liquidity::prefund and every p01_zkspl proof consumer did exactly
+      # that, and both were demonstrated paying out under litesvm on a
+      # hand-built phase-1-only buffer.
+      #
+      # `--lib` pins the byte LAYOUTS the gates read (min length 83, flag at 82,
+      # inputs-hash slice stopping before it, DenominatedPool field offsets).
+      # It does NOT execute a single `require!`: measured during review, both
+      # `require!(deep_ali_verified, ..)` lines were deleted and `--lib` stayed
+      # green on both crates. So it runs here as a layout pin and nothing more.
+      #
+      # `--test deep_ali_gate` is the actual gate. Each harness compiles the
+      # crate to real SBF bytecode (its own --sbf-out-dir + CARGO_TARGET_DIR,
+      # cached on a content fingerprint of src/, so it can never be a gate on
+      # stale bytes in target/deploy/) and asserts the accept/reject decision a
+      # validator would make. A missing build tool panics with the compiler
+      # output; it never skips and passes.
+      #
+      # Covered: the DEEP-ALI gate on prefund/withdraw/prove_balance; prefund's
+      # payout binding (`amount == denomination`), its pool allowlist
+      # (`denominated_pool.authority == pool.admin`, since zk_shielded pool
+      # creation is permissionless and the denomination is otherwise
+      # attacker-chosen), its replay bound (PrefundRecord keyed on the proven
+      # `nullifier[..8]`), and the `init_pool` kill switch. Each file carries
+      # positive controls, so "reject everything" cannot make this step green.
+      - name: cargo test (proof-buffer gate — layout pins, no require! executed)
+        run: |
+          cargo test -p p01_liquidity --lib
+          cargo test -p p01_zkspl --lib
+
+      # P01_CARGO_BUILD_SBF is set explicitly rather than left to the harness's
+      # PATH fallback: a silent fallback to a different tool is the kind of
+      # thing that turns a gate into a coin flip. `test -x` fails the job if the
+      # install step did not produce it.
+      - name: cargo test (proof-buffer + payout gates, real SBF bytecode under litesvm)
+        run: |
+          export P01_CARGO_BUILD_SBF="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
+          test -x "$P01_CARGO_BUILD_SBF" || { echo "cargo-build-sbf missing at $P01_CARGO_BUILD_SBF"; exit 1; }
+          cargo test -p p01_liquidity --test deep_ali_gate -- --nocapture
+          cargo test -p p01_zkspl     --test deep_ali_gate -- --nocapture
+
+      # [CU] `tests/cu_budget.rs` is the ONLY thing in this repo that measures compute
+      # units or proof bytes against real SBF bytecode, and until this step existed it
+      # appeared in no workflow — so the 1,400,000 CU ceiling was never checked
+      # automatically and Route C's +2,112 B / +3 chunks on C6 was caught by nothing.
+      #
+      # Two round-3 fixes make it a gate rather than a table:
+      #   * It BUILDS the .so it measures (its own --sbf-out-dir + CARGO_TARGET_DIR,
+      #     cached on a content fingerprint of src/), so there is no path by which it
+      #     reports CU for bytes that predate the change under test. The old behaviour
+      #     was a `println!` warning, and MEASURED: a green run on stale bytes happened
+      #     during this very step's development.
+      #   * `CU_CEILINGS` pins phase-1 and phase-2 CU per circuit at measured*1.02.
+      #     Before that, a regression from 474K to 1,399K CU passed silently — it is
+      #     under the cap, so nothing objected.
+      #     `cu_ceiling_check_rejects_a_regression_and_accepts_the_recorded_numbers`
+      #     carries the positive and negative controls, so "reject nothing" cannot make
+      #     this step green.
+      #
+      # --release is not optional: the harness generates eleven real STARK proofs.
+      # `cu_budget_c7_phase2_probe` is filtered out — its throwaway probe program is
+      # gitignored, and a missing artifact is a panic by design, so it cannot run here.
+      - name: cargo test (CU budget — measured CU + proof bytes, self-built SBF bytecode)
+        run: |
+          export P01_CARGO_BUILD_SBF="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
+          test -x "$P01_CARGO_BUILD_SBF" || { echo "cargo-build-sbf missing at $P01_CARGO_BUILD_SBF"; exit 1; }
+          cargo test -p p01_stark_verifier --release --test cu_budget \
+            -- --nocapture --test-threads=1 \
+            cu_budget_real_circuits cu_budget_verify_uniform_path cu_ceiling
+
+      # [ROUTE C] `p01_stark_verifier` is split out and BLOCKING. It was under the
+      # shared `continue-on-error: true` below, which made every warning on it
+      # advisory — including the unused-variable warning that is the only signal a
+      # PARTIAL deletion of the trace-commitment check leaves behind. MEASURED
+      # during review: with all four `verify_merkle_path_2seg` blocks removed but
+      # their `let (lo, hi) = ...` locals left in place, clippy is the only gate
+      # that reacts, and `continue-on-error` swallowed it.
+      #
+      # MEASURED here, on the tree this comment ships with:
+      #   cargo clippy -p p01_stark_verifier -- -D warnings           -> exit 0
+      #   cargo clippy -p p01_stark_verifier --all-targets -- -D ...  -> 105 errors
+      # so this is deliberately NOT `--all-targets`. `--all-targets` builds the
+      # dev-dependency `p01-stark`, which carries 105 untriaged clippy findings
+      # (`too_many_arguments` and friends). Widening the scope here would make the
+      # step permanently red and it would be reverted, which is worse than the
+      # narrower gate. Triaging `p01-stark` is a separate job.
+      - name: cargo clippy (BLOCKING — verifier)
+        run: cargo clippy -p p01_stark_verifier -- -D warnings
+
+      # These two still carry pre-existing warnings that nobody has triaged, so
+      # they stay advisory. Do not fold the verifier back in here.
+      - name: cargo clippy (advisory — zk_shielded, relayer)
         run: |
           cargo clippy -p zk_shielded -- -D warnings
-          cargo clippy -p p01_stark_verifier -- -D warnings
           cargo clippy -p p01_relayer -- -D warnings
         continue-on-error: true

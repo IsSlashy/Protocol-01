@@ -168,11 +168,197 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn verifier_so_path() -> PathBuf {
-    match std::env::var("P01_VERIFIER_SO") {
-        Ok(p) => PathBuf::from(p),
-        Err(_) => repo_root().join("target/deploy/p01_stark_verifier.so"),
+/// The `.so` under test, and whether the harness produced it itself.
+///
+/// # Why this is not just `target/deploy/`
+///
+/// Until this revision the harness read `target/deploy/p01_stark_verifier.so`
+/// and merely *printed* a warning when `src/` was newer. MEASURED: a green run
+/// on bytes that predate the change under test was therefore possible, and it
+/// happened — the first `cu_budget` run of the Route C work measured a `.so`
+/// dated 04:29 and reported pre-Route-C numbers as if they were post-Route-C.
+/// A warning is not a gate.
+///
+/// So by default the harness now BUILDS the artifact it measures, with the
+/// toolchain `Anchor.toml` pins, through a private `--sbf-out-dir` and a private
+/// `CARGO_TARGET_DIR` (so it never contends for the target lock held by the
+/// `cargo test` that invoked it, and never reads or writes anchor's
+/// `target/deploy/`), cached on a content fingerprint of `src/`. Same mechanism
+/// as `p01_liquidity`/`p01_zkspl`'s `deep_ali_gate` harnesses.
+///
+/// `P01_VERIFIER_SO` still points the harness at a prebuilt artifact — that is
+/// the "measure exactly what is on devnet" use case and it is legitimate — but
+/// in that mode `assert_artifact_is_current` requires the artifact to be at
+/// least as new as `src/`, so the stale-bytes trap is closed on both paths.
+enum SoUnderTest {
+    /// Built by this harness from the `src/` tree next to it.
+    SelfBuilt { path: PathBuf, fingerprint: String, cached: bool },
+    /// Supplied by the caller via `P01_VERIFIER_SO`.
+    Supplied { path: PathBuf },
+}
+
+impl SoUnderTest {
+    fn path(&self) -> &Path {
+        match self {
+            SoUnderTest::SelfBuilt { path, .. } | SoUnderTest::Supplied { path } => path,
+        }
     }
+
+    /// One line describing provenance, printed above every table.
+    fn provenance(&self) -> String {
+        match self {
+            SoUnderTest::SelfBuilt { fingerprint, cached, .. } => format!(
+                "SELF-BUILT by this harness from programs/p01_stark_verifier/src \
+                 (source fp {}, {})",
+                &fingerprint[..16],
+                if *cached { "cache hit" } else { "rebuilt" },
+            ),
+            SoUnderTest::Supplied { .. } => {
+                "SUPPLIED via P01_VERIFIER_SO — provenance is the caller's claim, not this \
+                 harness's"
+                    .to_string()
+            }
+        }
+    }
+}
+
+/// sha256 over every `.rs` under `src/`, plus `Cargo.toml` and the workspace
+/// `Cargo.lock`, path-sorted and length-delimited. Any edit to the verifier —
+/// including deleting a `verify_merkle_path_2seg` call — changes it.
+fn source_fingerprint() -> String {
+    fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                collect(&p, out);
+            } else if p.extension().and_then(|s| s.to_str()) == Some("rs") {
+                out.push(p);
+            }
+        }
+    }
+
+    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = crate_dir.join("src");
+    let mut files = Vec::new();
+    collect(&src, &mut files);
+    assert!(
+        !files.is_empty(),
+        "no .rs files under {} — the fingerprint would be vacuous and the staleness \
+         check meaningless",
+        src.display()
+    );
+    files.sort();
+    files.push(crate_dir.join("Cargo.toml"));
+    files.push(repo_root().join("Cargo.lock"));
+
+    let mut blob: Vec<u8> = Vec::new();
+    for f in &files {
+        let rel = f.strip_prefix(repo_root()).unwrap_or(f);
+        blob.extend_from_slice(rel.to_string_lossy().replace('\\', "/").as_bytes());
+        blob.push(0);
+        let bytes = std::fs::read(f).unwrap_or_else(|e| panic!("read {}: {}", f.display(), e));
+        blob.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+        blob.extend_from_slice(&bytes);
+    }
+    sha256_hex(&blob)
+}
+
+/// The `cargo-build-sbf` this repo pins (`Anchor.toml` `solana_version`).
+///
+/// Not the one on `PATH`: on the founder's machine that is agave 2.2.14 and it
+/// dies with `Failed to install platform-tools: os error 183`. Set
+/// `P01_CARGO_BUILD_SBF` to override.
+fn cargo_build_sbf() -> PathBuf {
+    if let Ok(p) = std::env::var("P01_CARGO_BUILD_SBF") {
+        return PathBuf::from(p);
+    }
+    let solana_version = std::fs::read_to_string(repo_root().join("Anchor.toml"))
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.trim_start().starts_with("solana_version"))
+                .and_then(|l| l.split('"').nth(1).map(str::to_string))
+        })
+        .unwrap_or_else(|| "3.1.9".to_string());
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default();
+    for exe in ["cargo-build-sbf.exe", "cargo-build-sbf"] {
+        let p = Path::new(&home).join(format!(
+            ".local/share/solana/install/releases/{}/solana-release/bin/{}",
+            solana_version, exe
+        ));
+        if p.exists() {
+            return p;
+        }
+    }
+    PathBuf::from("cargo-build-sbf")
+}
+
+fn verifier_so_path() -> SoUnderTest {
+    if let Ok(p) = std::env::var("P01_VERIFIER_SO") {
+        return SoUnderTest::Supplied { path: PathBuf::from(p) };
+    }
+
+    let fp = source_fingerprint();
+    let out_dir = repo_root().join("target/cu-budget");
+    let so = out_dir.join("p01_stark_verifier.so");
+    let fp_file = out_dir.join("p01_stark_verifier.srcfp");
+
+    let cached = so.exists()
+        && std::fs::read_to_string(&fp_file)
+            .map(|s| s.trim() == fp)
+            .unwrap_or(false);
+
+    if !cached {
+        std::fs::create_dir_all(&out_dir).expect("create cu-budget out dir");
+        // Drop the pair first: a fingerprint file must never outlive the
+        // artifact it describes, or a failed build leaves a stale artifact
+        // looking current.
+        let _ = std::fs::remove_file(&fp_file);
+        let _ = std::fs::remove_file(&so);
+
+        let tool = cargo_build_sbf();
+        eprintln!(
+            "[cu_budget] source fingerprint {} — rebuilding p01_stark_verifier with {}",
+            &fp[..16],
+            tool.display()
+        );
+        let out = std::process::Command::new(&tool)
+            .arg("--manifest-path")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+            .arg("--sbf-out-dir")
+            .arg(&out_dir)
+            .env("CARGO_TARGET_DIR", out_dir.join("sbf-target"))
+            .output()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "could not run {}: {}\n\n\
+                     This harness measures compute units of bytecode it builds itself, so a\n\
+                     missing build tool is a broken measurement, not a passing one. Set\n\
+                     P01_CARGO_BUILD_SBF to a working cargo-build-sbf, or point the harness at\n\
+                     a prebuilt artifact with P01_VERIFIER_SO.\n",
+                    tool.display(),
+                    e
+                )
+            });
+        if !out.status.success() || !so.exists() {
+            panic!(
+                "cargo-build-sbf failed for p01_stark_verifier (status {:?}, artifact present: \
+                 {})\n--- stderr ---\n{}\n--- stdout ---\n{}",
+                out.status.code(),
+                so.exists(),
+                String::from_utf8_lossy(&out.stderr),
+                String::from_utf8_lossy(&out.stdout),
+            );
+        }
+        std::fs::write(&fp_file, &fp).expect("write fingerprint");
+    }
+
+    SoUnderTest::SelfBuilt { path: so, fingerprint: fp, cached }
 }
 
 fn probe_so_path() -> PathBuf {
@@ -183,13 +369,18 @@ fn probe_so_path() -> PathBuf {
     }
 }
 
-/// Warn loudly if the `.so` under test predates the crate sources.
+/// FAIL if the `.so` under test predates the crate sources.
 ///
-/// A CU number is a property of a binary, not of a source tree. This harness
-/// deliberately defaults to `target/deploy/p01_stark_verifier.so` because that
-/// is the artifact that matches devnet — but if someone edits `verify.rs` and
-/// re-runs without rebuilding, the table below describes the OLD code. Say so
-/// rather than silently reporting a stale number.
+/// A CU number is a property of a binary, not of a source tree. This used to
+/// `println!` a warning and carry on, which meant a green run on stale bytes was
+/// possible — and it happened. `assert_artifact_is_current` below turns it into a
+/// failure.
+///
+/// Only reachable on the `P01_VERIFIER_SO` path now: a self-built artifact is
+/// keyed on a content fingerprint of `src/`, which is strictly stronger than an
+/// mtime comparison (an mtime check passes if someone edits a source and then
+/// rebuilds a *different* crate, because the `.so` ends up newer than the source
+/// it does not correspond to).
 fn staleness_note(so: &Path) -> Option<String> {
     let so_mtime = std::fs::metadata(so).ok()?.modified().ok()?;
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -207,8 +398,8 @@ fn staleness_note(so: &Path) -> Option<String> {
             "src/{} is NEWER than the .so under test — the numbers below describe the\n\
              OLD binary. Rebuild with `cargo-build-sbf --manifest-path \
              programs/p01_stark_verifier/Cargo.toml`\n\
-             if you want the current source measured, or keep this artifact if you want\n\
-             the deployed one.",
+             if you want the current source measured, or unset P01_VERIFIER_SO to let this\n\
+             harness build the artifact itself.",
             name
         ))
     } else {
@@ -400,9 +591,10 @@ fn tail(v: &[String], n: usize) -> Vec<String> {
 /// measurement, and a broken measurement must not report success. There is no
 /// environment variable that turns this into a skip — an opt-out would just
 /// reintroduce the silent green through a different door.
-fn load_verifier_or_fail(rig: &mut Rig, program: &Address) -> (PathBuf, usize, String) {
+fn load_verifier_or_fail(rig: &mut Rig, program: &Address) -> (SoUnderTest, usize, String) {
     let so = verifier_so_path();
-    match rig.load_program(program, &so) {
+    assert_artifact_is_current(&so);
+    match rig.load_program(program, so.path()) {
         Ok((len, hash)) => (so, len, hash),
         Err(e) => panic!(
             "\n\
@@ -419,10 +611,309 @@ fn load_verifier_or_fail(rig: &mut Rig, program: &Address) -> (PathBuf, usize, S
              Or point at an existing artifact:\n  \
              P01_VERIFIER_SO=/path/to/p01_stark_verifier.so cargo test ...\n\
              ============================================================\n",
-            so.display(),
+            so.path().display(),
             e
         ),
     }
+}
+
+/// A caller-supplied artifact must not predate `src/`. FAILS, does not warn.
+///
+/// The self-built path needs no check: it is keyed on a content fingerprint of
+/// `src/`, so a mismatch triggers a rebuild before this is reached.
+fn assert_artifact_is_current(so: &SoUnderTest) {
+    let SoUnderTest::Supplied { path } = so else {
+        return;
+    };
+    if let Some(note) = staleness_note(path) {
+        panic!(
+            "\n\
+             ============================================================\n\
+             STALE BINARY — refusing to report CU for bytes that predate src/.\n\
+             ============================================================\n\
+             path : {}\n\n\
+             {}\n\
+             ============================================================\n",
+            path.display(),
+            note,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-circuit CU ceilings — the actual regression gate
+// ---------------------------------------------------------------------------
+
+/// Phase-1 / phase-2 CU ceilings per circuit, as a RATCHET.
+///
+/// # Why a ceiling and not an equality pin
+///
+/// CU is deterministic for a given (binary, witness) pair, so an equality pin
+/// would be exact — and red on every legitimate edit, which means it would be
+/// deleted. A ceiling catches the thing that actually matters (drift toward the
+/// 1,400,000 cap) and stays green when a change makes the verifier cheaper.
+///
+/// Before this existed the only asserts in this file were "the measurement
+/// happened" and "there are seven rows". A regression from 474K to 1,399K CU
+/// passed silently — it is under the cap, so nothing objected, and the number
+/// just changed in a table nobody diffs.
+///
+/// # The numbers
+///
+/// Every `*_measured` below is a real `compute_units_consumed` from THIS harness
+/// on the Route C build (`.so` sha256 `e13073c6…`, 638,248 B, self-built from the
+/// `src/` tree these ceilings ship with — the same artifact, hash-matched, that
+/// the round-2 review measured independently).
+///
+/// Every `*_max` is `ceil(measured * 1.02)` rounded up to the next 1,000 — a
+/// uniform 2% band, wide enough for compiler-version noise and narrow enough that
+/// the "474K quietly became 1,399K" failure mode is red. It is COMPUTED from the
+/// measurement, not measured.
+///
+/// If you legitimately raise CU, raise the ceiling in the same commit and say
+/// why in the commit message. Do not widen the band to make a red run green.
+///
+/// C0 has no phase-2 instruction (`lib.rs:259-262` rejects circuit 0), so its
+/// phase-2 ceiling is `None` rather than a number that could never be exceeded.
+struct CuCeiling {
+    circuit_id: u8,
+    /// MEASURED phase-1 CU on the Route C build.
+    phase1_measured: u64,
+    /// COMPUTED ceiling asserted against: `measured * 1.02`, rounded up to 1,000.
+    phase1_max: u64,
+    /// MEASURED phase-2 CU, `None` where the instruction does not exist.
+    phase2_measured: Option<u64>,
+    phase2_max: Option<u64>,
+}
+
+const CU_CEILINGS: [CuCeiling; 7] = [
+    CuCeiling { circuit_id: 0, phase1_measured: 474_030, phase1_max: 484_000, phase2_measured: None,           phase2_max: None },
+    CuCeiling { circuit_id: 1, phase1_measured: 612_719, phase1_max: 625_000, phase2_measured: Some(122_730), phase2_max: Some(126_000) },
+    CuCeiling { circuit_id: 2, phase1_measured: 615_727, phase1_max: 629_000, phase2_measured: Some( 90_111), phase2_max: Some( 92_000) },
+    CuCeiling { circuit_id: 3, phase1_measured: 655_666, phase1_max: 669_000, phase2_measured: Some(113_515), phase2_max: Some(116_000) },
+    CuCeiling { circuit_id: 4, phase1_measured: 702_940, phase1_max: 717_000, phase2_measured: Some(177_719), phase2_max: Some(182_000) },
+    CuCeiling { circuit_id: 5, phase1_measured: 659_304, phase1_max: 673_000, phase2_measured: Some(198_551), phase2_max: Some(203_000) },
+    CuCeiling { circuit_id: 6, phase1_measured: 656_742, phase1_max: 670_000, phase2_measured: Some(120_345), phase2_max: Some(123_000) },
+];
+
+/// The band is COMPUTED, so assert the arithmetic rather than trusting a typo.
+///
+/// Without this, a fat-fingered `phase1_max: 6_250_000` would silently disable the
+/// gate for that circuit and every table above would still print `ok`.
+#[test]
+fn cu_ceilings_are_two_percent_over_the_recorded_measurement() {
+    fn band(measured: u64) -> u64 {
+        // ceil(measured * 1.02) rounded up to the next 1,000
+        let raw = (measured * 102).div_ceil(100);
+        raw.div_ceil(1_000) * 1_000
+    }
+    for c in CU_CEILINGS.iter() {
+        assert_eq!(
+            c.phase1_max,
+            band(c.phase1_measured),
+            "C{} phase-1 ceiling {} is not ceil(measured {} * 1.02) rounded to 1,000 = {} \
+             — either the measurement or the band was edited without the other",
+            c.circuit_id,
+            c.phase1_max,
+            c.phase1_measured,
+            band(c.phase1_measured),
+        );
+        match (c.phase2_measured, c.phase2_max) {
+            (Some(m), Some(max)) => assert_eq!(
+                max,
+                band(m),
+                "C{} phase-2 ceiling {} is not ceil({} * 1.02) rounded to 1,000 = {}",
+                c.circuit_id,
+                max,
+                m,
+                band(m),
+            ),
+            (None, None) => {}
+            _ => panic!(
+                "C{} declares a phase-2 measurement without a ceiling or vice versa",
+                c.circuit_id
+            ),
+        }
+        assert!(
+            c.phase1_max < MAX_CU_PER_IX,
+            "C{} phase-1 ceiling {} is at or over the {} cap — the ceiling would never fire",
+            c.circuit_id,
+            c.phase1_max,
+            MAX_CU_PER_IX,
+        );
+    }
+    assert_eq!(CU_CEILINGS.len(), 7, "one ceiling per shipping circuit C0..C6");
+}
+
+/// The ceiling check must be capable of failing. Prove it on synthetic rows.
+///
+/// `check_cu_ceilings` is the only thing standing between a CU regression and a
+/// green run, and it is fed by measurements that are always in-band on a healthy
+/// tree — so on a healthy tree its reject path is never exercised. This test
+/// exercises it directly:
+///
+///   * in-band rows          -> zero violations (the gate is not "reject always")
+///   * one row over ceiling  -> exactly one violation, naming that circuit
+///   * a phase-2 where the table says there is none -> a violation
+fn synthetic_row(circuit_id: u8, phase1: Measured, phase2: Measured) -> CircuitRow {
+    CircuitRow {
+        circuit_id,
+        label: "synthetic",
+        proof_bytes: 0,
+        num_chunks: 0,
+        init_cu: Measured::NotApplicable("synthetic"),
+        chunk_cu: Measured::NotApplicable("synthetic"),
+        phase1,
+        phase2,
+        prove_ms: 0,
+    }
+}
+
+#[test]
+fn cu_ceiling_check_rejects_a_regression_and_accepts_the_recorded_numbers() {
+    // Positive control: exactly the recorded measurements must be clean. Without
+    // this, "reject everything" would look like a working gate.
+    let clean: Vec<CircuitRow> = CU_CEILINGS
+        .iter()
+        .map(|c| {
+            synthetic_row(
+                c.circuit_id,
+                Measured::Ok(c.phase1_measured),
+                match c.phase2_measured {
+                    Some(cu) => Measured::Ok(cu),
+                    None => Measured::NotApplicable("C0 has no phase-2 ix"),
+                },
+            )
+        })
+        .collect();
+    assert!(
+        check_cu_ceilings(&clean).is_empty(),
+        "the recorded measurements must sit inside their own ceilings",
+    );
+
+    // Negative control 1: one CU over the C4 phase-1 ceiling.
+    let c4 = ceiling_for(4);
+    let over = vec![synthetic_row(
+        4,
+        Measured::Ok(c4.phase1_max + 1),
+        Measured::Ok(c4.phase2_measured.unwrap()),
+    )];
+    let v = check_cu_ceilings(&over);
+    assert_eq!(v.len(), 1, "expected exactly one violation, got {v:?}");
+    assert!(v[0].contains("C4 phase 1"), "violation should name the circuit and phase: {}", v[0]);
+
+    // Negative control 2: the same regression one CU BELOW the ceiling is clean,
+    // so the boundary is where it is documented to be and not off by a rounding.
+    let at = vec![synthetic_row(
+        4,
+        Measured::Ok(c4.phase1_max),
+        Measured::Ok(c4.phase2_measured.unwrap()),
+    )];
+    assert!(check_cu_ceilings(&at).is_empty(), "the ceiling itself must be inclusive");
+
+    // Negative control 3: phase 2 over its ceiling.
+    let ph2 = vec![synthetic_row(
+        5,
+        Measured::Ok(ceiling_for(5).phase1_measured),
+        Measured::Ok(ceiling_for(5).phase2_max.unwrap() + 1),
+    )];
+    let v = check_cu_ceilings(&ph2);
+    assert_eq!(v.len(), 1, "expected exactly one violation, got {v:?}");
+    assert!(v[0].contains("C5 phase 2"), "violation should name the circuit and phase: {}", v[0]);
+
+    // Negative control 4: C0 growing a phase-2 instruction is a dispatch change.
+    let c0ph2 = vec![synthetic_row(0, Measured::Ok(474_030), Measured::Ok(1))];
+    let v = check_cu_ceilings(&c0ph2);
+    assert_eq!(v.len(), 1, "expected exactly one violation, got {v:?}");
+    assert!(v[0].contains("structurally absent"), "unexpected message: {}", v[0]);
+}
+
+fn ceiling_for(circuit_id: u8) -> &'static CuCeiling {
+    CU_CEILINGS
+        .iter()
+        .find(|c| c.circuit_id == circuit_id)
+        .unwrap_or_else(|| panic!("no CU ceiling declared for circuit {circuit_id} — add one"))
+}
+
+/// Print the pin table and return every violation.
+///
+/// Two-sided reporting, one-sided assertion: a circuit that came in materially
+/// UNDER its recorded measurement is printed as `IMPROVED` (the ceiling is not
+/// there to stop that) but the ceiling itself is only ever an upper bound.
+fn check_cu_ceilings(rows: &[CircuitRow]) -> Vec<String> {
+    let mut violations: Vec<String> = Vec::new();
+
+    println!("\n{}", rule(104));
+    println!("CU CEILINGS — the regression gate (upper bound; ratchet, not an equality pin)");
+    println!("{}", rule(104));
+    println!(
+        "{:<26} {:>13} {:>13} {:>13} {:>10} {:>12}",
+        "circuit", "ph1 measured", "ph1 now", "ph1 ceiling", "verdict", "vs measured"
+    );
+    println!("{}", rule(104));
+    for r in rows {
+        let c = ceiling_for(r.circuit_id);
+        let (now, verdict, drift) = match r.phase1.cu_if_ok() {
+            Some(cu) => {
+                let verdict = if cu > c.phase1_max { "OVER" } else { "ok" };
+                let d = cu as i64 - c.phase1_measured as i64;
+                (thousands(cu), verdict, format!("{:+}", d))
+            }
+            None => ("-".to_string(), "NOT MEASURED", "-".to_string()),
+        };
+        println!(
+            "{:<26} {:>13} {:>13} {:>13} {:>10} {:>12}",
+            format!("{} (id {})", r.label, r.circuit_id),
+            thousands(c.phase1_measured),
+            now,
+            thousands(c.phase1_max),
+            verdict,
+            drift,
+        );
+        if let Some(cu) = r.phase1.cu_if_ok() {
+            if cu > c.phase1_max {
+                violations.push(format!(
+                    "C{} phase 1: {} CU > ceiling {} (recorded measurement {})",
+                    r.circuit_id,
+                    thousands(cu),
+                    thousands(c.phase1_max),
+                    thousands(c.phase1_measured),
+                ));
+            }
+        }
+
+        match (r.phase2.cu_if_ok(), c.phase2_max) {
+            (Some(cu), Some(max)) => {
+                if cu > max {
+                    violations.push(format!(
+                        "C{} phase 2: {} CU > ceiling {} (recorded measurement {})",
+                        r.circuit_id,
+                        thousands(cu),
+                        thousands(max),
+                        c.phase2_measured.map(thousands).unwrap_or_else(|| "-".into()),
+                    ));
+                }
+            }
+            // A circuit that grew a phase-2 instruction where the table says
+            // there is none is a structural change, not a CU regression — but it
+            // must not slip through unremarked either.
+            (Some(cu), None) => violations.push(format!(
+                "C{} phase 2 measured at {} CU but CU_CEILINGS declares it structurally absent \
+                 — the dispatch changed; add a ceiling",
+                r.circuit_id,
+                thousands(cu),
+            )),
+            _ => {}
+        }
+    }
+    println!("{}", rule(104));
+    println!(
+        "        ph2 ceilings are asserted too (not tabulated above; C0 has no phase-2 ix).\n        \
+         A number over its ceiling FAILS this test. Raise the ceiling in the same commit\n        \
+         that raises the cost, and say why — do not widen the band to clear a red run."
+    );
+
+    violations
 }
 
 // ---------------------------------------------------------------------------
@@ -939,14 +1430,12 @@ fn cu_budget_real_circuits() {
     println!("\n{}", rule(104));
     println!("P01 STARK VERIFIER — MEASURED COMPUTE UNITS (litesvm, in-process SBF VM)");
     println!("{}", rule(104));
-    println!("binary   : {}", so.display());
+    println!("binary   : {}", so.path().display());
     println!("size     : {} bytes", thousands(so_len as u64));
     println!("sha256   : {}", so_hash);
+    println!("origin   : {}", so.provenance());
     println!("program  : {}", VERIFIER_ID);
     println!("cap      : {} CU per instruction", thousands(MAX_CU_PER_IX));
-    if let Some(note) = staleness_note(&so) {
-        println!("\n!! STALE-BINARY WARNING\n!! {}", note.replace('\n', "\n!! "));
-    }
 
     let cases = all_cases();
     let mut rows: Vec<CircuitRow> = Vec::new();
@@ -1055,6 +1544,8 @@ fn cu_budget_real_circuits() {
 
     print_inferred_comparison(&rows);
 
+    let ceiling_violations = check_cu_ceilings(&rows);
+
     // A phase that fails outright means the numbers above are not what they
     // claim to be, and that must not pass silently.
     let bad: Vec<String> = rows
@@ -1065,10 +1556,15 @@ fn cu_budget_real_circuits() {
     assert!(
         bad.is_empty(),
         "these circuits did not verify against {} — the CU table above is incomplete: {}",
-        so.display(),
+        so.path().display(),
         bad.join(", ")
     );
     assert_eq!(rows.len(), 7, "expected one row per circuit C0..C6");
+    assert!(
+        ceiling_violations.is_empty(),
+        "CU CEILING EXCEEDED — this is the regression gate, not a formality:\n  {}",
+        ceiling_violations.join("\n  "),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1187,7 +1683,13 @@ fn cu_budget_verify_uniform_path() {
     println!("\n{}", rule(104));
     println!("verify_uniform PATH (PROBE_ORDER = [1, 6, 3, 5], lib.rs:413)");
     println!("{}", rule(104));
-    println!("binary   : {}  ({} bytes, sha256 {})", so.display(), thousands(so_len as u64), &so_hash[..16]);
+    println!(
+        "binary   : {}  ({} bytes, sha256 {})",
+        so.path().display(),
+        thousands(so_len as u64),
+        &so_hash[..16]
+    );
+    println!("origin   : {}", so.provenance());
     println!(
         "{:<26} {:>13} {:>10} {:>13} {:>10} {:>13}",
         "circuit", "uniform CU", "status", "phase 2 CU", "status", "vs 1.4M cap"

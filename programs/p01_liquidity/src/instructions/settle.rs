@@ -36,12 +36,16 @@ pub struct Settle<'info> {
     )]
     pub pool: Account<'info, LiquidityPool>,
 
+    /// Seeds mirror `prefund`: `nullifier[..8]`, the only part of the nullifier
+    /// the circuit-1 public-inputs hash commits to. See the `prefund_record`
+    /// doc comment in `prefund.rs` for why keying on all 32 bytes made the
+    /// record useless as an anti-replay constraint.
     #[account(
         mut,
         seeds = [
             PrefundRecord::SEED_PREFIX,
             prefund_record.denominated_pool.as_ref(),
-            prefund_record.nullifier.as_ref()
+            &prefund_record.nullifier[..8]
         ],
         bump = prefund_record.bump,
         constraint = prefund_record.pool == pool.key() @ LiquidityError::PrefundMismatch,

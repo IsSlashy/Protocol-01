@@ -507,6 +507,19 @@ describe('LiquidityModule', () => {
       const other = new Uint8Array(32).fill(2);
       const [pda3] = liquidity.getPrefundRecordPDA(denomPool, other);
       expect(pda1.toBase58()).not.toBe(pda3.toBase58());
+
+      // The seed is nullifier[..8] — the only bytes the circuit-1 public-inputs
+      // hash commits to. Two nullifiers that differ ONLY in the unproven tail
+      // must land on the SAME record, because `init` on that PDA is the only
+      // thing stopping one verified proof buffer from being prefunded twice.
+      // If this ever starts failing, the client has drifted from
+      // `programs/p01_liquidity/src/instructions/prefund.rs` and the on-chain
+      // replay bound has a client that cannot address it.
+      const sameProvenPrefix = new Uint8Array(32).fill(1);
+      sameProvenPrefix[8] = 0xff;
+      sameProvenPrefix[31] = 0x7c;
+      const [pda4] = liquidity.getPrefundRecordPDA(denomPool, sameProvenPrefix);
+      expect(pda4.toBase58()).toBe(pda1.toBase58());
     });
 
     it('should derive lp share PDA per (owner, pool)', () => {
