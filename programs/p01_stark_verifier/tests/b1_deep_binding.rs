@@ -597,3 +597,94 @@ fn both_fri_paths_derive_the_deep_coefficient_and_check_the_degree_bound() {
          its true 16-coefficient interpolant, and every check passes.\n",
     );
 }
+
+// ============================================================================
+// [B1 STEP 10] CROSS-LANGUAGE FIXTURE DIGEST — the merge blocker.
+// ============================================================================
+
+/// SHA-256 of the serialized proof bytes for two fixed witnesses.
+///
+/// # Why no existing gate can substitute for this
+///
+/// `packages/stark-prover/wasm/p01_stark_bg.wasm` is a git-tracked,
+/// npm-published, PREBUILT binary — the prover every client actually runs,
+/// inlined as base64 into four more tracked files. It is built from `stark/`,
+/// which B1 modifies, and nothing in the repo regenerates it automatically.
+///
+/// B1 is LENGTH-PRESERVING. So against a stale blob:
+///   * `stark-wasm-twins.mjs --check` stays green — it only proves the five
+///     copies agree with each other;
+///   * `wireFormat.test.ts` stays green — it only pins proof LENGTHS, and those
+///     are byte-identical before and after B1;
+///   * every Rust-side test stays green — they drive the Rust prover.
+///
+/// Meanwhile every client-generated proof is rejected by the new verifier with
+/// `FriFoldCheckFailed`. That is not a parse error and not a length mismatch: the
+/// layout is byte-identical while the CONTENT is semantically incompatible,
+/// because post-B1 layer roots and the final poly commit folds of `D` rather than
+/// of `Q`. This is the same failure the repo already suffered pre-Route-C
+/// (MEASURED: the blob emitted 79,993 B for C0 against a Rust prover emitting
+/// 45,001, undetected because the only assertion was `toBeGreaterThan(1024)`).
+///
+/// A content digest is the only check that catches prover/verifier semantic skew
+/// at constant length. The same two constants are pinned on the TypeScript side
+/// in `packages/stark-prover/src/wireFormat.test.ts`, driving the checked-in
+/// WASM. If the two languages disagree, one of them is stale.
+///
+/// # Why a digest is legitimate here
+///
+/// Proof generation is fully deterministic: `grind_nonce` starts at nonce 0 and
+/// increments, and there is no `rand`, `thread_rng` or `SystemTime` anywhere in
+/// `stark/src/compact.rs`. `fixture_proofs_are_deterministic` asserts that
+/// directly rather than assuming it.
+///
+/// Witnesses match `wireFormat.test.ts`'s C0 and C1 rows exactly so the three
+/// files can be diffed by eye.
+const FIXTURE_C0_SHA256: &str =
+    "e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7";
+const FIXTURE_C1_SHA256: &str =
+    "935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b";
+
+fn hex32(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(64);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+fn fixture_c0() -> Vec<u8> {
+    p01_stark::compact::generate_compact_proof(42).proof_bytes
+}
+
+fn fixture_c1() -> Vec<u8> {
+    p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11).proof_bytes
+}
+
+#[test]
+fn fixture_proofs_are_deterministic() {
+    assert_eq!(fixture_c0(), fixture_c0(), "C0 proof generation must be deterministic");
+    assert_eq!(fixture_c1(), fixture_c1(), "C1 proof generation must be deterministic");
+}
+
+#[test]
+fn cross_language_fixture_digests() {
+    let c0 = fixture_c0();
+    let c1 = fixture_c1();
+    let d0 = hex32(&solana_sha256_hasher::hashv(&[&c0]).to_bytes());
+    let d1 = hex32(&solana_sha256_hasher::hashv(&[&c1]).to_bytes());
+    println!("[FIXTURE] C0 {} bytes sha256 {d0}", c0.len());
+    println!("[FIXTURE] C1 {} bytes sha256 {d1}", c1.len());
+    assert_eq!(c0.len(), 45_001, "C0 fixture length pin");
+    assert_eq!(c1.len(), 65_801, "C1 fixture length pin");
+    assert_eq!(
+        d0, FIXTURE_C0_SHA256,
+        "\n\n  >>> C0 FIXTURE DIGEST DRIFT <<<\n  The Rust prover's output changed. If that \
+         was deliberate, RESHIP THE WASM PROVER and update BOTH this constant and the twin \
+         in packages/stark-prover/src/wireFormat.test.ts. Do not update one of them.\n",
+    );
+    assert_eq!(
+        d1, FIXTURE_C1_SHA256,
+        "\n\n  >>> C1 FIXTURE DIGEST DRIFT <<<\n  See the C0 message above.\n",
+    );
+}

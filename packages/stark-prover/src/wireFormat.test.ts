@@ -56,6 +56,8 @@
  * lockstep with `route_c_trace_pair.rs:1002` and the on-chain verifier.
  */
 
+import { createHash } from 'node:crypto';
+
 import { describe, it, expect, beforeAll } from 'vitest';
 
 import {
@@ -222,4 +224,109 @@ describe('checked-in WASM prover — Route C wire format', () => {
       expect(proofBytes.length - pin.preRouteC).toBe(expectedDelta);
     }, 60_000);
   }
+
+  // -------------------------------------------------------------------------
+  // [B1] CROSS-LANGUAGE FIXTURE DIGEST.
+  //
+  // The length pins above cannot catch B1-class skew. B1 changed WHAT FRI folds
+  // (a DEEP composition instead of the raw quotient LDE) without adding or
+  // removing a single byte, so a stale WASM prover keeps every length pin green
+  // while every proof it produces is rejected on chain with FriFoldCheckFailed —
+  // not a parse error, not a length mismatch. The layout is byte-identical; the
+  // content is semantically incompatible, because post-B1 layer roots and the
+  // final polynomial commit folds of D rather than of Q.
+  //
+  // `stark-wasm-twins.mjs --check` cannot catch it either: it only proves the
+  // five copies agree with each other, and they do, because they were all
+  // reshipped from the same stale blob.
+  //
+  // A content digest is the only cross-language check that catches prover /
+  // verifier semantic skew at constant length. The two constants below are the
+  // SAME two pinned on the Rust side in
+  // `programs/p01_stark_verifier/tests/b1_deep_binding.rs`
+  // (`FIXTURE_C0_SHA256` / `FIXTURE_C1_SHA256`), computed over the SAME two
+  // witnesses. If the two languages disagree, one of them is stale — reship, do
+  // not move the pin.
+  //
+  // Legitimate because proof generation is fully deterministic: `grind_nonce`
+  // starts at nonce 0 and increments, and there is no rand / thread_rng /
+  // SystemTime anywhere in `stark/src/compact.rs`.
+  //
+  // These live INSIDE this describe on purpose. A second `beforeAll` calling
+  // `resetStarkWasm()` desynchronises wasm-bindgen's shared return-pointer slot;
+  // MEASURED as `SyntaxError: Unexpected token 'd', "d7e295b754"... is not valid
+  // JSON`, i.e. the JSON read started partway into a proof_hex value.
+  // -------------------------------------------------------------------------
+
+  const FIXTURE_C0_SHA256 =
+    'e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7';
+  const FIXTURE_C1_SHA256 =
+    '935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b';
+
+  const sha256Hex = (bytes: Uint8Array): string =>
+    createHash('sha256').update(Buffer.from(bytes)).digest('hex');
+
+  it('C0 proof bytes hash to the digest the Rust prover produces', () => {
+    const { proofBytes } = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {
+      subscriberSecret: '42',
+    });
+    expect(proofBytes.length).toBe(45_001);
+    expect(sha256Hex(proofBytes)).toBe(FIXTURE_C0_SHA256);
+  }, 60_000);
+
+  it('C1 proof bytes hash to the digest the Rust prover produces', () => {
+    const { proofBytes } = generateProofBytes(exports, STARK_CIRCUITS.POOL_COMMITMENT, {
+      nullifierPreimage: '42',
+      secret: '17',
+      depositEpoch: '7',
+      tokenMint: '11',
+    });
+    expect(proofBytes.length).toBe(65_801);
+    expect(sha256Hex(proofBytes)).toBe(FIXTURE_C1_SHA256);
+  }, 60_000);
+
+  it('is deterministic — the same witness twice gives the same bytes', () => {
+    const a = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {
+      subscriberSecret: '42',
+    }).proofBytes;
+    const b = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {
+      subscriberSecret: '42',
+    }).proofBytes;
+    expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
+  }, 60_000);
 });
+
+
+// ---------------------------------------------------------------------------
+// [B1] CROSS-LANGUAGE FIXTURE DIGEST.
+//
+// The length pins above cannot catch B1-class skew. B1 changed WHAT FRI folds
+// (a DEEP composition instead of the raw quotient LDE) without adding or
+// removing a single byte, so a stale WASM prover keeps every length pin green
+// while every proof it produces is rejected on chain with FriFoldCheckFailed —
+// not a parse error, not a length mismatch. The layout is byte-identical; the
+// content is semantically incompatible, because post-B1 layer roots and the
+// final polynomial commit folds of D rather than of Q.
+//
+// `stark-wasm-twins.mjs --check` cannot catch it either: it only proves the five
+// copies agree with each other, and they do, because they were all reshipped
+// from the same stale blob.
+//
+// A content digest is the only cross-language check that catches prover /
+// verifier semantic skew at constant length. The two constants below are the
+// SAME two pinned on the Rust side in
+// `programs/p01_stark_verifier/tests/b1_deep_binding.rs`
+// (`FIXTURE_C0_SHA256` / `FIXTURE_C1_SHA256`), computed over the SAME two
+// witnesses. If the two languages disagree, one of them is stale — reship, do
+// not move the pin.
+//
+// Legitimate because proof generation is fully deterministic: `grind_nonce`
+// starts at nonce 0 and increments, and there is no rand / thread_rng /
+// SystemTime anywhere in `stark/src/compact.rs`.
+// ---------------------------------------------------------------------------
+
+const FIXTURE_C0_SHA256 =
+  'e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7';
+const FIXTURE_C1_SHA256 =
+  '935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b';
+
