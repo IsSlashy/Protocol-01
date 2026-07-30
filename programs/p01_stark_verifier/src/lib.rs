@@ -25,7 +25,7 @@ use anchor_lang::prelude::*;
 
 pub mod compact_proof;
 pub mod goldilocks;
-mod merkle;
+pub mod merkle;
 pub mod periodic_consts;
 pub mod periodic_ext_consts;
 mod poseidon_consts;
@@ -170,6 +170,16 @@ pub mod p01_stark_verifier {
     /// Verify a STARK proof with multiple public inputs.
     ///
     /// Used for circuits that need more than one public input value.
+    ///
+    /// **Circuits 1..=6 only.** `circuit_id == 0` is refused here, not routed:
+    /// C0 has exactly one verifier, the legacy `verify_stark_proof` path, and the
+    /// generic path cannot verify an honest C0 proof (wrong vanishing polynomial,
+    /// no recomputation of C0's folded boundary term). See
+    /// `verify::VerifyError::CircuitZeroIsLegacyOnly`. Four shipped instructions
+    /// hard-require `circuit_id == 0`
+    /// (`zk_shielded::{pause,resume,cancel_private_stark}`,
+    /// `p01_quantum_wallet/src/stark.rs:42`), so the legacy path stays and this
+    /// one says no.
     pub fn verify_stark_proof_v2(
         ctx: Context<VerifyStarkProof>,
         public_inputs: Vec<u64>,
@@ -186,6 +196,13 @@ pub mod p01_stark_verifier {
         );
 
         let circuit_id = buffer.circuit_id;
+        // [C0 GATE] Fail before touching the proof bytes. `verify::verify_generic`
+        // refuses circuit 0 as well; this is the same refusal surfaced as a named
+        // Anchor error instead of a generic `InvalidProof`.
+        require!(
+            circuit_id != CIRCUIT_SUBSCRIBER_OWNERSHIP,
+            StarkVerifierError::CircuitZeroIsLegacyOnly
+        );
         let config = get_circuit_config(circuit_id)
             .ok_or(StarkVerifierError::UnsupportedCircuit)?;
 
@@ -402,6 +419,11 @@ pub mod p01_stark_verifier {
         // Probe order: V3 active circuits only (1=pool_commitment, 3=merkle_path,
         // 5=transfer, 6=merkle_update). C0/C2/C4 are not used in V3 hot paths.
         //
+        // [C0 GATE] C0 must never appear in this list. It is not a "not needed
+        // yet" omission: `verify::verify_generic` refuses circuit 0 outright, so
+        // adding 0 here would only produce a probe that always errors. C0 goes
+        // through `verify_stark_proof`.
+        //
         // C6 MUST come before C3/C5: C3 and C5 share IDENTICAL config bytes
         // (tw=6, len=512, queries=22, lde=8192, fri_final=16); C6 differs only
         // by trace_width=10 (vs 6). A C6 proof fed to a C3/C5 parser would
@@ -591,4 +613,11 @@ pub enum StarkVerifierError {
     UnsupportedCircuit,
     #[msg("Proof has not been verified yet")]
     NotYetVerified,
+    /// [C0 GATE] `circuit_id == 0` reached a generic entry point.
+    ///
+    /// C0 is verified only by `verify_stark_proof` (the legacy single-instruction
+    /// path). The generic path cannot verify an honest C0 proof, so accepting the
+    /// call and failing inside would be indistinguishable from a bad proof.
+    #[msg("Circuit 0 is verified only by the legacy verify_stark_proof path")]
+    CircuitZeroIsLegacyOnly,
 }

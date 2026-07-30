@@ -20,6 +20,48 @@ fn sha256(data: &[u8]) -> [u8; 32] {
     Sha256::digest(data).into()
 }
 
+/// Domain-separation tag prefixed to every Merkle LEAF preimage.
+///
+/// Must match `p01_stark_verifier::merkle::MERKLE_LEAF_TAG` byte for byte. If
+/// prover and verifier ever disagree here, EVERY honest proof fails the Merkle
+/// check — the safe direction, and one the harness catches immediately, but it
+/// is still a hard break, so the two constants are a paired edit.
+///
+/// Rationale lives in the verifier's `merkle.rs`: untagged,
+/// `leaf = SHA256(preimage)` and `node = SHA256(l ‖ r)` are the same function,
+/// so a genuine internal node can be replayed as a leaf whose preimage is that
+/// node's own two children.
+pub const MERKLE_LEAF_TAG: u8 = 0x00;
+
+/// Domain-separation tag prefixed to every Merkle INTERNAL-NODE preimage.
+/// Must match `p01_stark_verifier::merkle::MERKLE_NODE_TAG`.
+///
+/// `pub` only so the verifier's integration tests can assert the two crates
+/// still agree; nothing outside this module builds trees.
+pub const MERKLE_NODE_TAG: u8 = 0x01;
+
+/// Hash a Merkle leaf preimage: `SHA256(0x00 ‖ data)`.
+///
+/// Every leaf of every tree this prover builds goes through here. A partially
+/// tagged tree is worse than an untagged one, because it looks done.
+#[inline]
+fn sha256_leaf(data: &[u8]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update([MERKLE_LEAF_TAG]);
+    h.update(data);
+    h.finalize().into()
+}
+
+/// Hash a Merkle internal node: `SHA256(0x01 ‖ left ‖ right)`.
+#[inline]
+fn sha256_node(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update([MERKLE_NODE_TAG]);
+    h.update(left);
+    h.update(right);
+    h.finalize().into()
+}
+
 /// Goldilocks prime: p = 2^64 - 2^32 + 1
 const GOLDILOCKS_PRIME: u64 = 0xFFFFFFFF00000001;
 
@@ -56,6 +98,36 @@ pub fn generate_compact_proof_with_pair_indexing(
     subscriber_secret: u64,
     pair_indexing: PairIndexing,
 ) -> CompactProofData {
+    generate_compact_proof_with_layout(subscriber_secret, pair_indexing, TraceLeaf::Canonical)
+}
+
+/// [ROUTE C fails-closed probe] `generate_compact_proof` with the TRACE
+/// commitment layout selectable.
+///
+/// This is the C0 half of the version-skew seam, and it is the highest-
+/// consequence half: C0 has its own parser (`CompactStarkProof`), its own
+/// verifier entry point (`verify_subscriber_ownership`), and four SHIPPED
+/// instructions hard-require `circuit_id == 0`
+/// (`zk_shielded::{pause,resume,cancel_private_stark}` and
+/// `p01_quantum_wallet/src/stark.rs:42`). `TraceLeaf::LegacyRowLeaf` builds a
+/// complete, internally consistent PRE-Route-C C0 proof — row-leaf tree, two
+/// rows per query, two depth-`MERKLE_DEPTH` paths — so a test can assert the
+/// Route C verifier rejects it rather than mis-verifying it.
+///
+/// Test-only. Every production entry point passes `TraceLeaf::Canonical`.
+#[doc(hidden)]
+pub fn generate_compact_proof_with_trace_leaf(
+    subscriber_secret: u64,
+    trace_leaf: TraceLeaf,
+) -> CompactProofData {
+    generate_compact_proof_with_layout(subscriber_secret, PairIndexing::Canonical, trace_leaf)
+}
+
+fn generate_compact_proof_with_layout(
+    subscriber_secret: u64,
+    pair_indexing: PairIndexing,
+    trace_leaf: TraceLeaf,
+) -> CompactProofData {
     let secret = BaseElement::new(subscriber_secret);
 
     // 1. Build execution trace (32 rows × 3 columns)
@@ -65,8 +137,16 @@ pub fn generate_compact_proof_with_pair_indexing(
     // 2. Compute LDE: evaluate trace polynomial at LDE_SIZE points
     let lde = compute_lde(&trace);
 
-    // 3. Build Merkle tree over LDE rows
-    let (root, tree) = build_merkle_tree(&lde);
+    // 3. [ROUTE C] Build the Merkle tree over PAIR leaves of LDE rows
+    //    (`leaf[j] = H(row[j] ‖ row[j + LDE_SIZE/2])`, LDE_SIZE/2 leaves).
+    //    The legacy C0 path keeps its own generator — four shipped instructions
+    //    hard-require `circuit_id == 0` and the generic path cannot verify C0
+    //    proofs — but the trace COMMITMENT is now the same shape on both paths.
+    //    `LegacyRowLeaf` rebuilds the pre-Route-C row-leaf tree; test-only.
+    let (root, tree) = match trace_leaf {
+        TraceLeaf::Canonical => build_trace_pair_merkle_tree(&lde, TRACE_WIDTH),
+        TraceLeaf::LegacyRowLeaf => build_merkle_tree_generic(&lde, TRACE_WIDTH),
+    };
 
     // 4. [P1.1 PR 4 DEEP-ALI] Compute the quotient LDE via polynomial division.
     //
@@ -173,15 +253,38 @@ pub fn generate_compact_proof_with_pair_indexing(
     for &pos in &positions {
         let next_pos = (pos + BLOWUP) % LDE_SIZE;
 
+        // [ROUTE C] Pair-leaf trace tree: ONE depth-(MERKLE_DEPTH-1) opening at
+        // pair index `pos mod (LDE_SIZE/2)` authenticates both `row(pos)` and
+        // `row(pos ^ LDE_SIZE/2)`; likewise for `next_pos`.
+        let t_half = LDE_SIZE / 2;
+        let mirror_pos = pos ^ t_half;
+        let next_mirror_pos = next_pos ^ t_half;
+
         let trace_values = [
             lde[0][pos], lde[1][pos], lde[2][pos],
+        ];
+        let trace_mirror_values = [
+            lde[0][mirror_pos], lde[1][mirror_pos], lde[2][mirror_pos],
         ];
         let next_trace_values = [
             lde[0][next_pos], lde[1][next_pos], lde[2][next_pos],
         ];
+        let next_trace_mirror_values = [
+            lde[0][next_mirror_pos], lde[1][next_mirror_pos], lde[2][next_mirror_pos],
+        ];
 
-        let merkle_path = get_merkle_proof(&tree, pos);
-        let next_merkle_path = get_merkle_proof(&tree, next_pos);
+        // [ROUTE C] Canonical: pair index `pos mod half` into the pair tree,
+        // depth `MERKLE_DEPTH - 1`. LegacyRowLeaf: row index `pos` into the row
+        // tree, depth `MERKLE_DEPTH`.
+        let (trace_index, next_trace_index, trace_path_depth) = match trace_leaf {
+            TraceLeaf::Canonical => {
+                (pos & (t_half - 1), next_pos & (t_half - 1), MERKLE_DEPTH - 1)
+            }
+            TraceLeaf::LegacyRowLeaf => (pos, next_pos, MERKLE_DEPTH),
+        };
+        let merkle_path = get_merkle_proof_generic(&tree, trace_index, trace_path_depth);
+        let next_merkle_path =
+            get_merkle_proof_generic(&tree, next_trace_index, trace_path_depth);
 
         // [B4] Quotient pair opening. `pos` and its mirror `pos ^ (LDE_SIZE/2)`
         // live in the SAME pair leaf `j = pos mod (LDE_SIZE/2)`, so ONE
@@ -206,10 +309,20 @@ pub fn generate_compact_proof_with_pair_indexing(
                 trace_values[1].as_int(),
                 trace_values[2].as_int(),
             ],
+            trace_mirror_values: [
+                trace_mirror_values[0].as_int(),
+                trace_mirror_values[1].as_int(),
+                trace_mirror_values[2].as_int(),
+            ],
             next_trace_values: [
                 next_trace_values[0].as_int(),
                 next_trace_values[1].as_int(),
                 next_trace_values[2].as_int(),
+            ],
+            next_trace_mirror_values: [
+                next_trace_mirror_values[0].as_int(),
+                next_trace_mirror_values[1].as_int(),
+                next_trace_mirror_values[2].as_int(),
             ],
             merkle_path,
             next_merkle_path,
@@ -237,6 +350,7 @@ pub fn generate_compact_proof_with_pair_indexing(
         grinding_nonce,
         &queries,
         &quotient_values,
+        trace_leaf,
     );
 
     CompactProofData {
@@ -255,9 +369,21 @@ pub struct CompactProofData {
 struct CompactQuery {
     position: u32,
     trace_values: [u64; 3],
+    /// [ROUTE C] Trace row at `position ^ (LDE_SIZE/2)` — the second half of the
+    /// pair leaf that `merkle_path` already authenticates. Unread by the current
+    /// verifier; it is the `T_i(-x)` a later DEEP composition needs.
+    trace_mirror_values: [u64; 3],
     next_trace_values: [u64; 3],
-    merkle_path: [[u8; 32]; MERKLE_DEPTH],
-    next_merkle_path: [[u8; 32]; MERKLE_DEPTH],
+    /// [ROUTE C] Trace row at `next_pos ^ (LDE_SIZE/2)`.
+    next_trace_mirror_values: [u64; 3],
+    /// [ROUTE C] Path into the trace PAIR tree, depth `MERKLE_DEPTH - 1`.
+    ///
+    /// `Vec` rather than `[[u8; 32]; MERKLE_DEPTH - 1]` because
+    /// `TraceLeaf::LegacyRowLeaf` needs the pre-Route-C depth `MERKLE_DEPTH`.
+    /// Only a test ever asks for that; the length is asserted per variant in
+    /// `serialize_compact_proof` so a wrong-depth path cannot reach the wire.
+    merkle_path: Vec<[u8; 32]>,
+    next_merkle_path: Vec<[u8; 32]>,
     /// [P1.1 PR 3] Mirror opening of the quotient LDE at `position XOR (lde_size/2)`.
     /// Needed so the verifier can recompute the first fold `f_1(y²)` from
     /// `(f_0(y), f_0(-y))`, with `f_0 = quotient LDE`.
@@ -1408,8 +1534,16 @@ fn ntt(values: &[BaseElement], omega: BaseElement) -> Vec<BaseElement> {
     result
 }
 
-/// Build a SHA-256 Merkle tree from LDE columns.
+/// Build a SHA-256 Merkle tree from LDE columns, ONE leaf per row.
 /// Returns (root, tree_layers).
+///
+/// [ROUTE C] No longer on the shipping C0 path — the legacy generator commits
+/// `build_trace_pair_merkle_tree` now. Kept `#[cfg(test)]` because the row-leaf
+/// walk it exercises (`test_merkle_proof_verification`) is still the clearest
+/// unit check that `sha256_leaf` / `sha256_node` compose into a valid tree, and
+/// because deleting it would make this file's history harder to read against the
+/// pre-Route-C wire format.
+#[cfg(test)]
 fn build_merkle_tree(lde: &[Vec<BaseElement>]) -> ([u8; 32], Vec<Vec<[u8; 32]>>) {
     // Compute leaf hashes (one per LDE row)
     let leaves: Vec<[u8; 32]> = (0..LDE_SIZE)
@@ -1418,7 +1552,7 @@ fn build_merkle_tree(lde: &[Vec<BaseElement>]) -> ([u8; 32], Vec<Vec<[u8; 32]>>)
             for col in 0..TRACE_WIDTH {
                 data[col * 8..(col + 1) * 8].copy_from_slice(&lde[col][i].as_int().to_le_bytes());
             }
-            sha256(&data)
+            sha256_leaf(&data)
         })
         .collect();
 
@@ -1429,10 +1563,8 @@ fn build_merkle_tree(lde: &[Vec<BaseElement>]) -> ([u8; 32], Vec<Vec<[u8; 32]>>)
         let next: Vec<[u8; 32]> = prev
             .chunks(2)
             .map(|pair| {
-                let mut data = [0u8; 64];
-                data[..32].copy_from_slice(&pair[0]);
-                data[32..].copy_from_slice(if pair.len() > 1 { &pair[1] } else { &pair[0] });
-                sha256(&data)
+                let right = if pair.len() > 1 { &pair[1] } else { &pair[0] };
+                sha256_node(&pair[0], right)
             })
             .collect();
         layers.push(next);
@@ -1465,7 +1597,11 @@ fn get_merkle_proof_pair(
     proof
 }
 
-/// Get Merkle proof (siblings) for a leaf at the given index.
+/// Get Merkle proof (siblings) for a leaf at the given index, full `MERKLE_DEPTH`.
+///
+/// [ROUTE C] Superseded on the shipping path by `get_merkle_proof_pair`
+/// (depth `MERKLE_DEPTH - 1`). See `build_merkle_tree` for why it stays.
+#[cfg(test)]
 fn get_merkle_proof(tree: &[Vec<[u8; 32]>], index: usize) -> [[u8; 32]; MERKLE_DEPTH] {
     let mut proof = [[0u8; 32]; MERKLE_DEPTH];
     let mut idx = index;
@@ -1498,6 +1634,7 @@ fn serialize_compact_proof(
     grinding_nonce: u64,
     queries: &[CompactQuery],
     quotient_values: &[u64],
+    trace_leaf: TraceLeaf,
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
 
@@ -1545,15 +1682,44 @@ fn serialize_compact_proof(
     // num_queries: 2 bytes
     bytes.extend_from_slice(&(queries.len() as u16).to_le_bytes());
 
+    // [ROUTE C] Trace path depth is a function of the commitment layout, and it
+    // never travels on the wire — the verifier infers it from `merkle_depth`.
+    // Assert it here so a caller that built the tree one way and the paths the
+    // other cannot silently emit a buffer the parser will misread.
+    let expected_trace_depth = match trace_leaf {
+        TraceLeaf::Canonical => MERKLE_DEPTH - 1,
+        TraceLeaf::LegacyRowLeaf => MERKLE_DEPTH,
+    };
+
     // queries
     for q in queries {
+        assert_eq!(
+            (q.merkle_path.len(), q.next_merkle_path.len()),
+            (expected_trace_depth, expected_trace_depth),
+            "trace path depth does not match the {trace_leaf:?} commitment layout",
+        );
         bytes.extend_from_slice(&q.position.to_le_bytes());
+        // [ROUTE C] row(pos) | row(pos^half) | row(next) | row(next^half).
+        // `LegacyRowLeaf` omits both mirror rows: pre-Route-C they did not exist
+        // on the wire, and an old-format proof has to be byte-exact for the
+        // fails-closed test to mean anything.
         for v in &q.trace_values {
             bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        if trace_leaf == TraceLeaf::Canonical {
+            for v in &q.trace_mirror_values {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
         }
         for v in &q.next_trace_values {
             bytes.extend_from_slice(&v.to_le_bytes());
         }
+        if trace_leaf == TraceLeaf::Canonical {
+            for v in &q.next_trace_mirror_values {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        // [ROUTE C] two depth-(MERKLE_DEPTH-1) trace pair-tree paths
         for path in &q.merkle_path {
             bytes.extend_from_slice(path);
         }
@@ -1637,8 +1803,11 @@ mod tests {
             + 2 + fri_final_poly_size * 8
             + 8 + 2
             + num_queries * (
-                4 + tw * 8 + tw * 8
-                + md * 32 + md * 32
+                // [ROUTE C] FOUR trace rows (pos, pos^half, next, next^half)
+                // + TWO depth-(md-1) trace PAIR paths (were two depth-md paths).
+                // Net vs pre-Route-C: num_queries * (16*tw - 64) bytes.
+                4 + 4 * (tw * 8)
+                + (md - 1) * 32 + (md - 1) * 32
                 + 8 + (md - 1) * 32
                 + fri_per_query
             )
@@ -1829,26 +1998,128 @@ mod tests {
             leaf_data[col * 8..(col + 1) * 8]
                 .copy_from_slice(&lde[col][idx].as_int().to_le_bytes());
         }
-        let leaf_hash = sha256(&leaf_data);
+        let leaf_hash = sha256_leaf(&leaf_data);
 
-        // Walk the proof
+        // Walk the proof. Leaf and node hashing are domain-separated, so this
+        // walk deliberately mirrors the two DIFFERENT functions the tree uses.
         let mut current = leaf_hash;
         let mut i = idx;
         for sibling in &proof {
-            let mut pair = [0u8; 64];
-            if i & 1 == 0 {
-                pair[..32].copy_from_slice(&current);
-                pair[32..].copy_from_slice(sibling);
+            current = if i & 1 == 0 {
+                sha256_node(&current, sibling)
             } else {
-                pair[..32].copy_from_slice(sibling);
-                pair[32..].copy_from_slice(&current);
-            }
-            current = sha256(&pair);
+                sha256_node(sibling, &current)
+            };
             i >>= 1;
         }
 
         assert_eq!(current, root, "Merkle proof should verify to root");
     }
+
+    /// [ROUTE C] The pair-leaf trace tree has half the leaves, one level less
+    /// depth, and an opening at pair index `j` that reproduces the root from BOTH
+    /// `row[j]` and `row[j + N/2]`.
+    ///
+    /// The negative half matters more than the positive: perturbing the HIGH row
+    /// must break the root too. If it did not, the mirror row would be riding
+    /// along unauthenticated and the whole route would buy nothing.
+    #[test]
+    fn route_c_trace_pair_tree_binds_both_halves() {
+        let trace = crate::air::subscriber_ownership::build_trace(BaseElement::new(42));
+        let lde = compute_lde(&trace);
+        let (root, tree) = build_trace_pair_merkle_tree(&lde, TRACE_WIDTH);
+
+        let half = LDE_SIZE / 2;
+        assert_eq!(tree[0].len(), half, "pair tree must have LDE_SIZE/2 leaves");
+        assert_eq!(
+            tree.len(),
+            MERKLE_DEPTH,
+            "layers = depth + 1; depth must be MERKLE_DEPTH - 1"
+        );
+
+        // Both a low-half and a high-half query position, so the `pos & (half-1)`
+        // indexing is exercised on both sides of the mirror.
+        for pos in [10usize, 10 + half, 0, half - 1] {
+            let j = pos & (half - 1);
+            let proof = get_merkle_proof_pair(&tree, j);
+            assert_eq!(proof.len(), MERKLE_DEPTH - 1);
+
+            let mut preimage = vec![0u8; TRACE_WIDTH * 16];
+            let hi_off = TRACE_WIDTH * 8;
+            for col in 0..TRACE_WIDTH {
+                preimage[col * 8..(col + 1) * 8]
+                    .copy_from_slice(&lde[col][j].as_int().to_le_bytes());
+                preimage[hi_off + col * 8..hi_off + (col + 1) * 8]
+                    .copy_from_slice(&lde[col][j + half].as_int().to_le_bytes());
+            }
+
+            let walk = |leaf: [u8; 32]| {
+                let mut current = leaf;
+                let mut i = j;
+                for sibling in &proof {
+                    current = if i & 1 == 0 {
+                        sha256_node(&current, sibling)
+                    } else {
+                        sha256_node(sibling, &current)
+                    };
+                    i >>= 1;
+                }
+                current
+            };
+
+            assert_eq!(walk(sha256_leaf(&preimage)), root, "pair opening at pos={pos}");
+
+            // Perturb the LOW row -> must break.
+            let mut lo_bad = preimage.clone();
+            lo_bad[0] ^= 0x01;
+            assert_ne!(walk(sha256_leaf(&lo_bad)), root, "low row unbound at pos={pos}");
+
+            // Perturb the HIGH (mirror) row -> must break. This is the claim.
+            let mut hi_bad = preimage.clone();
+            hi_bad[hi_off] ^= 0x01;
+            assert_ne!(walk(sha256_leaf(&hi_bad)), root, "MIRROR row unbound at pos={pos}");
+
+            // Swap the halves -> must break (unless degenerate).
+            let lo = preimage[..hi_off].to_vec();
+            let hi = preimage[hi_off..].to_vec();
+            if lo != hi {
+                let mut swapped = vec![0u8; TRACE_WIDTH * 16];
+                swapped[..hi_off].copy_from_slice(&hi);
+                swapped[hi_off..].copy_from_slice(&lo);
+                assert_ne!(
+                    walk(sha256_leaf(&swapped)),
+                    root,
+                    "half order not bound at pos={pos}"
+                );
+            }
+        }
+    }
+
+    /// [DOMAIN SEP] The prover's leaf and node hashes must be different
+    /// functions on the same bytes. If this goes green with the tags removed,
+    /// it is not testing anything.
+    #[test]
+    fn leaf_and_node_hash_are_domain_separated() {
+        let left = [0x11u8; 32];
+        let right = [0x22u8; 32];
+        let mut concat = [0u8; 64];
+        concat[..32].copy_from_slice(&left);
+        concat[32..].copy_from_slice(&right);
+
+        assert_ne!(
+            sha256_leaf(&concat),
+            sha256_node(&left, &right),
+            "prover hashes a 64-byte leaf preimage and an internal node \
+             identically — a genuine node can be replayed as a leaf"
+        );
+    }
+
+    // The prover↔verifier tag agreement is NOT asserted here: the on-chain
+    // crate is not a dependency of this one (the dependency runs the other
+    // way), so anything written here could only compare a constant to a
+    // restated copy of itself. The real cross-crate checks live in
+    // `programs/p01_stark_verifier/tests/merkle_domain_sep.rs`
+    // (`prover_and_verifier_agree_on_tags`, and the prover-built-tree opening).
 
     #[test]
     fn test_different_secrets_different_proofs() {
@@ -3497,7 +3768,7 @@ fn build_merkle_tree_generic(
                 data[col * 8..(col + 1) * 8]
                     .copy_from_slice(&lde[col][i].as_int().to_le_bytes());
             }
-            sha256(&data)
+            sha256_leaf(&data)
         })
         .collect();
 
@@ -3508,10 +3779,122 @@ fn build_merkle_tree_generic(
         let next: Vec<[u8; 32]> = prev
             .chunks(2)
             .map(|pair| {
-                let mut data = [0u8; 64];
-                data[..32].copy_from_slice(&pair[0]);
-                data[32..].copy_from_slice(if pair.len() > 1 { &pair[1] } else { &pair[0] });
-                sha256(&data)
+                let right = if pair.len() > 1 { &pair[1] } else { &pair[0] };
+                sha256_node(&pair[0], right)
+            })
+            .collect();
+        layers.push(next);
+    }
+
+    let root = layers.last().unwrap()[0];
+    (root, layers)
+}
+
+/// [ROUTE C] Trace-commitment layout knob.
+///
+/// `Canonical` is the only variant a shipping prover ever uses; it is what the
+/// on-chain verifier reconstructs. `LegacyRowLeaf` reproduces the PRE-Route-C
+/// commitment *and* the pre-Route-C wire layout, so a test can build a
+/// complete, internally consistent proof of the old format and assert the new
+/// verifier rejects it. That is the version-skew seam: an old proof meeting a
+/// new verifier must fail closed, never verify by accident.
+///
+/// Test-only; the public `generate_*` entry points all pass `Canonical`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TraceLeaf {
+    /// [ROUTE C] `leaf[j] = H(0x00 ‖ row[j] ‖ row[j + N/2])` over `N/2` leaves,
+    /// tree depth `log2(N) - 1`. Per query the wire carries FOUR rows
+    /// (`pos`, `pos ^ N/2`, `next_pos`, `next_pos ^ N/2`) and two
+    /// depth-`(log2(N) - 1)` paths.
+    Canonical,
+    /// Pre-Route-C: `leaf[t] = H(0x00 ‖ row[t])` over `N` leaves, tree depth
+    /// `log2(N)`. Per query the wire carries TWO rows and two depth-`log2(N)`
+    /// paths.
+    LegacyRowLeaf,
+}
+
+/// [ROUTE C] Build a SHA-256 Merkle tree over **pair leaves of trace ROWS**.
+///
+/// Same shape as [`build_pair_merkle_tree`] (which pairs single field elements
+/// for the quotient tree and the FRI layers), except each half of the leaf is a
+/// whole `trace_width`-wide row:
+///
+/// ```text
+///   leaf[j] = SHA256( 0x00 ‖ row[j][0..tw] ‖ row[j + N/2][0..tw] )   j in 0..N/2
+/// ```
+///
+/// The tree has `N/2` leaves and depth `log2(N) - 1`, so ONE opening yields
+/// both `T_i(x)` and `T_i(-x)`. Pre-Route-C the trace tree was
+/// [`build_merkle_tree_generic`]: one leaf per row, `N` leaves, depth `log2(N)`,
+/// and an opening bound one row only.
+///
+/// Byte order inside the leaf is `row_lo` then `row_hi`, each row being its
+/// columns in ascending order as LE `u64`s, behind the leaf domain-separation
+/// tag. The verifier reproduces this without a copy via
+/// `merkle::hash_leaf_2seg(lo_row_bytes, hi_row_bytes)`, which is bit-identical
+/// because `hashv` concatenates its segments.
+///
+/// This changes NO soundness property. It changes what one opening *makes
+/// available* to a future check (`T_i(-x)`); nothing in this revision consumes
+/// the mirror row.
+///
+/// # Cost, MEASURED
+///
+/// Per query the wire gains two rows (`+2 * trace_width * 8`) and loses two
+/// Merkle levels (`-2 * 32`), i.e. `num_queries * (16 * trace_width - 64)` bytes.
+/// Measured with the `cu_budget` harness (litesvm, real SBF bytecode) against the
+/// pre-Route-C tagged baseline (`.so` sha256 `b5c7e01d…`→`e879bf30…` tagged,
+/// 637,968→638,088 B) and the Route C build (`5eabc141…`, 638,248 B):
+///
+/// ```text
+///   circuit   proof B before -> after    delta   closed form   phase-1 CU before -> after
+///   C0            45,433 ->  45,001       -432       -432          480,335 ->  474,030
+///   C1            66,233 ->  65,801       -432       -432          617,570 ->  612,719
+///   C2            66,681 ->  66,681          0          0          618,739 ->  615,727
+///   C3            74,933 ->  75,637       +704       +704          659,366 ->  655,666
+///   C4            78,377 ->  78,377          0          0          704,685 ->  702,940
+///   C5            75,301 ->  76,357     +1,056     +1,056          658,596 ->  659,304
+///   C6            76,405 ->  78,517     +2,112     +2,112          661,697 ->  656,742
+/// ```
+///
+/// 7/7 exact on the closed form. Phase-1 CU falls on six of seven (two fewer SHA
+/// calls per query on the trace tree, minus the wider leaf preimage); C5 is the
+/// one circuit that rises, by 708 CU. Worst phase 1 is still C4, 702,940 CU =
+/// 50.2% of the 1,400,000 cap.
+fn build_trace_pair_merkle_tree(
+    lde: &[Vec<BaseElement>],
+    trace_width: usize,
+) -> ([u8; 32], Vec<Vec<[u8; 32]>>) {
+    let lde_size = lde[0].len();
+    assert!(
+        lde_size >= 2 && lde_size % 2 == 0,
+        "pair-leaf trace tree needs an even, non-empty LDE"
+    );
+    let half = lde_size / 2;
+
+    let leaves: Vec<[u8; 32]> = (0..half)
+        .map(|j| {
+            let mut data = vec![0u8; trace_width * 16];
+            let hi_off = trace_width * 8;
+            for col in 0..trace_width {
+                data[col * 8..(col + 1) * 8]
+                    .copy_from_slice(&lde[col][j].as_int().to_le_bytes());
+                data[hi_off + col * 8..hi_off + (col + 1) * 8]
+                    .copy_from_slice(&lde[col][j + half].as_int().to_le_bytes());
+            }
+            sha256_leaf(&data)
+        })
+        .collect();
+
+    let mut layers = vec![leaves];
+
+    while layers.last().unwrap().len() > 1 {
+        let prev = layers.last().unwrap();
+        let next: Vec<[u8; 32]> = prev
+            .chunks(2)
+            .map(|pair| {
+                let right = if pair.len() > 1 { &pair[1] } else { &pair[0] };
+                sha256_node(&pair[0], right)
             })
             .collect();
         layers.push(next);
@@ -3614,7 +3997,7 @@ fn build_pair_merkle_tree(
 
     let mut leaves: Vec<[u8; 32]> = vec![[0u8; 32]; half];
     for j in 0..half {
-        leaves[pair_slot(j, half, mode)] = sha256(&pair_leaf_preimage(values, j, half, mode));
+        leaves[pair_slot(j, half, mode)] = sha256_leaf(&pair_leaf_preimage(values, j, half, mode));
     }
 
     let mut layers = vec![leaves];
@@ -3624,10 +4007,8 @@ fn build_pair_merkle_tree(
         let next: Vec<[u8; 32]> = prev
             .chunks(2)
             .map(|pair| {
-                let mut data = [0u8; 64];
-                data[..32].copy_from_slice(&pair[0]);
-                data[32..].copy_from_slice(if pair.len() > 1 { &pair[1] } else { &pair[0] });
-                sha256(&data)
+                let right = if pair.len() > 1 { &pair[1] } else { &pair[0] };
+                sha256_node(&pair[0], right)
             })
             .collect();
         layers.push(next);
@@ -4080,11 +4461,13 @@ fn generate_compact_proof_from_trace(
         fri_final_poly_size,
         quotient_spec,
         PairIndexing::Canonical,
+        TraceLeaf::Canonical,
     )
 }
 
-/// [B4 fails-closed probe] `generate_compact_proof_from_trace` with the
-/// pair-leaf layout selectable. See `PairIndexing`.
+/// [B4 / ROUTE C fails-closed probe] `generate_compact_proof_from_trace` with
+/// the quotient/FRI pair-leaf layout AND the trace-commitment layout selectable.
+/// See `PairIndexing` and `TraceLeaf`.
 fn generate_compact_proof_from_trace_with_pair_indexing(
     trace: &[Vec<BaseElement>],
     pub_input_bytes: &[u8],
@@ -4093,6 +4476,7 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
     fri_final_poly_size: usize,
     quotient_spec: QuotientSpec,
     pair_indexing: PairIndexing,
+    trace_leaf: TraceLeaf,
 ) -> (Vec<u8>, [u8; 32]) {
     let trace_width = trace.len();
     let trace_length = trace[0].len();
@@ -4102,8 +4486,14 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
     // 1. Compute LDE
     let lde = compute_lde_generic(trace, blowup);
 
-    // 2. Build trace Merkle tree
-    let (root, tree) = build_merkle_tree_generic(&lde, trace_width);
+    // 2. [ROUTE C] Build the trace Merkle tree over PAIR leaves
+    //    (`leaf[j] = H(row[j] ‖ row[j + lde_size/2])`, `lde_size/2` leaves,
+    //    depth `merkle_depth - 1`). `LegacyRowLeaf` is the pre-Route-C tree and
+    //    exists only so a test can build an old-format proof.
+    let (root, tree) = match trace_leaf {
+        TraceLeaf::Canonical => build_trace_pair_merkle_tree(&lde, trace_width),
+        TraceLeaf::LegacyRowLeaf => build_merkle_tree_generic(&lde, trace_width),
+    };
 
     // 3. [P1.1 / P2.2a / P2.2d-C1] Compute quotient values at ALL LDE positions
     // + commit. quotient_root is folded into the Fiat-Shamir transcript BEFORE
@@ -4265,22 +4655,53 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
 
         bytes.extend_from_slice(&(pos as u32).to_le_bytes());
 
+        // [ROUTE C] Four trace rows travel per query instead of two:
+        //   row(pos) | row(pos ^ half) | row(next_pos) | row(next_pos ^ half)
+        // Each mirror row is the OTHER half of a pair leaf that had to be opened
+        // anyway, so it costs `trace_width * 8` bytes on the wire and removes one
+        // Merkle level from each of the two trace paths. Net per query:
+        // `16 * trace_width - 64` bytes.
+        //
+        // Nothing in THIS revision reads the mirror rows. They are the input a
+        // later DEEP-composition recomputation needs; shipping them changes no
+        // soundness property today.
+        let t_half = lde_size / 2;
+        let mirror_pos = pos ^ t_half;
+        let next_mirror_pos = next_pos ^ t_half;
+
         // trace_values at pos
         for col in 0..trace_width {
             bytes.extend_from_slice(&lde[col][pos].as_int().to_le_bytes());
+        }
+        if trace_leaf == TraceLeaf::Canonical {
+            // trace_mirror_values at pos ^ half
+            for col in 0..trace_width {
+                bytes.extend_from_slice(&lde[col][mirror_pos].as_int().to_le_bytes());
+            }
         }
         // next_trace_values at next_pos
         for col in 0..trace_width {
             bytes.extend_from_slice(&lde[col][next_pos].as_int().to_le_bytes());
         }
+        if trace_leaf == TraceLeaf::Canonical {
+            // next_trace_mirror_values at next_pos ^ half
+            for col in 0..trace_width {
+                bytes.extend_from_slice(&lde[col][next_mirror_pos].as_int().to_le_bytes());
+            }
+        }
 
-        // trace Merkle path at pos
-        let path = get_merkle_proof_generic(&tree, pos, merkle_depth);
+        // [ROUTE C] Trace openings. Canonical: pair index `pos mod half` into
+        // the pair tree, depth `merkle_depth - 1`. LegacyRowLeaf: row index
+        // `pos` into the row tree, depth `merkle_depth`.
+        let (trace_index, next_trace_index, trace_path_depth) = match trace_leaf {
+            TraceLeaf::Canonical => (pos & (t_half - 1), next_pos & (t_half - 1), merkle_depth - 1),
+            TraceLeaf::LegacyRowLeaf => (pos, next_pos, merkle_depth),
+        };
+        let path = get_merkle_proof_generic(&tree, trace_index, trace_path_depth);
         for node in &path {
             bytes.extend_from_slice(node);
         }
-        // trace Merkle path at next_pos
-        let next_path = get_merkle_proof_generic(&tree, next_pos, merkle_depth);
+        let next_path = get_merkle_proof_generic(&tree, next_trace_index, trace_path_depth);
         for node in &next_path {
             bytes.extend_from_slice(node);
         }
@@ -4367,6 +4788,54 @@ pub fn generate_pool_commitment_proof_with_pair_indexing(
     token_mint: u64,
     pair_indexing: PairIndexing,
 ) -> GenericCompactProofData {
+    generate_pool_commitment_proof_with_layout(
+        nullifier_preimage,
+        secret,
+        deposit_epoch,
+        token_mint,
+        pair_indexing,
+        TraceLeaf::Canonical,
+    )
+}
+
+/// [ROUTE C fails-closed probe] `generate_pool_commitment_proof` with the
+/// TRACE-commitment layout selectable. `TraceLeaf::LegacyRowLeaf` builds a
+/// complete, internally consistent proof in the PRE-Route-C format (row-leaf
+/// trace tree, two rows and two full-depth paths per query); the Route C
+/// verifier must reject it. Test-only.
+///
+/// C1 has `trace_width = 3`, so the two layouts have DIFFERENT per-query strides
+/// (`16*3 - 64 = -16` bytes). See
+/// `generate_confidential_balance_compact_proof_with_trace_leaf` for the
+/// `trace_width = 4` case, where the strides are byte-for-byte identical and the
+/// Merkle check is therefore the only thing standing between an old proof and
+/// acceptance.
+#[doc(hidden)]
+pub fn generate_pool_commitment_proof_with_trace_leaf(
+    nullifier_preimage: u64,
+    secret: u64,
+    deposit_epoch: u64,
+    token_mint: u64,
+    trace_leaf: TraceLeaf,
+) -> GenericCompactProofData {
+    generate_pool_commitment_proof_with_layout(
+        nullifier_preimage,
+        secret,
+        deposit_epoch,
+        token_mint,
+        PairIndexing::Canonical,
+        trace_leaf,
+    )
+}
+
+fn generate_pool_commitment_proof_with_layout(
+    nullifier_preimage: u64,
+    secret: u64,
+    deposit_epoch: u64,
+    token_mint: u64,
+    pair_indexing: PairIndexing,
+    trace_leaf: TraceLeaf,
+) -> GenericCompactProofData {
     let np = BaseElement::new(nullifier_preimage);
     let s = BaseElement::new(secret);
     let epoch = BaseElement::new(deposit_epoch);
@@ -4390,6 +4859,7 @@ pub fn generate_pool_commitment_proof_with_pair_indexing(
         FRI_FINAL_POLY_SIZE,
         QuotientSpec::Circuit1,
         pair_indexing,
+        trace_leaf,
     );
 
     GenericCompactProofData {
@@ -4498,6 +4968,33 @@ pub fn generate_confidential_balance_compact_proof(
     amount_salt: u64,
     token_mint: u64,
 ) -> GenericCompactProofData {
+    generate_confidential_balance_compact_proof_with_trace_leaf(
+        spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt,
+        token_mint, TraceLeaf::Canonical,
+    )
+}
+
+/// [ROUTE C fails-closed probe] `generate_confidential_balance_compact_proof`
+/// with the trace-commitment layout selectable.
+///
+/// C4 is the sharp version-skew case: `trace_width == 4`, so
+/// `16 * trace_width - 64 == 0` and an old-format proof is EXACTLY the same
+/// number of bytes as a new-format one. Every length check in the parser passes,
+/// every field boundary lines up, the transcript is self-consistent — the only
+/// thing left to reject it is the pair-leaf Merkle check itself. Test-only.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn generate_confidential_balance_compact_proof_with_trace_leaf(
+    spending_key: u64,
+    old_balance: u64,
+    old_salt: u64,
+    new_balance: u64,
+    new_salt: u64,
+    amount: u64,
+    amount_salt: u64,
+    token_mint: u64,
+    trace_leaf: TraceLeaf,
+) -> GenericCompactProofData {
     let sk = BaseElement::new(spending_key);
     let ob = BaseElement::new(old_balance);
     let os = BaseElement::new(old_salt);
@@ -4522,13 +5019,15 @@ pub fn generate_confidential_balance_compact_proof(
     pub_bytes.extend_from_slice(&ah_u64.to_le_bytes());
     pub_bytes.extend_from_slice(&token_mint.to_le_bytes());
 
-    let (proof_bytes, root) = generate_compact_proof_from_trace(
+    let (proof_bytes, root) = generate_compact_proof_from_trace_with_pair_indexing(
         &trace,
         &pub_bytes,
         GENERIC_BLOWUP,
         GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
         QuotientSpec::Circuit4,
+        PairIndexing::Canonical,
+        trace_leaf,
     );
 
     GenericCompactProofData {

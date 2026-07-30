@@ -255,10 +255,18 @@ pub struct QueryProof<'a> {
     /// that `quotient_pair_path_bytes` authenticates.
     pub quotient_mirror_value: Felt,
 
-    trace_values_bytes: &'a [u8],           // trace_width * 8
-    next_trace_values_bytes: &'a [u8],      // trace_width * 8
-    merkle_path_bytes: &'a [u8],            // merkle_depth * 32
-    next_merkle_path_bytes: &'a [u8],       // merkle_depth * 32
+    trace_values_bytes: &'a [u8],           // trace_width * 8  — row at `position`
+    /// [ROUTE C] Trace row at `position ^ (lde_size/2)`. Shares the pair leaf
+    /// `j = position mod (lde_size/2)` with `trace_values_bytes`, so
+    /// `merkle_path_bytes` authenticates both rows in one opening.
+    trace_mirror_values_bytes: &'a [u8],    // trace_width * 8
+    next_trace_values_bytes: &'a [u8],      // trace_width * 8  — row at `next_pos`
+    /// [ROUTE C] Trace row at `next_pos ^ (lde_size/2)`.
+    next_trace_mirror_values_bytes: &'a [u8], // trace_width * 8
+    /// [ROUTE C] Path into the trace **pair** tree: (merkle_depth - 1) * 32.
+    /// Was a full `merkle_depth * 32` value-tree path pre-Route-C.
+    merkle_path_bytes: &'a [u8],            // (merkle_depth - 1) * 32
+    next_merkle_path_bytes: &'a [u8],       // (merkle_depth - 1) * 32
     /// [B4] Path into the quotient **pair** tree: (merkle_depth - 1) * 32.
     quotient_pair_path_bytes: &'a [u8],
     /// [B4] Interleaved per-layer FRI block:
@@ -304,15 +312,52 @@ impl<'a> QueryProof<'a> {
     #[inline]
     pub fn next_trace_values_bytes(&self) -> &'a [u8] { self.next_trace_values_bytes }
 
+    /// [ROUTE C] Raw LE bytes of the trace row at `position ^ (lde_size/2)`.
+    ///
+    /// This is the `T_i(x_mirror)` half of the pair leaf. Nothing in this
+    /// revision *consumes* it — it is authenticated and then unused. It exists so
+    /// a later DEEP-composition recomputation has both halves of the coset from
+    /// ONE opening.
+    #[inline]
+    pub fn trace_mirror_values_bytes(&self) -> &'a [u8] { self.trace_mirror_values_bytes }
+
+    /// [ROUTE C] Raw LE bytes of the trace row at `next_pos ^ (lde_size/2)`.
+    ///
+    /// Because `next_pos = pos + blowup` and `blowup` divides `lde_size/2`, this
+    /// row is simultaneously the mirror of `next_pos` AND the *next* row of the
+    /// mirror of `pos` — so the four rows a query carries are two complete
+    /// transition frames, at `pos` and at `pos ^ (lde_size/2)`.
+    #[inline]
+    pub fn next_trace_mirror_values_bytes(&self) -> &'a [u8] { self.next_trace_mirror_values_bytes }
+
+    /// [ROUTE C] Mirror-row trace value at `col`.
+    #[inline]
+    pub fn trace_mirror_value(&self, col: usize) -> Felt {
+        felt_at(self.trace_mirror_values_bytes, col)
+    }
+
+    /// [ROUTE C] Mirror next-row trace value at `col`.
+    #[inline]
+    pub fn next_trace_mirror_value(&self, col: usize) -> Felt {
+        felt_at(self.next_trace_mirror_values_bytes, col)
+    }
+
+    /// [ROUTE C] Iterate mirror-row trace values.
+    pub fn trace_mirror_values_iter(&self) -> impl Iterator<Item = Felt> + '_ {
+        self.trace_mirror_values_bytes.chunks_exact(8).map(felt_from_slice)
+    }
+
     /// Number of trace columns (derived from the buffer length).
     #[inline]
     pub fn trace_width(&self) -> usize { self.trace_values_bytes.len() / 8 }
 
-    /// Trace Merkle path bytes (len = merkle_depth * 32).
+    /// [ROUTE C] Path into the trace pair tree (len = (merkle_depth - 1) * 32).
+    /// Authenticates the leaf `H(row[j] ‖ row[j + lde_size/2])` — i.e. the row at
+    /// `position` AND the row at its mirror.
     #[inline]
     pub fn merkle_path(&self) -> &'a [u8] { self.merkle_path_bytes }
 
-    /// Next-row trace Merkle path bytes.
+    /// [ROUTE C] Path into the trace pair tree for `next_pos`.
     #[inline]
     pub fn next_merkle_path(&self) -> &'a [u8] { self.next_merkle_path_bytes }
 
@@ -522,32 +567,43 @@ impl<'a> GenericCompactProof<'a> {
             ]);
             cursor += 4;
 
-            // trace_values: tw * 8 bytes
+            // [ROUTE C] trace_values(pos) | trace_mirror_values(pos ^ half) |
+            //   next_trace_values(next_pos) | next_trace_mirror_values(next ^ half)
+            // then TWO depth-(md - 1) trace PAIR paths. Pre-Route-C this was two
+            // rows and two full depth-md value-tree paths.
+            if md == 0 { return None; }
+
             if data.len() < cursor + tw * 8 { return None; }
             let trace_values_bytes = &data[cursor..cursor + tw * 8];
             cursor += tw * 8;
 
-            // next_trace_values: tw * 8 bytes
+            if data.len() < cursor + tw * 8 { return None; }
+            let trace_mirror_values_bytes = &data[cursor..cursor + tw * 8];
+            cursor += tw * 8;
+
             if data.len() < cursor + tw * 8 { return None; }
             let next_trace_values_bytes = &data[cursor..cursor + tw * 8];
             cursor += tw * 8;
 
-            // merkle_path: md * 32 bytes
-            if data.len() < cursor + md * 32 { return None; }
-            let merkle_path_bytes = &data[cursor..cursor + md * 32];
-            cursor += md * 32;
+            if data.len() < cursor + tw * 8 { return None; }
+            let next_trace_mirror_values_bytes = &data[cursor..cursor + tw * 8];
+            cursor += tw * 8;
 
-            // next_merkle_path: md * 32 bytes
-            if data.len() < cursor + md * 32 { return None; }
-            let next_merkle_path_bytes = &data[cursor..cursor + md * 32];
-            cursor += md * 32;
+            // trace pair path: (md - 1) * 32 bytes
+            if data.len() < cursor + (md - 1) * 32 { return None; }
+            let merkle_path_bytes = &data[cursor..cursor + (md - 1) * 32];
+            cursor += (md - 1) * 32;
+
+            // next-row trace pair path: (md - 1) * 32 bytes
+            if data.len() < cursor + (md - 1) * 32 { return None; }
+            let next_merkle_path_bytes = &data[cursor..cursor + (md - 1) * 32];
+            cursor += (md - 1) * 32;
 
             // [B4] quotient_mirror_value: 8 bytes, then ONE pair path:
             // (md - 1) * 32 bytes. The old layout had two full md*32 paths here.
             if data.len() < cursor + 8 { return None; }
             let quotient_mirror_value = felt_from_slice(&data[cursor..cursor + 8]);
             cursor += 8;
-            if md == 0 { return None; }
             if data.len() < cursor + (md - 1) * 32 { return None; }
             let quotient_pair_path_bytes = &data[cursor..cursor + (md - 1) * 32];
             cursor += (md - 1) * 32;
@@ -568,7 +624,9 @@ impl<'a> GenericCompactProof<'a> {
                 position,
                 quotient_mirror_value,
                 trace_values_bytes,
+                trace_mirror_values_bytes,
                 next_trace_values_bytes,
+                next_trace_mirror_values_bytes,
                 merkle_path_bytes,
                 next_merkle_path_bytes,
                 quotient_pair_path_bytes,
@@ -671,8 +729,14 @@ pub struct LegacyQueryProof<'a> {
     pub quotient_mirror_value: Felt,
 
     trace_values_bytes: &'a [u8],           // TRACE_WIDTH * 8 = 24
+    /// [ROUTE C] Trace row at `position ^ (LDE_SIZE/2)`.
+    trace_mirror_values_bytes: &'a [u8],    // 24
     next_trace_values_bytes: &'a [u8],      // 24
-    merkle_path_bytes: &'a [u8],            // MERKLE_DEPTH * 32 = 288
+    /// [ROUTE C] Trace row at `next_pos ^ (LDE_SIZE/2)`.
+    next_trace_mirror_values_bytes: &'a [u8], // 24
+    /// [ROUTE C] Path into the trace PAIR tree,
+    /// (MERKLE_DEPTH - 1) * 32 = 256. Was MERKLE_DEPTH * 32 = 288.
+    merkle_path_bytes: &'a [u8],
     next_merkle_path_bytes: &'a [u8],
     /// [B4] (MERKLE_DEPTH - 1) * 32 = 256
     quotient_pair_path_bytes: &'a [u8],
@@ -699,7 +763,29 @@ impl<'a> LegacyQueryProof<'a> {
     #[inline]
     pub fn next_trace_values_bytes(&self) -> &'a [u8] { self.next_trace_values_bytes }
 
+    /// [ROUTE C] Trace row at the mirror position (`position ^ LDE_SIZE/2`).
+    /// Authenticated by `merkle_path`, unread by this revision.
+    #[inline]
+    pub fn trace_mirror_values_bytes(&self) -> &'a [u8] { self.trace_mirror_values_bytes }
+    /// [ROUTE C] Trace row at the mirror of `next_pos`.
+    #[inline]
+    pub fn next_trace_mirror_values_bytes(&self) -> &'a [u8] {
+        self.next_trace_mirror_values_bytes
+    }
+    /// [ROUTE C] Mirror-row trace value at `col`.
+    #[inline]
+    pub fn trace_mirror_value(&self, col: usize) -> Felt {
+        felt_at(self.trace_mirror_values_bytes, col)
+    }
+    /// [ROUTE C] Mirror next-row trace value at `col`.
+    #[inline]
+    pub fn next_trace_mirror_value(&self, col: usize) -> Felt {
+        felt_at(self.next_trace_mirror_values_bytes, col)
+    }
+
+    /// [ROUTE C] Path into the trace pair tree ((MERKLE_DEPTH - 1) * 32 bytes).
     pub fn merkle_path(&self) -> &'a [u8] { self.merkle_path_bytes }
+    /// [ROUTE C] Path into the trace pair tree for `next_pos`.
     pub fn next_merkle_path(&self) -> &'a [u8] { self.next_merkle_path_bytes }
     /// [B4] Path into the quotient pair tree ((MERKLE_DEPTH - 1) * 32 bytes).
     pub fn quotient_pair_path(&self) -> &'a [u8] { self.quotient_pair_path_bytes }
@@ -908,21 +994,30 @@ impl<'a> CompactStarkProof<'a> {
             ]);
             cursor += 4;
 
+            // [ROUTE C] four trace rows + two depth-(md - 1) trace pair paths.
             if data.len() < cursor + tw * 8 { return None; }
             let trace_values_bytes = &data[cursor..cursor + tw * 8];
+            cursor += tw * 8;
+
+            if data.len() < cursor + tw * 8 { return None; }
+            let trace_mirror_values_bytes = &data[cursor..cursor + tw * 8];
             cursor += tw * 8;
 
             if data.len() < cursor + tw * 8 { return None; }
             let next_trace_values_bytes = &data[cursor..cursor + tw * 8];
             cursor += tw * 8;
 
-            if data.len() < cursor + md * 32 { return None; }
-            let merkle_path_bytes = &data[cursor..cursor + md * 32];
-            cursor += md * 32;
+            if data.len() < cursor + tw * 8 { return None; }
+            let next_trace_mirror_values_bytes = &data[cursor..cursor + tw * 8];
+            cursor += tw * 8;
 
-            if data.len() < cursor + md * 32 { return None; }
-            let next_merkle_path_bytes = &data[cursor..cursor + md * 32];
-            cursor += md * 32;
+            if data.len() < cursor + (md - 1) * 32 { return None; }
+            let merkle_path_bytes = &data[cursor..cursor + (md - 1) * 32];
+            cursor += (md - 1) * 32;
+
+            if data.len() < cursor + (md - 1) * 32 { return None; }
+            let next_merkle_path_bytes = &data[cursor..cursor + (md - 1) * 32];
+            cursor += (md - 1) * 32;
 
             // [B4] quotient_mirror_value(8) + ONE pair path ((md-1)*32).
             if data.len() < cursor + 8 { return None; }
@@ -945,7 +1040,9 @@ impl<'a> CompactStarkProof<'a> {
                 position,
                 quotient_mirror_value,
                 trace_values_bytes,
+                trace_mirror_values_bytes,
                 next_trace_values_bytes,
+                next_trace_mirror_values_bytes,
                 merkle_path_bytes,
                 next_merkle_path_bytes,
                 quotient_pair_path_bytes,
