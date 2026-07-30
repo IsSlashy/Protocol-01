@@ -686,14 +686,43 @@ struct CuCeiling {
     phase2_max: Option<u64>,
 }
 
+/// [B1] RE-PINNED from a fresh `cu_budget_real_circuits` run on the B1 build
+/// (.so sha256 47a9b2a2250e6143, source fp 255cda33813f3787, origin line says
+/// `rebuilt`, not `cache hit`). Phase-1 before -> after, all seven MEASURED:
+///
+/// ```text
+///   C0  474,030 -> 538,720   (+64,690, +13.6%)
+///   C1  612,719 -> 678,389   (+65,670, +10.7%)
+///   C2  615,727 -> 687,922   (+72,195, +11.7%)
+///   C3  655,666 -> 730,737   (+75,071, +11.4%)
+///   C4  702,940 -> 773,047   (+70,107, +10.0%)
+///   C5  659,304 -> 735,759   (+76,455, +11.6%)
+///   C6  656,742 -> 749,673   (+92,931, +14.1%)
+/// ```
+///
+/// That is the DEEP composition: ~`num_queries * (2w + 12) + 3w + 3` muls plus
+/// one 127-mul batched inversion. C6 pays the most because its irreducible term
+/// is `2w` muls per query at w = 10 and no rearrangement removes it. Worst
+/// absolute is C4 at 773,047 of 1,400,000 (55%); worst phase1+phase2 is C4 at
+/// 950,732, still one instruction.
+///
+/// Phase 2 moved by at most +98 CU (+0.05%) and is re-pinned too. It is NOT a
+/// phase-2 code change: `verify_deep_ali_circuit_*` reads no query data and its
+/// inputs (both roots, z, ood_current, ood_next, ood_quotient) are bit-identical
+/// pre/post B1, since B1 changes neither Merkle tree nor the OOD derivation. The
+/// phase-2 INSTRUCTION also calls `GenericCompactProof::from_bytes`, which B1
+/// gave a 16-iteration final-poly canonicity loop. The residual sign split by
+/// query count (27-query circuits -24..-34, 22-query circuits +77..+98) is
+/// attributed to codegen shifting inside that parse function; that attribution
+/// is INFERENCE from the source, not a separate measurement.
 const CU_CEILINGS: [CuCeiling; 7] = [
-    CuCeiling { circuit_id: 0, phase1_measured: 474_030, phase1_max: 484_000, phase2_measured: None,           phase2_max: None },
-    CuCeiling { circuit_id: 1, phase1_measured: 612_719, phase1_max: 625_000, phase2_measured: Some(122_730), phase2_max: Some(126_000) },
-    CuCeiling { circuit_id: 2, phase1_measured: 615_727, phase1_max: 629_000, phase2_measured: Some( 90_111), phase2_max: Some( 92_000) },
-    CuCeiling { circuit_id: 3, phase1_measured: 655_666, phase1_max: 669_000, phase2_measured: Some(113_515), phase2_max: Some(116_000) },
-    CuCeiling { circuit_id: 4, phase1_measured: 702_940, phase1_max: 717_000, phase2_measured: Some(177_719), phase2_max: Some(182_000) },
-    CuCeiling { circuit_id: 5, phase1_measured: 659_304, phase1_max: 673_000, phase2_measured: Some(198_551), phase2_max: Some(203_000) },
-    CuCeiling { circuit_id: 6, phase1_measured: 656_742, phase1_max: 670_000, phase2_measured: Some(120_345), phase2_max: Some(123_000) },
+    CuCeiling { circuit_id: 0, phase1_measured: 538_720, phase1_max: 550_000, phase2_measured: None,           phase2_max: None },
+    CuCeiling { circuit_id: 1, phase1_measured: 678_389, phase1_max: 692_000, phase2_measured: Some(122_706), phase2_max: Some(126_000) },
+    CuCeiling { circuit_id: 2, phase1_measured: 687_922, phase1_max: 702_000, phase2_measured: Some( 90_077), phase2_max: Some( 92_000) },
+    CuCeiling { circuit_id: 3, phase1_measured: 730_737, phase1_max: 746_000, phase2_measured: Some(113_592), phase2_max: Some(116_000) },
+    CuCeiling { circuit_id: 4, phase1_measured: 773_047, phase1_max: 789_000, phase2_measured: Some(177_685), phase2_max: Some(182_000) },
+    CuCeiling { circuit_id: 5, phase1_measured: 735_759, phase1_max: 751_000, phase2_measured: Some(198_649), phase2_max: Some(203_000) },
+    CuCeiling { circuit_id: 6, phase1_measured: 749_673, phase1_max: 765_000, phase2_measured: Some(120_428), phase2_max: Some(123_000) },
 ];
 
 /// The band is COMPUTED, so assert the arithmetic rather than trusting a typo.
