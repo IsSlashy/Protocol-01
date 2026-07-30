@@ -35,14 +35,17 @@
  */
 
 import { readFileSync, writeFileSync, statSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve, relative } from 'node:path';
+import { resolve, relative } from 'node:path';
 
-// this file lives at <repo>/packages/stark-prover/scripts/
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+import {
+  REPO,
+  CANONICAL as CANONICAL_REL,
+  GLUE as GLUE_REL,
+  TWIN_PATHS,
+} from './wasm-artifacts.mjs';
 
 /** The one true blob. Every twin below must decode to exactly these bytes. */
-const CANONICAL = resolve(REPO, 'packages/stark-prover/wasm/p01_stark_bg.wasm');
+const CANONICAL = resolve(REPO, CANONICAL_REL);
 
 /**
  * Each twin is a TS module exporting `STARK_WASM_BASE64`. `banner` is what
@@ -152,6 +155,25 @@ const TWINS = [
 
 // ---------------------------------------------------------------------------
 
+// `scripts/deployed-verifier-check.mjs` walks the same five artifacts from
+// `wasm-artifacts.mjs`. If a sixth client copy is added to one list and not the
+// other, that client ships an UNCHECKED prover. Fail here rather than leave it
+// unchecked.
+{
+  const mine = TWINS.map((t) => t.path).join('\n');
+  const shared = TWIN_PATHS.join('\n');
+  if (mine !== shared) {
+    console.error(
+      '[stark-wasm-twins] FAIL — this script\'s twin list has drifted from ' +
+        'scripts/wasm-artifacts.mjs TWIN_PATHS.\n' +
+        `  here:                  ${JSON.stringify(TWINS.map((t) => t.path))}\n` +
+        `  wasm-artifacts.mjs:    ${JSON.stringify(TWIN_PATHS)}\n` +
+        'Both gates must walk the same artifacts. Update wasm-artifacts.mjs.',
+    );
+    process.exit(1);
+  }
+}
+
 const mode = process.argv[2];
 if (mode !== '--check' && mode !== '--write') {
   console.error('usage: node packages/stark-prover/scripts/stark-wasm-twins.mjs --check | --write');
@@ -219,7 +241,7 @@ for (const twin of TWINS) {
 
 // The glue is generated alongside the .wasm and its API surface must match it.
 if (mode === '--check') {
-  const glue = resolve(REPO, 'packages/stark-prover/wasm/p01_stark.js');
+  const glue = resolve(REPO, GLUE_REL);
   try {
     const n = statSync(glue).size;
     if (n === 0) throw new Error('empty');
