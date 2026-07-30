@@ -346,8 +346,9 @@ fn compiler_identity() -> String {
 /// property of a binary; the source is only half of what produces one. This box
 /// carries two SBF toolchains — `~/.local/share/solana/install/active_release`
 /// points at agave 2.2.14 (platform-tools v1.47) while `Anchor.toml:3` pins
-/// 3.1.9 (v1.52) — and `ci.yml` selects the former by exporting
-/// `P01_CARGO_BUILD_SBF`, so the two are one environment variable apart.
+/// 3.1.9 (v1.52) — and `P01_CARGO_BUILD_SBF` picks between them, so a run on the
+/// wrong toolchain is one environment variable away. `ci.yml` used to export the
+/// 2.2.14 one; it now installs 3.1.9 and asserts the version before this runs.
 ///
 /// MEASURED on the source-only key: with `target/cu-budget` holding a 3.1.9
 /// build, re-running the harness with `P01_CARGO_BUILD_SBF` set to the 2.2.14
@@ -858,15 +859,26 @@ fn assert_artifact_is_current(so: &SoUnderTest) {
 /// uniform 2% band, narrow enough that the "it quietly became 1,399K" failure
 /// mode is red. It is COMPUTED from the measurement, not measured.
 ///
-/// That band is also the only thing absorbing a compiler difference that is real
-/// and UNMEASURED: the pin below was taken with the 3.1.9 toolchain
-/// `Anchor.toml:3` names, while `ci.yml` exports
-/// `P01_CARGO_BUILD_SBF=…/active_release/bin/cargo-build-sbf` and installs agave
-/// 2.2.14, so CI gates these numbers against bytecode from a different
-/// platform-tools. Nobody has measured what 2.2.14 costs — on the founder's box
-/// it cannot build at all (`os error 183`) — so treat a CI-only ceiling failure
-/// as a toolchain finding first and a regression second. `build_fingerprint`
-/// makes the switch visible instead of silent; it does not make the two equal.
+/// That band used to be the only thing absorbing a compiler difference. The pin
+/// below was taken with the 3.1.9 toolchain `Anchor.toml:3` names, while
+/// `ci.yml` installed agave 2.2.14 and exported
+/// `P01_CARGO_BUILD_SBF=…/active_release/bin/cargo-build-sbf`, so CI gated these
+/// numbers against bytecode from a different platform-tools and a red run there
+/// meant either a regression or a compiler difference with nothing saying which.
+/// Nobody has measured what 2.2.14 costs; on the founder's box it cannot build
+/// at all (`os error 183`), so the difference cannot be measured here either.
+///
+/// `ci.yml` now installs the 3.1.9 `Anchor.toml:3` pins and asserts
+/// `cargo-build-sbf --version` before this harness runs, so the gate compares
+/// like with like. `CU_MEASURED_WITH` and `toolchain_caveat` are the backstop
+/// for the day someone changes that pin without re-measuring: the harness then
+/// prints the gap above its own table and repeats it inside every violation, so
+/// the red still has two meanings but no longer hides that it does.
+///
+/// Still UNMEASURED: the host. These numbers were taken on Windows x86_64 and
+/// CI runs ubuntu x86_64. Same SBF target and same platform-tools, but nobody
+/// has compared the two `.so` files, so that residual is real and the 2% band
+/// is the only thing absorbing it.
 ///
 /// If you legitimately raise CU, raise the ceiling in the same commit and say
 /// why in the commit message. Do not widen the band to make a red run green.
@@ -943,6 +955,88 @@ const CU_CEILINGS: [CuCeiling; 7] = [
     CuCeiling { circuit_id: 5, phase1_measured: 735_492, phase1_max: 751_000, phase2_measured: Some(198_649), phase2_max: Some(203_000) },
     CuCeiling { circuit_id: 6, phase1_measured: 749_469, phase1_max: 765_000, phase2_measured: Some(120_428), phase2_max: Some(123_000) },
 ];
+
+/// The compiler that produced `CU_CEILINGS`, verbatim as `compiler_identity`
+/// reports it.
+///
+/// It is the string in the provenance paragraph above, held as a constant so the
+/// harness can compare it to the compiler it is actually running rather than
+/// leaving a reader to notice.
+const CU_MEASURED_WITH: &str = "solana-cargo-build-sbf 3.1.9 platform-tools v1.52";
+
+/// The toolchain gap between `CU_CEILINGS` and this run, or `None` when there is
+/// none.
+///
+/// A CU ceiling failure has two possible causes — a real regression, or bytecode
+/// from a different platform-tools — and until `ci.yml` was pinned to 3.1.9 the
+/// only thing separating them was the 2% band. It now installs the same 3.1.9
+/// these numbers were measured with, so the expected result here is `None` on
+/// both CI and a default local run.
+///
+/// This exists for the day that pin is changed without re-measuring. The gate
+/// cannot resolve the ambiguity, so it names it: the line is printed above the
+/// ceiling table on every run and appended to every violation, which is the
+/// difference between a red with two meanings and a red with two meanings that
+/// says so.
+fn toolchain_caveat(so: &SoUnderTest) -> Option<String> {
+    match so {
+        SoUnderTest::SelfBuilt { compiler, .. } if compiler == CU_MEASURED_WITH => None,
+        SoUnderTest::SelfBuilt { compiler, .. } => Some(format!(
+            "AMBIGUOUS GATE: CU_CEILINGS was measured with `{CU_MEASURED_WITH}`, this run built \
+             with `{compiler}`. CU is a property of bytecode, so a ceiling failure below is a \
+             toolchain finding as readily as a regression, and the difference between these two \
+             compilers has never been measured."
+        )),
+        SoUnderTest::Supplied { .. } => Some(format!(
+            "AMBIGUOUS GATE: the artifact came from P01_VERIFIER_SO, so the compiler that \
+             produced it is the caller's claim and this harness cannot check it. CU_CEILINGS was \
+             measured with `{CU_MEASURED_WITH}`; a ceiling failure below may be a toolchain \
+             difference."
+        )),
+    }
+}
+
+/// `CU_MEASURED_WITH` must be an identity `compiler_identity` could actually
+/// produce, and the caveat must fire on a mismatch and stay silent on a match.
+///
+/// Without the negative control the caveat could be a function that returns
+/// `None` unconditionally, which reads exactly like a clean toolchain.
+#[test]
+fn toolchain_caveat_fires_only_when_the_compiler_differs() {
+    let matching = SoUnderTest::SelfBuilt {
+        path: PathBuf::from("/dev/null"),
+        fingerprint: "0".repeat(64),
+        cached: false,
+        compiler: CU_MEASURED_WITH.to_string(),
+    };
+    assert!(
+        toolchain_caveat(&matching).is_none(),
+        "the compiler CU_CEILINGS was measured with must not raise a caveat against itself"
+    );
+
+    let other = SoUnderTest::SelfBuilt {
+        path: PathBuf::from("/dev/null"),
+        fingerprint: "0".repeat(64),
+        cached: false,
+        compiler: "solana-cargo-build-sbf 2.2.14 platform-tools v1.47".to_string(),
+    };
+    let note = toolchain_caveat(&other).expect("a different platform-tools must raise a caveat");
+    assert!(note.contains("2.2.14"), "the caveat must name the compiler in use: {note}");
+    assert!(note.contains("3.1.9"), "the caveat must name the compiler measured: {note}");
+
+    let supplied = SoUnderTest::Supplied { path: PathBuf::from("/dev/null") };
+    let note = toolchain_caveat(&supplied)
+        .expect("an artifact of unknown provenance must raise a caveat");
+    assert!(note.contains("P01_VERIFIER_SO"), "unexpected message: {note}");
+
+    // And the recorded string must be shaped like real `--version` output, or the
+    // comparison above would never match anything and the caveat would be stuck on.
+    assert!(
+        CU_MEASURED_WITH.starts_with("solana-cargo-build-sbf ")
+            && CU_MEASURED_WITH.contains("platform-tools "),
+        "CU_MEASURED_WITH {CU_MEASURED_WITH:?} is not shaped like `cargo-build-sbf --version`"
+    );
+}
 
 /// The band is COMPUTED, so assert the arithmetic rather than trusting a typo.
 ///
@@ -1035,7 +1129,7 @@ fn cu_ceiling_check_rejects_a_regression_and_accepts_the_recorded_numbers() {
         })
         .collect();
     assert!(
-        check_cu_ceilings(&clean).is_empty(),
+        check_cu_ceilings(&clean, None).is_empty(),
         "the recorded measurements must sit inside their own ceilings",
     );
 
@@ -1046,7 +1140,7 @@ fn cu_ceiling_check_rejects_a_regression_and_accepts_the_recorded_numbers() {
         Measured::Ok(c4.phase1_max + 1),
         Measured::Ok(c4.phase2_measured.unwrap()),
     )];
-    let v = check_cu_ceilings(&over);
+    let v = check_cu_ceilings(&over, None);
     assert_eq!(v.len(), 1, "expected exactly one violation, got {v:?}");
     assert!(v[0].contains("C4 phase 1"), "violation should name the circuit and phase: {}", v[0]);
 
@@ -1057,7 +1151,7 @@ fn cu_ceiling_check_rejects_a_regression_and_accepts_the_recorded_numbers() {
         Measured::Ok(c4.phase1_max),
         Measured::Ok(c4.phase2_measured.unwrap()),
     )];
-    assert!(check_cu_ceilings(&at).is_empty(), "the ceiling itself must be inclusive");
+    assert!(check_cu_ceilings(&at, None).is_empty(), "the ceiling itself must be inclusive");
 
     // Negative control 3: phase 2 over its ceiling.
     let ph2 = vec![synthetic_row(
@@ -1065,7 +1159,7 @@ fn cu_ceiling_check_rejects_a_regression_and_accepts_the_recorded_numbers() {
         Measured::Ok(ceiling_for(5).phase1_measured),
         Measured::Ok(ceiling_for(5).phase2_max.unwrap() + 1),
     )];
-    let v = check_cu_ceilings(&ph2);
+    let v = check_cu_ceilings(&ph2, None);
     assert_eq!(v.len(), 1, "expected exactly one violation, got {v:?}");
     assert!(v[0].contains("C5 phase 2"), "violation should name the circuit and phase: {}", v[0]);
 
@@ -1075,9 +1169,20 @@ fn cu_ceiling_check_rejects_a_regression_and_accepts_the_recorded_numbers() {
         Measured::Ok(ceiling_for(0).phase1_measured),
         Measured::Ok(1),
     )];
-    let v = check_cu_ceilings(&c0ph2);
+    let v = check_cu_ceilings(&c0ph2, None);
     assert_eq!(v.len(), 1, "expected exactly one violation, got {v:?}");
     assert!(v[0].contains("structurally absent"), "unexpected message: {}", v[0]);
+
+    // Negative control 5: a violation raised while the toolchain is ambiguous
+    // must carry that ambiguity in its own text. Printing it in a header the
+    // reader has scrolled past is not the same as saying it.
+    let v = check_cu_ceilings(&over, Some("AMBIGUOUS GATE: some other platform-tools"));
+    assert_eq!(v.len(), 1, "expected exactly one violation, got {v:?}");
+    assert!(
+        v[0].contains("AMBIGUOUS GATE"),
+        "a violation raised under a toolchain caveat must repeat it: {}",
+        v[0]
+    );
 }
 
 fn ceiling_for(circuit_id: u8) -> &'static CuCeiling {
@@ -1155,11 +1260,19 @@ fn proof_size_envelope_check_rejects_an_oversized_proof() {
 /// Two-sided reporting, one-sided assertion: a circuit that came in materially
 /// UNDER its recorded measurement is printed as `IMPROVED` (the ceiling is not
 /// there to stop that) but the ceiling itself is only ever an upper bound.
-fn check_cu_ceilings(rows: &[CircuitRow]) -> Vec<String> {
+fn check_cu_ceilings(rows: &[CircuitRow], caveat: Option<&str>) -> Vec<String> {
     let mut violations: Vec<String> = Vec::new();
 
     println!("\n{}", rule(104));
     println!("CU CEILINGS — the regression gate (upper bound; ratchet, not an equality pin)");
+    println!("{}", rule(104));
+    match caveat {
+        Some(note) => println!("!! {note}"),
+        None => println!(
+            "toolchain: built with `{CU_MEASURED_WITH}`, the compiler CU_CEILINGS was measured \
+             with — a failure below is a regression, not a compiler difference"
+        ),
+    }
     println!("{}", rule(104));
     println!(
         "{:<26} {:>13} {:>13} {:>13} {:>10} {:>12}",
@@ -1227,6 +1340,15 @@ fn check_cu_ceilings(rows: &[CircuitRow]) -> Vec<String> {
          A number over its ceiling FAILS this test. Raise the ceiling in the same commit\n        \
          that raises the cost, and say why — do not widen the band to clear a red run."
     );
+
+    // A violation is read on its own, in a CI log, by someone who did not see the
+    // header. If the red is ambiguous, it has to say so where it is read.
+    if let Some(note) = caveat {
+        for v in violations.iter_mut() {
+            v.push_str("\n      ");
+            v.push_str(note);
+        }
+    }
 
     violations
 }
@@ -1927,7 +2049,8 @@ fn cu_budget_real_circuits() {
 
     print_inferred_comparison(&rows);
 
-    let ceiling_violations = check_cu_ceilings(&rows);
+    let caveat = toolchain_caveat(&so);
+    let ceiling_violations = check_cu_ceilings(&rows, caveat.as_deref());
     let size_violations = check_proof_size_envelope(&rows);
 
     // A phase that fails outright means the numbers above are not what they

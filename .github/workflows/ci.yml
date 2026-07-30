@@ -163,6 +163,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    # The SBF toolchain `Anchor.toml:3` pins (`solana_version = "3.1.9"`, which
+    # ships platform-tools v1.52). This job used to install agave 2.2.14 instead.
+    # See the install step below for why that is not a detail.
+    env:
+      SOLANA_VERSION: "3.1.9"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -176,16 +182,57 @@ jobs:
       # bytecode with cargo-build-sbf and execute it under litesvm. Without a
       # Solana CLI here the harness panics (by design — it never skips and
       # passes), so this install is part of the gate, not a convenience.
+      #
+      # [TOOLCHAIN] This installed agave 2.2.14 (platform-tools v1.47) while
+      # `Anchor.toml:3` pins 3.1.9 (v1.52). For the accept/reject gates below that
+      # is harmless — they assert a decision, and the decision is a property of the
+      # program, not of the compiler. For the CU gate it is not: `CU_CEILINGS` pins
+      # the COST OF BYTECODE, the same `src/` through two platform-tools is not the
+      # same bytecode, and every one of those numbers was measured with 3.1.9. So a
+      # red CU step meant either a regression or a compiler difference, nothing said
+      # which, and the only thing absorbing the gap was a 2% band.
+      #
+      # The gap cannot be quantified: on the founder's box 2.2.14 dies with
+      # `Failed to install platform-tools: os error 183`, so nobody can measure what
+      # it costs. It is therefore removed rather than measured — CI now builds with
+      # the same compiler the pins were taken with, and the step below asserts that
+      # rather than assuming it.
       - name: Install Solana CLI (Agave) — required by the SBF gate tests
         run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/v2.2.14/install)"
+          sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+
+      # `CU_MEASURED_WITH` in tests/cu_budget.rs records the compiler `CU_CEILINGS`
+      # was measured with. It is READ OUT OF THE RUST rather than restated here, so
+      # the two cannot drift, and an unreadable constant fails this step instead of
+      # silently comparing against an empty string.
+      #
+      # A mismatch is a hard failure on purpose. If this ever fires, the CU numbers
+      # downstream would be gated against bytecode from a different platform-tools,
+      # and that is precisely the ambiguity this job no longer carries. Fix it by
+      # re-measuring and re-pinning CU_CEILINGS, not by deleting this step.
+      - name: Assert the SBF compiler is the one CU_CEILINGS was measured with
+        run: |
+          SBF="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
+          test -x "$SBF" || { echo "cargo-build-sbf missing at $SBF"; exit 1; }
+          got="$("$SBF" --version 2>&1 | tr '\n' ' ' | tr -s ' ' | sed -e 's/^ *//' -e 's/ *$//')"
+          want="$(sed -n 's/^const CU_MEASURED_WITH: &str = "\(.*\)";$/\1/p' programs/p01_stark_verifier/tests/cu_budget.rs)"
+          echo "cargo-build-sbf --version : $got"
+          echo "CU_MEASURED_WITH          : $want"
+          if [ -z "$want" ]; then
+            echo "::error title=CU_MEASURED_WITH unreadable::could not parse CU_MEASURED_WITH out of programs/p01_stark_verifier/tests/cu_budget.rs — this step cannot compare anything, so it fails rather than passing vacuously"
+            exit 1
+          fi
+          if [ "$got" != "$want" ]; then
+            echo "::error title=SBF toolchain drift::CU_CEILINGS was measured with '$want', this runner has '$got'. CU is a property of bytecode, so the CU gate downstream would be red for two possible reasons with no way to tell them apart. Re-measure and re-pin CU_CEILINGS with this compiler, or restore the pinned one."
+            exit 1
+          fi
 
       - name: Cache Solana platform-tools
         uses: actions/cache@v4
         with:
           path: ~/.cache/solana
-          key: solana-platform-tools-2.2.14
+          key: solana-platform-tools-${{ env.SOLANA_VERSION }}
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -360,6 +407,13 @@ jobs:
       # PATH fallback: a silent fallback to a different tool is the kind of
       # thing that turns a gate into a coin flip. `test -x` fails the job if the
       # install step did not produce it.
+      #
+      # These two moved from 2.2.14 to 3.1.9 as a side effect of the install pin
+      # above. They assert an accept/reject decision rather than a cost, so the
+      # compiler is not load-bearing here — but it still has to compile them.
+      # MEASURED before the pin was changed, with the 3.1.9 cargo-build-sbf and a
+      # CARGO_TARGET_DIR that did not exist: p01_liquidity exit 0, 328,344 B .so;
+      # p01_zkspl exit 0, 344,552 B .so.
       - name: cargo test (proof-buffer + payout gates, real SBF bytecode under litesvm)
         run: |
           export P01_CARGO_BUILD_SBF="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
@@ -382,13 +436,28 @@ jobs:
       #     which reports the platform-tools version with it). It did not, and MEASURED
       #     on the source-only key: with target/cu-budget holding a 3.1.9 build, re-running
       #     with P01_CARGO_BUILD_SBF pointed at agave 2.2.14 printed `cache hit` and
-      #     re-reported the 3.1.9 numbers under an unchanged .so sha256. This step exports
-      #     P01_CARGO_BUILD_SBF=active_release (2.2.14 here) while Anchor.toml:3 pins 3.1.9,
-      #     so CI and a local run are exactly one env var apart and the trap was live.
-      #     `build_fingerprint_changes_when_the_compiler_changes` is the pin.
+      #     re-reported the 3.1.9 numbers under an unchanged .so sha256. Back then this
+      #     step exported P01_CARGO_BUILD_SBF=active_release with 2.2.14 installed while
+      #     Anchor.toml:3 pinned 3.1.9, so CI and a local run were one env var apart and
+      #     the trap was live. `build_fingerprint_changes_when_the_compiler_changes` is
+      #     the pin, and it is a pin on the CACHE KEY, not on which compiler CI picks —
+      #     it makes a switch visible, it never made the two equal.
+      #     RE-MEASURED end to end when this step was pinned, on the same trap: with
+      #     target/cu-budget holding the valid 3.1.9 build under fingerprint
+      #     28cc268b11fd8b8a, re-running with P01_CARGO_BUILD_SBF pointed at 2.2.14
+      #     printed `build fingerprint 2dd5590bccda83a2 — rebuilding`, not `cache hit`,
+      #     and then panicked (exit 101) on 2.2.14's own platform-tools install. So the
+      #     compiler is still genuinely in the key, and the harness still fails closed.
+      #     What makes them equal is the install step above: this job now installs the
+      #     3.1.9 Anchor.toml pins, and `Assert the SBF compiler is the one CU_CEILINGS
+      #     was measured with` fails the job before this step runs if it is ever not.
+      #     Belt and braces, because a CI file is easy to edit: `toolchain_caveat` in
+      #     the harness compares the live compiler against CU_MEASURED_WITH and, on a
+      #     mismatch, prints the gap above the ceiling table AND inside every violation.
+      #     So a red here is a regression, and on the day it is not, it says so itself.
       #   * `CU_CEILINGS` pins phase-1 and phase-2 CU per circuit at measured*1.02.
-      #     Before that, a regression from 474K to 1,399K CU passed silently — it is
-      #     under the cap, so nothing objected.
+      #     Before that, nothing bounded CU from above except the 1,400,000 cap, so C0's
+      #     538,666 could have become 1,399,000 and stayed green.
       #     `cu_ceiling_check_rejects_a_regression_and_accepts_the_recorded_numbers`
       #     carries the positive and negative controls, so "reject nothing" cannot make
       #     this step green.
@@ -413,7 +482,7 @@ jobs:
           cargo test -p p01_stark_verifier --release --test cu_budget \
             -- --nocapture --test-threads=1 \
             cu_budget_real_circuits cu_budget_verify_uniform_path cu_ceiling \
-            build_fingerprint proof_size_envelope
+            build_fingerprint proof_size_envelope toolchain_caveat
 
       # [ROUTE C] `p01_stark_verifier` is split out and BLOCKING. It was under the
       # shared `continue-on-error: true` below, which made every warning on it
