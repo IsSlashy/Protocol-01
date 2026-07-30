@@ -1,0 +1,160 @@
+{
+  "record_version": 1,
+
+  "_WHAT_THIS_IS": [
+    "The record of WHICH on-chain verifier the checked-in client prover blob is allowed to talk to.",
+    "",
+    "packages/stark-prover/wasm/p01_stark_bg.wasm and its four inlined twins are the prover every",
+    "client actually runs. The proof wire format is agreed with the on-chain verifier and NOTHING on",
+    "the wire declares which generation produced a proof. A client that is one generation ahead of the",
+    "deployed program does not fail to build, does not fail to parse and does not fail early: it fails",
+    "at the very END of a long chunked proof upload, on chain, with FriFoldCheckFailed. That reads as an",
+    "unexplained transaction failure, which is why this file exists.",
+    "",
+    "scripts/deployed-verifier-check.mjs compares the checked-in blob against this record and fails the",
+    "build when they are not compatible. It is wired into the client build and publish steps, not only CI."
+  ],
+
+  "_HOW_TO_MAKE_THE_GATE_GREEN": [
+    "There is exactly ONE legitimate way, and it is not an edit to this file:",
+    "",
+    "  1. Deploy the CURRENT programs/p01_stark_verifier to the cluster named below.",
+    "  2. Re-measure this record from the chain:",
+    "       node packages/stark-prover/scripts/deployed-verifier-check.mjs --measure",
+    "     That prints a fresh `deployed` block read straight off the programdata account.",
+    "  3. Paste the measured block in, and set deployed.accepts_client_blob_sha256 to the sha256 of the",
+    "     blob you proved against that deployment.",
+    "  4. Re-run the gate with the on-chain leg:",
+    "       node packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain",
+    "",
+    "EDITING deployed.proof_format_generation OR deployed.accepts_client_blob_sha256 WITHOUT REDEPLOYING",
+    "IS THE FAILURE MODE THIS FILE EXISTS TO PREVENT. It makes the offline gate green and every proof",
+    "still fails on chain. --verify-onchain catches exactly that: it refetches the programdata account,",
+    "recomputes deployed.elf_sha256, and re-derives the generation from the deployed bytes. A record that",
+    "claims a generation the chain does not have is rejected against the chain, and no edit to this file",
+    "can change what the chain returns.",
+    "",
+    "The other direction is also blocked. Reverting the client blob to the older generation to match the",
+    "chain makes THIS gate green, but packages/stark-prover/src/wireFormat.test.ts then goes red on all",
+    "seven per-circuit sha256 digests, because the blob no longer matches the Rust prover in this tree.",
+    "The two gates constrain each other; neither alone is sufficient.",
+    "",
+    "The marker strings the gate scans for are HARDCODED in deployed-verifier-check.mjs, not read from",
+    "this file, so weakening the evidence blocks below cannot weaken the scan. They are reproduced here",
+    "for a human reader."
+  ],
+
+  "_WHICH_EXISTING_GATES_LET_A_STALE_BLOB_THROUGH_SILENTLY": [
+    "Both of the WASM gates that existed before this file compare the blob against THIS TREE. Neither",
+    "one has ever looked at the chain, and both are GREEN right now while every proof this blob produces",
+    "would be rejected on devnet:",
+    "",
+    "  scripts/stark-wasm-twins.mjs --check   proves the five artifacts carry the same bytes as each",
+    "                                         other. Says nothing about the deployed program.",
+    "  src/wireFormat.test.ts                 proves the blob's seven proof lengths and sha256 digests",
+    "                                         equal what the Rust prover in stark/ emits. That is the",
+    "                                         SAME side of the skew. If the tree is ahead of the chain,",
+    "                                         this gate confirms the tree agrees with itself and passes.",
+    "  src/wasmProbeScan.test.ts              proves no fails-closed probe identifier survives in the",
+    "                                         blob. Orthogonal to deployment.",
+    "",
+    "Nothing else in the repo compares a client artifact to a deployed program.",
+    "programs/p01_stark_verifier/tests/cu_budget.rs builds its own .so locally and never reads the chain."
+  ],
+
+  "deployed": {
+    "_note": "Every field in this block was MEASURED off the chain on the date below. Do not hand-edit; regenerate with --measure after a deploy.",
+
+    "cluster": "devnet",
+    "rpc_url": "https://api.devnet.solana.com",
+    "program_id": "EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z",
+    "programdata_address": "35XxrnBYPTWjir8Zc3BdS9LQA9Fjh6JB73iM3WaxKr57",
+    "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+    "upgrade_authority": "7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU",
+    "last_deployed_slot": 456289287,
+
+    "elf_sha256": "c359ab535f42d2d8a91a2b0228521b17d26c0bde32dc526538d92987c7019f5c",
+    "elf_bytes": 780249,
+    "elf_sha256_with_loader_padding": "17fc3f2b40b472a9dfa218e20eb4ddc26cec4a1e056eae2eb66f7de11f3a63b0",
+    "elf_bytes_with_loader_padding": 797824,
+    "programdata_account_space": 797869,
+
+    "proof_format_generation": "pre-b1",
+
+    "generation_evidence": {
+      "method": "byte scan of the deployed ELF for msg! format-string literals that B1 introduced in programs/p01_stark_verifier/src/verify.rs, controlled by sibling literals from the same file that predate B1",
+      "b1_markers_absent": [
+        "[verify] final poly coeff ",
+        " non-zero, bound is ",
+        "deep-v1"
+      ],
+      "pre_b1_controls_present": [
+        "[verify] step1 ok",
+        "[verify] step3.5 ok",
+        "[verify] step2a ok (expected=",
+        "[verify] OOD z mismatch: got ",
+        "DEEP-ALI phase 2 verified for circuit ",
+        "STARK proof verified for circuit ",
+        "rlc-c1 (the 8-byte NUL-padded domain tag b\"rlc-c1\\0\\0\")"
+      ],
+      "reading": "The B1 degree-bound msg! at verify.rs:1032 is absent while five sibling msg! literals from the same file are present, so the scan is working and the deployed bytes simply predate check_final_poly_degree_bound. `deep-v1` is the DEEP_COEFF_TAG byte string at verify.rs:962; its absence is corroborating but weaker, because an 8-byte byte-string literal can be materialised inline rather than kept in rodata.",
+      "the_gap_is_wider_than_b1": "Also absent from the deployed ELF: the C6 merkle_update boundary tag bnd-c6 (verify.rs:2592) and `verify_uniform: probed circuit ` (lib.rs:470, landed in commit 4bc69cb4). The deployment is several generations behind HEAD, not one. Redeploying fixes all of them at once; this record only tracks the B1 boundary because that is the one that silently breaks every proof."
+    },
+
+    "measured_at": {
+      "date_utc": "2026-07-30",
+      "observed_slot": 480007942,
+      "slots_since_deploy": 23718655,
+      "approximate_age": "~110 days at the nominal 0.4 s/slot. NOT exact: getBlockTime(456289287) returns `Block 456289287 cleaned up, does not exist on node. First available block: 479111617`, so the deploy block has been pruned and the wall-clock date cannot be read back. The slot number is the hard fact; the age is arithmetic.",
+      "corroboration": "The tracked IDL target/idl/p01_stark_verifier.json carries address EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z and was last written at commit 1023e5bb (release v1.0.3), which is before Route C and before B1. That is the same era the marker scan puts the deployment in."
+    },
+
+    "accepts_client_blob_sha256": null,
+    "accepts_client_blob_sha256_note": [
+      "UNKNOWN, and deliberately left null rather than guessed.",
+      "",
+      "What is established: the deployed program is pre-B1 (see generation_evidence) and the checked-in",
+      "blob 11e6f0041a23957b1624b89642a5b77a78c7a857ddfb56d4d26623665ec071a5 is B1, so the deployed",
+      "program does NOT accept the checked-in blob. That is enough to fail the gate correctly.",
+      "",
+      "What is NOT established: which historical blob it does accept. The last pre-B1 blob in git is",
+      "5fe610c90ff1fe15eb96abbbef3ca881b47923b68232335fda0df5546babd114 (194,540 B, commit 4b375d7c),",
+      "but the deployment also predates the C6 boundary fold, so 4b375d7c is very likely AHEAD of it too.",
+      "Writing 5fe610c9 here would be a guess, and a guess here is the one thing that turns this file from",
+      "a safety record into a source of false confidence.",
+      "",
+      "This stays null until someone deploys and proves a blob against that deployment end to end."
+    ]
+  },
+
+  "client_blob": {
+    "_note": "MEASURED from the working tree. Reconcile after every reship; the gate fails if these drift from the file on disk.",
+    "path": "packages/stark-prover/wasm/p01_stark_bg.wasm",
+    "sha256": "11e6f0041a23957b1624b89642a5b77a78c7a857ddfb56d4d26623665ec071a5",
+    "bytes": 211370,
+    "proof_format_generation": "b1",
+    "generation_evidence": {
+      "method": "byte scan of the blob for panic and assert message literals that B1 introduced in stark/src/compact.rs, controlled by domain-separation tags present in every generation",
+      "b1_markers_present": [
+        "B1 TERMINAL DEGREE BOUND VIOLATED",
+        "DEEP denominator vanishes at LDE position ",
+        "break the committed-vector/ood_quotient agreement B1 depends on"
+      ],
+      "controls_present": [
+        "the 8-byte NUL-padded domain tags rlc-c1, rlc-c2, rlc-c3, rlc-c5, bnd-c5, bnd-c6",
+        "proof_hex (the wasm_api JSON key, 7 occurrences)"
+      ],
+      "negative_control": "The pre-B1 blob 5fe610c9 (194,540 B, commit 4b375d7c) carries all seven controls and none of the three B1 markers, so the discriminators separate the two generations and the controls do not."
+    }
+  },
+
+  "interlock_status_when_this_record_was_written": [
+    "RED, and correctly so.",
+    "",
+    "  client blob  : b1      (11e6f004..., 211,370 B, this tree)",
+    "  deployed     : pre-b1  (c359ab53..., 780,249 B, devnet slot 456289287)",
+    "",
+    "Shipping apps/web, apps/extension, apps/mobile or packages/react-native-zk from this tree makes",
+    "EVERY proof those clients generate fail on chain with FriFoldCheckFailed. Ship the program first."
+  ]
+}
