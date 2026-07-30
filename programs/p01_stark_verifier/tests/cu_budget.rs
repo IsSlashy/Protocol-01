@@ -840,9 +840,9 @@ fn assert_artifact_is_current(so: &SoUnderTest) {
 /// 1,400,000 cap) and stays green when a change makes the verifier cheaper.
 ///
 /// Before this existed the only asserts in this file were "the measurement
-/// happened" and "there are seven rows". A regression from 474K to 1,399K CU
-/// passed silently — it is under the cap, so nothing objected, and the number
-/// just changed in a table nobody diffs.
+/// happened" and "there are seven rows". Nothing bounded CU from above except
+/// the 1,400,000 cap, so C0's 538,666 could become 1,399,000 and stay green —
+/// the number would just change in a table nobody diffs.
 ///
 /// # The numbers
 ///
@@ -855,7 +855,7 @@ fn assert_artifact_is_current(so: &SoUnderTest) {
 /// numbers in the array matched none of them.
 ///
 /// Every `*_max` is `ceil(measured * 1.02)` rounded up to the next 1,000 — a
-/// uniform 2% band, narrow enough that the "474K quietly became 1,399K" failure
+/// uniform 2% band, narrow enough that the "it quietly became 1,399K" failure
 /// mode is red. It is COMPUTED from the measurement, not measured.
 ///
 /// That band is also the only thing absorbing a compiler difference that is real
@@ -889,73 +889,51 @@ struct CuCeiling {
 /// Artifact: `target/cu-budget/p01_stark_verifier.so`, 671,064 B, sha256
 /// `3d843e834f9a3a5fda0c2b6505b1b6d9b3d30ba64bb2584d5b7334f20b618f2e`, built by
 /// `solana-cargo-build-sbf 3.1.9 platform-tools v1.52`, build fp
-/// `28cc268b11fd8b8a`, origin line `rebuilt`. `target/cu-budget` was deleted
-/// before the run, so nothing could be served from cache. A second run against
-/// the same tree rebuilt the `.so` to the same sha256, so the artifact is
-/// reproducible on this toolchain.
+/// `28cc268b11fd8b8a`, origin line `rebuilt`, from a `CARGO_TARGET_DIR` that did
+/// not exist. `target/cu-budget` was moved aside before the run, so nothing could
+/// be served from cache, and the rebuild landed on the same sha256 as the build
+/// it replaced, byte for byte — the artifact is reproducible on this toolchain.
 ///
-/// # What this re-pin corrects
+/// Every one of the thirteen numbers below is a `compute_units_consumed` from
+/// that run, and that run reproduces all thirteen: the `vs measured` column
+/// prints `+0` on all seven rows.
 ///
-/// `4b1347c3` ("re-pin CU after the dead ALI seam was deleted") edited the prose
-/// and moved no constant. Its paragraph described a SECOND measurement, taken
-/// after `verify_quotient_at_query` and its eight call sites were deleted, while
-/// `phase1_measured` still held the FIRST. The file therefore asserted C4 =
-/// 773,047 three lines below a sentence saying C4 = 772,776, and the harness
-/// measured 772,776. Re-measured here, and pinned to what was measured:
+/// # There is no historical column here, on purpose
 ///
-/// ```text
-///          was pinned      measured      delta
-///   C0        538,720       538,666        -54
-///   C1        678,389       678,142       -247
-///   C2        687,922       687,645       -277
-///   C3        730,737       730,461       -276
-///   C4        773,047       772,776       -271
-///   C5        735,759       735,492       -267
-///   C6        749,673       749,469       -204
-/// ```
+/// This block used to carry two more tables: a `was pinned / measured / delta`
+/// column from the re-pin in `0757b105`, and a `before -> after B1` column
+/// copied out of `d4b6ea12`'s commit message. Neither is reproducible by running
+/// this harness — `d4b6ea12` measured a tree that still contained
+/// `verify_quotient_at_query` and its eight call sites, which no longer exist —
+/// and the `after B1` column contradicted the array twenty lines under it on all
+/// seven circuits: it said C0 538,720 where the array says 538,666, and so on
+/// down to C6 749,673 against 749,469.
 ///
-/// No CEILING moves. `ceil(measured * 1.02)` rounded up to the next 1,000 lands
-/// on the same thousand for both columns on all seven circuits, which is what
-/// `4b1347c3` meant by "ceilings unchanged" — so nothing was ever mis-gated, and
-/// this is a correctness-of-record fix, not a live gate failure. What was wrong
-/// is the baseline the `vs measured` column diffs against: it printed -54 to
-/// -277 on a healthy tree where it should print 0, which is exactly the drift
-/// signal a reader is meant to trust.
+/// That is the second time a stale column in this doc drifted from the constants
+/// below it, so the columns are deleted rather than re-labelled. Nothing is
+/// lost: `git show 0757b105` and `git show d4b6ea12` carry both tables in their
+/// commit messages, attached to the diffs that moved the constants.
 ///
-/// Phase 2 needed no correction. All six reproduced exactly: C1 122,706,
-/// C2 90,077, C3 113,592, C4 177,685, C5 198,649, C6 120,428.
+/// # Where phase 1 got its cost
+///
+/// B1 — folding the DEEP composition into FRI — is what moved it, by +10.0% to
+/// +14.1% on phase 1 across the seven circuits (measured in `d4b6ea12`). That is
+/// the DEEP composition: ~`num_queries * (2w + 12) + 3w + 3` muls plus one
+/// 127-mul batched inversion. C6 pays the most because its irreducible term is
+/// `2w` muls per query at w = 10 and no rearrangement removes it.
+///
+/// Phase 2 moved by at most +98 CU (+0.05%) across B1 and has needed no re-pin
+/// since. It is NOT a phase-2 code change: `verify_deep_ali_circuit_*` reads no
+/// query data and its inputs (both roots, z, ood_current, ood_next,
+/// ood_quotient) are bit-identical pre/post B1, since B1 changes neither Merkle
+/// tree nor the OOD derivation. The phase-2 INSTRUCTION also calls
+/// `GenericCompactProof::from_bytes`, which B1 gave a 16-iteration final-poly
+/// canonicity loop, and codegen shifting inside that parse function is the
+/// attributed cause. That attribution is INFERENCE from the source, not a
+/// separate measurement.
 ///
 /// Worst absolute is C4 at 772,776 of 1,400,000 (55%); worst phase1+phase2 is
 /// C4 at 950,461, still inside one instruction.
-///
-/// # Where phase 1 got its cost, for context
-///
-/// B1 — folding the DEEP composition into FRI — is what moved it. Phase-1 before
-/// -> after B1, all seven MEASURED at the time:
-///
-/// ```text
-///   C0  474,030 -> 538,720   (+64,690, +13.6%)
-///   C1  612,719 -> 678,389   (+65,670, +10.7%)
-///   C2  615,727 -> 687,922   (+72,195, +11.7%)
-///   C3  655,666 -> 730,737   (+75,071, +11.4%)
-///   C4  702,940 -> 773,047   (+70,107, +10.0%)
-///   C5  659,304 -> 735,759   (+76,455, +11.6%)
-///   C6  656,742 -> 749,673   (+92,931, +14.1%)
-/// ```
-///
-/// That is the DEEP composition: ~`num_queries * (2w + 12) + 3w + 3` muls plus
-/// one 127-mul batched inversion. C6 pays the most because its irreducible term
-/// is `2w` muls per query at w = 10 and no rearrangement removes it.
-///
-/// Phase 2 moved by at most +98 CU (+0.05%) across B1. It is NOT a phase-2 code
-/// change: `verify_deep_ali_circuit_*` reads no query data and its inputs (both
-/// roots, z, ood_current, ood_next, ood_quotient) are bit-identical pre/post B1,
-/// since B1 changes neither Merkle tree nor the OOD derivation. The phase-2
-/// INSTRUCTION also calls `GenericCompactProof::from_bytes`, which B1 gave a
-/// 16-iteration final-poly canonicity loop. The residual sign split by query
-/// count (27-query circuits -24..-34, 22-query circuits +77..+98) is attributed
-/// to codegen shifting inside that parse function; that attribution is INFERENCE
-/// from the source, not a separate measurement.
 const CU_CEILINGS: [CuCeiling; 7] = [
     CuCeiling { circuit_id: 0, phase1_measured: 538_666, phase1_max: 550_000, phase2_measured: None,           phase2_max: None },
     CuCeiling { circuit_id: 1, phase1_measured: 678_142, phase1_max: 692_000, phase2_measured: Some(122_706), phase2_max: Some(126_000) },
