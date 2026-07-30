@@ -1141,23 +1141,40 @@ fn both_fri_paths_derive_the_deep_coefficient_and_check_the_degree_bound() {
 /// 45,001, undetected because the only assertion was `toBeGreaterThan(1024)`).
 ///
 /// A content digest is the only check that catches prover/verifier semantic skew
-/// at constant length. The same two constants are pinned on the TypeScript side
-/// in `packages/stark-prover/src/wireFormat.test.ts`, driving the checked-in
-/// WASM. If the two languages disagree, one of them is stale.
+/// at constant length. The SEVEN constants below are the same seven pinned on
+/// the TypeScript side in `packages/stark-prover/src/wireFormat.test.ts`
+/// (`Pin.sha256`), driving the checked-in WASM, over the same seven witnesses.
+/// If the two languages disagree, one of them is stale.
+///
+/// Until this round the Rust side pinned only C0 and C1 while the TypeScript
+/// side pinned all seven. A `stark/src/compact.rs` change that moved C2 through
+/// C6 proof bytes therefore broke nothing on the Rust side, and the only thing
+/// standing between that and a shipped skew was a TypeScript suite that has to
+/// be run against a freshly built WASM blob to mean anything.
 ///
 /// # Why a digest is legitimate here
 ///
 /// Proof generation is fully deterministic: `grind_nonce` starts at nonce 0 and
 /// increments, and there is no `rand`, `thread_rng` or `SystemTime` anywhere in
 /// `stark/src/compact.rs`. `fixture_proofs_are_deterministic` asserts that
-/// directly rather than assuming it.
+/// directly rather than assuming it, on all seven.
 ///
-/// Witnesses match `wireFormat.test.ts`'s C0 and C1 rows exactly so the three
-/// files can be diffed by eye.
+/// `FIXTURE_C0_SHA256` and `FIXTURE_C1_SHA256` keep their names because
+/// `wireFormat.test.ts` cites both by name.
 const FIXTURE_C0_SHA256: &str =
     "e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7";
 const FIXTURE_C1_SHA256: &str =
     "935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b";
+const FIXTURE_C2_SHA256: &str =
+    "063d86a18071ae369132c12a69c5af0e3c2efbe82f6340e6d7ec910be80fd49f";
+const FIXTURE_C3_SHA256: &str =
+    "2d97f56ffc3157fe7c644679d2945130efed8ea39c890a24c6c16022e78d5d9c";
+const FIXTURE_C4_SHA256: &str =
+    "f877836723d0711e7190c2fd5c8a5c6d0476f21794d39ffd47a075f57d53e3e7";
+const FIXTURE_C5_SHA256: &str =
+    "78afe9bbd533913771d5c2438e279934114fe4c6db934b67b43c0644376ea125";
+const FIXTURE_C6_SHA256: &str =
+    "8e1166f5d08bd948bc70a407d9261d6b88c1de5b257c4545918d9c36d94524fc";
 
 fn hex32(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(64);
@@ -1175,32 +1192,84 @@ fn fixture_c1() -> Vec<u8> {
     p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11).proof_bytes
 }
 
+fn fixture_c2() -> Vec<u8> {
+    p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999).proof_bytes
+}
+
+fn fixture_c3() -> Vec<u8> {
+    let pe: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
+    let pi: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
+    p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi).proof_bytes
+}
+
+fn fixture_c4() -> Vec<u8> {
+    p01_stark::compact::generate_confidential_balance_compact_proof(
+        42, 1000, 111, 800, 222, 200, 333, 999,
+    )
+    .proof_bytes
+}
+
+fn fixture_c5() -> Vec<u8> {
+    p01_stark::compact::generate_transfer_compact_proof(
+        13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50,
+    )
+    .proof_bytes
+}
+
+fn fixture_c6() -> Vec<u8> {
+    let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+    p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi).proof_bytes
+}
+
+/// One row per circuit. `len` is the same literal `wireFormat.test.ts` pins as
+/// `Pin.absolute` and `route_c_trace_pair.rs` pins for C0; `sha256` is the same
+/// literal it pins as `Pin.sha256`.
+struct Fixture {
+    label: &'static str,
+    len: usize,
+    sha256: &'static str,
+    build: fn() -> Vec<u8>,
+}
+
+const FIXTURES: [Fixture; 7] = [
+    Fixture { label: "C0", len: 45_001, sha256: FIXTURE_C0_SHA256, build: fixture_c0 },
+    Fixture { label: "C1", len: 65_801, sha256: FIXTURE_C1_SHA256, build: fixture_c1 },
+    Fixture { label: "C2", len: 66_681, sha256: FIXTURE_C2_SHA256, build: fixture_c2 },
+    Fixture { label: "C3", len: 75_637, sha256: FIXTURE_C3_SHA256, build: fixture_c3 },
+    Fixture { label: "C4", len: 78_377, sha256: FIXTURE_C4_SHA256, build: fixture_c4 },
+    Fixture { label: "C5", len: 76_357, sha256: FIXTURE_C5_SHA256, build: fixture_c5 },
+    Fixture { label: "C6", len: 78_517, sha256: FIXTURE_C6_SHA256, build: fixture_c6 },
+];
+
 #[test]
 fn fixture_proofs_are_deterministic() {
-    assert_eq!(fixture_c0(), fixture_c0(), "C0 proof generation must be deterministic");
-    assert_eq!(fixture_c1(), fixture_c1(), "C1 proof generation must be deterministic");
+    for f in FIXTURES.iter() {
+        assert_eq!(
+            (f.build)(),
+            (f.build)(),
+            "{} proof generation must be deterministic",
+            f.label,
+        );
+    }
 }
 
 #[test]
 fn cross_language_fixture_digests() {
-    let c0 = fixture_c0();
-    let c1 = fixture_c1();
-    let d0 = hex32(&solana_sha256_hasher::hashv(&[&c0]).to_bytes());
-    let d1 = hex32(&solana_sha256_hasher::hashv(&[&c1]).to_bytes());
-    println!("[FIXTURE] C0 {} bytes sha256 {d0}", c0.len());
-    println!("[FIXTURE] C1 {} bytes sha256 {d1}", c1.len());
-    assert_eq!(c0.len(), 45_001, "C0 fixture length pin");
-    assert_eq!(c1.len(), 65_801, "C1 fixture length pin");
-    assert_eq!(
-        d0, FIXTURE_C0_SHA256,
-        "\n\n  >>> C0 FIXTURE DIGEST DRIFT <<<\n  The Rust prover's output changed. If that \
-         was deliberate, RESHIP THE WASM PROVER and update BOTH this constant and the twin \
-         in packages/stark-prover/src/wireFormat.test.ts. Do not update one of them.\n",
-    );
-    assert_eq!(
-        d1, FIXTURE_C1_SHA256,
-        "\n\n  >>> C1 FIXTURE DIGEST DRIFT <<<\n  See the C0 message above.\n",
-    );
+    for f in FIXTURES.iter() {
+        let bytes = (f.build)();
+        let digest = hex32(&solana_sha256_hasher::hashv(&[&bytes]).to_bytes());
+        println!("[FIXTURE] {} {} bytes sha256 {digest}", f.label, bytes.len());
+        assert_eq!(bytes.len(), f.len, "{} fixture length pin", f.label);
+        assert_eq!(
+            digest, f.sha256,
+            "\n\n  >>> {} FIXTURE DIGEST DRIFT <<<\n  The Rust prover's output changed. If \
+             that was deliberate, RESHIP THE WASM PROVER and update BOTH this constant and \
+             the `Pin.sha256` twin in packages/stark-prover/src/wireFormat.test.ts. Do not \
+             update one of them.\n",
+            f.label,
+        );
+    }
 }
 
 // ============================================================================
