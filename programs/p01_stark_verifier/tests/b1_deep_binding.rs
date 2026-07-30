@@ -1569,15 +1569,28 @@ const COVERAGE: [Coverage; 7] = [
 const SELF_SRC: &str = include_str!("b1_deep_binding.rs");
 
 /// The source text of one function in this file, from its `fn` line to the first
-/// closing brace at column 0. Used to check that a row's claimed coverage is a
-/// call this file really makes, not just a name that happens to exist.
-fn test_body(name: &str) -> &'static str {
+/// closing brace at column 0, with `//` comment lines REMOVED.
+///
+/// Used to check that a row's claimed coverage is a call this file really makes,
+/// not just a name that happens to appear somewhere in it.
+///
+/// Dropping the comments is not cosmetic. MEASURED: the first version of this
+/// helper kept them, and the phase-2 check below then PASSED with C6's
+/// `phase2(..)` call deleted, because the comment left behind above it still
+/// said `verify_deep_ali_circuit_6`. A guardrail a comment can satisfy is not a
+/// guardrail. Re-run with the call deleted after this change and the check
+/// fails, which is the negative control quoted in the commit message.
+fn test_body(name: &str) -> String {
     let start = SELF_SRC
         .find(&format!("fn {name}("))
         .unwrap_or_else(|| panic!("no function named `{name}` in this file"));
     let rest = &SELF_SRC[start..];
     let end = rest.find("\n}\n").map(|e| e + 3).unwrap_or(rest.len());
-    &rest[..end]
+    rest[..end]
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The coverage table must describe this file, not an aspiration.
