@@ -198,9 +198,18 @@ wasm-pack build stark --target web --out-dir wasm-out -- --features wasm
 
 The `-- --features wasm` is **mandatory**; `mod wasm_api` is cfg-gated and without it the blob exports zero proof functions. Note that `packages/stark-prover/README.md:51-54` gives the command **without** it — fix that comment.
 
-There is no build script and no CI check. Hand-base64 the 192,732-byte `p01_stark_bg.wasm` into three files: `apps/web/lib/privacy/pool/starkWasmData.ts`, `apps/extension/src/shared/services/starkWasmData.ts`, `apps/mobile/services/stark/wasmData.ts`. All three are byte-identical today (md5-verified by AREA-prover); keep them that way.
+**UPDATED after the Route C reship (step 3, round 3).** Both halves of this step now exist and no longer need hand-work:
 
-**Proves it:** a script comparing each twin's base64 against a fresh build, and `WebAssembly.Module.exports()` confirming `generate_spend_stark_proof` is present. Add both as a CI step — its absence is why a stale twin currently fails as an opaque `TypeError` inside a worker. Declare the new export **optional** in the TS interfaces and guard it with an explicit throw, following the pattern at `wasm-loader.ts:51-58`.
+```
+node packages/stark-prover/scripts/stark-wasm-twins.mjs --write   # regenerate every twin
+node packages/stark-prover/scripts/stark-wasm-twins.mjs --check   # CI gate, exit 1 on drift
+```
+
+There are **four** twins, not three — the fourth is `packages/react-native-zk/src/wasmData.ts`, which had drifted to a THIRD generation of the blob (MEASURED 124,562 B against a 192,732 B sibling) because its own `inline-wasm.mjs` resolved `node_modules` before the workspace sibling. Canonical blob is now 194,540 B; `p01_stark_bg.wasm` sizes quoted anywhere else in this document predate the reship.
+
+The bigger finding this step should have caught and did not: the checked-in blob was **pre-B4, pre-domain-sep and pre-Route-C**. MEASURED, driving it under Node 22: circuit 0 at 79,993 bytes against a Rust prover emitting 45,001, and that 79,993-byte proof is rejected by the current verifier with `InvalidQueryPosition`. Every client-generated proof was old-format. Reship in lockstep with any wire-format change, and treat `packages/stark-prover`'s npm version as part of the change — the published 0.1.1 tarball still carries the pre-reship blob.
+
+**Proves it:** `packages/stark-prover/src/wireFormat.test.ts` pins all seven circuits' serialized proof length from the checked-in blob against the literals `programs/p01_stark_verifier/tests/route_c_trace_pair.rs:1002` pins for the Rust prover (catches a *stale* reship), and `--check` above compares every twin's base64 against the canonical blob (catches a *partial* reship). Both run as a BLOCKING CI step. For C7 specifically, still add `WebAssembly.Module.exports()` confirming `generate_spend_stark_proof` shipped, declare the new export **optional** in the TS interfaces, and guard it with an explicit throw following `wasm-loader.ts:51-58`.
 
 ---
 
@@ -348,9 +357,10 @@ cargo test -p p01-stark --lib emit_circuit_7_periodic_coeffs -- --ignored --noca
 cargo test -p p01-stark --lib   # 41 prover tests incl. wire-size drift pins and periodic parity pins
 cargo test -p p01_stark_verifier   # native prove->verify; p01-stark is already a dev-dependency
 cargo test -p p01_stark_verifier --lib transfer_deep_ali_rejects_non_conserving_proof   # THE negative-test pattern: phase 1 accepts, phase 2 rejects
-cargo test -p p01_stark_verifier --test cu_budget -- --nocapture   # NEW in Step 0: litesvm CU measurement for the C7 probe and for real C1/C3/C5/C6 numbers
+cargo test -p p01_stark_verifier --release --test cu_budget -- --nocapture --test-threads=1   # litesvm CU + proof bytes; builds its own .so from a content fingerprint of src/, and CU_CEILINGS makes a regression red
 wasm-pack build stark --target web --out-dir wasm-out -- --features wasm   # the `-- --features wasm` is MANDATORY
-node -e "const fs=require('fs');const b64=fs.readFileSync('stark/wasm-out/p01_stark_bg.wasm').toString('base64');for(const f of ['apps/web/lib/privacy/pool/starkWasmData.ts','apps/extension/src/shared/services/starkWasmData.ts','apps/mobile/services/stark/wasmData.ts']){const m=fs.readFileSync(f,'utf8').match(/[A-Za-z0-9+/=]{1000,}/);console.log(f,m&&m[0]===b64);}"   # verify the three base64 twins
+cp stark/wasm-out/p01_stark_bg.wasm stark/wasm-out/p01_stark.js packages/stark-prover/wasm/ && node packages/stark-prover/scripts/stark-wasm-twins.mjs --write   # reship the blob + all FOUR base64 twins
+node packages/stark-prover/scripts/stark-wasm-twins.mjs --check && pnpm --filter @protocol-01/stark-prover test   # the two prover-artifact gates: partial reship, then stale reship
 node -e "const fs=require('fs');for(const e of WebAssembly.Module.exports(new WebAssembly.Module(fs.readFileSync('stark/wasm-out/p01_stark_bg.wasm'))))console.log(e.kind,e.name);"   # confirm generate_spend_stark_proof shipped
 cd apps/web && pnpm test:pool   # pure math + instruction bytes only; NOT a C7 gate
 cargo check --workspace --all-targets --exclude p01-arcium --exclude encrypted-ixs   # what CI runs

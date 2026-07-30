@@ -48,9 +48,12 @@ export interface StarkExports {
     a: bigint, b: bigint, c: bigint, d: bigint, e: bigint, f: bigint,
     g: bigint, h: bigint, i: bigint, j: bigint, k: bigint, l: bigint, m: bigint,
   ): [number, number];
-  // The current `wasm-out/p01_stark.js` build does NOT yet expose
-  // `generate_merkle_update_stark_proof`. Listed optional so the loader can
-  // be reused once the next WASM rebuild ships circuit 6. See README.
+  // MEASURED: the bundled blob DOES export `generate_merkle_update_stark_proof`
+  // (14 exports, unchanged across the Route C reship) and
+  // `src/wireFormat.test.ts` drives it. The comment here used to claim the
+  // opposite. Kept optional so the loader still works against an older blob a
+  // consumer may have pinned, and so `generateProofBytes` can throw a named
+  // error instead of a `TypeError` inside a worker.
   generate_merkle_update_stark_proof?: (
     oldLeaf: bigint, newLeaf: bigint,
     elemsPtr: number, elemsLen: number,

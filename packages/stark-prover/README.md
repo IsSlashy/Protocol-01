@@ -48,10 +48,25 @@ await sdk.shield({ amount: 1_000_000n, mint: USDC_MINT });
 | 5  | transfer              | `[null_1, null_2, out_1, out_2, public_amount, mint]`  |
 | 6  | merkle_update         | `[old_leaf, new_leaf, old_root, new_root, depth]`*     |
 
-\* Circuit 6 is implemented in the Rust source but not yet exported by the
-bundled WASM (`stark/wasm-out/p01_stark_bg.wasm`). Rebuild the WASM with
-`wasm-pack build stark --target web --out-dir wasm-out` from the repo root
-to enable it.
+\* Circuit 6 **is** exported by the bundled WASM. This note used to say it was
+not; MEASURED against `wasm/p01_stark_bg.wasm`, `generate_merkle_update_stark_proof`
+is present and `src/wireFormat.test.ts` drives it. The export surface is 14
+functions and has not changed across the Route C reship.
+
+Rebuilding the WASM (the `-- --features wasm` is **mandatory** — `mod wasm_api`
+is cfg-gated and without it the blob exports zero proof functions):
+
+```bash
+wasm-pack build stark --target web --out-dir wasm-out -- --features wasm
+cp stark/wasm-out/p01_stark_bg.wasm stark/wasm-out/p01_stark.js packages/stark-prover/wasm/
+node packages/stark-prover/scripts/stark-wasm-twins.mjs --write   # the four inlined base64 twins
+```
+
+The wire format is agreed with the on-chain verifier and nothing on the wire
+declares which version produced a proof, so a stale blob here means every proof
+this package generates is rejected. Two CI gates cover it: `--check` above
+(partial reship) and `src/wireFormat.test.ts`, which pins all seven circuits'
+serialized proof length (stale reship).
 
 ## Runtime support
 
