@@ -27,7 +27,13 @@ anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
 solana-sha256-hasher = { version = "2.3.0", features = ["sha2"] }
 
 [dev-dependencies]
-p01-stark = { path = "../../stark" }
+# `test-probes` compiles the fails-closed probe knobs (coordinated OOD forgery,
+# `AliasedFold`, `LegacyRowLeaf`, the non-canonical `PairIndexing` variants) that
+# `tests/b1_deep_binding.rs`, `tests/b4_pair_leaf.rs` and
+# `tests/route_c_trace_pair.rs` drive. It is a DEV-dependency feature, so
+# `resolver = "2"` keeps it out of the normal graph and out of the shipping WASM
+# prover; `cargo test` needs no extra flags.
+p01-stark = { path = "../../stark", features = ["test-probes"] }
 # [C7 Step 0] Local compute-unit measurement harness (`tests/cu_budget.rs`).
 # litesvm loads the built `target/deploy/p01_stark_verifier.so` into an
 # in-process SBF VM, so `compute_units_consumed` is the real on-chain number

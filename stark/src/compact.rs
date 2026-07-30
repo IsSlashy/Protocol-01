@@ -104,14 +104,22 @@ const NUM_ROUNDS: usize = 30;
 /// This builds the trace, creates a Merkle commitment, derives
 /// query positions via Fiat-Shamir, and returns the serialized compact proof.
 pub fn generate_compact_proof(subscriber_secret: u64) -> CompactProofData {
-    generate_compact_proof_with_pair_indexing(subscriber_secret, PairIndexing::Canonical)
+    generate_compact_proof_with_layout(
+        subscriber_secret,
+        PairIndexing::Canonical,
+        TraceLeaf::Canonical,
+        DeepProbe::HONEST,
+    )
 }
 
 /// [B4 fails-closed probe] `generate_compact_proof` with the pair-leaf layout
 /// selectable. Only `PairIndexing::Canonical` matches the on-chain verifier;
 /// the other variants produce a complete, internally consistent proof under a
-/// *different* pair indexing, which the verifier must reject. Test-only —
-/// nothing in production calls this with a non-canonical mode.
+/// *different* pair indexing, which the verifier must reject.
+///
+/// Compiled only under the `test-probes` feature. See `OodForgery` for why the
+/// feature exists and what turns it on.
+#[cfg(any(test, feature = "test-probes"))]
 #[doc(hidden)]
 pub fn generate_compact_proof_with_pair_indexing(
     subscriber_secret: u64,
@@ -138,7 +146,9 @@ pub fn generate_compact_proof_with_pair_indexing(
 /// rows per query, two depth-`MERKLE_DEPTH` paths — so a test can assert the
 /// Route C verifier rejects it rather than mis-verifying it.
 ///
-/// Test-only. Every production entry point passes `TraceLeaf::Canonical`.
+/// Compiled only under the `test-probes` feature. Every production entry
+/// point passes `TraceLeaf::Canonical`.
+#[cfg(any(test, feature = "test-probes"))]
 #[doc(hidden)]
 pub fn generate_compact_proof_with_trace_leaf(
     subscriber_secret: u64,
@@ -159,7 +169,9 @@ pub fn generate_compact_proof_with_trace_leaf(
 /// shipped instructions (`zk_shielded::{pause,resume,cancel_private_stark}` and
 /// `p01_quantum_wallet/src/stark.rs`), and it keeps DEEP-ALI inside phase 1 and
 /// BEFORE FRI, so one instruction carries both the identity and the binding.
-/// Test-only.
+///
+/// Compiled only under the `test-probes` feature.
+#[cfg(any(test, feature = "test-probes"))]
 #[doc(hidden)]
 pub fn generate_compact_proof_with_forgery(
     subscriber_secret: u64,
@@ -197,6 +209,7 @@ fn generate_compact_proof_with_layout(
     //    `LegacyRowLeaf` rebuilds the pre-Route-C row-leaf tree; test-only.
     let (root, tree) = match trace_leaf {
         TraceLeaf::Canonical => build_trace_pair_merkle_tree(&lde, TRACE_WIDTH),
+        #[cfg(any(test, feature = "test-probes"))]
         TraceLeaf::LegacyRowLeaf => build_merkle_tree_generic(&lde, TRACE_WIDTH),
     };
 
@@ -287,6 +300,9 @@ fn generate_compact_proof_with_layout(
          vector would not interpolate back to q_poly",
         q_poly.len(),
     );
+    // `mut` exists only for the `test-probes` forgery re-solve below; without
+    // the feature nothing writes to it.
+    #[cfg_attr(not(any(test, feature = "test-probes")), allow(unused_mut))]
     let mut ood_quotient = {
         let q_poly_committed = inverse_ntt(&quotient_felts, lde_g);
         evaluate_poly(&q_poly_committed, ood_z_felt).as_int()
@@ -307,6 +323,7 @@ fn generate_compact_proof_with_layout(
     // identity accepts, FRI rejects. That also makes the re-solve MANDATORY here:
     // without it the identity would catch the forgery first and the test would
     // prove nothing about the binding.
+    #[cfg(any(test, feature = "test-probes"))]
     if let OodForgery::Coordinated { col, delta } = probe.ood_forgery {
         assert!(col < TRACE_WIDTH, "forgery column {col} out of range");
         ood_current[col] =
@@ -361,6 +378,8 @@ fn generate_compact_proof_with_layout(
         lde_g,
         gamma,
     );
+    // `mut` exists only for the `test-probes` terminal play below.
+    #[cfg_attr(not(any(test, feature = "test-probes")), allow(unused_mut))]
     let mut fri = fri_commit_phase(
         &deep_felts,
         lde_g,
@@ -370,7 +389,9 @@ fn generate_compact_proof_with_layout(
     );
 
     // [B1] Terminal probe + prover-side degree assert, before grinding absorbs
-    // the final poly. C0's bound is 7, not 8.
+    // the final poly. C0's bound is 7, not 8. The probe is `test-probes` only;
+    // the assert below is unconditional and ships.
+    #[cfg(any(test, feature = "test-probes"))]
     apply_terminal_poly_probe(
         &mut fri.final_poly,
         probe.terminal_poly,
@@ -430,6 +451,7 @@ fn generate_compact_proof_with_layout(
             TraceLeaf::Canonical => {
                 (pos & (t_half - 1), next_pos & (t_half - 1), MERKLE_DEPTH - 1)
             }
+            #[cfg(any(test, feature = "test-probes"))]
             TraceLeaf::LegacyRowLeaf => (pos, next_pos, MERKLE_DEPTH),
         };
         let merkle_path = get_merkle_proof_generic(&tree, trace_index, trace_path_depth);
@@ -1898,6 +1920,7 @@ fn serialize_compact_proof(
     // other cannot silently emit a buffer the parser will misread.
     let expected_trace_depth = match trace_leaf {
         TraceLeaf::Canonical => MERKLE_DEPTH - 1,
+        #[cfg(any(test, feature = "test-probes"))]
         TraceLeaf::LegacyRowLeaf => MERKLE_DEPTH,
     };
 
@@ -4070,6 +4093,10 @@ fn compute_lde_generic(
 }
 
 /// Build a SHA-256 Merkle tree from LDE columns (any width).
+///
+/// Pre-Route-C trace commitment: one leaf per row. The only callers left are
+/// the `TraceLeaf::LegacyRowLeaf` arms, so this is `test-probes` only.
+#[cfg(any(test, feature = "test-probes"))]
 fn build_merkle_tree_generic(
     lde: &[Vec<BaseElement>],
     trace_width: usize,
@@ -4124,14 +4151,21 @@ fn build_merkle_tree_generic(
 /// every alpha, every layer root, the grinding nonce, every query position — is
 /// then derived consistently by the prover itself.
 ///
-/// Test-only, and deliberately so: this is real attack code that re-solves
-/// `ood_quotient` from the AIR. It is `#[doc(hidden)]` AND `cfg`-gated so it
-/// cannot ship inside the WASM prover.
+/// This is real attack code that re-solves `ood_quotient` from the AIR, so the
+/// `Coordinated` variant and every branch that reads it are compiled ONLY under
+/// the `test-probes` cargo feature. That feature is off in `default`, so
+/// `cargo build` and `wasm-pack build stark -- --features wasm` cannot emit it;
+/// it is turned on for tests by `p01_stark_verifier`'s dev-dependency on this
+/// crate (`resolver = "2"` keeps dev-only features out of the normal graph) and
+/// by `cfg(test)` for this crate's own unit tests, so `cargo test` needs no
+/// extra flags. `packages/stark-prover/src/wasmProbeScan.test.ts` scans the
+/// checked-in blob for these identifiers and fails if the gate ever regresses.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum OodForgery {
     #[default]
     None,
     /// Perturb `ood_current[col]` by `delta`, then re-solve `ood_quotient`.
+    #[cfg(any(test, feature = "test-probes"))]
     Coordinated { col: usize, delta: u64 },
 }
 
@@ -4145,10 +4179,13 @@ pub enum OodForgery {
 /// `p` therefore passes the degree check AND agrees with the true final layer at
 /// all 8 even terminal indices — the maximum agreement a degree-<8 polynomial
 /// can have with 16 values, i.e. relative distance exactly 1/2.
+///
+/// `AliasedFold` is attack code and is compiled only under `test-probes`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TerminalPoly {
     #[default]
     Honest,
+    #[cfg(any(test, feature = "test-probes"))]
     AliasedFold,
 }
 
@@ -4171,7 +4208,8 @@ impl DeepProbe {
 ///
 /// Must run BEFORE the grinding transcript is built, or the published poly and
 /// the derived query positions disagree and the proof is rejected for the wrong
-/// reason.
+/// reason. Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
 fn apply_terminal_poly_probe(final_poly: &mut [u64], terminal: TerminalPoly, bound: usize) {
     if terminal != TerminalPoly::AliasedFold {
         return;
@@ -4207,6 +4245,9 @@ fn apply_terminal_poly_probe(final_poly: &mut [u64], terminal: TerminalPoly, bou
 /// may be quoted anywhere: `-log2(8/16) = 1.000` bits. It matches the
 /// independently measured FRI rate (deg(Q) = 4088 on an 8192 LDE, i.e. ~1/2),
 /// and it is why `num_queries * log2(blowup)` was always wrong.
+///
+/// Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
 #[doc(hidden)]
 pub fn measure_aliased_terminal_agreement() -> (Vec<usize>, Vec<usize>) {
     let forged = generate_pool_commitment_proof_with_forgery(
@@ -4272,6 +4313,7 @@ pub fn measure_aliased_terminal_agreement() -> (Vec<usize>, Vec<usize>) {
 ///
 /// `z_t * SUM_j alpha_bnd^j (ood_current[col_j] - v_j)/(z - g^{r_j})`.
 #[allow(clippy::too_many_arguments)]
+#[cfg(any(test, feature = "test-probes"))]
 fn boundary_c_at_ood_impl(
     circuit_id: u8,
     public_inputs: &[u64],
@@ -4316,6 +4358,7 @@ fn boundary_c_at_ood_impl(
 /// silently returning the honest value, which would make a forgery test pass for
 /// the wrong reason.
 #[allow(clippy::too_many_arguments)]
+#[cfg(any(test, feature = "test-probes"))]
 fn solve_ood_quotient_for_spec(
     spec: &QuotientSpec,
     trace_root: &[u8; 32],
@@ -4381,7 +4424,8 @@ fn solve_ood_quotient_for_spec(
 /// verifier rejects it. That is the version-skew seam: an old proof meeting a
 /// new verifier must fail closed, never verify by accident.
 ///
-/// Test-only; the public `generate_*` entry points all pass `Canonical`.
+/// Compiled only under `test-probes`; the public `generate_*` entry points all
+/// pass `Canonical`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TraceLeaf {
     /// [ROUTE C] `leaf[j] = H(0x00 ‖ row[j] ‖ row[j + N/2])` over `N/2` leaves,
@@ -4392,6 +4436,7 @@ pub enum TraceLeaf {
     /// Pre-Route-C: `leaf[t] = H(0x00 ‖ row[t])` over `N` leaves, tree depth
     /// `log2(N)`. Per query the wire carries TWO rows and two depth-`log2(N)`
     /// paths.
+    #[cfg(any(test, feature = "test-probes"))]
     LegacyRowLeaf,
 }
 
@@ -4786,20 +4831,25 @@ mod lde_coset_sequencing {
 /// **complete, internally consistent** prover that disagrees with the verifier
 /// about pair indexing and assert that honest-looking proofs are rejected.
 /// They are never reachable from the public `generate_*` entry points except
-/// through the `#[doc(hidden)]` `*_with_pair_indexing` probes.
+/// through the `#[doc(hidden)]` `*_with_pair_indexing` probes, and the
+/// non-canonical variants are compiled only under `test-probes`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PairIndexing {
     /// `leaf[j] = H(v[j] ‖ v[j + N/2])` — the shipping layout.
     Canonical,
     /// `leaf[j] = H(v[j + N/2] ‖ v[j])` — halves swapped inside the leaf.
+    #[cfg(any(test, feature = "test-probes"))]
     SwappedHalves,
     /// `leaf[(j+1) mod N/2] = H(v[j] ‖ v[j + N/2])` — pair one slot over.
+    #[cfg(any(test, feature = "test-probes"))]
     RotatedSlot,
     /// `SwappedHalves` on the FRI layers only; the quotient tree stays
     /// canonical. Lets a test reach the FRI-layer pair check, which the
     /// quotient check would otherwise short-circuit.
+    #[cfg(any(test, feature = "test-probes"))]
     SwappedHalvesFriOnly,
     /// `RotatedSlot` on the FRI layers only; quotient tree canonical.
+    #[cfg(any(test, feature = "test-probes"))]
     RotatedSlotFriOnly,
 }
 
@@ -4808,6 +4858,7 @@ impl PairIndexing {
     #[inline]
     fn quotient(self) -> Self {
         match self {
+            #[cfg(any(test, feature = "test-probes"))]
             PairIndexing::SwappedHalvesFriOnly | PairIndexing::RotatedSlotFriOnly => {
                 PairIndexing::Canonical
             }
@@ -4819,7 +4870,9 @@ impl PairIndexing {
     #[inline]
     fn fri(self) -> Self {
         match self {
+            #[cfg(any(test, feature = "test-probes"))]
             PairIndexing::SwappedHalvesFriOnly => PairIndexing::SwappedHalves,
+            #[cfg(any(test, feature = "test-probes"))]
             PairIndexing::RotatedSlotFriOnly => PairIndexing::RotatedSlot,
             other => other,
         }
@@ -4827,9 +4880,14 @@ impl PairIndexing {
 }
 
 /// [B4] Tree slot that holds the pair `{v[j], v[j + half]}`.
+///
+/// `half` is read only by the `test-probes` `RotatedSlot` arm; the parameter
+/// stays in the signature so the shipping and probe builds share one call site.
 #[inline]
+#[cfg_attr(not(any(test, feature = "test-probes")), allow(unused_variables))]
 fn pair_slot(j: usize, half: usize, mode: PairIndexing) -> usize {
     match mode {
+        #[cfg(any(test, feature = "test-probes"))]
         PairIndexing::RotatedSlot => (j + 1) % half,
         _ => j,
     }
@@ -4839,6 +4897,7 @@ fn pair_slot(j: usize, half: usize, mode: PairIndexing) -> usize {
 #[inline]
 fn pair_leaf_preimage(values: &[u64], j: usize, half: usize, mode: PairIndexing) -> [u8; 16] {
     let (a, b) = match mode {
+        #[cfg(any(test, feature = "test-probes"))]
         PairIndexing::SwappedHalves => (values[j + half], values[j]),
         _ => (values[j], values[j + half]),
     };
@@ -5567,6 +5626,7 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
     //    exists only so a test can build an old-format proof.
     let (root, tree) = match trace_leaf {
         TraceLeaf::Canonical => build_trace_pair_merkle_tree(&lde, trace_width),
+        #[cfg(any(test, feature = "test-probes"))]
         TraceLeaf::LegacyRowLeaf => build_merkle_tree_generic(&lde, trace_width),
     };
 
@@ -5669,6 +5729,8 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
     // the same reason.
     let quotient_felts: Vec<BaseElement> =
         all_quotient_values.iter().map(|&v| BaseElement::new(v)).collect();
+    // `mut` exists only for the `test-probes` forgery re-solve below.
+    #[cfg_attr(not(any(test, feature = "test-probes")), allow(unused_mut))]
     let mut ood_quotient = {
         let q_poly = inverse_ntt(&quotient_felts, lde_g);
         evaluate_poly(&q_poly, ood_z_felt).as_int()
@@ -5680,6 +5742,7 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
     // the grinding nonce, the positions) is then built from the forged claims, so
     // the proof is internally consistent and only the DEEP composition can catch
     // it. See `OodForgery`.
+    #[cfg(any(test, feature = "test-probes"))]
     if let OodForgery::Coordinated { col, delta } = probe.ood_forgery {
         assert!(col < trace_width, "forgery column {col} out of range");
         ood_current_vals[col] = (BaseElement::new(ood_current_vals[col])
@@ -5736,6 +5799,8 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
         lde_g,
         gamma,
     );
+    // `mut` exists only for the `test-probes` terminal play below.
+    #[cfg_attr(not(any(test, feature = "test-probes")), allow(unused_mut))]
     let mut fri = fri_commit_phase(
         &deep_felts,
         lde_g,
@@ -5747,6 +5812,8 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
     // [B1] Terminal probe, then the prover-side twin of the verifier's degree
     // bound. Order matters: both must run BEFORE the grinding transcript absorbs
     // the final poly, or the published poly and the derived positions disagree.
+    // The probe is `test-probes` only; the assert below is unconditional.
+    #[cfg(any(test, feature = "test-probes"))]
     apply_terminal_poly_probe(
         &mut fri.final_poly,
         probe.terminal_poly,
@@ -5855,6 +5922,7 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
         // `pos` into the row tree, depth `merkle_depth`.
         let (trace_index, next_trace_index, trace_path_depth) = match trace_leaf {
             TraceLeaf::Canonical => (pos & (t_half - 1), next_pos & (t_half - 1), merkle_depth - 1),
+            #[cfg(any(test, feature = "test-probes"))]
             TraceLeaf::LegacyRowLeaf => (pos, next_pos, merkle_depth),
         };
         let path = get_merkle_proof_generic(&tree, trace_index, trace_path_depth);
@@ -5937,19 +6005,23 @@ pub fn generate_pool_commitment_proof(
     deposit_epoch: u64,
     token_mint: u64,
 ) -> GenericCompactProofData {
-    generate_pool_commitment_proof_with_pair_indexing(
+    generate_pool_commitment_proof_with_layout(
         nullifier_preimage,
         secret,
         deposit_epoch,
         token_mint,
         PairIndexing::Canonical,
+        TraceLeaf::Canonical,
+        DeepProbe::HONEST,
     )
 }
 
 /// [B4 fails-closed probe] `generate_pool_commitment_proof` with the pair-leaf
 /// layout selectable. Only `PairIndexing::Canonical` matches the on-chain
 /// verifier; the other variants build a complete, internally consistent proof
-/// under a different pair indexing, which the verifier must reject. Test-only.
+/// under a different pair indexing, which the verifier must reject. Compiled
+/// only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
 #[doc(hidden)]
 pub fn generate_pool_commitment_proof_with_pair_indexing(
     nullifier_preimage: u64,
@@ -5980,7 +6052,8 @@ pub fn generate_pool_commitment_proof_with_pair_indexing(
 /// `generate_confidential_balance_compact_proof_with_trace_leaf` for the
 /// `trace_width = 4` case, where the strides are byte-for-byte identical and the
 /// Merkle check is therefore the only thing standing between an old proof and
-/// acceptance.
+/// acceptance. Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
 #[doc(hidden)]
 pub fn generate_pool_commitment_proof_with_trace_leaf(
     nullifier_preimage: u64,
@@ -6005,7 +6078,9 @@ pub fn generate_pool_commitment_proof_with_trace_leaf(
 ///
 /// C1 is the narrow generic case and the one with an existing probe entry point,
 /// so it carries the full T1/T2/T3 matrix in `tests/b1_deep_binding.rs`.
-/// Test-only; every production entry point passes `DeepProbe::HONEST`.
+/// Compiled only under `test-probes`; every production entry point passes
+/// `DeepProbe::HONEST`.
+#[cfg(any(test, feature = "test-probes"))]
 #[doc(hidden)]
 pub fn generate_pool_commitment_proof_with_forgery(
     nullifier_preimage: u64,
@@ -6169,27 +6244,20 @@ pub fn generate_confidential_balance_compact_proof(
     amount_salt: u64,
     token_mint: u64,
 ) -> GenericCompactProofData {
-    generate_confidential_balance_compact_proof_with_trace_leaf(
+    generate_confidential_balance_compact_proof_inner(
         spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt,
-        token_mint, TraceLeaf::Canonical,
+        token_mint, TraceLeaf::Canonical, DeepProbe::HONEST,
     )
 }
 
-/// [ROUTE C fails-closed probe] `generate_confidential_balance_compact_proof`
-/// with the trace-commitment layout selectable.
-///
-/// C4 is the sharp version-skew case: `trace_width == 4`, so
-/// `16 * trace_width - 64 == 0` and an old-format proof is EXACTLY the same
-/// number of bytes as a new-format one. Every length check in the parser passes,
-/// every field boundary lines up, the transcript is self-consistent — the only
-/// thing left to reject it is the pair-leaf Merkle check itself. Test-only.
 /// [B1 fails-closed probe] `generate_confidential_balance_compact_proof` with
 /// the coordinated-OOD-forgery and terminal-poly knobs exposed.
 ///
 /// C4 is the CU-binding circuit (highest measured phase-1 base, 27 queries on a
 /// 4096 LDE). Note `solve_ood_quotient_for_spec` has no C4 arm yet, so
 /// `OodForgery::Coordinated` PANICS here rather than silently producing a
-/// forgery phase 2 would reject. Test-only.
+/// forgery phase 2 would reject. Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
 pub fn generate_confidential_balance_compact_proof_with_forgery(
@@ -6210,6 +6278,16 @@ pub fn generate_confidential_balance_compact_proof_with_forgery(
     )
 }
 
+/// [ROUTE C fails-closed probe] `generate_confidential_balance_compact_proof`
+/// with the trace-commitment layout selectable.
+///
+/// C4 is the sharp version-skew case: `trace_width == 4`, so
+/// `16 * trace_width - 64 == 0` and an old-format proof is EXACTLY the same
+/// number of bytes as a new-format one. Every length check in the parser passes,
+/// every field boundary lines up, the transcript is self-consistent — the only
+/// thing left to reject it is the pair-leaf Merkle check itself. Compiled only
+/// under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
 pub fn generate_confidential_balance_compact_proof_with_trace_leaf(
@@ -6377,13 +6455,12 @@ pub fn generate_merkle_update_compact_proof(
     path_elements: &[u64],
     path_indices: &[u8],
 ) -> GenericCompactProofData {
-    generate_merkle_update_compact_proof_with_forgery(
+    generate_merkle_update_compact_proof_inner(
         old_leaf,
         new_leaf,
         path_elements,
         path_indices,
-        OodForgery::None,
-        TerminalPoly::Honest,
+        DeepProbe::HONEST,
     )
 }
 
@@ -6393,7 +6470,8 @@ pub fn generate_merkle_update_compact_proof(
 /// C6 had NO probe entry point of any kind before B1, and it is the widest
 /// circuit (w = 10) — which makes it the marginal one for the DEEP arithmetic,
 /// since the irreducible per-query cost is `2w` muls and no rearrangement
-/// removes it. Test-only.
+/// removes it. Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
 #[doc(hidden)]
 pub fn generate_merkle_update_compact_proof_with_forgery(
     old_leaf: u64,
@@ -6402,6 +6480,22 @@ pub fn generate_merkle_update_compact_proof_with_forgery(
     path_indices: &[u8],
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
+) -> GenericCompactProofData {
+    generate_merkle_update_compact_proof_inner(
+        old_leaf,
+        new_leaf,
+        path_elements,
+        path_indices,
+        DeepProbe { ood_forgery, terminal_poly },
+    )
+}
+
+fn generate_merkle_update_compact_proof_inner(
+    old_leaf: u64,
+    new_leaf: u64,
+    path_elements: &[u64],
+    path_indices: &[u8],
+    probe: DeepProbe,
 ) -> GenericCompactProofData {
     let old_leaf_felt = BaseElement::new(old_leaf);
     let new_leaf_felt = BaseElement::new(new_leaf);
@@ -6435,7 +6529,7 @@ pub fn generate_merkle_update_compact_proof_with_forgery(
         QuotientSpec::Circuit6 { depth: path_elements.len() },
         PairIndexing::Canonical,
         TraceLeaf::Canonical,
-        DeepProbe { ood_forgery, terminal_poly },
+        probe,
     );
 
     GenericCompactProofData {
