@@ -4180,13 +4180,54 @@ pub enum OodForgery {
 /// all 8 even terminal indices — the maximum agreement a degree-<8 polynomial
 /// can have with 16 values, i.e. relative distance exactly 1/2.
 ///
-/// `AliasedFold` is attack code and is compiled only under `test-probes`.
+/// `SubgroupAlias` is the same idea generalised to a bound that is NOT half the
+/// published size, which is the case on the LEGACY C0 path: bound 7 of fps 16.
+/// `AliasedFold` cannot be built there at all — its assert `bound * 2 == fps`
+/// fails — so before this variant existed EVERY C0 negative case rejected at
+/// `check_final_poly_degree_bound`, which runs ONCE per proof and BEFORE the
+/// per-query DEEP arithmetic. The legacy fold chain (`verify_fri_legacy`'s PASS
+/// 1 and PASS 2) therefore had no negative coverage at all, on the path that is
+/// the sole verifier for four shipped instructions.
+///
+/// `SubgroupAlias` reduces the true terminal interpolant `c` modulo `x^k - 1`,
+/// where `k` is the largest power of two with `k <= bound` (see
+/// `largest_terminal_subgroup`). The published `p` then has degree `< k <= bound`
+/// so it PASSES the degree check, and `p(x_j) == c(x_j)` exactly whenever
+/// `x_j^k = 1`, i.e. at the `k` terminal indices `j = 0 mod fps/k`.
+///
+/// For `bound == fps/2` this IS `AliasedFold` (`k == fps/2`, `p_m = c_m + c_{m+8}`)
+/// — the two agree by construction, and `subgroup_alias_matches_aliased_fold_on_c1`
+/// asserts it. For C0's bound 7 of 16 it gives `k = 4`: agreement at 4 of 16
+/// indices. That is a DIFFERENT rate from T5's measured 1.000 bits/query and must
+/// never be quoted as one; it is measured on its own by
+/// `measure_subgroup_alias_terminal_agreement_c0`.
+///
+/// `AliasedFold` and `SubgroupAlias` are attack code and are compiled only under
+/// `test-probes`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TerminalPoly {
     #[default]
     Honest,
     #[cfg(any(test, feature = "test-probes"))]
     AliasedFold,
+    #[cfg(any(test, feature = "test-probes"))]
+    SubgroupAlias,
+}
+
+/// [B1] The largest power of two `k` with `k <= bound`, which for a power-of-two
+/// `fps` also divides `fps` and therefore indexes a genuine multiplicative
+/// subgroup of the terminal domain.
+///
+/// Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
+fn largest_terminal_subgroup(fps: usize, bound: usize) -> usize {
+    assert!(fps.is_power_of_two(), "terminal domain size {fps} must be a power of two");
+    assert!(bound >= 1 && bound <= fps, "degree bound {bound} out of range for fps {fps}");
+    let mut k = 1usize;
+    while k * 2 <= bound {
+        k *= 2;
+    }
+    k
 }
 
 /// [B1] Both probe knobs, bundled so the pipeline signatures stay readable.
@@ -4211,26 +4252,47 @@ impl DeepProbe {
 /// reason. Compiled only under `test-probes`.
 #[cfg(any(test, feature = "test-probes"))]
 fn apply_terminal_poly_probe(final_poly: &mut [u64], terminal: TerminalPoly, bound: usize) {
-    if terminal != TerminalPoly::AliasedFold {
-        return;
-    }
     let fps = final_poly.len();
-    assert_eq!(
-        bound * 2,
-        fps,
-        "AliasedFold assumes the bound is exactly half the published size \
-         (fps {fps}, bound {bound}); the alias x^bound = -1 is what makes the \
-         even-index agreement exact",
-    );
-    let orig: Vec<u64> = final_poly.to_vec();
-    for m in 0..bound {
-        final_poly[m] =
-            (BaseElement::new(orig[m]) + BaseElement::new(orig[m + bound])).as_int();
-    }
-    for slot in final_poly.iter_mut().skip(bound) {
-        *slot = 0;
+    match terminal {
+        TerminalPoly::Honest => {}
+        TerminalPoly::AliasedFold => {
+            assert_eq!(
+                bound * 2,
+                fps,
+                "AliasedFold assumes the bound is exactly half the published size \
+                 (fps {fps}, bound {bound}); the alias x^bound = -1 is what makes the \
+                 even-index agreement exact",
+            );
+            let orig: Vec<u64> = final_poly.to_vec();
+            for m in 0..bound {
+                final_poly[m] =
+                    (BaseElement::new(orig[m]) + BaseElement::new(orig[m + bound])).as_int();
+            }
+            for slot in final_poly.iter_mut().skip(bound) {
+                *slot = 0;
+            }
+        }
+        TerminalPoly::SubgroupAlias => {
+            // p = c mod (x^k - 1). Degree < k <= bound, so it clears the degree
+            // check; equal to c at the k terminal points where x^k = 1.
+            let k = largest_terminal_subgroup(fps, bound);
+            let orig: Vec<u64> = final_poly.to_vec();
+            for (m, slot) in final_poly.iter_mut().enumerate().take(k) {
+                let mut acc = BaseElement::ZERO;
+                let mut t = m;
+                while t < fps {
+                    acc += BaseElement::new(orig[t]);
+                    t += k;
+                }
+                *slot = acc.as_int();
+            }
+            for slot in final_poly.iter_mut().skip(k) {
+                *slot = 0;
+            }
+        }
     }
 }
+
 
 /// [B1] MEASURE what the `AliasedFold` terminal play is worth, per query.
 ///
@@ -4308,7 +4370,84 @@ pub fn measure_aliased_terminal_agreement() -> (Vec<usize>, Vec<usize>) {
     (agree, disagree)
 }
 
+/// [B1] MEASURE what the `SubgroupAlias` terminal play is worth on the LEGACY C0
+/// path, per query.
+///
+/// Same shape as `measure_aliased_terminal_agreement` but for bound 7 of fps 16,
+/// where `AliasedFold` is structurally impossible. Builds a real coordinated C0
+/// forgery with the HONEST terminal poly, takes its true 16-coefficient terminal
+/// interpolant `c`, forms `p = c mod (x^k - 1)` with `k = 4`, and evaluates both
+/// at all 16 legacy terminal points `x_j = gen_final^j`.
+///
+/// Returns `(agreeing indices, disagreeing indices)`. This figure is its OWN
+/// measurement and is NOT the B2 / bits-per-query number: T5's 1.000 bits is the
+/// `bound == fps/2` case on the generic path and is untouched by this. Quote the
+/// two separately or not at all.
+///
+/// Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn measure_subgroup_alias_terminal_agreement_c0() -> (Vec<usize>, Vec<usize>) {
+    let forged = generate_compact_proof_with_forgery(
+        42,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::Honest,
+    );
+
+    // C0 header: 32 + 32 + 3*8 + 3*8 + 8 + 8, then layers, then fps + poly.
+    let bytes = &forged.proof_bytes;
+    let mut off = 32 + 32 + TRACE_WIDTH * 8 * 2 + 8 + 8;
+    let num_layers = bytes[off] as usize;
+    off += 1 + num_layers * 32;
+    let fps = u16::from_le_bytes([bytes[off], bytes[off + 1]]) as usize;
+    off += 2;
+    let c: Vec<BaseElement> = (0..fps)
+        .map(|i| {
+            BaseElement::new(u64::from_le_bytes(
+                bytes[off + i * 8..off + i * 8 + 8].try_into().unwrap(),
+            ))
+        })
+        .collect();
+
+    let bound = LEGACY_FRI_FINAL_POLY_DEGREE_BOUND;
+    let k = largest_terminal_subgroup(fps, bound);
+    assert!(
+        c[bound..].iter().any(|&v| v != BaseElement::ZERO),
+        "the forged C0 terminal interpolant must exceed the degree bound — if it \
+         did not, the legacy negative case would be measuring nothing",
+    );
+    let mut p = vec![BaseElement::ZERO; fps];
+    for (m, slot) in p.iter_mut().enumerate().take(k) {
+        let mut t = m;
+        while t < fps {
+            *slot += c[t];
+            t += k;
+        }
+    }
+
+    // gen_final = lde_gen^(2^num_folds), the primitive fps-th root of unity
+    // `verify_fri_legacy` uses for its Horner evaluation.
+    let num_folds = (LDE_SIZE / fps).trailing_zeros() as usize;
+    let mut gen_final = get_lde_domain_generator();
+    for _ in 0..num_folds {
+        gen_final = gen_final * gen_final;
+    }
+
+    let mut agree = Vec::new();
+    let mut disagree = Vec::new();
+    for j in 0..fps {
+        let x = gen_final.exp(j as u64);
+        if evaluate_poly(&c, x) == evaluate_poly(&p, x) {
+            agree.push(j);
+        } else {
+            disagree.push(j);
+        }
+    }
+    (agree, disagree)
+}
+
 /// [B1] Non-test twin of the test module's `boundary_c_at_ood`: the boundary
+
 /// contribution the prover folds into `Q`, evaluated at the OOD point.
 ///
 /// `z_t * SUM_j alpha_bnd^j (ood_current[col_j] - v_j)/(z - g^{r_j})`.
@@ -4352,11 +4491,19 @@ fn boundary_c_at_ood_impl(
 /// disagreeing on an honest proof, which
 /// `forged_proof_still_satisfies_the_phase_two_identity` asserts directly.
 ///
-/// Returns `None` for circuits whose solve is not implemented. Covered:
-/// C1 (`pool_commitment`) and C6 (`merkle_update`). C0 is on the legacy path and
-/// has its own inline solve. The gap is deliberate and named rather than
-/// silently returning the honest value, which would make a forgery test pass for
-/// the wrong reason.
+/// Returns `None` for circuits whose solve is not implemented. Covered: C1
+/// (`pool_commitment`), C2 (`balance_proof`), C3 (`merkle_path`), C4
+/// (`confidential_balance`), C5 (`transfer`) and C6 (`merkle_update`) — every
+/// circuit on the generic path. C0 is on the legacy path and has its own inline
+/// solve in `generate_compact_proof_with_layout`, so the only `None` arm left is
+/// `LegacyGeneric`. The gap is named rather than silently returning the honest
+/// value, which would make a forgery test pass for the wrong reason.
+///
+/// C2 and C4 have no boundary fold (`boundary_spec_for_quotient` returns `None`
+/// and `boundary_assertions_for_circuit` has no arm), so `boundary_c_at_ood_impl`
+/// short-circuits to zero for them and their `bnd_tag` is never consumed. The two
+/// facts agree BY CONSTRUCTION, not by coincidence: the same
+/// `boundary_assertions_for_circuit` decides both.
 #[allow(clippy::too_many_arguments)]
 #[cfg(any(test, feature = "test-probes"))]
 fn solve_ood_quotient_for_spec(
@@ -4377,9 +4524,28 @@ fn solve_ood_quotient_for_spec(
     let current: Vec<BaseElement> = ood_current.iter().map(|&v| BaseElement::new(v)).collect();
     let next: Vec<BaseElement> = ood_next.iter().map(|&v| BaseElement::new(v)).collect();
 
+    // C5's `build_transfer_periodic_columns` returns MIXED lengths — columns 0-3
+    // (rc0, rc1, rc2, round_flag) are period-`HASH_CYCLE_LEN`, the other 24 are
+    // full trace length. Interpolating a length-32 column with the length-512
+    // generator would produce a different polynomial from the one the committed
+    // quotient was built with, and the solve would disagree with the verifier.
+    // Tile the short ones first, exactly as `compute_quotient_lde_circuit_5`
+    // does. Full-length columns pass through unchanged, so this is a no-op for
+    // C1, C2, C3, C4 and C6.
+    let materialise = |col: &Vec<BaseElement>| -> Vec<BaseElement> {
+        if col.len() == trace_length {
+            col.clone()
+        } else {
+            let mut full = vec![BaseElement::ZERO; trace_length];
+            for (i, slot) in full.iter_mut().enumerate() {
+                *slot = col[i % col.len()];
+            }
+            full
+        }
+    };
     let periodic_at_z = |cols: &[Vec<BaseElement>]| -> Vec<BaseElement> {
         cols.iter()
-            .map(|col| evaluate_poly(&inverse_ntt(col, trace_g), z))
+            .map(|col| evaluate_poly(&inverse_ntt(&materialise(col), trace_g), z))
             .collect()
     };
 
@@ -4406,8 +4572,63 @@ fn solve_ood_quotient_for_spec(
             evaluate_merkle_update_transition(&current, &next, &p, &mut constraints);
             (rlc_combine(&constraints, alpha), CIRCUIT_MERKLE_UPDATE, b"bnd-c6\0\0")
         }
-        _ => return None,
+        QuotientSpec::Circuit2 => {
+            use crate::air::balance_proof::{
+                build_balance_proof_periodic_columns, evaluate_balance_proof_transition,
+                BALANCE_PROOF_NUM_CONSTRAINTS,
+            };
+            let alpha = derive_rlc_alpha_with_tag(trace_root, pub_bytes, b"rlc-c2\0\0");
+            let p = periodic_at_z(&build_balance_proof_periodic_columns(trace_length));
+            let mut constraints = [BaseElement::ZERO; BALANCE_PROOF_NUM_CONSTRAINTS];
+            evaluate_balance_proof_transition(&current, &next, &p, &mut constraints);
+            (rlc_combine(&constraints, alpha), CIRCUIT_BALANCE_PROOF, b"bnd-c2\0\0")
+        }
+        QuotientSpec::Circuit3 { depth } => {
+            use crate::air::merkle_path::{
+                build_merkle_path_periodic_columns, evaluate_merkle_path_transition,
+                MERKLE_PATH_NUM_CONSTRAINTS,
+            };
+            let alpha = derive_rlc_alpha_with_tag(trace_root, pub_bytes, b"rlc-c3\0\0");
+            let p = periodic_at_z(&build_merkle_path_periodic_columns(*depth, trace_length));
+            let mut constraints = [BaseElement::ZERO; MERKLE_PATH_NUM_CONSTRAINTS];
+            evaluate_merkle_path_transition(&current, &next, &p, &mut constraints);
+            (rlc_combine(&constraints, alpha), CIRCUIT_MERKLE_PATH, b"bnd-c3\0\0")
+        }
+        QuotientSpec::Circuit4 => {
+            use crate::air::confidential_balance::{
+                build_confidential_balance_periodic_columns,
+                evaluate_confidential_balance_transition,
+                CONFIDENTIAL_BALANCE_NUM_CONSTRAINTS, TRACE_LENGTH as C4_TRACE_LENGTH,
+            };
+            // C4's periodic builder takes no length argument: it materialises at
+            // its own fixed `TRACE_LENGTH`. If the two ever diverge the solve
+            // would silently interpolate the wrong domain, so assert instead.
+            assert_eq!(
+                trace_length, C4_TRACE_LENGTH,
+                "C4 periodic columns are built at a FIXED length ({C4_TRACE_LENGTH}); \
+                 the trace is {trace_length}",
+            );
+            let alpha = derive_rlc_alpha_with_tag(trace_root, pub_bytes, b"rlc-c4\0\0");
+            let p = periodic_at_z(&build_confidential_balance_periodic_columns());
+            let mut constraints = [BaseElement::ZERO; CONFIDENTIAL_BALANCE_NUM_CONSTRAINTS];
+            evaluate_confidential_balance_transition(&current, &next, &p, &mut constraints);
+            (rlc_combine(&constraints, alpha), CIRCUIT_CONFIDENTIAL_BALANCE, b"bnd-c4\0\0")
+        }
+        QuotientSpec::Circuit5 => {
+            use crate::air::transfer::{
+                build_transfer_periodic_columns, evaluate_transfer_transition,
+                TRANSFER_NUM_CONSTRAINTS,
+            };
+            let alpha = derive_rlc_alpha_with_tag(trace_root, pub_bytes, b"rlc-c5\0\0");
+            let p = periodic_at_z(&build_transfer_periodic_columns());
+            let mut constraints = [BaseElement::ZERO; TRANSFER_NUM_CONSTRAINTS];
+            evaluate_transfer_transition(&current, &next, &p, &mut constraints);
+            (rlc_combine(&constraints, alpha), CIRCUIT_TRANSFER, b"bnd-c5\0\0")
+        }
+        // Only C0's pipeline uses `LegacyGeneric`, and it re-solves inline.
+        QuotientSpec::LegacyGeneric => return None,
     };
+
 
     let c_bnd = boundary_c_at_ood_impl(
         circuit_id, public_inputs, trace_root, pub_bytes, bnd_tag, ood_current, z, z_t, trace_g,
@@ -5562,36 +5783,15 @@ fn boundary_spec_for_quotient(spec: &QuotientSpec) -> Option<(u8, [u8; 8])> {
     }
 }
 
-/// Generate a compact proof from an already-built trace.
-///
-/// [P2.2] `fri_final_poly_size` threads through to `fri_commit_phase`; see
-/// the constants `FRI_FINAL_POLY_SIZE` (16 — circuits 0–5) and
-/// `MERKLE_UPDATE_FRI_FINAL_POLY_SIZE` (also 16 — this comment said 256, which
-/// was never true against the constant). Must match the
-/// on-chain verifier's `CircuitConfig.fri_final_poly_size`. `num_queries` is
-/// also per-circuit (27 for circuits 0–5, 22 for circuit 6 — see
-/// `MERKLE_UPDATE_NUM_QUERIES`).
-fn generate_compact_proof_from_trace(
-    trace: &[Vec<BaseElement>],
-    pub_input_bytes: &[u8],
-    blowup: usize,
-    num_queries: usize,
-    fri_final_poly_size: usize,
-    quotient_spec: QuotientSpec,
-) -> (Vec<u8>, [u8; 32]) {
-    generate_compact_proof_from_trace_with_pair_indexing(
-        trace,
-        pub_input_bytes,
-        blowup,
-        num_queries,
-        fri_final_poly_size,
-        GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
-        quotient_spec,
-        PairIndexing::Canonical,
-        TraceLeaf::Canonical,
-        DeepProbe::HONEST,
-    )
-}
+// `generate_compact_proof_from_trace` (the HONEST-only shim over
+// `generate_compact_proof_from_trace_with_pair_indexing`) was deleted here: C2,
+// C3 and C5 were its last three callers and they now thread a `DeepProbe`
+// through their own private `*_inner`, like C1, C4 and C6 already did. Its doc
+// block also asserted "27 for circuits 0-5, 22 for circuit 6", which the
+// constants contradict — `CONFIG_MERKLE_PATH.num_queries` (C3) and
+// `CONFIG_TRANSFER.num_queries` (C5) are both 22. Deleted rather than corrected,
+// because the function it documented no longer exists.
+
 
 /// [B4 / ROUTE C fails-closed probe] `generate_compact_proof_from_trace` with
 /// the quotient/FRI pair-leaf layout AND the trace-commitment layout selectable.
@@ -6156,6 +6356,44 @@ pub fn generate_balance_compact_proof(
     salt: u64,
     token_mint: u64,
 ) -> GenericCompactProofData {
+    generate_balance_compact_proof_inner(
+        spending_key, balance, salt, token_mint, DeepProbe::HONEST,
+    )
+}
+
+/// [B1 fails-closed probe] `generate_balance_compact_proof` (C2) with the
+/// coordinated-OOD-forgery and terminal-poly knobs exposed.
+///
+/// C2 is one of the two circuits with NO boundary fold at the OOD point
+/// (`boundary_spec_for_quotient` returns `None` for it), so its public inputs
+/// bind the trace least well of the seven and the DEEP composition is doing
+/// proportionally more of the work. Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn generate_balance_compact_proof_with_forgery(
+    spending_key: u64,
+    balance: u64,
+    salt: u64,
+    token_mint: u64,
+    ood_forgery: OodForgery,
+    terminal_poly: TerminalPoly,
+) -> GenericCompactProofData {
+    generate_balance_compact_proof_inner(
+        spending_key,
+        balance,
+        salt,
+        token_mint,
+        DeepProbe { ood_forgery, terminal_poly },
+    )
+}
+
+fn generate_balance_compact_proof_inner(
+    spending_key: u64,
+    balance: u64,
+    salt: u64,
+    token_mint: u64,
+    probe: DeepProbe,
+) -> GenericCompactProofData {
     let sk = BaseElement::new(spending_key);
     let bal = BaseElement::new(balance);
     let s = BaseElement::new(salt);
@@ -6170,13 +6408,17 @@ pub fn generate_balance_compact_proof(
     pub_bytes.extend_from_slice(&commit_u64.to_le_bytes());
     pub_bytes.extend_from_slice(&mint_u64.to_le_bytes());
 
-    let (proof_bytes, root) = generate_compact_proof_from_trace(
+    let (proof_bytes, root) = generate_compact_proof_from_trace_with_pair_indexing(
         &trace,
         &pub_bytes,
         GENERIC_BLOWUP,
         GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
+        GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
         QuotientSpec::Circuit2,
+        PairIndexing::Canonical,
+        TraceLeaf::Canonical,
+        probe,
     );
 
     GenericCompactProofData {
@@ -6196,6 +6438,39 @@ pub fn generate_merkle_path_compact_proof(
     path_elements: &[u64],
     path_indices: &[u8],
 ) -> GenericCompactProofData {
+    generate_merkle_path_compact_proof_inner(leaf, path_elements, path_indices, DeepProbe::HONEST)
+}
+
+/// [B1 fails-closed probe] `generate_merkle_path_compact_proof` (C3) with the
+/// coordinated-OOD-forgery and terminal-poly knobs exposed.
+///
+/// C3 is the depth-carrying circuit: `depth` is the 3rd public input, it is
+/// folded into the Fiat-Shamir transcript, and `solve_ood_quotient_for_spec`
+/// reads it out of `QuotientSpec::Circuit3 { depth }` to rebuild the periodic
+/// columns. Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn generate_merkle_path_compact_proof_with_forgery(
+    leaf: u64,
+    path_elements: &[u64],
+    path_indices: &[u8],
+    ood_forgery: OodForgery,
+    terminal_poly: TerminalPoly,
+) -> GenericCompactProofData {
+    generate_merkle_path_compact_proof_inner(
+        leaf,
+        path_elements,
+        path_indices,
+        DeepProbe { ood_forgery, terminal_poly },
+    )
+}
+
+fn generate_merkle_path_compact_proof_inner(
+    leaf: u64,
+    path_elements: &[u64],
+    path_indices: &[u8],
+    probe: DeepProbe,
+) -> GenericCompactProofData {
     let leaf_felt = BaseElement::new(leaf);
     let elems: Vec<BaseElement> = path_elements.iter().map(|&v| BaseElement::new(v)).collect();
 
@@ -6213,13 +6488,17 @@ pub fn generate_merkle_path_compact_proof(
     pub_bytes.extend_from_slice(&root_u64.to_le_bytes());
     pub_bytes.extend_from_slice(&depth.to_le_bytes());
 
-    let (proof_bytes, merkle_root) = generate_compact_proof_from_trace(
+    let (proof_bytes, merkle_root) = generate_compact_proof_from_trace_with_pair_indexing(
         &trace,
         &pub_bytes,
         GENERIC_BLOWUP,
         HEAVY_GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
+        GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
         QuotientSpec::Circuit3 { depth: path_elements.len() },
+        PairIndexing::Canonical,
+        TraceLeaf::Canonical,
+        probe,
     );
 
     GenericCompactProofData {
@@ -6385,6 +6664,65 @@ pub fn generate_transfer_compact_proof(
     out_rand_2: u64,
     public_amount: u64,
 ) -> GenericCompactProofData {
+    generate_transfer_compact_proof_inner(
+        spending_key, token_mint, in_amount_1, in_rand_1, in_amount_2, in_rand_2, out_amount_1,
+        out_recipient_1, out_rand_1, out_amount_2, out_recipient_2, out_rand_2, public_amount,
+        DeepProbe::HONEST,
+    )
+}
+
+/// [B1 fails-closed probe] `generate_transfer_compact_proof` (C5) with the
+/// coordinated-OOD-forgery and terminal-poly knobs exposed.
+///
+/// C5 is the widest boundary fold (26 assertions, including the two
+/// value-conservation terms on col 6) and the only circuit whose periodic
+/// columns come back at MIXED lengths, so its solve is the one most likely to
+/// diverge silently from the committed quotient. Compiled only under
+/// `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn generate_transfer_compact_proof_with_forgery(
+    spending_key: u64,
+    token_mint: u64,
+    in_amount_1: u64,
+    in_rand_1: u64,
+    in_amount_2: u64,
+    in_rand_2: u64,
+    out_amount_1: u64,
+    out_recipient_1: u64,
+    out_rand_1: u64,
+    out_amount_2: u64,
+    out_recipient_2: u64,
+    out_rand_2: u64,
+    public_amount: u64,
+    ood_forgery: OodForgery,
+    terminal_poly: TerminalPoly,
+) -> GenericCompactProofData {
+    generate_transfer_compact_proof_inner(
+        spending_key, token_mint, in_amount_1, in_rand_1, in_amount_2, in_rand_2, out_amount_1,
+        out_recipient_1, out_rand_1, out_amount_2, out_recipient_2, out_rand_2, public_amount,
+        DeepProbe { ood_forgery, terminal_poly },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_transfer_compact_proof_inner(
+    spending_key: u64,
+    token_mint: u64,
+    in_amount_1: u64,
+    in_rand_1: u64,
+    in_amount_2: u64,
+    in_rand_2: u64,
+    out_amount_1: u64,
+    out_recipient_1: u64,
+    out_rand_1: u64,
+    out_amount_2: u64,
+    out_recipient_2: u64,
+    out_rand_2: u64,
+    public_amount: u64,
+    probe: DeepProbe,
+) -> GenericCompactProofData {
     use crate::air::transfer::{TransferInput, TransferOutput, build_transfer_trace};
 
     let sk = BaseElement::new(spending_key);
@@ -6418,18 +6756,23 @@ pub fn generate_transfer_compact_proof(
     pub_bytes.extend_from_slice(&public_amount.to_le_bytes());
     pub_bytes.extend_from_slice(&token_mint.to_le_bytes());
 
-    let (proof_bytes, root) = generate_compact_proof_from_trace(
+    let (proof_bytes, root) = generate_compact_proof_from_trace_with_pair_indexing(
         &trace,
         &pub_bytes,
         GENERIC_BLOWUP,
         HEAVY_GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
+        GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
         QuotientSpec::Circuit5,
+        PairIndexing::Canonical,
+        TraceLeaf::Canonical,
+        probe,
     );
 
     GenericCompactProofData {
         proof_bytes,
         circuit_id: CIRCUIT_TRANSFER,
+
         public_inputs: vec![n1_u64, n2_u64, oc1_u64, oc2_u64, public_amount, token_mint],
         root,
     }
