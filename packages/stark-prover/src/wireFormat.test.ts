@@ -50,7 +50,13 @@
  *   wasm-pack build stark --target web --out-dir wasm-out -- --features wasm
  *   cp stark/wasm-out/p01_stark_bg.wasm packages/stark-prover/wasm/
  *   cp stark/wasm-out/p01_stark.js      packages/stark-prover/wasm/
- *   node scripts/reship-stark-wasm.mjs        # re-base64 the four inlined twins
+ *   node packages/stark-prover/scripts/stark-wasm-twins.mjs --write
+ *
+ * `--features wasm` is MANDATORY: `stark/src/lib.rs` puts `mod wasm_api` behind
+ * `#[cfg(feature = "wasm")]`, so without it the blob exports zero proof
+ * functions. Do NOT pass `--features test-probes`; that compiles the
+ * fails-closed attack knobs into the shipping prover, and
+ * `wasmProbeScan.test.ts` will reject the result.
  *
  * Move the pin ONLY when the wire format changed on purpose, and then only in
  * lockstep with `route_c_trace_pair.rs:1002` and the on-chain verifier.
@@ -84,8 +90,24 @@ interface Pin {
   preRouteC: number;
   /** MEASURED post-Route-C proof bytes — `route_c_trace_pair.rs:1002`. */
   absolute: number;
+  /**
+   * MEASURED sha256 of the serialized proof for `inputs`, taken from the RUST
+   * prover in `stark/` — never copied out of a passing WASM run, which would
+   * make the check circular.
+   *
+   * C0 and C1 are the same two digests pinned Rust-side in
+   * `programs/p01_stark_verifier/tests/b1_deep_binding.rs`
+   * (`FIXTURE_C0_SHA256` / `FIXTURE_C1_SHA256`). C2..C6 extend the check to the
+   * five circuits that used to be pinned by LENGTH ONLY — the exact gap
+   * B1-class skew slips through, because changing WHAT FRI folds does not move
+   * a single byte.
+   */
+  sha256: string;
   inputs: Record<string, string | string[]>;
 }
+
+const sha256Hex = (bytes: Uint8Array): string =>
+  createHash('sha256').update(Buffer.from(bytes)).digest('hex');
 
 const csv = (xs: bigint[] | number[]): string[] => xs.map((x) => x.toString());
 
@@ -97,6 +119,7 @@ const PINS: Pin[] = [
     numQueries: 27,
     preRouteC: 45_433,
     absolute: 45_001,
+    sha256: 'e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7',
     inputs: { subscriberSecret: '42' },
   },
   {
@@ -106,6 +129,7 @@ const PINS: Pin[] = [
     numQueries: 27,
     preRouteC: 66_233,
     absolute: 65_801,
+    sha256: '935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b',
     inputs: { nullifierPreimage: '42', secret: '17', depositEpoch: '7', tokenMint: '11' },
   },
   {
@@ -115,6 +139,7 @@ const PINS: Pin[] = [
     numQueries: 27,
     preRouteC: 66_681,
     absolute: 66_681,
+    sha256: '063d86a18071ae369132c12a69c5af0e3c2efbe82f6340e6d7ec910be80fd49f',
     inputs: { spendingKey: '42', balance: '1000', salt: '777', tokenMint: '999' },
   },
   {
@@ -124,6 +149,7 @@ const PINS: Pin[] = [
     numQueries: 22,
     preRouteC: 74_933,
     absolute: 75_637,
+    sha256: '2d97f56ffc3157fe7c644679d2945130efed8ea39c890a24c6c16022e78d5d9c',
     inputs: {
       leaf: '777',
       pathElements: csv(Array.from({ length: 15 }, (_, i) => 1000 + i)),
@@ -137,6 +163,7 @@ const PINS: Pin[] = [
     numQueries: 27,
     preRouteC: 78_377,
     absolute: 78_377,
+    sha256: 'f877836723d0711e7190c2fd5c8a5c6d0476f21794d39ffd47a075f57d53e3e7',
     inputs: {
       spendingKey: '42',
       oldBalance: '1000',
@@ -155,6 +182,7 @@ const PINS: Pin[] = [
     numQueries: 22,
     preRouteC: 75_301,
     absolute: 76_357,
+    sha256: '78afe9bbd533913771d5c2438e279934114fe4c6db934b67b43c0644376ea125',
     inputs: {
       spendingKey: '13',
       tokenMint: '500',
@@ -178,6 +206,7 @@ const PINS: Pin[] = [
     numQueries: 22,
     preRouteC: 76_405,
     absolute: 78_517,
+    sha256: '8e1166f5d08bd948bc70a407d9261d6b88c1de5b257c4545918d9c36d94524fc',
     inputs: {
       oldLeaf: '111',
       newLeaf: '222',
@@ -222,6 +251,11 @@ describe('checked-in WASM prover — Route C wire format', () => {
       //     exactly nq * (16*trace_width - 64)
       const expectedDelta = pin.numQueries * (16 * pin.traceWidth - 64);
       expect(proofBytes.length - pin.preRouteC).toBe(expectedDelta);
+
+      // (3) CONTENT pin — the only one of the three that catches B1-class
+      //     semantic skew. See `Pin.sha256`. Both length checks stay green
+      //     against a stale prover; this one does not.
+      expect(sha256Hex(proofBytes)).toBe(pin.sha256);
     }, 60_000);
   }
 
@@ -241,12 +275,17 @@ describe('checked-in WASM prover — Route C wire format', () => {
   // reshipped from the same stale blob.
   //
   // A content digest is the only cross-language check that catches prover /
-  // verifier semantic skew at constant length. The two constants below are the
-  // SAME two pinned on the Rust side in
+  // verifier semantic skew at constant length. EVERY circuit now carries one:
+  // `Pin.sha256` in the table above covers C0..C6 and is asserted in the loop.
+  // The two constants below are the C0 and C1 digests called out by name
+  // because they are the SAME two pinned on the Rust side in
   // `programs/p01_stark_verifier/tests/b1_deep_binding.rs`
   // (`FIXTURE_C0_SHA256` / `FIXTURE_C1_SHA256`), computed over the SAME two
   // witnesses. If the two languages disagree, one of them is stale — reship, do
   // not move the pin.
+  //
+  // Before this file pinned C2..C6, those five were pinned by LENGTH ONLY and a
+  // stale prover for any of them passed every gate in the repo.
   //
   // Legitimate because proof generation is fully deterministic: `grind_nonce`
   // starts at nonce 0 and increments, and there is no rand / thread_rng /
@@ -262,9 +301,6 @@ describe('checked-in WASM prover — Route C wire format', () => {
     'e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7';
   const FIXTURE_C1_SHA256 =
     '935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b';
-
-  const sha256Hex = (bytes: Uint8Array): string =>
-    createHash('sha256').update(Buffer.from(bytes)).digest('hex');
 
   it('C0 proof bytes hash to the digest the Rust prover produces', () => {
     const { proofBytes } = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {
@@ -295,38 +331,3 @@ describe('checked-in WASM prover — Route C wire format', () => {
     expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
   }, 60_000);
 });
-
-
-// ---------------------------------------------------------------------------
-// [B1] CROSS-LANGUAGE FIXTURE DIGEST.
-//
-// The length pins above cannot catch B1-class skew. B1 changed WHAT FRI folds
-// (a DEEP composition instead of the raw quotient LDE) without adding or
-// removing a single byte, so a stale WASM prover keeps every length pin green
-// while every proof it produces is rejected on chain with FriFoldCheckFailed —
-// not a parse error, not a length mismatch. The layout is byte-identical; the
-// content is semantically incompatible, because post-B1 layer roots and the
-// final polynomial commit folds of D rather than of Q.
-//
-// `stark-wasm-twins.mjs --check` cannot catch it either: it only proves the five
-// copies agree with each other, and they do, because they were all reshipped
-// from the same stale blob.
-//
-// A content digest is the only cross-language check that catches prover /
-// verifier semantic skew at constant length. The two constants below are the
-// SAME two pinned on the Rust side in
-// `programs/p01_stark_verifier/tests/b1_deep_binding.rs`
-// (`FIXTURE_C0_SHA256` / `FIXTURE_C1_SHA256`), computed over the SAME two
-// witnesses. If the two languages disagree, one of them is stale — reship, do
-// not move the pin.
-//
-// Legitimate because proof generation is fully deterministic: `grind_nonce`
-// starts at nonce 0 and increments, and there is no rand / thread_rng /
-// SystemTime anywhere in `stark/src/compact.rs`.
-// ---------------------------------------------------------------------------
-
-const FIXTURE_C0_SHA256 =
-  'e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7';
-const FIXTURE_C1_SHA256 =
-  '935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b';
-
