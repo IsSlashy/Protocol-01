@@ -4293,7 +4293,6 @@ fn apply_terminal_poly_probe(final_poly: &mut [u64], terminal: TerminalPoly, bou
     }
 }
 
-
 /// [B1] MEASURE what the `AliasedFold` terminal play is worth, per query.
 ///
 /// Builds a real coordinated forgery on C1 with the HONEST terminal poly, takes
@@ -4447,7 +4446,6 @@ pub fn measure_subgroup_alias_terminal_agreement_c0() -> (Vec<usize>, Vec<usize>
 }
 
 /// [B1] Non-test twin of the test module's `boundary_c_at_ood`: the boundary
-
 /// contribution the prover folds into `Q`, evaluated at the OOD point.
 ///
 /// `z_t * SUM_j alpha_bnd^j (ood_current[col_j] - v_j)/(z - g^{r_j})`.
@@ -4628,7 +4626,6 @@ fn solve_ood_quotient_for_spec(
         // Only C0's pipeline uses `LegacyGeneric`, and it re-solves inline.
         QuotientSpec::LegacyGeneric => return None,
     };
-
 
     let c_bnd = boundary_c_at_ood_impl(
         circuit_id, public_inputs, trace_root, pub_bytes, bnd_tag, ood_current, z, z_t, trace_g,
@@ -5792,7 +5789,6 @@ fn boundary_spec_for_quotient(spec: &QuotientSpec) -> Option<(u8, [u8; 8])> {
 // `CONFIG_TRANSFER.num_queries` (C5) are both 22. Deleted rather than corrected,
 // because the function it documented no longer exists.
 
-
 /// [B4 / ROUTE C fails-closed probe] `generate_compact_proof_from_trace` with
 /// the quotient/FRI pair-leaf layout AND the trace-commitment layout selectable.
 /// See `PairIndexing` and `TraceLeaf`.
@@ -6533,9 +6529,10 @@ pub fn generate_confidential_balance_compact_proof(
 /// the coordinated-OOD-forgery and terminal-poly knobs exposed.
 ///
 /// C4 is the CU-binding circuit (highest measured phase-1 base, 27 queries on a
-/// 4096 LDE). Note `solve_ood_quotient_for_spec` has no C4 arm yet, so
-/// `OodForgery::Coordinated` PANICS here rather than silently producing a
-/// forgery phase 2 would reject. Compiled only under `test-probes`.
+/// 4096 LDE) and, with C2, one of the two circuits that has NO boundary fold at
+/// the OOD point, so its public inputs bind the trace least well of the seven.
+/// `solve_ood_quotient_for_spec` has a C4 arm, so `OodForgery::Coordinated`
+/// produces a forgery phase 2 still accepts. Compiled only under `test-probes`.
 #[cfg(any(test, feature = "test-probes"))]
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
