@@ -393,6 +393,16 @@ jobs:
       #     carries the positive and negative controls, so "reject nothing" cannot make
       #     this step green.
       #
+      # The harness now asserts the OTHER ceiling as well. Every proof is padded to
+      # UNIFORM_PROOF_SIZE (145,000 B) before upload so the buffer length leaks nothing
+      # about which circuit ran, and a proof over that cannot be padded to it. Nothing
+      # in Rust checked: `145_000` appeared in no .rs file, cu_budget carried proof_bytes
+      # on every row and only PRINTED it, and the sole enforcement anywhere was a runtime
+      # `throw` in padProofToUniform on a user's phone, after proving. Largest today is C6
+      # at 78,517 B; docs/C7_SPEND_CIRCUIT_PLAN.md:15 already projects ~160 KB for C7,
+      # which is 15,000 B over. The Rust constant is parsed out of
+      # apps/mobile/services/stark/index.ts so the two languages cannot drift.
+      #
       # --release is not optional: the harness generates eleven real STARK proofs.
       # `cu_budget_c7_phase2_probe` is filtered out — its throwaway probe program is
       # gitignored, and a missing artifact is a panic by design, so it cannot run here.
@@ -403,7 +413,7 @@ jobs:
           cargo test -p p01_stark_verifier --release --test cu_budget \
             -- --nocapture --test-threads=1 \
             cu_budget_real_circuits cu_budget_verify_uniform_path cu_ceiling \
-            build_fingerprint
+            build_fingerprint proof_size_envelope
 
       # [ROUTE C] `p01_stark_verifier` is split out and BLOCKING. It was under the
       # shared `continue-on-error: true` below, which made every warning on it

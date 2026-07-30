@@ -146,6 +146,52 @@ const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
 /// The per-instruction ceiling every one of these numbers is judged against.
 const MAX_CU_PER_IX: u64 = 1_400_000;
 
+/// The mobile client's fixed-size proof envelope, `apps/mobile/services/stark/
+/// index.ts:73`.
+///
+/// Phase C pads EVERY proof to this length before upload so the on-chain buffer
+/// size leaks nothing about which circuit ran. A proof larger than the envelope
+/// cannot be padded to it, and until this constant existed the only thing in the
+/// repo that noticed was a runtime `throw` in `padProofToUniform`
+/// (`index.ts:347-349`) — on a user's phone, at upload time, after the proof had
+/// already been generated. `145_000` appears in no `.rs` file before this one.
+///
+/// Read the value out of the TypeScript rather than copying it, so the two
+/// cannot drift; see `uniform_proof_size_from_the_mobile_client`.
+const UNIFORM_PROOF_SIZE: usize = 145_000;
+
+/// The mobile prover client, embedded at COMPILE time so that moving or renaming
+/// it is a build failure here rather than a silently skipped check.
+const MOBILE_STARK_TS: &str = include_str!("../../../apps/mobile/services/stark/index.ts");
+
+/// Parse `export const UNIFORM_PROOF_SIZE = 145_000;` out of the mobile client.
+///
+/// Panics rather than defaulting: a check that silently falls back to its own
+/// copy of the number is not a binding, it is a second copy.
+fn uniform_proof_size_from_the_mobile_client() -> usize {
+    const NEEDLE: &str = "export const UNIFORM_PROOF_SIZE = ";
+    let at = MOBILE_STARK_TS.find(NEEDLE).unwrap_or_else(|| {
+        panic!(
+            "`{NEEDLE}` not found in apps/mobile/services/stark/index.ts — the Rust side of \
+             the proof-size envelope has nothing left to bind to. Either the client moved the \
+             constant (re-point this parser) or the envelope was deleted (delete this check \
+             and the assertion it feeds)."
+        )
+    });
+    let digits: String = MOBILE_STARK_TS[at + NEEDLE.len()..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '_')
+        .collect();
+    assert!(
+        !digits.is_empty(),
+        "found `{NEEDLE}` but no numeric literal after it"
+    );
+    digits
+        .replace('_', "")
+        .parse()
+        .unwrap_or_else(|e| panic!("could not parse UNIFORM_PROOF_SIZE literal {digits:?}: {e}"))
+}
+
 /// `apps/web/lib/privacy/pool/stark.ts:41` uses 1000; 900 leaves headroom for
 /// the 3-account message inside the 1232-byte packet limit.
 const CHUNK: usize = 900;
@@ -1063,6 +1109,69 @@ fn ceiling_for(circuit_id: u8) -> &'static CuCeiling {
         .unwrap_or_else(|| panic!("no CU ceiling declared for circuit {circuit_id} — add one"))
 }
 
+/// The Rust copy of the envelope must equal the client's definition of it.
+///
+/// Two constants in two languages with no link between them drift, and the
+/// direction that hurts is the client SHRINKING the envelope while Rust keeps
+/// gating on the old, larger number: the gate stays green and the phone still
+/// throws. So the value is parsed out of the TypeScript at test time and the
+/// literal is only ever a cross-check.
+#[test]
+fn proof_size_envelope_matches_the_mobile_client_constant() {
+    let from_client = uniform_proof_size_from_the_mobile_client();
+    assert_eq!(
+        UNIFORM_PROOF_SIZE, from_client,
+        "UNIFORM_PROOF_SIZE is {UNIFORM_PROOF_SIZE} here and {from_client} in \
+         apps/mobile/services/stark/index.ts. The client is the source of truth — it is what \
+         pads and what throws — so update this constant, not that one."
+    );
+}
+
+/// The envelope check must be capable of failing, on a tree where it never does.
+///
+/// Same reasoning as `cu_ceiling_check_rejects_a_regression_...`: on a healthy
+/// repo the largest proof is C6 at 78,517 B against a 145,000 B envelope, so the
+/// reject path of `check_proof_size_envelope` is never taken by a real row and
+/// "return no violations, always" would look exactly like a working gate.
+#[test]
+fn proof_size_envelope_check_rejects_an_oversized_proof() {
+    fn sized(circuit_id: u8, proof_bytes: usize) -> CircuitRow {
+        CircuitRow {
+            proof_bytes,
+            ..synthetic_row(
+                circuit_id,
+                Measured::NotApplicable("synthetic"),
+                Measured::NotApplicable("synthetic"),
+            )
+        }
+    }
+
+    // Positive control: at the envelope exactly, and one byte under it.
+    let fits = vec![sized(0, UNIFORM_PROOF_SIZE), sized(1, UNIFORM_PROOF_SIZE - 1)];
+    assert!(
+        check_proof_size_envelope(&fits).is_empty(),
+        "the envelope is inclusive — a proof of exactly UNIFORM_PROOF_SIZE pads to itself"
+    );
+
+    // Negative control: one byte over.
+    let over = vec![sized(4, UNIFORM_PROOF_SIZE + 1)];
+    let v = check_proof_size_envelope(&over);
+    assert_eq!(v.len(), 1, "expected exactly one violation, got {v:?}");
+    assert!(v[0].contains("C4"), "violation should name the circuit: {}", v[0]);
+    assert!(
+        v[0].contains("1 B over"),
+        "violation should quote the measured overshoot: {}",
+        v[0]
+    );
+
+    // The C7 projection, so the number in the plan is exercised rather than
+    // merely cited: docs/C7_SPEND_CIRCUIT_PLAN.md:15 estimates ~160 KB.
+    let c7 = vec![sized(7, 160_000)];
+    let v = check_proof_size_envelope(&c7);
+    assert_eq!(v.len(), 1, "the projected C7 proof must not fit the current envelope: {v:?}");
+    assert!(v[0].contains("15,000 B over"), "unexpected message: {}", v[0]);
+}
+
 /// Print the pin table and return every violation.
 ///
 /// Two-sided reporting, one-sided assertion: a circuit that came in materially
@@ -1139,6 +1248,74 @@ fn check_cu_ceilings(rows: &[CircuitRow]) -> Vec<String> {
         "        ph2 ceilings are asserted too (not tabulated above; C0 has no phase-2 ix).\n        \
          A number over its ceiling FAILS this test. Raise the ceiling in the same commit\n        \
          that raises the cost, and say why — do not widen the band to clear a red run."
+    );
+
+    violations
+}
+
+// ---------------------------------------------------------------------------
+// Proof-size envelope — the client-side ceiling nothing in Rust was checking
+// ---------------------------------------------------------------------------
+
+/// Print the proof-size table and return every circuit that does not fit the
+/// client's fixed-size envelope.
+///
+/// Both ceilings in this file are now checked here: `MAX_CU_PER_IX` bounds what
+/// the chain will execute, `UNIFORM_PROOF_SIZE` bounds what the client can
+/// upload. The second one had no assertion anywhere in the repo — `cu_budget`
+/// carried `proof_bytes` on every row and only PRINTED it, and the largest
+/// shipping proof (C6, 78,517 B) is comfortable enough that the gap was easy to
+/// miss. `docs/C7_SPEND_CIRCUIT_PLAN.md:15` already projects ~160 KB for C7,
+/// which is over the envelope, so this is the check that turns that from a
+/// sentence in a plan into a red run.
+fn check_proof_size_envelope(rows: &[CircuitRow]) -> Vec<String> {
+    let mut violations: Vec<String> = Vec::new();
+
+    println!("\n{}", rule(104));
+    println!(
+        "PROOF SIZE vs the client envelope — UNIFORM_PROOF_SIZE = {} B \
+         (apps/mobile/services/stark/index.ts:73)",
+        thousands(UNIFORM_PROOF_SIZE as u64)
+    );
+    println!("{}", rule(104));
+    println!(
+        "{:<26} {:>13} {:>13} {:>13} {:>10}",
+        "circuit", "proof B", "envelope B", "headroom B", "verdict"
+    );
+    println!("{}", rule(104));
+    for r in rows {
+        let fits = r.proof_bytes <= UNIFORM_PROOF_SIZE;
+        println!(
+            "{:<26} {:>13} {:>13} {:>13} {:>10}",
+            format!("{} (id {})", r.label, r.circuit_id),
+            thousands(r.proof_bytes as u64),
+            thousands(UNIFORM_PROOF_SIZE as u64),
+            if fits {
+                thousands((UNIFORM_PROOF_SIZE - r.proof_bytes) as u64)
+            } else {
+                format!("-{}", thousands((r.proof_bytes - UNIFORM_PROOF_SIZE) as u64))
+            },
+            if fits { "ok" } else { "OVER" },
+        );
+        if !fits {
+            violations.push(format!(
+                "C{} ({}): proof is {} B, {} B over the {} B client envelope — \
+                 `padProofToUniform` (apps/mobile/services/stark/index.ts:347) throws on it, \
+                 so this circuit cannot be uploaded from the mobile client at all",
+                r.circuit_id,
+                r.label,
+                thousands(r.proof_bytes as u64),
+                thousands((r.proof_bytes - UNIFORM_PROOF_SIZE) as u64),
+                thousands(UNIFORM_PROOF_SIZE as u64),
+            ));
+        }
+    }
+    println!("{}", rule(104));
+    println!(
+        "        Every proof is padded to the envelope before upload so the buffer length\n        \
+         leaks nothing about which circuit ran. A proof OVER it cannot be padded and\n        \
+         fails on the user's phone, after proving. Growing the envelope is a client and\n        \
+         rent change, not a constant edit here — this number is read out of the client."
     );
 
     violations
@@ -1773,6 +1950,7 @@ fn cu_budget_real_circuits() {
     print_inferred_comparison(&rows);
 
     let ceiling_violations = check_cu_ceilings(&rows);
+    let size_violations = check_proof_size_envelope(&rows);
 
     // A phase that fails outright means the numbers above are not what they
     // claim to be, and that must not pass silently.
@@ -1792,6 +1970,12 @@ fn cu_budget_real_circuits() {
         ceiling_violations.is_empty(),
         "CU CEILING EXCEEDED — this is the regression gate, not a formality:\n  {}",
         ceiling_violations.join("\n  "),
+    );
+    assert!(
+        size_violations.is_empty(),
+        "PROOF LARGER THAN THE CLIENT ENVELOPE — the proof cannot be padded to \
+         UNIFORM_PROOF_SIZE and `padProofToUniform` throws on the user's phone:\n  {}",
+        size_violations.join("\n  "),
     );
 }
 
