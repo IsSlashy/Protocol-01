@@ -87,14 +87,29 @@ jobs:
       # rather than a soundness hole. Nothing detected it: the only assertion on WASM
       # output anywhere was `expect(proofBytes.length).toBeGreaterThan(1024)`.
       #
-      # Two gates, because they catch different failures:
-      #   --check       every inlined twin carries the SAME bytes as the canonical
-      #                 blob (catches a PARTIAL reship)
-      #   wireFormat    the canonical blob's seven proof sizes equal the literals
-      #                 `route_c_trace_pair.rs` pins for the Rust prover (catches a
-      #                 STALE reship — all five copies agreeing on the wrong bytes)
+      # Three gates, because they catch different failures:
+      #   --check         every inlined twin carries the SAME bytes as the
+      #                   canonical blob (catches a PARTIAL reship)
+      #   wireFormat      the canonical blob's seven proof LENGTHS equal the
+      #                   literals `route_c_trace_pair.rs` pins for the Rust
+      #                   prover, AND all seven sha256 CONTENT digests match the
+      #                   Rust prover (catches a STALE reship — all five copies
+      #                   agreeing on the wrong bytes; B1-class skew is
+      #                   length-preserving, so the digests are the half that
+      #                   catches it). MEASURED negative control: restoring the
+      #                   pre-B1 blob 5fe610c9… leaves every LENGTH assertion
+      #                   green and turns all seven digests red.
+      #   wasmProbeScan   no fails-closed probe identifier (OodForgery,
+      #                   AliasedFold, LegacyRowLeaf, …) survives in the blob or
+      #                   in any twin. Those knobs are `#[cfg(feature =
+      #                   "test-probes")]` in stark/src/compact.rs and the
+      #                   feature is off in `default`, so a hit here means the
+      #                   blob was built WITH the feature or a new probe landed
+      #                   ungated. MEASURED negative control: the pre-gate blob
+      #                   f4f2cb09… turns 6 canonical checks and all 4 twin
+      #                   checks red.
       #
-      # Regenerate with:
+      # Regenerate with (never add `--features test-probes`):
       #   wasm-pack build stark --target web --out-dir wasm-out -- --features wasm
       #   cp stark/wasm-out/p01_stark_bg.wasm packages/stark-prover/wasm/
       #   cp stark/wasm-out/p01_stark.js      packages/stark-prover/wasm/
@@ -103,6 +118,14 @@ jobs:
         run: |
           node packages/stark-prover/scripts/stark-wasm-twins.mjs --check
           pnpm --filter @protocol-01/stark-prover test
+
+      # Named separately from the step above so a probe leak is legible in the
+      # checks list rather than buried in a 50-test vitest run. `vitest run` in
+      # the previous step already executes this file; running it again on its own
+      # costs ~1s (it is a byte scan, no proof generation) and is what makes the
+      # gate merge-blocking BY NAME.
+      - name: WASM prover probe leak (BLOCKING — no attack code in the shipped blob)
+        run: pnpm --filter @protocol-01/stark-prover exec vitest run src/wasmProbeScan.test.ts
 
   rust-programs-build:
     name: Rust — Programs cargo check
