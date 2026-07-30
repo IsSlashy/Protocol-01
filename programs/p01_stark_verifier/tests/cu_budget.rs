@@ -702,9 +702,14 @@ struct CuCeiling {
 ///
 /// That is the DEEP composition: ~`num_queries * (2w + 12) + 3w + 3` muls plus
 /// one 127-mul batched inversion. C6 pays the most because its irreducible term
-/// is `2w` muls per query at w = 10 and no rearrangement removes it. Worst
-/// absolute is C4 at 773,047 of 1,400,000 (55%); worst phase1+phase2 is C4 at
-/// 950,732, still one instruction.
+/// is `2w` muls per query at w = 10 and no rearrangement removes it.
+///
+/// The numbers PINNED below are a SECOND measurement, taken after the
+/// `verify_quotient_at_query` no-op and its eight call sites were deleted: 54 to
+/// 277 CU cheaper than the table above on every circuit. Worst absolute is C4 at
+/// 772,776 of 1,400,000 (55%); worst phase1+phase2 is C4 at 950,461, still one
+/// instruction. That run's origin line reads `rebuilt`, source fp
+/// f27876a4d5fee5d1.
 ///
 /// Phase 2 moved by at most +98 CU (+0.05%) and is re-pinned too. It is NOT a
 /// phase-2 code change: `verify_deep_ali_circuit_*` reads no query data and its
