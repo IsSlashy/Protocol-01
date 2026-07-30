@@ -44,6 +44,61 @@
  * is a necessary condition for the gate having worked, and is the single check
  * that would have caught the original defect by itself.
  *
+ * # Four banned strings were deleted, because they could never fire
+ *
+ * This list used to ban ten identifiers. Four of them — `SwappedHalves`,
+ * `RotatedSlot`, `measure_aliased` and `test-probes` — scored zero not only in
+ * the shipped blob but in every blob they were ever run against, including the
+ * pre-gate blob that DID leak the probes. A banned string that cannot fire
+ * proves nothing and pads the list with reassurance, which in a security gate is
+ * the same defect as a false comment.
+ *
+ * They were given the fairest possible chance to fire, MEASURED 2026-07-30:
+ *
+ *   wasm-pack build stark --target web --out-dir <tmp> -- --features wasm,test-probes
+ *   → 229,459 B, sha256 73df0362b3d2af1609cf3c07b7439688c8a5b12159dd24783dc4001e37b3d544
+ *
+ * That is the exact regression this file exists to catch. The six retained
+ * needles all fire in it once each. The four dropped ones still score zero, and
+ * there are structural reasons why:
+ *
+ *   test-probes      appears only in `#[cfg]` / `#[cfg_attr]` attributes and
+ *                    comments. It is consumed by the compiler and is never a
+ *                    runtime string, so it can never reach the data section.
+ *   measure_aliased  is a function name (`measure_aliased_terminal_agreement`),
+ *                    not a string literal, and it is not `#[wasm_bindgen]`, so
+ *                    it is not in the export section either.
+ *   SwappedHalves    are `PairIndexing` variant names. The enum derives `Debug`,
+ *   RotatedSlot      but nothing ever formats a `PairIndexing`, so the variant
+ *                    name table is never instantiated. Corroborated by the
+ *                    probe build's actual Debug table, which reads
+ *                    "CanonicalLegacyRowLeafLegacyGenericCircuit1Circuit2Circuit3
+ *                    depthCircuit4Circuit5Circuit6" — `TraceLeaf`'s variants are
+ *                    in it, `PairIndexing`'s are not.
+ *
+ * # What the remaining six cover, and what they do not
+ *
+ * Sufficient for the regression this gate is for: `test-probes` is ONE cargo
+ * feature, so a build that turns it on compiles every probe family at once, and
+ * the six fire on such a build (measured above). The gate detects the feature
+ * being on; it does not detect probes one at a time.
+ *
+ * The six are not six independent witnesses. `OodForgery`, `Coordinated` and
+ * `ood_quotient solve` are all substrings of ONE panic literal,
+ * "OodForgery::Coordinated has no ood_quotient solve for ". Counting distinct
+ * literals, the probe build carries four: that one, "forgery column ",
+ * "AliasedFold assumes the bound is exactly half the published size (fps ", and
+ * the `TraceLeaf` Debug table that contains `LegacyRowLeaf`.
+ *
+ * NOT COVERED: the `PairIndexing` probe family. Its non-canonical variants are
+ * pure control flow — `match` arms returning an index or a swapped tuple — with
+ * no string literal anywhere, so a byte scan has nothing to find. It is covered
+ * today only transitively, by sharing the `test-probes` feature with the probes
+ * that do leave strings. If `PairIndexing` is ever moved to its own feature, or
+ * a new probe family lands with no literals in it, this scan stops covering it
+ * and something other than a byte scan is needed. Do not add a hopeful string
+ * here to paper over that; add it only once it is measured firing.
+ *
  * # Reading a failure
  *
  * A red here means someone built the blob with `--features test-probes`, or
@@ -78,8 +133,22 @@ const TWINS = [
 
 /**
  * Identifiers that exist ONLY inside `#[cfg(any(test, feature = "test-probes"))]`
- * code in `stark/src/compact.rs`. Each entry names where it comes from, so a
+ * code in `stark/src/compact.rs`, AND that have been shown to actually appear in
+ * a blob built with the probes on. Each entry names where it comes from, so a
  * failure points at the probe rather than at a mystery string.
+ *
+ * Every one of these was measured firing in two independent blobs:
+ *
+ *   the real regression   the pre-gate 219,219 B blob at commit 766ef07f
+ *                         (sha256 f4f2cb09...), which shipped the probes
+ *   a constructed control `wasm-pack build stark --target web --
+ *                          --features wasm,test-probes`, 229,459 B
+ *                         (sha256 73df0362...), built 2026-07-30
+ *
+ * counts in both: OodForgery 1, Coordinated 1, AliasedFold 1, "forgery column "
+ * 1, "ood_quotient solve" 1, LegacyRowLeaf 1. In the shipped blob, 0 each.
+ * `LegacyRowLeaf` additionally fires on the tracked pre-B1 blob 5fe610c9
+ * (194,540 B, commit 4b375d7c), so it discriminates on real history twice.
  */
 const BANNED: ReadonlyArray<readonly [string, string]> = [
   ['OodForgery', 'enum name — the coordinated OOD forgery knob'],
@@ -88,10 +157,6 @@ const BANNED: ReadonlyArray<readonly [string, string]> = [
   ['forgery column ', 'assert! inside the coordinated-forgery branch'],
   ['ood_quotient solve', 'panic when solve_ood_quotient_for_spec has no arm'],
   ['LegacyRowLeaf', 'TraceLeaf::LegacyRowLeaf — pre-Route-C trace commitment'],
-  ['SwappedHalves', 'PairIndexing::SwappedHalves / SwappedHalvesFriOnly'],
-  ['RotatedSlot', 'PairIndexing::RotatedSlot / RotatedSlotFriOnly'],
-  ['measure_aliased', 'measure_aliased_terminal_agreement — the B2 rate probe'],
-  ['test-probes', 'the cargo feature name itself'],
 ];
 
 /**
