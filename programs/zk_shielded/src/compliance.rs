@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 
-use crate::errors::ZkShieldedError;
 // === PoW & research — Groth16/SNARK path, removed from production (STARK-only flow). Re-enable requires a real ceremony + VK pinning. ===
 // Groth16-backed compliance imports disabled with verify_compliance_range /
 // verify_compliance_innocence below. revoke_attestation + check_compliance
@@ -13,10 +12,16 @@ use crate::errors::ZkShieldedError;
 // Constants
 // ---------------------------------------------------------------------------
 
+// Both bounds were enforced by verify_compliance_range / verify_compliance_innocence,
+// disabled with the Groth16 path above. Kept rather than deleted because re-enabling
+// that path needs these exact windows back; deleting them loses the intent and
+// whoever restores it would have to re-derive the numbers.
 /// Maximum expiry window: 90 days in seconds
+#[allow(dead_code)]
 const MAX_EXPIRES_IN_SECONDS: i64 = 90 * 24 * 60 * 60;
 
 /// Minimum expiry window: 1 hour in seconds
+#[allow(dead_code)]
 const MIN_EXPIRES_IN_SECONDS: i64 = 3600;
 
 /// ComplianceAttestation account size (excluding 8-byte discriminator)

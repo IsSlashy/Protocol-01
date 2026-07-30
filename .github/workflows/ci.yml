@@ -112,9 +112,40 @@ jobs:
       - name: cargo check (workspace, excl. p01-arcium)
         run: cargo check --workspace --all-targets --exclude p01-arcium --exclude encrypted-ixs
 
+      # This is a real gate, not a formality. `eval_periodic_stride_at_z` and
+      # `eval_periodic_ext_at_z` in the verifier perform NO runtime validation
+      # by design — a sparsity scan would cost exactly what the rewrite saves —
+      # so `tests/periodic_stride.rs` IS the entire safety argument for the A3
+      # and A4 periodic-column rewrites. It re-derives every constant from the
+      # dense tables in `periodic_consts.rs` and fails if a rebake was not
+      # mirrored. `cargo check --all-targets` COMPILES these tests but never
+      # runs them, so until this step existed the pin was never executed.
+      #
+      # Release mode is required: the older `eval_periodic_stride16_at_z` hides
+      # its sparsity check behind `#[cfg(debug_assertions)]`, so a debug-only
+      # run would not exercise the profile that actually ships.
+      #
+      # [B4] `tests/b4_pair_leaf.rs` is the fails-closed guard for the pair-leaf
+      # Merkle commitment. The pair index, the order of the two halves inside a
+      # leaf, and the path depth are agreed between prover and verifier but
+      # never travel on the wire, so nothing else catches a drift. That test
+      # runs the prover under three deliberately different pair layouts and
+      # asserts the verifier rejects each with MerkleProofFailed. If it is not
+      # executed, a silent prover/verifier disagreement is possible.
+      - name: cargo test (verifier — the periodic-column, field and pair-leaf pins)
+        run: |
+          cargo test -p p01_stark_verifier --lib
+          cargo test -p p01_stark_verifier --release --test periodic_stride
+          cargo test -p p01_stark_verifier --release --test fri_end_to_end
+          cargo test -p p01_stark_verifier --release --test b4_pair_leaf
+
+      # `continue-on-error: true` was on this step, which made it advisory: a real
+      # failure still passed the job, so `-D warnings` pinned nothing. Removed.
+      # zk_shielded's three warnings (an unused import and two constants orphaned
+      # by the Groth16 removal) were cleared to make this a gate rather than a
+      # permanently-red step someone would eventually re-silence.
       - name: cargo clippy (warnings as errors on hot programs)
         run: |
           cargo clippy -p zk_shielded -- -D warnings
           cargo clippy -p p01_stark_verifier -- -D warnings
           cargo clippy -p p01_relayer -- -D warnings
-        continue-on-error: true
