@@ -38,11 +38,25 @@ pub struct CircuitConfig {
     /// Larger values trade off Horner eval CU (linear in size) against fewer
     /// FRI merkle layers. Tuned per-circuit to fit in the 1.4M CU cap.
     pub fri_final_poly_size: usize,
-    /// [P2.2] Number of FRI queries. Soundness = num_queries × log2(blowup)
-    /// + grinding_bits. All circuits target ≥ 100-bit classical soundness:
-    /// circuits 0, 1, 2, 4 use 27 (124 bits); circuits 3, 5, 6 use 22
-    /// (104 bits) to fit their LDE=8192 / 10-col trace under the 1.4M CU
-    /// cap. All variants stay well above the 100-bit classical floor.
+    /// [B1] Number of final-poly coefficients the verifier ALLOWS to be non-zero.
+    /// MEASURED per circuit by `emit_deep_degree_table` (stark/src/compact.rs);
+    /// see `VerifyError::FriFinalPolyDegreeTooHigh` for why it exists.
+    ///
+    /// `fri_final_poly_size` stays 16 on the wire (a smaller field would mean one
+    /// more fold, one more committed layer and one more pair opening per query —
+    /// larger proofs to save 64 bytes). The extra slots must be provable zeros.
+    ///
+    /// The rate is invariant under folding, so `bound / fri_final_poly_size` IS
+    /// the FRI rate rho: 8/16 = 1/2 for C1..C6. That is the measured 1/2 the
+    /// soundness accounting must use — never `log2(blowup)`.
+    pub fri_final_poly_degree_bound: usize,
+    /// [P2.2] Number of FRI queries.
+    ///
+    /// [B1] Soundness is `num_queries * log2(1/rho) + grinding_bits` at the
+    /// MEASURED rho, NOT `num_queries * log2(blowup)`. deg(Q) = 8n-8 on a 16n
+    /// LDE, so rho ~ 1/2 and each query is worth 1.000 bit, not 4. Post-B1 that
+    /// is 27 + 16 = ~43 bits for circuits 0/1/2/4 and 22 + 16 = ~38 bits for
+    /// circuits 3/5/6. Raising rho is B2 and is a wire-format change.
     pub num_queries: usize,
 }
 
@@ -55,6 +69,7 @@ pub const CONFIG_SUBSCRIBER_OWNERSHIP: CircuitConfig = CircuitConfig {
     merkle_depth: 9,   // log2(512) = 9
     num_rounds: 30,
     fri_final_poly_size: 16,
+    fri_final_poly_degree_bound: 7, // [B1] MEASURED, emit_deep_degree_table
     num_queries: NUM_QUERIES,
 };
 
@@ -67,6 +82,7 @@ pub const CONFIG_POOL_COMMITMENT: CircuitConfig = CircuitConfig {
     merkle_depth: 11,  // log2(2048) = 11
     num_rounds: 30,
     fri_final_poly_size: 16,
+    fri_final_poly_degree_bound: 8, // [B1] MEASURED, emit_deep_degree_table
     num_queries: NUM_QUERIES,
 };
 
@@ -79,6 +95,7 @@ pub const CONFIG_BALANCE_PROOF: CircuitConfig = CircuitConfig {
     merkle_depth: 11,  // log2(2048) = 11
     num_rounds: 30,
     fri_final_poly_size: 16,
+    fri_final_poly_degree_bound: 8, // [B1] MEASURED, emit_deep_degree_table
     num_queries: NUM_QUERIES,
 };
 
@@ -96,6 +113,7 @@ pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
     merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
     fri_final_poly_size: 16,
+    fri_final_poly_degree_bound: 8, // [B1] MEASURED, emit_deep_degree_table
     num_queries: 22,
 };
 
@@ -108,6 +126,7 @@ pub const CONFIG_CONFIDENTIAL_BALANCE: CircuitConfig = CircuitConfig {
     merkle_depth: 12,  // log2(4096) = 12
     num_rounds: 30,
     fri_final_poly_size: 16,
+    fri_final_poly_degree_bound: 8, // [B1] MEASURED, emit_deep_degree_table
     num_queries: NUM_QUERIES,
 };
 
@@ -137,6 +156,7 @@ pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
     merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
     fri_final_poly_size: 16,
+    fri_final_poly_degree_bound: 8, // [B1] MEASURED, emit_deep_degree_table
     num_queries: 22,
 };
 
@@ -162,6 +182,7 @@ pub const CONFIG_MERKLE_UPDATE: CircuitConfig = CircuitConfig {
     merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
     fri_final_poly_size: 16,
+    fri_final_poly_degree_bound: 8, // [B1] MEASURED, emit_deep_degree_table
     num_queries: 22,
 };
 
@@ -198,6 +219,29 @@ pub const NUM_ROUNDS: usize = 30;
 /// Prover folds the quotient LDE down to this size; remaining polynomial is
 /// sent in the clear so the verifier can evaluate at any domain point.
 pub const FRI_FINAL_POLY_SIZE: usize = 16;
+
+/// [B1] Legacy circuit-0 twin of `CircuitConfig.fri_final_poly_degree_bound`.
+///
+/// C0 is DIFFERENT from every other circuit and that is the proof the bound has
+/// to be per-circuit rather than a single global: `subscriber_ownership`'s AIR
+/// declares ONE periodic factor (`with_cycles(7, vec![TRACE_LENGTH])`) where
+/// C1..C6 carry two, so deg(C) = 8*31 = 248, deg(Q) = 248 + 1 - 32 = 217, and
+/// ceil(218 / 2^5) = 7 — not 8. MEASURED at 7 by `emit_deep_degree_table`
+/// (top non-zero coefficient index 6).
+pub const LEGACY_FRI_FINAL_POLY_DEGREE_BOUND: usize = 7;
+
+/// [B1] Is `raw` a canonical Goldilocks encoding?
+///
+/// `MODULUS` itself is a perfectly legal `u64` that REDUCES to zero, so "the
+/// coefficient bytes are non-zero" and "the coefficient felt is non-zero" are
+/// DIFFERENT predicates. The final-poly tail check compares reduced felts, so
+/// the parser has to reject non-canonical encodings or an adversary could park
+/// `MODULUS` in a slot the tail check reads as zero while the transcript (which
+/// absorbs the RAW bytes, verify.rs) sees something else.
+#[inline]
+fn is_canonical(raw: u64) -> bool {
+    raw < crate::goldilocks::MODULUS
+}
 
 // ============================================================================
 // Byte-decode helpers
@@ -539,6 +583,12 @@ impl<'a> GenericCompactProof<'a> {
         if data.len() < cursor + fri_final_poly_size * 8 { return None; }
         let fri_final_poly_bytes = &data[cursor..cursor + fri_final_poly_size * 8];
         cursor += fri_final_poly_size * 8;
+        // [B1] Canonicity on EVERY published coefficient, not just the ones the
+        // degree bound reads. See `is_canonical`.
+        for chunk in fri_final_poly_bytes.chunks_exact(8) {
+            let raw = u64::from_le_bytes(chunk.try_into().unwrap());
+            if !is_canonical(raw) { return None; }
+        }
 
         // Consistency: num_fri_layers = num_folds - 1.
         let num_folds = (config.lde_size / config.fri_final_poly_size).trailing_zeros() as usize;
@@ -973,6 +1023,11 @@ impl<'a> CompactStarkProof<'a> {
         if data.len() < cursor + fri_final_poly_size * 8 { return None; }
         let fri_final_poly_bytes = &data[cursor..cursor + fri_final_poly_size * 8];
         cursor += fri_final_poly_size * 8;
+        // [B1] Same canonicity check as the generic parser.
+        for chunk in fri_final_poly_bytes.chunks_exact(8) {
+            let raw = u64::from_le_bytes(chunk.try_into().unwrap());
+            if !is_canonical(raw) { return None; }
+        }
 
         if data.len() < cursor + 8 { return None; }
         let grinding_nonce = u64::from_le_bytes([

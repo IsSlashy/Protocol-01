@@ -9,8 +9,8 @@
 use p01_stark_verifier::compact_proof::{
     get_circuit_config, CompactStarkProof, GenericCompactProof, CONFIG_POOL_COMMITMENT,
 };
-use p01_stark_verifier::goldilocks::Felt;
-use p01_stark_verifier::verify::{verify_generic, verify_subscriber_ownership};
+use p01_stark_verifier::goldilocks::{Felt, MODULUS};
+use p01_stark_verifier::verify::{verify_generic, verify_subscriber_ownership, VerifyError};
 
 #[test]
 fn legacy_subscriber_ownership_roundtrip() {
@@ -21,16 +21,30 @@ fn legacy_subscriber_ownership_roundtrip() {
         .expect("honest legacy proof should verify end-to-end (FRI fold check included)");
 }
 
-/// [P1.1 PR 4] DEEP-ALI soundness: a tampered `ood_quotient` must be rejected.
+/// A tampered `ood_quotient` must be rejected — and this test is precise about
+/// WHY, because the reason is not the one it used to claim.
 ///
-/// The prover's claimed Q(z) is absorbed into the Fiat-Shamir transcript
-/// (see `build_base_seed`) BEFORE query-position derivation, so any tamper
-/// is caught via the transcript binding path (query positions don't match)
-/// — the DEEP-ALI check `C(z) == Q(z) · Z_T(z)` is the additional, direct
-/// binding that activates when the transcript happens to collide. Either
-/// rejection path is sound; we just require that verification fails.
+/// **What this test does NOT show.** `ood_quotient` is absorbed into the
+/// Fiat-Shamir transcript (`build_base_seed`) before query-position derivation,
+/// so flipping it in a PARSED proof changes the derived positions and step 2
+/// rejects. That happens whether or not the verifier has any DEEP binding at all,
+/// so this test is NOT evidence for B1. Its old docstring said the DEEP-ALI check
+/// was "the additional, direct binding that activates when the transcript happens
+/// to collide"; that was wrong twice over — the identity is solvable for
+/// `ood_quotient` by construction, and the body then accepted any error variant,
+/// so the test would have stayed green against a verifier with no binding.
+///
+/// The coordinated-forgery suite (`tests/b1_deep_binding.rs`) is the test that
+/// exercises the binding: it re-solves `ood_quotient` from the AIR and rebuilds
+/// the whole transcript, so positions and Merkle openings all pass.
+///
+/// What this test pins now: the tamper is caught, and it is caught at the
+/// GRINDING step, named. MEASURED — the first guess (`InvalidQueryPosition`) was
+/// wrong: `ood_quotient` sits inside the base seed the proof-of-work is done
+/// over, so moving it invalidates the nonce before positions are ever derived.
+/// `InsufficientQueries` is the (badly named) variant `verify_grinding` returns.
 #[test]
-fn legacy_rejects_tampered_ood_quotient() {
+fn legacy_rejects_tampered_ood_quotient_via_the_transcript_not_the_identity() {
     let data = p01_stark::compact::generate_compact_proof(42);
     let mut proof = CompactStarkProof::from_bytes(&data.proof_bytes)
         .expect("legacy proof should parse");
@@ -40,7 +54,97 @@ fn legacy_rejects_tampered_ood_quotient() {
 
     let err = verify_subscriber_ownership(&proof, Felt::new(data.commitment))
         .expect_err("tampered ood_quotient must fail verification");
-    let _ = err; // any error variant is acceptable; what matters is rejection.
+    assert_eq!(
+        err,
+        VerifyError::InsufficientQueries,
+        "the tamper is caught by the GRINDING binding, NOT by the DEEP-ALI \
+         identity and NOT by FRI. If this variant ever changes, re-read the \
+         docstring before adjusting it.",
+    );
+}
+
+/// [B1] The terminal degree bound must be CAPABLE of rejecting, and it must
+/// compare the REDUCED felt rather than raw bytes.
+///
+/// `MODULUS` is a legal `u64` that reduces to zero, so "the tail bytes are zero"
+/// and "the tail felts are zero" are different predicates. The parser therefore
+/// refuses non-canonical coefficients outright, on BOTH parsers and in EVERY
+/// slot — otherwise the transcript (which absorbs raw bytes) and the tail check
+/// (which reads the reduced value) would disagree about the same slot.
+#[test]
+fn final_poly_rejects_non_canonical_coefficients() {
+    /// Byte offset + count of the `fri_final_poly` field.
+    /// Header: trace_root 32 | quotient_root 32 | ood_current 8w | ood_next 8w |
+    /// ood_z 8 | ood_quotient 8 | num_fri_layers 1 | roots 32L | fps u16 | poly.
+    fn final_poly_offset(bytes: &[u8], trace_width: usize) -> (usize, usize) {
+        let mut c = 32 + 32 + trace_width * 8 * 2 + 8 + 8;
+        let num_layers = bytes[c] as usize;
+        c += 1 + num_layers * 32;
+        let fps = u16::from_le_bytes([bytes[c], bytes[c + 1]]) as usize;
+        (c + 2, fps)
+    }
+
+    // Generic path (C1).
+    let data = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
+    let config = &CONFIG_POOL_COMMITMENT;
+    let (off, fps) = final_poly_offset(&data.proof_bytes, config.trace_width);
+    assert_eq!(fps, config.fri_final_poly_size);
+    assert!(
+        config.fri_final_poly_degree_bound < fps,
+        "C1 terminal check would be VACUOUS: bound {} >= size {fps}",
+        config.fri_final_poly_degree_bound,
+    );
+    // Honest tail really is all zeros — the bound is not vacuously satisfied.
+    for i in config.fri_final_poly_degree_bound..fps {
+        let raw = u64::from_le_bytes(
+            data.proof_bytes[off + i * 8..off + i * 8 + 8].try_into().unwrap(),
+        );
+        assert_eq!(raw, 0, "honest C1 final poly coeff {i} must be zero");
+    }
+    for slot in [0usize, config.fri_final_poly_degree_bound, fps - 1] {
+        let mut bytes = data.proof_bytes.clone();
+        bytes[off + slot * 8..off + slot * 8 + 8].copy_from_slice(&MODULUS.to_le_bytes());
+        assert!(
+            GenericCompactProof::from_bytes(&bytes, config).is_none(),
+            "MODULUS in generic final-poly slot {slot} must fail the parse-time \
+             canonicity check",
+        );
+    }
+    // A CANONICAL non-zero above the bound still parses, and is rejected.
+    //
+    // MEASURED: the rejection is `InsufficientQueries`, i.e. the GRINDING check,
+    // not the degree bound — the final poly is absorbed into the grinding
+    // transcript before positions are derived, so a byte patch invalidates the
+    // proof-of-work nonce first. That is why a byte patch can never be the test
+    // for the degree bound; only a prover that grinds AFTER publishing the high
+    // coefficient can reach it. See `tests/b1_deep_binding.rs`, which does
+    // exactly that.
+    let mut bytes = data.proof_bytes.clone();
+    bytes[off + (fps - 1) * 8..off + (fps - 1) * 8 + 8].copy_from_slice(&1u64.to_le_bytes());
+    let proof = GenericCompactProof::from_bytes(&bytes, config)
+        .expect("a canonical 1 still parses; the degree bound is a verify-time check");
+    let err = verify_generic(&proof, data.circuit_id, &data.public_inputs, config)
+        .expect_err("a non-zero coefficient above the degree bound must be rejected");
+    assert_eq!(
+        err,
+        VerifyError::InsufficientQueries,
+        "a byte patch is caught by grinding before the degree bound is reached",
+    );
+
+    // Legacy path (C0), whose bound is 7 rather than 8.
+    let c0 = p01_stark::compact::generate_compact_proof(42);
+    let (off, fps) = final_poly_offset(&c0.proof_bytes, 3);
+    for i in p01_stark_verifier::compact_proof::LEGACY_FRI_FINAL_POLY_DEGREE_BOUND..fps {
+        let raw =
+            u64::from_le_bytes(c0.proof_bytes[off + i * 8..off + i * 8 + 8].try_into().unwrap());
+        assert_eq!(raw, 0, "honest C0 final poly coeff {i} must be zero");
+    }
+    let mut bytes = c0.proof_bytes.clone();
+    bytes[off + (fps - 1) * 8..off + (fps - 1) * 8 + 8].copy_from_slice(&MODULUS.to_le_bytes());
+    assert!(
+        CompactStarkProof::from_bytes(&bytes).is_none(),
+        "legacy parser must reject MODULUS in a final-poly slot",
+    );
 }
 
 #[test]

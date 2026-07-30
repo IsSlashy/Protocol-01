@@ -2764,6 +2764,111 @@ mod tests {
         );
     }
 
+    /// [B1 STEP 1] MEASURE the FRI terminal degree bound, per circuit.
+    ///
+    /// # Why this has to be measured and not derived
+    /// `fri_final_poly_size == 16` on all seven circuits over a 16-point final
+    /// domain, so the 16 published coefficients span the FULL interpolation
+    /// space of the 16 evaluations and the terminal fold check in
+    /// `verify_fri_generic` cannot reject anything. Bounding the number of
+    /// ALLOWED coefficients is what turns that check from vacuous into
+    /// `num_queries * log2(1/rho)` bits. The bound is a per-circuit constant and
+    /// pinning it one too high silently loses a bit, one too low breaks honest
+    /// proofs ON CHAIN. So it gets measured here and pasted into
+    /// `CircuitConfig.fri_final_poly_degree_bound`.
+    ///
+    /// # Why measuring it BEFORE the DEEP change is valid
+    /// Today the final poly is the fold of `Q`. B1 folds
+    /// `D = num/((x-z)(x-zg))` instead, and `deg(D) = deg(Q) - 1` exactly (the
+    /// quotient term contributes `deg(Q) + 1` to the numerator and the shared
+    /// denominator has degree 2). Folding maps degree `d` to `floor(d/2)`, so
+    /// `floor(deg(D) / 2^folds) <= floor(deg(Q) / 2^folds)`: the number measured
+    /// here is a SAFE UPPER BOUND on the bound `D` needs. The prover-side assert
+    /// added in STEP 3 catches any circuit where the two differ.
+    ///
+    /// Run with:
+    /// `cargo test -p p01-stark --lib --release emit_deep_degree_table -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn emit_deep_degree_table() {
+        /// Pull `fri_final_poly` out of a serialized generic proof.
+        /// Header: trace_root 32 | quotient_root 32 | ood_current 8w |
+        /// ood_next 8w | ood_z 8 | ood_quotient 8 | num_fri_layers 1 |
+        /// roots 32L | fps u16 | poly 8*fps
+        fn parse_final_poly(bytes: &[u8], trace_width: usize) -> Vec<u64> {
+            let mut c = 32 + 32 + trace_width * 8 * 2 + 8 + 8;
+            let num_layers = bytes[c] as usize;
+            c += 1 + num_layers * 32;
+            let fps = u16::from_le_bytes([bytes[c], bytes[c + 1]]) as usize;
+            c += 2;
+            (0..fps)
+                .map(|i| u64::from_le_bytes(bytes[c + i * 8..c + i * 8 + 8].try_into().unwrap()))
+                .collect()
+        }
+
+        // (label, trace_width, trace_length, blowup, proof_bytes)
+        let mut rows: Vec<(&str, usize, usize, usize, Vec<u8>)> = Vec::new();
+
+        rows.push(("C0 subscriber_ownership", TRACE_WIDTH, TRACE_LENGTH, BLOWUP,
+                   generate_compact_proof(42).proof_bytes));
+        rows.push(("C1 pool_commitment", 3, 128, GENERIC_BLOWUP,
+                   generate_pool_commitment_proof(111, 222, 333, 444).proof_bytes));
+        rows.push(("C2 balance_proof", 4, 128, GENERIC_BLOWUP,
+                   generate_balance_compact_proof(42, 1000, 777, 999).proof_bytes));
+        {
+            let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
+            rows.push(("C3 merkle_path", 6, 512, GENERIC_BLOWUP,
+                       generate_merkle_path_compact_proof(42, &path_elements, &[0u8, 1, 0]).proof_bytes));
+        }
+        rows.push(("C4 confidential_balance", 4, 256, GENERIC_BLOWUP,
+                   generate_confidential_balance_compact_proof(42, 1000, 111, 800, 222, 200, 333, 999)
+                       .proof_bytes));
+        rows.push(("C5 transfer", 7, 512, GENERIC_BLOWUP,
+                   generate_transfer_compact_proof(42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0)
+                       .proof_bytes));
+        {
+            let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
+            rows.push(("C6 merkle_update", 10, 512, GENERIC_BLOWUP,
+                       generate_merkle_update_compact_proof(42, 1337, &path_elements, &[0u8, 1, 0])
+                           .proof_bytes));
+        }
+
+        println!();
+        println!("[B1 STEP 1] FRI terminal degree bound, MEASURED from honest proofs");
+        println!("{:<24} {:>6} {:>7} {:>6} {:>10} {:>9} {:>4}",
+                 "circuit", "n", "lde", "folds", "2^folds", "top nz i", "b");
+        let mut bounds: Vec<(String, usize)> = Vec::new();
+        let mut vacuous: Vec<String> = Vec::new();
+        for (label, tw, tl, blowup, bytes) in &rows {
+            let lde = tl * blowup;
+            let poly = parse_final_poly(bytes, *tw);
+            let fps = poly.len();
+            let num_folds = (lde / fps).trailing_zeros() as usize;
+            let top = poly.iter().rposition(|&c| c != 0);
+            let b = top.map(|i| i + 1).unwrap_or(0);
+            println!("{:<24} {:>6} {:>7} {:>6} {:>10} {:>9} {:>4}",
+                     label, tl, lde, num_folds, 1usize << num_folds,
+                     top.map(|i| i as i64).unwrap_or(-1), b);
+            if b >= fps {
+                vacuous.push(format!("{label} b={b} >= fri_final_poly_size={fps}"));
+            }
+            bounds.push((label.to_string(), b));
+        }
+        println!();
+        println!("PASTE INTO CircuitConfig.fri_final_poly_degree_bound:");
+        for (label, b) in &bounds {
+            println!("  {label}: {b}");
+        }
+        println!();
+        assert!(
+            vacuous.is_empty(),
+            "TERMINAL CHECK IS VACUOUS for: {}\n  \
+             the published final poly already spans its full interpolation space, so \
+             a degree bound buys ZERO bits for that circuit and B1 does not make it sound.",
+            vacuous.join(", "),
+        );
+    }
+
     /// [P2.2a] One-off generator: prints the 7 periodic-column polynomial
     /// coefficient arrays for the on-chain circuit 6 config (depth=13,
     /// trace_length=512) in the exact format used by

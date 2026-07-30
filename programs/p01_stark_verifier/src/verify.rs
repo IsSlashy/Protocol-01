@@ -14,7 +14,12 @@ use crate::merkle;
 use crate::poseidon_consts;
 use solana_sha256_hasher::hashv;
 
-#[derive(Debug)]
+/// [B1] `PartialEq` so tests can assert the EXACT variant. Accepting "any error"
+/// is how a test stays green against a verifier that rejects for the wrong
+/// reason, or that has no binding at all (see `tests/b1_deep_binding.rs`).
+/// Adding variants and derives changes nothing observable on chain: every call
+/// site maps this with `.map_err(|_| StarkVerifierError::InvalidProof)`.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[allow(dead_code)]
 pub enum VerifyError {
     OodConstraintFailed,
@@ -68,6 +73,27 @@ pub enum VerifyError {
     /// `p01_quantum_wallet/src/stark.rs:42`), so the legacy path is load-bearing
     /// and stays. This error says so out loud instead.
     CircuitZeroIsLegacyOnly,
+    /// [B1] The published FRI final polynomial has a non-zero coefficient at or
+    /// above `CircuitConfig.fri_final_poly_degree_bound`.
+    ///
+    /// Without this check the terminal FRI test is VACUOUS: `fri_final_poly_size`
+    /// is 16 on every circuit over a 16-point final domain, so the 16 published
+    /// coefficients span the full interpolation space of the 16 folded
+    /// evaluations and the terminal comparison at the end of `verify_fri_*` can
+    /// always be satisfied. The MEASURED honest bound is 8 coefficients for
+    /// C1..C6 and 7 for C0 (`emit_deep_degree_table` in stark/src/compact.rs), so
+    /// half the space is illegal and each query becomes worth 1.000 bit.
+    FriFinalPolyDegreeTooHigh,
+    /// [B1] The LAST fold disagreed with the published final polynomial,
+    /// specifically. Split out of `FriFoldCheckFailed` so the coordinated-forgery
+    /// test can name WHICH mechanism rejected rather than accepting any error.
+    FriTerminalCheckFailed,
+    /// [B1] The DEEP denominator `(y - z)(y + z)...` vanished at a queried
+    /// position, i.e. `z` or `z*g` landed in the LDE domain. LIVENESS, not
+    /// soundness: `z` is deterministic from the two roots plus the public inputs,
+    /// so this is a ~2^-50 accident and the honest prover asserts against it at
+    /// proof time rather than emitting an unprovable proof.
+    DeepDenominatorZero,
 }
 
 // ============================================================================
@@ -965,6 +991,34 @@ fn evaluate_poly_horner_bytes(coeffs_bytes: &[u8], x: Felt) -> Felt {
     result
 }
 
+/// [B1] Reject a final polynomial whose degree exceeds the circuit's MEASURED
+/// bound.
+///
+/// Compares the REDUCED felt, not the raw bytes: `MODULUS` is a legal `u64` that
+/// reduces to zero, so the two checks are not the same check. (The parser also
+/// refuses non-canonical encodings, so this is belt and braces on the same hole
+/// from the other side.)
+fn check_final_poly_degree_bound(
+    final_poly_bytes: &[u8],
+    degree_bound: usize,
+) -> Result<(), VerifyError> {
+    for (i, chunk) in final_poly_bytes.chunks_exact(8).enumerate() {
+        if i < degree_bound {
+            continue;
+        }
+        let arr: [u8; 8] = chunk.try_into().unwrap();
+        if Felt::from_le_bytes(arr) != Felt::ZERO {
+            anchor_lang::prelude::msg!(
+                "[verify] final poly coeff {} non-zero, bound is {}",
+                i,
+                degree_bound
+            );
+            return Err(VerifyError::FriFinalPolyDegreeTooHigh);
+        }
+    }
+    Ok(())
+}
+
 /// [B4] Verify one **pair-leaf** Merkle opening.
 ///
 /// The quotient LDE and every committed FRI layer are committed as
@@ -1016,13 +1070,29 @@ fn verify_fri_generic(
     config: &CircuitConfig,
     pub_bytes: &[u8],
 ) -> Result<(), VerifyError> {
-    // [P2.2] FRI_FINAL_POLY_SIZE is per-circuit (see CircuitConfig). Circuits 0-5
-    // use 16; circuit 6 uses 64 to fit the wider trace's verify cost under 1.4M CU.
+    // [P2.2] `fri_final_poly_size` is per-circuit (see CircuitConfig). It is 16 on
+    // ALL SEVEN circuits today — do not repeat the old comment here that said
+    // "circuit 6 uses 64", nor the one in compact_proof.rs that said 256. Both
+    // were wrong against the constant.
     let num_folds = (config.lde_size / config.fri_final_poly_size).trailing_zeros() as usize;
     let num_fri_layers = num_folds - 1;
     if proof.num_fri_layers() != num_fri_layers {
         return Err(VerifyError::FriFoldCheckFailed);
     }
+
+    // [B1] TERMINAL DEGREE BOUND, once per proof, before the query loop.
+    //
+    // Without this the terminal FRI test is worth ZERO bits: the 16 published
+    // coefficients span the full interpolation space of the 16 folded evaluations
+    // the query loop compares against, so a prover who folds his own function
+    // honestly and publishes its true interpolant always passes. Costs <= 8 u64
+    // comparisons. The parser pins `fri_final_poly_size` to the config value and
+    // range-checks every coefficient, so the field cannot be widened and a
+    // non-canonical `MODULUS` cannot masquerade as a zero here.
+    check_final_poly_degree_bound(
+        proof.fri_final_poly_bytes(),
+        config.fri_final_poly_degree_bound,
+    )?;
 
     // Re-derive α_0..α_{L-1} from the transcript. The initial state matches
     // the prover's `build_base_seed` output; each committed layer root is
@@ -1184,7 +1254,16 @@ fn verify_fri_generic(
             };
 
             if expected_next.as_u64() != actual_next.as_u64() {
-                return Err(VerifyError::FriFoldCheckFailed);
+                // [B1] Name WHICH mechanism rejected. Against an adversary who
+                // folds his own composition honestly, every intermediate check
+                // passes with probability 1 and ALL soundness lives in the
+                // terminal comparison — so a test that accepts "any error" would
+                // not distinguish a working binding from a broken one.
+                return Err(if i == num_fri_layers {
+                    VerifyError::FriTerminalCheckFailed
+                } else {
+                    VerifyError::FriFoldCheckFailed
+                });
             }
         }
     }
@@ -1203,6 +1282,13 @@ fn verify_fri_legacy(
     if proof.num_fri_layers() != num_fri_layers {
         return Err(VerifyError::FriFoldCheckFailed);
     }
+
+    // [B1] TERMINAL DEGREE BOUND — see verify_fri_generic. C0's bound is 7, not
+    // 8: its AIR carries ONE periodic factor where C1..C6 carry two.
+    check_final_poly_degree_bound(
+        proof.fri_final_poly_bytes(),
+        crate::compact_proof::LEGACY_FRI_FINAL_POLY_DEGREE_BOUND,
+    )?;
 
     let commitment_bytes = commitment.to_le_bytes();
     let ood_current_u64: Vec<u64> = proof.ood_current.iter().map(|f| f.as_u64()).collect();
@@ -1291,7 +1377,13 @@ fn verify_fri_legacy(
             };
 
             if expected_next.as_u64() != actual_next.as_u64() {
-                return Err(VerifyError::FriFoldCheckFailed);
+                // [B1] See verify_fri_generic: the terminal comparison is the one
+                // that carries the soundness, so it gets its own variant.
+                return Err(if i == num_fri_layers {
+                    VerifyError::FriTerminalCheckFailed
+                } else {
+                    VerifyError::FriFoldCheckFailed
+                });
             }
         }
     }
@@ -4103,6 +4195,9 @@ fn verify_transition_legacy(proof: &CompactStarkProof) -> Result<(), VerifyError
         num_rounds: NUM_ROUNDS,
         // [P2.2] Legacy verifier uses the default 16 (pre-P2.2 circuits only).
         fri_final_poly_size: FRI_FINAL_POLY_SIZE,
+        // [B1] Not read on this path — `verify_fri_legacy` uses the module const
+        // directly — but the field is mandatory and must not disagree with it.
+        fri_final_poly_degree_bound: crate::compact_proof::LEGACY_FRI_FINAL_POLY_DEGREE_BOUND,
         num_queries: NUM_QUERIES,
     };
 
