@@ -800,15 +800,27 @@ fn assert_artifact_is_current(so: &SoUnderTest) {
 ///
 /// # The numbers
 ///
-/// Every `*_measured` below is a real `compute_units_consumed` from THIS harness
-/// on the Route C build (`.so` sha256 `e13073c6…`, 638,248 B, self-built from the
-/// `src/` tree these ceilings ship with — the same artifact, hash-matched, that
-/// the round-2 review measured independently).
+/// Every `*_measured` below is a real `compute_units_consumed` from THIS
+/// harness. The artifact and the toolchain that produced them are named ONCE, on
+/// `CU_CEILINGS` directly below, and nowhere else. That is deliberate: this doc
+/// used to name a Route C `.so` (`e13073c6…`, 638,248 B), the block on the array
+/// named a B1 `.so` (`47a9b2a2…`) and then a third build (`f27876a4…`), all for
+/// one array of seven numbers. At most one of three could be true, and the
+/// numbers in the array matched none of them.
 ///
 /// Every `*_max` is `ceil(measured * 1.02)` rounded up to the next 1,000 — a
-/// uniform 2% band, wide enough for compiler-version noise and narrow enough that
-/// the "474K quietly became 1,399K" failure mode is red. It is COMPUTED from the
-/// measurement, not measured.
+/// uniform 2% band, narrow enough that the "474K quietly became 1,399K" failure
+/// mode is red. It is COMPUTED from the measurement, not measured.
+///
+/// That band is also the only thing absorbing a compiler difference that is real
+/// and UNMEASURED: the pin below was taken with the 3.1.9 toolchain
+/// `Anchor.toml:3` names, while `ci.yml` exports
+/// `P01_CARGO_BUILD_SBF=…/active_release/bin/cargo-build-sbf` and installs agave
+/// 2.2.14, so CI gates these numbers against bytecode from a different
+/// platform-tools. Nobody has measured what 2.2.14 costs — on the founder's box
+/// it cannot build at all (`os error 183`) — so treat a CI-only ceiling failure
+/// as a toolchain finding first and a regression second. `build_fingerprint`
+/// makes the switch visible instead of silent; it does not make the two equal.
 ///
 /// If you legitimately raise CU, raise the ceiling in the same commit and say
 /// why in the commit message. Do not widen the band to make a red run green.
@@ -817,7 +829,7 @@ fn assert_artifact_is_current(so: &SoUnderTest) {
 /// phase-2 ceiling is `None` rather than a number that could never be exceeded.
 struct CuCeiling {
     circuit_id: u8,
-    /// MEASURED phase-1 CU on the Route C build.
+    /// MEASURED phase-1 CU. Provenance for all seven is on `CU_CEILINGS`.
     phase1_measured: u64,
     /// COMPUTED ceiling asserted against: `measured * 1.02`, rounded up to 1,000.
     phase1_max: u64,
@@ -826,9 +838,54 @@ struct CuCeiling {
     phase2_max: Option<u64>,
 }
 
-/// [B1] RE-PINNED from a fresh `cu_budget_real_circuits` run on the B1 build
-/// (.so sha256 47a9b2a2250e6143, source fp 255cda33813f3787, origin line says
-/// `rebuilt`, not `cache hit`). Phase-1 before -> after, all seven MEASURED:
+/// MEASURED by `cu_budget_real_circuits` on this tree, 2026-07-30.
+///
+/// Artifact: `target/cu-budget/p01_stark_verifier.so`, 671,064 B, sha256
+/// `3d843e834f9a3a5fda0c2b6505b1b6d9b3d30ba64bb2584d5b7334f20b618f2e`, built by
+/// `solana-cargo-build-sbf 3.1.9 platform-tools v1.52`, build fp
+/// `28cc268b11fd8b8a`, origin line `rebuilt`. `target/cu-budget` was deleted
+/// before the run, so nothing could be served from cache. A second run against
+/// the same tree rebuilt the `.so` to the same sha256, so the artifact is
+/// reproducible on this toolchain.
+///
+/// # What this re-pin corrects
+///
+/// `4b1347c3` ("re-pin CU after the dead ALI seam was deleted") edited the prose
+/// and moved no constant. Its paragraph described a SECOND measurement, taken
+/// after `verify_quotient_at_query` and its eight call sites were deleted, while
+/// `phase1_measured` still held the FIRST. The file therefore asserted C4 =
+/// 773,047 three lines below a sentence saying C4 = 772,776, and the harness
+/// measured 772,776. Re-measured here, and pinned to what was measured:
+///
+/// ```text
+///          was pinned      measured      delta
+///   C0        538,720       538,666        -54
+///   C1        678,389       678,142       -247
+///   C2        687,922       687,645       -277
+///   C3        730,737       730,461       -276
+///   C4        773,047       772,776       -271
+///   C5        735,759       735,492       -267
+///   C6        749,673       749,469       -204
+/// ```
+///
+/// No CEILING moves. `ceil(measured * 1.02)` rounded up to the next 1,000 lands
+/// on the same thousand for both columns on all seven circuits, which is what
+/// `4b1347c3` meant by "ceilings unchanged" — so nothing was ever mis-gated, and
+/// this is a correctness-of-record fix, not a live gate failure. What was wrong
+/// is the baseline the `vs measured` column diffs against: it printed -54 to
+/// -277 on a healthy tree where it should print 0, which is exactly the drift
+/// signal a reader is meant to trust.
+///
+/// Phase 2 needed no correction. All six reproduced exactly: C1 122,706,
+/// C2 90,077, C3 113,592, C4 177,685, C5 198,649, C6 120,428.
+///
+/// Worst absolute is C4 at 772,776 of 1,400,000 (55%); worst phase1+phase2 is
+/// C4 at 950,461, still inside one instruction.
+///
+/// # Where phase 1 got its cost, for context
+///
+/// B1 — folding the DEEP composition into FRI — is what moved it. Phase-1 before
+/// -> after B1, all seven MEASURED at the time:
 ///
 /// ```text
 ///   C0  474,030 -> 538,720   (+64,690, +13.6%)
@@ -844,30 +901,23 @@ struct CuCeiling {
 /// one 127-mul batched inversion. C6 pays the most because its irreducible term
 /// is `2w` muls per query at w = 10 and no rearrangement removes it.
 ///
-/// The numbers PINNED below are a SECOND measurement, taken after the
-/// `verify_quotient_at_query` no-op and its eight call sites were deleted: 54 to
-/// 277 CU cheaper than the table above on every circuit. Worst absolute is C4 at
-/// 772,776 of 1,400,000 (55%); worst phase1+phase2 is C4 at 950,461, still one
-/// instruction. That run's origin line reads `rebuilt`, source fp
-/// f27876a4d5fee5d1.
-///
-/// Phase 2 moved by at most +98 CU (+0.05%) and is re-pinned too. It is NOT a
-/// phase-2 code change: `verify_deep_ali_circuit_*` reads no query data and its
-/// inputs (both roots, z, ood_current, ood_next, ood_quotient) are bit-identical
-/// pre/post B1, since B1 changes neither Merkle tree nor the OOD derivation. The
-/// phase-2 INSTRUCTION also calls `GenericCompactProof::from_bytes`, which B1
-/// gave a 16-iteration final-poly canonicity loop. The residual sign split by
-/// query count (27-query circuits -24..-34, 22-query circuits +77..+98) is
-/// attributed to codegen shifting inside that parse function; that attribution
-/// is INFERENCE from the source, not a separate measurement.
+/// Phase 2 moved by at most +98 CU (+0.05%) across B1. It is NOT a phase-2 code
+/// change: `verify_deep_ali_circuit_*` reads no query data and its inputs (both
+/// roots, z, ood_current, ood_next, ood_quotient) are bit-identical pre/post B1,
+/// since B1 changes neither Merkle tree nor the OOD derivation. The phase-2
+/// INSTRUCTION also calls `GenericCompactProof::from_bytes`, which B1 gave a
+/// 16-iteration final-poly canonicity loop. The residual sign split by query
+/// count (27-query circuits -24..-34, 22-query circuits +77..+98) is attributed
+/// to codegen shifting inside that parse function; that attribution is INFERENCE
+/// from the source, not a separate measurement.
 const CU_CEILINGS: [CuCeiling; 7] = [
-    CuCeiling { circuit_id: 0, phase1_measured: 538_720, phase1_max: 550_000, phase2_measured: None,           phase2_max: None },
-    CuCeiling { circuit_id: 1, phase1_measured: 678_389, phase1_max: 692_000, phase2_measured: Some(122_706), phase2_max: Some(126_000) },
-    CuCeiling { circuit_id: 2, phase1_measured: 687_922, phase1_max: 702_000, phase2_measured: Some( 90_077), phase2_max: Some( 92_000) },
-    CuCeiling { circuit_id: 3, phase1_measured: 730_737, phase1_max: 746_000, phase2_measured: Some(113_592), phase2_max: Some(116_000) },
-    CuCeiling { circuit_id: 4, phase1_measured: 773_047, phase1_max: 789_000, phase2_measured: Some(177_685), phase2_max: Some(182_000) },
-    CuCeiling { circuit_id: 5, phase1_measured: 735_759, phase1_max: 751_000, phase2_measured: Some(198_649), phase2_max: Some(203_000) },
-    CuCeiling { circuit_id: 6, phase1_measured: 749_673, phase1_max: 765_000, phase2_measured: Some(120_428), phase2_max: Some(123_000) },
+    CuCeiling { circuit_id: 0, phase1_measured: 538_666, phase1_max: 550_000, phase2_measured: None,           phase2_max: None },
+    CuCeiling { circuit_id: 1, phase1_measured: 678_142, phase1_max: 692_000, phase2_measured: Some(122_706), phase2_max: Some(126_000) },
+    CuCeiling { circuit_id: 2, phase1_measured: 687_645, phase1_max: 702_000, phase2_measured: Some( 90_077), phase2_max: Some( 92_000) },
+    CuCeiling { circuit_id: 3, phase1_measured: 730_461, phase1_max: 746_000, phase2_measured: Some(113_592), phase2_max: Some(116_000) },
+    CuCeiling { circuit_id: 4, phase1_measured: 772_776, phase1_max: 789_000, phase2_measured: Some(177_685), phase2_max: Some(182_000) },
+    CuCeiling { circuit_id: 5, phase1_measured: 735_492, phase1_max: 751_000, phase2_measured: Some(198_649), phase2_max: Some(203_000) },
+    CuCeiling { circuit_id: 6, phase1_measured: 749_469, phase1_max: 765_000, phase2_measured: Some(120_428), phase2_max: Some(123_000) },
 ];
 
 /// The band is COMPUTED, so assert the arithmetic rather than trusting a typo.
@@ -996,7 +1046,11 @@ fn cu_ceiling_check_rejects_a_regression_and_accepts_the_recorded_numbers() {
     assert!(v[0].contains("C5 phase 2"), "violation should name the circuit and phase: {}", v[0]);
 
     // Negative control 4: C0 growing a phase-2 instruction is a dispatch change.
-    let c0ph2 = vec![synthetic_row(0, Measured::Ok(474_030), Measured::Ok(1))];
+    let c0ph2 = vec![synthetic_row(
+        0,
+        Measured::Ok(ceiling_for(0).phase1_measured),
+        Measured::Ok(1),
+    )];
     let v = check_cu_ceilings(&c0ph2);
     assert_eq!(v.len(), 1, "expected exactly one violation, got {v:?}");
     assert!(v[0].contains("structurally absent"), "unexpected message: {}", v[0]);
