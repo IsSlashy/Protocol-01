@@ -111,9 +111,16 @@ node packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain 
 node packages/stark-prover/scripts/deployed-verifier-check.mjs --measure        # print a fresh `deployed` block
 ```
 
+`--cluster <devnet|mainnet-beta>` names which deployment a run is about. It
+defaults to devnet and it belongs to the **caller**, never to the record: the
+label picks the endpoint out of a table in the script and the program id out of
+`Anchor.toml`, and the record's own `cluster` and `program_id` are cross-checked
+against that choice, with either disagreeing a hard failure.
+
 It is **not** a CI-only gate. It runs in `apps/web` build, `apps/extension`
 build, `apps/mobile` `eas-build-post-install`, and the `prepublishOnly` of both
-this package and `@protocol-01/react-native-zk`.
+this package and `@protocol-01/react-native-zk`. All seven call sites pass
+`--verify-onchain --cluster devnet`.
 
 **It is RED today and that is correct.** MEASURED 2026-07-30: `wasm/` holds the
 B1 prover (`11e6f004…`, 211,370 B, three B1 marker literals present) and devnet
@@ -141,6 +148,31 @@ the chain never contacted. The endpoint is now pinned in the script and keyed by
 a cluster label, the program id comes from `Anchor.toml`, a record carrying an
 `rpc_url` is rejected, and the chain read is retried three times before the run
 is called red.
+
+Removing `rpc_url` was not enough on its own, because the *label* was still the
+record's to write and `localnet` was one of the labels. MEASURED 2026-07-30
+against that revision: setting `cluster` to `localnet`, `program_id` to the id
+`Anchor.toml [programs.localnet]` genuinely carries, `proof_format_generation` to
+`b1` and `accepts_client_blob_sha256` to the blob's own hash, then answering
+`getAccountInfo` on `127.0.0.1:8899` with 149 fabricated bytes carrying the two
+B1 marker literals and the four controls, printed `PASS — the shipped prover
+matches the deployment, and the chain was asked and agreed`, exit code 0. Killing
+the listener and rerunning the same record exited 1, so the pass came entirely
+from the listener. The forgery was not even necessary — `solana-test-validator`
+plus `anchor deploy` of the current verifier answers all of those checks honestly
+— but that variant was not run, because the forged one already shows the gate
+believed whatever answered `127.0.0.1:8899`. CI was safe only by accident, since
+nothing listens on 8899 on a fresh runner; the other six call sites are developer
+and release machines.
+
+So the cluster now comes from `--cluster`, `localnet` is **refused** by any run
+that could be a shipping verdict, and a record naming a different cluster than
+the caller fails the run. Local development keeps a way in that no build can take
+by accident: `P01_ALLOW_LOCAL_VERIFIER_GATE=1` in the environment plus an
+explicit `--cluster localnet`. That path never prints the word PASS, prints `THIS
+IS NOT A SHIPPING VERDICT` instead, and is refused outright when `CI`,
+`GITHUB_ACTIONS`, `VERCEL` or `EAS_BUILD` is set. Nothing in this repo sets the
+variable.
 
 One field in the record is believed rather than verified:
 `accepts_client_blob_sha256`. Nothing on chain records which client blob a

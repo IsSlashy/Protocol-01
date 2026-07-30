@@ -41,8 +41,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "check:deployed": "node scripts/deployed-verifier-check.mjs --verify-onchain",
-    "prepublishOnly": "node scripts/deployed-verifier-check.mjs --verify-onchain && npm run build"
+    "check:deployed": "node scripts/deployed-verifier-check.mjs --verify-onchain --cluster devnet",
+    "prepublishOnly": "node scripts/deployed-verifier-check.mjs --verify-onchain --cluster devnet && npm run build"
   },
   "keywords": [
     "solana",

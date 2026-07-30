@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "eas-build-post-install": "cd ../.. && node packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain && pnpm --filter \"./packages/*\" run --if-present build"
+    "eas-build-post-install": "cd ../.. && node packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain --cluster devnet && pnpm --filter \"./packages/*\" run --if-present build"
   },
   "dependencies": {
     "@babel/runtime": "^7.29.7",

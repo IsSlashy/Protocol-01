@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "node ../../packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain && pnpm --filter @protocol-01/rpc-config build && pnpm --filter @protocol-01/specter-sdk build:core && next build",
+    "build": "node ../../packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain --cluster devnet && pnpm --filter @protocol-01/rpc-config build && pnpm --filter @protocol-01/specter-sdk build:core && next build",
     "start": "next start",
     "test": "vitest run",
     "test:ui": "vitest run --config vitest.ui.config.ts",

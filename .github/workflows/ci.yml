@@ -85,15 +85,25 @@ jobs:
       # `--measure`. Editing the record instead makes the OFFLINE half green and
       # changes nothing on chain, which is why `--verify-onchain` is passed here:
       # it refetches the programdata account and re-derives the deployed
-      # generation from the deployed bytes. An unreachable cluster is reported as
-      # SKIPPED and does not fail the step, so a network flake cannot block a
-      # merge; a reachable cluster that contradicts the record is a hard failure.
+      # generation from the deployed bytes. A reachable cluster that contradicts
+      # the record is a hard failure, and so is an unreachable one whenever
+      # nothing else was going to fail the step: a leg that could not reach the
+      # chain has established nothing and must not pass on the record's own
+      # authority. The chain read is retried three times first, so a single flake
+      # does not block a merge.
+      #
+      # `--cluster devnet` is what makes this a SHIPPING verdict. The cluster is
+      # the caller's to name and not the record's; the record's own `cluster`
+      # field is cross-checked against this flag and a disagreement fails. Passing
+      # `--cluster localnet` here would be refused twice over: it is not a
+      # shipping cluster, and CI is not allowed to use the local escape hatch even
+      # with P01_ALLOW_LOCAL_VERIFIER_GATE set. Do not set that variable here.
       #
       # The same script runs in `apps/web` build, `apps/extension` build,
       # `apps/mobile` eas-build-post-install and both `prepublishOnly` hooks, so
       # this is not a CI-only gate.
       - name: STARK prover vs DEPLOYED verifier (BLOCKING — proof-format interlock)
-        run: node packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain
+        run: node packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain --cluster devnet
 
       - name: Type check & Build
         run: pnpm turbo run build

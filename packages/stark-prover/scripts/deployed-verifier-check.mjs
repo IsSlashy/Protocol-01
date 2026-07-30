@@ -7,6 +7,9 @@
  *   node packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain # + prove the record against the chain
  *   node packages/stark-prover/scripts/deployed-verifier-check.mjs --measure        # print a fresh `deployed` block
  *
+ * `--cluster <devnet|mainnet-beta>` names WHICH deployment this run is about.
+ * It defaults to devnet and it is the CALLER's to choose, never the record's.
+ *
  * # Why this exists
  *
  * The proof wire format is agreed between `packages/stark-prover/wasm/` and the
@@ -43,24 +46,62 @@
  * `deployed.proof_format_generation`. Those three fields cannot be edited into
  * agreement, because the chain is asked what they are.
  *
- * It can only do that because the record does NOT get to say where to look. The
- * endpoint comes from `CLUSTERS` below, and the program id from Anchor.toml, both
- * keyed by a cluster LABEL. Until 2026-07-30 the endpoint was `deployed.rpc_url`,
- * read out of the record, and an unreachable endpoint was a SKIP that still
- * exited 0. MEASURED: editing three fields of the record — generation to `b1`,
- * `accepts_client_blob_sha256` to the blob's own hash, `rpc_url` to
- * `https://api.devnet.solana.invalid` — made `--verify-onchain` print
- * "on-chain SKIPPED" and then "PASS", exit code 0, with the chain never
- * contacted. So `rpc_url` is gone from the record and a record that still
- * carries one is rejected; an unresolvable cluster label is rejected; and a
- * cluster that cannot be reached is a hard failure whenever nothing else was
- * going to fail the build.
+ * It can only do that because the record does NOT get to say where to look. See
+ * the next section: the caller names the cluster, the record is only checked
+ * against it.
  *
  * It does NOT establish `deployed.accepts_client_blob_sha256`. Nothing on chain
  * records which client blob a deployment accepts. That field is a human
  * attestation that someone submitted a proof and watched it land, and this
  * script cannot check it against anything. It is the one field in the `deployed`
  * block that is believed rather than verified.
+ *
+ * # Which chain gets asked, and who chooses
+ *
+ * The CALLER chooses, with `--cluster`, defaulting to devnet. The label selects
+ * an endpoint from `CLUSTERS` below and a program id from Anchor.toml. The
+ * record's own `cluster` and `program_id` are then CHECKED against that choice,
+ * and either disagreeing is a hard failure. So the record is data about a
+ * deployment, not an instruction about where to look.
+ *
+ * A gate that decides whether a client may SHIP accepts devnet and mainnet-beta
+ * and nothing else. `localnet` is refused outright unless the caller both asks
+ * for it and sets P01_ALLOW_LOCAL_VERIFIER_GATE=1, and that path prints its
+ * result as NOT A SHIPPING VERDICT and is refused again if CI is set. Nothing in
+ * this repo sets that variable: not .github/workflows/ci.yml, not the apps/web,
+ * apps/extension or apps/mobile build scripts, not either prepublishOnly.
+ *
+ * That is not hypothetical tidiness. Until this revision the cluster came from
+ * the record and `localnet` was one of the labels. MEASURED 2026-07-30 against
+ * the previous revision of this file: setting `cluster` to `localnet`,
+ * `program_id` to the id Anchor.toml [programs.localnet] genuinely carries (so
+ * the cross-check passes), `proof_format_generation` to `b1` and
+ * `accepts_client_blob_sha256` to the blob's own hash, plus a fabricated elf hash
+ * and slot; then a throwaway JSON-RPC server on 127.0.0.1:8899 answering
+ * getAccountInfo with 149 bytes carrying the two B1 marker literals and the four
+ * controls. It printed "PASS — the shipped prover matches the deployment, and the
+ * chain was asked and agreed", exit 0. Killing the listener and rerunning the
+ * same record exited 1, so the pass came entirely from the listener.
+ *
+ * NOT measured, because it is strictly easier and needs no forgery at all: a
+ * `solana-test-validator` with the current verifier deployed to it answers every
+ * one of those checks honestly, and the gate would then be green forever while
+ * devnet stayed pre-B1 and every client proof died with FriFoldCheckFailed.
+ * Nobody ran it; the forged run already establishes that the gate believed
+ * whatever answered 127.0.0.1:8899.
+ *
+ * CI was safe only by accident, because nothing listens on 8899 on a fresh
+ * runner. The other six call sites are developer and release machines, where a
+ * local validator is normal.
+ *
+ * An earlier round the same day removed `deployed.rpc_url`, which is why a record
+ * carrying one is still rejected below. MEASURED then: editing generation to `b1`,
+ * `accepts_client_blob_sha256` to the blob's own hash and `rpc_url` to
+ * `https://api.devnet.solana.invalid` made `--verify-onchain` print
+ * "on-chain SKIPPED" and then "PASS", exit 0, with the chain never contacted.
+ * Hence also: an unresolvable cluster label is rejected, and a cluster that
+ * cannot be reached is a hard failure whenever nothing else was going to fail
+ * the build.
  *
  * # Generation detection
  *
@@ -121,24 +162,40 @@ const ELF_CONTROLS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Where to look. Pinned HERE, never taken from the record.
+// Where to look. Pinned HERE, chosen by the CALLER, never taken from the record.
 // ---------------------------------------------------------------------------
 
 /**
- * `deployed.cluster` is a LABEL. It selects an endpoint from this table and a
- * program id from Anchor.toml. The record does not get to name either one, so it
- * cannot redirect the on-chain leg at a chain, or a program, of its choosing.
+ * A cluster LABEL selects an endpoint from this table and a program id from
+ * Anchor.toml. The label comes from `--cluster`; the record's `cluster` is
+ * checked against it, so the record cannot redirect the on-chain leg at a chain,
+ * or a program, of its choosing.
  *
  * `anchorSection` is the Anchor.toml table for that cluster; Anchor's own name
  * for mainnet is `programs.mainnet`, not `programs.mainnet-beta`. A label with no
  * entry here is a hard failure — there is no default and no fallback, because a
  * fallback is how an unrecognised label becomes a silent pass.
+ *
+ * `shipping: false` means a client build or publish must never be gated on it.
+ * localnet is here so `--measure` and hand runs can reach a test validator, and
+ * for nothing else; every path that reads it demands the escape-hatch variable
+ * below and labels its own verdict as not a shipping verdict.
  */
 const CLUSTERS = {
-  devnet: { endpoint: 'https://api.devnet.solana.com', anchorSection: 'programs.devnet' },
-  'mainnet-beta': { endpoint: 'https://api.mainnet-beta.solana.com', anchorSection: 'programs.mainnet' },
-  localnet: { endpoint: 'http://127.0.0.1:8899', anchorSection: 'programs.localnet' },
+  devnet: { endpoint: 'https://api.devnet.solana.com', anchorSection: 'programs.devnet', shipping: true },
+  'mainnet-beta': { endpoint: 'https://api.mainnet-beta.solana.com', anchorSection: 'programs.mainnet', shipping: true },
+  localnet: { endpoint: 'http://127.0.0.1:8899', anchorSection: 'programs.localnet', shipping: false },
 };
+
+/** Used when the caller passes no `--cluster`. A label, not an endpoint. */
+const DEFAULT_CLUSTER = 'devnet';
+
+/**
+ * The one way to point this script at a non-shipping cluster. It must be set in
+ * the environment by a human, per invocation. No build or publish step in this
+ * repo sets it, and it is refused outright when CI is set.
+ */
+const LOCAL_ESCAPE_ENV = 'P01_ALLOW_LOCAL_VERIFIER_GATE';
 
 /** The Anchor.toml key naming the verifier program, in every cluster table. */
 const ANCHOR_PROGRAM_KEY = 'p01_stark_verifier';
@@ -167,18 +224,96 @@ function programIdFromAnchorToml(anchorSection) {
 
 // ---------------------------------------------------------------------------
 
-const argv = process.argv.slice(2);
-const wantOnchain = argv.includes('--verify-onchain');
-const wantMeasure = argv.includes('--measure');
-const recordIdx = argv.indexOf('--record');
-const RECORD_REL = recordIdx !== -1 ? argv[recordIdx + 1] : RECORD_DEFAULT;
+const USAGE =
+  'usage: deployed-verifier-check.mjs [--verify-onchain] [--measure] [--record <path>] [--cluster <label>]';
 
-for (const a of argv) {
-  if (!['--verify-onchain', '--measure', '--record', RECORD_REL].includes(a)) {
+const argv = process.argv.slice(2);
+let wantOnchain = false;
+let wantMeasure = false;
+let RECORD_REL = RECORD_DEFAULT;
+let clusterFlag = null;
+
+for (let i = 0; i < argv.length; i += 1) {
+  const a = argv[i];
+  if (a === '--verify-onchain') {
+    wantOnchain = true;
+  } else if (a === '--measure') {
+    wantMeasure = true;
+  } else if (a === '--record' || a === '--cluster') {
+    const v = argv[i + 1];
+    if (v === undefined || v.startsWith('--')) {
+      console.error(`[deployed-verifier] ${a} needs a value`);
+      console.error(USAGE);
+      process.exit(2);
+    }
+    if (a === '--record') RECORD_REL = v;
+    else clusterFlag = v;
+    i += 1;
+  } else {
     console.error(`[deployed-verifier] unknown argument ${a}`);
-    console.error('usage: deployed-verifier-check.mjs [--verify-onchain] [--measure] [--record <path>]');
+    console.error(USAGE);
     process.exit(2);
   }
+}
+
+// ---------------------------------------------------------------------------
+// WHICH DEPLOYMENT THIS RUN IS ABOUT. Decided here, before anything is read.
+// ---------------------------------------------------------------------------
+//
+// The record is not consulted. It carries a `cluster` label of its own, but that
+// label is evidence to be checked against this choice further down, and a
+// disagreement fails the run. A record that could pick the cluster could pick
+// `localnet` and be verified against a chain the person editing it controls.
+
+const TARGET_CLUSTER = clusterFlag ?? DEFAULT_CLUSTER;
+const TARGET = CLUSTERS[TARGET_CLUSTER];
+
+if (TARGET === undefined) {
+  console.error(`[deployed-verifier] unknown --cluster ${JSON.stringify(TARGET_CLUSTER)}`);
+  console.error(`[deployed-verifier] known labels: ${Object.keys(CLUSTERS).join(', ')}`);
+  console.error(USAGE);
+  process.exit(2);
+}
+
+/** The caller named a cluster that cannot produce a shipping verdict. */
+const LOCAL_MODE = TARGET.shipping !== true;
+
+if (LOCAL_MODE) {
+  const allowed = process.env[LOCAL_ESCAPE_ENV] === '1';
+  const inCI = ['CI', 'GITHUB_ACTIONS', 'VERCEL', 'EAS_BUILD'].some(
+    (v) => process.env[v] !== undefined && process.env[v] !== '' && process.env[v] !== 'false' && process.env[v] !== '0',
+  );
+  if (!allowed || inCI) {
+    console.error(`${'='.repeat(78)}`);
+    console.error(`[deployed-verifier] REFUSED — ${TARGET_CLUSTER} cannot answer the question this gate asks.`);
+    console.error('');
+    console.error('  This gate decides whether a client may SHIP. Shipped clients talk to devnet and');
+    console.error('  mainnet-beta. A validator on this machine proves nothing about either: deploy the');
+    console.error('  current verifier to a local validator and the gate goes green forever while devnet');
+    console.error('  is still pre-B1 and every proof a user generates dies on chain with');
+    console.error('  FriFoldCheckFailed. That much needs no forgery at all, and a fake JSON-RPC');
+    console.error(`  listener on ${TARGET.endpoint} reaches the same green with less work.`);
+    console.error('');
+    console.error(`  Shipping clusters: ${Object.entries(CLUSTERS).filter(([, c]) => c.shipping).map(([k]) => k).join(', ')}`);
+    console.error('');
+    if (inCI && allowed) {
+      console.error(`  ${LOCAL_ESCAPE_ENV}=1 is set, and is being IGNORED because this is CI. The escape`);
+      console.error('  hatch is for a human at a keyboard on their own machine, and CI never ships a');
+      console.error('  verdict that a developer machine vouched for.');
+    } else {
+      console.error(`  If you are developing against a local validator and you know the result is NOT a`);
+      console.error(`  shipping verdict, rerun with ${LOCAL_ESCAPE_ENV}=1 in the environment.`);
+    }
+    console.error(`${'='.repeat(78)}`);
+    process.exit(1);
+  }
+  console.error(`${'!'.repeat(78)}`);
+  console.error(`[deployed-verifier] LOCAL MODE — cluster ${TARGET_CLUSTER} (${TARGET.endpoint}).`);
+  console.error(`[deployed-verifier] ${LOCAL_ESCAPE_ENV}=1 was set, so this run is allowed against a chain`);
+  console.error('[deployed-verifier] that is not a shipping cluster. WHATEVER IT PRINTS IS NOT A SHIPPING');
+  console.error('[deployed-verifier] VERDICT. It says nothing about devnet or mainnet-beta, and a green run');
+  console.error('[deployed-verifier] here does not mean a client built from this tree can ship.');
+  console.error(`${'!'.repeat(78)}`);
 }
 
 function countOccurrences(buf, needle) {
@@ -319,6 +454,71 @@ async function readDeployedWithRetry(rpcUrl, programId) {
 }
 
 // ---------------------------------------------------------------------------
+// --measure: print a fresh `deployed` block and stop
+// ---------------------------------------------------------------------------
+//
+// This runs BEFORE the record is read and reads nothing out of it. --measure is
+// what you run when the record is stale or wrong, so depending on the record
+// would make it useless in the one situation it exists for. The cluster comes
+// from --cluster, the program id from Anchor.toml, and neither is negotiable
+// here either: a --measure that could be aimed by the record would just be the
+// same hole one step earlier, since its output is what gets pasted in.
+
+if (wantMeasure) {
+  const measureProgramId = programIdFromAnchorToml(TARGET.anchorSection);
+  if (measureProgramId === null) {
+    console.error(`[deployed-verifier] --measure: Anchor.toml has no ${ANCHOR_PROGRAM_KEY} under [${TARGET.anchorSection}]`);
+    console.error('That table is where this script learns which program to read, so there is nothing to fetch.');
+    process.exit(1);
+  }
+  console.error(`[deployed-verifier] --measure reading ${measureProgramId} on ${TARGET_CLUSTER} (${TARGET.endpoint})`);
+  let chain;
+  try {
+    chain = await readDeployedWithRetry(TARGET.endpoint, measureProgramId);
+  } catch (e) {
+    console.error(`[deployed-verifier] --measure could not read ${measureProgramId} on ${TARGET.endpoint}: ${e.message}`);
+    process.exit(1);
+  }
+  const cls = classify(chain.elf, ELF_B1_MARKERS, ELF_CONTROLS);
+  const observedSlot = await rpc(TARGET.endpoint, 'getSlot', []).catch(() => null);
+  console.log(
+    JSON.stringify(
+      {
+        cluster: TARGET_CLUSTER,
+        program_id: measureProgramId,
+        programdata_address: chain.programdataAddress,
+        loader: chain.loader,
+        upgrade_authority: chain.upgradeAuthority,
+        last_deployed_slot: chain.lastDeployedSlot,
+        elf_sha256: chain.elfSha256,
+        elf_bytes: chain.elfBytes,
+        elf_sha256_with_loader_padding: chain.paddedSha256,
+        elf_bytes_with_loader_padding: chain.paddedBytes,
+        programdata_account_space: chain.programdataAccountSpace,
+        proof_format_generation: cls.generation ?? 'UNCLASSIFIABLE',
+        measured_at: { date_utc: new Date().toISOString().slice(0, 10), observed_slot: observedSlot },
+      },
+      null,
+      2,
+    ),
+  );
+  if (cls.generation === null) {
+    console.error(`\n[deployed-verifier] the deployed ELF could not be classified: controls missing ${JSON.stringify(cls.missingControls)}`);
+    process.exit(1);
+  }
+  console.error(
+    `\n[deployed-verifier] --measure only READS the chain. Paste the block above into ${RECORD_REL}, ` +
+      'and set accepts_client_blob_sha256 only after proving a blob against this deployment end to end.',
+  );
+  if (LOCAL_MODE) {
+    console.error(`[deployed-verifier] This block describes ${TARGET_CLUSTER}. Pasting it in makes the record describe a`);
+    console.error('[deployed-verifier] local chain, and every shipping run of this gate will then fail on the cluster');
+    console.error('[deployed-verifier] mismatch. That is deliberate: do not commit it.');
+  }
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
 // 1. the record
 // ---------------------------------------------------------------------------
 
@@ -369,105 +569,66 @@ for (const [path, value] of [
 }
 
 // ---------------------------------------------------------------------------
-// 1b. resolve WHERE to look — from the cluster label, not from the record
+// 1b. the record's cluster label is CHECKED against the caller's choice
 // ---------------------------------------------------------------------------
+//
+// The endpoint and the program id were fixed by --cluster before this file was
+// opened. What is left for the record to do is agree, or fail the run. A record
+// that disagrees is describing some other deployment than the one this run is
+// about, and nothing it says applies.
 
-/** Endpoint and program id for this run, or null if the label did not resolve. */
-let endpoint = null;
+const endpoint = TARGET.endpoint;
 let programId = null;
 
 if ('rpc_url' in deployed) {
   fail(`${RECORD_REL} carries deployed.rpc_url`, [
-    'The endpoint is pinned in deployed-verifier-check.mjs and keyed by deployed.cluster. It is not the',
-    "record's to choose, because a record that names its own endpoint can name one that does not answer,",
-    'and an endpoint that does not answer used to be a SKIP that still exited 0. Delete the field.',
+    'The endpoint is pinned in deployed-verifier-check.mjs and keyed by the --cluster label the CALLER',
+    "passed. It is not the record's to choose, because a record that names its own endpoint can name one",
+    'that does not answer, and an endpoint that does not answer used to be a SKIP that still exited 0.',
+    'Delete the field.',
   ]);
 }
 
 if (typeof deployed.cluster === 'string' && deployed.cluster.length > 0) {
-  const cfg = CLUSTERS[deployed.cluster];
-  if (cfg === undefined) {
+  if (CLUSTERS[deployed.cluster] === undefined) {
     fail(`${RECORD_REL} names an unknown cluster ${JSON.stringify(deployed.cluster)}`, [
       `Known labels: ${Object.keys(CLUSTERS).join(', ')}.`,
       'There is deliberately no default: an unrecognised label must not quietly become devnet.',
     ]);
+  } else if (deployed.cluster !== TARGET_CLUSTER) {
+    fail(`${RECORD_REL} describes ${deployed.cluster}, but this run is gating ${TARGET_CLUSTER}`, [
+      `  record deployed.cluster  ${deployed.cluster}`,
+      `  this run  --cluster      ${TARGET_CLUSTER}${clusterFlag === null ? ' (the default; pass --cluster to change it)' : ''}`,
+      '',
+      'The caller says which deployment a build is allowed to ship against. The record is evidence about',
+      'a deployment, and evidence that is about a different chain is not evidence. This is the check that',
+      'stops a record from choosing where it is verified: it used to name the cluster, so setting it to',
+      'localnet and answering on 127.0.0.1:8899 produced a full PASS with exit code 0.',
+      '',
+      'If the record is right and this run is wrong, pass --cluster ' + deployed.cluster + '.',
+    ]);
+  }
+}
+
+{
+  const anchorId = programIdFromAnchorToml(TARGET.anchorSection);
+  if (anchorId === null) {
+    fail(`Anchor.toml has no ${ANCHOR_PROGRAM_KEY} under [${TARGET.anchorSection}]`, [
+      'That table is where this script learns which program to read. Without it the cluster label',
+      'resolves to an endpoint but not to a program, and the on-chain leg has nothing to fetch.',
+    ]);
   } else {
-    endpoint = cfg.endpoint;
-    const anchorId = programIdFromAnchorToml(cfg.anchorSection);
-    if (anchorId === null) {
-      fail(`Anchor.toml has no ${ANCHOR_PROGRAM_KEY} under [${cfg.anchorSection}]`, [
-        'That table is where this script learns which program to read. Without it the cluster label',
-        'resolves to an endpoint but not to a program, and the on-chain leg has nothing to fetch.',
-      ]);
-    } else if (anchorId !== deployed.program_id) {
+    programId = anchorId;
+    if (anchorId !== deployed.program_id) {
       fail(`${RECORD_REL} and Anchor.toml disagree about the verifier program`, [
         `  record deployed.program_id           ${deployed.program_id}`,
-        `  Anchor.toml [${cfg.anchorSection}] ${ANCHOR_PROGRAM_KEY}  ${anchorId}`,
+        `  Anchor.toml [${TARGET.anchorSection}] ${ANCHOR_PROGRAM_KEY}  ${anchorId}`,
         'The Anchor.toml value wins and is what gets fetched. This is not a formality: if the record could',
         'name the program, a record could point the on-chain leg at some other program that happens to be',
         'the generation it wants to claim, and the leg would agree with it.',
       ]);
-      programId = anchorId;
-    } else {
-      programId = anchorId;
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// --measure: print a fresh `deployed` block and stop
-// ---------------------------------------------------------------------------
-
-if (wantMeasure) {
-  if (endpoint === null || programId === null) {
-    console.error('[deployed-verifier] --measure cannot run: the cluster label did not resolve.');
-    for (const f of failures) {
-      console.error(`\n  ${f.title}`);
-      for (const line of f.lines) console.error(line ? `    ${line}` : '');
-    }
-    process.exit(1);
-  }
-  const rpcUrl = endpoint;
-  console.error(`[deployed-verifier] --measure reading ${programId} on ${deployed.cluster} (${rpcUrl})`);
-  let chain;
-  try {
-    chain = await readDeployedWithRetry(rpcUrl, programId);
-  } catch (e) {
-    console.error(`[deployed-verifier] --measure could not read ${programId} on ${rpcUrl}: ${e.message}`);
-    process.exit(1);
-  }
-  const cls = classify(chain.elf, ELF_B1_MARKERS, ELF_CONTROLS);
-  const observedSlot = await rpc(rpcUrl, 'getSlot', []).catch(() => null);
-  console.log(
-    JSON.stringify(
-      {
-        cluster: deployed.cluster,
-        program_id: programId,
-        programdata_address: chain.programdataAddress,
-        loader: chain.loader,
-        upgrade_authority: chain.upgradeAuthority,
-        last_deployed_slot: chain.lastDeployedSlot,
-        elf_sha256: chain.elfSha256,
-        elf_bytes: chain.elfBytes,
-        elf_sha256_with_loader_padding: chain.paddedSha256,
-        elf_bytes_with_loader_padding: chain.paddedBytes,
-        programdata_account_space: chain.programdataAccountSpace,
-        proof_format_generation: cls.generation ?? 'UNCLASSIFIABLE',
-        measured_at: { date_utc: new Date().toISOString().slice(0, 10), observed_slot: observedSlot },
-      },
-      null,
-      2,
-    ),
-  );
-  if (cls.generation === null) {
-    console.error(`\n[deployed-verifier] the deployed ELF could not be classified: controls missing ${JSON.stringify(cls.missingControls)}`);
-    process.exit(1);
-  }
-  console.error(
-    `\n[deployed-verifier] --measure only READS the chain. Paste the block above into ${RECORD_REL}, ` +
-      'and set accepts_client_blob_sha256 only after proving a blob against this deployment end to end.',
-  );
-  process.exit(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -485,11 +646,12 @@ try {
 const blobSha = sha256(blob);
 const blobCls = classify(blob, BLOB_B1_MARKERS, BLOB_CONTROLS);
 
+console.log(`[deployed-verifier] gating   ${TARGET_CLUSTER}${clusterFlag === null ? ' (default)' : ' (--cluster)'} ${TARGET.endpoint}${LOCAL_MODE ? '  NOT A SHIPPING CLUSTER' : ''}`);
 console.log(`[deployed-verifier] record   ${RECORD_REL}`);
 console.log(`[deployed-verifier] blob     ${CANONICAL}`);
 console.log(`[deployed-verifier]          ${blob.length.toLocaleString()} bytes, sha256 ${blobSha}`);
 console.log(`[deployed-verifier]          generation ${blobCls.generation ?? 'UNCLASSIFIABLE'} (B1 markers found: ${blobCls.hits.length}/${BLOB_B1_MARKERS.length})`);
-console.log(`[deployed-verifier] deployed ${deployed.program_id} on ${deployed.cluster}`);
+console.log(`[deployed-verifier] deployed ${deployed.program_id} on ${deployed.cluster} (as the record has it)`);
 console.log(`[deployed-verifier]          generation ${deployed.proof_format_generation}, elf sha256 ${deployed.elf_sha256}, slot ${deployed.last_deployed_slot}`);
 
 if (blobCls.generation === null) {
@@ -609,8 +771,10 @@ if (blobGen !== null && deployedGen !== blobGen) {
 // proof_format_generation — and re-derives them from the programdata account, so
 // an edit to any of the three does not survive here.
 //
-// It only means that because the record does not say where to look: the endpoint
-// comes from CLUSTERS and the program id from Anchor.toml.
+// It only means that because the record does not say where to look: the cluster
+// comes from the caller's --cluster, the endpoint from CLUSTERS and the program
+// id from Anchor.toml, and the record's own cluster and program_id have already
+// been checked against those rather than followed.
 //
 // A cluster that cannot be reached is a HARD FAILURE whenever nothing else was
 // going to fail this run. That is the point. It used to be a SKIP that still
@@ -630,10 +794,10 @@ if (wantOnchain) {
 
   let chain = null;
   let chainErr = null;
-  if (endpoint === null || programId === null) {
-    chainErr = new Error('the cluster label did not resolve to an endpoint and a program id (see the failures above)');
+  if (programId === null) {
+    chainErr = new Error(`Anchor.toml does not name ${ANCHOR_PROGRAM_KEY} for ${TARGET_CLUSTER} (see the failures above)`);
   } else {
-    console.log(`[deployed-verifier] on-chain reading ${programId} on ${deployed.cluster} (${endpoint})`);
+    console.log(`[deployed-verifier] on-chain reading ${programId} on ${TARGET_CLUSTER} (${endpoint})`);
     try {
       chain = await readDeployedWithRetry(endpoint, programId);
     } catch (e) {
@@ -644,8 +808,8 @@ if (wantOnchain) {
   if (chainErr !== null) {
     if (nothingElseWouldFail) {
       fail('the on-chain leg could not run, and nothing else was going to fail this build', [
-        `  cluster  ${deployed.cluster}`,
-        `  endpoint ${endpoint ?? '(unresolved)'}`,
+        `  cluster  ${TARGET_CLUSTER}`,
+        `  endpoint ${endpoint}`,
         `  program  ${programId ?? '(unresolved)'}`,
         `  error    ${chainErr.message}`,
         '',
@@ -691,8 +855,8 @@ if (wantOnchain) {
         `  B1 markers found on chain                ${JSON.stringify(chainCls.hits)}`,
         '',
         'The generation was re-derived from the bytes the chain returned, not read from the record, and the',
-        'endpoint and program id were not the record\'s to choose. Editing the JSON turns the offline half',
-        'green and is caught here. Deploy the program.',
+        'cluster, endpoint and program id were not the record\'s to choose. Editing the JSON turns the',
+        'offline half green and is caught here. Deploy the program.',
       ]);
     } else {
       console.log(`[deployed-verifier] on-chain ok — the chain agrees the deployment is ${chainCls.generation}`);
@@ -721,8 +885,24 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(
-  wantOnchain
-    ? '\n[deployed-verifier] PASS — the shipped prover matches the deployment, and the chain was asked and agreed.'
-    : '\n[deployed-verifier] PASS — the shipped prover matches the RECORDED deployment. The chain was not asked.',
-);
+if (LOCAL_MODE) {
+  // Not a shipping verdict, and it must not be quotable as one. The word PASS is
+  // deliberately absent from this branch.
+  console.log(`\n${'!'.repeat(78)}`);
+  console.log(
+    wantOnchain
+      ? `[deployed-verifier] LOCAL OK — the blob matches the record, and ${TARGET_CLUSTER} agreed.`
+      : `[deployed-verifier] LOCAL OK — the blob matches the record. No chain was asked.`,
+  );
+  console.log('[deployed-verifier] THIS IS NOT A SHIPPING VERDICT. It was measured against');
+  console.log(`[deployed-verifier] ${TARGET.endpoint}, which no user has ever talked to. It says nothing about`);
+  console.log(`[deployed-verifier] devnet or mainnet-beta. Before shipping anything, rerun without`);
+  console.log(`[deployed-verifier] ${LOCAL_ESCAPE_ENV} and without --cluster ${TARGET_CLUSTER}.`);
+  console.log(`${'!'.repeat(78)}`);
+} else {
+  console.log(
+    wantOnchain
+      ? `\n[deployed-verifier] PASS — the shipped prover matches the ${TARGET_CLUSTER} deployment, and the chain was asked and agreed.`
+      : `\n[deployed-verifier] PASS — the shipped prover matches the RECORDED ${TARGET_CLUSTER} deployment. The chain was not asked.`,
+  );
+}

@@ -16,20 +16,21 @@
     "MEASURED 2026-07-30, the script has seven invocations in the repo (.github/workflows/ci.yml, the",
     "apps/web and apps/extension `build` scripts, apps/mobile `eas-build-post-install`, and the",
     "packages/react-native-zk and packages/stark-prover `prepublishOnly` scripts, plus `check:deployed`),",
-    "and all seven pass --verify-onchain. None of them runs the record-only half on its own."
+    "and all seven pass `--verify-onchain --cluster devnet`. None of them runs the record-only half on its",
+    "own, and none of them sets P01_ALLOW_LOCAL_VERIFIER_GATE."
   ],
 
   "_HOW_TO_MAKE_THE_GATE_GREEN": [
     "There is exactly ONE legitimate way, and it is not an edit to this file:",
     "",
-    "  1. Deploy the CURRENT programs/p01_stark_verifier to the cluster named below.",
+    "  1. Deploy the CURRENT programs/p01_stark_verifier to devnet.",
     "  2. Re-measure this record from the chain:",
-    "       node packages/stark-prover/scripts/deployed-verifier-check.mjs --measure",
+    "       node packages/stark-prover/scripts/deployed-verifier-check.mjs --measure --cluster devnet",
     "     That prints a fresh `deployed` block read straight off the programdata account.",
     "  3. Paste the measured block in, and set deployed.accepts_client_blob_sha256 to the sha256 of the",
     "     blob you proved against that deployment.",
     "  4. Re-run the gate with the on-chain leg:",
-    "       node packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain",
+    "       node packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain --cluster devnet",
     "",
     "EDITING deployed.proof_format_generation WITHOUT REDEPLOYING IS THE FAILURE MODE THIS FILE EXISTS TO",
     "PREVENT. It makes the offline half green and every proof still fails on chain. --verify-onchain",
@@ -38,9 +39,13 @@
     "",
     "Three fields of the `deployed` block below are therefore NOT believed, they are refetched:",
     "elf_sha256, last_deployed_slot and proof_format_generation. Editing them does not survive the",
-    "on-chain leg. Nor can this file redirect that leg: the endpoint comes from a table in the script and",
-    "the program id from Anchor.toml, and the record's own program_id is cross-checked against it. A",
-    "cluster the script cannot reach is a hard failure whenever nothing else was going to fail the run.",
+    "on-chain leg. Nor can this file redirect that leg. THE CLUSTER IS THE CALLER'S, passed as",
+    "--cluster; the endpoint comes from a table in the script and the program id from Anchor.toml; and",
+    "`cluster` and `program_id` below are cross-checked against those, with either disagreeing a hard",
+    "failure. A cluster the script cannot reach is a hard failure whenever nothing else was going to fail",
+    "the run. The gate accepts --cluster devnet and --cluster mainnet-beta; localnet is refused unless a",
+    "human sets P01_ALLOW_LOCAL_VERIFIER_GATE=1, and that path prints NOT A SHIPPING VERDICT, never the",
+    "word PASS, and is refused anyway when CI is set.",
     "",
     "ONE FIELD IS BELIEVED, NOT VERIFIED: deployed.accepts_client_blob_sha256. Nothing on chain records",
     "which client blob a deployment accepts, so no script can check it. It is a human attestation that",
@@ -86,9 +91,9 @@
   ],
 
   "deployed": {
-    "_note": "The address, slot, size and hash fields here were MEASURED off the chain on the date below and are regenerated with --measure after a deploy; do not hand-edit them. Three exceptions, none of which --measure produces: `cluster` is a label the script resolves (see below), the `_`-prefixed blocks are prose for a human, and `accepts_client_blob_sha256` is a human attestation no script can check.",
+    "_note": "The address, slot, size and hash fields here were MEASURED off the chain on the date below and are regenerated with --measure after a deploy; do not hand-edit them. Two exceptions --measure does not produce: the `_`-prefixed blocks are prose for a human, and `accepts_client_blob_sha256` is a human attestation no script can check. `cluster` IS in the --measure output, but it is only an echo of the --cluster the caller passed; see below for why it is checked rather than obeyed.",
 
-    "_cluster_is_a_label": "cluster selects an RPC endpoint from the CLUSTERS table in deployed-verifier-check.mjs and a program id from Anchor.toml [programs.devnet]. There is deliberately no rpc_url field here: the endpoint used to live in this file, and a record that names its own endpoint can name one that does not answer. Combined with an unreachable endpoint being a skip, that let a three-field edit of this file pass --verify-onchain with exit code 0 and the chain never contacted. The script now rejects a record that carries rpc_url, and program_id below is cross-checked against Anchor.toml rather than trusted.",
+    "_cluster_is_checked_not_obeyed": "cluster does NOT select anything. The caller passes --cluster, that label selects an RPC endpoint from the CLUSTERS table in deployed-verifier-check.mjs and a program id from Anchor.toml, and the two fields below are then checked against the caller's choice: a record that names a different cluster, or a different program id than Anchor.toml carries for it, fails the run. Two rounds of the same defect are why. First the endpoint lived here as rpc_url, and a record that names its own endpoint can name one that does not answer, which combined with an unreachable endpoint being a skip let a three-field edit pass --verify-onchain with exit code 0 and the chain never contacted. Deleting rpc_url was not enough: the LABEL was still this file's to write and localnet was one of the labels, so setting cluster to localnet, program_id to the id Anchor.toml [programs.localnet] genuinely carries, generation to b1 and accepts_client_blob_sha256 to the blob's own hash, then answering getAccountInfo on 127.0.0.1:8899 with 149 fabricated bytes, printed a full PASS at exit code 0 (MEASURED 2026-07-30), and killing the listener made the same record exit 1, so the pass came from the listener alone. The forgery was not even necessary, since a real solana-test-validator answers all of it honestly, but that variant was not run and is not claimed as measured. The gate now refuses localnet outright for any run that could be a shipping verdict.",
 
     "cluster": "devnet",
     "program_id": "EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z",
