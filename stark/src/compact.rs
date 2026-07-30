@@ -78,6 +78,13 @@ const NUM_QUERIES: usize = 27;
 /// `GRINDING_BITS` to classical soundness without additional queries.
 const GRINDING_BITS: u32 = 16;
 const MERKLE_DEPTH: usize = 9; // log2(512) = 9
+/// [B1] MEASURED terminal degree bound for C0. Different from the generic
+/// circuits' 8 because `subscriber_ownership`'s AIR declares ONE periodic factor
+/// (`with_cycles(7, vec![TRACE_LENGTH])`) where C1..C6 declare two: deg(C) =
+/// 8*31 = 248, deg(Q) = 217, ceil(218/32) = 7. `emit_deep_degree_table` reports
+/// a top non-zero coefficient index of 6, i.e. 7. Must equal the verifier's
+/// `compact_proof::LEGACY_FRI_FINAL_POLY_DEGREE_BOUND`.
+const LEGACY_FRI_FINAL_POLY_DEGREE_BOUND: usize = 7;
 const NUM_ROUNDS: usize = 30;
 
 /// Generate a compact proof for subscriber_ownership.
@@ -98,7 +105,12 @@ pub fn generate_compact_proof_with_pair_indexing(
     subscriber_secret: u64,
     pair_indexing: PairIndexing,
 ) -> CompactProofData {
-    generate_compact_proof_with_layout(subscriber_secret, pair_indexing, TraceLeaf::Canonical)
+    generate_compact_proof_with_layout(
+        subscriber_secret,
+        pair_indexing,
+        TraceLeaf::Canonical,
+        DeepProbe::HONEST,
+    )
 }
 
 /// [ROUTE C fails-closed probe] `generate_compact_proof` with the TRACE
@@ -120,13 +132,41 @@ pub fn generate_compact_proof_with_trace_leaf(
     subscriber_secret: u64,
     trace_leaf: TraceLeaf,
 ) -> CompactProofData {
-    generate_compact_proof_with_layout(subscriber_secret, PairIndexing::Canonical, trace_leaf)
+    generate_compact_proof_with_layout(
+        subscriber_secret,
+        PairIndexing::Canonical,
+        trace_leaf,
+        DeepProbe::HONEST,
+    )
+}
+
+/// [B1 fails-closed probe] `generate_compact_proof` (C0) with the
+/// coordinated-OOD-forgery and terminal-poly knobs exposed.
+///
+/// C0 is the FLAGSHIP forgery case: it is the SOLE verifier path for four
+/// shipped instructions (`zk_shielded::{pause,resume,cancel_private_stark}` and
+/// `p01_quantum_wallet/src/stark.rs`), and it keeps DEEP-ALI inside phase 1 and
+/// BEFORE FRI, so one instruction carries both the identity and the binding.
+/// Test-only.
+#[doc(hidden)]
+pub fn generate_compact_proof_with_forgery(
+    subscriber_secret: u64,
+    ood_forgery: OodForgery,
+    terminal_poly: TerminalPoly,
+) -> CompactProofData {
+    generate_compact_proof_with_layout(
+        subscriber_secret,
+        PairIndexing::Canonical,
+        TraceLeaf::Canonical,
+        DeepProbe { ood_forgery, terminal_poly },
+    )
 }
 
 fn generate_compact_proof_with_layout(
     subscriber_secret: u64,
     pair_indexing: PairIndexing,
     trace_leaf: TraceLeaf,
+    probe: DeepProbe,
 ) -> CompactProofData {
     let secret = BaseElement::new(subscriber_secret);
 
@@ -216,26 +256,124 @@ fn generate_compact_proof_with_layout(
         ood_next[col] = evaluate_poly(&poly, ood_z_next).as_int();
     }
 
-    // 6b. [P1.1 PR 4 DEEP-ALI] Q(z) = evaluate_poly(q_poly, z). Absorbed into
-    // the transcript so Q(z) is fixed before FRI challenges.
+    // 6b. [P1.1 PR 4 DEEP-ALI] Q(z), absorbed into the transcript so it is fixed
+    // before FRI challenges.
+    //
+    // [B1] CLOSED A DIVERGENCE. This used to be `evaluate_poly(&q_poly, z)` — the
+    // COEFFICIENT vector — while the generic pipeline took Q(z) from the
+    // COMMITTED vector via `inverse_ntt`. That was cosmetic before B1 and is not
+    // any more: D's quotient term is (Q_committed(x) - q_z)/(x - z), so if q_z is
+    // not the committed vector's interpolant at z then D is not a polynomial and
+    // HONEST legacy proofs fail. The two forms agree today only because
+    // `q_poly.len()` (481) is under LDE_SIZE (512); assert that rather than rely
+    // on it.
     let quotient_felts: Vec<BaseElement> =
         all_quotient_values.iter().map(|&v| BaseElement::new(v)).collect();
-    let ood_quotient = evaluate_poly(&q_poly, ood_z_felt).as_int();
+    assert!(
+        q_poly.len() <= LDE_SIZE,
+        "legacy q_poly has {} coefficients, LDE is {LDE_SIZE} — the committed \
+         vector would not interpolate back to q_poly",
+        q_poly.len(),
+    );
+    let mut ood_quotient = {
+        let q_poly_committed = inverse_ntt(&quotient_felts, lde_g);
+        evaluate_poly(&q_poly_committed, ood_z_felt).as_int()
+    };
+    assert_eq!(
+        ood_quotient,
+        evaluate_poly(&q_poly, ood_z_felt).as_int(),
+        "legacy ood_quotient: the committed-vector form and the coefficient-vector \
+         form disagree at z. B1 requires the committed form; a mismatch means the \
+         quotient LDE is not the evaluation of q_poly.",
+    );
 
-    // 7. [P1.1 PR 2] FRI commit phase. Starting transcript contains all prior
-    // commitments + OOD evals; fold quotient LDE down to FRI_FINAL_POLY_SIZE,
-    // committing Blake3 Merkle roots per intermediate layer. Subsequent
-    // challenges (grinding, query positions) depend on these roots so the
+    // [B1 fails-closed probe] Coordinated OOD forgery, C0 flavour.
+    //
+    // C0 is the FLAGSHIP case: on this path DEEP-ALI runs INSIDE phase 1 and
+    // BEFORE FRI (`verify_deep_ali_legacy` then `verify_fri_legacy`), so a single
+    // `verify_subscriber_ownership` call demonstrates the entire property — the
+    // identity accepts, FRI rejects. That also makes the re-solve MANDATORY here:
+    // without it the identity would catch the forgery first and the test would
+    // prove nothing about the binding.
+    if let OodForgery::Coordinated { col, delta } = probe.ood_forgery {
+        assert!(col < TRACE_WIDTH, "forgery column {col} out of range");
+        ood_current[col] =
+            (BaseElement::new(ood_current[col]) + BaseElement::new(delta)).as_int();
+        // C(z) for C0: the single-cycle transition RLC is folded into
+        // `evaluate_transition_constraint`, so re-derive C(z) from the same
+        // quotient identity the verifier checks: C = Q * Z_T with the boundary
+        // term folded in. Only the boundary term depends on ood_current, and the
+        // transition term is evaluated directly below.
+        let last_row = trace_g.exp((TRACE_LENGTH - 1) as u64);
+        let z_d = ood_z_felt.exp(TRACE_LENGTH as u64) - BaseElement::ONE;
+        let z_t = z_d * (ood_z_felt - last_row).inv();
+        let c_trans = evaluate_transition_constraint(
+            &ood_current.iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
+            &ood_next.iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
+            ood_z_felt,
+            trace_g,
+            TRACE_LENGTH,
+            NUM_ROUNDS,
+        );
+        let c_bnd = boundary_c_at_ood_impl(
+            CIRCUIT_SUBSCRIBER_OWNERSHIP,
+            &[commitment],
+            &root,
+            &commitment_bytes,
+            b"bnd-c0\0\0",
+            &ood_current,
+            ood_z_felt,
+            z_t,
+            trace_g,
+        );
+        ood_quotient = ((c_trans + c_bnd) * z_t.inv()).as_int();
+    }
+
+    // 7. [P1.1 PR 2 / B1] FRI commit phase over the DEEP COMPOSITION, not the raw
+    // quotient LDE. See `deep_composition_lde` and the generic twin. Starting
+    // transcript contains all prior commitments + OOD evals; subsequent
+    // challenges (grinding, query positions) depend on the layer roots so the
     // prover cannot adaptively choose layer values.
     let initial_fri_transcript = build_base_seed(
         &root, &quotient_root, &commitment_bytes, &ood_current, &ood_next, ood_quotient,
     );
-    let fri = fri_commit_phase(
-        &quotient_felts,
+    let gamma = derive_deep_coeff(&initial_fri_transcript);
+    let deep_felts = deep_composition_lde(
+        &lde,
+        &all_quotient_values,
+        &ood_current,
+        &ood_next,
+        ood_quotient,
+        ood_z_felt,
+        trace_g,
+        lde_g,
+        gamma,
+    );
+    let mut fri = fri_commit_phase(
+        &deep_felts,
         lde_g,
         &initial_fri_transcript,
         FRI_FINAL_POLY_SIZE,
         pair_indexing,
+    );
+
+    // [B1] Terminal probe + prover-side degree assert, before grinding absorbs
+    // the final poly. C0's bound is 7, not 8.
+    apply_terminal_poly_probe(
+        &mut fri.final_poly,
+        probe.terminal_poly,
+        LEGACY_FRI_FINAL_POLY_DEGREE_BOUND,
+    );
+    // Only HONEST proofs are held to the bound. A coordinated forgery folds a
+    // function with poles, so its terminal interpolant legitimately spills past
+    // the bound — that spill IS the rejection T1 asserts.
+    assert!(
+        probe.ood_forgery != OodForgery::None
+            || fri.final_poly[LEGACY_FRI_FINAL_POLY_DEGREE_BOUND..].iter().all(|&c| c == 0),
+        "B1 TERMINAL DEGREE BOUND VIOLATED at proof time for C0: coefficients \
+         {LEGACY_FRI_FINAL_POLY_DEGREE_BOUND}..{} of the final poly are not all \
+         zero. Fail here, not on chain.",
+        fri.final_poly.len(),
     );
 
     // 8. [H9] Grinding seed extends the FRI transcript with all layer roots
@@ -686,8 +824,18 @@ fn compute_quotient_lde_circuit_6(
     // 6. Pad Q_poly to lde_size coefficients and evaluate on the LDE via
     //    naive Horner (matches the pattern used by `compute_lde_generic`).
     let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
-    let copy_len = q_poly.len().min(lde_size);
-    q_poly_padded[..copy_len].copy_from_slice(&q_poly[..copy_len]);
+    // [B1] Was `let copy_len = q_poly.len().min(lde_size);` — a SILENT truncation.
+    // Under B1 that is no longer cosmetic: D's quotient term is
+    // (Q_committed(x) - q_z)/(x - z), so if the committed vector's interpolant is
+    // a truncation of q_poly then q_z is not its value at z, D is not a
+    // polynomial, and HONEST proofs fail. Fail at proof time instead.
+    assert!(
+        q_poly.len() <= lde_size,
+        "quotient polynomial has {} coefficients, LDE is {} — truncating would          break the committed-vector/ood_quotient agreement B1 depends on",
+        q_poly.len(),
+        lde_size,
+    );
+    q_poly_padded[..q_poly.len()].copy_from_slice(&q_poly);
 
     let mut q_lde = vec![0u64; lde_size];
     for i in 0..lde_size {
@@ -784,8 +932,18 @@ fn compute_quotient_lde_circuit_1(
 
     // 6. Pad to lde_size and evaluate on LDE.
     let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
-    let copy_len = q_poly.len().min(lde_size);
-    q_poly_padded[..copy_len].copy_from_slice(&q_poly[..copy_len]);
+    // [B1] Was `let copy_len = q_poly.len().min(lde_size);` — a SILENT truncation.
+    // Under B1 that is no longer cosmetic: D's quotient term is
+    // (Q_committed(x) - q_z)/(x - z), so if the committed vector's interpolant is
+    // a truncation of q_poly then q_z is not its value at z, D is not a
+    // polynomial, and HONEST proofs fail. Fail at proof time instead.
+    assert!(
+        q_poly.len() <= lde_size,
+        "quotient polynomial has {} coefficients, LDE is {} — truncating would          break the committed-vector/ood_quotient agreement B1 depends on",
+        q_poly.len(),
+        lde_size,
+    );
+    q_poly_padded[..q_poly.len()].copy_from_slice(&q_poly);
 
     let mut q_lde = vec![0u64; lde_size];
     for i in 0..lde_size {
@@ -887,8 +1045,18 @@ fn compute_quotient_lde_circuit_2(
 
     // 6. Pad to lde_size and evaluate on LDE.
     let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
-    let copy_len = q_poly.len().min(lde_size);
-    q_poly_padded[..copy_len].copy_from_slice(&q_poly[..copy_len]);
+    // [B1] Was `let copy_len = q_poly.len().min(lde_size);` — a SILENT truncation.
+    // Under B1 that is no longer cosmetic: D's quotient term is
+    // (Q_committed(x) - q_z)/(x - z), so if the committed vector's interpolant is
+    // a truncation of q_poly then q_z is not its value at z, D is not a
+    // polynomial, and HONEST proofs fail. Fail at proof time instead.
+    assert!(
+        q_poly.len() <= lde_size,
+        "quotient polynomial has {} coefficients, LDE is {} — truncating would          break the committed-vector/ood_quotient agreement B1 depends on",
+        q_poly.len(),
+        lde_size,
+    );
+    q_poly_padded[..q_poly.len()].copy_from_slice(&q_poly);
 
     let mut q_lde = vec![0u64; lde_size];
     for i in 0..lde_size {
@@ -997,8 +1165,18 @@ fn compute_quotient_lde_circuit_3(
 
     // 6. Pad to lde_size and evaluate on LDE.
     let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
-    let copy_len = q_poly.len().min(lde_size);
-    q_poly_padded[..copy_len].copy_from_slice(&q_poly[..copy_len]);
+    // [B1] Was `let copy_len = q_poly.len().min(lde_size);` — a SILENT truncation.
+    // Under B1 that is no longer cosmetic: D's quotient term is
+    // (Q_committed(x) - q_z)/(x - z), so if the committed vector's interpolant is
+    // a truncation of q_poly then q_z is not its value at z, D is not a
+    // polynomial, and HONEST proofs fail. Fail at proof time instead.
+    assert!(
+        q_poly.len() <= lde_size,
+        "quotient polynomial has {} coefficients, LDE is {} — truncating would          break the committed-vector/ood_quotient agreement B1 depends on",
+        q_poly.len(),
+        lde_size,
+    );
+    q_poly_padded[..q_poly.len()].copy_from_slice(&q_poly);
 
     let mut q_lde = vec![0u64; lde_size];
     for i in 0..lde_size {
@@ -1106,8 +1284,18 @@ fn compute_quotient_lde_circuit_4(
 
     // 6. Pad to lde_size and evaluate on LDE.
     let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
-    let copy_len = q_poly.len().min(lde_size);
-    q_poly_padded[..copy_len].copy_from_slice(&q_poly[..copy_len]);
+    // [B1] Was `let copy_len = q_poly.len().min(lde_size);` — a SILENT truncation.
+    // Under B1 that is no longer cosmetic: D's quotient term is
+    // (Q_committed(x) - q_z)/(x - z), so if the committed vector's interpolant is
+    // a truncation of q_poly then q_z is not its value at z, D is not a
+    // polynomial, and HONEST proofs fail. Fail at proof time instead.
+    assert!(
+        q_poly.len() <= lde_size,
+        "quotient polynomial has {} coefficients, LDE is {} — truncating would          break the committed-vector/ood_quotient agreement B1 depends on",
+        q_poly.len(),
+        lde_size,
+    );
+    q_poly_padded[..q_poly.len()].copy_from_slice(&q_poly);
 
     let mut q_lde = vec![0u64; lde_size];
     for i in 0..lde_size {
@@ -1226,8 +1414,18 @@ fn compute_quotient_lde_circuit_5(
 
     // 6. Pad to lde_size and evaluate on LDE.
     let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
-    let copy_len = q_poly.len().min(lde_size);
-    q_poly_padded[..copy_len].copy_from_slice(&q_poly[..copy_len]);
+    // [B1] Was `let copy_len = q_poly.len().min(lde_size);` — a SILENT truncation.
+    // Under B1 that is no longer cosmetic: D's quotient term is
+    // (Q_committed(x) - q_z)/(x - z), so if the committed vector's interpolant is
+    // a truncation of q_poly then q_z is not its value at z, D is not a
+    // polynomial, and HONEST proofs fail. Fail at proof time instead.
+    assert!(
+        q_poly.len() <= lde_size,
+        "quotient polynomial has {} coefficients, LDE is {} — truncating would          break the committed-vector/ood_quotient agreement B1 depends on",
+        q_poly.len(),
+        lde_size,
+    );
+    q_poly_padded[..q_poly.len()].copy_from_slice(&q_poly);
 
     let mut q_lde = vec![0u64; lde_size];
     for i in 0..lde_size {
@@ -3895,6 +4093,273 @@ fn build_merkle_tree_generic(
     (root, layers)
 }
 
+/// [B1 fails-closed probe] Out-of-domain forgery knob.
+///
+/// There is NO other way to build this proof. Every existing tampered-OOD test
+/// mutates an HONEST proof after the fact, which desynchronises the Fiat-Shamir
+/// transcript and is caught by the grinding check before FRI is ever reached —
+/// so those tests pass against a verifier with no binding whatsoever. The final
+/// poly is absorbed into the grinding transcript BEFORE positions are derived
+/// (see the pipelines), so patching bytes afterwards desynchronises the openings
+/// from the positions and proves nothing.
+///
+/// `Coordinated` is the OPTIMAL adversary, in the strongest available position:
+/// an HONEST trace and an HONEST quotient LDE, so every Merkle opening, every
+/// aligned-position transition check, every boundary check and phase 2 all pass.
+/// Only the three OOD header words are a lie: `ood_current[col]` is perturbed by
+/// `delta` and `ood_quotient` is RE-SOLVED from the AIR at `z` so the phase-2
+/// identity `C(z) = Q(z)*Z_T(z)` still closes. Everything downstream — gamma,
+/// every alpha, every layer root, the grinding nonce, every query position — is
+/// then derived consistently by the prover itself.
+///
+/// Test-only, and deliberately so: this is real attack code that re-solves
+/// `ood_quotient` from the AIR. It is `#[doc(hidden)]` AND `cfg`-gated so it
+/// cannot ship inside the WASM prover.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum OodForgery {
+    #[default]
+    None,
+    /// Perturb `ood_current[col]` by `delta`, then re-solve `ood_quotient`.
+    Coordinated { col: usize, delta: u64 },
+}
+
+/// [B1 fails-closed probe] Terminal-polynomial knob.
+///
+/// `AliasedFold` is the OPTIMAL terminal play against a degree bound of
+/// `fps/2 = 8`: publish `p_m = c_m + c_{m+8}` for `m < 8` and zero above. This is
+/// EXACT, not approximate. On the 16-point terminal domain `x_j = w^j` we have
+/// `x_j^8 = (-1)^j`, so with `u = SUM_{m<8} c_{m+8} x^m`,
+/// `c(x_j) - p(x_j) = (-1)^j u(x_j) - u(x_j)`, which is 0 at every EVEN `j`.
+/// `p` therefore passes the degree check AND agrees with the true final layer at
+/// all 8 even terminal indices — the maximum agreement a degree-<8 polynomial
+/// can have with 16 values, i.e. relative distance exactly 1/2.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TerminalPoly {
+    #[default]
+    Honest,
+    AliasedFold,
+}
+
+/// [B1] Both probe knobs, bundled so the pipeline signatures stay readable.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct DeepProbe {
+    pub ood_forgery: OodForgery,
+    pub terminal_poly: TerminalPoly,
+}
+
+impl DeepProbe {
+    /// What every production entry point passes.
+    pub const HONEST: DeepProbe = DeepProbe {
+        ood_forgery: OodForgery::None,
+        terminal_poly: TerminalPoly::Honest,
+    };
+}
+
+/// [B1] Apply the `AliasedFold` terminal play in place.
+///
+/// Must run BEFORE the grinding transcript is built, or the published poly and
+/// the derived query positions disagree and the proof is rejected for the wrong
+/// reason.
+fn apply_terminal_poly_probe(final_poly: &mut [u64], terminal: TerminalPoly, bound: usize) {
+    if terminal != TerminalPoly::AliasedFold {
+        return;
+    }
+    let fps = final_poly.len();
+    assert_eq!(
+        bound * 2,
+        fps,
+        "AliasedFold assumes the bound is exactly half the published size \
+         (fps {fps}, bound {bound}); the alias x^bound = -1 is what makes the \
+         even-index agreement exact",
+    );
+    let orig: Vec<u64> = final_poly.to_vec();
+    for m in 0..bound {
+        final_poly[m] =
+            (BaseElement::new(orig[m]) + BaseElement::new(orig[m + bound])).as_int();
+    }
+    for slot in final_poly.iter_mut().skip(bound) {
+        *slot = 0;
+    }
+}
+
+/// [B1] MEASURE what the `AliasedFold` terminal play is worth, per query.
+///
+/// Builds a real coordinated forgery on C1 with the HONEST terminal poly, takes
+/// its true 16-coefficient terminal interpolant `c` (whose top half is non-zero
+/// precisely because the forged `D` has poles and is therefore not a
+/// polynomial), forms the aliased `p_m = c_m + c_{m+8}`, and evaluates BOTH at
+/// all 16 terminal domain points `x_j = gen_final^j`.
+///
+/// Returns `(agreeing indices, disagreeing indices)`. The result — 8 and 8,
+/// agreeing exactly on the EVEN indices — is the ONLY per-query rate figure that
+/// may be quoted anywhere: `-log2(8/16) = 1.000` bits. It matches the
+/// independently measured FRI rate (deg(Q) = 4088 on an 8192 LDE, i.e. ~1/2),
+/// and it is why `num_queries * log2(blowup)` was always wrong.
+#[doc(hidden)]
+pub fn measure_aliased_terminal_agreement() -> (Vec<usize>, Vec<usize>) {
+    let forged = generate_pool_commitment_proof_with_forgery(
+        111,
+        222,
+        333,
+        444,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::Honest,
+    );
+
+    // C1 header: 32 + 32 + 3*8 + 3*8 + 8 + 8, then layers, then fps + poly.
+    let bytes = &forged.proof_bytes;
+    let mut off = 32 + 32 + 3 * 8 * 2 + 8 + 8;
+    let num_layers = bytes[off] as usize;
+    off += 1 + num_layers * 32;
+    let fps = u16::from_le_bytes([bytes[off], bytes[off + 1]]) as usize;
+    off += 2;
+    let c: Vec<BaseElement> = (0..fps)
+        .map(|i| {
+            BaseElement::new(u64::from_le_bytes(
+                bytes[off + i * 8..off + i * 8 + 8].try_into().unwrap(),
+            ))
+        })
+        .collect();
+
+    let bound = GENERIC_FRI_FINAL_POLY_DEGREE_BOUND;
+    assert_eq!(bound * 2, fps, "AliasedFold assumes bound == fps/2");
+    assert!(
+        c[bound..].iter().any(|&v| v != BaseElement::ZERO),
+        "the forged terminal interpolant must exceed the degree bound — if it did \
+         not, T1 would be measuring nothing",
+    );
+    let mut p = vec![BaseElement::ZERO; fps];
+    for m in 0..bound {
+        p[m] = c[m] + c[m + bound];
+    }
+
+    // gen_final = lde_gen^(2^num_folds), the primitive fps-th root of unity the
+    // verifier uses for its Horner evaluation.
+    let lde_size = 128usize * GENERIC_BLOWUP;
+    let num_folds = (lde_size / fps).trailing_zeros() as usize;
+    let mut gen_final = get_domain_generator_generic(lde_size);
+    for _ in 0..num_folds {
+        gen_final = gen_final * gen_final;
+    }
+
+    let mut agree = Vec::new();
+    let mut disagree = Vec::new();
+    for j in 0..fps {
+        let x = gen_final.exp(j as u64);
+        if evaluate_poly(&c, x) == evaluate_poly(&p, x) {
+            agree.push(j);
+        } else {
+            disagree.push(j);
+        }
+    }
+    (agree, disagree)
+}
+
+/// [B1] Non-test twin of the test module's `boundary_c_at_ood`: the boundary
+/// contribution the prover folds into `Q`, evaluated at the OOD point.
+///
+/// `z_t * SUM_j alpha_bnd^j (ood_current[col_j] - v_j)/(z - g^{r_j})`.
+#[allow(clippy::too_many_arguments)]
+fn boundary_c_at_ood_impl(
+    circuit_id: u8,
+    public_inputs: &[u64],
+    trace_root: &[u8; 32],
+    pub_bytes: &[u8],
+    tag: &[u8; 8],
+    ood_current: &[u64],
+    z: BaseElement,
+    z_t: BaseElement,
+    trace_g: BaseElement,
+) -> BaseElement {
+    let assertions = boundary_assertions_for_circuit(circuit_id, public_inputs);
+    if assertions.is_empty() {
+        return BaseElement::ZERO;
+    }
+    let alpha_bnd = derive_rlc_alpha_with_tag(trace_root, pub_bytes, tag);
+    let mut acc = BaseElement::ZERO;
+    let mut alpha_pow = BaseElement::ONE;
+    for (col, row, v) in assertions {
+        let g_r = trace_g.exp(row as u64);
+        let num = BaseElement::new(ood_current[col]) - v;
+        acc += alpha_pow * (num * (z - g_r).inv());
+        alpha_pow *= alpha_bnd;
+    }
+    acc * z_t
+}
+
+/// [B1 fails-closed probe] Re-solve `ood_quotient` from the AIR at `z` for a
+/// (possibly forged) set of OOD trace claims.
+///
+/// This is the "ood_quotient is ALWAYS solvable" property, exercised rather than
+/// argued: phase 2's identity is ONE equation in `2*width + 1` prover-chosen
+/// unknowns, so fixing `2*width` of them still leaves `ood_quotient` free. The
+/// code path mirrors the inline DEEP-ALI harnesses in this module's test section
+/// exactly; a mismatch would show up as those harnesses and this function
+/// disagreeing on an honest proof, which
+/// `forged_proof_still_satisfies_the_phase_two_identity` asserts directly.
+///
+/// Returns `None` for circuits whose solve is not implemented. Covered:
+/// C1 (`pool_commitment`) and C6 (`merkle_update`). C0 is on the legacy path and
+/// has its own inline solve. The gap is deliberate and named rather than
+/// silently returning the honest value, which would make a forgery test pass for
+/// the wrong reason.
+#[allow(clippy::too_many_arguments)]
+fn solve_ood_quotient_for_spec(
+    spec: &QuotientSpec,
+    trace_root: &[u8; 32],
+    pub_bytes: &[u8],
+    public_inputs: &[u64],
+    trace_length: usize,
+    ood_current: &[u64],
+    ood_next: &[u64],
+    z: BaseElement,
+) -> Option<u64> {
+    let trace_g = get_domain_generator_generic(trace_length);
+    let last_row_x = trace_g.exp((trace_length - 1) as u64);
+    let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
+    let z_t = z_d * (z - last_row_x).inv();
+
+    let current: Vec<BaseElement> = ood_current.iter().map(|&v| BaseElement::new(v)).collect();
+    let next: Vec<BaseElement> = ood_next.iter().map(|&v| BaseElement::new(v)).collect();
+
+    let periodic_at_z = |cols: &[Vec<BaseElement>]| -> Vec<BaseElement> {
+        cols.iter()
+            .map(|col| evaluate_poly(&inverse_ntt(col, trace_g), z))
+            .collect()
+    };
+
+    let (c_at_z, circuit_id, bnd_tag): (BaseElement, u8, &[u8; 8]) = match spec {
+        QuotientSpec::Circuit1 => {
+            use crate::air::denominated_pool::{
+                build_pool_commitment_periodic_columns, evaluate_pool_commitment_transition,
+                POOL_COMMITMENT_NUM_CONSTRAINTS,
+            };
+            let alpha = derive_rlc_alpha_with_tag(trace_root, pub_bytes, b"rlc-c1\0\0");
+            let p = periodic_at_z(&build_pool_commitment_periodic_columns(trace_length));
+            let mut constraints = [BaseElement::ZERO; POOL_COMMITMENT_NUM_CONSTRAINTS];
+            evaluate_pool_commitment_transition(&current, &next, &p, &mut constraints);
+            (rlc_combine(&constraints, alpha), CIRCUIT_POOL_COMMITMENT, b"bnd-c1\0\0")
+        }
+        QuotientSpec::Circuit6 { depth } => {
+            use crate::air::merkle_update::{
+                build_merkle_update_periodic_columns, evaluate_merkle_update_transition,
+                MERKLE_UPDATE_NUM_CONSTRAINTS,
+            };
+            let alpha = derive_rlc_alpha(trace_root, pub_bytes);
+            let p = periodic_at_z(&build_merkle_update_periodic_columns(*depth, trace_length));
+            let mut constraints = [BaseElement::ZERO; MERKLE_UPDATE_NUM_CONSTRAINTS];
+            evaluate_merkle_update_transition(&current, &next, &p, &mut constraints);
+            (rlc_combine(&constraints, alpha), CIRCUIT_MERKLE_UPDATE, b"bnd-c6\0\0")
+        }
+        _ => return None,
+    };
+
+    let c_bnd = boundary_c_at_ood_impl(
+        circuit_id, public_inputs, trace_root, pub_bytes, bnd_tag, ood_current, z, z_t, trace_g,
+    );
+    Some(((c_at_z + c_bnd) * z_t.inv()).as_int())
+}
+
 /// [ROUTE C] Trace-commitment layout knob.
 ///
 /// `Canonical` is the only variant a shipping prover ever uses; it is what the
@@ -4509,6 +4974,193 @@ fn extend_transcript_with_final_poly(state: &[u8; 32], final_poly: &[u64]) -> [u
     sha256(&buf)
 }
 
+/// [B1] Domain tag for the single new Fiat-Shamir challenge B1 introduces.
+///
+/// Keeping gamma on its OWN tag rather than on the FRI alpha chain means
+/// `alpha_0 = derive_fri_alpha(base_seed)` is unchanged and no existing
+/// transcript order is disturbed.
+const DEEP_COEFF_TAG: &[u8; 8] = b"deep-v1\0";
+
+/// [B1] Derive the DEEP linearisation coefficient gamma.
+///
+/// gamma = derive_fri_alpha(extend_transcript(base_seed, b"deep-v1\0")), where
+/// `base_seed` is `build_base_seed(trace_root, quotient_root, pub_bytes,
+/// ood_current, ood_next, ood_quotient)`. Both callees already exist on both
+/// sides, so this is ZERO new hash code in either language.
+///
+/// # Ordering, and why the obvious alternative is impossible
+/// gamma is sampled strictly AFTER all three OOD arrays are absorbed. That is
+/// the only ordering that can work. "Absorb the OOD values into
+/// `derive_ood_point`" is circular and unimplementable: `derive_ood_point` takes
+/// only the two roots and the public inputs, so `z` is sampled BEFORE the OOD
+/// values exist.
+fn derive_deep_coeff(base_seed: &[u8; 32]) -> BaseElement {
+    derive_fri_alpha(&extend_transcript(base_seed, DEEP_COEFF_TAG))
+}
+
+/// [B1] Build the two-point-linearised DEEP composition over the LDE domain.
+///
+/// This is the function FRI folds, in place of the raw quotient LDE. It is the
+/// ONLY place the algebra lives — both prover pipelines call it and the verifier
+/// mirrors it term for term (`verify_fri_generic` / `verify_fri_legacy`), so the
+/// two sides can be diffed by eye. Do NOT fork it.
+///
+/// # The construction
+/// Let `w` = trace width, `z` = OOD point, `zg = z*trace_g`, `v_c =
+/// ood_current[c]`, `v'_c = ood_next[c]`, `q_z = ood_quotient`.
+///
+/// Degree-1 interpolant through the two OOD points, per column:
+/// ```text
+///   b_c = (v'_c - v_c) / (zg - z)      a_c = v_c - b_c*z
+///   L_c(x) = a_c + b_c*x               [L_c(z) = v_c, L_c(zg) = v'_c]
+/// ```
+/// Random-linear-combine the columns with one challenge:
+/// ```text
+///   S(x)   = SUM_c gamma^(c+1) * T_c(x)
+///   A0     = SUM_c gamma^(c+1) * a_c        B0 = SUM_c gamma^(c+1) * b_c
+///   num(x) = ( S(x) - A0 - x*B0 ) + ( Q(x) - q_z ) * (x - zg)
+///   den(x) = (x - z)(x - zg)
+///   D(x)   = num(x) / den(x)
+/// ```
+///
+/// Multiplying the quotient numerator by `(x - zg)` is FREE (it cancels) and is
+/// what lets both groups share ONE denominator: `w` muls per evaluation point for
+/// the trace dot product instead of `2w`. On C6 (w = 10, the marginal circuit)
+/// that is the difference between ~32 and ~54 muls per query on chain.
+///
+/// # Why it binds
+/// Let `eps_c = T_c(z) - v_c`, `eps'_c = T_c(zg) - v'_c`, `eps_q = Q(z) - q_z`
+/// for the COMMITTED trace and quotient. `D` is a polynomial iff both residues
+/// vanish:
+/// ```text
+///   at zg:  SUM_c gamma^(c+1) * eps'_c = 0
+///   at z :  SUM_c gamma^(c+1) * eps_c + eps_q*(z - zg) = 0
+/// ```
+/// gamma is a hash of the eps themselves, so satisfying either needs a
+/// Fiat-Shamir fixed point (~1/p per attempt, and each attempt changes D and
+/// therefore every layer root, i.e. a full commit-phase re-run). Meanwhile a
+/// poled `D` is MAXIMALLY far from the code: on the LDE subgroup
+/// `1/(x-z) = (SUM_{i<N} z^i x^(N-1-i))/(1 - z^N)`, and if a degree-<N/2 `h`
+/// agreed with `1/(x-z)` at `t` domain points then `(x-z)h(x) - 1` (degree
+/// <= N/2) would have `t` roots, so `t <= N/2` — relative distance >= 1/2, the
+/// maximum possible at this rate. Hence ~1 bit per query, which is exactly the
+/// already-measured rate.
+///
+/// # No degree adjust
+/// `deg(D) = deg(Q) - 1 = 8n - 9`; the trace part is only degree `n - 1`, well
+/// under it. FRI already bounds `deg(Q) <= 8n - 8` and phase 2 forces the
+/// polynomial identity `C = Q*Z_T` at a hash-chosen `z`, so `deg(T) <= n - 1` is
+/// already forced tightly. An `x^kappa` adjust would be dead weight.
+///
+/// # Panics
+/// If `z` or `z*trace_g` lands in the LDE domain, `D` has a pole at a domain
+/// point and the proof is UNPROVABLE. That is LIVENESS, not soundness: `z` is
+/// deterministic from the two roots plus the public inputs, so there is no
+/// re-roll without adding a nonce (a wire change), and the probability is
+/// ~2*lde/p ~ 2^-50 per proof. Fail at proof time rather than emit garbage; the
+/// verifier's twin rejects with `DeepDenominatorZero`.
+#[allow(clippy::too_many_arguments)]
+fn deep_composition_lde(
+    trace_lde: &[Vec<BaseElement>],
+    quotient_values: &[u64],
+    ood_current: &[u64],
+    ood_next: &[u64],
+    ood_quotient: u64,
+    ood_z: BaseElement,
+    trace_g: BaseElement,
+    lde_g: BaseElement,
+    gamma: BaseElement,
+) -> Vec<BaseElement> {
+    let width = trace_lde.len();
+    let lde_size = quotient_values.len();
+    assert_eq!(ood_current.len(), width, "ood_current width");
+    assert_eq!(ood_next.len(), width, "ood_next width");
+    assert_eq!(trace_lde[0].len(), lde_size, "trace LDE / quotient LDE size");
+
+    let z = ood_z;
+    let zg = z * trace_g;
+    let q_z = BaseElement::new(ood_quotient);
+
+    // gamma^1 .. gamma^width
+    let mut gp: Vec<BaseElement> = Vec::with_capacity(width);
+    let mut g_pow = gamma;
+    for _ in 0..width {
+        gp.push(g_pow);
+        g_pow = g_pow * gamma;
+    }
+
+    // A0 / B0 via SV and SV', exactly the identities the verifier uses.
+    let mut sv = BaseElement::ZERO;
+    let mut svp = BaseElement::ZERO;
+    for c in 0..width {
+        sv += gp[c] * BaseElement::new(ood_current[c]);
+        svp += gp[c] * BaseElement::new(ood_next[c]);
+    }
+    let zgz = zg - z;
+    assert_ne!(zgz, BaseElement::ZERO, "z*g == z: trace generator is degenerate");
+    let inv_zgz = zgz.inv();
+    let b0 = (svp - sv) * inv_zgz;
+    let a0 = sv - z * b0;
+
+    let s = z + zg;
+    let pz = z * zg;
+
+    // Denominators first, then ONE batch inversion. `x` walks the domain
+    // multiplicatively rather than via `lde_g.exp(pos)`.
+    let mut dens: Vec<BaseElement> = Vec::with_capacity(lde_size);
+    let mut x = BaseElement::ONE;
+    for _ in 0..lde_size {
+        dens.push(x * x - s * x + pz);
+        x *= lde_g;
+    }
+    for (pos, d) in dens.iter().enumerate() {
+        assert_ne!(
+            *d,
+            BaseElement::ZERO,
+            "DEEP denominator vanishes at LDE position {pos}: z or z*g is IN the LDE \
+             domain, so D has a pole at a queried point and the proof is unprovable. \
+             ~2^-50 per proof; z is deterministic so there is no re-roll without a \
+             wire change."
+        );
+    }
+    let inv_dens = batch_inverse_felts(&dens);
+
+    let mut out: Vec<BaseElement> = Vec::with_capacity(lde_size);
+    let mut x = BaseElement::ONE;
+    for pos in 0..lde_size {
+        let mut s_x = BaseElement::ZERO;
+        for c in 0..width {
+            s_x += gp[c] * trace_lde[c][pos];
+        }
+        let trace_part = s_x - a0 - x * b0;
+        let quot_part = (BaseElement::new(quotient_values[pos]) - q_z) * (x - zg);
+        out.push((trace_part + quot_part) * inv_dens[pos]);
+        x *= lde_g;
+    }
+    out
+}
+
+/// [B1] Montgomery batch inversion. One real inversion plus 3(n-1) muls.
+///
+/// Prover-side only (the verifier has its own, `verify.rs::batch_inverse`).
+/// Callers must have already rejected zero inputs.
+fn batch_inverse_felts(inputs: &[BaseElement]) -> Vec<BaseElement> {
+    let n = inputs.len();
+    let mut prefix: Vec<BaseElement> = Vec::with_capacity(n);
+    let mut acc = BaseElement::ONE;
+    for &a in inputs {
+        prefix.push(acc);
+        acc *= a;
+    }
+    let mut running = acc.inv();
+    let mut out = vec![BaseElement::ZERO; n];
+    for i in (0..n).rev() {
+        out[i] = running * prefix[i];
+        running *= inputs[i];
+    }
+    out
+}
+
 /// One FRI fold step over a radix-2 layer.
 /// For y = domain_gen^i and -y = domain_gen^(i + N/2):
 ///   f_{i+1}(y²) = (f(y) + f(-y))/2 + α · (f(y) - f(-y))/(2y)
@@ -4857,24 +5509,32 @@ fn generate_compact_proof_from_trace(
         blowup,
         num_queries,
         fri_final_poly_size,
+        GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
         quotient_spec,
         PairIndexing::Canonical,
         TraceLeaf::Canonical,
+        DeepProbe::HONEST,
     )
 }
 
 /// [B4 / ROUTE C fails-closed probe] `generate_compact_proof_from_trace` with
 /// the quotient/FRI pair-leaf layout AND the trace-commitment layout selectable.
 /// See `PairIndexing` and `TraceLeaf`.
+#[allow(clippy::too_many_arguments)]
 fn generate_compact_proof_from_trace_with_pair_indexing(
     trace: &[Vec<BaseElement>],
     pub_input_bytes: &[u8],
     blowup: usize,
     num_queries: usize,
     fri_final_poly_size: usize,
+    // [B1] MEASURED per circuit; see `emit_deep_degree_table` and
+    // `CircuitConfig.fri_final_poly_degree_bound`. Threaded rather than derived
+    // so a mis-sized bound fails in CI instead of on chain.
+    fri_final_poly_degree_bound: usize,
     quotient_spec: QuotientSpec,
     pair_indexing: PairIndexing,
     trace_leaf: TraceLeaf,
+    probe: DeepProbe,
 ) -> (Vec<u8>, [u8; 32]) {
     let trace_width = trace.len();
     let trace_length = trace[0].len();
@@ -4984,23 +5644,108 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
     // 5b. [P1.1 PR 4 DEEP-ALI] Evaluate Q(z) by interpolating the quotient LDE
     // and evaluating at the OOD point. Absorbed into the transcript so Q(z)
     // is fixed before FRI commitments.
+    //
+    // [B1] It matters that this comes from the COMMITTED vector, not from a
+    // coefficient vector held on the side: D's quotient term is
+    // (Q_committed(x) - q_z)/(x - z), so any disagreement makes D non-polynomial
+    // and breaks HONEST proofs. The legacy pipeline was moved onto this form for
+    // the same reason.
     let quotient_felts: Vec<BaseElement> =
         all_quotient_values.iter().map(|&v| BaseElement::new(v)).collect();
-    let ood_quotient = {
+    let mut ood_quotient = {
         let q_poly = inverse_ntt(&quotient_felts, lde_g);
         evaluate_poly(&q_poly, ood_z_felt).as_int()
     };
 
-    // 6. [P1.1 PR 2] FRI commit phase over the quotient LDE.
+    // [B1 fails-closed probe] Coordinated OOD forgery. Perturb one claimed trace
+    // evaluation and RE-SOLVE ood_quotient from the AIR so the phase-2 identity
+    // still closes. Everything downstream (gamma, the alphas, the layer roots,
+    // the grinding nonce, the positions) is then built from the forged claims, so
+    // the proof is internally consistent and only the DEEP composition can catch
+    // it. See `OodForgery`.
+    if let OodForgery::Coordinated { col, delta } = probe.ood_forgery {
+        assert!(col < trace_width, "forgery column {col} out of range");
+        ood_current_vals[col] = (BaseElement::new(ood_current_vals[col])
+            + BaseElement::new(delta))
+        .as_int();
+        let public_inputs: Vec<u64> = pub_input_bytes
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        ood_quotient = solve_ood_quotient_for_spec(
+            &quotient_spec,
+            &root,
+            pub_input_bytes,
+            &public_inputs,
+            trace_length,
+            &ood_current_vals,
+            &ood_next_vals,
+            ood_z_felt,
+        )
+        .unwrap_or_else(|| {
+            panic!(
+                "OodForgery::Coordinated has no ood_quotient solve for {quotient_spec:?}. \
+                 Returning the honest value here would make the forgery test pass for the \
+                 WRONG reason (phase 2 would reject it), so this fails loudly instead."
+            )
+        });
+    }
+
+    // 6. [P1.1 PR 2 / B1] FRI commit phase over the DEEP COMPOSITION, not the raw
+    // quotient LDE.
+    //
+    // This is the whole point of B1. Folding Q binds nothing: the OOD claims are
+    // absorbed into the transcript but the FOLDED FUNCTION does not depend on
+    // them, so a prover can claim anything at z and FRI never notices. Folding
+    //   D(x) = [ (S(x) - A0 - x*B0) + (Q(x) - q_z)*(x - zg) ] / ((x - z)(x - zg))
+    // makes D a polynomial only if the claims are the true evaluations of the
+    // COMMITTED trace and quotient. See `deep_composition_lde`.
+    //
+    // quotient_root, the per-query quotient openings and the quotient tail all
+    // STAY: the verifier now consumes Q(y) and Q(-y) arithmetically, so they must
+    // remain authenticated.
     let initial_fri_transcript = build_base_seed(
         &root, &quotient_root, pub_input_bytes, &ood_current_vals, &ood_next_vals, ood_quotient,
     );
-    let fri = fri_commit_phase(
-        &quotient_felts,
+    let gamma = derive_deep_coeff(&initial_fri_transcript);
+    let deep_felts = deep_composition_lde(
+        &lde,
+        &all_quotient_values,
+        &ood_current_vals,
+        &ood_next_vals,
+        ood_quotient,
+        ood_z_felt,
+        trace_g,
+        lde_g,
+        gamma,
+    );
+    let mut fri = fri_commit_phase(
+        &deep_felts,
         lde_g,
         &initial_fri_transcript,
         fri_final_poly_size,
         pair_indexing,
+    );
+
+    // [B1] Terminal probe, then the prover-side twin of the verifier's degree
+    // bound. Order matters: both must run BEFORE the grinding transcript absorbs
+    // the final poly, or the published poly and the derived positions disagree.
+    apply_terminal_poly_probe(
+        &mut fri.final_poly,
+        probe.terminal_poly,
+        fri_final_poly_degree_bound,
+    );
+    // Only HONEST proofs are held to the bound. A coordinated forgery folds a
+    // function with poles, so its terminal interpolant legitimately spills past
+    // the bound — that spill IS the rejection T1 asserts.
+    assert!(
+        probe.ood_forgery != OodForgery::None
+            || fri.final_poly[fri_final_poly_degree_bound..].iter().all(|&c| c == 0),
+        "B1 TERMINAL DEGREE BOUND VIOLATED at proof time: coefficients \
+         {fri_final_poly_degree_bound}..{} of the final poly are not all zero. \
+         The pinned bound in CircuitConfig.fri_final_poly_degree_bound is too low \
+         for this circuit, or deg(D) regressed. Fail here, not on chain.",
+        fri.final_poly.len(),
     );
 
     // 7. [H9] Grinding seed binds trace + quotient + OOD + all FRI layers + final poly
@@ -5144,6 +5889,13 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
 // ============================================================================
 
 const GENERIC_BLOWUP: usize = 16;
+/// [B1] MEASURED terminal degree bound for every GENERIC circuit (C1..C6).
+///
+/// `emit_deep_degree_table` reports a top non-zero coefficient index of 7 on all
+/// six, i.e. 8 allowed coefficients out of the 16 published. deg(Q) = 8n-8 on a
+/// 16n LDE and 2^num_folds = n, so ceil((8n-7)/n) = 8 exactly; deg(D) = deg(Q)-1
+/// gives the same 8. C0 is DIFFERENT (7) and lives on the legacy path.
+const GENERIC_FRI_FINAL_POLY_DEGREE_BOUND: usize = 8;
 const GENERIC_NUM_QUERIES: usize = 27;
 /// [P2.2] Circuit 6 uses fewer queries (22 vs 27) to fit its 10-col trace
 /// under the 1.4M Solana BPF CU cap. Soundness: 22×4 + 16 = 104 bits,
@@ -5193,6 +5945,7 @@ pub fn generate_pool_commitment_proof_with_pair_indexing(
         token_mint,
         pair_indexing,
         TraceLeaf::Canonical,
+        DeepProbe::HONEST,
     )
 }
 
@@ -5223,6 +5976,33 @@ pub fn generate_pool_commitment_proof_with_trace_leaf(
         token_mint,
         PairIndexing::Canonical,
         trace_leaf,
+        DeepProbe::HONEST,
+    )
+}
+
+/// [B1 fails-closed probe] `generate_pool_commitment_proof` with the
+/// coordinated-OOD-forgery and terminal-poly knobs exposed.
+///
+/// C1 is the narrow generic case and the one with an existing probe entry point,
+/// so it carries the full T1/T2/T3 matrix in `tests/b1_deep_binding.rs`.
+/// Test-only; every production entry point passes `DeepProbe::HONEST`.
+#[doc(hidden)]
+pub fn generate_pool_commitment_proof_with_forgery(
+    nullifier_preimage: u64,
+    secret: u64,
+    deposit_epoch: u64,
+    token_mint: u64,
+    ood_forgery: OodForgery,
+    terminal_poly: TerminalPoly,
+) -> GenericCompactProofData {
+    generate_pool_commitment_proof_with_layout(
+        nullifier_preimage,
+        secret,
+        deposit_epoch,
+        token_mint,
+        PairIndexing::Canonical,
+        TraceLeaf::Canonical,
+        DeepProbe { ood_forgery, terminal_poly },
     )
 }
 
@@ -5233,6 +6013,7 @@ fn generate_pool_commitment_proof_with_layout(
     token_mint: u64,
     pair_indexing: PairIndexing,
     trace_leaf: TraceLeaf,
+    probe: DeepProbe,
 ) -> GenericCompactProofData {
     let np = BaseElement::new(nullifier_preimage);
     let s = BaseElement::new(secret);
@@ -5255,9 +6036,11 @@ fn generate_pool_commitment_proof_with_layout(
         GENERIC_BLOWUP,
         GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
+        GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
         QuotientSpec::Circuit1,
         pair_indexing,
         trace_leaf,
+        probe,
     );
 
     GenericCompactProofData {
@@ -5380,6 +6163,33 @@ pub fn generate_confidential_balance_compact_proof(
 /// number of bytes as a new-format one. Every length check in the parser passes,
 /// every field boundary lines up, the transcript is self-consistent — the only
 /// thing left to reject it is the pair-leaf Merkle check itself. Test-only.
+/// [B1 fails-closed probe] `generate_confidential_balance_compact_proof` with
+/// the coordinated-OOD-forgery and terminal-poly knobs exposed.
+///
+/// C4 is the CU-binding circuit (highest measured phase-1 base, 27 queries on a
+/// 4096 LDE). Note `solve_ood_quotient_for_spec` has no C4 arm yet, so
+/// `OodForgery::Coordinated` PANICS here rather than silently producing a
+/// forgery phase 2 would reject. Test-only.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn generate_confidential_balance_compact_proof_with_forgery(
+    spending_key: u64,
+    old_balance: u64,
+    old_salt: u64,
+    new_balance: u64,
+    new_salt: u64,
+    amount: u64,
+    amount_salt: u64,
+    token_mint: u64,
+    ood_forgery: OodForgery,
+    terminal_poly: TerminalPoly,
+) -> GenericCompactProofData {
+    generate_confidential_balance_compact_proof_inner(
+        spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt,
+        token_mint, TraceLeaf::Canonical, DeepProbe { ood_forgery, terminal_poly },
+    )
+}
+
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
 pub fn generate_confidential_balance_compact_proof_with_trace_leaf(
@@ -5392,6 +6202,25 @@ pub fn generate_confidential_balance_compact_proof_with_trace_leaf(
     amount_salt: u64,
     token_mint: u64,
     trace_leaf: TraceLeaf,
+) -> GenericCompactProofData {
+    generate_confidential_balance_compact_proof_inner(
+        spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt,
+        token_mint, trace_leaf, DeepProbe::HONEST,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_confidential_balance_compact_proof_inner(
+    spending_key: u64,
+    old_balance: u64,
+    old_salt: u64,
+    new_balance: u64,
+    new_salt: u64,
+    amount: u64,
+    amount_salt: u64,
+    token_mint: u64,
+    trace_leaf: TraceLeaf,
+    probe: DeepProbe,
 ) -> GenericCompactProofData {
     let sk = BaseElement::new(spending_key);
     let ob = BaseElement::new(old_balance);
@@ -5423,9 +6252,11 @@ pub fn generate_confidential_balance_compact_proof_with_trace_leaf(
         GENERIC_BLOWUP,
         GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
+        GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
         QuotientSpec::Circuit4,
         PairIndexing::Canonical,
         trace_leaf,
+        probe,
     );
 
     GenericCompactProofData {
@@ -5526,6 +6357,32 @@ pub fn generate_merkle_update_compact_proof(
     path_elements: &[u64],
     path_indices: &[u8],
 ) -> GenericCompactProofData {
+    generate_merkle_update_compact_proof_with_forgery(
+        old_leaf,
+        new_leaf,
+        path_elements,
+        path_indices,
+        OodForgery::None,
+        TerminalPoly::Honest,
+    )
+}
+
+/// [B1 fails-closed probe] `generate_merkle_update_compact_proof` with the
+/// coordinated-OOD-forgery and terminal-poly knobs exposed.
+///
+/// C6 had NO probe entry point of any kind before B1, and it is the widest
+/// circuit (w = 10) — which makes it the marginal one for the DEEP arithmetic,
+/// since the irreducible per-query cost is `2w` muls and no rearrangement
+/// removes it. Test-only.
+#[doc(hidden)]
+pub fn generate_merkle_update_compact_proof_with_forgery(
+    old_leaf: u64,
+    new_leaf: u64,
+    path_elements: &[u64],
+    path_indices: &[u8],
+    ood_forgery: OodForgery,
+    terminal_poly: TerminalPoly,
+) -> GenericCompactProofData {
     let old_leaf_felt = BaseElement::new(old_leaf);
     let new_leaf_felt = BaseElement::new(new_leaf);
     let elems: Vec<BaseElement> = path_elements.iter().map(|&v| BaseElement::new(v)).collect();
@@ -5548,13 +6405,17 @@ pub fn generate_merkle_update_compact_proof(
     pub_bytes.extend_from_slice(&new_root_u64.to_le_bytes());
     pub_bytes.extend_from_slice(&depth.to_le_bytes());
 
-    let (proof_bytes, merkle_root) = generate_compact_proof_from_trace(
+    let (proof_bytes, merkle_root) = generate_compact_proof_from_trace_with_pair_indexing(
         &trace,
         &pub_bytes,
         GENERIC_BLOWUP,
         MERKLE_UPDATE_NUM_QUERIES,
         MERKLE_UPDATE_FRI_FINAL_POLY_SIZE,
+        GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
         QuotientSpec::Circuit6 { depth: path_elements.len() },
+        PairIndexing::Canonical,
+        TraceLeaf::Canonical,
+        DeepProbe { ood_forgery, terminal_poly },
     );
 
     GenericCompactProofData {

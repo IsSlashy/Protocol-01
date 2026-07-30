@@ -952,6 +952,22 @@ fn verify_query_positions_generic(
     Ok(())
 }
 
+/// [B1] Domain tag for the DEEP linearisation coefficient. Exact twin of the
+/// prover's `DEEP_COEFF_TAG` (stark/src/compact.rs).
+const DEEP_COEFF_TAG: &[u8; 8] = b"deep-v1\0";
+
+/// [B1] Derive the DEEP linearisation coefficient gamma. Exact twin of the
+/// prover's `derive_deep_coeff`; both callees already existed on both sides, so
+/// this is zero new hash code.
+///
+/// gamma is sampled strictly AFTER all three OOD arrays are absorbed
+/// (`build_base_seed` takes them) and off the FRI alpha chain (its own domain
+/// tag), so `alpha_0 = derive_fri_alpha(base_seed)` is unchanged and no existing
+/// transcript order is disturbed.
+fn derive_deep_coeff(base_seed: &[u8; 32]) -> Felt {
+    derive_fri_alpha(&extend_transcript(base_seed, DEEP_COEFF_TAG))
+}
+
 /// [P1.1 PR 3] Derive a single FRI fold challenge α_i from the transcript.
 /// Must match the prover: sha256(state)[0..8] as u64 mod p, mapping 0 → 1.
 fn derive_fri_alpha(state: &[u8; 32]) -> Felt {
@@ -1099,7 +1115,7 @@ fn verify_fri_generic(
     // absorbed in commit-phase order (layer i absorbed BEFORE α_{i+1} derived).
     let ood_current_u64: Vec<u64> = proof.ood_current_iter().map(|f| f.as_u64()).collect();
     let ood_next_u64: Vec<u64> = proof.ood_next_iter().map(|f| f.as_u64()).collect();
-    let mut state = build_base_seed(
+    let base_seed = build_base_seed(
         &proof.trace_root,
         &proof.quotient_root,
         pub_bytes,
@@ -1107,6 +1123,9 @@ fn verify_fri_generic(
         &ood_next_u64,
         proof.ood_quotient.as_u64(),
     );
+    // [B1] gamma from the PRE-layer-root seed, before the alpha loop mutates it.
+    let gamma = derive_deep_coeff(&base_seed);
+    let mut state = base_seed;
     let mut alphas = Vec::with_capacity(num_folds);
     for i in 0..num_folds {
         alphas.push(derive_fri_alpha(&state));
@@ -1174,6 +1193,95 @@ fn verify_fri_generic(
 
     let two_inv = Felt::new(2).inv();
 
+    // ========================================================================
+    // [B1] DEEP composition setup, once per proof (~3w + 3 muls).
+    //
+    // FRI folds D, not Q. See `deep_composition_lde` in stark/src/compact.rs for
+    // the full construction and the binding argument; this is its verifier twin
+    // and the two are written in the same shape so they can be diffed by eye.
+    //
+    //   S(x)   = SUM_c gamma^(c+1) * T_c(x)
+    //   A0     = SUM_c gamma^(c+1) * a_c ,  B0 = SUM_c gamma^(c+1) * b_c
+    //   num(x) = ( S(x) - A0 - x*B0 ) + ( Q(x) - q_z ) * (x - zg)
+    //   den(x) = (x - z)(x - zg)
+    //   D(x)   = num(x) / den(x)
+    //
+    // with `A0 = SV - z*B0` and `B0 = (SV' - SV)/(zg - z)`, so the per-column
+    // interpolants never have to be materialised.
+    // ========================================================================
+    let trace_g = get_trace_generator(config.trace_length)?;
+    let z = proof.ood_z;
+    let zg = z.mul(trace_g);
+    let deep_s = z.add(zg);
+    let deep_pz = z.mul(zg);
+    let q_z = proof.ood_quotient;
+
+    let width = config.trace_width;
+    let mut gamma_pows: Vec<Felt> = Vec::with_capacity(width);
+    {
+        let mut g_pow = gamma;
+        for _ in 0..width {
+            gamma_pows.push(g_pow);
+            g_pow = g_pow.mul(gamma);
+        }
+    }
+    let mut sv = Felt::ZERO;
+    let mut svp = Felt::ZERO;
+    for (c, gp) in gamma_pows.iter().enumerate() {
+        sv = sv.add(gp.mul(proof.ood_current(c)));
+        svp = svp.add(gp.mul(proof.ood_next(c)));
+    }
+
+    // PASS 1: per-query domain point and the two denominators, then ONE batched
+    // inversion for the whole proof.
+    //
+    // The batching is LOAD-BEARING, not an optimisation. Four independent Fermat
+    // inversions per query would be 4 * 127 = 508 muls/query — on C6 that is
+    // 11,176 muls, ~2.4M CU, over the 1.4M cap on the DEEP arithmetic alone.
+    let nq = proof.queries.len();
+    let mut deep_scratch: Vec<(Felt, Felt, Felt)> = Vec::with_capacity(nq); // (y, d_lo, d_hi)
+    let mut batch_in: Vec<Felt> = Vec::with_capacity(nq + 1);
+    for query in proof.queries.iter() {
+        let pos = query.position as usize;
+        let j = pos & (half_lde - 1);
+        // y = G^j, obtained WITHOUT a forward power table: G has order
+        // N = 2*half, so G^half = -1 and therefore G^j = -inv_G^(half - j). For
+        // j in [1, half-1] the index half-j lies in [1, half-1], inside the
+        // two-level table's coverage. j == 0 would need index `half`, which is
+        // OUT OF RANGE, hence the explicit special case — a BPF panic is not a
+        // clean VerifyError.
+        let y = if j == 0 {
+            Felt::ONE
+        } else {
+            let k = half_lde - j;
+            let r = k & (INV_GEN_BASE_SIZE - 1);
+            let qi = k >> INV_GEN_BASE_SIZE.trailing_zeros();
+            let t = if qi == 0 {
+                inv_gen_0_powers[r]
+            } else {
+                inv_gen_0_powers[r].mul(inv_gen_step_table[qi])
+            };
+            Felt::ZERO.sub(t)
+        };
+        let y2 = y.mul(y);
+        let sy = deep_s.mul(y);
+        // den(y) = y^2 - s*y + pz ; den(-y) = y^2 + s*y + pz — shares y^2 and s*y.
+        let d_lo = y2.sub(sy).add(deep_pz);
+        let d_hi = y2.add(sy).add(deep_pz);
+        batch_in.push(d_lo.mul(d_hi));
+        deep_scratch.push((y, d_lo, d_hi));
+    }
+    batch_in.push(zg.sub(z));
+    let mut batch_out = vec![Felt::ZERO; batch_in.len()];
+    if !batch_inverse(&batch_in, &mut batch_out) {
+        // LIVENESS, not soundness: z or z*g landed in the LDE domain, so D has a
+        // pole at a queried point. ~2^-50; the honest prover asserts against it.
+        return Err(VerifyError::DeepDenominatorZero);
+    }
+    let b0 = svp.sub(sv).mul(batch_out[nq]);
+    let a0 = sv.sub(z.mul(b0));
+
+    // PASS 2.
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
 
@@ -1184,11 +1292,42 @@ fn verify_fri_generic(
         let half0 = config.lde_size / 2;
         let q_at_pos = proof.quotient_value(query_idx);
         let q_mirror = query.quotient_mirror_value;
-        let (mut f_lo, mut f_hi) = if pos < half0 {
+        let (q_lo, q_hi) = if pos < half0 {
             (q_at_pos, q_mirror)
         } else {
             (q_mirror, q_at_pos)
         };
+
+        // [B1] Route C's payoff. The wire ships (row_at_pos, row_at_mirror); the
+        // fold wants (low-half, high-half). Getting this backwards verifies for
+        // pos < half and fails for pos >= half — a ~50% flake that looks like a
+        // prover bug. Same rule as `verify_merkle_proofs_generic` uses for the
+        // pair leaf, and the same rule the quotient swap above uses.
+        let (y, d_lo, d_hi) = deep_scratch[query_idx];
+        let inv_p = batch_out[query_idx];
+        let inv_lo = inv_p.mul(d_hi);
+        let inv_hi = inv_p.mul(d_lo);
+
+        let mut s_lo = Felt::ZERO;
+        let mut s_hi = Felt::ZERO;
+        for (c, gp) in gamma_pows.iter().enumerate() {
+            let (t_lo, t_hi) = if pos < half0 {
+                (query.trace_value(c), query.trace_mirror_value(c))
+            } else {
+                (query.trace_mirror_value(c), query.trace_value(c))
+            };
+            s_lo = s_lo.add(gp.mul(t_lo));
+            s_hi = s_hi.add(gp.mul(t_hi));
+        }
+
+        let y_b0 = y.mul(b0);
+        // At x = y the linear term is -y*B0; at x = -y it is +y*B0.
+        let brk_lo = s_lo.sub(a0).sub(y_b0);
+        let brk_hi = s_hi.sub(a0).add(y_b0);
+        let qt_lo = q_lo.sub(q_z).mul(y.sub(zg));
+        let qt_hi = q_hi.sub(q_z).mul(Felt::ZERO.sub(y).sub(zg));
+        let mut f_lo = brk_lo.add(qt_lo).mul(inv_lo);
+        let mut f_hi = brk_hi.add(qt_hi).mul(inv_hi);
 
         // **[P1.6 CU fix]** Single-pass Merkle + fold verification.
         // The old two-loop form called `query.fri_value(i)`/etc inside each loop;
@@ -1293,7 +1432,7 @@ fn verify_fri_legacy(
     let commitment_bytes = commitment.to_le_bytes();
     let ood_current_u64: Vec<u64> = proof.ood_current.iter().map(|f| f.as_u64()).collect();
     let ood_next_u64: Vec<u64> = proof.ood_next.iter().map(|f| f.as_u64()).collect();
-    let mut state = build_base_seed(
+    let base_seed = build_base_seed(
         &proof.trace_root,
         &proof.quotient_root,
         &commitment_bytes,
@@ -1301,6 +1440,13 @@ fn verify_fri_legacy(
         &ood_next_u64,
         proof.ood_quotient.as_u64(),
     );
+    // [B1] gamma from the PRE-layer-root seed. Same derivation as the generic
+    // path; this is the SOLE verifier for four shipped instructions
+    // (zk_shielded::{pause,resume,cancel_private_stark} and
+    // p01_quantum_wallet), so a generic-only B1 would leave them exactly as
+    // forgeable as before.
+    let gamma = derive_deep_coeff(&base_seed);
+    let mut state = base_seed;
     let mut alphas = Vec::with_capacity(num_folds);
     for i in 0..num_folds {
         alphas.push(derive_fri_alpha(&state));
@@ -1326,6 +1472,65 @@ fn verify_fri_legacy(
 
     let two_inv = Felt::new(2).inv();
 
+    // ========================================================================
+    // [B1] DEEP composition setup, legacy shape. Term for term identical to
+    // `verify_fri_generic`; the differences are all shape, not algebra:
+    //   * the inverse table is a FLAT 256-entry array over k < half = 256, so
+    //     `-inv_table[256 - j]` works with no two-level split (G has order 512,
+    //     so G^256 = -1);
+    //   * ood_current / ood_next are [Felt; 3];
+    //   * the trace generator is the GENERATOR_32 constant, so zg is one mul.
+    // ========================================================================
+    let trace_g = Felt::new(GENERATOR_32);
+    let z = proof.ood_z;
+    let zg = z.mul(trace_g);
+    let deep_s = z.add(zg);
+    let deep_pz = z.mul(zg);
+    let q_z = proof.ood_quotient;
+
+    let mut gamma_pows = [Felt::ZERO; TRACE_WIDTH];
+    {
+        let mut g_pow = gamma;
+        for slot in gamma_pows.iter_mut() {
+            *slot = g_pow;
+            g_pow = g_pow.mul(gamma);
+        }
+    }
+    let mut sv = Felt::ZERO;
+    let mut svp = Felt::ZERO;
+    for (c, gp) in gamma_pows.iter().enumerate() {
+        sv = sv.add(gp.mul(proof.ood_current[c]));
+        svp = svp.add(gp.mul(proof.ood_next[c]));
+    }
+
+    // PASS 1 — see the generic twin for why the batching is load-bearing.
+    let nq = proof.queries.len();
+    let mut deep_scratch: Vec<(Felt, Felt, Felt)> = Vec::with_capacity(nq);
+    let mut batch_in: Vec<Felt> = Vec::with_capacity(nq + 1);
+    for query in proof.queries.iter() {
+        let pos = query.position as usize;
+        let j = pos & (half_lde - 1);
+        let y = if j == 0 {
+            Felt::ONE
+        } else {
+            Felt::ZERO.sub(inv_gen_0_powers[half_lde - j])
+        };
+        let y2 = y.mul(y);
+        let sy = deep_s.mul(y);
+        let d_lo = y2.sub(sy).add(deep_pz);
+        let d_hi = y2.add(sy).add(deep_pz);
+        batch_in.push(d_lo.mul(d_hi));
+        deep_scratch.push((y, d_lo, d_hi));
+    }
+    batch_in.push(zg.sub(z));
+    let mut batch_out = vec![Felt::ZERO; batch_in.len()];
+    if !batch_inverse(&batch_in, &mut batch_out) {
+        return Err(VerifyError::DeepDenominatorZero);
+    }
+    let b0 = svp.sub(sv).mul(batch_out[nq]);
+    let a0 = sv.sub(z.mul(b0));
+
+    // PASS 2.
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
 
@@ -1334,11 +1539,40 @@ fn verify_fri_legacy(
         let half0 = LEGACY_LDE / 2;
         let q_at_pos = proof.quotient_value(query_idx);
         let q_mirror = query.quotient_mirror_value;
-        let (mut f_lo, mut f_hi) = if pos < half0 {
+        let (q_lo, q_hi) = if pos < half0 {
             (q_at_pos, q_mirror)
         } else {
             (q_mirror, q_at_pos)
         };
+
+        // [B1] Route C's legacy mirror accessors had ZERO consumers before this.
+        // Same (lo, hi) rule as `verify_merkle_proofs_legacy` uses for the pair
+        // leaf — see the generic twin for why getting it backwards is the single
+        // most likely implementation bug here.
+        let (y, d_lo, d_hi) = deep_scratch[query_idx];
+        let inv_p = batch_out[query_idx];
+        let inv_lo = inv_p.mul(d_hi);
+        let inv_hi = inv_p.mul(d_lo);
+
+        let mut s_lo = Felt::ZERO;
+        let mut s_hi = Felt::ZERO;
+        for (c, gp) in gamma_pows.iter().enumerate() {
+            let (t_lo, t_hi) = if pos < half0 {
+                (query.trace_value(c), query.trace_mirror_value(c))
+            } else {
+                (query.trace_mirror_value(c), query.trace_value(c))
+            };
+            s_lo = s_lo.add(gp.mul(t_lo));
+            s_hi = s_hi.add(gp.mul(t_hi));
+        }
+
+        let y_b0 = y.mul(b0);
+        let brk_lo = s_lo.sub(a0).sub(y_b0);
+        let brk_hi = s_hi.sub(a0).add(y_b0);
+        let qt_lo = q_lo.sub(q_z).mul(y.sub(zg));
+        let qt_hi = q_hi.sub(q_z).mul(Felt::ZERO.sub(y).sub(zg));
+        let mut f_lo = brk_lo.add(qt_lo).mul(inv_lo);
+        let mut f_hi = brk_hi.add(qt_hi).mul(inv_hi);
 
         // **[P1.6 CU fix]** Same single-pass pattern as `verify_fri_generic`.
         let mut fri_iter = query.fri_block_iter();
