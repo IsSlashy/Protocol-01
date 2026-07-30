@@ -106,12 +106,20 @@ export class LiquidityModule {
     return PublicKey.findProgramAddressSync([POOL_SEED], this.programId);
   }
 
+  /**
+   * PrefundRecord PDA — seeds `[b"prefund", denominated_pool, nullifier[..8]]`.
+   *
+   * The seed is the FIRST 8 BYTES of the nullifier, not all 32: that is exactly
+   * what the circuit-1 public-inputs hash commits to, and `init` on this PDA is
+   * the only anti-replay constraint `prefund` has. See
+   * `programs/p01_liquidity/src/instructions/prefund.rs`.
+   */
   getPrefundRecordPDA(
     denominatedPool: PublicKey,
     nullifier: Uint8Array | number[],
   ): [PublicKey, number] {
     return PublicKey.findProgramAddressSync(
-      [PREFUND_SEED, denominatedPool.toBuffer(), Buffer.from(nullifier)],
+      [PREFUND_SEED, denominatedPool.toBuffer(), Buffer.from(nullifier).subarray(0, 8)],
       this.programId,
     );
   }

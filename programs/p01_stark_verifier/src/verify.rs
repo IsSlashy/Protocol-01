@@ -46,6 +46,28 @@ pub enum VerifyError {
     /// "add a circuit with a new domain size" a silently-unsound edit. Now it
     /// fails closed.
     UnsupportedDomainSize,
+    /// Circuit 0 (`subscriber_ownership`) was handed to the GENERIC verifier.
+    ///
+    /// C0 has one verifier — the legacy `verify_subscriber_ownership` path — and
+    /// the generic path cannot substitute for it:
+    ///
+    /// * `verify_deep_ali_generic` divides by the wrong vanishing polynomial for
+    ///   C0. C0's constraint is divisible by `Z_T(x) = (x^n - 1)/(x - g^(n-1))`,
+    ///   not by `Z_D(x) = x^n - 1`, because the wrap-around transition at row
+    ///   `n-1` does not vanish. The legacy path knows this; the generic one does
+    ///   not.
+    /// * C0's committed quotient carries a folded boundary term
+    ///   (`fold_boundary_quotient` with the `bnd-c0` tag). The generic path has no
+    ///   matching recomputation for circuit 0, so the OOD identity cannot close.
+    ///
+    /// The generic path therefore REJECTS honest C0 proofs. Before this variant
+    /// it rejected them as `DeepAliFailed` — indistinguishable from a forgery, and
+    /// one refactor away from being "fixed" into a silent mis-verification. Four
+    /// shipped instructions hard-require `circuit_id == 0`
+    /// (`zk_shielded::{pause,resume,cancel_private_stark}` and
+    /// `p01_quantum_wallet/src/stark.rs:42`), so the legacy path is load-bearing
+    /// and stays. This error says so out loud instead.
+    CircuitZeroIsLegacyOnly,
 }
 
 // ============================================================================
@@ -558,13 +580,32 @@ fn get_boundary_assertions(
 // Unified verification entry point
 // ============================================================================
 
-/// Verify a generic compact proof for any supported circuit.
+/// Verify a generic compact proof for any supported circuit **1..=6**.
+///
+/// # Circuit 0 is refused here, explicitly
+///
+/// `circuit_id == 0` returns [`VerifyError::CircuitZeroIsLegacyOnly`] before any
+/// work is done. C0 proofs are verified by [`verify_subscriber_ownership`], and
+/// only by it: the generic DEEP-ALI check uses the wrong vanishing polynomial for
+/// C0 and has no recomputation for C0's folded boundary term, so it cannot verify
+/// an honest C0 proof. A silent "it just fails" is the wrong shape for that — it
+/// reads as a forgery, and a future refactor could plausibly "fix" the failure
+/// into an acceptance. The refusal is the contract.
 pub fn verify_generic(
     proof: &GenericCompactProof,
     circuit_id: u8,
     public_inputs: &[u64],
     config: &CircuitConfig,
 ) -> Result<(), VerifyError> {
+    // Step 0: C0 hard gate. Must come before everything — the point is that the
+    // generic path never touches a C0 proof, not that it fails late.
+    if circuit_id == crate::CIRCUIT_SUBSCRIBER_OWNERSHIP {
+        anchor_lang::prelude::msg!(
+            "[verify] circuit 0 is legacy-only; use verify_stark_proof, not the generic path"
+        );
+        return Err(VerifyError::CircuitZeroIsLegacyOnly);
+    }
+
     // Step 1: Field range check on OOD values
     verify_ood_range(proof)?;
     anchor_lang::prelude::msg!("[verify] step1 ok");
@@ -609,7 +650,11 @@ pub fn verify_generic(
 
     // Step 4: Circuit-specific transition constraint + quotient verification
     match circuit_id {
-        0 => verify_constraints_subscriber_ownership(proof, config, public_inputs),
+        // 0 is unreachable — the step-0 gate above returned already. Left as an
+        // explicit arm so the refusal is visible at the dispatch too, and so a
+        // future edit that deletes the gate does not silently re-enable a path
+        // that cannot verify honest C0 proofs.
+        0 => Err(VerifyError::CircuitZeroIsLegacyOnly),
         1 => verify_constraints_pool_commitment(proof, config, public_inputs),
         2 => verify_constraints_balance_proof(proof, config, public_inputs),
         3 => verify_constraints_merkle_path(proof, config, public_inputs),
@@ -1258,26 +1303,64 @@ fn verify_merkle_proofs_generic(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
 ) -> Result<(), VerifyError> {
+    let half = config.lde_size / 2;
     for (query_idx, query) in proof.queries.iter().enumerate() {
-        // [P1.6] Hash trace row directly from its LE bytes in the proof buffer —
-        // no copy into a `Vec<u8>`. The prover serializes the trace leaves as
-        // flat LE felts exactly matching `query.trace_values_bytes()`, so Blake3
-        // over that slice is the same leaf hash as the old `felt_vec_to_bytes`
-        // round-trip.
-        if !merkle::verify_merkle_path(
+        // [ROUTE C] The trace tree is committed as PAIR leaves, exactly as B4 did
+        // for the quotient tree and every FRI layer:
+        //
+        //     leaf[j] = H(0x00 ‖ row[j] ‖ row[j + lde_size/2])   over lde_size/2 leaves
+        //
+        // ONE depth-(merkle_depth - 1) opening therefore authenticates the row at
+        // `position` AND the row at `position ^ (lde_size/2)`. Pre-Route-C this was
+        // a depth-merkle_depth opening that bound the row at `position` only.
+        //
+        // This changes NO soundness property: the mirror row is authenticated and
+        // then not read. It is the coset partner a later DEEP-composition
+        // recomputation needs, made available without a second opening.
+        //
+        // [P1.6] The rows are hashed straight out of the proof buffer — no copy
+        // into a Vec. `hash_leaf_2seg` concatenates the two segments inside the
+        // syscall, so the digest is bit-identical to the prover's contiguous
+        // `sha256_leaf(row_lo ‖ row_hi)`.
+        //
+        // `lo` MUST be the low-half row and `hi` the high-half row: the leaf hash
+        // cannot depend on which side of the mirror the query landed on. The wire
+        // always ships (row_at_pos, row_at_mirror) in that order, so the verifier
+        // swaps when `pos >= half`. `position` is transcript-bound, so a prover
+        // cannot choose which side it lands on.
+        let pos = query.position as usize;
+        let (lo, hi) = if pos < half {
+            (query.trace_values_bytes(), query.trace_mirror_values_bytes())
+        } else {
+            (query.trace_mirror_values_bytes(), query.trace_values_bytes())
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.trace_root,
-            query.trace_values_bytes(),
-            query.position as usize,
+            lo,
+            hi,
+            pos & (half - 1),
             query.merkle_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
         }
 
-        let next_pos = (query.position as usize + config.blowup) % config.lde_size;
-        if !merkle::verify_merkle_path(
+        // [ROUTE C] Same for the next row. `next_pos = pos + blowup` is never the
+        // mirror of `pos` (the mirror is `pos + lde_size/2`, and
+        // `lde_size/2 >= 16 * blowup` on every shipping config), so this is a
+        // genuinely different pair leaf and both openings are needed. It is,
+        // however, the SAME leaf that holds `next(mirror(pos))`, because
+        // `mirror(next_pos) = pos + blowup + lde/2 = next(mirror(pos))`.
+        let next_pos = (pos + config.blowup) % config.lde_size;
+        let (nlo, nhi) = if next_pos < half {
+            (query.next_trace_values_bytes(), query.next_trace_mirror_values_bytes())
+        } else {
+            (query.next_trace_mirror_values_bytes(), query.next_trace_values_bytes())
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.trace_root,
-            query.next_trace_values_bytes(),
-            next_pos,
+            nlo,
+            nhi,
+            next_pos & (half - 1),
             query.next_merkle_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
@@ -1290,19 +1373,17 @@ fn verify_merkle_proofs_generic(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let pos = query.position as usize;
-        let half = config.lde_size / 2;
         let q_at_pos = proof.quotient_value(query_idx);
         let q_mirror = query.quotient_mirror_value;
-        let (lo, hi) = if pos < half {
+        let (qlo, qhi) = if pos < half {
             (q_at_pos, q_mirror)
         } else {
             (q_mirror, q_at_pos)
         };
         if !verify_pair_leaf(
             &proof.quotient_root,
-            lo,
-            hi,
+            qlo,
+            qhi,
             pos & (half - 1),
             query.quotient_pair_path(),
         ) {
@@ -3378,7 +3459,16 @@ fn verify_quotient_at_query(
 // Circuit 0: subscriber_ownership
 // ============================================================================
 
-fn verify_constraints_subscriber_ownership(
+/// [C0 GATE] Unreachable from `verify_generic` — both the step-0 gate and the
+/// step-4 dispatch arm refuse `circuit_id == 0` before this can run.
+///
+/// It is kept, and kept compiling, for one reason: it is the evidence for the
+/// refusal. `c0_generic_path_cannot_verify_an_honest_c0_proof` calls it directly
+/// on an honest C0 proof and records the failure, so the claim "the generic path
+/// rejects honest C0 proofs" is a measurement in the test suite rather than a
+/// comment. Delete it and the gate becomes an unargued assertion.
+#[allow(dead_code)]
+pub(crate) fn verify_constraints_subscriber_ownership(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
     _public_inputs: &[u64],
@@ -3925,21 +4015,40 @@ fn verify_query_positions_legacy(
 }
 
 fn verify_merkle_proofs_legacy(proof: &CompactStarkProof) -> Result<(), VerifyError> {
+    let half = LDE_SIZE / 2;
     for (query_idx, query) in proof.queries.iter().enumerate() {
-        if !merkle::verify_merkle_path(
+        // [ROUTE C] Pair-leaf trace tree, identical rule to
+        // `verify_merkle_proofs_generic` — see the commentary there. The legacy C0
+        // path keeps its own parser and its own verifier entry point, but the
+        // trace COMMITMENT is now the same shape on both paths, so a drift between
+        // them cannot hide.
+        let pos = query.position as usize;
+        let (lo, hi) = if pos < half {
+            (query.trace_values_bytes(), query.trace_mirror_values_bytes())
+        } else {
+            (query.trace_mirror_values_bytes(), query.trace_values_bytes())
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.trace_root,
-            query.trace_values_bytes(),
-            query.position as usize,
+            lo,
+            hi,
+            pos & (half - 1),
             query.merkle_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
         }
 
-        let next_pos = (query.position as usize + BLOWUP) % LDE_SIZE;
-        if !merkle::verify_merkle_path(
+        let next_pos = (pos + BLOWUP) % LDE_SIZE;
+        let (nlo, nhi) = if next_pos < half {
+            (query.next_trace_values_bytes(), query.next_trace_mirror_values_bytes())
+        } else {
+            (query.next_trace_mirror_values_bytes(), query.next_trace_values_bytes())
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.trace_root,
-            query.next_trace_values_bytes(),
-            next_pos,
+            nlo,
+            nhi,
+            next_pos & (half - 1),
             query.next_merkle_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
@@ -3950,19 +4059,17 @@ fn verify_merkle_proofs_legacy(proof: &CompactStarkProof) -> Result<(), VerifyEr
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let pos = query.position as usize;
-        let half = LDE_SIZE / 2;
         let q_at_pos = proof.quotient_value(query_idx);
         let q_mirror = query.quotient_mirror_value;
-        let (lo, hi) = if pos < half {
+        let (qlo, qhi) = if pos < half {
             (q_at_pos, q_mirror)
         } else {
             (q_mirror, q_at_pos)
         };
         if !verify_pair_leaf(
             &proof.quotient_root,
-            lo,
-            hi,
+            qlo,
+            qhi,
             pos & (half - 1),
             query.quotient_pair_path(),
         ) {
@@ -5118,6 +5225,67 @@ mod boundary_c0_tests {
         assert!(
             matches!(res, Err(VerifyError::DeepAliFailed)),
             "tampered ood_current must be rejected: got {res:?}"
+        );
+    }
+
+    /// [C0 GATE] The generic dispatch REFUSES circuit 0, explicitly.
+    ///
+    /// An honest C0 proof parses cleanly as a `GenericCompactProof` (same header
+    /// layout, tw=3, md=9, 4 committed FRI layers), so nothing about the bytes
+    /// stops it reaching `verify_generic`. The gate is what stops it, and it must
+    /// return the named error rather than something that reads like a bad proof.
+    #[test]
+    fn c0_generic_dispatch_refuses_circuit_zero() {
+        let pd = p01_stark::compact::generate_compact_proof(42);
+        let cfg = crate::compact_proof::get_circuit_config(0).expect("C0 has a config");
+        let parsed = GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+            .expect("an honest C0 proof does parse under the generic parser");
+        let res = verify_generic(&parsed, 0, &[pd.commitment], cfg);
+        assert!(
+            matches!(res, Err(VerifyError::CircuitZeroIsLegacyOnly)),
+            "generic path must refuse circuit 0 by name, got {res:?}"
+        );
+    }
+
+    /// [C0 GATE] …and the refusal is not merely tidy: the generic path CANNOT
+    /// verify an honest C0 proof. This calls the C0 constraint body directly,
+    /// bypassing the gate, and records the failure.
+    ///
+    /// Two independent reasons, both structural:
+    ///   * `verify_deep_ali_circuit_0` is reached through generic machinery that
+    ///     divides by `Z_D(x) = x^n - 1`; C0's constraint is only divisible by
+    ///     `Z_T(x) = (x^n - 1)/(x - g^(n-1))` because the row-(n-1) wrap does not
+    ///     vanish.
+    ///   * C0's committed quotient carries a folded boundary term (`bnd-c0` tag)
+    ///     that the generic path never recomputes.
+    ///
+    /// If this test ever goes green-accepting, the gate above stops being a
+    /// safety property and becomes a policy choice — and this comment becomes a
+    /// lie. That is the point of asserting it.
+    #[test]
+    fn c0_generic_path_cannot_verify_an_honest_c0_proof() {
+        let pd = p01_stark::compact::generate_compact_proof(42);
+        let cfg = crate::compact_proof::get_circuit_config(0).expect("C0 has a config");
+        let parsed = GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+            .expect("parse honest C0 proof as generic");
+
+        // Sanity: the legacy path DOES verify this proof, so any failure below is
+        // about the generic path, not about the proof.
+        let legacy = crate::compact_proof::CompactStarkProof::from_bytes(&pd.proof_bytes)
+            .expect("parse honest C0 proof as legacy");
+        verify_subscriber_ownership(&legacy, Felt::new(pd.commitment))
+            .expect("honest C0 proof must verify on its own legacy path");
+
+        let res = verify_constraints_subscriber_ownership(&parsed, cfg, &[pd.commitment]);
+        assert!(
+            res.is_err(),
+            "the generic C0 constraint path accepted an honest C0 proof — the \
+             CircuitZeroIsLegacyOnly gate is then a policy choice, not a \
+             necessity, and its doc comment is wrong"
+        );
+        println!(
+            "[C0 GATE] MEASURED: generic C0 constraint path on an HONEST C0 proof -> {:?}",
+            res.unwrap_err()
         );
     }
 }

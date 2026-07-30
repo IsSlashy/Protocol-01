@@ -256,13 +256,15 @@ fn quotient_pair_offsets(
     off += 8; // grinding nonce
     off += 2; // num_queries
 
-    // query 0: position + trace + next_trace + two trace paths
+    // [ROUTE C] query 0: position + FOUR trace rows + TWO depth-(md-1) trace
+    // PAIR paths. Pre-Route-C this was two rows + two depth-md value paths.
     let q_start = off;
-    let mirror_off = q_start + 4 + tw * 8 + tw * 8 + md * 32 + md * 32;
+    let trace_block = 4 * (tw * 8) + 2 * ((md - 1) * 32);
+    let mirror_off = q_start + 4 + trace_block;
 
     // full per-query stride, to locate the tail array
     let fri_per_query: usize = (0..num_commits).map(|i| 16 + (md - i - 2) * 32).sum();
-    let per_query = 4 + tw * 8 + tw * 8 + md * 32 + md * 32 + 8 + (md - 1) * 32 + fri_per_query;
+    let per_query = 4 + trace_block + 8 + (md - 1) * 32 + fri_per_query;
     let tail = q_start + per_query * cfg.num_queries;
     assert_eq!(
         tail + cfg.num_queries * 8,
@@ -298,8 +300,9 @@ fn expected_wire_size(
         + 2 + fri_final_poly_size * 8
         + 8 + 2
         + num_queries * (
-            4 + tw * 8 + tw * 8
-            + md * 32 + md * 32
+            // [ROUTE C] four trace rows + two depth-(md-1) trace pair paths.
+            4 + 4 * (tw * 8)
+            + (md - 1) * 32 + (md - 1) * 32
             + 8 + (md - 1) * 32
             + fri_per_query
         )

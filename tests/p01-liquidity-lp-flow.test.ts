@@ -144,11 +144,16 @@ describe('p01_liquidity LP flow', function () {
   let preShares: bigint;
   let mintedShares: bigint;
 
-  it('pool exists + is active', async () => {
+  it('pool exists', async () => {
     const acc = await connection.getAccountInfo(poolPDA);
     expect(acc, 'pool not initialized').to.not.be.null;
     pre = parsePool(acc!.data);
-    expect(pre.isActive).to.equal(true);
+    // Deliberately NOT asserting `isActive`. `is_active` gates `prefund` only —
+    // deposit and withdraw ignore it — and `init_pool` now creates the pool with
+    // `is_active = false` because `settle` cannot return a prefund's lamports
+    // (its CPI target `zk_shielded::unshield_denominated_stark` is no longer
+    // registered). LP flow must work on a prefund-disabled pool.
+    console.log(`  prefunds ${pre.isActive ? 'ENABLED' : 'disabled'} on this pool`);
     const shareAcc = await connection.getAccountInfo(sharePDA);
     preShares = shareAcc ? parseShare(shareAcc.data).shares : 0n;
     console.log(`  pre-state: reserve=${pre.reserveLamports} shares=${pre.totalShares} ours=${preShares}`);

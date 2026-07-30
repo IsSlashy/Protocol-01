@@ -102,6 +102,57 @@ jobs:
       - name: anchor build
         run: anchor build
 
+      # NOT advisory. These litesvm tests run the real SBF bytecode and assert
+      # the accept/reject decision the validator would make.
+      #
+      # Each harness builds its own artifact from the crate under test (private
+      # --sbf-out-dir + private CARGO_TARGET_DIR, cached on a content
+      # fingerprint of src/), so it does NOT read target/deploy/ and does not
+      # depend on the `anchor build` above. That is deliberate: reading
+      # target/deploy/ made the suite a gate on whatever bytes were sitting
+      # there — during review, deleting the require! and copying the old .so
+      # back left the whole file green. It runs here because this is the job
+      # that already has the Solana toolchain installed.
+      #
+      # What they gate: STARK verification of circuits 1-6 is two instructions
+      # (`verify_stark_proof_v2` sets ProofBuffer.verified, byte 49;
+      # `verify_deep_ali_phase2` sets deep_ali_verified, byte 82). Phase 1 on
+      # its own is not an AIR check — `verify_quotient_at_query` enforces
+      # nothing and boundary constraints fire only on a query that is both
+      # trace-aligned and on an assertion row — so a consumer gating on byte 49
+      # alone accepts a proof whose declared public inputs are bound to
+      # nothing. p01_liquidity::prefund and every p01_zkspl proof consumer did
+      # exactly that, and both were demonstrated paying out under litesvm on a
+      # hand-built phase-1-only buffer.
+      #
+      # p01_liquidity::prefund additionally binds WHICH pool and HOW MUCH:
+      #   - `amount` is a free instruction argument the circuit-1 proof does not
+      #     cover, so it is pinned to the pool's `denomination`;
+      #   - `denomination` is only meaningful once the pool itself is pinned,
+      #     because `zk_shielded::init_denominated_pool` is permissionless — an
+      #     attacker mints a genuine, correctly-discriminated pool declaring any
+      #     denomination they like (measured: 9,890,000,000 lamports out of a
+      #     10-SOL reserve in one instruction). Hence
+      #     `denominated_pool.authority == pool.admin`;
+      #   - the `PrefundRecord` PDA is keyed on `nullifier[..8]`, the only part
+      #     the proof commits to. On all 32 bytes, one buffer bought one payout
+      #     per tail value (measured: 4 accepts, 3,956,000,000 lamports);
+      #   - `init_pool` creates the pool with `is_active = false`, because
+      #     `settle` CPIs an instruction zk_shielded no longer registers, so any
+      #     prefund opened today is an unrecoverable loss.
+      # All of those negatives, and their positive controls, are in the same
+      # file, and each was verified to go RED with only its own check deleted.
+      #
+      # Also run by ci.yml, which is the workflow the founder actually runs;
+      # duplicated here because this job triggers on `programs/**` and already
+      # has the toolchain.
+      - name: cargo test (proof-buffer DEEP-ALI gate + prefund payout binding, real SBF bytecode)
+        run: |
+          export P01_CARGO_BUILD_SBF="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
+          test -x "$P01_CARGO_BUILD_SBF" || { echo "cargo-build-sbf missing at $P01_CARGO_BUILD_SBF"; exit 1; }
+          cargo test -p p01_liquidity --test deep_ali_gate -- --nocapture
+          cargo test -p p01_zkspl --test deep_ali_gate -- --nocapture
+
       # Advisory in CI. anchor test deploys to the devnet provider and runs the
       # TS suite, but (1) the CI throwaway keypair has no devnet SOL and (2) the
       # TS integration suite still references removed v2/Groth16 instructions

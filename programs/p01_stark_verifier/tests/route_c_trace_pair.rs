@@ -1,0 +1,733 @@
+//! [ROUTE C] Pair-leaf TRACE commitment — fails-closed guard, then the tamper
+//! gates, then the structural pins.
+//!
+//! # What Route C changed
+//!
+//! B4 committed the quotient LDE and every FRI layer as pair leaves. Route C
+//! applies the same shape to the trace commitment itself:
+//!
+//! ```text
+//!   leaf[j] = SHA256( 0x00 ‖ row[j][0..tw] ‖ row[j + N/2][0..tw] )   j in 0..N/2
+//! ```
+//!
+//! `N/2` leaves instead of `N`, depth `log2(N) - 1` instead of `log2(N)`. One
+//! opening now yields the row at `pos` AND the row at `pos ^ (N/2)`. The `0x00`
+//! is the leaf domain-separation tag; internal nodes carry `0x01`.
+//!
+//! # What Route C did NOT change
+//!
+//! **No soundness property.** The mirror rows are authenticated and then never
+//! read: nothing in this revision consumes `trace_mirror_values_bytes`. Route C
+//! is the plumbing that makes both halves of a coset available from a single
+//! opening; the check that would *use* them does not exist yet. A reader who
+//! takes this file as evidence that the verifier gained a DEEP binding has
+//! misread it.
+//!
+//! # Why the fails-closed tests come first
+//!
+//! Prover and verifier must agree on four things that never travel on the wire:
+//! the pair index `j`, which of the two rows is the low half, the path depth, and
+//! the fact that the tree is pair-leafed at all. A version skew across that seam
+//! must produce a LOUD rejection, never an accidental acceptance.
+//!
+//! `p01_stark::compact::TraceLeaf::LegacyRowLeaf` is a test-only knob that makes
+//! the prover build a **complete, internally consistent** proof in the
+//! pre-Route-C format — old row-leaf tree, two rows per query, two full-depth
+//! paths. The Route C verifier must reject it. And the pre-Route-C *rule* must
+//! reject a Route C opening. Both directions, below.
+
+use p01_stark::compact::TraceLeaf;
+use p01_stark_verifier::compact_proof::{
+    CircuitConfig, GenericCompactProof, CONFIG_BALANCE_PROOF, CONFIG_CONFIDENTIAL_BALANCE,
+    CONFIG_MERKLE_PATH, CONFIG_MERKLE_UPDATE, CONFIG_POOL_COMMITMENT, CONFIG_SUBSCRIBER_OWNERSHIP,
+    CONFIG_TRANSFER,
+};
+use p01_stark_verifier::merkle;
+use p01_stark_verifier::verify::{verify_generic, verify_subscriber_ownership, VerifyError};
+
+const SHIPPING: [&CircuitConfig; 7] = [
+    &CONFIG_SUBSCRIBER_OWNERSHIP,
+    &CONFIG_POOL_COMMITMENT,
+    &CONFIG_BALANCE_PROOF,
+    &CONFIG_MERKLE_PATH,
+    &CONFIG_CONFIDENTIAL_BALANCE,
+    &CONFIG_TRANSFER,
+    &CONFIG_MERKLE_UPDATE,
+];
+
+// C1 witness — one place, so every C1 test below is comparing like with like.
+const C1_ARGS: (u64, u64, u64, u64) = (0xA11CE, 0xB0B, 0xC0FFEE, 0xD00D);
+// C4 witness. Values from `verify.rs::c4_sample_proof`.
+const C4_ARGS: (u64, u64, u64, u64, u64, u64, u64, u64) =
+    (42, 1000, 111, 800, 222, 200, 333, 999);
+
+fn c1_proof(trace_leaf: TraceLeaf) -> p01_stark::compact::GenericCompactProofData {
+    let (a, b, c, d) = C1_ARGS;
+    p01_stark::compact::generate_pool_commitment_proof_with_trace_leaf(a, b, c, d, trace_leaf)
+}
+
+fn c4_proof(trace_leaf: TraceLeaf) -> p01_stark::compact::GenericCompactProofData {
+    let (a, b, c, d, e, f, g, h) = C4_ARGS;
+    p01_stark::compact::generate_confidential_balance_compact_proof_with_trace_leaf(
+        a, b, c, d, e, f, g, h, trace_leaf,
+    )
+}
+
+fn c1_verify(bytes: &[u8], public_inputs: &[u64]) -> Result<(), VerifyError> {
+    let proof = GenericCompactProof::from_bytes(bytes, &CONFIG_POOL_COMMITMENT)
+        .expect("parse under the Route C layout");
+    verify_generic(&proof, 1, public_inputs, &CONFIG_POOL_COMMITMENT)
+}
+
+/// Byte offset of query `q`'s trace block, and the per-query row stride.
+///
+/// Mirrors the Route C serializer and asserts the whole layout adds up, so a
+/// future format change makes these tests fail loudly instead of probing stale
+/// bytes and passing for the wrong reason.
+fn trace_block_offsets(cfg: &CircuitConfig, bytes: &[u8], q: usize) -> (usize, usize) {
+    let tw = cfg.trace_width;
+    let md = cfg.merkle_depth;
+    let num_folds = (cfg.lde_size / cfg.fri_final_poly_size).trailing_zeros() as usize;
+    let num_commits = num_folds - 1;
+
+    let mut off = 32 + 32 + tw * 8 + tw * 8 + 8 + 8;
+    assert_eq!(bytes[off] as usize, num_commits, "num_fri_layers byte drift");
+    off += 1 + num_commits * 32;
+    off += 2 + cfg.fri_final_poly_size * 8;
+    off += 8 + 2; // grinding nonce + num_queries
+
+    let fri_per_query: usize = (0..num_commits).map(|i| 16 + (md - i - 2) * 32).sum();
+    // [ROUTE C] four rows + two depth-(md-1) pair paths.
+    let trace_block = 4 * (tw * 8) + 2 * ((md - 1) * 32);
+    let per_query = 4 + trace_block + 8 + (md - 1) * 32 + fri_per_query;
+
+    assert_eq!(
+        off + per_query * cfg.num_queries + cfg.num_queries * 8,
+        bytes.len(),
+        "Route C serializer layout drift — offsets in this test are stale",
+    );
+
+    (off + q * per_query + 4, tw * 8)
+}
+
+// ============================================================================
+// 0. BASELINE — without this the reject tests below prove nothing
+// ============================================================================
+
+#[test]
+fn route_c_canonical_proof_verifies() {
+    let data = c1_proof(TraceLeaf::Canonical);
+    c1_verify(&data.proof_bytes, &data.public_inputs)
+        .expect("canonical Route C proof must verify");
+
+    let d4 = c4_proof(TraceLeaf::Canonical);
+    let p4 = GenericCompactProof::from_bytes(&d4.proof_bytes, &CONFIG_CONFIDENTIAL_BALANCE)
+        .expect("parse C4");
+    verify_generic(&p4, 4, &d4.public_inputs, &CONFIG_CONFIDENTIAL_BALANCE)
+        .expect("canonical Route C C4 proof must verify");
+}
+
+// ============================================================================
+// 1. FAILS CLOSED — the version-skew seam, both directions
+// ============================================================================
+
+/// **Direction 1, sharp case.** An old-format C4 proof against the new verifier.
+///
+/// C4 has `trace_width == 4`, so `16 * trace_width - 64 == 0`: the pre-Route-C
+/// and Route C wire formats are the SAME NUMBER OF BYTES. Every length check in
+/// the parser passes, every field boundary lands inside the buffer, and the
+/// transcript is internally consistent (the old prover derived its OOD point and
+/// query positions from its own `trace_root`). Nothing incidental rejects this
+/// proof. The pair-leaf Merkle check is the only thing standing between an
+/// old-format proof and acceptance — so this test pins that it is, in fact,
+/// standing there.
+#[test]
+fn fails_closed_old_format_c4_proof_against_new_verifier() {
+    let old = c4_proof(TraceLeaf::LegacyRowLeaf);
+    let new = c4_proof(TraceLeaf::Canonical);
+
+    assert_eq!(
+        old.proof_bytes.len(),
+        new.proof_bytes.len(),
+        "C4 is the sharp case precisely because the two layouts are the same \
+         size (16*tw - 64 == 0 at tw=4). If this ever differs, this test has \
+         stopped being the sharp case and the assertion below proves less.",
+    );
+    assert_ne!(
+        old.root, new.root,
+        "row-leaf and pair-leaf trees must commit to different roots, or there \
+         is no version skew to fail closed on",
+    );
+
+    let proof = GenericCompactProof::from_bytes(&old.proof_bytes, &CONFIG_CONFIDENTIAL_BALANCE)
+        .expect("an old-format C4 proof parses — same length, same boundaries");
+    let err = verify_generic(&proof, 4, &old.public_inputs, &CONFIG_CONFIDENTIAL_BALANCE)
+        .expect_err("an old-format proof must NOT verify against the new verifier");
+    assert!(
+        matches!(err, VerifyError::MerkleProofFailed),
+        "an old-format C4 proof must be rejected at the Merkle check — anything \
+         else means it got past the trace commitment. got {err:?}",
+    );
+}
+
+/// **Direction 1, length-mismatch case.** Same skew on C1 (`trace_width == 3`),
+/// where the old layout is `27 * 16 = 432` bytes LONGER. Rejection may come from
+/// the parser or from a downstream check; the property is that it comes.
+#[test]
+fn fails_closed_old_format_c1_proof_against_new_verifier() {
+    let old = c1_proof(TraceLeaf::LegacyRowLeaf);
+    let new = c1_proof(TraceLeaf::Canonical);
+
+    assert_eq!(
+        old.proof_bytes.len(),
+        new.proof_bytes.len() + 432,
+        "C1: nq * (16*tw - 64) = 27 * -16 = -432, so the OLD layout is 432 \
+         bytes longer than Route C",
+    );
+
+    match GenericCompactProof::from_bytes(&old.proof_bytes, &CONFIG_POOL_COMMITMENT) {
+        // Trailing bytes are ignored by the parser, so it may well parse. What
+        // matters is that verification does not succeed.
+        Some(proof) => {
+            let err = verify_generic(&proof, 1, &old.public_inputs, &CONFIG_POOL_COMMITMENT)
+                .expect_err("old-format C1 proof must not verify");
+            println!("[ROUTE C] MEASURED: old-format C1 proof rejected with {err:?}");
+        }
+        None => println!("[ROUTE C] MEASURED: old-format C1 proof rejected at parse"),
+    }
+}
+
+/// **Direction 2.** A Route C opening against the PRE-ROUTE-C rule.
+///
+/// The old verifier's trace check was, verbatim,
+/// `merkle::verify_merkle_path(trace_root, row_at_pos, pos, path)` — one row per
+/// leaf, index `pos`, depth `merkle_depth`. That function is still exported and
+/// unchanged, so this runs the old rule itself rather than a re-implementation of
+/// it. (It is the old *rule*, not the old *binary*; the two-binary check is a
+/// separate manual measurement, see the session notes.)
+///
+/// The positive control is the half that makes this a test: the old rule must
+/// still ACCEPT an old-format proof. Without that, "the old rule says no" could
+/// just mean the old rule is broken.
+#[test]
+fn fails_closed_route_c_opening_against_the_legacy_row_leaf_rule() {
+    let md = CONFIG_POOL_COMMITMENT.merkle_depth;
+
+    // Positive control: old proof, old rule -> accepted.
+    let old = c1_proof(TraceLeaf::LegacyRowLeaf);
+    let old_parsed = old_layout_trace_openings(&CONFIG_POOL_COMMITMENT, &old.proof_bytes);
+    let mut controls = 0;
+    for (pos, row, path) in &old_parsed {
+        assert_eq!(path.len(), md * 32, "old layout carries a full-depth path");
+        assert!(
+            merkle::verify_merkle_path(&old.trace_root_bytes(), row, *pos, path),
+            "the pre-Route-C rule must accept a pre-Route-C opening at pos={pos} \
+             — otherwise the negative half of this test is vacuous",
+        );
+        controls += 1;
+    }
+    assert_eq!(controls, CONFIG_POOL_COMMITMENT.num_queries);
+
+    // The real direction: Route C proof, old rule -> rejected.
+    let data = c1_proof(TraceLeaf::Canonical);
+    let proof = GenericCompactProof::from_bytes(&data.proof_bytes, &CONFIG_POOL_COMMITMENT)
+        .expect("parse Route C proof");
+    let root = data.trace_root_bytes();
+    let mut checked = 0;
+    for query in &proof.queries {
+        let pos = query.position as usize;
+        let path = query.merkle_path();
+        assert_eq!(path.len(), (md - 1) * 32, "Route C path is one level shallower");
+
+        // (a) as-is: the old rule walks md-1 levels and lands nowhere.
+        assert!(
+            !merkle::verify_merkle_path(&root, query.trace_values_bytes(), pos, path),
+            "the pre-Route-C rule accepted a Route C opening at pos={pos}",
+        );
+        // (b) generously padded to the old depth, so the failure is not merely a
+        //     length accident.
+        let mut padded = path.to_vec();
+        padded.extend_from_slice(&[0u8; 32]);
+        assert!(
+            !merkle::verify_merkle_path(&root, query.trace_values_bytes(), pos, &padded),
+            "the pre-Route-C rule accepted a zero-padded Route C opening at pos={pos}",
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, CONFIG_POOL_COMMITMENT.num_queries);
+}
+
+/// Read `(position, row_at_pos, full_depth_path)` for every query out of a
+/// PRE-Route-C proof buffer. Only used by the positive control above; the layout
+/// is asserted against the buffer length so it cannot silently rot.
+fn old_layout_trace_openings(
+    cfg: &CircuitConfig,
+    bytes: &[u8],
+) -> Vec<(usize, Vec<u8>, Vec<u8>)> {
+    let tw = cfg.trace_width;
+    let md = cfg.merkle_depth;
+    let num_folds = (cfg.lde_size / cfg.fri_final_poly_size).trailing_zeros() as usize;
+    let num_commits = num_folds - 1;
+
+    let mut off = 32 + 32 + tw * 8 + tw * 8 + 8 + 8;
+    assert_eq!(bytes[off] as usize, num_commits, "num_fri_layers byte drift");
+    off += 1 + num_commits * 32;
+    off += 2 + cfg.fri_final_poly_size * 8;
+    off += 8 + 2;
+
+    let fri_per_query: usize = (0..num_commits).map(|i| 16 + (md - i - 2) * 32).sum();
+    // Pre-Route-C: TWO rows + TWO depth-md paths.
+    let per_query = 4 + 2 * (tw * 8) + 2 * (md * 32) + 8 + (md - 1) * 32 + fri_per_query;
+    assert_eq!(
+        off + per_query * cfg.num_queries + cfg.num_queries * 8,
+        bytes.len(),
+        "pre-Route-C layout drift in this test's offsets",
+    );
+
+    (0..cfg.num_queries)
+        .map(|q| {
+            let base = off + q * per_query;
+            let pos = u32::from_le_bytes(bytes[base..base + 4].try_into().unwrap()) as usize;
+            let row = bytes[base + 4..base + 4 + tw * 8].to_vec();
+            let path_start = base + 4 + 2 * (tw * 8);
+            let path = bytes[path_start..path_start + md * 32].to_vec();
+            (pos, row, path)
+        })
+        .collect()
+}
+
+/// `GenericCompactProofData.root` is the trace root; give it a name that says so.
+trait TraceRootBytes {
+    fn trace_root_bytes(&self) -> [u8; 32];
+}
+impl TraceRootBytes for p01_stark::compact::GenericCompactProofData {
+    fn trace_root_bytes(&self) -> [u8; 32] {
+        self.root
+    }
+}
+
+// ============================================================================
+// 2. TAMPER — the mirror rows are genuinely authenticated
+// ============================================================================
+
+/// THE test that distinguishes "the mirror row rides along unauthenticated" from
+/// "the mirror row is bound to `trace_root`". Pre-Route-C the mirror row did not
+/// exist on the wire at all; the entire point of the route is that it arrives
+/// already authenticated. Flip one byte of it and the root check must fail.
+#[test]
+fn route_c_rejects_a_corrupted_mirror_row() {
+    let data = c1_proof(TraceLeaf::Canonical);
+    for q in 0..3 {
+        let (base, row_len) = trace_block_offsets(&CONFIG_POOL_COMMITMENT, &data.proof_bytes, q);
+        let mut bytes = data.proof_bytes.clone();
+        // trace_mirror_values sits immediately after trace_values.
+        bytes[base + row_len] ^= 0x01;
+        let err = c1_verify(&bytes, &data.public_inputs)
+            .expect_err("a corrupted trace MIRROR row must be rejected");
+        assert!(
+            matches!(err, VerifyError::MerkleProofFailed),
+            "corrupted mirror row must fail at the Merkle check, got {err:?} (query {q})",
+        );
+    }
+}
+
+/// Same for the mirror of `next_pos` — the fourth row, the one that exists only
+/// because the pair leaf forces it onto the wire.
+#[test]
+fn route_c_rejects_a_corrupted_next_mirror_row() {
+    let data = c1_proof(TraceLeaf::Canonical);
+    for q in 0..3 {
+        let (base, row_len) = trace_block_offsets(&CONFIG_POOL_COMMITMENT, &data.proof_bytes, q);
+        let mut bytes = data.proof_bytes.clone();
+        bytes[base + 3 * row_len] ^= 0x01;
+        let err = c1_verify(&bytes, &data.public_inputs)
+            .expect_err("a corrupted next-mirror row must be rejected");
+        assert!(
+            matches!(err, VerifyError::MerkleProofFailed),
+            "corrupted next-mirror row must fail at the Merkle check, got {err:?} (query {q})",
+        );
+    }
+}
+
+/// Swapping the two halves inside the leaf must fail. Trace analogue of B4's
+/// `generic_rejects_wire_level_pair_half_swap`: the verifier picks the (lo, hi)
+/// order from `position`, which is itself transcript-bound, so a prover cannot
+/// choose which side of the mirror its row lands on.
+#[test]
+fn route_c_rejects_a_wire_level_trace_half_swap() {
+    let data = c1_proof(TraceLeaf::Canonical);
+    let mut swapped = 0;
+    for q in 0..CONFIG_POOL_COMMITMENT.num_queries {
+        let (base, row_len) = trace_block_offsets(&CONFIG_POOL_COMMITMENT, &data.proof_bytes, q);
+        let at_pos = data.proof_bytes[base..base + row_len].to_vec();
+        let mirror = data.proof_bytes[base + row_len..base + 2 * row_len].to_vec();
+        if at_pos == mirror {
+            continue; // degenerate; a swap would be a no-op
+        }
+        let mut bytes = data.proof_bytes.clone();
+        bytes[base..base + row_len].copy_from_slice(&mirror);
+        bytes[base + row_len..base + 2 * row_len].copy_from_slice(&at_pos);
+        let err = c1_verify(&bytes, &data.public_inputs)
+            .expect_err("a trace half swap must be rejected");
+        assert!(
+            matches!(err, VerifyError::MerkleProofFailed),
+            "trace half swap must fail at the Merkle check, got {err:?} (query {q})",
+        );
+        swapped += 1;
+        if swapped == 3 {
+            break;
+        }
+    }
+    assert!(swapped > 0, "no query had distinct halves — test proved nothing");
+}
+
+// ============================================================================
+// 3. THE LEGACY C0 PATH — its own parser, its own verifier, same tamper gates
+// ============================================================================
+
+/// C0 is not a variant of the generic path; it has a separate parser
+/// (`CompactStarkProof`) and a separate verifier (`verify_subscriber_ownership`).
+/// Route C touched both, so both need the gates.
+#[test]
+fn route_c_legacy_c0_honest_proof_still_verifies() {
+    for secret in [42u64, 7, 0xDEAD_BEEF] {
+        let pd = p01_stark::compact::generate_compact_proof(secret);
+        let parsed = p01_stark_verifier::compact_proof::CompactStarkProof::from_bytes(
+            &pd.proof_bytes,
+        )
+        .expect("parse legacy C0 proof under the Route C layout");
+        verify_subscriber_ownership(
+            &parsed,
+            p01_stark_verifier::goldilocks::Felt::new(pd.commitment),
+        )
+        .unwrap_or_else(|e| panic!("honest C0 proof must verify (secret={secret}): {e:?}"));
+    }
+}
+
+/// C0's wire size is fixed, so pin it: `45,001` bytes, `432` fewer than the
+/// pre-Route-C `45,433` (`nq * (16*tw - 64) = 27 * (48 - 64) = -432`).
+#[test]
+fn route_c_legacy_c0_wire_size_matches_the_closed_form() {
+    let pd = p01_stark::compact::generate_compact_proof(42);
+    let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    let tw = cfg.trace_width;
+    let md = cfg.merkle_depth;
+    let nq = cfg.num_queries;
+    let num_commits = (cfg.lde_size / cfg.fri_final_poly_size).trailing_zeros() as usize - 1;
+    let fri_per_query: usize = (0..num_commits).map(|i| 16 + (md - i - 2) * 32).sum();
+
+    let expected = 32 + 32 + tw * 8 + tw * 8 + 8 + 8
+        + 1 + num_commits * 32
+        + 2 + cfg.fri_final_poly_size * 8
+        + 8 + 2
+        + nq * (4 + 4 * (tw * 8) + 2 * ((md - 1) * 32) + 8 + (md - 1) * 32 + fri_per_query)
+        + nq * 8;
+
+    assert_eq!(pd.proof_bytes.len(), expected, "C0 wire size drift");
+    assert_eq!(pd.proof_bytes.len(), 45_001, "C0 must be 45,001 bytes post-Route-C");
+    assert_eq!(
+        45_433 - pd.proof_bytes.len() as i64,
+        -(nq as i64 * (16 * tw as i64 - 64)),
+        "C0 delta must match the closed form nq * (16*tw - 64) = -432",
+    );
+}
+
+/// Tamper the legacy C0 mirror row. Same claim as the generic case, different
+/// parser — a fix applied to one and not the other would slip past every other
+/// test in the suite.
+#[test]
+fn route_c_legacy_c0_rejects_a_corrupted_mirror_row() {
+    let pd = p01_stark::compact::generate_compact_proof(42);
+    let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    let (base, row_len) = legacy_c0_trace_block_offsets(cfg, &pd.proof_bytes, 0);
+
+    for (label, slot) in [("mirror", 1usize), ("next-mirror", 3)] {
+        let mut bytes = pd.proof_bytes.clone();
+        bytes[base + slot * row_len] ^= 0x01;
+        let parsed =
+            p01_stark_verifier::compact_proof::CompactStarkProof::from_bytes(&bytes)
+                .expect("still parses — only a value byte changed");
+        let err = verify_subscriber_ownership(
+            &parsed,
+            p01_stark_verifier::goldilocks::Felt::new(pd.commitment),
+        )
+        .expect_err("a corrupted C0 mirror row must be rejected");
+        assert!(
+            matches!(err, VerifyError::MerkleProofFailed),
+            "corrupted C0 {label} row must fail at the Merkle check, got {err:?}",
+        );
+    }
+}
+
+/// Swap the two halves of a legacy C0 leaf.
+#[test]
+fn route_c_legacy_c0_rejects_a_wire_level_trace_half_swap() {
+    let pd = p01_stark::compact::generate_compact_proof(42);
+    let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    let mut swapped = 0;
+    for q in 0..cfg.num_queries {
+        let (base, row_len) = legacy_c0_trace_block_offsets(cfg, &pd.proof_bytes, q);
+        let at_pos = pd.proof_bytes[base..base + row_len].to_vec();
+        let mirror = pd.proof_bytes[base + row_len..base + 2 * row_len].to_vec();
+        if at_pos == mirror {
+            continue;
+        }
+        let mut bytes = pd.proof_bytes.clone();
+        bytes[base..base + row_len].copy_from_slice(&mirror);
+        bytes[base + row_len..base + 2 * row_len].copy_from_slice(&at_pos);
+        let parsed =
+            p01_stark_verifier::compact_proof::CompactStarkProof::from_bytes(&bytes)
+                .expect("still parses");
+        let err = verify_subscriber_ownership(
+            &parsed,
+            p01_stark_verifier::goldilocks::Felt::new(pd.commitment),
+        )
+        .expect_err("a C0 trace half swap must be rejected");
+        assert!(
+            matches!(err, VerifyError::MerkleProofFailed),
+            "C0 half swap must fail at the Merkle check, got {err:?} (query {q})",
+        );
+        swapped += 1;
+        if swapped == 3 {
+            break;
+        }
+    }
+    assert!(swapped > 0, "no C0 query had distinct halves — test proved nothing");
+}
+
+fn legacy_c0_trace_block_offsets(
+    cfg: &CircuitConfig,
+    bytes: &[u8],
+    q: usize,
+) -> (usize, usize) {
+    // The legacy header layout is byte-identical to the generic one for tw=3,
+    // md=9, so the generic helper's asserted arithmetic applies unchanged.
+    trace_block_offsets(cfg, bytes, q)
+}
+
+// ============================================================================
+// 4. THE C0 DISPATCH DECISION
+// ============================================================================
+
+/// [C0 GATE] The generic dispatch refuses `circuit_id == 0` by name.
+///
+/// Four shipped instructions hard-require `circuit_id == 0`
+/// (`zk_shielded::{pause,resume,cancel_private_stark}` and
+/// `p01_quantum_wallet/src/stark.rs:42`), and the generic path cannot verify an
+/// honest C0 proof anyway. So the legacy path stays and the generic path says no
+/// — out loud, with its own error, before doing any work.
+#[test]
+fn c0_is_hard_gated_off_the_generic_dispatch() {
+    let pd = p01_stark::compact::generate_compact_proof(42);
+    let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    let parsed = GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+        .expect("an honest C0 proof DOES parse as generic — the gate is what stops it");
+    let err = verify_generic(&parsed, 0, &[pd.commitment], cfg)
+        .expect_err("the generic dispatch must refuse circuit 0");
+    assert!(
+        matches!(err, VerifyError::CircuitZeroIsLegacyOnly),
+        "circuit 0 must be refused explicitly, not fail incidentally: got {err:?}",
+    );
+}
+
+/// [C0 GATE] The refusal must be a refusal, not a silent mis-verification: a
+/// TAMPERED C0 proof handed to the generic path must fail too, and with the same
+/// named error — the gate cannot be a path that "happens to work" for good proofs
+/// and leaks for bad ones.
+#[test]
+fn c0_gate_refuses_tampered_proofs_the_same_way() {
+    let pd = p01_stark::compact::generate_compact_proof(42);
+    let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    let mut bytes = pd.proof_bytes.clone();
+    bytes[64] ^= 0x01; // ood_current[0]
+    let parsed = GenericCompactProof::from_bytes(&bytes, cfg).expect("parses");
+    let err = verify_generic(&parsed, 0, &[pd.commitment], cfg).expect_err("must refuse");
+    assert!(
+        matches!(err, VerifyError::CircuitZeroIsLegacyOnly),
+        "the C0 gate must fire before any proof-dependent check: got {err:?}",
+    );
+}
+
+// ============================================================================
+// 5. STRUCTURAL — the access pattern actually permits pair-leafing
+// ============================================================================
+
+/// `next_pos` is never the mirror of `pos`, so the two trace openings are always
+/// two DISTINCT pair leaves. If `lde_size/2` ever divided `blowup` the pair index
+/// would alias and the format would be ambiguous. Pin it on all seven configs.
+#[test]
+fn next_pos_is_never_the_mirror_and_never_aliases_the_pair_index() {
+    for cfg in SHIPPING {
+        let n = cfg.lde_size;
+        let half = n / 2;
+        let b = cfg.blowup;
+        assert!(half % b == 0, "lde/2 must be a multiple of blowup for cfg lde={n}");
+        assert!(half > b, "lde/2 must exceed blowup for cfg lde={n}");
+        for pos in 0..n {
+            let next = (pos + b) % n;
+            assert_ne!(next, pos ^ half, "next_pos is the mirror at pos={pos}, lde={n}");
+            assert_ne!(
+                next & (half - 1),
+                pos & (half - 1),
+                "pair index aliases at pos={pos}, lde={n}",
+            );
+        }
+    }
+}
+
+/// THE identity that makes Route C over-deliver: the mirror of `next_pos` is the
+/// same point as the next row of the mirror of `pos`.
+///
+/// ```text
+///   mirror(next(pos)) = (pos + blowup + lde/2) mod lde = next(mirror(pos))
+/// ```
+///
+/// So the four rows a query carries are two COMPLETE transition frames:
+/// `(pos, pos+blowup)` and `(pos^half, pos^half+blowup)`. Nothing extra must be
+/// opened to spot-check the transition constraint at the mirror position — which
+/// is what makes this plumbing worth landing ahead of the check that uses it.
+#[test]
+fn mirror_of_next_equals_next_of_mirror() {
+    for cfg in SHIPPING {
+        let n = cfg.lde_size;
+        let half = n / 2;
+        let b = cfg.blowup;
+        for pos in 0..n {
+            let next = (pos + b) % n;
+            let mirror = pos ^ half;
+            assert_eq!(
+                next ^ half,
+                (mirror + b) % n,
+                "mirror/next identity broken at pos={pos}, lde={n}",
+            );
+        }
+    }
+}
+
+/// The trace-alignment leak surface does not widen in PROBABILITY, only in
+/// VOLUME: because `blowup | lde/2`, `pos` is trace-aligned iff its mirror is. So
+/// Route C never makes a proof leak a raw trace row at a position the baseline
+/// would not also have leaked — but when a query does land trace-aligned it now
+/// exposes FOUR raw rows instead of two.
+///
+/// This matters because the LDE has no coset offset (see
+/// `stark-lde-no-coset-witness-leak-2026-07-27`): raw trace rows in a proof are a
+/// live witness leak, and Route C doubles the volume per unlucky query. The coset
+/// fix is a separate, still-outstanding change.
+#[test]
+fn mirror_is_trace_aligned_exactly_when_position_is() {
+    for cfg in SHIPPING {
+        let n = cfg.lde_size;
+        let half = n / 2;
+        let b = cfg.blowup;
+        for pos in 0..n {
+            assert_eq!(
+                pos % b == 0,
+                (pos ^ half) % b == 0,
+                "alignment parity differs at pos={pos}, lde={n}",
+            );
+            assert_eq!(
+                ((pos + b) % n) % b == 0,
+                (((pos + b) % n) ^ half) % b == 0,
+            );
+        }
+    }
+}
+
+// ============================================================================
+// 6. POSITIVE — the mirror slot really holds the row at the mirror position
+// ============================================================================
+
+/// The tamper tests show the mirror row is bound to `trace_root`. They do NOT by
+/// themselves show it is the row at `pos ^ (lde/2)` rather than some other
+/// committed row. This does.
+///
+/// Search seeds until some proof has two queries `a`, `b` with
+/// `pos_b == pos_a ^ half`. When that happens `row(pos_b)` is on the wire twice:
+/// once as query `b`'s own trace row, once as query `a`'s mirror row. They must be
+/// byte-identical. The test panics rather than silently skipping if it never
+/// occurs.
+#[test]
+fn mirror_slot_holds_the_row_at_the_mirror_position() {
+    let cfg = &CONFIG_POOL_COMMITMENT;
+    let half = cfg.lde_size / 2;
+    let mut checked = 0usize;
+
+    for seed in 0..40u64 {
+        let data = p01_stark::compact::generate_pool_commitment_proof(
+            seed.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            seed + 1,
+            seed + 2,
+            seed + 3,
+        );
+        let (_, row_len) = trace_block_offsets(cfg, &data.proof_bytes, 0);
+        let proof = GenericCompactProof::from_bytes(&data.proof_bytes, cfg).expect("parse");
+
+        for a in 0..proof.queries.len() {
+            for b in 0..proof.queries.len() {
+                let pa = proof.queries[a].position as usize;
+                let pb = proof.queries[b].position as usize;
+                if pb != pa ^ half {
+                    continue;
+                }
+                let (base_a, _) = trace_block_offsets(cfg, &data.proof_bytes, a);
+                let (base_b, _) = trace_block_offsets(cfg, &data.proof_bytes, b);
+                let mirror_of_a = &data.proof_bytes[base_a + row_len..base_a + 2 * row_len];
+                let row_of_b = &data.proof_bytes[base_b..base_b + row_len];
+                assert_eq!(
+                    mirror_of_a, row_of_b,
+                    "query {a}'s mirror slot (pos {pa}) must equal query {b}'s own row (pos {pb})",
+                );
+                checked += 1;
+            }
+        }
+        if checked >= 4 {
+            break;
+        }
+    }
+
+    assert!(
+        checked > 0,
+        "no mirror-pair collision found in 40 seeds — this test proved nothing",
+    );
+}
+
+// ============================================================================
+// 7. WIRE SIZE — the closed form, on every shipping circuit
+// ============================================================================
+
+/// Route C's byte delta is `nq * (16*trace_width - 64)` per circuit: two extra
+/// rows (`+2 * tw * 8`) minus two Merkle levels (`-2 * 32`) per query. Pin the
+/// absolute post-Route-C size of every shipping circuit against that form, from
+/// the pre-Route-C measured baseline.
+#[test]
+fn route_c_wire_sizes_match_the_closed_form() {
+    // (label, pre-Route-C measured bytes, actual bytes)
+    let cases: Vec<(&str, usize, &CircuitConfig, usize)> = vec![
+        ("C0", 45_433, &CONFIG_SUBSCRIBER_OWNERSHIP,
+            p01_stark::compact::generate_compact_proof(42).proof_bytes.len()),
+        ("C1", 66_233, &CONFIG_POOL_COMMITMENT,
+            p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11).proof_bytes.len()),
+        ("C2", 66_681, &CONFIG_BALANCE_PROOF,
+            p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999)
+                .proof_bytes.len()),
+        ("C4", 78_377, &CONFIG_CONFIDENTIAL_BALANCE, {
+            let (a, b, c, d, e, f, g, h) = C4_ARGS;
+            p01_stark::compact::generate_confidential_balance_compact_proof(
+                a, b, c, d, e, f, g, h,
+            )
+            .proof_bytes
+            .len()
+        }),
+    ];
+
+    for (label, baseline, cfg, actual) in cases {
+        let expected_delta = cfg.num_queries as i64 * (16 * cfg.trace_width as i64 - 64);
+        let measured_delta = actual as i64 - baseline as i64;
+        assert_eq!(
+            measured_delta, expected_delta,
+            "{label}: byte delta {measured_delta} != closed form \
+             nq*(16*tw-64) = {expected_delta} (baseline {baseline}, actual {actual})",
+        );
+    }
+}
