@@ -36,6 +36,32 @@
  * submission proves that. The record's `accepts_client_blob_sha256` is the place
  * that fact gets written down once someone has done it.
  *
+ * # What `--verify-onchain` establishes, exactly
+ *
+ * It refetches the programdata account and re-derives three things from the
+ * bytes it gets back: `deployed.elf_sha256`, `deployed.last_deployed_slot` and
+ * `deployed.proof_format_generation`. Those three fields cannot be edited into
+ * agreement, because the chain is asked what they are.
+ *
+ * It can only do that because the record does NOT get to say where to look. The
+ * endpoint comes from `CLUSTERS` below, and the program id from Anchor.toml, both
+ * keyed by a cluster LABEL. Until 2026-07-30 the endpoint was `deployed.rpc_url`,
+ * read out of the record, and an unreachable endpoint was a SKIP that still
+ * exited 0. MEASURED: editing three fields of the record — generation to `b1`,
+ * `accepts_client_blob_sha256` to the blob's own hash, `rpc_url` to
+ * `https://api.devnet.solana.invalid` — made `--verify-onchain` print
+ * "on-chain SKIPPED" and then "PASS", exit code 0, with the chain never
+ * contacted. So `rpc_url` is gone from the record and a record that still
+ * carries one is rejected; an unresolvable cluster label is rejected; and a
+ * cluster that cannot be reached is a hard failure whenever nothing else was
+ * going to fail the build.
+ *
+ * It does NOT establish `deployed.accepts_client_blob_sha256`. Nothing on chain
+ * records which client blob a deployment accepts. That field is a human
+ * attestation that someone submitted a proof and watched it land, and this
+ * script cannot check it against anything. It is the one field in the `deployed`
+ * block that is believed rather than verified.
+ *
  * # Generation detection
  *
  * Both sides are classified by scanning for message literals that B1 introduced,
@@ -93,6 +119,51 @@ const ELF_CONTROLS = [
   '[verify] OOD z mismatch: got ',
   'STARK proof verified for circuit ',
 ];
+
+// ---------------------------------------------------------------------------
+// Where to look. Pinned HERE, never taken from the record.
+// ---------------------------------------------------------------------------
+
+/**
+ * `deployed.cluster` is a LABEL. It selects an endpoint from this table and a
+ * program id from Anchor.toml. The record does not get to name either one, so it
+ * cannot redirect the on-chain leg at a chain, or a program, of its choosing.
+ *
+ * `anchorSection` is the Anchor.toml table for that cluster; Anchor's own name
+ * for mainnet is `programs.mainnet`, not `programs.mainnet-beta`. A label with no
+ * entry here is a hard failure — there is no default and no fallback, because a
+ * fallback is how an unrecognised label becomes a silent pass.
+ */
+const CLUSTERS = {
+  devnet: { endpoint: 'https://api.devnet.solana.com', anchorSection: 'programs.devnet' },
+  'mainnet-beta': { endpoint: 'https://api.mainnet-beta.solana.com', anchorSection: 'programs.mainnet' },
+  localnet: { endpoint: 'http://127.0.0.1:8899', anchorSection: 'programs.localnet' },
+};
+
+/** The Anchor.toml key naming the verifier program, in every cluster table. */
+const ANCHOR_PROGRAM_KEY = 'p01_stark_verifier';
+
+/**
+ * Read `p01_stark_verifier` out of one Anchor.toml `[programs.*]` table.
+ * Anchor.toml is what `anchor deploy` targets and what `declare_id!` is kept in
+ * step with, so it is the repo's answer to "which program is the verifier".
+ * Returns null if the table or the key is absent.
+ */
+function programIdFromAnchorToml(anchorSection) {
+  const text = readFileSync(resolve(REPO, 'Anchor.toml'), 'utf8');
+  let inSection = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, '').trim();
+    if (line.startsWith('[') && line.endsWith(']')) {
+      inSection = line.slice(1, -1) === anchorSection;
+      continue;
+    }
+    if (!inSection) continue;
+    const m = line.match(/^([A-Za-z0-9_]+)\s*=\s*"([^"]+)"\s*$/);
+    if (m !== null && m[1] === ANCHOR_PROGRAM_KEY) return m[2];
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 
@@ -175,8 +246,7 @@ async function rpc(url, method, params) {
 
 /**
  * Read the deployed program's ELF straight off the BPFLoaderUpgradeable
- * programdata account. Throws on any RPC problem; the caller decides whether an
- * unreachable cluster is a SKIP or a failure.
+ * programdata account. Throws on any RPC problem.
  */
 async function readDeployed(rpcUrl, programId) {
   const prog = await rpc(rpcUrl, 'getAccountInfo', [programId, { encoding: 'base64' }]);
@@ -219,6 +289,35 @@ async function readDeployed(rpcUrl, programId) {
   };
 }
 
+/** How many times to try the chain before calling it unreachable. */
+const RPC_ATTEMPTS = 3;
+
+/**
+ * `readDeployed` with a bounded retry. This exists because the alternative to a
+ * flake is now a RED BUILD rather than a skip, and public devnet returns a
+ * JSON-RPC error under rate limiting often enough to matter.
+ *
+ * It cannot manufacture a pass. Every attempt has to reach the RPC, get a
+ * programdata account back and parse an ELF out of it; there is no branch here
+ * that returns anything on failure. All it can do is turn N transient errors
+ * into one report of the last one.
+ */
+async function readDeployedWithRetry(rpcUrl, programId) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= RPC_ATTEMPTS; attempt += 1) {
+    try {
+      return await readDeployed(rpcUrl, programId);
+    } catch (e) {
+      lastErr = e;
+      if (attempt < RPC_ATTEMPTS) {
+        console.log(`[deployed-verifier] chain read attempt ${attempt}/${RPC_ATTEMPTS} failed (${e.message}); retrying`);
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 // ---------------------------------------------------------------------------
 // 1. the record
 // ---------------------------------------------------------------------------
@@ -234,9 +333,10 @@ try {
   process.exit(1);
 }
 
-// The instructions in the record are the only thing standing between a red gate
-// and someone "fixing" it by editing the wrong side. Stripping them is a defeat
-// of the gate, so they are required to exist and be non-trivial.
+// The instructions in the record are what tells whoever hits a red gate which
+// side to fix. Deleting them would not defeat the on-chain leg, but it would
+// leave a red gate with no stated remedy, which is how a red gate gets quietly
+// reinterpreted. They are required to exist and be non-trivial.
 const REQUIRED_DOC_FIELDS = [
   '_WHAT_THIS_IS',
   '_HOW_TO_MAKE_THE_GATE_GREEN',
@@ -257,7 +357,6 @@ const deployed = record.deployed ?? {};
 const clientRec = record.client_blob ?? {};
 for (const [path, value] of [
   ['deployed.cluster', deployed.cluster],
-  ['deployed.rpc_url', deployed.rpc_url],
   ['deployed.program_id', deployed.program_id],
   ['deployed.elf_sha256', deployed.elf_sha256],
   ['deployed.proof_format_generation', deployed.proof_format_generation],
@@ -270,15 +369,69 @@ for (const [path, value] of [
 }
 
 // ---------------------------------------------------------------------------
+// 1b. resolve WHERE to look — from the cluster label, not from the record
+// ---------------------------------------------------------------------------
+
+/** Endpoint and program id for this run, or null if the label did not resolve. */
+let endpoint = null;
+let programId = null;
+
+if ('rpc_url' in deployed) {
+  fail(`${RECORD_REL} carries deployed.rpc_url`, [
+    'The endpoint is pinned in deployed-verifier-check.mjs and keyed by deployed.cluster. It is not the',
+    "record's to choose, because a record that names its own endpoint can name one that does not answer,",
+    'and an endpoint that does not answer used to be a SKIP that still exited 0. Delete the field.',
+  ]);
+}
+
+if (typeof deployed.cluster === 'string' && deployed.cluster.length > 0) {
+  const cfg = CLUSTERS[deployed.cluster];
+  if (cfg === undefined) {
+    fail(`${RECORD_REL} names an unknown cluster ${JSON.stringify(deployed.cluster)}`, [
+      `Known labels: ${Object.keys(CLUSTERS).join(', ')}.`,
+      'There is deliberately no default: an unrecognised label must not quietly become devnet.',
+    ]);
+  } else {
+    endpoint = cfg.endpoint;
+    const anchorId = programIdFromAnchorToml(cfg.anchorSection);
+    if (anchorId === null) {
+      fail(`Anchor.toml has no ${ANCHOR_PROGRAM_KEY} under [${cfg.anchorSection}]`, [
+        'That table is where this script learns which program to read. Without it the cluster label',
+        'resolves to an endpoint but not to a program, and the on-chain leg has nothing to fetch.',
+      ]);
+    } else if (anchorId !== deployed.program_id) {
+      fail(`${RECORD_REL} and Anchor.toml disagree about the verifier program`, [
+        `  record deployed.program_id           ${deployed.program_id}`,
+        `  Anchor.toml [${cfg.anchorSection}] ${ANCHOR_PROGRAM_KEY}  ${anchorId}`,
+        'The Anchor.toml value wins and is what gets fetched. This is not a formality: if the record could',
+        'name the program, a record could point the on-chain leg at some other program that happens to be',
+        'the generation it wants to claim, and the leg would agree with it.',
+      ]);
+      programId = anchorId;
+    } else {
+      programId = anchorId;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // --measure: print a fresh `deployed` block and stop
 // ---------------------------------------------------------------------------
 
 if (wantMeasure) {
-  const rpcUrl = deployed.rpc_url ?? 'https://api.devnet.solana.com';
-  const programId = deployed.program_id;
+  if (endpoint === null || programId === null) {
+    console.error('[deployed-verifier] --measure cannot run: the cluster label did not resolve.');
+    for (const f of failures) {
+      console.error(`\n  ${f.title}`);
+      for (const line of f.lines) console.error(line ? `    ${line}` : '');
+    }
+    process.exit(1);
+  }
+  const rpcUrl = endpoint;
+  console.error(`[deployed-verifier] --measure reading ${programId} on ${deployed.cluster} (${rpcUrl})`);
   let chain;
   try {
-    chain = await readDeployed(rpcUrl, programId);
+    chain = await readDeployedWithRetry(rpcUrl, programId);
   } catch (e) {
     console.error(`[deployed-verifier] --measure could not read ${programId} on ${rpcUrl}: ${e.message}`);
     process.exit(1);
@@ -288,8 +441,7 @@ if (wantMeasure) {
   console.log(
     JSON.stringify(
       {
-        cluster: deployed.cluster ?? '<set me>',
-        rpc_url: rpcUrl,
+        cluster: deployed.cluster,
         program_id: programId,
         programdata_address: chain.programdataAddress,
         loader: chain.loader,
@@ -431,8 +583,9 @@ if (blobGen !== null && deployedGen !== blobGen) {
     '',
     'SHIP THE PROGRAM FIRST. Deploy programs/p01_stark_verifier to the cluster above, then re-measure:',
     '  node packages/stark-prover/scripts/deployed-verifier-check.mjs --measure',
-    `and update ${RECORD_REL}. Editing that file without redeploying makes this gate green and changes`,
-    'nothing on chain; --verify-onchain exists to catch exactly that edit.',
+    `and update ${RECORD_REL}. Editing that file without redeploying satisfies the checks above and`,
+    'changes nothing on chain. The --verify-onchain leg refetches the deployment and rejects that edit,',
+    'and every build and publish step that runs this script runs it with --verify-onchain.',
   ]);
 } else if (deployed.accepts_client_blob_sha256 !== blobSha) {
   // Same generation, but this exact artifact has never been proven against the
@@ -451,21 +604,60 @@ if (blobGen !== null && deployedGen !== blobGen) {
 // 6. optional: prove the record against the chain
 // ---------------------------------------------------------------------------
 //
-// This is the leg that cannot be cheated by editing the record. Everything above
-// trusts `deployed.*`; this refetches it.
+// Sections 1 to 5 read `deployed.*` and believe it. This one refetches the three
+// fields that describe the deployment — elf_sha256, last_deployed_slot and
+// proof_format_generation — and re-derives them from the programdata account, so
+// an edit to any of the three does not survive here.
 //
-// A cluster we cannot reach is reported as SKIPPED and does not fail the build —
-// a network flake must not block a merge. A cluster we CAN reach that disagrees
-// with the record is a hard failure. So the record can only be believed when the
-// network is down, and it is checked whenever it is up.
+// It only means that because the record does not say where to look: the endpoint
+// comes from CLUSTERS and the program id from Anchor.toml.
+//
+// A cluster that cannot be reached is a HARD FAILURE whenever nothing else was
+// going to fail this run. That is the point. It used to be a SKIP that still
+// exited 0, which meant a record that named an unreachable endpoint got believed
+// on its own authority; MEASURED, three edited fields passed --verify-onchain
+// without the chain being contacted. A verification that could not reach the
+// chain has established nothing, and must not report success on the strength of
+// the file it was checking.
+//
+// When the run is already red the unreachable cluster is reported and not
+// counted again: the exit code is 1 either way, and adding a second failure to a
+// build that is already failing only buries the real one.
 
 if (wantOnchain) {
+  // Snapshot BEFORE the chain read: "was anything else going to fail this run?"
+  const nothingElseWouldFail = failures.length === 0;
+
   let chain = null;
-  try {
-    chain = await readDeployed(deployed.rpc_url, deployed.program_id);
-  } catch (e) {
-    console.log(`[deployed-verifier] on-chain SKIPPED — ${deployed.rpc_url} unreachable or unusable: ${e.message}`);
-    console.log('[deployed-verifier] the offline result above still stands; rerun when the cluster is reachable.');
+  let chainErr = null;
+  if (endpoint === null || programId === null) {
+    chainErr = new Error('the cluster label did not resolve to an endpoint and a program id (see the failures above)');
+  } else {
+    console.log(`[deployed-verifier] on-chain reading ${programId} on ${deployed.cluster} (${endpoint})`);
+    try {
+      chain = await readDeployedWithRetry(endpoint, programId);
+    } catch (e) {
+      chainErr = e;
+    }
+  }
+
+  if (chainErr !== null) {
+    if (nothingElseWouldFail) {
+      fail('the on-chain leg could not run, and nothing else was going to fail this build', [
+        `  cluster  ${deployed.cluster}`,
+        `  endpoint ${endpoint ?? '(unresolved)'}`,
+        `  program  ${programId ?? '(unresolved)'}`,
+        `  error    ${chainErr.message}`,
+        '',
+        `Tried ${RPC_ATTEMPTS} times. Everything else in this run passed, which means the only thing left`,
+        'saying the record is true is the record. That is not a verification, so this is a failure and not',
+        'a skip. Rerun when the cluster answers.',
+      ]);
+    } else {
+      console.log(`[deployed-verifier] on-chain leg did NOT run: ${chainErr.message}`);
+      console.log('[deployed-verifier] this run is already red for the reasons below, so the unreachable cluster is');
+      console.log('[deployed-verifier] not counted twice. Rerun when it answers to get the on-chain verdict too.');
+    }
   }
 
   if (chain) {
@@ -498,15 +690,21 @@ if (wantOnchain) {
         `  derived from the deployed bytes          ${chainCls.generation}`,
         `  B1 markers found on chain                ${JSON.stringify(chainCls.hits)}`,
         '',
-        'This is the check that makes the record unfakeable. The deployed program is what it is; editing',
-        'the JSON to say otherwise turns the offline gate green and is caught here. Deploy the program.',
+        'The generation was re-derived from the bytes the chain returned, not read from the record, and the',
+        'endpoint and program id were not the record\'s to choose. Editing the JSON turns the offline half',
+        'green and is caught here. Deploy the program.',
       ]);
     } else {
       console.log(`[deployed-verifier] on-chain ok — the chain agrees the deployment is ${chainCls.generation}`);
+      if (deployed.accepts_client_blob_sha256 === blobSha) {
+        console.log('[deployed-verifier] note: accepts_client_blob_sha256 is an attestation. Nothing on chain records');
+        console.log('[deployed-verifier]       which blob a deployment accepts, so this script did not verify it.');
+      }
     }
   }
 } else {
-  console.log('[deployed-verifier] on-chain check not requested (pass --verify-onchain to prove the record against the cluster)');
+  console.log('[deployed-verifier] on-chain check not requested — this run checked the record against itself only.');
+  console.log('[deployed-verifier] pass --verify-onchain to refetch the deployment and prove the record against it.');
 }
 
 // ---------------------------------------------------------------------------
@@ -523,4 +721,8 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('\n[deployed-verifier] PASS — the shipped prover matches the recorded deployment.');
+console.log(
+  wantOnchain
+    ? '\n[deployed-verifier] PASS — the shipped prover matches the deployment, and the chain was asked and agreed.'
+    : '\n[deployed-verifier] PASS — the shipped prover matches the RECORDED deployment. The chain was not asked.',
+);
