@@ -347,6 +347,14 @@ jobs:
       #     reports CU for bytes that predate the change under test. The old behaviour
       #     was a `println!` warning, and MEASURED: a green run on stale bytes happened
       #     during this very step's development.
+      #     That fingerprint now covers the COMPILER too (`cargo-build-sbf --version`,
+      #     which reports the platform-tools version with it). It did not, and MEASURED
+      #     on the source-only key: with target/cu-budget holding a 3.1.9 build, re-running
+      #     with P01_CARGO_BUILD_SBF pointed at agave 2.2.14 printed `cache hit` and
+      #     re-reported the 3.1.9 numbers under an unchanged .so sha256. This step exports
+      #     P01_CARGO_BUILD_SBF=active_release (2.2.14 here) while Anchor.toml:3 pins 3.1.9,
+      #     so CI and a local run are exactly one env var apart and the trap was live.
+      #     `build_fingerprint_changes_when_the_compiler_changes` is the pin.
       #   * `CU_CEILINGS` pins phase-1 and phase-2 CU per circuit at measured*1.02.
       #     Before that, a regression from 474K to 1,399K CU passed silently — it is
       #     under the cap, so nothing objected.
@@ -363,7 +371,8 @@ jobs:
           test -x "$P01_CARGO_BUILD_SBF" || { echo "cargo-build-sbf missing at $P01_CARGO_BUILD_SBF"; exit 1; }
           cargo test -p p01_stark_verifier --release --test cu_budget \
             -- --nocapture --test-threads=1 \
-            cu_budget_real_circuits cu_budget_verify_uniform_path cu_ceiling
+            cu_budget_real_circuits cu_budget_verify_uniform_path cu_ceiling \
+            build_fingerprint
 
       # [ROUTE C] `p01_stark_verifier` is split out and BLOCKING. It was under the
       # shared `continue-on-error: true` below, which made every warning on it

@@ -183,8 +183,10 @@ fn repo_root() -> PathBuf {
 /// toolchain `Anchor.toml` pins, through a private `--sbf-out-dir` and a private
 /// `CARGO_TARGET_DIR` (so it never contends for the target lock held by the
 /// `cargo test` that invoked it, and never reads or writes anchor's
-/// `target/deploy/`), cached on a content fingerprint of `src/`. Same mechanism
-/// as `p01_liquidity`/`p01_zkspl`'s `deep_ali_gate` harnesses.
+/// `target/deploy/`), cached on a content fingerprint of `src/` AND of the
+/// compiler that will consume it. Same mechanism as
+/// `p01_liquidity`/`p01_zkspl`'s `deep_ali_gate` harnesses, plus the compiler
+/// term — see `build_fingerprint`.
 ///
 /// `P01_VERIFIER_SO` still points the harness at a prebuilt artifact — that is
 /// the "measure exactly what is on devnet" use case and it is legitimate — but
@@ -192,7 +194,13 @@ fn repo_root() -> PathBuf {
 /// least as new as `src/`, so the stale-bytes trap is closed on both paths.
 enum SoUnderTest {
     /// Built by this harness from the `src/` tree next to it.
-    SelfBuilt { path: PathBuf, fingerprint: String, cached: bool },
+    SelfBuilt {
+        path: PathBuf,
+        fingerprint: String,
+        cached: bool,
+        /// The SBF compiler that produced these bytes, as it identifies itself.
+        compiler: String,
+    },
     /// Supplied by the caller via `P01_VERIFIER_SO`.
     Supplied { path: PathBuf },
 }
@@ -207,9 +215,10 @@ impl SoUnderTest {
     /// One line describing provenance, printed above every table.
     fn provenance(&self) -> String {
         match self {
-            SoUnderTest::SelfBuilt { fingerprint, cached, .. } => format!(
+            SoUnderTest::SelfBuilt { fingerprint, cached, compiler, .. } => format!(
                 "SELF-BUILT by this harness from programs/p01_stark_verifier/src \
-                 (source fp {}, {})",
+                 by `{}` (build fp {}, {})",
+                compiler,
                 &fingerprint[..16],
                 if *cached { "cache hit" } else { "rebuilt" },
             ),
@@ -222,10 +231,85 @@ impl SoUnderTest {
     }
 }
 
-/// sha256 over every `.rs` under `src/`, plus `Cargo.toml` and the workspace
-/// `Cargo.lock`, path-sorted and length-delimited. Any edit to the verifier —
-/// including deleting a `verify_merkle_path_2seg` call — changes it.
-fn source_fingerprint() -> String {
+/// The SBF compiler's identity, as it reports it, whitespace-normalised.
+///
+/// `cargo-build-sbf --version` prints its own version and the platform-tools
+/// version it will invoke, and those two lines are what decide the bytecode:
+///
+/// ```text
+///   solana-cargo-build-sbf 3.1.9      solana-cargo-build-sbf 2.2.14
+///   platform-tools v1.52              platform-tools v1.47
+/// ```
+///
+/// Running this is not optional and a failure is not tolerated. A build
+/// fingerprint that silently omits the compiler is the exact defect this
+/// function exists to close, so a tool that cannot report its version panics
+/// here rather than degrading to a source-only key.
+fn compiler_identity() -> String {
+    let tool = cargo_build_sbf();
+    let out = std::process::Command::new(&tool)
+        .arg("--version")
+        .output()
+        .unwrap_or_else(|e| {
+            panic!(
+                "could not run `{} --version`: {}\n\n\
+                 The compiler's identity is part of the build fingerprint this harness caches\n\
+                 on, because CU is a property of BYTECODE and the same src/ compiled by two\n\
+                 different platform-tools is not the same bytecode. Falling back to a\n\
+                 source-only key here would let a toolchain switch report a cache hit and\n\
+                 re-print the previous compiler's numbers as if freshly measured, which is the\n\
+                 failure this check exists to prevent. Set P01_CARGO_BUILD_SBF to a working\n\
+                 cargo-build-sbf, or point the harness at a prebuilt artifact with\n\
+                 P01_VERIFIER_SO.\n",
+                tool.display(),
+                e
+            )
+        });
+    if !out.status.success() {
+        panic!(
+            "`{} --version` exited {:?}\n--- stderr ---\n{}\n--- stdout ---\n{}",
+            tool.display(),
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr),
+            String::from_utf8_lossy(&out.stdout),
+        );
+    }
+    let mut raw = String::from_utf8_lossy(&out.stdout).into_owned();
+    raw.push(' ');
+    raw.push_str(&String::from_utf8_lossy(&out.stderr));
+    // Collapse the line breaks so CRLF/LF and trailing-newline differences
+    // between platforms cannot masquerade as a different compiler.
+    let id = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        !id.is_empty(),
+        "`{} --version` printed nothing — an empty compiler identity would silently \
+         reduce the build fingerprint to a source-only key",
+        tool.display(),
+    );
+    id
+}
+
+/// sha256 over every `.rs` under `src/`, plus `Cargo.toml`, the workspace
+/// `Cargo.lock` and the COMPILER IDENTITY, path-sorted and length-delimited.
+/// Any edit to the verifier — including deleting a `verify_merkle_path_2seg`
+/// call — changes it.
+///
+/// # Why the compiler is in here
+///
+/// It used to hash source only, and that made the cache a trap. A CU number is a
+/// property of a binary; the source is only half of what produces one. This box
+/// carries two SBF toolchains — `~/.local/share/solana/install/active_release`
+/// points at agave 2.2.14 (platform-tools v1.47) while `Anchor.toml:3` pins
+/// 3.1.9 (v1.52) — and `ci.yml` selects the former by exporting
+/// `P01_CARGO_BUILD_SBF`, so the two are one environment variable apart.
+///
+/// MEASURED on the source-only key: with `target/cu-budget` holding a 3.1.9
+/// build, re-running the harness with `P01_CARGO_BUILD_SBF` set to the 2.2.14
+/// binary printed `(source fp 716225449ed00a96, cache hit)` and re-reported the
+/// 3.1.9 numbers, byte-identical `.so` sha256 included. The 2.2.14 compiler was
+/// never invoked and nothing in the output said so. That is a measurement
+/// attributed to the wrong compiler, which is worse than no measurement.
+fn build_fingerprint(compiler_id: &str) -> String {
     fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
@@ -263,6 +347,14 @@ fn source_fingerprint() -> String {
         blob.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
         blob.extend_from_slice(&bytes);
     }
+
+    // Same shape as a file entry — a tagged, length-delimited field — so the
+    // compiler cannot be confused with the tail of the last source file.
+    blob.extend_from_slice(b"sbf-compiler");
+    blob.push(0);
+    blob.extend_from_slice(&(compiler_id.len() as u64).to_le_bytes());
+    blob.extend_from_slice(compiler_id.as_bytes());
+
     sha256_hex(&blob)
 }
 
@@ -303,10 +395,14 @@ fn verifier_so_path() -> SoUnderTest {
         return SoUnderTest::Supplied { path: PathBuf::from(p) };
     }
 
-    let fp = source_fingerprint();
+    let compiler = compiler_identity();
+    let fp = build_fingerprint(&compiler);
     let out_dir = repo_root().join("target/cu-budget");
     let so = out_dir.join("p01_stark_verifier.so");
-    let fp_file = out_dir.join("p01_stark_verifier.srcfp");
+    let fp_file = out_dir.join("p01_stark_verifier.buildfp");
+    // Pre-compiler-aware records were written to `.srcfp`. The name is a lie
+    // about what the hash covers, so it is not read and not left behind.
+    let legacy_fp_file = out_dir.join("p01_stark_verifier.srcfp");
 
     let cached = so.exists()
         && std::fs::read_to_string(&fp_file)
@@ -319,13 +415,15 @@ fn verifier_so_path() -> SoUnderTest {
         // artifact it describes, or a failed build leaves a stale artifact
         // looking current.
         let _ = std::fs::remove_file(&fp_file);
+        let _ = std::fs::remove_file(&legacy_fp_file);
         let _ = std::fs::remove_file(&so);
 
         let tool = cargo_build_sbf();
         eprintln!(
-            "[cu_budget] source fingerprint {} — rebuilding p01_stark_verifier with {}",
+            "[cu_budget] build fingerprint {} — rebuilding p01_stark_verifier with {} (`{}`)",
             &fp[..16],
-            tool.display()
+            tool.display(),
+            compiler,
         );
         let out = std::process::Command::new(&tool)
             .arg("--manifest-path")
@@ -358,7 +456,47 @@ fn verifier_so_path() -> SoUnderTest {
         std::fs::write(&fp_file, &fp).expect("write fingerprint");
     }
 
-    SoUnderTest::SelfBuilt { path: so, fingerprint: fp, cached }
+    SoUnderTest::SelfBuilt { path: so, fingerprint: fp, cached, compiler }
+}
+
+/// The build fingerprint must MOVE when the compiler moves.
+///
+/// Without this the guarantee is a comment. `build_fingerprint` takes the
+/// compiler identity as an argument precisely so the property can be asserted
+/// without installing a second toolchain: feed it the two strings this box
+/// actually reports and require the two hashes to differ.
+#[test]
+fn build_fingerprint_changes_when_the_compiler_changes() {
+    // Verbatim `cargo-build-sbf --version` output from the two SBF toolchains
+    // installed on the founder's box, whitespace-normalised the way
+    // `compiler_identity` normalises it.
+    let v3 = "solana-cargo-build-sbf 3.1.9 platform-tools v1.52";
+    let v2 = "solana-cargo-build-sbf 2.2.14 platform-tools v1.47";
+
+    let fp3 = build_fingerprint(v3);
+    let fp2 = build_fingerprint(v2);
+    assert_ne!(
+        fp3, fp2,
+        "the build fingerprint is identical for {v3:?} and {v2:?} — the compiler is not part \
+         of the cache key, so switching toolchain reports a cache hit and re-prints the \
+         previous compiler's CU as if freshly measured"
+    );
+
+    // Positive control: the same compiler on the same tree must still hash the
+    // same, or the cache would never hit and this would be a rebuild-always
+    // gate rather than a correct one.
+    assert_eq!(
+        fp3,
+        build_fingerprint(v3),
+        "the build fingerprint is not stable for a fixed (source, compiler) pair"
+    );
+
+    // And the live one must be a real, non-empty identity, not a silent default.
+    let live = compiler_identity();
+    assert!(
+        live.contains("cargo-build-sbf"),
+        "compiler identity {live:?} does not look like cargo-build-sbf output"
+    );
 }
 
 fn probe_so_path() -> PathBuf {
@@ -377,10 +515,11 @@ fn probe_so_path() -> PathBuf {
 /// failure.
 ///
 /// Only reachable on the `P01_VERIFIER_SO` path now: a self-built artifact is
-/// keyed on a content fingerprint of `src/`, which is strictly stronger than an
-/// mtime comparison (an mtime check passes if someone edits a source and then
-/// rebuilds a *different* crate, because the `.so` ends up newer than the source
-/// it does not correspond to).
+/// keyed on a content fingerprint of `src/` plus the compiler identity, which is
+/// strictly stronger than an mtime comparison (an mtime check passes if someone
+/// edits a source and then rebuilds a *different* crate, because the `.so` ends
+/// up newer than the source it does not correspond to, and it passes on a
+/// toolchain switch that touches no source at all).
 fn staleness_note(so: &Path) -> Option<String> {
     let so_mtime = std::fs::metadata(so).ok()?.modified().ok()?;
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -620,7 +759,8 @@ fn load_verifier_or_fail(rig: &mut Rig, program: &Address) -> (SoUnderTest, usiz
 /// A caller-supplied artifact must not predate `src/`. FAILS, does not warn.
 ///
 /// The self-built path needs no check: it is keyed on a content fingerprint of
-/// `src/`, so a mismatch triggers a rebuild before this is reached.
+/// `src/` and of the compiler, so a mismatch in either triggers a rebuild before
+/// this is reached.
 fn assert_artifact_is_current(so: &SoUnderTest) {
     let SoUnderTest::Supplied { path } = so else {
         return;
