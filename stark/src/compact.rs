@@ -249,7 +249,8 @@ fn generate_compact_proof_with_layout(
     // public-input binding (commitment at row 30, capacity zeros at row 0) is
     // enforced at the OOD point on EVERY proof — not just when a query lands on
     // a trace-aligned row. The verifier recomputes the matching boundary term
-    // at z via `verify_boundary_at_ood_circuit_0`. Trace interpolants are
+    // at z via `boundary_fold_at_ood`, called from `verify_deep_ali_legacy`
+    // with the `bnd-c0` tag. Trace interpolants are
     // reused below for the OOD evaluation.
     let trace_polys: Vec<Vec<BaseElement>> =
         (0..TRACE_WIDTH).map(|col| interpolate_poly(&trace[col])).collect();
@@ -4196,8 +4197,10 @@ pub enum OodForgery {
 /// `x_j^k = 1`, i.e. at the `k` terminal indices `j = 0 mod fps/k`.
 ///
 /// For `bound == fps/2` this IS `AliasedFold` (`k == fps/2`, `p_m = c_m + c_{m+8}`)
-/// — the two agree by construction, and `subgroup_alias_matches_aliased_fold_on_c1`
-/// asserts it. For C0's bound 7 of 16 it gives `k = 4`: agreement at 4 of 16
+/// — the two agree by construction, and
+/// `subgroup_alias_equals_aliased_fold_when_the_bound_is_half_the_size` in
+/// `programs/p01_stark_verifier/tests/b1_deep_binding.rs` asserts it. For C0's
+/// bound 7 of 16 it gives `k = 4`: agreement at 4 of 16
 /// indices. That is a DIFFERENT rate from T5's measured 1.000 bits/query and must
 /// never be quoted as one; it is measured on its own by
 /// `measure_subgroup_alias_terminal_agreement_c0`.
@@ -4486,8 +4489,14 @@ fn boundary_c_at_ood_impl(
 /// unknowns, so fixing `2*width` of them still leaves `ood_quotient` free. The
 /// code path mirrors the inline DEEP-ALI harnesses in this module's test section
 /// exactly; a mismatch would show up as those harnesses and this function
-/// disagreeing on an honest proof, which
-/// `forged_proof_still_satisfies_the_phase_two_identity` asserts directly.
+/// disagreeing on an honest proof. That a coordinated forgery STILL satisfies
+/// phase 2 is asserted directly in
+/// `programs/p01_stark_verifier/tests/b1_deep_binding.rs`: it calls
+/// `verify_deep_ali_circuit_1` .. `verify_deep_ali_circuit_6` on the forged proof
+/// and requires `Ok(())` from all six — inline in
+/// `t1_t2_t3_c1_coordinated_forgery_matrix` and
+/// `t1_t2_t3_c6_coordinated_forgery`, and through the shared
+/// `run_generic_forgery_case` for C2 through C5.
 ///
 /// Returns `None` for circuits whose solve is not implemented. Covered: C1
 /// (`pool_commitment`), C2 (`balance_proof`), C3 (`merkle_path`), C4
