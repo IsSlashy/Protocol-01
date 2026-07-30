@@ -8,17 +8,24 @@
  * `src/ZKProver.tsx` so the WASM ships inside the package's JS bundle
  * (no runtime fetch, no `.wasm` asset registration in metro.config.js).
  *
- * Resolution order (first hit wins):
- *   1. node_modules/@protocol-01/stark-prover/wasm/p01_stark_bg.wasm
- *      (works after `pnpm install` once devDeps are installed)
- *   2. ../stark-prover/wasm/p01_stark_bg.wasm
- *      (workspace-relative — works during local development before
- *      pnpm has linked node_modules)
+ * Resolution order (first hit wins) — WORKSPACE SIBLING FIRST, deliberately:
+ *   1. ../stark-prover/wasm/p01_stark_bg.wasm
+ *      (the canonical blob in this repo, and the one CI gates)
+ *   2. node_modules/@protocol-01/stark-prover/wasm/p01_stark_bg.wasm
+ *      (only for a checkout where the sibling is absent)
+ *
+ * The order used to be the other way round, and it silently pinned an OLDER
+ * generation of the prover: MEASURED, `src/wasmData.ts` carried 124,562 bytes
+ * sourced from `node_modules/@protocol-01/stark-prover` while the workspace
+ * sibling held 192,732. Since nothing in the repo rebuilt either one, the two
+ * drifted apart and every mobile proof came from the older of the two. If both
+ * exist and differ, this script now FAILS rather than picking one.
+ *
+ * The repo-level gate is `packages/stark-prover/scripts/stark-wasm-twins.mjs`
+ * (`--check` in CI, `--write` to regenerate); this script exists so
+ * `prepublishOnly` cannot ship a tarball with a stale inlined blob.
  *
  * Idempotent. Logs the input + base64 sizes.
- *
- * Hooked into `prepublishOnly` so the published tarball always carries
- * a fresh `wasmData.ts`.
  */
 
 import { readFileSync, writeFileSync, statSync } from 'node:fs';
@@ -30,25 +37,45 @@ const __dirname = dirname(__filename);
 const PKG_ROOT = resolve(__dirname, '..');
 
 const CANDIDATES = [
-  resolve(PKG_ROOT, 'node_modules/@protocol-01/stark-prover/wasm/p01_stark_bg.wasm'),
   resolve(PKG_ROOT, '../stark-prover/wasm/p01_stark_bg.wasm'),
+  resolve(PKG_ROOT, 'node_modules/@protocol-01/stark-prover/wasm/p01_stark_bg.wasm'),
   resolve(PKG_ROOT, '../../node_modules/@protocol-01/stark-prover/wasm/p01_stark_bg.wasm'),
 ];
 
 function findWasm() {
-  for (const candidate of CANDIDATES) {
+  const present = CANDIDATES.filter((c) => {
     try {
-      const stat = statSync(candidate);
-      if (stat.isFile() && stat.size > 0) return candidate;
+      const stat = statSync(c);
+      return stat.isFile() && stat.size > 0;
     } catch {
-      // not present, try next
+      return false;
     }
+  });
+
+  if (present.length === 0) {
+    throw new Error(
+      `Could not locate p01_stark_bg.wasm. Tried:\n  - ${CANDIDATES.join('\n  - ')}\n` +
+      'Ensure @protocol-01/stark-prover is installed (pnpm install) or that the ' +
+      'workspace sibling exists at ../stark-prover/wasm/.'
+    );
   }
-  throw new Error(
-    `Could not locate p01_stark_bg.wasm. Tried:\n  - ${CANDIDATES.join('\n  - ')}\n` +
-    'Ensure @protocol-01/stark-prover is installed (pnpm install) or that the ' +
-    'workspace sibling exists at ../stark-prover/wasm/.'
-  );
+
+  // If several copies exist they MUST agree. Picking the first silently is how
+  // this package ended up inlining a 124,562-byte prover next to a 192,732-byte
+  // sibling — see the header.
+  const sizes = present.map((c) => statSync(c).size);
+  const disagree = sizes.some((n) => n !== sizes[0]);
+  if (disagree) {
+    throw new Error(
+      'Multiple p01_stark_bg.wasm copies with DIFFERENT sizes — refusing to guess:\n' +
+      present.map((c, i) => `  - ${sizes[i]} bytes  ${c}`).join('\n') +
+      '\nThe canonical blob is packages/stark-prover/wasm/p01_stark_bg.wasm. Run\n' +
+      '  node packages/stark-prover/scripts/stark-wasm-twins.mjs --check\n' +
+      'from the repo root and reconcile before publishing.'
+    );
+  }
+
+  return present[0];
 }
 
 const wasmPath = findWasm();
