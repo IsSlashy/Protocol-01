@@ -38,12 +38,15 @@
 
 use p01_stark::compact::{OodForgery, TerminalPoly};
 use p01_stark_verifier::compact_proof::{
-    CompactStarkProof, GenericCompactProof, CONFIG_MERKLE_UPDATE, CONFIG_POOL_COMMITMENT,
+    CompactStarkProof, GenericCompactProof, CONFIG_BALANCE_PROOF, CONFIG_CONFIDENTIAL_BALANCE,
+    CONFIG_MERKLE_PATH, CONFIG_MERKLE_UPDATE, CONFIG_POOL_COMMITMENT, CONFIG_TRANSFER,
     LEGACY_FRI_FINAL_POLY_DEGREE_BOUND,
 };
 use p01_stark_verifier::goldilocks::{Felt, MODULUS};
 use p01_stark_verifier::verify::{
-    verify_deep_ali_circuit_1, verify_generic, verify_subscriber_ownership, VerifyError,
+    verify_deep_ali_circuit_1, verify_deep_ali_circuit_2, verify_deep_ali_circuit_3,
+    verify_deep_ali_circuit_4, verify_deep_ali_circuit_5, verify_deep_ali_circuit_6,
+    verify_generic, verify_subscriber_ownership, VerifyError,
 };
 
 // ============================================================================
@@ -498,6 +501,290 @@ fn t1_t2_c6_coordinated_forgery() {
 }
 
 // ============================================================================
+// T1 / T2 / T3 on the remaining generic circuits — C2, C3, C4, C5.
+// ============================================================================
+
+/// Phase 2 for a generic circuit, by id. Phase 2 is the identity that was
+/// SUPPOSED to be the binding; the T3 leg below requires it to still ACCEPT.
+fn phase2(
+    circuit_id: u8,
+    parsed: &GenericCompactProof,
+    public_inputs: &[u64],
+) -> Result<(), VerifyError> {
+    match circuit_id {
+        1 => verify_deep_ali_circuit_1(parsed, public_inputs),
+        2 => verify_deep_ali_circuit_2(parsed, public_inputs),
+        3 => verify_deep_ali_circuit_3(parsed, public_inputs),
+        4 => verify_deep_ali_circuit_4(parsed, public_inputs),
+        5 => verify_deep_ali_circuit_5(parsed, public_inputs),
+        6 => verify_deep_ali_circuit_6(parsed, public_inputs),
+        other => panic!("no phase-2 entry point for circuit {other}"),
+    }
+}
+
+/// One circuit's two-legged acceptance case, in the shape
+/// `t1_t2_t3_c1_coordinated_forgery_matrix` already uses, so adding a circuit
+/// costs a witness and one call.
+///
+/// **T4 preamble.** The forgery is a forgery and its ONLY defect is the OOD
+/// header: same public inputs, different `ood_current[0]`, identical length.
+///
+/// **T1.** Coordinated forgery + HONEST terminal poly, which must be REJECTED.
+/// `verify_generic` runs ood_range -> ood_z -> positions -> merkle -> FRI ->
+/// constraints -> boundary in that fixed order, so a FRI-specific variant proves
+/// the positions and every Merkle opening passed and the rejection came from the
+/// DEEP binding rather than from a desynchronised transcript.
+///
+/// **T3 control**, between the legs. Phase 2 must STILL ACCEPT the forgery. This
+/// is what makes T1 mean anything: a forgery phase 2 rejects is not coordinated.
+/// It is also the ONLY check on a freshly written `solve_ood_quotient_for_spec`
+/// arm — a wrong solve surfaces here as `DeepAliFailed` and nowhere else, because
+/// every other check in the pipeline is satisfied by the honest trace.
+///
+/// **T2.** The same forgery with the aliased terminal poly, which is INSIDE the
+/// degree bound, so the degree check cannot fire and the only mechanism left is
+/// the terminal comparison. The variant is pinned exactly, not by `matches!`.
+fn run_generic_forgery_case(
+    label: &str,
+    config: &p01_stark_verifier::compact_proof::CircuitConfig,
+    honest: &p01_stark::compact::GenericCompactProofData,
+    forged: &p01_stark::compact::GenericCompactProofData,
+    aliased: &p01_stark::compact::GenericCompactProofData,
+) {
+    // --- T4 preamble.
+    assert_eq!(
+        honest.public_inputs, forged.public_inputs,
+        "{label}: the forgery must keep the SAME public inputs — a different \
+         statement is not a forgery",
+    );
+    assert_ne!(
+        read_ood_current(&honest.proof_bytes, 0),
+        read_ood_current(&forged.proof_bytes, 0),
+        "{label}: the forgery must actually change ood_current[0]",
+    );
+    assert_eq!(
+        honest.proof_bytes.len(),
+        forged.proof_bytes.len(),
+        "{label}: B1 is zero-wire-delta — a forged proof is the same length as an \
+         honest one",
+    );
+
+    // --- T1.
+    let parsed = GenericCompactProof::from_bytes(&forged.proof_bytes, config)
+        .unwrap_or_else(|| panic!("{label}: forged proof still parses"));
+    let err = match verify_generic(&parsed, forged.circuit_id, &forged.public_inputs, config) {
+        Ok(()) => panic!(
+            "{label} T1: a coordinated OOD forgery must be REJECTED after B1. It was \
+             ACCEPTED, which is the PRE-B1 behaviour: FRI folding the raw quotient \
+             binds nothing, so the OOD claims can be anything."
+        ),
+        Err(e) => e,
+    };
+    assert!(
+        matches!(
+            err,
+            VerifyError::FriTerminalCheckFailed
+                | VerifyError::FriFoldCheckFailed
+                | VerifyError::FriFinalPolyDegreeTooHigh
+        ),
+        "{label} T1 must be rejected inside verify_fri_generic. Got {err:?} — \
+         `DeepAliFailed` would mean phase 2 caught it (it cannot: ood_quotient was \
+         re-solved), `InvalidQueryPosition` would mean the transcript was \
+         inconsistent (it is not: the prover built it).",
+    );
+    println!("[T1 {label}] rejected with {err:?}");
+
+    // --- T3 control.
+    phase2(forged.circuit_id, &parsed, &forged.public_inputs).unwrap_or_else(|e| {
+        panic!(
+            "{label} T3: phase 2 must STILL ACCEPT the forgery, got {e:?}. That means \
+             solve_ood_quotient_for_spec's arm for this circuit is WRONG — the \
+             forgery is not coordinated and T1 above proves nothing about DEEP \
+             binding."
+        )
+    });
+    println!("[T3 {label}] phase 2 accepted the forgery, as designed");
+
+    // --- T2.
+    let parsed = GenericCompactProof::from_bytes(&aliased.proof_bytes, config)
+        .unwrap_or_else(|| panic!("{label}: aliased forged proof still parses"));
+    let poly = read_final_poly(&aliased.proof_bytes, config.trace_width);
+    for (i, &c) in poly.iter().enumerate().skip(config.fri_final_poly_degree_bound) {
+        assert_eq!(c, 0, "{label} T2: the aliased poly must be WITHIN the bound (coeff {i})");
+    }
+    let odd = parsed.queries.iter().filter(|q| (q.position as usize & 15) % 2 == 1).count();
+    println!("[T2 {label}] terminal index parity: {}/{} odd", odd, parsed.queries.len());
+    assert!(
+        odd > 0,
+        "{label} T2 needs at least one ODD terminal index to reject; got 0/{} — that \
+         is a 2^-{} accident on a fixed witness, not a verifier defect",
+        parsed.queries.len(),
+        parsed.queries.len(),
+    );
+    let err = match verify_generic(&parsed, aliased.circuit_id, &aliased.public_inputs, config) {
+        Ok(()) => panic!("{label} T2: the aliased-fold forgery must be REJECTED, it was ACCEPTED"),
+        Err(e) => e,
+    };
+    assert_eq!(
+        err,
+        VerifyError::FriTerminalCheckFailed,
+        "{label} T2 must be rejected by the TERMINAL comparison specifically — that \
+         is the only mechanism left once the poly is inside the degree bound and \
+         every intermediate fold is honest",
+    );
+    println!("[T2 {label}] rejected with {err:?}");
+}
+
+/// T1/T2/T3 on C2 (balance_proof).
+///
+/// C2 is one of the two circuits with NO boundary fold at the OOD point
+/// (`boundary_spec_for_quotient` returns `None`), so `boundary_c_at_ood_impl`
+/// contributes nothing to the solve and the public inputs bind the trace least
+/// well of the seven. That makes the DEEP composition the only thing standing
+/// between a forged OOD header and acceptance here.
+#[test]
+fn t1_t2_t3_c2_coordinated_forgery() {
+    let config = &CONFIG_BALANCE_PROOF;
+    let honest = p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999);
+    let forged = p01_stark::compact::generate_balance_compact_proof_with_forgery(
+        42,
+        1000,
+        777,
+        999,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::Honest,
+    );
+    let aliased = p01_stark::compact::generate_balance_compact_proof_with_forgery(
+        42,
+        1000,
+        777,
+        999,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::AliasedFold,
+    );
+    run_generic_forgery_case("C2", config, &honest, &forged, &aliased);
+}
+
+/// T1/T2/T3 on C3 (merkle_path).
+///
+/// Canonical depth 15 — `CONFIG_MERKLE_PATH` pins trace_length 512, which only a
+/// depth-15 witness produces, and `depth` is the 3rd public input, folded into
+/// the transcript. `solve_ood_quotient_for_spec` reads it back out of
+/// `QuotientSpec::Circuit3 { depth }` to rebuild the periodic columns, so a depth
+/// mismatch would show up as a T3 failure.
+#[test]
+fn t1_t2_t3_c3_coordinated_forgery() {
+    let config = &CONFIG_MERKLE_PATH;
+    let pe: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
+    let pi: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
+    let honest = p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi);
+    let forged = p01_stark::compact::generate_merkle_path_compact_proof_with_forgery(
+        777,
+        &pe,
+        &pi,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::Honest,
+    );
+    let aliased = p01_stark::compact::generate_merkle_path_compact_proof_with_forgery(
+        777,
+        &pe,
+        &pi,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::AliasedFold,
+    );
+    run_generic_forgery_case("C3", config, &honest, &forged, &aliased);
+}
+
+/// T1/T2/T3 on C4 (confidential_balance) — the CU-binding circuit.
+///
+/// C4 carries the highest measured phase-1 base of the seven and, like C2, has no
+/// boundary fold. It is also the sharpest version-skew case (`trace_width == 4`,
+/// so `16 * trace_width - 64 == 0`), which is why it is worth having both the
+/// Route C probe and the B1 probe pointed at it.
+#[test]
+fn t1_t2_t3_c4_coordinated_forgery() {
+    let config = &CONFIG_CONFIDENTIAL_BALANCE;
+    let honest = p01_stark::compact::generate_confidential_balance_compact_proof(
+        42, 1000, 111, 800, 222, 200, 333, 999,
+    );
+    let forged = p01_stark::compact::generate_confidential_balance_compact_proof_with_forgery(
+        42,
+        1000,
+        111,
+        800,
+        222,
+        200,
+        333,
+        999,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::Honest,
+    );
+    let aliased = p01_stark::compact::generate_confidential_balance_compact_proof_with_forgery(
+        42,
+        1000,
+        111,
+        800,
+        222,
+        200,
+        333,
+        999,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::AliasedFold,
+    );
+    run_generic_forgery_case("C4", config, &honest, &forged, &aliased);
+}
+
+/// T1/T2/T3 on C5 (transfer) — the widest boundary fold.
+///
+/// C5 has 26 boundary assertions, including the two value-conservation terms on
+/// col 6, and it is the only circuit whose periodic columns come back at MIXED
+/// lengths (four period-32, 24 full-length). The solve has to tile the short ones
+/// onto the trace domain before interpolating, exactly as
+/// `compute_quotient_lde_circuit_5` does; if it did not, the T3 leg would reject.
+#[test]
+fn t1_t2_t3_c5_coordinated_forgery() {
+    let config = &CONFIG_TRANSFER;
+    let honest = p01_stark::compact::generate_transfer_compact_proof(
+        13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50,
+    );
+    let forged = p01_stark::compact::generate_transfer_compact_proof_with_forgery(
+        13,
+        500,
+        77,
+        400,
+        88,
+        100,
+        150,
+        1234,
+        555,
+        65,
+        2222,
+        333,
+        50,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::Honest,
+    );
+    let aliased = p01_stark::compact::generate_transfer_compact_proof_with_forgery(
+        13,
+        500,
+        77,
+        400,
+        88,
+        100,
+        150,
+        1234,
+        555,
+        65,
+        2222,
+        333,
+        50,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::AliasedFold,
+    );
+    run_generic_forgery_case("C5", config, &honest, &forged, &aliased);
+}
+
+// ============================================================================
 // T5 — the mechanism, MEASURED. This is the only per-query rate figure that may
 // be quoted anywhere.
 // ============================================================================
@@ -529,6 +816,233 @@ fn t5_aliased_terminal_poly_agrees_at_exactly_the_even_indices() {
          aliasing error vanishes iff j is even. Got {agree:?}",
     );
     assert!(disagree.iter().all(|j| j % 2 == 1), "disagreement must be the odd indices");
+}
+
+// ============================================================================
+// [DEFECT 4] The LEGACY fold chain, negatively.
+// ============================================================================
+
+/// A C0 forgery that gets PAST the once-per-proof degree check and is therefore
+/// forced through the whole legacy fold chain.
+///
+/// Every C0 negative case in the repo before this one rejected at
+/// `check_final_poly_degree_bound`, which `verify_fri_legacy` calls ONCE per
+/// proof and BEFORE the transcript, the inverse table, the DEEP setup, PASS 1 and
+/// PASS 2. MEASURED, printed by
+/// `t1_c0_coordinated_forgery_is_rejected_by_the_legacy_verifier` itself:
+/// `[T1 C0] rejected with FriFinalPolyDegreeTooHigh`. So the legacy per-query
+/// DEEP arithmetic — the SOLE verifier for four shipped instructions
+/// (`zk_shielded::{pause,resume,cancel_private_stark}` and `p01_quantum_wallet`)
+/// — was reached by honest proofs only, and the two implementation details the
+/// design pass named as most likely to be wrong there had no negative coverage:
+///
+///   * the `(lo, hi)` swap at `pos >= LDE_SIZE/2`, at two sites (the quotient
+///     pair, and the trace/mirror pair inside the gamma loop);
+///   * `y = -inv_gen_0_powers[half - j]` and its `j == 0` special case, which
+///     exists because index `half` is one past the end of a 256-entry table and
+///     would be a BPF panic rather than a clean `VerifyError`.
+///
+/// `TerminalPoly::AliasedFold` cannot be built on this path at all: it asserts
+/// `bound * 2 == fps`, and C0 is bound 7 of fps 16, so the prover panics.
+/// `SubgroupAlias` publishes `c mod (x^4 - 1)` — degree < 4, comfortably inside
+/// the bound of 7 — so the degree check PASSES and the verifier has to run the
+/// whole chain.
+///
+/// # What this leg does and does not prove
+///
+/// `FriTerminalCheckFailed` is returned at exactly ONE place in
+/// `verify_fri_legacy`: the `i == num_fri_layers` arm of the fold loop. Getting it
+/// back proves PASS 1 ran for every query and PASS 2 ran the entire fold chain for
+/// at least one. It is NOT independent evidence of DEEP binding: the terminal
+/// comparison would reject an aliased terminal poly with or without the DEEP fold,
+/// because the prover published a polynomial that is not the interpolant of the
+/// layer he committed to. C0's DEEP-binding evidence is the T1 leg above, and the
+/// coverage table at the end of this file keeps the two claims apart.
+#[test]
+fn t2_legacy_c0_subgroup_alias_reaches_the_terminal_check() {
+    let honest = p01_stark::compact::generate_compact_proof(42);
+    let forged = p01_stark::compact::generate_compact_proof_with_forgery(
+        42,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::SubgroupAlias,
+    );
+    assert_eq!(honest.commitment, forged.commitment, "same public input");
+    assert_ne!(
+        read_ood_current(&honest.proof_bytes, 0),
+        read_ood_current(&forged.proof_bytes, 0),
+        "the forgery must actually change ood_current[0]",
+    );
+    assert_eq!(honest.proof_bytes.len(), forged.proof_bytes.len(), "zero wire delta");
+
+    // The published poly is INSIDE the bound, so the degree check CANNOT be what
+    // rejects this proof. Assert that directly instead of inferring it from the
+    // returned variant.
+    let poly = read_final_poly(&forged.proof_bytes, 3);
+    assert_eq!(poly.len(), 16, "C0 fri_final_poly_size");
+    for (i, &c) in poly.iter().enumerate().skip(LEGACY_FRI_FINAL_POLY_DEGREE_BOUND) {
+        assert_eq!(c, 0, "SubgroupAlias must be within C0's bound of 7 (coeff {i})");
+    }
+    // ...and it really is the k = 4 reduction, not some degree-6 polynomial.
+    for (i, &c) in poly.iter().enumerate().skip(4) {
+        assert_eq!(c, 0, "SubgroupAlias on C0 reduces mod x^4 - 1, so coeff {i} must be zero");
+    }
+    assert!(
+        poly[..4].iter().any(|&c| c != 0),
+        "a degenerate all-zero terminal poly would reject for the wrong reason",
+    );
+
+    let proof = CompactStarkProof::from_bytes(&forged.proof_bytes)
+        .expect("subgroup-aliased forged C0 proof still parses");
+
+    // Rejection needs one query whose terminal index is NOT 0 mod 4 — those four
+    // of sixteen are exactly where the aliased poly agrees with the true layer.
+    let outside = proof.queries.iter().filter(|q| (q.position as usize & 15) % 4 != 0).count();
+    println!(
+        "[T2 C0-legacy] terminal index residues: {}/{} outside the k=4 subgroup",
+        outside,
+        proof.queries.len(),
+    );
+    assert!(
+        outside > 0,
+        "needs at least one terminal index outside {{0,4,8,12}} to reject; got 0/{} — \
+         that is a 4^-{} accident on a fixed witness, not a verifier defect",
+        proof.queries.len(),
+        proof.queries.len(),
+    );
+
+    // What PASS 1 actually covers on this proof. PASS 1 computes `y` for EVERY
+    // query before PASS 2 runs, so the whole position set drives the y lookup even
+    // though PASS 2 returns on the first failing query.
+    let j_zero = proof.queries.iter().filter(|q| (q.position as usize & 255) == 0).count();
+    let high_half = proof.queries.iter().filter(|q| (q.position as usize) >= 256).count();
+    println!(
+        "[T2 C0-legacy] PASS 1 y-lookup coverage on {} queries: {j_zero} at j == 0, \
+         {high_half} in the high half",
+        proof.queries.len(),
+    );
+
+    let err = verify_subscriber_ownership(&proof, Felt::new(forged.commitment))
+        .expect_err("a subgroup-aliased C0 forgery must be REJECTED");
+    assert_eq!(
+        err,
+        VerifyError::FriTerminalCheckFailed,
+        "the rejection must come from the TERMINAL comparison, which is the only \
+         thing left once the poly is inside the degree bound and every intermediate \
+         fold was built honestly by the forger. `FriFinalPolyDegreeTooHigh` would \
+         mean the proof never entered the fold chain, which is the exact gap this \
+         test exists to close.",
+    );
+    println!("[T2 C0-legacy] rejected with {err:?}");
+}
+
+/// MEASURE what `SubgroupAlias` is worth per query on the LEGACY path.
+///
+/// This is a SEPARATE figure from T5's 1.000 bits/query and must never be quoted
+/// as one. T5 measures the `bound == fps/2` case on the generic path: 8 agreeing
+/// indices of 16. C0's bound is 7 of 16, so the largest usable subgroup is k = 4
+/// and the agreement is 4 of 16, i.e. 2.000 bits per query. Higher is WORSE for
+/// the adversary, so this neither improves nor weakens anything B2 will have to
+/// say about the generic path; it is a second, independent number.
+#[test]
+fn t5b_subgroup_alias_terminal_agreement_on_the_legacy_path() {
+    let (agree, disagree) = p01_stark::compact::measure_subgroup_alias_terminal_agreement_c0();
+    println!(
+        "[T5b] legacy terminal agreement: {} of 16 indices, agreement at {:?}, \
+         disagreement at {:?}",
+        agree.len(),
+        agree,
+        disagree,
+    );
+    assert_eq!(
+        agree.len(),
+        4,
+        "c mod (x^4 - 1) agrees with the true 16-value terminal layer at exactly the \
+         4 points where x^4 = 1",
+    );
+    assert!(agree.iter().all(|j| j % 4 == 0), "agreement must be at j = 0 mod 4, got {agree:?}");
+    assert!(disagree.iter().all(|j| j % 4 != 0), "disagreement must be everything else");
+}
+
+/// `SubgroupAlias` and `AliasedFold` are the SAME play when the bound is exactly
+/// half the published size: `k == fps/2`, and `c mod (x^8 - 1)` is precisely
+/// `p_m = c_m + c_{m+8}`.
+///
+/// Asserted on C1 so the generalisation cannot silently diverge from the variant
+/// T5 measures. If these two ever produce different bytes, one of them has been
+/// changed and T5's 1.000 bits/query no longer describes what `SubgroupAlias`
+/// does on the generic path.
+#[test]
+fn subgroup_alias_equals_aliased_fold_when_the_bound_is_half_the_size() {
+    let a = p01_stark::compact::generate_pool_commitment_proof_with_forgery(
+        111,
+        222,
+        333,
+        444,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::AliasedFold,
+    );
+    let b = p01_stark::compact::generate_pool_commitment_proof_with_forgery(
+        111,
+        222,
+        333,
+        444,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::SubgroupAlias,
+    );
+    assert_eq!(
+        a.proof_bytes, b.proof_bytes,
+        "on C1 (bound 8 of fps 16) the two terminal plays are the same polynomial, \
+         so the two proofs must be byte-identical",
+    );
+}
+
+/// The legacy per-query DEEP arithmetic, POSITIVELY, at the two query positions
+/// that separate a correct implementation from the two most likely wrong ones.
+///
+/// Neither is reachable through a FORGED proof: PASS 2 returns on the first query
+/// that fails the terminal comparison, so a rejection exercises one query's fold
+/// chain, not the whole position set. An HONEST proof runs PASS 2 to completion
+/// for every query, so the honest side is what pins these.
+///
+///   * `pos & 255 == 0` drives the `j == 0` branch of the `y` lookup. Without the
+///     branch the index would be `half_lde`, one past the end of a 256-entry
+///     table — an out-of-bounds panic on chain, not a `VerifyError`. Only 2 of
+///     512 positions qualify, so roughly 90% of C0 proofs never touch it. The
+///     seed is SEARCHED rather than assumed, and the search bound is asserted.
+///   * `pos >= 256` drives both `(lo, hi)` swaps. Inverting either verifies for
+///     the low half and fails for the high half, which reads as a ~50% prover
+///     flake; this assertion is what turns it into a test failure.
+#[test]
+fn legacy_c0_honest_proofs_cover_the_j_zero_and_high_half_query_positions() {
+    const SEARCH_LIMIT: u64 = 400;
+    let mut found: Option<(u64, usize, usize)> = None;
+    for seed in 1..=SEARCH_LIMIT {
+        let data = p01_stark::compact::generate_compact_proof(seed);
+        let proof = CompactStarkProof::from_bytes(&data.proof_bytes)
+            .unwrap_or_else(|| panic!("honest C0 proof for seed {seed} must parse"));
+        let j_zero = proof.queries.iter().filter(|q| (q.position as usize & 255) == 0).count();
+        let high = proof.queries.iter().filter(|q| (q.position as usize) >= 256).count();
+        if j_zero > 0 && high > 0 {
+            verify_subscriber_ownership(&proof, Felt::new(data.commitment)).unwrap_or_else(|e| {
+                panic!(
+                    "seed {seed}: an HONEST C0 proof with a query at position 0 or 256 \
+                     must verify, got {e:?}. That is the j == 0 branch of the y lookup \
+                     or one of the two (lo, hi) swaps being wrong."
+                )
+            });
+            found = Some((seed, j_zero, high));
+            break;
+        }
+    }
+    let (seed, j_zero, high) = found.expect(
+        "no seed in 1..=400 produced a C0 proof with a query at position 0 or 256. \
+         Each proof has roughly a 10% chance, so 400 consecutive misses is about \
+         2^-60 — that is position derivation having changed, not a flake.",
+    );
+    println!(
+        "[LEGACY POS] seed {seed}: {j_zero} queries with (pos & 255) == 0, {high} in the \
+         high half"
+    );
 }
 
 // ============================================================================
@@ -686,5 +1200,241 @@ fn cross_language_fixture_digests() {
     assert_eq!(
         d1, FIXTURE_C1_SHA256,
         "\n\n  >>> C1 FIXTURE DIGEST DRIFT <<<\n  See the C0 message above.\n",
+    );
+}
+
+// ============================================================================
+// [B1] PER-CIRCUIT COVERAGE TABLE
+// ============================================================================
+
+/// What is and is not covered, per circuit, for the coordinated-forgery
+/// acceptance case. It lives HERE rather than only in a session report, so that
+/// a gap is visible to the next reader of the tree.
+///
+/// The three claims are deliberately kept apart, because they are not the same
+/// claim and two of them have been conflated before:
+///
+///   * `t1_forgery_rejected` — the coordinated forgery with an HONEST terminal
+///     poly is rejected. This is the acceptance criterion.
+///   * `t1_accepted_when_deep_disabled` — the SAME forgery is ACCEPTED once the
+///     DEEP fold is reverted on both sides. Without this column the first one is
+///     worthless: a test that passes before and after the revert proves nothing.
+///     MEASURED, not argued; see the module note below for the exact revert.
+///   * `t2_terminal_play_reaches_fold_chain` — a terminal play that is INSIDE
+///     the degree bound, so the verifier is forced past the once-per-proof
+///     `check_final_poly_degree_bound` and through the per-query fold chain to
+///     the terminal comparison. This is NOT evidence of DEEP binding. MEASURED:
+///     with the DEEP fold reverted, `t2_legacy_c0_subgroup_alias_reaches_the_terminal_check`
+///     still PASSES, because an aliased terminal poly is rejected by the terminal
+///     comparison whether FRI folded `D` or `Q`. Its value is that it puts the
+///     legacy `(lo, hi)` swaps and the `-inv_table[half - j]` lookup under test.
+///
+/// # The revert used for the middle column
+///
+/// Prover (`stark/src/compact.rs`): both `fri_commit_phase(&deep_felts, ..)` call
+/// sites back to `&quotient_felts`, and both prover-side terminal degree asserts
+/// neutered so they no longer bind honest proofs. Verifier
+/// (`programs/p01_stark_verifier/src/verify.rs`): both
+/// `f_lo = brk_lo.add(qt_lo).mul(inv_lo) / f_hi = ..` back to `f_lo = q_lo /
+/// f_hi = q_hi`, and `check_final_poly_degree_bound` returning `Ok(())`
+/// immediately. That is pre-B1 behaviour with the post-B1 wire format.
+///
+/// Note that `both_fri_paths_derive_the_deep_coefficient_and_check_the_degree_bound`
+/// stayed GREEN under that revert. It counts SOURCE TEXT, so it catches a
+/// deletion, not a behavioural neutering — which is exactly why this column is
+/// measured by hand and written down rather than inferred from a green suite.
+struct Coverage {
+    id: u8,
+    label: &'static str,
+    /// Verifier entry point the negative case drives.
+    path: &'static str,
+    /// The prover can BUILD a coordinated forgery: `solve_ood_quotient_for_spec`
+    /// has an arm (C1..C6), or the pipeline has an inline solve (C0).
+    solve_implemented: bool,
+    t1_forgery_rejected: bool,
+    t1_accepted_when_deep_disabled: bool,
+    t2_terminal_play_reaches_fold_chain: bool,
+    /// Test names, checked against this file's own source text below, so
+    /// deleting a test breaks the table instead of leaving it lying.
+    t1_test: &'static str,
+    t2_test: &'static str,
+    note: &'static str,
+}
+
+const COVERAGE: [Coverage; 7] = [
+    Coverage {
+        id: 0,
+        label: "C0 subscriber_ownership",
+        path: "verify_subscriber_ownership (legacy)",
+        solve_implemented: true,
+        t1_forgery_rejected: true,
+        t1_accepted_when_deep_disabled: true,
+        t2_terminal_play_reaches_fold_chain: true,
+        t1_test: "t1_c0_coordinated_forgery_is_rejected_by_the_legacy_verifier",
+        t2_test: "t2_legacy_c0_subgroup_alias_reaches_the_terminal_check",
+        note: "T1 rejects at FriFinalPolyDegreeTooHigh, i.e. BEFORE the fold chain. \
+               SubgroupAlias (bound 7 of 16, k = 4) is what reaches it; AliasedFold \
+               cannot be built here at all.",
+    },
+    Coverage {
+        id: 1,
+        label: "C1 pool_commitment",
+        path: "verify_generic",
+        solve_implemented: true,
+        t1_forgery_rejected: true,
+        t1_accepted_when_deep_disabled: true,
+        t2_terminal_play_reaches_fold_chain: true,
+        t1_test: "t1_t2_t3_c1_coordinated_forgery_matrix",
+        t2_test: "t1_t2_t3_c1_coordinated_forgery_matrix",
+        note: "Carries the T3 phase-2 control and the T5 rate measurement.",
+    },
+    Coverage {
+        id: 2,
+        label: "C2 balance_proof",
+        path: "verify_generic",
+        solve_implemented: true,
+        t1_forgery_rejected: true,
+        t1_accepted_when_deep_disabled: true,
+        t2_terminal_play_reaches_fold_chain: true,
+        t1_test: "t1_t2_t3_c2_coordinated_forgery",
+        t2_test: "t1_t2_t3_c2_coordinated_forgery",
+        note: "No boundary fold at the OOD point, so the public inputs bind least well.",
+    },
+    Coverage {
+        id: 3,
+        label: "C3 merkle_path",
+        path: "verify_generic",
+        solve_implemented: true,
+        t1_forgery_rejected: true,
+        t1_accepted_when_deep_disabled: true,
+        t2_terminal_play_reaches_fold_chain: true,
+        t1_test: "t1_t2_t3_c3_coordinated_forgery",
+        t2_test: "t1_t2_t3_c3_coordinated_forgery",
+        note: "Depth-carrying; the solve rebuilds periodic columns from QuotientSpec.",
+    },
+    Coverage {
+        id: 4,
+        label: "C4 confidential_balance",
+        path: "verify_generic",
+        solve_implemented: true,
+        t1_forgery_rejected: true,
+        t1_accepted_when_deep_disabled: true,
+        t2_terminal_play_reaches_fold_chain: true,
+        t1_test: "t1_t2_t3_c4_coordinated_forgery",
+        t2_test: "t1_t2_t3_c4_coordinated_forgery",
+        note: "The CU-binding circuit, and the second with no boundary fold.",
+    },
+    Coverage {
+        id: 5,
+        label: "C5 transfer",
+        path: "verify_generic",
+        solve_implemented: true,
+        t1_forgery_rejected: true,
+        t1_accepted_when_deep_disabled: true,
+        t2_terminal_play_reaches_fold_chain: true,
+        t1_test: "t1_t2_t3_c5_coordinated_forgery",
+        t2_test: "t1_t2_t3_c5_coordinated_forgery",
+        note: "Mixed-length periodic columns; the solve tiles them before interpolating.",
+    },
+    Coverage {
+        id: 6,
+        label: "C6 merkle_update",
+        path: "verify_generic",
+        solve_implemented: true,
+        t1_forgery_rejected: true,
+        t1_accepted_when_deep_disabled: true,
+        t2_terminal_play_reaches_fold_chain: true,
+        t1_test: "t1_t2_c6_coordinated_forgery",
+        t2_test: "t1_t2_c6_coordinated_forgery",
+        note: "Widest trace (w = 10) and the marginal case for the DEEP arithmetic.",
+    },
+];
+
+const SELF_SRC: &str = include_str!("b1_deep_binding.rs");
+
+/// The coverage table must describe this file, not an aspiration.
+///
+/// Every claimed test name is checked against this file's own source text, and a
+/// row that claims coverage without naming a test fails. That is the same
+/// source-text technique the tripwire above uses, for the same reason: it is the
+/// one assertion that still means something when someone deletes a test and the
+/// suite goes green because there is less of it.
+#[test]
+fn coverage_table_describes_the_tests_that_actually_exist() {
+    println!(
+        "\n  id  circuit                  path                                  solve  T1 rej  \
+         T1 acc/no-DEEP  T2 fold-chain"
+    );
+    for (i, row) in COVERAGE.iter().enumerate() {
+        assert_eq!(row.id as usize, i, "COVERAGE must be indexed by circuit id");
+        println!(
+            "  C{}  {:<24} {:<37} {:<6} {:<7} {:<15} {}",
+            row.id,
+            row.label,
+            row.path,
+            row.solve_implemented,
+            row.t1_forgery_rejected,
+            row.t1_accepted_when_deep_disabled,
+            row.t2_terminal_play_reaches_fold_chain,
+        );
+
+        if row.t1_forgery_rejected {
+            assert!(
+                row.solve_implemented,
+                "C{}: cannot reject a forgery the prover cannot build",
+                row.id,
+            );
+            assert!(
+                !row.t1_test.is_empty(),
+                "C{}: claims the forgery is rejected but names no test",
+                row.id,
+            );
+            assert!(
+                SELF_SRC.contains(&format!("fn {}(", row.t1_test)),
+                "C{}: names T1 test `{}`, which does not exist in this file",
+                row.id,
+                row.t1_test,
+            );
+        } else {
+            assert!(row.t1_test.is_empty(), "C{}: names a T1 test but claims no coverage", row.id);
+        }
+
+        if row.t2_terminal_play_reaches_fold_chain {
+            assert!(
+                !row.t2_test.is_empty(),
+                "C{}: claims the fold chain is reached but names no test",
+                row.id,
+            );
+            assert!(
+                SELF_SRC.contains(&format!("fn {}(", row.t2_test)),
+                "C{}: names T2 test `{}`, which does not exist in this file",
+                row.id,
+                row.t2_test,
+            );
+        } else {
+            assert!(row.t2_test.is_empty(), "C{}: names a T2 test but claims no coverage", row.id);
+        }
+
+        // The middle column is the one that can only be produced by hand. It may
+        // never be claimed for a circuit whose forgery is not even rejected.
+        if row.t1_accepted_when_deep_disabled {
+            assert!(
+                row.t1_forgery_rejected,
+                "C{}: 'accepted with DEEP disabled' is meaningless without a rejection \
+                 to compare it against",
+                row.id,
+            );
+        }
+    }
+
+    for row in COVERAGE.iter() {
+        println!("  C{} note: {}", row.id, row.note);
+    }
+    let covered = COVERAGE.iter().filter(|r| r.t1_forgery_rejected).count();
+    let confirmed = COVERAGE.iter().filter(|r| r.t1_accepted_when_deep_disabled).count();
+    let chain = COVERAGE.iter().filter(|r| r.t2_terminal_play_reaches_fold_chain).count();
+    println!(
+        "  acceptance coverage: {covered}/7 forgeries rejected, {confirmed}/7 confirmed \
+         ACCEPTED with the DEEP fold reverted, {chain}/7 reaching the per-query fold chain\n"
     );
 }
