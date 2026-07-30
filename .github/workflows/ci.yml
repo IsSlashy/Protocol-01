@@ -64,6 +64,37 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # THE DEPLOYMENT INTERLOCK. The three WASM gates further down (twins,
+      # wireFormat, wasmProbeScan) all compare the blob to THIS TREE and are green
+      # whenever the tree agrees with itself. None of them has ever looked at the
+      # chain. This step runs BEFORE `turbo run build` on purpose: `apps/web` and
+      # `apps/extension` now run the same script in their own build scripts, so
+      # without this the job would go red inside a bundler log instead of under a
+      # name that says what broke.
+      #
+      # A client one proof-format generation ahead of the deployed verifier
+      # builds fine, serialises fine, uploads all ~78 KB in chunks and then fails
+      # on the LAST instruction with FriFoldCheckFailed — which reads as an
+      # unexplained transaction failure, not as a version skew.
+      #
+      # EXPECTED RED as of 2026-07-30: packages/stark-prover/wasm/ holds the B1
+      # prover, devnet EXmAQqmk… still runs pre-B1 bytes (measured off the
+      # programdata account, see packages/stark-prover/deployed-verifier.json).
+      # The ONLY legitimate way to turn it green is to deploy
+      # programs/p01_stark_verifier and then re-measure the record with
+      # `--measure`. Editing the record instead makes the OFFLINE half green and
+      # changes nothing on chain, which is why `--verify-onchain` is passed here:
+      # it refetches the programdata account and re-derives the deployed
+      # generation from the deployed bytes. An unreachable cluster is reported as
+      # SKIPPED and does not fail the step, so a network flake cannot block a
+      # merge; a reachable cluster that contradicts the record is a hard failure.
+      #
+      # The same script runs in `apps/web` build, `apps/extension` build,
+      # `apps/mobile` eas-build-post-install and both `prepublishOnly` hooks, so
+      # this is not a CI-only gate.
+      - name: STARK prover vs DEPLOYED verifier (BLOCKING — proof-format interlock)
+        run: node packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain
+
       - name: Type check & Build
         run: pnpm turbo run build
 
