@@ -86,6 +86,12 @@ this package generates is rejected. Four gates cover it:
   any twin (probe leak). MEASURED: the pre-gate 219,219-byte blob carried
   `OodForgery`, `Coordinated`, `AliasedFold`, `LegacyRowLeaf`, `forgery column `
   and `ood_quotient solve`; the gated 211,370-byte blob carries none of them.
+  Those six are the whole list. Four others were banned until 2026-07-30 and
+  were dropped, because a blob built with `--features wasm,test-probes` — the
+  regression itself — still scored zero on all four. A banned string that cannot
+  fire is decoration. The residual gap is written up in the file's header: the
+  `PairIndexing` probe family carries no string literals at all and is covered
+  only by sharing one cargo feature with the probes that do.
 - `scripts/deployed-verifier-check.mjs` — the blob matches the verifier that is
   actually DEPLOYED (deployment skew). The three gates above all compare the blob
   to *this tree* and are green whenever the tree agrees with itself; this one is
@@ -123,11 +129,27 @@ re-measure the record. Editing the record instead turns the *offline* half green
 and changes nothing on chain, which is what `--verify-onchain` is for: it
 refetches the programdata account and re-derives the generation from the deployed
 bytes, so a record that claims a generation the chain does not have is rejected.
-An unreachable cluster is reported as SKIPPED rather than failed, so a network
-flake cannot block a merge — which does mean the offline half alone is
-defeatable by a record edit when the network is down. Reverting the blob to the
-older generation instead is caught by `src/wireFormat.test.ts`, which then goes
-red on all seven digests (MEASURED: 9 failed / 3 passed).
+
+An unreachable cluster is a **hard failure** whenever nothing else was going to
+fail the run. It used to be reported as SKIPPED so a network flake could not
+block a merge, and that made the whole leg optional at the record's discretion:
+the record supplied the RPC endpoint, so MEASURED, editing three fields
+(`proof_format_generation` to `b1`, `accepts_client_blob_sha256` to the blob's
+own hash, `rpc_url` to `https://api.devnet.solana.invalid`) made
+`--verify-onchain` print `on-chain SKIPPED` and then `PASS`, exit code 0, with
+the chain never contacted. The endpoint is now pinned in the script and keyed by
+a cluster label, the program id comes from `Anchor.toml`, a record carrying an
+`rpc_url` is rejected, and the chain read is retried three times before the run
+is called red.
+
+One field in the record is believed rather than verified:
+`accepts_client_blob_sha256`. Nothing on chain records which client blob a
+deployment accepts, so no script can check it — it is a human attestation.
+
+Reverting the blob to the older generation instead is caught by
+`src/wireFormat.test.ts`, which then goes red on all seven digests (MEASURED:
+9 failed / 3 passed), and by `src/wasmProbeScan.test.ts` (MEASURED: 2 failed /
+9 passed, on its positive control and on `LegacyRowLeaf`).
 
 ## Runtime support
 
