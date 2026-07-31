@@ -23,9 +23,14 @@ pub mod resize_denominated_pool;
 // wallet pubkey, so anyone could answer "does wallet W subscribe to merchant M?"
 // by re-deriving the address off-chain. A deterministic membership oracle with no
 // enumeration cost, sitting next to a private path that seeds on
-// `subscriber_commitment` and leaks nothing. The weak path defined the privacy of
-// the whole subscription feature, so it is gone rather than patched. The only way
-// to open a vault is now `subscribe_private_stark`.
+// `subscriber_commitment`. The weak path defined the privacy of the whole
+// subscription feature, so it is gone rather than patched. The only way to open a
+// vault is now `subscribe_private_stark`.
+// Do not read that as "the oracle is closed on chain". `subscribe_private_stark`
+// accepts `subscriber_commitment` as a free `[u8; 32]`, uses it only as a PDA seed
+// and proves nothing about it, so a client that puts a wallet pubkey there rebuilds
+// the same oracle at the same address. Removal takes away the convenient
+// constructor; the client is what keeps the seed unlinkable.
 // The `*_normal` lifecycle instructions below are DELIBERATELY KEPT: they are the
 // only exit for the normal-mode vaults that already exist on chain, and they
 // cannot create an account, so they carry no oracle of their own.
