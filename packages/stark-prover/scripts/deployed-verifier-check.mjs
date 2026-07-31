@@ -304,10 +304,10 @@ function knownElfContradiction(elfSha, claimedGeneration, where) {
   return {
     title: `${where} contradicts a deployment that was measured by hand`,
     lines: [
-      `  elf sha256   ${elfSha}`,
-      `  that ELF is  ${known.what}`,
-      `  measured     ${known.generation}`,
-      `  ${where.padEnd(11)} ${claimedGeneration}`,
+      `  elf sha256          ${elfSha}`,
+      `  those bytes are     ${known.what}`,
+      `  measured by hand    ${known.generation}`,
+      `  ${`${where} says`.padEnd(18)}${claimedGeneration}`,
       '',
       'Those exact bytes were read off the chain and classified on 2026-07-31, and they have not changed',
       'since — the hash is how we know. A redeploy would produce a different hash and this check would',
