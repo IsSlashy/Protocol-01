@@ -122,8 +122,29 @@ build, `apps/mobile` `eas-build-post-install`, and the `prepublishOnly` of both
 this package and `@protocol-01/react-native-zk`. All seven call sites pass
 `--verify-onchain --cluster devnet`.
 
-**It is RED today and that is correct.** MEASURED 2026-07-30: `wasm/` holds the
-B1 prover (`11e6f004…`, 211,370 B, three B1 marker literals present) and devnet
+**How each side's generation is decided.** The client blob's is MEASURED by
+running it: `scripts/prover-behaviour.mjs` generates one proof per shipping
+circuit on seven fixed witnesses and sha256s each, and all seven digests must
+match one column of its fixture table. B1 is length-preserving on every circuit
+— MEASURED 2026-07-31, the B1 blob and the last pre-B1 blob emit the same seven
+byte counts — so content is the only discriminator there is. Anything else, a
+mixture included, refuses to classify and fails. Until 2026-07-31 this was a scan
+for panic-message literals, and it was cheated four rounds running: four bytes of
+panic text in the blob plus three renames in `stark/src/compact.rs` and one
+`msg!` line in the verifier crate printed the full `PASS` at exit 0 against a
+genuinely pre-B1 devnet. The same cheat now exits 1. That is ~5 s per run, and
+there is no cache, because a cache is a place to keep a verdict nobody measured.
+
+The **deployed** side is still a scan of the on-chain ELF for `msg!` literals —
+nothing in a build script can execute a BPF program. `KNOWN_ELF_GENERATIONS`
+bounds that by pinning the sha256 of both live devnet deployments with the
+generation each was measured to be by hand, so a marker table reworded to make a
+pinned pre-B1 ELF read as B1 contradicts the pin and fails, offline as well as on
+chain. What is left is an edit to the guardrail itself, which is louder than a
+rename in a refactor but not impossible.
+
+**It is RED today and that is correct.** MEASURED 2026-07-31: `wasm/` holds the
+B1 prover (`11e6f004…`, 211,370 B, 7/7 circuits emitting the B1 proof digest) and devnet
 `EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z` still runs pre-B1 bytes
 (`c359ab53…`, 780,249 B, deployed at slot 456,289,287; B1's degree-bound `msg!`
 literal absent while five sibling `msg!` literals from the same source file are
