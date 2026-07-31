@@ -87,6 +87,7 @@
     "src"
   ],
   "scripts": {
+    "lint": "tsc --noEmit",
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest run",

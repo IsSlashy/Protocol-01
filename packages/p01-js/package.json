@@ -40,6 +40,7 @@
   ],
   "sideEffects": false,
   "scripts": {
+    "lint": "tsc --noEmit",
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",

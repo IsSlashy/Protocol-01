@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
+    "lint": "tsc --noEmit",
     "dev": "next dev --turbopack",
     "build": "node ../../packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain --cluster devnet && pnpm --filter @protocol-01/rpc-config build && pnpm --filter @protocol-01/specter-sdk build:core && next build",
     "start": "next start",

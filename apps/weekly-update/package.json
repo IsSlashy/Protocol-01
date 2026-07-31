@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "lint": "tsc --noEmit",
     "dev": "remotion studio",
     "build": "echo 'weekly-update: build is a no-op; use pnpm render to produce the video' && exit 0",
     "render": "remotion render WeeklyUpdate out/week1.mp4",

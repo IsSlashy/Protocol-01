@@ -17,6 +17,7 @@
     "src"
   ],
   "scripts": {
+    "lint": "tsc --noEmit",
     "build": "tsup --config tsup.config.ts",
     "dev": "tsup --config tsup.config.ts --watch",
     "test": "vitest run --passWithNoTests",

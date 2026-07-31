@@ -22,6 +22,7 @@
     "src"
   ],
   "scripts": {
+    "lint": "tsc --noEmit",
     "build": "tsup src/index.ts --format cjs,esm --dts",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "prepublishOnly": "npm run build"

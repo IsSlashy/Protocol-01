@@ -11,6 +11,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "lint": "tsc --noEmit",
     "build": "tsc --skipLibCheck",
     "inline-wasm": "node scripts/inline-wasm.mjs",
     "prepublishOnly": "node scripts/inline-wasm.mjs && node ../stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain --cluster devnet && tsc --skipLibCheck",

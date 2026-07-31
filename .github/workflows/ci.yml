@@ -69,6 +69,39 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # `pnpm lint` is `turbo run lint`. turbo prints "Running lint in 22 packages"
+      # but a package with no `lint` script is silently skipped, so for most of
+      # this repo's life that line described 2 packages: apps/extension (eslint)
+      # and packages/arcium-sdk (tsc --noEmit). NOTHING that produces or consumes a
+      # STARK proof was linted or type-checked here — packages/stark-prover, which
+      # holds the shipped WASM prover blob, least of all.
+      #
+      # MEASURED per package with `tsc --noEmit`, with workspace dependencies built
+      # (the raw counts before building deps are all TS2307 "cannot find module
+      # @protocol-01/…" against a missing dist/, not real type errors — which is why
+      # the lint task now declares `dependsOn: ["^build"]` in turbo.json):
+      #   0 errors: stark-prover, privacy-sdk, specter-sdk, zk-sdk, zkspl-sdk,
+      #             pay-core, merchant-sdk, auth-sdk, p01-js, privacy-toolkit,
+      #             react-native-zk, rpc-config, specter-js, ui, whitelist-sdk,
+      #             apps/web, apps/mugen, apps/weekly-update, examples/merchant-netflix
+      # All nineteen now carry a `lint` script, so this step covers 21 of 22.
+      #
+      # NOT covered, deliberately, with the number that makes it a decision:
+      #   apps/mobile — 509 errors. 507 of them are `className` (TS2769/TS2322) and
+      #     disappear the moment `apps/mobile/nativewind-env.d.ts` exists; that file
+      #     is generated, and root .gitignore:183 ignores `**/*.d.ts`, so a fresh CI
+      #     checkout never has it. With it present the real count is 2, both
+      #     `Type 'Timeout' is not assignable to type 'number'` in
+      #     services/sync/realtimeSync.ts. Adding lint here today would be red.
+      #   apps/extension — its eslint passes, but `tsc --noEmit` reports 2
+      #     (`Property 'env' does not exist on type 'ImportMeta'`, missing
+      #     vite/client types), so no type-check was added alongside its eslint.
+      #   apps/web eslint — 47 problems (12 errors, 35 warnings). 9 of the 12 are
+      #     "Definition for rule … was not found" from eslint-disable comments
+      #     naming react-hooks/@next rules its flat config never loads. apps/web
+      #     declares eslint ^9.39.4 + eslint-config-next 16.2.6 and invokes
+      #     neither; `next lint` no longer exists in Next 16 (not in `next --help`).
+      #     Its `lint` script above is the type-check only.
       - name: Lint
         run: pnpm lint
 

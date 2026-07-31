@@ -5,6 +5,7 @@
   "description": "Runnable example: a Netflix-style merchant backend using @protocol-01/merchant-sdk.",
   "type": "module",
   "scripts": {
+    "lint": "tsc --noEmit",
     "start": "tsx index.ts",
     "typecheck": "tsc --noEmit"
   },
