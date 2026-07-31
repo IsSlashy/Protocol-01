@@ -497,15 +497,23 @@ export async function upsertStreamFromVault(
   const intervalSlotsNum = Number(vault.intervalSlots);
   const { frequency, customIntervalDays } = inferFrequencyFromSlots(intervalSlotsNum);
 
+  // Resolve the slot ONCE. It is needed twice — for the "started N days ago"
+  // display and, more importantly, to decide whether this subscription still
+  // has any of its funded periods left. Callers rarely pass one, so fetching it
+  // here is what makes the status honest at every call site.
+  let resolvedSlot: number | null = null;
+  try {
+    resolvedSlot = opts?.currentSlot ?? (await getConnection().getSlot('confirmed'));
+  } catch {
+    // No RPC. Both consumers below fall back to something safe.
+  }
+
   // Approximate start timestamp from start_slot. Solana slot ≈ 400ms — good enough
   // for the "started N days ago" display in the Streams list.
   let startDate = Date.now();
-  try {
-    const currentSlot = opts?.currentSlot ?? await getConnection().getSlot('confirmed');
-    const slotsElapsed = currentSlot - Number(vault.startSlot);
+  if (resolvedSlot !== null) {
+    const slotsElapsed = resolvedSlot - Number(vault.startSlot);
     if (slotsElapsed > 0) startDate = Date.now() - slotsElapsed * 400;
-  } catch {
-    // keep Date.now()
   }
 
   const rateSOL = Number(vault.rate) / LAMPORTS_PER_SOL;
@@ -513,14 +521,7 @@ export async function upsertStreamFromVault(
   const claimedPeriods = Number(vault.claimedPeriods);
   const intervalMs = getIntervalMs(frequency, customIntervalDays);
   const now = Date.now();
-  // NOT `vault.isActive`: the program writes that `true` at subscribe and
-  // `false` NOWHERE, so a subscription that has spent every period it paid for
-  // reports `true` for ever and would land in the Streams list as `active`.
-  // `entitlementStatus` needs a slot; without one it answers 'unknown', and an
-  // imported subscription whose state cannot be established is better recorded
-  // as `active` and corrected on the next sync than as `cancelled`, which the
-  // cancelled-ids list would then make sticky.
-  const status: StreamStatus = mapVaultStatusToStream(vault, opts?.currentSlot ?? null);
+  const status: StreamStatus = mapVaultStatusToStream(vault, resolvedSlot);
 
   const stream: Stream = {
     id: generateId(),
