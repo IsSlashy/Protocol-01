@@ -519,7 +519,11 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
                 vaultPDA: vaultPDA.toBase58(),
               });
             }
-            if (vaultInfo) await upsertStreamFromVault(vaultInfo);
+            // Record the tag that was hashed into license_commitment above.
+            // Without it this row can only re-derive the retailer fallback, and
+            // a subscription made under a registry slug shows a key the
+            // merchant is bound to reject.
+            if (vaultInfo) await upsertStreamFromVault(vaultInfo, { licenseServiceTag: serviceId });
           } catch (e) {
             console.warn('[SubscriptionVault] stream sync after subscribePrivateStark failed (non-fatal):', e);
           }

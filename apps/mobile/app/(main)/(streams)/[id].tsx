@@ -559,8 +559,7 @@ function DetailContent() {
         <Animated.View entering={FadeInDown.delay(40).duration(250)}>
           <LicenseKeyCard
             status={stream.status as 'active' | 'paused' | 'completed' | 'cancelled'}
-            retailerAddress={stream.recipientAddress}
-            serviceId={stream.serviceId}
+            stream={stream}
             serviceName={stream.serviceName || serviceInfo?.name}
             vaultAddress={stream.vaultAddress}
             walletPubkey={publicKey || undefined}

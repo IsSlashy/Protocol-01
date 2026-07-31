@@ -71,6 +71,16 @@ export interface Stream {
   serviceName?: string;
   serviceCategory?: string;
   serviceColor?: string;
+  /**
+   * The service tag that was hashed into the vault's `license_commitment` at
+   * subscribe time, recorded verbatim.
+   *
+   * `serviceId` is NOT a substitute: records synthesised from an on-chain vault
+   * carry no slug, and `recipientAddress` only reproduces the tag for
+   * recipients that never had one. Absent on legacy records — the display path
+   * falls back through `licenseScopeForStream`.
+   */
+  licenseServiceTag?: string;
 
   // On-chain subscription data (for automatic payments via relayer)
   onChainSubscription?: {
@@ -130,6 +140,8 @@ export interface CreateStreamParams {
   serviceName?: string;
   serviceCategory?: string;
   serviceColor?: string;
+  /** The tag hashed into `license_commitment` — see Stream.licenseServiceTag. */
+  licenseServiceTag?: string;
 }
 
 const STORAGE_KEY = 'p01_streams';
@@ -397,6 +409,7 @@ export async function createStream(params: CreateStreamParams): Promise<Stream> 
     serviceName: params.serviceName,
     serviceCategory: params.serviceCategory,
     serviceColor: params.serviceColor,
+    licenseServiceTag: params.licenseServiceTag,
     createdAt: now,
     updatedAt: now,
     paymentHistory: [],
@@ -441,7 +454,16 @@ export async function updateStream(streamId: string, updates: Partial<Stream>): 
  */
 export async function upsertStreamFromVault(
   vault: import('../subscriptionVault').VaultInfo,
-  opts?: { retailerName?: string; currentSlot?: number },
+  opts?: {
+    retailerName?: string;
+    currentSlot?: number;
+    /**
+     * The tag the caller hashed into `license_commitment`. Supplied on the
+     * subscribe path, which knows it; absent on true cross-device recovery,
+     * where the chain does not carry it.
+     */
+    licenseServiceTag?: string;
+  },
 ): Promise<Stream | null> {
   const streams = await loadStreams();
   if (streams.some(s => s.vaultAddress === vault.address)) return null;
@@ -492,6 +514,7 @@ export async function upsertStreamFromVault(
     useZkPool: true,
     useZkVault: true,
     vaultAddress: vault.address,
+    licenseServiceTag: opts?.licenseServiceTag,
     createdAt: now,
     updatedAt: now,
     paymentHistory: [],

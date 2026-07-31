@@ -608,6 +608,9 @@ function SubscribeContent() {
         id: streamId,
         name: serviceName, recipientAddress: retailerAddr, totalAmount: totalPrice,
         frequency, endDate, serviceId, serviceName,
+        // Record the exact tag the vault path hashed into license_commitment,
+        // so the detail screen never has to guess it back.
+        licenseServiceTag: useZkVault ? licenseServiceTag(serviceId, retailerAddr) : undefined,
         amountNoise: enablePrivacy ? 10 : 0, timingNoise: enablePrivacy ? 4 : 0,
         useStealthAddress: enablePrivacy, useZkPool: useZkPool || useZkVault, useZkVault,
       });

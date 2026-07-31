@@ -13,20 +13,20 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
-import { licenseKeyForSubscription } from '@/services/license/derive';
+import { licenseKeyForSubscription, licenseScopeForStream, type LicenseStreamRecord } from '@/services/license/derive';
 import { loadVaultSubscriberSecret } from '@/stores/subscriptionVaultStore';
 
 export interface LicenseKeyCardProps {
   status: 'active' | 'paused' | 'completed' | 'cancelled';
   /**
-   * Retailer base58 address — the license service tag whenever the recipient
-   * has no Service Registry slug. This is the ONLY correct fallback: it is what
-   * the subscribe screens commit on-chain. The local stream id used to sit here
-   * and could never match, because the chain has never seen it.
+   * The persisted subscription record, passed WHOLE.
+   *
+   * Deliberately not decomposed into `serviceId` + `retailerAddress` props:
+   * choosing which field feeds the HKDF is the decision that broke in
+   * production, and a per-field prop list hands that decision back to every
+   * caller. `licenseScopeForStream` owns it, and it is unit-tested.
    */
-  retailerAddress: string;
-  /** Registered service identifier from the Service Registry. */
-  serviceId?: string;
+  stream: LicenseStreamRecord;
   /** Service display name (e.g. "Disney+"). Shown in the eyebrow label. */
   serviceName?: string;
   /** SubscriberVault PDA — present for private (ZK vault) subscriptions. */
@@ -63,17 +63,14 @@ export function LicenseKeyCard(props: LicenseKeyCardProps) {
         // Shares licenseServiceTag with the subscribe screens that posted
         // license_commitment, so the two cannot resolve the service tag
         // differently. Anything else shows a key the merchant must reject.
-        const key = licenseKeyForSubscription(secretDecimal, {
-          serviceId: props.serviceId,
-          retailerAddress: props.retailerAddress,
-        });
+        const key = licenseKeyForSubscription(secretDecimal, licenseScopeForStream(props.stream));
         if (!cancelled) setLicenseKey(key);
       } catch {
         if (!cancelled) setLicenseKey(null);
       }
     })();
     return () => { cancelled = true; };
-  }, [props.vaultAddress, props.retailerAddress, props.serviceId]);
+  }, [props.vaultAddress, props.stream.licenseServiceTag, props.stream.serviceId, props.stream.recipientAddress]);
 
   if (!licenseKey) return null;
 

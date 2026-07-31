@@ -115,9 +115,15 @@ function licenseInfo(serviceId: string): Uint8Array {
  * base58`, while `LicenseKeyCard` fell back to the local `streamId` — a value
  * the chain has never seen — so every subscription to a recipient without a
  * Service Registry slug showed a key the merchant was bound to reject. Vaults
- * recovered on a second device were worse: `upsertStreamFromVault` sets no
- * `serviceId` at all and mints a fresh random stream id, so the fallback was
- * wrong 100% of the time there.
+ * synthesised by `upsertStreamFromVault` were worse: it sets no `serviceId` at
+ * all and mints a fresh random stream id, so the fallback was wrong 100% of the
+ * time there.
+ *
+ * This function alone does not close that. It fixes the RULE; the INPUTS are
+ * fixed by recording the committed tag on the record — see
+ * `licenseScopeForStream`. And one case stays open: a vault recovered on a
+ * device that never saw the registry slug cannot reproduce a slug-scoped tag,
+ * because the SubscriptionVault account does not carry one.
  *
  * @param serviceId Service Registry slug, when the recipient has one.
  * @param retailerAddress The retailer's base58 address — the fallback tag for a
@@ -246,9 +252,56 @@ export function licenseKeyForSubscription(
 }
 
 /**
+ * The minimum a persisted subscription record must carry for the display side
+ * to reproduce the tag that was committed. Structural on purpose so this module
+ * keeps no dependency on the streams service — the cross-client parity fixture
+ * imports it directly.
+ */
+export interface LicenseStreamRecord {
+  /**
+   * The tag that was actually hashed into `license_commitment` at subscribe
+   * time, recorded verbatim. Authoritative when present: it is the only field
+   * that cannot be re-derived wrongly later.
+   */
+  licenseServiceTag?: string;
+  /** Service Registry slug, when the record carries one. */
+  serviceId?: string;
+  /** Retailer base58 address. */
+  recipientAddress: string;
+}
+
+/**
+ * The scope a persisted subscription's license key must be derived under.
+ *
+ * This exists because `licenseServiceTag` being correct is not enough: the
+ * display side has to be handed the right INPUTS, and that hand-off is where
+ * the shipped defect lived. Every path that renders a key goes through this one
+ * function, so a record can be wrong in exactly one place instead of at every
+ * call site.
+ *
+ * Precedence: the recorded tag, then the slug, then the retailer address.
+ * A record synthesised from an on-chain vault carries no slug — the vault
+ * account does not store one — so a subscription made under a registry slug and
+ * recovered on a device that never saw that slug still cannot be reproduced.
+ * That gap is real and is asserted in `stream-scope.test.ts` rather than
+ * papered over.
+ */
+export function licenseScopeForStream(stream: LicenseStreamRecord): LicenseScope {
+  return {
+    serviceId: stream.licenseServiceTag || stream.serviceId,
+    retailerAddress: stream.recipientAddress,
+  };
+}
+
+/**
  * The `license_commitment` to POST for a private subscription. Counterpart of
- * `licenseKeyForSubscription` — the two are the only supported entry points, and
- * they cannot disagree because they share `licenseServiceTag`.
+ * `licenseKeyForSubscription`; they cannot disagree because they share
+ * `licenseServiceTag`.
+ *
+ * NOTE: the mobile subscribe screens do not call this — they resolve the tag
+ * with `licenseServiceTag` and hand the string to `subscriptionVaultStore`,
+ * which hashes it. Both routes are the same derivation, but only the store's
+ * route is on the wire today.
  */
 export function licenseCommitmentForSubscription(
   masterNoteSecret: bigint | string,
