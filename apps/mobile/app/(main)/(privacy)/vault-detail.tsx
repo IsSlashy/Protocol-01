@@ -17,6 +17,7 @@ import {
   type VaultInfo,
   type CancelPreview,
   computeCancelPreview,
+  entitlementStatus,
   REFUND_KEEPER_FEE,
   REFUND_MIN_RESIDUAL,
 } from '@/services/subscriptionVault';
@@ -31,6 +32,21 @@ import CancelConfirmModal, {
 } from '@/components/privacy/CancelConfirmModal';
 
 const SECURE_SECRET_PREFIX = 'p01_vault_secret_';
+
+/**
+ * Never label this row from `isActive`. The program writes it `true` at
+ * subscribe and `false` NOWHERE, so a subscription that has spent every period
+ * it paid for still reports `true` and this row used to read "Active".
+ * "Ended" is that state. "Checking" is the state where the slot poll has not
+ * landed, which must not be rendered as the optimistic answer either.
+ */
+const STATUS_LABEL: Record<ReturnType<typeof entitlementStatus>, string> = {
+  inactive: 'Inactive',
+  paused: 'Paused',
+  unknown: 'Checking',
+  current: 'Active',
+  ended: 'Ended',
+};
 
 export default function VaultDetailScreen() {
   const router = useRouter();
@@ -51,6 +67,10 @@ export default function VaultDetailScreen() {
 
   const [vaultInfo, setVaultInfo] = useState<VaultInfo | null>(null);
   const [starkStatus, setStarkStatus] = useState<string | null>(null);
+  // Needed for the Status row: without a slot the funded window cannot be
+  // evaluated, and `isActive` alone reports every subscription as Active for
+  // ever because the program never writes it false.
+  const [currentSlot, setCurrentSlot] = useState<number | null>(null);
 
   // Cancel modal state ──────────────────────────────────────────────────────
   const [cancelVisible, setCancelVisible] = useState(false);
@@ -69,6 +89,11 @@ export default function VaultDetailScreen() {
       if (vaultAddress) {
         const info = await refreshVault(vaultAddress);
         setVaultInfo(info);
+      }
+      try {
+        setCurrentSlot(await getConnection().getSlot('confirmed'));
+      } catch {
+        // Leave it null — the Status row says "Checking", never "Active".
       }
     };
     load();
@@ -255,7 +280,7 @@ export default function VaultDetailScreen() {
         <View style={styles.detailCard}>
           <Text style={styles.detailLabel}>Status</Text>
           <Text style={styles.detailValue}>
-            {!vaultInfo.isActive ? 'Cancelled' : vaultInfo.isPaused ? 'Paused' : 'Active'}
+            {STATUS_LABEL[entitlementStatus(vaultInfo, currentSlot ?? 0)]}
           </Text>
         </View>
 

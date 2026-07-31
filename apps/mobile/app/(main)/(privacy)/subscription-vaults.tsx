@@ -16,7 +16,7 @@ import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { useSubscriptionVaultStore, type StoredVaultInfo } from '@/stores/subscriptionVaultStore';
-import { type VaultInfo } from '@/services/subscriptionVault';
+import { entitlementStatus, type VaultInfo } from '@/services/subscriptionVault';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { getConnection } from '@/services/solana/connection';
 
@@ -95,6 +95,14 @@ export default function SubscriptionVaultsScreen() {
     });
   };
 
+  /**
+   * Never derive this badge from `info.isActive`. The program writes that
+   * `true` at subscribe and `false` NOWHERE, so a subscription that has spent
+   * every period it paid for still reports `true` and used to render "Active".
+   * `entitlementStatus` answers the question the badge is actually asking, and
+   * returns 'unknown' rather than the optimistic answer when the slot poll has
+   * not landed yet.
+   */
   const statusBadge = (vault: StoredVaultInfo, info: VaultInfo | undefined) => {
     if (!info) {
       return (
@@ -104,27 +112,38 @@ export default function SubscriptionVaultsScreen() {
       );
     }
 
-    if (!info.isActive) {
-      return (
-        <View style={[styles.statusBadge, { borderColor: Colors.textTertiary }]}>
-          <Text style={[styles.statusText, { color: Colors.textTertiary }]}>Cancelled</Text>
-        </View>
-      );
+    switch (entitlementStatus(info, currentSlot ?? 0)) {
+      case 'inactive':
+        return (
+          <View style={[styles.statusBadge, { borderColor: Colors.textTertiary }]}>
+            <Text style={[styles.statusText, { color: Colors.textTertiary }]}>Inactive</Text>
+          </View>
+        );
+      case 'paused':
+        return (
+          <View style={[styles.statusBadge, { borderColor: P01Colors.yellow }]}>
+            <Text style={[styles.statusText, { color: P01Colors.yellow }]}>Paused</Text>
+          </View>
+        );
+      case 'unknown':
+        return (
+          <View style={[styles.statusBadge, { borderColor: Colors.textTertiary }]}>
+            <Text style={[styles.statusText, { color: Colors.textTertiary }]}>Checking</Text>
+          </View>
+        );
+      case 'ended':
+        return (
+          <View style={[styles.statusBadge, { borderColor: P01Colors.pink }]}>
+            <Text style={[styles.statusText, { color: P01Colors.pink }]}>Ended</Text>
+          </View>
+        );
+      default:
+        return (
+          <View style={[styles.statusBadge, { borderColor: P01Colors.cyan }]}>
+            <Text style={[styles.statusText, { color: P01Colors.cyan }]}>Active</Text>
+          </View>
+        );
     }
-
-    if (info.isPaused) {
-      return (
-        <View style={[styles.statusBadge, { borderColor: P01Colors.yellow }]}>
-          <Text style={[styles.statusText, { color: P01Colors.yellow }]}>Paused</Text>
-        </View>
-      );
-    }
-
-    return (
-      <View style={[styles.statusBadge, { borderColor: P01Colors.cyan }]}>
-        <Text style={[styles.statusText, { color: P01Colors.cyan }]}>Active</Text>
-      </View>
-    );
   };
 
   const renderVault = (vault: StoredVaultInfo, index: number) => {
@@ -224,7 +243,11 @@ export default function SubscriptionVaultsScreen() {
                 <View style={styles.summaryDivider} />
                 <View style={styles.summaryItem}>
                   <Text style={[styles.summaryValue, { color: P01Colors.cyan }]}>
-                    {Object.values(vaultInfos).filter(v => v?.isActive && !v?.isPaused).length}
+                    {
+                      Object.values(vaultInfos).filter(
+                        (v) => v && entitlementStatus(v, currentSlot ?? 0) === 'current',
+                      ).length
+                    }
                   </Text>
                   <Text style={styles.summaryLabel}>Active</Text>
                 </View>
@@ -234,6 +257,17 @@ export default function SubscriptionVaultsScreen() {
                     {Object.values(vaultInfos).filter(v => v?.isPaused).length}
                   </Text>
                   <Text style={styles.summaryLabel}>Paused</Text>
+                </View>
+                <View style={styles.summaryDivider} />
+                <View style={styles.summaryItem}>
+                  <Text style={[styles.summaryValue, { color: P01Colors.pink }]}>
+                    {
+                      Object.values(vaultInfos).filter(
+                        (v) => v && entitlementStatus(v, currentSlot ?? 0) === 'ended',
+                      ).length
+                    }
+                  </Text>
+                  <Text style={styles.summaryLabel}>Ended</Text>
                 </View>
               </View>
             </LinearGradient>
