@@ -563,10 +563,35 @@ jobs:
       - name: cargo clippy (BLOCKING — verifier)
         run: cargo clippy -p p01_stark_verifier -- -D warnings
 
-      # These two still carry pre-existing warnings that nobody has triaged, so
-      # they stay advisory. Do not fold the verifier back in here.
-      - name: cargo clippy (advisory — zk_shielded, relayer)
-        run: |
-          cargo clippy -p zk_shielded -- -D warnings
-          cargo clippy -p p01_relayer -- -D warnings
+      # `p01_relayer` was advisory on the grounds that it "still carries
+      # pre-existing warnings that nobody has triaged". It does not, and had not
+      # for some time. MEASURED on this tree, after `cargo clean -p p01_relayer`:
+      #   cargo clippy -p p01_relayer -- -D warnings   -> exit 0, zero findings
+      # so it is promoted. Separate step, separate name: a red here is a relayer
+      # regression, and it should not read as a verifier one.
+      #
+      # Two honest caveats, so this comment does not overstate its own gate the
+      # way the one it replaced did:
+      #   * exit 0 is against `src/lib.rs:1-22`, which allows ~20 clippy lints
+      #     crate-wide (`too_many_arguments`, `needless_range_loop`, …). That
+      #     list is pre-existing and untouched here; the gate is "no NEW finding
+      #     outside it", not "clippy-clean".
+      #   * measured with clippy 0.1.95 / rustc 1.95.0. CI takes
+      #     `dtolnay/rust-toolchain@stable`, so a later stable that adds a lint
+      #     can turn this red without a source change. That is the same exposure
+      #     the verifier step above already carries. If it fires, triage the
+      #     finding — do not restore `continue-on-error`.
+      - name: cargo clippy (BLOCKING — relayer)
+        run: cargo clippy -p p01_relayer -- -D warnings
+
+      # `zk_shielded` stays advisory, and it is the ONLY one that still needs to
+      # be. MEASURED on this tree, after `cargo clean -p zk_shielded`:
+      #   cargo clippy -p zk_shielded -- -D warnings   -> exit 101, 3 findings
+      # all three in `programs/zk_shielded/src/compliance.rs`: the unused import
+      # `crate::errors::ZkShieldedError` (line 3) and the never-used constants
+      # `MAX_EXPIRES_IN_SECONDS` (17) and `MIN_EXPIRES_IN_SECONDS` (20). Triage
+      # those three and this step can be promoted too. Do not fold the verifier
+      # or the relayer back in here.
+      - name: cargo clippy (advisory — zk_shielded)
+        run: cargo clippy -p zk_shielded -- -D warnings
         continue-on-error: true
