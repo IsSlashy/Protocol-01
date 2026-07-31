@@ -2,7 +2,12 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { blake3 } from '@noble/hashes/blake3.js';
 import { listVaultsForRetailer, type SubscriptionVaultAccount, type ListVaultsOptions } from './vaults';
 import { periodsPaidFor, subscriptionIsCurrent } from './claim';
-import { type ServiceScope, vaultMatchesService } from './service-scope';
+import { type ServiceScopedOptions, vaultMatchesService } from './service-scope';
+
+// Re-exported so `import { ServiceScopedOptions } from './license'` keeps
+// working; the declaration moved to `service-scope.ts` when `vaults.ts` started
+// needing it too.
+export type { ServiceScopedOptions };
 
 /**
  * Protocol 01 subscription **license keys** — commitment scheme.
@@ -204,22 +209,6 @@ export interface VerifyLicenseKeyResult {
    * access if you like, but the chain does not distinguish the two products.
    */
   ambiguousService?: boolean;
-}
-
-/** Options common to both license verification paths. */
-export interface ServiceScopedOptions {
-  /**
-   * Registry facts for the service the key is being presented FOR. Supply this
-   * and `serviceId` becomes enforceable; omit it and the key is only checked
-   * against the merchant, so a key issued for one of the merchant's services
-   * verifies against any other that shares a retailer and mint.
-   */
-  service?: ServiceScope;
-  /**
-   * The merchant's other services, used only to report when `service` cannot
-   * discriminate. Cheap to pass if the merchant already caches its registry.
-   */
-  otherServices?: ServiceScope[];
 }
 
 export interface VerifyLicenseKeyOptions

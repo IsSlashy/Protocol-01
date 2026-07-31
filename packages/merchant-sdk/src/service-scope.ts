@@ -97,6 +97,30 @@ export function vaultMatchesService(
   return collides ? { matches: true, ambiguous: true } : { matches: true };
 }
 
+/**
+ * Options accepted by every entitlement check that can be scoped to a service.
+ *
+ * Lives here rather than next to any one caller because both the license paths
+ * (`license.ts`) and the access-check paths (`vaults.ts`) take it, and putting
+ * it in either of those would make the other import a module that imports it
+ * back.
+ */
+export interface ServiceScopedOptions {
+  /**
+   * Registry facts for the service the caller is being asked to grant access
+   * TO. Supply this and `serviceId` becomes enforceable; omit it and the check
+   * is only against the merchant, so a subscription to one of the merchant's
+   * services passes for any other that shares a retailer, mint, price and
+   * interval.
+   */
+  service?: ServiceScope;
+  /**
+   * The merchant's other services, used only to report when `service` cannot
+   * discriminate. Cheap to pass if the merchant already caches its registry.
+   */
+  otherServices?: ServiceScope[];
+}
+
 /** Build a {@link ServiceScope} from a decoded registry entry. */
 export function serviceScopeFromRegistry(entry: {
   retailer: PublicKey;
