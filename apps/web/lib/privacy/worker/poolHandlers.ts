@@ -522,10 +522,18 @@ async function handlePoolUnshieldPrepare(
   // adopted a passphrase is a v1 note: its secrets, its withdrawal ephemeral and
   // its stored blob all key off the legacy seed, and using the active seed for
   // any of them would produce a proof for a commitment that is not on the tree.
+  //
+  // The commitment map is fetched ONCE and reused across derivations, the same
+  // way handlePoolScan does it. Letting each candidate call recoverNotes bare
+  // would re-pull the pool's whole history per derivation, i.e. double the
+  // heaviest RPC call on the withdrawal path for every passphrase wallet — and
+  // a Helius devnet 429 arrives as HTTP 200 with a JSON-RPC -32429 body, so the
+  // second pull failing does not look like a failure.
   onProgress?.('Locating your note on-chain...');
+  const commitments = await fetchPoolCommitments(conn, pool.poolPDA);
   let owner: { candidate: SeedCandidate; note: RecoveredNote } | null = null;
   for (const candidate of candidates) {
-    const notes = await recoverNotes(conn, pool, candidate.seed, { onProgress });
+    const notes = await recoverNotes(conn, pool, candidate.seed, { commitments, onProgress });
     const hit = notes.find((n) => n.receipt.leafIndex === req.leafIndex);
     if (hit) {
       owner = { candidate, note: hit };
