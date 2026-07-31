@@ -1335,6 +1335,18 @@ export async function fetchAllVaults(walletPubkey: string): Promise<VaultInfo[]>
     // memcmp.bytes uses base58 encoding in @solana/web3.js.
     // We match the 1-byte Some tag + 32 subscriber pubkey bytes at offset 8.
     // This picks up normal-mode vaults only.
+    //
+    // RESIDUAL LEAK, kept on purpose. This filter is the same membership oracle
+    // that got `subscribe_normal` deleted, in its other form: any RPC caller can
+    // memcmp offset 8 for any wallet and get that wallet's subscriptions, and
+    // running it here also hands the wallet to the RPC provider. It survives
+    // because `subscriber_pubkey` is a plaintext wallet inside a public account,
+    // which no client-side change can fix. It is bounded: no new normal-mode
+    // vault can be created, so this can only ever return vaults that predate the
+    // removal, and each one stops being findable the moment its owner calls
+    // cancel_normal (which closes the account). Removing this function would
+    // leave those owners with no way to see the vault they need to close.
+    // Private vaults are keyed on a commitment and never match this filter.
     const filterBytes = Buffer.from([1, ...pubkey.toBytes()]);
     const accounts = await connection.getProgramAccounts(ZK_SHIELDED_PROGRAM_ID, {
       filters: [
