@@ -231,6 +231,24 @@ describe('assertSplClaimCanSettle — one check per measured devnet failure', ()
     ).rejects.toThrow(/holds 0 atomic units but the claim moves 5/);
   });
 
+  it('refuses the aliased claim that succeeds on chain and pays nobody', async () => {
+    // MEASURED devnet 2026-08-01, tx 3KN8JDmDMQx11NSau8Xdj6UXQ6kXqzGTzKGtbgRvDq4n8VEXda3vFVgeRRBqfKvcyNEFrTTSV3XrbjrNEibvn7g2:
+    // vault_token_account passed in BOTH token-account slots. spl-token
+    // short-circuits source == destination and returns Ok without moving
+    // anything, so err was null, claimed_periods went 0 -> 6, the vault token
+    // account stayed at 6 and the retailer got nothing. This is the only way to
+    // get an SPL claim wrong that produces no on-chain error to match on, which
+    // is why it has to be caught here.
+    const aliased: SplClaimAccounts = { ...HEALTHY, retailerTokenAccount: VAULT_TA };
+    await expect(
+      assertSplClaimCanSettle(fakeConnection(healthyAccounts(6n)), 6n, aliased),
+    ).rejects.toThrow(/same account .* self-transfer/s);
+    // and through the public entry point, where a merchant would actually hit it
+    await expect(
+      assertRetailerCanReceiveClaim(fakeConnection(healthyAccounts(6n)), RETAILER, 6n, aliased),
+    ).rejects.toThrow(/retailer is paid nothing/);
+  });
+
   it('allows a payout exactly equal to the balance', async () => {
     await expect(
       assertSplClaimCanSettle(fakeConnection(healthyAccounts(5n)), 5n, HEALTHY),
