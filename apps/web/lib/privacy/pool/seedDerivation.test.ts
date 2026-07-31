@@ -22,11 +22,14 @@ import { describe, it, expect } from 'vitest';
 import { PublicKey } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
-import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { scrypt } from '@noble/hashes/scrypt.js';
+import { bytesToHex, concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import {
   MIN_PASSPHRASE_CHARS,
   SCRYPT_N,
+  SCRYPT_P,
+  SCRYPT_R,
   assertPassphraseAcceptable,
   derivePassphraseSalt,
   derivePoolSeedLegacy,
@@ -75,6 +78,27 @@ function legacySeedAsShipped(signature: Uint8Array): Uint8Array {
   return hkdf(sha256, signature, undefined, utf8ToBytes('p01:web:poolseed:v1'), 32);
 }
 
+/**
+ * THE v2 FORMULA, transcribed longhand the same way, for the same reason.
+ *
+ * `seedDerivation.ts` says of SCRYPT_N: "it is FORMAT-BREAKING — every v2 note
+ * derived under the old N becomes unreachable — so it must be versioned into a
+ * v3 info string, never edited in place." That sentence was unenforced: N, r, p,
+ * the v2 info string and the scrypt-salt domain separator could each be edited
+ * in place and the whole suite stayed green, which is exactly the silent
+ * fund-loss the v1 parity gate exists to prevent, on the newer path.
+ */
+function saltedSeedAsShipped(signature: Uint8Array, passphrase: string): Uint8Array {
+  const scryptSalt = sha256(concatBytes(utf8ToBytes('p01:web:passphrase-salt:v1'), signature));
+  const passSalt = scrypt(utf8ToBytes(passphrase.normalize('NFKC').trim()), scryptSalt, {
+    N: 1 << 16,
+    r: 8,
+    p: 1,
+    dkLen: 32,
+  });
+  return hkdf(sha256, signature, passSalt, utf8ToBytes('p01:web:poolseed:v2'), 32);
+}
+
 // ---------------------------------------------------------------------------
 // 1. PARITY GATE — no passphrase reproduces the shipped derivation exactly
 // ---------------------------------------------------------------------------
@@ -119,6 +143,51 @@ describe('parity with the pre-passphrase derivation', () => {
     );
     // deriveNoteEncryptionKeys — X25519 + ML-KEM-768 note-encryption keypair
     expect(createNoteEncryptionAddress(now)).toBe(createNoteEncryptionAddress(shipped));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1b. THE SAME GATE FOR v2 — a salted note is just as strandable as a legacy one
+// ---------------------------------------------------------------------------
+
+describe('parity of the salted derivation with itself over time', () => {
+  it('reproduces the shipped v2 formula byte-for-byte', () => {
+    expect(bytesToHex(derivePoolSeedSalted(SIGNATURE, PASS_A))).toBe(
+      bytesToHex(saltedSeedAsShipped(SIGNATURE, PASS_A)),
+    );
+    expect(bytesToHex(derivePoolSeeds(SIGNATURE, PASS_A).active)).toBe(
+      bytesToHex(saltedSeedAsShipped(SIGNATURE, PASS_A)),
+    );
+  });
+
+  it('pins the salted seed to a frozen vector', () => {
+    // Computed from the derivation as shipped. If this constant has to change,
+    // the v2 format changed, and every note a passphrase user ever shielded is
+    // unreachable. Do NOT update it to match new code: add a v3 info string and
+    // keep v2 in the search order, exactly as v1 was kept.
+    const FROZEN_V2 = 'e7288fdefc44ce2e369872395d22495c78acd9f0365ee62fbeabdef1f882fb1a';
+    expect(bytesToHex(saltedSeedAsShipped(SIGNATURE, PASS_A))).toBe(FROZEN_V2);
+    expect(bytesToHex(derivePoolSeedSalted(SIGNATURE, PASS_A))).toBe(FROZEN_V2);
+  });
+
+  it('pins the stretched salt, so the scrypt inputs cannot drift unnoticed', () => {
+    // The intermediate is pinned separately from the seed so a failure says
+    // WHICH half moved — the stretch or the HKDF around it.
+    const FROZEN_SALT = 'f19200a06d52752aca3a21a0d27685d5171b4e432fb27c9517b26279f3135d40';
+    expect(bytesToHex(derivePassphraseSalt(SIGNATURE, PASS_A))).toBe(FROZEN_SALT);
+  });
+
+  it('pins every parameter the v2 format is made of', () => {
+    // Each of these is format-breaking in place. Lowering N from 2^16 to 2^14,
+    // or r from 8 to 4, halves or quarters the attacker's cost AND strands every
+    // existing v2 note — a silent double failure. The module header forbids the
+    // edit; this is what enforces it.
+    expect(SCRYPT_N).toBe(1 << 16);
+    expect(SCRYPT_R).toBe(8);
+    expect(SCRYPT_P).toBe(1);
+    // A length floor, not an entropy floor — 'aaaaaaaaaaaa' passes. Pinned so a
+    // future relaxation is a decision someone makes, not one that slips through.
+    expect(MIN_PASSPHRASE_CHARS).toBe(12);
   });
 });
 
