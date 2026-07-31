@@ -158,6 +158,35 @@
  * is a different length and digest per circuit either side of B1, which is what
  * src/wireFormat.test.ts already pins) is the only thing that would close it
  * properly, and it is not done here.
+ *
+ * # An independent audit of this file, 2026-07-31, and what it found
+ *
+ * A fourth attempt to cheat this gate found three things. Two are fixed; the
+ * third is the residual above, now measured rather than reasoned about.
+ *
+ *   1. THE TWINS WERE NOT REALLY CHECKED. Both this gate and stark-wasm-twins.mjs
+ *      pulled the base64 with the FIRST long-base64-run regex, which need not be
+ *      the string the client imports. MEASURED: a decoy const carrying the
+ *      canonical bytes above `export const STARK_WASM_BASE64 = '<other blob>'` in
+ *      apps/web's twin printed "PASS — 4 twins" and "ok apps/web/…" from the two
+ *      gates while apps/web shipped a prover neither had hashed. Both now read the
+ *      export and refuse a module carrying more than one long literal.
+ *
+ *   2. THE GATE VERIFIED A PROGRAM ONE SHIPPED CODE PATH DOES NOT CALL. The SDK
+ *      cross-check read one key. packages/privacy-sdk/src/modules/instantUnshield.ts
+ *      pins a SECOND verifier id, and it is a different live devnet deployment.
+ *      See verifierConstantsInPrivacySdk for the measurement; every such constant
+ *      is swept now.
+ *
+ *   3. THE TWO-CRATE RENAME IS OPEN. MEASURED against the revision that added the
+ *      prover/verifier agreement below: renaming the three B1 literals in
+ *      stark/src/compact.rs AND the two in
+ *      programs/p01_stark_verifier/src/{verify,lib}.rs, with the same four bytes
+ *      edited in the blob, makes every source in this tree agree that it is
+ *      pre-B1 and prints "PASS — the shipped prover matches the devnet
+ *      deployment, and the chain was asked and agreed" at exit 0, with devnet
+ *      genuinely pre-B1. Five strings across two crates, in a diff a human reads.
+ *      That is the cost, and the cost is the whole of the defence.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
