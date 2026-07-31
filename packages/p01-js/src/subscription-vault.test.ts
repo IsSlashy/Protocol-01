@@ -16,6 +16,7 @@ import {
   computeClaimableAmount,
   computeRefundable,
   fundedPeriodsRemaining,
+  nextClaimableSlot,
   periodsElapsed,
   periodsPaidFor,
   subscriptionEndSlot,
@@ -153,6 +154,55 @@ describe('the max_funded clamp this port was missing', () => {
     expect(computeClaimable(v, 9_999)).toBe(0);
     expect(computeClaimableAmount(v, 9_999)).toBe(0);
     expect(subscriptionIsCurrent(v, 9_999)).toBe(false);
+  });
+
+  it('nextClaimableSlot stops naming a slot once the funding is gone', () => {
+    // The same `isActive` defect one function over: this answered from a flag
+    // the program never clears, so an exhausted subscription was told to come
+    // back at slot 1,600 — where `claim_period` will return NoClaimablePeriods
+    // for ever, because claimable_periods is clamped by max_funded.
+    const exhausted = toVaultInfo({
+      isActive: true,
+      isPaused: false,
+      startSlot: 1_000n,
+      totalPausedSlots: 0n,
+      intervalSlots: 100n,
+      claimedPeriods: 5n,
+      totalDeposited: 500_000n,
+      rate: 100_000n,
+    });
+    expect(exhausted.isActive).toBe(true);
+    expect(fundedPeriodsRemaining(exhausted)).toBe(0);
+    expect(computeClaimable(exhausted, 9_999)).toBe(0);
+    expect(nextClaimableSlot(exhausted)).toBeNull();
+  });
+
+  it('nextClaimableSlot still answers while periods remain funded', () => {
+    const live = toVaultInfo({
+      isActive: true,
+      isPaused: false,
+      startSlot: 1_000n,
+      totalPausedSlots: 0n,
+      intervalSlots: 100n,
+      claimedPeriods: 2n,
+      totalDeposited: 500_000n,
+      rate: 100_000n,
+    });
+    expect(nextClaimableSlot(live)).toBe(1_300);
+  });
+
+  it('nextClaimableSlot refuses a zero interval rather than naming the start slot', () => {
+    const broken = toVaultInfo({
+      isActive: true,
+      isPaused: false,
+      startSlot: 1_000n,
+      totalPausedSlots: 0n,
+      intervalSlots: 0n,
+      claimedPeriods: 0n,
+      totalDeposited: 500_000n,
+      rate: 100_000n,
+    });
+    expect(nextClaimableSlot(broken)).toBeNull();
   });
 
   it('intervalSlots 0 no longer yields Infinity claimable periods', () => {

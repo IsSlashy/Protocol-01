@@ -349,6 +349,19 @@ export function nextClaimableSlot(vault: VaultInfo): number | null {
   if (!vault.isActive || vault.isPaused) {
     return null;
   }
+  // A vault that has no funded periods left will never have another claimable
+  // slot: `claim_period` requires `claimable_periods > 0` and that is clamped
+  // by `max_funded` (subscription_vault.rs:149-154), so every future call
+  // fails with NoClaimablePeriods. Without this the function answered from
+  // `isActive` — which the program writes true at subscribe and false nowhere
+  // — and named a slot in the future for a subscription that had ended. The
+  // popup rendered that beside the new ENDED badge as "Next claim: Slot N".
+  if (fundedPeriodsRemaining(vault) === 0) {
+    return null;
+  }
+  if (vault.intervalSlots === 0) {
+    return null;
+  }
   const nextPeriod = vault.claimedPeriods + 1;
   const slotsNeeded = nextPeriod * vault.intervalSlots;
   return vault.startSlot + vault.totalPausedSlots + slotsNeeded;

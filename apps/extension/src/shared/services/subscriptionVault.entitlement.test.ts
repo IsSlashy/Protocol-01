@@ -18,6 +18,7 @@ import {
   computeRefundable,
   entitlementStatus,
   fundedPeriodsRemaining,
+  nextClaimableSlot,
   periodsElapsed,
   periodsPaidFor,
   subscriptionEndSlot,
@@ -179,6 +180,42 @@ describe('the max_funded clamp the extension was missing', () => {
     expect(v.isActive).toBe(true);
     expect(computeClaimable(v, 9_999)).toBe(0);
     expect(subscriptionIsCurrent(v, 9_999)).toBe(false);
+  });
+
+  it('THE SAME BUG ONE PANEL OVER: nextClaimableSlot stops answering once funding is gone', () => {
+    // SubscriptionVaults.tsx renders this as "Next claim: Slot N" in a panel
+    // still gated on `vault.isActive && !vault.isPaused`. Answering from
+    // `isActive` — true on every vault that exists — put a future slot next to
+    // the new ENDED badge for a subscription where `claim_period` will return
+    // NoClaimablePeriods for ever.
+    const exhausted = toVaultInfo({
+      isActive: true,
+      isPaused: false,
+      startSlot: 1_000n,
+      totalPausedSlots: 0n,
+      intervalSlots: 100n,
+      claimedPeriods: 5n,
+      totalDeposited: 500_000n,
+      rate: 100_000n,
+    });
+    expect(exhausted.isActive).toBe(true);
+    expect(entitlementStatus(exhausted, 1_500)).toBe('ended');
+    expect(fundedPeriodsRemaining(exhausted)).toBe(0);
+    expect(nextClaimableSlot(exhausted)).toBeNull();
+  });
+
+  it('nextClaimableSlot still answers while periods remain funded', () => {
+    const live = toVaultInfo({
+      isActive: true,
+      isPaused: false,
+      startSlot: 1_000n,
+      totalPausedSlots: 0n,
+      intervalSlots: 100n,
+      claimedPeriods: 2n,
+      totalDeposited: 500_000n,
+      rate: 100_000n,
+    });
+    expect(nextClaimableSlot(live)).toBe(1_300);
   });
 
   it('intervalSlots 0 no longer yields Infinity claimable periods', () => {
