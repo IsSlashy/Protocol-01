@@ -4,7 +4,7 @@
     "name": "zk_shielded",
     "version": "0.1.0",
     "spec": "0.1.0",
-    "description": "Protocol 01 - ZK Shielded Pool with Groth16 verification"
+    "description": "Protocol 01 - ZK Shielded Pool (STARK base pool; Groth16 retained only for compliance + escrow)"
   },
   "instructions": [
     {
@@ -70,7 +70,9 @@
     {
       "name": "cancel_normal",
       "docs": [
-        "Cancel a normal subscription vault, refund remaining to subscriber"
+        "Cancel a normal subscription vault, refund remaining to subscriber.",
+        "LEGACY, and the ONLY exit for a normal-mode vault: removing it would",
+        "strand both the deposit and the rent of every such vault on chain."
       ],
       "discriminator": [
         202,
@@ -258,70 +260,24 @@
         },
         {
           "name": "denominated_pool",
+          "docs": [
+            "Source denominated pool — REQUIRED only on the legacy reshield path.",
+            "May be `None` on the refund-via-relayer path. Uses `UncheckedAccount`",
+            "to avoid Anchor 0.32 typed-Account discriminator checks for the",
+            "program-id sentinel pattern; handler validates linkage when used."
+          ],
           "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  110,
-                  111,
-                  109,
-                  105,
-                  110,
-                  97,
-                  116,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.token_mint",
-                "account": "DenominatedPool"
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.denomination",
-                "account": "DenominatedPool"
-              }
-            ]
-          }
+          "optional": true
         },
         {
           "name": "merkle_tree",
+          "docs": [
+            "Merkle tree — REQUIRED only on the legacy reshield path.",
+            "May be `None` on the refund-via-relayer path. Same `UncheckedAccount`",
+            "rationale as `denominated_pool` above."
+          ],
           "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  101,
-                  114,
-                  107,
-                  108,
-                  101,
-                  95,
-                  116,
-                  114,
-                  101,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool"
-              }
-            ]
-          }
+          "optional": true
         },
         {
           "name": "stark_proof_buffer",
@@ -335,6 +291,23 @@
             "- Public inputs hash matches vault commitment"
           ],
           "writable": true
+        },
+        {
+          "name": "refund_job",
+          "docs": [
+            "RefundJob PDA — REQUIRED only on the refund-via-relayer path.",
+            "Seeds: `[b\"refund_job\", vault.key().as_ref()]`, owned by `p01_relayer`.",
+            "Validated manually inside the handler before/after the CPI."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "p01_relayer_program",
+          "docs": [
+            "`p01_relayer` program — REQUIRED only on the refund-via-relayer path."
+          ],
+          "optional": true
         },
         {
           "name": "system_program",
@@ -517,590 +490,6 @@
       "args": []
     },
     {
-      "name": "emergency_unshield_denominated_stark",
-      "docs": [
-        "Emergency unshield from a denominated pool using STARK (quantum-resistant).",
-        "Bypasses the on-chain maturity check. Emits is_emergency=true — reduces",
-        "anonymity set for this withdrawal."
-      ],
-      "discriminator": [
-        212,
-        58,
-        186,
-        224,
-        37,
-        212,
-        143,
-        4
-      ],
-      "accounts": [
-        {
-          "name": "payer",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "recipient",
-          "writable": true
-        },
-        {
-          "name": "denominated_pool",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  110,
-                  111,
-                  109,
-                  105,
-                  110,
-                  97,
-                  116,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.token_mint",
-                "account": "DenominatedPool"
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.denomination",
-                "account": "DenominatedPool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "merkle_tree",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  101,
-                  114,
-                  107,
-                  108,
-                  101,
-                  95,
-                  116,
-                  114,
-                  101,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "nullifier_record",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  110,
-                  117,
-                  108,
-                  108,
-                  105,
-                  102,
-                  105,
-                  101,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool"
-              },
-              {
-                "kind": "arg",
-                "path": "nullifier"
-              }
-            ]
-          }
-        },
-        {
-          "name": "stark_proof_buffer",
-          "docs": [
-            "STARK proof buffer from p01_stark_verifier (circuit 1: pool_commitment)."
-          ]
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "token_program",
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "pool_vault",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "recipient_token_account",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "protocol_fee_wallet",
-          "docs": [
-            "Protocol fee wallet — receives unshield fee (0.5%)"
-          ],
-          "writable": true
-        }
-      ],
-      "args": [
-        {
-          "name": "nullifier",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "merkle_root",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "min_epoch",
-          "type": "u64"
-        },
-        {
-          "name": "stark_commitment",
-          "type": "u64"
-        }
-      ]
-    },
-    {
-      "name": "escrow_release",
-      "docs": [
-        "Release an auction escrow after the Arcium MPC settles the auction.",
-        "Inserts the correct commitment (pay or refund) into the Merkle tree.",
-        "Permissionless: anyone can crank once outcome is set."
-      ],
-      "discriminator": [
-        121,
-        64,
-        131,
-        15,
-        26,
-        229,
-        125,
-        230
-      ],
-      "accounts": [
-        {
-          "name": "payer",
-          "docs": [
-            "Anyone can crank (permissionless)"
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "denominated_pool",
-          "docs": [
-            "Denominated pool"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  110,
-                  111,
-                  109,
-                  105,
-                  110,
-                  97,
-                  116,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.token_mint",
-                "account": "DenominatedPool"
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.denomination",
-                "account": "DenominatedPool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "merkle_tree",
-          "docs": [
-            "Merkle tree state (mutable — commitment is inserted)"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  101,
-                  114,
-                  107,
-                  108,
-                  101,
-                  95,
-                  116,
-                  114,
-                  101,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "auction_escrow",
-          "docs": [
-            "Auction escrow PDA"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  117,
-                  99,
-                  116,
-                  105,
-                  111,
-                  110,
-                  95,
-                  101,
-                  115,
-                  99,
-                  114,
-                  111,
-                  119
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "auction_escrow.auction_id",
-                "account": "AuctionEscrow"
-              },
-              {
-                "kind": "account",
-                "path": "auction_escrow.nullifier",
-                "account": "AuctionEscrow"
-              }
-            ]
-          }
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "new_root",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        }
-      ]
-    },
-    {
-      "name": "escrow_shield",
-      "docs": [
-        "Lock a denominated pool note into escrow for a sealed-bid auction.",
-        "Consumes the old note (nullifier) and stores two conditional commitments:",
-        "pay_commitment (seller wins) and refund_commitment (bidder loses)."
-      ],
-      "discriminator": [
-        251,
-        10,
-        81,
-        89,
-        55,
-        114,
-        95,
-        223
-      ],
-      "accounts": [
-        {
-          "name": "payer",
-          "docs": [
-            "Transaction submitter (bidder or relayer)"
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "denominated_pool",
-          "docs": [
-            "Denominated pool"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  110,
-                  111,
-                  109,
-                  105,
-                  110,
-                  97,
-                  116,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.token_mint",
-                "account": "DenominatedPool"
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.denomination",
-                "account": "DenominatedPool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "merkle_tree",
-          "docs": [
-            "Merkle tree state (read-only — no insertion during escrow)"
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  101,
-                  114,
-                  107,
-                  108,
-                  101,
-                  95,
-                  116,
-                  114,
-                  101,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "nullifier_record",
-          "docs": [
-            "Nullifier record PDA — marks old note as spent"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  110,
-                  117,
-                  108,
-                  108,
-                  105,
-                  102,
-                  105,
-                  101,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool"
-              },
-              {
-                "kind": "arg",
-                "path": "nullifier"
-              }
-            ]
-          }
-        },
-        {
-          "name": "auction_escrow",
-          "docs": [
-            "Auction escrow PDA — stores both conditional commitments"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  117,
-                  99,
-                  116,
-                  105,
-                  111,
-                  110,
-                  95,
-                  101,
-                  115,
-                  99,
-                  114,
-                  111,
-                  119
-                ]
-              },
-              {
-                "kind": "arg",
-                "path": "auction_id"
-              },
-              {
-                "kind": "arg",
-                "path": "nullifier"
-              }
-            ]
-          }
-        },
-        {
-          "name": "verification_key_data",
-          "docs": [
-            "Escrow circuit verification key data account"
-          ]
-        },
-        {
-          "name": "system_program",
-          "docs": [
-            "System program (required for PDA creation)"
-          ],
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "proof",
-          "type": {
-            "defined": {
-              "name": "Groth16Proof"
-            }
-          }
-        },
-        {
-          "name": "nullifier",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "merkle_root",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "min_epoch",
-          "type": "u64"
-        },
-        {
-          "name": "auction_id",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "pay_commitment",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "refund_commitment",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        }
-      ]
-    },
-    {
       "name": "init_denominated_pool",
       "docs": [
         "Initialize a denominated shielded pool for a specific token + denomination",
@@ -1151,7 +540,10 @@
                   112,
                   111,
                   111,
-                  108
+                  108,
+                  95,
+                  118,
+                  50
                 ]
               },
               {
@@ -1187,6 +579,147 @@
                   114,
                   101,
                   101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program"
+          ],
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "docs": [
+            "Rent sysvar"
+          ],
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "vk_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "token_mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "denomination",
+          "type": "u64"
+        },
+        {
+          "name": "epoch_delay",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "init_denominated_pool_v3",
+      "docs": [
+        "Initialize a V3 denominated shielded pool (Goldilocks Poseidon tree).",
+        "PDA seed: [b\"denominated_pool_v3\", token_mint, denomination_le_bytes]."
+      ],
+      "discriminator": [
+        57,
+        208,
+        245,
+        50,
+        164,
+        89,
+        94,
+        40
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Authority that will manage the pool"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "denominated_pool",
+          "docs": [
+            "Denominated pool V3 account (PDA)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  110,
+                  111,
+                  109,
+                  105,
+                  110,
+                  97,
+                  116,
+                  101,
+                  100,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "token_mint"
+              },
+              {
+                "kind": "arg",
+                "path": "denomination"
+              }
+            ]
+          }
+        },
+        {
+          "name": "merkle_tree",
+          "docs": [
+            "Merkle tree V3 state account (PDA derived from pool key)"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  114,
+                  107,
+                  108,
+                  101,
+                  95,
+                  116,
+                  114,
+                  101,
+                  101,
+                  95,
+                  118,
+                  52
                 ]
               },
               {
@@ -1278,7 +811,10 @@
                   112,
                   111,
                   111,
-                  108
+                  108,
+                  95,
+                  118,
+                  50
                 ]
               },
               {
@@ -1321,103 +857,6 @@
               {
                 "kind": "account",
                 "path": "denominated_pool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "vk_size",
-          "type": "u32"
-        }
-      ]
-    },
-    {
-      "name": "init_vk_data",
-      "docs": [
-        "Initialize VK data account (admin only)",
-        "Creates a PDA for storing verification key bytes"
-      ],
-      "discriminator": [
-        192,
-        55,
-        242,
-        142,
-        213,
-        184,
-        203,
-        94
-      ],
-      "accounts": [
-        {
-          "name": "authority",
-          "docs": [
-            "Pool authority (must sign)"
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "shielded_pool",
-          "docs": [
-            "Shielded pool"
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  104,
-                  105,
-                  101,
-                  108,
-                  100,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool.token_mint",
-                "account": "ShieldedPool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "vk_data_account",
-          "docs": [
-            "VK data account (PDA owned by this program)"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  107,
-                  95,
-                  100,
-                  97,
-                  116,
-                  97
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool"
               }
             ]
           }
@@ -1590,7 +1029,10 @@
     {
       "name": "pause_normal",
       "docs": [
-        "Pause a normal subscription vault (subscriber wallet signature)"
+        "Pause a normal subscription vault (subscriber wallet signature).",
+        "LEGACY: no new normal-mode vault can be created — `subscribe_normal` was",
+        "removed because its PDA leaked (wallet, merchant) membership. This exists",
+        "only to service vaults opened before that removal."
       ],
       "discriminator": [
         43,
@@ -1847,7 +1289,8 @@
     {
       "name": "resume_normal",
       "docs": [
-        "Resume a normal subscription vault (subscriber wallet signature)"
+        "Resume a normal subscription vault (subscriber wallet signature).",
+        "LEGACY — services pre-existing normal-mode vaults only."
       ],
       "discriminator": [
         162,
@@ -2031,9 +1474,9 @@
     {
       "name": "shield",
       "docs": [
-        "Shield tokens: deposit transparent tokens into the shielded pool",
-        "Creates a new note commitment and adds it to the Merkle tree",
-        "The new_root is computed off-chain (Poseidon syscall not yet enabled on devnet)"
+        "Shield tokens using STARK circuit 6 (merkle_update) — quantum-resistant.",
+        "Proves old_root -> new_root given insertion of commitment.",
+        "Requires a pre-verified STARK proof buffer from p01_stark_verifier."
       ],
       "discriminator": [
         220,
@@ -2049,7 +1492,7 @@
         {
           "name": "depositor",
           "docs": [
-            "User depositing tokens"
+            "User depositing tokens — must be the STARK proof authority."
           ],
           "writable": true,
           "signer": true
@@ -2091,7 +1534,7 @@
         {
           "name": "merkle_tree",
           "docs": [
-            "Merkle tree state"
+            "Merkle tree state — mutable, we insert the new commitment."
           ],
           "writable": true,
           "pda": {
@@ -2120,6 +1563,19 @@
           }
         },
         {
+          "name": "stark_proof_buffer",
+          "docs": [
+            "STARK proof buffer from p01_stark_verifier (circuit 6: merkle_update).",
+            "- Owner is p01_stark_verifier program",
+            "- Discriminator matches ProofBuffer",
+            "- Authority matches depositor",
+            "- Circuit ID is 6 (merkle_update)",
+            "- Both verified and deep_ali_verified flags are true",
+            "- Public inputs hash matches sha256([old_leaf=0 || new_leaf=commitment_u64",
+            "|| old_root_u64 || new_root_u64 || depth=15] — each u64 LE)"
+          ]
+        },
+        {
           "name": "system_program",
           "docs": [
             "System program (required for native SOL transfers)"
@@ -2145,8 +1601,7 @@
         {
           "name": "pool_vault",
           "docs": [
-            "Pool's token vault (optional, only for SPL tokens)",
-            "When present, ownership is validated in handler (vault authority must be pool PDA)."
+            "Pool's token vault (optional, only for SPL tokens)"
           ],
           "writable": true,
           "optional": true
@@ -2154,11 +1609,16 @@
       ],
       "args": [
         {
-          "name": "amount",
-          "type": "u64"
+          "name": "commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
         },
         {
-          "name": "commitment",
+          "name": "old_root",
           "type": {
             "array": [
               "u8",
@@ -2174,6 +1634,10 @@
               32
             ]
           }
+        },
+        {
+          "name": "amount",
+          "type": "u64"
         }
       ]
     },
@@ -2229,7 +1693,10 @@
                   112,
                   111,
                   111,
-                  108
+                  108,
+                  95,
+                  118,
+                  50
                 ]
               },
               {
@@ -2337,6 +1804,220 @@
       ]
     },
     {
+      "name": "shield_denominated_v3",
+      "docs": [
+        "Shield into a V3 pool. Requires a pre-verified C6 (merkle_update)",
+        "STARK proof buffer attesting that (old_root → new_root + leaf +",
+        "new_subtrees) is a valid insertion."
+      ],
+      "discriminator": [
+        207,
+        215,
+        165,
+        45,
+        178,
+        125,
+        204,
+        211
+      ],
+      "accounts": [
+        {
+          "name": "depositor",
+          "docs": [
+            "User depositing tokens"
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "denominated_pool",
+          "docs": [
+            "Denominated pool V3"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  110,
+                  111,
+                  109,
+                  105,
+                  110,
+                  97,
+                  116,
+                  101,
+                  100,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool.token_mint",
+                "account": "DenominatedPoolV3"
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool.denomination",
+                "account": "DenominatedPoolV3"
+              }
+            ]
+          }
+        },
+        {
+          "name": "merkle_tree",
+          "docs": [
+            "Merkle tree V3 state"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  114,
+                  107,
+                  108,
+                  101,
+                  95,
+                  116,
+                  114,
+                  101,
+                  101,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "c6_proof_buffer",
+          "docs": [
+            "C6 (merkle_update) STARK proof buffer from p01_stark_verifier.",
+            "Pre-verified in a prior transaction sequence:",
+            "init_proof_buffer → write_proof_chunk* → verify_stark_proof_v2",
+            "→ verify_deep_ali_phase2 (or verify_merkle_update_deep_ali)",
+            "(owner, discriminator, circuit_id == 6, verified, deep_ali_verified,",
+            "public_inputs_hash matches `(0, leaf, old_root, new_root, depth)`)."
+          ]
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "System program (required for native SOL transfers)"
+          ],
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program (optional, for SPL token transfers)"
+          ],
+          "optional": true,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "user_token_account",
+          "docs": [
+            "User's token account (optional, only for SPL tokens)"
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "pool_vault",
+          "docs": [
+            "Pool's token vault (optional, only for SPL tokens)"
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "fee_escrow",
+          "docs": [
+            "Per-pool fee escrow PDA (Phase E v1).",
+            "Receives the shield fee instead of the legacy hardcoded `BRop3...` wallet.",
+            "PDA seed: [b\"fee_escrow\", pool.key()]. Deterministic per pool, no",
+            "cross-pool linkability. Drained later via `sweep_fee_escrow` (treasury",
+            "authority)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "new_root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "new_subtrees",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "split_note_stark",
       "docs": [
         "Split a note into multiple notes in a lower-denomination pool using STARK",
@@ -2388,7 +2069,10 @@
                   112,
                   111,
                   111,
-                  108
+                  108,
+                  95,
+                  118,
+                  50
                 ]
               },
               {
@@ -2460,7 +2144,10 @@
                   112,
                   111,
                   111,
-                  108
+                  108,
+                  95,
+                  118,
+                  50
                 ]
               },
               {
@@ -2541,9 +2228,25 @@
           }
         },
         {
-          "name": "stark_proof_buffer",
+          "name": "c1_proof_buffer",
           "docs": [
-            "STARK proof buffer from p01_stark_verifier (circuit 1: pool_commitment)."
+            "C1 (pool_commitment) STARK proof buffer from p01_stark_verifier — proves",
+            "knowledge of secret + nullifier_preimage hashing to the nullifier and the",
+            "source-note commitment.",
+            "verified, deep_ali_verified, public_inputs_hash)."
+          ]
+        },
+        {
+          "name": "c3_proof_buffer",
+          "docs": [
+            "C3 (merkle_path) STARK proof buffer — proves the source-note commitment",
+            "from C1 is actually a leaf in the SOURCE pool's tree at `merkle_root`.",
+            "Without this, split verifies only C1 (knowledge of a well-formed note)",
+            "and never that the note was ever deposited — a quantum/forging attacker",
+            "could synthesize a valid C1 proof for any commitment and split value out",
+            "of nothing into the target pool. Mirrors the C3 gate added to",
+            "unshield_denominated_stark_v3 / subscribe_private_stark.",
+            "verified, deep_ali_verified, public_inputs_hash)."
           ]
         },
         {
@@ -2629,143 +2332,12 @@
       ]
     },
     {
-      "name": "subscribe_normal",
-      "docs": [
-        "Create a normal (wallet-based) subscription vault",
-        "Deposits funds from subscriber wallet into vault PDA"
-      ],
-      "discriminator": [
-        209,
-        213,
-        161,
-        124,
-        160,
-        102,
-        28,
-        139
-      ],
-      "accounts": [
-        {
-          "name": "subscriber",
-          "docs": [
-            "Subscriber depositing funds"
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "retailer",
-          "docs": [
-            "Retailer who will receive periodic payments"
-          ]
-        },
-        {
-          "name": "vault",
-          "docs": [
-            "Subscription vault PDA"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  117,
-                  98,
-                  115,
-                  99,
-                  114,
-                  105,
-                  112,
-                  116,
-                  105,
-                  111,
-                  110,
-                  95,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "retailer"
-              },
-              {
-                "kind": "account",
-                "path": "subscriber"
-              },
-              {
-                "kind": "arg",
-                "path": "token_mint"
-              }
-            ]
-          }
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "token_program",
-          "docs": [
-            "Token program (optional, for SPL token transfers)"
-          ],
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "subscriber_token_account",
-          "docs": [
-            "Subscriber's token account (optional, only for SPL tokens)"
-          ],
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "vault_token_account",
-          "docs": [
-            "Vault's token account (optional, only for SPL tokens)"
-          ],
-          "writable": true,
-          "optional": true
-        }
-      ],
-      "args": [
-        {
-          "name": "rate",
-          "type": "u64"
-        },
-        {
-          "name": "interval_slots",
-          "type": "u64"
-        },
-        {
-          "name": "amount",
-          "type": "u64"
-        },
-        {
-          "name": "token_mint",
-          "type": "pubkey"
-        },
-        {
-          "name": "vk_hash_subscriber",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        }
-      ]
-    },
-    {
       "name": "subscribe_private_stark",
       "docs": [
-        "Create a private subscription vault using STARK proof (quantum-resistant)"
+        "Create a private subscription vault using STARK proof (quantum-resistant).",
+        "`client_stealth_meta`: optional 64-byte stealth address",
+        "(`[spending_pub(32) | viewing_pub(32)]`) used to route the refund",
+        "through `p01_relayer` on cancel. `None` keeps the legacy reshield path."
       ],
       "discriminator": [
         187,
@@ -2834,7 +2406,7 @@
               {
                 "kind": "account",
                 "path": "denominated_pool.token_mint",
-                "account": "DenominatedPool"
+                "account": "DenominatedPoolV3"
               }
             ]
           }
@@ -2865,18 +2437,21 @@
                   112,
                   111,
                   111,
-                  108
+                  108,
+                  95,
+                  118,
+                  52
                 ]
               },
               {
                 "kind": "account",
                 "path": "denominated_pool.token_mint",
-                "account": "DenominatedPool"
+                "account": "DenominatedPoolV3"
               },
               {
                 "kind": "account",
                 "path": "denominated_pool.denomination",
-                "account": "DenominatedPool"
+                "account": "DenominatedPoolV3"
               }
             ]
           }
@@ -2901,7 +2476,10 @@
                   116,
                   114,
                   101,
-                  101
+                  101,
+                  95,
+                  118,
+                  52
                 ]
               },
               {
@@ -2945,19 +2523,24 @@
           }
         },
         {
-          "name": "stark_proof_buffer",
+          "name": "c1_proof_buffer",
           "docs": [
-            "STARK proof buffer from p01_stark_verifier (circuit 1: pool_commitment).",
-            "Must be verified (verified == true) and owned by the payer.",
-            "- Owner is p01_stark_verifier program",
-            "- Discriminator matches ProofBuffer",
-            "- Authority matches payer",
-            "- Circuit ID is 1 (pool_commitment)",
-            "- Verified flag is true",
-            "- Public inputs hash matches expected value",
-            "Marked mut because we invalidate (set verified=false) after use."
-          ],
-          "writable": true
+            "C1 (pool_commitment) STARK proof buffer — proves knowledge of secret +",
+            "nullifier_preimage hashing to the nullifier and commitment.",
+            "verified, deep_ali_verified, public_inputs_hash)."
+          ]
+        },
+        {
+          "name": "c3_proof_buffer",
+          "docs": [
+            "C3 (merkle_path) STARK proof buffer — proves the commitment from C1 is a",
+            "leaf at the supplied merkle root. Without this, subscribe verifies only",
+            "C1 (knowledge of a well-formed note) and never that the note was ever",
+            "deposited — a quantum/forging attacker could synthesize a valid C1 proof",
+            "for any commitment and drain `denomination` per call. Mirrors the C3",
+            "gate added to unshield_denominated_stark_v3.",
+            "verified, deep_ali_verified, public_inputs_hash)."
+          ]
         },
         {
           "name": "system_program",
@@ -3040,15 +2623,162 @@
         {
           "name": "stark_commitment",
           "type": "u64"
+        },
+        {
+          "name": "client_stealth_meta",
+          "type": {
+            "option": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        },
+        {
+          "name": "license_commitment",
+          "type": {
+            "option": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sweep_fee_escrow",
+      "docs": [
+        "Phase E v1 — drain a per-pool fee_escrow PDA into an arbitrary",
+        "destination. Only `fee::TREASURY_AUTHORITY` can sign. Records each",
+        "sweep in a SweepRecord PDA (per-slot idempotent)."
+      ],
+      "discriminator": [
+        240,
+        78,
+        40,
+        84,
+        24,
+        149,
+        224,
+        188
+      ],
+      "accounts": [
+        {
+          "name": "treasury_authority",
+          "docs": [
+            "Treasury authority — must match the hardcoded `TREASURY_AUTHORITY`.",
+            "Pays for tx fees + SweepRecord rent."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "denominated_pool",
+          "docs": [
+            "The denominated pool whose fee_escrow we're draining."
+          ]
+        },
+        {
+          "name": "fee_escrow",
+          "docs": [
+            "Per-pool fee_escrow PDA — drained."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "docs": [
+            "Destination — any account; rotated per sweep by the treasury for",
+            "timing/address decorrelation."
+          ],
+          "writable": true
+        },
+        {
+          "name": "sweep_record",
+          "docs": [
+            "Audit record (immutable per slot) — initialised here to make the sweep",
+            "non-replayable in the same slot and to leave an off-chain trail for",
+            "treasury reconciliation. Closed automatically by anyone after rent",
+            "epoch (can be GC'd; the on-chain log + tx history is the canonical",
+            "trail)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  115,
+                  119,
+                  101,
+                  101,
+                  112
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              },
+              {
+                "kind": "arg",
+                "path": "slot"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "slot",
+          "type": "u64"
         }
       ]
     },
     {
       "name": "transfer",
       "docs": [
-        "Transfer shielded tokens privately",
-        "Spends input notes (via nullifiers) and creates new output notes",
-        "Requires a valid ZK proof"
+        "Transfer shielded tokens privately using STARK circuit 5 (transfer) —",
+        "quantum-resistant. Spends two input notes and creates two output",
+        "commitments. public_amount = 0 (no net value change).",
+        "Requires a pre-verified STARK proof buffer from p01_stark_verifier."
       ],
       "discriminator": [
         163,
@@ -3064,7 +2794,7 @@
         {
           "name": "payer",
           "docs": [
-            "Transaction submitter (can be anyone, including relayer)"
+            "Transaction payer — must be the STARK proof authority."
           ],
           "writable": true,
           "signer": true
@@ -3137,8 +2867,7 @@
         {
           "name": "nullifier_record_1",
           "docs": [
-            "Nullifier 1 PDA — created on first use.",
-            "If this PDA already exists, `init` fails → atomic double-spend rejection."
+            "Nullifier 1 PDA — created on first use."
           ],
           "writable": true,
           "pda": {
@@ -3171,8 +2900,7 @@
         {
           "name": "nullifier_record_2",
           "docs": [
-            "Nullifier 2 PDA — created on first use.",
-            "If this PDA already exists, `init` fails → atomic double-spend rejection."
+            "Nullifier 2 PDA — created on first use."
           ],
           "writable": true,
           "pda": {
@@ -3203,28 +2931,17 @@
           }
         },
         {
-          "name": "verification_key_data",
+          "name": "stark_proof_buffer",
           "docs": [
-            "Verification key data account (stores the VK bytes)"
+            "STARK proof buffer from p01_stark_verifier (circuit 5: transfer)."
           ]
         },
         {
           "name": "system_program",
-          "docs": [
-            "System program (required for PDA creation)"
-          ],
           "address": "11111111111111111111111111111111"
         }
       ],
       "args": [
-        {
-          "name": "proof",
-          "type": {
-            "defined": {
-              "name": "Groth16Proof"
-            }
-          }
-        },
         {
           "name": "nullifier_1",
           "type": {
@@ -3282,21 +2999,26 @@
       ]
     },
     {
-      "name": "transfer_denominated_stark",
+      "name": "transfer_denominated_stark_v3",
       "docs": [
-        "Transfer a note within a denominated pool using STARK proof (quantum-resistant).",
-        "The old note is nullified and a new commitment is inserted into the tree.",
-        "No funds move — same pool, same denomination."
+        "V3 transfer of a note within a denominated pool using THREE STARK proofs:",
+        "- C1 (pool_commitment): proves ownership of the old note.",
+        "- C3 (merkle_path): proves the old commitment is at `merkle_root`",
+        "(closes the v2 trust gap where membership was never on-chain proven).",
+        "- C6 (merkle_update): proves the new commitment insertion against the",
+        "current pool root.",
+        "Funds do not move (same pool, same denomination). Universal `LeafInserted`",
+        "is emitted by `insert_with_root_v3`."
       ],
       "discriminator": [
-        195,
-        123,
-        146,
-        73,
-        75,
-        115,
-        252,
-        14
+        196,
+        150,
+        11,
+        141,
+        91,
+        208,
+        60,
+        22
       ],
       "accounts": [
         {
@@ -3310,7 +3032,7 @@
         {
           "name": "denominated_pool",
           "docs": [
-            "Denominated pool"
+            "Denominated pool V3"
           ],
           "writable": true,
           "pda": {
@@ -3333,18 +3055,21 @@
                   112,
                   111,
                   111,
-                  108
+                  108,
+                  95,
+                  118,
+                  52
                 ]
               },
               {
                 "kind": "account",
                 "path": "denominated_pool.token_mint",
-                "account": "DenominatedPool"
+                "account": "DenominatedPoolV3"
               },
               {
                 "kind": "account",
                 "path": "denominated_pool.denomination",
-                "account": "DenominatedPool"
+                "account": "DenominatedPoolV3"
               }
             ]
           }
@@ -3352,7 +3077,7 @@
         {
           "name": "merkle_tree",
           "docs": [
-            "Merkle tree state (mutable — new commitment is inserted)"
+            "Merkle tree V3 state (mutable — new commitment is inserted)"
           ],
           "writable": true,
           "pda": {
@@ -3370,7 +3095,10 @@
                   116,
                   114,
                   101,
-                  101
+                  101,
+                  95,
+                  118,
+                  52
                 ]
               },
               {
@@ -3414,15 +3142,26 @@
           }
         },
         {
-          "name": "stark_proof_buffer",
+          "name": "c1_proof_buffer",
           "docs": [
-            "STARK proof buffer from p01_stark_verifier (circuit 1: pool_commitment).",
-            "- Owner is p01_stark_verifier program",
-            "- Discriminator matches ProofBuffer",
-            "- Authority matches payer",
-            "- Circuit ID is 1 (pool_commitment)",
-            "- Verified flag is true",
-            "- Public inputs hash matches sha256([nullifier_u64_le || stark_commitment_u64_le])"
+            "C1 (pool_commitment) STARK proof buffer.",
+            "verified, public_inputs_hash matches `(nullifier, stark_commitment)`)."
+          ]
+        },
+        {
+          "name": "c3_proof_buffer",
+          "docs": [
+            "C3 (merkle_path) STARK proof buffer — proves OLD commitment is at",
+            "`merkle_root`. NEW in V3.",
+            "verified, public_inputs_hash matches `(stark_commitment, merkle_root)`)."
+          ]
+        },
+        {
+          "name": "c6_proof_buffer",
+          "docs": [
+            "C6 (merkle_update) STARK proof buffer — proves NEW commitment insertion.",
+            "verified, deep_ali_verified, public_inputs_hash matches",
+            "`(0, new_commitment, current_root, new_root, depth)`)."
           ]
         },
         {
@@ -3474,14 +3213,28 @@
               32
             ]
           }
+        },
+        {
+          "name": "new_subtrees",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
         }
       ]
     },
     {
       "name": "unshield",
       "docs": [
-        "Unshield tokens: withdraw from shielded pool to transparent address",
-        "Requires a valid ZK proof showing ownership of the notes"
+        "Unshield tokens from the base pool using STARK circuit 5 (transfer) —",
+        "quantum-resistant. public_amount = -amount (two's complement u64)",
+        "ensures value conservation between the two output notes and the",
+        "withdrawn `amount`.",
+        "Requires a pre-verified STARK proof buffer from p01_stark_verifier."
       ],
       "discriminator": [
         21,
@@ -3496,24 +3249,18 @@
       "accounts": [
         {
           "name": "payer",
-          "docs": [
-            "Transaction submitter (can be anyone)"
-          ],
           "writable": true,
           "signer": true
         },
         {
           "name": "recipient",
           "docs": [
-            "Recipient of the unshielded tokens"
+            "Recipient of the unshielded tokens."
           ],
           "writable": true
         },
         {
           "name": "shielded_pool",
-          "docs": [
-            "Shielded pool"
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -3545,9 +3292,6 @@
         },
         {
           "name": "merkle_tree",
-          "docs": [
-            "Merkle tree state"
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -3576,10 +3320,6 @@
         },
         {
           "name": "nullifier_record_1",
-          "docs": [
-            "Nullifier 1 PDA — created on first use.",
-            "If this PDA already exists, `init` fails → atomic double-spend rejection."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -3610,10 +3350,6 @@
         },
         {
           "name": "nullifier_record_2",
-          "docs": [
-            "Nullifier 2 PDA — created on first use.",
-            "If this PDA already exists, `init` fails → atomic double-spend rejection."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -3643,52 +3379,32 @@
           }
         },
         {
-          "name": "verification_key_data",
+          "name": "stark_proof_buffer",
           "docs": [
-            "Verification key data account"
+            "STARK proof buffer from p01_stark_verifier (circuit 5: transfer)."
           ]
         },
         {
           "name": "system_program",
-          "docs": [
-            "System program (required for PDA creation + native SOL transfers)"
-          ],
           "address": "11111111111111111111111111111111"
         },
         {
           "name": "token_program",
-          "docs": [
-            "Token program (optional, for SPL token transfers)"
-          ],
           "optional": true,
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
         {
           "name": "pool_vault",
-          "docs": [
-            "Pool's token vault (optional, only for SPL tokens)"
-          ],
           "writable": true,
           "optional": true
         },
         {
           "name": "recipient_token_account",
-          "docs": [
-            "Recipient's token account (optional, only for SPL tokens)"
-          ],
           "writable": true,
           "optional": true
         }
       ],
       "args": [
-        {
-          "name": "proof",
-          "type": {
-            "defined": {
-              "name": "Groth16Proof"
-            }
-          }
-        },
         {
           "name": "nullifier_1",
           "type": {
@@ -3750,31 +3466,29 @@
       ]
     },
     {
-      "name": "unshield_denominated_stark",
+      "name": "unshield_denominated_stark_v3",
       "docs": [
-        "Unshield from denominated pool using STARK proof (quantum-resistant).",
-        "Requires a pre-verified STARK proof buffer from p01_stark_verifier.",
-        "The STARK proof replaces Groth16 — no elliptic curve pairings needed."
+        "Unshield from a V3 pool using two STARK proof buffers:",
+        "- C1 (pool_commitment): proves nullifier + commitment.",
+        "- C3 (merkle_path): proves the commitment is at the supplied",
+        "merkle root (closes the v2 trust gap where membership was",
+        "never proven on-chain)."
       ],
       "discriminator": [
-        94,
-        95,
-        79,
-        48,
-        195,
-        183,
-        41,
-        160
+        119,
+        242,
+        17,
+        93,
+        75,
+        158,
+        78,
+        37
       ],
       "accounts": [
         {
           "name": "payer",
           "writable": true,
           "signer": true
-        },
-        {
-          "name": "recipient",
-          "writable": true
         },
         {
           "name": "denominated_pool",
@@ -3799,18 +3513,21 @@
                   112,
                   111,
                   111,
-                  108
+                  108,
+                  95,
+                  118,
+                  52
                 ]
               },
               {
                 "kind": "account",
                 "path": "denominated_pool.token_mint",
-                "account": "DenominatedPool"
+                "account": "DenominatedPoolV3"
               },
               {
                 "kind": "account",
                 "path": "denominated_pool.denomination",
-                "account": "DenominatedPool"
+                "account": "DenominatedPoolV3"
               }
             ]
           }
@@ -3832,7 +3549,10 @@
                   116,
                   114,
                   101,
-                  101
+                  101,
+                  95,
+                  118,
+                  52
                 ]
               },
               {
@@ -3873,17 +3593,18 @@
           }
         },
         {
-          "name": "stark_proof_buffer",
+          "name": "c1_proof_buffer",
           "docs": [
-            "STARK proof buffer from p01_stark_verifier (circuit 1: pool_commitment).",
-            "Must be verified (verified == true) and owned by the payer.",
-            "Marked mut because we invalidate (set verified=false) after use.",
-            "- Owner is p01_stark_verifier program",
-            "- Discriminator matches ProofBuffer",
-            "- Authority matches payer",
-            "- Circuit ID is 1 (pool_commitment)",
-            "- Verified flag is true",
-            "- Public inputs hash matches expected value"
+            "C1 (pool_commitment) STARK proof buffer — proves nullifier + commitment.",
+            "verified, public_inputs_hash)."
+          ]
+        },
+        {
+          "name": "c3_proof_buffer",
+          "docs": [
+            "C3 (merkle_path) STARK proof buffer — proves the commitment is at",
+            "the merkle root. NEW in V3.",
+            "verified, public_inputs_hash)."
           ]
         },
         {
@@ -3906,11 +3627,38 @@
           "optional": true
         },
         {
-          "name": "protocol_fee_wallet",
+          "name": "fee_escrow",
           "docs": [
-            "Protocol fee wallet — receives unshield fee (0.5%)"
+            "Per-pool fee escrow PDA (Phase E v1).",
+            "Receives the unshield fee instead of the legacy hardcoded `BRop3...` wallet.",
+            "PDA seed: [b\"fee_escrow\", pool.key()]. Deterministic per pool, no",
+            "cross-pool linkability. Drained later via `sweep_fee_escrow` (treasury",
+            "authority)."
           ],
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
         }
       ],
       "args": [
@@ -3939,6 +3687,15 @@
         {
           "name": "stark_commitment",
           "type": "u64"
+        },
+        {
+          "name": "recipient",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
         }
       ]
     },
@@ -3990,336 +3747,6 @@
       ]
     },
     {
-      "name": "update_verification_key",
-      "docs": [
-        "Update the verification key (admin only)"
-      ],
-      "discriminator": [
-        137,
-        144,
-        60,
-        6,
-        206,
-        144,
-        18,
-        216
-      ],
-      "accounts": [
-        {
-          "name": "authority",
-          "docs": [
-            "Pool authority"
-          ],
-          "signer": true
-        },
-        {
-          "name": "shielded_pool",
-          "docs": [
-            "Shielded pool to update"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  104,
-                  105,
-                  101,
-                  108,
-                  100,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool.token_mint",
-                "account": "ShieldedPool"
-              }
-            ]
-          }
-        }
-      ],
-      "args": [
-        {
-          "name": "new_vk_hash",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        }
-      ]
-    },
-    {
-      "name": "verify_compliance_innocence",
-      "docs": [
-        "Verify a Groth16 innocence proof and create a ComplianceAttestation.",
-        "Proves: user identity is NOT in the sanctions Merkle tree."
-      ],
-      "discriminator": [
-        63,
-        79,
-        1,
-        237,
-        232,
-        196,
-        66,
-        63
-      ],
-      "accounts": [
-        {
-          "name": "authority",
-          "docs": [
-            "Authority requesting compliance verification (pays for PDA creation)"
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "user",
-          "docs": [
-            "User proving innocence"
-          ],
-          "signer": true
-        },
-        {
-          "name": "attestation",
-          "docs": [
-            "ComplianceAttestation PDA: [\"compliance\", user, 1u8, attestation_nonce]"
-          ],
-          "writable": true
-        },
-        {
-          "name": "vk_data",
-          "docs": [
-            "VK data for the compliance_innocence circuit."
-          ]
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "proof",
-          "type": {
-            "defined": {
-              "name": "Groth16Proof"
-            }
-          }
-        },
-        {
-          "name": "sanctions_root",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "user_commitment",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "attestation_nonce",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "expires_in_seconds",
-          "type": "i64"
-        }
-      ]
-    },
-    {
-      "name": "verify_compliance_range",
-      "docs": [
-        "Verify a Groth16 range proof and create a ComplianceAttestation.",
-        "Proves: min_bound <= secret_balance <= max_bound"
-      ],
-      "discriminator": [
-        240,
-        182,
-        136,
-        54,
-        101,
-        184,
-        158,
-        225
-      ],
-      "accounts": [
-        {
-          "name": "authority",
-          "docs": [
-            "Authority requesting compliance verification (pays for PDA creation)"
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "user",
-          "docs": [
-            "User whose balance is being attested"
-          ],
-          "signer": true
-        },
-        {
-          "name": "attestation",
-          "docs": [
-            "ComplianceAttestation PDA: [\"compliance\", user, 0u8, attestation_nonce]"
-          ],
-          "writable": true
-        },
-        {
-          "name": "confidential_account",
-          "docs": [
-            "The confidential account whose balance commitment we verify against."
-          ]
-        },
-        {
-          "name": "vk_data",
-          "docs": [
-            "VK data for the compliance_range circuit."
-          ]
-        },
-        {
-          "name": "token_mint",
-          "docs": [
-            "Token mint associated with the balance commitment."
-          ]
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "proof",
-          "type": {
-            "defined": {
-              "name": "Groth16Proof"
-            }
-          }
-        },
-        {
-          "name": "min_bound",
-          "type": "u64"
-        },
-        {
-          "name": "max_bound",
-          "type": "u64"
-        },
-        {
-          "name": "attestation_nonce",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "expires_in_seconds",
-          "type": "i64"
-        }
-      ]
-    },
-    {
-      "name": "write_escrow_outcome",
-      "docs": [
-        "Write the auction outcome to an escrow PDA by reading the finalized",
-        "Auction account from p01_arcium. Permissionless cranker."
-      ],
-      "discriminator": [
-        185,
-        124,
-        9,
-        180,
-        108,
-        16,
-        108,
-        193
-      ],
-      "accounts": [
-        {
-          "name": "payer",
-          "docs": [
-            "Anyone can crank (permissionless)"
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "auction_escrow",
-          "docs": [
-            "Auction escrow PDA (mutable — outcome is written)"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  97,
-                  117,
-                  99,
-                  116,
-                  105,
-                  111,
-                  110,
-                  95,
-                  101,
-                  115,
-                  99,
-                  114,
-                  111,
-                  119
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "auction_escrow.auction_id",
-                "account": "AuctionEscrow"
-              },
-              {
-                "kind": "account",
-                "path": "auction_escrow.nullifier",
-                "account": "AuctionEscrow"
-              }
-            ]
-          }
-        },
-        {
-          "name": "auction_account",
-          "docs": [
-            "The Auction PDA from p01_arcium program."
-          ]
-        }
-      ],
-      "args": []
-    },
-    {
       "name": "write_escrow_vk_data",
       "docs": [
         "Write chunk of escrow VK data."
@@ -4361,7 +3788,10 @@
                   112,
                   111,
                   111,
-                  108
+                  108,
+                  95,
+                  118,
+                  50
                 ]
               },
               {
@@ -4419,118 +3849,9 @@
           "type": "bytes"
         }
       ]
-    },
-    {
-      "name": "write_vk_data",
-      "docs": [
-        "Write chunk of VK data (admin only)",
-        "Used to upload VK data in multiple transactions"
-      ],
-      "discriminator": [
-        158,
-        131,
-        125,
-        119,
-        246,
-        102,
-        158,
-        162
-      ],
-      "accounts": [
-        {
-          "name": "authority",
-          "docs": [
-            "Pool authority (must sign)"
-          ],
-          "signer": true
-        },
-        {
-          "name": "shielded_pool",
-          "docs": [
-            "Shielded pool"
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  104,
-                  105,
-                  101,
-                  108,
-                  100,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool.token_mint",
-                "account": "ShieldedPool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "vk_data_account",
-          "docs": [
-            "VK data account (PDA owned by this program)"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  118,
-                  107,
-                  95,
-                  100,
-                  97,
-                  116,
-                  97
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool"
-              }
-            ]
-          }
-        }
-      ],
-      "args": [
-        {
-          "name": "offset",
-          "type": "u32"
-        },
-        {
-          "name": "data",
-          "type": "bytes"
-        }
-      ]
     }
   ],
   "accounts": [
-    {
-      "name": "AuctionEscrow",
-      "discriminator": [
-        219,
-        16,
-        234,
-        116,
-        247,
-        132,
-        116,
-        213
-      ]
-    },
     {
       "name": "ComplianceAttestation",
       "discriminator": [
@@ -4558,6 +3879,19 @@
       ]
     },
     {
+      "name": "DenominatedPoolV3",
+      "discriminator": [
+        15,
+        219,
+        145,
+        69,
+        148,
+        52,
+        170,
+        42
+      ]
+    },
+    {
       "name": "MerkleTreeState",
       "discriminator": [
         110,
@@ -4568,6 +3902,19 @@
         80,
         172,
         23
+      ]
+    },
+    {
+      "name": "MerkleTreeStateV3",
+      "discriminator": [
+        20,
+        54,
+        166,
+        79,
+        70,
+        11,
+        70,
+        191
       ]
     },
     {
@@ -4621,2117 +3968,24 @@
         86,
         190
       ]
+    },
+    {
+      "name": "SweepRecord",
+      "discriminator": [
+        176,
+        183,
+        154,
+        118,
+        125,
+        172,
+        99,
+        118
+      ]
     }
   ],
-  "types": [
-    {
-      "name": "AuctionEscrow",
-      "docs": [
-        "Auction escrow: holds two conditional commitments for a sealed-bid auction.",
-        "",
-        "When a bidder places a bid, their denominated pool note is consumed (nullified)",
-        "and both possible outcomes are recorded:",
-        "- pay_commitment:    note for the seller (if bidder wins)",
-        "- refund_commitment: note for the bidder (if bidder loses)",
-        "",
-        "After the Arcium MPC settles the auction and writes the outcome,",
-        "a permissionless `escrow_release` instruction inserts the correct",
-        "commitment into the Merkle tree. The other commitment is discarded.",
-        "",
-        "PDA seeds: [b\"auction_escrow\", auction_id, nullifier]"
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "auction_id",
-            "docs": [
-              "Auction identifier: Poseidon(auction_pubkey, nonce) or hash of Auction PDA"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "pool",
-            "docs": [
-              "The denominated pool this escrow belongs to"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "nullifier",
-            "docs": [
-              "Nullifier of the consumed source note (serves as bidder handle)"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "pay_commitment",
-            "docs": [
-              "Commitment that pays the seller (winner outcome)"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "refund_commitment",
-            "docs": [
-              "Commitment that refunds the bidder (loser outcome)"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "outcome",
-            "docs": [
-              "0 = unsettled, 1 = pay (winner), 2 = refund (loser)"
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "is_released",
-            "docs": [
-              "Whether the escrow has been released (commitment inserted into tree)"
-            ],
-            "type": "bool"
-          },
-          {
-            "name": "created_at",
-            "docs": [
-              "Creation timestamp"
-            ],
-            "type": "i64"
-          },
-          {
-            "name": "bump",
-            "docs": [
-              "PDA bump"
-            ],
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "AuthorityTransferAccepted",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "old_authority",
-            "type": "pubkey"
-          },
-          {
-            "name": "new_authority",
-            "type": "pubkey"
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "AuthorityTransferProposed",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "current_authority",
-            "type": "pubkey"
-          },
-          {
-            "name": "proposed_authority",
-            "type": "pubkey"
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "CancelNormalEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "subscriber",
-            "type": "pubkey"
-          },
-          {
-            "name": "retailer",
-            "type": "pubkey"
-          },
-          {
-            "name": "retailer_amount",
-            "type": "u64"
-          },
-          {
-            "name": "refund_amount",
-            "type": "u64"
-          },
-          {
-            "name": "slot",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "CancelPrivateStarkEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "retailer",
-            "type": "pubkey"
-          },
-          {
-            "name": "source_pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "retailer_amount",
-            "type": "u64"
-          },
-          {
-            "name": "reshield_amount",
-            "type": "u64"
-          },
-          {
-            "name": "notes_reshielded",
-            "type": "u64"
-          },
-          {
-            "name": "dust_forfeited",
-            "type": "u64"
-          },
-          {
-            "name": "slot",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "ClaimPeriodEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "retailer",
-            "type": "pubkey"
-          },
-          {
-            "name": "periods_claimed",
-            "type": "u64"
-          },
-          {
-            "name": "amount_claimed",
-            "type": "u64"
-          },
-          {
-            "name": "total_claimed_periods",
-            "type": "u64"
-          },
-          {
-            "name": "slot",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "ComplianceAttestation",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "authority",
-            "docs": [
-              "Authority who can revoke this attestation"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "user",
-            "docs": [
-              "User this attestation is about"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "attestation_type",
-            "docs": [
-              "0 = range proof, 1 = innocence proof"
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "is_verified",
-            "docs": [
-              "Whether the ZK proof was verified"
-            ],
-            "type": "bool"
-          },
-          {
-            "name": "issued_at",
-            "docs": [
-              "Unix timestamp of issuance"
-            ],
-            "type": "i64"
-          },
-          {
-            "name": "expires_at",
-            "docs": [
-              "Unix timestamp of expiry (e.g., +30 days)"
-            ],
-            "type": "i64"
-          },
-          {
-            "name": "revoked",
-            "docs": [
-              "Whether authority has revoked"
-            ],
-            "type": "bool"
-          },
-          {
-            "name": "sanctions_root",
-            "docs": [
-              "For innocence: which sanctions list version was proven against"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "min_bound",
-            "docs": [
-              "For range: the threshold/bound proven (public input, not the secret balance)"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "max_bound",
-            "type": "u64"
-          },
-          {
-            "name": "circuit_vk_hash",
-            "docs": [
-              "Hash of the circuit verification key used"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "attestation_nonce",
-            "docs": [
-              "Attestation nonce (anti-replay)"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "bump",
-            "docs": [
-              "PDA bump"
-            ],
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "ComplianceInnocenceEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "user",
-            "type": "pubkey"
-          },
-          {
-            "name": "authority",
-            "type": "pubkey"
-          },
-          {
-            "name": "sanctions_root",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "attestation",
-            "type": "pubkey"
-          },
-          {
-            "name": "issued_at",
-            "type": "i64"
-          },
-          {
-            "name": "expires_at",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "ComplianceRangeEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "user",
-            "type": "pubkey"
-          },
-          {
-            "name": "authority",
-            "type": "pubkey"
-          },
-          {
-            "name": "min_bound",
-            "type": "u64"
-          },
-          {
-            "name": "max_bound",
-            "type": "u64"
-          },
-          {
-            "name": "token_mint",
-            "type": "pubkey"
-          },
-          {
-            "name": "attestation",
-            "type": "pubkey"
-          },
-          {
-            "name": "issued_at",
-            "type": "i64"
-          },
-          {
-            "name": "expires_at",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "ComplianceRevokedEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "attestation",
-            "type": "pubkey"
-          },
-          {
-            "name": "authority",
-            "type": "pubkey"
-          },
-          {
-            "name": "revoked_at",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "DenominatedPool",
-      "docs": [
-        "A shielded pool where every note has a fixed denomination.",
-        "Commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)",
-        "No amount in the commitment — denomination enforced at program level.",
-        "",
-        "Dynamic time delay: The pool adjusts the withdrawal delay based on the",
-        "anonymity set size (mature notes). More notes = shorter delay because the",
-        "anonymity set is large enough to resist timing analysis.",
-        "",
-        "Lazy maturity tracking: A circular buffer `epoch_note_counts` records how",
-        "many notes were deposited in each epoch. On every shield/unshield, the",
-        "`update_maturity()` method walks the buffer to graduate old epochs into",
-        "`mature_note_count`. This avoids scanning all notes — O(buffer_size) worst",
-        "case, which is bounded at 32."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "authority",
-            "docs": [
-              "Authority that can update pool settings"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "token_mint",
-            "docs": [
-              "Token mint address (system program for SOL)"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "denomination",
-            "docs": [
-              "Fixed denomination per note (in lamports / atomic units)"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "epoch_delay",
-            "docs": [
-              "Minimum epochs that must pass between deposit and withdrawal"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "merkle_root",
-            "docs": [
-              "Current Merkle tree root"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "tree_depth",
-            "docs": [
-              "Depth of the Merkle tree (20 = ~1M notes)"
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "next_leaf_index",
-            "docs": [
-              "Index of the next leaf to insert"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "vk_hash",
-            "docs": [
-              "Hash of the verification key for proof validation"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "total_shielded",
-            "docs": [
-              "Total amount currently shielded (= note_count * denomination)"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "note_count",
-            "docs": [
-              "Number of notes in pool (anonymity set size)"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "is_active",
-            "docs": [
-              "Whether the pool is accepting new deposits"
-            ],
-            "type": "bool"
-          },
-          {
-            "name": "historical_roots",
-            "docs": [
-              "Historical roots (last 100 roots for flexibility)"
-            ],
-            "type": {
-              "vec": {
-                "array": [
-                  "u8",
-                  32
-                ]
-              }
-            }
-          },
-          {
-            "name": "max_historical_roots",
-            "docs": [
-              "Maximum size of historical roots array"
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "created_at",
-            "docs": [
-              "Pool creation timestamp"
-            ],
-            "type": "i64"
-          },
-          {
-            "name": "last_tx_at",
-            "docs": [
-              "Last transaction timestamp"
-            ],
-            "type": "i64"
-          },
-          {
-            "name": "bump",
-            "docs": [
-              "Bump seed for PDA"
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "mature_note_count",
-            "docs": [
-              "Number of notes that have been in the pool longer than `epoch_delay` epochs.",
-              "Drives `get_dynamic_delay()`: more mature notes = shorter withdrawal delay."
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "last_maturity_update_epoch",
-            "docs": [
-              "The last epoch at which `update_maturity()` was called.",
-              "Used to determine how many new epochs to graduate."
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "epoch_note_counts",
-            "docs": [
-              "Circular buffer: number of notes deposited in each epoch.",
-              "Index `i` corresponds to epoch `epoch_note_start + i`.",
-              "Size 32 provides a lookback window of 32 epochs (~32 hours)."
-            ],
-            "type": {
-              "array": [
-                "u64",
-                32
-              ]
-            }
-          },
-          {
-            "name": "epoch_note_start",
-            "docs": [
-              "The absolute epoch number corresponding to index 0 of `epoch_note_counts`.",
-              "When time advances, old entries are graduated (added to mature_note_count)",
-              "and the start is shifted forward."
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "vk_hash_transfer",
-            "docs": [
-              "Hash of the verification key for transfer circuit validation.",
-              "Separate from vk_hash because unshield and transfer are different circuits",
-              "with different public inputs."
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "vk_update_slot",
-            "docs": [
-              "Timestamp of the last VK update (for 24h cooldown enforcement)"
-            ],
-            "type": "i64"
-          },
-          {
-            "name": "root_write_index",
-            "docs": [
-              "Write index for the historical_roots circular buffer.",
-              "Decoupled from next_leaf_index so root history is not corrupted",
-              "when next_leaf_index diverges (e.g., transfer_denominated)."
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "vk_hash_escrow",
-            "docs": [
-              "Hash of the verification key for escrow bid circuit validation.",
-              "Separate from vk_hash and vk_hash_transfer because escrow_bid",
-              "has 7 public inputs (adds auction_id, pay_commitment, refund_commitment)."
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          }
-        ]
-      }
-    },
-    {
-      "name": "EmergencyUnshieldDenominatedStarkEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "recipient",
-            "type": "pubkey"
-          },
-          {
-            "name": "denomination",
-            "type": "u64"
-          },
-          {
-            "name": "protocol_fee",
-            "type": "u64"
-          },
-          {
-            "name": "nullifier",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "min_epoch",
-            "type": "u64"
-          },
-          {
-            "name": "current_epoch",
-            "type": "u64"
-          },
-          {
-            "name": "is_emergency",
-            "type": "bool"
-          },
-          {
-            "name": "mature_note_count",
-            "type": "u64"
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "EscrowOutcomeEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "auction_id",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "nullifier",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "outcome",
-            "type": "u8"
-          },
-          {
-            "name": "winner_nullifier",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "EscrowReleaseEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "auction_id",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "nullifier",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "outcome",
-            "type": "u8"
-          },
-          {
-            "name": "commitment",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "leaf_index",
-            "type": "u64"
-          },
-          {
-            "name": "new_root",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "EscrowShieldEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "auction_id",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "nullifier",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "pay_commitment",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "refund_commitment",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "current_epoch",
-            "type": "u64"
-          },
-          {
-            "name": "dynamic_delay",
-            "type": "u64"
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "Groth16Proof",
-      "docs": [
-        "Groth16 proof structure for on-chain verification"
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "pi_a",
-            "type": {
-              "array": [
-                "u8",
-                64
-              ]
-            }
-          },
-          {
-            "name": "pi_b",
-            "type": {
-              "array": [
-                "u8",
-                128
-              ]
-            }
-          },
-          {
-            "name": "pi_c",
-            "type": {
-              "array": [
-                "u8",
-                64
-              ]
-            }
-          }
-        ]
-      }
-    },
-    {
-      "docs": [
-        "Event emitted whenever the Merkle root changes.",
-        "Off-chain monitors should watch for unexpected root transitions to detect",
-        "potential root poisoning attempts."
-      ],
-      "name": "MerkleRootChanged",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "old_root",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "new_root",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "leaf_index",
-            "type": "u64"
-          },
-          {
-            "name": "leaf",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "MerkleTreeState",
-      "docs": [
-        "Merkle tree state stored on-chain",
-        "Uses sparse storage for efficiency - only stores non-empty nodes"
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "pool",
-            "docs": [
-              "Associated shielded pool"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "root",
-            "docs": [
-              "Current root hash"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "leaf_count",
-            "docs": [
-              "Number of leaves inserted"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "depth",
-            "docs": [
-              "Tree depth"
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "filled_subtrees",
-            "docs": [
-              "Filled subtrees (optimization for insertion)",
-              "Stores the rightmost filled node at each level"
-            ],
-            "type": {
-              "vec": {
-                "array": [
-                  "u8",
-                  32
-                ]
-              }
-            }
-          },
-          {
-            "name": "bump",
-            "docs": [
-              "Bump seed for PDA"
-            ],
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "NullifierRecord",
-      "docs": [
-        "A tiny PDA account whose existence proves a nullifier has been spent.",
-        "Seeds: [b\"nullifier\", pool_key, nullifier_bytes]",
-        "No false positives, no size limits, scales to millions of nullifiers.",
-        "Rent (~0.00089 SOL) paid by the withdrawer."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "pool",
-            "docs": [
-              "The pool this nullifier belongs to"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "bump",
-            "docs": [
-              "Bump seed for PDA"
-            ],
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "NullifierSet",
-      "docs": [
-        "Nullifier set for preventing double-spending",
-        "Uses a Bloom filter for fast probabilistic checking",
-        "plus an on-chain list for definitive verification",
-        "",
-        "Uses zero-copy to avoid stack overflow during deserialization"
-      ],
-      "serialization": "bytemuck",
-      "repr": {
-        "kind": "c"
-      },
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "pool",
-            "docs": [
-              "Associated shielded pool"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "count",
-            "docs": [
-              "Number of nullifiers stored"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "num_hash_functions",
-            "docs": [
-              "Number of hash functions for bloom filter"
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "bump",
-            "docs": [
-              "Bump seed for PDA"
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "_padding",
-            "docs": [
-              "Padding for alignment"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                6
-              ]
-            }
-          },
-          {
-            "name": "bloom_filter",
-            "docs": [
-              "Bloom filter for fast probabilistic checking (2KB)",
-              "False positives possible, false negatives impossible"
-            ],
-            "type": {
-              "array": [
-                "u64",
-                256
-              ]
-            }
-          }
-        ]
-      }
-    },
-    {
-      "name": "PauseVaultEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "paused_at_slot",
-            "type": "i64"
-          },
-          {
-            "name": "is_private",
-            "type": "bool"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "PauseVaultPrivateStarkEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "paused_at_slot",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "ResumeVaultEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "resumed_at_slot",
-            "type": "i64"
-          },
-          {
-            "name": "paused_duration",
-            "type": "i64"
-          },
-          {
-            "name": "total_paused_slots",
-            "type": "i64"
-          },
-          {
-            "name": "is_private",
-            "type": "bool"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "ResumeVaultPrivateStarkEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "resumed_at_slot",
-            "type": "i64"
-          },
-          {
-            "name": "paused_duration",
-            "type": "i64"
-          },
-          {
-            "name": "total_paused_slots",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "ShieldDenominatedEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "depositor",
-            "type": "pubkey"
-          },
-          {
-            "name": "denomination",
-            "type": "u64"
-          },
-          {
-            "name": "protocol_fee",
-            "type": "u64"
-          },
-          {
-            "name": "commitment",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "leaf_index",
-            "type": "u64"
-          },
-          {
-            "name": "new_root",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "deposit_epoch",
-            "type": "u64"
-          },
-          {
-            "name": "mature_note_count",
-            "type": "u64"
-          },
-          {
-            "name": "dynamic_delay",
-            "type": "u64"
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "docs": [
-        "Event emitted when tokens are shielded"
-      ],
-      "name": "ShieldEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "depositor",
-            "type": "pubkey"
-          },
-          {
-            "name": "amount",
-            "type": "u64"
-          },
-          {
-            "name": "commitment",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "leaf_index",
-            "type": "u64"
-          },
-          {
-            "name": "new_root",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "ShieldedPool",
-      "docs": [
-        "Configuration and state of a shielded pool",
-        "Each pool handles one token type (SOL or SPL token)"
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "authority",
-            "docs": [
-              "Authority that can update pool settings"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "token_mint",
-            "docs": [
-              "Token mint address (system program for SOL)"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "merkle_root",
-            "docs": [
-              "Current Merkle tree root"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "tree_depth",
-            "docs": [
-              "Depth of the Merkle tree (20 = ~1M notes)"
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "next_leaf_index",
-            "docs": [
-              "Index of the next leaf to insert"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "vk_hash",
-            "docs": [
-              "Hash of the verification key for proof validation"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "total_shielded",
-            "docs": [
-              "Total amount currently shielded in the pool"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "is_active",
-            "docs": [
-              "Whether the pool is accepting new deposits/transfers"
-            ],
-            "type": "bool"
-          },
-          {
-            "name": "historical_roots",
-            "docs": [
-              "Historical roots (last 100 roots for flexibility)"
-            ],
-            "type": {
-              "vec": {
-                "array": [
-                  "u8",
-                  32
-                ]
-              }
-            }
-          },
-          {
-            "name": "max_historical_roots",
-            "docs": [
-              "Maximum size of historical roots array"
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "created_at",
-            "docs": [
-              "Pool creation timestamp"
-            ],
-            "type": "i64"
-          },
-          {
-            "name": "last_tx_at",
-            "docs": [
-              "Last transaction timestamp"
-            ],
-            "type": "i64"
-          },
-          {
-            "name": "relayer_fee_bps",
-            "docs": [
-              "Relayer fee in basis points (100 = 1%)"
-            ],
-            "type": "u16"
-          },
-          {
-            "name": "relayer",
-            "docs": [
-              "Relayer pubkey that receives fees"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "bump",
-            "docs": [
-              "Bump seed for PDA"
-            ],
-            "type": "u8"
-          },
-          {
-            "name": "vk_update_slot",
-            "docs": [
-              "Timestamp of the last VK update (for 24h cooldown enforcement)"
-            ],
-            "type": "i64"
-          },
-          {
-            "name": "pending_authority",
-            "docs": [
-              "Pending new authority for two-step authority transfer"
-            ],
-            "type": {
-              "option": "pubkey"
-            }
-          }
-        ]
-      }
-    },
-    {
-      "name": "SplitNoteStarkEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "source_pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "target_pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "source_denomination",
-            "type": "u64"
-          },
-          {
-            "name": "target_denomination",
-            "type": "u64"
-          },
-          {
-            "name": "num_outputs",
-            "type": "u8"
-          },
-          {
-            "name": "protocol_fee",
-            "type": "u64"
-          },
-          {
-            "name": "nullifier",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "SubscribeNormalEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "subscriber",
-            "type": "pubkey"
-          },
-          {
-            "name": "retailer",
-            "type": "pubkey"
-          },
-          {
-            "name": "token_mint",
-            "type": "pubkey"
-          },
-          {
-            "name": "amount",
-            "type": "u64"
-          },
-          {
-            "name": "rate",
-            "type": "u64"
-          },
-          {
-            "name": "interval_slots",
-            "type": "u64"
-          },
-          {
-            "name": "start_slot",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "SubscribePrivateStarkEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "subscriber_commitment",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "retailer",
-            "type": "pubkey"
-          },
-          {
-            "name": "token_mint",
-            "type": "pubkey"
-          },
-          {
-            "name": "amount",
-            "type": "u64"
-          },
-          {
-            "name": "rate",
-            "type": "u64"
-          },
-          {
-            "name": "interval_slots",
-            "type": "u64"
-          },
-          {
-            "name": "source_pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "nullifier",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "start_slot",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "SubscriptionVault",
-      "docs": [
-        "Subscription vault: holds funds deposited by a subscriber for periodic",
-        "claims by a retailer. Supports two modes:",
-        "",
-        "**Normal mode**: `subscriber_pubkey` is set, vault actions require wallet signature.",
-        "**Private mode**: `subscriber_commitment` is set (Poseidon(secret)), vault actions",
-        "require a ZK proof of knowledge of the secret.",
-        "",
-        "PDA: [b\"subscription_vault\", retailer, subscriber_id_bytes, token_mint]",
-        "where subscriber_id_bytes = subscriber_pubkey (normal) or subscriber_commitment (private)"
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "subscriber_pubkey",
-            "docs": [
-              "Subscriber wallet (normal mode only)"
-            ],
-            "type": {
-              "option": "pubkey"
-            }
-          },
-          {
-            "name": "subscriber_commitment",
-            "docs": [
-              "Subscriber commitment = Poseidon(secret) (private mode only)"
-            ],
-            "type": {
-              "option": {
-                "array": [
-                  "u8",
-                  32
-                ]
-              }
-            }
-          },
-          {
-            "name": "retailer",
-            "docs": [
-              "Retailer who receives periodic payments"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "token_mint",
-            "docs": [
-              "Token mint (system program ID for native SOL)"
-            ],
-            "type": "pubkey"
-          },
-          {
-            "name": "total_deposited",
-            "docs": [
-              "Total amount deposited into the vault"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "rate",
-            "docs": [
-              "Amount paid per period (in lamports / atomic units)"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "interval_slots",
-            "docs": [
-              "Number of slots between each claimable period"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "start_slot",
-            "docs": [
-              "Slot at which the subscription started"
-            ],
-            "type": "i64"
-          },
-          {
-            "name": "claimed_periods",
-            "docs": [
-              "Number of periods already claimed by the retailer"
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "is_active",
-            "docs": [
-              "Whether the vault is active (accepting claims)"
-            ],
-            "type": "bool"
-          },
-          {
-            "name": "is_paused",
-            "docs": [
-              "Whether the vault is paused (no claims while paused)"
-            ],
-            "type": "bool"
-          },
-          {
-            "name": "pause_slot",
-            "docs": [
-              "Slot at which the vault was paused (if paused)"
-            ],
-            "type": {
-              "option": "i64"
-            }
-          },
-          {
-            "name": "total_paused_slots",
-            "docs": [
-              "Total slots spent in paused state (accumulated over pause/resume cycles)"
-            ],
-            "type": "i64"
-          },
-          {
-            "name": "vk_hash_subscriber",
-            "docs": [
-              "VK hash for subscriber ownership circuit (private mode)"
-            ],
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "source_pool",
-            "docs": [
-              "Source denominated pool (for cancel_private re-shield)"
-            ],
-            "type": {
-              "option": "pubkey"
-            }
-          },
-          {
-            "name": "bump",
-            "docs": [
-              "PDA bump seed"
-            ],
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "TransferDenominatedStarkEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "nullifier",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "new_commitment",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "leaf_index",
-            "type": "u64"
-          },
-          {
-            "name": "new_root",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "min_epoch",
-            "type": "u64"
-          },
-          {
-            "name": "current_epoch",
-            "type": "u64"
-          },
-          {
-            "name": "dynamic_delay",
-            "type": "u64"
-          },
-          {
-            "name": "mature_note_count",
-            "type": "u64"
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "docs": [
-        "Event emitted on shielded transfer"
-      ],
-      "name": "TransferEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "nullifier_1",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "nullifier_2",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "output_commitment_1",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "output_commitment_2",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "leaf_index_1",
-            "type": "u64"
-          },
-          {
-            "name": "leaf_index_2",
-            "type": "u64"
-          },
-          {
-            "name": "new_root",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "name": "UnshieldDenominatedStarkEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "recipient",
-            "type": "pubkey"
-          },
-          {
-            "name": "denomination",
-            "type": "u64"
-          },
-          {
-            "name": "protocol_fee",
-            "type": "u64"
-          },
-          {
-            "name": "nullifier",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "min_epoch",
-            "type": "u64"
-          },
-          {
-            "name": "current_epoch",
-            "type": "u64"
-          },
-          {
-            "name": "dynamic_delay",
-            "type": "u64"
-          },
-          {
-            "name": "mature_note_count",
-            "type": "u64"
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "docs": [
-        "Event emitted when tokens are unshielded"
-      ],
-      "name": "UnshieldEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "recipient",
-            "type": "pubkey"
-          },
-          {
-            "name": "amount",
-            "type": "u64"
-          },
-          {
-            "name": "nullifier_1",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "nullifier_2",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "change_commitment",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "change_leaf_index",
-            "type": {
-              "option": "u64"
-            }
-          },
-          {
-            "name": "new_root",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    },
-    {
-      "docs": [
-        "Event emitted when verification key is updated"
-      ],
-      "name": "VKUpdateEvent",
-      "type": {
-        "fields": [
-          {
-            "name": "pool",
-            "type": "pubkey"
-          },
-          {
-            "name": "old_vk_hash",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "new_vk_hash",
-            "type": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          },
-          {
-            "name": "authority",
-            "type": "pubkey"
-          },
-          {
-            "name": "timestamp",
-            "type": "i64"
-          }
-        ],
-        "kind": "struct"
-      }
-    }
-  ],
-  "constants": [],
   "events": [
     {
+      "name": "AuthorityTransferAccepted",
       "discriminator": [
         149,
         165,
@@ -6741,10 +3995,10 @@
         203,
         239,
         121
-      ],
-      "name": "AuthorityTransferAccepted"
+      ]
     },
     {
+      "name": "AuthorityTransferProposed",
       "discriminator": [
         103,
         244,
@@ -6754,10 +4008,10 @@
         4,
         100,
         119
-      ],
-      "name": "AuthorityTransferProposed"
+      ]
     },
     {
+      "name": "CancelNormalEvent",
       "discriminator": [
         197,
         20,
@@ -6767,10 +4021,10 @@
         240,
         121,
         118
-      ],
-      "name": "CancelNormalEvent"
+      ]
     },
     {
+      "name": "CancelPrivateStarkEvent",
       "discriminator": [
         20,
         86,
@@ -6780,10 +4034,10 @@
         41,
         239,
         171
-      ],
-      "name": "CancelPrivateStarkEvent"
+      ]
     },
     {
+      "name": "ClaimPeriodEvent",
       "discriminator": [
         208,
         192,
@@ -6793,10 +4047,10 @@
         123,
         169,
         193
-      ],
-      "name": "ClaimPeriodEvent"
+      ]
     },
     {
+      "name": "ComplianceInnocenceEvent",
       "discriminator": [
         171,
         12,
@@ -6806,10 +4060,10 @@
         58,
         65,
         86
-      ],
-      "name": "ComplianceInnocenceEvent"
+      ]
     },
     {
+      "name": "ComplianceRangeEvent",
       "discriminator": [
         188,
         80,
@@ -6819,10 +4073,10 @@
         196,
         48,
         77
-      ],
-      "name": "ComplianceRangeEvent"
+      ]
     },
     {
+      "name": "ComplianceRevokedEvent",
       "discriminator": [
         180,
         158,
@@ -6832,62 +4086,23 @@
         168,
         241,
         110
-      ],
-      "name": "ComplianceRevokedEvent"
+      ]
     },
     {
+      "name": "LeafInserted",
       "discriminator": [
-        149,
-        174,
-        150,
-        219,
-        247,
-        145,
-        32,
-        80
-      ],
-      "name": "EmergencyUnshieldDenominatedStarkEvent"
+        89,
+        243,
+        212,
+        8,
+        215,
+        191,
+        187,
+        152
+      ]
     },
     {
-      "discriminator": [
-        38,
-        246,
-        60,
-        173,
-        91,
-        171,
-        52,
-        136
-      ],
-      "name": "EscrowOutcomeEvent"
-    },
-    {
-      "discriminator": [
-        174,
-        132,
-        185,
-        57,
-        1,
-        40,
-        80,
-        217
-      ],
-      "name": "EscrowReleaseEvent"
-    },
-    {
-      "discriminator": [
-        11,
-        214,
-        176,
-        18,
-        239,
-        81,
-        213,
-        6
-      ],
-      "name": "EscrowShieldEvent"
-    },
-    {
+      "name": "MerkleRootChanged",
       "discriminator": [
         160,
         201,
@@ -6897,10 +4112,10 @@
         193,
         181,
         252
-      ],
-      "name": "MerkleRootChanged"
+      ]
     },
     {
+      "name": "PauseVaultEvent",
       "discriminator": [
         181,
         156,
@@ -6910,10 +4125,10 @@
         28,
         238,
         12
-      ],
-      "name": "PauseVaultEvent"
+      ]
     },
     {
+      "name": "PauseVaultPrivateStarkEvent",
       "discriminator": [
         109,
         14,
@@ -6923,10 +4138,10 @@
         46,
         35,
         110
-      ],
-      "name": "PauseVaultPrivateStarkEvent"
+      ]
     },
     {
+      "name": "ResumeVaultEvent",
       "discriminator": [
         130,
         4,
@@ -6936,10 +4151,10 @@
         156,
         107,
         185
-      ],
-      "name": "ResumeVaultEvent"
+      ]
     },
     {
+      "name": "ResumeVaultPrivateStarkEvent",
       "discriminator": [
         73,
         113,
@@ -6949,10 +4164,10 @@
         77,
         227,
         6
-      ],
-      "name": "ResumeVaultPrivateStarkEvent"
+      ]
     },
     {
+      "name": "ShieldDenominatedEvent",
       "discriminator": [
         39,
         76,
@@ -6962,23 +4177,23 @@
         39,
         15,
         10
-      ],
-      "name": "ShieldDenominatedEvent"
+      ]
     },
     {
+      "name": "ShieldStarkEvent",
       "discriminator": [
-        63,
-        189,
-        150,
-        76,
-        39,
-        180,
-        65,
-        230
-      ],
-      "name": "ShieldEvent"
+        226,
+        200,
+        121,
+        64,
+        184,
+        243,
+        170,
+        4
+      ]
     },
     {
+      "name": "SplitNoteStarkEvent",
       "discriminator": [
         168,
         230,
@@ -6988,23 +4203,10 @@
         6,
         227,
         135
-      ],
-      "name": "SplitNoteStarkEvent"
+      ]
     },
     {
-      "discriminator": [
-        125,
-        242,
-        127,
-        107,
-        210,
-        159,
-        23,
-        93
-      ],
-      "name": "SubscribeNormalEvent"
-    },
-    {
+      "name": "SubscribePrivateStarkEvent",
       "discriminator": [
         6,
         63,
@@ -7014,73 +4216,33 @@
         75,
         191,
         161
-      ],
-      "name": "SubscribePrivateStarkEvent"
+      ]
     },
     {
+      "name": "TransferStarkEvent",
       "discriminator": [
-        133,
-        189,
-        147,
-        133,
-        147,
-        8,
-        70,
-        127
-      ],
-      "name": "TransferDenominatedStarkEvent"
+        91,
+        162,
+        55,
+        138,
+        255,
+        106,
+        178,
+        6
+      ]
     },
     {
+      "name": "UnshieldStarkEvent",
       "discriminator": [
-        100,
-        10,
-        46,
-        113,
-        8,
+        205,
+        24,
+        166,
+        52,
         28,
-        179,
-        125
-      ],
-      "name": "TransferEvent"
-    },
-    {
-      "discriminator": [
-        231,
-        163,
-        68,
-        238,
-        216,
-        158,
-        141,
-        167
-      ],
-      "name": "UnshieldDenominatedStarkEvent"
-    },
-    {
-      "discriminator": [
-        241,
-        158,
-        74,
-        33,
-        108,
-        246,
-        131,
-        79
-      ],
-      "name": "UnshieldEvent"
-    },
-    {
-      "discriminator": [
-        121,
-        108,
-        229,
-        103,
-        186,
-        253,
-        101,
-        130
-      ],
-      "name": "VKUpdateEvent"
+        110,
+        252,
+        95
+      ]
     }
   ],
   "errors": [
@@ -7333,6 +4495,2040 @@
       "code": 6049,
       "name": "AuctionNotFinalized",
       "msg": "Auction has not been finalized by MPC"
+    },
+    {
+      "code": 6050,
+      "name": "MissingRecipient",
+      "msg": "Recipient account missing from remaining_accounts"
+    },
+    {
+      "code": 6051,
+      "name": "MismatchedRecipient",
+      "msg": "Recipient pubkey does not match recipient arg"
+    },
+    {
+      "code": 6052,
+      "name": "MissingAccount",
+      "msg": "Required account is missing for this code path"
+    },
+    {
+      "code": 6053,
+      "name": "InvalidProgramId",
+      "msg": "Provided program account does not match the expected program id"
+    },
+    {
+      "code": 6054,
+      "name": "InvalidPda",
+      "msg": "PDA derivation does not match the provided account"
+    },
+    {
+      "code": 6055,
+      "name": "SlotMismatch",
+      "msg": "Slot mismatch — caller-supplied slot must match current clock within drift window"
+    }
+  ],
+  "types": [
+    {
+      "name": "AuthorityTransferAccepted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AuthorityTransferProposed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "current_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "proposed_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CancelNormalEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "subscriber",
+            "type": "pubkey"
+          },
+          {
+            "name": "retailer",
+            "type": "pubkey"
+          },
+          {
+            "name": "retailer_amount",
+            "type": "u64"
+          },
+          {
+            "name": "refund_amount",
+            "type": "u64"
+          },
+          {
+            "name": "slot",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CancelPrivateStarkEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "retailer",
+            "type": "pubkey"
+          },
+          {
+            "name": "source_pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "retailer_amount",
+            "type": "u64"
+          },
+          {
+            "name": "reshield_amount",
+            "type": "u64"
+          },
+          {
+            "name": "notes_reshielded",
+            "type": "u64"
+          },
+          {
+            "name": "dust_forfeited",
+            "type": "u64"
+          },
+          {
+            "name": "slot",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ClaimPeriodEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "retailer",
+            "type": "pubkey"
+          },
+          {
+            "name": "periods_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "amount_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "total_claimed_periods",
+            "type": "u64"
+          },
+          {
+            "name": "slot",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ComplianceAttestation",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "Authority who can revoke this attestation"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "docs": [
+              "User this attestation is about"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "attestation_type",
+            "docs": [
+              "0 = range proof, 1 = innocence proof"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "is_verified",
+            "docs": [
+              "Whether the ZK proof was verified"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "issued_at",
+            "docs": [
+              "Unix timestamp of issuance"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "expires_at",
+            "docs": [
+              "Unix timestamp of expiry (e.g., +30 days)"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "revoked",
+            "docs": [
+              "Whether authority has revoked"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "sanctions_root",
+            "docs": [
+              "For innocence: which sanctions list version was proven against"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "min_bound",
+            "docs": [
+              "For range: the threshold/bound proven (public input, not the secret balance)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "max_bound",
+            "type": "u64"
+          },
+          {
+            "name": "circuit_vk_hash",
+            "docs": [
+              "Hash of the circuit verification key used"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "attestation_nonce",
+            "docs": [
+              "Attestation nonce (anti-replay)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ComplianceInnocenceEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "sanctions_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "attestation",
+            "type": "pubkey"
+          },
+          {
+            "name": "issued_at",
+            "type": "i64"
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ComplianceRangeEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "min_bound",
+            "type": "u64"
+          },
+          {
+            "name": "max_bound",
+            "type": "u64"
+          },
+          {
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "attestation",
+            "type": "pubkey"
+          },
+          {
+            "name": "issued_at",
+            "type": "i64"
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ComplianceRevokedEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "attestation",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "revoked_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DenominatedPool",
+      "docs": [
+        "A shielded pool where every note has a fixed denomination.",
+        "Commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)",
+        "No amount in the commitment — denomination enforced at program level.",
+        "",
+        "Dynamic time delay: The pool adjusts the withdrawal delay based on the",
+        "anonymity set size (mature notes). More notes = shorter delay because the",
+        "anonymity set is large enough to resist timing analysis.",
+        "",
+        "Lazy maturity tracking: A circular buffer `epoch_note_counts` records how",
+        "many notes were deposited in each epoch. On every shield/unshield, the",
+        "`update_maturity()` method walks the buffer to graduate old epochs into",
+        "`mature_note_count`. This avoids scanning all notes — O(buffer_size) worst",
+        "case, which is bounded at 32."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "Authority that can update pool settings"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_mint",
+            "docs": [
+              "Token mint address (system program for SOL)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "denomination",
+            "docs": [
+              "Fixed denomination per note (in lamports / atomic units)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "epoch_delay",
+            "docs": [
+              "Minimum epochs that must pass between deposit and withdrawal"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "merkle_root",
+            "docs": [
+              "Current Merkle tree root"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "tree_depth",
+            "docs": [
+              "Depth of the Merkle tree (20 = ~1M notes)"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "next_leaf_index",
+            "docs": [
+              "Index of the next leaf to insert"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "vk_hash",
+            "docs": [
+              "Hash of the verification key for proof validation"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "total_shielded",
+            "docs": [
+              "Total amount currently shielded (= note_count * denomination)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "note_count",
+            "docs": [
+              "Number of notes in pool (anonymity set size)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "is_active",
+            "docs": [
+              "Whether the pool is accepting new deposits"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "historical_roots",
+            "docs": [
+              "Historical roots (last 100 roots for flexibility)"
+            ],
+            "type": {
+              "vec": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            "name": "max_historical_roots",
+            "docs": [
+              "Maximum size of historical roots array"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "docs": [
+              "Pool creation timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "last_tx_at",
+            "docs": [
+              "Last transaction timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "Bump seed for PDA"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "mature_note_count",
+            "docs": [
+              "Number of notes that have been in the pool longer than `epoch_delay` epochs.",
+              "Drives `get_dynamic_delay()`: more mature notes = shorter withdrawal delay."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "last_maturity_update_epoch",
+            "docs": [
+              "The last epoch at which `update_maturity()` was called.",
+              "Used to determine how many new epochs to graduate."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "epoch_note_counts",
+            "docs": [
+              "Circular buffer: number of notes deposited in each epoch.",
+              "Index `i` corresponds to epoch `epoch_note_start + i`.",
+              "Size 32 provides a lookback window of 32 epochs (~32 hours)."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                32
+              ]
+            }
+          },
+          {
+            "name": "epoch_note_start",
+            "docs": [
+              "The absolute epoch number corresponding to index 0 of `epoch_note_counts`.",
+              "When time advances, old entries are graduated (added to mature_note_count)",
+              "and the start is shifted forward."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "vk_hash_transfer",
+            "docs": [
+              "Hash of the verification key for transfer circuit validation.",
+              "Separate from vk_hash because unshield and transfer are different circuits",
+              "with different public inputs."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "vk_update_slot",
+            "docs": [
+              "Timestamp of the last VK update (for 24h cooldown enforcement)"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "root_write_index",
+            "docs": [
+              "Write index for the historical_roots circular buffer.",
+              "Decoupled from next_leaf_index so root history is not corrupted",
+              "when next_leaf_index diverges (e.g., transfer_denominated)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "vk_hash_escrow",
+            "docs": [
+              "Hash of the verification key for escrow bid circuit validation.",
+              "Separate from vk_hash and vk_hash_transfer because escrow_bid",
+              "has 7 public inputs (adds auction_id, pay_commitment, refund_commitment)."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "DenominatedPoolV3",
+      "docs": [
+        "A V3 shielded pool where every note has a fixed denomination.",
+        "",
+        "Layout is intentionally near-identical to `DenominatedPool` (v2) so the",
+        "mobile / extension layout decoders can largely be cloned with seed/version",
+        "bumps. The only on-chain semantic difference is the SEED_PREFIX and the",
+        "fact that the merkle tree state attached via the `merkle_tree` PDA is a",
+        "`MerkleTreeStateV3` (with on-chain subtree maintenance via C6)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "Authority that can update pool settings"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_mint",
+            "docs": [
+              "Token mint address (system program for SOL)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "denomination",
+            "docs": [
+              "Fixed denomination per note (in lamports / atomic units)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "epoch_delay",
+            "docs": [
+              "Minimum epochs that must pass between deposit and withdrawal"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "merkle_root",
+            "docs": [
+              "Current Merkle tree root (Goldilocks Poseidon)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "tree_depth",
+            "docs": [
+              "Depth of the Merkle tree (15 = 32K notes, bound by STARK circuit 6)"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "next_leaf_index",
+            "docs": [
+              "Index of the next leaf to insert"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "vk_hash",
+            "docs": [
+              "DEPRECATED in V3: Groth16 verification key hash. STARK circuits are",
+              "pinned in p01_stark_verifier; no per-pool VK is consulted. Retained",
+              "for layout symmetry with v2."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "total_shielded",
+            "docs": [
+              "Total amount currently shielded (= note_count * denomination)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "note_count",
+            "docs": [
+              "Number of notes in pool (anonymity set size)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "is_active",
+            "docs": [
+              "Whether the pool is accepting new deposits"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "historical_roots",
+            "docs": [
+              "Historical roots (last `max_historical_roots` roots for flexibility)"
+            ],
+            "type": {
+              "vec": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            "name": "max_historical_roots",
+            "docs": [
+              "Maximum size of historical roots array"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "docs": [
+              "Pool creation timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "last_tx_at",
+            "docs": [
+              "Last transaction timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "Bump seed for PDA"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "mature_note_count",
+            "docs": [
+              "Number of notes that have been in the pool longer than `epoch_delay`",
+              "epochs. Drives `get_dynamic_delay()`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "last_maturity_update_epoch",
+            "docs": [
+              "Last epoch at which `update_maturity()` was called."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "epoch_note_counts",
+            "docs": [
+              "Circular buffer: number of notes deposited in each epoch.",
+              "Index `i` corresponds to epoch `epoch_note_start + i`."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                32
+              ]
+            }
+          },
+          {
+            "name": "epoch_note_start",
+            "docs": [
+              "Absolute epoch number corresponding to index 0 of `epoch_note_counts`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "vk_hash_transfer",
+            "docs": [
+              "DEPRECATED in V3 (transfer circuit VK hash) — retained for layout",
+              "symmetry; STARK transfer circuit is pinned in p01_stark_verifier."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "vk_update_slot",
+            "docs": [
+              "Timestamp of the last VK update (24h cooldown enforcement)"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "root_write_index",
+            "docs": [
+              "Write index for the historical_roots circular buffer."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "vk_hash_escrow",
+            "docs": [
+              "DEPRECATED in V3 (escrow bid circuit VK hash) — retained for layout",
+              "symmetry."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "LeafInserted",
+      "docs": [
+        "Universal leaf-insertion event for V3. Emitted only by",
+        "`insert_with_root_v3`. This is the canonical event for off-chain merkle",
+        "rebuild — all V3 shield/transfer/split/escrow_release paths converge here.",
+        "",
+        "Replaces the v2 zoo of `ShieldDenominatedEvent`, `MerkleRootChanged`,",
+        "`EscrowReleaseEvent`, `SplitNoteEvent`, `TransferDenominatedEvent`,",
+        "`CancelPrivateEvent` (the 6 layouts handled by the mobile",
+        "`LEAF_INSERTION_EVENTS` decoder)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "leaf_index",
+            "type": "u64"
+          },
+          {
+            "name": "leaf",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "new_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "old_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "MerkleRootChanged",
+      "docs": [
+        "Event emitted whenever the Merkle root changes.",
+        "Off-chain monitors should watch for unexpected root transitions to detect",
+        "potential root poisoning attempts."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "new_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_index",
+            "type": "u64"
+          },
+          {
+            "name": "leaf",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "MerkleTreeState",
+      "docs": [
+        "Merkle tree state stored on-chain",
+        "Uses sparse storage for efficiency - only stores non-empty nodes"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "docs": [
+              "Associated shielded pool"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "root",
+            "docs": [
+              "Current root hash"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_count",
+            "docs": [
+              "Number of leaves inserted"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "depth",
+            "docs": [
+              "Tree depth"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "filled_subtrees",
+            "docs": [
+              "Filled subtrees (optimization for insertion)",
+              "Stores the rightmost filled node at each level"
+            ],
+            "type": {
+              "vec": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "Bump seed for PDA"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MerkleTreeStateV3",
+      "docs": [
+        "V3 Merkle tree state — Goldilocks Poseidon hash, on-chain subtree",
+        "maintenance via the C6 (merkle_update) STARK proof.",
+        "",
+        "In v2 the program persisted only `filled_subtrees[0] = leaf` and trusted",
+        "the client-supplied root for everything above level 0. In V3 the caller",
+        "pre-verifies a C6 STARK proof in a separate transaction; this program",
+        "reads the proof buffer to confirm the new (root, subtrees) tuple is",
+        "consistent with the previous root + the new leaf."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "docs": [
+              "Associated denominated pool (V3)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "root",
+            "docs": [
+              "Current root hash (Goldilocks Poseidon)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_count",
+            "docs": [
+              "Number of leaves inserted"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "depth",
+            "docs": [
+              "Tree depth"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "filled_subtrees",
+            "docs": [
+              "Filled subtrees, one per level (0..=depth).",
+              "Maintained on-chain in V3 — updated from the C6 proof's public",
+              "inputs on every `insert_with_root_v3` call."
+            ],
+            "type": {
+              "vec": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "Bump seed for PDA"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "NullifierRecord",
+      "docs": [
+        "A tiny PDA account whose existence proves a nullifier has been spent.",
+        "Seeds: [b\"nullifier\", pool_key, nullifier_bytes]",
+        "No false positives, no size limits, scales to millions of nullifiers.",
+        "Rent (~0.00089 SOL) paid by the withdrawer."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "docs": [
+              "The pool this nullifier belongs to"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "Bump seed for PDA"
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "NullifierSet",
+      "docs": [
+        "Nullifier set for preventing double-spending",
+        "Uses a Bloom filter for fast probabilistic checking",
+        "plus an on-chain list for definitive verification",
+        "",
+        "Uses zero-copy to avoid stack overflow during deserialization"
+      ],
+      "serialization": "bytemuck",
+      "repr": {
+        "kind": "c"
+      },
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "docs": [
+              "Associated shielded pool"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "count",
+            "docs": [
+              "Number of nullifiers stored"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "num_hash_functions",
+            "docs": [
+              "Number of hash functions for bloom filter"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "Bump seed for PDA"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "_padding",
+            "docs": [
+              "Padding for alignment"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                6
+              ]
+            }
+          },
+          {
+            "name": "bloom_filter",
+            "docs": [
+              "Bloom filter for fast probabilistic checking (2KB)",
+              "False positives possible, false negatives impossible"
+            ],
+            "type": {
+              "array": [
+                "u64",
+                256
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "PauseVaultEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "paused_at_slot",
+            "type": "i64"
+          },
+          {
+            "name": "is_private",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PauseVaultPrivateStarkEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "paused_at_slot",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ResumeVaultEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "resumed_at_slot",
+            "type": "i64"
+          },
+          {
+            "name": "paused_duration",
+            "type": "i64"
+          },
+          {
+            "name": "total_paused_slots",
+            "type": "i64"
+          },
+          {
+            "name": "is_private",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ResumeVaultPrivateStarkEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "resumed_at_slot",
+            "type": "i64"
+          },
+          {
+            "name": "paused_duration",
+            "type": "i64"
+          },
+          {
+            "name": "total_paused_slots",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ShieldDenominatedEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "depositor",
+            "type": "pubkey"
+          },
+          {
+            "name": "denomination",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee",
+            "type": "u64"
+          },
+          {
+            "name": "commitment",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_index",
+            "type": "u64"
+          },
+          {
+            "name": "new_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "deposit_epoch",
+            "type": "u64"
+          },
+          {
+            "name": "mature_note_count",
+            "type": "u64"
+          },
+          {
+            "name": "dynamic_delay",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ShieldStarkEvent",
+      "docs": [
+        "Event emitted when tokens are shielded via STARK merkle_update."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "depositor",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "commitment",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_index",
+            "type": "u64"
+          },
+          {
+            "name": "old_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "new_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ShieldedPool",
+      "docs": [
+        "Configuration and state of a shielded pool",
+        "Each pool handles one token type (SOL or SPL token)"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "Authority that can update pool settings"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_mint",
+            "docs": [
+              "Token mint address (system program for SOL)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "merkle_root",
+            "docs": [
+              "Current Merkle tree root"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "tree_depth",
+            "docs": [
+              "Depth of the Merkle tree (15 = 32K notes, bound by STARK circuit 6)"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "next_leaf_index",
+            "docs": [
+              "Index of the next leaf to insert"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "vk_hash",
+            "docs": [
+              "DEPRECATED (P9 STARK migration): Groth16 verification key hash. No",
+              "longer consulted — STARK circuits are pinned in p01_stark_verifier.",
+              "Retained for account-layout compatibility with pre-migration pools."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "total_shielded",
+            "docs": [
+              "Total amount currently shielded in the pool"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "is_active",
+            "docs": [
+              "Whether the pool is accepting new deposits/transfers"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "historical_roots",
+            "docs": [
+              "Historical roots (last 100 roots for flexibility)"
+            ],
+            "type": {
+              "vec": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            "name": "max_historical_roots",
+            "docs": [
+              "Maximum size of historical roots array"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "docs": [
+              "Pool creation timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "last_tx_at",
+            "docs": [
+              "Last transaction timestamp"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "relayer_fee_bps",
+            "docs": [
+              "Relayer fee in basis points (100 = 1%)"
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "relayer",
+            "docs": [
+              "Relayer pubkey that receives fees"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "Bump seed for PDA"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "vk_update_slot",
+            "docs": [
+              "Timestamp of the last VK update (for 24h cooldown enforcement)"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "pending_authority",
+            "docs": [
+              "Pending new authority for two-step authority transfer"
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "SplitNoteStarkEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "source_pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "target_pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "source_denomination",
+            "type": "u64"
+          },
+          {
+            "name": "target_denomination",
+            "type": "u64"
+          },
+          {
+            "name": "num_outputs",
+            "type": "u8"
+          },
+          {
+            "name": "protocol_fee",
+            "type": "u64"
+          },
+          {
+            "name": "nullifier",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SubscribePrivateStarkEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "subscriber_commitment",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "retailer",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "rate",
+            "type": "u64"
+          },
+          {
+            "name": "interval_slots",
+            "type": "u64"
+          },
+          {
+            "name": "source_pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "nullifier",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "start_slot",
+            "type": "i64"
+          },
+          {
+            "name": "has_stealth_meta",
+            "docs": [
+              "True if the vault was created with a stealth meta address (refund-via-relayer",
+              "path will trigger on cancel). The 64 raw bytes are NOT emitted to avoid leaks."
+            ],
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SubscriptionVault",
+      "docs": [
+        "Subscription vault: holds funds deposited by a subscriber for periodic",
+        "claims by a retailer. Supports two modes:",
+        "",
+        "**Private mode** (the only mode that can still be created): `subscriber_commitment`",
+        "is set (Poseidon(secret)), vault actions require a ZK proof of knowledge of the",
+        "secret, and the PDA is seeded on that commitment, so the address reveals nothing",
+        "about who subscribed.",
+        "",
+        "**Normal mode** (LEGACY, read/close only): `subscriber_pubkey` is set and vault",
+        "actions require a wallet signature. `subscribe_normal` — the only instruction that",
+        "ever wrote this field — has been removed: seeding the PDA on the subscriber's wallet",
+        "made the vault address a deterministic membership oracle, so anyone could re-derive",
+        "it for a (wallet, merchant) pair and learn that the subscription exists. The field",
+        "itself is KEPT because it is the first field of the account layout; dropping it would",
+        "shift every byte after it and make the vaults already on chain undecodable.",
+        "",
+        "PDA: [b\"subscription_vault\", retailer, subscriber_id_bytes, token_mint]",
+        "where subscriber_id_bytes = subscriber_commitment (private) or, for legacy vaults,",
+        "subscriber_pubkey (normal)"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "subscriber_pubkey",
+            "docs": [
+              "Subscriber wallet (LEGACY normal-mode vaults only — never written by any",
+              "instruction that still exists; kept for layout compatibility)."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "subscriber_commitment",
+            "docs": [
+              "Subscriber commitment = Poseidon(secret) (private mode only)"
+            ],
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            "name": "retailer",
+            "docs": [
+              "Retailer who receives periodic payments"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_mint",
+            "docs": [
+              "Token mint (system program ID for native SOL)"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "total_deposited",
+            "docs": [
+              "Total amount deposited into the vault"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "rate",
+            "docs": [
+              "Amount paid per period (in lamports / atomic units)"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "interval_slots",
+            "docs": [
+              "Number of slots between each claimable period"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "start_slot",
+            "docs": [
+              "Slot at which the subscription started"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "claimed_periods",
+            "docs": [
+              "Number of periods already claimed by the retailer"
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "is_active",
+            "docs": [
+              "Whether the vault is active (accepting claims)"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "is_paused",
+            "docs": [
+              "Whether the vault is paused (no claims while paused)"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "pause_slot",
+            "docs": [
+              "Slot at which the vault was paused (if paused)"
+            ],
+            "type": {
+              "option": "i64"
+            }
+          },
+          {
+            "name": "total_paused_slots",
+            "docs": [
+              "Total slots spent in paused state (accumulated over pause/resume cycles)"
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "vk_hash_subscriber",
+            "docs": [
+              "VK hash for subscriber ownership circuit (private mode)"
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "source_pool",
+            "docs": [
+              "Source denominated pool (for cancel_private re-shield)"
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "bump",
+            "docs": [
+              "PDA bump seed"
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "client_stealth_meta",
+            "docs": [
+              "Stealth meta address (v1) for refund-via-relayer delivery on cancel.",
+              "Layout: `[spending_pub(32) | viewing_pub(32)]`.",
+              "`None` for legacy V4 vaults — those fall back to the legacy reshield",
+              "path in `cancel_private_stark`. Appended at the end so existing",
+              "vaults decode as `None` from trailing zero padding."
+            ],
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  64
+                ]
+              }
+            }
+          },
+          {
+            "name": "license_commitment",
+            "docs": [
+              "License commitment = Poseidon(licenseSecret), posted by the subscriber",
+              "at subscribe time so a merchant can later verify a presented license key",
+              "by checking Poseidon(decode(key)) == license_commitment OFF-CHAIN.",
+              "The chain only stores the 32 raw bytes — no Poseidon/verification runs",
+              "on-chain. `None` for vaults created before this field existed; appended",
+              "at the very end so existing vault accounts decode it as `None` from",
+              "trailing zero padding (same backward-compat trick as `client_stealth_meta`)."
+            ],
+            "type": {
+              "option": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "SweepRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "slot",
+            "type": "u64"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "destination_prefix",
+            "docs": [
+              "First 16 bytes of the destination pubkey (full pubkey is in the tx",
+              "accounts list — storing the prefix saves space and is enough for",
+              "cross-referencing)."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TransferStarkEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "nullifier_1",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "nullifier_2",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "output_commitment_1",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "output_commitment_2",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_index_1",
+            "type": "u64"
+          },
+          {
+            "name": "leaf_index_2",
+            "type": "u64"
+          },
+          {
+            "name": "new_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UnshieldStarkEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "nullifier_1",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "nullifier_2",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "change_commitment",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "change_leaf_index",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "new_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
     }
   ]
 }
