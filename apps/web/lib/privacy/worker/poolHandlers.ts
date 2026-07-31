@@ -21,8 +21,6 @@
  */
 
 import { Connection, PublicKey } from '@solana/web3.js';
-import { sha256 } from '@noble/hashes/sha2.js';
-import { hkdf } from '@noble/hashes/hkdf.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import {
@@ -31,6 +29,16 @@ import {
   getPoolsForTokenV3,
   type PoolConfig,
 } from '../pool/denominatedPool';
+import {
+  assertPassphraseAcceptable,
+  derivePoolSeeds,
+  normalizePassphrase,
+  seedsInSearchOrder,
+  wipePoolSeeds,
+  type DerivationVersion,
+  type PoolSeedSet,
+  type SeedCandidate,
+} from '../pool/seedDerivation';
 import {
   createNoteEncryptionAddress,
   decryptNote,
@@ -114,11 +122,31 @@ export interface PoolRecoverRequest {
   ownerPubkey: string;
 }
 
+/**
+ * Arm the passphrase that the NEXT `deriveMeta` will mix into the pool seed.
+ *
+ * Why it is a separate message and why it clears state: the pool seed is built
+ * the instant the wallet signature reaches the worker, and the signature is
+ * wiped immediately after (`stealth.worker.ts`), so a passphrase supplied later
+ * could not be applied without retaining the signature — which would hand a
+ * post-quantum attacker the same one-secret target this whole mechanism exists
+ * to remove. So arming a passphrase drops every derived seed and the caller must
+ * re-sign. `requiresRederive` says so explicitly rather than leaving the caller
+ * to assume a silent no-op worked.
+ *
+ * Send `passphrase: null` to disarm and go back to the legacy derivation.
+ */
+export interface PoolSetPassphraseRequest {
+  kind: 'poolSetPassphrase';
+  passphrase: string | null;
+}
+
 export type PoolRequest =
   | PoolRecoverRequest
   | PoolShieldPrepareRequest
   | PoolShieldExecuteRequest
   | PoolScanRequest
+  | PoolSetPassphraseRequest
   | PoolUnshieldPrepareRequest
   | PoolUnshieldExecuteRequest;
 
@@ -150,6 +178,10 @@ export interface PoolNoteView {
   leafIndex: number;
   commitment: string;
   spent: boolean;
+  /** Which seed derivation owns this note — 1 = wallet signature only,
+   *  2 = signature + passphrase. Notes shielded before a passphrase was adopted
+   *  stay at 1 forever and remain spendable from the signature alone. */
+  derivation: DerivationVersion;
 }
 
 /**
@@ -181,6 +213,16 @@ export interface PoolUnshieldPrepareResponse {
   ephemeralPubkey: string;
   requiredLamports: number;
   denomination: number;
+  /** Seed derivation the note was found under, resolved in the worker. */
+  derivation: DerivationVersion;
+}
+
+export interface PoolSetPassphraseResponse {
+  kind: 'poolSetPassphrase';
+  /** Always true — the caller must re-run deriveMeta for this to take effect. */
+  requiresRederive: true;
+  /** True when a passphrase is now armed, false when it was disarmed. */
+  armed: boolean;
 }
 
 export interface PoolUnshieldExecuteResponse {
@@ -202,6 +244,7 @@ export type PoolResponse =
   | PoolShieldPrepareResponse
   | PoolShieldExecuteResponse
   | PoolScanResponse
+  | PoolSetPassphraseResponse
   | PoolUnshieldPrepareResponse
   | PoolUnshieldExecuteResponse;
 
@@ -214,7 +257,16 @@ export type PoolResponseFor<R extends PoolRequest> = Extract<PoolResponse, { kin
 let connection: Connection | null = null;
 
 /** Pool seeds by meta. Same lifetime as the stealth sessions in workerCore. */
-const poolSeeds = new Map<string, Uint8Array>();
+const poolSeeds = new Map<string, PoolSeedSet>();
+
+/**
+ * Passphrase armed by `poolSetPassphrase`, consumed by the next `setPoolSeed`.
+ *
+ * Held only between those two calls, and only in this worker — it never reaches
+ * the main thread and is never persisted. It is deliberately NOT stored
+ * alongside the seed: once the seed exists the passphrase has done its job.
+ */
+let armedPassphrase: string | null = null;
 
 /** In-flight shields, awaiting their pre-fund. */
 const prepared = new Map<string, { ctx: PreparedShield; meta: string; counter: number }>();
@@ -238,30 +290,48 @@ export function configurePoolHandlers(rpcUrl: string): void {
 }
 
 /**
- * Derive and retain this identity's pool seed. Called by the worker entry right
+ * Derive and retain this identity's pool seeds. Called by the worker entry right
  * after a successful `deriveMeta`, from the same wallet signature.
  *
  * Domain-separated from the stealth wallet seed so a compromise of one derived
- * key set says nothing about the other. Deterministic in the signature, so the
- * same wallet always reaches the same notes — that is what makes storage-free
- * recovery possible.
+ * key set says nothing about the other. Deterministic in the signature (and, when
+ * armed, the passphrase), so the same wallet always reaches the same notes — that
+ * is what makes storage-free recovery possible.
+ *
+ * With a passphrase armed this stores BOTH the salted seed and the legacy one:
+ * a wallet that adopts a passphrase must not lose sight of the notes it shielded
+ * before. See `seedDerivation.ts`.
  */
-export function setPoolSeed(meta: string, signature: Uint8Array): void {
-  poolSeeds.set(meta, hkdf(sha256, signature, undefined, utf8ToBytes('p01:web:poolseed:v1'), 32));
+export function setPoolSeed(meta: string, signature: Uint8Array, passphrase?: string | null): void {
+  const existing = poolSeeds.get(meta);
+  if (existing) wipePoolSeeds(existing);
+  poolSeeds.set(meta, derivePoolSeeds(signature, passphrase ?? armedPassphrase));
+  armedPassphrase = null;
 }
 
 export function clearPoolState(): void {
+  for (const set of poolSeeds.values()) wipePoolSeeds(set);
   poolSeeds.clear();
+  armedPassphrase = null;
   prepared.clear();
   preparedUnshields.clear();
 }
 
-function requireSeed(meta: string): Uint8Array {
-  const seed = poolSeeds.get(meta);
-  if (!seed) {
+function requireSeeds(meta: string): PoolSeedSet {
+  const seeds = poolSeeds.get(meta);
+  if (!seeds) {
     throw new Error('No pool keys for this identity. Reconnect and sign to derive.');
   }
-  return seed;
+  return seeds;
+}
+
+/**
+ * The seed NEW notes are created under. Read paths must use
+ * `seedsInSearchOrder(requireSeeds(meta))` instead, or they will hide every note
+ * shielded before the passphrase was adopted.
+ */
+function requireActiveSeed(meta: string): Uint8Array {
+  return requireSeeds(meta).active;
 }
 
 function requireConnection(): Connection {
@@ -287,7 +357,7 @@ async function handlePoolScan(
   onProgress?: (step: string) => void,
 ): Promise<PoolScanResponse> {
   const conn = requireConnection();
-  const seed = requireSeed(req.meta);
+  const candidates = seedsInSearchOrder(requireSeeds(req.meta));
   const pools = req.denomination !== undefined
     ? [requirePool(req.token, req.denomination)]
     : getPoolsForTokenV3(req.token);
@@ -305,17 +375,32 @@ async function handlePoolScan(
       discoverableNotes: commitments.size,
     });
 
-    const { notes: found } = await scanPoolForSeed(conn, pool, seed, { commitments, onProgress });
-    for (const n of found) {
-      notes.push(toNoteView(n));
-      if (!n.spent) shieldedBalance += pool.denomination;
+    // Every derivation this identity holds, not just the active one — a wallet
+    // that adopted a passphrase still owns everything it shielded before, and a
+    // note that stops appearing in the balance is a note the user believes is
+    // gone. The commitment map is fetched once and reused across derivations.
+    const seenLeaves = new Set<number>();
+    for (const candidate of candidates) {
+      const { notes: found } = await scanPoolForSeed(conn, pool, candidate.seed, {
+        commitments,
+        onProgress,
+      });
+      for (const n of found) {
+        // A leaf can only belong to one derivation; a second hit would mean a
+        // commitment collision. Keep the active-derivation view and drop the
+        // duplicate rather than double-count the balance.
+        if (seenLeaves.has(n.receipt.leafIndex)) continue;
+        seenLeaves.add(n.receipt.leafIndex);
+        notes.push(toNoteView(n, candidate.derivation));
+        if (!n.spent) shieldedBalance += pool.denomination;
+      }
     }
   }
 
   return { kind: 'poolScan', notes, shieldedBalance, poolSizes };
 }
 
-function toNoteView(n: RecoveredNote): PoolNoteView {
+function toNoteView(n: RecoveredNote, derivation: DerivationVersion): PoolNoteView {
   return {
     pool: n.receipt.pool,
     token: n.receipt.token,
@@ -324,6 +409,7 @@ function toNoteView(n: RecoveredNote): PoolNoteView {
     leafIndex: n.receipt.leafIndex,
     commitment: n.receipt.commitment.toString(),
     spent: n.spent,
+    derivation,
   };
 }
 
@@ -332,7 +418,8 @@ async function handlePoolShieldPrepare(
   onProgress?: (step: string) => void,
 ): Promise<PoolShieldPrepareResponse> {
   const conn = requireConnection();
-  const seed = requireSeed(req.meta);
+  // Active seed only: a new note is always created under the current derivation.
+  const seed = requireActiveSeed(req.meta);
   const pool = requirePool(req.token, req.denomination);
 
   // The counter is the tree's leaf index, read inside prepareShield from the
@@ -366,7 +453,9 @@ async function handlePoolShieldExecute(
   if (!job) {
     throw new Error('Unknown shield job — prepare it again (the worker was restarted).');
   }
-  const seed = requireSeed(job.meta);
+  // Same seed the note was prepared under; the blob is encrypted to that seed's
+  // own PQ address, so a salted wallet's blobs are unreadable by the legacy seed.
+  const seed = requireActiveSeed(job.meta);
 
   try {
     const { txSig, receipt } = await executeShield(
@@ -419,7 +508,7 @@ async function handlePoolUnshieldPrepare(
   onProgress?: (step: string) => void,
 ): Promise<PoolUnshieldPrepareResponse> {
   const conn = requireConnection();
-  const seed = requireSeed(req.meta);
+  const candidates = seedsInSearchOrder(requireSeeds(req.meta));
   const pool = requirePool(req.token, req.denomination);
 
   // Rebuild the note from the seed: its secrets come from (seed, pool, leaf
@@ -428,17 +517,31 @@ async function handlePoolUnshieldPrepare(
   // this is NOT an authorization boundary: the caller picks the leaf index, so
   // same-origin script can ask to spend any note this seed owns. What it cannot
   // do is learn the secrets or redirect funds outside the recipient it names.
+  //
+  // Every derivation is tried, active first. A note shielded before the wallet
+  // adopted a passphrase is a v1 note: its secrets, its withdrawal ephemeral and
+  // its stored blob all key off the legacy seed, and using the active seed for
+  // any of them would produce a proof for a commitment that is not on the tree.
   onProgress?.('Locating your note on-chain...');
-  const notes = await recoverNotes(conn, pool, seed, { onProgress });
-  const note = notes.find((n) => n.receipt.leafIndex === req.leafIndex);
-  if (!note) {
+  let owner: { candidate: SeedCandidate; note: RecoveredNote } | null = null;
+  for (const candidate of candidates) {
+    const notes = await recoverNotes(conn, pool, candidate.seed, { onProgress });
+    const hit = notes.find((n) => n.receipt.leafIndex === req.leafIndex);
+    if (hit) {
+      owner = { candidate, note: hit };
+      break;
+    }
+  }
+  if (!owner) {
     throw new Error(
       `No note of yours found at leaf #${req.leafIndex} in the ${pool.denomination} ` +
         `${pool.token} pool. If it was just shielded, wait for the RPC to index it.`,
     );
   }
+  const { candidate, note } = owner;
   if (note.spent) throw new Error('This note has already been withdrawn.');
 
+  const seed = candidate.seed;
   const storedPath = extractStoredPath(seed, req.encryptedNotes, note.receipt.commitment);
   const ctx = await prepareUnshieldJob(note.receipt, pool, conn, seed, onProgress, storedPath);
   preparedUnshields.set(ctx.jobId, { ctx, meta: req.meta });
@@ -449,6 +552,7 @@ async function handlePoolUnshieldPrepare(
     ephemeralPubkey: ctx.ephemeral.publicKey.toBase58(),
     requiredLamports: ctx.requiredLamports,
     denomination: pool.denomination,
+    derivation: candidate.derivation,
   };
 }
 
@@ -520,7 +624,7 @@ async function handlePoolRecover(
   onProgress?: (step: string) => void,
 ): Promise<PoolRecoverResponse> {
   const conn = requireConnection();
-  const seed = requireSeed(req.meta);
+  const candidates = seedsInSearchOrder(requireSeeds(req.meta));
   const pool = requirePool(req.token, req.denomination);
 
   if (prepared.size > 0 || preparedUnshields.size > 0) {
@@ -528,9 +632,17 @@ async function handlePoolRecover(
   }
 
   onProgress?.('Looking for funds left on earlier attempts...');
-  const found = await recoverStuckFloat(conn, pool, seed, new PublicKey(req.ownerPubkey), {
-    onProgress,
-  });
+  // Sweep every derivation. Float stranded on an ephemeral derived before the
+  // wallet adopted a passphrase is only reachable through the legacy seed, and
+  // that float is often ~1 SOL of proof-buffer rent.
+  const found = [];
+  for (const candidate of candidates) {
+    found.push(
+      ...(await recoverStuckFloat(conn, pool, candidate.seed, new PublicKey(req.ownerPubkey), {
+        onProgress,
+      })),
+    );
+  }
 
   return {
     kind: 'poolRecover',
@@ -538,6 +650,26 @@ async function handlePoolRecover(
     closedBuffers: found.reduce((n, f) => n + f.closedBuffers, 0),
     keys: found.length,
   };
+}
+
+/**
+ * Arm (or disarm) the passphrase the next derivation will mix in, and drop every
+ * seed already derived so nothing keeps running under the old derivation.
+ *
+ * `derivePoolSeeds` validates the passphrase — a too-short one throws here,
+ * before any state is touched, so a rejected passphrase leaves the session
+ * exactly as it was.
+ */
+function handlePoolSetPassphrase(req: PoolSetPassphraseRequest): PoolSetPassphraseResponse {
+  // Validate BEFORE touching any state, so a rejected passphrase leaves the
+  // session exactly as it was rather than logging the user out of their notes.
+  const normalized =
+    normalizePassphrase(req.passphrase) === null
+      ? null
+      : assertPassphraseAcceptable(req.passphrase as string);
+  clearPoolState();
+  armedPassphrase = normalized;
+  return { kind: 'poolSetPassphrase', requiresRederive: true, armed: normalized !== null };
 }
 
 // ---------------------------------------------------------------------------
@@ -561,6 +693,9 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolRecover':
       res = await handlePoolRecover(req, onProgress);
+      break;
+    case 'poolSetPassphrase':
+      res = handlePoolSetPassphrase(req);
       break;
     case 'poolUnshieldPrepare':
       res = await handlePoolUnshieldPrepare(req, onProgress);
