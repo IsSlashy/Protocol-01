@@ -15,16 +15,28 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import AsyncStorage from '../../test/__mocks__/async-storage';
-import { createStream, processStreamPayment, getStream, pauseStream, updateStream, mapVaultStatusToStream } from './streams';
+import { createStream, processStreamPayment, getStream, pauseStream, updateStream, mapVaultStatusToStream, upsertStreamFromVault } from './streams';
 import type { VaultInfo } from '../subscriptionVault';
 
 // ===================================================================
 // Static module mocks
 // ===================================================================
 
+/**
+ * `mockSlot` is what `getConnection().getSlot()` returns. `upsertStreamFromVault`
+ * fetches it when the caller supplies none — which every one of its four call
+ * sites does — so it is the only thing that makes the recovered subscription's
+ * status real. Set it to `null` to simulate an unreachable RPC.
+ */
+let mockSlot: number | null = 1_250;
+
 vi.mock('./connection', () => ({
   getConnection: vi.fn(() => ({
     getLatestBlockhash: vi.fn().mockResolvedValue({ blockhash: 'mock-bh', lastValidBlockHeight: 999 }),
+    getSlot: vi.fn(async () => {
+      if (mockSlot === null) throw new Error('no RPC');
+      return mockSlot;
+    }),
   })),
   getExplorerUrl: vi.fn(() => 'https://solscan.io/tx/mock'),
   isMainnet: vi.fn(() => false),
@@ -373,5 +385,61 @@ describe('mapVaultStatusToStream', () => {
 
   it('reports cancelled only when the account itself says inactive', () => {
     expect(mapVaultStatusToStream(vaultAt({ isActive: false }), 1_250)).toBe('cancelled');
+  });
+});
+
+// ===================================================================
+// upsertStreamFromVault — the wiring, not just the mapping
+// ===================================================================
+
+/**
+ * `mapVaultStatusToStream` being right proves nothing on its own: all four
+ * production call sites of `upsertStreamFromVault` pass no `currentSlot`, so
+ * for one commit the mapping ran on `null` every time and the fix had no
+ * effect anywhere. Feeding it a slot it fetches itself is the whole fix, and
+ * nothing pinned it — replacing `resolvedSlot` with `null` at the call site
+ * left every test green. These tests go through the public function.
+ */
+describe('upsertStreamFromVault resolves a slot, so the recovered status is real', () => {
+  beforeEach(() => {
+    mockSlot = 1_250;
+  });
+
+  it('files a subscription still inside its funded periods as active', async () => {
+    const s = await upsertStreamFromVault(vaultAt({ address: 'VaultInsideTerm11111111111' }));
+    expect(s?.status).toBe('active');
+  });
+
+  it('THE WIRING: with no currentSlot passed, an exhausted vault still lands as completed', async () => {
+    // No `opts.currentSlot` — exactly how every production caller invokes it.
+    // The slot has to come from the connection or the status is a guess.
+    mockSlot = 1_500;
+    const v = vaultAt({ address: 'VaultExhausted111111111111' });
+    const s = await upsertStreamFromVault(v);
+    expect(v.isActive).toBe(true);
+    expect(s?.status).toBe('completed');
+  });
+
+  it('an explicit currentSlot still wins over the fetch', async () => {
+    mockSlot = 1_250;
+    const s = await upsertStreamFromVault(
+      vaultAt({ address: 'VaultExplicitSlot111111111' }),
+      { currentSlot: 5_000 },
+    );
+    expect(s?.status).toBe('completed');
+  });
+
+  it('falls back to active, not cancelled, when the RPC is unreachable', async () => {
+    // `cancelled` would be sticky: loadStreams re-applies the cancelled-ids
+    // list on every load, so a wrong guess here would never self-correct.
+    mockSlot = null;
+    const s = await upsertStreamFromVault(vaultAt({ address: 'VaultNoRpc111111111111111' }));
+    expect(s?.status).toBe('active');
+  });
+
+  it('dedupes by vaultAddress', async () => {
+    const v = vaultAt({ address: 'VaultDedupe1111111111111111' });
+    expect(await upsertStreamFromVault(v)).not.toBeNull();
+    expect(await upsertStreamFromVault(v)).toBeNull();
   });
 });
