@@ -78,6 +78,7 @@ const seen = {
   stuckFloat: [] as string[],
   prepareUnshield: [] as string[],
   prepareShield: [] as string[],
+  encryptionAddress: [] as string[],
 };
 
 // ---------------------------------------------------------------------------
@@ -111,13 +112,45 @@ vi.mock('./shieldEphemeral', () => ({
       poolConfig: null,
       ephemeral: { publicKey: { toBase58: () => 'EPHEMERAL' } },
       requiredLamports: 123,
-      prepared: { insertParams: { leafIndex: 30 } },
+      prepared: {
+        insertParams: { leafIndex: 30 },
+        merklePath: { pathElements: [1n, 2n], pathIndices: [0, 1], root: 5n },
+      },
     };
   },
-  executeShield: async () => {
-    throw new Error('not exercised');
-  },
+  executeShield: async () => ({
+    txSig: 'SHIELD_TX',
+    receipt: {
+      pool: POOL_58,
+      secret: 1n,
+      nullifierPreimage: 2n,
+      depositEpoch: 3n,
+      tokenMint: 0n,
+      commitment: 4n,
+      leafIndex: 30,
+      token: 'SOL',
+      denominationHuman: DENOM,
+      shieldedAt: 0,
+    },
+  }),
   recordShieldBreadcrumb: async () => undefined,
+}));
+
+/**
+ * The note blob a shield hands back is encrypted to an address derived from the
+ * seed, and only that seed can read it again. Recording the seed here is what
+ * makes the "execute encrypts to the derivation that will read it back"
+ * assertion possible — nothing else in the handler exposes it.
+ */
+vi.mock('./noteCrypto', () => ({
+  createNoteEncryptionAddress: (seed: Uint8Array) => {
+    seen.encryptionAddress.push(bytesToHex(seed));
+    return `addr:${bytesToHex(seed).slice(0, 8)}`;
+  },
+  encryptNote: (address: string) => `blob-for:${address}`,
+  decryptNote: () => {
+    throw new Error('not ours');
+  },
 }));
 
 vi.mock('./unshieldEphemeral', () => ({
@@ -162,6 +195,7 @@ beforeEach(() => {
   seen.stuckFloat = [];
   seen.prepareUnshield = [];
   seen.prepareShield = [];
+  seen.encryptionAddress = [];
   configurePoolHandlers('http://localhost:8899');
 });
 
@@ -258,6 +292,28 @@ describe('a wallet that adopts a passphrase keeps its old notes', () => {
       denomination: DENOM,
     });
     expect(seen.prepareShield).toEqual([SALTED_HEX]);
+  });
+
+  it('encrypts the stored note to the SAME derivation that prepared it', async () => {
+    // Execute runs after prepare and picks its seed independently. If it picked
+    // a different one, the blob would be sealed to an address the withdrawal
+    // path cannot open: extractStoredPath swallows the failure and silently
+    // falls back to rebuilding the Merkle path from history, so the fast path
+    // would be dead for every note and nothing would ever say so.
+    const prep = await handlePoolRequest({
+      kind: 'poolShieldPrepare',
+      meta: META,
+      token: 'SOL',
+      denomination: DENOM,
+    });
+    const res = await handlePoolRequest({
+      kind: 'poolShieldExecute',
+      jobId: prep.jobId,
+      ownerPubkey: OWNER.toBase58(),
+    });
+    expect(seen.encryptionAddress).toEqual([SALTED_HEX]);
+    expect(seen.prepareShield).toEqual([SALTED_HEX]);
+    expect(res.encryptedNote).toBe(`blob-for:addr:${SALTED_HEX.slice(0, 8)}`);
   });
 
   it('sweeps stranded float from BOTH derivations', async () => {
