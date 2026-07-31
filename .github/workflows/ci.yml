@@ -39,6 +39,28 @@ jobs:
         with:
           version: 9.15.9
 
+      # [ENGINE CONTRADICTION — UNRESOLVED ON PURPOSE, DO NOT "FIX" BY LOOSENING
+      # apps/web] Three declarations disagree:
+      #   root package.json      "node": ">=22"
+      #   apps/web/package.json  "node": "24.x"
+      #   this step              node-version: 22
+      # `semver.satisfies("22.22.0", "24.x")` is false, so every `pnpm install` on
+      # this runner prints `WARN Unsupported engine` for apps/web. engine-strict is
+      # not set in .npmrc, so it stays a warning and the job stays green.
+      #
+      # It is NOT an accident and must not be widened back to ">=22". ddbeda3e
+      # pinned apps/web to 24.x deliberately, to match the runtime Vercel already
+      # provisions (project.nodeVersion = "24.x") and to stop Vercel warning that an
+      # open-ended range would auto-upgrade apps/web across a future Node major
+      # without an opt-in. Loosening it changes what production is built on.
+      #
+      # So the two ways out are both the owner's call, not CI's:
+      #   * bump this step to node 24, so CI validates the major that is actually
+      #     deployed — but then nothing checks the >=22 floor the root still claims;
+      #   * or drop the apps/web pin and accept Vercel's auto-upgrade warning again.
+      # MEASURED for whoever decides: the strictest node floor among apps/web's own
+      # dependencies is starknet@10.0.2 at ">=22" (next@16.2.6 wants ">=20.9.0"),
+      # so nothing in the dependency tree requires 24.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
