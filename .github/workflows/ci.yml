@@ -211,8 +211,12 @@ jobs:
       # rendering; this one needs the REAL web3.js in a node environment.
       #
       # MEASURED green when this step was added: 48 passed, 48 total, 2.5s.
+      # `run` is spelled out rather than relying on the `pnpm <script>` shorthand:
+      # this workflow installs pnpm 10.34.0 while the repo's packageManager field
+      # says pnpm@9.15.9, and a gate that silently becomes "Unknown command" is
+      # worse than no gate. Both forms were checked on 9.15.9, exit 0.
       - name: Denominated-pool extraction parity (BLOCKING — /pay send drift gate)
-        run: pnpm --filter @protocol-01/web test:pool
+        run: pnpm --filter @protocol-01/web run test:pool
 
       # [PROVER ARTIFACT SKEW] BLOCKING, and separate from `pnpm turbo run test`
       # above because that runs with `--continue` and this must not be advisory.
