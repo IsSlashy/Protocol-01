@@ -357,13 +357,28 @@ jobs:
         run: |
           cargo test -p p01_stark_verifier --lib
           cargo test -p p01_stark_verifier --release --test periodic_stride
+          # [A4 PROVENANCE] Not a second pin — say so out loud. Every assertion
+          # `a4_probe` makes is implied by `periodic_stride` above, and strictly:
+          # it asserts `gcd >= 16` where periodic_stride asserts stride-16
+          # sparsity at every index; it recomputes the deviation support where
+          # periodic_stride asserts that support IS rows 480..=511; it never
+          # reads the baked `*_PERIODIC16` / `*_TAIL` at all. It runs here for
+          # two reasons: `tests/a4_probe.rs` also carries `a4_emit_consts`, the
+          # `--ignored` generator that `src/periodic_ext_consts.rs:25` names as
+          # the provenance of a checked-in source file, and a `#[test]` that no
+          # workflow executes reads as coverage while being none. `--nocapture`
+          # because the printed table IS the deliverable: per-column gcd,
+          # non-zero counts, deviation support and the identity verdict at 1,000
+          # random z. MEASURED: 0.24s.
+          cargo test -p p01_stark_verifier --release --test a4_probe -- --nocapture
           cargo test -p p01_stark_verifier --release --test fri_end_to_end
           cargo test -p p01_stark_verifier --release --test b4_pair_leaf
           cargo test -p p01_stark_verifier --release --test merkle_domain_sep
           cargo test -p p01_stark_verifier --release --test route_c_trace_pair
           # [B1] The coordinated-forgery suite. Listing it here is what makes it a
           # gate: unfiltered `cargo test -p p01_stark_verifier` is never what CI
-          # runs (a4_probe.rs is in no workflow), and anchor-test.yml runs no
+          # runs — this list IS the coverage, so a test file that is not named
+          # above executes nowhere — and anchor-test.yml runs no
           # p01_stark_verifier suite at all, so ci.yml is the only place it lands.
           # It is the ONLY test in the repo that distinguishes a working DEEP
           # binding from a broken one — the twelve existing tampered-OOD tests
