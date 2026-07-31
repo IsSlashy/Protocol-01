@@ -25,7 +25,8 @@ export type { ServiceScopedOptions };
  * .license_commitment`, stored verbatim — no on-chain verification). The
  * subscriber later presents the key (= the preimage) to the merchant, who
  * recomputes `blake3(decode(key))` and checks it equals the on-chain
- * commitment for an active vault it owns.
+ * commitment for a CURRENT vault it is the retailer of. Current, not
+ * `is_active` — see `subscriptionIsCurrent`.
  *
  *   key string  = "P01-" + Crockford-base32(licenseSecret)  (16 bytes → 26 chars, grouped in 4s)
  *   commitment  = blake3(licenseSecret)                      (32 bytes, posted on-chain)
@@ -223,17 +224,26 @@ export interface VerifyLicenseKeyOptions
 /**
  * Verify a presented license key for THIS merchant + serviceId by enumerating
  * the merchant's on-chain vaults and matching `blake3(decode(key))` against each
- * vault's `license_commitment`. Returns the matching active vault, or invalid.
+ * vault's `license_commitment`. Returns the matching current vault, or invalid.
  *
  * NO merchant secret anywhere — verification uses only public on-chain state.
  *
- * ⚠ `getProgramAccounts` is involved (via listVaultsForRetailer) — cache the
- * vault list in a background worker; don't call this on every request.
+ * @deprecated Use {@link verifyLicenseAgainstVault}, which reads the one vault
+ *   the key belongs to instead of the merchant's whole subscriber book. This
+ *   form remains the fallback for a merchant that has the key and nothing else:
+ *   no vault address from the client, and not enough information (retailer +
+ *   subscriber id + mint) to derive one.
  *
- * The `serviceId` is accepted for API symmetry / future per-service scoping but
- * is not required by the commitment check itself (the commitment already binds
- * the subscriber's licenseSecret, which the client derived with serviceId in
- * the HKDF info). It is currently unused in the comparison.
+ *   MEASURED on devnet 2026-08-01, one verification against a 4-vault merchant:
+ *   this path made 2 RPC calls (`getProgramAccounts` + `getSlot`) for 492
+ *   request / 2,750 response bytes and 4 accounts;
+ *   {@link verifyLicenseAgainstVault} made 2 calls (`getAccountInfo` +
+ *   `getSlot`) for 309 request / 813 response bytes and 1 account. The call
+ *   count is the same; the payload is not, and it scales with the subscriber
+ *   count rather than with the question asked.
+ *
+ * The `serviceId` argument is only enforceable when `opts.service` supplies the
+ * service's registry facts — see `ServiceScope`.
  */
 export async function verifyLicenseKey(
   connection: Connection,
@@ -302,11 +312,17 @@ export interface VerifyLicenseAgainstVaultOptions extends ServiceScopedOptions {
 }
 
 /**
- * Verify a license key against a SPECIFIC vault address the client presents.
- * The merchant confirms the vault is active + belongs to it on-chain, then
- * checks `blake3(decode(key)) === vault.license_commitment`. Useful when the
- * client supplies its vault address directly (cheaper than enumerating, and the
- * only path for vaults that aren't enumerable by retailer).
+ * **The primary license verification path.** Verify a key against the SPECIFIC
+ * vault address the client presents (from its subscription receipt), or that
+ * the merchant derived itself with `deriveSubscriptionVaultPda`.
+ *
+ * One `getAccountInfo` + one `getSlot`, whatever the merchant's subscriber
+ * count. The merchant confirms the account is owned by `zk_shielded` and names
+ * it as the retailer, that the subscription is current, then checks
+ * `blake3(decode(key)) === vault.license_commitment`.
+ *
+ * Prefer this over {@link verifyLicenseKey}, which answers the same question by
+ * hydrating the merchant's entire subscriber book.
  */
 export async function verifyLicenseAgainstVault(
   connection: Connection,

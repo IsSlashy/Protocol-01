@@ -2,7 +2,14 @@
 
 Server-side SDK for merchants integrating Protocol 01 subscriptions on Solana.
 
-Register a service on-chain, detect incoming ZK payments, watch private subscription vaults, and issue signed access tokens — all framework-agnostic (Node.js, Next.js routes, Cloudflare Workers, Deno).
+Register a service on-chain, detect incoming ZK payments, check a subscriber's
+entitlement, collect the recurring revenue, and issue signed access tokens — all
+framework-agnostic (Node.js, Next.js routes, Cloudflare Workers, Deno).
+
+**If you are integrating today, read [section 3](#3-check-a-subscription-on-a-request--read-one-account) first.**
+An entitlement check reads one account rather than your whole subscriber book
+(which does not make that book private — see the note at the end of section 3),
+and it does not trust the vault's `is_active` flag.
 
 ## Status
 
@@ -89,7 +96,7 @@ Pass the config to any SDK function that accepts it:
 
 ```typescript
 await registerServiceOnChain(connection, kp, { ...args, sdkConfig: mainnetConfig });
-await listVaultsForRetailer(connection, retailer, { sdkConfig: mainnetConfig });
+await hasActiveVaultAccessForVault(connection, vaultPda, retailer, subId, { sdkConfig: mainnetConfig });
 await updateServiceOnChain(connection, kp, args, mainnetConfig);
 await deregisterServiceOnChain(connection, kp, slug, mainnetConfig);
 await getRegisteredService(connection, kp.publicKey, slug, mainnetConfig);
@@ -106,7 +113,9 @@ import {
   registerServiceOnChain,
   fetchService,
   pollPaymentsForRetailer,
-  listVaultsForRetailer,
+  deriveSubscriptionVaultPda,
+  hasActiveVaultAccessForVault,
+  verifyLicenseAgainstVault,
   issueAccessToken,
   verifyAccessToken,
   NATIVE_SOL_MINT,
@@ -159,23 +168,104 @@ for (const r of receipts) {
 }
 ```
 
-### 3. Watch recurring subscription vaults
+### 3. Check a subscription on a request — read ONE account
 
-Users who subscribe via the vault flow lock a shielded note and let the retailer pull at every billing period.
+Users who subscribe via the vault flow lock a shielded note and let the retailer
+pull at every billing period. To decide whether to serve a request, read the one
+vault that request is about.
+
+You need the vault's address. Either the client presents it (it is in the
+subscription receipt), or you derive it yourself from three things you already
+know — the payout key you registered, the subscriber ID you have in session, and
+your service's mint:
 
 ```typescript
+import {
+  deriveSubscriptionVaultPda,
+  hasActiveVaultAccessForVault,
+  NATIVE_SOL_MINT,
+} from '@protocol-01/merchant-sdk';
+
+const [vaultPda] = deriveSubscriptionVaultPda(
+  merchantKp.publicKey,   // retailer
+  subscriberIdBytes,      // 32 bytes: wallet pubkey (normal) or commitment (private)
+  NATIVE_SOL_MINT,        // the mint your service is priced in
+);
+
+const vault = await hasActiveVaultAccessForVault(
+  connection,
+  vaultPda,
+  merchantKp.publicKey,
+  subscriberIdBytes,
+  { service: myServiceScope },  // optional but recommended — see below
+);
+
+if (!vault) return Response.json({ error: 'no current subscription' }, { status: 402 });
+```
+
+The same shape exists for license keys, when the subscriber authenticates with a
+key instead of a session:
+
+```typescript
+const res = await verifyLicenseAgainstVault(
+  connection, presentedKey, vaultPda, merchantKp.publicKey, 'my-saas-pro',
+  { service: myServiceScope },
+);
+if (!res.valid) return Response.json({ error: res.reason }, { status: 401 });
+```
+
+**What "current" means.** Both functions gate on `subscriptionIsCurrent`, not on
+the vault's `is_active` flag. The program writes `is_active = true` at subscribe
+time and `false` nowhere, so a subscription that has spent every lamport it
+deposited still reports `true` for ever. Measured on devnet 2026-08-01: of the 18
+live subscription vaults, 14 had run past the periods they were funded for — and
+all 18 reported `is_active: true`. `subscriptionIsCurrent` asks the only question
+that has an answer: is the period we are in one the subscriber paid for?
+
+**Pass a `service` scope if you run more than one product.** A vault records no
+service ID — its address is `[retailer, subscriber, mint]` — so without a scope,
+a subscriber to your €5 tier passes the check for your €50 tier. `ServiceScope`
+compares the vault against the price and interval your service registered.
+If two of your services agree on retailer, mint, price *and* interval, the chain
+cannot tell them apart at all; `verifyLicenseAgainstVault` reports that as
+`ambiguousService: true`. Give each product its own `retailer` key if you need
+them separated.
+
+### 3b. Reconcile the whole book — on a schedule, not per request
+
+`listVaultsForRetailer` returns every vault that pays you. It is deprecated for
+entitlement checks and supported for reconciliation:
+
+```typescript
+// e.g. in a cron job, every 30–60s — not in a request handler.
 const vaults = await listVaultsForRetailer(connection, merchantKp.publicKey, {
   includePaused: true,
 });
-
-for (const v of vaults) {
-  console.log(
-    `vault ${v.pda.toBase58().slice(0,12)}... ` +
-    `rate=${Number(v.rate) / 1e9} SOL ` +
-    `paused=${v.isPaused} private=${v.subscriberCommitment !== null}`,
-  );
-}
 ```
+
+Measured on devnet (2026-08-01), one entitlement check for one subscriber of a
+merchant with 4 vaults:
+
+| path | RPC calls | request B | response B | accounts returned |
+|---|---|---|---|---|
+| `hasActiveVaultAccessForVault` | 2 (`getAccountInfo`, `getSlot`) | 309 | 813 | 1 |
+| `hasActiveVaultAccess` (enumerating) | 2 (`getProgramAccounts`, `getSlot`) | 492 | 2,750 | 4 |
+| `verifyLicenseAgainstVault` | 2 | 309 | 813 | 1 |
+| `verifyLicenseKey` (enumerating) | 2 | 492 | 2,750 | 4 |
+| `fetchVaultByAddress` alone (you pass `currentSlot`) | 1 | 191 | 733 | 1 |
+
+The call *count* is the same. What differs is the payload, and it grows with your
+subscriber count (~650 response bytes each) rather than with the question asked.
+
+> **This is not a privacy control.** Preferring the single-account path does not
+> stop anyone enumerating your subscribers. `retailer` sits at a fixed offset in
+> a public, unencrypted account, so the same `getProgramAccounts` runs from curl
+> with no SDK involved — verified on devnet 2026-08-01, a raw JSON-RPC call
+> filtered only on the account discriminator returned all 17 `SubscriptionVault`
+> accounts across 6 retailers. Using the single-account path costs *you* less and
+> leaks nothing extra to your own server; it does not hide anything from anyone
+> else. Only not putting the retailer in the clear on chain would do that, and
+> that is a program change, not an SDK one.
 
 ### 4. Issue signed access tokens
 
@@ -213,12 +303,37 @@ fetchService(connection, owner, slug)                 ServiceEntry | null
 fetchServiceByPda(connection, pda)                    ServiceEntry | null
 fetchAllServices(connection, opts?)                   ServiceEntry[]
 
-// Payments + vaults
+// Payments
 verifyOneShotPayment(connection, signature, opts?)    PaymentReceipt
 pollPaymentsForRetailer(connection, retailer, opts?)  PaymentReceipt[]
 parseInvoiceMemo(memo)                                ParsedInvoiceMemo | null
+
+// Subscriptions — PRIMARY, one account per check
+deriveSubscriptionVaultPda(retailer, subId, mint)     [PublicKey, bump]
+fetchVaultByAddress(connection, vaultPda, opts?)      { ok, vault } | { ok:false, reason }
+hasActiveVaultAccessForVault(conn, vaultPda, retailer, subId, opts?)
+                                                      SubscriptionVaultAccount | null
+verifyLicenseAgainstVault(conn, key, vaultPda, merchant, serviceId, opts?)
+                                                      { valid, vault?, reason?, ambiguousService? }
+vaultMatchesService(vault, scope, opts?)              { matches, reason?, ambiguous? }
+serviceScopeFromRegistry(entry)                       ServiceScope
+
+// Subscriptions — FALLBACK, hydrates the whole subscriber book (deprecated
+// for per-request use; fine on a schedule for reconciliation)
 listVaultsForRetailer(connection, retailer, opts?)    SubscriptionVaultAccount[]
-hasActiveVaultAccess(connection, retailer, subscriber) SubscriptionVaultAccount | null
+hasActiveVaultAccess(connection, retailer, subId)     SubscriptionVaultAccount | null
+verifyLicenseKey(conn, key, merchant, serviceId, opts?) VerifyLicenseKeyResult
+
+// Subscription math (pure, no network)
+subscriptionIsCurrent(vault, currentSlot)             boolean   <- gate on this
+claimablePeriods(vault, currentSlot)                  bigint
+claimableAmount(vault, currentSlot)                   bigint
+fundedPeriodsRemaining(vault)                         bigint
+periodsPaidFor(vault) / periodsElapsed(vault, slot)   bigint
+
+// Revenue leg
+buildClaimPeriodInstruction(vaultPda, retailer, opts?) TransactionInstruction
+assertRetailerCanReceiveClaim(conn, retailer, payout)  throws on the rent floor
 
 // Access tokens (Ed25519-signed, no DB required)
 issueAccessToken(opts)                                string
@@ -227,6 +342,7 @@ verifyAccessToken(token, merchantPubkey)              { valid, claims?, reason? 
 // Constants
 ZK_SHIELDED_PROGRAM_ID_DEVNET
 REGISTRY_PROGRAM_ID_DEVNET
+NATIVE_SOL_MINT
 ```
 
 Instruction builders (`buildRegisterServiceIx`, `buildAttestServiceIx`, etc.) are re-exported from `@protocol-01/specter-sdk` for callers that need to assemble custom transactions.
@@ -237,6 +353,8 @@ Instruction builders (`buildRegisterServiceIx`, `buildAttestServiceIx`, etc.) ar
 - **No side effects at import.** Connecting to an RPC is always explicit.
 - **No server state required.** Access tokens are self-contained and signed — verify them anywhere.
 - **Configurable programs.** `MerchantSdkConfig` lets mainnet merchants supply the correct program IDs without forking the package.
+- **One account per question.** The default entitlement path reads the vault the request is about. The enumerating helpers are still there, deprecated for per-request use and supported for reconciliation.
+- **Nothing is trusted because a client sent it.** An account presented by a client is only decoded once its owner is confirmed to be `zk_shielded`; a vault only counts if it sits at the canonical PDA for the retailer, subscriber and mint in question.
 
 ## Example: complete Netflix-style integration
 
