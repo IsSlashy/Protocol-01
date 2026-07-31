@@ -19,7 +19,16 @@ pub mod unshield_denominated_stark_v3;
 // The _stark variants below read a pre-verified proof buffer from
 // p01_stark_verifier and are the canonical denominated-pool entrypoints.
 pub mod resize_denominated_pool;
-pub mod subscribe_normal;
+// === REMOVED: subscribe_normal — its vault PDA was seeded with the subscriber's
+// wallet pubkey, so anyone could answer "does wallet W subscribe to merchant M?"
+// by re-deriving the address off-chain. A deterministic membership oracle with no
+// enumeration cost, sitting next to a private path that seeds on
+// `subscriber_commitment` and leaks nothing. The weak path defined the privacy of
+// the whole subscription feature, so it is gone rather than patched. The only way
+// to open a vault is now `subscribe_private_stark`.
+// The `*_normal` lifecycle instructions below are DELIBERATELY KEPT: they are the
+// only exit for the normal-mode vaults that already exist on chain, and they
+// cannot create an account, so they carry no oracle of their own.
 pub mod claim_period;
 pub mod pause_normal;
 pub mod resume_normal;
@@ -56,7 +65,7 @@ pub use shield_denominated::*;
 pub use shield_denominated_v3::*;
 pub use unshield_denominated_stark_v3::*;
 pub use resize_denominated_pool::*;
-pub use subscribe_normal::*;
+// === REMOVED: subscribe_normal (see the module block above). ===
 pub use claim_period::*;
 pub use pause_normal::*;
 pub use resume_normal::*;

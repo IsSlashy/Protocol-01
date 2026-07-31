@@ -226,22 +226,16 @@ pub mod zk_shielded {
     }
 
     // -----------------------------------------------------------------------
-    // Subscription Vault instructions (normal + private ZK)
+    // Subscription Vault instructions
+    //
+    // A vault can only be OPENED privately. `subscribe_normal` used to sit here
+    // and seeded its vault PDA on the subscriber's wallet pubkey, which let
+    // anyone re-derive the address for a (wallet, merchant) pair and read
+    // subscription membership straight off the chain. It has been removed; see
+    // instructions/mod.rs. The `*_normal` lifecycle instructions remain so the
+    // normal-mode vaults already on chain can still be paused, resumed,
+    // claimed and cancelled.
     // -----------------------------------------------------------------------
-
-    /// Create a normal (wallet-based) subscription vault
-    /// Deposits funds from subscriber wallet into vault PDA
-    pub fn subscribe_normal(
-        ctx: Context<SubscribeNormal>,
-        rate: u64,
-        interval_slots: u64,
-        amount: u64,
-        token_mint: Pubkey,
-        vk_hash_subscriber: [u8; 32],
-        license_commitment: Option<[u8; 32]>,
-    ) -> Result<()> {
-        instructions::subscribe_normal::handler(ctx, rate, interval_slots, amount, token_mint, vk_hash_subscriber, license_commitment)
-    }
 
     /// Create a private subscription vault using STARK proof (quantum-resistant).
     /// `client_stealth_meta`: optional 64-byte stealth address
@@ -453,17 +447,23 @@ pub mod zk_shielded {
         instructions::claim_period::handler(ctx)
     }
 
-    /// Pause a normal subscription vault (subscriber wallet signature)
+    /// Pause a normal subscription vault (subscriber wallet signature).
+    /// LEGACY: no new normal-mode vault can be created — `subscribe_normal` was
+    /// removed because its PDA leaked (wallet, merchant) membership. This exists
+    /// only to service vaults opened before that removal.
     pub fn pause_normal(ctx: Context<PauseNormal>) -> Result<()> {
         instructions::pause_normal::handler(ctx)
     }
 
-    /// Resume a normal subscription vault (subscriber wallet signature)
+    /// Resume a normal subscription vault (subscriber wallet signature).
+    /// LEGACY — services pre-existing normal-mode vaults only.
     pub fn resume_normal(ctx: Context<ResumeNormal>) -> Result<()> {
         instructions::resume_normal::handler(ctx)
     }
 
-    /// Cancel a normal subscription vault, refund remaining to subscriber
+    /// Cancel a normal subscription vault, refund remaining to subscriber.
+    /// LEGACY, and the ONLY exit for a normal-mode vault: removing it would
+    /// strand both the deposit and the rent of every such vault on chain.
     pub fn cancel_normal(ctx: Context<CancelNormal>) -> Result<()> {
         instructions::cancel_normal::handler(ctx)
     }

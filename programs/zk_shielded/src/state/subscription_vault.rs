@@ -3,16 +3,27 @@ use anchor_lang::prelude::*;
 /// Subscription vault: holds funds deposited by a subscriber for periodic
 /// claims by a retailer. Supports two modes:
 ///
-/// **Normal mode**: `subscriber_pubkey` is set, vault actions require wallet signature.
-/// **Private mode**: `subscriber_commitment` is set (Poseidon(secret)), vault actions
-/// require a ZK proof of knowledge of the secret.
+/// **Private mode** (the only mode that can still be created): `subscriber_commitment`
+/// is set (Poseidon(secret)), vault actions require a ZK proof of knowledge of the
+/// secret, and the PDA is seeded on that commitment, so the address reveals nothing
+/// about who subscribed.
+///
+/// **Normal mode** (LEGACY, read/close only): `subscriber_pubkey` is set and vault
+/// actions require a wallet signature. `subscribe_normal` — the only instruction that
+/// ever wrote this field — has been removed: seeding the PDA on the subscriber's wallet
+/// made the vault address a deterministic membership oracle, so anyone could re-derive
+/// it for a (wallet, merchant) pair and learn that the subscription exists. The field
+/// itself is KEPT because it is the first field of the account layout; dropping it would
+/// shift every byte after it and make the vaults already on chain undecodable.
 ///
 /// PDA: [b"subscription_vault", retailer, subscriber_id_bytes, token_mint]
-/// where subscriber_id_bytes = subscriber_pubkey (normal) or subscriber_commitment (private)
+/// where subscriber_id_bytes = subscriber_commitment (private) or, for legacy vaults,
+/// subscriber_pubkey (normal)
 #[account]
 #[derive(Default)]
 pub struct SubscriptionVault {
-    /// Subscriber wallet (normal mode only)
+    /// Subscriber wallet (LEGACY normal-mode vaults only — never written by any
+    /// instruction that still exists; kept for layout compatibility).
     pub subscriber_pubkey: Option<Pubkey>,
 
     /// Subscriber commitment = Poseidon(secret) (private mode only)
