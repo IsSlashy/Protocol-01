@@ -114,6 +114,49 @@
  *
  * The markers are hardcoded here, not read from the JSON, so editing the record
  * cannot weaken the scan.
+ *
+ * The controls only cover the WHOLESALE case, and saying they close the
+ * false-green direction was an overstatement until this revision. MEASURED
+ * 2026-07-31 against the previous revision: rewriting one byte inside each of the
+ * three B1 marker literals in the blob (`B1 ` -> `Bx `, `DEEP ` -> `DEEQ `, and
+ * the same in the third), which changes four bytes of panic text and nothing
+ * else — WebAssembly.validate still true, every control still present, the same
+ * 211,370 bytes — then reshipping the four twins with stark-wasm-twins.mjs
+ * --write and setting client_blob.proof_format_generation to `pre-b1` and
+ * accepts_client_blob_sha256 to the doctored hash, printed
+ * "PASS — the shipped prover matches the devnet deployment, and the chain was
+ * asked and agreed", exit 0, against the real pre-B1 devnet deployment. The blob
+ * was still B1 in every way that reaches the chain, so every proof it produced
+ * would still have died with FriFoldCheckFailed. stark-wasm-twins.mjs --check
+ * passed on the doctored artifacts too, because they agree with each other.
+ *
+ * That is the same false green the controls were supposed to stop, reached by
+ * editing the discriminator instead of deleting it. It does not need an
+ * adversary: rewording those three panic messages in stark/src/compact.rs is an
+ * ordinary refactor and would have had exactly the same effect silently.
+ *
+ * # The blob is CORROBORATED against the source it is built from
+ *
+ * So the blob no longer classifies itself. BLOB_B1_MARKERS are scanned in
+ * `stark/src/compact.rs` as well, and the two sets must be EQUAL. The prover
+ * source and the prover binary are supposed to correspond — src/wireFormat.test.ts
+ * already asserts that this blob's proofs equal what the Rust prover in stark/
+ * emits — so a marker the source has and the blob does not means the blob was not
+ * built from this tree, or the literal was edited out of it. Either way the scan
+ * refuses to classify rather than reading the absence as "pre-B1".
+ *
+ * This is not unfakeable and is not claimed to be. MEASURED 2026-07-31 against
+ * THIS revision: applying the same three renames to stark/src/compact.rs as well
+ * restores the agreement, and the gate printed the full PASS at exit 0 again
+ * against the pre-B1 devnet deployment. What the corroboration buys is that the
+ * cheapest false green now requires renaming the
+ * B1 panic messages in the prover's own source, in the same commit, for no
+ * stated reason, in a diff a human reads — instead of being reachable by
+ * touching only generated artifacts, or by accident during a rename. Deriving
+ * the generation from BEHAVIOUR rather than from strings (a proof from this blob
+ * is a different length and digest per circuit either side of B1, which is what
+ * src/wireFormat.test.ts already pins) is the only thing that would close it
+ * properly, and it is not done here.
  */
 
 import { readFileSync } from 'node:fs';
@@ -160,6 +203,44 @@ const ELF_CONTROLS = [
   '[verify] OOD z mismatch: got ',
   'STARK proof verified for circuit ',
 ];
+
+/**
+ * The Rust sources every literal above was lifted from. They are read so the
+ * scan can be corroborated instead of believed:
+ *
+ *   BLOB_MARKER_SOURCES  the prover the blob is built from. The markers found
+ *                        here and the markers found in the blob MUST be the same
+ *                        set. A marker the source has and the blob does not is
+ *                        the doctored-blob false green described in the header,
+ *                        and is refused rather than read as "pre-B1".
+ *
+ *   ELF_MARKER_SOURCES   the verifier the deployed program is built from. The
+ *                        deployed bytes are ALLOWED to lag this source — that
+ *                        skew is the whole subject of this gate — so nothing is
+ *                        compared against the chain here. What is required is
+ *                        that the literals this scan discriminates on still
+ *                        EXIST in the source, because once they are reworded
+ *                        "the chain has no B1 markers" stops meaning "the chain
+ *                        is pre-B1" and starts meaning "this script is stale".
+ */
+const BLOB_MARKER_SOURCES = ['stark/src/compact.rs'];
+const ELF_MARKER_SOURCES = [
+  'programs/p01_stark_verifier/src/verify.rs',
+  'programs/p01_stark_verifier/src/lib.rs',
+];
+
+/** Concatenate a list of repo-relative source files. Returns null if any is unreadable. */
+function readSources(rels) {
+  const parts = [];
+  for (const rel of rels) {
+    try {
+      parts.push(readFileSync(resolve(REPO, rel), 'utf8'));
+    } catch (e) {
+      return { text: null, unreadable: rel, message: e.message };
+    }
+  }
+  return { text: parts.join('\n'), unreadable: null, message: null };
+}
 
 // ---------------------------------------------------------------------------
 // Where to look. Pinned HERE, chosen by the CALLER, never taken from the record.
@@ -339,6 +420,97 @@ function classify(buf, markers, controls) {
   return { generation: hits.length > 0 ? 'b1' : 'pre-b1', hits, missingControls };
 }
 
+/** Which B1 markers the prover source in THIS TREE carries. null if unreadable. */
+function proverSourceMarkerHits() {
+  const src = readSources(BLOB_MARKER_SOURCES);
+  if (src.text === null) return null;
+  return BLOB_B1_MARKERS.filter((m) => src.text.includes(m));
+}
+
+/**
+ * The blob must carry the same B1 discriminators as the prover source it is
+ * built from. Returns a failure block, or null when they agree.
+ *
+ * A marker the source has and the blob does not is the measured false green in
+ * the header: four bytes of panic text edited out of the artifact reclassify a
+ * B1 prover as pre-B1 and green the gate against a pre-B1 chain, with every
+ * control intact and every twin agreeing. Read as skew, not as a generation.
+ */
+function blobSourceSkew(blobHits) {
+  const src = readSources(BLOB_MARKER_SOURCES);
+  if (src.text === null) {
+    return {
+      title: `cannot read ${src.unreadable}, so the blob's generation cannot be corroborated`,
+      lines: [
+        `  ${src.message}`,
+        'That file is the prover source the checked-in blob is supposed to be built from, and it is what',
+        "stops the blob from being the only witness to its own generation. Without it a blob with its B1",
+        'panic strings edited out reads as pre-B1 and greens this gate against a pre-B1 chain.',
+      ],
+    };
+  }
+  const srcHits = BLOB_B1_MARKERS.filter((m) => src.text.includes(m));
+  const onlySource = srcHits.filter((m) => !blobHits.includes(m));
+  const onlyBlob = blobHits.filter((m) => !srcHits.includes(m));
+  if (onlySource.length === 0 && onlyBlob.length === 0) return null;
+  return {
+    title: 'the prover blob and the prover source disagree about which B1 markers exist',
+    lines: [
+      `  source ${BLOB_MARKER_SOURCES.join(', ')}  ${srcHits.length}/${BLOB_B1_MARKERS.length}`,
+      `  blob   ${CANONICAL}  ${blobHits.length}/${BLOB_B1_MARKERS.length}`,
+      ...(onlySource.length > 0 ? ['', '  in the SOURCE but not in the BLOB:', ...onlySource.map((m) => `    ${JSON.stringify(m)}`)] : []),
+      ...(onlyBlob.length > 0 ? ['', '  in the BLOB but not in the SOURCE:', ...onlyBlob.map((m) => `    ${JSON.stringify(m)}`)] : []),
+      '',
+      'Two things do this, and this gate cannot tell them apart, so it refuses to classify either way:',
+      '',
+      '  1. The blob was not built from this tree. src/wireFormat.test.ts asserts the blob\'s proofs equal',
+      '     what the Rust prover in stark/ emits, so a blob that disagrees with that source here is a',
+      '     reship that never happened, or one that happened from a different checkout.',
+      '  2. The literals were edited. MEASURED: rewriting four bytes of panic text inside the blob leaves',
+      '     WebAssembly.validate true, every control present, the byte count identical and all four twins',
+      '     agreeing after --write, and reclassifies a B1 prover as pre-B1. That greened this gate against',
+      '     the real pre-B1 devnet deployment at exit 0 while every proof would still have died with',
+      '     FriFoldCheckFailed. Rewording those messages in a normal refactor does the same thing.',
+      '',
+      'If the messages were legitimately reworded, update BLOB_B1_MARKERS in this script in the same commit.',
+      'Do not make the two sides agree by editing the artifact.',
+    ],
+  };
+}
+
+/**
+ * The literals the DEPLOYED-ELF scan discriminates on must still exist in the
+ * verifier source. Nothing here is compared against the chain: the deployed
+ * bytes are expected to lag, that lag is the subject of this gate. What is
+ * checked is that the discriminator itself is not stale, because once these are
+ * reworded "no B1 markers on chain" means "this script can no longer tell",
+ * which is not the same claim at all. Returns a failure block, or null.
+ */
+function elfMarkerSourceProblem(treeIsB1) {
+  const src = readSources(ELF_MARKER_SOURCES);
+  if (src.text === null) {
+    return {
+      title: `cannot read ${src.unreadable}, so the deployed-ELF scan cannot be corroborated`,
+      lines: [`  ${src.message}`, 'That file is where the literals this scan classifies a deployment by come from.'],
+    };
+  }
+  const missingMarkers = treeIsB1 ? ELF_B1_MARKERS.filter((m) => !src.text.includes(m)) : [];
+  const missingControls = ELF_CONTROLS.filter((c) => !src.text.includes(c));
+  if (missingMarkers.length === 0 && missingControls.length === 0) return null;
+  return {
+    title: 'the literals this gate classifies a DEPLOYMENT by no longer exist in the verifier source',
+    lines: [
+      `  source ${ELF_MARKER_SOURCES.join(', ')}`,
+      ...(missingMarkers.length > 0 ? ['', '  B1 markers gone from the source:', ...missingMarkers.map((m) => `    ${JSON.stringify(m)}`)] : []),
+      ...(missingControls.length > 0 ? ['', '  controls gone from the source:', ...missingControls.map((m) => `    ${JSON.stringify(m)}`)] : []),
+      '',
+      'The tree is B1 and these are the strings that say so, so a deployment scanned with them would now',
+      'be reported pre-B1 whatever it is actually running, or refuse to classify for the wrong reason.',
+      'Update ELF_B1_MARKERS / ELF_CONTROLS in this script to literals the current verifier really emits.',
+    ],
+  };
+}
+
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 
 const failures = [];
@@ -465,6 +637,13 @@ async function readDeployedWithRetry(rpcUrl, programId) {
 // same hole one step earlier, since its output is what gets pasted in.
 
 if (wantMeasure) {
+  const srcHits = proverSourceMarkerHits();
+  const elfStale = elfMarkerSourceProblem(srcHits !== null && srcHits.length > 0);
+  if (elfStale !== null) {
+    console.error(`[deployed-verifier] --measure refuses to classify: ${elfStale.title}`);
+    for (const line of elfStale.lines) console.error(line);
+    process.exit(1);
+  }
   const measureProgramId = programIdFromAnchorToml(TARGET.anchorSection);
   if (measureProgramId === null) {
     console.error(`[deployed-verifier] --measure: Anchor.toml has no ${ANCHOR_PROGRAM_KEY} under [${TARGET.anchorSection}]`);
@@ -651,6 +830,7 @@ console.log(`[deployed-verifier] record   ${RECORD_REL}`);
 console.log(`[deployed-verifier] blob     ${CANONICAL}`);
 console.log(`[deployed-verifier]          ${blob.length.toLocaleString()} bytes, sha256 ${blobSha}`);
 console.log(`[deployed-verifier]          generation ${blobCls.generation ?? 'UNCLASSIFIABLE'} (B1 markers found: ${blobCls.hits.length}/${BLOB_B1_MARKERS.length})`);
+console.log(`[deployed-verifier] source   ${BLOB_MARKER_SOURCES.join(', ')} carries ${proverSourceMarkerHits()?.length ?? '?'}/${BLOB_B1_MARKERS.length} of the same markers`);
 console.log(`[deployed-verifier] deployed ${deployed.program_id} on ${deployed.cluster} (as the record has it)`);
 console.log(`[deployed-verifier]          generation ${deployed.proof_format_generation}, elf sha256 ${deployed.elf_sha256}, slot ${deployed.last_deployed_slot}`);
 
@@ -661,6 +841,19 @@ if (blobCls.generation === null) {
     'truncated, string-stripped or simply not the prover. Refusing to classify rather than guess:',
     'guessing here defaults to "pre-b1", which would wave a B1 blob past a pre-B1 deployment.',
   ]);
+}
+
+// The blob does not get to be the only witness to its own generation. Its B1
+// markers are scanned in stark/src/compact.rs too and the two sets must match;
+// a marker the source has and the artifact does not is skew, not a generation.
+{
+  const skew = blobSourceSkew(blobCls.hits);
+  if (skew !== null) {
+    fail(skew.title, skew.lines);
+    // The classification is now worthless in the direction that matters, so it
+    // must not be used to satisfy the interlock below.
+    blobCls.generation = null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -841,6 +1034,9 @@ if (wantOnchain) {
         `  chain  ${chain.lastDeployedSlot}`,
       ]);
     }
+
+    const elfStale = elfMarkerSourceProblem(proverSourceMarkerHits()?.length > 0);
+    if (elfStale !== null) fail(elfStale.title, elfStale.lines);
 
     const chainCls = classify(chain.elf, ELF_B1_MARKERS, ELF_CONTROLS);
     if (chainCls.generation === null) {
