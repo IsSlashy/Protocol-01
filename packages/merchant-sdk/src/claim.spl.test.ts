@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { PublicKey, SystemProgram } from '@solana/web3.js';
 import {
@@ -79,6 +80,46 @@ function healthyAccounts(vaultBalance = 5n) {
     [RETAILER_ATA.toBase58(), accountInfo(tokenAccountData(MINT, RETAILER, 0n))],
   ]);
 }
+
+/**
+ * The three constants every SPL claim rests on, compared against a value
+ * derived WITHOUT the SDK — from `node:crypto`, or from a base58/hex literal
+ * read off the transaction that settled.
+ *
+ * Asserting `ix.data` equals `CLAIM_PERIOD_DISCRIMINATOR`, or that an account
+ * slot holds `TOKEN_PROGRAM_ID`, pins nothing: both sides of the comparison are
+ * the same constant, so corrupting the constant keeps the suite green.
+ * MEASURED, before these three tests existed: `…66, 82` -> `…66, 83`,
+ * `Tokenkeg…` -> `TokenzQd…` (Token-2022) and `TOKEN_ACCOUNT_LEN` 165 -> 129
+ * each left 89 of 89 passing, while any one of them would have made every SPL
+ * claim the SDK builds unlandable.
+ */
+describe('the constants the whole instruction rests on, pinned independently', () => {
+  it('derives the claim_period discriminator from sha256("global:claim_period")', () => {
+    const derived = createHash('sha256').update('global:claim_period').digest().subarray(0, 8);
+    expect(Buffer.from(CLAIM_PERIOD_DISCRIMINATOR).toString('hex')).toBe(derived.toString('hex'));
+    // The eight bytes carried by every claim_period transaction on devnet,
+    // including 5Aym1ZiUZMD2w7DUUmWfCEqZoc9h1q7y7RiyMXJGwQqSpBsxqpCvfZoqYNFoHpr6TxBFMcDEofPjDnX8EnH3Gyuh.
+    expect(derived.toString('hex')).toBe('487ea465bed24252');
+  });
+
+  it('uses the legacy SPL token program, which is what Program<Token> demands', () => {
+    // claim_period declares `token_program: Option<Program<'info, Token>>` and
+    // anchor_spl's `Token` is Tokenkeg… hard-coded, so a Token-2022 address here
+    // would be rejected at account validation. No Token-2022 path exists in the
+    // program at all.
+    expect(TOKEN_PROGRAM_ID.toBase58()).toBe('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+  });
+
+  it('sizes an SPL token account at the 165 bytes spl-token 3.x serializes', () => {
+    expect(TOKEN_ACCOUNT_LEN).toBe(165);
+    // The boundary, not just a wildly short buffer: 164 bytes is not a token
+    // account, and a decoder trusting a smaller length would accept a truncated
+    // one and read a torn `state` byte.
+    expect(() => decodeTokenAccount(Buffer.alloc(164))).toThrow(/not an SPL token account/);
+    expect(() => decodeTokenAccount(Buffer.alloc(165))).not.toThrow();
+  });
+});
 
 describe('decodeTokenAccount', () => {
   it('reads mint, owner and amount at the spl-token 3.x offsets', () => {
