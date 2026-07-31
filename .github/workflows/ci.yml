@@ -119,6 +119,31 @@ jobs:
       - name: Test
         run: pnpm turbo run test --continue
 
+      # [POOL PARITY] BLOCKING, and it has to be its own step because `pnpm turbo
+      # run test` CANNOT see this file. turbo's `test` task runs `vitest run` in
+      # apps/web, and `apps/web/vitest.config.ts` sets
+      #   include: ['__tests__/**/*.test.ts', '__tests__/**/*.test.tsx']
+      # so `lib/privacy/pool/denominatedPool.test.ts` matches nothing. MEASURED:
+      # `vitest list --filesOnly` in apps/web returns 20 files and none of them is
+      # this one. It runs only under vitest.pool.config.mts (`pnpm test:pool`),
+      # and until now nothing in this workflow invoked that.
+      #
+      # What it covers, in its own config's words: the denominated-pool code was
+      # PORTED from the proven extension into apps/web/lib/privacy/pool, and this
+      # gate asserts the port stays byte-identical — commitment low-u64 ==
+      # the WASM circuit's own output — "so a drift can never silently reach a
+      # shielded /pay send". That is a fund-safety property of the /pay send path,
+      # and the gate that was supposed to make the drift impossible was wired to
+      # nothing while the ported files were under active edit.
+      #
+      # It needs its own vitest config rather than a wider `include` because the
+      # main apps/web suite runs in jsdom with @solana/web3.js mocked for component
+      # rendering; this one needs the REAL web3.js in a node environment.
+      #
+      # MEASURED green when this step was added: 48 passed, 48 total, 2.5s.
+      - name: Denominated-pool extraction parity (BLOCKING — /pay send drift gate)
+        run: pnpm --filter @protocol-01/web test:pool
+
       # [PROVER ARTIFACT SKEW] BLOCKING, and separate from `pnpm turbo run test`
       # above because that runs with `--continue` and this must not be advisory.
       #
