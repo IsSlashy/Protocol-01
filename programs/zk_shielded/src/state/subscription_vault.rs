@@ -67,10 +67,19 @@ pub struct SubscriptionVault {
     /// vaults decode as `None` from trailing zero padding.
     pub client_stealth_meta: Option<[u8; 64]>,
 
-    /// License commitment = Poseidon(licenseSecret), posted by the subscriber
+    /// License commitment = **blake3**(licenseSecret), posted by the subscriber
     /// at subscribe time so a merchant can later verify a presented license key
-    /// by checking Poseidon(decode(key)) == license_commitment OFF-CHAIN.
-    /// The chain only stores the 32 raw bytes — no Poseidon/verification runs
+    /// by checking blake3(decode(key)) == license_commitment OFF-CHAIN.
+    ///
+    /// This said Poseidon. Nothing on chain reads the field, so the wrong hash
+    /// name cost nothing yet — but it is the only description of the value a
+    /// future verifier would be written against, and every shipped client
+    /// (apps/mobile, apps/extension, packages/merchant-sdk) uses blake3. The
+    /// authoritative block is `LICENSE_SCHEME` in
+    /// `packages/merchant-sdk/src/license.ts`, executed by
+    /// `packages/merchant-sdk/src/license-parity.test.ts`.
+    ///
+    /// The chain only stores the 32 raw bytes — no hashing or verification runs
     /// on-chain. `None` for vaults created before this field existed; appended
     /// at the very end so existing vault accounts decode it as `None` from
     /// trailing zero padding (same backward-compat trick as `client_stealth_meta`).
