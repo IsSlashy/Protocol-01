@@ -10,9 +10,10 @@
  *      and confirm it transferred the expected amount to the retailer
  *      wallet with a matching invoice memo (`p01:<slug>:...`).
  *
- *   3. **Watch vault subscriptions** — enumerate `SubscriptionVault`
- *      accounts whose `retailer` matches the merchant, so recurring
- *      private subscribers can be granted access.
+ *   3. **Check a subscription** — read the ONE `SubscriptionVault` a request is
+ *      about (`hasActiveVaultAccessForVault` / `verifyLicenseAgainstVault`) and
+ *      decide whether to serve it. `listVaultsForRetailer` still returns the
+ *      whole book for reconciliation, on a schedule rather than per request.
  *
  * Design goals:
  *   - Framework-agnostic. Works in Node.js, Next.js routes, Cloudflare

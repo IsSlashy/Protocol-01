@@ -235,13 +235,46 @@ export interface ListVaultsOptions {
 
 /**
  * Fetch every `SubscriptionVault` whose `retailer` field equals the given
- * pubkey. Uses an RPC `memcmp` filter at the mode-invariant retailer offset
- * (`SUBSCRIPTION_VAULT_RETAILER_OFFSET` = 42) so each merchant only hydrates
- * their own vaults. (The pre-fix offset 74 assumed fixed-width Borsh Options
- * and never matched — see the constant's doc.)
+ * pubkey — the merchant's whole subscriber book in one call.
  *
- * ⚠ On busy clusters `getProgramAccounts` is expensive. Merchants should
- * cache and throttle (call every 30–60s in a background worker).
+ * @deprecated Not for entitlement checks. Use
+ *   {@link hasActiveVaultAccessForVault} (or `verifyLicenseAgainstVault`),
+ *   which reads ONE account instead of the book. Two reasons, in order:
+ *
+ *   1. It hydrates every subscriber to answer a question about one of them.
+ *      MEASURED against devnet on 2026-08-01, one access check for one
+ *      subscriber of a merchant with 4 vaults:
+ *
+ *        hasActiveVaultAccessForVault  2 calls  309 req B    813 res B  1 account
+ *        hasActiveVaultAccess          2 calls  492 req B  2,750 res B  4 accounts
+ *
+ *      Same call COUNT; what differs is what comes back. The single-account
+ *      figure is flat in the number of subscribers, the enumerating one grows
+ *      by ~650 response bytes each (raw JSON-RPC: 11,093 B for 17 accounts vs
+ *      2,633 B for 4). Every extra account carries the subscriber ID, mint,
+ *      deposit, rate, interval and start slot of someone the request was not
+ *      about. Pass `currentSlot` and the single-account path drops to 1 call /
+ *      733 response bytes.
+ *   2. `getProgramAccounts` is unindexed and rate-limited on shared RPC; a
+ *      per-request call is a per-request scan of the program's accounts.
+ *
+ *   It stays exported and supported: reconciling a merchant's books legitimately
+ *   needs the whole list. Call it on a schedule, not on a request.
+ *
+ * NOTE — what deprecating this does NOT do. It does not stop anyone enumerating
+ * a merchant's subscribers. `retailer` sits at a fixed offset in a public,
+ * unencrypted account, so the same query runs from curl with no SDK at all.
+ * VERIFIED on devnet 2026-08-01: a raw JSON-RPC `getProgramAccounts` against
+ * `GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c` — plain `fetch`, no SDK, no
+ * auth — filtered only on the account discriminator, returned all 17
+ * `SubscriptionVault` accounts then live across 6 distinct retailers; adding
+ * the retailer memcmp narrowed it to that merchant's 4, with each subscriber's
+ * ID, deposit, rate, interval and start slot in the clear. Deprecating this
+ * helper removes CONVENIENCE, not CAPABILITY. The only thing that would remove
+ * the capability is not putting the retailer in the clear on chain.
+ *
+ * Implementation note: the filter uses `SUBSCRIPTION_VAULT_RETAILER_OFFSET`,
+ * whose doc explains why the offset is mode-invariant.
  */
 export async function listVaultsForRetailer(
   connection: Connection,
@@ -296,9 +329,10 @@ export async function listVaultsForRetailer(
  *
  * A merchant that already knows those three things does not need the client to
  * present an address and does not need to enumerate anything: derive, then read
- * the one account. VERIFIED against devnet 2026-08-01 — this reproduced the
- * address of all 17 live vaults, in both modes and across all three account
- * lengths in use (263 / 328 / 361 bytes).
+ * the one account. VERIFIED against devnet 2026-08-01 before it became a gate —
+ * this reproduced the address of every live vault (18 at the time; the count
+ * moves as subscriptions land), in both modes, across all three account lengths
+ * in use (263 / 328 / 361 bytes).
  */
 export function deriveSubscriptionVaultPda(
   retailer: PublicKey,
@@ -396,7 +430,10 @@ export interface VaultAccessCheckOptions extends FetchVaultOptions, ServiceScope
  * should reach for. It reads a single account instead of the merchant's whole
  * subscriber book, and it applies the same {@link subscriptionIsCurrent} gate —
  * NOT `is_active`, which the program writes `true` at subscribe time and `false`
- * nowhere, so an exhausted vault reports `true` forever.
+ * nowhere, so an exhausted vault reports `true` forever. MEASURED on devnet
+ * 2026-08-01: of the 18 live `SubscriptionVault` accounts, 14 had run past the
+ * periods they were funded for, and all 18 reported `is_active: true`. Gating
+ * on that flag would have served every one of the 14.
  *
  * The client supplies `vaultPda` (from its own subscription receipt), or the
  * merchant derives it with {@link deriveSubscriptionVaultPda} and never asks.
@@ -484,6 +521,19 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
  *
  * The function only validates on-chain state; any off-chain mapping between
  * subscriber identities and vault IDs is the merchant's responsibility.
+ *
+ * @deprecated for per-request use. This is the enumerating form: it calls
+ *   {@link listVaultsForRetailer} and scans. Prefer
+ *   {@link hasActiveVaultAccessForVault}, which reads the one vault the request
+ *   is about — the client presents its address, or the merchant derives it with
+ *   {@link deriveSubscriptionVaultPda}. Keep this one for a background sweep
+ *   over all subscribers, where the whole book is the point.
+ *
+ *   The two are not equivalent in strength, and not only in the new form's
+ *   favour: this one never has to trust a client-supplied address, but it also
+ *   cannot check that the account it matched sits at the canonical PDA, and it
+ *   accepts no service scope, so a subscriber to any of the merchant's services
+ *   sharing a mint, price and interval passes for all of them.
  */
 export async function hasActiveVaultAccess(
   connection: Connection,
