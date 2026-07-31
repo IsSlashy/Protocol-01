@@ -167,6 +167,39 @@ export function subscriptionIsCurrent(
 }
 
 /**
+ * What a UI should say a subscription is, given the slot it last read.
+ *
+ * `subscriptionIsCurrent` answers a yes/no with the slot the caller supplies
+ * and trusts it. A screen cannot: its slot is whatever the last poll returned,
+ * and a slot of 0 (never fetched) or one from before the vault existed makes
+ * `periodsElapsed` report 0 and the subscription look brand new. Rendering
+ * "ACTIVE" off a stale clock is the same failure as rendering it off
+ * `is_active`, so that case gets its own answer instead of the optimistic one.
+ *
+ *   - `inactive` — `is_active` false. The program never writes this; a vault
+ *     that shows it was decoded wrong or is not a vault.
+ *   - `paused`   — suspended by the subscriber; entitles nobody until resumed.
+ *   - `unknown`  — the clock cannot be trusted. Say so; do not say ACTIVE.
+ *   - `current`  — inside a period the subscriber paid for.
+ *   - `ended`    — ran past the periods it was funded for. THIS is the state
+ *     the UI used to render as ACTIVE, and the one measured on devnet.
+ */
+export type EntitlementStatus = 'inactive' | 'paused' | 'unknown' | 'current' | 'ended';
+
+export function entitlementStatus(
+  vault: VaultEntitlementState,
+  currentSlot: bigint,
+): EntitlementStatus {
+  if (!vault.isActive) return 'inactive';
+  if (vault.isPaused) return 'paused';
+  // `is_active` / `is_paused` come straight off the account and are always
+  // fresh; only the clock can be stale, so it is checked after them.
+  if (currentSlot <= 0n) return 'unknown';
+  if (currentSlot < vault.startSlot) return 'unknown';
+  return subscriptionIsCurrent(vault, currentSlot) ? 'current' : 'ended';
+}
+
+/**
  * First slot at which {@link subscriptionIsCurrent} turns false, or `null` when
  * the vault is never current (`rate === 0`, `intervalSlots === 0`, inactive, or
  * paused — a paused vault entitles nobody until it resumes).
@@ -274,6 +307,8 @@ export interface EntitlementParityVector {
   claimable: bigint;
   /** Expected {@link fundedPeriodsRemaining}. */
   fundedRemaining: bigint;
+  /** Expected {@link entitlementStatus} — what a screen should render. */
+  status: EntitlementStatus;
 }
 
 function vaultOf(over: Partial<VaultPeriodState> = {}): VaultPeriodState {
@@ -307,6 +342,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: true,
     claimable: 0n,
     fundedRemaining: 5n,
+    status: 'current',
   },
   {
     name: 'mid-subscription: period 2 of 5, two periods claimable',
@@ -315,6 +351,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: true,
     claimable: 2n,
     fundedRemaining: 5n,
+    status: 'current',
   },
   {
     name: 'last funded period — still current at the very last slot before rollover',
@@ -323,6 +360,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: true,
     claimable: 4n,
     fundedRemaining: 5n,
+    status: 'current',
   },
   {
     name: 'THE BUG: exactly 5 periods elapsed, all 5 paid — no longer current',
@@ -331,6 +369,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: false,
     claimable: 5n,
     fundedRemaining: 5n,
+    status: 'ended',
   },
   {
     name: 'THE MEASURED VAULT: 5 periods claimed, balance spent, isActive still true',
@@ -339,6 +378,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: false,
     claimable: 0n,
     fundedRemaining: 0n,
+    status: 'ended',
   },
   {
     name: 'long overrun: 40 periods of wall clock, only 5 ever funded',
@@ -347,6 +387,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: false,
     claimable: 5n,
     fundedRemaining: 5n,
+    status: 'ended',
   },
   {
     name: 'lazy retailer: funding intact but time exhausted — money left, no entitlement',
@@ -355,6 +396,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: false,
     claimable: 4n,
     fundedRemaining: 4n,
+    status: 'ended',
   },
   {
     name: 'paused vault entitles nobody, and nothing is claimable while paused',
@@ -363,6 +405,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: false,
     claimable: 0n,
     fundedRemaining: 5n,
+    status: 'paused',
   },
   {
     name: 'pause credit shifts the window: 200 paused slots keep period 3 alive',
@@ -371,6 +414,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: true,
     claimable: 3n,
     fundedRemaining: 5n,
+    status: 'current',
   },
   {
     name: 'pause cannot rewind an already-exhausted subscription',
@@ -379,6 +423,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: false,
     claimable: 5n,
     fundedRemaining: 5n,
+    status: 'ended',
   },
   {
     name: 'isActive false (never written by the program, but decode it faithfully)',
@@ -387,6 +432,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: false,
     claimable: 0n,
     fundedRemaining: 5n,
+    status: 'inactive',
   },
   {
     // Unreachable on chain: `start_slot` is written from `Clock::get()` at
@@ -398,6 +444,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: true,
     claimable: 0n,
     fundedRemaining: 5n,
+    status: 'unknown',
   },
   {
     name: 'rate 0 — unreachable on chain, must never be treated as infinite service',
@@ -406,6 +453,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: false,
     claimable: 0n,
     fundedRemaining: 0n,
+    status: 'ended',
   },
   {
     name: 'intervalSlots 0 — unreachable on chain, must fail closed, not entitle forever',
@@ -414,6 +462,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: false,
     claimable: 0n,
     fundedRemaining: 5n,
+    status: 'ended',
   },
   {
     name: 'partial funding: deposit buys 3.5 periods, only 3 are entitled',
@@ -422,6 +471,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: false,
     claimable: 3n,
     fundedRemaining: 3n,
+    status: 'ended',
   },
   {
     name: 'partial funding, still inside period 2 of the 3 funded',
@@ -430,6 +480,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: true,
     claimable: 2n,
     fundedRemaining: 3n,
+    status: 'current',
   },
   {
     name: 'over-claimed vault (claimed beyond funding) saturates instead of underflowing',
@@ -438,6 +489,7 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: false,
     claimable: 0n,
     fundedRemaining: 0n,
+    status: 'ended',
   },
   {
     name: 'large values stay exact in bigint (would lose precision as a double)',
@@ -450,5 +502,6 @@ export const ENTITLEMENT_PARITY_VECTORS: readonly EntitlementParityVector[] = [
     isCurrent: true,
     claimable: 1n,
     fundedRemaining: 3_002_399_751_580_331n,
+    status: 'current',
   },
 ];

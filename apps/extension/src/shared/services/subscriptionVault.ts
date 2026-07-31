@@ -219,6 +219,100 @@ export function deriveSubscriberVkPDA(authority: PublicKey): PublicKey {
 // Computation helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Total periods the subscriber paid for at subscribe time — the only thing
+ * that bounds entitlement.
+ *
+ * NOT `isActive`. The program writes that `true` at `subscribe_normal.rs:120`
+ * and `subscribe_private_stark.rs:395` and `false` NOWHERE, so an exhausted
+ * vault reports `true` for ever. Cancellation is not the hole either — both
+ * cancel instructions `close` the account. Running out of money is the hole,
+ * and nothing on chain marks it.
+ */
+export function periodsPaidFor(vault: Pick<VaultInfo, 'totalDeposited' | 'rate'>): number {
+  if (vault.rate === 0) return 0;
+  return Math.floor(vault.totalDeposited / vault.rate);
+}
+
+/** Zero-based index of the period the subscription is in at `currentSlot`. */
+export function periodsElapsed(
+  vault: Pick<VaultInfo, 'startSlot' | 'totalPausedSlots' | 'intervalSlots'>,
+  currentSlot: number,
+): number {
+  if (vault.intervalSlots === 0) return 0;
+  const effective = currentSlot - vault.startSlot - vault.totalPausedSlots;
+  if (effective <= 0) return 0;
+  return Math.floor(effective / vault.intervalSlots);
+}
+
+/**
+ * Periods this vault can still PAY for. Zero means the program refuses every
+ * further claim. Not an entitlement test: a retailer that neglects to claim
+ * leaves this high long after the subscriber stopped being current.
+ */
+export function fundedPeriodsRemaining(
+  vault: Pick<VaultInfo, 'totalDeposited' | 'rate' | 'claimedPeriods'>,
+): number {
+  if (vault.rate === 0) return 0;
+  return Math.max(0, Math.floor(vault.totalDeposited / vault.rate) - vault.claimedPeriods);
+}
+
+/**
+ * Whether the subscription entitles its holder to service RIGHT NOW.
+ *
+ * Local port of `subscriptionIsCurrent` from
+ * `packages/merchant-sdk/src/period-math.ts` — the extension bundles its own
+ * copy because the MV3 build does not pull workspace packages at runtime.
+ * `subscriptionVault.entitlement.test.ts` runs the shared
+ * `ENTITLEMENT_PARITY_VECTORS` table through both, so they cannot drift.
+ */
+export function subscriptionIsCurrent(vault: VaultInfo, currentSlot: number): boolean {
+  if (!vault.isActive || vault.isPaused) return false;
+  if (vault.intervalSlots === 0) return false;
+  return periodsElapsed(vault, currentSlot) < periodsPaidFor(vault);
+}
+
+/**
+ * What the popup is allowed to say a vault is, given the slot it last polled.
+ *
+ * The store initialises `currentSlot` to 0 and PERSISTS it, so a freshly opened
+ * popup can hold a slot of 0 or one from a previous session. At slot 0
+ * `periodsElapsed` reads 0 and every subscription looks brand new — rendering
+ * ACTIVE off that is the same failure as rendering it off `isActive`, so it
+ * gets its own answer.
+ *
+ * Local port of `entitlementStatus` from
+ * `packages/merchant-sdk/src/period-math.ts`; pinned by the parity test.
+ */
+export type EntitlementStatus = 'inactive' | 'paused' | 'unknown' | 'current' | 'ended';
+
+export function entitlementStatus(vault: VaultInfo, currentSlot: number): EntitlementStatus {
+  if (!vault.isActive) return 'inactive';
+  if (vault.isPaused) return 'paused';
+  if (currentSlot <= 0) return 'unknown';
+  if (currentSlot < vault.startSlot) return 'unknown';
+  return subscriptionIsCurrent(vault, currentSlot) ? 'current' : 'ended';
+}
+
+/**
+ * First slot at which {@link subscriptionIsCurrent} turns false, or `null` when
+ * the vault never entitles anyone.
+ */
+export function subscriptionEndSlot(vault: VaultInfo): number | null {
+  if (!vault.isActive || vault.isPaused) return null;
+  if (vault.intervalSlots === 0) return null;
+  const paid = periodsPaidFor(vault);
+  if (paid === 0) return null;
+  return vault.startSlot + vault.totalPausedSlots + paid * vault.intervalSlots;
+}
+
+/**
+ * Faithful port of `SubscriptionVault::claimable_periods`
+ * (`programs/zk_shielded/src/state/subscription_vault.rs:133`), INCLUDING the
+ * `max_funded` clamp that was missing. Without it this returned the raw
+ * elapsed-period count — and `Infinity` when `intervalSlots` was 0 — which
+ * `computeRefundable` then turned into an under-reported subscriber refund.
+ */
 export function computeClaimable(vault: VaultInfo, currentSlot: number): number {
   if (!vault.isActive || vault.isPaused) {
     return 0;
@@ -227,13 +321,19 @@ export function computeClaimable(vault: VaultInfo, currentSlot: number): number 
   if (effectiveElapsed <= 0) {
     return 0;
   }
+  if (vault.intervalSlots === 0) {
+    return 0;
+  }
   const totalPeriods = Math.floor(effectiveElapsed / vault.intervalSlots);
-  return Math.max(0, totalPeriods - vault.claimedPeriods);
+  const unclaimed = Math.max(0, totalPeriods - vault.claimedPeriods);
+  return Math.min(unclaimed, fundedPeriodsRemaining(vault));
 }
 
 export function computeClaimableAmount(vault: VaultInfo, currentSlot: number): number {
   const periods = computeClaimable(vault, currentSlot);
   const amount = periods * vault.rate;
+  // Mirrors the program's own `actual_amount = claim_amount.min(vault_balance)`
+  // (`claim_period.rs:65`).
   const totalOwed = vault.claimedPeriods * vault.rate;
   const available = vault.totalDeposited - totalOwed;
   return Math.min(amount, available);

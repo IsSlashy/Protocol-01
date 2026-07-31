@@ -3,6 +3,7 @@ import {
   ENTITLEMENT_PARITY_VECTORS,
   NOMINAL_SLOT_MS,
   claimablePeriods,
+  entitlementStatus,
   fundedPeriodsRemaining,
   periodsElapsed,
   periodsPaidFor,
@@ -48,8 +49,34 @@ describe('ENTITLEMENT_PARITY_VECTORS — the table every port is pinned to', () 
       expect(subscriptionIsCurrent(v.vault, v.currentSlot)).toBe(v.isCurrent);
       expect(claimablePeriods(v.vault, v.currentSlot)).toBe(v.claimable);
       expect(fundedPeriodsRemaining(v.vault)).toBe(v.fundedRemaining);
+      expect(entitlementStatus(v.vault, v.currentSlot)).toBe(v.status);
     });
   }
+});
+
+describe('entitlementStatus — what a screen is allowed to say', () => {
+  it('never says current off a slot the app has not fetched yet', () => {
+    // Zustand stores in this repo persist `currentSlot` and initialise it to 0.
+    expect(subscriptionIsCurrent(vault(), 0n)).toBe(true);
+    expect(entitlementStatus(vault(), 0n)).toBe('unknown');
+  });
+
+  it('never says current off a slot older than the vault itself', () => {
+    expect(entitlementStatus(vault(), 999n)).toBe('unknown');
+    expect(entitlementStatus(vault(), 1_000n)).toBe('current');
+  });
+
+  it('reports paused and inactive before it looks at the clock', () => {
+    expect(entitlementStatus(vault({ isPaused: true }), 0n)).toBe('paused');
+    expect(entitlementStatus(vault({ isActive: false }), 0n)).toBe('inactive');
+  });
+
+  it('THE UI BUG: the exhausted devnet vault reads ended, not active', () => {
+    const exhausted = vault({ claimedPeriods: 5n });
+    expect(exhausted.isActive).toBe(true);
+    expect(exhausted.isPaused).toBe(false);
+    expect(entitlementStatus(exhausted, 1_500n)).toBe('ended');
+  });
 });
 
 describe('subscriptionEndSlot', () => {

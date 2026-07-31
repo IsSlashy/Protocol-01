@@ -16,6 +16,7 @@ export {
   periodsPaidFor,
   periodsElapsed,
   subscriptionIsCurrent,
+  entitlementStatus,
   subscriptionEndSlot,
   slotsUntilSubscriptionEnds,
   secondsUntilSubscriptionEnds,
@@ -28,6 +29,7 @@ export {
   type VaultElapsedState,
   type VaultEntitlementState,
   type EntitlementParityVector,
+  type EntitlementStatus,
 } from './period-math';
 
 /** SPL Token program ID. Inlined so the SDK keeps zero `@solana/spl-token` dependency. */

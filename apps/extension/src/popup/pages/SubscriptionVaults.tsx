@@ -39,6 +39,7 @@ export default function SubscriptionVaults() {
     getClaimableAmount,
     getRefundable,
     getNextClaimableSlot,
+    getEntitlementStatus,
     pauseNormalVault,
     resumeNormalVault,
     cancelNormalVault,
@@ -312,6 +313,9 @@ export default function SubscriptionVaults() {
               const claimableAmount = getClaimableAmount(vault.address);
               const refundable = getRefundable(vault.address);
               const nextSlot = getNextClaimableSlot(vault.address);
+              // Never `vault.isActive`: the program writes it true at subscribe
+              // and false nowhere, so an exhausted subscription rendered ACTIVE.
+              const status = getEntitlementStatus(vault.address);
               const isRetailer = publicKey === vault.retailer;
 
               return (
@@ -339,17 +343,33 @@ export default function SubscriptionVaults() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
-                      {vault.isPaused && (
+                      {status === 'paused' && (
                         <span className="text-[10px] font-mono font-medium text-yellow-400 bg-yellow-400/10 px-2 py-0.5 rounded-full border border-yellow-400/20">
                           PAUSED
                         </span>
                       )}
-                      {vault.isActive && !vault.isPaused && (
+                      {status === 'current' && (
                         <span className="text-[10px] font-mono font-medium text-p01-cyan bg-p01-cyan/10 px-2 py-0.5 rounded-full border border-p01-cyan/20">
                           ACTIVE
                         </span>
                       )}
-                      {!vault.isActive && (
+                      {status === 'ended' && (
+                        <span
+                          title="Every period this subscription paid for has gone by. It grants no access, and nothing further can be claimed from it."
+                          className="text-[10px] font-mono font-medium text-p01-pink bg-p01-pink/10 px-2 py-0.5 rounded-full border border-p01-pink/20"
+                        >
+                          ENDED
+                        </span>
+                      )}
+                      {status === 'unknown' && (
+                        <span
+                          title="No recent slot from the cluster, so the subscription state cannot be determined yet."
+                          className="text-[10px] font-mono font-medium text-p01-chrome bg-p01-void px-2 py-0.5 rounded-full border border-p01-border"
+                        >
+                          UNKNOWN
+                        </span>
+                      )}
+                      {status === 'inactive' && (
                         <span className="text-[10px] font-mono font-medium text-p01-chrome bg-p01-void px-2 py-0.5 rounded-full border border-p01-border">
                           INACTIVE
                         </span>

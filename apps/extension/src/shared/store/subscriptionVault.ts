@@ -22,8 +22,10 @@ import {
   computeClaimable,
   computeClaimableAmount,
   computeRefundable,
+  entitlementStatus,
   nextClaimableSlot,
 } from '../services/subscriptionVault';
+import type { EntitlementStatus } from '../services/subscriptionVault';
 import type { VaultInfo } from '../services/subscriptionVault.types';
 import type { ShieldReceipt } from '../services/denominatedPool';
 import {
@@ -153,6 +155,16 @@ interface SubscriptionVaultState {
   getClaimableAmount: (vaultAddress: string) => number;
   getRefundable: (vaultAddress: string) => number;
   getNextClaimableSlot: (vaultAddress: string) => number | null;
+  /**
+   * What the UI is allowed to say about this vault, using the slot last polled.
+   *
+   * Never derive a badge from `vault.isActive`: the program writes it `true` at
+   * subscribe and `false` nowhere, so an exhausted subscription reports `true`
+   * for ever and the popup rendered it ACTIVE. `'unknown'` covers the other
+   * half of the problem — `currentSlot` starts at 0 and is persisted, so a
+   * freshly opened popup can be holding no clock at all.
+   */
+  getEntitlementStatus: (vaultAddress: string) => EntitlementStatus | 'missing';
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +484,13 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         const vault = state.vaults.find((v) => v.address === vaultAddress);
         if (!vault) return null;
         return nextClaimableSlot(vault);
+      },
+
+      getEntitlementStatus: (vaultAddress: string) => {
+        const state = get();
+        const vault = state.vaults.find((v) => v.address === vaultAddress);
+        if (!vault) return 'missing';
+        return entitlementStatus(vault, state.currentSlot);
       },
     }),
     {
