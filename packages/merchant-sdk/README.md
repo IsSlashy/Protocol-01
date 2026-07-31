@@ -117,7 +117,9 @@ import {
   hasActiveVaultAccessForVault,
   verifyLicenseAgainstVault,
   issueAccessToken,
+  issueSubscriptionAccessToken,
   verifyAccessToken,
+  subscriptionIsCurrent,
   NATIVE_SOL_MINT,
 } from '@protocol-01/merchant-sdk';
 
@@ -286,20 +288,53 @@ subscriber count (~650 response bytes each) rather than with the question asked.
 
 Minimal JWS-style token signed with the merchant Ed25519 key. Clients store it, send it back on each API call, and the server verifies in-memory — no session DB required.
 
+Issue it from the vault, not from a bare TTL. `issueSubscriptionAccessToken`
+clamps `exp` to the end of the funded window, so a 30-day session token cannot
+be handed to a subscriber with two days left, and pins the token to the vault's
+`start_slot` so it does not survive a cancel-and-resubscribe on the same PDA.
+
 ```typescript
-const token = issueAccessToken({
+const token = issueSubscriptionAccessToken({
   merchantKeypair: merchantKp,
   subscriberId: 'user-42',
   serviceSlug: 'my-saas-pro',
-  ttlSeconds: 60 * 60,          // 1 hour
+  ttlSeconds: 60 * 60,          // ceiling, not a promise
+  vault,                        // freshly fetched SubscriptionVaultAccount
+  currentSlot: BigInt(await connection.getSlot('confirmed')),
   extraClaims: { tier: 'pro' },
 });
+// throws if the subscription is not current — there is no honest token to mint
 
 // later, on an API route:
-const result = verifyAccessToken(token, merchantKp.publicKey);
+const result = verifyAccessToken(token, merchantKp.publicKey, {
+  expectedService: 'my-saas-pro',
+});
 if (!result.valid) return Response.json({ error: result.reason }, { status: 401 });
 // result.claims.sub / .svc / .tier / .exp
 ```
+
+Pass `expectedService`. Without it the `svc` claim is not compared and a token
+minted for one of your services authenticates against every other one;
+`result.serviceChecked` tells you which happened. Pass `subscription` too when
+you want the chain re-consulted — that is the only thing that notices a
+subscription which ended, was paused, or was cancelled since the token was
+minted.
+
+### On not asking `isActive`
+
+`SubscriptionVault.is_active` is written `true` when the subscription is
+created and `false` nowhere in the program, so it is `true` on every vault that
+exists. Cancellation is not the exception — both cancel instructions `close`
+the account, so a cancelled subscription stops existing rather than flipping a
+flag. Running out of money is what the flag cannot express.
+
+Gate on `subscriptionIsCurrent(vault, currentSlot)`, which asks whether the
+period the subscription is in is one the subscriber paid for. `hasActiveVaultAccess`
+and `verifyLicenseKey` already do.
+
+Do not substitute `fundedPeriodsRemaining > 0` either: that stays positive
+while you simply have not got round to claiming, and would keep serving a
+subscriber whose term ended.
 
 ## API surface
 
@@ -350,9 +385,22 @@ periodsPaidFor(vault) / periodsElapsed(vault, slot)   bigint
 buildClaimPeriodInstruction(vaultPda, retailer, opts?) TransactionInstruction
 assertRetailerCanReceiveClaim(conn, retailer, payout)  throws on the rent floor
 
+// Entitlement (pure, no network) — packages/merchant-sdk/src/period-math.ts
+subscriptionIsCurrent(vault, currentSlot)             boolean   <- gate on THIS
+entitlementStatus(vault, currentSlot)                 'current' | 'ended' | 'paused' | 'inactive' | 'unknown'
+periodsPaidFor(vault) / periodsElapsed(vault, slot)   bigint
+fundedPeriodsRemaining(vault)                         bigint    <- money, not access
+subscriptionEndSlot(vault)                            bigint | null
+claimablePeriods(vault, slot) / claimableAmount(...)  bigint
+
+// Claiming revenue
+buildClaimPeriodInstruction(vaultPda, retailer, opts?) TransactionInstruction
+assertRetailerCanReceiveClaim(conn, retailer, payout)  void (throws on rent floor)
+
 // Access tokens (Ed25519-signed, no DB required)
+issueSubscriptionAccessToken(opts)                    string  <- clamps exp to the subscription
 issueAccessToken(opts)                                string
-verifyAccessToken(token, merchantPubkey)              { valid, claims?, reason? }
+verifyAccessToken(token, merchantPubkey, opts?)       { valid, claims?, reason?, serviceChecked, subscriptionChecked }
 
 // Constants
 ZK_SHIELDED_PROGRAM_ID_DEVNET
