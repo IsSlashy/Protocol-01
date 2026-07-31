@@ -3371,6 +3371,62 @@ mod tests {
         }
     }
 
+    /// [B1] Pin the DEEP challenge γ to the transcript.
+    ///
+    /// γ is the single challenge that random-linear-combines the trace columns
+    /// inside `deep_composition_lde`. Its ONLY security property is that the
+    /// prover cannot choose it: it must be derived from a transcript that
+    /// already commits to the trace root, the quotient root, the public inputs
+    /// and all the OOD claims. A prover that picks γ freely picks it AFTER
+    /// seeing those commitments, which is exactly the assumption B1's
+    /// two-point linearisation rests on.
+    ///
+    /// MEASURED GAP this closes: replacing the body of `derive_deep_coeff` with
+    /// a constant leaves `cargo test -p p01-stark --lib --release` at
+    /// 111 passed / 0 failed — every other prover-side pin is blind to it,
+    /// because nothing in this crate re-derives γ and the compact-path verifier
+    /// lives in `p01_stark_verifier`, which `--lib` never links. Only
+    /// `p01_stark_verifier --test b1_deep_binding` caught it (10 of 20 red).
+    /// That test is a different CI step, so the prover half had no pin at all.
+    ///
+    /// Two independent assertions, because either alone is cheatable:
+    ///   1. KAT — γ for a fixed seed is a fixed field element. Kills a changed
+    ///      domain-separation tag, a changed transcript order, and a constant.
+    ///   2. Transcript dependence — distinct seeds give distinct γ. Kills any
+    ///      implementation that ignores its input, including one that happens
+    ///      to return the KAT value.
+    ///
+    /// The constant below is the value the SHIPPED verifier reconstructs:
+    /// `p01_stark_verifier`'s `verify.rs::derive_deep_coeff` is the same
+    /// construction over the same `DEEP_COEFF_TAG = b"deep-v1\0"`, and
+    /// `b1_deep_binding` is green on this tree. Do NOT re-bless this constant
+    /// to make a red go away — a change here desynchronises every shipped
+    /// verifier and rejects every honest proof.
+    #[test]
+    fn deep_challenge_is_bound_to_the_transcript() {
+        const DEEP_COEFF_KAT: u64 = 928_484_199_954_007_395;
+        let seed = [0xA5u8; 32];
+        let gamma = derive_deep_coeff(&seed);
+        assert_eq!(
+            gamma.as_int(),
+            DEEP_COEFF_KAT,
+            "γ for the all-0xA5 seed changed. `derive_deep_coeff` no longer agrees with \
+             p01_stark_verifier::verify::derive_deep_coeff, so the prover and every \
+             deployed verifier now compute different DEEP compositions and NO honest \
+             proof verifies. Fix the prover, do not re-bless this constant."
+        );
+
+        let mut other = seed;
+        other[31] ^= 1;
+        assert_ne!(
+            derive_deep_coeff(&other).as_int(),
+            gamma.as_int(),
+            "γ is the same for two different transcripts — it is not bound to the trace \
+             root, quotient root, public inputs or OOD claims, so a prover can choose it \
+             after seeing them. That voids the B1 two-point linearisation."
+        );
+    }
+
     /// [P2.2a] End-to-end: a proof produced by `generate_merkle_update_compact_proof`
     /// satisfies DEEP-ALI (C(z) == Q(z)·Z_T(z)) when C is the full 19-constraint
     /// RLC with α = `derive_rlc_alpha(trace_root, pub_inputs)`.
