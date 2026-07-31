@@ -105,6 +105,30 @@
  *     1875-1876 with `secureRandomU64()`, i.e. CSPRNG, not seed-derived. A
  *     transfer's bearer note was never derivable from the signature and is not
  *     derivable from the passphrase either.
+ *
+ * STILL EXPOSED — DO NOT READ THIS FILE AS "/pay SURVIVES SHOR"
+ * ────────────────────────────────────────────────────────────
+ * This module covers the POOL seed and nothing else. The other half of /pay —
+ * the stealth identity — has the identical flaw, untouched, one package away:
+ *
+ *   packages/pay-core/src/worker/workerCore.ts:205
+ *     walletSeed = HKDF-SHA256(ikm = signature, salt = ∅,
+ *                              info = 'p01:web:walletseed:v2', 64)
+ *
+ * SAME Ed25519 signature, SAME empty salt slot. From it come the stealth
+ * SPENDING keypair, the VIEWING keypair and the ML-KEM keypair that decide which
+ * incoming payments are yours. A Shor adversary who recovers the Phantom key
+ * re-signs the same deterministic message and reproduces all three — so the
+ * recipient-side privacy of every stealth payment opens retroactively, and given
+ * the known view/spend coupling the spend authority goes with it. The pool
+ * passphrase does not reach that derivation and was never routed to it.
+ *
+ * The same flaw is also unfixed in the extension and the mobile app.
+ *
+ * So the honest statement of what this change buys, and the ONLY one that should
+ * appear in any external claim: pool NOTE secrets and pool EPHEMERALS can now be
+ * gated on a user secret, for a wallet that has one, for notes created after it
+ * was set. Nothing else.
  */
 
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -141,6 +165,12 @@ export const SCRYPT_P = 1;
  * while permanently splitting the wallet's note namespace in two — all cost, no
  * benefit, and the cost is denominated in stranded funds. Rejecting is safe
  * (loud failure); silently accepting a four-character passphrase is not.
+ *
+ * This is a LENGTH floor, not an entropy floor. `'aaaaaaaaaaaa'` passes, and so
+ * does one common dictionary word of twelve letters — both fall to an offline
+ * guess in seconds even at 129 ms per attempt. Nothing in this module measures
+ * entropy, so whatever surfaces the prompt is the only thing standing between a
+ * user and a passphrase that costs them their notes without protecting them.
  */
 export const MIN_PASSPHRASE_CHARS = 12;
 
