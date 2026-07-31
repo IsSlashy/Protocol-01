@@ -58,6 +58,13 @@ export interface LicenseDerivationImpl {
   deriveLicenseSecret(masterNoteSecret: bigint | string, serviceId: string): Uint8Array;
   deriveClassicLicenseSecret(deterministicSignature: Uint8Array, serviceId: string): Uint8Array;
   classicLicenseSignMessage(serviceId: string): Uint8Array;
+  /**
+   * The service tag fed to the HKDF `info`. Pinned here because a mismatch
+   * between the caller that POSTS the commitment and the caller that DISPLAYS
+   * the key is exactly the bug this fixture was written after — and it is
+   * invisible to a test that only checks the crypto.
+   */
+  licenseServiceTag(serviceId: string | null | undefined, retailerAddress: string): string;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +96,24 @@ export const ZK_DERIVATION_VECTORS: ReadonlyArray<{ id: string; ikm: string; ser
   { id: 'zk/retailer-fallback', ikm: '9182736455647382910', serviceId: '7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU' },
   { id: 'zk/empty-service', ikm: '42', serviceId: '' },
   { id: 'zk/unicode-service', ikm: '42', serviceId: 'café-日本-🔑' },
+];
+
+/**
+ * The service-tag rule. `RETAILER` stands in for the retailer's base58 address,
+ * which is the tag whenever the recipient has no Service Registry slug.
+ */
+export const SERVICE_TAG_VECTORS: ReadonlyArray<{
+  id: string;
+  serviceId: string | null | undefined;
+  retailerAddress: string;
+}> = [
+  { id: 'tag/slug', serviceId: 'disney-plus', retailerAddress: 'RETAILER' },
+  { id: 'tag/empty-string', serviceId: '', retailerAddress: 'RETAILER' },
+  { id: 'tag/undefined', serviceId: undefined, retailerAddress: 'RETAILER' },
+  { id: 'tag/null', serviceId: null, retailerAddress: 'RETAILER' },
+  // Not trimmed on purpose — see licenseServiceTag. Normalising would orphan
+  // any key already issued against the un-normalised bytes.
+  { id: 'tag/whitespace-kept', serviceId: '  ', retailerAddress: 'RETAILER' },
 ];
 
 /** Classic path — ikm is the raw 64-byte ed25519 signature. */
@@ -162,6 +187,9 @@ export function licenseDerivationFingerprint(impl: LicenseDerivationImpl & Licen
         `|msg=${bytesToHex(impl.classicLicenseSignMessage(v.serviceId))}`,
     );
   }
+  for (const v of SERVICE_TAG_VECTORS) {
+    lines.push(`${v.id}|tag=${impl.licenseServiceTag(v.serviceId, v.retailerAddress)}`);
+  }
   return lines;
 }
 
@@ -190,6 +218,11 @@ export const EXPECTED_DERIVATION_FINGERPRINT: readonly string[] = [
   'zk/unicode-service|secret=433db0f8311ed0c55136dad9a9a5b0cc|key=P01-8CYV-1Y1H-3V8C-AM9P-VBCT-K9DG-SG|commit=f466667c85e39f02873327aa83d388f075cbe0f77ba88bcf7cd51b0b2592acfa',
   'classic/sig-00..3f|secret=b1451363f0522144a724fb9e4031ffdf|key=P01-P52H-6RZG-A8GM-99S4-ZEF4-0CFZ-VW|commit=9db7baf098aed3606a9aaac602f933c0fc9beaf4eeb7f41428c18cd2dbc4710c|msg=7030312d6c6963656e73652d76313a6469736e65792d706c7573',
   'classic/sig-ff|secret=54c53c6e760972aceb58ef27b0595f49|key=P01-AK2K-RVKP-15SA-STTR-XWKV-0PAZ-94|commit=1d8002dda1a1e7ca42b74438e1c856bda069fec1444b043905ce5c8aa941a49b|msg=7030312d6c6963656e73652d76313a',
+  'tag/slug|tag=disney-plus',
+  'tag/empty-string|tag=RETAILER',
+  'tag/undefined|tag=RETAILER',
+  'tag/null|tag=RETAILER',
+  'tag/whitespace-kept|tag=  ',
 ];
 
 export const EXPECTED_SCHEME_FINGERPRINT: readonly string[] = [
@@ -204,7 +237,7 @@ export const EXPECTED_SCHEME_FINGERPRINT: readonly string[] = [
  * keeps zero dependencies.
  */
 export const EXPECTED_SCHEME_DIGEST_BLAKE3 =
-  '0876f4d95070203b722d2b478b137eb4054953e6cc9a4b097db77205db1fb071';
+  'f67a08fa9dde78b4efb23636703fe6041ec689650db3a90c339d5ab06646a7fa';
 
 /** The exact preimage the digest is taken over. */
 export function schemeDigestPreimage(fingerprint: readonly string[]): string {

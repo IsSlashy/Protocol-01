@@ -114,6 +114,32 @@ function licenseInfo(serviceId: string): Uint8Array {
 }
 
 /**
+ * THE service tag that goes into the HKDF `info`. One rule, one function, for
+ * every caller: the flow that posts `license_commitment` on-chain and the view
+ * that re-derives the key for display must agree on this string or the
+ * displayed key verifies against nothing.
+ *
+ * Mirrored from `apps/mobile/services/license/derive.ts`, where the two sides
+ * had already diverged — mobile's subscribe screens tagged on `serviceId ||
+ * retailer base58` while its LicenseKeyCard fell back to a local `streamId` the
+ * chain has never seen.
+ *
+ * @param serviceId Service Registry slug, when the recipient has one.
+ * @param retailerAddress The retailer's base58 address — the fallback tag for a
+ *        free-form recipient with no slug.
+ *
+ * No trimming, no case folding: this reproduces the exact `serviceId ||
+ * retailerAddress` bytes already committed by every vault on chain. Normalising
+ * here would silently orphan any key already issued.
+ */
+export function licenseServiceTag(
+  serviceId: string | null | undefined,
+  retailerAddress: string,
+): string {
+  return serviceId ? serviceId : retailerAddress;
+}
+
+/**
  * Derive the 16-byte `licenseSecret` for a PRIVATE (ZK) subscription from the
  * subscriber's master note secret (`receipt.secret`) — the SAME secret family
  * from which the vault's `subscriber_commitment` is derived. Deterministic, so

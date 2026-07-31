@@ -106,6 +106,35 @@ function licenseInfo(serviceId: string): Uint8Array {
 }
 
 /**
+ * THE service tag that goes into the HKDF `info`. One rule, one function, for
+ * every caller: the screen that posts `license_commitment` on-chain and the
+ * screen that re-derives the key for display must agree on this string or the
+ * displayed key verifies against nothing.
+ *
+ * They did not agree. The subscribe screens tagged on `serviceId || retailer
+ * base58`, while `LicenseKeyCard` fell back to the local `streamId` — a value
+ * the chain has never seen — so every subscription to a recipient without a
+ * Service Registry slug showed a key the merchant was bound to reject. Vaults
+ * recovered on a second device were worse: `upsertStreamFromVault` sets no
+ * `serviceId` at all and mints a fresh random stream id, so the fallback was
+ * wrong 100% of the time there.
+ *
+ * @param serviceId Service Registry slug, when the recipient has one.
+ * @param retailerAddress The retailer's base58 address — the fallback tag for a
+ *        free-form recipient with no slug.
+ *
+ * No trimming, no case folding: this reproduces the exact `serviceId ||
+ * retailerAddress` bytes already committed by every vault on chain. Normalising
+ * here would silently orphan any key already issued.
+ */
+export function licenseServiceTag(
+  serviceId: string | null | undefined,
+  retailerAddress: string,
+): string {
+  return serviceId ? serviceId : retailerAddress;
+}
+
+/**
  * Derive the 16-byte `licenseSecret` for a PRIVATE (ZK) subscription from the
  * subscriber's master note secret (`receipt.secret`) — the SAME secret family
  * from which the vault's `subscriber_commitment` is derived. Deterministic, so
@@ -191,6 +220,43 @@ export function licenseKeyForPrivate(
   serviceId: string,
 ): string {
   return encodeLicenseKey(deriveLicenseSecret(masterNoteSecret, serviceId));
+}
+
+/**
+ * The subscription scope a license key is derived under. Both halves of the
+ * flow take this same object, so there is no second place to spell the fallback
+ * rule differently.
+ */
+export interface LicenseScope {
+  /** Service Registry slug, when the recipient has one. */
+  serviceId?: string | null;
+  /** Retailer base58 address — the tag when there is no slug. */
+  retailerAddress: string;
+}
+
+/**
+ * The key to SHOW for a private subscription. This is the function the
+ * LicenseKeyCard calls; nothing else may re-implement the tag rule.
+ */
+export function licenseKeyForSubscription(
+  masterNoteSecret: bigint | string,
+  scope: LicenseScope,
+): string {
+  return licenseKeyForPrivate(masterNoteSecret, licenseServiceTag(scope.serviceId, scope.retailerAddress));
+}
+
+/**
+ * The `license_commitment` to POST for a private subscription. Counterpart of
+ * `licenseKeyForSubscription` — the two are the only supported entry points, and
+ * they cannot disagree because they share `licenseServiceTag`.
+ */
+export function licenseCommitmentForSubscription(
+  masterNoteSecret: bigint | string,
+  scope: LicenseScope,
+): Uint8Array {
+  return licenseCommitment(
+    deriveLicenseSecret(masterNoteSecret, licenseServiceTag(scope.serviceId, scope.retailerAddress)),
+  );
 }
 
 /**

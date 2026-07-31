@@ -30,7 +30,7 @@ import {
 } from '@/shared/services/denominatedPool';
 import { deriveVaultPDA } from '@/shared/services/subscriptionVault';
 import { starkProver } from '@/shared/services/starkProver';
-import { licenseKeyForPrivate } from '@/shared/services/license';
+import { licenseKeyForPrivate, licenseServiceTag } from '@/shared/services/license';
 import { noteMaturity } from '@/shared/services/maturity';
 import { useLicenseStore, type LicenseEntry } from '@/shared/store/license';
 
@@ -472,12 +472,11 @@ export default function CreateSubscription() {
         // (createNormalVault also passes new Uint8Array(32) by default).
         const vkHashSubscriber = new Uint8Array(32);
 
-        // serviceId for the license-key commitment (HKDF info). Registered
-        // services pass their slug; fall back to the retailer address for a
-        // free-form recipient, so the on-chain commitment is always
-        // service-scoped and the displayed key re-derives from the same pair.
-        // MUST match the value subscribePrivate hashes into license_commitment.
-        const licenseServiceId = svc?.serviceId || recipient;
+        // Service tag for the license-key commitment (HKDF info). ONE rule,
+        // pinned across clients — see licenseServiceTag. MUST match the value
+        // subscribePrivate hashes into license_commitment AND the value any
+        // display path re-derives from, or the key verifies nowhere.
+        const licenseServiceId = licenseServiceTag(svc?.serviceId, recipient);
 
         // ── Create private vault ───────────────────────────────────────────
         setProgressMsg('Creating private vault (C1 proof + on-chain)...');
