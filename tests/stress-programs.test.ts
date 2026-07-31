@@ -544,7 +544,8 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
       shield: computeDiscriminator('shield'),
       init_denominated_pool: computeDiscriminator('init_denominated_pool'),
       shield_denominated: computeDiscriminator('shield_denominated'),
-      subscribe_normal: computeDiscriminator('subscribe_normal'),
+      // subscribe_normal removed from the program — its vault PDA was keyed on
+      // the subscriber's wallet, which published subscription membership.
       claim_period: computeDiscriminator('claim_period'),
       pause_normal: computeDiscriminator('pause_normal'),
       resume_normal: computeDiscriminator('resume_normal'),
