@@ -323,6 +323,26 @@ export interface VerifyLicenseAgainstVaultOptions extends ServiceScopedOptions {
  *
  * Prefer this over {@link verifyLicenseKey}, which answers the same question by
  * hydrating the merchant's entire subscriber book.
+ *
+ * ## Two things this does NOT check
+ *
+ * 1. **The canonical PDA.** Unlike `hasActiveVaultAccessForVault`, this takes no
+ *    subscriber ID, so there is no seed set to derive from. The account is
+ *    accepted at whatever address it is presented at, as long as `zk_shielded`
+ *    owns it and its `retailer` is the merchant. The license commitment is what
+ *    binds a key to a vault here.
+ * 2. **That the merchant ever sold this subscription.** `license_commitment` is
+ *    an instruction argument to `subscribe_normal`, whose `retailer` is an
+ *    unsigned account and whose `rate`/`interval_slots`/`amount` are chosen by
+ *    the caller. A stranger can therefore create a real, program-owned,
+ *    currently-funded vault naming this merchant, with a commitment whose
+ *    preimage they picked, for one lamport — and present the matching key. A
+ *    valid result WITHOUT `opts.service` means "a vault naming you exists, is
+ *    inside a paid-for period, and this key matches the commitment someone put
+ *    on it". Pass `opts.service` and the vault's `rate` and `interval_slots`
+ *    must equal the price and interval the service registered, which is what
+ *    turns that into "this person bought this product".
+ *    `src/self-minted-vault.test.ts` pins both.
  */
 export async function verifyLicenseAgainstVault(
   connection: Connection,

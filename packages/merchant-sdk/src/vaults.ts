@@ -447,9 +447,25 @@ export interface VaultAccessCheckOptions extends FetchVaultOptions, ServiceScope
  *     the presented address is the one the program would have created;
  *  5. the vault's subscriber ID is `subscriberIdBytes`;
  *  6. `subscriptionIsCurrent` at `currentSlot`;
- *  7. `opts.service`, when supplied — otherwise a subscription to any of this
- *     merchant's services with the same mint, price and interval passes for all
- *     of them. That gap is the merchant's to close by passing a scope.
+ *  7. `opts.service`, when supplied.
+ *
+ * ## Steps 1-6 prove the account is real, not that you sold it
+ *
+ * `subscribe_normal` is permissionless. `retailer` is an unsigned `AccountInfo`
+ * carrying `/// CHECK: Any pubkey can be a retailer`, and `rate`,
+ * `interval_slots` and `amount` are instruction arguments with only `> 0`
+ * required of each. So anyone can have the program write a genuine vault, at
+ * the canonical PDA, naming any merchant, funded with ONE lamport at one
+ * lamport per period, with an interval long enough that `periodsElapsed` never
+ * reaches `periodsPaidFor`. Steps 1-6 all pass on it — nothing there is forged.
+ * It is granted access.
+ *
+ * Step 7 is the only step that refuses it, because only the registry knows what
+ * the merchant charges. Treat `opts.service` as required in production, not as
+ * a multi-product convenience: without it this function answers "does a vault
+ * naming you exist and is it inside a period someone paid for", which a
+ * stranger can arrange for a lamport. `src/self-minted-vault.test.ts` pins both
+ * directions.
  *
  * Ambiguous scopes (two of the merchant's services indistinguishable on chain)
  * are ACCEPTED here, because the return type has nowhere to report the

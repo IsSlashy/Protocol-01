@@ -222,14 +222,29 @@ live subscription vaults, 14 had run past the periods they were funded for — a
 all 18 reported `is_active: true`. `subscriptionIsCurrent` asks the only question
 that has an answer: is the period we are in one the subscriber paid for?
 
-**Pass a `service` scope if you run more than one product.** A vault records no
-service ID — its address is `[retailer, subscriber, mint]` — so without a scope,
-a subscriber to your €5 tier passes the check for your €50 tier. `ServiceScope`
-compares the vault against the price and interval your service registered.
-If two of your services agree on retailer, mint, price *and* interval, the chain
-cannot tell them apart at all; `verifyLicenseAgainstVault` reports that as
-`ambiguousService: true`. Give each product its own `retailer` key if you need
-them separated.
+**Pass a `service` scope. Not only if you sell more than one thing.** A vault
+records no service ID — its address is `[retailer, subscriber, mint]` — and
+`subscribe_normal` is permissionless: the retailer is an unsigned account
+(`/// CHECK: Any pubkey can be a retailer`) and `rate`, `interval_slots` and
+`amount` are instruction arguments the caller picks, needing only to be greater
+than zero. So a stranger can have the program create a genuine vault, at the
+canonical PDA, naming **you** as retailer, funded with one lamport at one
+lamport per period, with a period long enough that it never elapses. That vault
+passes every check the SDK can make from the account alone — owner,
+discriminator, retailer field, canonical PDA, subscriber ID,
+`subscriptionIsCurrent` — because none of them is forged. The program wrote it.
+
+The only thing that refuses it is `service`, because only the registry knows
+what you charge. `ServiceScope` compares the vault's `rate` and `interval_slots`
+against the price and interval your service registered; the one-lamport vault
+fails on both. Without a scope you are not checking a subscription, you are
+checking that an account exists. (Pinned in `src/self-minted-vault.test.ts`,
+both directions.)
+
+Two products at the same price are a separate matter: if two of your services
+agree on retailer, mint, price *and* interval, the chain cannot tell them apart
+at all; `verifyLicenseAgainstVault` reports that as `ambiguousService: true`.
+Give each product its own `retailer` key if you need them separated.
 
 ### 3b. Reconcile the whole book — on a schedule, not per request
 
@@ -354,7 +369,7 @@ Instruction builders (`buildRegisterServiceIx`, `buildAttestServiceIx`, etc.) ar
 - **No server state required.** Access tokens are self-contained and signed — verify them anywhere.
 - **Configurable programs.** `MerchantSdkConfig` lets mainnet merchants supply the correct program IDs without forking the package.
 - **One account per question.** The default entitlement path reads the vault the request is about. The enumerating helpers are still there, deprecated for per-request use and supported for reconciliation.
-- **Nothing is trusted because a client sent it.** An account presented by a client is only decoded once its owner is confirmed to be `zk_shielded`; a vault only counts if it sits at the canonical PDA for the retailer, subscriber and mint in question.
+- **Nothing is trusted because a client sent it.** An account presented by a client is only decoded once its owner is confirmed to be `zk_shielded`. `hasActiveVaultAccessForVault` additionally requires the account to sit at the canonical PDA for the retailer, subscriber and mint in question; `verifyLicenseAgainstVault` cannot — it is given no subscriber ID, so it has no seed set to derive from, and the license commitment is what binds. Owner-checked and program-written is not the same as sold-by-you: see the `service` scope note in section 3.
 
 ## Example: complete Netflix-style integration
 
