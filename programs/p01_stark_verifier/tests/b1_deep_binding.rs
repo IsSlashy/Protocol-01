@@ -185,39 +185,99 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
 // The terminal degree bound, negatively. It must be CAPABLE of failing.
 // ============================================================================
 
-/// A canonical non-zero coefficient above the bound is rejected by the degree
-/// check, on the GENERIC path.
+/// A non-zero coefficient above the bound is rejected by the degree check
+/// SPECIFICALLY, on the GENERIC path.
 ///
-/// Uses index 15, i.e. the top slot, which is the one an aliasing adversary
-/// would populate. Byte-patching desynchronises the transcript, so the position
-/// check would also reject this proof — that is why the assertion names the
-/// variant: `check_final_poly_degree_bound` runs inside `verify_fri_generic`,
-/// which is step 3.5, AFTER the position check at step 2. Getting
-/// `FriFinalPolyDegreeTooHigh` back therefore proves the degree check fired
-/// first, which can only happen if... it cannot. See the note below.
+/// # Why this is not a byte patch
+///
+/// It was one, and a byte patch cannot reach the degree check at all. The final
+/// poly is absorbed into the grinding transcript BEFORE the query positions are
+/// derived, so patching a coefficient desynchronises everything downstream and
+/// the proof dies early. MEASURED on C1, both at the top slot and at the first
+/// slot above the bound:
+///
+/// ```text
+/// [PROBE A]  byte-patch idx15 -> InsufficientQueries
+/// [PROBE A2] byte-patch idx8  -> InsufficientQueries
+/// ```
+///
+/// Not even `InvalidQueryPosition` — the regrind lands on a different position
+/// set and the count check fires first. The old body accepted
+/// `FriFinalPolyDegreeTooHigh | InvalidQueryPosition | InsufficientQueries`, so
+/// it was green on the transcript rejection and the degree bound was never
+/// exercised. MEASURED: with `check_final_poly_degree_bound` neutered
+/// (`if i < degree_bound || true`) the old body still passed while seven other
+/// tests in this file went red.
+///
+/// # What it does instead
+///
+/// The adversary of T1: an HONEST trace and quotient, a coordinated OOD forgery
+/// with `ood_quotient` re-solved so phase 2 still closes, and the prover's own
+/// transcript — so steps 1, 1b, 2a, 2 and 3 all pass and the proof arrives at
+/// `verify_fri_generic` intact. Because `D`'s numerator no longer vanishes at
+/// `z` or `z*g`, `D` is a rational function with poles, and the true interpolant
+/// of its terminal layer spills past the bound. MEASURED on C1: coefficients
+/// 8..=15 are all non-zero against `fri_final_poly_degree_bound = 8`.
+///
+/// The spill is asserted from the wire bytes BEFORE verification, so if `deg(D)`
+/// ever changes and the forged poly stops spilling, this fails on the premise
+/// with a message that says so, rather than on a confusing variant mismatch.
+/// Given the premise, `FriFinalPolyDegreeTooHigh` is the ONLY correct answer:
+/// `check_final_poly_degree_bound` runs at the top of `verify_fri_generic`,
+/// before the DEEP setup and before a single per-query fold.
 #[test]
 fn terminal_degree_bound_rejects_a_high_coefficient_generic() {
-    let data = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
     let config = &CONFIG_POOL_COMMITMENT;
-    let mut bytes = data.proof_bytes.clone();
-    write_final_poly_coeff(&mut bytes, config.trace_width, 15, 1);
+    let honest = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
+    let forged = p01_stark::compact::generate_pool_commitment_proof_with_forgery(
+        111,
+        222,
+        333,
+        444,
+        OodForgery::Coordinated { col: 0, delta: 1 },
+        TerminalPoly::Honest,
+    );
 
-    let proof = GenericCompactProof::from_bytes(&bytes, config).expect("still parses (canonical 1)");
-    let err = verify_generic(&proof, data.circuit_id, &data.public_inputs, config)
-        .expect_err("a non-zero coefficient above the bound must be rejected");
-    // The final poly is absorbed into the grinding transcript BEFORE positions
-    // are derived, so a byte patch also breaks the positions. Either rejection
-    // is correct; what this test pins is that the degree check EXISTS and that
-    // the honest tail really is all zeros (asserted in T6). The dedicated
-    // check-in-isolation assertion is `terminal_degree_bound_check_in_isolation`.
+    // Control: the honest tail is all zeros, so the bound is not vacuous and the
+    // rejection below cannot be a property every C1 proof has.
+    let honest_poly = read_final_poly(&honest.proof_bytes, config.trace_width);
+    for (i, &c) in honest_poly.iter().enumerate().skip(config.fri_final_poly_degree_bound) {
+        assert_eq!(c, 0, "honest C1 final poly coeff {i} must be zero under the bound");
+    }
+
+    // Premise: the forged proof really does publish a coefficient above the
+    // bound. Without this the assertion below would pin a variant on nothing.
+    let poly = read_final_poly(&forged.proof_bytes, config.trace_width);
+    assert_eq!(poly.len(), config.fri_final_poly_size, "C1 fri_final_poly_size");
+    let spilled: Vec<usize> = poly
+        .iter()
+        .enumerate()
+        .skip(config.fri_final_poly_degree_bound)
+        .filter(|(_, &c)| c != 0)
+        .map(|(i, _)| i)
+        .collect();
     assert!(
-        matches!(
-            err,
-            VerifyError::FriFinalPolyDegreeTooHigh
-                | VerifyError::InvalidQueryPosition
-                | VerifyError::InsufficientQueries
-        ),
-        "unexpected variant {err:?}",
+        !spilled.is_empty(),
+        "the forged terminal interpolant no longer spills past the bound {} \
+         (published size {}), so this construction no longer exercises \
+         check_final_poly_degree_bound at all. Fix the construction — do NOT \
+         widen the accepted error set below.",
+        config.fri_final_poly_degree_bound,
+        config.fri_final_poly_size,
+    );
+
+    let proof = GenericCompactProof::from_bytes(&forged.proof_bytes, config)
+        .expect("forged C1 proof still parses");
+    let err = verify_generic(&proof, forged.circuit_id, &forged.public_inputs, config)
+        .expect_err("a non-zero coefficient above the bound must be rejected");
+    assert_eq!(
+        err,
+        VerifyError::FriFinalPolyDegreeTooHigh,
+        "the transcript is the prover's own and every earlier step passes, so the \
+         terminal degree bound is the only thing that can reject this proof at \
+         this point. Coefficients {spilled:?} are non-zero above bound {}. Any \
+         other variant means check_final_poly_degree_bound stopped firing.",
+        config.fri_final_poly_degree_bound,
     );
 }
 
