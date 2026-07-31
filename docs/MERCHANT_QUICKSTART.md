@@ -84,7 +84,8 @@ import { Connection, Keypair, SystemProgram } from '@solana/web3.js';
 import {
   registerServiceOnChain,
   pollPaymentsForRetailer,
-  listVaultsForRetailer,
+  deriveSubscriptionVaultPda,
+  hasActiveVaultAccessForVault,
   issueAccessToken,
   verifyAccessToken,
   NATIVE_SOL_MINT,
@@ -119,12 +120,26 @@ for (const r of receipts) {
   // Grant access; the memo `r.memo?.slug` ties the payment to your service.
 }
 
-// 3. Vault subscribers (recurring private subscriptions).
-const vaults = await listVaultsForRetailer(connection, retailer, { includePaused: false });
-for (const v of vaults) {
-  // v.subscriberCommitment is non-null when the vault is private (ZK).
-  // v.rate / v.intervalSlots tell you how much you can pull per period.
-}
+// 3. Vault subscribers (recurring private subscriptions). Check the ONE vault
+//    the request is about — derive its address from things you already know.
+const [vaultPda] = deriveSubscriptionVaultPda(
+  retailer,
+  subscriberIdBytes,   // 32 bytes: wallet pubkey (normal) or commitment (private)
+  NATIVE_SOL_MINT,
+);
+const vault = await hasActiveVaultAccessForVault(
+  connection, vaultPda, retailer, subscriberIdBytes,
+  // ALWAYS pass `service`. Anyone can create a vault naming you as retailer for
+  // one lamport at a rate they choose; the scope is what checks it against the
+  // price and interval YOU registered. See the merchant-sdk README, section 3.
+  { service: { retailer, tokenMint: NATIVE_SOL_MINT, priceAtomic: 50_000_000n, intervalSlots: 6_480_000n } },
+);
+if (!vault) return; // no current subscription — do not serve
+// `vault.subscriberCommitment` is non-null when the subscription is private (ZK).
+//
+// `listVaultsForRetailer` still returns your whole subscriber book for
+// reconciliation, on a timer. It is deprecated for per-request checks: it
+// hydrates every subscriber to answer a question about one of them.
 
 // 4. Issue a session token your frontend stores. No DB required.
 const token = issueAccessToken({

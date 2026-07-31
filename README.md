@@ -351,7 +351,7 @@ await client.sendPrivate({ amount: 1.5, recipient: stealthMetaAddress });
 // @protocol-01/merchant-sdk — server-side for retailers
 import {
   registerServiceOnChain, fetchService, pollPaymentsForRetailer,
-  listVaultsForRetailer, issueAccessToken, NATIVE_SOL_MINT,
+  hasActiveVaultAccessForVault, issueAccessToken, NATIVE_SOL_MINT,
 } from '@protocol-01/merchant-sdk';
 
 // Register the service (idempotent — boot-time)

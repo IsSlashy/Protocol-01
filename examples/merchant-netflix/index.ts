@@ -32,6 +32,8 @@ import {
   registerServiceOnChain,
   subscriptionIsCurrent,
   periodsPaidFor,
+  vaultMatchesService,
+  type ServiceScope,
   type MerchantRegistrationResult,
 } from '@protocol-01/merchant-sdk';
 
@@ -192,6 +194,14 @@ async function pollOnce(
   // the one vault the request is about.
   try {
     const slot = BigInt(await connection.getSlot('confirmed'));
+    // Exactly what this service registered on chain, and the only thing that
+    // distinguishes a subscription we sold from an account anyone can create.
+    const serviceScope: ServiceScope = {
+      retailer: retailer.publicKey,
+      tokenMint: SystemProgram.programId, // native SOL, as the program records it
+      priceAtomic: PRICE_LAMPORTS,
+      intervalSlots: INTERVAL_SLOTS,
+    };
     const vaults = await listVaultsForRetailer(connection, retailer.publicKey, {
       includePaused: false,
     });
@@ -210,6 +220,17 @@ async function pollOnce(
           `  – vault ${v.pda.toBase58().slice(0, 12)}… skipped: ran past the ` +
             `${periodsPaidFor(v)} period(s) it was funded for (is_active is still true)`,
         );
+        continue;
+      }
+
+      // A vault naming us proves the program wrote it, NOT that we sold it.
+      // `subscribe_normal` takes an unsigned retailer and a caller-chosen rate,
+      // interval and amount, so a stranger can create a real, "current" vault
+      // pointing at this merchant for one lamport. Check it against the price
+      // and interval this service actually registered.
+      const scoped = vaultMatchesService(v, serviceScope);
+      if (!scoped.matches) {
+        logStep(`  – vault ${v.pda.toBase58().slice(0, 12)}… skipped: ${scoped.reason}`);
         continue;
       }
 
