@@ -42,6 +42,7 @@ import {
   EXPECTED_SCHEME_FINGERPRINT,
   ZK_DERIVATION_VECTORS,
   CLASSIC_DERIVATION_VECTORS,
+  SERVICE_TAG_VECTORS,
   bytesToHex,
   hexToBytes,
   licenseCodecFingerprint,
@@ -287,6 +288,60 @@ describe('license parity: implementations agree byte-for-byte', () => {
         const s = impl.deriveLicenseSecret(v.ikm, v.serviceId);
         expect(sdk.encodeLicenseKey(s), `${name} ${v.id}`).toBe(impl.encodeLicenseKey(s));
       }
+    }
+  });
+});
+
+// ===========================================================================
+// 4. The service tag — the rule that actually broke in production
+// ===========================================================================
+
+describe('license parity: service tag', () => {
+  it('every client resolves the tag identically', () => {
+    for (const v of SERVICE_TAG_VECTORS) {
+      const tags = CLIENTS.map(([, impl]) => impl.licenseServiceTag(v.serviceId, v.retailerAddress));
+      expect(new Set(tags).size, `${v.id} → ${JSON.stringify(tags)}`).toBe(1);
+    }
+  });
+
+  it('a missing slug falls back to the retailer address, never to a local id', () => {
+    // The recorded defect: the display path fell back to the local `streamId`,
+    // a value that has never been on chain, so the key it showed could not
+    // match the commitment the subscribe path had posted.
+    const retailer = '7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU';
+    const localStreamId = 'stream_1754000000000_abc123def';
+    for (const [name, impl] of CLIENTS) {
+      for (const missing of ['', undefined, null] as const) {
+        expect(impl.licenseServiceTag(missing, retailer), name).toBe(retailer);
+        expect(impl.licenseServiceTag(missing, retailer), name).not.toBe(localStreamId);
+      }
+    }
+  });
+
+  it('poster and displayer produce the same key when they use the tag rule', () => {
+    // Full round trip on the no-slug path: subscribe posts the commitment,
+    // the card re-derives the key, the merchant SDK verifies it.
+    const retailer = '7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU';
+    const noteSecret = '9182736455647382910';
+    for (const [name, impl] of CLIENTS) {
+      const postedTag = impl.licenseServiceTag(undefined, retailer);
+      const onChain = impl.licenseCommitment(impl.deriveLicenseSecret(noteSecret, postedTag));
+      const displayedTag = impl.licenseServiceTag(undefined, retailer);
+      const displayedKey = impl.encodeLicenseKey(impl.deriveLicenseSecret(noteSecret, displayedTag));
+      expect(sdk.keyMatchesCommitment(displayedKey, onChain), name).toBe(true);
+    }
+  });
+
+  it('the old streamId fallback is demonstrably wrong', () => {
+    // Kept as a live proof of the failure, not a comment: derive with a local
+    // stream id and the merchant rejects the key.
+    const retailer = '7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU';
+    const noteSecret = '9182736455647382910';
+    const localStreamId = 'stream_1754000000000_abc123def';
+    for (const [name, impl] of CLIENTS) {
+      const onChain = impl.licenseCommitment(impl.deriveLicenseSecret(noteSecret, retailer));
+      const keyFromStreamId = impl.encodeLicenseKey(impl.deriveLicenseSecret(noteSecret, localStreamId));
+      expect(sdk.keyMatchesCommitment(keyFromStreamId, onChain), name).toBe(false);
     }
   });
 });

@@ -13,14 +13,18 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
-import { deriveLicenseSecret, encodeLicenseKey } from '@/services/license/derive';
+import { licenseKeyForSubscription } from '@/services/license/derive';
 import { loadVaultSubscriberSecret } from '@/stores/subscriptionVaultStore';
 
 export interface LicenseKeyCardProps {
   status: 'active' | 'paused' | 'completed' | 'cancelled';
-  /** Stream id — always present, used as service fallback for custom
-   *  recipients without a registered serviceId. */
-  streamId: string;
+  /**
+   * Retailer base58 address — the license service tag whenever the recipient
+   * has no Service Registry slug. This is the ONLY correct fallback: it is what
+   * the subscribe screens commit on-chain. The local stream id used to sit here
+   * and could never match, because the chain has never seen it.
+   */
+  retailerAddress: string;
   /** Registered service identifier from the Service Registry. */
   serviceId?: string;
   /** Service display name (e.g. "Disney+"). Shown in the eyebrow label. */
@@ -56,16 +60,20 @@ export function LicenseKeyCard(props: LicenseKeyCardProps) {
           if (!cancelled) setLicenseKey(null);
           return;
         }
-        const serviceTag = props.serviceId || props.streamId;
-        const licenseSecret = deriveLicenseSecret(secretDecimal, serviceTag);
-        const key = encodeLicenseKey(licenseSecret);
+        // Shares licenseServiceTag with the subscribe screens that posted
+        // license_commitment, so the two cannot resolve the service tag
+        // differently. Anything else shows a key the merchant must reject.
+        const key = licenseKeyForSubscription(secretDecimal, {
+          serviceId: props.serviceId,
+          retailerAddress: props.retailerAddress,
+        });
         if (!cancelled) setLicenseKey(key);
       } catch {
         if (!cancelled) setLicenseKey(null);
       }
     })();
     return () => { cancelled = true; };
-  }, [props.vaultAddress, props.streamId, props.serviceId]);
+  }, [props.vaultAddress, props.retailerAddress, props.serviceId]);
 
   if (!licenseKey) return null;
 

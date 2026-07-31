@@ -19,6 +19,7 @@ import { getConnection } from '../../../services/solana/connection';
 import { getKeypair } from '../../../services/solana/wallet';
 import { sendSolPrivate } from '../../../services/solana/transactions';
 import { deriveStealthAddressSimple } from '../../../utils/crypto/stealth';
+import { licenseServiceTag } from '../../../services/license/derive';
 import { useStarkProver } from '../../../providers/StarkProverProvider';
 import { withKeepAwake } from '../../../utils/keepAwakeDuring';
 import {
@@ -399,11 +400,10 @@ function SubscribeContent() {
           },
           c3ProofData,
           clientStealthMeta,
-          // serviceId for the license-key commitment (HKDF info). Registered
-          // services pass their slug; fall back to the retailer address when a
-          // free-form recipient has no slug, so the commitment is always
-          // service-scoped and the LicenseKeyCard can re-derive the same key.
-          serviceId || retailerPubkey.toBase58(),
+          // Service tag for the license-key commitment (HKDF info). ONE rule,
+          // shared with LicenseKeyCard — see licenseServiceTag. Inlining the
+          // fallback on both sides is what let them drift apart.
+          licenseServiceTag(serviceId, retailerPubkey.toBase58()),
         );
         sig = subscribeResult.signature;
         vaultAddress = subscribeResult.vaultAddress;

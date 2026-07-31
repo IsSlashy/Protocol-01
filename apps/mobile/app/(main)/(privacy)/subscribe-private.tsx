@@ -28,6 +28,7 @@ import {
 } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
+import { licenseServiceTag } from '@/services/license/derive';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
@@ -284,11 +285,10 @@ export default function SubscribePrivateScreen() {
           proofSize: c3Result.proofSize,
         },
         undefined, // clientStealthMeta — not used on this direct private flow
-        // serviceId for the license-key commitment. This screen has no Service
-        // Registry slug (free-form retailer), so the retailer address is the
-        // stable service identifier. The LicenseKeyCard re-derives the key from
-        // the same (subscriberSecret, serviceId) pair.
-        retailerKey.toBase58(),
+        // Service tag for the license-key commitment. This screen has no
+        // Service Registry slug (free-form retailer), so the rule resolves to
+        // the retailer address — the same value LicenseKeyCard now uses.
+        licenseServiceTag(undefined, retailerKey.toBase58()),
       );
 
       if (__DEV__) {
