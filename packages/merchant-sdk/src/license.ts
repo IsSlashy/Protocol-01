@@ -2,6 +2,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { blake3 } from '@noble/hashes/blake3.js';
 import { listVaultsForRetailer, type SubscriptionVaultAccount, type ListVaultsOptions } from './vaults';
 import { periodsPaidFor, subscriptionIsCurrent } from './claim';
+import { type ServiceScope, vaultMatchesService } from './service-scope';
 
 /**
  * Protocol 01 subscription **license keys** — commitment scheme.
@@ -197,9 +198,33 @@ export interface VerifyLicenseKeyResult {
   reason?: string;
   /** The active vault whose commitment matched, when valid. */
   vault?: SubscriptionVaultAccount;
+  /**
+   * Valid, but the supplied `service` scope cannot tell this service apart from
+   * another of the merchant's: same retailer, mint, price and interval. Grant
+   * access if you like, but the chain does not distinguish the two products.
+   */
+  ambiguousService?: boolean;
 }
 
-export interface VerifyLicenseKeyOptions extends Omit<ListVaultsOptions, 'includeInactive'> {}
+/** Options common to both license verification paths. */
+export interface ServiceScopedOptions {
+  /**
+   * Registry facts for the service the key is being presented FOR. Supply this
+   * and `serviceId` becomes enforceable; omit it and the key is only checked
+   * against the merchant, so a key issued for one of the merchant's services
+   * verifies against any other that shares a retailer and mint.
+   */
+  service?: ServiceScope;
+  /**
+   * The merchant's other services, used only to report when `service` cannot
+   * discriminate. Cheap to pass if the merchant already caches its registry.
+   */
+  otherServices?: ServiceScope[];
+}
+
+export interface VerifyLicenseKeyOptions
+  extends Omit<ListVaultsOptions, 'includeInactive'>,
+    ServiceScopedOptions {}
 
 /**
  * Verify a presented license key for THIS merchant + serviceId by enumerating
@@ -223,7 +248,12 @@ export async function verifyLicenseKey(
   serviceId: string,
   opts: VerifyLicenseKeyOptions = {},
 ): Promise<VerifyLicenseKeyResult> {
-  void serviceId;
+  // `serviceId` is only enforceable when the caller supplies the service's
+  // registry facts — the vault records no service identifier. Without a scope
+  // this argument cannot be honoured, and saying so beats the silent `void`
+  // that let a key for one service verify against another. See ServiceScope.
+  const scope = opts.service;
+  if (!scope) void serviceId;
   let secret: Uint8Array;
   try {
     secret = decodeLicenseKey(presentedKey);
@@ -256,10 +286,19 @@ export async function verifyLicenseKey(
       vault: matched,
     };
   }
+  if (scope) {
+    const m = vaultMatchesService(matched, scope, { otherServices: opts.otherServices });
+    if (!m.matches) {
+      return { valid: false, reason: `key is not scoped to "${serviceId}": ${m.reason}`, vault: matched };
+    }
+    if (m.ambiguous) {
+      return { valid: true, vault: matched, ambiguousService: true };
+    }
+  }
   return { valid: true, vault: matched };
 }
 
-export interface VerifyLicenseAgainstVaultOptions {
+export interface VerifyLicenseAgainstVaultOptions extends ServiceScopedOptions {
   /** SDK config; forwarded to the vault decoder/program-id resolution if needed. */
   sdkConfig?: import('./config').MerchantSdkConfig;
 }
@@ -279,8 +318,12 @@ export async function verifyLicenseAgainstVault(
   serviceId: string,
   opts: VerifyLicenseAgainstVaultOptions = {},
 ): Promise<VerifyLicenseKeyResult> {
-  void serviceId;
-  void opts;
+  // `serviceId` is only enforceable when the caller supplies the service's
+  // registry facts — the vault records no service identifier. Without a scope
+  // this argument cannot be honoured, and saying so beats the silent `void`
+  // that let a key for one service verify against another. See ServiceScope.
+  const scope = opts.service;
+  if (!scope) void serviceId;
   let secret: Uint8Array;
   try {
     secret = decodeLicenseKey(presentedKey);
@@ -317,6 +360,13 @@ export async function verifyLicenseAgainstVault(
   }
   if (!bytesEqual(licenseCommitment(secret), vault.licenseCommitment)) {
     return { valid: false, reason: 'license key does not match this vault', vault };
+  }
+  if (scope) {
+    const m = vaultMatchesService(vault, scope, { otherServices: opts.otherServices });
+    if (!m.matches) {
+      return { valid: false, reason: `key is not scoped to "${serviceId}": ${m.reason}`, vault };
+    }
+    if (m.ambiguous) return { valid: true, vault, ambiguousService: true };
   }
   return { valid: true, vault };
 }

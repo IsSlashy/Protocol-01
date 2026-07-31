@@ -30,6 +30,7 @@ export * from './vaults';
 export * from './access-token';
 export * from './license';
 export * from './claim';
+export * from './service-scope';
 
 // Re-export the lower-level registry helpers so merchants only need one dep.
 export {
