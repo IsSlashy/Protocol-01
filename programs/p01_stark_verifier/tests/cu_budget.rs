@@ -1314,6 +1314,33 @@ const PROSE_FIGURES: [(u64, &str); 6] = [
     (78_517, "measured C6 proof bytes — printed by the size table each run, not pinned"),
 ];
 
+/// Every figure the constants in this file produce, in every form prose quotes
+/// them in: the pins, the computed ceilings, the per-circuit totals, the two
+/// caps and the band.
+fn allowed_figures() -> Vec<u64> {
+    let mut allowed: Vec<u64> = vec![
+        MAX_CU_PER_IX,
+        UNIFORM_PROOF_SIZE as u64,
+        CU_BAND_ROUNDING,
+        CU_BAND_NUMERATOR,
+    ];
+    for c in CU_CEILINGS.iter() {
+        allowed.push(c.phase1_measured);
+        allowed.push(c.phase1_max);
+        if let Some(m) = c.phase2_measured {
+            allowed.push(m);
+            allowed.push(c.phase1_measured + m);
+        }
+        if let Some(m) = c.phase2_max {
+            allowed.push(m);
+        }
+    }
+    for (_, _, cu, _) in INFERRED.iter() {
+        allowed.push(*cu);
+    }
+    allowed
+}
+
 /// Every comment line in this file, marker stripped and whitespace collapsed, so
 /// a sentence wrapped across three `///` lines matches as one string.
 fn comment_prose() -> String {
@@ -1446,26 +1473,7 @@ fn cu_ceiling_prose_matches_the_constants() {
     }
 
     // --- no unexplained figure anywhere in the prose ------------------------
-    let mut allowed: Vec<u64> = vec![
-        MAX_CU_PER_IX,
-        UNIFORM_PROOF_SIZE as u64,
-        CU_BAND_ROUNDING,
-        CU_BAND_NUMERATOR,
-    ];
-    for c in CU_CEILINGS.iter() {
-        allowed.push(c.phase1_measured);
-        allowed.push(c.phase1_max);
-        if let Some(m) = c.phase2_measured {
-            allowed.push(m);
-            allowed.push(c.phase1_measured + m);
-        }
-        if let Some(m) = c.phase2_max {
-            allowed.push(m);
-        }
-    }
-    for (_, _, cu, _) in INFERRED.iter() {
-        allowed.push(*cu);
-    }
+    let allowed = allowed_figures();
 
     for (figure, why) in PROSE_FIGURES.iter() {
         assert!(
@@ -1496,6 +1504,88 @@ fn cu_ceiling_prose_matches_the_constants() {
          re-pin that moved only prose. Either it is a real pin — put it in CU_CEILINGS and \
          let the prose quote it — or it is historical/illustrative, in which case add it to \
          PROSE_FIGURES with the reason it is there."
+    );
+}
+
+/// The workflow that runs this gate, embedded at COMPILE time — same reasoning
+/// as `MOBILE_STARK_TS`: moving or renaming it must be a build failure here, not
+/// a check that silently stops checking.
+const CI_WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yml");
+
+/// Comma-grouped figures in `ci.yml` that sit inside the CU range but are not CU
+/// pins. Same contract as `PROSE_FIGURES`: a reason each, checked both ways.
+///
+/// Deliberately SEPARATE from `PROSE_FIGURES` rather than layered on top of it.
+/// MEASURED while building this: with `PROSE_FIGURES` also accepted here,
+/// rewriting ci.yml's `538,666` to the stale `538,720` that this file quotes as
+/// a historical mistake passed green — one file's list of known-wrong numbers
+/// had become another file's permission to print them.
+const CI_FIGURES: [(u64, &str); 3] = [
+    (328_344, "p01_liquidity .so byte size, deep_ali_gate step — a size, not a CU pin"),
+    (344_552, "p01_zkspl .so byte size, same step"),
+    (1_399_000, "illustrative: what C0 could have become before a ceiling existed"),
+];
+
+/// `ci.yml` holds the only OTHER copy of a CU pin in this repo, and it is prose.
+///
+/// The `[CU]` block in the workflow explains the gate by quoting C0's phase-1
+/// figure. That copy is exactly as capable of going stale as the one this file
+/// used to carry, and further from anyone who would notice — so it is checked
+/// against the same constants.
+///
+/// Scope: figures between the smallest recorded pin and the per-instruction cap,
+/// which is the range a CU pin can occupy. Both bounds are DERIVED from
+/// `CU_CEILINGS` and `MAX_CU_PER_IX`, not chosen. Byte sizes, chunk counts and
+/// warning counts fall outside it and are none of this test's business.
+#[test]
+fn cu_ceiling_ci_workflow_cannot_hold_a_stale_copy_of_a_pin() {
+    let floor = CU_CEILINGS
+        .iter()
+        .flat_map(|c| [Some(c.phase1_measured), c.phase2_measured])
+        .flatten()
+        .min()
+        .expect("CU_CEILINGS is non-empty");
+    let allowed = allowed_figures();
+
+    let found = comma_grouped_numbers(CI_WORKFLOW);
+    assert!(
+        !found.is_empty(),
+        "no comma-grouped figure found in ci.yml at all — this check is reading the wrong \
+         file, or the workflow moved, and it is now vacuous"
+    );
+    assert!(
+        found.iter().any(|(_, v)| *v == MAX_CU_PER_IX),
+        "ci.yml no longer names the {} CU cap; this check is probably pointed at the wrong \
+         block and would pass vacuously",
+        thousands(MAX_CU_PER_IX),
+    );
+
+    for (figure, why) in CI_FIGURES.iter() {
+        assert!(
+            !allowed.contains(figure),
+            "CI_FIGURES lists {} ({why}) but a constant now produces it — drop the entry",
+            thousands(*figure),
+        );
+        assert!(
+            found.iter().any(|(_, v)| v == figure),
+            "CI_FIGURES lists {} ({why}) but ci.yml does not contain it any more. Delete \
+             the entry rather than leave an allowlist of numbers nobody wrote.",
+            thousands(*figure),
+        );
+    }
+
+    let stale: Vec<String> = found
+        .into_iter()
+        .filter(|(_, v)| *v >= floor && *v <= MAX_CU_PER_IX)
+        .filter(|(_, v)| !allowed.contains(v) && !CI_FIGURES.iter().any(|(f, _)| f == v))
+        .map(|(tok, _)| tok)
+        .collect();
+    assert!(
+        stale.is_empty(),
+        ".github/workflows/ci.yml quotes these CU-range figures, and no constant in \
+         CU_CEILINGS produces them: {stale:?}\n\
+         The workflow comment is a second copy of the pins. If a pin moved, move it there \
+         too; if the figure is not a CU pin at all, add it to CI_FIGURES with the reason."
     );
 }
 
