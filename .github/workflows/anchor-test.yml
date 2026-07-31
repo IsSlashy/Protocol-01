@@ -149,10 +149,34 @@ jobs:
       # Also run by ci.yml, which is the workflow the founder actually runs;
       # duplicated here because this job triggers on `programs/**` and already
       # has the toolchain.
+      #
+      # [TOOLCHAIN] `active_release` is a symlink the installer owns, and
+      # `test -x` on it catches a MISSING compiler, not a wrong one. The path is
+      # now resolved and the resolved binary is required to report the
+      # `SOLANA_VERSION` this job installed, so a re-aimed symlink or a
+      # differently-provisioned runner fails here instead of silently compiling
+      # the gate with another platform-tools.
+      #
+      # It asserts THIS job's pin, not `CU_MEASURED_WITH`. This job runs no CU
+      # measurement, and its pin (2.2.14) is not the 3.1.9 in `Anchor.toml:3`
+      # that ci.yml installs and checks. These two harnesses assert an
+      # accept/reject decision, which is a property of the program rather than of
+      # the bytecode, so the gap is tolerable — but it is a gap, and reconciling
+      # the two pins is a call for the owner, not something to slip in under a
+      # guard commit.
       - name: cargo test (proof-buffer DEEP-ALI gate + prefund payout binding, real SBF bytecode)
         run: |
-          export P01_CARGO_BUILD_SBF="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
-          test -x "$P01_CARGO_BUILD_SBF" || { echo "cargo-build-sbf missing at $P01_CARGO_BUILD_SBF"; exit 1; }
+          LINK="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
+          test -x "$LINK" || { echo "cargo-build-sbf missing at $LINK"; exit 1; }
+          export P01_CARGO_BUILD_SBF="$(readlink -f "$LINK")"
+          test -x "$P01_CARGO_BUILD_SBF" || { echo "$LINK resolves to $P01_CARGO_BUILD_SBF, which is not executable"; exit 1; }
+          got="$("$P01_CARGO_BUILD_SBF" --version 2>&1 | tr '\n' ' ' | tr -s ' ')"
+          echo "cargo-build-sbf : $P01_CARGO_BUILD_SBF"
+          echo "--version       : $got"
+          case "$got" in
+            *"$SOLANA_VERSION"*) ;;
+            *) echo "::error title=SBF toolchain drift::this job installed Solana v$SOLANA_VERSION but active_release resolves to a cargo-build-sbf reporting '$got'. The gate below would be compiled by an unpinned compiler."; exit 1 ;;
+          esac
           cargo test -p p01_liquidity --test deep_ali_gate -- --nocapture
           cargo test -p p01_zkspl --test deep_ali_gate -- --nocapture
 

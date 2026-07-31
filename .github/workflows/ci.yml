@@ -229,10 +229,27 @@ jobs:
       # downstream would be gated against bytecode from a different platform-tools,
       # and that is precisely the ambiguity this job no longer carries. Fix it by
       # re-measuring and re-pinning CU_CEILINGS, not by deleting this step.
+      #
+      # `active_release` is a SYMLINK the Solana installer owns, so the thing this
+      # step version-checks is not a fixed path. Two consequences, both closed here:
+      #   * The symlink is RESOLVED (`readlink -f`) and the concrete versioned path
+      #     is what gets checked, so the check names a real binary rather than a
+      #     pointer that could be re-aimed after it passed.
+      #   * That resolved path is exported to `$GITHUB_ENV` as `P01_CARGO_BUILD_SBF`,
+      #     and every later step that builds SBF CONSUMES it instead of re-deriving
+      #     `active_release` for itself. Before, three steps each spelled the symlink
+      #     path out independently and only this one checked a version — a one-sided
+      #     edit to any of the other two reached an unchecked compiler with a green
+      #     `test -x`. There is now one source of truth, and the consumers fail
+      #     closed if it is unset (i.e. if this step is ever removed) rather than
+      #     falling back to whatever `cargo-build-sbf` is on PATH.
       - name: Assert the SBF compiler is the one CU_CEILINGS was measured with
         run: |
-          SBF="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
-          test -x "$SBF" || { echo "cargo-build-sbf missing at $SBF"; exit 1; }
+          LINK="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
+          test -x "$LINK" || { echo "cargo-build-sbf missing at $LINK"; exit 1; }
+          SBF="$(readlink -f "$LINK")"
+          test -x "$SBF" || { echo "cargo-build-sbf at $LINK resolves to $SBF, which is not executable"; exit 1; }
+          echo "active_release resolves to : $SBF"
           got="$("$SBF" --version 2>&1 | tr '\n' ' ' | tr -s ' ' | sed -e 's/^ *//' -e 's/ *$//')"
           want="$(sed -n 's/^const CU_MEASURED_WITH: &str = "\(.*\)";$/\1/p' programs/p01_stark_verifier/tests/cu_budget.rs)"
           echo "cargo-build-sbf --version : $got"
@@ -245,6 +262,7 @@ jobs:
             echo "::error title=SBF toolchain drift::CU_CEILINGS was measured with '$want', this runner has '$got'. CU is a property of bytecode, so the CU gate downstream would be red for two possible reasons with no way to tell them apart. Re-measure and re-pin CU_CEILINGS with this compiler, or restore the pinned one."
             exit 1
           fi
+          echo "P01_CARGO_BUILD_SBF=$SBF" >> "$GITHUB_ENV"
 
       - name: Cache Solana platform-tools
         uses: actions/cache@v4
@@ -421,10 +439,13 @@ jobs:
           cargo test -p p01_liquidity --lib
           cargo test -p p01_zkspl --lib
 
-      # P01_CARGO_BUILD_SBF is set explicitly rather than left to the harness's
-      # PATH fallback: a silent fallback to a different tool is the kind of
-      # thing that turns a gate into a coin flip. `test -x` fails the job if the
-      # install step did not produce it.
+      # P01_CARGO_BUILD_SBF comes from the assert step above, already resolved
+      # past `active_release` and already version-checked against
+      # CU_MEASURED_WITH. It is NOT re-derived here: a second spelling of the
+      # symlink path is a second place to drift, and the harness's PATH fallback
+      # means a silent fallback to a different tool is the kind of thing that
+      # turns a gate into a coin flip. Unset means the assert step is gone, so
+      # this fails rather than reaching an unchecked compiler.
       #
       # These two moved from 2.2.14 to 3.1.9 as a side effect of the install pin
       # above. They assert an accept/reject decision rather than a cost, so the
@@ -434,7 +455,7 @@ jobs:
       # p01_zkspl exit 0, 344,552 B .so.
       - name: cargo test (proof-buffer + payout gates, real SBF bytecode under litesvm)
         run: |
-          export P01_CARGO_BUILD_SBF="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
+          test -n "$P01_CARGO_BUILD_SBF" || { echo "::error title=SBF compiler not asserted::P01_CARGO_BUILD_SBF is unset, so the step that version-checks the SBF compiler against CU_MEASURED_WITH did not run. Restore it — do not re-derive the path here."; exit 1; }
           test -x "$P01_CARGO_BUILD_SBF" || { echo "cargo-build-sbf missing at $P01_CARGO_BUILD_SBF"; exit 1; }
           cargo test -p p01_liquidity --test deep_ali_gate -- --nocapture
           cargo test -p p01_zkspl     --test deep_ali_gate -- --nocapture
@@ -495,7 +516,7 @@ jobs:
       # gitignored, and a missing artifact is a panic by design, so it cannot run here.
       - name: cargo test (CU budget — measured CU + proof bytes, self-built SBF bytecode)
         run: |
-          export P01_CARGO_BUILD_SBF="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
+          test -n "$P01_CARGO_BUILD_SBF" || { echo "::error title=SBF compiler not asserted::P01_CARGO_BUILD_SBF is unset, so the step that version-checks the SBF compiler against CU_MEASURED_WITH did not run. Restore it — do not re-derive the path here."; exit 1; }
           test -x "$P01_CARGO_BUILD_SBF" || { echo "cargo-build-sbf missing at $P01_CARGO_BUILD_SBF"; exit 1; }
           cargo test -p p01_stark_verifier --release --test cu_budget \
             -- --nocapture --test-threads=1 \
