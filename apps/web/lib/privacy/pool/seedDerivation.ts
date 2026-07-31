@@ -90,9 +90,21 @@
  * that list changes under a different passphrase, and that all five are
  * byte-identical to today when no passphrase is set.
  *
- * NOT covered, and deliberately so: `relayEphemeralRecovery.deriveEphemeralForRelay`
- * keys off a random per-device seed in SecureStore, never off the wallet
- * signature. Shor does not reach it. It is also not used by the /pay pool path.
+ * NOT covered, because neither derives from the wallet signature and Shor
+ * therefore does not reach either:
+ *
+ *   relayEphemeralRecovery.deriveEphemeralForRelay — used by
+ *     `denominatedPool.transferDenominatedStarkV3` (line 2020). Its IKM is a
+ *     random per-device seed and its job id is `crypto.getRandomValues`, so the
+ *     wallet key says nothing about it. It carries transient proof-buffer float,
+ *     never a note secret. (Separately, and already documented in
+ *     `shieldEphemeral.ts:79-84`, that randomness is why it is NOT re-derivable
+ *     after a reload inside a Worker — which is why the shield path does not use it.)
+ *
+ *   denominatedPool.transferDenominatedStarkV3 recipient notes — minted at lines
+ *     1875-1876 with `secureRandomU64()`, i.e. CSPRNG, not seed-derived. A
+ *     transfer's bearer note was never derivable from the signature and is not
+ *     derivable from the passphrase either.
  */
 
 import { sha256 } from '@noble/hashes/sha2.js';
