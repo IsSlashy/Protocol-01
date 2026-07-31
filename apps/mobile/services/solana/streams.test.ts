@@ -15,7 +15,8 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import AsyncStorage from '../../test/__mocks__/async-storage';
-import { createStream, processStreamPayment, getStream, pauseStream, updateStream } from './streams';
+import { createStream, processStreamPayment, getStream, pauseStream, updateStream, mapVaultStatusToStream } from './streams';
+import type { VaultInfo } from '../subscriptionVault';
 
 // ===================================================================
 // Static module mocks
@@ -314,5 +315,63 @@ describe('Streams Service -- Payment Guard Conditions', () => {
     const { sendSol } = await import('./transactions');
     expect(sendSol).not.toHaveBeenCalled();
     expect((await getStream(stream.id))?.status).toBe('completed');
+  });
+});
+
+
+// ===================================================================
+// Vault -> StreamStatus mapping
+// ===================================================================
+
+/** 500,000 lamports at 100,000/period buys 5 periods, of 100 slots each. */
+function vaultAt(over: Partial<VaultInfo> = {}): VaultInfo {
+  return {
+    address: 'Vau1t1111111111111111111111111111111111111',
+    subscriberPubkey: null,
+    subscriberCommitment: null,
+    retailer: 'Reta11er111111111111111111111111111111111',
+    tokenMint: '11111111111111111111111111111111',
+    totalDeposited: 500_000n,
+    rate: 100_000n,
+    intervalSlots: 100n,
+    startSlot: 1_000n,
+    claimedPeriods: 0n,
+    isActive: true,
+    isPaused: false,
+    pauseSlot: null,
+    totalPausedSlots: 0n,
+    sourcePool: null,
+    isNormalMode: true,
+    isPrivateMode: false,
+    clientStealthMeta: null,
+    ...over,
+  };
+}
+
+describe('mapVaultStatusToStream', () => {
+  it('files a subscription still inside its funded periods as active', () => {
+    expect(mapVaultStatusToStream(vaultAt(), 1_250)).toBe('active');
+  });
+
+  it('THE BUG: an exhausted vault is completed, not active', () => {
+    // isActive is still true here — the program never writes it false — so the
+    // old `vault.isActive ? 'active' : 'cancelled'` filed this as active.
+    const v = vaultAt();
+    expect(v.isActive).toBe(true);
+    expect(mapVaultStatusToStream(v, 1_500)).toBe('completed');
+  });
+
+  it('still reports paused', () => {
+    expect(mapVaultStatusToStream(vaultAt({ isPaused: true }), 1_500)).toBe('paused');
+  });
+
+  it('stays active when no slot could be fetched, rather than guessing', () => {
+    // `cancelled` would be sticky: loadStreams re-applies the cancelled-ids
+    // list on every load, so a wrong guess here would never self-correct.
+    expect(mapVaultStatusToStream(vaultAt(), null)).toBe('active');
+  });
+
+  it('reports cancelled only when the account itself says inactive', () => {
+    expect(mapVaultStatusToStream(vaultAt({ isActive: false }), 1_250)).toBe('cancelled');
   });
 });

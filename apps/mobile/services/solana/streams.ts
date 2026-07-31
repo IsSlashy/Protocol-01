@@ -13,6 +13,7 @@ import {
   applyTimingNoise,
   ensurePaymentNotSkipped,
 } from '../../utils/privacy/timingNoise';
+import { entitlementStatus } from '../subscriptionVault';
 
 // Stream status types
 export type StreamStatus = 'active' | 'paused' | 'completed' | 'cancelled' | 'failed';
@@ -446,6 +447,31 @@ export async function updateStream(streamId: string, updates: Partial<Stream>): 
 }
 
 /**
+ * Map a decoded `SubscriptionVault` onto a `StreamStatus`.
+ *
+ * Deliberately does not consult `vault.isActive`. The program writes that
+ * `true` at `subscribe_normal.rs:120` / `subscribe_private_stark.rs:395` and
+ * `false` NOWHERE, so an exhausted subscription reports `true` for ever; a
+ * recovered vault whose five periods had all elapsed used to be filed as
+ * `active`. A subscription that ran out of the periods it paid for is
+ * `completed`, which is a state this list already has.
+ *
+ * `currentSlot` may be `null` when the caller could not reach an RPC. Nothing
+ * can be concluded then, so it stays `active` and the next sync corrects it —
+ * writing `cancelled` on an unknown would be sticky, because `loadStreams`
+ * re-applies the cancelled-ids list on every load.
+ */
+export function mapVaultStatusToStream(
+  vault: import('../subscriptionVault').VaultInfo,
+  currentSlot: number | null,
+): StreamStatus {
+  if (!vault.isActive) return 'cancelled';
+  if (vault.isPaused) return 'paused';
+  if (currentSlot === null) return 'active';
+  return entitlementStatus(vault, currentSlot) === 'ended' ? 'completed' : 'active';
+}
+
+/**
  * Synthesize a local Stream record from an on-chain SubscriptionVault.
  *
  * Cross-device recovery: when we discover a vault on a new device by scanning
@@ -487,11 +513,14 @@ export async function upsertStreamFromVault(
   const claimedPeriods = Number(vault.claimedPeriods);
   const intervalMs = getIntervalMs(frequency, customIntervalDays);
   const now = Date.now();
-  const status: StreamStatus = vault.isPaused
-    ? 'paused'
-    : vault.isActive
-    ? 'active'
-    : 'cancelled';
+  // NOT `vault.isActive`: the program writes that `true` at subscribe and
+  // `false` NOWHERE, so a subscription that has spent every period it paid for
+  // reports `true` for ever and would land in the Streams list as `active`.
+  // `entitlementStatus` needs a slot; without one it answers 'unknown', and an
+  // imported subscription whose state cannot be established is better recorded
+  // as `active` and corrected on the next sync than as `cancelled`, which the
+  // cancelled-ids list would then make sticky.
+  const status: StreamStatus = mapVaultStatusToStream(vault, opts?.currentSlot ?? null);
 
   const stream: Stream = {
     id: generateId(),
