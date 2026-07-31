@@ -250,23 +250,31 @@ const amountCommitment = poseidon([transferAmount, amountSalt]);`,
     i18nKey: "subscriptionVaults",
     icon: <Zap className="w-6 h-6" />,
     detailCount: 6,
-    codeExample: `// Retailer creates a subscription vault
-await program.methods.initSubscriptionVault(
-  amount,       // per-period amount (lamports or token units)
-  interval,     // seconds between payments
-  tokenMint     // SOL (system_program::ID) or SPL token
-).accounts({ vault, retailer }).rpc();
+    codeExample: `// The subscriber opens the vault, funded from a note already in the
+// denominated pool. There is no retailer-side init and no wallet-keyed
+// variant: the vault PDA is seeded on subscriberCommitment, so the
+// address does not name the payer. That commitment is a caller-supplied
+// label, NOT proof-bound on chain — the client is what keeps a wallet
+// pubkey out of it.
+await program.methods.subscribePrivateStark(
+  nullifier,             // [u8;32] spends the funding note
+  merkleRoot,            // [u8;32] pool root the note is proven against
+  minEpoch,              // u64
+  subscriberCommitment,  // [u8;32] PDA seed — never the wallet
+  rate,                  // u64 per-period amount
+  intervalSlots,         // u64 slots between periods
+  vkHashSubscriber,      // [u8;32]
+  starkCommitment,       // u64
+  clientStealthMeta,     // Option<[u8;64]> refund route, or null
+  licenseCommitment      // Option<[u8;32]>, or null
+).accounts({
+  payer, retailer, vault, denominatedPool, merkleTree,
+  nullifierRecord, c1ProofBuffer, c3ProofBuffer, systemProgram,
+}).rpc();
 
-// Subscriber joins. The vault is keyed on a commitment to a secret the
-// subscriber holds, never on their wallet, so the vault address does not
-// reveal who is paying. There is no wallet-keyed variant.
-await program.methods.subscribePrivateStark(subscriberCommitment)
-  .accounts({ vault, proofBuffer, pool })
-  .rpc();
-
-// Retailer claims a payment period
+// Retailer claims accrued periods (retailer signs)
 await program.methods.claimPeriod()
-  .accounts({ vault, subscriberRecord, retailer })
+  .accounts({ retailer, vault, systemProgram })
   .rpc();`,
   },
   {
