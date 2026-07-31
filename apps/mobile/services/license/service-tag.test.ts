@@ -44,8 +44,14 @@ const bytesToHex = (b: Uint8Array) =>
     .join('');
 
 /**
- * What subscribe posts on-chain. Same function the subscribe path calls, so a
- * change there is caught here — not a re-implementation of it.
+ * The commitment for a given (secret, tag) pair.
+ *
+ * NOT the function the subscribe path calls: subscribe.tsx resolves the tag
+ * with `licenseServiceTag` and hands the string to `subscriptionVaultStore`,
+ * which hashes it there. Both routes share `deriveLicenseSecret`, so this
+ * pins the DERIVATION the poster performs — it does not pin the wiring.
+ * `stream-scope.test.ts` covers the persistence hand-off; the store's own
+ * call remains uncovered.
  */
 function commitmentPostedBySubscribe(noteSecret: string, serviceId: string | undefined): Uint8Array {
   return licenseCommitmentForSubscription(noteSecret, { serviceId, retailerAddress: RETAILER });
