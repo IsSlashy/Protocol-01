@@ -906,9 +906,15 @@ struct CuCeiling {
 /// be served from cache, and the rebuild landed on the same sha256 as the build
 /// it replaced, byte for byte — the artifact is reproducible on this toolchain.
 ///
-/// Every one of the thirteen numbers below is a `compute_units_consumed` from
-/// that run, and that run reproduces all thirteen: the `vs measured` column
-/// prints `+0` on all seven rows.
+/// Every one of the 13 numbers below is a `compute_units_consumed` from that
+/// run, and that run reproduces all 13: the `vs measured` column prints `+0` on
+/// all 13 pins.
+///
+/// That sentence used to say "all seven rows", because only phase 1 HAD a
+/// `vs measured` column — the six phase-2 pins were asserted against their
+/// ceiling and printed nowhere, so six of the thirteen numbers this block claims
+/// were reproduced could not be seen to have been. Both phases are tabulated
+/// now.
 ///
 /// # There is no historical column here, on purpose
 ///
@@ -1185,6 +1191,92 @@ fn cu_ceiling_check_rejects_a_regression_and_accepts_the_recorded_numbers() {
     );
 }
 
+/// Every verdict this file can print, exercised. A verdict function that can
+/// only say `ok` and `OVER` is what the phase-1 table shipped with while its own
+/// doc claimed it printed `IMPROVED`.
+///
+/// Named with the `cu_ceiling` prefix so `ci.yml`'s test-name filter picks it up
+/// without editing the workflow.
+#[test]
+fn cu_ceiling_verdict_separates_a_movement_from_a_breach() {
+    let (rec, max) = (100_000u64, 102_000u64);
+    assert_eq!(pin_verdict(rec, rec, max), "ok", "reproducing the pin is not drift");
+    assert_eq!(pin_verdict(rec - 1, rec, max), "IMPROVED");
+    assert_eq!(pin_verdict(rec + 1, rec, max), "DRIFT", "up but under the ceiling is drift");
+    assert_eq!(
+        pin_verdict(max, rec, max),
+        "DRIFT",
+        "the ceiling is inclusive — at the ceiling is still not a violation"
+    );
+    assert_eq!(pin_verdict(max + 1, rec, max), "OVER");
+}
+
+/// A phase-2 movement must be VISIBLE, not merely under the ceiling.
+///
+/// This is the defect this commit exists for. `check_cu_ceilings` asserts phase
+/// 2 against a 2% ratchet and printed no phase-2 table at all, so any movement
+/// inside the band produced no output whatsoever: nothing to diff, nothing to
+/// notice. The assertion below is on the RENDERED table, because "the number is
+/// in a struct field somewhere" is not observability.
+#[test]
+fn cu_ceiling_phase2_movement_shows_up_in_the_printed_table() {
+    // The recorded numbers, with C5's phase 2 moved +37 CU — well inside its 2%
+    // ceiling, so the gate stays green and only the drift column can show it.
+    let rows: Vec<CircuitRow> = CU_CEILINGS
+        .iter()
+        .map(|c| {
+            let ph2 = match c.phase2_measured {
+                Some(cu) if c.circuit_id == 5 => Measured::Ok(cu + 37),
+                Some(cu) => Measured::Ok(cu),
+                None => Measured::NotApplicable("C0 has no phase-2 ix"),
+            };
+            synthetic_row(c.circuit_id, Measured::Ok(c.phase1_measured), ph2)
+        })
+        .collect();
+
+    let report = ceiling_report(&rows, None);
+    assert!(
+        report.violations.is_empty(),
+        "+37 CU is inside the 2% band, so the ceiling must stay green — that is the \
+         whole point: {:?}",
+        report.violations
+    );
+    let out = report.lines.join("\n");
+
+    assert!(out.contains("PHASE 2"), "there must be a phase-2 table at all:\n{out}");
+    assert!(
+        out.contains("ph2 recorded") && out.contains("vs recorded"),
+        "the phase-2 table must carry a recorded baseline and a drift column:\n{out}"
+    );
+    assert!(out.contains("+37"), "the phase-2 movement must be printed:\n{out}");
+    assert!(out.contains("DRIFT"), "a movement up under the ceiling reads DRIFT:\n{out}");
+    assert_eq!(report.drifted, 1, "exactly one pin moved:\n{out}");
+    assert_eq!(
+        report.measured, 13,
+        "seven phase-1 pins plus six phase-2 pins are what this gate covers:\n{out}"
+    );
+    assert!(
+        out.contains("1 of 13 pins moved"),
+        "the drift count must be legible without reading the tables:\n{out}"
+    );
+
+    // C0's phase-2 cell is structurally absent — not a zero, not a blank.
+    let c0: Vec<&str> = out.lines().filter(|l| l.contains("(id 0)")).collect();
+    assert_eq!(c0.len(), 2, "C0 appears once per phase table: {c0:?}");
+    assert!(c0[1].contains("n/a"), "C0 phase 2 must read n/a, not 0: {}", c0[1]);
+
+    // The same instrument on phase 1, in the other direction.
+    let mut improved = rows;
+    improved[0] = synthetic_row(
+        0,
+        Measured::Ok(ceiling_for(0).phase1_measured - 12),
+        Measured::NotApplicable("C0 has no phase-2 ix"),
+    );
+    let out2 = ceiling_report(&improved, None).lines.join("\n");
+    assert!(out2.contains("-12"), "a phase-1 improvement must be printed:\n{out2}");
+    assert!(out2.contains("IMPROVED"), "a movement down reads IMPROVED:\n{out2}");
+}
+
 fn ceiling_for(circuit_id: u8) -> &'static CuCeiling {
     CU_CEILINGS
         .iter()
@@ -1255,90 +1347,224 @@ fn proof_size_envelope_check_rejects_an_oversized_proof() {
     assert!(v[0].contains("15,000 B over"), "unexpected message: {}", v[0]);
 }
 
-/// Print the pin table and return every violation.
+/// One pin: a recorded baseline, the ceiling computed from it, and what this run
+/// measured. Phase 1 and phase 2 are the same shape, so they render identically.
 ///
-/// Two-sided reporting, one-sided assertion: a circuit that came in materially
-/// UNDER its recorded measurement is printed as `IMPROVED` (the ceiling is not
-/// there to stop that) but the ceiling itself is only ever an upper bound.
-fn check_cu_ceilings(rows: &[CircuitRow], caveat: Option<&str>) -> Vec<String> {
-    let mut violations: Vec<String> = Vec::new();
+/// They did not. Phase 1 had a `vs measured` drift column; phase 2 had no table
+/// at all, only an assertion. Since the assertion is a 2% RATCHET and not an
+/// equality (see `CU_CEILINGS`, which explains why an equality pin would be
+/// deleted), a phase-2 movement of up to +2% was both unasserted AND invisible:
+/// C5 phase 2 could go 198,649 -> 203,000 and every line of output would still
+/// read `ok`. B2 raises the FRI blowup and moves both phases at once, so
+/// without this column B2's cost on phase 2 would be a number nobody printed.
+struct Pin {
+    circuit_id: u8,
+    label: String,
+    /// The baseline in `CU_CEILINGS`; `None` where the instruction is
+    /// structurally absent (C0 has no phase-2 ix).
+    recorded: Option<u64>,
+    ceiling: Option<u64>,
+    /// This run's clean measurement, `None` if it did not measure cleanly.
+    now: Option<u64>,
+}
 
-    println!("\n{}", rule(104));
-    println!("CU CEILINGS — the regression gate (upper bound; ratchet, not an equality pin)");
-    println!("{}", rule(104));
-    match caveat {
-        Some(note) => println!("!! {note}"),
-        None => println!(
-            "toolchain: built with `{CU_MEASURED_WITH}`, the compiler CU_CEILINGS was measured \
-             with — a failure below is a regression, not a compiler difference"
-        ),
+/// What a measurement did, relative to its baseline and its ceiling.
+///
+/// Four states, not two. `OVER` is the only one that fails; `DRIFT` and
+/// `IMPROVED` are reporting. The doc on `check_cu_ceilings` has claimed since it
+/// was written that a circuit coming in under its baseline "is printed as
+/// `IMPROVED`" — it was not, the verdict cell only ever held `OVER` or `ok`.
+fn pin_verdict(now: u64, recorded: u64, ceiling: u64) -> &'static str {
+    if now > ceiling {
+        "OVER"
+    } else if now > recorded {
+        "DRIFT"
+    } else if now < recorded {
+        "IMPROVED"
+    } else {
+        "ok"
     }
-    println!("{}", rule(104));
-    println!(
+}
+
+/// Render one phase's pin table. Returns (lines, pins measured, pins drifted).
+fn pin_table(header: &str, phase: &str, pins: &[Pin]) -> (Vec<String>, usize, usize) {
+    let mut lines = Vec::new();
+    let mut measured = 0usize;
+    let mut drifted = 0usize;
+
+    lines.push(rule(104));
+    lines.push(header.to_string());
+    lines.push(rule(104));
+    lines.push(format!(
         "{:<26} {:>13} {:>13} {:>13} {:>10} {:>12}",
-        "circuit", "ph1 measured", "ph1 now", "ph1 ceiling", "verdict", "vs measured"
-    );
-    println!("{}", rule(104));
-    for r in rows {
-        let c = ceiling_for(r.circuit_id);
-        let (now, verdict, drift) = match r.phase1.cu_if_ok() {
-            Some(cu) => {
-                let verdict = if cu > c.phase1_max { "OVER" } else { "ok" };
-                let d = cu as i64 - c.phase1_measured as i64;
-                (thousands(cu), verdict, format!("{:+}", d))
+        "circuit",
+        format!("{phase} recorded"),
+        format!("{phase} now"),
+        format!("{phase} ceiling"),
+        "verdict",
+        "vs recorded",
+    ));
+    lines.push(rule(104));
+    for p in pins {
+        let (now, verdict, drift) = match (p.now, p.recorded, p.ceiling) {
+            (Some(cu), Some(rec), Some(max)) => {
+                measured += 1;
+                if cu != rec {
+                    drifted += 1;
+                }
+                (
+                    thousands(cu),
+                    pin_verdict(cu, rec, max),
+                    format!("{:+}", cu as i64 - rec as i64),
+                )
             }
-            None => ("-".to_string(), "NOT MEASURED", "-".to_string()),
+            // A baseline with no ceiling is already rejected by
+            // `cu_ceilings_are_two_percent_over_the_recorded_measurement`. If one
+            // ever reaches here, name it rather than render a blank cell.
+            (Some(cu), Some(rec), None) => (
+                thousands(cu),
+                "NO CEILING",
+                format!("{:+}", cu as i64 - rec as i64),
+            ),
+            // Measured where the table says there is no instruction at all.
+            (Some(cu), None, _) => (thousands(cu), "STRUCTURAL", "-".to_string()),
+            (None, None, _) => ("n/a".to_string(), "n/a", "-".to_string()),
+            (None, Some(_), _) => ("-".to_string(), "NOT MEASURED", "-".to_string()),
         };
-        println!(
+        lines.push(format!(
             "{:<26} {:>13} {:>13} {:>13} {:>10} {:>12}",
-            format!("{} (id {})", r.label, r.circuit_id),
-            thousands(c.phase1_measured),
+            p.label,
+            p.recorded.map(thousands).unwrap_or_else(|| "n/a".into()),
             now,
-            thousands(c.phase1_max),
+            p.ceiling.map(thousands).unwrap_or_else(|| "n/a".into()),
             verdict,
             drift,
-        );
-        if let Some(cu) = r.phase1.cu_if_ok() {
-            if cu > c.phase1_max {
-                violations.push(format!(
-                    "C{} phase 1: {} CU > ceiling {} (recorded measurement {})",
-                    r.circuit_id,
-                    thousands(cu),
-                    thousands(c.phase1_max),
-                    thousands(c.phase1_measured),
-                ));
-            }
-        }
+        ));
+    }
+    lines.push(rule(104));
+    (lines, measured, drifted)
+}
 
-        match (r.phase2.cu_if_ok(), c.phase2_max) {
-            (Some(cu), Some(max)) => {
-                if cu > max {
-                    violations.push(format!(
-                        "C{} phase 2: {} CU > ceiling {} (recorded measurement {})",
-                        r.circuit_id,
-                        thousands(cu),
-                        thousands(max),
-                        c.phase2_measured.map(thousands).unwrap_or_else(|| "-".into()),
-                    ));
-                }
-            }
-            // A circuit that grew a phase-2 instruction where the table says
-            // there is none is a structural change, not a CU regression — but it
-            // must not slip through unremarked either.
+/// Everything the ceiling gate produces: what to print, and what to fail on.
+struct CeilingReport {
+    lines: Vec<String>,
+    violations: Vec<String>,
+    /// Pins that produced a clean number against a recorded baseline.
+    measured: usize,
+    /// Of those, how many differ from the baseline in either direction.
+    drifted: usize,
+}
+
+/// Build the pin tables and collect every violation.
+///
+/// Two-sided reporting, one-sided assertion: a circuit that came in under its
+/// recorded measurement is printed as `IMPROVED` (the ceiling is not there to
+/// stop that), one that came in over it but under the ceiling is printed as
+/// `DRIFT`, and only `OVER` is a violation.
+///
+/// # Why drift is reported and not asserted
+///
+/// The band is deliberately a ratchet — the reasoning is on `CU_CEILINGS` and
+/// it is a founder decision, not this function's to overturn. Sizing a tighter
+/// hard band from measurement does not work either: CU is deterministic for a
+/// given (bytecode, witness) pair, and these thirteen pins have reproduced at
+/// exactly `+0` on every run that has measured them, so the measured
+/// run-to-run variance is 0. A band of 0 IS the equality pin that was rejected;
+/// any other number would be one nobody measured. So the honest instrument is
+/// the one below: make the movement legible, keep the 2% ratchet as the
+/// assertion, and let whoever owns the trade-off see the drift and decide.
+fn ceiling_report(rows: &[CircuitRow], caveat: Option<&str>) -> CeilingReport {
+    let mut violations: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
+
+    lines.push(String::new());
+    lines.push(rule(104));
+    lines.push(
+        "CU CEILINGS — the regression gate (upper bound; ratchet, not an equality pin)".into(),
+    );
+    lines.push(rule(104));
+    match caveat {
+        Some(note) => lines.push(format!("!! {note}")),
+        None => lines.push(format!(
+            "toolchain: built with `{CU_MEASURED_WITH}`, the compiler CU_CEILINGS was measured \
+             with — a failure below is a regression, not a compiler difference"
+        )),
+    }
+
+    let mut phase1: Vec<Pin> = Vec::new();
+    let mut phase2: Vec<Pin> = Vec::new();
+    for r in rows {
+        let c = ceiling_for(r.circuit_id);
+        let label = format!("{} (id {})", r.label, r.circuit_id);
+        phase1.push(Pin {
+            circuit_id: r.circuit_id,
+            label: label.clone(),
+            recorded: Some(c.phase1_measured),
+            ceiling: Some(c.phase1_max),
+            now: r.phase1.cu_if_ok(),
+        });
+        phase2.push(Pin {
+            circuit_id: r.circuit_id,
+            label,
+            recorded: c.phase2_measured,
+            ceiling: c.phase2_max,
+            now: r.phase2.cu_if_ok(),
+        });
+    }
+
+    let (t1, m1, d1) = pin_table("PHASE 1", "ph1", &phase1);
+    lines.extend(t1);
+    let (t2, m2, d2) = pin_table(
+        "PHASE 2  (C0 has no phase-2 ix — structurally absent, not unmeasured)",
+        "ph2",
+        &phase2,
+    );
+    lines.push(String::new());
+    lines.extend(t2);
+
+    for (phase, p) in phase1
+        .iter()
+        .map(|p| (1, p))
+        .chain(phase2.iter().map(|p| (2, p)))
+    {
+        match (p.now, p.ceiling) {
+            (Some(cu), Some(max)) if cu > max => violations.push(format!(
+                "C{} phase {}: {} CU > ceiling {} (recorded measurement {})",
+                p.circuit_id,
+                phase,
+                thousands(cu),
+                thousands(max),
+                p.recorded.map(thousands).unwrap_or_else(|| "-".into()),
+            )),
+            // A circuit that grew an instruction the table says is absent is a
+            // structural change, not a CU regression — but it must not slip
+            // through unremarked either.
             (Some(cu), None) => violations.push(format!(
-                "C{} phase 2 measured at {} CU but CU_CEILINGS declares it structurally absent \
+                "C{} phase {} measured at {} CU but CU_CEILINGS declares it structurally absent \
                  — the dispatch changed; add a ceiling",
-                r.circuit_id,
+                p.circuit_id,
+                phase,
                 thousands(cu),
             )),
             _ => {}
         }
     }
-    println!("{}", rule(104));
-    println!(
-        "        ph2 ceilings are asserted too (not tabulated above; C0 has no phase-2 ix).\n        \
-         A number over its ceiling FAILS this test. Raise the ceiling in the same commit\n        \
+
+    let measured = m1 + m2;
+    let drifted = d1 + d2;
+    lines.push(format!(
+        "        {} of {} pins moved from their recorded measurement ({} on phase 1, {} on \
+         phase 2).",
+        drifted, measured, d1, d2,
+    ));
+    lines.push(
+        "        Drift is REPORTED, not asserted — the assertion is the 2% ceiling, and the\n        \
+         reasoning for a ratchet rather than an equality pin is on CU_CEILINGS. These pins\n        \
+         have reproduced at +0 on every run that measured them, so a tighter hard band would\n        \
+         either be 0 (the equality pin that was rejected) or a number nobody measured.\n        \
+         A number over its CEILING fails this test. Raise the ceiling in the same commit\n        \
          that raises the cost, and say why — do not widen the band to clear a red run."
+            .to_string(),
     );
 
     // A violation is read on its own, in a CI log, by someone who did not see the
@@ -1350,7 +1576,16 @@ fn check_cu_ceilings(rows: &[CircuitRow], caveat: Option<&str>) -> Vec<String> {
         }
     }
 
-    violations
+    CeilingReport { lines, violations, measured, drifted }
+}
+
+/// Print the pin tables and return every violation.
+fn check_cu_ceilings(rows: &[CircuitRow], caveat: Option<&str>) -> Vec<String> {
+    let report = ceiling_report(rows, caveat);
+    for line in &report.lines {
+        println!("{line}");
+    }
+    report.violations
 }
 
 // ---------------------------------------------------------------------------
