@@ -182,3 +182,154 @@ impl SubscriptionVault {
         self.total_deposited.saturating_sub(total_owed)
     }
 }
+
+// ---------------------------------------------------------------------------
+// State-machine tests
+//
+// These pin the CURRENT behaviour of the vault's pure accessors. They are not
+// a claim that the behaviour is right — two of them document a hole and say so
+// in the test name. Changing program behaviour is an owner's decision; making
+// the consequence measurable is not.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 500,000 lamports at 100,000 per period buys 5 periods of 100 slots,
+    /// starting at slot 1,000. Same shape as the devnet vault that was claimed
+    /// for the first time on 2026-08-01.
+    fn vault() -> SubscriptionVault {
+        SubscriptionVault {
+            subscriber_pubkey: None,
+            subscriber_commitment: Some([7u8; 32]),
+            retailer: Pubkey::new_from_array([1u8; 32]),
+            token_mint: Pubkey::default(),
+            total_deposited: 500_000,
+            rate: 100_000,
+            interval_slots: 100,
+            start_slot: 1_000,
+            claimed_periods: 0,
+            is_active: true,
+            is_paused: false,
+            pause_slot: None,
+            total_paused_slots: 0,
+            vk_hash_subscriber: [0u8; 32],
+            source_pool: None,
+            bump: 255,
+            client_stealth_meta: None,
+            license_commitment: None,
+        }
+    }
+
+    #[test]
+    fn is_active_is_true_on_every_vault_the_program_can_produce() {
+        // `is_active = true` is written at subscribe_normal.rs:120 and
+        // subscribe_private_stark.rs:395. No instruction writes `false`; both
+        // cancel paths `close` the account instead. So a vault that exists has
+        // `is_active == true`, and the flag answers no question.
+        let mut v = vault();
+        v.claimed_periods = 5; // every funded period collected, balance spent
+        assert!(v.is_active);
+        assert_eq!(v.claimable_periods(9_999), 0);
+    }
+
+    #[test]
+    fn claimable_periods_is_clamped_by_funding_not_by_elapsed_time() {
+        let v = vault();
+        // 40 periods of wall clock have gone by; only 5 were ever funded.
+        assert_eq!(v.claimable_periods(5_000), 5);
+        // ...and the payout that follows is exactly the deposit.
+        assert_eq!(v.claimable_periods(5_000) * v.rate, v.total_deposited);
+    }
+
+    #[test]
+    fn partial_funding_pays_whole_periods_and_refunds_the_remainder() {
+        let mut v = vault();
+        v.total_deposited = 350_000; // 3 whole periods + 50,000 of dust
+        assert_eq!(v.claimable_periods(1_500), 3);
+        assert_eq!(v.refundable_amount(1_500), 50_000);
+    }
+
+    #[test]
+    fn pausing_cannot_rewind_an_exhausted_subscription() {
+        // Pause credit only ever pushes the window later, so a subscriber
+        // cannot pause their way back into a term they have already used up.
+        let mut v = vault();
+        v.total_paused_slots = 200;
+        assert_eq!(v.claimable_periods(1_700), 5);
+    }
+
+    #[test]
+    fn an_exhausted_vault_can_still_be_paused_and_resumed_forever() {
+        // pause_normal.rs:26 / resume_normal.rs:24 gate on `vault.is_active`,
+        // which is always true, and on nothing else. Neither instruction
+        // consults the funding, so both stay callable on a vault that has paid
+        // out everything it ever will. Costs a signature and a fee, does
+        // nothing. Reported, not changed.
+        let mut v = vault();
+        v.claimed_periods = 5;
+        assert!(v.is_active, "the only thing pause/resume check");
+        assert_eq!(v.claimable_periods(9_999), 0, "nothing left to move");
+    }
+
+    #[test]
+    fn pause_then_cancel_zeroes_the_retailers_earned_but_unclaimed_revenue() {
+        // THE HOLE, measured as an arithmetic identity.
+        //
+        // `claimable_periods` returns 0 while `is_paused`, and BOTH cancel
+        // instructions pay the retailer exactly `claimable_periods * rate`
+        // (cancel_normal.rs:72, cancel_private_stark.rs:218) while carrying no
+        // `!is_paused` constraint — cancel_normal.rs:40 checks `is_active`
+        // only. So a subscriber who has consumed five periods of service can
+        // pause and then cancel, and the retailer is paid nothing.
+        let mut v = vault();
+
+        // Five periods delivered, retailer has not claimed them yet.
+        assert_eq!(v.claimable_periods(1_500), 5);
+        assert_eq!(v.claimable_periods(1_500) * v.rate, 500_000);
+        assert_eq!(v.refundable_amount(1_500), 0);
+
+        // Subscriber pauses.
+        v.is_paused = true;
+        v.pause_slot = Some(1_500);
+
+        // Retailer's payout on cancel collapses to zero...
+        assert_eq!(v.claimable_periods(1_500), 0);
+        // ...and the entire deposit goes back to the subscriber.
+        assert_eq!(v.refundable_amount(1_500), 500_000);
+
+        // 500,000 lamports of delivered service, paid for at 0. On the 16 live
+        // devnet vaults (all at claimed_periods = 0) the exposure is the whole
+        // balance of every one of them.
+    }
+
+    #[test]
+    fn the_rent_floor_is_why_the_drain_is_reachable_rather_than_theoretical() {
+        // A retailer whose payout wallet is empty cannot take the first claim
+        // at all: the program succeeds and the RUNTIME rejects the transaction
+        // for leaving the retailer below rent exemption (MEASURED devnet
+        // 2026-08-01, 890,880 lamports). Until enough periods accrue for one
+        // claim to clear that floor, the retailer is FORCED to leave revenue
+        // unclaimed - which is exactly the state the pause-then-cancel drain
+        // preys on.
+        const RENT_EXEMPT_ZERO_DATA: u64 = 890_880;
+        let v = vault();
+        let first_claim = v.claimable_periods(1_500) * v.rate;
+        assert!(
+            first_claim < RENT_EXEMPT_ZERO_DATA,
+            "a full 5-period claim of {first_claim} does not clear the {RENT_EXEMPT_ZERO_DATA}-lamport floor",
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn interval_slots_zero_panics_which_is_why_subscribe_forbids_it() {
+        // subscribe_normal.rs:68 and subscribe_private_stark.rs:182 both
+        // require `interval_slots > 0`. If either check were ever dropped, the
+        // vault would be permanently unclaimable AND uncancellable, because
+        // both handlers call `claimable_periods` first.
+        let mut v = vault();
+        v.interval_slots = 0;
+        let _ = v.claimable_periods(1_500);
+    }
+}
