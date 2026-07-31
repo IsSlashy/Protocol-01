@@ -744,7 +744,7 @@ if (blobGen !== null && deployedGen !== blobGen) {
     'unexplained transaction failure at the end of a slow upload.',
     '',
     'SHIP THE PROGRAM FIRST. Deploy programs/p01_stark_verifier to the cluster above, then re-measure:',
-    '  node packages/stark-prover/scripts/deployed-verifier-check.mjs --measure',
+    `  node packages/stark-prover/scripts/deployed-verifier-check.mjs --measure --cluster ${TARGET_CLUSTER}`,
     `and update ${RECORD_REL}. Editing that file without redeploying satisfies the checks above and`,
     'changes nothing on chain. The --verify-onchain leg refetches the deployment and rejects that edit,',
     'and every build and publish step that runs this script runs it with --verify-onchain.',
