@@ -133,13 +133,22 @@ export function issueAccessToken(input: IssueAccessTokenInput): string {
     exp = Math.min(ttlExp, ceiling);
   }
   const claims: AccessTokenClaims = {
+    // `extraClaims` is spread FIRST. Spreading it last let a caller override the
+    // claims the token's security rests on — most importantly `exp`, which
+    // `issueSubscriptionAccessToken` has just clamped to the funded window.
+    // MEASURED: with `exp` clamped to now+40s, passing
+    // `extraClaims: { tier: 'pro', exp: now + 365 days }` produced a token that
+    // `verifyAccessToken` still accepted 200 days later. `extraClaims` is the
+    // documented way to attach a tier, so this was reachable from the README's
+    // own example. Merchant-supplied fields now decorate the token; they do not
+    // define it.
+    ...input.extraClaims,
     iss: input.merchantKeypair.publicKey.toBase58(),
     sub: input.subscriberId,
     svc: input.serviceSlug,
     exp,
     iat: now,
     nonce: input.nonce ?? randomNonce(),
-    ...input.extraClaims,
   };
 
   const payload = Buffer.from(JSON.stringify(claims), 'utf-8');
@@ -295,7 +304,17 @@ export function verifyAccessToken(
   if (!ok) return bad(claims, 'signature invalid');
 
   const now = opts.nowUnix ?? Math.floor(Date.now() / 1000);
-  if (typeof claims.exp === 'number' && claims.exp < now) {
+  // Fail CLOSED on a missing or non-numeric `exp`. The old guard was
+  // `typeof claims.exp === 'number' && claims.exp < now`, so a payload whose
+  // `exp` was a string — or absent — skipped the expiry check completely and
+  // the token never expired. MEASURED: a token carrying `"exp": "never"`
+  // verified as valid one hundred years after it was issued. `exp` is the only
+  // bound a bearer token has; a token that does not carry one legibly is not a
+  // token this function can vouch for.
+  if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) {
+    return bad(claims, 'token has no numeric exp, so its lifetime is unbounded');
+  }
+  if (claims.exp < now) {
     return bad(claims, 'token expired');
   }
 

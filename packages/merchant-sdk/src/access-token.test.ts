@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { Keypair, PublicKey } from '@solana/web3.js';
+import bs58 from 'bs58';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import {
   issueAccessToken,
   issueSubscriptionAccessToken,
@@ -326,5 +329,181 @@ describe('verifyAccessToken — vault binding and re-check', () => {
     expect(r.valid).toBe(true);
     expect(r.serviceChecked).toBe(false);
     expect(r.subscriptionChecked).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extraClaims must not be able to define the token
+// ---------------------------------------------------------------------------
+
+/** Decode the signed payload without going through verifyAccessToken. */
+function payloadOf(token: string): Record<string, unknown> {
+  return JSON.parse(Buffer.from(bs58.decode(token.split('.')[0]!)).toString('utf-8'));
+}
+
+describe('extraClaims decorates a token, it does not define it', () => {
+  it('THE BYPASS: extraClaims.exp used to overwrite the clamp just computed', () => {
+    // The subscription has 100 slots left — 40 seconds at the nominal slot
+    // time — so the honest ceiling is NOW + 40.
+    const honest = issueSubscriptionAccessToken({
+      merchantKeypair: merchant,
+      subscriberId: 'sub-1',
+      serviceSlug: 'svc',
+      ttlSeconds: 30 * 86_400,
+      vault: vault(),
+      currentSlot: 1_400n,
+      nowUnix: NOW,
+    });
+    expect(payloadOf(honest).exp).toBe(NOW + 40);
+
+    // The same call plus the `tier` field the README's own example attaches —
+    // and a year of expiry smuggled in beside it. MEASURED before the fix:
+    // exp came out at NOW + 31,536,000 and the token verified 200 days later,
+    // which is precisely the defect issueSubscriptionAccessToken exists to
+    // close, reachable through its own documented parameter.
+    const smuggled = issueSubscriptionAccessToken({
+      merchantKeypair: merchant,
+      subscriberId: 'sub-1',
+      serviceSlug: 'svc',
+      ttlSeconds: 30 * 86_400,
+      vault: vault(),
+      currentSlot: 1_400n,
+      nowUnix: NOW,
+      extraClaims: { tier: 'pro', exp: NOW + 365 * 86_400 },
+    });
+    expect(payloadOf(smuggled).exp).toBe(NOW + 40);
+    expect(payloadOf(smuggled).tier).toBe('pro');
+
+    const r = verifyAccessToken(smuggled, merchant.publicKey, {
+      expectedService: 'svc',
+      nowUnix: NOW + 200 * 86_400,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/expired/);
+  });
+
+  it('cannot re-point iss, sub or svc either', () => {
+    const other = Keypair.fromSeed(new Uint8Array(32).fill(0x11));
+    const t = issueAccessToken({
+      merchantKeypair: merchant,
+      subscriberId: 'sub-1',
+      serviceSlug: 'cheap-tier',
+      ttlSeconds: 3600,
+      nowUnix: NOW,
+      extraClaims: {
+        iss: other.publicKey.toBase58(),
+        sub: 'somebody-else',
+        svc: 'expensive-tier',
+      },
+    });
+    const p = payloadOf(t);
+    expect(p.iss).toBe(merchant.publicKey.toBase58());
+    expect(p.sub).toBe('sub-1');
+    expect(p.svc).toBe('cheap-tier');
+    // The service escalation the svc check exists to stop stays stopped.
+    const r = verifyAccessToken(t, merchant.publicKey, {
+      expectedService: 'expensive-tier',
+      nowUnix: NOW,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/scoped to service "cheap-tier"/);
+  });
+
+  it('still carries the fields a merchant legitimately attaches', () => {
+    const t = issueAccessToken({
+      merchantKeypair: merchant,
+      subscriberId: 'sub-1',
+      serviceSlug: 'svc',
+      ttlSeconds: 3600,
+      nowUnix: NOW,
+      extraClaims: { tier: 'pro', seats: 5 },
+    });
+    const r = verifyAccessToken(t, merchant.publicKey, { nowUnix: NOW });
+    expect(r.valid).toBe(true);
+    expect(r.claims!.tier).toBe('pro');
+    expect(r.claims!.seats).toBe(5);
+  });
+
+  it('the vault binding cannot be stripped through extraClaims', () => {
+    const t = issueSubscriptionAccessToken({
+      merchantKeypair: merchant,
+      subscriberId: 'sub-1',
+      serviceSlug: 'svc',
+      ttlSeconds: 3600,
+      vault: vault(),
+      currentSlot: 1_200n,
+      nowUnix: NOW,
+      extraClaims: { vault: VAULT_B.toBase58(), vaultStartSlot: '9000' },
+    });
+    const p = payloadOf(t);
+    expect(p.vault).toBe(VAULT_A.toBase58());
+    expect(p.vaultStartSlot).toBe('1000');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// exp is the only bound a bearer token has
+// ---------------------------------------------------------------------------
+
+describe('a token with no legible exp is not a token', () => {
+  /** Sign an arbitrary payload with the merchant key, exactly as the SDK does. */
+  function forgeSigned(claims: Record<string, unknown>): string {
+    const payload = Buffer.from(JSON.stringify(claims), 'utf-8');
+    const sig = ed25519.sign(sha256(payload), merchant.secretKey.subarray(0, 32));
+    return `${bs58.encode(payload)}.${bs58.encode(sig)}`;
+  }
+
+  it('THE UNBOUNDED TOKEN: a non-numeric exp used to skip the expiry check', () => {
+    // MEASURED before the fix: this verified as valid one hundred years on,
+    // because the guard read `typeof claims.exp === 'number' && exp < now`.
+    const t = forgeSigned({
+      iss: merchant.publicKey.toBase58(),
+      sub: 'sub-1',
+      svc: 'svc',
+      exp: 'never',
+      iat: NOW,
+    });
+    const r = verifyAccessToken(t, merchant.publicKey, { nowUnix: NOW + 100 * 365 * 86_400 });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/no numeric exp/);
+  });
+
+  it('rejects a token with no exp claim at all', () => {
+    const t = forgeSigned({
+      iss: merchant.publicKey.toBase58(),
+      sub: 'sub-1',
+      svc: 'svc',
+      iat: NOW,
+    });
+    const r = verifyAccessToken(t, merchant.publicKey, { nowUnix: NOW });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/no numeric exp/);
+  });
+
+  it('rejects Infinity and NaN, which are numbers but not deadlines', () => {
+    // JSON.stringify writes all three as `null`, which is not a number either.
+    for (const exp of [Infinity, -Infinity, NaN]) {
+      const t = forgeSigned({
+        iss: merchant.publicKey.toBase58(),
+        sub: 'sub-1',
+        svc: 'svc',
+        exp,
+        iat: NOW,
+      });
+      const r = verifyAccessToken(t, merchant.publicKey, { nowUnix: NOW });
+      expect(r.valid).toBe(false);
+      expect(r.reason).toMatch(/no numeric exp/);
+    }
+  });
+
+  it('a normally issued token is unaffected', () => {
+    const t = issueAccessToken({
+      merchantKeypair: merchant,
+      subscriberId: 'sub-1',
+      serviceSlug: 'svc',
+      ttlSeconds: 3600,
+      nowUnix: NOW,
+    });
+    expect(verifyAccessToken(t, merchant.publicKey, { nowUnix: NOW }).valid).toBe(true);
   });
 });
