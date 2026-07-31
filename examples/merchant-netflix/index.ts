@@ -30,6 +30,8 @@ import {
   listVaultsForRetailer,
   pollPaymentsForRetailer,
   registerServiceOnChain,
+  subscriptionIsCurrent,
+  periodsPaidFor,
   type MerchantRegistrationResult,
 } from '@protocol-01/merchant-sdk';
 
@@ -180,8 +182,16 @@ async function pollOnce(
     logStep(`  ! poll payments failed: ${(err as Error).message}`);
   }
 
-  // 2. Vault subscribers — granted for as long as the vault is active + unpaused.
+  // 2. Vault subscribers.
+  //
+  // This is a DISCOVERY sweep — it runs on a timer and its job is to notice
+  // subscribers the merchant has not seen before, so hydrating the whole book is
+  // the point and `listVaultsForRetailer` is the right tool. A per-REQUEST
+  // entitlement check must not look like this: use
+  // `hasActiveVaultAccessForVault` (or `verifyLicenseAgainstVault`), which reads
+  // the one vault the request is about.
   try {
+    const slot = BigInt(await connection.getSlot('confirmed'));
     const vaults = await listVaultsForRetailer(connection, retailer.publicKey, {
       includePaused: false,
     });
@@ -190,6 +200,18 @@ async function pollOnce(
       if (!idBytes) continue;
       const subscriberId = `vault:${Buffer.from(idBytes).toString('hex').slice(0, 16)}`;
       if (accessGrants.has(subscriberId)) continue;
+
+      // Do NOT grant on `is_active`. The program writes it `true` at subscribe
+      // time and `false` nowhere, so a vault that has spent everything it
+      // deposited still reports `true` for ever — on devnet 2026-08-01, 14 of
+      // the 18 live vaults had run out and every one of them said `true`.
+      if (!subscriptionIsCurrent(v, slot)) {
+        logStep(
+          `  – vault ${v.pda.toBase58().slice(0, 12)}… skipped: ran past the ` +
+            `${periodsPaidFor(v)} period(s) it was funded for (is_active is still true)`,
+        );
+        continue;
+      }
 
       const token = issueAccessToken({
         merchantKeypair: merchant,
