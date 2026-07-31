@@ -525,11 +525,32 @@ jobs:
 
       # [ROUTE C] `p01_stark_verifier` is split out and BLOCKING. It was under the
       # shared `continue-on-error: true` below, which made every warning on it
-      # advisory — including the unused-variable warning that is the only signal a
-      # PARTIAL deletion of the trace-commitment check leaves behind. MEASURED
-      # during review: with all four `verify_merkle_path_2seg` blocks removed but
-      # their `let (lo, hi) = ...` locals left in place, clippy is the only gate
-      # that reacts, and `continue-on-error` swallowed it.
+      # advisory — including the unused-variable warning a PARTIAL deletion of the
+      # trace-commitment check leaves behind.
+      #
+      # READ THE SCOPE OF THAT PRECISELY. This step reacts to a partial deletion
+      # and to NOTHING ELSE about the trace commitment. Re-MEASURED on this tree,
+      # both mutations run and reverted:
+      #   * all four `verify_merkle_path_2seg` blocks removed, their
+      #     `let (lo, hi)` / `let (nlo, nhi)` locals LEFT in place
+      #       -> cargo clippy -p p01_stark_verifier -- -D warnings : exit 101,
+      #          8 `unused variable` errors. Caught.
+      #   * the same four blocks removed TOGETHER with those locals and the
+      #     `let next_pos = …` they fed — a clean deletion, nothing orphaned
+      #       -> cargo clippy -p p01_stark_verifier -- -D warnings : exit 0.
+      #          SILENT, with the entire trace-commitment check gone.
+      # It cannot be otherwise: `src/lib.rs:1` carries crate-wide
+      # `#![allow(unknown_lints, dead_code, unused_imports)]`, and
+      # `merkle::verify_merkle_path_2seg` is a `pub fn` in a `pub mod`, so a
+      # zero-call-site version of it is not dead code by any lint's definition.
+      #
+      # The gate on the clean deletion is
+      # `route_c_trace_pair::all_four_trace_authentication_call_sites_are_present`
+      # in the blocking cargo test step above, and that is VERIFIED, not assumed:
+      # under the clean-deletion mutation `cargo test -p p01_stark_verifier
+      # --release --test route_c_trace_pair` went 15 passed / 7 FAILED, that test
+      # among them, naming `contains 0 call sites, expected 4`. Do not let this
+      # step's name talk anyone out of running that one.
       #
       # MEASURED here, on the tree this comment ships with:
       #   cargo clippy -p p01_stark_verifier -- -D warnings           -> exit 0
