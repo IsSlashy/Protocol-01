@@ -263,9 +263,9 @@ function readSources(rels) {
  * below and labels its own verdict as not a shipping verdict.
  */
 const CLUSTERS = {
-  devnet: { endpoint: 'https://api.devnet.solana.com', anchorSection: 'programs.devnet', shipping: true },
-  'mainnet-beta': { endpoint: 'https://api.mainnet-beta.solana.com', anchorSection: 'programs.mainnet', shipping: true },
-  localnet: { endpoint: 'http://127.0.0.1:8899', anchorSection: 'programs.localnet', shipping: false },
+  devnet: { endpoint: 'https://api.devnet.solana.com', anchorSection: 'programs.devnet', sdkNetwork: 'devnet', shipping: true },
+  'mainnet-beta': { endpoint: 'https://api.mainnet-beta.solana.com', anchorSection: 'programs.mainnet', sdkNetwork: 'mainnet', shipping: true },
+  localnet: { endpoint: 'http://127.0.0.1:8899', anchorSection: 'programs.localnet', sdkNetwork: null, shipping: false },
 };
 
 /** Used when the caller passes no `--cluster`. A label, not an endpoint. */
@@ -299,6 +299,55 @@ function programIdFromAnchorToml(anchorSection) {
     if (!inSection) continue;
     const m = line.match(/^([A-Za-z0-9_]+)\s*=\s*"([^"]+)"\s*$/);
     if (m !== null && m[1] === ANCHOR_PROGRAM_KEY) return m[2];
+  }
+  return null;
+}
+
+/**
+ * The id the CLIENTS actually send their proof to.
+ *
+ * Anchor.toml is what `anchor deploy` targets, but no client reads it. apps/web,
+ * apps/extension, apps/mobile and packages/react-native-zk all resolve the
+ * verifier through PROGRAM_IDS in the privacy SDK, which is generated from
+ * Anchor.toml by scripts/sync-program-ids.ts — and `pnpm check-program-ids`,
+ * which would catch the two drifting apart, is NOT run by .github/workflows/ci.yml
+ * (MEASURED 2026-07-31). So the two can disagree, and if they do this gate would
+ * be reading a deployment no user ever talks to: point Anchor.toml at a second,
+ * B1 copy of the verifier and the on-chain leg agrees while every client keeps
+ * sending proofs to the pre-B1 id and keeps failing with FriFoldCheckFailed.
+ *
+ * The fix is not to prefer one file over the other. Both are read and they must
+ * agree, because "the deployment this build may ship against" and "the program
+ * the shipped code calls" have to be the same program for the question this gate
+ * asks to mean anything.
+ *
+ * Returns the base58 id, or null if the block or the key is absent.
+ */
+const SDK_PROGRAM_IDS = 'packages/privacy-sdk/src/constants.ts';
+const SDK_PROGRAM_KEY = 'starkVerifier';
+
+function programIdFromPrivacySdk(sdkNetwork) {
+  let text;
+  try {
+    text = readFileSync(resolve(REPO, SDK_PROGRAM_IDS), 'utf8');
+  } catch {
+    return null;
+  }
+  let inNetwork = false;
+  let depth = 0;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/\/\/.*$/, '').trim();
+    if (!inNetwork) {
+      if (new RegExp(`^${sdkNetwork}\\s*:\\s*\\{`).test(line)) {
+        inNetwork = true;
+        depth = 1;
+      }
+      continue;
+    }
+    const m = line.match(/^([A-Za-z0-9_]+)\s*:\s*new PublicKey\('([^']+)'\)/);
+    if (m !== null && m[1] === SDK_PROGRAM_KEY) return m[2];
+    depth += (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+    if (depth <= 0) return null;
   }
   return null;
 }
@@ -798,6 +847,28 @@ if (typeof deployed.cluster === 'string' && deployed.cluster.length > 0) {
     ]);
   } else {
     programId = anchorId;
+    if (TARGET.sdkNetwork !== null) {
+      const sdkId = programIdFromPrivacySdk(TARGET.sdkNetwork);
+      if (sdkId === null) {
+        fail(`${SDK_PROGRAM_IDS} does not name ${SDK_PROGRAM_KEY} for ${TARGET.sdkNetwork}`, [
+          'That is the id every client sends its proof to. If this gate cannot read it, it cannot show that',
+          'the deployment it just verified is the deployment the shipped code will actually talk to.',
+        ]);
+      } else if (sdkId !== anchorId) {
+        fail('Anchor.toml and the privacy SDK disagree about which verifier the clients call', [
+          `  Anchor.toml [${TARGET.anchorSection}] ${ANCHOR_PROGRAM_KEY}  ${anchorId}`,
+          `  ${SDK_PROGRAM_IDS} ${TARGET.sdkNetwork}.${SDK_PROGRAM_KEY}  ${sdkId}`,
+          '',
+          'The on-chain leg below reads the Anchor.toml id, and every client resolves the verifier through',
+          'the SDK id. While those differ this gate is vouching for a deployment no user talks to: a second,',
+          'B1 copy of the verifier deployed under the Anchor.toml id would satisfy the whole on-chain leg',
+          'while every shipped client kept sending proofs to the other id and kept failing with',
+          'FriFoldCheckFailed, which is the exact failure this gate exists to prevent.',
+          '',
+          'Regenerate the SDK block from Anchor.toml: pnpm sync-program-ids',
+        ]);
+      }
+    }
     if (anchorId !== deployed.program_id) {
       fail(`${RECORD_REL} and Anchor.toml disagree about the verifier program`, [
         `  record deployed.program_id           ${deployed.program_id}`,
