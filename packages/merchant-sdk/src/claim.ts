@@ -244,9 +244,13 @@ export interface SplClaimAccounts {
  *
  * `claim_period` checks only `retailer_token.mint == vault.token_mint`
  * (`claim_period.rs:107`); it never checks who owns that account. MEASURED
- * 2026-08-01 — the mint check is the only one that fires. The retailer signs,
- * so this is not an authorisation hole, but a mis-wired integration sends the
- * money to a token account the merchant cannot spend from and nothing objects.
+ * devnet 2026-08-01, tx
+ * `4G58G6xzgydec1d1CRMFPcSVYPHeNQT9GCXY84sHWyshEA6R3rweg9H2yhQWBdSDGH11ujmiwxbLVhteM2NM7hbd`:
+ * a claim whose `retailer_token_account` was a correct-mint account owned by the
+ * SUBSCRIBER succeeded — err null, 9,933 CU — and moved 3 units into it. The
+ * retailer signs, so this is not an authorisation hole, but a mis-wired
+ * integration sends the money to a token account the merchant cannot spend from
+ * and nothing objects.
  *
  * Deliberately NOT enforced inside {@link assertRetailerCanReceiveClaim}:
  * paying into a treasury account the retailer key does not own is a legitimate
@@ -324,6 +328,31 @@ export async function assertSplClaimCanSettle(
   accounts: SplClaimAccounts,
 ): Promise<void> {
   const { vaultPda, vaultTokenAccount, retailerTokenAccount, tokenMint } = accounts;
+
+  // 0. The two token accounts must be DIFFERENT accounts. This is the only way
+  //    of getting an SPL claim wrong that the chain does not report at all.
+  //    MEASURED devnet 2026-08-01, tx
+  //    3KN8JDmDMQx11NSau8Xdj6UXQ6kXqzGTzKGtbgRvDq4n8VEXda3vFVgeRRBqfKvcyNEFrTTSV3XrbjrNEibvn7g2:
+  //    passing the vault token account in BOTH token-account slots made the CPI
+  //    an SPL self-transfer. spl-token short-circuits `source == destination`
+  //    and returns Ok WITHOUT moving anything, so the transaction succeeded
+  //    (err null, 9,782 CU), `claimed_periods` went 0 -> 6, the vault token
+  //    account stayed at 6, the retailer received nothing, and
+  //    `ClaimPeriodEvent` was emitted saying `amount_claimed: 6`. The whole
+  //    subscription's revenue was destroyed while both the transaction status
+  //    and the event reported success. There is no on-chain error to recognise
+  //    here, which is exactly why the check has to live client-side.
+  if (vaultTokenAccount.equals(retailerTokenAccount)) {
+    throw new Error(
+      `claim_period: vault_token_account and retailer_token_account are the same account ` +
+        `(${vaultTokenAccount.toBase58()}). The CPI would be an SPL self-transfer, which the token ` +
+        `program accepts and returns Ok from WITHOUT moving anything. The transaction SUCCEEDS, ` +
+        `ClaimPeriodEvent reports the full amount as paid, claimed_periods advances, and the ` +
+        `retailer is paid nothing — the periods are burnt and cannot be re-claimed. MEASURED on ` +
+        `devnet 2026-08-01, tx 3KN8JDmDMQx11NSau8Xdj6UXQ6kXqzGTzKGtbgRvDq4n8VEXda3vFVgeRRBqfKvcyNEFrTTSV3XrbjrNEibvn7g2.`,
+    );
+  }
+
   const [vaultInfo, retailerInfo] = await connection.getMultipleAccountsInfo([
     vaultTokenAccount,
     retailerTokenAccount,
