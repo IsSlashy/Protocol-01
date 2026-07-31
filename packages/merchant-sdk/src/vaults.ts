@@ -277,6 +277,66 @@ export async function listVaultsForRetailer(
   return out;
 }
 
+export interface FetchVaultOptions {
+  /** Commitment. Default `confirmed`. */
+  commitment?: 'processed' | 'confirmed' | 'finalized';
+  /** Program ID override. Ignored when `sdkConfig` is supplied. */
+  programId?: PublicKey;
+  /** SDK-level configuration (cluster + program ID overrides). */
+  sdkConfig?: MerchantSdkConfig;
+}
+
+export type FetchVaultResult =
+  | { ok: true; vault: SubscriptionVaultAccount }
+  | { ok: false; reason: string };
+
+/**
+ * Read ONE `SubscriptionVault` by address and decode it, refusing anything the
+ * `zk_shielded` program did not write.
+ *
+ * ## Why the owner check is not optional
+ *
+ * `getAccountInfo` returns whatever lives at an address, and an account's bytes
+ * are chosen by the program that OWNS it. So an attacker who deploys their own
+ * program can create an account holding a perfectly-formed vault body — right
+ * discriminator, the victim merchant in the `retailer` field, a
+ * `license_commitment` whose preimage they picked, a start slot and deposit
+ * that make the subscription look current — and hand its address to the
+ * merchant. Without `owner == zk_shielded` every field checked afterwards is
+ * attacker-chosen and the check proves nothing.
+ *
+ * `verifyLicenseAgainstVault` did exactly that until this existed: it called
+ * `connection.getAccountInfo` and went straight to decoding. It is enforced
+ * here, once, rather than left to each caller, because a
+ * client-presents-its-address flow takes on this risk by construction.
+ */
+export async function fetchVaultByAddress(
+  connection: Connection,
+  vaultPda: PublicKey,
+  opts: FetchVaultOptions = {},
+): Promise<FetchVaultResult> {
+  const programId = opts.sdkConfig
+    ? resolveProgramIds(opts.sdkConfig).zkShielded
+    : (opts.programId ?? ZK_SHIELDED_PROGRAM_ID);
+
+  const info = await connection.getAccountInfo(vaultPda, opts.commitment ?? 'confirmed');
+  if (!info) return { ok: false, reason: 'vault not found' };
+  if (!info.owner.equals(programId)) {
+    return {
+      ok: false,
+      reason:
+        `account ${vaultPda.toBase58()} is owned by ${info.owner.toBase58()}, not the zk_shielded ` +
+        `program ${programId.toBase58()} — its contents are written by whoever owns it, so nothing ` +
+        `in them can be trusted`,
+    };
+  }
+  try {
+    return { ok: true, vault: decodeSubscriptionVault(info.data, vaultPda) };
+  } catch (e) {
+    return { ok: false, reason: `vault decode failed: ${(e as Error).message}` };
+  }
+}
+
 /**
  * Compute whether a subscriber has a CURRENT subscription granting them access
  * right now. Callers typically derive the subscriber ID from an out-of-band

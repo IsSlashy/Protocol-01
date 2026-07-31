@@ -1,6 +1,11 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { blake3 } from '@noble/hashes/blake3.js';
-import { listVaultsForRetailer, type SubscriptionVaultAccount, type ListVaultsOptions } from './vaults';
+import {
+  fetchVaultByAddress,
+  listVaultsForRetailer,
+  type SubscriptionVaultAccount,
+  type ListVaultsOptions,
+} from './vaults';
 import { periodsPaidFor, subscriptionIsCurrent } from './claim';
 import { type ServiceScopedOptions, vaultMatchesService } from './service-scope';
 
@@ -288,8 +293,12 @@ export async function verifyLicenseKey(
 }
 
 export interface VerifyLicenseAgainstVaultOptions extends ServiceScopedOptions {
-  /** SDK config; forwarded to the vault decoder/program-id resolution if needed. */
+  /** SDK config; forwarded to program-id resolution (used for the owner check). */
   sdkConfig?: import('./config').MerchantSdkConfig;
+  /** Program ID override. Ignored when `sdkConfig` is supplied. */
+  programId?: PublicKey;
+  /** Commitment. Default `confirmed`. */
+  commitment?: 'processed' | 'confirmed' | 'finalized';
 }
 
 /**
@@ -319,20 +328,23 @@ export async function verifyLicenseAgainstVault(
   } catch (e) {
     return { valid: false, reason: `malformed license key: ${(e as Error).message}` };
   }
-  const { decodeSubscriptionVault } = await import('./vaults');
-  const info = await connection.getAccountInfo(vaultPda);
-  if (!info) return { valid: false, reason: 'vault not found' };
-  let vault: SubscriptionVaultAccount;
-  try {
-    vault = decodeSubscriptionVault(info.data, vaultPda);
-  } catch (e) {
-    return { valid: false, reason: `vault decode failed: ${(e as Error).message}` };
-  }
+  // A client that presents an address chose that address. `getAccountInfo`
+  // returns whatever lives there, and an account's bytes are written by the
+  // program that OWNS it — so without an owner check the attacker supplies both
+  // the address and every field verified below, including the commitment.
+  // `fetchVaultByAddress` rejects anything `zk_shielded` did not write.
+  const fetched = await fetchVaultByAddress(connection, vaultPda, {
+    commitment: opts.commitment,
+    programId: opts.programId,
+    sdkConfig: opts.sdkConfig,
+  });
+  if (!fetched.ok) return { valid: false, reason: fetched.reason };
+  const vault: SubscriptionVaultAccount = fetched.vault;
   if (!vault.retailer.equals(merchantPubkey)) return { valid: false, reason: 'vault is for a different merchant', vault };
   // `isActive` alone is not an entitlement: the program writes it `true` at
   // subscribe time and `false` nowhere, so an exhausted subscription reports
   // `true` forever. Gate on the period actually being paid for.
-  const slot = BigInt(await connection.getSlot('confirmed'));
+  const slot = BigInt(await connection.getSlot(opts.commitment ?? 'confirmed'));
   if (!subscriptionIsCurrent(vault, slot)) {
     return {
       valid: false,
