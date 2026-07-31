@@ -42,6 +42,7 @@ import {
   CANONICAL as CANONICAL_REL,
   GLUE as GLUE_REL,
   TWIN_PATHS,
+  extractBase64,
 } from './wasm-artifacts.mjs';
 
 /** The one true blob. Every twin below must decode to exactly these bytes. */
@@ -193,11 +194,10 @@ console.log(
     `${wasm.length.toLocaleString()} bytes, ${base64.length.toLocaleString()} base64 chars`,
 );
 
-/** Pull the single long base64 literal out of a twin module. */
-function extractBase64(text) {
-  const m = text.match(/[A-Za-z0-9+/=]{1000,}/);
-  return m ? m[0] : null;
-}
+// The extractor is NOT redefined here. It used to be a private copy of the same
+// first-long-run regex that wasm-artifacts.mjs had, so a weakness in it was a
+// weakness in both gates at once and fixing one would silently leave the other.
+// One implementation, imported above.
 
 let failures = 0;
 
@@ -219,9 +219,9 @@ for (const twin of TWINS) {
     continue;
   }
 
-  const got = extractBase64(text);
+  const { base64: got, problem } = extractBase64(text);
   if (got === null) {
-    console.error(`[stark-wasm-twins] DRIFT ${twin.path}: no base64 literal found`);
+    console.error(`[stark-wasm-twins] DRIFT ${twin.path}: ${problem}`);
     failures += 1;
     continue;
   }

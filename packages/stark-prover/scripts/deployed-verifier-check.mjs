@@ -945,9 +945,14 @@ for (const twinRel of TWIN_PATHS) {
     fail(`${twinRel} is missing`, [e.message]);
     continue;
   }
-  const b64 = extractBase64(text);
+  const { base64: b64, problem } = extractBase64(text);
   if (b64 === null) {
-    fail(`${twinRel} has no base64 prover literal`, ['This client ships no prover, or the file was hand-edited.']);
+    fail(`${twinRel} does not present one exported prover literal`, [
+      `  ${problem}`,
+      'The literal hashed here has to be the one the client imports. It was not until 2026-07-31: both',
+      'this gate and stark-wasm-twins.mjs took the FIRST long base64 run in the file, so a decoy carrying',
+      'the canonical bytes above the export made both print ok while apps/web shipped a different prover.',
+    ]);
     continue;
   }
   const decoded = Buffer.from(b64, 'base64');

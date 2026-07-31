@@ -41,8 +41,49 @@ export const TWIN_PATHS = [
   'packages/react-native-zk/src/wasmData.ts',
 ];
 
-/** Pull the single long base64 literal out of a twin module. */
+/** The binding a twin module exports, and the only literal a client ever loads. */
+export const TWIN_EXPORT = 'STARK_WASM_BASE64';
+
+/**
+ * Pull the base64 a twin module ACTUALLY EXPORTS.
+ *
+ * This used to be `text.match(/[A-Za-z0-9+/=]{1000,}/)` — the FIRST long base64
+ * run anywhere in the file — and both gates that walk these files used it. That
+ * is not the same string the client imports, and the gap is trivially reachable.
+ * MEASURED 2026-07-31: putting the canonical base64 in an unused `const` above
+ * the export and a different blob in `export const STARK_WASM_BASE64` made
+ *
+ *   stark-wasm-twins.mjs --check      "PASS — 4 twins", exit 0
+ *   deployed-verifier-check.mjs       "ok  apps/web/lib/privacy/pool/starkWasmData.ts"
+ *
+ * while apps/web shipped a prover neither gate had hashed. Both gates claim to
+ * check "what the clients actually import", so they have to read the export.
+ *
+ * Returns `{ base64, problem }`. `problem` is a human sentence and non-null
+ * exactly when `base64` is null; callers must treat it as a hard failure.
+ */
 export function extractBase64(text) {
-  const m = text.match(/[A-Za-z0-9+/=]{1000,}/);
-  return m ? m[0] : null;
+  const runs = text.match(/[A-Za-z0-9+/=]{1000,}/g) ?? [];
+  const m = text.match(
+    new RegExp(`export\\s+const\\s+${TWIN_EXPORT}\\s*(?::[^=]*)?=\\s*['"\`]([A-Za-z0-9+/=]{1000,})['"\`]`),
+  );
+  if (m === null) {
+    return {
+      base64: null,
+      problem:
+        runs.length > 0
+          ? `has ${runs.length} long base64 literal(s) but none of them is \`export const ${TWIN_EXPORT} = '…'\`; ` +
+            'this gate only vouches for the string the client imports'
+          : 'has no base64 prover literal at all — this client ships no prover, or the file was hand-edited',
+    };
+  }
+  if (runs.length !== 1) {
+    return {
+      base64: null,
+      problem:
+        `carries ${runs.length} long base64 literals. Exactly one is allowed: a second one is how a twin ` +
+        `passes this gate on a decoy while exporting something else (MEASURED — see wasm-artifacts.mjs)`,
+    };
+  }
+  return { base64: m[1], problem: null };
 }
