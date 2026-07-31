@@ -9,9 +9,18 @@ import { describe, it, expect } from 'vitest';
 import { PublicKey } from '@solana/web3.js';
 import { Buffer } from 'buffer';
 
-import { fetchVaultByAddress, decodeSubscriptionVault, SUBSCRIPTION_VAULT_RETAILER_OFFSET } from './vaults';
+import {
+  fetchVaultByAddress,
+  decodeSubscriptionVault,
+  deriveSubscriptionVaultPda,
+  hasActiveVaultAccess,
+  hasActiveVaultAccessForVault,
+  SUBSCRIPTION_VAULT_RETAILER_OFFSET,
+  SUBSCRIPTION_VAULT_SEED_PREFIX,
+} from './vaults';
 import { verifyLicenseAgainstVault, encodeLicenseKey, licenseCommitment, LICENSE_SECRET_BYTES } from './license';
 import { ZK_SHIELDED_PROGRAM_ID_DEVNET } from './config';
+import type { ServiceScope } from './service-scope';
 
 const PROGRAM = ZK_SHIELDED_PROGRAM_ID_DEVNET;
 const VAULT_DISC = [96, 90, 247, 202, 157, 16, 86, 190];
@@ -103,20 +112,54 @@ function stubConnection(opts: {
 }
 
 const RETAILER = new PublicKey(new Uint8Array(32).fill(0x22));
+const OTHER_RETAILER = new PublicKey(new Uint8Array(32).fill(0x23));
 const MINT = PublicKey.default; // native SOL, as the program records it
 const SUBSCRIBER = (() => { const s = new Uint8Array(32); for (let i = 0; i < 32; i++) s[i] = (i * 5 + 1) & 0xff; return s; })();
-const SEED_PREFIX = Buffer.from('subscription_vault', 'utf8');
 
 function canonicalVault(over: Partial<VaultFields> = {}) {
   const fields: VaultFields = {
     mode: 'private', subscriberId: SUBSCRIBER, retailer: RETAILER, tokenMint: MINT, ...over,
   };
-  const [pda] = PublicKey.findProgramAddressSync(
-    [SEED_PREFIX, fields.retailer.toBuffer(), Buffer.from(fields.subscriberId!), fields.tokenMint.toBuffer()],
-    PROGRAM,
-  );
+  const [pda] = deriveSubscriptionVaultPda(fields.retailer, fields.subscriberId!, fields.tokenMint);
   return { pda, data: buildVault(fields), fields };
 }
+
+// ---------------------------------------------------------------------------
+// deriveSubscriptionVaultPda
+// ---------------------------------------------------------------------------
+
+describe('deriveSubscriptionVaultPda', () => {
+  it('uses the program seeds [prefix, retailer, subscriber_id, token_mint]', () => {
+    const [got, bump] = deriveSubscriptionVaultPda(RETAILER, SUBSCRIBER, MINT);
+    const [want, wantBump] = PublicKey.findProgramAddressSync(
+      [SUBSCRIPTION_VAULT_SEED_PREFIX, RETAILER.toBuffer(), Buffer.from(SUBSCRIBER), MINT.toBuffer()],
+      PROGRAM,
+    );
+    expect(got.equals(want)).toBe(true);
+    expect(bump).toBe(wantBump);
+  });
+
+  it('is sensitive to every seed — a different subscriber, retailer or mint gives a different address', () => {
+    const [base] = deriveSubscriptionVaultPda(RETAILER, SUBSCRIBER, MINT);
+    const otherSub = new Uint8Array(SUBSCRIBER); otherSub[0] ^= 0xff;
+    expect(deriveSubscriptionVaultPda(RETAILER, otherSub, MINT)[0].equals(base)).toBe(false);
+    expect(deriveSubscriptionVaultPda(OTHER_RETAILER, SUBSCRIBER, MINT)[0].equals(base)).toBe(false);
+    expect(
+      deriveSubscriptionVaultPda(RETAILER, SUBSCRIBER, new PublicKey(new Uint8Array(32).fill(9)))[0].equals(base),
+    ).toBe(false);
+  });
+
+  it('honours a program ID override, so a redeployed program derives its own vaults', () => {
+    const forked = new PublicKey(new Uint8Array(32).fill(0x07));
+    const [devnet] = deriveSubscriptionVaultPda(RETAILER, SUBSCRIBER, MINT);
+    const [other] = deriveSubscriptionVaultPda(RETAILER, SUBSCRIBER, MINT, { programId: forked });
+    expect(other.equals(devnet)).toBe(false);
+  });
+
+  it('rejects a subscriber ID that is not 32 bytes', () => {
+    expect(() => deriveSubscriptionVaultPda(RETAILER, new Uint8Array(31), MINT)).toThrow(/32 bytes/);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // fetchVaultByAddress — the owner check
@@ -189,6 +232,182 @@ describe('fetchVaultByAddress', () => {
     });
     expect((await fetchVaultByAddress(conn, v.pda)).ok).toBe(false);
     expect((await fetchVaultByAddress(conn, v.pda, { programId: forked })).ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hasActiveVaultAccessForVault
+// ---------------------------------------------------------------------------
+
+describe('hasActiveVaultAccessForVault', () => {
+  /** Period 1 of the 20 a default fixture is funded for — current. */
+  const CURRENT = 1_000n + 216_000n;
+
+  function scene(over: Partial<VaultFields> = {}) {
+    const v = canonicalVault(over);
+    return {
+      ...v,
+      ...stubConnection({
+        accounts: { [v.pda.toBase58()]: { data: v.data, owner: PROGRAM } },
+        slot: Number(CURRENT),
+      }),
+    };
+  }
+
+  it('grants access to a current subscription, reading ONE account', async () => {
+    const s = scene();
+    const got = await hasActiveVaultAccessForVault(s.conn, s.pda, RETAILER, SUBSCRIBER);
+    expect(got).not.toBeNull();
+    expect(got!.retailer.equals(RETAILER)).toBe(true);
+    expect(s.calls.filter((c) => c.method === 'getAccountInfo')).toHaveLength(1);
+    expect(s.calls.filter((c) => c.method === 'getSlot')).toHaveLength(1);
+    expect(s.calls.filter((c) => c.method === 'getProgramAccounts')).toHaveLength(0);
+  });
+
+  it('skips the getSlot round trip when the caller already has the slot', async () => {
+    const s = scene();
+    const got = await hasActiveVaultAccessForVault(s.conn, s.pda, RETAILER, SUBSCRIBER, { currentSlot: CURRENT });
+    expect(got).not.toBeNull();
+    expect(s.calls).toHaveLength(1);
+    expect(s.calls[0]!.method).toBe('getAccountInfo');
+  });
+
+  it('works for a normal-mode vault, where the subscriber ID is the wallet pubkey', async () => {
+    const s = scene({ mode: 'normal' });
+    const got = await hasActiveVaultAccessForVault(s.conn, s.pda, RETAILER, SUBSCRIBER, { currentSlot: CURRENT });
+    expect(got).not.toBeNull();
+    expect(got!.subscriberPubkey).not.toBeNull();
+    expect(got!.subscriberCommitment).toBeNull();
+  });
+
+  it('DENIES an exhausted subscription that still reports isActive true', async () => {
+    // The gate this whole session exists for: totalDeposited/rate = 2 periods,
+    // and we are in period 5. `is_active` is still 1 on chain.
+    const s = scene({ totalDeposited: 100_000_000n, rate: 50_000_000n });
+    const late = 1_000n + 5n * 216_000n;
+    expect(await hasActiveVaultAccessForVault(s.conn, s.pda, RETAILER, SUBSCRIBER, { currentSlot: late })).toBeNull();
+    expect(decodeSubscriptionVault(s.data, s.pda).isActive).toBe(true);
+  });
+
+  it('DENIES a paused subscription', async () => {
+    const s = scene({ isPaused: true });
+    expect(
+      await hasActiveVaultAccessForVault(s.conn, s.pda, RETAILER, SUBSCRIBER, { currentSlot: CURRENT }),
+    ).toBeNull();
+  });
+
+  it('DENIES a vault belonging to a different merchant', async () => {
+    // The address is canonical for OTHER_RETAILER; we ask on behalf of RETAILER.
+    const s = scene({ retailer: OTHER_RETAILER });
+    expect(
+      await hasActiveVaultAccessForVault(s.conn, s.pda, RETAILER, SUBSCRIBER, { currentSlot: CURRENT }),
+    ).toBeNull();
+  });
+
+  it('DENIES a vault whose subscriber is someone else', async () => {
+    const other = new Uint8Array(SUBSCRIBER); other[0] ^= 0xff;
+    const s = scene({ subscriberId: other });
+    expect(
+      await hasActiveVaultAccessForVault(s.conn, s.pda, RETAILER, SUBSCRIBER, { currentSlot: CURRENT }),
+    ).toBeNull();
+  });
+
+  it('DENIES an account that is not at the canonical PDA for the triple', async () => {
+    // Vault contents are consistent (right retailer, right subscriber) but it
+    // lives at an address the program would never have derived.
+    const v = canonicalVault();
+    const impostor = new PublicKey(new Uint8Array(32).fill(0x5c));
+    const { conn } = stubConnection({
+      accounts: { [impostor.toBase58()]: { data: v.data, owner: PROGRAM } },
+      slot: Number(CURRENT),
+    });
+    expect(
+      await hasActiveVaultAccessForVault(conn, impostor, RETAILER, SUBSCRIBER, { currentSlot: CURRENT }),
+    ).toBeNull();
+  });
+
+  it('DENIES an account the zk_shielded program does not own', async () => {
+    const v = canonicalVault();
+    const { conn } = stubConnection({
+      accounts: { [v.pda.toBase58()]: { data: v.data, owner: new PublicKey(new Uint8Array(32).fill(0xbe)) } },
+      slot: Number(CURRENT),
+    });
+    expect(
+      await hasActiveVaultAccessForVault(conn, v.pda, RETAILER, SUBSCRIBER, { currentSlot: CURRENT }),
+    ).toBeNull();
+  });
+
+  it('DENIES a missing account', async () => {
+    const v = canonicalVault();
+    const { conn } = stubConnection({ slot: Number(CURRENT) });
+    expect(
+      await hasActiveVaultAccessForVault(conn, v.pda, RETAILER, SUBSCRIBER, { currentSlot: CURRENT }),
+    ).toBeNull();
+  });
+
+  it('rejects a subscriber ID that is not 32 bytes, rather than silently denying', async () => {
+    const s = scene();
+    await expect(
+      hasActiveVaultAccessForVault(s.conn, s.pda, RETAILER, new Uint8Array(16)),
+    ).rejects.toThrow(/32 bytes/);
+  });
+
+  it('enforces a service scope when one is supplied', async () => {
+    const s = scene({ rate: 50_000_000n, intervalSlots: 216_000n });
+    const cheap: ServiceScope = {
+      retailer: RETAILER, tokenMint: MINT, priceAtomic: 50_000_000n, intervalSlots: 216_000n,
+    };
+    const pricier: ServiceScope = { ...cheap, priceAtomic: 150_000_000n };
+    expect(
+      await hasActiveVaultAccessForVault(s.conn, s.pda, RETAILER, SUBSCRIBER, { currentSlot: CURRENT, service: cheap }),
+    ).not.toBeNull();
+    // A subscriber to the cheap tier must not pass for the expensive one.
+    expect(
+      await hasActiveVaultAccessForVault(s.conn, s.pda, RETAILER, SUBSCRIBER, { currentSlot: CURRENT, service: pricier }),
+    ).toBeNull();
+  });
+
+  it('accepts an ambiguous scope, as documented — the return type cannot report it', async () => {
+    const s = scene();
+    const scope: ServiceScope = {
+      retailer: RETAILER, tokenMint: MINT, priceAtomic: 50_000_000n, intervalSlots: 216_000n,
+    };
+    expect(
+      await hasActiveVaultAccessForVault(s.conn, s.pda, RETAILER, SUBSCRIBER, {
+        currentSlot: CURRENT, service: scope, otherServices: [{ ...scope }],
+      }),
+    ).not.toBeNull();
+  });
+
+  it('agrees with the enumerating form on the same vault — a change of cost, not of meaning', async () => {
+    const v = canonicalVault();
+    const single = stubConnection({
+      accounts: { [v.pda.toBase58()]: { data: v.data, owner: PROGRAM } }, slot: Number(CURRENT),
+    });
+    const enumerating = stubConnection({
+      slot: Number(CURRENT),
+      programAccounts: [
+        { pubkey: v.pda, data: v.data },
+        // Three other subscribers of the same merchant: returned to the caller
+        // by the enumerating path, and to nobody by the single-account path.
+        { pubkey: new PublicKey(new Uint8Array(32).fill(0x71)), data: buildVault({ retailer: RETAILER, tokenMint: MINT, subscriberId: new Uint8Array(32).fill(0x81) }) },
+        { pubkey: new PublicKey(new Uint8Array(32).fill(0x72)), data: buildVault({ retailer: RETAILER, tokenMint: MINT, subscriberId: new Uint8Array(32).fill(0x82) }) },
+        { pubkey: new PublicKey(new Uint8Array(32).fill(0x73)), data: buildVault({ retailer: RETAILER, tokenMint: MINT, subscriberId: new Uint8Array(32).fill(0x83) }) },
+      ],
+    });
+
+    const a = await hasActiveVaultAccessForVault(single.conn, v.pda, RETAILER, SUBSCRIBER, { currentSlot: CURRENT });
+    const b = await hasActiveVaultAccess(enumerating.conn, RETAILER, SUBSCRIBER, { currentSlot: CURRENT });
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a!.pda.toBase58()).toBe(b!.pda.toBase58());
+    expect(a!.rate).toBe(b!.rate);
+
+    // Same number of RPC calls; what differs is how many accounts come back.
+    expect(single.calls).toHaveLength(1);
+    expect(enumerating.calls).toHaveLength(1);
+    expect(single.calls[0]!.method).toBe('getAccountInfo');
+    expect(enumerating.calls[0]!.method).toBe('getProgramAccounts');
   });
 });
 

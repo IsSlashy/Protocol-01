@@ -2,6 +2,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { type MerchantSdkConfig, resolveProgramIds, ZK_SHIELDED_PROGRAM_ID_DEVNET } from './config';
 import { subscriptionIsCurrent } from './claim';
+import { type ServiceScopedOptions, vaultMatchesService } from './service-scope';
 
 /**
  * Default `zk_shielded` program ID (devnet, v0.9.9+ / V4 pool seed).
@@ -40,6 +41,9 @@ export const SUBSCRIPTION_VAULT_DISCRIMINATOR = Buffer.from([
  * live devnet vaults (both modes) — `retailer` is valid at 42, all-zero at 74.
  */
 export const SUBSCRIPTION_VAULT_RETAILER_OFFSET = 42;
+
+/** PDA seed prefix — `SubscriptionVault::SEED_PREFIX`. */
+export const SUBSCRIPTION_VAULT_SEED_PREFIX = Buffer.from('subscription_vault', 'utf8');
 
 /** Decoded `SubscriptionVault` snapshot. */
 export interface SubscriptionVaultAccount {
@@ -277,6 +281,48 @@ export async function listVaultsForRetailer(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Single-account path (the primary one)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the `SubscriptionVault` PDA the program would have created for this
+ * (retailer, subscriber, mint) triple:
+ * `[b"subscription_vault", retailer, subscriber_id_bytes, token_mint]`
+ * (`programs/zk_shielded/src/state/subscription_vault.rs:10`).
+ *
+ * `subscriberIdBytes` is the subscriber's wallet pubkey (normal mode) or their
+ * `subscriber_commitment` (private mode) — the program uses whichever is `Some`.
+ *
+ * A merchant that already knows those three things does not need the client to
+ * present an address and does not need to enumerate anything: derive, then read
+ * the one account. VERIFIED against devnet 2026-08-01 — this reproduced the
+ * address of all 17 live vaults, in both modes and across all three account
+ * lengths in use (263 / 328 / 361 bytes).
+ */
+export function deriveSubscriptionVaultPda(
+  retailer: PublicKey,
+  subscriberIdBytes: Uint8Array,
+  tokenMint: PublicKey,
+  opts: { programId?: PublicKey; sdkConfig?: MerchantSdkConfig } = {},
+): [PublicKey, number] {
+  if (subscriberIdBytes.length !== 32) {
+    throw new Error('subscriberIdBytes must be exactly 32 bytes');
+  }
+  const programId = opts.sdkConfig
+    ? resolveProgramIds(opts.sdkConfig).zkShielded
+    : (opts.programId ?? ZK_SHIELDED_PROGRAM_ID);
+  return PublicKey.findProgramAddressSync(
+    [
+      SUBSCRIPTION_VAULT_SEED_PREFIX,
+      retailer.toBuffer(),
+      Buffer.from(subscriberIdBytes),
+      tokenMint.toBuffer(),
+    ],
+    programId,
+  );
+}
+
 export interface FetchVaultOptions {
   /** Commitment. Default `confirmed`. */
   commitment?: 'processed' | 'confirmed' | 'finalized';
@@ -335,6 +381,92 @@ export async function fetchVaultByAddress(
   } catch (e) {
     return { ok: false, reason: `vault decode failed: ${(e as Error).message}` };
   }
+}
+
+export interface VaultAccessCheckOptions extends FetchVaultOptions, ServiceScopedOptions {
+  /** Slot to evaluate against. Fetched when omitted. */
+  currentSlot?: bigint;
+}
+
+/**
+ * The non-enumerating entitlement check: given the address of ONE vault, say
+ * whether it currently entitles `subscriberIdBytes` to service from `retailer`.
+ *
+ * This is the companion to {@link hasActiveVaultAccess} and the form merchants
+ * should reach for. It reads a single account instead of the merchant's whole
+ * subscriber book, and it applies the same {@link subscriptionIsCurrent} gate —
+ * NOT `is_active`, which the program writes `true` at subscribe time and `false`
+ * nowhere, so an exhausted vault reports `true` forever.
+ *
+ * The client supplies `vaultPda` (from its own subscription receipt), or the
+ * merchant derives it with {@link deriveSubscriptionVaultPda} and never asks.
+ *
+ * ## What is checked, in order
+ *
+ *  1. the account is owned by `zk_shielded` — see {@link fetchVaultByAddress};
+ *  2. it carries the `SubscriptionVault` discriminator and decodes;
+ *  3. `vault.retailer` is `retailer`, so another merchant's vault cannot pass;
+ *  4. the vault sits at the canonical PDA for (retailer, subscriber, mint), so
+ *     the presented address is the one the program would have created;
+ *  5. the vault's subscriber ID is `subscriberIdBytes`;
+ *  6. `subscriptionIsCurrent` at `currentSlot`;
+ *  7. `opts.service`, when supplied — otherwise a subscription to any of this
+ *     merchant's services with the same mint, price and interval passes for all
+ *     of them. That gap is the merchant's to close by passing a scope.
+ *
+ * Ambiguous scopes (two of the merchant's services indistinguishable on chain)
+ * are ACCEPTED here, because the return type has nowhere to report the
+ * ambiguity. Use `verifyLicenseAgainstVault`, which returns
+ * `ambiguousService: true`, when the caller needs to know.
+ *
+ * @returns the vault when access is granted, `null` otherwise.
+ */
+export async function hasActiveVaultAccessForVault(
+  connection: Connection,
+  vaultPda: PublicKey,
+  retailer: PublicKey,
+  subscriberIdBytes: Uint8Array,
+  opts: VaultAccessCheckOptions = {},
+): Promise<SubscriptionVaultAccount | null> {
+  if (subscriberIdBytes.length !== 32) {
+    throw new Error('subscriberIdBytes must be exactly 32 bytes');
+  }
+
+  const [fetched, slot] = await Promise.all([
+    fetchVaultByAddress(connection, vaultPda, opts),
+    opts.currentSlot !== undefined
+      ? Promise.resolve(opts.currentSlot)
+      : connection.getSlot(opts.commitment ?? 'confirmed').then(BigInt),
+  ]);
+  if (!fetched.ok) return null;
+  const vault = fetched.vault;
+
+  if (!vault.retailer.equals(retailer)) return null;
+
+  // The vault must be the canonical PDA for this triple. Redundant given the
+  // owner + discriminator + field checks, and kept because it is free and pins
+  // the address itself rather than only its contents.
+  const [derived] = deriveSubscriptionVaultPda(retailer, subscriberIdBytes, vault.tokenMint, opts);
+  if (!derived.equals(vaultPda)) return null;
+
+  const idBytes = vault.subscriberPubkey ? vault.subscriberPubkey.toBytes() : vault.subscriberCommitment;
+  if (!idBytes || idBytes.length !== 32) return null;
+  if (!bytesEqual(idBytes, subscriberIdBytes)) return null;
+
+  if (!subscriptionIsCurrent(vault, slot)) return null;
+
+  if (opts.service) {
+    const m = vaultMatchesService(vault, opts.service, { otherServices: opts.otherServices });
+    if (!m.matches) return null;
+  }
+  return vault;
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i]! ^ b[i]!;
+  return diff === 0;
 }
 
 /**
