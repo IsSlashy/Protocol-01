@@ -32,9 +32,9 @@
  *
  * PROVES: the checked-in blob (and every inlined twin) is the exact artifact
  * `deployed-verifier.json` records as compatible with the deployed program, and
- * that its proof-format generation — derived from the blob's own bytes and
- * corroborated against the prover source those bytes are built from — equals the
- * generation that record attributes to the deployment.
+ * that its proof-format generation — MEASURED by generating seven proofs with it
+ * and hashing them, not read off it — equals the generation that record
+ * attributes to the deployment.
  *
  * DOES NOT PROVE: that a proof from this blob verifies on chain. Only a real
  * submission proves that. The record's `accepts_client_blob_sha256` is the place
@@ -104,65 +104,64 @@
  * cannot be reached is a hard failure whenever nothing else was going to fail
  * the build.
  *
- * # Generation detection
+ * # Generation detection — the CLIENT side is measured, not read
  *
- * Both sides are classified by scanning for message literals that B1 introduced,
- * each with a POSITIVE CONTROL — a literal present in every generation. Without
- * the control an empty, truncated or string-stripped artifact would scan as
- * "no B1 markers found" and be classified pre-B1, which is a FALSE GREEN in the
- * one direction that matters. If the controls are missing the scan refuses to
- * classify and the gate fails.
+ * The client blob's generation comes from what it DOES: seven fixed witnesses in,
+ * seven serialized proofs out, sha256 each, and every one must match the same
+ * column of the fixture table in scripts/prover-behaviour.mjs. B1 is
+ * length-preserving on all seven circuits, so length alone cannot separate the
+ * generations (MEASURED: both blobs emit 45,001 / 65,801 / 66,681 / 75,637 /
+ * 78,377 / 76,357 / 78,517 bytes) and the CONTENT digests are the discriminator.
+ * A mixture, or a digest in neither column, refuses to classify and fails.
  *
- * The markers are hardcoded here, not read from the JSON, so editing the record
- * cannot weaken the scan.
+ * This replaced a scan for panic-message literals, which was cheated four rounds
+ * running and was cheatable by accident. MEASURED 2026-07-31 against the previous
+ * revision: rewriting FOUR BYTES of panic text inside the blob (`B1 ` -> `Bx `,
+ * `DEEP ` -> `DEEQ `, `B1 depends on` -> `Bx depends on`), applying the same three
+ * renames to stark/src/compact.rs, rewording ONE msg! line in
+ * programs/p01_stark_verifier/src/verify.rs — that single line carries BOTH
+ * literals the deployed-ELF scan discriminates on, so the "five strings" this was
+ * costed at was really three plus one — then reshipping the four twins with
+ * stark-wasm-twins.mjs --write and pointing the record at the doctored hash,
+ * printed "PASS — the shipped prover matches the devnet deployment, and the chain
+ * was asked and agreed", exit 0, against the real pre-B1 devnet deployment. Same
+ * 211,370 bytes, WebAssembly.validate still true, every control still present,
+ * stark-wasm-twins.mjs --check still green. Every proof that client produced
+ * would still have died with FriFoldCheckFailed.
  *
- * The controls only cover the WHOLESALE case, and saying they close the
- * false-green direction was an overstatement until this revision. MEASURED
- * 2026-07-31 against the previous revision: rewriting one byte inside each of the
- * three B1 marker literals in the blob (`B1 ` -> `Bx `, `DEEP ` -> `DEEQ `, and
- * the same in the third), which changes four bytes of panic text and nothing
- * else — WebAssembly.validate still true, every control still present, the same
- * 211,370 bytes — then reshipping the four twins with stark-wasm-twins.mjs
- * --write and setting client_blob.proof_format_generation to `pre-b1` and
- * accepts_client_blob_sha256 to the doctored hash, printed
- * "PASS — the shipped prover matches the devnet deployment, and the chain was
- * asked and agreed", exit 0, against the real pre-B1 devnet deployment. The blob
- * was still B1 in every way that reaches the chain, so every proof it produced
- * would still have died with FriFoldCheckFailed. stark-wasm-twins.mjs --check
- * passed on the doctored artifacts too, because they agree with each other.
+ * MEASURED against THIS revision, the same doctored blob still emits all seven B1
+ * digests, so it classifies b1 and the interlock fires. Renaming every literal in
+ * every Rust file and in the artifact does not move the verdict, because none of
+ * them is read to reach it.
  *
- * That is the same false green the controls were supposed to stop, reached by
- * editing the discriminator instead of deleting it. It does not need an
- * adversary: rewording those three panic messages in stark/src/compact.rs is an
- * ordinary refactor and would have had exactly the same effect silently.
+ * What the digests do NOT prove is that the blob is B1 on every input; they are a
+ * seven-witness sample. See the "What this DOES NOT prove" section of
+ * scripts/prover-behaviour.mjs.
  *
- * # The blob is CORROBORATED against the source it is built from
+ * The DEPLOYED side is still classified by scanning the ELF for msg! literals,
+ * because nothing here can run a BPF program and a proof cannot be submitted to
+ * one without funding and a chunked upload. The markers are hardcoded in this
+ * file, not read from the record, so no edit to the record weakens that scan —
+ * but ELF_B1_MARKERS is now the softest thing left in this gate, and that is
+ * stated rather than implied: pointing those two literals at a string the pre-B1
+ * deployment also carries would make the chain read b1. That is an edit to the
+ * guardrail itself rather than to anything it measures, which is a louder diff
+ * than a panic-message rename, but it is not nothing.
  *
- * So the blob no longer classifies itself. BLOB_B1_MARKERS are scanned in
- * `stark/src/compact.rs` as well, and the two sets must be EQUAL. The prover
- * source and the prover binary are supposed to correspond — src/wireFormat.test.ts
- * already asserts that this blob's proofs equal what the Rust prover in stark/
- * emits — so a marker the source has and the blob does not means the blob was not
- * built from this tree, or the literal was edited out of it. Either way the scan
- * refuses to classify rather than reading the absence as "pre-B1".
+ * # The blob is ALSO corroborated against the source it is built from
  *
- * This is not unfakeable and is not claimed to be. MEASURED 2026-07-31 against
- * THIS revision: applying the same three renames to stark/src/compact.rs as well
- * restores the agreement, and the gate printed the full PASS at exit 0 again
- * against the pre-B1 devnet deployment. What the corroboration buys is that the
- * cheapest false green now requires renaming the
- * B1 panic messages in the prover's own source, in the same commit, for no
- * stated reason, in a diff a human reads — instead of being reachable by
- * touching only generated artifacts, or by accident during a rename. Deriving
- * the generation from BEHAVIOUR rather than from strings (a proof from this blob
- * is a different length and digest per circuit either side of B1, which is what
- * src/wireFormat.test.ts already pins) is the only thing that would close it
- * properly, and it is not done here.
+ * The panic-literal scan is kept, demoted to corroboration. BLOB_B1_MARKERS are
+ * scanned in the blob and in `stark/src/compact.rs`, and the two sets must be
+ * EQUAL. That still detects a blob that was not built from this tree, and a
+ * string-stripped artifact, neither of which the digests speak to. And a blob
+ * that PROVES one generation while its strings CLAIM another is now its own named
+ * failure — that combination is the four-byte edit above and has no innocent
+ * explanation.
  *
  * # An independent audit of this file, 2026-07-31, and what it found
  *
- * A fourth attempt to cheat this gate found three things. Two are fixed; the
- * third is the residual above, now measured rather than reasoned about.
+ * A fourth attempt to cheat this gate found three things. All three are now
+ * closed.
  *
  *   1. THE TWINS WERE NOT REALLY CHECKED. Both this gate and stark-wasm-twins.mjs
  *      pulled the base64 with the FIRST long-base64-run regex, which need not be
@@ -178,15 +177,13 @@
  *      See verifierConstantsInPrivacySdk for the measurement; every such constant
  *      is swept now.
  *
- *   3. THE TWO-CRATE RENAME IS OPEN. MEASURED against the revision that added the
- *      prover/verifier agreement below: renaming the three B1 literals in
- *      stark/src/compact.rs AND the two in
- *      programs/p01_stark_verifier/src/{verify,lib}.rs, with the same four bytes
- *      edited in the blob, makes every source in this tree agree that it is
- *      pre-B1 and prints "PASS — the shipped prover matches the devnet
- *      deployment, and the chain was asked and agreed" at exit 0, with devnet
- *      genuinely pre-B1. Five strings across two crates, in a diff a human reads.
- *      That is the cost, and the cost is the whole of the defence.
+ *   3. THE TWO-CRATE RENAME IS CLOSED, behaviourally. It was open and measured:
+ *      renaming the B1 literals in stark/src/compact.rs and in
+ *      programs/p01_stark_verifier/src/{verify,lib}.rs, with four bytes edited in
+ *      the blob, printed the full PASS at exit 0 with devnet genuinely pre-B1.
+ *      MEASURED 2026-07-31 against this revision, the identical cheat now exits 1
+ *      with "the blob PROVES one generation and its panic strings CLAIM another"
+ *      and the FriFoldCheckFailed interlock underneath it.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
@@ -194,6 +191,7 @@ import { createHash } from 'node:crypto';
 import { resolve, relative } from 'node:path';
 
 import { REPO, CANONICAL, TWIN_PATHS, extractBase64 } from './wasm-artifacts.mjs';
+import { classifyProverBehaviour, describeBehaviour, fixtureTableProblem } from './prover-behaviour.mjs';
 
 const RECORD_DEFAULT = 'packages/stark-prover/deployed-verifier.json';
 
@@ -201,7 +199,15 @@ const RECORD_DEFAULT = 'packages/stark-prover/deployed-verifier.json';
 // Generation markers. Hardcoded on purpose — see the header.
 // ---------------------------------------------------------------------------
 
-/** Literals B1 added to the PROVER (stark/src/compact.rs). Any hit means B1. */
+/**
+ * Literals B1 added to the PROVER (stark/src/compact.rs).
+ *
+ * These NO LONGER decide the blob's generation — scripts/prover-behaviour.mjs
+ * does, by driving it. They are kept because they still detect two things the
+ * proof digests are silent about: an artifact whose strings were stripped, and
+ * an artifact that was not built from the source in this tree. And a blob whose
+ * strings disagree with its proofs is reported as exactly that.
+ */
 const BLOB_B1_MARKERS = [
   'B1 TERMINAL DEGREE BOUND VIOLATED',
   'DEEP denominator vanishes at LDE position ',
@@ -571,10 +577,13 @@ function proverSourceMarkerHits() {
  * The blob must carry the same B1 discriminators as the prover source it is
  * built from. Returns a failure block, or null when they agree.
  *
- * A marker the source has and the blob does not is the measured false green in
- * the header: four bytes of panic text edited out of the artifact reclassify a
- * B1 prover as pre-B1 and green the gate against a pre-B1 chain, with every
- * control intact and every twin agreeing. Read as skew, not as a generation.
+ * A marker the source has and the blob does not used to BE the false green:
+ * four bytes of panic text edited out of the artifact reclassified a B1 prover
+ * as pre-B1 and greened this gate against a pre-B1 chain. It no longer decides
+ * the generation, so what this check reports now is narrower and still worth a
+ * red: the artifact and the source it is supposed to be built from disagree
+ * about themselves, which means one of them was edited or the blob was never
+ * reshipped from this checkout.
  */
 function blobSourceSkew(blobHits) {
   const src = readSources(BLOB_MARKER_SOURCES);
@@ -601,16 +610,17 @@ function blobSourceSkew(blobHits) {
       ...(onlySource.length > 0 ? ['', '  in the SOURCE but not in the BLOB:', ...onlySource.map((m) => `    ${JSON.stringify(m)}`)] : []),
       ...(onlyBlob.length > 0 ? ['', '  in the BLOB but not in the SOURCE:', ...onlyBlob.map((m) => `    ${JSON.stringify(m)}`)] : []),
       '',
-      'Two things do this, and this gate cannot tell them apart, so it refuses to classify either way:',
+      'Two things do this, and this gate cannot tell them apart:',
       '',
       '  1. The blob was not built from this tree. src/wireFormat.test.ts asserts the blob\'s proofs equal',
       '     what the Rust prover in stark/ emits, so a blob that disagrees with that source here is a',
       '     reship that never happened, or one that happened from a different checkout.',
       '  2. The literals were edited. MEASURED: rewriting four bytes of panic text inside the blob leaves',
       '     WebAssembly.validate true, every control present, the byte count identical and all four twins',
-      '     agreeing after --write, and reclassifies a B1 prover as pre-B1. That greened this gate against',
-      '     the real pre-B1 devnet deployment at exit 0 while every proof would still have died with',
-      '     FriFoldCheckFailed. Rewording those messages in a normal refactor does the same thing.',
+      '     agreeing after --write, and used to reclassify a B1 prover as pre-B1. That greened this gate',
+      '     against the real pre-B1 devnet deployment at exit 0 while every proof would still have died',
+      '     with FriFoldCheckFailed. It no longer moves the verdict — the generation is measured by',
+      '     driving the blob — but it is still an artifact nobody can account for.',
       '',
       'If the messages were legitimately reworded, update BLOB_B1_MARKERS in this script in the same commit.',
       'Do not make the two sides agree by editing the artifact.',
@@ -621,22 +631,16 @@ function blobSourceSkew(blobHits) {
 /**
  * The two halves of this tree have to agree about which generation it is.
  *
- * "Is the prover source B1" was decided by one file, stark/src/compact.rs, and
- * only by panic strings inside it. MEASURED 2026-07-31 against the revision that
- * introduced the source corroboration: renaming those three literals in
- * compact.rs AND in the blob makes the two agree at 0/3, the tree reads pre-B1,
- * and the gate prints the full PASS at exit 0 against the real pre-B1 devnet
- * deployment. That is still true of a rename in BOTH crates and is not claimed
- * to be closed here.
+ * B1 landed in the prover and in the verifier together, so a tree whose verifier
+ * source carries its B1 literals while its prover source carries none is skew,
+ * and one of the two was edited.
  *
- * What is no longer true is that one file decides it. B1 landed in the prover and
- * in the verifier together; programs/p01_stark_verifier/src/verify.rs carries B1
- * literals of its own, and this tree does have them. So a tree whose verifier
- * source says B1 while its prover source says pre-B1 is skew, and reading it as
- * "pre-B1, same as the chain, ship it" is the false green. Cost of the cheapest
- * silent reclassification goes from renaming three strings in one crate to
- * renaming five across two crates, in a diff a human reads. It buys a cost, not
- * a proof; only deriving the generation from BEHAVIOUR would close it.
+ * This used to be a load-bearing defence, costed at "renaming five strings across
+ * two crates" — and MEASURED at that cost, which the rename bought and then
+ * spent: the gate printed the full PASS at exit 0 against the real pre-B1 devnet
+ * deployment. Deriving the generation from BEHAVIOUR is what closed it, and this
+ * check is now a consistency assertion about the sources rather than the thing
+ * standing between the repo and a false green.
  *
  * Returns a failure block, or null.
  */
@@ -654,8 +658,9 @@ function treeGenerationSkew() {
       `  ${ELF_MARKER_SOURCES.join(', ')}  ${verifierHits.length}/${ELF_B1_MARKERS.length} B1 markers`,
       '',
       'B1 changed the prover and the verifier together, so one half carrying its B1 literals while the',
-      'other carries none is not a generation, it is skew. Refusing to classify rather than guess: the',
-      'guess that matters reads the prover as pre-B1, matches it to a pre-B1 chain and ships a B1 client.',
+      'other carries none is not a generation, it is skew, and one of the two files was edited. The',
+      'client generation no longer depends on this — it is measured by driving the blob — so this is a',
+      'red about the sources, not about the interlock verdict.',
       '',
       'If these messages were legitimately reworded, update BLOB_B1_MARKERS / ELF_B1_MARKERS in this',
       'script in the same commit.',
@@ -1049,23 +1054,54 @@ try {
   process.exit(1);
 }
 const blobSha = sha256(blob);
-const blobCls = classify(blob, BLOB_B1_MARKERS, BLOB_CONTROLS);
+
+// THE VERDICT. The blob is driven — seven witnesses in, seven proof digests out
+// — and the generation is whichever column of the fixture table all seven match.
+// Nothing here reads a string out of the artifact or out of any Rust source, so
+// no rename in any file changes what this returns. See prover-behaviour.mjs.
+const tableProblem = fixtureTableProblem();
+if (tableProblem !== null) fail(tableProblem.title, tableProblem.lines);
+const blobBehaviour = classifyProverBehaviour(blob);
+
+// CORROBORATION ONLY. The panic-literal scan that used to BE the verdict is kept
+// because it still detects things the digests do not — a string-stripped
+// artifact, or a blob that was not built from the source in this tree — and
+// because a disagreement between what the blob says and what it does is itself
+// the signature of the measured four-byte edit. It no longer decides anything.
+const blobStrings = classify(blob, BLOB_B1_MARKERS, BLOB_CONTROLS);
+
+/** The generation the interlock is allowed to act on. Behavioural, or nothing. */
+const blobGen = tableProblem === null ? blobBehaviour.generation : null;
 
 console.log(`[deployed-verifier] gating   ${TARGET_CLUSTER}${clusterFlag === null ? ' (default)' : ' (--cluster)'} ${TARGET.endpoint}${LOCAL_MODE ? '  NOT A SHIPPING CLUSTER' : ''}`);
 console.log(`[deployed-verifier] record   ${RECORD_REL}`);
 console.log(`[deployed-verifier] blob     ${CANONICAL}`);
 console.log(`[deployed-verifier]          ${blob.length.toLocaleString()} bytes, sha256 ${blobSha}`);
-console.log(`[deployed-verifier]          generation ${blobCls.generation ?? 'UNCLASSIFIABLE'} (B1 markers found: ${blobCls.hits.length}/${BLOB_B1_MARKERS.length})`);
+console.log(
+  `[deployed-verifier]          generation ${blobGen ?? 'UNCLASSIFIABLE'} — MEASURED by driving it: ` +
+    `${blobBehaviour.results.filter((r) => r.verdict === blobGen).length}/${blobBehaviour.results.length} ` +
+    `circuits emit the ${blobGen ?? 'expected'} proof digest (${(blobBehaviour.ms / 1000).toFixed(1)} s)`,
+);
+console.log(
+  `[deployed-verifier]          panic-string scan says ${blobStrings.generation ?? 'UNCLASSIFIABLE'} ` +
+    `(${blobStrings.hits.length}/${BLOB_B1_MARKERS.length} B1 markers) — corroboration, not the verdict`,
+);
 console.log(`[deployed-verifier] source   ${BLOB_MARKER_SOURCES.join(', ')} carries ${proverSourceMarkerHits()?.length ?? '?'}/${BLOB_B1_MARKERS.length} of the same markers`);
 console.log(`[deployed-verifier] deployed ${deployed.program_id} on ${deployed.cluster} (as the record has it)`);
 console.log(`[deployed-verifier]          generation ${deployed.proof_format_generation}, elf sha256 ${deployed.elf_sha256}, slot ${deployed.last_deployed_slot}`);
 
-if (blobCls.generation === null) {
-  fail('the checked-in prover blob cannot be classified', [
-    `Missing control literals: ${JSON.stringify(blobCls.missingControls)}`,
-    'These are present in every generation of the blob. Their absence means the artifact is empty,',
-    'truncated, string-stripped or simply not the prover. Refusing to classify rather than guess:',
-    'guessing here defaults to "pre-b1", which would wave a B1 blob past a pre-B1 deployment.',
+if (blobGen === null) {
+  fail('the checked-in prover blob could not be classified by what it DOES', [
+    `  ${blobBehaviour.problem ?? 'the reference fixture table was rejected; see the failure above'}`,
+    ...(blobBehaviour.results.length > 0 ? ['', ...describeBehaviour(blobBehaviour), ''] : ['']),
+    'The generation is decided by driving the blob against seven fixed witnesses and comparing the seven',
+    'proof digests, because B1 is length-preserving on all seven circuits and only the CONTENT moves.',
+    'A blob whose digests match neither the B1 column nor the measured pre-B1 artifact is a prover this',
+    'gate has never seen, and there is no safe default: guessing would guess "pre-b1", which is exactly',
+    'the guess that ships a B1 client at a pre-B1 chain. Refusing instead.',
+    '',
+    'If the wire format changed on purpose, re-measure the fixtures in scripts/prover-behaviour.mjs in',
+    'lockstep with src/wireFormat.test.ts and programs/p01_stark_verifier/tests/b1_deep_binding.rs.',
   ]);
 }
 
@@ -1075,19 +1111,42 @@ if (blobCls.generation === null) {
 // ...and the prover source does not get to be the only witness either: B1 landed
 // in the prover and the verifier together, so the two crates must agree about
 // which generation this tree is.
+//
+// None of these null out `blobGen` any more. They used to, because the string
+// scan WAS the verdict and a skewed scan had to be prevented from satisfying the
+// interlock. Now the verdict comes from behaviour, which a skew cannot touch, so
+// each of these adds a failure and the interlock still fires underneath it.
+if (blobStrings.generation === null) {
+  fail('the checked-in prover blob carries none of the literals every generation has', [
+    `Missing control literals: ${JSON.stringify(blobStrings.missingControls)}`,
+    'These are present in every generation of the blob. Their absence means the artifact is empty,',
+    'truncated, string-stripped or simply not the prover. That is worth failing on even though the',
+    'generation is now measured by driving the blob rather than by scanning it.',
+  ]);
+}
 {
-  const skew = blobSourceSkew(blobCls.hits);
-  if (skew !== null) {
-    fail(skew.title, skew.lines);
-    // The classification is now worthless in the direction that matters, so it
-    // must not be used to satisfy the interlock below.
-    blobCls.generation = null;
-  }
+  const skew = blobSourceSkew(blobStrings.hits);
+  if (skew !== null) fail(skew.title, skew.lines);
   const treeSkew = treeGenerationSkew();
-  if (treeSkew !== null) {
-    fail(treeSkew.title, treeSkew.lines);
-    blobCls.generation = null;
-  }
+  if (treeSkew !== null) fail(treeSkew.title, treeSkew.lines);
+}
+
+// WHAT THE BLOB SAYS vs WHAT THE BLOB DOES. This is the four-byte edit, named.
+// A B1 prover with its B1 panic strings rewritten scans as pre-B1 and proves as
+// B1, and that combination has no innocent explanation.
+if (blobGen !== null && blobStrings.generation !== null && blobGen !== blobStrings.generation) {
+  fail('the blob PROVES one generation and its panic strings CLAIM another', [
+    `  driving the blob (seven proof digests)  ${blobGen}`,
+    `  scanning the blob for panic literals    ${blobStrings.generation} (${blobStrings.hits.length}/${BLOB_B1_MARKERS.length} B1 markers)`,
+    '',
+    ...describeBehaviour(blobBehaviour),
+    '',
+    'The digests win, because they are what the on-chain verifier sees; the strings are what a human',
+    'reads. MEASURED 2026-07-31: rewriting four bytes of panic text inside the blob left the length,',
+    'WebAssembly.validate, every control literal and all four twins intact, reclassified a B1 prover as',
+    'pre-B1 and printed the full PASS at exit 0 against the genuinely pre-B1 devnet deployment. This is',
+    'that edit. Reship the blob from this tree; do not reconcile the two sides by editing either.',
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1148,12 +1207,14 @@ if (typeof clientRec.bytes === 'number' && clientRec.bytes !== blob.length) {
     `  record ${clientRec.bytes} / disk ${blob.length}`,
   ]);
 }
-if (blobCls.generation !== null && clientRec.proof_format_generation !== blobCls.generation) {
+if (blobGen !== null && clientRec.proof_format_generation !== blobGen) {
   fail('the record misstates the blob\'s own generation', [
     `  record client_blob.proof_format_generation  ${clientRec.proof_format_generation}`,
-    `  derived from the blob's bytes               ${blobCls.generation}`,
-    `  B1 markers found in the blob                ${JSON.stringify(blobCls.hits)}`,
-    'The derived value wins: it comes from the artifact, the record is just prose.',
+    `  measured by driving the blob                ${blobGen}`,
+    '',
+    ...describeBehaviour(blobBehaviour),
+    '',
+    'The measured value wins: it is what the artifact does, the record is just prose.',
   ]);
 }
 
@@ -1162,12 +1223,14 @@ if (blobCls.generation !== null && clientRec.proof_format_generation !== blobCls
 // ---------------------------------------------------------------------------
 
 const deployedGen = deployed.proof_format_generation;
-const blobGen = blobCls.generation;
 
 if (blobGen !== null && deployedGen !== blobGen) {
   fail(`the client blob is ${blobGen.toUpperCase()}, the deployed program is ${String(deployedGen).toUpperCase()}`, [
     `  client blob  ${blobGen.padEnd(7)} ${blobSha}  (${blob.length.toLocaleString()} B, this tree)`,
     `  deployed     ${String(deployedGen).padEnd(7)} ${deployed.elf_sha256}  (${Number(deployed.elf_bytes ?? 0).toLocaleString()} B, ${deployed.cluster} slot ${deployed.last_deployed_slot})`,
+    '',
+    `The client generation was MEASURED by driving the blob, not read off it (${(blobBehaviour.ms / 1000).toFixed(1)} s, all seven circuits):`,
+    ...describeBehaviour(blobBehaviour),
     '',
     'EVERY PROOF THIS CLIENT GENERATES WILL BE REJECTED WITH FriFoldCheckFailed.',
     '',
