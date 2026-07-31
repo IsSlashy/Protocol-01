@@ -32,8 +32,9 @@
  *
  * PROVES: the checked-in blob (and every inlined twin) is the exact artifact
  * `deployed-verifier.json` records as compatible with the deployed program, and
- * that its proof-format generation, derived from the blob's own bytes, equals
- * the generation that record attributes to the deployment.
+ * that its proof-format generation — derived from the blob's own bytes and
+ * corroborated against the prover source those bytes are built from — equals the
+ * generation that record attributes to the deployment.
  *
  * DOES NOT PROVE: that a proof from this blob verifies on chain. Only a real
  * submission proves that. The record's `accepts_client_blob_sha256` is the place
