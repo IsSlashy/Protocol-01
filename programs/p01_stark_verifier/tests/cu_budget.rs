@@ -856,7 +856,7 @@ fn assert_artifact_is_current(so: &SoUnderTest) {
 /// numbers in the array matched none of them.
 ///
 /// Every `*_max` is `ceil(measured * 1.02)` rounded up to the next 1,000 — a
-/// uniform 2% band, narrow enough that the "it quietly became 1,399K" failure
+/// uniform 2% band, narrow enough that the "it quietly became 1,399,000" failure
 /// mode is red. It is COMPUTED from the measurement, not measured.
 ///
 /// That band used to be the only thing absorbing a compiler difference. The pin
@@ -914,7 +914,8 @@ struct CuCeiling {
 /// `vs measured` column — the six phase-2 pins were asserted against their
 /// ceiling and printed nowhere, so six of the thirteen numbers this block claims
 /// were reproduced could not be seen to have been. Both phases are tabulated
-/// now.
+/// now, and every number in this doc comment that also exists as a constant is
+/// checked against it by `cu_ceiling_prose_matches_the_constants`.
 ///
 /// # There is no historical column here, on purpose
 ///
@@ -951,7 +952,8 @@ struct CuCeiling {
 /// separate measurement.
 ///
 /// Worst absolute is C4 at 772,776 of 1,400,000 (55%); worst phase1+phase2 is
-/// C4 at 950,461, still inside one instruction.
+/// C4 at 950,461, still inside one instruction. Worst phase 2 alone is C5 at
+/// 198,649.
 const CU_CEILINGS: [CuCeiling; 7] = [
     CuCeiling { circuit_id: 0, phase1_measured: 538_666, phase1_max: 550_000, phase2_measured: None,           phase2_max: None },
     CuCeiling { circuit_id: 1, phase1_measured: 678_142, phase1_max: 692_000, phase2_measured: Some(122_706), phase2_max: Some(126_000) },
@@ -961,6 +963,21 @@ const CU_CEILINGS: [CuCeiling; 7] = [
     CuCeiling { circuit_id: 5, phase1_measured: 735_492, phase1_max: 751_000, phase2_measured: Some(198_649), phase2_max: Some(203_000) },
     CuCeiling { circuit_id: 6, phase1_measured: 749_469, phase1_max: 765_000, phase2_measured: Some(120_428), phase2_max: Some(123_000) },
 ];
+
+/// The band every `*_max` is computed with, as a percentage numerator over 100.
+///
+/// Held as constants rather than spelled inline so the prose check below can
+/// treat `1,000` in a doc comment as derived rather than as a figure someone
+/// typed.
+const CU_BAND_NUMERATOR: u64 = 102;
+/// `*_max` is rounded UP to the next multiple of this.
+const CU_BAND_ROUNDING: u64 = 1_000;
+
+/// `ceil(measured * 1.02)` rounded up to the next 1,000. COMPUTED, never typed.
+fn cu_band(measured: u64) -> u64 {
+    let raw = (measured * CU_BAND_NUMERATOR).div_ceil(100);
+    raw.div_ceil(CU_BAND_ROUNDING) * CU_BAND_ROUNDING
+}
 
 /// The compiler that produced `CU_CEILINGS`, verbatim as `compiler_identity`
 /// reports it.
@@ -1050,11 +1067,7 @@ fn toolchain_caveat_fires_only_when_the_compiler_differs() {
 /// gate for that circuit and every table above would still print `ok`.
 #[test]
 fn cu_ceilings_are_two_percent_over_the_recorded_measurement() {
-    fn band(measured: u64) -> u64 {
-        // ceil(measured * 1.02) rounded up to the next 1,000
-        let raw = (measured * 102).div_ceil(100);
-        raw.div_ceil(1_000) * 1_000
-    }
+    let band = cu_band;
     for c in CU_CEILINGS.iter() {
         assert_eq!(
             c.phase1_max,
@@ -1275,6 +1288,254 @@ fn cu_ceiling_phase2_movement_shows_up_in_the_printed_table() {
     let out2 = ceiling_report(&improved, None).lines.join("\n");
     assert!(out2.contains("-12"), "a phase-1 improvement must be printed:\n{out2}");
     assert!(out2.contains("IMPROVED"), "a movement down reads IMPROVED:\n{out2}");
+}
+
+/// This file's own source, so prose that quotes a constant can be checked
+/// against the constant.
+const THIS_FILE: &str = include_str!("cu_budget.rs");
+
+/// Comma-grouped figures in this file's PROSE that no constant here produces.
+///
+/// Each one needs a reason. An unexplained number in a comment is precisely how
+/// commit `4b1347c3`, titled "re-pin CU after the dead ALI seam was deleted",
+/// shipped a diff that touched only this doc block and moved no constant at all
+/// — eight lines added, three removed, zero pins changed.
+///
+/// Adding an entry here is cheap and honest; leaving a figure out is a red run
+/// with the number quoted back at you. Entries are checked in BOTH directions:
+/// an entry that no longer appears in the prose is itself a failure, so this
+/// cannot rot into a list of numbers nobody wrote.
+const PROSE_FIGURES: [(u64, &str); 6] = [
+    (1_399_000, "illustrative: what C0 could have become before a ceiling existed"),
+    (638_248, "byte size of the historical Route C .so this doc used to name"),
+    (671_064, "byte size of the .so CU_CEILINGS was measured from — provenance, not a pin"),
+    (538_720, "the stale `after B1` column's C0, quoted to show it contradicted the array"),
+    (749_673, "the same stale column's C6"),
+    (78_517, "measured C6 proof bytes — printed by the size table each run, not pinned"),
+];
+
+/// Every comment line in this file, marker stripped and whitespace collapsed, so
+/// a sentence wrapped across three `///` lines matches as one string.
+fn comment_prose() -> String {
+    let mut words: Vec<&str> = Vec::new();
+    for line in THIS_FILE.lines() {
+        let t = line.trim_start();
+        let body = t
+            .strip_prefix("//!")
+            .or_else(|| t.strip_prefix("///"))
+            .or_else(|| t.strip_prefix("//"));
+        if let Some(b) = body {
+            words.extend(b.split_whitespace());
+        }
+    }
+    words.join(" ")
+}
+
+/// Every comma-grouped integer in `s`, as (token, value).
+///
+/// Comma-grouped on purpose: that is how this file writes CU figures in prose,
+/// while the constants themselves are underscore-grouped Rust literals. So this
+/// reads the prose and never the code it is checking the prose against.
+fn comma_grouped_numbers(s: &str) -> Vec<(String, u64)> {
+    let c: Vec<char> = s.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < c.len() {
+        if !c[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < c.len() {
+            if c[i].is_ascii_digit() {
+                i += 1;
+            } else if c[i] == ','
+                && i + 3 < c.len()
+                && c[i + 1].is_ascii_digit()
+                && c[i + 2].is_ascii_digit()
+                && c[i + 3].is_ascii_digit()
+            {
+                i += 4;
+            } else {
+                break;
+            }
+        }
+        let tok: String = c[start..i].iter().collect();
+        if tok.contains(',') {
+            if let Ok(v) = tok.replace(',', "").parse::<u64>() {
+                out.push((tok, v));
+            }
+        }
+    }
+    out
+}
+
+/// Prose in this file may not quote a CU figure the constants do not produce.
+///
+/// Two checks, because a doc comment can go stale in two ways:
+///
+///   1. A figure appears in prose that matches no constant and no declared
+///      historical figure. That is a number someone typed, and once the
+///      constants move it is a number that used to be true.
+///   2. The three summary sentences are DERIVED here and matched verbatim, so
+///      "worst is C4 at 772,776" cannot survive C4 becoming C5, or 772,776
+///      becoming anything else.
+///
+/// Between them, the `4b1347c3` failure mode — prose and constant disagreeing
+/// with nothing red — is not reachable by editing either side alone.
+#[test]
+fn cu_ceiling_prose_matches_the_constants() {
+    let prose = comment_prose();
+
+    // --- derived, matched verbatim -----------------------------------------
+    let worst1 = CU_CEILINGS
+        .iter()
+        .max_by_key(|c| c.phase1_measured)
+        .expect("CU_CEILINGS is non-empty");
+    let pct = (worst1.phase1_measured as f64 / MAX_CU_PER_IX as f64 * 100.0).round() as u64;
+    let sentences = [
+        format!(
+            "Worst absolute is C{} at {} of {} ({}%)",
+            worst1.circuit_id,
+            thousands(worst1.phase1_measured),
+            thousands(MAX_CU_PER_IX),
+            pct,
+        ),
+        {
+            let w = CU_CEILINGS
+                .iter()
+                .max_by_key(|c| c.phase1_measured + c.phase2_measured.unwrap_or(0))
+                .unwrap();
+            format!(
+                "worst phase1+phase2 is C{} at {}",
+                w.circuit_id,
+                thousands(w.phase1_measured + w.phase2_measured.unwrap_or(0)),
+            )
+        },
+        {
+            let w = CU_CEILINGS
+                .iter()
+                .filter(|c| c.phase2_measured.is_some())
+                .max_by_key(|c| c.phase2_measured.unwrap())
+                .unwrap();
+            format!(
+                "Worst phase 2 alone is C{} at {}",
+                w.circuit_id,
+                thousands(w.phase2_measured.unwrap()),
+            )
+        },
+        {
+            let pins = CU_CEILINGS.len()
+                + CU_CEILINGS.iter().filter(|c| c.phase2_measured.is_some()).count();
+            format!("Every one of the {pins} numbers below")
+        },
+        {
+            let pins = CU_CEILINGS.len()
+                + CU_CEILINGS.iter().filter(|c| c.phase2_measured.is_some()).count();
+            format!("prints `+0` on all {pins} pins")
+        },
+    ];
+    for want in sentences.iter() {
+        assert!(
+            prose.contains(want.as_str()),
+            "the doc comments in this file must contain, verbatim:\n    {want}\n\
+             It is DERIVED from CU_CEILINGS / MAX_CU_PER_IX, so this is red because the \
+             constants moved and the prose did not. Paste the line above into the \
+             CU_CEILINGS doc block, replacing the stale one."
+        );
+    }
+
+    // --- no unexplained figure anywhere in the prose ------------------------
+    let mut allowed: Vec<u64> = vec![
+        MAX_CU_PER_IX,
+        UNIFORM_PROOF_SIZE as u64,
+        CU_BAND_ROUNDING,
+        CU_BAND_NUMERATOR,
+    ];
+    for c in CU_CEILINGS.iter() {
+        allowed.push(c.phase1_measured);
+        allowed.push(c.phase1_max);
+        if let Some(m) = c.phase2_measured {
+            allowed.push(m);
+            allowed.push(c.phase1_measured + m);
+        }
+        if let Some(m) = c.phase2_max {
+            allowed.push(m);
+        }
+    }
+    for (_, _, cu, _) in INFERRED.iter() {
+        allowed.push(*cu);
+    }
+
+    for (figure, why) in PROSE_FIGURES.iter() {
+        assert!(
+            !allowed.contains(figure),
+            "PROSE_FIGURES lists {} ({why}) but a constant now produces it — drop the \
+             allowlist entry so the prose is checked against the constant instead",
+            thousands(*figure),
+        );
+        assert!(
+            prose.contains(&thousands(*figure)),
+            "PROSE_FIGURES lists {} ({why}) but no comment in this file contains it any \
+             more. Delete the entry — an allowlist of numbers nobody wrote is how the \
+             next stale figure gets waved through.",
+            thousands(*figure),
+        );
+    }
+
+    let unexplained: Vec<String> = comma_grouped_numbers(&prose)
+        .into_iter()
+        .filter(|(_, v)| !allowed.contains(v) && !PROSE_FIGURES.iter().any(|(f, _)| f == v))
+        .map(|(tok, _)| tok)
+        .collect();
+    assert!(
+        unexplained.is_empty(),
+        "these figures appear in this file's comments but match no constant and no \
+         PROSE_FIGURES entry: {unexplained:?}\n\
+         A number in a comment that no constant produces is how commit 4b1347c3 shipped a \
+         re-pin that moved only prose. Either it is a real pin — put it in CU_CEILINGS and \
+         let the prose quote it — or it is historical/illustrative, in which case add it to \
+         PROSE_FIGURES with the reason it is there."
+    );
+}
+
+/// The prose check must be capable of failing, on a file where it never does.
+///
+/// Same reasoning as every other negative control here: `comma_grouped_numbers`
+/// returning an empty vec, or `comment_prose` returning an empty string, would
+/// make the test above pass unconditionally and read exactly like a clean file.
+#[test]
+fn cu_ceiling_prose_scanner_actually_finds_numbers() {
+    let prose = comment_prose();
+    assert!(
+        prose.len() > 10_000,
+        "comment_prose() returned {} chars — it is not reading this file's comments, so \
+         cu_ceiling_prose_matches_the_constants is vacuous",
+        prose.len()
+    );
+    let found = comma_grouped_numbers(&prose);
+    assert!(
+        found.len() >= 10,
+        "only {} comma-grouped figures found in the prose; the scanner is broken and the \
+         prose gate is vacuous: {found:?}",
+        found.len()
+    );
+    assert!(
+        found.iter().any(|(_, v)| *v == CU_CEILINGS[0].phase1_measured),
+        "the scanner did not find C0's pinned phase-1 figure in the prose that quotes it"
+    );
+
+    // Shape: grouping, boundaries, and the things that must NOT parse as figures.
+    let probe = comma_grouped_numbers(
+        "1,400,000 cap; at 950,461, still; v1.52 and 2026-07-30 and 145,000 B and 12,34",
+    );
+    let values: Vec<u64> = probe.iter().map(|(_, v)| *v).collect();
+    assert_eq!(
+        values,
+        vec![1_400_000, 950_461, 145_000],
+        "unexpected parse: {probe:?} — a version, a date and a mis-grouped number must not \
+         be read as CU figures, and a trailing comma must not swallow the next word"
+    );
 }
 
 fn ceiling_for(circuit_id: u8) -> &'static CuCeiling {
