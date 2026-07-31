@@ -257,9 +257,11 @@ await program.methods.initSubscriptionVault(
   tokenMint     // SOL (system_program::ID) or SPL token
 ).accounts({ vault, retailer }).rpc();
 
-// Subscriber joins (normal mode)
-await program.methods.subscribeNormal()
-  .accounts({ vault, subscriber, subscriberRecord })
+// Subscriber joins. The vault is keyed on a commitment to a secret the
+// subscriber holds, never on their wallet, so the vault address does not
+// reveal who is paying. There is no wallet-keyed variant.
+await program.methods.subscribePrivateStark(subscriberCommitment)
+  .accounts({ vault, proofBuffer, pool })
   .rpc();
 
 // Retailer claims a payment period

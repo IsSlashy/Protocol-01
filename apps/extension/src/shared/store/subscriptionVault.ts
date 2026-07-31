@@ -10,7 +10,6 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import {
   fetchAllVaults,
   fetchVault,
-  subscribeNormal,
   subscribePrivate,
   claimPeriod,
   pauseNormal,
@@ -85,18 +84,11 @@ interface SubscriptionVaultState {
   reset: () => void;
 
   // -------------------------------------------------------------------
-  // On-chain normal-mode actions
+  // On-chain LEGACY normal-mode actions. There is no createNormalVault: the
+  // on-chain `subscribe_normal` derived the vault address from the subscriber's
+  // wallet, which made every wallet-mode subscription publicly linkable. These
+  // only service vaults created before that instruction was removed.
   // -------------------------------------------------------------------
-
-  /** Subscribe to a service with wallet deposit (no ZK proof required). */
-  createNormalVault: (params: {
-    retailer: string;
-    tokenMint: string;
-    amount: number;
-    rate: number;
-    intervalSlots: number;
-    vkHashSubscriber?: Uint8Array;
-  }) => Promise<string>;
 
   /** Pause a normal vault subscription. */
   pauseNormalVault: (vaultAddress: string) => Promise<string>;
@@ -293,30 +285,8 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       },
 
       // -------------------------------------------------------------------
-      // Normal-mode on-chain actions
+      // LEGACY normal-mode on-chain actions (service existing vaults only)
       // -------------------------------------------------------------------
-
-      createNormalVault: async (params) => {
-        set({ loading: true, error: null });
-        try {
-          const sig = await subscribeNormal({
-            retailer: params.retailer,
-            tokenMint: params.tokenMint,
-            amount: params.amount,
-            rate: params.rate,
-            intervalSlots: params.intervalSlots,
-            vkHashSubscriber: params.vkHashSubscriber ?? new Uint8Array(32),
-          });
-          // Reload vaults from chain
-          const walletPk = (await import('../store/wallet')).useWalletStore.getState().publicKey;
-          if (walletPk) await get().loadVaults(walletPk);
-          set({ loading: false });
-          return sig;
-        } catch (error) {
-          set({ loading: false, error: (error as Error).message });
-          throw error;
-        }
-      },
 
       pauseNormalVault: async (vaultAddress: string) => {
         set({ loading: true, error: null });

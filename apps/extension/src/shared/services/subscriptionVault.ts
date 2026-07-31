@@ -40,7 +40,7 @@ import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { deriveLicenseSecret, licenseCommitment } from './license';
 import { useWalletStore } from '../store/wallet';
 import { getConnection } from './wallet';
-import type { VaultInfo, SubscribeNormalParams, SubscribePrivateParams, ProofData } from './subscriptionVault.types';
+import type { VaultInfo, SubscribePrivateParams, ProofData } from './subscriptionVault.types';
 import type { WalletSigner } from './stark';
 import {
   submitAndVerifyStarkProof,
@@ -79,7 +79,7 @@ export class NoteAlreadySpentError extends Error {
 }
 
 // Re-export types
-export type { VaultInfo, SubscribeNormalParams, SubscribePrivateParams, ProofData };
+export type { VaultInfo, SubscribePrivateParams, ProofData };
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -473,68 +473,11 @@ export function parseVaultAccount(data: Buffer, address: string): VaultInfo {
 
 // ---------------------------------------------------------------------------
 // Instruction Builders — mirrored byte-for-byte from mobile index.ts
+//
+// buildSubscribeNormalIx is gone: the on-chain `subscribe_normal` derived its
+// vault PDA from the subscriber's wallet, so the vault address published the
+// (wallet, merchant) pair to anyone who could run findProgramAddress.
 // ---------------------------------------------------------------------------
-
-/**
- * Build subscribe_normal instruction.
- * On-chain arg order (subscribe_normal.rs:12-18):
- *   rate | interval_slots | amount | token_mint(Pubkey/32) | vk_hash_subscriber([u8;32])
- *   | license_commitment: Option<[u8;32]>   (arg #6, LAST — 1-byte tag + 32 if Some)
- * token_mint is an ARGUMENT (native SOL ⇒ SystemProgram.programId), NOT an account.
- * Accounts == SubscribeNormal struct field order; optional token accounts use the
- * program ID as Anchor 0.32's None sentinel. (Mirrors mobile buildSubscribeNormalIx.)
- *
- * CLASSIC license is DEFERRED (no deterministic signer yet), so license_commitment
- * is always serialized as None here — matching mobile, which passes None for the
- * classic path too. The trailing Option byte is REQUIRED regardless: the on-chain
- * handler now declares the arg, so omitting it would mis-deserialize.
- */
-function buildSubscribeNormalIx(
-  subscriber: PublicKey,
-  retailer: PublicKey,
-  tokenMint: PublicKey,
-  vaultPDA: PublicKey,
-  amount: bigint,
-  rate: bigint,
-  intervalSlots: bigint,
-  vkHashSubscriber: Uint8Array,
-  tokenProgram?: PublicKey,
-  subscriberTokenAccount?: PublicKey,
-  vaultTokenAccount?: PublicKey,
-  licenseCommitment?: Uint8Array,
-): TransactionInstruction {
-  const disc = getDiscriminator('subscribe_normal');
-  const hasLicense = !!licenseCommitment && licenseCommitment.length === 32;
-  const licenseOptionSize = 1 + (hasLicense ? 32 : 0);
-  const data = Buffer.alloc(8 + 8 + 8 + 8 + 32 + 32 + licenseOptionSize);
-  let offset = 0;
-  disc.copy(data, offset); offset += 8;
-  data.writeBigUInt64LE(rate, offset); offset += 8;
-  data.writeBigUInt64LE(intervalSlots, offset); offset += 8;
-  data.writeBigUInt64LE(amount, offset); offset += 8;
-  tokenMint.toBuffer().copy(data, offset); offset += 32;
-  Buffer.from(vkHashSubscriber).copy(data, offset); offset += 32;
-  // arg #6 (LAST) — Borsh Option<[u8;32]> license_commitment. Classic deferred ⇒ None.
-  if (hasLicense) {
-    data.writeUInt8(1, offset); offset += 1;
-    Buffer.from(licenseCommitment!).copy(data, offset); offset += 32;
-  } else {
-    data.writeUInt8(0, offset); offset += 1;
-  }
-
-  const keys = [
-    { pubkey: subscriber, isSigner: true, isWritable: true },
-    { pubkey: retailer, isSigner: false, isWritable: false },
-    { pubkey: vaultPDA, isSigner: false, isWritable: true },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    // Optional token accounts — program ID == Anchor None sentinel
-    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: subscriberTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!subscriberTokenAccount },
-    { pubkey: vaultTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!vaultTokenAccount },
-  ];
-
-  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
-}
 
 /**
  * Build pause_normal instruction.
@@ -731,52 +674,10 @@ export function goldilocksU64To32(commitment: bigint): Uint8Array {
 }
 
 // ---------------------------------------------------------------------------
-// Service functions — Normal flows (no ZK proof required)
+// Service functions — LEGACY normal-mode vault lifecycle (no ZK proof required).
+// There is no `subscribeNormal` any more, so these only ever act on vaults that
+// were opened before `subscribe_normal` was removed from the program.
 // ---------------------------------------------------------------------------
-
-/**
- * Create a normal (wallet-based) subscription vault.
- * Mirrors mobile subscribeNormal lines 351-413.
- *
- * @param params.vkHashSubscriber - 32-byte VK hash. Pass new Uint8Array(32) for
- *   "no subscriber ownership circuit" (normal-mode vaults ignore this field
- *   on pause/resume/cancel since they use wallet signature instead).
- */
-export async function subscribeNormal(params: {
-  retailer: string;
-  tokenMint: string;
-  amount: number;
-  rate: number;
-  intervalSlots: number;
-  vkHashSubscriber: Uint8Array;
-}): Promise<string> {
-  const { signer, connection } = createWalletSigner();
-  const retailerPubkey = new PublicKey(params.retailer);
-  const tokenMintPubkey = new PublicKey(params.tokenMint);
-  const isNativeSol = tokenMintPubkey.equals(NATIVE_SOL_MINT);
-
-  const vaultPDA = deriveVaultPDA(
-    retailerPubkey,
-    signer.publicKey.toBytes(),
-    tokenMintPubkey,
-  );
-
-  const ix = buildSubscribeNormalIx(
-    signer.publicKey,
-    retailerPubkey,
-    isNativeSol ? NATIVE_SOL_MINT : tokenMintPubkey,
-    vaultPDA,
-    BigInt(params.amount),
-    BigInt(params.rate),
-    BigInt(params.intervalSlots),
-    params.vkHashSubscriber,
-  );
-
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(300_000));
-  tx.add(ix);
-  return signSendConfirmTx(connection, tx, signer);
-}
 
 /**
  * Pause a normal vault (subscriber only).

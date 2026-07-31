@@ -75,21 +75,10 @@ export interface VaultInfo {
   isPrivateMode: boolean;
 }
 
-/** Parameters for creating a normal subscription */
-export interface SubscribeNormalParams {
-  /** Retailer pubkey (base58) */
-  retailer: string;
-  /** Token mint (base58, system program for SOL) */
-  tokenMint: string;
-  /** Amount to deposit (lamports/atomic units) */
-  amount: number;
-  /** Rate per period */
-  rate: number;
-  /** Interval between periods (slots) */
-  intervalSlots: number;
-  /** VK hash for subscriber ownership circuit */
-  vkHashSubscriber: Uint8Array;
-}
+// SubscribeNormalParams was removed together with the on-chain `subscribe_normal`
+// instruction. That vault's PDA was seeded on the subscriber's wallet pubkey, so
+// re-deriving the address answered "does wallet W subscribe to merchant M?" for
+// free. Subscribing is private-only; see SubscribePrivateParams.
 
 /** Parameters for creating a private subscription */
 export interface SubscribePrivateParams {

@@ -468,8 +468,7 @@ export default function CreateSubscription() {
 
         // vkHashSubscriber: 32 bytes stored on-chain as metadata.
         // Use zeros — pause/resume/cancel validate circuit-0 proof against
-        // subscriber_commitment, not vkHashSubscriber. Matches extension pattern
-        // (createNormalVault also passes new Uint8Array(32) by default).
+        // subscriber_commitment, not vkHashSubscriber.
         const vkHashSubscriber = new Uint8Array(32);
 
         // Service tag for the license-key commitment (HKDF info). ONE rule,
@@ -604,9 +603,10 @@ export default function CreateSubscription() {
       // CLASSIC license key is DEFERRED under the commitment scheme (mobile does
       // the same): it needs a deterministic ed25519 signer to derive the
       // licenseSecret, which our wallet/signMessage path does not yet guarantee.
-      // The standard subscribe_normal ix posts license_commitment = None (arg
-      // #6), so there is no on-chain commitment to verify a classic key against.
-      // Skip minting a key here rather than show one that wouldn't verify.
+      // This standard path never opens a subscription vault at all — it runs on
+      // p01_stream — so there is no on-chain license_commitment to verify a
+      // classic key against. Skip minting a key rather than show one that
+      // wouldn't verify.
       navigate('/subscriptions', { replace: true });
     } catch (err) {
       console.error('[Subscription] Create error:', err);

@@ -140,13 +140,9 @@ export interface VaultInfo {
   clientStealthMeta: Uint8Array | null;
 }
 
-export interface SubscribeNormalConfig {
-  retailer: PublicKey;
-  tokenMint: PublicKey;
-  amount: bigint;
-  rate: bigint;
-  intervalSlots: bigint;
-}
+// SubscribeNormalConfig is gone with the subscribe_normal instruction: a vault
+// keyed on the subscriber's wallet made "wallet W pays merchant M" readable by
+// anyone who could derive a PDA. Subscribing is private-only now.
 
 export interface SubscribePrivateConfig {
   retailer: PublicKey;
@@ -190,67 +186,6 @@ export function deriveVaultPDA(
 function getDiscriminator(name: string): Buffer {
   const hash = sha256(utf8ToBytes(`global:${name}`));
   return Buffer.from(hash.slice(0, 8));
-}
-
-/**
- * Build subscribe_normal instruction.
- * Creates a wallet-authenticated subscription vault.
- */
-function buildSubscribeNormalIx(
-  subscriber: PublicKey,
-  retailer: PublicKey,
-  tokenMint: PublicKey,
-  vaultPDA: PublicKey,
-  amount: bigint,
-  rate: bigint,
-  intervalSlots: bigint,
-  vkHashSubscriber: Uint8Array,
-  tokenProgram?: PublicKey,
-  subscriberTokenAccount?: PublicKey,
-  vaultTokenAccount?: PublicKey,
-  licenseCommitment?: Uint8Array,
-): TransactionInstruction {
-  const disc = getDiscriminator('subscribe_normal');
-
-  // On-chain arg order (subscribe_normal.rs:58-65):
-  //   rate | interval_slots | amount | token_mint(Pubkey/32) |
-  //   vk_hash_subscriber([u8;32]) | license_commitment: Option<[u8;32]> (arg #6, LAST)
-  // token_mint is an ARGUMENT (native SOL ⇒ SystemProgram.programId), NOT an
-  // account. The trailing Option<[u8;32]> MUST be serialized (at minimum the
-  // None tag byte) — the upgraded program expects it, so omitting it fails
-  // Borsh arg deserialization. blake3(licenseSecret) when present; None otherwise.
-  const hasLicense = !!licenseCommitment && licenseCommitment.length === 32;
-  const data = Buffer.alloc(8 + 8 + 8 + 8 + 32 + 32 + 1 + (hasLicense ? 32 : 0));
-  let offset = 0;
-  disc.copy(data, offset); offset += 8;
-  data.writeBigUInt64LE(rate, offset); offset += 8;
-  data.writeBigUInt64LE(intervalSlots, offset); offset += 8;
-  data.writeBigUInt64LE(amount, offset); offset += 8;
-  tokenMint.toBuffer().copy(data, offset); offset += 32;
-  Buffer.from(vkHashSubscriber).copy(data, offset); offset += 32;
-  // arg #6 (LAST) — Borsh Option<[u8;32]> license_commitment.
-  if (hasLicense) {
-    data.writeUInt8(1, offset); offset += 1;
-    Buffer.from(licenseCommitment!).copy(data, offset); offset += 32;
-  } else {
-    data.writeUInt8(0, offset); offset += 1;
-  }
-
-  // Account order == SubscribeNormal struct field order (subscribe_normal.rs:19-40).
-  // No token_mint account. Optional token accounts (token_program,
-  // subscriber_token_account, vault_token_account) use the executing program ID
-  // as Anchor 0.32's `None` sentinel — same pattern as subscribe_private_stark.
-  const keys = [
-    { pubkey: subscriber, isSigner: true, isWritable: true },
-    { pubkey: retailer, isSigner: false, isWritable: false },
-    { pubkey: vaultPDA, isSigner: false, isWritable: true },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: subscriberTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!subscriberTokenAccount },
-    { pubkey: vaultTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!vaultTokenAccount },
-  ];
-
-  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
 }
 
 /**
@@ -364,87 +299,6 @@ async function signAndSend(
 // ---------------------------------------------------------------------------
 // Public Functions
 // ---------------------------------------------------------------------------
-
-/**
- * Create a normal (wallet-authenticated) subscription.
- */
-export async function subscribeNormal(
-  config: SubscribeNormalConfig,
-  vkHashSubscriber: Uint8Array,
-  onProgress?: (step: string) => void,
-  walletSigner?: WalletSigner,
-  /**
-   * Optional 32-byte `license_commitment = blake3(licenseSecret)` posted as the
-   * LAST subscribe_normal arg (#6). CLASSIC license keys are DEFERRED — see the
-   * note in `services/license/derive.ts#deriveClassicLicenseSecret`: a
-   * deterministic classic signer isn't reliably available across all wallet
-   * signers, so callers currently pass `undefined` and the builder serializes
-   * `None`. The on-chain program still requires the Option byte, which is why
-   * this is threaded through even while the value stays None. ZK private
-   * subscribe is the headline flow and ships its commitment fully.
-   */
-  licenseCommitment?: Uint8Array,
-): Promise<string> {
-  payLog('classic-recurring-p2b', 'subscribeNormal-start', {
-    retailer: config.retailer.toBase58(),
-    tokenMint: config.tokenMint.toBase58(),
-    amount: String(config.amount),
-    rate: String(config.rate),
-    intervalSlots: String(config.intervalSlots),
-  });
-
-  onProgress?.('Reading wallet...');
-  const keypair = walletSigner ? null : await getKeypair();
-  if (!keypair && !walletSigner) throw new Error('Wallet not found');
-
-  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
-  const connection = getConnection();
-
-  onProgress?.('Deriving vault PDA...');
-  const [vaultPDA] = deriveVaultPDA(config.retailer, walletPubkey, config.tokenMint);
-
-  onProgress?.('Building transaction...');
-
-  const isNativeSOL = config.tokenMint.equals(NATIVE_SOL_MINT);
-  let tokenProgram: PublicKey | undefined;
-  let subscriberTokenAccount: PublicKey | undefined;
-
-  if (!isNativeSOL) {
-    tokenProgram = TOKEN_PROGRAM_ID;
-    subscriberTokenAccount = await getAssociatedTokenAddress(config.tokenMint, walletPubkey);
-  }
-
-  const ix = buildSubscribeNormalIx(
-    walletPubkey,
-    config.retailer,
-    config.tokenMint,
-    vaultPDA,
-    config.amount,
-    config.rate,
-    config.intervalSlots,
-    vkHashSubscriber,
-    tokenProgram,
-    subscriberTokenAccount,
-    undefined, // vaultTokenAccount
-    licenseCommitment, // DEFERRED for classic — None until a deterministic classic signer lands
-  );
-
-  onProgress?.('Sending transaction...');
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(300_000));
-  tx.add(ix);
-  let sig: string;
-  try {
-    sig = await signAndSend(connection, tx, keypair, walletSigner);
-  } catch (err: any) {
-    inspectPayError('classic-recurring-p2b', err?.message ?? String(err), 'subscribeNormal');
-    throw err;
-  }
-
-  onProgress?.('Done!');
-  markPayComplete('classic-recurring-p2b', { signature: sig, vault: vaultPDA.toBase58() });
-  return sig;
-}
 
 /**
  * Retailer claims accumulated subscription payments.

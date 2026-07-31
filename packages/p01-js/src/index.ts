@@ -259,7 +259,6 @@ export {
 
   // Types
   type VaultInfo,
-  type SubscribeNormalParams,
   type SubscribePrivateParams,
   type ProofData,
 } from './subscription-vault';

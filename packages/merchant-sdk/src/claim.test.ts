@@ -80,7 +80,8 @@ describe('fundedPeriodsRemaining — the exhaustion signal `isActive` cannot giv
 
   it('reaches zero on an exhausted vault that still reports isActive = true', () => {
     // This is the live defect: `is_active` is written `true` at
-    // subscribe_normal.rs:120 and subscribe_private_stark.rs:395 and `false`
+    // subscribe_private_stark.rs:395 (and was at subscribe_normal.rs:120 before
+    // that instruction was removed) and `false`
     // NOWHERE in the program, so an exhausted subscription is indistinguishable
     // from a current one to any check that reads only that flag. The merchant
     // stops being paid and keeps serving.

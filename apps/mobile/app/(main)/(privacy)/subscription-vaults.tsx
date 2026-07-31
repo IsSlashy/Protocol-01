@@ -213,7 +213,7 @@ export default function SubscriptionVaultsScreen() {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Subscriptions</Text>
         <TouchableOpacity
-          onPress={() => router.push('/(main)/(privacy)/subscribe-normal' as any)}
+          onPress={() => router.push('/(main)/(privacy)/subscribe-private' as any)}
           style={styles.addBtn}
         >
           <Ionicons name="add" size={22} color={P01Colors.pink} />
@@ -284,13 +284,9 @@ export default function SubscriptionVaultsScreen() {
                 Create a subscription vault to send recurring payments to a retailer.
               </Text>
               <View style={styles.emptyActions}>
-                <TouchableOpacity
-                  style={styles.emptyAction}
-                  onPress={() => router.push('/(main)/(privacy)/subscribe-normal' as any)}
-                >
-                  <Ionicons name="add" size={18} color="#000" />
-                  <Text style={styles.emptyActionText}>Normal</Text>
-                </TouchableOpacity>
+                {/* Wallet-based ("Normal") subscribe is gone: its vault address was
+                    derived from the subscriber's wallet, so the subscription was
+                    publicly linkable to that wallet. Private is the only mode. */}
                 <TouchableOpacity
                   style={[styles.emptyAction, { backgroundColor: '#3b82f6' }]}
                   onPress={() => router.push('/(main)/(privacy)/subscribe-private' as any)}

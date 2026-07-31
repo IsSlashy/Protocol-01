@@ -7,10 +7,8 @@ import { poseidon2 } from 'poseidon-lite';
 import { getConnection } from '../services/solana/connection';
 import {
   type VaultInfo,
-  type SubscribeNormalConfig,
   type SubscribePrivateConfig,
   type WalletSigner,
-  subscribeNormal,
   subscribePrivateStark,
   claimPeriod,
   pauseNormal,
@@ -84,10 +82,6 @@ interface SubscriptionVaultState {
   setError: (error: string | null) => void;
   setProgress: (progress: string | null) => void;
   refreshVault: (vaultAddress: string) => Promise<VaultInfo | null>;
-  subscribeNormalAction: (
-    config: SubscribeNormalConfig,
-    vkHashSubscriber: Uint8Array,
-  ) => Promise<string>;
   /** STARK variant: quantum-resistant subscribe_private using pre-verified proof buffer.
    *
    * `subscriberOwnershipCommitment` is the Goldilocks u64 Poseidon commitment of the
@@ -318,80 +312,10 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       },
 
       // ------------------------------------------------------------------
-      // Subscribe Normal
-      // ------------------------------------------------------------------
-
-      subscribeNormalAction: async (config, vkHashSubscriber) => {
-        set({ isLoading: true, error: null, progress: 'Preparing...' });
-
-        try {
-          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
-          const sig = await subscribeNormal(
-            config,
-            vkHashSubscriber,
-            (step) => {
-              set({ progress: step });
-            },
-            walletSigner,
-          );
-
-          // Add vault to store
-          const { getPublicKey } = await import('../services/solana/wallet');
-          const subscriberPubkey = await getPublicKey();
-          if (!subscriberPubkey) throw new Error('Failed to get wallet pubkey');
-
-          const { deriveVaultPDA } = await import('../services/subscriptionVault');
-          const [vaultPDA] = deriveVaultPDA(
-            config.retailer,
-            new PublicKey(subscriberPubkey),
-            config.tokenMint
-          );
-
-          const storedVault: StoredVaultInfo = {
-            vaultAddress: vaultPDA.toBase58(),
-            retailer: config.retailer.toBase58(),
-            tokenMint: config.tokenMint.toBase58(),
-            rate: config.rate.toString(),
-            intervalSlots: config.intervalSlots.toString(),
-            isNormalMode: true,
-            isPrivateMode: false,
-            createdAt: Date.now(),
-          };
-
-          set(state => ({
-            isLoading: false,
-            progress: null,
-            vaults: [storedVault, ...state.vaults.filter(v => v.vaultAddress !== storedVault.vaultAddress)],
-          }));
-
-          // Sync the new vault as a Stream record so the Streams tab reflects
-          // the subscription immediately (otherwise it stays invisible until
-          // the next on-chain rescan / app reboot). Best-effort, non-fatal.
-          try {
-            const { fetchVault } = await import('../services/subscriptionVault');
-            const { upsertStreamFromVault } = await import('../services/solana/streams');
-            const vaultInfo = await fetchVault(vaultPDA);
-            if (vaultInfo) await upsertStreamFromVault(vaultInfo);
-          } catch (e) {
-            console.warn('[SubscriptionVault] stream sync after subscribeNormal failed (non-fatal):', e);
-          }
-
-          notifySubscriptionEvent(
-            'Subscription Active',
-            `Subscribed at ${formatRateSOL(config.rate)} per period`,
-            { transactionId: sig },
-          );
-
-          return sig;
-        } catch (err) {
-          console.error('[SubscriptionVault] subscribeNormal error:', err);
-          set({ isLoading: false, progress: null, error: (err as Error).message });
-          throw err;
-        }
-      },
-
-      // ------------------------------------------------------------------
       // Subscribe Private (STARK — quantum-resistant)
+      // The only way to open a vault. `subscribeNormalAction` was removed with
+      // the on-chain `subscribe_normal`: that vault's address was derived from
+      // the subscriber's wallet, which published the subscription.
       // ------------------------------------------------------------------
 
       subscribePrivateStarkAction: async (
