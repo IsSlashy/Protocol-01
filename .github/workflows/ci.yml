@@ -171,6 +171,21 @@ jobs:
       - name: Type check & Build
         run: pnpm turbo run build
 
+      # "17 successful" is 17 turbo tasks, not 17 test suites. MEASURED, two of the
+      # seventeen assert nothing and neither is a failure:
+      #   @protocol-01/react-native-zk  test = `echo "Tests require React Native
+      #     environment"`. No runner is invoked, exit 0. The package contains ZERO
+      #     files matching *.{test,spec}.*, so there is nothing for a runner to run
+      #     either — the echo is honest about the package, dishonest about the count.
+      #   @protocol-01/zkspl-sdk        test = `vitest run --passWithNoTests`, and
+      #     vitest reports "No test files found, exiting with code 0". Also zero test
+      #     files. `--passWithNoTests` is what keeps it green.
+      # Both are green-by-construction and will stay green through any change to
+      # either package. Left as they are on purpose: writing tests for the zkSPL
+      # client and finding a runner for react-native-zk are pieces of work, not CI
+      # edits, and deleting the tasks would only move the gap somewhere less visible.
+      # If either package is ever load-bearing for a proof path, that is the moment
+      # this stops being acceptable.
       - name: Test
         run: pnpm turbo run test --continue
 
