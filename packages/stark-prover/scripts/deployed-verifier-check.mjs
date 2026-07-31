@@ -590,6 +590,51 @@ function blobSourceSkew(blobHits) {
 }
 
 /**
+ * The two halves of this tree have to agree about which generation it is.
+ *
+ * "Is the prover source B1" was decided by one file, stark/src/compact.rs, and
+ * only by panic strings inside it. MEASURED 2026-07-31 against the revision that
+ * introduced the source corroboration: renaming those three literals in
+ * compact.rs AND in the blob makes the two agree at 0/3, the tree reads pre-B1,
+ * and the gate prints the full PASS at exit 0 against the real pre-B1 devnet
+ * deployment. That is still true of a rename in BOTH crates and is not claimed
+ * to be closed here.
+ *
+ * What is no longer true is that one file decides it. B1 landed in the prover and
+ * in the verifier together; programs/p01_stark_verifier/src/verify.rs carries B1
+ * literals of its own, and this tree does have them. So a tree whose verifier
+ * source says B1 while its prover source says pre-B1 is skew, and reading it as
+ * "pre-B1, same as the chain, ship it" is the false green. Cost of the cheapest
+ * silent reclassification goes from renaming three strings in one crate to
+ * renaming five across two crates, in a diff a human reads. It buys a cost, not
+ * a proof; only deriving the generation from BEHAVIOUR would close it.
+ *
+ * Returns a failure block, or null.
+ */
+function treeGenerationSkew() {
+  const proverHits = proverSourceMarkerHits();
+  if (proverHits === null) return null; // blobSourceSkew already reports an unreadable prover source.
+  const src = readSources(ELF_MARKER_SOURCES);
+  if (src.text === null) return null; // elfMarkerSourceProblem already reports this.
+  const verifierHits = ELF_B1_MARKERS.filter((m) => src.text.includes(m));
+  if ((proverHits.length > 0) === (verifierHits.length > 0)) return null;
+  return {
+    title: 'the prover source and the verifier source disagree about whether this tree is B1',
+    lines: [
+      `  ${BLOB_MARKER_SOURCES.join(', ')}  ${proverHits.length}/${BLOB_B1_MARKERS.length} B1 markers`,
+      `  ${ELF_MARKER_SOURCES.join(', ')}  ${verifierHits.length}/${ELF_B1_MARKERS.length} B1 markers`,
+      '',
+      'B1 changed the prover and the verifier together, so one half carrying its B1 literals while the',
+      'other carries none is not a generation, it is skew. Refusing to classify rather than guess: the',
+      'guess that matters reads the prover as pre-B1, matches it to a pre-B1 chain and ships a B1 client.',
+      '',
+      'If these messages were legitimately reworded, update BLOB_B1_MARKERS / ELF_B1_MARKERS in this',
+      'script in the same commit.',
+    ],
+  };
+}
+
+/**
  * The literals the DEPLOYED-ELF scan discriminates on must still exist in the
  * verifier source. Nothing here is compared against the chain: the deployed
  * bytes are expected to lag, that lag is the subject of this gate. What is
@@ -998,12 +1043,20 @@ if (blobCls.generation === null) {
 // The blob does not get to be the only witness to its own generation. Its B1
 // markers are scanned in stark/src/compact.rs too and the two sets must match;
 // a marker the source has and the artifact does not is skew, not a generation.
+// ...and the prover source does not get to be the only witness either: B1 landed
+// in the prover and the verifier together, so the two crates must agree about
+// which generation this tree is.
 {
   const skew = blobSourceSkew(blobCls.hits);
   if (skew !== null) {
     fail(skew.title, skew.lines);
     // The classification is now worthless in the direction that matters, so it
     // must not be used to satisfy the interlock below.
+    blobCls.generation = null;
+  }
+  const treeSkew = treeGenerationSkew();
+  if (treeSkew !== null) {
+    fail(treeSkew.title, treeSkew.lines);
     blobCls.generation = null;
   }
 }
