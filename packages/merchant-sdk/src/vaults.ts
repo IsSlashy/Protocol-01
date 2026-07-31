@@ -1,6 +1,7 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { type MerchantSdkConfig, resolveProgramIds, ZK_SHIELDED_PROGRAM_ID_DEVNET } from './config';
+import { subscriptionIsCurrent } from './claim';
 
 /**
  * Default `zk_shielded` program ID (devnet, v0.9.9+ / V4 pool seed).
@@ -277,9 +278,17 @@ export async function listVaultsForRetailer(
 }
 
 /**
- * Compute whether a subscriber has an active, unpaused vault granting them
- * access right now. Callers typically derive the subscriber ID from an
- * out-of-band session token and check here.
+ * Compute whether a subscriber has a CURRENT subscription granting them access
+ * right now. Callers typically derive the subscriber ID from an out-of-band
+ * session token and check here.
+ *
+ * "Current" means the subscriber has paid for the period the subscription is
+ * in — see {@link subscriptionIsCurrent}. It deliberately does not mean
+ * `is_active`, which the program writes `true` at subscribe time and `false`
+ * nowhere, so an exhausted vault reports `true` forever. Before this check
+ * existed, a devnet vault with every period claimed and a zero balance was
+ * MEASURED granting access (2026-08-01); the merchant had collected everything
+ * it would ever collect and was still being told to serve.
  *
  * The function only validates on-chain state; any off-chain mapping between
  * subscriber identities and vault IDs is the merchant's responsibility.
@@ -288,16 +297,22 @@ export async function hasActiveVaultAccess(
   connection: Connection,
   retailer: PublicKey,
   subscriberIdBytes: Uint8Array,
-  opts: Omit<ListVaultsOptions, 'includeInactive'> = {},
+  opts: Omit<ListVaultsOptions, 'includeInactive'> & {
+    /** Slot to evaluate against. Fetched when omitted. */
+    currentSlot?: bigint;
+  } = {},
 ): Promise<SubscriptionVaultAccount | null> {
   if (subscriberIdBytes.length !== 32) {
     throw new Error('subscriberIdBytes must be exactly 32 bytes');
   }
-  const vaults = await listVaultsForRetailer(connection, retailer, {
-    ...opts,
-    includeInactive: false,
-  });
+  const [vaults, slot] = await Promise.all([
+    listVaultsForRetailer(connection, retailer, { ...opts, includeInactive: false }),
+    opts.currentSlot !== undefined
+      ? Promise.resolve(opts.currentSlot)
+      : connection.getSlot(opts.commitment ?? 'confirmed').then(BigInt),
+  ]);
   for (const v of vaults) {
+    if (!subscriptionIsCurrent(v, slot)) continue;
     const idBytes = v.subscriberPubkey
       ? v.subscriberPubkey.toBytes()
       : v.subscriberCommitment;

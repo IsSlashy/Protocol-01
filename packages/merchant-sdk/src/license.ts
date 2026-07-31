@@ -1,6 +1,7 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { blake3 } from '@noble/hashes/blake3.js';
 import { listVaultsForRetailer, type SubscriptionVaultAccount, type ListVaultsOptions } from './vaults';
+import { periodsPaidFor, subscriptionIsCurrent } from './claim';
 
 /**
  * Protocol 01 subscription **license keys** — commitment scheme.
@@ -232,18 +233,30 @@ export async function verifyLicenseKey(
   const wantCommitment = licenseCommitment(secret);
 
   let vaults: SubscriptionVaultAccount[];
+  let slot: bigint;
   try {
-    vaults = await listVaultsForRetailer(connection, merchantPubkey, { ...opts, includeInactive: false });
+    [vaults, slot] = await Promise.all([
+      listVaultsForRetailer(connection, merchantPubkey, { ...opts, includeInactive: false }),
+      connection.getSlot(opts.commitment ?? 'confirmed').then(BigInt),
+    ]);
   } catch (e) {
     return { valid: false, reason: `on-chain lookup failed: ${(e as Error).message}` };
   }
-  for (const v of vaults) {
-    if (!v.licenseCommitment) continue;
-    if (bytesEqual(v.licenseCommitment, wantCommitment)) {
-      return { valid: true, vault: v };
-    }
+  // Match the key first, then judge the subscription, so an exhausted holder
+  // gets "expired" rather than the indistinguishable "no match" that a
+  // commitment-only loop produces.
+  const matched = vaults.find((v) => v.licenseCommitment && bytesEqual(v.licenseCommitment, wantCommitment));
+  if (!matched) return { valid: false, reason: 'no subscription matches this license key' };
+  if (!subscriptionIsCurrent(matched, slot)) {
+    return {
+      valid: false,
+      reason: matched.isPaused
+        ? 'subscription is paused'
+        : `subscription has run past the ${periodsPaidFor(matched)} period(s) it was funded for`,
+      vault: matched,
+    };
   }
-  return { valid: false, reason: 'no active subscription matches this license key' };
+  return { valid: true, vault: matched };
 }
 
 export interface VerifyLicenseAgainstVaultOptions {
@@ -284,7 +297,21 @@ export async function verifyLicenseAgainstVault(
     return { valid: false, reason: `vault decode failed: ${(e as Error).message}` };
   }
   if (!vault.retailer.equals(merchantPubkey)) return { valid: false, reason: 'vault is for a different merchant', vault };
-  if (!vault.isActive) return { valid: false, reason: 'subscription not active', vault };
+  // `isActive` alone is not an entitlement: the program writes it `true` at
+  // subscribe time and `false` nowhere, so an exhausted subscription reports
+  // `true` forever. Gate on the period actually being paid for.
+  const slot = BigInt(await connection.getSlot('confirmed'));
+  if (!subscriptionIsCurrent(vault, slot)) {
+    return {
+      valid: false,
+      reason: vault.isPaused
+        ? 'subscription is paused'
+        : !vault.isActive
+          ? 'subscription not active'
+          : `subscription has run past the ${periodsPaidFor(vault)} period(s) it was funded for`,
+      vault,
+    };
+  }
   if (!vault.licenseCommitment) {
     return { valid: false, reason: 'vault has no license commitment (created before license keys)', vault };
   }
