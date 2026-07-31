@@ -160,7 +160,7 @@
  * properly, and it is not done here.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve, relative } from 'node:path';
 
@@ -305,27 +305,51 @@ function programIdFromAnchorToml(anchorSection) {
 }
 
 /**
- * The id the CLIENTS actually send their proof to.
+ * EVERY id the CLIENTS can send a STARK proof to.
  *
- * Anchor.toml is what `anchor deploy` targets, but no client reads it. apps/web,
- * apps/extension, apps/mobile and packages/react-native-zk all resolve the
- * verifier through PROGRAM_IDS in the privacy SDK, which is generated from
- * Anchor.toml by scripts/sync-program-ids.ts — and `pnpm check-program-ids`,
- * which would catch the two drifting apart, is NOT run by .github/workflows/ci.yml
- * (MEASURED 2026-07-31). So the two can disagree, and if they do this gate would
- * be reading a deployment no user ever talks to: point Anchor.toml at a second,
- * B1 copy of the verifier and the on-chain leg agrees while every client keeps
- * sending proofs to the pre-B1 id and keeps failing with FriFoldCheckFailed.
+ * Anchor.toml is what `anchor deploy` targets, but no client reads it. Clients
+ * resolve the verifier through the privacy SDK, so the SDK's ids and the
+ * Anchor.toml id have to be the same program or this gate is vouching for a
+ * deployment nobody talks to: point Anchor.toml at a second, B1 copy of the
+ * verifier and the on-chain leg agrees while every client keeps sending proofs to
+ * the other id and keeps failing with FriFoldCheckFailed.
  *
- * The fix is not to prefer one file over the other. Both are read and they must
- * agree, because "the deployment this build may ship against" and "the program
- * the shipped code calls" have to be the same program for the question this gate
- * asks to mean anything.
+ * An earlier revision of this file read ONE id, `PROGRAM_IDS[network].starkVerifier`
+ * in constants.ts, and said in this comment that "every client resolves the
+ * verifier through the SDK id". That was wrong, and the way it was wrong is the
+ * reason this now sweeps instead of reading one key. MEASURED 2026-07-31:
  *
- * Returns the base58 id, or null if the block or the key is absent.
+ *   packages/privacy-sdk/src/constants.ts    devnet.starkVerifier
+ *                                            EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z
+ *   packages/privacy-sdk/src/modules/instantUnshield.ts:65
+ *                                            P01_STARK_VERIFIER_PROGRAM_ID
+ *                                            DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs
+ *
+ * The second is exported from the SDK's index, is the `programId` of all seven
+ * instant-unshield instruction builders, and is the default value of
+ * `starkVerifierProgramId` on the client class. Both ids are LIVE, DISTINCT
+ * p01_stark_verifier deployments on devnet under the same upgrade authority
+ * (EXmAQqm… slot 456289287, 780,249 B; DGY37k3… slot 469197514, 817,617 B —
+ * measured with --measure), and DGY37k3… is also what `declare_id!` in
+ * programs/p01_stark_verifier/src/lib.rs names. So the gate was reading one
+ * deployment while a shipped SDK path addressed another.
+ *
+ * Nothing here prefers one file over another: the Anchor.toml id and every id the
+ * SDK associates with the stark verifier must all be equal.
+ *
+ * `pnpm check-program-ids` would be the obvious other place to catch this. It is
+ * not run by .github/workflows/ci.yml, and it could not catch it anyway: it runs
+ * `tsx scripts/sync-program-ids.ts --check` and that file does not exist in this
+ * tree (MEASURED 2026-07-31, `git ls-files` has no match).
+ *
+ * Returns `[{ file, symbol, id }]`, empty when nothing could be read.
  */
+const SDK_ROOT = 'packages/privacy-sdk/src';
 const SDK_PROGRAM_IDS = 'packages/privacy-sdk/src/constants.ts';
 const SDK_PROGRAM_KEY = 'starkVerifier';
+
+/** base58, 32-byte-ish. Loose on length on purpose; it is compared, not decoded. */
+const B58_ID = "[1-9A-HJ-NP-Za-km-z]{32,44}";
 
 function programIdFromPrivacySdk(sdkNetwork) {
   let text;
@@ -351,6 +375,43 @@ function programIdFromPrivacySdk(sdkNetwork) {
     if (depth <= 0) return null;
   }
   return null;
+}
+
+/**
+ * Any OTHER module-level constant in the SDK that pins a verifier id, e.g.
+ * `export const P01_STARK_VERIFIER_PROGRAM_ID = new PublicKey('…')`. Scoped to
+ * names that say stark verifier, so this does not sweep up unrelated program ids;
+ * the network-keyed table is read separately above because its other networks are
+ * legitimately different ids.
+ */
+function verifierConstantsInPrivacySdk() {
+  const out = [];
+  let entries;
+  try {
+    entries = readdirSync(resolve(REPO, SDK_ROOT), { recursive: true, withFileTypes: true });
+  } catch {
+    return out;
+  }
+  const re = new RegExp(
+    `const\\s+([A-Za-z0-9_]*STARK_VERIFIER[A-Za-z0-9_]*)\\s*(?::[^=]*)?=\\s*new PublicKey\\(\\s*'(${B58_ID})'`,
+    'g',
+  );
+  for (const ent of entries) {
+    if (!ent.isFile() || !ent.name.endsWith('.ts')) continue;
+    const abs = resolve(ent.parentPath ?? ent.path, ent.name);
+    let text;
+    try {
+      text = readFileSync(abs, 'utf8');
+    } catch {
+      continue;
+    }
+    const rel = relative(REPO, abs).split('\\').join('/');
+    for (const m of text.matchAll(re)) {
+      const line = text.slice(0, m.index).split('\n').length;
+      out.push({ file: `${rel}:${line}`, symbol: m[1], id: m[2] });
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -860,13 +921,32 @@ if (typeof deployed.cluster === 'string' && deployed.cluster.length > 0) {
           `  Anchor.toml [${TARGET.anchorSection}] ${ANCHOR_PROGRAM_KEY}  ${anchorId}`,
           `  ${SDK_PROGRAM_IDS} ${TARGET.sdkNetwork}.${SDK_PROGRAM_KEY}  ${sdkId}`,
           '',
-          'The on-chain leg below reads the Anchor.toml id, and every client resolves the verifier through',
-          'the SDK id. While those differ this gate is vouching for a deployment no user talks to: a second,',
+          'The on-chain leg below reads the Anchor.toml id, and clients resolve the verifier through the',
+          'SDK. While those differ this gate is vouching for a deployment no user talks to: a second,',
           'B1 copy of the verifier deployed under the Anchor.toml id would satisfy the whole on-chain leg',
           'while every shipped client kept sending proofs to the other id and kept failing with',
           'FriFoldCheckFailed, which is the exact failure this gate exists to prevent.',
+        ]);
+      }
+
+      // constants.ts is not the only place the SDK pins this program. Every
+      // module-level *STARK_VERIFIER* constant is swept, because one of them
+      // names a DIFFERENT live devnet deployment and is what the instant-unshield
+      // instructions are actually built against. See verifierConstantsInPrivacySdk.
+      for (const c of verifierConstantsInPrivacySdk()) {
+        if (c.id === anchorId) continue;
+        fail(`${c.symbol} in the privacy SDK names a different verifier than Anchor.toml`, [
+          `  Anchor.toml [${TARGET.anchorSection}] ${ANCHOR_PROGRAM_KEY}  ${anchorId}`,
+          `  ${c.file}  ${c.symbol}  ${c.id}`,
           '',
-          'Regenerate the SDK block from Anchor.toml: pnpm sync-program-ids',
+          'This gate verifies the Anchor.toml id against the chain. That constant is compiled into the',
+          'published SDK and is what the code using it sends its proof to, so while the two differ the',
+          'green this gate can print is about a program that code never addresses. Both ids being pre-B1',
+          'today is why the verdict does not change; it is not a reason to leave it unchecked.',
+          '',
+          'Point them at the same program. There is no generator to run: package.json defines',
+          'sync-program-ids/check-program-ids as `tsx scripts/sync-program-ids.ts`, and that file is not in',
+          'this tree, so both commands fail before they check anything.',
         ]);
       }
     }
