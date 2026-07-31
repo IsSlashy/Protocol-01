@@ -26,10 +26,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 9.15.9, not 10.x, and the number here is decorative either way: root
+      # package.json pins `"packageManager": "pnpm@9.15.9"` and pnpm 10
+      # self-manages down to that pin on first invocation. MEASURED:
+      # `npx -y pnpm@10.34.0 --version` prints 9.15.9. So this line said 10.34.0
+      # while CI ran 9.15.9 — no behavioural drift, but the repo was pinned to
+      # 9.15.9 ON PURPOSE after pnpm 10 broke the Android build, and a future
+      # edit to a number that is never obeyed would look effective and be inert.
+      # Change the packageManager field, not this line.
       - name: Install pnpm
         uses: pnpm/action-setup@v2
         with:
-          version: 10.34.0
+          version: 9.15.9
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

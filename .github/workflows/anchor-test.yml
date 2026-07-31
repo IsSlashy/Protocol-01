@@ -82,10 +82,13 @@ jobs:
           avm install ${{ env.ANCHOR_VERSION }}
           avm use ${{ env.ANCHOR_VERSION }}
 
+      # 9.15.9 — same correction as ci.yml, same reason: root package.json pins
+      # `"packageManager": "pnpm@9.15.9"` and pnpm 10 delegates to it, so this
+      # number was never the version that ran.
       - name: Install pnpm
         uses: pnpm/action-setup@v2
         with:
-          version: 10.34.0
+          version: 9.15.9
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
