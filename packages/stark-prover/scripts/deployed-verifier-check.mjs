@@ -144,9 +144,13 @@
  * file, not read from the record, so no edit to the record weakens that scan —
  * but ELF_B1_MARKERS is now the softest thing left in this gate, and that is
  * stated rather than implied: pointing those two literals at a string the pre-B1
- * deployment also carries would make the chain read b1. That is an edit to the
- * guardrail itself rather than to anything it measures, which is a louder diff
- * than a panic-message rename, but it is not nothing.
+ * deployment also carries would make the chain read b1. KNOWN_ELF_GENERATIONS
+ * bounds that. It pins the sha256 of the two live deployments as measured by
+ * hand, and a scan that reads one of them as a different generation is a
+ * contradiction and a hard failure — offline as well as on chain, since the
+ * record names the same hash. What is left after that is an edit to the
+ * guardrail itself, deleting a measured constant, which is a louder diff than a
+ * panic-message rename in a refactor. It is not the same as impossible.
  *
  * # The blob is ALSO corroborated against the source it is built from
  *
@@ -239,6 +243,84 @@ const ELF_CONTROLS = [
   '[verify] OOD z mismatch: got ',
   'STARK proof verified for circuit ',
 ];
+
+/**
+ * ELF sha256 -> the generation that exact deployment was measured to be.
+ *
+ * The client side is classified by RUNNING the prover, so no rename moves it.
+ * The deployed side cannot be: nothing in a build script can execute a BPF
+ * program, and putting a real proof in front of one needs funding and a ~78 KB
+ * chunked upload. So the chain is still classified by scanning its ELF for msg!
+ * literals, and that leaves ELF_B1_MARKERS as the softest thing in this gate:
+ * point those two literals at a string the pre-B1 deployment also carries and
+ * the chain reads b1.
+ *
+ * This table is what stops that from being enough on its own. Every entry is a
+ * deployment somebody read off devnet and classified by hand; if the chain hands
+ * back those exact bytes it is still that deployment, whatever the scan says. A
+ * marker table edited to make a pinned pre-B1 ELF read as b1 now CONTRADICTS the
+ * pin, and a contradiction is a hard failure. The cost of the cheapest false
+ * green on this side therefore goes from "reword two literals" to "reword two
+ * literals AND delete a measured constant that names the program, the slot and
+ * the byte count it was taken from".
+ *
+ * Both entries MEASURED 2026-07-31 off https://api.devnet.solana.com, by reading
+ * the programdata account and scanning the payload: neither carries either B1
+ * marker, both carry all four ELF_CONTROLS. They are the two live
+ * p01_stark_verifier deployments the clients can address — see
+ * verifierConstantsInPrivacySdk for why there are two.
+ *
+ * An entry here is NOT a claim about any other deployment. A redeploy changes
+ * the hash, the new hash is not in this table, and the scan is then the only
+ * evidence again — which is the honest state until someone measures the new one
+ * and adds it. This table can only ever add a contradiction, never a pass.
+ */
+const KNOWN_ELF_GENERATIONS = {
+  c359ab535f42d2d8a91a2b0228521b17d26c0bde32dc526538d92987c7019f5c: {
+    generation: 'pre-b1',
+    what: 'devnet EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z, programdata 35XxrnBYPTWjir8Zc3BdS9LQA9Fjh6JB73iM3WaxKr57, slot 456289287, 780,249 B',
+  },
+  c1a26c1772a27f46d50570127bfa0b18ea3f46594ded4b80d9e40e3f87c03755: {
+    generation: 'pre-b1',
+    what: 'devnet DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs, programdata Dmndh5d1SMr54vjGMHVcvsfC1Dy3LXHfAhn58RM1eWJi, slot 469197514, 817,617 B',
+  },
+};
+
+/**
+ * A generation attributed to a specific ELF, checked against what that ELF was
+ * measured to be. Returns a failure block, or null when there is nothing pinned
+ * about that hash or the two agree.
+ *
+ * `where` says whose claim is being checked, because the two cases read very
+ * differently: the record claiming it is prose that can be edited, the marker
+ * scan claiming it means the discriminator itself has gone stale or been
+ * reworded.
+ */
+function knownElfContradiction(elfSha, claimedGeneration, where) {
+  const known = KNOWN_ELF_GENERATIONS[elfSha];
+  if (known === undefined) return null;
+  if (claimedGeneration === null || claimedGeneration === undefined) return null;
+  if (claimedGeneration === known.generation) return null;
+  return {
+    title: `${where} contradicts a deployment that was measured by hand`,
+    lines: [
+      `  elf sha256   ${elfSha}`,
+      `  that ELF is  ${known.what}`,
+      `  measured     ${known.generation}`,
+      `  ${where.padEnd(11)} ${claimedGeneration}`,
+      '',
+      'Those exact bytes were read off the chain and classified on 2026-07-31, and they have not changed',
+      'since — the hash is how we know. A redeploy would produce a different hash and this check would',
+      'have nothing to say. So this is not a stale pin disagreeing with a fresh reading, it is two',
+      'readings of the SAME bytes disagreeing, and one of them was edited.',
+      '',
+      'If the marker scan is what changed, that is the failure: ELF_B1_MARKERS is the only thing telling',
+      'this gate what generation a deployment is, and pointing it at a literal the pre-B1 program also',
+      'carries turns every pre-B1 deployment into a b1 one. If a deployment genuinely changed, redeploy',
+      'and re-measure — do not reconcile these by editing either side.',
+    ],
+  };
+}
 
 /**
  * The Rust sources every literal above was lifted from. They are read so the
@@ -875,6 +957,16 @@ if (wantMeasure) {
     console.error(`\n[deployed-verifier] the deployed ELF could not be classified: controls missing ${JSON.stringify(cls.missingControls)}`);
     process.exit(1);
   }
+  {
+    // --measure output is what gets pasted into the record, so a scan that
+    // disagrees with a hand-measured deployment must not be printed as fact.
+    const contradiction = knownElfContradiction(chain.elfSha256, cls.generation, 'the marker scan');
+    if (contradiction !== null) {
+      console.error(`\n[deployed-verifier] --measure refuses to vouch for that block: ${contradiction.title}`);
+      for (const line of contradiction.lines) console.error(line);
+      process.exit(1);
+    }
+  }
   console.error(
     `\n[deployed-verifier] --measure only READS the chain. Paste the block above into ${RECORD_REL}, ` +
       'and set accepts_client_blob_sha256 only after proving a blob against this deployment end to end.',
@@ -1224,6 +1316,15 @@ if (blobGen !== null && clientRec.proof_format_generation !== blobGen) {
 
 const deployedGen = deployed.proof_format_generation;
 
+// Before the interlock reads it: the generation the record attributes to that
+// ELF, against what that ELF was measured to be. This one needs no chain — an
+// offline run catches an edited generation too, as long as elf_sha256 is one of
+// the deployments somebody has already read.
+{
+  const contradiction = knownElfContradiction(deployed.elf_sha256, deployedGen, 'the record');
+  if (contradiction !== null) fail(contradiction.title, contradiction.lines);
+}
+
 if (blobGen !== null && deployedGen !== blobGen) {
   fail(`the client blob is ${blobGen.toUpperCase()}, the deployed program is ${String(deployedGen).toUpperCase()}`, [
     `  client blob  ${blobGen.padEnd(7)} ${blobSha}  (${blob.length.toLocaleString()} B, this tree)`,
@@ -1357,7 +1458,16 @@ if (wantOnchain) {
         'offline half green and is caught here. Deploy the program.',
       ]);
     } else {
+      // The scan agreed with the record. Both of those can be reworded; the
+      // bytes the chain just handed back cannot. If those bytes are a
+      // deployment somebody measured by hand, the scan has to agree with THAT
+      // too, or the discriminator is what changed.
+      const contradiction = knownElfContradiction(chain.elfSha256, chainCls.generation, 'the marker scan');
+      if (contradiction !== null) fail(contradiction.title, contradiction.lines);
       console.log(`[deployed-verifier] on-chain ok — the chain agrees the deployment is ${chainCls.generation}`);
+      if (KNOWN_ELF_GENERATIONS[chain.elfSha256] !== undefined) {
+        console.log(`[deployed-verifier]          and those exact bytes were measured ${KNOWN_ELF_GENERATIONS[chain.elfSha256].generation} by hand on 2026-07-31`);
+      }
       if (deployed.accepts_client_blob_sha256 === blobSha) {
         console.log('[deployed-verifier] note: accepts_client_blob_sha256 is an attestation. Nothing on chain records');
         console.log('[deployed-verifier]       which blob a deployment accepts, so this script did not verify it.');

@@ -164,7 +164,19 @@
     "real proof to it needs funding and a ~78 KB chunked upload, so there is no behavioural classifier",
     "available for that side. ELF_B1_MARKERS is therefore the softest thing left in this gate: pointing",
     "those two literals at a string the pre-B1 deployment also carries would make the chain read b1.",
-    "That is an edit to the guardrail itself rather than to anything it measures, which is a louder diff",
+    "",
+    "That is bounded, not closed. KNOWN_ELF_GENERATIONS in deployed-verifier-check.mjs pins the sha256",
+    "of both live devnet deployments with the generation each was measured to be by hand (MEASURED",
+    "2026-07-31: EXmAQqm... c359ab53, 780,249 B, slot 456289287; DGY37k3... c1a26c17, 817,617 B, slot",
+    "469197514; neither carries either B1 marker, both carry all four controls). If the chain hands back",
+    "those exact bytes it is still that deployment, so a marker scan reading one of them as b1 is two",
+    "readings of the same bytes disagreeing, and that is a hard failure. The record names the same hash,",
+    "so the contradiction is caught offline too. A pin can only ever add a failure: after a redeploy the",
+    "hash is new, nothing is pinned about it, and the scan is the only evidence again until someone",
+    "measures it and adds it.",
+    "",
+    "What is left is an edit to the guardrail itself - rewording ELF_B1_MARKERS and deleting a measured",
+    "constant that names the program, the slot and the byte count it came from. That is a louder diff",
     "than a panic-message rename buried in a refactor. It is not the same as impossible."
   ],
 
@@ -217,7 +229,8 @@
     "proof_format_generation": "pre-b1",
 
     "generation_evidence": {
-      "method": "byte scan of the deployed ELF for msg! format-string literals that B1 introduced in programs/p01_stark_verifier/src/verify.rs, controlled by sibling literals from the same file that predate B1",
+      "method": "byte scan of the deployed ELF for msg! format-string literals that B1 introduced in programs/p01_stark_verifier/src/verify.rs, controlled by sibling literals from the same file that predate B1. This side is STILL a string scan, unlike the client side, because nothing in a build script can execute a BPF program and putting a real proof in front of one needs funding and a ~78 KB chunked upload.",
+      "identity_pin": "elf_sha256 c359ab53... is listed in KNOWN_ELF_GENERATIONS in deployed-verifier-check.mjs as measured pre-b1 by hand on 2026-07-31, together with the other live deployment c1a26c17... (DGY37k3...). The scan and the pin must agree; a disagreement about the same bytes is a hard failure, offline and on chain. That is what keeps the two literals below from being the only thing this side rests on.",
       "b1_markers_absent": [
         "[verify] final poly coeff ",
         " non-zero, bound is ",
