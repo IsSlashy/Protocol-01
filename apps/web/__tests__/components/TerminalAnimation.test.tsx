@@ -80,7 +80,7 @@ describe('TerminalAnimation -- CLI-style protocol demonstration', () => {
       advanceSteps(12);
       expect(screen.getByText('$ p01 init --stealth')).toBeInTheDocument();
       expect(screen.getByText('[OK] Wallet created: 0x7f3a...8c2e')).toBeInTheDocument();
-      expect(screen.getByText('[OK] Transaction sent (untraceable)')).toBeInTheDocument();
+      expect(screen.getByText('[OK] Transaction sent (recipient hidden)')).toBeInTheDocument();
       expect(screen.getByText('>> The system cannot see you.')).toBeInTheDocument();
     });
 

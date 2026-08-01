@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import Home from '@/app/page';
 
 describe('Homepage -- Protocol 01 main landing page', () => {
@@ -8,17 +8,26 @@ describe('Homepage -- Protocol 01 main landing page', () => {
   });
 
   describe('Navigation Bar', () => {
-    it('renders the fixed navigation bar at the top', () => {
+    it('renders the fixed site header at the top, wrapping the nav', () => {
+      // Commit 97339ea6 unified the three per-page headers into SiteHeader.
+      // `fixed top-0` now lives on the wrapping <header>; the <nav> is just
+      // the link row inside it.
       const nav = screen.getByRole('navigation');
       expect(nav).toBeInTheDocument();
-      expect(nav.className).toContain('fixed');
-      expect(nav.className).toContain('top-0');
+      const header = nav.closest('header');
+      expect(header).not.toBeNull();
+      expect(header!.className).toContain('fixed');
+      expect(header!.className).toContain('top-0');
     });
 
-    it('displays the P01 logo badge in the navigation', () => {
-      // P01 appears in both nav and footer
-      const badges = screen.getAllByText('P01');
-      expect(badges.length).toBeGreaterThanOrEqual(1);
+    it('displays the app-icon logo linking home in the site header', () => {
+      // Commit 6fb9d6b8 ("replace P01 text badge with app icon across all
+      // headers") swapped the "P01" text badge for /icon.png. The header logo
+      // is now an <img alt="Protocol 01"> inside the home link.
+      const header = screen.getByRole('navigation').closest('header')!;
+      const logo = within(header).getByAltText('Protocol 01');
+      expect(logo).toHaveAttribute('src', '/icon.png');
+      expect(logo.closest('a')).toHaveAttribute('href', '/');
     });
 
     it('displays the "PROTOCOL 01" brand name in the navigation', () => {
@@ -71,11 +80,19 @@ describe('Homepage -- Protocol 01 main landing page', () => {
       expect(navLink).toHaveAttribute('target', '_blank');
     });
 
-    it('has a GitHub link in the navigation', () => {
-      const githubLinks = screen.getAllByLabelText('GitHub');
-      const navLink = githubLinks.find(l => l.getAttribute('href') === 'https://github.com/IsSlashy/Protocol-01');
-      expect(navLink).toBeDefined();
-      expect(navLink).toHaveAttribute('target', '_blank');
+    it('exposes exactly Twitter/X and Discord as social links -- GitHub stays hidden in waitlist mode', () => {
+      // WAITLIST MODE (Footer.tsx): the GitHub entry is commented out behind
+      // "GitHub de-emphasized while access runs through the waitlist, restore
+      // at launch". There is no GitHub link anywhere on the homepage today.
+      // When that comment is un-commented, add 'GitHub' back to this list.
+      const twitter = screen
+        .getAllByLabelText('Twitter/X')
+        .find(l => l.getAttribute('href') === 'https://x.com/Protocol01_')!;
+      const socialRow = twitter.parentElement!;
+      const labels = Array.from(socialRow.querySelectorAll('a[aria-label]')).map(a =>
+        a.getAttribute('aria-label')
+      );
+      expect(labels).toEqual(['Twitter/X', 'Discord']);
     });
 
     it('has a Discord link in the navigation', () => {
@@ -101,9 +118,17 @@ describe('Homepage -- Protocol 01 main landing page', () => {
       expect(featuresSection).toBeTruthy();
     });
 
-    it('renders the TechStack section with id="tech"', () => {
-      const techSection = document.getElementById('tech');
-      expect(techSection).toBeTruthy();
+    it('renders the Ecosystem tech marquee in place of the removed id="tech" section', () => {
+      // Commit a91974cd ("streamline landing page -- remove tech sections")
+      // dropped the TechStack/Showcase sections from the landing page; the
+      // technology list moved to /docs and to the Ecosystem marquee. Nothing
+      // links to #tech any more, so the anchor is gone on purpose.
+      expect(document.getElementById('tech')).toBeNull();
+      expect(screen.getByText('Ecosystem & Technologies')).toBeInTheDocument();
+      expect(screen.getByText('BEST IN CLASS')).toBeInTheDocument();
+      // Marquee rows are duplicated for the seamless loop, hence getAllByText.
+      expect(screen.getAllByText('Winterfell').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Quantum-Safe Field').length).toBeGreaterThan(0);
     });
 
     it('renders the CTA/Download section with id="download"', () => {

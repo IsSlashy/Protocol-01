@@ -1,6 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import Hero from '@/components/Hero';
+
+/**
+ * Assertions here are pinned to the copy Hero.tsx actually renders today,
+ * resolved through i18n/en.ts by the @/i18n mock in __tests__/setup.tsx.
+ * Keep them exact: the job of a copy assertion is to fail when copy changes.
+ */
+
+// The stat row renders <div.text-left><div>{value}</div><div>{label}</div></div>,
+// so the label's parent is the stat cell. Scoping the value lookup to that cell
+// asserts the value/label PAIRING, not just that both strings exist somewhere.
+const statCell = (label: string) => {
+  const cell = screen.getByText(label).parentElement;
+  if (!cell) throw new Error(`Stat label "${label}" has no parent cell`);
+  return cell;
+};
 
 describe('Hero -- Privacy-first landing section', () => {
   beforeEach(() => {
@@ -12,14 +27,17 @@ describe('Hero -- Privacy-first landing section', () => {
       expect(screen.getByText('Protocol Active')).toBeInTheDocument();
     });
 
-    it('presents the "SUBSCRIBE PRIVATELY" headline as the core value proposition', () => {
-      const headlines = screen.getAllByText('SUBSCRIBE PRIVATELY');
-      // Main text + chromatic aberration layers (cyan, pink, main)
-      expect(headlines.length).toBeGreaterThanOrEqual(1);
+    it('presents the "NOTHING THEY CAN TRACE." headline as the core value proposition', () => {
+      // Rendered three times on purpose: cyan ghost, pink ghost, and the main
+      // white layer that together produce the chromatic-aberration glitch.
+      const headlines = screen.getAllByText('NOTHING THEY CAN TRACE.');
+      expect(headlines).toHaveLength(3);
     });
 
-    it('shows the "SYSTEM STATUS" label in terminal style for cyberpunk aesthetic', () => {
-      expect(screen.getByText('[ SYSTEM STATUS ]')).toBeInTheDocument();
+    it('shows the kicker line that sets up the headline', () => {
+      expect(
+        screen.getByText('WHO YOU PAY. WHAT YOU BUY. HOW MUCH.')
+      ).toBeInTheDocument();
     });
 
     it('displays "READY" status indicator confirming the protocol is operational', () => {
@@ -27,21 +45,33 @@ describe('Hero -- Privacy-first landing section', () => {
     });
   });
 
-  describe('Privacy Messaging', () => {
-    it('communicates recurring private payments as a key feature', () => {
-      expect(screen.getByText('Recurring private payments.')).toBeInTheDocument();
+  describe('Description copy', () => {
+    it('states what the protocol lets you do on Solana', () => {
+      expect(
+        screen.getByText('Pay merchants, subscribe, send and swap on Solana.')
+      ).toBeInTheDocument();
     });
 
-    it('communicates anonymous subscriptions as a key feature', () => {
-      expect(screen.getByText('Anonymous subscriptions.')).toBeInTheDocument();
+    it('scopes the privacy claim to the three things kept hidden', () => {
+      expect(
+        screen.getByText(
+          'Without revealing who you are, what you bought, or how much.'
+        )
+      ).toBeInTheDocument();
     });
 
-    it('communicates stealth transfers on Solana as a key feature', () => {
-      expect(screen.getByText('Stealth transfers on Solana.')).toBeInTheDocument();
+    it('names the primitives and qualifies the deployment stage as devnet', () => {
+      expect(
+        screen.getByText(
+          'Post-quantum proofs, stealth addresses, shielded pools. Live on devnet.'
+        )
+      ).toBeInTheDocument();
     });
 
-    it('highlights the privacy promise: "Your finances, your privacy."', () => {
-      expect(screen.getByText('Your finances, your privacy.')).toBeInTheDocument();
+    it('closes on the three verifiable properties: self-custody, open source, no KYC', () => {
+      expect(
+        screen.getByText('Self-custody. Open source. No KYC.')
+      ).toBeInTheDocument();
     });
   });
 
@@ -50,30 +80,47 @@ describe('Hero -- Privacy-first landing section', () => {
       expect(screen.getByText('Initialize Protocol')).toBeInTheDocument();
     });
 
-    it('renders the "Documentation" link pointing to /docs', () => {
-      const docsLink = screen.getByText('Documentation');
-      expect(docsLink).toBeInTheDocument();
-      expect(docsLink.closest('a')).toHaveAttribute('href', '/docs');
-    });
-
     it('links "Initialize Protocol" to the live /pay demo', () => {
       const cta = screen.getByText('Initialize Protocol');
       expect(cta.closest('a')).toHaveAttribute('href', '/pay');
     });
+
+    it('renders "Join the waitlist" as the secondary CTA, scrolling to #download', () => {
+      const cta = screen.getByRole('button', { name: 'Join the waitlist' });
+      expect(cta).toBeInTheDocument();
+
+      const downloadSection = document.createElement('div');
+      downloadSection.id = 'download';
+      const scrollIntoView = vi.fn();
+      downloadSection.scrollIntoView = scrollIntoView;
+      document.body.appendChild(downloadSection);
+
+      try {
+        fireEvent.click(cta);
+        expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' });
+      } finally {
+        downloadSection.remove();
+      }
+    });
   });
 
   describe('Statistics Dashboard', () => {
-    it('displays infinity symbol for "Recurring" payments -- unlimited private subscriptions', () => {
-      expect(screen.getByText('Recurring')).toBeInTheDocument();
+    it('pairs the infinity symbol with "Private subscriptions"', () => {
+      expect(
+        within(statCell('Private subscriptions')).getByText('∞')
+      ).toBeInTheDocument();
     });
 
-    it('displays "100%" for "Private" -- complete transaction privacy', () => {
-      expect(screen.getByText('100%')).toBeInTheDocument();
-      expect(screen.getByText('Private')).toBeInTheDocument();
+    it('pairs "100%" with "Self-custody"', () => {
+      expect(
+        within(statCell('Self-custody')).getByText('100%')
+      ).toBeInTheDocument();
     });
 
-    it('displays "0" for "Traces" -- zero on-chain footprint', () => {
-      expect(screen.getByText('Traces')).toBeInTheDocument();
+    it('pairs "0" with "Traces left on-chain"', () => {
+      expect(
+        within(statCell('Traces left on-chain')).getByText('0')
+      ).toBeInTheDocument();
     });
   });
 

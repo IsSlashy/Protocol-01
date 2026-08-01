@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import SDKDemoPage from '@/app/sdk-demo/page';
 
@@ -14,14 +14,23 @@ describe('SDKDemoPage -- Developer SDK playground and widget showcase', () => {
   });
 
   describe('Page Header', () => {
-    it('displays the "P-01" brand link to homepage', () => {
-      expect(screen.getByText('P-01')).toBeInTheDocument();
-      const brandLink = screen.getByText('P-01').closest('a');
-      expect(brandLink).toHaveAttribute('href', '/');
+    // The page-local header was replaced by the shared <SiteHeader />, whose
+    // wordmark is "PROTOCOL 01" (next to the /icon.png logo), not "P-01".
+    // Scoped to the banner because the footer repeats the wordmark twice.
+    it('displays the "PROTOCOL 01" brand link to homepage', () => {
+      const header = screen.getByRole('banner');
+      const brand = within(header).getByText('PROTOCOL 01');
+      expect(brand).toBeInTheDocument();
+      expect(brand.closest('a')).toHaveAttribute('href', '/');
     });
 
+    // "SDK Demo" is also a footer link (footer.sdkDemo), so this pins the <h1>.
     it('shows "SDK Demo" page title', () => {
-      expect(screen.getByText('SDK Demo')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { level: 1, name: 'SDK Demo' })).toBeInTheDocument();
+    });
+
+    it('shows the "Developer Preview" hero kicker', () => {
+      expect(screen.getByText('Developer Preview')).toBeInTheDocument();
     });
 
     it('displays "100% Serverless" badge', () => {
@@ -34,8 +43,16 @@ describe('SDKDemoPage -- Developer SDK playground and widget showcase', () => {
   });
 
   describe('Tab Navigation', () => {
+    // "Devnet" is rendered twice: as the network badge in the hero and as the
+    // tab label. Query the tab by its button role so this still fails if the
+    // tab is renamed or dropped.
     it('renders the "Devnet" tab', () => {
-      expect(screen.getByText('Devnet')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Devnet' })).toBeInTheDocument();
+    });
+
+    // Tab added after this suite was written (Privacy SDKs section).
+    it('renders the "Privacy SDKs" tab', () => {
+      expect(screen.getByRole('button', { name: 'Privacy SDKs' })).toBeInTheDocument();
     });
 
     it('renders the "Stream SDK" tab', () => {

@@ -29,17 +29,30 @@ describe('TechStack -- Cryptography and infrastructure showcase', () => {
 
     it('shows the Application Layer', () => {
       expect(screen.getByText('Application Layer')).toBeInTheDocument();
-      expect(screen.getByText('Wallet, Streams, Agent')).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          'Wallet, Streams, Agent, Denominated Pools, Subscription Vaults, P2P Sharing'
+        )
+      ).toBeInTheDocument();
     });
 
     it('shows the Privacy Layer', () => {
       expect(screen.getByText('Privacy Layer')).toBeInTheDocument();
-      expect(screen.getByText('ZK Proofs, Stealth Addresses, Encryption')).toBeInTheDocument();
+      // Was "ZK Proofs, ..." before the Groth16 -> Goldilocks STARK migration (ac07e56c).
+      expect(
+        screen.getByText(
+          'STARK Proofs, Stealth Addresses, Encryption, zkSPL Confidential Balances'
+        )
+      ).toBeInTheDocument();
     });
 
     it('shows the Execution Layer', () => {
       expect(screen.getByText('Execution Layer')).toBeInTheDocument();
-      expect(screen.getByText('TEE Compute, Private Relayers')).toBeInTheDocument();
+      // "TEE Compute, Private Relayers" was removed on purpose by the accuracy pass
+      // (90031780): no TEE compute exists. The layer now names only shipped programs.
+      expect(
+        screen.getByText('On-chain Relayer, STARK Verifier, Quantum Vault, Subscription Crank')
+      ).toBeInTheDocument();
     });
 
     it('shows the Settlement Layer', () => {
@@ -57,9 +70,11 @@ describe('TechStack -- Cryptography and infrastructure showcase', () => {
       expect(screen.getByText('Zero-Knowledge')).toBeInTheDocument();
     });
 
-    it('lists Circom as ZK circuit language', () => {
-      expect(screen.getByText('Circom')).toBeInTheDocument();
-      expect(screen.getByText('ZK circuit language')).toBeInTheDocument();
+    // Circom / "ZK circuit language" was replaced by Winterfell when the frontend
+    // moved off Groth16 to the Goldilocks-field STARK prover (36612e6c, ac07e56c).
+    it('lists Winterfell as the Goldilocks-field STARK prover', () => {
+      expect(screen.getByText('Winterfell')).toBeInTheDocument();
+      expect(screen.getByText('Goldilocks-field STARK prover')).toBeInTheDocument();
     });
 
     it('lists STARK as the active proof system', () => {
