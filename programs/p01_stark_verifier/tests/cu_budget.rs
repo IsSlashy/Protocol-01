@@ -902,8 +902,26 @@ struct CuCeiling {
 /// Artifact: `target/cu-budget/p01_stark_verifier.so`, 687,440 B, sha256
 /// `df4b325fd7e543dbb46b7af304e796299820090e9ac951f46a0a584a2c658a4e`, built by
 /// `solana-cargo-build-sbf 3.1.9 platform-tools v1.52`, build fp
-/// `1aaddf07001a1cc0`, origin line `rebuilt`, from a `CARGO_TARGET_DIR` that did
+/// `488086644ca36a77`, origin line `rebuilt`, from a `CARGO_TARGET_DIR` that did
 /// not exist.
+///
+/// # [B2-AUDIT] The build fp moved and the artifact hash did NOT — on purpose
+///
+/// The fp recorded here was `1aaddf07001a1cc0` at the integration head
+/// `58e5c77a`. `f62ce46f` then added `mod grinding_enforcement` to `verify.rs`,
+/// and `build_fingerprint` hashes the BYTES of every `.rs` under `src/`, so it
+/// moved to `488086644ca36a77`. The `.so` did not: the module is behind
+/// `#[cfg(test)]` and sits at the very END of the file, below every panicking
+/// statement, so no relative panic location shifted. Two independent cold
+/// measurements of the artifact — one at `58e5c77a`, one after `f62ce46f` with
+/// `target/cu-budget` deleted first — both give `df4b325f…` at 687,440 B, and
+/// all thirteen CU pins print `+0` against the recorded numbers in both.
+///
+/// That is the useful shape of the two records: the fp is the CACHE key and must
+/// move on any source edit, the sha256 is the ARTIFACT and only moves when the
+/// bytes do. A change that moves the fp and not the sha256 is a source edit the
+/// binary did not notice. A change that moves the sha256 is a change to what
+/// runs on chain.
 ///
 /// # That artifact hash goes stale on a doc-comment edit, and has now done it twice
 ///
