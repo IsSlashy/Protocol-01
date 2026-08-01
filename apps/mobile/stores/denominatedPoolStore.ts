@@ -205,11 +205,13 @@ interface DenominatedPoolState {
     c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
   ) => Promise<string>;
   /**
-   * Quantum-resistant STARK unshield. Pass `emergency=true` to bypass the maturity
-   * check (min_epoch=0). The on-chain ix, account layout, and emitted event are
-   * identical for both paths — an observer cannot distinguish emergency from
-   * classic. Privacy posture (ephemeral signer + ECDH stealth recipient + random
-   * sweep) is uniform across both.
+   * Quantum-resistant STARK unshield. Pass `emergency=true` to bypass the
+   * client-side maturity check. It changes no instruction byte: min_epoch is
+   * always UNSHIELD_MIN_EPOCH (0) — see services/denominatedPool/index.ts. The
+   * on-chain ix, account layout, and emitted event are identical for both
+   * paths, so an observer cannot distinguish emergency from classic. Privacy
+   * posture (ephemeral signer + ECDH stealth recipient + random sweep) is
+   * uniform across both.
    */
   unshieldNoteStark: (
     noteId: string,
@@ -225,9 +227,9 @@ interface DenominatedPoolState {
    * mirrors v2 `unshieldNoteStark`.
    *
    * Side-by-side with v2 — screen routes via `note.poolVersion === 'v3'`.
-   * `emergency` flag is accepted for symmetry but currently unused: the
-   * V3 ix maturity check uses the same UX-only convention as v2 and the
-   * on-chain min_epoch check is decoupled from the proof contents.
+   * `emergency` flag is accepted for symmetry but currently unused: min_epoch
+   * is always UNSHIELD_MIN_EPOCH (0) and the V3 handler ignores it
+   * (unshield_denominated_stark_v3.rs:387), so maturity is a UX-only gate.
    */
   unshieldNoteStarkV3: (
     noteId: string,

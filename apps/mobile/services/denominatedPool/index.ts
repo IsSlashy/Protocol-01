@@ -1675,10 +1675,49 @@ export async function shield(
 // ---------------------------------------------------------------------------
 
 /**
+ * The ONLY value this client ever publishes in the `min_epoch` argument of an
+ * unshield instruction — v2 (`unshield_denominated_stark`), v3
+ * (`unshield_denominated_stark_v3`) and the p01_liquidity `prefund` record
+ * alike. It lands at byte offset 72 of `ix.data` on every one of them, the
+ * same offset the web client uses.
+ *
+ * Why a constant:
+ *
+ *  - It is dead on-chain on the unshield path. v3 consumes it as
+ *    `let _ = (amount, unshield_fee, min_epoch, current_epoch, dynamic_delay,
+ *    nullifier);` (unshield_denominated_stark_v3.rs:387) and v2 explicitly
+ *    stopped enforcing it (unshield_denominated_stark.rs:212-220). p01_liquidity
+ *    only stores it on the PrefundRecord (prefund.rs:197) and `settle` rebuilds
+ *    the CPI with its own `current_epoch` (settle.rs:109-116), so nothing reads
+ *    the stored value either.
+ *  - Anything note-derived in this slot narrows the anonymity set. This client
+ *    was writing the *current* epoch, which is already public from the block
+ *    slot, so nothing leaked yet — but the extension was writing the note's
+ *    DEPOSIT epoch, and any client that adopts the PRF commitment blinding
+ *    shipped in apps/web (apps/web/lib/privacy/pool/noteBlinding.ts) would end
+ *    up publishing a 63-bit SECRET here. Pinning to zero makes that class of
+ *    regression impossible.
+ *  - Uniformity across clients. web, extension and mobile now all write the
+ *    same eight zero bytes, so the field cannot fingerprint the client.
+ *
+ * See docs/C7_SPEND_CIRCUIT_PLAN.md Step 1.
+ *
+ * NOT safe to reuse for transfer/split/subscribe/escrow: `min_epoch` IS
+ * enforced on those handlers (e.g. `transfer_denominated_stark_v3.rs:167-173`
+ * `require!(current_epoch >= min_epoch + dynamic_delay, EpochDelayNotMet)`).
+ * This constant is for the unshield path only.
+ *
+ * Do not turn this back into a builder parameter. Both unshield builders write
+ * it inline precisely so that no call site can reintroduce a note-derived
+ * value.
+ */
+export const UNSHIELD_MIN_EPOCH = 0n;
+
+/**
  * Build unshield_denominated_stark instruction.
  * No Groth16 proof — instead references a pre-verified STARK proof buffer.
  */
-function buildUnshieldDenominatedStarkIx(
+export function buildUnshieldDenominatedStarkIx(
   payer: PublicKey,
   recipient: PublicKey,
   poolPDA: PublicKey,
@@ -1687,7 +1726,6 @@ function buildUnshieldDenominatedStarkIx(
   starkProofBuffer: PublicKey,
   nullifierBytes: number[],
   merkleRootBytes: number[],
-  minEpoch: bigint,
   starkCommitment: bigint,
   tokenProgram?: PublicKey,
   poolVault?: PublicKey,
@@ -1701,7 +1739,8 @@ function buildUnshieldDenominatedStarkIx(
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
   Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
-  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  // min_epoch @ byte 72 — pinned to 0 on every path. See UNSHIELD_MIN_EPOCH.
+  data.writeBigUInt64LE(UNSHIELD_MIN_EPOCH, offset); offset += 8;
   data.writeBigUInt64LE(starkCommitment, offset);
 
   // Account ordering must match on-chain UnshieldDenominatedStark struct:
@@ -1780,13 +1819,19 @@ export async function unshieldStark(
     _nv >>= 8n;
   }
   const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot!);
-  // Phase 1 indistinguishability: zk_shielded no longer enforces `min_epoch`
-  // on-chain (see programs/zk_shielded/src/instructions/unshield_denominated_stark.rs).
-  // Mature, emergency, and prefund paths all pass `current_epoch` so tx args
-  // and event shape are identical on every unshield.
+  // min_epoch is ALWAYS 0 on the unshield path — never the current epoch and
+  // never the note's deposit epoch. See the UNSHIELD_MIN_EPOCH doc comment.
+  // zk_shielded stopped enforcing it (unshield_denominated_stark.rs:212-220),
+  // and p01_liquidity only records it (prefund.rs:197) — settle rebuilds the
+  // CPI with its own current_epoch (settle.rs:109-116). Mature, emergency and
+  // prefund paths therefore stay byte-identical to each other AND to the web
+  // and extension clients.
   void emergency;
   void poolInfo;
-  const minEpoch = currentEpoch;
+  void currentEpoch;
+  // The v2 unshield builder pins min_epoch itself; the p01_liquidity prefund
+  // record below still takes it as an argument, so name it explicitly here.
+  const minEpoch = UNSHIELD_MIN_EPOCH;
 
   // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
   // Use stealth keypair if available (overrideKeypair), otherwise walletSigner
@@ -1885,7 +1930,6 @@ export async function unshieldStark(
       proofBuffer,
       Array.from(nullifierBytes),
       merkleRootBytes,
-      minEpoch,
       starkCommitment,
       tokenProgram,
       poolVault,
@@ -2870,7 +2914,7 @@ function buildShieldDenominatedV3Ix(
  * Anchor's token constraints validate mint/owner — moving it to remaining_accounts
  * would require manual deserialization for marginal privacy gain.
  */
-function buildUnshieldDenominatedStarkV3Ix(
+export function buildUnshieldDenominatedStarkV3Ix(
   payer: PublicKey,
   recipient: PublicKey,
   poolPDA: PublicKey,
@@ -2880,7 +2924,6 @@ function buildUnshieldDenominatedStarkV3Ix(
   c3ProofBuffer: PublicKey,
   nullifierBytes: number[],
   merkleRootBytes: number[],
-  minEpoch: bigint,
   starkCommitment: bigint,
   tokenProgram?: PublicKey,
   poolVault?: PublicKey,
@@ -2893,7 +2936,8 @@ function buildUnshieldDenominatedStarkV3Ix(
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
   Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
-  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  // min_epoch @ byte 72 — pinned to 0 on every path. See UNSHIELD_MIN_EPOCH.
+  data.writeBigUInt64LE(UNSHIELD_MIN_EPOCH, offset); offset += 8;
   data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
   // recipient as 32-byte instruction arg (matches `recipient: [u8; 32]` in Rust)
   Buffer.from(recipient.toBytes()).copy(data, offset);
@@ -3281,8 +3325,11 @@ export async function unshieldDenominatedStarkV3(
       }
     }
 
-    const slot = await connection.getSlot('confirmed');
-    const minEpoch = slotToEpoch(slot); // V3 mirrors v2: maturity is UX-only on-chain.
+    // min_epoch is no longer passed in: the builder pins it to
+    // UNSHIELD_MIN_EPOCH (0). The V3 handler ignores the argument
+    // (unshield_denominated_stark_v3.rs:387), so the previous
+    // `slotToEpoch(await connection.getSlot())` bought nothing and cost one
+    // RPC round trip.
 
     const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
 
@@ -3306,7 +3353,6 @@ export async function unshieldDenominatedStarkV3(
       c3ProofBuffer,
       nullifierBytes,
       merkleRootBytes,
-      minEpoch,
       starkCommitment,
       tokenProgram,
       poolVault,
