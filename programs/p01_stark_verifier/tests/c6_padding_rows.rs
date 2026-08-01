@@ -20,8 +20,24 @@
 //! demands a Poseidon round of a row that the honest prover deliberately did not
 //! hash.
 //!
-//! This test does not assert a fix. It measures the bad row set and the
-//! resulting honest-rejection rate, so both are on the record with numbers.
+//! [2026-08-01] BOTH DEFECTS THIS FILE PINNED ARE NOW CLOSED, and the file has
+//! been inverted from a defect probe into the regression guard for the fixes.
+//!
+//! * C6: `verify_constraints_merkle_update` now bounds the active region at
+//!   `CANONICAL_DEPTH * 32 = 480`, the twin of the 2026-05-29 C3 fix in
+//!   `verify_constraints_merkle_path` that was never applied here. Rows
+//!   480..=509 fall through to the padding arm, which demands identity on all
+//!   10 columns. `CANONICAL_DEPTH` is a constant, not a public input: phase 2
+//!   already hard-rejects any C6 proof whose `public_inputs[4] != 15`, so the
+//!   prover has no lever over which rows count as padding.
+//! * C5: the `pos_in_cycle == 30` arm demanded identity on the carry columns at
+//!   rows 30, 62, 286 and 382 — the four points where the AIR CAPTURES a carry.
+//!   It now checks the capture edge (`next[carry] == current[0]`, the cycle's
+//!   Poseidon output) instead, which is stricter than both the old check and an
+//!   exemption.
+//!
+//! Each measurement now carries an anti-vacuity guard: a 0% rejection rate is
+//! only evidence if the rows under test were actually queried.
 
 use p01_stark_verifier::compact_proof::{get_circuit_config, GenericCompactProof};
 use p01_stark_verifier::verify::verify_generic;
@@ -109,11 +125,28 @@ fn locate_the_c6_rows_that_reject_an_honest_trace() {
         predicted * 100.0,
     );
 
+    // [2026-08-01] This assertion was `n_rejected > 0` — the file was a probe
+    // that pinned the DEFECT while it was open. The defect is closed
+    // (`verify_constraints_merkle_update` now bounds the active region at
+    // `CANONICAL_DEPTH * 32`, the twin of the 2026-05-29 C3 fix), so the probe
+    // is inverted into the regression guard for that fix. `== 0` is strictly
+    // stronger than `> 0`; nothing here got easier to satisfy.
+    assert_eq!(
+        n_rejected, 0,
+        "the verifier rejected {n_rejected} of {WITNESSES} HONEST depth-{depth} C6 proofs. \
+         Rows seen only in rejected proofs: {suspect:?} ({suspect_in_padding} of them in the \
+         padding cycle {active_rows}..{}).",
+        config.trace_length - 1,
+    );
+
+    // A zero-rejection result is only evidence if the padding rows were
+    // actually queried. Without this the test passes vacuously the day the
+    // query derivation stops reaching rows >= 480.
     assert!(
-        n_rejected > 0,
-        "this probe found no honest C6 rejection in {WITNESSES} witnesses — if that is \
-         reproducible the defect honest_liveness measured has been fixed and both \
-         files should be revisited together",
+        !cleared_in_padding.is_empty(),
+        "no accepted proof queried a single padding row in {WITNESSES} witnesses, so the \
+         0%% rejection rate says nothing about the padding arm. Raise WITNESSES rather \
+         than trusting this result.",
     );
 }
 
@@ -131,9 +164,11 @@ fn locate_the_c5_rows_that_reject_an_honest_trace() {
 
     for i in 0..WITNESSES {
         let s = i as u64;
+        // Conserving: in1 + in2 = 165 + 2s, out1 + out2 = 215 + 2s, so
+        // acc(385) = 50 == public_amount for every witness.
         let data = p01_stark::compact::generate_transfer_compact_proof(
-            13 + s, 500 + s * 17, 77 + s, 400 + s * 17, 88 + s, 100, 150, 1234 + s, 555 + s, 65,
-            2222 + s, 333 + s, 50,
+            13 + s, 500 + s * 17, 77 + s, 400 + s * 17, 88 + s, 100, 150 + 2 * s, 1234 + s,
+            555 + s, 65, 2222 + s, 333 + s, 50,
         );
         let proof = GenericCompactProof::from_bytes(&data.proof_bytes, config).expect("parse");
         let rows: Vec<usize> = proof
@@ -184,9 +219,35 @@ fn locate_the_c5_rows_that_reject_an_honest_trace() {
         rejected_rows[385].len(),
     );
 
+    // [2026-08-01] Inverted from `n_rejected > 0` for the same reason as the C6
+    // probe above: the two defects it was pinning are closed.
+    //
+    // The generator was ALSO wrong. It moved both input amounts with `s` while
+    // holding both outputs and `public_amount` fixed, so every witness with
+    // `s != 0` violated `acc(385) = out1 + out2 - in1 - in2 == public_amount`
+    // and was correctly rejected — this file was calling a mint-from-nothing
+    // witness "honest". `out_amount_1` now moves with `s` too. The
+    // non-conserving case is covered deliberately in
+    // `tests/c5_conservation_probe.rs`.
+    assert_eq!(
+        n_rejected, 0,
+        "the verifier rejected {n_rejected} of {WITNESSES} HONEST conserving C5 proofs",
+    );
+
+    // Same anti-vacuity guard as the C6 probe: the four carry-capture rows are
+    // the ones the fix is about, so at least one of them has to have been
+    // exercised for a 0%% rate to mean anything.
+    let capture_rows = [30usize, 62, 286, 382];
+    let capture_seen: Vec<usize> = capture_rows
+        .iter()
+        .copied()
+        .filter(|&r| accepted_rows[r] > 0)
+        .collect();
+    println!("[C5 ROWS] carry-capture rows cleared by an accepted proof: {capture_seen:?}");
     assert!(
-        n_rejected > 0,
-        "no honest C5 rejection in {WITNESSES} witnesses — revisit together with \
-         honest_liveness if this becomes reproducible",
+        !capture_seen.is_empty(),
+        "no accepted proof queried any of the carry-capture rows {capture_rows:?} in \
+         {WITNESSES} witnesses, so the 0%% rejection rate says nothing about the arm \
+         that was fixed. Raise WITNESSES rather than trusting this result.",
     );
 }
