@@ -49,7 +49,7 @@ function note(leafIndex: number): RecoveredNote {
     receipt: {
       secret: BigInt(leafIndex * 1000 + 1),
       nullifierPreimage: BigInt(leafIndex * 1000 + 2),
-      depositEpoch: 7n,
+      noteBlinding: 7n,
       tokenMint: 0n,
       commitment: BigInt(leafIndex * 1000 + 3),
       leafIndex,
@@ -124,7 +124,7 @@ vi.mock('./shieldEphemeral', () => ({
       pool: POOL_58,
       secret: 1n,
       nullifierPreimage: 2n,
-      depositEpoch: 3n,
+      noteBlinding: 3n,
       tokenMint: 0n,
       commitment: 4n,
       leafIndex: 30,

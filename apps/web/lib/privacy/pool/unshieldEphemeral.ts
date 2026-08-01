@@ -33,6 +33,12 @@
  * proven without revealing which leaf — the C3 proof already proves membership,
  * so publishing the leaf defeats the point of proving it.
  *
+ * What the withdrawal no longer publishes is `min_epoch` at byte offset 72: it
+ * is pinned to 0 on every path (`UNSHIELD_MIN_EPOCH`). It used to carry the
+ * note's third commitment input, which is now a 63-bit secret blinding, so
+ * publishing it handed an observer the value that makes the commitment
+ * recomputable from the nullifier.
+ *
  * Until that lands, this path buys amount quantisation and a post-quantum note,
  * NOT unlinkability. Do not describe it as unlinkable anywhere.
  */
@@ -68,8 +74,12 @@ const NULLIFIER_RENT = 2_000_000;
 /** Fee headroom for ~2 proofs' worth of chunk uploads plus the inner tx. */
 const E_TX_FEE_BUDGET = 4_000_000;
 
-/** See shieldEphemeral.ts — leaves enough for a later buffer close. */
-const SWEEP_FEE = 25_000;
+/**
+ * See shieldEphemeral.ts for the full reasoning: exactly the sweep tx's own fee,
+ * so E lands on zero. Any larger residue leaves this 0-data system account
+ * rent-paying, which the runtime rejects outright — that made every sweep fail.
+ */
+const SWEEP_FEE = 5_000;
 
 /**
  * Derive the withdrawal ephemeral from the pool seed and the note's leaf index.
@@ -187,15 +197,20 @@ export async function executeUnshield(
     },
   };
 
-  const funded = await connection.getBalance(ephemeral.publicKey, 'confirmed');
-  if (funded < ctx.requiredLamports) {
-    throw new Error(
-      `The withdrawal signer is underfunded (${funded} of ${ctx.requiredLamports} lamports). ` +
-        'The pre-fund transaction may not have confirmed yet — retry in a moment.',
-    );
-  }
-
   try {
+    // The underfunded check lives INSIDE the try deliberately — see the same
+    // reasoning in shieldEphemeral.ts. Throwing before the try skips the
+    // `finally` sweep below, so a merely-lagging RPC read (pre-fund confirmed
+    // on chain but not yet visible here) strands the whole withdrawal float on
+    // an ephemeral instead of returning it.
+    const funded = await connection.getBalance(ephemeral.publicKey, 'confirmed');
+    if (funded < ctx.requiredLamports) {
+      throw new Error(
+        `The withdrawal signer is underfunded (${funded} of ${ctx.requiredLamports} lamports). ` +
+          'The pre-fund transaction may not have confirmed yet — retry in a moment.',
+      );
+    }
+
     const txSig = await unshieldDenominatedStarkV3(
       receipt,
       poolConfig,
@@ -204,11 +219,6 @@ export async function executeUnshield(
       eSigner,
       connection,
       onProgress,
-      // min_epoch = 0. The handler ignores this field entirely
-      // (unshield_denominated_stark_v3.rs:387), and passing receipt.depositEpoch
-      // would publish the note's secret blinding in the clear — defeating the
-      // whole point of blinding the commitment.
-      true,
     );
     return { txSig };
   } finally {

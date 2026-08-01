@@ -107,7 +107,10 @@ export async function prepareUnshieldFromPath(
   const c1Raw = await starkProver.generatePoolCommitmentProof(
     receipt.nullifierPreimage.toString(),
     receipt.secret.toString(),
-    receipt.depositEpoch.toString(),
+    // Commitment's third slot — a PRF blinding for new notes, a real epoch for
+    // legacy ones. Private witness either way (C1 publishes only
+    // [nullifier, commitment]).
+    receipt.noteBlinding.toString(),
     receipt.tokenMint.toString(),
   );
 

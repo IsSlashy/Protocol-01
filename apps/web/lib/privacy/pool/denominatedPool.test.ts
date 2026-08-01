@@ -17,21 +17,26 @@
 
 import { describe, it, expect } from 'vitest';
 import { deriveNoteBlinding } from './noteBlinding';
-import { PublicKey, Keypair, SystemProgram } from '@solana/web3.js';
+import { PublicKey, Keypair, SystemProgram, type Connection } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import {
   createCommitmentV3,
   createNullifierV3,
   deriveNoteMaterial,
+  deriveNullifierPDA,
   goldilocksToLeBytes32,
+  goldilocksU64To32,
   bigintToLeBytes32,
   U64_MASK_V3,
   computeZeroHashesV3,
   computeNewRootFromSubtreesV3,
   pubkeyToField,
+  slotToEpoch,
   MERKLE_DEPTH,
   buildTransferDenominatedStarkV3Ix,
+  buildUnshieldDenominatedStarkV3Ix,
+  UNSHIELD_MIN_EPOCH,
   encodeShareableNote,
   decodeShareableNote,
   importNote,
@@ -39,7 +44,9 @@ import {
   SOL_POOLS_V3,
   ZK_SHIELDED_PROGRAM_ID,
   type ShareableNote,
+  type ShieldReceipt,
 } from './denominatedPool';
+import { recoverNotes } from './poolNotes';
 import { GOLDILOCKS_MODULUS } from './goldilocks-poseidon';
 
 // ---------------------------------------------------------------------------
@@ -451,9 +458,9 @@ describe('importNote integrity', () => {
   const pool = SOL_POOLS_V3[0];
   const secret = secureRandomU64();
   const nullifierPreimage = secureRandomU64();
-  const depositEpoch = 100n;
+  const noteBlinding = 100n;
   const tokenMintField = pubkeyToField(pool.tokenMint);
-  const commitment = createCommitmentV3(nullifierPreimage, secret, depositEpoch, tokenMintField);
+  const commitment = createCommitmentV3(nullifierPreimage, secret, noteBlinding, tokenMintField);
 
   function makeNote(overrides: Partial<ShareableNote> = {}): string {
     const note: ShareableNote = {
@@ -461,7 +468,8 @@ describe('importNote integrity', () => {
       pool: pool.poolPDA.toBase58(),
       secret: secret.toString(),
       nullifier_preimage: nullifierPreimage.toString(),
-      deposit_epoch: depositEpoch.toString(),
+      // Wire key stays `deposit_epoch`; the TS field is `noteBlinding`.
+      deposit_epoch: noteBlinding.toString(),
       token_mint: tokenMintField.toString(),
       commitment: commitment.toString(),
       leafIndex: 3,
@@ -485,7 +493,7 @@ describe('importNote integrity', () => {
     expect(receipt.commitment).toBe(commitment);
     expect(receipt.secret).toBe(secret);
     expect(receipt.nullifierPreimage).toBe(nullifierPreimage);
-    expect(receipt.depositEpoch).toBe(depositEpoch);
+    expect(receipt.noteBlinding).toBe(noteBlinding);
     expect(receipt.tokenMint).toBe(tokenMintField);
     expect(receipt.pool).toBe(pool.poolPDA.toBase58());
     expect(receipt.denomination).toBe(pool.denominationAtomic);
@@ -564,5 +572,280 @@ describe('note blinding', () => {
       }
     }
     expect(foundBlinded).toBe(false); // and fails against the new one
+  });
+});
+
+// ---------------------------------------------------------------------------
+// unshield_denominated_stark_v3 — min_epoch must be zero on every path
+//
+// C7_SPEND_CIRCUIT_PLAN.md Step 1. `min_epoch` sits at instruction byte offset
+// 72 and the handler provably ignores it:
+//   unshield_denominated_stark_v3.rs:387
+//     let _ = (amount, unshield_fee, min_epoch, current_epoch, dynamic_delay, nullifier);
+// (`min_epoch` appears nowhere else in that file — only :80 in the arg list and
+// :173 in the handler signature.) It used to carry `receipt.depositEpoch`,
+// which since commitment blinding is a 63-bit SECRET. Publishing it cancels the
+// blinding: an observer recomputes poseidon(nullifier, poseidon(blinding, mint))
+// and lands on the exact deposit leaf.
+// ---------------------------------------------------------------------------
+
+/**
+ * Read a u64 LE with a DataView, never `Buffer.readBigUInt64LE`. The browser
+ * Buffer polyfill has historically lacked the 64-bit accessors (four separate
+ * production bugs), so the test asserts on the bytes themselves.
+ */
+function readU64LE(bytes: Uint8Array, offset: number): bigint {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return view.getBigUint64(offset, true);
+}
+
+/** Every 8-byte little-endian window in `bytes`, as u64s. */
+function allU64Windows(bytes: Uint8Array): bigint[] {
+  const out: bigint[] = [];
+  for (let i = 0; i + 8 <= bytes.length; i++) out.push(readU64LE(bytes, i));
+  return out;
+}
+
+describe('buildUnshieldDenominatedStarkV3Ix — min_epoch pinned to 0', () => {
+  const payer = Keypair.generate().publicKey;
+  const recipient = Keypair.generate().publicKey;
+  const pool = SOL_POOLS_V3[0];
+  const c1 = Keypair.generate().publicKey;
+  const c3 = Keypair.generate().publicKey;
+
+  // A realistic BLINDED note: 63-bit PRF blinding in the commitment's third
+  // slot, exactly what a /pay shield produces today.
+  const seed = new Uint8Array(32).fill(3);
+  const { secret, nullifierPreimage } = deriveNoteMaterial(seed, pool.poolPDA, 30);
+  const mintField = pubkeyToField(pool.tokenMint);
+  const noteBlinding = deriveNoteBlinding(seed, pool.poolPDA, 30);
+  const commitment = createCommitmentV3(nullifierPreimage, secret, noteBlinding, mintField);
+  const nullifier = createNullifierV3(nullifierPreimage, secret);
+
+  const nullifierBytes = Array.from(goldilocksU64To32(nullifier));
+  const merkleRootBytes = Array.from(goldilocksToLeBytes32(0x0123456789abcdefn));
+  const [nullifierPDA] = deriveNullifierPDA(pool.poolPDA, nullifierBytes);
+
+  function build() {
+    return buildUnshieldDenominatedStarkV3Ix(
+      payer,
+      recipient,
+      pool.poolPDA,
+      pool.treePDA,
+      nullifierPDA,
+      c1,
+      c3,
+      nullifierBytes,
+      merkleRootBytes,
+      commitment,
+    );
+  }
+
+  // The two historical call shapes. `unshieldDenominatedStarkV3(..., emergency)`
+  // used to compute `emergency ? 0n : receipt.depositEpoch` and hand the result
+  // to this builder. The flag is gone and the builder takes no epoch/blinding
+  // argument at all, so both shapes now reduce to the single call above — which
+  // is precisely the property asserted here. If anyone reintroduces a per-call
+  // min_epoch, one of these goes red.
+  for (const shape of ['non-emergency', 'emergency'] as const) {
+    it(`writes 0 at bytes 72..80 (${shape} call shape)`, () => {
+      const ix = build();
+      expect(ix.data.length).toBe(8 + 32 + 32 + 8 + 8 + 32);
+      expect(ix.data.length).toBe(120);
+      expect(readU64LE(ix.data, 72)).toBe(0n);
+      expect(Array.from(ix.data.subarray(72, 80))).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+    });
+  }
+
+  it('exposes the pinned constant as 0n', () => {
+    expect(UNSHIELD_MIN_EPOCH).toBe(0n);
+  });
+
+  it('still lays out every other arg at its on-chain offset', () => {
+    const ix = build();
+    const expectedDisc = Buffer.from(
+      sha256(utf8ToBytes('global:unshield_denominated_stark_v3')).slice(0, 8),
+    );
+    expect(Buffer.from(ix.data.subarray(0, 8)).equals(expectedDisc)).toBe(true);
+    expect(Array.from(ix.data.subarray(8, 40))).toEqual(nullifierBytes);
+    expect(Array.from(ix.data.subarray(40, 72))).toEqual(merkleRootBytes);
+    // 72..80 = min_epoch (0). 80..88 = stark_commitment — still published; that
+    // is the remaining linkability leak the C7 spend circuit closes.
+    expect(readU64LE(ix.data, 80)).toBe(commitment);
+    expect(Array.from(ix.data.subarray(88, 120))).toEqual(Array.from(recipient.toBytes()));
+  });
+
+  it('leaks the note blinding in NO 8-byte window of the instruction data', () => {
+    const ix = build();
+    const windows = allU64Windows(ix.data);
+    expect(windows.length).toBe(113); // 120 - 8 + 1
+    expect(windows).not.toContain(noteBlinding);
+
+    // Sanity: the scan is capable of finding a value that IS present, otherwise
+    // the assertion above would pass vacuously.
+    expect(windows).toContain(commitment);
+    expect(windows).toContain(nullifier);
+  });
+
+  it('leaks no blinding for any leaf index of this seed', () => {
+    const windows = allU64Windows(build().data);
+    for (let leaf = 0; leaf < 64; leaf++) {
+      expect(windows).not.toContain(deriveNoteBlinding(seed, pool.poolPDA, leaf));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Legacy notes — blinding slot holds a REAL small epoch
+//
+// There is an unspent legacy note at leaf 30 of the 0.1 SOL pool. If the
+// commitment formula, the wire format, or the epoch-enumeration fallback in
+// recoverNotes changes, that note becomes invisible to scan and unwithdrawable
+// through the UI. These are its regression guards.
+// ---------------------------------------------------------------------------
+
+describe('legacy note positive control', () => {
+  const pool = SOL_POOLS_V3[0];
+  const mintField = pubkeyToField(pool.tokenMint);
+
+  it('produces the identical commitment for a small epoch (locked vector)', () => {
+    const c = createCommitmentV3(
+      FIXED_NULLIFIER_PREIMAGE,
+      FIXED_SECRET,
+      42n, // a real epoch, not a blinding
+      FIXED_TOKEN_MINT_FIELD,
+    );
+    // Locked: the formula is poseidon(poseidon(np, secret), poseidon(42, mint)),
+    // byte-identical to stark/src/air/denominated_pool.rs::compute_pool_values.
+    // A change here means every legacy note on-chain just became unspendable.
+    expect(c).toBe(18294426081100205196n);
+    expect(c & U64_MASK_V3).toBe(c);
+  });
+
+  it('the C1 witness tuple off a legacy receipt reproduces the on-chain leaf', () => {
+    // The pool suite is pure math — no WASM — so this asserts the witness the
+    // client feeds to generatePoolCommitmentProof(np, secret, blinding, mint)
+    // reproduces `commitment`, which the existing hard gate above ties to the
+    // C1 circuit's publicInputs[1]. It is NOT a proof that a STARK verifies.
+    const legacyEpoch = 42n;
+    const commitment = createCommitmentV3(
+      FIXED_NULLIFIER_PREIMAGE,
+      FIXED_SECRET,
+      legacyEpoch,
+      FIXED_TOKEN_MINT_FIELD,
+    );
+    const receipt: ShieldReceipt = {
+      secret: FIXED_SECRET,
+      nullifierPreimage: FIXED_NULLIFIER_PREIMAGE,
+      noteBlinding: legacyEpoch,
+      tokenMint: FIXED_TOKEN_MINT_FIELD,
+      commitment,
+      leafIndex: 30,
+      denomination: pool.denominationAtomic,
+      pool: pool.poolPDA.toBase58(),
+      token: 'SOL',
+      denominationHuman: pool.denomination,
+      shieldedAt: 0,
+    };
+    expect(
+      createCommitmentV3(
+        receipt.nullifierPreimage,
+        receipt.secret,
+        receipt.noteBlinding,
+        receipt.tokenMint,
+      ),
+    ).toBe(receipt.commitment);
+    expect(createNullifierV3(receipt.nullifierPreimage, receipt.secret)).toBe(
+      8379325109983999434n,
+    );
+  });
+
+  it('round-trips through the wire format under the unchanged deposit_epoch key', () => {
+    const legacyEpoch = 42n;
+    const note: ShareableNote = {
+      version: 1,
+      pool: pool.poolPDA.toBase58(),
+      secret: FIXED_SECRET.toString(),
+      nullifier_preimage: FIXED_NULLIFIER_PREIMAGE.toString(),
+      deposit_epoch: legacyEpoch.toString(),
+      token_mint: mintField.toString(),
+      commitment: createCommitmentV3(
+        FIXED_NULLIFIER_PREIMAGE,
+        FIXED_SECRET,
+        legacyEpoch,
+        mintField,
+      ).toString(),
+      leafIndex: 30,
+      token: 'SOL',
+      denominationHuman: pool.denomination,
+    };
+    const receipt = importNote(encodeShareableNote(note));
+    expect(receipt.noteBlinding).toBe(legacyEpoch);
+
+    // The serialized key itself is load-bearing: extractStoredPath in
+    // worker/poolHandlers.ts parses stored blobs by shape, so renaming it
+    // without a version bump silently drops the stored Merkle path.
+    expect(Object.keys(JSON.parse(atob(encodeShareableNote(note))))).toContain('deposit_epoch');
+  });
+
+  it('recoverNotes still finds a legacy note via the epoch-enumeration fallback', async () => {
+    const seed = new Uint8Array(32).fill(3);
+    const counter = 30;
+    const { secret, nullifierPreimage } = deriveNoteMaterial(seed, pool.poolPDA, counter);
+    const legacyEpoch = 1000n;
+    const legacyCommitment = createCommitmentV3(nullifierPreimage, secret, legacyEpoch, mintField);
+    expect(legacyCommitment).toBe(1923574579667412516n); // locked
+
+    // The chain holds the LEGACY commitment, not the blinded one — so the
+    // single-hash blinded match must miss and the fallback must catch it.
+    const blinded = createCommitmentV3(
+      nullifierPreimage,
+      secret,
+      deriveNoteBlinding(seed, pool.poolPDA, counter),
+      mintField,
+    );
+    expect(blinded).not.toBe(legacyCommitment);
+
+    const commitments = new Map([
+      [legacyCommitment.toString(), { commitment: legacyCommitment, leafIndex: counter }],
+    ]);
+    // slotToEpoch(slot) = floor(slot / 7200); pick a slot 5 epochs past the note
+    // so the 6000-epoch window covers it.
+    const slot = 7200 * 1005;
+    expect(slotToEpoch(slot)).toBe(1005n);
+
+    const fakeConnection = {
+      getSlot: async () => slot,
+      getAccountInfo: async () => null, // no NullifierRecord => unspent
+    } as unknown as Connection;
+
+    const notes = await recoverNotes(fakeConnection, pool, seed, { commitments });
+    expect(notes.length).toBe(1);
+    expect(notes[0].receipt.leafIndex).toBe(counter);
+    expect(notes[0].receipt.commitment).toBe(legacyCommitment);
+    expect(notes[0].receipt.noteBlinding).toBe(legacyEpoch);
+    expect(notes[0].spent).toBe(false);
+  });
+
+  it('recoverNotes finds a blinded note with the single-hash path', async () => {
+    const seed = new Uint8Array(32).fill(3);
+    const counter = 30;
+    const { secret, nullifierPreimage } = deriveNoteMaterial(seed, pool.poolPDA, counter);
+    const blinding = deriveNoteBlinding(seed, pool.poolPDA, counter);
+    const blinded = createCommitmentV3(nullifierPreimage, secret, blinding, mintField);
+    expect(blinded).toBe(1848980999532868805n); // locked
+
+    const commitments = new Map([
+      [blinded.toString(), { commitment: blinded, leafIndex: counter }],
+    ]);
+    const fakeConnection = {
+      getSlot: async () => 7200 * 1005,
+      getAccountInfo: async () => null,
+    } as unknown as Connection;
+
+    const notes = await recoverNotes(fakeConnection, pool, seed, { commitments });
+    expect(notes.length).toBe(1);
+    expect(notes[0].receipt.noteBlinding).toBe(blinding);
+    expect(notes[0].receipt.commitment).toBe(blinded);
   });
 });

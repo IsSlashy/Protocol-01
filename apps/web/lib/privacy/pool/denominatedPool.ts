@@ -64,19 +64,11 @@ import {
 // STARK WASM prover singleton.
 import { starkProver } from './starkProver';
 
-// Post-quantum note encryption (hybrid X25519 + ML-KEM-768) for transfers.
-import { encryptNote, isNoteEncryptionAddress } from './noteCrypto';
-
-// Deterministic ephemeral derivation + crash-recovery breadcrumbs. Phase 1 of
-// the sender-anonymity design: the transfer is authored by a per-transfer
-// ephemeral so the user's wallet never signs the transfer itself.
-import {
-  deriveEphemeralForRelay,
-  addPendingRelay,
-  removePendingRelay,
-  markPendingRelayErrored,
-  jobIdToHex,
-} from './relayEphemeralRecovery';
+// NOTE: `./noteCrypto` (post-quantum note encryption) and
+// `./relayEphemeralRecovery` (deterministic ephemeral + crash breadcrumbs) used
+// to be imported here for the note-to-note transfer path. That path is deleted
+// (see the tombstone below `buildTransferDenominatedStarkV3Ix`); both modules
+// are still live and imported by shieldEphemeral/unshieldEphemeral/poolHandlers.
 
 // ---------------------------------------------------------------------------
 // Re-export circuit IDs and signer type so consumers can import from here.
@@ -287,7 +279,25 @@ export function findPoolV3(token: 'SOL' | 'USDC', denomination: number): PoolCon
 export interface ShieldReceipt {
   secret: bigint;
   nullifierPreimage: bigint;
-  depositEpoch: bigint;
+  /**
+   * Third input to the commitment: `poseidon(nullifier, poseidon(X, mint))`.
+   *
+   * It was the real `deposit_epoch` (slot / 7200) until commitment blinding
+   * landed; it is now a 63-bit PRF blinding derived from the wallet seed
+   * (`noteBlinding.ts`). Nothing on-chain reads it — C1's public inputs are
+   * `[nullifier, commitment]` and this value is a PRIVATE witness — so the
+   * rename is purely descriptive and the two are interchangeable at the field
+   * level. Legacy notes still carry a real epoch here and MUST keep working.
+   *
+   * The serialized form (`ShareableNote.deposit_epoch`, and the same key in the
+   * PQ-encrypted note blob written by `poolHandlers.ts`) deliberately keeps its
+   * old name: changing the wire key without a version bump would make
+   * `extractStoredPath` stop matching previously stored blobs and silently drop
+   * the stored Merkle path.
+   *
+   * NEVER publish this value in instruction data. See `UNSHIELD_MIN_EPOCH`.
+   */
+  noteBlinding: bigint;
   tokenMint: bigint;
   commitment: bigint;
   leafIndex: number;
@@ -396,6 +406,13 @@ export function pubkeyToField(pubkey: PublicKey): bigint {
  * Mirrors mobile createCommitmentV3 lines 2560-2575.
  * MUST match the on-chain AIR formula in
  * stark/src/air/denominated_pool.rs lines 349-351.
+ *
+ * The third argument keeps its historical name because this function IS the
+ * shared formula and its parameter order is load-bearing across three clients.
+ * Its MEANING changed: for notes shielded since commitment blinding it is
+ * `ShieldReceipt.noteBlinding`, a 63-bit PRF value; for legacy notes it is a
+ * real `slot / 7200` epoch. The circuit accepts any field element, which is
+ * exactly what keeps legacy notes provable — never add a range check here.
  */
 export function createCommitmentV3(
   nullifierPreimage: bigint,
@@ -748,7 +765,7 @@ export async function shieldV3(
     newSubtrees: bigint[];
     secret: bigint;
     nullifierPreimage: bigint;
-    depositEpoch: bigint;
+    noteBlinding: bigint;
     leafIndex: number;
   },
   signer: WalletSigner,
@@ -824,7 +841,7 @@ export async function shieldV3(
     const receipt: ShieldReceipt = {
       secret: insertParams.secret,
       nullifierPreimage: insertParams.nullifierPreimage,
-      depositEpoch: insertParams.depositEpoch,
+      noteBlinding: insertParams.noteBlinding,
       tokenMint: pubkeyToField(poolConfig.tokenMint),
       commitment: insertParams.commitment,
       leafIndex: insertParams.leafIndex,
@@ -870,12 +887,12 @@ export async function prepareShieldInsert(
   counter: number,
   onProgress?: (step: string) => void,
   /**
-   * Value to occupy the commitment's `deposit_epoch` slot. Defaults to the real
-   * epoch (legacy behaviour). Callers pass a secret blinding instead so the
-   * commitment cannot be recomputed from the published nullifier — nothing
-   * on-chain reads this value, see noteBlinding.ts.
+   * Value to occupy the commitment's third slot (historically `deposit_epoch`).
+   * Defaults to the real epoch (legacy behaviour). Callers pass a secret
+   * blinding instead so the commitment cannot be recomputed from the published
+   * nullifier — nothing on-chain reads this value, see noteBlinding.ts.
    */
-  depositEpochOverride?: bigint,
+  noteBlindingOverride?: bigint,
 ): Promise<{
   c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number; circuitId: number };
   insertParams: {
@@ -884,7 +901,7 @@ export async function prepareShieldInsert(
     newSubtrees: bigint[];
     secret: bigint;
     nullifierPreimage: bigint;
-    depositEpoch: bigint;
+    noteBlinding: bigint;
     leafIndex: number;
   };
   newLeaf: bigint;
@@ -905,14 +922,14 @@ export async function prepareShieldInsert(
   onProgress?.('Deriving note material...');
   const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolConfig.poolPDA, counter);
 
-  // 3. deposit_epoch slot of the commitment: a caller-supplied secret blinding
-  // when given, otherwise the real epoch (legacy notes).
-  const depositEpoch =
-    depositEpochOverride ?? slotToEpoch(await connection.getSlot('confirmed'));
+  // 3. Third commitment slot (historically deposit_epoch): a caller-supplied
+  // secret blinding when given, otherwise the real epoch (legacy notes).
+  const noteBlinding =
+    noteBlindingOverride ?? slotToEpoch(await connection.getSlot('confirmed'));
 
   // 4. Compute Goldilocks commitment.
   const tokenMintField = pubkeyToField(poolConfig.tokenMint);
-  const commitment = createCommitmentV3(nullifierPreimage, secret, depositEpoch, tokenMintField);
+  const commitment = createCommitmentV3(nullifierPreimage, secret, noteBlinding, tokenMintField);
 
   // The commitment IS the leaf in V3. Stored as u64 LE (low 8 bytes of the
   // 32-byte field element).
@@ -978,7 +995,7 @@ export async function prepareShieldInsert(
       newSubtrees: updatedSubtrees,
       secret,
       nullifierPreimage,
-      depositEpoch,
+      noteBlinding,
       leafIndex: leafCount,
     },
     newLeaf,
@@ -1392,7 +1409,34 @@ export function buildMerkleProofFromLeavesV3(params: {
 // Args: nullifier[32] | merkle_root[32] | min_epoch u64 | stark_commitment u64 | recipient[32]
 // ---------------------------------------------------------------------------
 
-function buildUnshieldDenominatedStarkV3Ix(
+/**
+ * The `min_epoch` value every V3 withdrawal publishes at instruction byte
+ * offset 72. It is ALWAYS zero and there is deliberately no way for a caller to
+ * change it.
+ *
+ * WHY THIS IS PINNED AND NOT A PARAMETER
+ * ──────────────────────────────────────
+ * The field used to carry `receipt.noteBlinding` (formerly `depositEpoch`).
+ * Since the commitment gained a 63-bit PRF blinding in that slot
+ * (`noteBlinding.ts`), passing it here would publish the note's blinding in the
+ * clear on the withdrawal transaction and cancel the entire blinding change —
+ * an observer would recompute `poseidon(nullifier, poseidon(blinding, mint))`
+ * and land straight back on the deposit leaf.
+ *
+ * Publishing 0 is safe because the on-chain handler provably ignores the field:
+ * `unshield_denominated_stark_v3.rs:387` is
+ * `let _ = (amount, unshield_fee, min_epoch, current_epoch, dynamic_delay, nullifier);`
+ * and `min_epoch` appears nowhere else in that file (only at :80 in the arg
+ * list and :173 in the handler signature). Unlike
+ * `transfer_denominated_stark_v3.rs:167-173`, which DOES enforce
+ * `current_epoch >= min_epoch + dynamic_delay`, unshield has no maturity gate.
+ *
+ * Do not turn this back into a parameter. If a future instruction genuinely
+ * needs a maturity floor, it must take a real epoch that is not the blinding.
+ */
+export const UNSHIELD_MIN_EPOCH = 0n;
+
+export function buildUnshieldDenominatedStarkV3Ix(
   payer: PublicKey,
   recipient: PublicKey,
   poolPDA: PublicKey,
@@ -1402,7 +1446,6 @@ function buildUnshieldDenominatedStarkV3Ix(
   c3ProofBuffer: PublicKey,
   nullifierBytes: number[],
   merkleRootBytes: number[],
-  minEpoch: bigint,
   starkCommitment: bigint,
   tokenProgram?: PublicKey,
   poolVault?: PublicKey,
@@ -1415,7 +1458,8 @@ function buildUnshieldDenominatedStarkV3Ix(
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
   Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
-  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  // min_epoch — pinned to 0 on every path. See UNSHIELD_MIN_EPOCH above.
+  data.writeBigUInt64LE(UNSHIELD_MIN_EPOCH, offset); offset += 8;
   data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
   // recipient as 32-byte arg (matches `recipient: [u8; 32]` in Rust)
   Buffer.from(recipient.toBytes()).copy(data, offset);
@@ -1535,13 +1579,16 @@ export async function prepareUnshield(
 
   // --- Generate C1 (pool_commitment) proof ---
   // publicInputs layout: [nullifier_u64, commitment_u64]
-  // starkProver.generatePoolCommitmentProof(np, secret, epoch, mint)
+  // starkProver.generatePoolCommitmentProof(np, secret, blinding, mint) — the
+  // third argument is the commitment's third slot, a PRIVATE witness. It is a
+  // real epoch for legacy notes and a PRF blinding for new ones; C1 accepts any
+  // field element, which is what keeps legacy notes provable.
   onProgress?.('Generating C1 (pool_commitment) STARK proof (~60s)...');
   await prover.start();
   const c1Raw = await prover.generatePoolCommitmentProof(
     receipt.nullifierPreimage.toString(),
     receipt.secret.toString(),
-    receipt.depositEpoch.toString(),
+    receipt.noteBlinding.toString(),
     receipt.tokenMint.toString(),
   );
 
@@ -1588,17 +1635,14 @@ export async function prepareUnshield(
 // instead of submitAndVerifyStarkProofUniform. The on-chain handler reads the
 // verified buffer PDA regardless of upload path.
 //
-// REGULAR vs EMERGENCY (per lib.rs:156 + unshield_denominated_stark_v3.rs
-// handler comment lines 197-199):
-//   Regular:   minEpoch = receipt.depositEpoch  — respects maturity gate.
-//              The V3 handler does NOT enforce this on-chain (maturity is
-//              UX-only in V3 — see handler line 198: "UX/SDK concern").
-//              We pass it anyway to mirror the mobile behaviour.
-//   Emergency: minEpoch = 0n                   — explicit bypass signal.
-//              Per lib.rs:156, min_epoch==0 is the emergency bypass.
-//              The V3 handler ignores min_epoch in its logic (line 370:
-//              `let _ = (..., min_epoch, ...)`) — passing 0 is safe and
-//              matches what a guardian/emergency path would pass.
+// min_epoch IS NOT A CHOICE ANY MORE
+// ──────────────────────────────────
+// There used to be a regular path (`minEpoch = receipt.depositEpoch`) and an
+// emergency path (`minEpoch = 0n`). The regular path published the note's
+// secret blinding in the clear once the commitment gained one, so both paths
+// now publish 0 and the `emergency` flag is gone. The on-chain handler ignores
+// the field entirely (`unshield_denominated_stark_v3.rs:387`), so nothing
+// on-chain observes the difference. See `UNSHIELD_MIN_EPOCH`.
 // ---------------------------------------------------------------------------
 
 export async function unshieldDenominatedStarkV3(
@@ -1609,7 +1653,6 @@ export async function unshieldDenominatedStarkV3(
   signer: WalletSigner,
   connection: Connection,
   onProgress?: (step: string) => void,
-  emergency = false,
 ): Promise<string> {
   const { c1ProofResult, c3ProofResult, merkleRoot, nullifierGoldilocks, starkCommitment } = preparedResult;
 
@@ -1648,10 +1691,6 @@ export async function unshieldDenominatedStarkV3(
     const nullifierBytes = goldilocksToLeBytes32(nullifierGoldilocks);
     const merkleRootBytes = goldilocksToLeBytes32(merkleRoot);
 
-    // minEpoch: regular = depositEpoch, emergency = 0.
-    // V3 handler accepts both (maturity is UX-only on-chain in V3).
-    const minEpoch = emergency ? 0n : receipt.depositEpoch;
-
     const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
 
     const isNativeSOL = poolConfig.tokenMint.equals(SystemProgram.programId);
@@ -1676,7 +1715,6 @@ export async function unshieldDenominatedStarkV3(
       c3ProofBuffer,
       nullifierBytes,
       merkleRootBytes,
-      minEpoch,
       starkCommitment,
       tokenProgram,
       poolVault,
@@ -1736,6 +1774,14 @@ export interface ShareableNote {
   pool: string;
   secret: string;
   nullifier_preimage: string;
+  /**
+   * The commitment's third slot — `ShieldReceipt.noteBlinding` in TypeScript.
+   * The KEY MUST STAY `deposit_epoch`: it is the serialized form shared with
+   * mobile and written into the PQ-encrypted note blob, and `extractStoredPath`
+   * (`worker/poolHandlers.ts`) matches previously stored blobs by parsing this
+   * exact shape. Renaming it without a `version` bump silently drops the stored
+   * Merkle path and forces an RPC-dependent history rebuild.
+   */
   deposit_epoch: string;
   token_mint: string;
   commitment: string;
@@ -1786,6 +1832,15 @@ export function secureRandomU64(): bigint {
  *   merkle_tree(MUT — a leaf is inserted), nullifier_record(init,mut),
  *   c1_proof_buffer(ro), c3_proof_buffer(ro), c6_proof_buffer(ro), system_program.
  *   NO fee_escrow, NO token/vault/recipient — funds stay in the pool.
+ *
+ * ⚠ `minEpoch` IS ENFORCED ON-CHAIN for this instruction, unlike unshield:
+ * `transfer_denominated_stark_v3.rs:167-173` requires
+ * `current_epoch >= min_epoch + dynamic_delay`. NEVER pass a note's
+ * `noteBlinding` here — it is a 63-bit secret, so it would both set an
+ * unreachable maturity floor (EpochDelayNotMet forever) and publish the
+ * blinding in the clear. Pass a real epoch, or 0. This builder has no
+ * production caller today; it is kept because the parity suite locks its wire
+ * format against the deployed handler.
  */
 export function buildTransferDenominatedStarkV3Ix(
   payer: PublicKey,
@@ -1834,335 +1889,35 @@ export function buildTransferDenominatedStarkV3Ix(
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
 }
 
-export interface PrepareTransferResult {
-  c1ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number };
-  c3ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number };
-  c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number; circuitId: number };
-  insertParams: {
-    newCommitment: bigint;
-    newRoot: bigint;
-    newSubtrees: bigint[];
-    newSecret: bigint;
-    newNullifierPreimage: bigint;
-    newDepositEpoch: bigint;
-    newLeafIndex: number;
-  };
-  merkleRoot: bigint;
-  nullifierGoldilocks: bigint;
-  starkCommitment: bigint;
-}
-
-/**
- * Prepare a transfer: C1 + C3 over the OLD note (reuses prepareUnshield), then
- * a FRESH-secret C6 insertion proof for the recipient's new note.
- *
- * Sequencing matters: C1/C3 are generated first (via prepareUnshield), THEN the
- * tree is re-read for C6 so its old_root binds the LATEST on-chain root (C3 may
- * legitimately target an older historical root, but C6 must match
- * merkle_tree.root at execution).
- */
-export async function prepareTransfer(
-  receipt: ShieldReceipt,
-  poolConfig: PoolConfig,
-  connection: Connection,
-  onProgress?: (step: string) => void,
-): Promise<PrepareTransferResult> {
-  // 1. C1 + C3 over the OLD note (fetch leaves, build path, root pre-flight).
-  const prep = await prepareUnshield(receipt, poolConfig, connection, onProgress);
-
-  // 2. Fresh RANDOM secrets for the recipient note (no owner pubkey is baked
-  //    into a V3 commitment, so a transfer = mint a brand-new note).
-  const newSecret = secureRandomU64();
-  const newNullifierPreimage = secureRandomU64();
-
-  // 3. Re-read tree AFTER C1/C3 → latest leafCount + filled_subtrees + root.
-  onProgress?.('Reading on-chain tree state for insertion...');
-  const treeInfo = await connection.getAccountInfo(poolConfig.treePDA);
-  if (!treeInfo) throw new Error(`Tree account not found: ${poolConfig.treePDA.toBase58()}`);
-  const treeBuf = Buffer.from(treeInfo.data);
-  const { leafCount, subtrees } = parseFilledSubtrees(treeBuf);
-
-  let onChainRoot = 0n;
-  for (let b = 7; b >= 0; b--) onChainRoot = (onChainRoot << 8n) | BigInt(treeBuf[8 + 32 + b]);
-
-  const slot = await connection.getSlot('confirmed');
-  const newDepositEpoch = slotToEpoch(slot);
-  const tokenMintField = pubkeyToField(poolConfig.tokenMint);
-  const newCommitment = createCommitmentV3(newNullifierPreimage, newSecret, newDepositEpoch, tokenMintField);
-  const newLeaf = newCommitment;
-
-  // 4. Direct-vs-sliced old_root pre-flight (identical to prepareShieldInsert):
-  //    pick the filled_subtrees layout that reproduces the on-chain root before
-  //    burning the ~2-min C6 proof.
-  onProgress?.('Computing Merkle insertion path...');
-  const direct = computeNewRootFromSubtreesV3(newLeaf, leafCount, subtrees);
-  const sliced = computeNewRootFromSubtreesV3(newLeaf, leafCount, subtrees.slice(1));
-  const oldRootDirect = computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, subtrees).newRoot;
-  const oldRootSliced = computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, subtrees.slice(1)).newRoot;
-
-  let chosen: typeof direct;
-  if (oldRootDirect === onChainRoot) {
-    chosen = direct;
-  } else if (oldRootSliced === onChainRoot) {
-    chosen = sliced;
-  } else {
-    throw new Error(
-      `Transfer pre-flight failed: cannot reconstruct the on-chain Merkle root ` +
-      `(${onChainRoot}) from the pool's filled_subtrees for leaf #${leafCount} ` +
-      `(direct=${oldRootDirect}, shifted=${oldRootSliced}). Refusing to burn C6 ` +
-      `proof rent on a guaranteed InvalidProof — retry shortly.`,
-    );
-  }
-  const { newRoot, updatedSubtrees, pathElements, pathIndices } = chosen;
-
-  // 5. Generate C6 (merkle_update) proof for the new leaf.
-  onProgress?.('Generating C6 (merkle_update) STARK proof (~60s)...');
-  await starkProver.start();
-  const c6Raw = await starkProver.generateMerkleUpdateProof(
-    '0',
-    newLeaf.toString(),
-    pathElements.map((e) => e.toString()),
-    pathIndices,
-  );
-
-  return {
-    c1ProofResult: prep.c1ProofResult,
-    c3ProofResult: prep.c3ProofResult,
-    c6ProofResult: {
-      proofBytes: hexToBytes(c6Raw.proofHex),
-      publicInputs: c6Raw.publicInputs.map((s) => BigInt(s)),
-      proofSize: c6Raw.proofSize,
-      circuitId: CIRCUIT_MERKLE_UPDATE,
-    },
-    insertParams: {
-      newCommitment,
-      newRoot,
-      newSubtrees: updatedSubtrees,
-      newSecret,
-      newNullifierPreimage,
-      newDepositEpoch,
-      newLeafIndex: leafCount,
-    },
-    merkleRoot: prep.merkleRoot,
-    nullifierGoldilocks: prep.nullifierGoldilocks,
-    starkCommitment: prep.starkCommitment,
-  };
-}
-
-/**
- * Orchestrate a denominated note-to-note transfer:
- *   1. Submit + verify C1 (pool_commitment), C3 (merkle_path), C6 (merkle_update)
- *      — distinct buffer PDAs (keyed by circuit_id), all DEEP-ALI verified.
- *   2. Build + send transfer_denominated_stark_v3 (atomically spends old note
- *      via nullifier + inserts the new leaf).
- *   3. Close all 3 buffers in finally (rent recovery).
- *
- * Returns the tx signature + the recipient's shareable note. min_epoch =
- * receipt.depositEpoch — the on-chain handler ENFORCES maturity for transfer
- * (current_epoch >= min_epoch + dynamic_delay), unlike unshield. An immature
- * note fails with EpochDelayNotMet (buffers still close → rent recovered).
- */
-export async function transferDenominatedStarkV3(
-  receipt: ShieldReceipt,
-  poolConfig: PoolConfig,
-  prepared: PrepareTransferResult,
-  signer: WalletSigner,
-  connection: Connection,
-  recipientAddress: string,
-  onProgress?: (step: string) => void,
-): Promise<{ txSig: string; encryptedNote: string }> {
-  // Validate the recipient address up-front (before any proving/upload) so we
-  // never spend rent on a transfer whose output we can't hand off securely.
-  if (!isNoteEncryptionAddress(recipientAddress)) {
-    throw new Error('Invalid recipient address. Expected a p01pq:… post-quantum note address.');
-  }
-  const {
-    c1ProofResult, c3ProofResult, c6ProofResult,
-    insertParams, merkleRoot, nullifierGoldilocks, starkCommitment,
-  } = prepared;
-
-  const createdBuffers: PublicKey[] = [];
-
-  // Pre-flight balance: a transfer holds THREE STARK proof buffers (C1+C3+C6)
-  // open simultaneously — the handler reads all three in one tx — so the peak
-  // temporary rent is the sum of all three buffers (fully recovered when they
-  // close). Compute it from the ACTUAL proof sizes (no hard-coded worst case).
-  // The USER funds this float onto the ephemeral below; it is swept back after.
-  onProgress?.('Checking wallet balance...');
-  const [r1, r3, r6, balance] = await Promise.all([
-    connection.getMinimumBalanceForRentExemption(83 + c1ProofResult.proofSize),
-    connection.getMinimumBalanceForRentExemption(83 + c3ProofResult.proofSize),
-    connection.getMinimumBalanceForRentExemption(83 + c6ProofResult.proofSize),
-    connection.getBalance(signer.publicKey),
-  ]);
-  const nullifierRent = 2_000_000; // NullifierRecord init (~0.0009 SOL) + margin
-  const txFees = 8_000_000;        // ~390 buffer txs + inner + fund + sweep + priority headroom
-  const required = r1 + r3 + r6 + nullifierRent + txFees;
-  if (balance < required) {
-    throw new Error(
-      `Insufficient SOL for transfer. It needs ~${(required / 1e9).toFixed(2)} SOL of ` +
-      `temporary proof-buffer rent (3 STARK proofs held open at once — fully recovered ` +
-      `after the transaction confirms), but the wallet has ${(balance / 1e9).toFixed(3)} SOL. ` +
-      `Fund the wallet (devnet: request an airdrop) and try again.`,
-    );
-  }
-
-  // ── Phase 1 sender-anonymity ──────────────────────────────────────────────
-  // A fresh, deterministic ephemeral E is the proof-buffer AUTHORITY and the
-  // inner-tx PAYER, so the USER's wallet signs NOTHING on the transfer itself —
-  // only the pre-fund tx below. E is re-derivable (deriveEphemeralForRelay) and
-  // a recovery breadcrumb is recorded before funding, so the float is never
-  // stranded. E's SOL is swept back to the user at the end.
-  // (Phase 2 will source E's float from inside the pool + relay the buffer txs
-  // to also break the user→E funding link and hide the originating IP.)
-  const jobId = crypto.getRandomValues(new Uint8Array(16));
-  const jobHex = jobIdToHex(jobId);
-  const ephemeral = await deriveEphemeralForRelay(jobId);
-  const eSigner: WalletSigner = {
-    publicKey: ephemeral.publicKey,
-    signTransaction: async (t: Transaction) => {
-      if (!t.recentBlockhash) {
-        const { blockhash } = await connection.getLatestBlockhash('confirmed');
-        t.recentBlockhash = blockhash;
-      }
-      if (!t.feePayer) t.feePayer = ephemeral.publicKey;
-      t.sign(ephemeral);
-      return t;
-    },
-  };
-
-  let result: { txSig: string; encryptedNote: string } | undefined;
-  try {
-    // Breadcrumb BEFORE funding (so a mid-flight crash is sweepable), then fund
-    // E from the user wallet — the ONLY user signature in the whole transfer.
-    await addPendingRelay({
-      jobId: jobHex,
-      ephemeralPubkey: ephemeral.publicKey.toBase58(),
-      expectedLamports: required,
-      createdAt: new Date().toISOString(),
-      reason: 'transfer-ephemeral-authority',
-    });
-    onProgress?.('Funding the transfer signer...');
-    const fundTx = new Transaction().add(
-      SystemProgram.transfer({ fromPubkey: signer.publicKey, toPubkey: ephemeral.publicKey, lamports: required }),
-    );
-    await signSendConfirmTx(connection, fundTx, signer);
-
-    // Steps 1-3: upload + verify C1, C3, C6 — ALL signed by E (authority = E),
-    // so the proof buffers + their PDAs are keyed on E, not the user.
-    onProgress?.('Submitting C1 (pool_commitment) proof on-chain...');
-    const c1Result = await submitAndVerifyStarkProof(
-      { proofBytes: c1ProofResult.proofBytes, circuitId: CIRCUIT_POOL_COMMITMENT, publicInputs: c1ProofResult.publicInputs, proofSize: c1ProofResult.proofSize },
-      eSigner, connection, onProgress,
-    );
-    createdBuffers.push(c1Result.proofBuffer);
-
-    onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
-    const c3Result = await submitAndVerifyStarkProof(
-      { proofBytes: c3ProofResult.proofBytes, circuitId: CIRCUIT_MERKLE_PATH, publicInputs: c3ProofResult.publicInputs, proofSize: c3ProofResult.proofSize },
-      eSigner, connection, onProgress,
-    );
-    createdBuffers.push(c3Result.proofBuffer);
-
-    onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
-    const c6Result = await submitAndVerifyStarkProof(
-      { proofBytes: c6ProofResult.proofBytes, circuitId: CIRCUIT_MERKLE_UPDATE, publicInputs: c6ProofResult.publicInputs, proofSize: c6ProofResult.proofSize },
-      eSigner, connection, onProgress,
-    );
-    createdBuffers.push(c6Result.proofBuffer);
-
-    // Step 4: build + send transfer_denominated_stark_v3 — payer = E, signed by E.
-    onProgress?.('Building V3 transfer transaction...');
-    const nullifierBytes = goldilocksToLeBytes32(nullifierGoldilocks);
-    const merkleRootBytes = goldilocksToLeBytes32(merkleRoot);
-    const newCommitmentBytes = goldilocksToLeBytes32(insertParams.newCommitment);
-    const newRootBytes = goldilocksToLeBytes32(insertParams.newRoot);
-    const newSubtreesBytes = insertParams.newSubtrees.map(goldilocksToLeBytes32);
-    const minEpoch = receipt.depositEpoch;
-
-    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
-
-    const ix = buildTransferDenominatedStarkV3Ix(
-      ephemeral.publicKey,
-      poolConfig.poolPDA,
-      poolConfig.treePDA,
-      nullifierPDA,
-      c1Result.proofBuffer,
-      c3Result.proofBuffer,
-      c6Result.proofBuffer,
-      nullifierBytes,
-      merkleRootBytes,
-      minEpoch,
-      starkCommitment,
-      newCommitmentBytes,
-      newRootBytes,
-      newSubtreesBytes,
-    );
-
-    const tx = new Transaction();
-    tx.add(...buildComputeBudgetIxs(300_000));
-    tx.add(ix);
-
-    onProgress?.('Sending V3 transfer transaction...');
-    // Phase 1: E signs + submits the transfer directly. (Phase 2b will route
-    // E's buffer + inner txs through the relayer to also hide the user's IP.)
-    const txSig = await signSendConfirmTx(connection, tx, eSigner);
-    onProgress?.('V3 transfer confirmed!');
-
-    const recipientNote: ShareableNote = {
-      version: 1,
-      pool: poolConfig.poolPDA.toBase58(),
-      secret: insertParams.newSecret.toString(),
-      nullifier_preimage: insertParams.newNullifierPreimage.toString(),
-      deposit_epoch: insertParams.newDepositEpoch.toString(),
-      token_mint: pubkeyToField(poolConfig.tokenMint).toString(),
-      commitment: insertParams.newCommitment.toString(),
-      leafIndex: insertParams.newLeafIndex,
-      token: poolConfig.token,
-      denominationHuman: poolConfig.denomination,
-      shieldedAt: Date.now(),
-    };
-
-    // Encrypt the note TO the recipient's p01pq address (hybrid X25519 +
-    // ML-KEM-768 → XSalsa20-Poly1305). The blob is safe to intercept: only the
-    // recipient's wallet seed can decrypt it.
-    const encryptedNote = encryptNote(recipientAddress, utf8ToBytes(JSON.stringify(recipientNote)));
-    result = { txSig, encryptedNote };
-  } finally {
-    // Close E's proof buffers (rent → E), then sweep E's residual back to the
-    // user — recovers the pre-funded float whether the transfer succeeded or
-    // threw. If the sweep itself fails, the breadcrumb keeps the funds
-    // recoverable from the Recover screen.
-    for (const buf of createdBuffers) {
-      try {
-        onProgress?.('Closing proof buffer (rent recovery)...');
-        await closeStarkProofBuffer(buf, eSigner, connection);
-      } catch (closeErr: unknown) {
-        console.warn(
-          '[DenomPool/ext] closeStarkProofBuffer (transfer) failed:',
-          closeErr instanceof Error ? closeErr.message : String(closeErr),
-        );
-      }
-    }
-    try {
-      const eBal = await connection.getBalance(ephemeral.publicKey, 'confirmed');
-      const sweepable = eBal - 5000; // leave the sweep tx fee
-      if (sweepable > 0) {
-        onProgress?.('Returning recovered rent to your wallet...');
-        const sweepTx = new Transaction().add(
-          SystemProgram.transfer({ fromPubkey: ephemeral.publicKey, toPubkey: signer.publicKey, lamports: sweepable }),
-        );
-        await signSendConfirmTx(connection, sweepTx, eSigner);
-      }
-      await removePendingRelay(jobHex);
-    } catch (sweepErr: unknown) {
-      const msg = sweepErr instanceof Error ? sweepErr.message : String(sweepErr);
-      console.warn('[DenomPool/ext] ephemeral sweep failed; funds recoverable via breadcrumb:', msg);
-      try { await markPendingRelayErrored(jobHex, 'sweep failed: ' + msg); } catch { /* ignore */ }
-    }
-  }
-  return result!;
-}
+// ---------------------------------------------------------------------------
+// DELETED: prepareTransfer / transferDenominatedStarkV3 / PrepareTransferResult
+//
+// The note-to-note transfer orchestration is gone from the web client, and it
+// must not come back in this shape.
+//
+// WHY
+// ───
+// It passed `receipt.depositEpoch` as `min_epoch`, and unlike unshield the
+// transfer handler ENFORCES that field:
+//   transfer_denominated_stark_v3.rs:166-173
+//     let dynamic_delay = pool.get_dynamic_delay();
+//     let effective_min_epoch = min_epoch.checked_add(dynamic_delay)...;
+//     require!(current_epoch >= effective_min_epoch, ZkShieldedError::EpochDelayNotMet);
+//
+// Since the commitment gained a 63-bit PRF blinding in that slot
+// (noteBlinding.ts), a current note carries a `noteBlinding` near 2^62. Feeding
+// it in as `min_epoch` sets a maturity floor roughly 2^62 epochs in the future,
+// so every blinded note would be PERMANENTLY un-transferable with
+// EpochDelayNotMet — and the transaction would publish the blinding in the clear
+// on its way to failing. It had no caller anywhere in apps/web, so it is deleted
+// rather than patched: a future caller cannot trip a landmine that is not here.
+//
+// If note-to-note transfer is wanted again, it must pass a REAL epoch (or 0) as
+// `min_epoch` and blind the NEW note's commitment slot separately.
+// `buildTransferDenominatedStarkV3Ix` is deliberately kept: it is a pure byte
+// encoder with no note input, and the parity suite locks its on-chain wire
+// contract.
+// ---------------------------------------------------------------------------
 
 /**
  * Decode + validate a received shareable note into a ShieldReceipt the store
@@ -2185,11 +1940,12 @@ export function shareableNoteToReceipt(note: ShareableNote): ShieldReceipt {
 
   const secret = BigInt(note.secret);
   const nullifierPreimage = BigInt(note.nullifier_preimage);
-  const depositEpoch = BigInt(note.deposit_epoch);
+  // Wire key stays `deposit_epoch` on purpose — see ShieldReceipt.noteBlinding.
+  const noteBlinding = BigInt(note.deposit_epoch);
   const tokenMint = BigInt(note.token_mint);
   const commitment = BigInt(note.commitment);
 
-  const recomputed = createCommitmentV3(nullifierPreimage, secret, depositEpoch, tokenMint);
+  const recomputed = createCommitmentV3(nullifierPreimage, secret, noteBlinding, tokenMint);
   if (recomputed !== commitment) {
     throw new Error('Invalid note: commitment does not match its secrets.');
   }
@@ -2197,7 +1953,7 @@ export function shareableNoteToReceipt(note: ShareableNote): ShieldReceipt {
   return {
     secret,
     nullifierPreimage,
-    depositEpoch,
+    noteBlinding,
     tokenMint,
     commitment,
     leafIndex: note.leafIndex,
