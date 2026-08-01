@@ -4210,13 +4210,59 @@ fn verify_constraints_transfer(
                         return Err(VerifyError::TransitionConstraintFailed);
                     }
                 }
-                // [H5] Carry columns identity in padding rows. Col 6 (acc) is
-                // exempt for the same reason as above — phase-2 DEEP-ALI binds it.
-                // (In padding rows acc is in fact constant, but the four amount
-                // rows are non-padding; excluding col 6 uniformly keeps phase-1
-                // honest-complete and defers all acc soundness to phase-2.)
+                // [LIVENESS 2026-08-01] Carry columns in the `pos_in_cycle == 30`
+                // row.
+                //
+                // This branch used to demand identity on cols 3-5 at EVERY such
+                // row. That is false on an honest trace: `build_transfer_trace`
+                // fills the carry columns as
+                //
+                //   col 3 (carry_owner)   = 0 for row <= 30,  owner    after
+                //   col 4 (carry_o_mint)  = 0 for row <= 62,  owner_mint after
+                //   col 5 (carry_out_rm)  = 0 for row <= 286, out1_rm until 382,
+                //                                             out2_rm after
+                //
+                // so the carry CHANGES on exactly the edges 30→31, 62→63,
+                // 286→287 and 382→383 — the four capture points the AIR encodes
+                // as constraints [10], [12], [18] and [20]. All four sit at
+                // `pos_in_cycle == 30`, i.e. in this branch, so an honest C5
+                // proof was rejected with `TransitionConstraintFailed` whenever a
+                // trace-aligned query landed on row 30, 62, 286 or 382.
+                //
+                // The fix does NOT exempt those columns — exempting is the
+                // soundness hole. Row `c*32 + 30` holds the cycle's Poseidon
+                // OUTPUT in col 0 (`run_hash` writes rounds 0..29 to rows
+                // start+1..start+30), and the captured value IS that output, so
+                // phase 1 can check the capture edge directly:
+                //
+                //   next[3] == current[0]  at row 30   (owner)
+                //   next[4] == current[0]  at row 62   (owner_mint)
+                //   next[5] == current[0]  at rows 286, 382 (out1_rm, out2_rm)
+                //
+                // That is STRICTER than the pre-fix code on an honest trace (the
+                // pre-fix code demanded something false) and strictly stronger
+                // than an exemption on a forged one. The capture rows are AIR
+                // constants, not prover-chosen: no input to this branch is under
+                // the prover's control.
+                //
+                // Col 6 (acc) stays exempt for the reason documented above.
+                const CAPTURE_ROW_OWNER: usize = 30;
+                const CAPTURE_ROW_OWNER_MINT: usize = 62;
+                const CAPTURE_ROW_OUT1_RM: usize = 286;
+                const CAPTURE_ROW_OUT2_RM: usize = 382;
+                let capture_col = match trace_row {
+                    CAPTURE_ROW_OWNER => Some(3usize),
+                    CAPTURE_ROW_OWNER_MINT => Some(4usize),
+                    CAPTURE_ROW_OUT1_RM | CAPTURE_ROW_OUT2_RM => Some(5usize),
+                    _ => None,
+                };
                 for col in (3..config.trace_width).filter(|&c| c != 6) {
-                    if query.next_trace_value(col) != query.trace_value(col) {
+                    if Some(col) == capture_col {
+                        // Capture edge: the carry takes this cycle's hash output.
+                        if query.next_trace_value(col) != query.trace_value(0) {
+                            return Err(VerifyError::TransitionConstraintFailed);
+                        }
+                    } else if query.next_trace_value(col) != query.trace_value(col) {
                         return Err(VerifyError::TransitionConstraintFailed);
                     }
                 }
@@ -4259,7 +4305,34 @@ fn verify_constraints_merkle_update(
             let pos_in_cycle = trace_row % hash_cycle_len;
             let is_cycle_boundary = pos_in_cycle == hash_cycle_len - 1;
 
-            if pos_in_cycle < config.num_rounds {
+            // [LIVENESS 2026-08-01] C6 twin of the 2026-05-29 C3 fix in
+            // `verify_constraints_merkle_path`, which was never applied here.
+            //
+            // A C6 trace is 512 rows but only `depth * 32` of them are active
+            // Poseidon rounds; `build_merkle_update_trace` fills the tail with
+            // identity rows and the AIR disables the round constraint over them
+            // via the periodic `round_active` column. This branch knew only
+            // `pos_in_cycle` and had no notion of an inactive CYCLE, so it
+            // demanded a Poseidon round of a row the honest prover deliberately
+            // did not hash — any trace-aligned query landing in 480..=509
+            // rejected an honest proof with `TransitionConstraintFailed`.
+            //
+            // `CANONICAL_DEPTH` is a CONSTANT, not a public input, so the prover
+            // has no lever over which rows are treated as inactive. It cannot be
+            // anything else: `verify_deep_ali_circuit_6` (phase 2, mandatory)
+            // already hard-rejects any proof whose `public_inputs[4] != 15`,
+            // because the baked periodic polynomials are depth-15. Reading the
+            // depth off the public inputs here would widen the prover's surface
+            // for no gain; hardcoding it matches both phase 2 and the C3
+            // precedent.
+            //
+            // Rows >= `active_rows` now fall through to the padding arm, which
+            // demands identity on all 10 columns — a real constraint, not a
+            // free pass.
+            const CANONICAL_DEPTH: usize = 15;
+            let active_rows = CANONICAL_DEPTH * hash_cycle_len; // 480
+
+            if trace_row < active_rows && pos_in_cycle < config.num_rounds {
                 let rc = poseidon_consts::round_constants(pos_in_cycle);
 
                 // OLD chain Poseidon round (cols 0-2)
