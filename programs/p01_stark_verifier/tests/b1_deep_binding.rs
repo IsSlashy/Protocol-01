@@ -1434,6 +1434,13 @@ fn copy_config(
 const PROVER_SRC_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../stark/src/compact.rs");
 const CONFIG_SRC_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/compact_proof.rs");
+/// [B2-M2] The Winterfell-backed prover options. NOT on the shipped compact path,
+/// but this is the file the "128-bit security" lore actually came from
+/// (`32 queries × log2(16) = 128`, with `FieldExtension::None` and grinding 0),
+/// and no gate scanned it. Adding it is the whole point of the exercise.
+const WINTERFELL_PROVER_SRC_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../stark/src/prover.rs");
+const VERIFY_SRC_PATH_FOR_PROSE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/verify.rs");
 
 fn read_src(path: &str) -> String {
     std::fs::read_to_string(path)
@@ -1520,11 +1527,16 @@ fn prover_and_verifier_agree_on_the_segmentation_constants() {
 /// note explaining why it was wrong.
 #[test]
 fn the_blowup_formula_is_never_quoted_without_its_precondition() {
-    for path in [PROVER_SRC_PATH, CONFIG_SRC_PATH] {
+    for path in [
+        PROVER_SRC_PATH,
+        CONFIG_SRC_PATH,
+        WINTERFELL_PROVER_SRC_PATH,
+        VERIFY_SRC_PATH_FOR_PROSE,
+    ] {
         let src = read_src(path);
         let lines: Vec<&str> = src.lines().collect();
         for (i, line) in lines.iter().enumerate() {
-            if !line.contains("log2(blowup)") {
+            if !line.contains("log2(blowup)") && !line.contains("log2(16)") {
                 continue;
             }
             let lo = i.saturating_sub(6);

@@ -39,13 +39,29 @@ pub struct StarkProofBytes {
 /// Default proof options for Protocol 01 circuits.
 ///
 /// Tuned for:
-/// - 128-bit security: 32 queries × log2(16) = 32 × 4 = 128 bits
-/// - Reasonable proof size (~60-120KB)
-/// - Fast client-side proving
+/// - Proof size (~60-120KB) and fast client-side proving.
+///
+/// # This block used to claim 128-bit security. It was never true.
+///
+/// The claim was `32 queries × log2(blowup) = 32 × 4 = 128 bits`. That formula is
+/// only correct when the FRI terminal degree bound is 1 of the terminal domain
+/// size, and it says nothing at all about the two things that actually cap this
+/// construction:
+///
+/// * `FieldExtension::None` — every Fiat-Shamir challenge is ONE base-field
+///   Goldilocks element, so the whole proof is capped by a floor of
+///   `64 - log2(#challenge draws)`, around 48-53 bits. No number of queries
+///   crosses it.
+/// * `grinding factor 0` here, so there is not even a proof-of-work term.
+///
+/// The shipped compact path (`crate::compact`) is the one with measured numbers;
+/// see `programs/p01_stark_verifier/tests/b2_bits_measured.rs`, which measures
+/// 4.000 bits per query on all seven circuits and derives 42-46 bits
+/// unconditional / 47-52 conjectured. Do not quote a figure from this file.
 fn default_proof_options() -> ProofOptions {
     ProofOptions::new(
         32, // number of queries (security parameter)
-        16, // blowup factor — 16 = 2^4, gives 32×4 = 128-bit security
+        16, // blowup factor. NOT a security level: see the doc block above.
         0,  // grinding factor (0 = no proof-of-work, faster proving)
         FieldExtension::None, // base field only
         8,  // FRI folding factor
