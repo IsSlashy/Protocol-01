@@ -235,9 +235,9 @@ pub fn handler(ctx: Context<ClaimPeriod>) -> Result<()> {
         periods_claimed: claimable,
         amount_claimed: amount_moved,
         total_claimed_periods: vault.claimed_periods,
+        slot: clock.slot as i64,
         vault_closed: is_final,
         rent_to_retailer,
-        slot: clock.slot as i64,
     });
 
     if is_final {
@@ -260,11 +260,15 @@ pub struct ClaimPeriodEvent {
     pub periods_claimed: u64,
     pub amount_claimed: u64,
     pub total_claimed_periods: u64,
+    pub slot: i64,
+    // The two fields below are APPENDED, deliberately. Borsh decodes an event
+    // sequentially, so inserting anything before `slot` would silently shift it
+    // for every decoder built against the old layout. Appended, an old decoder
+    // reads the first six fields correctly and ignores the tail.
     /// True when this claim exhausted the vault and closed it. No further
     /// claim is possible and the account no longer exists.
     pub vault_closed: bool,
     /// Lamports paid to the retailer on top of `amount_claimed` when the vault
     /// closed: the vault's rent, plus the vault token account's rent for SPL.
     pub rent_to_retailer: u64,
-    pub slot: i64,
 }

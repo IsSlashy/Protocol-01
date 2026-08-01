@@ -74,298 +74,6 @@ export type ZkShielded = {
       "args": []
     },
     {
-      "name": "cancelNormal",
-      "docs": [
-        "Cancel a normal subscription vault, refund remaining to subscriber.",
-        "LEGACY, and the ONLY exit for a normal-mode vault: removing it would",
-        "strand both the deposit and the rent of every such vault on chain."
-      ],
-      "discriminator": [
-        202,
-        166,
-        254,
-        74,
-        18,
-        84,
-        99,
-        206
-      ],
-      "accounts": [
-        {
-          "name": "subscriber",
-          "docs": [
-            "Subscriber cancelling the vault"
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "retailer",
-          "docs": [
-            "Retailer receives any outstanding claimable periods"
-          ],
-          "writable": true
-        },
-        {
-          "name": "vault",
-          "docs": [
-            "Subscription vault (closed after cancellation)"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  117,
-                  98,
-                  115,
-                  99,
-                  114,
-                  105,
-                  112,
-                  116,
-                  105,
-                  111,
-                  110,
-                  95,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "vault.retailer",
-                "account": "subscriptionVault"
-              },
-              {
-                "kind": "account",
-                "path": "vault"
-              },
-              {
-                "kind": "account",
-                "path": "vault.token_mint",
-                "account": "subscriptionVault"
-              }
-            ]
-          }
-        },
-        {
-          "name": "systemProgram",
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "tokenProgram",
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "vaultTokenAccount",
-          "docs": [
-            "Vault's token account (optional, only for SPL tokens)"
-          ],
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "subscriberTokenAccount",
-          "docs": [
-            "Subscriber's token account (optional, only for SPL tokens)"
-          ],
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "retailerTokenAccount",
-          "docs": [
-            "Retailer's token account (optional, only for SPL tokens)"
-          ],
-          "writable": true,
-          "optional": true
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "cancelPrivateStark",
-      "docs": [
-        "Cancel a private subscription vault using STARK proof (quantum-resistant).",
-        "Re-shields remaining funds back into the source denominated pool."
-      ],
-      "discriminator": [
-        148,
-        95,
-        195,
-        37,
-        192,
-        187,
-        155,
-        218
-      ],
-      "accounts": [
-        {
-          "name": "payer",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "retailer",
-          "docs": [
-            "Retailer receives outstanding claimable periods"
-          ],
-          "writable": true
-        },
-        {
-          "name": "vault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  117,
-                  98,
-                  115,
-                  99,
-                  114,
-                  105,
-                  112,
-                  116,
-                  105,
-                  111,
-                  110,
-                  95,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "vault.retailer",
-                "account": "subscriptionVault"
-              },
-              {
-                "kind": "account",
-                "path": "vault"
-              },
-              {
-                "kind": "account",
-                "path": "vault.token_mint",
-                "account": "subscriptionVault"
-              }
-            ]
-          }
-        },
-        {
-          "name": "denominatedPool",
-          "docs": [
-            "Source denominated pool — REQUIRED only on the legacy reshield path.",
-            "May be `None` on the refund-via-relayer path. Uses `UncheckedAccount`",
-            "to avoid Anchor 0.32 typed-Account discriminator checks for the",
-            "program-id sentinel pattern; handler validates linkage when used."
-          ],
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "merkleTree",
-          "docs": [
-            "Merkle tree — REQUIRED only on the legacy reshield path.",
-            "May be `None` on the refund-via-relayer path. Same `UncheckedAccount`",
-            "rationale as `denominated_pool` above."
-          ],
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "starkProofBuffer",
-          "docs": [
-            "STARK proof buffer from p01_stark_verifier (circuit 0: subscriber_ownership).",
-            "- Owner is p01_stark_verifier program",
-            "- Discriminator matches ProofBuffer",
-            "- Authority matches payer",
-            "- Circuit ID is 0 (subscriber_ownership)",
-            "- Verified flag is true",
-            "- Public inputs hash matches vault commitment"
-          ],
-          "writable": true
-        },
-        {
-          "name": "refundJob",
-          "docs": [
-            "RefundJob PDA — REQUIRED only on the refund-via-relayer path.",
-            "Seeds: `[b\"refund_job\", vault.key().as_ref()]`, owned by `p01_relayer`.",
-            "Validated manually inside the handler before/after the CPI."
-          ],
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "p01RelayerProgram",
-          "docs": [
-            "`p01_relayer` program — REQUIRED only on the refund-via-relayer path."
-          ],
-          "optional": true
-        },
-        {
-          "name": "systemProgram",
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "tokenProgram",
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "vaultTokenAccount",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "poolVault",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "retailerTokenAccount",
-          "writable": true,
-          "optional": true
-        }
-      ],
-      "args": [
-        {
-          "name": "newCommitments",
-          "type": {
-            "vec": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          }
-        },
-        {
-          "name": "newRoots",
-          "type": {
-            "vec": {
-              "array": [
-                "u8",
-                32
-              ]
-            }
-          }
-        }
-      ]
-    },
-    {
       "name": "checkCompliance",
       "docs": [
         "Check whether a compliance attestation is currently valid.",
@@ -395,7 +103,12 @@ export type ZkShielded = {
     {
       "name": "claimPeriod",
       "docs": [
-        "Claim accrued periods from a subscription vault (retailer only)"
+        "Claim accrued periods from a subscription vault (retailer only).",
+        "",
+        "On the claim that spends the last funded period this also CLOSES the",
+        "vault, paying the retailer the sub-period remainder and the rent. It is",
+        "the only instruction that can close a SubscriptionVault. Refuses while",
+        "the vault is paused."
       ],
       "discriminator": [
         72,
@@ -411,7 +124,9 @@ export type ZkShielded = {
         {
           "name": "retailer",
           "docs": [
-            "Retailer claiming the payment"
+            "Retailer claiming the payment. Also receives the vault's rent on the",
+            "final claim — the subscriber has no refund path, so the rent cannot go",
+            "back to them."
           ],
           "writable": true,
           "signer": true
@@ -419,7 +134,7 @@ export type ZkShielded = {
         {
           "name": "vault",
           "docs": [
-            "Subscription vault"
+            "Subscription vault. Closed by the handler on the final claim."
           ],
           "writable": true,
           "pda": {
@@ -479,7 +194,8 @@ export type ZkShielded = {
         {
           "name": "vaultTokenAccount",
           "docs": [
-            "Vault's token account (optional, only for SPL tokens)"
+            "Vault's token account (optional, only for SPL tokens). Closed to the",
+            "retailer on the final claim so its rent is not stranded either."
           ],
           "writable": true,
           "optional": true
@@ -2341,9 +2057,13 @@ export type ZkShielded = {
       "name": "subscribePrivateStark",
       "docs": [
         "Create a private subscription vault using STARK proof (quantum-resistant).",
-        "`client_stealth_meta`: optional 64-byte stealth address",
-        "(`[spending_pub(32) | viewing_pub(32)]`) used to route the refund",
-        "through `p01_relayer` on cancel. `None` keeps the legacy reshield path."
+        "",
+        "`client_stealth_meta`: DEPRECATED and unused. It was a 64-byte stealth",
+        "address (`[spending_pub(32) | viewing_pub(32)]`) that routed the refund",
+        "through `p01_relayer` on cancel. There is no cancel and no refund, so",
+        "nothing on chain reads this any more. The parameter and the field are",
+        "kept so the instruction ABI and `SubscriptionVault::LEN` do not move",
+        "under the 16 vaults already live on devnet. Pass `None`."
       ],
       "discriminator": [
         187,
@@ -4017,32 +3737,6 @@ export type ZkShielded = {
       ]
     },
     {
-      "name": "cancelNormalEvent",
-      "discriminator": [
-        197,
-        20,
-        175,
-        83,
-        134,
-        240,
-        121,
-        118
-      ]
-    },
-    {
-      "name": "cancelPrivateStarkEvent",
-      "discriminator": [
-        20,
-        86,
-        111,
-        207,
-        9,
-        41,
-        239,
-        171
-      ]
-    },
-    {
       "name": "claimPeriodEvent",
       "discriminator": [
         208,
@@ -4515,17 +4209,17 @@ export type ZkShielded = {
     {
       "code": 6052,
       "name": "missingAccount",
-      "msg": "Required account is missing for this code path"
+      "msg": "DEPRECATED — unused since cancellation was removed"
     },
     {
       "code": 6053,
       "name": "invalidProgramId",
-      "msg": "Provided program account does not match the expected program id"
+      "msg": "DEPRECATED — unused since cancellation was removed"
     },
     {
       "code": 6054,
       "name": "invalidPda",
-      "msg": "PDA derivation does not match the provided account"
+      "msg": "DEPRECATED — unused since cancellation was removed"
     },
     {
       "code": 6055,
@@ -4583,78 +4277,6 @@ export type ZkShielded = {
       }
     },
     {
-      "name": "cancelNormalEvent",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "subscriber",
-            "type": "pubkey"
-          },
-          {
-            "name": "retailer",
-            "type": "pubkey"
-          },
-          {
-            "name": "retailerAmount",
-            "type": "u64"
-          },
-          {
-            "name": "refundAmount",
-            "type": "u64"
-          },
-          {
-            "name": "slot",
-            "type": "i64"
-          }
-        ]
-      }
-    },
-    {
-      "name": "cancelPrivateStarkEvent",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "vault",
-            "type": "pubkey"
-          },
-          {
-            "name": "retailer",
-            "type": "pubkey"
-          },
-          {
-            "name": "sourcePool",
-            "type": "pubkey"
-          },
-          {
-            "name": "retailerAmount",
-            "type": "u64"
-          },
-          {
-            "name": "reshieldAmount",
-            "type": "u64"
-          },
-          {
-            "name": "notesReshielded",
-            "type": "u64"
-          },
-          {
-            "name": "dustForfeited",
-            "type": "u64"
-          },
-          {
-            "name": "slot",
-            "type": "i64"
-          }
-        ]
-      }
-    },
-    {
       "name": "claimPeriodEvent",
       "type": {
         "kind": "struct",
@@ -4682,6 +4304,22 @@ export type ZkShielded = {
           {
             "name": "slot",
             "type": "i64"
+          },
+          {
+            "name": "vaultClosed",
+            "docs": [
+              "True when this claim exhausted the vault and closed it. No further",
+              "claim is possible and the account no longer exists."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "rentToRetailer",
+            "docs": [
+              "Lamports paid to the retailer on top of `amount_claimed` when the vault",
+              "closed: the vault's rent, plus the vault token account's rent for SPL."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -6157,8 +5795,10 @@ export type ZkShielded = {
           {
             "name": "hasStealthMeta",
             "docs": [
-              "True if the vault was created with a stealth meta address (refund-via-relayer",
-              "path will trigger on cancel). The 64 raw bytes are NOT emitted to avoid leaks."
+              "DEPRECATED. True if the vault was created with a stealth meta address.",
+              "It selected the refund-via-relayer path on cancel; there is no cancel",
+              "and no refund, so this now reports a field nothing acts on. The 64 raw",
+              "bytes are NOT emitted, to avoid leaking the address itself."
             ],
             "type": "bool"
           }
@@ -6171,13 +5811,20 @@ export type ZkShielded = {
         "Subscription vault: holds funds deposited by a subscriber for periodic",
         "claims by a retailer. Supports two modes:",
         "",
+        "A subscription is a ONE-WAY PREPAID ENVELOPE. Every lamport that enters a vault",
+        "leaves it toward the retailer and nothing returns to the subscriber. The",
+        "subscriber's controls are pause and resume; cancellation and refunds were removed.",
+        "The vault ends when the retailer's `claim_period` spends its last funded period,",
+        "which pays out the residual and the rent and closes the account. That is the ONLY",
+        "way a vault can close.",
+        "",
         "**Private mode** (the only mode that can still be created): `subscriber_commitment`",
         "is set and the PDA is seeded on it instead of on a wallet, so the address does not",
         "name the payer. Read the guarantee narrowly: `subscribe_private_stark` takes",
         "`subscriber_commitment` as a plain `[u8; 32]` argument, uses it only as a PDA seed,",
         "and binds it to NO proof — pass a wallet pubkey there and the program builds exactly",
         "the address `subscribe_normal` used to build, membership oracle included. What keeps",
-        "a wallet out of this field is the client, not the program. Pause/resume/cancel are",
+        "a wallet out of this field is the client, not the program. Pause and resume are",
         "what require a ZK proof of knowledge of the secret behind the commitment.",
         "",
         "**Normal mode** (LEGACY, read/close only): `subscriber_pubkey` is set and vault",
@@ -6313,7 +5960,15 @@ export type ZkShielded = {
           {
             "name": "sourcePool",
             "docs": [
-              "Source denominated pool (for cancel_private re-shield)"
+              "DEPRECATED AND UNUSED. Source denominated pool, read only by",
+              "`cancel_private_stark` to know where to re-shield the refund. There is",
+              "no cancellation and no refund, so nothing on chain reads this field.",
+              "",
+              "The bytes are KEPT. Sixteen vaults are live on devnet and removing 33",
+              "bytes from the middle of the layout shifts every field after it and",
+              "makes all of them undecodable. Reclaiming the space is a migration, not",
+              "a cleanup. `subscribe_private_stark` still writes it; stopping that",
+              "write is a separate, client-visible change."
             ],
             "type": {
               "option": "pubkey"
@@ -6329,11 +5984,19 @@ export type ZkShielded = {
           {
             "name": "clientStealthMeta",
             "docs": [
-              "Stealth meta address (v1) for refund-via-relayer delivery on cancel.",
-              "Layout: `[spending_pub(32) | viewing_pub(32)]`.",
-              "`None` for legacy V4 vaults — those fall back to the legacy reshield",
-              "path in `cancel_private_stark`. Appended at the end so existing",
-              "vaults decode as `None` from trailing zero padding."
+              "DEPRECATED AND UNUSED. Stealth meta address (v1),",
+              "`[spending_pub(32) | viewing_pub(32)]`, which routed the cancellation",
+              "refund to the subscriber through `p01_relayer::submit_refund_job`. The",
+              "refund leg was the system's only INBOUND operation and the only place a",
+              "subscriber had to receive money; deleting it is most of the point of",
+              "removing cancellation, so this field has no reader left.",
+              "",
+              "The bytes are KEPT for the same layout reason as `source_pool`.",
+              "`subscribe_private_stark` still accepts the argument and still writes",
+              "it, which now publishes a subscriber-controlled stealth address on chain",
+              "for a feature that cannot fire. Clients should pass `None`; removing the",
+              "write and the parameter is a follow-up that has to move with the",
+              "clients."
             ],
             "type": {
               "option": {
@@ -6347,10 +6010,19 @@ export type ZkShielded = {
           {
             "name": "licenseCommitment",
             "docs": [
-              "License commitment = Poseidon(licenseSecret), posted by the subscriber",
+              "License commitment = **blake3**(licenseSecret), posted by the subscriber",
               "at subscribe time so a merchant can later verify a presented license key",
-              "by checking Poseidon(decode(key)) == license_commitment OFF-CHAIN.",
-              "The chain only stores the 32 raw bytes — no Poseidon/verification runs",
+              "by checking blake3(decode(key)) == license_commitment OFF-CHAIN.",
+              "",
+              "This said Poseidon. Nothing on chain reads the field, so the wrong hash",
+              "name cost nothing yet — but it is the only description of the value a",
+              "future verifier would be written against, and every shipped client",
+              "(apps/mobile, apps/extension, packages/merchant-sdk) uses blake3. The",
+              "authoritative block is `LICENSE_SCHEME` in",
+              "`packages/merchant-sdk/src/license.ts`, executed by",
+              "`packages/merchant-sdk/src/license-parity.test.ts`.",
+              "",
+              "The chain only stores the 32 raw bytes — no hashing or verification runs",
               "on-chain. `None` for vaults created before this field existed; appended",
               "at the very end so existing vault accounts decode it as `None` from",
               "trailing zero padding (same backward-compat trick as `client_stealth_meta`)."
