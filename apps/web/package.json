@@ -7,6 +7,7 @@
     "build": "pnpm --filter @protocol-01/rpc-config build && pnpm --filter @protocol-01/specter-sdk build:core && next build",
     "start": "next start",
     "test": "vitest run",
+    "test:ui": "vitest run --config vitest.ui.config.ts",
     "test:pool": "vitest run --config vitest.pool.config.mts"
   },
   "dependencies": {
