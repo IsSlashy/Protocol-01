@@ -404,6 +404,19 @@ fn generate_compact_proof_with_layout(
         ood_quotient[0] = (target - rest).as_int();
     }
 
+    // [B2 fails-closed probe] Segment-split forgery, C0 flavour. See
+    // `OodForgery::SegmentSplit`. Runs BEFORE `build_base_seed`, so gamma, the
+    // alphas, the layer roots, the grinding nonce and every position are derived
+    // from the LYING split — the proof is internally consistent and only the
+    // per-segment gamma powers can catch it.
+    #[cfg(any(test, feature = "test-probes"))]
+    if probe.ood_forgery == OodForgery::SegmentSplit {
+        let d = segment_split_deltas(ood_quotient.len(), ood_z_felt, TRACE_LENGTH);
+        for (q, dj) in ood_quotient.iter_mut().zip(d.iter()) {
+            *q = (BaseElement::new(*q) + *dj).as_int();
+        }
+    }
+
     // 7. [P1.1 PR 2 / B1] FRI commit phase over the DEEP COMPOSITION, not the raw
     // quotient LDE. See `deep_composition_lde` and the generic twin. Starting
     // transcript contains all prior commitments + OOD evals; subsequent
@@ -4438,6 +4451,61 @@ pub enum OodForgery {
     /// Perturb `ood_current[col]` by `delta`, then re-solve `ood_quotient`.
     #[cfg(any(test, feature = "test-probes"))]
     Coordinated { col: usize, delta: u64 },
+    /// [B2] Lie about the SPLIT of `Q(z)` across segments while keeping the
+    /// recombination `SUM_j z^(jn) Q_j(z)` — and the plain sum `SUM_j Q_j(z)` —
+    /// exactly honest.
+    ///
+    /// This attack DID NOT EXIST before B2. With a single quotient column there
+    /// was one `Q(z)` and phase 2 pinned it. With `k` columns the wire carries
+    /// `k` claims and phase 2 constrains ONE linear functional of them, so a
+    /// prover has `k-1` free dimensions of lie that phase 2 cannot see at all.
+    /// `ood_current` and `ood_next` stay HONEST, the trace and every quotient
+    /// column stay HONEST, and NO re-solve is needed: the phase-2 identity holds
+    /// with equality, not by construction.
+    ///
+    /// The deltas are `d = (z^n, -(z^n + 1), 1)` on segments 0, 1, 2, which
+    /// satisfies BOTH
+    /// ```text
+    ///   SUM_j d_j * z^(jn) = 0     (phase 2 cannot see it)
+    ///   SUM_j d_j          = 0     (a verifier that shared ONE gamma power
+    ///                               across the segments cannot see it either)
+    /// ```
+    /// so the ONLY thing left that can reject it is the per-segment gamma powers
+    /// in the DEEP composition. That makes it the exact experiment for the claim
+    /// `deep_composition_lde` states about itself — "every segment carries its
+    /// OWN gamma power ... reusing a power across two segments leaves every
+    /// existing test green while un-binding the segments".
+    #[cfg(any(test, feature = "test-probes"))]
+    SegmentSplit,
+}
+
+/// [B2] The recombination- AND sum-preserving delta vector for `SegmentSplit`.
+///
+/// Returns `k` deltas, non-zero on segments 0..3 only. See `OodForgery`.
+/// Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
+fn segment_split_deltas(
+    segments: usize,
+    z: BaseElement,
+    trace_length: usize,
+) -> Vec<BaseElement> {
+    assert!(
+        segments >= 3,
+        "[B2] SegmentSplit needs at least 3 segments to satisfy both invariants; \
+         this circuit has {segments}",
+    );
+    let a = z.exp(trace_length as u64);
+    assert_ne!(
+        a,
+        BaseElement::ONE,
+        "[B2] z^n == 1 makes the two invariants collinear and the forgery degenerate. \
+         ~n/p per proof; re-run with a different witness rather than relaxing this.",
+    );
+    let mut d = vec![BaseElement::ZERO; segments];
+    d[0] = a;
+    d[1] = BaseElement::ZERO - (a + BaseElement::ONE);
+    d[2] = BaseElement::ONE;
+    d
 }
 
 /// [B1 fails-closed probe] Terminal-polynomial knob.
@@ -6405,6 +6473,18 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
             zp *= zn;
         }
         ood_quotient[0] = (target - rest).as_int();
+    }
+
+    // [B2 fails-closed probe] Segment-split forgery, generic flavour. See
+    // `OodForgery::SegmentSplit`. `ood_current_vals` / `ood_next_vals` are left
+    // HONEST and no re-solve runs: the phase-2 identity holds with equality
+    // because the recombination is preserved exactly.
+    #[cfg(any(test, feature = "test-probes"))]
+    if probe.ood_forgery == OodForgery::SegmentSplit {
+        let d = segment_split_deltas(ood_quotient.len(), ood_z_felt, trace_length);
+        for (q, dj) in ood_quotient.iter_mut().zip(d.iter()) {
+            *q = (BaseElement::new(*q) + *dj).as_int();
+        }
     }
 
     // 6. [P1.1 PR 2 / B1] FRI commit phase over the DEEP COMPOSITION, not the raw
