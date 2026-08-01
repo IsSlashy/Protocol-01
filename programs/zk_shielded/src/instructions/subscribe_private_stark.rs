@@ -452,3 +452,101 @@ pub struct SubscribePrivateStarkEvent {
     /// decoder built against the old layout.
     pub has_stealth_meta: bool,
 }
+
+// ---------------------------------------------------------------------------
+// Structural guard on the stealth-meta removal.
+//
+// Nothing executes this handler either — same gap as `claim_period`, same
+// reason. This guard exists because the removal it protects was MEASURED to be
+// unguarded: putting `vault.client_stealth_meta = Some(..)` back left
+// `cargo test -p zk_shielded` at 26 passed / 0 failed, and the client-side
+// encoder tests only cover the instruction ARGUMENT, never what the program
+// writes into the account.
+//
+// What it protects. `client_stealth_meta` was a 64-byte subscriber-controlled
+// stealth address, `[spending_pub(32) | viewing_pub(32)]`, written into a PUBLIC
+// account so `cancel_private_stark` could route a refund to it through
+// `p01_relayer`. There is no cancel and no refund, so publishing it buys
+// nothing and links a subscriber's stealth identity to a vault forever.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod stealth_meta_guard {
+    const SRC: &str = include_str!("subscribe_private_stark.rs");
+
+    /// Code only. A comment naming the field must not satisfy an assertion
+    /// about the field — `claim_period`'s decoy guard was hollow for exactly
+    /// that reason, and that was measured, not suspected.
+    fn code() -> String {
+        let end = SRC.find("mod stealth_meta_guard").expect("guard marker");
+        SRC[..end]
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(at) => &l[..at],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn the_comment_stripper_actually_strips() {
+        assert!(
+            SRC.contains("DEPRECATED, and no longer writable."),
+            "fixture reworded — pick another comment",
+        );
+        assert!(
+            !code().contains("DEPRECATED, and no longer writable."),
+            "code() is leaking comments; the guards below become prose matches",
+        );
+        assert!(code().contains("pub fn handler("));
+    }
+
+    #[test]
+    fn subscribe_never_writes_a_stealth_address_into_the_public_vault() {
+        let code = code();
+        let writes: Vec<&str> = code
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("vault.client_stealth_meta ="))
+            .collect();
+        assert_eq!(
+            writes,
+            vec!["vault.client_stealth_meta = None;"],
+            "the deprecated stealth-meta field must be written None and nothing \
+             else — anything else republishes a 64-byte subscriber-controlled \
+             stealth address into a public account, for a refund path that no \
+             longer exists",
+        );
+    }
+
+    #[test]
+    fn the_handler_takes_no_stealth_meta_argument_at_all() {
+        // Stopping only the WRITE would have left the 64 bytes in the
+        // transaction payload, which is exactly as public as the account they
+        // used to land in. The parameter is gone; this keeps it gone.
+        let code = code();
+        let sig_start = code.find("pub fn handler(").expect("handler signature");
+        let sig_end = code[sig_start..].find(") -> Result<").expect("end of signature") + sig_start;
+        assert!(
+            !code[sig_start..sig_end].contains("client_stealth_meta"),
+            "subscribe_private_stark takes a client_stealth_meta argument again \
+             — the subscriber's stealth address is back in the public \
+             transaction payload even if nothing stores it",
+        );
+    }
+
+    #[test]
+    fn the_event_never_reports_a_stealth_meta_and_never_carries_the_bytes() {
+        let code = code();
+        assert!(
+            code.contains("has_stealth_meta: false,"),
+            "the event's has_stealth_meta is no longer pinned false",
+        );
+        // An event is as public as an account, so the raw address must never be
+        // emitted either.
+        assert!(
+            !code.lines().any(|l| l.trim() == "client_stealth_meta,"),
+            "the 64 raw stealth bytes are being emitted in an event",
+        );
+    }
+}
