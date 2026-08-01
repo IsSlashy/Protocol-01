@@ -899,11 +899,30 @@ struct CuCeiling {
 /// MEASURED by `cu_budget_real_circuits` on this tree, 2026-08-01, RE-ANCHORED
 /// for [B2] and RE-MEASURED at the [B2-INT] integration head.
 ///
-/// Artifact: `target/cu-budget/p01_stark_verifier.so`, 687,440 B, sha256
-/// `df4b325fd7e543dbb46b7af304e796299820090e9ac951f46a0a584a2c658a4e`, built by
+/// Artifact: `target/cu-budget/p01_stark_verifier.so`, 687,736 B, sha256
+/// `8729ac97979e9b7cc464e010f06141062c575c035d97872d709c015c5a9b091b`, built by
 /// `solana-cargo-build-sbf 3.1.9 platform-tools v1.52`, build fp
-/// `488086644ca36a77`, origin line `rebuilt`, from a `CARGO_TARGET_DIR` that did
-/// not exist.
+/// `d0a21acd521d6e83`, from a `CARGO_TARGET_DIR` that did not exist.
+///
+/// # [LIVENESS 2026-08-01] The artifact moved because the PROGRAM moved
+///
+/// Every previous entry in the history below is a line-number shift: same size,
+/// same thirteen CU numbers, different hash. This one is not. The liveness fix
+/// rewrote two live phase-1 arms in `verify.rs` —
+/// `verify_constraints_merkle_update` gained an `active_rows` bound (the twin of
+/// the 2026-05-29 C3 fix) and `verify_constraints_transfer` gained the
+/// carry-capture edge check — so the `.so` grew 687,440 → 687,736 B (+296) and
+/// two CU pins moved for a reason:
+///
+/// * C5 phase 1  793,372 → 793,355  (−17). The capture rows now take a
+///   `next[carry] == current[0]` compare instead of the `next == current` one
+///   they took before; the branch is the same shape and one comparand changed.
+/// * C6 phase 1  809,654 → 809,658  (+4). One extra `trace_row < active_rows`
+///   compare per trace-aligned query.
+///
+/// Both are re-recorded below. NEITHER CEILING WAS TOUCHED: C5 sits at 810,000
+/// and C6 at 826,000, and the new numbers are 16,645 and 16,342 under them. The
+/// remaining eleven pins print `+0`.
 ///
 /// # [B2-AUDIT] The build fp moved and the artifact hash did NOT — on purpose
 ///
@@ -1042,8 +1061,11 @@ const CU_CEILINGS: [CuCeiling; 7] = [
     CuCeiling { circuit_id: 2, phase1_measured: 756_358, phase1_max: 772_000, phase2_measured: Some( 92_348), phase2_max: Some( 95_000) },
     CuCeiling { circuit_id: 3, phase1_measured: 785_407, phase1_max: 802_000, phase2_measured: Some(115_974), phase2_max: Some(119_000) },
     CuCeiling { circuit_id: 4, phase1_measured: 843_918, phase1_max: 861_000, phase2_measured: Some(179_638), phase2_max: Some(184_000) },
-    CuCeiling { circuit_id: 5, phase1_measured: 793_372, phase1_max: 810_000, phase2_measured: Some(201_422), phase2_max: Some(206_000) },
-    CuCeiling { circuit_id: 6, phase1_measured: 809_654, phase1_max: 826_000, phase2_measured: Some(122_812), phase2_max: Some(126_000) },
+    // [LIVENESS 2026-08-01] phase1_measured re-recorded: C5 793_372 -> 793_355
+    // (-17, the capture-edge compare) and C6 809_654 -> 809_658 (+4, the
+    // active_rows bound). The CEILINGS are unchanged and neither was approached.
+    CuCeiling { circuit_id: 5, phase1_measured: 793_355, phase1_max: 810_000, phase2_measured: Some(201_422), phase2_max: Some(206_000) },
+    CuCeiling { circuit_id: 6, phase1_measured: 809_658, phase1_max: 826_000, phase2_measured: Some(122_812), phase2_max: Some(126_000) },
 ];
 
 /// The band every `*_max` is computed with, as a percentage numerator over 100.
@@ -1387,10 +1409,18 @@ const THIS_FILE: &str = include_str!("cu_budget.rs");
 /// with the number quoted back at you. Entries are checked in BOTH directions:
 /// an entry that no longer appears in the prose is itself a failure, so this
 /// cannot rot into a list of numbers nobody wrote.
-const PROSE_FIGURES: [(u64, &str); 16] = [
+const PROSE_FIGURES: [(u64, &str); 21] = [
     (1_399_000, "illustrative: what C0 could have become before a ceiling existed"),
     (638_248, "byte size of the historical Route C .so this doc used to name"),
-    (687_440, "byte size of the .so CU_CEILINGS was measured from — provenance, not a pin"),
+    (687_736, "byte size of the .so CU_CEILINGS is measured from TODAY — provenance, not a pin"),
+    (687_440, "byte size of the PRE-liveness-fix .so, quoted to show the +296 B the fix cost"),
+    // [LIVENESS 2026-08-01] The two phase-1 pins the fix moved. Both are quoted
+    // in the provenance block as the BEFORE value; the AFTER value is the
+    // constant in CU_CEILINGS, so only the before-value needs registering.
+    (793_372, "the PRE-liveness-fix C5 phase-1 pin, quoted beside the 793,355 that replaced it"),
+    (809_654, "the PRE-liveness-fix C6 phase-1 pin, quoted beside the 809,658 that replaced it"),
+    (16_645, "C5 phase-1 headroom under its unchanged ceiling — derived from pins"),
+    (16_342, "C6 phase-1 headroom under its unchanged ceiling — derived from pins"),
     (54_946, "smallest measured B2 phase-1 CU delta (C3) — provenance, not a pin"),
     (72_685, "largest measured B2 phase-1 CU delta (C1) — provenance, not a pin"),
     (1_953, "smallest measured B2 phase-2 CU delta (C4) — provenance, not a pin"),
