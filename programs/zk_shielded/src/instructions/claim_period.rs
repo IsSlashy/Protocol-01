@@ -8,7 +8,16 @@ use crate::state::SubscriptionVault;
 /// Claim one or more accrued periods from a subscription vault, and close the
 /// vault once its funding is spent.
 ///
-/// Only the retailer can claim. Works for both normal and private vaults.
+/// PERMISSIONLESS. Anybody can send this instruction; the money still has
+/// exactly one destination. `retailer` is checked against `vault.retailer`, an
+/// immutable field written at subscribe time, and the vault PDA is the only
+/// authority that can move the funds — so the CALLER never chooses where the
+/// value lands, the account does. What the caller chooses is only WHEN, and
+/// they pay the fee for the privilege. It used to be a `Signer`, which meant a
+/// merchant that lost its key lost the revenue: devnet has 13 such vaults
+/// holding ~5.52 SOL whose retailer keys were generated in a browser during
+/// testing and no longer exist anywhere. Works for both normal and private
+/// vaults.
 ///
 /// Claimable periods = floor(effective_elapsed / interval_slots) - claimed_periods
 /// where effective_elapsed = current_slot - start_slot - total_paused_slots
@@ -24,20 +33,32 @@ use crate::state::SubscriptionVault;
 ///     period and used to be the "refund",
 ///   * the vault's rent, and for SPL the rent of the vault token account.
 ///
-/// A paused vault cannot be claimed and therefore cannot be closed: the
-/// `!vault.is_paused` account constraint below rejects the instruction before
-/// the handler runs. Pause moves WHEN the retailer is paid, never HOW MUCH, and
-/// it cannot be closed out from under a subscriber who still has funding left.
+/// Pause blocks the claim — pause moves WHEN the retailer is paid, never HOW
+/// MUCH — with ONE exception: a vault that is already exhausted. Deleting
+/// cancellation left `claim_period` as the only exit, and its `!is_paused`
+/// constraint then meant a subscriber who paused and never resumed held the
+/// account open forever, withholding the retailer's last payout and the rent
+/// from everyone including themselves. `is_exhausted()` is true only once every
+/// funded period has been claimed, so letting that case through takes nothing
+/// the subscriber still owns: there is no period left to deliver, and the
+/// residual it sweeps is the sub-period remainder that never bought one. A
+/// paused vault with funding left is still refused, and still cannot be closed
+/// out from under its subscriber.
 #[derive(Accounts)]
 pub struct ClaimPeriod<'info> {
-    /// Retailer claiming the payment. Also receives the vault's rent on the
+    /// Retailer receiving the payment. Also receives the vault's rent on the
     /// final claim — the subscriber has no refund path, so the rent cannot go
     /// back to them.
+    ///
+    /// NOT a signer: see the struct doc. The `==` constraint is what makes that
+    /// safe, and it is the only thing that does.
+    /// CHECK: pinned to `vault.retailer` by the constraint below and used only
+    /// as a lamport destination.
     #[account(
         mut,
         constraint = retailer.key() == vault.retailer @ ZkShieldedError::Unauthorized
     )]
-    pub retailer: Signer<'info>,
+    pub retailer: UncheckedAccount<'info>,
 
     /// Subscription vault. Closed by the handler on the final claim.
     #[account(
@@ -50,7 +71,7 @@ pub struct ClaimPeriod<'info> {
         ],
         bump = vault.bump,
         constraint = vault.is_active @ ZkShieldedError::VaultNotActive,
-        constraint = !vault.is_paused @ ZkShieldedError::VaultAlreadyPaused
+        constraint = !vault.is_paused || vault.is_exhausted() @ ZkShieldedError::VaultAlreadyPaused
     )]
     pub vault: Account<'info, SubscriptionVault>,
 
@@ -61,11 +82,33 @@ pub struct ClaimPeriod<'info> {
 
     /// Vault's token account (optional, only for SPL tokens). Closed to the
     /// retailer on the final claim so its rent is not stranded either.
-    #[account(mut)]
+    ///
+    /// The authority check is written out rather than left to the token
+    /// program. The transfer and the close both make the vault PDA sign, so the
+    /// token program would refuse a foreign account anyway — but it would NOT
+    /// refuse a second, empty account that the same PDA happens to own, and now
+    /// that anyone can send this instruction anyone could create one. Passing
+    /// that decoy on the final claim would close the decoy, hand its rent over,
+    /// close the vault, and strand the real balance behind a PDA that can never
+    /// sign again. The `vault_token.amount >= unpaid` require in the handler is
+    /// the other half of that guard.
+    #[account(
+        mut,
+        constraint = vault_token_account.owner == vault.key() @ ZkShieldedError::Unauthorized
+    )]
     pub vault_token_account: Option<Account<'info, TokenAccount>>,
 
-    /// Retailer's token account (optional, only for SPL tokens)
-    #[account(mut)]
+    /// Retailer's token account (optional, only for SPL tokens).
+    ///
+    /// Its OWNER must be the retailer. Nothing but the signature used to pin
+    /// this: the handler only ever checked the mint, so a permissionless claim
+    /// with no owner check would let any caller name their own token account
+    /// and take the whole SPL payout. This constraint is load-bearing for the
+    /// permissionless change and must not be relaxed.
+    #[account(
+        mut,
+        constraint = retailer_token_account.owner == vault.retailer @ ZkShieldedError::Unauthorized
+    )]
     pub retailer_token_account: Option<Account<'info, TokenAccount>>,
 }
 
@@ -77,13 +120,17 @@ pub fn handler(ctx: Context<ClaimPeriod>) -> Result<()> {
     // the unit tests in `state/subscription_vault.rs` drive directly. `None`
     // means nothing accrued AND funding is still outstanding — a genuine no-op.
     //
-    // A settled vault does NOT come back as `None`. Two of them reach this
+    // A settled vault does NOT come back as `None`. Three of them reach this
     // point with nothing accruing and value still inside:
     //   * one whose funded periods were all claimed before this instruction
     //     learned how to close, leaving dust and rent behind;
     //   * one funded with less than one period's `rate`, for which
-    //     `claimable_periods` is 0 from the first slot and always will be.
-    // Both must be closable, or the deposit and the rent are stranded forever
+    //     `claimable_periods` is 0 from the first slot and always will be;
+    //   * one of the two above that is ALSO paused, which the account
+    //     constraint now lets through. `claimable_periods` returns 0 while
+    //     paused, so `settle` credits no period and pays only the residual the
+    //     subscriber could never have got back anyway.
+    // All must be closable, or the deposit and the rent are stranded forever
     // now that no cancel instruction exists.
     let settlement = vault
         .settle(clock.slot as i64)
@@ -181,6 +228,16 @@ pub fn handler(ctx: Context<ClaimPeriod>) -> Result<()> {
         require!(
             retailer_token.mint == token_mint,
             ZkShieldedError::InvalidTokenMint
+        );
+
+        // The other half of the decoy guard on `vault_token_account` (see its
+        // doc). Owning the right PDA is not enough: a caller who wants the
+        // vault closed with its money still inside would pass an EMPTY account
+        // that the PDA owns. The real one always holds at least `unpaid`, so
+        // requiring that here is exactly the difference between the two.
+        require!(
+            vault_token.amount >= unpaid,
+            ZkShieldedError::InsufficientVaultBalance
         );
 
         // On the final claim drain the token account outright: `close_account`
@@ -322,12 +379,63 @@ mod plumbing_guards {
     }
 
     #[test]
-    fn a_paused_vault_is_still_refused_at_the_account_constraint() {
+    fn a_paused_vault_is_refused_unless_it_has_nothing_left_to_deliver() {
+        // The whole constraint, not a prefix of it. `contains("constraint =
+        // !vault.is_paused")` is satisfied by the exhaustion escape hatch too,
+        // so it can no longer tell a correct constraint from a widened one.
         assert!(
-            handler_src().contains("constraint = !vault.is_paused"),
-            "claim_period would now accept a paused vault — pause must move \
-             WHEN the retailer is paid, and a claim while paused takes money \
-             for a period during which the subscriber had no access"
+            handler_src().contains("constraint = !vault.is_paused || vault.is_exhausted()"),
+            "claim_period's pause constraint changed shape — dropping the \
+             `!is_paused` half lets a claim take money for a period the \
+             subscriber had no access to; dropping the `is_exhausted()` half \
+             puts back the deadlock where a subscriber who pauses and never \
+             resumes strands the retailer's last payout and the rent forever"
+        );
+    }
+
+    #[test]
+    fn the_claim_is_permissionless_but_the_destination_is_not() {
+        let src = handler_src();
+        // Dropping `Signer` is the entire point: a merchant that lost its key
+        // must not lose the revenue. It is only safe while the destination
+        // stays pinned to the account's own immutable field.
+        assert!(
+            !src.contains("pub retailer: Signer<'info>"),
+            "retailer is a Signer again — a merchant whose key is gone can \
+             never be paid, which is already true of 13 devnet vaults"
+        );
+        assert!(
+            src.contains("constraint = retailer.key() == vault.retailer"),
+            "the retailer is no longer pinned to vault.retailer — with no \
+             signature required, ANY caller could now name themselves as the \
+             payee and drain every vault on the program"
+        );
+    }
+
+    #[test]
+    fn the_spl_payout_cannot_be_redirected_by_whoever_sent_the_transaction() {
+        let src = handler_src();
+        // Before the claim went permissionless the retailer's signature was
+        // what tied `retailer_token_account` to the retailer; the handler only
+        // ever checked its MINT. Without this constraint the permissionless
+        // change alone hands every SPL vault to the first caller.
+        assert!(
+            src.contains("constraint = retailer_token_account.owner == vault.retailer"),
+            "retailer_token_account is no longer owner-checked — any caller \
+             could name their own token account and take the whole SPL payout"
+        );
+        // And the vault side: the token program refuses an account the vault
+        // PDA does not own, but not a second EMPTY one that it does.
+        assert!(
+            src.contains("constraint = vault_token_account.owner == vault.key()"),
+            "vault_token_account is no longer owner-checked"
+        );
+        assert!(
+            src.contains("vault_token.amount >= unpaid"),
+            "the vault token account's balance is no longer checked against \
+             what is owed — a caller could pass an empty decoy the PDA owns, \
+             close the vault, and strand the real balance behind a PDA that \
+             can never sign again"
         );
     }
 

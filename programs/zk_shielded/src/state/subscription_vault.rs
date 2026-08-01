@@ -413,19 +413,20 @@ mod tests {
     }
 
     #[test]
-    fn pausing_an_exhausted_vault_blocks_the_claim_that_would_close_it() {
-        // Was `an_exhausted_vault_can_still_be_paused_and_resumed_forever`,
-        // which observed that pause/resume gate on `is_active` alone and so
-        // stay callable on a spent vault, costing a fee and doing nothing.
-        // That is no longer nothing. `claim_period` is the only instruction
-        // that can close a vault and it refuses while `is_paused`, so a paused
-        // subscriber holds the account open and withholds the retailer's last
-        // payout and the rent for as long as they never resume.
+    fn pausing_an_exhausted_vault_no_longer_blocks_the_claim_that_closes_it() {
+        // Was `pausing_an_exhausted_vault_blocks_the_claim_that_would_close_it`,
+        // which recorded the deadlock the removal of cancellation created:
+        // `claim_period` became the only exit, its `!is_paused` account
+        // constraint refused a paused vault, and a subscriber who paused and
+        // never resumed held the account open forever — withholding the
+        // retailer's last payout and the rent from everyone, themselves
+        // included. Cancellation had no such constraint, so this hole did not
+        // exist before the deletion.
         //
-        // This is a DEFERRAL, not a drain: nothing returns to the subscriber
-        // either, and the money is still owed. It is the residual cost of the
-        // founder's ruling that pause blocks claims, recorded here rather than
-        // changed.
+        // The constraint is now `!vault.is_paused || vault.is_exhausted()`.
+        // This test pins the arithmetic half of why that is safe: an exhausted
+        // vault has no period left to deliver, so the escape hatch cannot pay
+        // for time the subscriber did not receive.
         let mut v = vault();
         v.claimed_periods = 5;
         assert!(v.is_exhausted());
@@ -437,10 +438,47 @@ mod tests {
         v.is_paused = true;
         v.pause_slot = Some(9_999);
         assert!(v.is_active, "still the only thing pause/resume check");
-        // `claim_period`'s `!vault.is_paused` account constraint rejects the
-        // instruction before `settle` is ever reached. Pinned here as the
-        // reason the vault stays open, not as an assertion about `settle`.
-        assert!(v.is_paused);
+        assert!(
+            v.is_exhausted(),
+            "pausing does not un-exhaust a vault, so the account constraint \
+             lets this one through",
+        );
+        let s = v.settle(9_999).expect("a paused exhausted vault still settles");
+        assert!(s.is_final, "and the settlement closes it");
+        assert_eq!(
+            s.periods, 0,
+            "no period is credited while paused — claimable_periods returns 0 \
+             the moment is_paused is set, so the escape hatch cannot pay the \
+             retailer for time the subscriber was not being served",
+        );
+        assert_eq!(
+            s.payout, 0,
+            "and there is nothing left to sweep: all five funded periods were \
+             already claimed, so only the rent is released",
+        );
+    }
+
+    #[test]
+    fn a_paused_vault_with_funding_left_still_settles_nothing_and_stays_open() {
+        // The other side of the escape hatch, and the reason it is written
+        // `!is_paused || is_exhausted()` rather than dropped outright. A paused
+        // vault that still owes periods is NOT exhausted, so the account
+        // constraint refuses it and it cannot be closed out from under its
+        // subscriber. If that constraint were ever widened to let any paused
+        // vault through, `settle` would report `is_final == false` for this one
+        // and `claim_period`'s `value_payout > 0 || is_final` require would
+        // reject it — but on a vault that HAS accrued, a widened constraint
+        // would pay the retailer for paused time. Both halves matter.
+        let mut v = vault();
+        v.claimed_periods = 2; // 3 funded periods still owed
+        v.is_paused = true;
+        v.pause_slot = Some(1_500);
+        assert!(!v.is_exhausted(), "still owes three periods");
+        assert_eq!(v.claimable_periods(9_999), 0, "paused accrues nothing");
+        assert!(
+            v.settle(9_999).is_none(),
+            "nothing accrued and funding outstanding — a no-op claim, refused",
+        );
     }
 
     #[test]

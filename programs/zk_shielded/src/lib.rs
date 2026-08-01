@@ -248,12 +248,22 @@ pub mod zk_shielded {
 
     /// Create a private subscription vault using STARK proof (quantum-resistant).
     ///
-    /// `client_stealth_meta`: DEPRECATED and unused. It was a 64-byte stealth
-    /// address (`[spending_pub(32) | viewing_pub(32)]`) that routed the refund
-    /// through `p01_relayer` on cancel. There is no cancel and no refund, so
-    /// nothing on chain reads this any more. The parameter and the field are
-    /// kept so the instruction ABI and `SubscriptionVault::LEN` do not move
-    /// under the 16 vaults already live on devnet. Pass `None`.
+    /// REMOVED ARGUMENT: `client_stealth_meta: Option<[u8; 64]>` used to sit
+    /// between `stark_commitment` and `license_commitment` as argument #9. It
+    /// carried a 64-byte subscriber-controlled stealth address
+    /// (`[spending_pub(32) | viewing_pub(32)]`) that routed the refund through
+    /// `p01_relayer` on cancel. There is no cancel and no refund, so it could
+    /// no longer do anything except publish a stealth address on a public
+    /// chain. Keeping it as an ignored parameter would have left those bytes in
+    /// the transaction payload, which is as public as the account they used to
+    /// land in — so the argument is gone, not merely unread. THIS MOVES THE
+    /// ARGUMENT ENCODING: every caller must drop the `Option` tag byte at that
+    /// offset. All in-tree callers were updated in the same commit.
+    ///
+    /// The `SubscriptionVault::client_stealth_meta` FIELD is untouched and
+    /// still occupies its 65 bytes, always `None`, so `SubscriptionVault::LEN`
+    /// and every account decoder keep working against the vaults already live
+    /// on devnet.
     pub fn subscribe_private_stark(
         ctx: Context<SubscribePrivateStark>,
         nullifier: [u8; 32],
@@ -264,10 +274,9 @@ pub mod zk_shielded {
         interval_slots: u64,
         vk_hash_subscriber: [u8; 32],
         stark_commitment: u64,
-        client_stealth_meta: Option<[u8; 64]>,
         license_commitment: Option<[u8; 32]>,
     ) -> Result<()> {
-        instructions::subscribe_private_stark::handler(ctx, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber, stark_commitment, client_stealth_meta, license_commitment)
+        instructions::subscribe_private_stark::handler(ctx, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber, stark_commitment, license_commitment)
     }
 
     /// Pause a private subscription vault using STARK proof (quantum-resistant)
@@ -453,12 +462,18 @@ pub mod zk_shielded {
         instructions::store_escrow_vk_data::handler_write_escrow_vk(ctx, offset, data)
     }
 
-    /// Claim accrued periods from a subscription vault (retailer only).
+    /// Claim accrued periods from a subscription vault. PERMISSIONLESS: the
+    /// funds can only ever reach `vault.retailer`, so nothing is gained by
+    /// requiring that key to sign — and requiring it stranded the revenue of
+    /// every merchant that lost one. A keeper, the subscriber or a bystander
+    /// can push the transaction and pay its fee.
     ///
     /// On the claim that spends the last funded period this also CLOSES the
     /// vault, paying the retailer the sub-period remainder and the rent. It is
     /// the only instruction that can close a SubscriptionVault. Refuses while
-    /// the vault is paused.
+    /// the vault is paused UNLESS the vault is already exhausted, which is the
+    /// only way a paused vault can ever be closed now that cancellation is
+    /// gone.
     pub fn claim_period(ctx: Context<ClaimPeriod>) -> Result<()> {
         instructions::claim_period::handler(ctx)
     }

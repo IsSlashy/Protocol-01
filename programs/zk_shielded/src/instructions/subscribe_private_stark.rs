@@ -70,7 +70,6 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32], 
     interval_slots: u64,
     vk_hash_subscriber: [u8; 32],
     stark_commitment: u64,
-    client_stealth_meta: Option<[u8; 64]>,
     license_commitment: Option<[u8; 32]>
 )]
 pub struct SubscribePrivateStark<'info> {
@@ -175,7 +174,6 @@ pub fn handler(
     interval_slots: u64,
     vk_hash_subscriber: [u8; 32],
     stark_commitment: u64,
-    client_stealth_meta: Option<[u8; 64]>,
     license_commitment: Option<[u8; 32]>,
 ) -> Result<()> {
     require!(rate > 0, ZkShieldedError::InvalidRate);
@@ -399,10 +397,20 @@ pub fn handler(
     vault.vk_hash_subscriber = vk_hash_subscriber;
     vault.source_pool = Some(pool_key);
     vault.bump = ctx.bumps.vault;
-    vault.client_stealth_meta = client_stealth_meta;
+    // DEPRECATED, and no longer writable. `client_stealth_meta` used to take a
+    // 64-byte subscriber-controlled stealth address — `[spending_pub(32) |
+    // viewing_pub(32)]` — straight from the instruction data into this public
+    // account, where it selected the refund-via-relayer path on cancel. There
+    // is no cancel and no refund, so the only thing it could still do was
+    // publish a subscriber's stealth address for a feature that can never fire.
+    // The parameter is gone from the instruction too, so those bytes no longer
+    // reach the chain at all; leaving the parameter in place would have kept
+    // them in the transaction payload, which is every bit as public as the
+    // account. The FIELD stays, always `None`, because `SubscriptionVault::LEN`
+    // and the account layout must not move under the vaults already live on
+    // devnet.
+    vault.client_stealth_meta = None;
     vault.license_commitment = license_commitment;
-
-    let has_stealth_meta = client_stealth_meta.is_some();
 
     emit!(SubscribePrivateStarkEvent {
         vault: vault.key(),
@@ -415,7 +423,9 @@ pub fn handler(
         source_pool: pool_key,
         nullifier,
         start_slot: clock.slot as i64,
-        has_stealth_meta,
+        // Always false now, and kept only so the event's Borsh layout does not
+        // move under decoders already built against it. See the field's doc.
+        has_stealth_meta: false,
     });
 
     Ok(())
@@ -433,9 +443,12 @@ pub struct SubscribePrivateStarkEvent {
     pub source_pool: Pubkey,
     pub nullifier: [u8; 32],
     pub start_slot: i64,
-    /// DEPRECATED. True if the vault was created with a stealth meta address.
-    /// It selected the refund-via-relayer path on cancel; there is no cancel
-    /// and no refund, so this now reports a field nothing acts on. The 64 raw
-    /// bytes are NOT emitted, to avoid leaking the address itself.
+    /// DEPRECATED and now permanently `false`. It reported whether the vault
+    /// was created with a stealth meta address, which selected the
+    /// refund-via-relayer path on cancel. There is no cancel, no refund, and
+    /// since the `client_stealth_meta` parameter was removed no way to supply
+    /// one either. Retained, and never removed, because Borsh decodes an event
+    /// sequentially and dropping a field silently shortens the buffer for every
+    /// decoder built against the old layout.
     pub has_stealth_meta: bool,
 }
