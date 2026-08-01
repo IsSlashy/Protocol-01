@@ -574,9 +574,13 @@ export default function RoadmapPage() {
           <p className="text-xs font-mono tracking-[0.2em] mb-3" style={{ color: THEME.primaryColor }}>
             {t('roadmap.heroSubtitle')}
           </p>
-          <h2 className="text-2xl sm:text-3xl font-bold font-display tracking-wide mb-2">
+          {/* h1, not h2: this is the page title. The page had NO h1 at all after
+              commit 97339ea6 folded the old page header into SiteHeader, which
+              contains no heading element — an a11y and SEO defect, since a
+              document should expose exactly one top-level heading. */}
+          <h1 className="text-2xl sm:text-3xl font-bold font-display tracking-wide mb-2">
             {t('roadmap.heroTitle')}
-          </h2>
+          </h1>
           <p className="text-sm max-w-2xl" style={{ color: THEME.mutedColor }}>
             {t('roadmap.heroDesc')}
           </p>
