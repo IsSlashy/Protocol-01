@@ -2,15 +2,23 @@
  * What a `SubscriptionVault` proves about the person presenting it — and what
  * it does not.
  *
- * `subscribe_normal` is permissionless. Its accounts struct carries
- * `/// CHECK: Any pubkey can be a retailer` on an unsigned `AccountInfo`
- * (`programs/zk_shielded/src/instructions/subscribe_normal.rs:25-27`), and its
- * handler takes `rate`, `interval_slots` and `amount` straight from the
- * instruction data with only `> 0` required of each (lines 58-70). So ANYONE
- * can create a real, program-owned vault at the canonical PDA that names any
- * merchant as `retailer`, funded with one lamport, at a rate of one lamport,
- * with an interval long enough that `periodsElapsed` never reaches
- * `periodsPaidFor`. Nothing about that account is forged: the program wrote it.
+ * Subscribing is permissionless, and the removal of `subscribe_normal` did not
+ * change that. `subscribe_private_stark` — the only instruction left that can
+ * create a vault — carries `/// CHECK: Any pubkey can be a retailer` on an
+ * unsigned `AccountInfo`
+ * (`programs/zk_shielded/src/instructions/subscribe_private_stark.rs:81-83`),
+ * and its handler takes `rate` and `interval_slots` straight from the
+ * instruction data with only `> 0` required of each (`:181-182`). So ANYONE can
+ * create a real, program-owned vault at the canonical PDA that names any
+ * merchant as `retailer`, at a rate of one atomic unit per period. Nothing
+ * about that account is forged: the program wrote it.
+ *
+ * What removing `subscribe_normal` DID change is the price. `total_deposited`
+ * is no longer a caller-chosen `amount`; it is fixed to the source pool's
+ * denomination (`:187`, `:390`), so the attacker must burn a real pool note
+ * instead of one lamport. It closes nothing: at a rate of 1, `periodsPaidFor`
+ * becomes that entire denomination — 100,000,000 periods for the 0.1 SOL pools
+ * live on devnet — and `periodsElapsed` never catches up.
  *
  * Every structural check on the single-account path passes on such a vault —
  * owner, discriminator, retailer field, canonical PDA, subscriber ID,
@@ -19,6 +27,9 @@
  *
  * These tests pin that: the scope is not a multi-product convenience, it is the
  * entire distance between "this account exists" and "this person paid you".
+ * Both vault shapes are covered — the wallet-keyed one `subscribe_normal` used
+ * to write, which 3 of the 18 live devnet vaults still are, and the
+ * commitment-keyed one `subscribe_private_stark` writes today.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -74,6 +85,24 @@ function buildNormalVault(f: {
   return Buffer.concat(parts);
 }
 
+/**
+ * Commitment-mode vault body — the shape `subscribe_private_stark` writes
+ * (`subscriber_pubkey = None` at `:386`, `subscriber_commitment = Some` at
+ * `:387`). Identical to {@link buildNormalVault} except for which of the two
+ * subscriber options is populated, which is exactly why the PDA seeds, and
+ * therefore every structural check, are the same for both.
+ */
+function buildPrivateVault(f: Parameters<typeof buildNormalVault>[0]): Buffer {
+  const normal = buildNormalVault(f);
+  const tail = normal.subarray(8 + 33 + 1); // past disc + Some(pubkey) + None
+  return Buffer.concat([
+    Buffer.from(VAULT_DISC),
+    Buffer.from([0]),                                          // subscriber_pubkey None
+    Buffer.concat([Buffer.from([1]), Buffer.from(f.subscriberId)]), // subscriber_commitment Some
+    tail,
+  ]);
+}
+
 function stubConnection(accounts: Record<string, { data: Buffer; owner: PublicKey }>, slot: number) {
   const conn = {
     async getAccountInfo(pk: PublicKey) {
@@ -115,7 +144,7 @@ const SELF_MINTED = {
 
 const NOW = 480_000_000; // a real devnet slot, far past startSlot
 
-describe('a vault the merchant never sold', () => {
+describe('a vault the merchant never sold — the legacy wallet-keyed shape', () => {
   const [pda] = deriveSubscriptionVaultPda(MERCHANT, ATTACKER, MINT);
   const data = buildNormalVault(SELF_MINTED);
   const conn = stubConnection({ [pda.toBase58()]: { data, owner: PROGRAM } }, NOW);
@@ -163,7 +192,9 @@ describe('a vault the merchant never sold', () => {
   });
 
   it('the license path behaves the same way — the commitment is attacker-chosen', async () => {
-    // `license_commitment` is an instruction argument (`subscribe_normal.rs:65`),
+    // `license_commitment` is an instruction argument on the surviving
+    // instruction too (`subscribe_private_stark.rs:74`, and it was
+    // `subscribe_normal.rs:65` before that instruction was removed),
     // so whoever creates the vault picks the preimage. A matching key therefore
     // proves possession of a secret the attacker invented, nothing more.
     const secret = new Uint8Array(LICENSE_SECRET_BYTES).fill(0x5a);
@@ -196,5 +227,78 @@ describe('a vault the merchant never sold', () => {
 
     // The access path, given the same off-PDA address, refuses it.
     expect(await hasActiveVaultAccessForVault(c, impostorAddress, MERCHANT, ATTACKER)).toBeNull();
+  });
+});
+
+/**
+ * The same hole, on the only instruction that still exists.
+ *
+ * `subscribe_private_stark` fixes `total_deposited` to the pool's denomination,
+ * so the one-lamport fixture above is no longer constructible. It leaves `rate`
+ * free, which is enough: a rate of 1 turns a 0.1 SOL pool note into 100,000,000
+ * paid-for periods. These four cases are the same four as above, re-run against
+ * a body shaped the way the surviving instruction writes it, so that removing
+ * `subscribe_normal` cannot be mistaken for closing this.
+ */
+describe('a vault the merchant never sold — the shape subscribe_private_stark writes', () => {
+  /** One 0.1 SOL pool note, one atomic unit per period, the merchant's own interval. */
+  const SELF_MINTED_PRIVATE = {
+    subscriberId: ATTACKER,
+    retailer: MERCHANT,
+    tokenMint: MINT,
+    totalDeposited: 100_000_000n, // pool.denomination — the attacker cannot choose it
+    rate: 1n,                     // …but it can choose this
+    intervalSlots: 216_000n,      // copied from what the merchant sells
+    startSlot: 1_000n,
+  };
+
+  const [pda] = deriveSubscriptionVaultPda(MERCHANT, ATTACKER, MINT);
+  const data = buildPrivateVault(SELF_MINTED_PRIVATE);
+  const conn = stubConnection({ [pda.toBase58()]: { data, owner: PROGRAM } }, NOW);
+
+  it('decodes as a commitment-keyed vault, not a wallet-keyed one', async () => {
+    const fetched = await fetchVaultByAddress(conn, pda);
+    expect(fetched.ok).toBe(true);
+    if (!fetched.ok) return;
+    expect(fetched.vault.subscriberPubkey).toBeNull();
+    expect(fetched.vault.subscriberCommitment).not.toBeNull();
+    expect(fetched.vault.retailer.equals(MERCHANT)).toBe(true);
+  });
+
+  it('is "current" for a hundred million periods, at the merchant own interval', async () => {
+    const fetched = await fetchVaultByAddress(conn, pda);
+    expect(fetched.ok).toBe(true);
+    if (!fetched.ok) return;
+    expect(periodsPaidFor(fetched.vault)).toBe(100_000_000n);
+    expect(subscriptionIsCurrent(fetched.vault, BigInt(NOW))).toBe(true);
+    // and still current 400 years of slots later
+    expect(subscriptionIsCurrent(fetched.vault, 100_000_000_000n)).toBe(true);
+  });
+
+  it('IS GRANTED ACCESS when no service scope is supplied', async () => {
+    const got = await hasActiveVaultAccessForVault(conn, pda, MERCHANT, ATTACKER);
+    expect(got).not.toBeNull();
+    expect(got!.rate).toBe(1n);
+  });
+
+  it('is DENIED once the merchant passes what it actually charges', async () => {
+    // The interval matches REAL_SERVICE exactly; only the price refuses it.
+    const got = await hasActiveVaultAccessForVault(conn, pda, MERCHANT, ATTACKER, {
+      service: REAL_SERVICE,
+    });
+    expect(got).toBeNull();
+  });
+
+  it('a genuine private subscriber at the registered price still passes with the same scope', async () => {
+    const honest = { ...SELF_MINTED_PRIVATE, rate: 50_000_000n, totalDeposited: 500_000_000n };
+    const honestConn = stubConnection(
+      { [pda.toBase58()]: { data: buildPrivateVault(honest), owner: PROGRAM } },
+      Number(1_000n + 216_000n),
+    );
+    const got = await hasActiveVaultAccessForVault(honestConn, pda, MERCHANT, ATTACKER, {
+      currentSlot: 1_000n + 216_000n,
+      service: REAL_SERVICE,
+    });
+    expect(got).not.toBeNull();
   });
 });

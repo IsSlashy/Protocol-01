@@ -332,11 +332,16 @@ export interface VerifyLicenseAgainstVaultOptions extends ServiceScopedOptions {
  *    owns it and its `retailer` is the merchant. The license commitment is what
  *    binds a key to a vault here.
  * 2. **That the merchant ever sold this subscription.** `license_commitment` is
- *    an instruction argument to `subscribe_normal`, whose `retailer` is an
- *    unsigned account and whose `rate`/`interval_slots`/`amount` are chosen by
- *    the caller. A stranger can therefore create a real, program-owned,
+ *    an instruction argument to `subscribe_private_stark`
+ *    (`subscribe_private_stark.rs:74`), whose `retailer` is an unsigned account
+ *    (`:81-83`) and whose `rate`/`interval_slots` are chosen by the caller
+ *    (`:181-182`). A stranger can therefore create a real, program-owned,
  *    currently-funded vault naming this merchant, with a commitment whose
- *    preimage they picked, for one lamport — and present the matching key. A
+ *    preimage they picked, at a rate of one atomic unit — and present the
+ *    matching key. Removing `subscribe_normal` did not close this; it only
+ *    stopped the deposit being caller-chosen (`total_deposited` is now the
+ *    pool's denomination, `:187`/`:390`), which a rate of 1 turns straight back
+ *    into an effectively unexpiring `periodsPaidFor`. A
  *    valid result WITHOUT `opts.service` means "a vault naming you exists, is
  *    inside a paid-for period, and this key matches the commitment someone put
  *    on it". Pass `opts.service` and the vault's `rate` and `interval_slots`

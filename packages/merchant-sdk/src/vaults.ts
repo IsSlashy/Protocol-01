@@ -451,21 +451,27 @@ export interface VaultAccessCheckOptions extends FetchVaultOptions, ServiceScope
  *
  * ## Steps 1-6 prove the account is real, not that you sold it
  *
- * `subscribe_normal` is permissionless. `retailer` is an unsigned `AccountInfo`
- * carrying `/// CHECK: Any pubkey can be a retailer`, and `rate`,
- * `interval_slots` and `amount` are instruction arguments with only `> 0`
- * required of each. So anyone can have the program write a genuine vault, at
- * the canonical PDA, naming any merchant, funded with ONE lamport at one
- * lamport per period, with an interval long enough that `periodsElapsed` never
- * reaches `periodsPaidFor`. Steps 1-6 all pass on it — nothing there is forged.
- * It is granted access.
+ * Subscribing is permissionless. `subscribe_private_stark` — since the removal
+ * of `subscribe_normal`, the only instruction that can create a vault — declares
+ * `retailer` as an unsigned `AccountInfo` carrying `/// CHECK: Any pubkey can be
+ * a retailer` (`subscribe_private_stark.rs:81-83`), and takes `rate` and
+ * `interval_slots` from the instruction data with only `> 0` required of each
+ * (`:181-182`). So anyone can have the program write a genuine vault, at the
+ * canonical PDA, naming any merchant, at a rate of one atomic unit per period.
+ * Steps 1-6 all pass on it — nothing there is forged. It is granted access.
+ *
+ * The deposit is no longer attacker-chosen: `total_deposited` is fixed to the
+ * pool's denomination (`:187`, `:390`). That raises the price from one lamport
+ * and closes nothing, because a rate of 1 makes `periodsPaidFor` equal to that
+ * whole denomination, so `periodsElapsed` never reaches it in any horizon the
+ * merchant cares about.
  *
  * Step 7 is the only step that refuses it, because only the registry knows what
  * the merchant charges. Treat `opts.service` as required in production, not as
  * a multi-product convenience: without it this function answers "does a vault
  * naming you exist and is it inside a period someone paid for", which a
- * stranger can arrange for a lamport. `src/self-minted-vault.test.ts` pins both
- * directions.
+ * stranger can arrange without ever talking to the merchant.
+ * `src/self-minted-vault.test.ts` pins both directions.
  *
  * Ambiguous scopes (two of the merchant's services indistinguishable on chain)
  * are ACCEPTED here, because the return type has nowhere to report the

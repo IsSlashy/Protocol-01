@@ -224,10 +224,10 @@ async function pollOnce(
       }
 
       // A vault naming us proves the program wrote it, NOT that we sold it.
-      // `subscribe_normal` takes an unsigned retailer and a caller-chosen rate,
-      // interval and amount, so a stranger can create a real, "current" vault
-      // pointing at this merchant for one lamport. Check it against the price
-      // and interval this service actually registered.
+      // `subscribe_private_stark` takes an unsigned retailer and a caller-chosen
+      // rate and interval, so a stranger can create a real, "current" vault
+      // pointing at this merchant at one atomic unit per period. Check it
+      // against the price and interval this service actually registered.
       const scoped = vaultMatchesService(v, serviceScope);
       if (!scoped.matches) {
         logStep(`  – vault ${v.pda.toBase58().slice(0, 12)}… skipped: ${scoped.reason}`);

@@ -226,22 +226,33 @@ that has an answer: is the period we are in one the subscriber paid for?
 
 **Pass a `service` scope. Not only if you sell more than one thing.** A vault
 records no service ID — its address is `[retailer, subscriber, mint]` — and
-`subscribe_normal` is permissionless: the retailer is an unsigned account
-(`/// CHECK: Any pubkey can be a retailer`) and `rate`, `interval_slots` and
-`amount` are instruction arguments the caller picks, needing only to be greater
-than zero. So a stranger can have the program create a genuine vault, at the
-canonical PDA, naming **you** as retailer, funded with one lamport at one
-lamport per period, with a period long enough that it never elapses. That vault
-passes every check the SDK can make from the account alone — owner,
-discriminator, retailer field, canonical PDA, subscriber ID,
+subscribing is permissionless. `subscribe_private_stark`, now the only
+instruction that can create a vault, declares the retailer as an unsigned
+`AccountInfo` carrying `/// CHECK: Any pubkey can be a retailer`
+(`subscribe_private_stark.rs:81-83`) and takes `rate` and `interval_slots`
+straight from the instruction data, requiring only that each be greater than
+zero (`:181-182`). So a stranger can have the program create a genuine vault, at
+the canonical PDA, naming **you** as retailer, at a rate of one atomic unit per
+period. That vault passes every check the SDK can make from the account alone —
+owner, discriminator, retailer field, canonical PDA, subscriber ID,
 `subscriptionIsCurrent` — because none of them is forged. The program wrote it.
+
+Removing `subscribe_normal` raised the price of that from one lamport, and did
+not close it. The deposit is no longer a caller-chosen `amount`: it is fixed to
+the pool's denomination (`:187`, `:390`). But the attacker still picks the rate,
+and a rate of 1 turns that denomination into `periodsPaidFor` — 100,000,000
+periods for the 0.1 SOL pools live on devnet — so the vault reads "current" for
+longer than the merchant will exist, and `cancel_private_stark` gives the
+deposit back when the attacker is done with it.
 
 The only thing that refuses it is `service`, because only the registry knows
 what you charge. `ServiceScope` compares the vault's `rate` and `interval_slots`
-against the price and interval your service registered; the one-lamport vault
-fails on both. Without a scope you are not checking a subscription, you are
-checking that an account exists. (Pinned in `src/self-minted-vault.test.ts`,
-both directions.)
+against the price and interval your service registered; a rate of 1 fails on
+price whatever interval it copies from you. Without a scope you are not checking
+a subscription, you are checking that an account exists. (Pinned in
+`src/self-minted-vault.test.ts`, both directions, for both the legacy
+wallet-keyed shape and the commitment-keyed shape the surviving instruction
+writes.)
 
 Two products at the same price are a separate matter: if two of your services
 agree on retailer, mint, price *and* interval, the chain cannot tell them apart
