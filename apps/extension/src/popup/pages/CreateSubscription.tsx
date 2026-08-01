@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
+  AlertTriangle,
   ArrowLeft,
   Shield,
   Loader2,
@@ -1072,6 +1073,58 @@ export default function CreateSubscription() {
               </div>
             )}
 
+            {/*
+              THE ONE-WAY WARNING. It has to be on the paying screen, above the
+              button that moves the money, not in a settings page or a tooltip.
+              The ZK path deposits the whole note into a SubscriptionVault, and
+              the protocol has no instruction that can ever pay any of it back.
+            */}
+            {privacyMode === 'zk' ? (
+              <div
+                className="p-3 rounded-xl bg-yellow-400/8 border border-yellow-400/40 space-y-1.5"
+                role="note"
+              >
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-yellow-400 shrink-0" aria-hidden="true" />
+                  <p className="text-yellow-400 text-[11px] font-bold font-display tracking-wide">
+                    THIS PAYMENT IS ONE-WAY
+                  </p>
+                </div>
+                <p className="text-p01-chrome text-[10px] leading-relaxed">
+                  Your note is deposited in full and can only ever be paid out to the
+                  merchant. <span className="text-white font-semibold">There is no
+                  cancellation and no refund</span> — not from the merchant, not from
+                  Protocol 01.
+                </p>
+                <p className="text-p01-chrome text-[10px] leading-relaxed">
+                  You can <span className="text-white font-semibold">pause at any time
+                  and resume later</span>. Pausing freezes the clock and cuts access;
+                  your prepaid days are not lost while paused.
+                </p>
+              </div>
+            ) : (
+              <div
+                className="p-3 rounded-xl bg-yellow-400/8 border border-yellow-400/40 space-y-1.5"
+                role="note"
+              >
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-yellow-400 shrink-0" aria-hidden="true" />
+                  <p className="text-yellow-400 text-[11px] font-bold font-display tracking-wide">
+                    PAYMENTS ARE FINAL
+                  </p>
+                </div>
+                <p className="text-p01-chrome text-[10px] leading-relaxed">
+                  Every payment sent is final. <span className="text-white font-semibold">
+                  Protocol 01 cannot refund you</span>; a refund is something the
+                  merchant would have to send you separately.
+                </p>
+                <p className="text-p01-chrome text-[10px] leading-relaxed">
+                  You can <span className="text-white font-semibold">pause at any time
+                  and resume later</span> to stop further payments.
+                </p>
+              </div>
+            )}
+
             {/* Actions */}
             <button
               onClick={handleCreate}
@@ -1097,7 +1150,7 @@ export default function CreateSubscription() {
             </button>
 
             <p className="text-p01-chrome/40 text-[9px] font-mono text-center">
-              First payment sent immediately. Cancel anytime.
+              First payment sent immediately. Pause and resume anytime — no refunds.
             </p>
           </motion.div>
         )}

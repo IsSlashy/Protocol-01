@@ -599,10 +599,26 @@ const provider = {
   },
 
   /**
-   * Cancel a subscription
+   * Pause a subscription. Freezes the subscription clock and cuts access;
+   * prepaid days are not lost and resume picks them back up.
+   *
+   * BREAKING CHANGE: replaces `cancelSubscription`. A Protocol 01 subscription
+   * is a one-way prepaid envelope — money that enters it can only ever leave it
+   * toward the merchant, and the protocol has no instruction that could send any
+   * of it back. Pause and resume are the whole set of subscriber controls.
    */
-  async cancelSubscription(subscriptionId: string): Promise<{ success: boolean }> {
-    return sendMessage<{ success: boolean }>('CANCEL_SUBSCRIPTION', {
+  async pauseSubscription(subscriptionId: string): Promise<{ success: boolean }> {
+    return sendMessage<{ success: boolean }>('PAUSE_SUBSCRIPTION', {
+      origin: window.location.origin,
+      subscriptionId,
+    });
+  },
+
+  /**
+   * Resume a paused subscription.
+   */
+  async resumeSubscription(subscriptionId: string): Promise<{ success: boolean }> {
+    return sendMessage<{ success: boolean }>('RESUME_SUBSCRIPTION', {
       origin: window.location.origin,
       subscriptionId,
     });

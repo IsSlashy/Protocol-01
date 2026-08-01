@@ -6,7 +6,6 @@ import {
   Clock,
   Play,
   Pause,
-  Trash2,
   DollarSign,
   Shield,
   Eye,
@@ -37,21 +36,21 @@ export default function SubscriptionVaults() {
     setCurrentSlot,
     getClaimable,
     getClaimableAmount,
-    getRefundable,
+    getOutstandingToRetailer,
     getNextClaimableSlot,
     getEntitlementStatus,
     pauseNormalVault,
     resumeNormalVault,
-    cancelNormalVault,
     claimVaultPeriod,
     pausePrivateVault,
     resumePrivateVault,
-    cancelPrivateVault,
   } = useSubscriptionVaultStore();
 
   const [showBalance, setShowBalance] = useState(true);
   const [selectedVault, setSelectedVault] = useState<string | null>(null);
-  const [actionModal, setActionModal] = useState<'pause' | 'resume' | 'cancel' | 'claim' | null>(null);
+  // NO 'cancel'. A subscription is a one-way prepaid envelope — the protocol has
+  // no cancellation instruction, so there is nothing behind such a control.
+  const [actionModal, setActionModal] = useState<'pause' | 'resume' | 'claim' | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -136,32 +135,6 @@ export default function SubscriptionVaults() {
         await resumeNormalVault(selectedVault);
       }
       setSuccessMsg('Vault resumed successfully');
-      setActionModal(null);
-      setTimeout(() => setSuccessMsg(null), 4000);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setIsProcessing(false);
-      setZkProgress(null);
-    }
-  };
-
-  const handleCancel = async () => {
-    if (!selectedVault) return;
-    const vault = vaults.find(v => v.address === selectedVault);
-    if (!vault) return;
-
-    setIsProcessing(true);
-    setError(null);
-    setZkProgress(null);
-
-    try {
-      if (vault.isPrivateMode) {
-        await cancelPrivateVault(selectedVault, (step) => setZkProgress(step));
-      } else {
-        await cancelNormalVault(selectedVault);
-      }
-      setSuccessMsg('Vault cancelled successfully');
       setActionModal(null);
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err) {
@@ -311,7 +284,8 @@ export default function SubscriptionVaults() {
             {vaults.map((vault) => {
               const claimablePeriods = getClaimable(vault.address);
               const claimableAmount = getClaimableAmount(vault.address);
-              const refundable = getRefundable(vault.address);
+              // What the retailer is STILL OWED — never a refund quote.
+              const outstanding = getOutstandingToRetailer(vault.address);
               const nextSlot = getNextClaimableSlot(vault.address);
               // Never `vault.isActive`: the program writes it true at subscribe
               // and false nowhere, so an exhausted subscription rendered ACTIVE.
@@ -462,19 +436,6 @@ export default function SubscriptionVaults() {
                         Resume
                       </button>
                     )}
-                    {!isRetailer && vault.isActive && (
-                      <button
-                        onClick={() => {
-                          setSelectedVault(vault.address);
-                          setActionModal('cancel');
-                          setError(null);
-                        }}
-                        className="flex-1 py-2 px-3 bg-red-500/10 text-red-400 rounded-lg text-xs font-medium hover:bg-red-500/20 transition-colors flex items-center justify-center gap-1 border border-red-500/30"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        Cancel
-                      </button>
-                    )}
                     {isRetailer && claimablePeriods > 0 && (
                       <button
                         onClick={() => {
@@ -489,6 +450,19 @@ export default function SubscriptionVaults() {
                       </button>
                     )}
                   </div>
+
+                  {/* The no-refund rule, stated where the Cancel button used to be. */}
+                  {!isRetailer && (
+                    <p className="mt-3 text-p01-chrome/70 text-[10px] leading-relaxed">
+                      This subscription cannot be cancelled or refunded.
+                      {showBalance && outstanding > 0 && (
+                        <> {formatTokenAmount(outstanding, vault.tokenMint)} is still
+                        owed to the retailer and will be paid out over time.</>
+                      )}{' '}
+                      You can pause at any time and resume later — your prepaid days
+                      are not lost while paused.
+                    </p>
+                  )}
                 </motion.div>
               );
             })}
@@ -510,13 +484,11 @@ export default function SubscriptionVaults() {
                   'w-12 h-12 rounded-full flex items-center justify-center',
                   actionModal === 'pause' && 'bg-yellow-400/20',
                   actionModal === 'resume' && 'bg-p01-cyan/20',
-                  actionModal === 'cancel' && 'bg-red-500/20',
                   actionModal === 'claim' && 'bg-p01-cyan/20'
                 )}
               >
                 {actionModal === 'pause' && <Pause className="w-6 h-6 text-yellow-400" />}
                 {actionModal === 'resume' && <Play className="w-6 h-6 text-p01-cyan" />}
-                {actionModal === 'cancel' && <Trash2 className="w-6 h-6 text-red-400" />}
                 {actionModal === 'claim' && <DollarSign className="w-6 h-6 text-p01-cyan" />}
               </div>
               <div>
@@ -524,9 +496,8 @@ export default function SubscriptionVaults() {
                   {actionModal} Vault
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
-                  {actionModal === 'pause' && 'Temporarily stop periodic payments'}
-                  {actionModal === 'resume' && 'Resume periodic payments'}
-                  {actionModal === 'cancel' && 'Close vault and refund remaining balance'}
+                  {actionModal === 'pause' && 'Freeze the clock and cut access. Prepaid days are not lost.'}
+                  {actionModal === 'resume' && 'Restart the clock where it stopped'}
                   {actionModal === 'claim' && 'Claim accrued periods'}
                 </p>
               </div>
@@ -559,13 +530,12 @@ export default function SubscriptionVaults() {
                 disabled={isProcessing}
                 className="flex-1 py-3 bg-p01-void text-white font-medium rounded-xl hover:bg-p01-dark transition-colors disabled:opacity-50"
               >
-                Cancel
+                Back
               </button>
               <button
                 onClick={() => {
                   if (actionModal === 'pause') handlePause();
                   else if (actionModal === 'resume') handleResume();
-                  else if (actionModal === 'cancel') handleCancel();
                   else if (actionModal === 'claim') handleClaim();
                 }}
                 disabled={isProcessing}
@@ -573,7 +543,6 @@ export default function SubscriptionVaults() {
                   'flex-1 py-3 font-medium rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2',
                   actionModal === 'pause' && 'bg-yellow-400 text-p01-void hover:bg-yellow-400/90',
                   actionModal === 'resume' && 'bg-p01-cyan text-p01-void hover:bg-p01-cyan/90',
-                  actionModal === 'cancel' && 'bg-red-500 text-white hover:bg-red-500/90',
                   actionModal === 'claim' && 'bg-p01-cyan text-p01-void hover:bg-p01-cyan/90'
                 )}
               >

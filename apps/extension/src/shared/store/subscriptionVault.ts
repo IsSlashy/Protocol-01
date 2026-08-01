@@ -16,11 +16,9 @@ import {
   pausePrivate,
   resumeNormal,
   resumePrivate,
-  cancelNormal,
-  cancelPrivate,
   computeClaimable,
   computeClaimableAmount,
-  computeRefundable,
+  computeOutstandingToRetailer,
   entitlementStatus,
   nextClaimableSlot,
 } from '../services/subscriptionVault';
@@ -51,7 +49,7 @@ interface SubscriptionVaultState {
    * Stored ENCRYPTED at rest: each value is an AES-256-GCM EncryptedBlob keyed
    * by the in-memory session password (sessionCrypto). Legacy entries may still
    * be plaintext bigint strings — getSecret tolerates both and re-encrypts is
-   * not auto-triggered (the secret is only read on pause/resume/cancel).
+   * not auto-triggered (the secret is only read on pause/resume).
    */
   subscriberSecrets: Record<string, EncryptedBlob | string>;
   /** Loading indicator */
@@ -96,9 +94,6 @@ interface SubscriptionVaultState {
   /** Resume a paused normal vault subscription. */
   resumeNormalVault: (vaultAddress: string) => Promise<string>;
 
-  /** Cancel a normal vault and refund subscriber. */
-  cancelNormalVault: (vaultAddress: string) => Promise<string>;
-
   /** Claim accrued periods (retailer only). */
   claimVaultPeriod: (vaultAddress: string) => Promise<string>;
 
@@ -114,7 +109,7 @@ interface SubscriptionVaultState {
    * call subscribe_private_stark on-chain.
    *
    * subscriberOwnershipCommitment is the bigint stored from the subscriber's
-   * STARK circuit-0 proof (used for pause/resume/cancel authentication).
+   * STARK circuit-0 proof (used for pause/resume authentication).
    */
   createPrivateVault: (params: {
     receipt: ShieldReceipt;
@@ -136,16 +131,20 @@ interface SubscriptionVaultState {
   /** Resume a private vault (generates circuit-0 STARK proof). */
   resumePrivateVault: (vaultAddress: string, onProgress?: (step: string) => void) => Promise<string>;
 
-  /** Cancel a private vault (generates circuit-0 STARK proof, refund-via-relayer). */
-  cancelPrivateVault: (vaultAddress: string, onProgress?: (step: string) => void) => Promise<string>;
-
   // -------------------------------------------------------------------
   // Computed helpers (use current slot from state)
   // -------------------------------------------------------------------
 
   getClaimable: (vaultAddress: string) => number;
   getClaimableAmount: (vaultAddress: string) => number;
-  getRefundable: (vaultAddress: string) => number;
+  /**
+   * What the retailer is still owed on this vault, in atomic units.
+   *
+   * NOT a refund quote. A subscription is a one-way prepaid envelope: money that
+   * enters a vault can only ever leave it toward the retailer. Replaces
+   * `getRefundable`.
+   */
+  getOutstandingToRetailer: (vaultAddress: string) => number;
   getNextClaimableSlot: (vaultAddress: string) => number | null;
   /**
    * What the UI is allowed to say about this vault, using the slot last polled.
@@ -314,20 +313,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         }
       },
 
-      cancelNormalVault: async (vaultAddress: string) => {
-        set({ loading: true, error: null });
-        try {
-          const sig = await cancelNormal(vaultAddress);
-          // Remove from local state (vault is closed on-chain)
-          get().removeVault(vaultAddress);
-          set({ loading: false });
-          return sig;
-        } catch (error) {
-          set({ loading: false, error: (error as Error).message });
-          throw error;
-        }
-      },
-
       claimVaultPeriod: async (vaultAddress: string) => {
         set({ loading: true, error: null });
         try {
@@ -407,24 +392,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         }
       },
 
-      cancelPrivateVault: async (vaultAddress: string, onProgress?: (step: string) => void) => {
-        set({ loading: true, error: null });
-        const secret = await get().getSecret(vaultAddress);
-        if (!secret) {
-          set({ loading: false, error: 'Subscriber secret not found. Cannot generate ZK proof.' });
-          throw new Error('Subscriber secret not found for vault ' + vaultAddress);
-        }
-        try {
-          const sig = await cancelPrivate(vaultAddress, secret, onProgress);
-          get().removeVault(vaultAddress);
-          set({ loading: false });
-          return sig;
-        } catch (error) {
-          set({ loading: false, error: (error as Error).message });
-          throw error;
-        }
-      },
-
       // -------------------------------------------------------------------
       // Computed helpers
       // -------------------------------------------------------------------
@@ -442,11 +409,11 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         return computeClaimableAmount(vault, state.currentSlot);
       },
 
-      getRefundable: (vaultAddress: string) => {
+      getOutstandingToRetailer: (vaultAddress: string) => {
         const state = get();
         const vault = state.vaults.find((v) => v.address === vaultAddress);
         if (!vault) return 0;
-        return computeRefundable(vault, state.currentSlot);
+        return computeOutstandingToRetailer(vault);
       },
 
       getNextClaimableSlot: (vaultAddress: string) => {

@@ -67,14 +67,12 @@ function getCategoryIconComponent(category: ServiceCategory): React.ComponentTyp
 export default function SubscriptionDetails() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showPaymentHistory, setShowPaymentHistory] = useState(false);
 
   const {
     getSubscription,
     pauseSubscription,
     resumeSubscription,
-    cancelSubscription,
     error,
     clearError,
   } = useSubscriptionsStore();
@@ -156,13 +154,6 @@ export default function SubscriptionDetails() {
       resumeSubscription(subscription.id);
     }
   };
-
-  const handleCancel = () => {
-    cancelSubscription(subscription.id);
-    setShowCancelConfirm(false);
-    navigate('/subscriptions');
-  };
-
 
   return (
     <div className="flex flex-col h-full">
@@ -451,62 +442,22 @@ export default function SubscriptionDetails() {
             )}
           </button>
 
-          <button
-            onClick={() => setShowCancelConfirm(true)}
-            className="w-full flex items-center justify-center gap-2 py-3 bg-red-500/10 text-red-500 font-medium rounded-xl border border-red-500/30 hover:bg-red-500/20 transition-colors"
-          >
-            <Ban className="w-4 h-4" />
-            Cancel & Revoke
-          </button>
+          {/*
+            The no-refund rule, stated where "Cancel & Revoke" used to be.
+            A subscription is a one-way prepaid envelope: money that has left
+            your wallet can only ever reach the merchant, and the protocol has
+            no instruction that could send any of it back. Pause and resume are
+            the whole set of controls.
+          */}
+          <p className="text-p01-chrome/60 text-[11px] leading-relaxed pt-1">
+            This subscription cannot be cancelled or refunded. Pause it at any time
+            and resume later — your prepaid days are not lost while paused. If you
+            want money back, that is between you and the merchant; Protocol 01
+            cannot return it.
+          </p>
         </div>
       )}
 
-      {/* Cancel Confirmation Modal */}
-      {showCancelConfirm && (
-        <div className="absolute inset-0 bg-black/80 flex items-end justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="cancel-confirm-title">
-          <motion.div
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="w-full bg-p01-surface rounded-2xl p-5"
-          >
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-red-500" />
-              </div>
-              <div>
-                <h3 id="cancel-confirm-title" className="text-lg font-semibold text-white">
-                  Cancel Subscription?
-                </h3>
-                <p className="text-sm text-p01-chrome/60">
-                  This will permanently stop all payments
-                </p>
-              </div>
-            </div>
-
-            <div className="bg-p01-elevated rounded-xl p-3 mb-4">
-              <p className="text-xs text-p01-chrome">
-                <strong className="text-white">{subscription.name}</strong> will no longer receive
-                payments. This action cannot be undone.
-              </p>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowCancelConfirm(false)}
-                className="flex-1 py-3 bg-p01-border text-white font-medium rounded-xl hover:bg-p01-border transition-colors"
-              >
-                Keep Active
-              </button>
-              <button
-                onClick={handleCancel}
-                className="flex-1 py-3 bg-red-500 text-white font-medium rounded-xl hover:bg-red-600 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </motion.div>
-        </div>
-      )}
     </div>
   );
 }
