@@ -2671,7 +2671,11 @@ pub fn verify_deep_ali_circuit_6(
 //       to cycle 1's output (epoch_hash) — was never enforced on-chain. A
 //       malicious prover could pick any epoch_hash' and solve a 1-variable
 //       Poseidon preimage to forge `Poseidon(nullifier', epoch_hash')` = target,
-//       reducing soundness to ~2^64 Goldilocks work.
+//       at a cost of ~2^64 Goldilocks operations for the preimage search.
+//       [B2-M2] This line used to say "reducing soundness to ~2^64", which reads
+//       as a security level and is not one: the construction's own ceiling is
+//       2^42-2^52 (see `B2_CONJECTURED_FORGERY_BITS`), so 2^64 is the cost of
+//       THIS forgery route, and it is the expensive one.
 //
 // This function closes both gaps by RLC-combining the AIR's four transition
 // constraints — evaluated on the OOD trace with the *real* multi-cycle
@@ -3333,7 +3337,9 @@ fn evaluate_transition_at_ood_circuit_4(
 /// salt, amount) with `Poseidon(amount, amount_salt)` folded into a public
 /// amount hash. Without DEEP-ALI on the chain edges, an attacker could swap
 /// cycles, inject rogue balances, or forge commitments that don't correspond
-/// to any real spending path — soundness drops to ~2^64. This check binds
+/// to any real spending path, at a cost of ~2^64 field operations. [B2-M2] That
+/// is the cost of that particular forgery route, NOT a soundness level: the
+/// construction's own ceiling is 2^42-2^52 per circuit. This check binds
 /// every chain edge and carry update to the opened OOD trace via
 /// Schwartz–Zippel.
 #[inline(never)]
