@@ -3593,7 +3593,10 @@ export async function transferDenominatedStarkV3(
 // — orchestrate sequentially or chunk by tx-budget.
 //
 // TODO(v3-escrow-release): port `escrow_release_v3`.
-// TODO(v3-cancel): port `cancel_private_stark_v3`.
+// DROPPED, not a TODO: `cancel_private_stark_v3`. Cancellation and refunds
+// were removed from the protocol; `cancel_private_stark` is deleted, so there
+// is nothing to port to V3. A subscription is a one-way prepaid envelope and
+// `claim_period` is its only exit.
 // TODO(v3-prefund): port the p01_liquidity prefund path with the C1/C3 buffer
 // pair (currently v2-only — see unshieldStark `instant` flag).
 

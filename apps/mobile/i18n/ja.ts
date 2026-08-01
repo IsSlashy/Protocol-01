@@ -545,7 +545,9 @@ export default {
     copied: '\u30b3\u30d4\u30fc\u6e08\u307f',
     clipboardClears: '60\u79d2\u5f8c\u306b\u30af\u30ea\u30a2\u3055\u308c\u307e\u3059\u3002',
     noNotes: '\u30ce\u30fc\u30c8\u306a\u3057',
-    cancelAnytime: '\u3044\u3064\u3067\u3082\u30ad\u30e3\u30f3\u30bb\u30eb\u53ef\u80fd\u3001\u30da\u30ca\u30eb\u30c6\u30a3\u306a\u3057',
+    // Was 'cancel anytime, no penalty'. There is no cancellation and no
+    // refund; pause and resume are free and are what the subscriber keeps.
+    cancelAnytime: '\u3044\u3064\u3067\u3082\u4e00\u6642\u505c\u6b62\u53ef\u80fd\u3001\u30da\u30ca\u30eb\u30c6\u30a3\u306a\u3057',
     protectedByStream: 'Stream Secure\u3067\u4fdd\u8b77',
     automaticPayments: '\u81ea\u52d5\u5b9a\u671f\u652f\u6255\u3044',
     zkHidesIdentity: 'ZK\u8a3c\u660e\u304c\u3042\u306a\u305f\u306e\u8eab\u5143\u3092\u96a0\u3057\u307e\u3059',

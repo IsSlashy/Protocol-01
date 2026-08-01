@@ -206,10 +206,18 @@ pub mod p01_relayer {
     // -----------------------------------------------------------------------
 
     /// Initialise a RefundJob PDA for a cancelled private subscription.
-    /// Called via CPI by `zk_shielded::cancel_private_stark` on the new
-    /// path (vault carries `client_stealth_meta`). The caller is responsible
-    /// for transferring the residual `amount` lamports into the PDA via
-    /// direct lamport manipulation immediately after this ix.
+    ///
+    /// ORPHANED — its only caller, `zk_shielded::cancel_private_stark`, has
+    /// been deleted along with cancellation and refunds, and
+    /// `subscribe_private_stark` no longer writes the `client_stealth_meta`
+    /// that used to select this path. Nothing on chain can reach it. Kept so
+    /// `process_refund_job` / `expire_refund_job` keep their discriminators
+    /// and can still drain RefundJob PDAs already live on devnet; see
+    /// `instructions/submit_refund_job.rs` for the full note.
+    ///
+    /// The caller was responsible for transferring the residual `amount`
+    /// lamports into the PDA via direct lamport manipulation immediately
+    /// after this ix.
     pub fn submit_refund_job(
         ctx: Context<SubmitRefundJob>,
         amount: u64,

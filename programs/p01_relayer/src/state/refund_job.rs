@@ -2,11 +2,17 @@ use anchor_lang::prelude::*;
 
 /// Refund job for a cancelled private subscription.
 ///
-/// Created via CPI by `zk_shielded::cancel_private_stark` (new path, vault
-/// has `client_stealth_meta`). The cancel handler transfers the residual
-/// lamports into this PDA. A permissionless keeper later calls
-/// `process_refund_job` to shield the funds into the target pool as a
-/// stealth-encrypted note for the original subscriber.
+/// NO LONGER CREATABLE. It was created via CPI by
+/// `zk_shielded::cancel_private_stark` (new path, vault carried
+/// `client_stealth_meta`), which transferred the residual lamports into this
+/// PDA; a permissionless keeper then called `process_refund_job` to shield
+/// the funds into the target pool as a stealth-encrypted note for the
+/// original subscriber. Cancellation and refunds are deleted, so no new
+/// RefundJob can come into existence.
+///
+/// The account and its two draining instructions stay because any RefundJob
+/// PDA already sitting on devnet holds lamports that only `process_refund_job`
+/// or `expire_refund_job` can release.
 ///
 /// PDA seeds: [b"refund_job", source_vault.as_ref()]
 /// One RefundJob per cancelled vault — re-init is impossible until the

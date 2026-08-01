@@ -516,7 +516,9 @@ export default {
     copied: 'Copied',
     clipboardClears: 'Clipboard clears in 60s.',
     noNotes: 'No Notes',
-    cancelAnytime: 'Cancel anytime, no penalties',
+    // Was 'Cancel anytime, no penalties'. There is no cancellation and no
+    // refund; pause and resume are free and are what the subscriber keeps.
+    cancelAnytime: 'Pause anytime, no penalties',
     protectedByStream: 'Protected by Stream Secure',
     automaticPayments: 'Automatic recurring payments',
     zkHidesIdentity: 'Zero-knowledge proof hides your identity',

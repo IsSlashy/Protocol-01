@@ -514,7 +514,9 @@ export default {
     copied: 'Copi\u00e9',
     clipboardClears: 'Le presse-papier se vide dans 60s.',
     noNotes: 'Aucune note',
-    cancelAnytime: 'Annulez \u00e0 tout moment, sans p\u00e9nalit\u00e9',
+    // Etait 'Annulez a tout moment, sans penalite'. Ni annulation ni
+    // remboursement ; la pause et la reprise restent gratuites.
+    cancelAnytime: 'Mettez en pause \u00e0 tout moment, sans p\u00e9nalit\u00e9',
     protectedByStream: 'Prot\u00e9g\u00e9 par Stream Secure',
     automaticPayments: 'Paiements r\u00e9currents automatiques',
     zkHidesIdentity: 'La preuve ZK masque votre identit\u00e9',

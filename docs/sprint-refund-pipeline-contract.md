@@ -1,5 +1,22 @@
 # Refund Pipeline Sprint — Shared Interface Contract
 
+> **SUPERSEDED — 2026-08-01. This document describes a feature that no longer exists.**
+>
+> The founder removed cancellation and refunds from the subscription entirely. A vault is a
+> one-way prepaid envelope: money that enters can only leave toward the retailer.
+> `zk_shielded::cancel_normal` and `zk_shielded::cancel_private_stark` are DELETED, and
+> `subscribe_private_stark` no longer takes or writes `client_stealth_meta`, so the field this
+> whole pipeline branched on is permanently `None`. `claim_period` is now the only instruction
+> that can close a `SubscriptionVault`, and it pays the residual and the rent to the retailer.
+>
+> Nothing below is implementable and nothing below should be quoted as shipped or planned.
+> Sections A, D and E in particular describe on-chain code that has been removed.
+> `p01_relayer::submit_refund_job` still exists but is ORPHANED: it had exactly one caller and
+> that caller is gone. It and the `RefundJob` account are kept only so `process_refund_job` /
+> `expire_refund_job` can still drain any RefundJob PDA already live on devnet.
+>
+> Kept as the historical record of what was built and why it was undone.
+
 **Date:** 2026-05-11
 **Goal:** Cancel a private subscription → residual routed to p01_relayer RefundJob → keeper shields into pool with stealth-encrypted commitment → subscriber sees note via existing stealth scanner.
 

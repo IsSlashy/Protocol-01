@@ -5,11 +5,26 @@ use crate::state::RefundJob;
 
 /// Initialise a RefundJob PDA for a cancelled private subscription.
 ///
-/// Called via CPI by `zk_shielded::cancel_private_stark` when the source
-/// vault has a `client_stealth_meta` field set. This instruction only
-/// initialises the PDA and records metadata — the caller is responsible
-/// for transferring the residual lamports into `refund_job` separately
-/// (via direct lamport manipulation on the vault PDA).
+/// ORPHANED. It had exactly one caller, `zk_shielded::cancel_private_stark`,
+/// invoked by CPI when the source vault carried a `client_stealth_meta`.
+/// That instruction has been DELETED along with cancellation and refunds —
+/// a subscription is now a one-way prepaid envelope and `claim_period` is
+/// the only exit — and `subscribe_private_stark` no longer writes
+/// `client_stealth_meta` at all, so no vault created from here on could
+/// select this path even if the caller came back.
+///
+/// Nothing on chain reaches this instruction any more. It is left in place
+/// rather than deleted because `#[program]` dispatches on a discriminator
+/// derived from the instruction NAME and the surviving refund-pipeline
+/// instructions (`process_refund_job`, `expire_refund_job`) still have to
+/// drain any RefundJob PDA already created on devnet. Removing the whole
+/// pipeline is a decision about those live accounts, not a cleanup.
+///
+/// This instruction only initialises the PDA and records metadata — the
+/// caller was responsible for transferring the residual lamports into
+/// `refund_job` separately (via direct lamport manipulation on the vault
+/// PDA). Since the caller is gone, a call today would be an externally
+/// funded PDA with no vault behind it.
 ///
 /// PDA: `[b"refund_job", source_vault.as_ref()]`.
 #[derive(Accounts)]
@@ -18,10 +33,11 @@ pub struct SubmitRefundJob<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    /// CHECK: source subscription vault PDA. Used as PDA seed only —
-    /// any validation (ownership, status, denomination) is performed by
-    /// the calling `zk_shielded::cancel_private_stark` handler before
-    /// the CPI fires.
+    /// CHECK: source subscription vault PDA. Used as PDA seed only — every
+    /// validation (ownership, status, denomination) was performed by the
+    /// calling `zk_shielded::cancel_private_stark` handler before the CPI
+    /// fired. That handler is deleted, so nothing validates this account
+    /// any more; see the struct doc for why the instruction is still here.
     pub source_vault: AccountInfo<'info>,
 
     /// The refund job PDA being initialised. Boxed to keep the 64-byte
