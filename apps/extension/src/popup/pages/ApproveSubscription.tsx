@@ -415,7 +415,7 @@ export default function ApproveSubscription() {
               <span className="text-sm font-medium text-white">
                 {payload.maxPeriods > 0
                   ? `${payload.maxPeriods} ${periodLabel}s`
-                  : 'Until cancelled'}
+                  : 'Until paused'}
               </span>
             </div>
 
@@ -538,8 +538,26 @@ export default function ApproveSubscription() {
             <li className="flex items-start gap-2 text-xs text-p01-chrome">
               <Check className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
               <span>
-                You can <strong className="text-white">pause or cancel</strong>{' '}
+                You can <strong className="text-white">pause and resume</strong>{' '}
                 anytime from your wallet
+              </span>
+            </li>
+            {/*
+              THE NO-REFUND RULE. This is the screen a dApp-initiated
+              subscription is approved on, so the rule has to be stated HERE and
+              not only on the wallet's own CreateSubscription page. It used to
+              say "pause or cancel anytime", which the protocol can no longer
+              deliver: cancel_normal and cancel_private_stark are deleted and
+              claim_period only ever pays the merchant.
+            */}
+            <li className="flex items-start gap-2 text-xs text-p01-chrome">
+              <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
+              <span>
+                <strong className="text-white">
+                  There is no cancellation and no refund
+                </strong>{' '}
+                — not from the merchant, not from Protocol 01. Payments already
+                sent are final.
               </span>
             </li>
             {(amountNoise > 0 || timingNoise > 0 || useStealthAddress) && (
@@ -613,8 +631,9 @@ export default function ApproveSubscription() {
                   Unlimited Duration
                 </p>
                 <p className="text-xs text-p01-chrome mt-1">
-                  This subscription has no end date. Remember to cancel when
-                  you no longer need it.
+                  This subscription has no end date. Pause it when you no
+                  longer need it — it cannot be cancelled and nothing already
+                  paid can be refunded.
                 </p>
               </div>
             </div>

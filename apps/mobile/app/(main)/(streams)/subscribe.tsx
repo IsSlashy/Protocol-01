@@ -755,8 +755,12 @@ function SubscribeContent() {
                   <Text style={st.methodTitle}>Privé</Text>
                   <Text style={st.methodDesc}>
                     {supportsVault
-                      ? `Vault privé — pull ${formatPriceSOL(priceLamports)} SOL every ${formatInterval(intervalSlotsBig)}. Pause/cancel any time, refund as shielded notes.`
-                      : 'Paiement unique privé via note shielded. Pas de refund, repaye manuellement chaque période.'}
+                      // No cancellation and no refund: the vault pays the
+                      // retailer only. Saying "cancel / refund as shielded
+                      // notes" here contradicted the one-way warning further
+                      // down THIS screen.
+                      ? `Vault privé — pull ${formatPriceSOL(priceLamports)} SOL every ${formatInterval(intervalSlotsBig)}. Pause/reprise à tout moment. Ni annulation ni remboursement.`
+                      : 'Paiement unique privé via note shielded. Ni annulation ni remboursement, repaye manuellement chaque période.'}
                   </Text>
                 </View>
                 <View style={[st.zkBadge, uiMode === 'private' && { backgroundColor: 'rgba(255,119,168,0.25)' }]}>

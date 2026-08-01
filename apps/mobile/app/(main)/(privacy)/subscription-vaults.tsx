@@ -335,7 +335,8 @@ export default function SubscriptionVaultsScreen() {
             <Ionicons name="information-circle-outline" size={16} color={Colors.textTertiary} />
             <Text style={styles.explainerText}>
               Subscription vaults enable recurring payments. Retailers can claim accumulated
-              periods. You can pause or cancel anytime.
+              periods. You can pause and resume anytime. A vault cannot be cancelled and
+              nothing in it can be refunded — every lamport goes to the retailer.
             </Text>
           </View>
         </Animated.View>
