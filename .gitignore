@@ -263,3 +263,14 @@ scripts/seed-services/keypairs/
 .playwright-mcp/
 .snfoundry_cache/
 contracts/starknet/target/
+
+# ── Security planning docs — keep OUT of the public repo ──────────────────
+# These describe unfixed weaknesses at file:line while they are still open.
+# They live in the private vault: D:\Protocol-01-HQ\Tech\Security-Private\
+# Publish a document only once the fix it describes has shipped and verified.
+# See SECURITY.md.
+docs/PAY_MASTER_PLAN.md
+docs/MOBILE_SUBSCRIPTION_AUDIT.md
+docs/STARK_CU_REFINEMENT_PLAN.md
+docs/*_AUDIT.md
+docs/*_SECURITY_*.md
