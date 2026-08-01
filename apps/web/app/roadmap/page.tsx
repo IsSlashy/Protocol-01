@@ -451,8 +451,8 @@ const roadmap: RoadmapPhase[] = [
         icon: <Wallet className="w-5 h-5" />,
       },
       {
-        title: "roadmap.items.cancelPrivateV3.title",
-        description: "roadmap.items.cancelPrivateV3.desc",
+        title: "roadmap.items.subscriptionOneWay.title",
+        description: "roadmap.items.subscriptionOneWay.desc",
         icon: <Code className="w-5 h-5" />,
       },
     ],

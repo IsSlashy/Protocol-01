@@ -457,7 +457,7 @@ const en = {
       },
       paymentStreams: {
         title: 'Payment Streams',
-        desc: 'Real-time token streaming for subscriptions and recurring payments. Create, pause, and cancel streams with per-second settlement.',
+        desc: 'Real-time token streaming for subscriptions and recurring payments. Create, pause, and resume streams with per-second settlement.',
       },
       jupiterSwap: {
         title: 'Jupiter Swap Integration',
@@ -648,9 +648,9 @@ const en = {
         title: 'v1.0.2 Mobile + Extension v0.5.0',
         desc: 'Mobile app shipped at v1.0.2 (versionCode 29) with the Privy removal and stabilization work. The Chrome extension launched as a downloadable v0.5.0 beta with its own install page, and the site download now points at the v1.0.2 release.',
       },
-      cancelPrivateV3: {
-        title: 'cancel_private_stark V3 Port',
-        desc: 'Port the on-chain cancel ix to V3 — insert_with_root_v3 has a different signature (subtrees + c6_verified flag). Requires client-side computation of new subtrees per re-shielded note. Tracked separately from subscribe_private_stark V3.',
+      subscriptionOneWay: {
+        title: 'Subscriptions Become One-Way',
+        desc: 'Cancellation and refunds removed from the protocol. cancel_normal and cancel_private_stark are deleted; claim_period now closes an exhausted vault and pays the remainder and the rent to the merchant. This also deletes the only inbound leg in the system, which was where the linkability budget was being spent. The subscriber keeps pause and resume, and is told before paying that the money is one-way. Supersedes the planned cancel_private_stark V3 port, which no longer has a subject.',
       },
       arciumConfidentialRelay: {
         title: 'Phase D — Arcium confidentialRelay',
@@ -790,7 +790,7 @@ const en = {
     withProtocol01: 'With Protocol 01',
     p01Sub1: 'Price is LOCKED when you subscribe',
     p01Sub2: 'Impossible to charge more than agreed',
-    p01Sub3: 'You cancel from your wallet, not the website',
+    p01Sub3: 'You pause from your wallet, not the website',
     simpleTermsSummaryPrefix: 'In short:',
     simpleTermsSummary: " It's like Netflix signing a contract with you - they can never change the terms once you've agreed.",
     // Stream features
@@ -804,7 +804,7 @@ const en = {
     featP01Required: 'P01 wallet required',
     featImmutablePricing: 'Immutable Pricing',
     featPricesLocked: 'Prices locked on-chain',
-    featCancelAnytime: 'Cancel Anytime',
+    featCancelAnytime: 'Pause Anytime',
     featUserControls: 'User controls subscription',
     // Customer Protection
     customerProtectionTitle: 'Customer Protection: Locked Prices',
@@ -816,11 +816,15 @@ const en = {
     customerProtectionCannotTouch: 'they cannot touch your subscription',
     customerProtectionDesc2Suffix: ". It's like a signed contract - impossible to modify without your consent.",
     youCan: 'YOU CAN',
-    youCanDesc: 'Cancel your subscription anytime you want',
+    youCanDesc: 'Pause your subscription anytime and resume when you want',
     devCan: 'DEVELOPER CAN',
     devCanDesc: 'Change prices for new customers only',
     impossible: 'IMPOSSIBLE',
     impossibleDesc: 'Change the price of your existing subscription',
+    // A subscription is one-way: no cancellation, no protocol refund.
+    // The merchant may still refund off-band from its own wallet.
+    noRefundTitle: 'ONE-WAY',
+    noRefundDesc: 'A subscription is a prepaid envelope: the money you deposit can only ever be paid out to the merchant. There is no cancellation and the protocol cannot refund you. A merchant remains free to refund you off-band from its own wallet.',
     // Developer Access
     devAccessTitle: '1. Developer Access',
     devAccessDesc: 'To use the Stream SDK, you need to be a whitelisted developer. Request access to get your wallet added to the whitelist.',
@@ -874,12 +878,12 @@ const en = {
     securityDesc: "A smart contract is like a robot that automatically enforces the rules. Nobody - not us, not the developers - can bypass it. Here's what's guaranteed:",
     whatYouCanDo: 'What YOU can do',
     priceSameForever: 'Your price stays the same, forever',
-    cancelOneClick: 'Cancel in one click, directly from your wallet',
+    cancelOneClick: 'Pause and resume in one click, directly from your wallet',
     noModifyWithoutPermission: 'Nobody can modify without your permission',
     viewPaymentHistory: 'View your complete payment history',
     whatDevsCannotDo: 'What developers CANNOT do',
     raisePrice: 'Raise your price after you subscribe',
-    cancelWithoutYou: 'Cancel your subscription without you',
+    cancelWithoutYou: 'Pause or end your subscription without you',
     changeBilling: 'Change from monthly to weekly billing',
     chargeMore: 'Charge more than the agreed amount',
     // Widgets Section
@@ -887,7 +891,7 @@ const en = {
     widgetsDesc: 'A complete pricing widget for subscription payments. ',
     widgetsDescHighlight: 'Requires Protocol 01 wallet.',
     priceLocked: 'Price Locked On-Chain',
-    priceLockedDesc: 'Once subscribed, the price can never be changed. Cancel anytime from your wallet.',
+    priceLockedDesc: 'Once subscribed, the price can never be changed. Pause and resume anytime from your wallet. Subscriptions cannot be cancelled and the protocol cannot refund; a merchant may still refund you off-band from its own wallet.',
     widgetCodeTitle: 'Usage (Serverless - No API Keys)',
     // Subscription widget
     choosePlan: 'Choose Your Plan',

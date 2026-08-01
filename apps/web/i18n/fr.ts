@@ -458,7 +458,7 @@ const fr: Translations = {
       },
       paymentStreams: {
         title: 'Flux de paiement',
-        desc: 'Streaming de tokens en temps r\u00e9el pour les abonnements et paiements r\u00e9currents. Cr\u00e9ez, mettez en pause et annulez des flux avec r\u00e8glement \u00e0 la seconde.',
+        desc: 'Streaming de jetons en temps r\u00e9el pour les abonnements et paiements r\u00e9currents. Cr\u00e9ez, mettez en pause et reprenez des flux avec r\u00e8glement \u00e0 la seconde.',
       },
       jupiterSwap: {
         title: 'Int\u00e9gration Jupiter Swap',
@@ -644,9 +644,9 @@ const fr: Translations = {
         title: 'v1.0.2 Mobile + Extension v0.5.0',
         desc: 'App mobile livree en v1.0.2 (versionCode 29) avec la suppression de Privy et le travail de stabilisation. L\'extension Chrome est lancee en beta v0.5.0 telechargeable avec sa propre page d\'installation, et le telechargement du site pointe maintenant vers la release v1.0.2.',
       },
-      cancelPrivateV3: {
-        title: 'Port cancel_private_stark V3',
-        desc: 'Porter l\'ix cancel on-chain vers V3 — insert_with_root_v3 a une signature differente (subtrees + flag c6_verified). Necessite le calcul cote client des nouveaux subtrees par re-shielded note. Tracke separement de subscribe_private_stark V3.',
+      subscriptionOneWay: {
+        title: 'Les abonnements deviennent sans retour',
+        desc: 'Annulation et remboursements retir\u00e9s du protocole. cancel_normal et cancel_private_stark sont supprim\u00e9s ; claim_period ferme d\u00e9sormais un coffre \u00e9puis\u00e9 et verse le reliquat et la rente au commer\u00e7ant. Cela supprime aussi la seule op\u00e9ration entrante du syst\u00e8me, l\u00e0 o\u00f9 se d\u00e9pensait le budget de tra\u00e7abilit\u00e9. L\'abonn\u00e9 conserve la pause et la reprise, et est pr\u00e9venu avant de payer que l\'argent ne revient pas. Remplace le portage pr\u00e9vu de cancel_private_stark vers V3, devenu sans objet.',
       },
       arciumConfidentialRelay: {
         title: 'Phase D — Arcium confidentialRelay',
@@ -790,7 +790,7 @@ const fr: Translations = {
     withProtocol01: 'Avec Protocol 01',
     p01Sub1: "Le prix est VERROUILL\u00c9 quand vous vous abonnez",
     p01Sub2: "Impossible de facturer plus que convenu",
-    p01Sub3: 'Vous annulez depuis votre portefeuille, pas le site web',
+    p01Sub3: 'Vous mettez en pause depuis votre portefeuille, pas le site web',
     simpleTermsSummaryPrefix: 'En r\u00e9sum\u00e9 :',
     simpleTermsSummary: " C'est comme si Netflix signait un contrat avec vous - ils ne peuvent jamais changer les termes une fois que vous avez accept\u00e9.",
     // Stream features
@@ -804,7 +804,7 @@ const fr: Translations = {
     featP01Required: 'Portefeuille P01 requis',
     featImmutablePricing: 'Tarification immuable',
     featPricesLocked: 'Prix verrouill\u00e9s on-chain',
-    featCancelAnytime: 'Annulation \u00e0 tout moment',
+    featCancelAnytime: 'Pause \u00e0 tout moment',
     featUserControls: "L'utilisateur contr\u00f4le l'abonnement",
     // Customer Protection
     customerProtectionTitle: 'Protection client : prix verrouill\u00e9s',
@@ -816,11 +816,15 @@ const fr: Translations = {
     customerProtectionCannotTouch: 'il ne peut pas toucher \u00e0 votre abonnement',
     customerProtectionDesc2Suffix: ". C'est comme un contrat sign\u00e9 - impossible \u00e0 modifier sans votre consentement.",
     youCan: 'VOUS POUVEZ',
-    youCanDesc: 'Annuler votre abonnement quand vous voulez',
+    youCanDesc: 'Mettre votre abonnement en pause \u00e0 tout moment et le reprendre quand vous voulez',
     devCan: 'LE D\u00c9VELOPPEUR PEUT',
     devCanDesc: 'Changer les prix pour les nouveaux clients uniquement',
     impossible: 'IMPOSSIBLE',
     impossibleDesc: 'Changer le prix de votre abonnement existant',
+    // A subscription is one-way: no cancellation, no protocol refund.
+    // The merchant may still refund off-band from its own wallet.
+    noRefundTitle: 'SANS RETOUR',
+    noRefundDesc: 'Un abonnement est une enveloppe pr\u00e9pay\u00e9e : l\'argent d\u00e9pos\u00e9 ne peut \u00eatre vers\u00e9 qu\'au commer\u00e7ant. Il n\'y a pas d\'annulation et le protocole ne peut pas vous rembourser. Un commer\u00e7ant reste libre de vous rembourser hors protocole depuis son propre portefeuille.',
     // Developer Access
     devAccessTitle: '1. Acc\u00e8s d\u00e9veloppeur',
     devAccessDesc: "Pour utiliser le SDK Stream, vous devez \u00eatre un d\u00e9veloppeur sur la whitelist. Demandez l'acc\u00e8s pour ajouter votre portefeuille.",
@@ -874,12 +878,12 @@ const fr: Translations = {
     securityDesc: "Un smart contract est comme un robot qui applique automatiquement les r\u00e8gles. Personne - ni nous, ni les d\u00e9veloppeurs - ne peut le contourner. Voici ce qui est garanti :",
     whatYouCanDo: 'Ce que VOUS pouvez faire',
     priceSameForever: 'Votre prix reste le m\u00eame, pour toujours',
-    cancelOneClick: 'Annuler en un clic, directement depuis votre portefeuille',
+    cancelOneClick: 'Mettre en pause et reprendre en un clic, directement depuis votre portefeuille',
     noModifyWithoutPermission: 'Personne ne peut modifier sans votre permission',
     viewPaymentHistory: 'Voir votre historique complet de paiements',
     whatDevsCannotDo: 'Ce que les d\u00e9veloppeurs NE PEUVENT PAS faire',
     raisePrice: "Augmenter votre prix apr\u00e8s votre abonnement",
-    cancelWithoutYou: 'Annuler votre abonnement sans vous',
+    cancelWithoutYou: 'Mettre en pause ou arr\u00eater votre abonnement sans vous',
     changeBilling: 'Passer de mensuel \u00e0 hebdomadaire',
     chargeMore: "Facturer plus que le montant convenu",
     // Widgets Section
@@ -887,7 +891,7 @@ const fr: Translations = {
     widgetsDesc: "Un widget de tarification complet pour les paiements par abonnement. ",
     widgetsDescHighlight: 'N\u00e9cessite le portefeuille Protocol 01.',
     priceLocked: 'Prix verrouill\u00e9 on-chain',
-    priceLockedDesc: "Une fois abonn\u00e9, le prix ne peut jamais \u00eatre modifi\u00e9. Annulez \u00e0 tout moment depuis votre portefeuille.",
+    priceLockedDesc: 'Une fois abonn\u00e9, le prix ne peut jamais \u00eatre modifi\u00e9. Mettez en pause et reprenez \u00e0 tout moment depuis votre portefeuille. Les abonnements ne peuvent pas \u00eatre annul\u00e9s et le protocole ne peut pas rembourser ; un commer\u00e7ant peut toujours vous rembourser hors protocole depuis son propre portefeuille.',
     widgetCodeTitle: 'Utilisation (sans serveur - pas de cl\u00e9s API)',
     // Subscription widget
     choosePlan: 'Choisissez votre plan',

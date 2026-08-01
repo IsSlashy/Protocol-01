@@ -1208,6 +1208,18 @@ function StreamSDKSection() {
                 </div>
                 <p className="text-p01-text-muted text-sm">{t('sdkDemo.impossibleDesc')}</p>
               </div>
+              {/*
+                The one-way rule. A subscription is a prepaid envelope: the
+                protocol has no cancellation instruction and cannot refund. Say
+                so next to what the subscriber CAN do, not in a footnote.
+              */}
+              <div className="bg-p01-void/50 p-3 border border-p01-pink/30 md:col-span-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <X size={14} className="text-p01-pink" />
+                  <p className="text-p01-pink text-xs font-mono">{t('sdkDemo.noRefundTitle')}</p>
+                </div>
+                <p className="text-p01-text-muted text-sm">{t('sdkDemo.noRefundDesc')}</p>
+              </div>
             </div>
           </div>
         </div>
