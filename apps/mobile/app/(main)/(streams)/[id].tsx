@@ -31,17 +31,10 @@ import { vaultDecrypt } from '../../../utils/crypto/noteVault';
 import { getServiceById, CATEGORY_CONFIG, ServiceCategory } from '../../../services/subscriptions/serviceRegistry';
 import { useSubscriptionVaultStore } from '../../../stores/subscriptionVaultStore';
 import {
-  computeCancelPreview,
+  computeSubscriptionOutlook,
   fetchVault,
-  REFUND_KEEPER_FEE,
-  REFUND_MIN_RESIDUAL,
-  type CancelPreview,
-  type VaultInfo,
+  type SubscriptionOutlook,
 } from '../../../services/subscriptionVault';
-import CancelConfirmModal, {
-  type CancelPhase,
-  type RefundInfo,
-} from '../../../components/privacy/CancelConfirmModal';
 import { withKeepAwake } from '../../../utils/keepAwakeDuring';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { useT } from '@/i18n';
@@ -66,7 +59,6 @@ function DetailContent() {
   const {
     pausePrivateStarkAction,
     resumePrivateStarkAction,
-    cancelPrivateStarkAction,
   } = useSubscriptionVaultStore();
   const { publicKey } = useWalletStore();
 
@@ -78,20 +70,31 @@ function DetailContent() {
   const [isStarkBusy, setIsStarkBusy] = useState(false);
   const [starkStep, setStarkStep] = useState<{ current: number; total: number } | null>(null);
 
-  // Cancel modal state (ZK vault path) ────────────────────────────
-  const [cancelVisible, setCancelVisible] = useState(false);
-  const [cancelPhase, setCancelPhase] = useState<CancelPhase>('preview');
-  const [cancelPreview, setCancelPreview] = useState<CancelPreview | null>(null);
-  const [cancelProgress, setCancelProgress] = useState<string | null>(null);
-  const [cancelError, setCancelError] = useState<string | null>(null);
-  const [cancelTx, setCancelTx] = useState<string | null>(null);
-  const [cancelPoolLabel, setCancelPoolLabel] = useState<string>('');
-  /** Cached vault info — used by the cancel modal to decide between legacy
-   *  reshield and refund-via-relayer UX. Captured once when the preview is
-   *  opened so subsequent renders don't refetch. */
-  const [cancelVault, setCancelVault] = useState<VaultInfo | null>(null);
+  // Where the money stands on the backing vault (ZK path only). NOT a refund
+  // quote: `outstandingToRetailer` is what the RETAILER will still receive. A
+  // subscription is a one-way prepaid envelope and nothing returns to the payer.
+  const [outlook, setOutlook] = useState<SubscriptionOutlook | null>(null);
 
   useEffect(() => { setStream(streams.find(s => s.id === id) || null); }, [streams, id]);
+
+  // Read the backing vault so the no-refund notice can name what the retailer
+  // is still owed. Best-effort: the notice renders without the figure if the
+  // read fails.
+  useEffect(() => {
+    let cancelled = false;
+    const vaultAddress = stream?.vaultAddress;
+    if (!vaultAddress) { setOutlook(null); return; }
+    (async () => {
+      try {
+        const vault = await fetchVault(new PublicKey(vaultAddress));
+        const slot = await getConnection().getSlot('confirmed');
+        if (!cancelled && vault) setOutlook(computeSubscriptionOutlook(vault, slot));
+      } catch {
+        if (!cancelled) setOutlook(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [stream?.vaultAddress]);
 
   // Reactive subscription to the vault store so this effect re-runs when the
   // persisted vaults hydrate from AsyncStorage (cold boot race).
@@ -210,126 +213,50 @@ function DetailContent() {
     await refresh();
   };
 
-  const openCancelModal = async () => {
+  /**
+   * Stop a LOCAL, non-vault stream. This is a client-side schedule with no
+   * prepaid balance on chain: stopping it just stops future payments, and no
+   * money changes hands. It is NOT a subscription cancellation -- a
+   * SubscriptionVault (`stream.vaultAddress` set) cannot be cancelled at all,
+   * because the protocol has no instruction that could pay the subscriber back.
+   */
+  const stopLocalStream = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (stream.vaultAddress) return;
 
-    // Local fallback — non-ZK streams keep the old confirm alert
-    if (!stream.vaultAddress) {
-      p01Alert(t('streams.cancelStream'), t('streams.cancelStreamConfirm', { name: stream.name }),
-        [{ text: t('streams.cancelStream'), style: 'destructive', onPress: async () => {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-          await cancelStream(stream.id);
-          // Publish a P01_SUB_UPD memo on-chain so cross-device sync (and our own
-          // post-wipe recovery) sees the cancellation. Without this, the stream
-          // resurrects from its original P01_SUB_V1 memo as `s:'a'` after wipe.
-          try {
-            const memoData = 'P01_SUB_UPD:' + JSON.stringify({
-              v: 1,
-              id: stream.id,
-              s: 'c',
-              u: Math.floor(Date.now() / 1000),
-            });
-            const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
-            const memoIx = new TransactionInstruction({
-              keys: [],
-              programId: MEMO_PROGRAM_ID,
-              data: Buffer.from(memoData, 'utf-8'),
-            });
-            const conn = getConnection();
-            // Local keypair is the only signing path (Privy removed — spec §3 Phase 1).
-            const kp = await getKeypair();
-            if (kp) {
-              const tx = new Transaction().add(memoIx);
-              await sendAndConfirmTransaction(conn, tx, [kp], { commitment: 'confirmed' });
-            }
-          } catch (e) {
-            console.warn('[Streams] cancel publish memo failed (non-fatal):', (e as Error).message);
+    p01Alert(t('streams.cancelStream'), t('streams.cancelStreamConfirm', { name: stream.name }),
+      [{ text: t('streams.cancelStream'), style: 'destructive', onPress: async () => {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        await cancelStream(stream.id);
+        // Publish a P01_SUB_UPD memo on-chain so cross-device sync (and our own
+        // post-wipe recovery) sees the stop. Without this, the stream
+        // resurrects from its original P01_SUB_V1 memo as `s:'a'` after wipe.
+        try {
+          const memoData = 'P01_SUB_UPD:' + JSON.stringify({
+            v: 1,
+            id: stream.id,
+            s: 'c',
+            u: Math.floor(Date.now() / 1000),
+          });
+          const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+          const memoIx = new TransactionInstruction({
+            keys: [],
+            programId: MEMO_PROGRAM_ID,
+            data: Buffer.from(memoData, 'utf-8'),
+          });
+          const conn = getConnection();
+          // Local keypair is the only signing path (Privy removed -- spec section 3 Phase 1).
+          const kp = await getKeypair();
+          if (kp) {
+            const tx = new Transaction().add(memoIx);
+            await sendAndConfirmTransaction(conn, tx, [kp], { commitment: 'confirmed' });
           }
-          await deleteStream(stream.id);
-          router.back();
-        }}, { text: t('streams.keepStream'), style: 'cancel' }], 'warning');
-      return;
-    }
-
-    // ZK vault path — compute preview + open CancelConfirmModal
-    try {
-      const vaultPDA = new PublicKey(stream.vaultAddress);
-      const vault = await fetchVault(vaultPDA);
-      if (!vault) throw new Error('Vault not found on-chain — may have been closed already.');
-      // Use the V2+V3-aware lookup — V4 pools live in ALL_POOLS_V3, so a pure
-      // ALL_POOLS scan misses every post-2026-05-07 vault. The guard below is
-      // load-bearing for BOTH paths: legacy needs the denomination + tree for
-      // reshield, refund-via-relayer needs target_pool + target_tree.
-      const pool = findPoolByPDA(vault.sourcePool ?? '');
-      // Bail before opening the preview — the cancel action does the same
-      // findPoolByPDA lookup and throws, so without this guard the user waits
-      // ~60s for a STARK proof before seeing "Source pool not found", and
-      // the preview UI misleadingly shows "0 notes re-shielded, all dust".
-      if (!pool) {
-        p01Alert(
-          'Pool config missing',
-          `Source pool ${vault.sourcePool ?? 'unknown'} is not in this build. Update the app or contact support.`,
-        );
-        return;
-      }
-      const connection = getConnection();
-      const slot = await connection.getSlot('confirmed');
-      setCancelPreview(computeCancelPreview(vault, slot, pool.denominationAtomic));
-      setCancelPoolLabel(`${pool.denomination} ${pool.token}`);
-      setCancelVault(vault);
-      setCancelPhase('preview');
-      setCancelProgress(null);
-      setCancelError(null);
-      setCancelTx(null);
-      setCancelVisible(true);
-    } catch (err) {
-      p01Alert('Error', (err as Error).message);
-    }
-  };
-
-  const confirmCancel = async () => {
-    if (!stream.vaultAddress) return;
-    // /3 totals when the refund-via-relayer CPI is reachable (stealth meta + non-dust residual)
-    const useRefundJob =
-      !!cancelVault?.clientStealthMeta &&
-      !!cancelPreview &&
-      cancelPreview.refundable >= REFUND_MIN_RESIDUAL;
-    const total = useRefundJob ? 3 : 2;
-    setCancelPhase('processing');
-    setCancelProgress(`1/${total} — Generating ownership proof (STARK)`);
-    try {
-      if (!starkReady) throw new Error('STARK prover not ready — try again in a moment.');
-      await withKeepAwake('p01-vault-cancel', async () => {
-        const secret = await loadVaultSecret(stream.vaultAddress!);
-        setCancelProgress(`1/${total} — Generating ownership proof (STARK)`);
-        const starkResult = await starkGenerate(secret.toString());
-        setCancelProgress(`2/${total} — Uploading proof & sending transaction`);
-        const sig = await cancelPrivateStarkAction(stream.vaultAddress!, secret, {
-          proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
-          commitment: BigInt(starkResult.commitment),
-          proofSize: starkResult.proofSize,
-        });
-        if (useRefundJob) {
-          setCancelProgress(`3/${total} — Routing residual to refund job`);
+        } catch (e) {
+          console.warn('[Streams] stop publish memo failed (non-fatal):', (e as Error).message);
         }
-        setCancelTx(sig);
-      });
-      setCancelPhase('success');
-      // Mirror the state locally so the Streams UI reflects the cancellation
-      await updateStreamRecord(stream.id, { status: 'cancelled' });
-      await refresh();
-    } catch (err) {
-      setCancelError((err as Error).message);
-      setCancelPhase('error');
-    }
-  };
-
-  const closeCancelModal = () => {
-    const wasSuccess = cancelPhase === 'success';
-    setCancelVisible(false);
-    if (wasSuccess) {
-      setTimeout(() => router.back(), 150);
-    }
+        await deleteStream(stream.id);
+        router.back();
+      }}, { text: t('streams.keepStream'), style: 'cancel' }], 'warning');
   };
 
   const handlePayNow = async () => {
@@ -659,11 +586,32 @@ function DetailContent() {
               <Ionicons name={stream.status === 'active' ? 'pause' : 'play'} size={18} color={accent} />
               <Text style={[st.actionText, { color: accent }]}>{stream.status === 'active' ? t('streams.pause') : t('streams.resume')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={openCancelModal}
-              style={[st.actionBtn, { backgroundColor: 'rgba(255,51,102,0.12)' }]}>
-              <Ionicons name="close-circle" size={18} color={Colors.error} />
-              <Text style={[st.actionText, { color: Colors.error }]}>{t('common.cancel')}</Text>
-            </TouchableOpacity>
+            {/*
+              A vault-backed subscription has NO stop control: the deposit is a
+              one-way prepaid envelope and the protocol has no instruction that
+              could pay any of it back. A local stream has no on-chain balance
+              at all, so stopping it only stops future payments.
+            */}
+            {!stream.vaultAddress && (
+              <TouchableOpacity onPress={stopLocalStream}
+                style={[st.actionBtn, { backgroundColor: 'rgba(255,51,102,0.12)' }]}>
+                <Ionicons name="close-circle" size={18} color={Colors.error} />
+                <Text style={[st.actionText, { color: Colors.error }]}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+            )}
+          </Animated.View>
+        )}
+
+        {/* The no-refund rule, where the Cancel button used to be. */}
+        {!!stream.vaultAddress && (stream.status === 'active' || stream.status === 'paused') && (
+          <Animated.View entering={FadeInDown.delay(320).duration(250)} style={st.noRefundCard}>
+            <Ionicons name="information-circle-outline" size={16} color={Colors.textSecondary} />
+            <Text style={st.noRefundText}>
+              {t('streams.noRefundNotice')}
+              {outlook !== null
+                ? ` ${(Number(outlook.outstandingToRetailer) / 1e9).toFixed(3)} SOL ${t('streams.stillOwedSuffix')}`
+                : ''}
+            </Text>
           </Animated.View>
         )}
 
@@ -690,42 +638,30 @@ function DetailContent() {
         )}
       </ScrollView>
 
-      {/* Cancel modal — only active when stream.vaultAddress is set (ZK path) */}
-      <CancelConfirmModal
-        visible={cancelVisible}
-        preview={cancelPreview}
-        denominationLabel={cancelPoolLabel}
-        retailerLabel={`${stream.recipientAddress.slice(0, 6)}…${stream.recipientAddress.slice(-4)}`}
-        phase={cancelPhase}
-        progress={cancelProgress}
-        errorMessage={cancelError}
-        txSignature={cancelTx}
-        refundInfo={
-          // Refund-via-relayer UX only when the vault has a stealth meta
-          // address. Without it, the legacy reshield copy is correct.
-          cancelVault?.clientStealthMeta && cancelPreview
-            ? (cancelPreview.refundable >= REFUND_MIN_RESIDUAL
-                ? {
-                    kind: 'refund' as const,
-                    keeperFeeLamports: REFUND_KEEPER_FEE,
-                    netLamports:
-                      cancelPreview.refundable - REFUND_KEEPER_FEE,
-                  }
-                : {
-                    kind: 'dust-only' as const,
-                    residualLamports: cancelPreview.refundable,
-                  }) satisfies RefundInfo
-            : undefined
-        }
-        onConfirm={confirmCancel}
-        onClose={closeCancelModal}
-      />
     </View>
   );
 }
 
 const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+  noRefundCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 20,
+    padding: 12,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.surfaceTertiary,
+  },
+  noRefundText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+  },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: Spacing.xl, paddingBottom: Spacing.md,

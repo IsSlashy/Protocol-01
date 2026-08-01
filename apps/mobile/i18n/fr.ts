@@ -321,6 +321,10 @@ export default {
     cancelStream: 'Annuler le flux',
     cancelStreamConfirm: 'Annuler "%{name}" ? Cela arr\u00eate tous les paiements futurs.',
     keepStream: 'Garder',
+    // La règle du non-remboursement, affichée à la place de l'ancien bouton Annuler.
+    noRefundNotice:
+      "Cet abonnement ne peut être ni annulé ni remboursé. Vous pouvez le mettre en pause à tout moment et le reprendre plus tard \u2014 vos jours prépayés ne sont pas perdus pendant la pause.",
+    stillOwedSuffix: 'restent dûs au commerçant et lui seront versés au fil du temps.',
     recipient: 'Destinataire',
     schedule: 'Calendrier',
     frequency: 'Fr\u00e9quence',
@@ -353,6 +357,18 @@ export default {
     firstPayment: 'Premier paiement',
     subscribe: 'S\u2019abonner',
     subscribePrivately: 'S\u2019abonner en priv\u00e9',
+    // Stated on the paying screen, above the CTA. The protocol cannot refund;
+    // a merchant remains free to refund off-band from its own wallet.
+    oneWayTitle:
+      'CE PAIEMENT EST SANS RETOUR',
+    oneWayBody:
+      'Votre note est d\u00e9pos\u00e9e en totalit\u00e9 et ne peut \u00eatre vers\u00e9e qu\u2019au commer\u00e7ant. Il n\u2019y a ni annulation ni remboursement \u2014 ni du commer\u00e7ant, ni de Protocol 01.',
+    finalTitle:
+      'LES PAIEMENTS SONT D\u00c9FINITIFS',
+    finalBody:
+      'Chaque paiement envoy\u00e9 est d\u00e9finitif. Protocol 01 ne peut pas vous rembourser ; un remboursement devrait vous \u00eatre envoy\u00e9 s\u00e9par\u00e9ment par le commer\u00e7ant.',
+    pauseResumeBody:
+      'Vous pouvez mettre en pause \u00e0 tout moment et reprendre plus tard. La pause fige l\u2019horloge et coupe l\u2019acc\u00e8s ; vos jours pr\u00e9pay\u00e9s ne sont pas perdus pendant la pause.',
     subscribed: 'Abonn\u00e9 !',
     privatelySubscribed: 'Abonn\u00e9 en priv\u00e9 !',
     noMatureNote: 'Aucune note mature suffisante. Prot\u00e9gez plus de SOL.',

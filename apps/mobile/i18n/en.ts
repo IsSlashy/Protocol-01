@@ -321,6 +321,12 @@ export default {
     cancelStream: 'Cancel Stream',
     cancelStreamConfirm: 'Cancel "%{name}"? This stops all future payments.',
     keepStream: 'Keep',
+    // The no-refund rule, shown on a vault-backed subscription where the
+    // Cancel control used to be. A subscription is a one-way prepaid
+    // envelope: the protocol cannot return money to the subscriber.
+    noRefundNotice:
+      'This subscription cannot be cancelled or refunded. You can pause at any time and resume later \u2014 your prepaid days are not lost while paused.',
+    stillOwedSuffix: 'is still owed to the retailer and will be paid out over time.',
     recipient: 'Recipient',
     schedule: 'Schedule',
     frequency: 'Frequency',
@@ -353,6 +359,18 @@ export default {
     firstPayment: 'First payment',
     subscribe: 'Subscribe',
     subscribePrivately: 'Subscribe Privately',
+    // Stated on the paying screen, above the CTA. The protocol cannot refund;
+    // a merchant remains free to refund off-band from its own wallet.
+    oneWayTitle:
+      'THIS PAYMENT IS ONE-WAY',
+    oneWayBody:
+      'Your note is deposited in full and can only ever be paid out to the retailer. There is no cancellation and no refund \u2014 not from the retailer, not from Protocol 01.',
+    finalTitle:
+      'PAYMENTS ARE FINAL',
+    finalBody:
+      'Every payment sent is final. Protocol 01 cannot refund you; a refund is something the retailer would have to send you separately.',
+    pauseResumeBody:
+      'You can pause at any time and resume later. Pausing freezes the clock and cuts access; your prepaid days are not lost while paused.',
     subscribed: 'Subscribed!',
     privatelySubscribed: 'Privately Subscribed!',
     noMatureNote: 'No mature note large enough. Shield more SOL.',

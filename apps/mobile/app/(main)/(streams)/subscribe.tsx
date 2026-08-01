@@ -903,6 +903,26 @@ function SubscribeContent() {
             </>
           )}
         </Animated.View>
+
+        {/*
+          THE ONE-WAY WARNING, on the paying screen and above the CTA. The
+          vault path deposits the note in full into a SubscriptionVault and the
+          protocol has no instruction that can ever pay any of it back. The
+          non-vault paths still cannot be refunded by the protocol, so both are
+          stated, just with the accuracy each deserves.
+        */}
+        <Animated.View entering={FadeInDown.delay(270).duration(250)} style={st.oneWayCard}>
+          <View style={st.oneWayHeader}>
+            <Ionicons name="warning-outline" size={16} color={P01Colors.yellow} />
+            <Text style={st.oneWayTitle}>
+              {useZkVault ? t('subscribe.oneWayTitle') : t('subscribe.finalTitle')}
+            </Text>
+          </View>
+          <Text style={st.oneWayBody}>
+            {useZkVault ? t('subscribe.oneWayBody') : t('subscribe.finalBody')}
+          </Text>
+          <Text style={st.oneWayBody}>{t('subscribe.pauseResumeBody')}</Text>
+        </Animated.View>
       </ScrollView>
 
       {/* CTA */}
@@ -946,6 +966,28 @@ function Radio({ selected, color }: { selected: boolean; color: string }) {
 }
 
 const st = StyleSheet.create({
+  oneWayCard: {
+    marginTop: 16,
+    padding: 12,
+    borderRadius: BorderRadius.md,
+    backgroundColor: 'rgba(255,204,0,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,204,0,0.4)',
+    gap: 6,
+  },
+  oneWayHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  oneWayTitle: {
+    fontSize: 12,
+    fontFamily: FontFamily.bold,
+    letterSpacing: 1,
+    color: P01Colors.yellow,
+  },
+  oneWayBody: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+  },
   container: { flex: 1, backgroundColor: Colors.background },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

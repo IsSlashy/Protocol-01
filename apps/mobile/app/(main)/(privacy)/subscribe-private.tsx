@@ -485,6 +485,36 @@ export default function SubscribePrivateScreen() {
           </Animated.View>
         )}
 
+        {/*
+          THE ONE-WAY WARNING. It sits on the paying screen, directly above the
+          button that moves the money -- not in settings, not in a tooltip. The
+          note is deposited into a SubscriptionVault in full and the protocol has
+          no instruction that can ever pay any of it back.
+        */}
+        <Animated.View entering={FadeInUp.delay(330)}>
+          <View style={styles.oneWayCard}>
+            <View style={styles.oneWayHeader}>
+              <Ionicons name="warning-outline" size={16} color={P01Colors.yellow} />
+              <Text style={styles.oneWayTitle}>THIS PAYMENT IS ONE-WAY</Text>
+            </View>
+            <Text style={styles.oneWayBody}>
+              Your note is deposited in full and can only ever be paid out to the
+              retailer.{' '}
+              <Text style={styles.oneWayStrong}>
+                There is no cancellation and no refund
+              </Text>
+              {' '}- not from the retailer, not from Protocol 01.
+            </Text>
+            <Text style={styles.oneWayBody}>
+              <Text style={styles.oneWayStrong}>
+                You can pause at any time and resume later.
+              </Text>
+              {' '}Pausing freezes the clock and cuts access; your prepaid days are
+              not lost while paused.
+            </Text>
+          </View>
+        </Animated.View>
+
         {/* Submit Button */}
         <Animated.View entering={FadeInUp.delay(350)}>
           <TouchableOpacity
@@ -513,6 +543,36 @@ export default function SubscribePrivateScreen() {
 }
 
 const styles = StyleSheet.create({
+  oneWayCard: {
+    marginTop: Spacing.lg,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: 'rgba(255,204,0,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,204,0,0.4)',
+    gap: 6,
+  },
+  oneWayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  oneWayTitle: {
+    fontSize: 12,
+    fontFamily: FontFamily.bold,
+    letterSpacing: 1,
+    color: P01Colors.yellow,
+  },
+  oneWayBody: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+  },
+  oneWayStrong: {
+    fontFamily: FontFamily.bold,
+    color: Colors.text,
+  },
   container: { flex: 1, backgroundColor: 'transparent' },
   header: {
     flexDirection: 'row',
