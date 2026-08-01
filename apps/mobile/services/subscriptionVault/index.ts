@@ -956,6 +956,12 @@ export async function fetchVault(vaultPDA: PublicKey): Promise<VaultInfo | null>
   // Legacy V4 vaults (account size 263 bytes) end right after bump and have no
   // tag byte → decode as None. New vaults (account size 373 bytes) include the
   // full Option. Trailing zero padding on old vaults also decodes as None.
+  //
+  // The DECODE stays even though `subscribe_private_stark` no longer accepts
+  // the argument and always writes None: vaults created before that change are
+  // still on chain with 64 real bytes in this slot, and every field AFTER it is
+  // read from an offset this Option advances. Skipping it would misread the
+  // rest of the account rather than merely ignore this field.
   let clientStealthMeta: Uint8Array | null = null;
   if (offset + 1 <= data.length) {
     const tag = data[offset];

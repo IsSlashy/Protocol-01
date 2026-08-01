@@ -131,17 +131,22 @@ export function deriveStealthForRecipient(recipientMetaAddress: string): Stealth
  * Return the user's v1 stealth meta address as 64 raw bytes:
  * `[spending_ed25519_pub(32) | viewing_x25519_pub(32)]`.
  *
- * This is the on-chain layout expected by `SubscriptionVault.client_stealth_meta`
- * (refund-via-relayer): the keeper splits it into the two 32-byte halves to
- * derive a one-time stealth address for the refund note.
+ * NOT FOR SUBSCRIPTIONS ANY MORE. This used to be handed to
+ * `subscribe_private_stark` as `client_stealth_meta`, where a keeper would
+ * split it into two 32-byte halves to address a refund note. Cancellation and
+ * refunds are gone, the instruction no longer takes the argument, and
+ * `subscribe.tsx` no longer calls this — publishing these 64 bytes in a public
+ * transaction bought nothing and identified the payer's stealth address. The
+ * remaining caller is the inbox scanner, where the same bytes are the user's
+ * own receiving address and are meant to be shared.
  *
  * - Loads or derives the user's persistent stealth keypairs via
  *   `getOrCreateStealthKeys` (cached, persisted in SecureStore).
  * - Drops any v2 KEM material — only the v1 portion (spending + viewing) is
- *   encoded since the on-chain field is fixed-size `[u8; 64]`.
+ *   encoded, in the fixed 64-byte layout.
  *
  * Stable across sessions: re-invoking on the same device returns the same
- * 64 bytes, which is what enables cross-session refund-note recovery.
+ * 64 bytes, which is what lets an incoming note be recognised later.
  */
 export async function getOrCreateStealthMetaV1(): Promise<Uint8Array> {
   const keys = await getOrCreateStealthKeys();
