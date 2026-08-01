@@ -70,33 +70,65 @@ const TRACE_WIDTH: usize = 3;
 const TRACE_LENGTH: usize = 32;
 const BLOWUP: usize = 16;
 const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
-// [B1] SOUNDNESS, HONESTLY. num_queries * log2(1/rho) + grinding_bits at the
-// MEASURED rho, NEVER num_queries * log2(blowup).
+// [B2] SOUNDNESS, HONESTLY. The query term is
 //
-// The FRI rate is ~1/2, not 1/blowup: deg(Q) = 8n-8 on a 16n LDE, MEASURED as
-// 4088 at n = 512, so each query is worth 1.000 bit, not 4. That figure is
-// pinned as an observation by `t5_aliased_terminal_poly_agrees_at_exactly_the_even_indices` in programs/p01_stark_verifier/tests/b1_deep_binding.rs, which
-// shows an aliased degree-<8 terminal polynomial agreeing with the true 16-value
-// final layer at exactly 8 of 16 points.
+//     num_queries * log2(1/rho) + grinding_bits
 //
-// Post-B1: ~43 bits for circuits 0/1/2/4 (27 queries) and ~38 bits for circuits
-// 3/5/6 (22 queries). Pre-B1 a coordinated forgery was FREE, so this is a move
-// from zero to ~2^38 hashes, which is hours on a GPU. It is NOT 100 bits and NOT
-// the 124 this comment used to claim. Raising rho is B2 and is a wire-format
-// change. No README, CV, pitch or tweet number above ~43 bits until B2 lands and
-// is MEASURED.
+// at the MEASURED rho, where rho = fri_final_poly_degree_bound / fri_final_poly_size
+// is READ OFF THE TERMINAL BOUND, not assumed. `log2(blowup)` is only ever the
+// right answer when the terminal bound has been driven to 1, and before B2 it
+// was NOT: deg(Q) = 8n-8 on a 16n LDE gave bound 8 of 16, rho = 1/2, and each
+// query was worth 1.000 bit — not 4. Quoting `num_queries * log2(blowup)`
+// without checking the bound is the specific error this project shipped.
+//
+// B2 splits the composition polynomial into `*_QUOTIENT_SEGMENTS` columns of
+// degree < n each, so deg(D) = n-2, the terminal bound is 1 of 16, rho = 1/16,
+// and each query is worth 4.000 bits. See `segment_quotient_poly`.
+//
+// The query term is NOT the whole story and never was. Every Fiat-Shamir
+// challenge in this construction (`derive_ood_point`, `derive_fri_alpha`,
+// `derive_deep_coeff`) is a SINGLE base-field Goldilocks element, so the
+// argument has a hard field floor of
+//
+//     field_bits = 64 - log2( 8n + (w + k + 1) + folds * lde_size )
+//
+// which is 47.8-52.5 bits on the seven shipping circuits and which grinding
+// cannot rescue (the nonce is absorbed AFTER z, gamma and every alpha). The
+// honest post-B2 figure is `min(query_term, field_floor)` and it is
+// FLOOR-BOUND on all seven. Both columns are derived from `CircuitConfig` and
+// asserted in `programs/p01_stark_verifier/tests/b1_deep_binding.rs`
+// (`B2_CONJECTURED_FORGERY_BITS` / `B2_UNCONDITIONAL_FORGERY_BITS`); no number
+// above those reaches a README, CV, pitch or tweet.
 const NUM_QUERIES: usize = 27;
-/// Grinding factor in bits — proof-of-work over Fiat-Shamir seed adds
-/// `GRINDING_BITS` to classical soundness without additional queries.
-const GRINDING_BITS: u32 = 16;
+/// Grinding factor in bits — proof-of-work over the Fiat-Shamir seed.
+///
+/// [B2] 16 -> 22. Post-segmentation the CONJECTURED column is floor-bound, so
+/// grinding buys nothing there; its entire value is the UNCONDITIONAL
+/// (unique-decoding) column, where it is worth +6 bits. May be lowered to 20 on
+/// measurement; NEVER raised without a fresh WASM prover-latency measurement,
+/// because grinding cost is 2^GRINDING_BITS hashes on the prover's device and
+/// the 99th-percentile tail is ~4.6x the mean.
+const GRINDING_BITS: u32 = 22;
 const MERKLE_DEPTH: usize = 9; // log2(512) = 9
-/// [B1] MEASURED terminal degree bound for C0. Different from the generic
-/// circuits' 8 because `subscriber_ownership`'s AIR declares ONE periodic factor
-/// (`with_cycles(7, vec![TRACE_LENGTH])`) where C1..C6 declare two: deg(C) =
-/// 8*31 = 248, deg(Q) = 217, ceil(218/32) = 7. `emit_deep_degree_table` reports
-/// a top non-zero coefficient index of 6, i.e. 7. Must equal the verifier's
-/// `compact_proof::LEGACY_FRI_FINAL_POLY_DEGREE_BOUND`.
-const LEGACY_FRI_FINAL_POLY_DEGREE_BOUND: usize = 7;
+/// [B2] MEASURED terminal degree bound for C0, post-segmentation.
+///
+/// Pre-B2 this was 7: `subscriber_ownership`'s AIR declares ONE periodic factor
+/// (`with_cycles(7, vec![TRACE_LENGTH])`) where C1..C6 declare two, so
+/// deg(C) = 8*31 = 248, deg(Q) = 217 and ceil(218/32) = 7. Post-B2 the quotient
+/// ships as `LEGACY_QUOTIENT_SEGMENTS` columns of degree < 32, so deg(D) = 30 and
+/// ceil(30 * 16 / 512) = 1. MEASURED by `quotient_segmentation_is_measured_not_assumed`
+/// in `programs/p01_stark_verifier/tests/b1_deep_binding.rs`, which reads the top
+/// non-zero terminal coefficient index off honest proofs of all seven circuits.
+/// Must equal the verifier's `compact_proof::LEGACY_FRI_FINAL_POLY_DEGREE_BOUND`.
+const LEGACY_FRI_FINAL_POLY_DEGREE_BOUND: usize = 1;
+/// [B2] Number of degree-`< TRACE_LENGTH` columns C0's quotient is split into.
+///
+/// `ceil((deg(Q) + 1) / n) = ceil(218 / 32) = 7`. This is the ONE number that
+/// makes the terminal bound 1 rather than 7, and under-segmenting it is a SILENT
+/// over-claim (the config would say rho = 1/16 while the real rate is worse), so
+/// `segment_quotient_poly` asserts it against the measured coefficient count in
+/// BOTH directions. Must equal the verifier's `CONFIG_SUBSCRIBER_OWNERSHIP.quotient_segments`.
+const LEGACY_QUOTIENT_SEGMENTS: usize = 7;
 const NUM_ROUNDS: usize = 30;
 
 /// Generate a compact proof for subscriber_ownership.
@@ -260,12 +292,14 @@ fn generate_compact_proof_with_layout(
         derive_rlc_alpha_with_tag(&root, &commitment.to_le_bytes(), b"bnd-c0\0\0");
     fold_boundary_quotient(&mut q_poly, &trace_polys, &boundary_assertions, trace_g, alpha_bnd);
 
-    let all_quotient_values: Vec<u64> = (0..LDE_SIZE).map(|pos| {
-        let x = lde_g.exp(pos as u64);
-        evaluate_poly(&q_poly, x).as_int()
-    }).collect();
+    // [B2] Split Q into `LEGACY_QUOTIENT_SEGMENTS` degree-<32 columns and commit
+    // all of them in ONE pair tree. Depth is unchanged (LDE_SIZE/2 leaves); only
+    // the leaf preimage widens, from 16 bytes to 16*k.
+    let q_segs = segment_quotient_poly(
+        &q_poly, TRACE_LENGTH, LDE_SIZE, lde_g, LEGACY_QUOTIENT_SEGMENTS,
+    );
     let (quotient_root, quotient_tree) =
-        build_pair_merkle_tree(&all_quotient_values, pair_indexing.quotient());
+        build_pair_merkle_tree_multi(&q_segs.lde, pair_indexing.quotient());
 
     // 5. [H10] Derive OOD point from Fiat-Shamir transcript (trace_root || quotient_root || pub_bytes)
     let commitment_bytes = commitment.to_le_bytes();
@@ -282,38 +316,36 @@ fn generate_compact_proof_with_layout(
         ood_next[col] = evaluate_poly(&poly, ood_z_next).as_int();
     }
 
-    // 6b. [P1.1 PR 4 DEEP-ALI] Q(z), absorbed into the transcript so it is fixed
-    // before FRI challenges.
+    // 6b. [P1.1 PR 4 DEEP-ALI / B2] Q_j(z) for every segment, absorbed into the
+    // transcript so all k claims are fixed before FRI challenges.
     //
-    // [B1] CLOSED A DIVERGENCE. This used to be `evaluate_poly(&q_poly, z)` — the
-    // COEFFICIENT vector — while the generic pipeline took Q(z) from the
-    // COMMITTED vector via `inverse_ntt`. That was cosmetic before B1 and is not
-    // any more: D's quotient term is (Q_committed(x) - q_z)/(x - z), so if q_z is
-    // not the committed vector's interpolant at z then D is not a polynomial and
-    // HONEST legacy proofs fail. The two forms agree today only because
-    // `q_poly.len()` (481) is under LDE_SIZE (512); assert that rather than rely
-    // on it.
-    let quotient_felts: Vec<BaseElement> =
-        all_quotient_values.iter().map(|&v| BaseElement::new(v)).collect();
-    assert!(
-        q_poly.len() <= LDE_SIZE,
-        "legacy q_poly has {} coefficients, LDE is {LDE_SIZE} — the committed \
-         vector would not interpolate back to q_poly",
-        q_poly.len(),
-    );
+    // [B1] CLOSED A DIVERGENCE, and [B2] closed the class it came from. B1's bug
+    // was that Q(z) came from the COEFFICIENT vector here and from the COMMITTED
+    // vector (via `inverse_ntt`) in the generic pipeline; D's quotient term is
+    // (Q_committed(x) - q_z)/(x - z), so any disagreement makes D non-polynomial
+    // and HONEST proofs fail. Post-B2 the two forms cannot diverge by
+    // construction: `segment_quotient_poly` asserts every segment has at most
+    // `trace_length <= lde_size` coefficients and then evaluates THAT vector to
+    // build the committed column, so the committed column's interpolant IS the
+    // segment coefficient vector. There is nothing left to cross-check.
     // `mut` exists only for the `test-probes` forgery re-solve below; without
     // the feature nothing writes to it.
     #[cfg_attr(not(any(test, feature = "test-probes")), allow(unused_mut))]
-    let mut ood_quotient = {
-        let q_poly_committed = inverse_ntt(&quotient_felts, lde_g);
-        evaluate_poly(&q_poly_committed, ood_z_felt).as_int()
-    };
-    assert_eq!(
-        ood_quotient,
+    let mut ood_quotient: Vec<u64> = segment_ood_values(&q_segs, ood_z_felt);
+    debug_assert_eq!(
+        {
+            // Q(z) = SUM_j z^(j*n) * Q_j(z) must reproduce the un-split value.
+            let mut acc = BaseElement::ZERO;
+            let zn = ood_z_felt.exp(TRACE_LENGTH as u64);
+            let mut zp = BaseElement::ONE;
+            for &q in ood_quotient.iter() {
+                acc += zp * BaseElement::new(q);
+                zp *= zn;
+            }
+            acc.as_int()
+        },
         evaluate_poly(&q_poly, ood_z_felt).as_int(),
-        "legacy ood_quotient: the committed-vector form and the coefficient-vector \
-         form disagree at z. B1 requires the committed form; a mismatch means the \
-         quotient LDE is not the evaluation of q_poly.",
+        "[B2] segment recombination SUM_j z^(jn) Q_j(z) does not reproduce Q(z)",
     );
 
     // [B1 fails-closed probe] Coordinated OOD forgery, C0 flavour.
@@ -356,7 +388,20 @@ fn generate_compact_proof_with_layout(
             z_t,
             trace_g,
         );
-        ood_quotient = ((c_trans + c_bnd) * z_t.inv()).as_int();
+        // [B2] The identity constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z),
+        // so the re-solve absorbs the whole correction into segment 0 and leaves
+        // segments 1.. honest. That keeps the forgery minimal: exactly one
+        // committed column's OOD claim is a lie, which is the weakest form of the
+        // attack B1's terminal bound has to catch.
+        let target = (c_trans + c_bnd) * z_t.inv();
+        let zn = ood_z_felt.exp(TRACE_LENGTH as u64);
+        let mut rest = BaseElement::ZERO;
+        let mut zp = zn;
+        for &q in ood_quotient.iter().skip(1) {
+            rest += zp * BaseElement::new(q);
+            zp *= zn;
+        }
+        ood_quotient[0] = (target - rest).as_int();
     }
 
     // 7. [P1.1 PR 2 / B1] FRI commit phase over the DEEP COMPOSITION, not the raw
@@ -365,15 +410,15 @@ fn generate_compact_proof_with_layout(
     // challenges (grinding, query positions) depend on the layer roots so the
     // prover cannot adaptively choose layer values.
     let initial_fri_transcript = build_base_seed(
-        &root, &quotient_root, &commitment_bytes, &ood_current, &ood_next, ood_quotient,
+        &root, &quotient_root, &commitment_bytes, &ood_current, &ood_next, &ood_quotient,
     );
     let gamma = derive_deep_coeff(&initial_fri_transcript);
     let deep_felts = deep_composition_lde(
         &lde,
-        &all_quotient_values,
+        &q_segs.lde,
         &ood_current,
         &ood_next,
-        ood_quotient,
+        &ood_quotient,
         ood_z_felt,
         trace_g,
         lde_g,
@@ -465,7 +510,8 @@ fn generate_compact_proof_with_layout(
         // The mirror value still travels on the wire (the verifier needs the
         // second field element; only the redundant path is gone).
         let quotient_mirror_pos = pos ^ (LDE_SIZE / 2);
-        let quotient_mirror_value = all_quotient_values[quotient_mirror_pos];
+        let quotient_mirror_values: Vec<u64> =
+            q_segs.lde.iter().map(|c| c[quotient_mirror_pos]).collect();
         let quotient_pair_j = pos & (LDE_SIZE / 2 - 1);
         let quotient_pair_path = get_merkle_proof_pair(
             &quotient_tree,
@@ -499,7 +545,7 @@ fn generate_compact_proof_with_layout(
             ],
             merkle_path,
             next_merkle_path,
-            quotient_mirror_value,
+            quotient_mirror_values,
             quotient_pair_path,
             fri_lo_values: fri_openings.lo_values,
             fri_hi_values: fri_openings.hi_values,
@@ -507,8 +553,12 @@ fn generate_compact_proof_with_layout(
         });
     }
 
-    // 9. Per-query quotient values (subset of all_quotient_values at query positions)
-    let quotient_values: Vec<u64> = positions.iter().map(|&pos| all_quotient_values[pos]).collect();
+    // 9. [B2] Per-query quotient values: `quotient_segments` felts per query,
+    // segment-major within a query (Q_0[pos] .. Q_{k-1}[pos]).
+    let quotient_values: Vec<u64> = positions
+        .iter()
+        .flat_map(|&pos| q_segs.lde.iter().map(move |c| c[pos]))
+        .collect();
 
     // 10. Serialize with new wire format (trace_root || quotient_root || ood || FRI || ...)
     let bytes = serialize_compact_proof(
@@ -517,7 +567,7 @@ fn generate_compact_proof_with_layout(
         &ood_current,
         &ood_next,
         ood_z,
-        ood_quotient,
+        &ood_quotient,
         &fri.layer_roots,
         &fri.final_poly,
         grinding_nonce,
@@ -560,7 +610,8 @@ struct CompactQuery {
     /// [P1.1 PR 3] Mirror opening of the quotient LDE at `position XOR (lde_size/2)`.
     /// Needed so the verifier can recompute the first fold `f_1(y²)` from
     /// `(f_0(y), f_0(-y))`, with `f_0 = quotient LDE`.
-    quotient_mirror_value: u64,
+    /// [B2] One entry per quotient SEGMENT, in wire order.
+    quotient_mirror_values: Vec<u64>,
     /// [B4] ONE path into the quotient pair tree, depth `MERKLE_DEPTH - 1`.
     /// Authenticates the leaf `H(q[j] ‖ q[j + LDE_SIZE/2])`, i.e. both the
     /// value at `position` and the value at its mirror. Replaces the pre-B4
@@ -789,7 +840,7 @@ fn compute_quotient_lde_circuit_6(
     trace_length: usize,
     depth: usize,
     alpha: BaseElement,
-) -> Vec<u64> {
+) -> Vec<BaseElement> {
     use crate::air::merkle_update::{
         build_merkle_update_periodic_columns, evaluate_merkle_update_transition,
         MERKLE_UPDATE_NUM_CONSTRAINTS, MERKLE_UPDATE_NUM_PERIODIC,
@@ -858,26 +909,21 @@ fn compute_quotient_lde_circuit_6(
 
     // 6. Pad Q_poly to lde_size coefficients and evaluate on the LDE via
     //    naive Horner (matches the pattern used by `compute_lde_generic`).
-    let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
-    // [B1] Was `let copy_len = q_poly.len().min(lde_size);` — a SILENT truncation.
-    // Under B1 that is no longer cosmetic: D's quotient term is
-    // (Q_committed(x) - q_z)/(x - z), so if the committed vector's interpolant is
-    // a truncation of q_poly then q_z is not its value at z, D is not a
-    // polynomial, and HONEST proofs fail. Fail at proof time instead.
+    // [B1] The predecessor of this block padded to `lde_size` and evaluated the
+    // whole of Q on the LDE. That was a SILENT truncation risk (`min(lde_size)`)
+    // and an O(N^2) pass. [B2] The caller now splits Q into degree-<n segments
+    // and evaluates those instead — same total mul count, and the truncation
+    // hole closes structurally because each segment is asserted to fit in n
+    // coefficients. Returning coefficients rather than evaluations is what makes
+    // the split possible at all: the boundary fold is added in coefficient space
+    // by the caller, so nothing downstream has to re-interpolate the LDE.
     assert!(
         q_poly.len() <= lde_size,
-        "quotient polynomial has {} coefficients, LDE is {} — truncating would          break the committed-vector/ood_quotient agreement B1 depends on",
+        "quotient polynomial has {} coefficients, LDE is {} — a quotient this          large cannot be committed on this domain at all",
         q_poly.len(),
         lde_size,
     );
-    q_poly_padded[..q_poly.len()].copy_from_slice(&q_poly);
-
-    let mut q_lde = vec![0u64; lde_size];
-    for i in 0..lde_size {
-        let x = lde_g.exp(i as u64);
-        q_lde[i] = evaluate_poly(&q_poly_padded, x).as_int();
-    }
-    q_lde
+    q_poly
 }
 
 /// [P2.2d-C1] Compute the DEEP-ALI quotient LDE for circuit 1 (pool_commitment).
@@ -906,7 +952,7 @@ fn compute_quotient_lde_circuit_1(
     blowup: usize,
     trace_length: usize,
     alpha: BaseElement,
-) -> Vec<u64> {
+) -> Vec<BaseElement> {
     use crate::air::denominated_pool::{
         build_pool_commitment_periodic_columns, evaluate_pool_commitment_transition,
         POOL_COMMITMENT_NUM_CONSTRAINTS, POOL_COMMITMENT_NUM_PERIODIC, TRACE_WIDTH,
@@ -966,26 +1012,21 @@ fn compute_quotient_lde_circuit_1(
     let q_poly = divide_by_vanishing(&c_poly_ext, trace_length);
 
     // 6. Pad to lde_size and evaluate on LDE.
-    let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
-    // [B1] Was `let copy_len = q_poly.len().min(lde_size);` — a SILENT truncation.
-    // Under B1 that is no longer cosmetic: D's quotient term is
-    // (Q_committed(x) - q_z)/(x - z), so if the committed vector's interpolant is
-    // a truncation of q_poly then q_z is not its value at z, D is not a
-    // polynomial, and HONEST proofs fail. Fail at proof time instead.
+    // [B1] The predecessor of this block padded to `lde_size` and evaluated the
+    // whole of Q on the LDE. That was a SILENT truncation risk (`min(lde_size)`)
+    // and an O(N^2) pass. [B2] The caller now splits Q into degree-<n segments
+    // and evaluates those instead — same total mul count, and the truncation
+    // hole closes structurally because each segment is asserted to fit in n
+    // coefficients. Returning coefficients rather than evaluations is what makes
+    // the split possible at all: the boundary fold is added in coefficient space
+    // by the caller, so nothing downstream has to re-interpolate the LDE.
     assert!(
         q_poly.len() <= lde_size,
-        "quotient polynomial has {} coefficients, LDE is {} — truncating would          break the committed-vector/ood_quotient agreement B1 depends on",
+        "quotient polynomial has {} coefficients, LDE is {} — a quotient this          large cannot be committed on this domain at all",
         q_poly.len(),
         lde_size,
     );
-    q_poly_padded[..q_poly.len()].copy_from_slice(&q_poly);
-
-    let mut q_lde = vec![0u64; lde_size];
-    for i in 0..lde_size {
-        let x = lde_g.exp(i as u64);
-        q_lde[i] = evaluate_poly(&q_poly_padded, x).as_int();
-    }
-    q_lde
+    q_poly
 }
 
 /// [P2.2d-C2] Compute the RLC-combined quotient LDE for circuit 2 (balance_proof).
@@ -1019,7 +1060,7 @@ fn compute_quotient_lde_circuit_2(
     blowup: usize,
     trace_length: usize,
     alpha: BaseElement,
-) -> Vec<u64> {
+) -> Vec<BaseElement> {
     use crate::air::balance_proof::{
         build_balance_proof_periodic_columns, evaluate_balance_proof_transition,
         BALANCE_PROOF_NUM_CONSTRAINTS, BALANCE_PROOF_NUM_PERIODIC, TRACE_WIDTH,
@@ -1079,26 +1120,21 @@ fn compute_quotient_lde_circuit_2(
     let q_poly = divide_by_vanishing(&c_poly_ext, trace_length);
 
     // 6. Pad to lde_size and evaluate on LDE.
-    let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
-    // [B1] Was `let copy_len = q_poly.len().min(lde_size);` — a SILENT truncation.
-    // Under B1 that is no longer cosmetic: D's quotient term is
-    // (Q_committed(x) - q_z)/(x - z), so if the committed vector's interpolant is
-    // a truncation of q_poly then q_z is not its value at z, D is not a
-    // polynomial, and HONEST proofs fail. Fail at proof time instead.
+    // [B1] The predecessor of this block padded to `lde_size` and evaluated the
+    // whole of Q on the LDE. That was a SILENT truncation risk (`min(lde_size)`)
+    // and an O(N^2) pass. [B2] The caller now splits Q into degree-<n segments
+    // and evaluates those instead — same total mul count, and the truncation
+    // hole closes structurally because each segment is asserted to fit in n
+    // coefficients. Returning coefficients rather than evaluations is what makes
+    // the split possible at all: the boundary fold is added in coefficient space
+    // by the caller, so nothing downstream has to re-interpolate the LDE.
     assert!(
         q_poly.len() <= lde_size,
-        "quotient polynomial has {} coefficients, LDE is {} — truncating would          break the committed-vector/ood_quotient agreement B1 depends on",
+        "quotient polynomial has {} coefficients, LDE is {} — a quotient this          large cannot be committed on this domain at all",
         q_poly.len(),
         lde_size,
     );
-    q_poly_padded[..q_poly.len()].copy_from_slice(&q_poly);
-
-    let mut q_lde = vec![0u64; lde_size];
-    for i in 0..lde_size {
-        let x = lde_g.exp(i as u64);
-        q_lde[i] = evaluate_poly(&q_poly_padded, x).as_int();
-    }
-    q_lde
+    q_poly
 }
 
 /// [P2.2d-C3] Compute the RLC-combined quotient LDE for circuit 3 (merkle_path).
@@ -1139,7 +1175,7 @@ fn compute_quotient_lde_circuit_3(
     trace_length: usize,
     depth: usize,
     alpha: BaseElement,
-) -> Vec<u64> {
+) -> Vec<BaseElement> {
     use crate::air::merkle_path::{
         build_merkle_path_periodic_columns, evaluate_merkle_path_transition,
         MERKLE_PATH_NUM_CONSTRAINTS, MERKLE_PATH_NUM_PERIODIC, TRACE_WIDTH,
@@ -1199,26 +1235,21 @@ fn compute_quotient_lde_circuit_3(
     let q_poly = divide_by_vanishing(&c_poly_ext, trace_length);
 
     // 6. Pad to lde_size and evaluate on LDE.
-    let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
-    // [B1] Was `let copy_len = q_poly.len().min(lde_size);` — a SILENT truncation.
-    // Under B1 that is no longer cosmetic: D's quotient term is
-    // (Q_committed(x) - q_z)/(x - z), so if the committed vector's interpolant is
-    // a truncation of q_poly then q_z is not its value at z, D is not a
-    // polynomial, and HONEST proofs fail. Fail at proof time instead.
+    // [B1] The predecessor of this block padded to `lde_size` and evaluated the
+    // whole of Q on the LDE. That was a SILENT truncation risk (`min(lde_size)`)
+    // and an O(N^2) pass. [B2] The caller now splits Q into degree-<n segments
+    // and evaluates those instead — same total mul count, and the truncation
+    // hole closes structurally because each segment is asserted to fit in n
+    // coefficients. Returning coefficients rather than evaluations is what makes
+    // the split possible at all: the boundary fold is added in coefficient space
+    // by the caller, so nothing downstream has to re-interpolate the LDE.
     assert!(
         q_poly.len() <= lde_size,
-        "quotient polynomial has {} coefficients, LDE is {} — truncating would          break the committed-vector/ood_quotient agreement B1 depends on",
+        "quotient polynomial has {} coefficients, LDE is {} — a quotient this          large cannot be committed on this domain at all",
         q_poly.len(),
         lde_size,
     );
-    q_poly_padded[..q_poly.len()].copy_from_slice(&q_poly);
-
-    let mut q_lde = vec![0u64; lde_size];
-    for i in 0..lde_size {
-        let x = lde_g.exp(i as u64);
-        q_lde[i] = evaluate_poly(&q_poly_padded, x).as_int();
-    }
-    q_lde
+    q_poly
 }
 
 /// [P2.2d-C4] Compute the RLC-combined quotient LDE for circuit 4
@@ -1258,7 +1289,7 @@ fn compute_quotient_lde_circuit_4(
     blowup: usize,
     trace_length: usize,
     alpha: BaseElement,
-) -> Vec<u64> {
+) -> Vec<BaseElement> {
     use crate::air::confidential_balance::{
         build_confidential_balance_periodic_columns, evaluate_confidential_balance_transition,
         CONFIDENTIAL_BALANCE_NUM_CONSTRAINTS, CONFIDENTIAL_BALANCE_NUM_PERIODIC, TRACE_WIDTH,
@@ -1318,26 +1349,21 @@ fn compute_quotient_lde_circuit_4(
     let q_poly = divide_by_vanishing(&c_poly_ext, trace_length);
 
     // 6. Pad to lde_size and evaluate on LDE.
-    let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
-    // [B1] Was `let copy_len = q_poly.len().min(lde_size);` — a SILENT truncation.
-    // Under B1 that is no longer cosmetic: D's quotient term is
-    // (Q_committed(x) - q_z)/(x - z), so if the committed vector's interpolant is
-    // a truncation of q_poly then q_z is not its value at z, D is not a
-    // polynomial, and HONEST proofs fail. Fail at proof time instead.
+    // [B1] The predecessor of this block padded to `lde_size` and evaluated the
+    // whole of Q on the LDE. That was a SILENT truncation risk (`min(lde_size)`)
+    // and an O(N^2) pass. [B2] The caller now splits Q into degree-<n segments
+    // and evaluates those instead — same total mul count, and the truncation
+    // hole closes structurally because each segment is asserted to fit in n
+    // coefficients. Returning coefficients rather than evaluations is what makes
+    // the split possible at all: the boundary fold is added in coefficient space
+    // by the caller, so nothing downstream has to re-interpolate the LDE.
     assert!(
         q_poly.len() <= lde_size,
-        "quotient polynomial has {} coefficients, LDE is {} — truncating would          break the committed-vector/ood_quotient agreement B1 depends on",
+        "quotient polynomial has {} coefficients, LDE is {} — a quotient this          large cannot be committed on this domain at all",
         q_poly.len(),
         lde_size,
     );
-    q_poly_padded[..q_poly.len()].copy_from_slice(&q_poly);
-
-    let mut q_lde = vec![0u64; lde_size];
-    for i in 0..lde_size {
-        let x = lde_g.exp(i as u64);
-        q_lde[i] = evaluate_poly(&q_poly_padded, x).as_int();
-    }
-    q_lde
+    q_poly
 }
 
 /// [P2.2d-C5] Compute the RLC-combined quotient LDE for circuit 5 (transfer).
@@ -1369,7 +1395,7 @@ fn compute_quotient_lde_circuit_5(
     blowup: usize,
     trace_length: usize,
     alpha: BaseElement,
-) -> Vec<u64> {
+) -> Vec<BaseElement> {
     use crate::air::transfer::{
         build_transfer_periodic_columns, evaluate_transfer_transition,
         TRACE_WIDTH, TRANSFER_NUM_CONSTRAINTS, TRANSFER_NUM_PERIODIC,
@@ -1448,26 +1474,21 @@ fn compute_quotient_lde_circuit_5(
     let q_poly = divide_by_vanishing(&c_poly_ext, trace_length);
 
     // 6. Pad to lde_size and evaluate on LDE.
-    let mut q_poly_padded = vec![BaseElement::ZERO; lde_size];
-    // [B1] Was `let copy_len = q_poly.len().min(lde_size);` — a SILENT truncation.
-    // Under B1 that is no longer cosmetic: D's quotient term is
-    // (Q_committed(x) - q_z)/(x - z), so if the committed vector's interpolant is
-    // a truncation of q_poly then q_z is not its value at z, D is not a
-    // polynomial, and HONEST proofs fail. Fail at proof time instead.
+    // [B1] The predecessor of this block padded to `lde_size` and evaluated the
+    // whole of Q on the LDE. That was a SILENT truncation risk (`min(lde_size)`)
+    // and an O(N^2) pass. [B2] The caller now splits Q into degree-<n segments
+    // and evaluates those instead — same total mul count, and the truncation
+    // hole closes structurally because each segment is asserted to fit in n
+    // coefficients. Returning coefficients rather than evaluations is what makes
+    // the split possible at all: the boundary fold is added in coefficient space
+    // by the caller, so nothing downstream has to re-interpolate the LDE.
     assert!(
         q_poly.len() <= lde_size,
-        "quotient polynomial has {} coefficients, LDE is {} — truncating would          break the committed-vector/ood_quotient agreement B1 depends on",
+        "quotient polynomial has {} coefficients, LDE is {} — a quotient this          large cannot be committed on this domain at all",
         q_poly.len(),
         lde_size,
     );
-    q_poly_padded[..q_poly.len()].copy_from_slice(&q_poly);
-
-    let mut q_lde = vec![0u64; lde_size];
-    for i in 0..lde_size {
-        let x = lde_g.exp(i as u64);
-        q_lde[i] = evaluate_poly(&q_poly_padded, x).as_int();
-    }
-    q_lde
+    q_poly
 }
 
 /// Compute LDE by evaluating trace polynomials at BLOWUP * TRACE_LENGTH points.
@@ -1721,6 +1742,121 @@ fn fold_boundary_quotient(
     }
 }
 
+/// [B2] The committed quotient, split into `segments` columns of degree `< n`.
+///
+/// `coeffs[j]` is the coefficient vector of segment `j` (length `<= n`) and
+/// `lde[j]` is its evaluation over the whole LDE domain. `ood[j]` is `Q_j(z)`.
+pub(crate) struct QuotientSegments {
+    pub(crate) coeffs: Vec<Vec<BaseElement>>,
+    pub(crate) lde: Vec<Vec<u64>>,
+}
+
+/// [B2] THE change. Split `Q` into `k` degree-`< n` segments so the FRI rate
+/// stops being a function of the AIR's constraint degree.
+///
+/// `Q_j[i] = Q[j*n + i]`, so `Q(x) = SUM_j x^(j*n) * Q_j(x)` exactly. The DEEP
+/// composition then gives every segment its OWN gamma power:
+///
+/// ```text
+///   num(x) = ( S(x) - A0 - x*B0 ) + (x - zg) * SUM_j gamma^(w+1+j) * (Q_j(x) - Q_j(z))
+/// ```
+///
+/// so `deg(D) = max(deg(S) - 2, (n-1) + 1 - 2) = n - 2` regardless of `deg(Q)`.
+/// On a `16n` LDE folded to 16 coefficients that is a terminal degree bound of
+/// `ceil((n-2) * 16 / (16n)) = 1`, i.e. `rho = 1/16` and 4.000 bits per query,
+/// where the pre-B2 single-column form gave `bound = 8` and 1.000 bit.
+///
+/// # Why the segment count is asserted in BOTH directions
+///
+/// Too FEW segments is a silent over-claim: some `Q_j` would have degree `>= n`,
+/// `deg(D)` would exceed `n-2`, the true terminal bound would be 2 or more, and
+/// the config would still say 1 — the proof would simply fail to verify if we
+/// were lucky and quietly halve the claimed rate if we were not. Too MANY is
+/// merely wasteful, but it also means the constant no longer matches the AIR it
+/// claims to describe. So both bounds are hard asserts against the MEASURED
+/// coefficient count, and the constant is the measurement, not an assumption.
+///
+/// # Why the batching must not collapse
+///
+/// Each segment gets a distinct gamma power. Combining the segments into one
+/// value before the DEEP step (or reusing a power) un-binds them and puts
+/// `deg(D)` straight back at `8n`, with every existing test still green — see
+/// `deep_composition_lde`.
+fn segment_quotient_poly(
+    q_poly: &[BaseElement],
+    trace_length: usize,
+    lde_size: usize,
+    lde_g: BaseElement,
+    segments: usize,
+) -> QuotientSegments {
+    assert!(segments >= 1, "quotient_segments must be at least 1");
+
+    // MEASURED degree: the index of the top non-zero coefficient, plus one.
+    let significant = {
+        let mut len = q_poly.len();
+        while len > 0 && q_poly[len - 1] == BaseElement::ZERO {
+            len -= 1;
+        }
+        len
+    };
+    assert!(
+        significant <= segments * trace_length,
+        "[B2] UNDER-SEGMENTED: the quotient has {significant} significant coefficients but \
+         only {segments} segments of {trace_length} were allocated. Segment {} would have \
+         degree >= {trace_length}, deg(D) would exceed n-2, and the terminal degree bound \
+         pinned in CircuitConfig would be an OVER-CLAIM of the FRI rate. Fail here, not on chain.",
+        segments - 1,
+    );
+    assert!(
+        significant > (segments - 1) * trace_length,
+        "[B2] OVER-SEGMENTED: the quotient has {significant} significant coefficients, which \
+         fits in {} segments of {trace_length}, but {segments} were allocated. The constant is \
+         supposed to BE the measurement — re-measure and lower it rather than carrying a \
+         segment of zeros on the wire.",
+        significant.div_ceil(trace_length).max(1),
+    );
+
+    let mut coeffs: Vec<Vec<BaseElement>> = Vec::with_capacity(segments);
+    for j in 0..segments {
+        let start = j * trace_length;
+        let end = ((j + 1) * trace_length).min(q_poly.len()).max(start);
+        let mut seg = q_poly[start..end].to_vec();
+        // Trailing zeros are free to drop: `evaluate_poly` is Horner over the
+        // slice, so a shorter vector is the same polynomial and less work.
+        while seg.last() == Some(&BaseElement::ZERO) {
+            seg.pop();
+        }
+        assert!(
+            seg.len() <= trace_length,
+            "segment {j} has {} coefficients, must be < {trace_length}",
+            seg.len(),
+        );
+        coeffs.push(seg);
+    }
+
+    // Evaluate every segment on the LDE domain. Total work is
+    // `significant * lde_size` muls — the SAME as the single full-Q evaluation
+    // this replaces, because the segments partition Q's coefficients. Walking
+    // `x` multiplicatively avoids `lde_size` exponentiations per segment.
+    let mut lde: Vec<Vec<u64>> = Vec::with_capacity(segments);
+    for seg in coeffs.iter() {
+        let mut col = vec![0u64; lde_size];
+        let mut x = BaseElement::ONE;
+        for slot in col.iter_mut() {
+            *slot = evaluate_poly(seg, x).as_int();
+            x *= lde_g;
+        }
+        lde.push(col);
+    }
+
+    QuotientSegments { coeffs, lde }
+}
+
+/// [B2] `Q_j(z)` for every segment, in wire order.
+fn segment_ood_values(segs: &QuotientSegments, z: BaseElement) -> Vec<u64> {
+    segs.coeffs.iter().map(|c| evaluate_poly(c, z).as_int()).collect()
+}
+
 /// Inverse NTT for interpolation.
 fn inverse_ntt(values: &[BaseElement], omega: BaseElement) -> Vec<BaseElement> {
     let n = values.len();
@@ -1861,7 +1997,8 @@ fn serialize_compact_proof(
     ood_current: &[u64; 3],
     ood_next: &[u64; 3],
     ood_z: u64,
-    ood_quotient: u64,
+    // [B2] `quotient_segments` felts, in wire order.
+    ood_quotient: &[u64],
     fri_layer_roots: &[[u8; 32]],
     fri_final_poly: &[u64],
     grinding_nonce: u64,
@@ -1890,8 +2027,13 @@ fn serialize_compact_proof(
     // ood_z: 8 bytes
     bytes.extend_from_slice(&ood_z.to_le_bytes());
 
-    // [P1.1 PR 4 DEEP-ALI] ood_quotient: 8 bytes
-    bytes.extend_from_slice(&ood_quotient.to_le_bytes());
+    // [P1.1 PR 4 DEEP-ALI / B2] ood_quotient: quotient_segments * 8 bytes.
+    // The COUNT is not on the wire — the verifier takes it from
+    // `CircuitConfig.quotient_segments`, so a prover cannot renegotiate the
+    // split (and a short header fails the parser's length arithmetic).
+    for v in ood_quotient {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
 
     // [P1.1 PR 2] num_fri_layers: 1 byte
     bytes.push(fri_layer_roots.len() as u8);
@@ -1963,7 +2105,9 @@ fn serialize_compact_proof(
         // [B4] quotient pair opening: mirror value(8) + ONE path((md-1) * 32).
         // The value at `position` itself travels in the tail `quotient_values`
         // array; the verifier orders the two into (lo, hi) and rehashes the leaf.
-        bytes.extend_from_slice(&q.quotient_mirror_value.to_le_bytes());
+        for v in &q.quotient_mirror_values {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
         for node in &q.quotient_pair_path {
             bytes.extend_from_slice(node);
         }
@@ -2018,13 +2162,41 @@ mod tests {
     ///
     /// [P2.2] `fri_final_poly_size` is a parameter so circuit 6 (which uses 64
     /// instead of 16) can assert its own wire size.
+    ///
+    /// [B2] `k = quotient_segments` widens exactly three fields and nothing else:
+    /// the header `ood_quotient` (8 -> 8k), the per-query quotient mirror block
+    /// (8 -> 8k), and the tail `quotient_values` (8 -> 8k per query). Merkle
+    /// depth, path length and layer count are all unchanged, so the total delta
+    /// is `8*(k-1)*(2*num_queries + 1)` bytes and not one path node more.
+    /// [B2] `Q(z) = SUM_j z^(j*n) * Q_j(z)` from the wire-order segment claims.
+    ///
+    /// Verifier twin: `GenericCompactProof::ood_quotient_recombined`. Every
+    /// DEEP-ALI end-to-end check below goes through here, so a disagreement
+    /// between the split and the identity shows up in six tests at once.
+    fn recombine_ood_quotient(
+        segments: &[u64],
+        z: BaseElement,
+        trace_length: usize,
+    ) -> BaseElement {
+        let zn = z.exp(trace_length as u64);
+        let mut acc = BaseElement::ZERO;
+        let mut zp = BaseElement::ONE;
+        for &q in segments {
+            acc += zp * BaseElement::new(q);
+            zp *= zn;
+        }
+        acc
+    }
+
     fn expected_wire_size(
         tw: usize,
         md: usize,
         num_queries: usize,
         lde_size: usize,
         fri_final_poly_size: usize,
+        quotient_segments: usize,
     ) -> usize {
+        let k = quotient_segments;
         let num_folds = (lde_size / fri_final_poly_size).trailing_zeros() as usize;
         let num_fri_commits = num_folds - 1;
         // [B4] Per-query FRI footprint: lo(8) + hi(8) + pair_path((md-i-2)*32).
@@ -2032,7 +2204,7 @@ mod tests {
             .map(|i| 16 + (md - i - 2) * 32)
             .sum();
         32 + 32
-            + tw * 8 + tw * 8 + 8 + 8  // PR 4: +8 for ood_quotient
+            + tw * 8 + tw * 8 + 8 + 8 * k  // PR 4 + [B2]: k felts for ood_quotient
             + 1 + num_fri_commits * 32
             + 2 + fri_final_poly_size * 8
             + 8 + 2
@@ -2042,10 +2214,10 @@ mod tests {
                 // Net vs pre-Route-C: num_queries * (16*tw - 64) bytes.
                 4 + 4 * (tw * 8)
                 + (md - 1) * 32 + (md - 1) * 32
-                + 8 + (md - 1) * 32
+                + 8 * k + (md - 1) * 32
                 + fri_per_query
             )
-            + num_queries * 8
+            + num_queries * 8 * k
     }
 
     /// [P1.1 PR 2] Fold a known low-degree polynomial and verify the result is
@@ -2124,7 +2296,7 @@ mod tests {
         let proof = generate_compact_proof(42);
         assert_eq!(
             proof.proof_bytes.len(),
-            expected_wire_size(3, 9, 27, 512, FRI_FINAL_POLY_SIZE),
+            expected_wire_size(3, 9, 27, 512, FRI_FINAL_POLY_SIZE, LEGACY_QUOTIENT_SEGMENTS),
             "legacy wire size drift",
         );
     }
@@ -2135,7 +2307,7 @@ mod tests {
         let proof = generate_pool_commitment_proof(111, 222, 333, 444);
         assert_eq!(
             proof.proof_bytes.len(),
-            expected_wire_size(3, 11, 27, 2048, FRI_FINAL_POLY_SIZE),
+            expected_wire_size(3, 11, 27, 2048, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
             "pool_commitment wire size drift",
         );
     }
@@ -2148,7 +2320,7 @@ mod tests {
         );
         assert_eq!(
             proof.proof_bytes.len(),
-            expected_wire_size(4, 12, 27, 4096, FRI_FINAL_POLY_SIZE),
+            expected_wire_size(4, 12, 27, 4096, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
             "confidential_balance wire size drift",
         );
     }
@@ -2165,7 +2337,7 @@ mod tests {
         );
         assert_eq!(
             proof.proof_bytes.len(),
-            expected_wire_size(7, 13, 22, 8192, FRI_FINAL_POLY_SIZE),
+            expected_wire_size(7, 13, 22, 8192, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
             "transfer wire size drift",
         );
     }
@@ -3477,7 +3649,14 @@ mod tests {
         }
         let ood_z = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
         off += 8;
-        let ood_quotient = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        // [B2] The header carries `GENERIC_QUOTIENT_SEGMENTS` claims Q_j(z);
+        // the DEEP-ALI identity is written against the recombined
+        // Q(z) = SUM_j z^(j*n) * Q_j(z). See `segment_quotient_poly`.
+        let ood_quotient_segments: Vec<u64> = (0..GENERIC_QUOTIENT_SEGMENTS)
+            .map(|j| {
+                u64::from_le_bytes(bytes[off + j * 8..off + j * 8 + 8].try_into().unwrap())
+            })
+            .collect();
 
         // Reconstruct public input bytes exactly as the prover built them.
         let (old_root_u64, new_root_u64) = {
@@ -3535,7 +3714,7 @@ mod tests {
         );
         let c_total = c_at_z + c_bnd;
 
-        let q_at_z = BaseElement::new(ood_quotient);
+        let q_at_z = recombine_ood_quotient(&ood_quotient_segments, z, trace_length);
         assert_eq!(
             c_total,
             q_at_z * z_t,
@@ -3588,7 +3767,14 @@ mod tests {
         }
         let ood_z = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
         off += 8;
-        let ood_quotient = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        // [B2] The header carries `GENERIC_QUOTIENT_SEGMENTS` claims Q_j(z);
+        // the DEEP-ALI identity is written against the recombined
+        // Q(z) = SUM_j z^(j*n) * Q_j(z). See `segment_quotient_poly`.
+        let ood_quotient_segments: Vec<u64> = (0..GENERIC_QUOTIENT_SEGMENTS)
+            .map(|j| {
+                u64::from_le_bytes(bytes[off + j * 8..off + j * 8 + 8].try_into().unwrap())
+            })
+            .collect();
 
         // Reconstruct public input bytes exactly as the prover built them.
         let null_u64 = proof.public_inputs[0];
@@ -3633,7 +3819,7 @@ mod tests {
         );
         let c_total = c_at_z + c_bnd;
 
-        let q_at_z = BaseElement::new(ood_quotient);
+        let q_at_z = recombine_ood_quotient(&ood_quotient_segments, z, trace_length);
         assert_eq!(
             c_total,
             q_at_z * z_t,
@@ -3715,7 +3901,14 @@ mod tests {
         }
         let ood_z = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
         off += 8;
-        let ood_quotient = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        // [B2] The header carries `GENERIC_QUOTIENT_SEGMENTS` claims Q_j(z);
+        // the DEEP-ALI identity is written against the recombined
+        // Q(z) = SUM_j z^(j*n) * Q_j(z). See `segment_quotient_poly`.
+        let ood_quotient_segments: Vec<u64> = (0..GENERIC_QUOTIENT_SEGMENTS)
+            .map(|j| {
+                u64::from_le_bytes(bytes[off + j * 8..off + j * 8 + 8].try_into().unwrap())
+            })
+            .collect();
 
         // Reconstruct public input bytes exactly as the prover built them.
         let commit_u64 = proof.public_inputs[0];
@@ -3753,7 +3946,7 @@ mod tests {
         let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
         let z_t = z_d * (z - last_row_x).inv();
 
-        let q_at_z = BaseElement::new(ood_quotient);
+        let q_at_z = recombine_ood_quotient(&ood_quotient_segments, z, trace_length);
         assert_eq!(
             c_at_z,
             q_at_z * z_t,
@@ -3811,7 +4004,14 @@ mod tests {
         }
         let ood_z = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
         off += 8;
-        let ood_quotient = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        // [B2] The header carries `GENERIC_QUOTIENT_SEGMENTS` claims Q_j(z);
+        // the DEEP-ALI identity is written against the recombined
+        // Q(z) = SUM_j z^(j*n) * Q_j(z). See `segment_quotient_poly`.
+        let ood_quotient_segments: Vec<u64> = (0..GENERIC_QUOTIENT_SEGMENTS)
+            .map(|j| {
+                u64::from_le_bytes(bytes[off + j * 8..off + j * 8 + 8].try_into().unwrap())
+            })
+            .collect();
 
         // Reconstruct public input bytes exactly as the prover built them.
         let leaf_u64 = proof.public_inputs[0];
@@ -3858,7 +4058,7 @@ mod tests {
         );
         let c_total = c_at_z + c_bnd;
 
-        let q_at_z = BaseElement::new(ood_quotient);
+        let q_at_z = recombine_ood_quotient(&ood_quotient_segments, z, trace_length);
         assert_eq!(
             c_total,
             q_at_z * z_t,
@@ -3906,7 +4106,14 @@ mod tests {
         }
         let ood_z = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
         off += 8;
-        let ood_quotient = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        // [B2] The header carries `GENERIC_QUOTIENT_SEGMENTS` claims Q_j(z);
+        // the DEEP-ALI identity is written against the recombined
+        // Q(z) = SUM_j z^(j*n) * Q_j(z). See `segment_quotient_poly`.
+        let ood_quotient_segments: Vec<u64> = (0..GENERIC_QUOTIENT_SEGMENTS)
+            .map(|j| {
+                u64::from_le_bytes(bytes[off + j * 8..off + j * 8 + 8].try_into().unwrap())
+            })
+            .collect();
 
         // Reconstruct public input bytes exactly as the prover built them:
         // [old_commit, new_commit, amount_hash, token_mint].
@@ -3944,7 +4151,7 @@ mod tests {
         let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
         let z_t = z_d * (z - last_row_x).inv();
 
-        let q_at_z = BaseElement::new(ood_quotient);
+        let q_at_z = recombine_ood_quotient(&ood_quotient_segments, z, trace_length);
         assert_eq!(
             c_at_z,
             q_at_z * z_t,
@@ -3995,7 +4202,14 @@ mod tests {
         }
         let ood_z = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
         off += 8;
-        let ood_quotient = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        // [B2] The header carries `GENERIC_QUOTIENT_SEGMENTS` claims Q_j(z);
+        // the DEEP-ALI identity is written against the recombined
+        // Q(z) = SUM_j z^(j*n) * Q_j(z). See `segment_quotient_poly`.
+        let ood_quotient_segments: Vec<u64> = (0..GENERIC_QUOTIENT_SEGMENTS)
+            .map(|j| {
+                u64::from_le_bytes(bytes[off + j * 8..off + j * 8 + 8].try_into().unwrap())
+            })
+            .collect();
 
         // Reconstruct public input bytes exactly as the prover built them:
         // [null_1, null_2, out_commit_1, out_commit_2, public_amount, token_mint].
@@ -4055,7 +4269,7 @@ mod tests {
         );
         let c_total = c_at_z + c_bnd;
 
-        let q_at_z = BaseElement::new(ood_quotient);
+        let q_at_z = recombine_ood_quotient(&ood_quotient_segments, z, trace_length);
         assert_eq!(
             c_total,
             q_at_z * z_t,
@@ -4315,19 +4529,28 @@ fn apply_terminal_poly_probe(final_poly: &mut [u64], terminal: TerminalPoly, bou
     match terminal {
         TerminalPoly::Honest => {}
         TerminalPoly::AliasedFold => {
-            assert_eq!(
-                bound * 2,
-                fps,
-                "AliasedFold assumes the bound is exactly half the published size \
-                 (fps {fps}, bound {bound}); the alias x^bound = -1 is what makes the \
-                 even-index agreement exact",
-            );
+            // [B2] Was hard-coded to `p_m = c_m + c_{m+bound}` with an assert that
+            // `bound == fps/2`. That assert held only while the bound was 8 of 16;
+            // post-segmentation it is 1 of 16 and the special case is dead.
+            //
+            // `p_m = c_m + c_{m+k}` IS `c mod (x^k - 1)` for `k = fps/2`, so the
+            // general subgroup form below reproduces the old bytes EXACTLY at
+            // bound 8 (k = 8, p_m = c_m + c_{m+8}) and keeps working at bound 1
+            // (k = 1, p = the sum of every coefficient, a constant). The measured
+            // agreement count is `k`, so this is the construction that turns the
+            // degree bound into a bits-per-query number at ANY bound.
+            let k = largest_terminal_subgroup(fps, bound);
             let orig: Vec<u64> = final_poly.to_vec();
-            for m in 0..bound {
-                final_poly[m] =
-                    (BaseElement::new(orig[m]) + BaseElement::new(orig[m + bound])).as_int();
+            for (m, slot) in final_poly.iter_mut().enumerate().take(k) {
+                let mut acc = BaseElement::ZERO;
+                let mut t = m;
+                while t < fps {
+                    acc += BaseElement::new(orig[t]);
+                    t += k;
+                }
+                *slot = acc.as_int();
             }
-            for slot in final_poly.iter_mut().skip(bound) {
+            for slot in final_poly.iter_mut().skip(k) {
                 *slot = 0;
             }
         }
@@ -4379,9 +4602,9 @@ pub fn measure_aliased_terminal_agreement() -> (Vec<usize>, Vec<usize>) {
         TerminalPoly::Honest,
     );
 
-    // C1 header: 32 + 32 + 3*8 + 3*8 + 8 + 8, then layers, then fps + poly.
+    // C1 header: 32 + 32 + 3*8 + 3*8 + 8 + 8k, then layers, then fps + poly.
     let bytes = &forged.proof_bytes;
-    let mut off = 32 + 32 + 3 * 8 * 2 + 8 + 8;
+    let mut off = 32 + 32 + 3 * 8 * 2 + 8 + GENERIC_QUOTIENT_SEGMENTS * 8;
     let num_layers = bytes[off] as usize;
     off += 1 + num_layers * 32;
     let fps = u16::from_le_bytes([bytes[off], bytes[off + 1]]) as usize;
@@ -4395,15 +4618,26 @@ pub fn measure_aliased_terminal_agreement() -> (Vec<usize>, Vec<usize>) {
         .collect();
 
     let bound = GENERIC_FRI_FINAL_POLY_DEGREE_BOUND;
-    assert_eq!(bound * 2, fps, "AliasedFold assumes bound == fps/2");
     assert!(
         c[bound..].iter().any(|&v| v != BaseElement::ZERO),
         "the forged terminal interpolant must exceed the degree bound — if it did \
          not, T1 would be measuring nothing",
     );
+    // [B2] Same generalisation as `apply_terminal_poly_probe`: `c mod (x^k - 1)`
+    // with `k` the largest power of two <= bound. At bound 8 this is literally
+    // `p_m = c_m + c_{m+8}` (the pre-B2 form); at bound 1 it is the constant
+    // `SUM_m c_m`. Agreement comes out at `k` points either way, which is the
+    // whole point: the measurement now follows the bound instead of assuming it.
+    let k = largest_terminal_subgroup(fps, bound);
     let mut p = vec![BaseElement::ZERO; fps];
-    for m in 0..bound {
-        p[m] = c[m] + c[m + bound];
+    for (m, slot) in p.iter_mut().enumerate().take(k) {
+        let mut acc = BaseElement::ZERO;
+        let mut t = m;
+        while t < fps {
+            acc += c[t];
+            t += k;
+        }
+        *slot = acc;
     }
 
     // gen_final = lde_gen^(2^num_folds), the primitive fps-th root of unity the
@@ -4452,9 +4686,9 @@ pub fn measure_subgroup_alias_terminal_agreement_c0() -> (Vec<usize>, Vec<usize>
         TerminalPoly::Honest,
     );
 
-    // C0 header: 32 + 32 + 3*8 + 3*8 + 8 + 8, then layers, then fps + poly.
+    // C0 header: 32 + 32 + 3*8 + 3*8 + 8 + 8k, then layers, then fps + poly.
     let bytes = &forged.proof_bytes;
-    let mut off = 32 + 32 + TRACE_WIDTH * 8 * 2 + 8 + 8;
+    let mut off = 32 + 32 + TRACE_WIDTH * 8 * 2 + 8 + LEGACY_QUOTIENT_SEGMENTS * 8;
     let num_layers = bytes[off] as usize;
     off += 1 + num_layers * 32;
     let fps = u16::from_le_bytes([bytes[off], bytes[off + 1]]) as usize;
@@ -5235,6 +5469,66 @@ fn build_pair_merkle_tree(
     (root, layers)
 }
 
+/// [B2] Pair-leaf Merkle tree over the `k` quotient SEGMENT columns at once.
+///
+/// Leaf `j` (for `j` in `0..N/2`) is
+///
+/// ```text
+///   H( Q_0[j] ‖ … ‖ Q_{k-1}[j] ‖ Q_0[j+N/2] ‖ … ‖ Q_{k-1}[j+N/2] )
+/// ```
+///
+/// — `16k` preimage bytes instead of 16, ONE tree instead of `k`. That is what
+/// keeps the per-query cost at `8k` bytes rather than `k` full Merkle paths, and
+/// it leaves `merkle_depth` untouched, which is why B2 costs no extra FRI layer
+/// and no extra path node anywhere. `k == 1` reproduces `build_pair_merkle_tree`
+/// byte for byte.
+fn build_pair_merkle_tree_multi(
+    columns: &[Vec<u64>],
+    mode: PairIndexing,
+) -> ([u8; 32], Vec<Vec<[u8; 32]>>) {
+    let k = columns.len();
+    assert!(k >= 1, "quotient pair tree needs at least one segment column");
+    let n = columns[0].len();
+    assert!(n >= 2 && n % 2 == 0, "pair-leaf tree needs an even, non-empty vector");
+    for c in columns.iter() {
+        assert_eq!(c.len(), n, "all quotient segment columns share the LDE size");
+    }
+    let half = n / 2;
+
+    let mut preimage = vec![0u8; 16 * k];
+    let mut leaves: Vec<[u8; 32]> = vec![[0u8; 32]; half];
+    for j in 0..half {
+        // `SwappedHalves` is a `test-probes` mis-indexing probe; it swaps the
+        // two HALVES of the leaf, not the segment order inside a half.
+        let (a, b) = match mode {
+            #[cfg(any(test, feature = "test-probes"))]
+            PairIndexing::SwappedHalves => (j + half, j),
+            _ => (j, j + half),
+        };
+        for (s, col) in columns.iter().enumerate() {
+            preimage[s * 8..(s + 1) * 8].copy_from_slice(&col[a].to_le_bytes());
+            preimage[(k + s) * 8..(k + s + 1) * 8].copy_from_slice(&col[b].to_le_bytes());
+        }
+        leaves[pair_slot(j, half, mode)] = sha256_leaf(&preimage);
+    }
+
+    let mut layers = vec![leaves];
+    while layers.last().unwrap().len() > 1 {
+        let prev = layers.last().unwrap();
+        let next: Vec<[u8; 32]> = prev
+            .chunks(2)
+            .map(|pair| {
+                let right = if pair.len() > 1 { &pair[1] } else { &pair[0] };
+                sha256_node(&pair[0], right)
+            })
+            .collect();
+        layers.push(next);
+    }
+
+    let root = layers.last().unwrap()[0];
+    (root, layers)
+}
+
 // ============================================================================
 // [P1.1 PR 2] FRI commit phase
 // ============================================================================
@@ -5364,8 +5658,9 @@ fn derive_deep_coeff(base_seed: &[u8; 32]) -> BaseElement {
 /// two sides can be diffed by eye. Do NOT fork it.
 ///
 /// # The construction
-/// Let `w` = trace width, `z` = OOD point, `zg = z*trace_g`, `v_c =
-/// ood_current[c]`, `v'_c = ood_next[c]`, `q_z = ood_quotient`.
+/// Let `w` = trace width, `k` = quotient segments, `z` = OOD point,
+/// `zg = z*trace_g`, `v_c = ood_current[c]`, `v'_c = ood_next[c]`,
+/// `q_j = ood_quotient[j] = Q_j(z)`.
 ///
 /// Degree-1 interpolant through the two OOD points, per column:
 /// ```text
@@ -5376,10 +5671,15 @@ fn derive_deep_coeff(base_seed: &[u8; 32]) -> BaseElement {
 /// ```text
 ///   S(x)   = SUM_c gamma^(c+1) * T_c(x)
 ///   A0     = SUM_c gamma^(c+1) * a_c        B0 = SUM_c gamma^(c+1) * b_c
-///   num(x) = ( S(x) - A0 - x*B0 ) + ( Q(x) - q_z ) * (x - zg)
+///   num(x) = ( S(x) - A0 - x*B0 )
+///          + (x - zg) * SUM_j gamma^(w+1+j) * ( Q_j(x) - q_j )
 ///   den(x) = (x - z)(x - zg)
 ///   D(x)   = num(x) / den(x)
 /// ```
+///
+/// [B2] Every segment carries its OWN gamma power. Batching them into a single
+/// value first, or reusing a power across two segments, leaves every existing
+/// test green while un-binding the segments and returning `deg(D)` to `8n`.
 ///
 /// Multiplying the quotient numerator by `(x - zg)` is FREE (it cancels) and is
 /// what lets both groups share ONE denominator: `w` muls per evaluation point for
@@ -5387,12 +5687,12 @@ fn derive_deep_coeff(base_seed: &[u8; 32]) -> BaseElement {
 /// that is the difference between ~32 and ~54 muls per query on chain.
 ///
 /// # Why it binds
-/// Let `eps_c = T_c(z) - v_c`, `eps'_c = T_c(zg) - v'_c`, `eps_q = Q(z) - q_z`
-/// for the COMMITTED trace and quotient. `D` is a polynomial iff both residues
-/// vanish:
+/// Let `eps_c = T_c(z) - v_c`, `eps'_c = T_c(zg) - v'_c`,
+/// `eps_j = Q_j(z) - q_j` for the COMMITTED trace and quotient segments. `D` is
+/// a polynomial iff both residues vanish:
 /// ```text
 ///   at zg:  SUM_c gamma^(c+1) * eps'_c = 0
-///   at z :  SUM_c gamma^(c+1) * eps_c + eps_q*(z - zg) = 0
+///   at z :  SUM_c gamma^(c+1) * eps_c + (z - zg) * SUM_j gamma^(w+1+j) * eps_j = 0
 /// ```
 /// gamma is a hash of the eps themselves, so satisfying either needs a
 /// Fiat-Shamir fixed point (~1/p per attempt, and each attempt changes D and
@@ -5400,15 +5700,26 @@ fn derive_deep_coeff(base_seed: &[u8; 32]) -> BaseElement {
 /// poled `D` is MAXIMALLY far from the code: on the LDE subgroup
 /// `1/(x-z) = (SUM_{i<N} z^i x^(N-1-i))/(1 - z^N)`, and if a degree-<N/2 `h`
 /// agreed with `1/(x-z)` at `t` domain points then `(x-z)h(x) - 1` (degree
-/// <= N/2) would have `t` roots, so `t <= N/2` — relative distance >= 1/2, the
-/// maximum possible at this rate. Hence ~1 bit per query, which is exactly the
-/// already-measured rate.
+/// <= N/2) would have `t` roots, so `t <= N/2` — relative distance >= 1/2.
 ///
-/// # No degree adjust
-/// `deg(D) = deg(Q) - 1 = 8n - 9`; the trace part is only degree `n - 1`, well
-/// under it. FRI already bounds `deg(Q) <= 8n - 8` and phase 2 forces the
-/// polynomial identity `C = Q*Z_T` at a hash-chosen `z`, so `deg(T) <= n - 1` is
-/// already forced tightly. An `x^kappa` adjust would be dead weight.
+/// That distance argument is what a query TESTS; what a query is WORTH is set by
+/// the terminal degree bound, `log2(fri_final_poly_size / bound)`. Pre-B2 the
+/// bound was 8 of 16 and a query was worth 1.000 bit. Post-B2 it is 1 of 16 and
+/// a query is worth 4.000 bits. Neither number may be quoted without reading the
+/// bound out of `CircuitConfig`.
+///
+/// # Degree, and why B2 is the whole point
+/// Pre-B2, with a single quotient column, `deg(D) = deg(Q) - 1 = 8n - 9` — the
+/// AIR's constraint degree leaked straight into the FRI rate.
+///
+/// Post-B2 every `Q_j` has degree `< n`, so
+/// ```text
+///   deg(D) = max( deg(S) - 2 , (n-1) + 1 - 2 ) = n - 2
+/// ```
+/// independent of `deg(Q)`. On a `16n` LDE that is `rho = 1/16`, and raising the
+/// AIR's constraint degree later costs one more SEGMENT rather than one less
+/// BIT. An `x^kappa` degree adjust is still dead weight: the trace part is only
+/// degree `n-1`, already under the bound.
 ///
 /// # Panics
 /// If `z` or `z*trace_g` lands in the LDE domain, `D` has a pole at a domain
@@ -5420,29 +5731,38 @@ fn derive_deep_coeff(base_seed: &[u8; 32]) -> BaseElement {
 #[allow(clippy::too_many_arguments)]
 fn deep_composition_lde(
     trace_lde: &[Vec<BaseElement>],
-    quotient_values: &[u64],
+    quotient_segments: &[Vec<u64>],
     ood_current: &[u64],
     ood_next: &[u64],
-    ood_quotient: u64,
+    ood_quotient: &[u64],
     ood_z: BaseElement,
     trace_g: BaseElement,
     lde_g: BaseElement,
     gamma: BaseElement,
 ) -> Vec<BaseElement> {
     let width = trace_lde.len();
-    let lde_size = quotient_values.len();
+    let k = quotient_segments.len();
+    assert!(k >= 1, "at least one quotient segment");
+    let lde_size = quotient_segments[0].len();
     assert_eq!(ood_current.len(), width, "ood_current width");
     assert_eq!(ood_next.len(), width, "ood_next width");
+    assert_eq!(ood_quotient.len(), k, "one Q_j(z) per quotient segment");
     assert_eq!(trace_lde[0].len(), lde_size, "trace LDE / quotient LDE size");
+    for c in quotient_segments.iter() {
+        assert_eq!(c.len(), lde_size, "quotient segment LDE size");
+    }
 
     let z = ood_z;
     let zg = z * trace_g;
-    let q_z = BaseElement::new(ood_quotient);
+    let q_z: Vec<BaseElement> = ood_quotient.iter().map(|&v| BaseElement::new(v)).collect();
 
-    // gamma^1 .. gamma^width
-    let mut gp: Vec<BaseElement> = Vec::with_capacity(width);
+    // [B2] gamma^1 .. gamma^(width + k). Powers `width+1 ..= width+k` are the
+    // SEGMENT coefficients: one per segment, never shared and never collapsed
+    // into a single batched value, or the segments stop being independently
+    // bound and deg(D) reverts to deg(Q).
+    let mut gp: Vec<BaseElement> = Vec::with_capacity(width + k);
     let mut g_pow = gamma;
-    for _ in 0..width {
+    for _ in 0..width + k {
         gp.push(g_pow);
         g_pow = g_pow * gamma;
     }
@@ -5491,7 +5811,12 @@ fn deep_composition_lde(
             s_x += gp[c] * trace_lde[c][pos];
         }
         let trace_part = s_x - a0 - x * b0;
-        let quot_part = (BaseElement::new(quotient_values[pos]) - q_z) * (x - zg);
+        // [B2] SUM_j gamma^(width+1+j) * (Q_j(x) - Q_j(z)), then ONE (x - zg).
+        let mut q_acc = BaseElement::ZERO;
+        for j in 0..k {
+            q_acc += gp[width + j] * (BaseElement::new(quotient_segments[j][pos]) - q_z[j]);
+        }
+        let quot_part = q_acc * (x - zg);
         out.push((trace_part + quot_part) * inv_dens[pos]);
         x *= lde_g;
     }
@@ -5719,7 +6044,10 @@ fn build_base_seed(
     pub_input_bytes: &[u8],
     ood_current: &[u64],
     ood_next: &[u64],
-    ood_quotient: u64,
+    // [B2] All `quotient_segments` OOD claims, in wire order. Absorbing only the
+    // recombined Q(z) would let a prover choose the SPLIT after seeing gamma —
+    // the segments would no longer be independently bound.
+    ood_quotient: &[u64],
 ) -> [u8; 32] {
     let mut transcript = Vec::new();
     transcript.extend_from_slice(trace_root);
@@ -5731,7 +6059,9 @@ fn build_base_seed(
     for val in ood_next {
         transcript.extend_from_slice(&val.to_le_bytes());
     }
-    transcript.extend_from_slice(&ood_quotient.to_le_bytes());
+    for val in ood_quotient {
+        transcript.extend_from_slice(&val.to_le_bytes());
+    }
     sha256(&transcript)
 }
 
@@ -5868,6 +6198,12 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
     // `CircuitConfig.fri_final_poly_degree_bound`. Threaded rather than derived
     // so a mis-sized bound fails in CI instead of on chain.
     fri_final_poly_degree_bound: usize,
+    // [B2] MEASURED per circuit - `ceil((deg(Q) + 1) / trace_length)`. Threaded
+    // rather than derived for the same reason the degree bound is: a mis-sized
+    // split fails in CI (`segment_quotient_poly` asserts it in both directions)
+    // instead of quietly over-claiming the FRI rate on chain. Must equal the
+    // verifier's `CircuitConfig.quotient_segments`.
+    quotient_segments: usize,
     quotient_spec: QuotientSpec,
     pair_indexing: PairIndexing,
     trace_leaf: TraceLeaf,
@@ -5897,7 +6233,11 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
     // challenges. DEEP-ALI circuits derive α from trace_root first, so
     // quotient_root also binds α implicitly.
     let lde_g = get_domain_generator_generic(lde_size);
-    let mut all_quotient_values: Vec<u64> = match quotient_spec {
+    // [B2] Builders return Q in COEFFICIENT form. The boundary fold is added in
+    // coefficient space below, and the split into degree-<n segments happens
+    // once, afterwards — so the whole pipeline evaluates Q on the LDE exactly
+    // once, as `segment_quotient_poly`.
+    let mut q_poly: Vec<BaseElement> = match quotient_spec {
         QuotientSpec::Circuit6 { depth } => {
             let alpha = derive_rlc_alpha(&root, pub_input_bytes);
             compute_quotient_lde_circuit_6(&lde, blowup, trace_length, depth, alpha)
@@ -5922,13 +6262,18 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
             let alpha = derive_rlc_alpha_with_tag(&root, pub_input_bytes, b"rlc-c5\0\0");
             compute_quotient_lde_circuit_5(&lde, blowup, trace_length, alpha)
         }
-        QuotientSpec::LegacyGeneric => (0..lde_size)
-            .map(|pos| {
-                compute_quotient_at_position_generic(
-                    &lde, pos, blowup, trace_length, trace_width, NUM_ROUNDS, &lde_g,
-                )
-            })
-            .collect(),
+        QuotientSpec::LegacyGeneric => {
+            // This spec builds Q pointwise on the LDE, so it is the one path
+            // that has to interpolate back to coefficients before segmenting.
+            let vals: Vec<BaseElement> = (0..lde_size)
+                .map(|pos| {
+                    BaseElement::new(compute_quotient_at_position_generic(
+                        &lde, pos, blowup, trace_length, trace_width, NUM_ROUNDS, &lde_g,
+                    ))
+                })
+                .collect();
+            inverse_ntt(&vals, lde_g)
+        }
     };
 
     // [C2] Fold the boundary public-input binding into the committed quotient.
@@ -5950,19 +6295,27 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
             let trace_polys: Vec<Vec<BaseElement>> =
                 (0..trace_width).map(|col| inverse_ntt(&trace[col], trace_g_b)).collect();
             let alpha_bnd = derive_rlc_alpha_with_tag(&root, pub_input_bytes, &alpha_tag);
+            // [B2] Added in COEFFICIENT space. Pre-B2 this was an lde_size-long
+            // Horner sweep over the committed evaluations; the coefficient form
+            // is the same polynomial, `deg(Qb) <= n-2` so it cannot raise the
+            // segment count, and it is what lets the split happen at all.
             let mut qb_poly: Vec<BaseElement> = Vec::new();
             fold_boundary_quotient(&mut qb_poly, &trace_polys, &assertions, trace_g_b, alpha_bnd);
-            // Evaluate Q_bnd on the LDE domain and add to the committed quotient.
-            for (pos, qv) in all_quotient_values.iter_mut().enumerate() {
-                let x = lde_g.exp(pos as u64);
-                let add = evaluate_poly(&qb_poly, x);
-                *qv = (BaseElement::new(*qv) + add).as_int();
+            if q_poly.len() < qb_poly.len() {
+                q_poly.resize(qb_poly.len(), BaseElement::ZERO);
+            }
+            for (i, &c) in qb_poly.iter().enumerate() {
+                q_poly[i] = q_poly[i] + c;
             }
         }
     }
 
+    // [B2] THE change: k degree-<n segment columns, committed in ONE pair tree.
+    let q_segs = segment_quotient_poly(
+        &q_poly, trace_length, lde_size, lde_g, quotient_segments,
+    );
     let (quotient_root, quotient_tree) =
-        build_pair_merkle_tree(&all_quotient_values, pair_indexing.quotient());
+        build_pair_merkle_tree_multi(&q_segs.lde, pair_indexing.quotient());
 
     // 4. [H10] Derive OOD point from transcript (trace_root || quotient_root || pub_bytes)
     let ood_z = derive_ood_point_generic(&root, &quotient_root, pub_input_bytes);
@@ -5988,14 +6341,14 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
     // (Q_committed(x) - q_z)/(x - z), so any disagreement makes D non-polynomial
     // and breaks HONEST proofs. The legacy pipeline was moved onto this form for
     // the same reason.
-    let quotient_felts: Vec<BaseElement> =
-        all_quotient_values.iter().map(|&v| BaseElement::new(v)).collect();
+    // [B2] One claim per segment. The committed column for segment j is built by
+    // evaluating THIS coefficient vector, and `segment_quotient_poly` asserts it
+    // is at most `trace_length <= lde_size` long, so the committed column's
+    // interpolant IS the coefficient vector - the B1 committed-vector /
+    // coefficient-vector divergence cannot recur by construction.
     // `mut` exists only for the `test-probes` forgery re-solve below.
     #[cfg_attr(not(any(test, feature = "test-probes")), allow(unused_mut))]
-    let mut ood_quotient = {
-        let q_poly = inverse_ntt(&quotient_felts, lde_g);
-        evaluate_poly(&q_poly, ood_z_felt).as_int()
-    };
+    let mut ood_quotient: Vec<u64> = segment_ood_values(&q_segs, ood_z_felt);
 
     // [B1 fails-closed probe] Coordinated OOD forgery. Perturb one claimed trace
     // evaluation and RE-SOLVE ood_quotient from the AIR so the phase-2 identity
@@ -6013,7 +6366,7 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
             .chunks_exact(8)
             .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
             .collect();
-        ood_quotient = solve_ood_quotient_for_spec(
+        let target = BaseElement::new(solve_ood_quotient_for_spec(
             &quotient_spec,
             &root,
             pub_input_bytes,
@@ -6029,7 +6382,19 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
                  Returning the honest value here would make the forgery test pass for the \
                  WRONG reason (phase 2 would reject it), so this fails loudly instead."
             )
-        });
+        }));
+        // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+        // absorb the entire correction into segment 0 and leave segments 1..
+        // honest. Exactly one committed column's OOD claim is then a lie, which
+        // is the weakest form of the attack the terminal bound has to catch.
+        let zn = ood_z_felt.exp(trace_length as u64);
+        let mut rest = BaseElement::ZERO;
+        let mut zp = zn;
+        for &q in ood_quotient.iter().skip(1) {
+            rest += zp * BaseElement::new(q);
+            zp *= zn;
+        }
+        ood_quotient[0] = (target - rest).as_int();
     }
 
     // 6. [P1.1 PR 2 / B1] FRI commit phase over the DEEP COMPOSITION, not the raw
@@ -6046,15 +6411,15 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
     // STAY: the verifier now consumes Q(y) and Q(-y) arithmetically, so they must
     // remain authenticated.
     let initial_fri_transcript = build_base_seed(
-        &root, &quotient_root, pub_input_bytes, &ood_current_vals, &ood_next_vals, ood_quotient,
+        &root, &quotient_root, pub_input_bytes, &ood_current_vals, &ood_next_vals, &ood_quotient,
     );
     let gamma = derive_deep_coeff(&initial_fri_transcript);
     let deep_felts = deep_composition_lde(
         &lde,
-        &all_quotient_values,
+        &q_segs.lde,
         &ood_current_vals,
         &ood_next_vals,
-        ood_quotient,
+        &ood_quotient,
         ood_z_felt,
         trace_g,
         lde_g,
@@ -6118,8 +6483,12 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
     }
     bytes.extend_from_slice(&ood_z.to_le_bytes());
 
-    // [P1.1 PR 4 DEEP-ALI] ood_quotient (Q(z)): 8 bytes
-    bytes.extend_from_slice(&ood_quotient.to_le_bytes());
+    // [P1.1 PR 4 DEEP-ALI / B2] ood_quotient: quotient_segments * 8 bytes, one
+    // Q_j(z) per committed segment column, in wire order. The count never
+    // travels - the verifier takes it from `CircuitConfig.quotient_segments`.
+    for v in &ood_quotient {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
 
     // [P1.1 PR 2] FRI commit phase serialization
     bytes.push(fri.layer_roots.len() as u8);
@@ -6201,7 +6570,9 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
         // `quotient_values` array (the constraint / DEEP-ALI code reads it
         // from there), so only the mirror value is written here.
         let quotient_mirror_pos = pos ^ (lde_size / 2);
-        bytes.extend_from_slice(&all_quotient_values[quotient_mirror_pos].to_le_bytes());
+        for col in q_segs.lde.iter() {
+            bytes.extend_from_slice(&col[quotient_mirror_pos].to_le_bytes());
+        }
         let q_half = lde_size / 2;
         let q_pair_path = get_merkle_proof_generic(
             &quotient_tree,
@@ -6222,9 +6593,12 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
         }
     }
 
-    // Per-query quotient values (subset of all_quotient_values at query positions)
+    // [B2] Per-query quotient values: `quotient_segments` felts per query,
+    // segment-major within a query (Q_0[pos] .. Q_{k-1}[pos]).
     for &pos in &positions {
-        bytes.extend_from_slice(&all_quotient_values[pos].to_le_bytes());
+        for col in q_segs.lde.iter() {
+            bytes.extend_from_slice(&col[pos].to_le_bytes());
+        }
     }
 
     (bytes, root)
@@ -6235,25 +6609,43 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
 // ============================================================================
 
 const GENERIC_BLOWUP: usize = 16;
-/// [B1] MEASURED terminal degree bound for every GENERIC circuit (C1..C6).
+/// [B2] MEASURED terminal degree bound for every GENERIC circuit (C1..C6).
 ///
-/// `emit_deep_degree_table` reports a top non-zero coefficient index of 7 on all
-/// six, i.e. 8 allowed coefficients out of the 16 published. deg(Q) = 8n-8 on a
-/// 16n LDE and 2^num_folds = n, so ceil((8n-7)/n) = 8 exactly; deg(D) = deg(Q)-1
-/// gives the same 8. C0 is DIFFERENT (7) and lives on the legacy path.
-const GENERIC_FRI_FINAL_POLY_DEGREE_BOUND: usize = 8;
+/// Pre-B2 this was 8 of the 16 published coefficients: `deg(Q) = 8n-8` on a 16n
+/// LDE with `2^num_folds = n` gives `ceil((8n-7)/n) = 8`, i.e. `rho = 1/2` and
+/// 1.000 bit per query. Post-B2 the quotient ships as `GENERIC_QUOTIENT_SEGMENTS`
+/// columns of degree `< n`, so `deg(D) = n-2`, `ceil((n-2)*16/(16n)) = 1`,
+/// `rho = 1/16` and 4.000 bits per query. MEASURED on honest proofs of all seven
+/// circuits by `quotient_segmentation_is_measured_not_assumed`
+/// (`programs/p01_stark_verifier/tests/b1_deep_binding.rs`), which reads the top
+/// non-zero terminal coefficient index straight off the wire.
+///
+/// C0 is on the legacy path with 7 segments; its bound is also 1.
+const GENERIC_FRI_FINAL_POLY_DEGREE_BOUND: usize = 1;
+/// [B2] Number of degree-`< trace_length` columns the generic circuits' quotient
+/// is split into.
+///
+/// `deg(Q) = 8n - 8` on C1..C6, so `ceil((8n - 7) / n) = 8` exactly. Under-
+/// segmenting is a SILENT over-claim of the FRI rate and over-segmenting means
+/// the constant is no longer the measurement, so `segment_quotient_poly` asserts
+/// it in BOTH directions against the real coefficient count. Must equal the
+/// verifier's `CircuitConfig.quotient_segments`. C0 is DIFFERENT (7) and lives on
+/// the legacy path.
+const GENERIC_QUOTIENT_SEGMENTS: usize = 8;
 const GENERIC_NUM_QUERIES: usize = 27;
 /// [P2.2] Circuit 6 uses fewer queries (22 vs 27) to fit its 10-col trace
 /// under the 1.4M Solana BPF CU cap.
 ///
-/// [B1] Soundness is ~38 bits (22 * 1.000 + 16), not the 22*4 + 16 = 104 this
-/// comment used to claim. See the soundness note at the top of this file.
+/// [B2] The query term is `22 * 4.000 + 22 = 110` bits post-segmentation, but the
+/// HONEST figure is `min(query_term, field_floor)` and C6's field floor is
+/// ~47.8 bits, so the real number is 47 conjectured / 42 unconditional. See the
+/// soundness note at the top of this file; do not quote the query term alone.
 const MERKLE_UPDATE_NUM_QUERIES: usize = 22;
 /// [P2.2g] Circuits 3 and 5 (width=6, trace=512, lde=8192) also drop to 22
 /// queries so phase-1 FRI + per-query checks fits within 1.4M CU. DEEP-ALI
 /// still runs, but in phase 2 (`verify_deep_ali_phase2`).
 ///
-/// [B1] Soundness identical to C6: ~38 bits, not 104.
+/// [B2] Soundness identical to C6: 47 conjectured / 42 unconditional, floor-bound.
 const HEAVY_GENERIC_NUM_QUERIES: usize = 22;
 
 /// Generate compact proof for denominated pool commitment.
@@ -6393,6 +6785,7 @@ fn generate_pool_commitment_proof_with_layout(
         GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
         GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
+        GENERIC_QUOTIENT_SEGMENTS,
         QuotientSpec::Circuit1,
         pair_indexing,
         trace_leaf,
@@ -6476,6 +6869,7 @@ fn generate_balance_compact_proof_inner(
         GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
         GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
+        GENERIC_QUOTIENT_SEGMENTS,
         QuotientSpec::Circuit2,
         PairIndexing::Canonical,
         TraceLeaf::Canonical,
@@ -6556,6 +6950,7 @@ fn generate_merkle_path_compact_proof_inner(
         HEAVY_GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
         GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
+        GENERIC_QUOTIENT_SEGMENTS,
         QuotientSpec::Circuit3 { depth: path_elements.len() },
         PairIndexing::Canonical,
         TraceLeaf::Canonical,
@@ -6692,6 +7087,7 @@ fn generate_confidential_balance_compact_proof_inner(
         GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
         GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
+        GENERIC_QUOTIENT_SEGMENTS,
         QuotientSpec::Circuit4,
         PairIndexing::Canonical,
         trace_leaf,
@@ -6825,6 +7221,7 @@ fn generate_transfer_compact_proof_inner(
         HEAVY_GENERIC_NUM_QUERIES,
         FRI_FINAL_POLY_SIZE,
         GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
+        GENERIC_QUOTIENT_SEGMENTS,
         QuotientSpec::Circuit5,
         PairIndexing::Canonical,
         TraceLeaf::Canonical,
@@ -6931,6 +7328,7 @@ fn generate_merkle_update_compact_proof_inner(
         MERKLE_UPDATE_NUM_QUERIES,
         MERKLE_UPDATE_FRI_FINAL_POLY_SIZE,
         GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
+        GENERIC_QUOTIENT_SEGMENTS,
         QuotientSpec::Circuit6 { depth: path_elements.len() },
         PairIndexing::Canonical,
         TraceLeaf::Canonical,

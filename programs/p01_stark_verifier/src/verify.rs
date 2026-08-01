@@ -655,7 +655,7 @@ pub fn verify_generic(
     let ood_next_u64: Vec<u64> = proof.ood_next_iter().map(|f| f.as_u64()).collect();
     let expected = derive_query_positions_generic(
         &proof.trace_root, &proof.quotient_root, &pub_bytes,
-        &ood_current_u64, &ood_next_u64, proof.ood_quotient.as_u64(),
+        &ood_current_u64, &ood_next_u64, proof.ood_quotient_bytes(),
         proof.fri_layer_roots_bytes(), proof.fri_final_poly_bytes(),
         proof.grinding_nonce,
         config.lde_size, config.num_queries,
@@ -713,8 +713,12 @@ pub fn verify_subscriber_ownership(
             return Err(VerifyError::OodConstraintFailed);
         }
     }
-    if proof.ood_quotient.as_u64() >= crate::goldilocks::MODULUS {
-        return Err(VerifyError::OodConstraintFailed);
+    // [B2] Every segment claim, not just one. (The parser already refuses
+    // non-canonical encodings; this is the same hole from the other side.)
+    for v in proof.ood_quotient_iter() {
+        if v.as_u64() >= crate::goldilocks::MODULUS {
+            return Err(VerifyError::OodConstraintFailed);
+        }
     }
 
     // [H10] Verify OOD point was correctly derived (binds quotient_root, P1.1)
@@ -729,7 +733,7 @@ pub fn verify_subscriber_ownership(
     let ood_next_u64: Vec<u64> = proof.ood_next.iter().map(|f| f.as_u64()).collect();
     let expected = derive_query_positions_legacy(
         &proof.trace_root, &proof.quotient_root, commitment, &ood_current_u64, &ood_next_u64,
-        proof.ood_quotient.as_u64(),
+        proof.ood_quotient_bytes(),
         proof.fri_layer_roots_bytes(), proof.fri_final_poly_bytes(),
         proof.grinding_nonce,
     )?;
@@ -765,8 +769,11 @@ fn verify_ood_range(proof: &GenericCompactProof) -> Result<(), VerifyError> {
             return Err(VerifyError::OodConstraintFailed);
         }
     }
-    if proof.ood_quotient.as_u64() >= crate::goldilocks::MODULUS {
-        return Err(VerifyError::OodConstraintFailed);
+    // [B2] Every segment claim, not just one.
+    for v in proof.ood_quotient_iter() {
+        if v.as_u64() >= crate::goldilocks::MODULUS {
+            return Err(VerifyError::OodConstraintFailed);
+        }
     }
     Ok(())
 }
@@ -807,11 +814,16 @@ fn build_base_seed(
     pub_bytes: &[u8],
     ood_current: &[u64],
     ood_next: &[u64],
-    ood_quotient: u64,
+    // [B2] RAW wire bytes of all `quotient_segments` Q_j(z) claims. Absorbing
+    // only the recombined Q(z) would let a prover pick the SPLIT after seeing
+    // gamma, and the split is precisely what the DEEP composition binds.
+    ood_quotient_bytes: &[u8],
 ) -> [u8; 32] {
     // Serialize OOD felts once into one small scratch buffer, then feed the
     // syscall a sliced &[&[u8]] — avoids a big concatenated transcript Vec.
-    let ood_total = ood_current.len() + ood_next.len() + 1;
+    // The quotient claims are already contiguous wire bytes, so they go in as
+    // their own segment rather than through the scratch buffer.
+    let ood_total = ood_current.len() + ood_next.len();
     let mut ood_buf: Vec<u8> = Vec::with_capacity(ood_total * 8);
     for val in ood_current {
         ood_buf.extend_from_slice(&val.to_le_bytes());
@@ -819,8 +831,7 @@ fn build_base_seed(
     for val in ood_next {
         ood_buf.extend_from_slice(&val.to_le_bytes());
     }
-    ood_buf.extend_from_slice(&ood_quotient.to_le_bytes());
-    hashv(&[trace_root, quotient_root, pub_bytes, &ood_buf]).to_bytes()
+    hashv(&[trace_root, quotient_root, pub_bytes, &ood_buf, ood_quotient_bytes]).to_bytes()
 }
 
 fn leading_zero_bits(bytes: &[u8; 32]) -> u32 {
@@ -921,14 +932,14 @@ fn derive_query_positions_generic(
     pub_bytes: &[u8],
     ood_current: &[u64],
     ood_next: &[u64],
-    ood_quotient: u64,
+    ood_quotient_bytes: &[u8],
     fri_layer_roots_bytes: &[u8],
     fri_final_poly_bytes: &[u8],
     grinding_nonce: u64,
     lde_size: usize,
     num_queries: usize,
 ) -> Result<Vec<u32>, VerifyError> {
-    let mut state = build_base_seed(trace_root, quotient_root, pub_bytes, ood_current, ood_next, ood_quotient);
+    let mut state = build_base_seed(trace_root, quotient_root, pub_bytes, ood_current, ood_next, ood_quotient_bytes);
     for layer_root in fri_layer_roots_bytes.chunks_exact(32) {
         state = extend_transcript(&state, layer_root);
     }
@@ -1126,7 +1137,7 @@ fn verify_fri_generic(
         pub_bytes,
         &ood_current_u64,
         &ood_next_u64,
-        proof.ood_quotient.as_u64(),
+        proof.ood_quotient_bytes(),
     );
     // [B1] gamma from the PRE-layer-root seed, before the alpha loop mutates it.
     let gamma = derive_deep_coeff(&base_seed);
@@ -1219,20 +1230,26 @@ fn verify_fri_generic(
     let zg = z.mul(trace_g);
     let deep_s = z.add(zg);
     let deep_pz = z.mul(zg);
-    let q_z = proof.ood_quotient;
-
+    // [B2] gamma^1 ..= gamma^(width + k). Powers width+1 ..= width+k are the
+    // SEGMENT coefficients: one per segment, never shared and never collapsed
+    // into a single batched value, or the segments stop being independently
+    // bound and deg(D) reverts to deg(Q). Exact twin of `deep_composition_lde`.
     let width = config.trace_width;
-    let mut gamma_pows: Vec<Felt> = Vec::with_capacity(width);
+    let ksegs = config.quotient_segments;
+    if proof.ood_quotient_len() != ksegs {
+        return Err(VerifyError::OodConstraintFailed);
+    }
+    let mut gamma_pows: Vec<Felt> = Vec::with_capacity(width + ksegs);
     {
         let mut g_pow = gamma;
-        for _ in 0..width {
+        for _ in 0..width + ksegs {
             gamma_pows.push(g_pow);
             g_pow = g_pow.mul(gamma);
         }
     }
     let mut sv = Felt::ZERO;
     let mut svp = Felt::ZERO;
-    for (c, gp) in gamma_pows.iter().enumerate() {
+    for (c, gp) in gamma_pows.iter().take(width).enumerate() {
         sv = sv.add(gp.mul(proof.ood_current(c)));
         svp = svp.add(gp.mul(proof.ood_next(c)));
     }
@@ -1295,13 +1312,6 @@ fn verify_fri_generic(
         // — one opening there now binds both halves, so there is no separate
         // mirror path to check here any more.
         let half0 = config.lde_size / 2;
-        let q_at_pos = proof.quotient_value(query_idx);
-        let q_mirror = query.quotient_mirror_value;
-        let (q_lo, q_hi) = if pos < half0 {
-            (q_at_pos, q_mirror)
-        } else {
-            (q_mirror, q_at_pos)
-        };
 
         // [B1] Route C's payoff. The wire ships (row_at_pos, row_at_mirror); the
         // fold wants (low-half, high-half). Getting this backwards verifies for
@@ -1315,7 +1325,7 @@ fn verify_fri_generic(
 
         let mut s_lo = Felt::ZERO;
         let mut s_hi = Felt::ZERO;
-        for (c, gp) in gamma_pows.iter().enumerate() {
+        for (c, gp) in gamma_pows.iter().take(width).enumerate() {
             let (t_lo, t_hi) = if pos < half0 {
                 (query.trace_value(c), query.trace_mirror_value(c))
             } else {
@@ -1325,12 +1335,29 @@ fn verify_fri_generic(
             s_hi = s_hi.add(gp.mul(t_hi));
         }
 
+        // [B2] SUM_j gamma^(width+1+j) * (Q_j(x) - Q_j(z)), accumulated for both
+        // halves of the coset before the shared (x - zg) factor.
+        let mut sq_lo = Felt::ZERO;
+        let mut sq_hi = Felt::ZERO;
+        for (j, gp) in gamma_pows.iter().skip(width).enumerate() {
+            let q_at_pos = proof.quotient_value(query_idx, j, ksegs);
+            let q_mirror = query.quotient_mirror_value(j);
+            let (q_lo, q_hi) = if pos < half0 {
+                (q_at_pos, q_mirror)
+            } else {
+                (q_mirror, q_at_pos)
+            };
+            let q_z_j = proof.ood_quotient(j);
+            sq_lo = sq_lo.add(gp.mul(q_lo.sub(q_z_j)));
+            sq_hi = sq_hi.add(gp.mul(q_hi.sub(q_z_j)));
+        }
+
         let y_b0 = y.mul(b0);
         // At x = y the linear term is -y*B0; at x = -y it is +y*B0.
         let brk_lo = s_lo.sub(a0).sub(y_b0);
         let brk_hi = s_hi.sub(a0).add(y_b0);
-        let qt_lo = q_lo.sub(q_z).mul(y.sub(zg));
-        let qt_hi = q_hi.sub(q_z).mul(Felt::ZERO.sub(y).sub(zg));
+        let qt_lo = sq_lo.mul(y.sub(zg));
+        let qt_hi = sq_hi.mul(Felt::ZERO.sub(y).sub(zg));
         let mut f_lo = brk_lo.add(qt_lo).mul(inv_lo);
         let mut f_hi = brk_hi.add(qt_hi).mul(inv_hi);
 
@@ -1443,7 +1470,7 @@ fn verify_fri_legacy(
         &commitment_bytes,
         &ood_current_u64,
         &ood_next_u64,
-        proof.ood_quotient.as_u64(),
+        proof.ood_quotient_bytes(),
     );
     // [B1] gamma from the PRE-layer-root seed. Same derivation as the generic
     // path; this is the SOLE verifier for four shipped instructions
@@ -1491,9 +1518,11 @@ fn verify_fri_legacy(
     let zg = z.mul(trace_g);
     let deep_s = z.add(zg);
     let deep_pz = z.mul(zg);
-    let q_z = proof.ood_quotient;
-
-    let mut gamma_pows = [Felt::ZERO; TRACE_WIDTH];
+    // [B2] gamma^1 ..= gamma^(TRACE_WIDTH + LEGACY_QUOTIENT_SEGMENTS). Twin of
+    // the generic path: one power per trace column, then one per quotient
+    // segment, never shared.
+    const KSEGS: usize = crate::compact_proof::LEGACY_QUOTIENT_SEGMENTS;
+    let mut gamma_pows = [Felt::ZERO; TRACE_WIDTH + KSEGS];
     {
         let mut g_pow = gamma;
         for slot in gamma_pows.iter_mut() {
@@ -1503,7 +1532,7 @@ fn verify_fri_legacy(
     }
     let mut sv = Felt::ZERO;
     let mut svp = Felt::ZERO;
-    for (c, gp) in gamma_pows.iter().enumerate() {
+    for (c, gp) in gamma_pows.iter().take(TRACE_WIDTH).enumerate() {
         sv = sv.add(gp.mul(proof.ood_current[c]));
         svp = svp.add(gp.mul(proof.ood_next[c]));
     }
@@ -1542,13 +1571,6 @@ fn verify_fri_legacy(
         // [B4] Layer-0 pair in canonical (lo, hi) order. The quotient pair leaf
         // is Merkle-checked in `verify_merkle_proofs_legacy`.
         let half0 = LEGACY_LDE / 2;
-        let q_at_pos = proof.quotient_value(query_idx);
-        let q_mirror = query.quotient_mirror_value;
-        let (q_lo, q_hi) = if pos < half0 {
-            (q_at_pos, q_mirror)
-        } else {
-            (q_mirror, q_at_pos)
-        };
 
         // [B1] Route C's legacy mirror accessors had ZERO consumers before this.
         // Same (lo, hi) rule as `verify_merkle_proofs_legacy` uses for the pair
@@ -1561,7 +1583,7 @@ fn verify_fri_legacy(
 
         let mut s_lo = Felt::ZERO;
         let mut s_hi = Felt::ZERO;
-        for (c, gp) in gamma_pows.iter().enumerate() {
+        for (c, gp) in gamma_pows.iter().take(TRACE_WIDTH).enumerate() {
             let (t_lo, t_hi) = if pos < half0 {
                 (query.trace_value(c), query.trace_mirror_value(c))
             } else {
@@ -1571,11 +1593,27 @@ fn verify_fri_legacy(
             s_hi = s_hi.add(gp.mul(t_hi));
         }
 
+        // [B2] SUM_j gamma^(TRACE_WIDTH+1+j) * (Q_j(x) - Q_j(z)).
+        let mut sq_lo = Felt::ZERO;
+        let mut sq_hi = Felt::ZERO;
+        for (j, gp) in gamma_pows.iter().skip(TRACE_WIDTH).enumerate() {
+            let q_at_pos = proof.quotient_value(query_idx, j);
+            let q_mirror = query.quotient_mirror_value(j);
+            let (q_lo, q_hi) = if pos < half0 {
+                (q_at_pos, q_mirror)
+            } else {
+                (q_mirror, q_at_pos)
+            };
+            let q_z_j = proof.ood_quotient(j);
+            sq_lo = sq_lo.add(gp.mul(q_lo.sub(q_z_j)));
+            sq_hi = sq_hi.add(gp.mul(q_hi.sub(q_z_j)));
+        }
+
         let y_b0 = y.mul(b0);
         let brk_lo = s_lo.sub(a0).sub(y_b0);
         let brk_hi = s_hi.sub(a0).add(y_b0);
-        let qt_lo = q_lo.sub(q_z).mul(y.sub(zg));
-        let qt_hi = q_hi.sub(q_z).mul(Felt::ZERO.sub(y).sub(zg));
+        let qt_lo = sq_lo.mul(y.sub(zg));
+        let qt_hi = sq_hi.mul(Felt::ZERO.sub(y).sub(zg));
         let mut f_lo = brk_lo.add(qt_lo).mul(inv_lo);
         let mut f_hi = brk_hi.add(qt_hi).mul(inv_hi);
 
@@ -1710,21 +1748,23 @@ fn verify_merkle_proofs_generic(
             return Err(VerifyError::MerkleProofFailed);
         }
 
-        // [B4] Verify quotient LDE membership for BOTH `quotient_values[query_idx]`
-        // (the value at `position`) and `quotient_mirror_value` (the value at
-        // `position ^ lde_size/2`) with ONE pair-leaf opening. Pre-B4 this was
-        // two full-depth openings — one here, one in `verify_fri_generic`.
-        if query_idx >= proof.quotient_values_len() {
+        // [B2] `quotient_segments` felts per side instead of one. The leaf
+        // preimage widens from 16 bytes to 16k; the tree keeps `merkle_depth - 1`
+        // levels, which is why segmentation costs 8k bytes per query and not k
+        // Merkle paths. Both halves are already contiguous, wire-ordered blocks,
+        // so they hash in place with no copy.
+        let ksegs = config.quotient_segments;
+        if (query_idx + 1) * ksegs > proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let q_at_pos = proof.quotient_value(query_idx);
-        let q_mirror = query.quotient_mirror_value;
+        let q_block = proof.quotient_values_block(query_idx, ksegs);
+        let q_mirror_block = query.quotient_mirror_bytes();
         let (qlo, qhi) = if pos < half {
-            (q_at_pos, q_mirror)
+            (q_block, q_mirror_block)
         } else {
-            (q_mirror, q_at_pos)
+            (q_mirror_block, q_block)
         };
-        if !verify_pair_leaf(
+        if !merkle::verify_merkle_path_2seg(
             &proof.quotient_root,
             qlo,
             qhi,
@@ -2284,7 +2324,9 @@ fn verify_deep_ali_legacy(proof: &CompactStarkProof, commitment: Felt) -> Result
         .ok_or(VerifyError::DeepAliFailed)?;
     let c_total = c_at_z.add(c_bnd);
 
-    let rhs = proof.ood_quotient.mul(z_t);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined().mul(z_t);
     if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -2334,7 +2376,9 @@ pub fn verify_deep_ali_circuit_0(proof: &GenericCompactProof) -> Result<(), Veri
         return Err(VerifyError::DeepAliFailed);
     }
 
-    let rhs = proof.ood_quotient.mul(z_d);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C0).mul(z_d);
     if c_at_z != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -2594,7 +2638,9 @@ pub fn verify_deep_ali_circuit_6(
         .ok_or(VerifyError::DeepAliFailed)?;
     let c_total = c_at_z.add(c_bnd);
 
-    let rhs = proof.ood_quotient.mul(z_t);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C6).mul(z_t);
     if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -2772,7 +2818,9 @@ pub fn verify_deep_ali_circuit_1(
         .ok_or(VerifyError::DeepAliFailed)?;
     let c_total = c_at_z.add(c_bnd);
 
-    let rhs = proof.ood_quotient.mul(z_t);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C1).mul(z_t);
     if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -2943,7 +2991,9 @@ pub fn verify_deep_ali_circuit_2(
     }
     let z_t = z_d.mul(z_minus_last.inv());
 
-    let rhs = proof.ood_quotient.mul(z_t);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C2).mul(z_t);
     if c_at_z != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -3166,7 +3216,9 @@ pub fn verify_deep_ali_circuit_3(
         .ok_or(VerifyError::DeepAliFailed)?;
     let c_total = c_at_z.add(c_bnd);
 
-    let rhs = proof.ood_quotient.mul(z_t);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C3).mul(z_t);
     if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -3356,7 +3408,9 @@ pub fn verify_deep_ali_circuit_4(
     }
     let z_t = z_d.mul(z_minus_last.inv());
 
-    let rhs = proof.ood_quotient.mul(z_t);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C4).mul(z_t);
     if c_at_z != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -3746,7 +3800,9 @@ pub fn verify_deep_ali_circuit_5(
         .ok_or(VerifyError::DeepAliFailed)?;
     let c_total = c_at_z.add(c_bnd);
 
-    let rhs = proof.ood_quotient.mul(z_t);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C5).mul(z_t);
     if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -4260,7 +4316,7 @@ fn derive_query_positions_legacy(
     commitment: Felt,
     ood_current: &[u64],
     ood_next: &[u64],
-    ood_quotient: u64,
+    ood_quotient_bytes: &[u8],
     fri_layer_roots_bytes: &[u8],
     fri_final_poly_bytes: &[u8],
     grinding_nonce: u64,
@@ -4271,7 +4327,7 @@ fn derive_query_positions_legacy(
         &commitment.to_le_bytes(),
         ood_current,
         ood_next,
-        ood_quotient,
+        ood_quotient_bytes,
     );
     for layer_root in fri_layer_roots_bytes.chunks_exact(32) {
         state = extend_transcript(&state, layer_root);
@@ -4336,19 +4392,23 @@ fn verify_merkle_proofs_legacy(proof: &CompactStarkProof) -> Result<(), VerifyEr
             return Err(VerifyError::MerkleProofFailed);
         }
 
-        // [B4] One pair-leaf opening binds both the quotient value at
-        // `position` and the mirror value at `position ^ LDE_SIZE/2`.
-        if query_idx >= proof.quotient_values_len() {
+        // [B4] One pair-leaf opening binds both the quotient values at
+        // `position` and the mirror values at `position ^ LDE_SIZE/2`.
+        // [B2] Both sides are now `LEGACY_QUOTIENT_SEGMENTS` felts, contiguous
+        // and wire-ordered, so they hash in place — the leaf preimage widens and
+        // the tree depth does not move.
+        const KSEGS: usize = crate::compact_proof::LEGACY_QUOTIENT_SEGMENTS;
+        if (query_idx + 1) * KSEGS > proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let q_at_pos = proof.quotient_value(query_idx);
-        let q_mirror = query.quotient_mirror_value;
+        let q_block = proof.quotient_values_block(query_idx);
+        let q_mirror_block = query.quotient_mirror_bytes();
         let (qlo, qhi) = if pos < half {
-            (q_at_pos, q_mirror)
+            (q_block, q_mirror_block)
         } else {
-            (q_mirror, q_at_pos)
+            (q_mirror_block, q_block)
         };
-        if !verify_pair_leaf(
+        if !merkle::verify_merkle_path_2seg(
             &proof.quotient_root,
             qlo,
             qhi,

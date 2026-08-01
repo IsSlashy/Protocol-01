@@ -39,24 +39,47 @@ pub struct CircuitConfig {
     /// FRI merkle layers. Tuned per-circuit to fit in the 1.4M CU cap.
     pub fri_final_poly_size: usize,
     /// [B1] Number of final-poly coefficients the verifier ALLOWS to be non-zero.
-    /// MEASURED per circuit by `emit_deep_degree_table` (stark/src/compact.rs);
-    /// see `VerifyError::FriFinalPolyDegreeTooHigh` for why it exists.
+    /// MEASURED per circuit; see `VerifyError::FriFinalPolyDegreeTooHigh` for why
+    /// it exists, and `quotient_segmentation_is_measured_not_assumed` in
+    /// `tests/b1_deep_binding.rs` for where the number comes from.
     ///
     /// `fri_final_poly_size` stays 16 on the wire (a smaller field would mean one
     /// more fold, one more committed layer and one more pair opening per query —
     /// larger proofs to save 64 bytes). The extra slots must be provable zeros.
     ///
     /// The rate is invariant under folding, so `bound / fri_final_poly_size` IS
-    /// the FRI rate rho: 8/16 = 1/2 for C1..C6. That is the measured 1/2 the
-    /// soundness accounting must use — never `log2(blowup)`.
+    /// the FRI rate rho. [B2] That is 1/16 on all seven circuits now; it was 8/16
+    /// before segmentation. Read it off this field — never assume `1/blowup`, and
+    /// never quote `log2(blowup)` without checking that the bound really is 1.
     pub fri_final_poly_degree_bound: usize,
+    /// [B2] Number of degree-`< trace_length` columns the committed quotient is
+    /// split into, `k = ceil((deg(Q) + 1) / trace_length)`.
+    ///
+    /// This is the field that makes `fri_final_poly_degree_bound` 1. The DEEP
+    /// composition gives each segment its own gamma power, so
+    /// `deg(D) = trace_length - 2` regardless of the AIR's constraint degree, and
+    /// `rho = 1/blowup` becomes an invariant of the construction rather than an
+    /// accident of the AIR.
+    ///
+    /// It is also a WIRE parameter and never travels on the wire: `ood_quotient`
+    /// is `k` felts, each query carries `k` mirror felts, and the tail carries `k`
+    /// felts per query. A prover that disagrees with this constant produces a
+    /// buffer the parser rejects on length — it cannot renegotiate the split.
+    pub quotient_segments: usize,
     /// [P2.2] Number of FRI queries.
     ///
-    /// [B1] Soundness is `num_queries * log2(1/rho) + grinding_bits` at the
-    /// MEASURED rho, NOT `num_queries * log2(blowup)`. deg(Q) = 8n-8 on a 16n
-    /// LDE, so rho ~ 1/2 and each query is worth 1.000 bit, not 4. Post-B1 that
-    /// is 27 + 16 = ~43 bits for circuits 0/1/2/4 and 22 + 16 = ~38 bits for
-    /// circuits 3/5/6. Raising rho is B2 and is a wire-format change.
+    /// [B2] The query term is `num_queries * log2(1/rho) + grinding_bits` at the
+    /// MEASURED rho = `fri_final_poly_degree_bound / fri_final_poly_size`, which
+    /// post-segmentation is 1/16 — 4.000 bits per query, where pre-B2 it was
+    /// 1.000. It was NEVER `num_queries * log2(blowup)` by assumption.
+    ///
+    /// The query term is not the answer. Every Fiat-Shamir challenge here is a
+    /// single base-field Goldilocks element, so the argument has a hard field
+    /// floor of `64 - log2(8n + w + k + 1 + folds*lde_size)` that grinding cannot
+    /// lift (the nonce is absorbed after z, gamma and every alpha). On all seven
+    /// circuits the query term OVERSHOOTS that floor, so the honest figure is the
+    /// floor: 47-52 bits conjectured, 42-46 unconditional. Both columns are
+    /// derived from this struct and asserted in `tests/b1_deep_binding.rs`.
     pub num_queries: usize,
 }
 
@@ -69,7 +92,8 @@ pub const CONFIG_SUBSCRIBER_OWNERSHIP: CircuitConfig = CircuitConfig {
     merkle_depth: 9,   // log2(512) = 9
     num_rounds: 30,
     fri_final_poly_size: 16,
-    fri_final_poly_degree_bound: 7, // [B1] MEASURED, emit_deep_degree_table
+    fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
+    quotient_segments: 7,           // [B2] ceil(218 / 32), MEASURED
     num_queries: NUM_QUERIES,
 };
 
@@ -82,7 +106,8 @@ pub const CONFIG_POOL_COMMITMENT: CircuitConfig = CircuitConfig {
     merkle_depth: 11,  // log2(2048) = 11
     num_rounds: 30,
     fri_final_poly_size: 16,
-    fri_final_poly_degree_bound: 8, // [B1] MEASURED, emit_deep_degree_table
+    fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
+    quotient_segments: 8,           // [B2] ceil((8n-7)/n), MEASURED
     num_queries: NUM_QUERIES,
 };
 
@@ -95,7 +120,8 @@ pub const CONFIG_BALANCE_PROOF: CircuitConfig = CircuitConfig {
     merkle_depth: 11,  // log2(2048) = 11
     num_rounds: 30,
     fri_final_poly_size: 16,
-    fri_final_poly_degree_bound: 8, // [B1] MEASURED, emit_deep_degree_table
+    fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
+    quotient_segments: 8,           // [B2] ceil((8n-7)/n), MEASURED
     num_queries: NUM_QUERIES,
 };
 
@@ -116,7 +142,8 @@ pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
     merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
     fri_final_poly_size: 16,
-    fri_final_poly_degree_bound: 8, // [B1] MEASURED, emit_deep_degree_table
+    fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
+    quotient_segments: 8,           // [B2] ceil((8n-7)/n), MEASURED
     num_queries: 22,
 };
 
@@ -129,7 +156,8 @@ pub const CONFIG_CONFIDENTIAL_BALANCE: CircuitConfig = CircuitConfig {
     merkle_depth: 12,  // log2(4096) = 12
     num_rounds: 30,
     fri_final_poly_size: 16,
-    fri_final_poly_degree_bound: 8, // [B1] MEASURED, emit_deep_degree_table
+    fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
+    quotient_segments: 8,           // [B2] ceil((8n-7)/n), MEASURED
     num_queries: NUM_QUERIES,
 };
 
@@ -162,7 +190,8 @@ pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
     merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
     fri_final_poly_size: 16,
-    fri_final_poly_degree_bound: 8, // [B1] MEASURED, emit_deep_degree_table
+    fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
+    quotient_segments: 8,           // [B2] ceil((8n-7)/n), MEASURED
     num_queries: 22,
 };
 
@@ -190,7 +219,8 @@ pub const CONFIG_MERKLE_UPDATE: CircuitConfig = CircuitConfig {
     merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
     fri_final_poly_size: 16,
-    fri_final_poly_degree_bound: 8, // [B1] MEASURED, emit_deep_degree_table
+    fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
+    quotient_segments: 8,           // [B2] ceil((8n-7)/n), MEASURED
     num_queries: 22,
 };
 
@@ -215,23 +245,45 @@ pub const TRACE_WIDTH: usize = 3;
 pub const TRACE_LENGTH: usize = 32;
 pub const BLOWUP: usize = 16;
 pub const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
-// [B1] SOUNDNESS, HONESTLY. num_queries * log2(1/rho) + grinding_bits at the
-// MEASURED rho, NEVER num_queries * log2(blowup).
+// [B2] SOUNDNESS, HONESTLY, IN TWO COLUMNS.
 //
-// The FRI rate is ~1/2, not 1/blowup: deg(Q) = 8n-8 on a 16n LDE, MEASURED as
-// 4088 at n = 512, so each query is worth 1.000 bit, not 4. That figure is
-// pinned as an observation by `t5_aliased_terminal_poly_agrees_at_exactly_the_even_indices` in programs/p01_stark_verifier/tests/b1_deep_binding.rs, which
-// shows an aliased degree-<8 terminal polynomial agreeing with the true 16-value
-// final layer at exactly 8 of 16 points.
+// The query term is `num_queries * log2(1/rho) + grinding_bits` at the MEASURED
+// rho = `fri_final_poly_degree_bound / fri_final_poly_size`. Pre-B2 that bound
+// was 8 of 16, rho = 1/2, and a query was worth 1.000 bit; `log2(blowup)` was
+// wrong by 4x and quoting it is the specific error this project shipped. Post-B2
+// the quotient is split into `quotient_segments` degree-<n columns, deg(D) = n-2,
+// the bound is 1 of 16, rho = 1/16, and a query is worth 4.000 bits.
 //
-// Post-B1: ~43 bits for circuits 0/1/2/4 (27 queries) and ~38 bits for circuits
-// 3/5/6 (22 queries). Pre-B1 a coordinated forgery was FREE, so this is a move
-// from zero to ~2^38 hashes, which is hours on a GPU. It is NOT 100 bits and NOT
-// the 124 this comment used to claim. Raising rho is B2 and is a wire-format
-// change. No README, CV, pitch or tweet number above ~43 bits until B2 lands and
-// is MEASURED.
+// The query term is NOT the answer, and B2 does not change that. Every
+// Fiat-Shamir challenge here — `derive_ood_point`, `derive_fri_alpha`,
+// `derive_deep_coeff` — is a SINGLE base-field Goldilocks element, so the whole
+// argument sits under a field floor of
+//
+//     field_bits = 64 - log2( 8n + (w + k + 1) + folds * lde_size )
+//
+// = 47.8 bits on C3/C5/C6 and 52.5 on C0. Grinding cannot lift it: the nonce is
+// absorbed AFTER z, gamma and every alpha, so an adversary who wins the OOD or
+// proximity lottery wins with zero grinding. Post-B2 the query term OVERSHOOTS
+// the floor on all seven circuits, so the honest conjectured figure IS the floor:
+//
+//     conjectured  52 / 50 / 50 / 47 / 48 / 47 / 47   (C0..C6)
+//     unconditional 46 / 46 / 46 / 42 / 46 / 42 / 42
+//
+// The unconditional column is unique-decoding (`log2(2/(1+rho))` = 0.913 bits per
+// query, a theorem); the conjectured column is list-decoding to capacity
+// (ethSTARK Conjecture 8.4). Both are derived from `CircuitConfig` and asserted
+// in `tests/b1_deep_binding.rs`, which cannot publish one without the other.
+//
+// 42-47 bits is SHORT for a product holding real funds — about 20 GPU-minutes to
+// 8 GPU-hours on one consumer card, and roughly half that many bits under Grover.
+// Lifting the floor needs the challenges drawn from an extension field, which is
+// a separate change and another wire break. No README, CV, pitch or tweet number
+// above the unconditional column.
 pub const NUM_QUERIES: usize = 27;
-pub const GRINDING_BITS: u32 = 16;
+/// [B2] 16 -> 22. Post-segmentation the conjectured column is floor-bound, so
+/// grinding buys nothing there; its whole value is +6 bits in the unconditional
+/// column. Must equal the prover's `GRINDING_BITS`.
+pub const GRINDING_BITS: u32 = 22;
 pub const MERKLE_DEPTH: usize = 9; // log2(512) = 9
 pub const NUM_ROUNDS: usize = 30;
 
@@ -240,15 +292,23 @@ pub const NUM_ROUNDS: usize = 30;
 /// sent in the clear so the verifier can evaluate at any domain point.
 pub const FRI_FINAL_POLY_SIZE: usize = 16;
 
-/// [B1] Legacy circuit-0 twin of `CircuitConfig.fri_final_poly_degree_bound`.
+/// [B2] Legacy circuit-0 twin of `CircuitConfig.fri_final_poly_degree_bound`.
 ///
-/// C0 is DIFFERENT from every other circuit and that is the proof the bound has
-/// to be per-circuit rather than a single global: `subscriber_ownership`'s AIR
-/// declares ONE periodic factor (`with_cycles(7, vec![TRACE_LENGTH])`) where
-/// C1..C6 carry two, so deg(C) = 8*31 = 248, deg(Q) = 248 + 1 - 32 = 217, and
-/// ceil(218 / 2^5) = 7 — not 8. MEASURED at 7 by `emit_deep_degree_table`
-/// (top non-zero coefficient index 6).
-pub const LEGACY_FRI_FINAL_POLY_DEGREE_BOUND: usize = 7;
+/// Pre-B2 this was 7 where C1..C6 were 8, and that difference was the proof the
+/// bound had to be per-circuit: `subscriber_ownership`'s AIR declares ONE
+/// periodic factor (`with_cycles(7, vec![TRACE_LENGTH])`) where C1..C6 carry two,
+/// so deg(C) = 8*31 = 248, deg(Q) = 248 + 1 - 32 = 217, and ceil(218 / 2^5) = 7.
+///
+/// Post-segmentation the AIR's constraint degree no longer reaches the bound at
+/// all — it sets `LEGACY_QUOTIENT_SEGMENTS` instead — so C0 lands on 1 like
+/// everything else. MEASURED, top non-zero terminal coefficient index 0.
+pub const LEGACY_FRI_FINAL_POLY_DEGREE_BOUND: usize = 1;
+
+/// [B2] Legacy circuit-0 twin of `CircuitConfig.quotient_segments`.
+///
+/// `ceil((deg(Q) + 1) / n) = ceil(218 / 32) = 7`. Must equal the prover's
+/// `LEGACY_QUOTIENT_SEGMENTS` and `CONFIG_SUBSCRIBER_OWNERSHIP.quotient_segments`.
+pub const LEGACY_QUOTIENT_SEGMENTS: usize = 7;
 
 /// [B1] Is `raw` a canonical Goldilocks encoding?
 ///
@@ -314,10 +374,12 @@ fn fri_layer_pair_path_bytes(merkle_depth: usize, layer: usize) -> usize {
 #[derive(Clone, Debug)]
 pub struct QueryProof<'a> {
     pub position: u32,
-    /// Quotient LDE value at `position XOR (lde_size/2)`. Together with
-    /// `quotient_values[query_idx]` (the value at `position`) this is the pair
-    /// that `quotient_pair_path_bytes` authenticates.
-    pub quotient_mirror_value: Felt,
+    /// [B2] Quotient SEGMENT values at `position XOR (lde_size/2)` —
+    /// `quotient_segments * 8` raw LE bytes, segment-major. Together with the
+    /// tail block `quotient_values(query_idx)` (the segment values at
+    /// `position`) this is the pair `quotient_pair_path_bytes` authenticates,
+    /// and the two blocks are hashed as contiguous halves of one leaf.
+    quotient_mirror_bytes: &'a [u8],
 
     trace_values_bytes: &'a [u8],           // trace_width * 8  — row at `position`
     /// [ROUTE C] Trace row at `position ^ (lde_size/2)`. Shares the pair leaf
@@ -344,6 +406,18 @@ pub struct QueryProof<'a> {
 }
 
 impl<'a> QueryProof<'a> {
+    /// [B2] Mirror value of quotient segment `seg`.
+    #[inline]
+    pub fn quotient_mirror_value(&self, seg: usize) -> Felt {
+        felt_at(self.quotient_mirror_bytes, seg)
+    }
+
+    /// [B2] Raw LE bytes of all mirror segment values (`quotient_segments * 8`).
+    /// This is the second half of the quotient pair-leaf preimage, already in
+    /// wire order, so it is hashed without a copy.
+    #[inline]
+    pub fn quotient_mirror_bytes(&self) -> &'a [u8] { self.quotient_mirror_bytes }
+
     /// Trace column value at `col` (0..trace_width).
     #[inline]
     pub fn trace_value(&self, col: usize) -> Felt {
@@ -463,11 +537,14 @@ pub struct GenericCompactProof<'a> {
     /// Commitment to the quotient LDE (P1.1 FRI step 1).
     pub quotient_root: [u8; 32],
     pub ood_z: Felt,
-    /// [P1.1 PR 4 DEEP-ALI] Prover's claimed Q(z).
-    pub ood_quotient: Felt,
     /// PoW grinding nonce.
     pub grinding_nonce: u64,
 
+    /// [B2] Prover's claimed `Q_j(z)` for every quotient segment —
+    /// `quotient_segments * 8` raw LE bytes, segment-major. Pre-B2 this was one
+    /// felt. `ood_quotient_recombined` reassembles `Q(z)` for the phase-2
+    /// identity; the DEEP composition consumes the segments individually.
+    ood_quotient_bytes: &'a [u8],
     ood_current_bytes: &'a [u8],          // trace_width * 8
     ood_next_bytes: &'a [u8],             // trace_width * 8
     fri_layer_roots_bytes: &'a [u8],      // num_fri_layers * 32
@@ -481,6 +558,44 @@ pub struct GenericCompactProof<'a> {
 
 impl<'a> GenericCompactProof<'a> {
     pub fn num_fri_layers(&self) -> usize { self.num_fri_layers as usize }
+
+    /// [B2] Claimed `Q_j(z)` for segment `seg`.
+    #[inline]
+    pub fn ood_quotient(&self, seg: usize) -> Felt {
+        felt_at(self.ood_quotient_bytes, seg)
+    }
+
+    /// [B2] Number of quotient segments actually parsed. Always equals
+    /// `config.quotient_segments` — the parser has no other source for it.
+    #[inline]
+    pub fn ood_quotient_len(&self) -> usize { self.ood_quotient_bytes.len() / 8 }
+
+    /// [B2] Raw LE bytes of all `Q_j(z)` claims, for the Fiat-Shamir transcript.
+    #[inline]
+    pub fn ood_quotient_bytes(&self) -> &'a [u8] { self.ood_quotient_bytes }
+
+    pub fn ood_quotient_iter(&self) -> impl Iterator<Item = Felt> + '_ {
+        self.ood_quotient_bytes.chunks_exact(8).map(felt_from_slice)
+    }
+
+    /// [B2] `Q(z) = SUM_j z^(j*n) * Q_j(z)` — the un-split claim the phase-2
+    /// DEEP-ALI identity `C(z) == Q(z) * Z_T(z)` is written against.
+    ///
+    /// Recombining here rather than shipping `Q(z)` is what keeps the segments
+    /// bound: a prover who could publish `Q(z)` directly would be free to choose
+    /// any split consistent with it AFTER seeing gamma, and the DEEP composition
+    /// would stop binding the individual columns.
+    pub fn ood_quotient_recombined(&self, trace_length: usize) -> Felt {
+        let zn = self.ood_z.exp(trace_length as u64);
+        let mut acc = Felt::ZERO;
+        let mut zp = Felt::ONE;
+        for chunk in self.ood_quotient_bytes.chunks_exact(8) {
+            let arr: [u8; 8] = chunk.try_into().unwrap();
+            acc = acc.add(zp.mul(Felt::from_le_bytes(arr)));
+            zp = zp.mul(zn);
+        }
+        acc
+    }
 
     /// OOD trace value at column `col`.
     #[inline]
@@ -531,13 +646,21 @@ impl<'a> GenericCompactProof<'a> {
     /// Raw flat bytes of the final FRI polynomial (len = FRI_FINAL_POLY_SIZE * 8).
     pub fn fri_final_poly_bytes(&self) -> &'a [u8] { self.fri_final_poly_bytes }
 
-    /// Opened quotient LDE value at query index `idx` (0..num_queries).
+    /// [B2] Opened quotient SEGMENT value: segment `seg` at query `idx`.
     #[inline]
-    pub fn quotient_value(&self, idx: usize) -> Felt {
-        felt_at(self.quotient_values_bytes, idx)
+    pub fn quotient_value(&self, idx: usize, seg: usize, segments: usize) -> Felt {
+        felt_at(self.quotient_values_bytes, idx * segments + seg)
     }
 
-    /// Number of opened quotient LDE values (one per query).
+    /// [B2] The `segments * 8` raw LE bytes for query `idx`. This is the FIRST
+    /// half of the quotient pair-leaf preimage when `pos < lde_size/2`, already
+    /// in wire order, so it is hashed without a copy.
+    #[inline]
+    pub fn quotient_values_block(&self, idx: usize, segments: usize) -> &'a [u8] {
+        &self.quotient_values_bytes[idx * segments * 8..(idx + 1) * segments * 8]
+    }
+
+    /// [B2] Number of opened quotient values, `num_queries * quotient_segments`.
     #[inline]
     pub fn quotient_values_len(&self) -> usize {
         self.quotient_values_bytes.len() / 8
@@ -576,10 +699,24 @@ impl<'a> GenericCompactProof<'a> {
         let ood_z = felt_from_slice(&data[cursor..cursor + 8]);
         cursor += 8;
 
-        // [P1.1 PR 4 DEEP-ALI] ood_quotient: 8 bytes.
-        if data.len() < cursor + 8 { return None; }
-        let ood_quotient = felt_from_slice(&data[cursor..cursor + 8]);
-        cursor += 8;
+        // [P1.1 PR 4 DEEP-ALI / B2] ood_quotient: `quotient_segments * 8` bytes,
+        // one Q_j(z) per committed segment column. The count comes from the
+        // CONFIG, never from the wire, so a prover cannot renegotiate the split;
+        // a buffer built for a different k fails the length arithmetic here or
+        // in the per-query block below.
+        let k = config.quotient_segments;
+        if k == 0 { return None; }
+        if data.len() < cursor + k * 8 { return None; }
+        let ood_quotient_bytes = &data[cursor..cursor + k * 8];
+        cursor += k * 8;
+        // [B1] Canonicity on every OOD quotient claim. `MODULUS` is a legal u64
+        // that reduces to zero, and the transcript absorbs the RAW bytes, so a
+        // non-canonical encoding would make the transcript and the arithmetic
+        // disagree about the same slot.
+        for chunk in ood_quotient_bytes.chunks_exact(8) {
+            let raw = u64::from_le_bytes(chunk.try_into().unwrap());
+            if !is_canonical(raw) { return None; }
+        }
 
         // [P1.1 PR 2] num_fri_layers: 1 byte
         if data.len() < cursor + 1 { return None; }
@@ -669,11 +806,14 @@ impl<'a> GenericCompactProof<'a> {
             let next_merkle_path_bytes = &data[cursor..cursor + (md - 1) * 32];
             cursor += (md - 1) * 32;
 
-            // [B4] quotient_mirror_value: 8 bytes, then ONE pair path:
-            // (md - 1) * 32 bytes. The old layout had two full md*32 paths here.
-            if data.len() < cursor + 8 { return None; }
-            let quotient_mirror_value = felt_from_slice(&data[cursor..cursor + 8]);
-            cursor += 8;
+            // [B4/B2] quotient mirror block: `k * 8` bytes (one felt per
+            // segment), then ONE pair path of (md - 1) * 32 bytes. Pre-B4 this
+            // was two full md*32 paths; pre-B2 the block was a single felt.
+            // Widening the leaf preimage costs no Merkle depth, which is why the
+            // segmentation is 8k bytes per query and not k paths.
+            if data.len() < cursor + k * 8 { return None; }
+            let quotient_mirror_bytes = &data[cursor..cursor + k * 8];
+            cursor += k * 8;
             if data.len() < cursor + (md - 1) * 32 { return None; }
             let quotient_pair_path_bytes = &data[cursor..cursor + (md - 1) * 32];
             cursor += (md - 1) * 32;
@@ -692,7 +832,7 @@ impl<'a> GenericCompactProof<'a> {
 
             queries.push(QueryProof {
                 position,
-                quotient_mirror_value,
+                quotient_mirror_bytes,
                 trace_values_bytes,
                 trace_mirror_values_bytes,
                 next_trace_values_bytes,
@@ -706,17 +846,18 @@ impl<'a> GenericCompactProof<'a> {
             });
         }
 
-        // quotient_values: num_queries * 8 bytes (slice view)
-        if data.len() < cursor + num_queries * 8 { return None; }
-        let quotient_values_bytes = &data[cursor..cursor + num_queries * 8];
-        // cursor += num_queries * 8; // final, not used
+        // [B2] quotient_values: num_queries * k * 8 bytes (slice view),
+        // segment-major within a query.
+        if data.len() < cursor + num_queries * k * 8 { return None; }
+        let quotient_values_bytes = &data[cursor..cursor + num_queries * k * 8];
+        // cursor += num_queries * k * 8; // final, not used
 
         Some(GenericCompactProof {
             trace_root,
             quotient_root,
             ood_z,
-            ood_quotient,
             grinding_nonce,
+            ood_quotient_bytes,
             ood_current_bytes,
             ood_next_bytes,
             fri_layer_roots_bytes,
@@ -739,10 +880,10 @@ pub struct CompactStarkProof<'a> {
     pub ood_current: [Felt; TRACE_WIDTH],
     pub ood_next: [Felt; TRACE_WIDTH],
     pub ood_z: Felt,
-    /// [P1.1 PR 4 DEEP-ALI] Q(z) at the OOD point.
-    pub ood_quotient: Felt,
     pub grinding_nonce: u64,
 
+    /// [B2] `LEGACY_QUOTIENT_SEGMENTS * 8` raw LE bytes of `Q_j(z)`.
+    ood_quotient_bytes: &'a [u8],
     fri_layer_roots_bytes: &'a [u8],      // num_fri_layers * 32
     fri_final_poly_bytes: &'a [u8],       // FRI_FINAL_POLY_SIZE * 8
     quotient_values_bytes: &'a [u8],      // num_queries * 8
@@ -780,13 +921,48 @@ impl<'a> CompactStarkProof<'a> {
     /// Raw flat bytes of the final FRI polynomial (len = FRI_FINAL_POLY_SIZE * 8).
     pub fn fri_final_poly_bytes(&self) -> &'a [u8] { self.fri_final_poly_bytes }
 
-    pub fn quotient_value(&self, idx: usize) -> Felt {
-        felt_at(self.quotient_values_bytes, idx)
+    /// [B2] Segment `seg` at query `idx`.
+    pub fn quotient_value(&self, idx: usize, seg: usize) -> Felt {
+        felt_at(self.quotient_values_bytes, idx * LEGACY_QUOTIENT_SEGMENTS + seg)
+    }
+
+    /// [B2] The `LEGACY_QUOTIENT_SEGMENTS * 8` raw LE bytes for query `idx`.
+    #[inline]
+    pub fn quotient_values_block(&self, idx: usize) -> &'a [u8] {
+        let w = LEGACY_QUOTIENT_SEGMENTS * 8;
+        &self.quotient_values_bytes[idx * w..(idx + 1) * w]
     }
 
     #[inline]
     pub fn quotient_values_len(&self) -> usize {
         self.quotient_values_bytes.len() / 8
+    }
+
+    /// [B2] `Q(z) = SUM_j z^(j*32) * Q_j(z)`. Twin of the generic accessor.
+    pub fn ood_quotient_recombined(&self) -> Felt {
+        let zn = self.ood_z.exp(TRACE_LENGTH as u64);
+        let mut acc = Felt::ZERO;
+        let mut zp = Felt::ONE;
+        for chunk in self.ood_quotient_bytes.chunks_exact(8) {
+            let arr: [u8; 8] = chunk.try_into().unwrap();
+            acc = acc.add(zp.mul(Felt::from_le_bytes(arr)));
+            zp = zp.mul(zn);
+        }
+        acc
+    }
+
+    /// [B2] Claimed `Q_j(z)` for segment `seg`.
+    #[inline]
+    pub fn ood_quotient(&self, seg: usize) -> Felt {
+        felt_at(self.ood_quotient_bytes, seg)
+    }
+
+    /// [B2] Raw LE bytes of all `Q_j(z)` claims, for the transcript.
+    #[inline]
+    pub fn ood_quotient_bytes(&self) -> &'a [u8] { self.ood_quotient_bytes }
+
+    pub fn ood_quotient_iter(&self) -> impl Iterator<Item = Felt> + '_ {
+        self.ood_quotient_bytes.chunks_exact(8).map(felt_from_slice)
     }
 }
 
@@ -796,7 +972,8 @@ impl<'a> CompactStarkProof<'a> {
 #[derive(Clone, Debug)]
 pub struct LegacyQueryProof<'a> {
     pub position: u32,
-    pub quotient_mirror_value: Felt,
+    /// [B2] `LEGACY_QUOTIENT_SEGMENTS * 8` raw LE bytes, segment-major.
+    quotient_mirror_bytes: &'a [u8],
 
     trace_values_bytes: &'a [u8],           // TRACE_WIDTH * 8 = 24
     /// [ROUTE C] Trace row at `position ^ (LDE_SIZE/2)`.
@@ -817,6 +994,15 @@ pub struct LegacyQueryProof<'a> {
 }
 
 impl<'a> LegacyQueryProof<'a> {
+    /// [B2] Mirror value of quotient segment `seg`.
+    #[inline]
+    pub fn quotient_mirror_value(&self, seg: usize) -> Felt {
+        felt_at(self.quotient_mirror_bytes, seg)
+    }
+    /// [B2] Raw LE bytes of all mirror segment values.
+    #[inline]
+    pub fn quotient_mirror_bytes(&self) -> &'a [u8] { self.quotient_mirror_bytes }
+
     pub fn trace_value(&self, col: usize) -> Felt { felt_at(self.trace_values_bytes, col) }
     pub fn next_trace_value(&self, col: usize) -> Felt { felt_at(self.next_trace_values_bytes, col) }
 
@@ -1022,9 +1208,15 @@ impl<'a> CompactStarkProof<'a> {
         let ood_z = felt_from_slice(&data[cursor..cursor + 8]);
         cursor += 8;
 
-        if data.len() < cursor + 8 { return None; }
-        let ood_quotient = felt_from_slice(&data[cursor..cursor + 8]);
-        cursor += 8;
+        // [B2] LEGACY_QUOTIENT_SEGMENTS felts, canonicity-checked.
+        const K: usize = LEGACY_QUOTIENT_SEGMENTS;
+        if data.len() < cursor + K * 8 { return None; }
+        let ood_quotient_bytes = &data[cursor..cursor + K * 8];
+        for chunk in ood_quotient_bytes.chunks_exact(8) {
+            let raw = u64::from_le_bytes(chunk.try_into().unwrap());
+            if !is_canonical(raw) { return None; }
+        }
+        cursor += K * 8;
 
         if data.len() < cursor + 1 { return None; }
         let num_fri_layers = data[cursor] as usize;
@@ -1094,10 +1286,10 @@ impl<'a> CompactStarkProof<'a> {
             let next_merkle_path_bytes = &data[cursor..cursor + (md - 1) * 32];
             cursor += (md - 1) * 32;
 
-            // [B4] quotient_mirror_value(8) + ONE pair path ((md-1)*32).
-            if data.len() < cursor + 8 { return None; }
-            let quotient_mirror_value = felt_from_slice(&data[cursor..cursor + 8]);
-            cursor += 8;
+            // [B4/B2] quotient mirror block (K*8) + ONE pair path ((md-1)*32).
+            if data.len() < cursor + K * 8 { return None; }
+            let quotient_mirror_bytes = &data[cursor..cursor + K * 8];
+            cursor += K * 8;
             if data.len() < cursor + (md - 1) * 32 { return None; }
             let quotient_pair_path_bytes = &data[cursor..cursor + (md - 1) * 32];
             cursor += (md - 1) * 32;
@@ -1113,7 +1305,7 @@ impl<'a> CompactStarkProof<'a> {
 
             queries.push(LegacyQueryProof {
                 position,
-                quotient_mirror_value,
+                quotient_mirror_bytes,
                 trace_values_bytes,
                 trace_mirror_values_bytes,
                 next_trace_values_bytes,
@@ -1127,8 +1319,9 @@ impl<'a> CompactStarkProof<'a> {
             });
         }
 
-        if data.len() < cursor + num_queries * 8 { return None; }
-        let quotient_values_bytes = &data[cursor..cursor + num_queries * 8];
+        // [B2] num_queries * K felts, segment-major within a query.
+        if data.len() < cursor + num_queries * K * 8 { return None; }
+        let quotient_values_bytes = &data[cursor..cursor + num_queries * K * 8];
 
         Some(CompactStarkProof {
             trace_root,
@@ -1136,8 +1329,8 @@ impl<'a> CompactStarkProof<'a> {
             ood_current,
             ood_next,
             ood_z,
-            ood_quotient,
             grinding_nonce,
+            ood_quotient_bytes,
             fri_layer_roots_bytes,
             fri_final_poly_bytes,
             quotient_values_bytes,
