@@ -268,17 +268,50 @@ fn all_four_trace_authentication_call_sites_are_present() {
          \n  UNAUTHENTICATED quotient segment values. DO NOT LAND THIS TREE.\n"
     );
 
-    // The count is necessary but not sufficient: four calls that all ignore their
-    // result would pass it. Pin the reject arm too.
-    let rejects = on_disk
-        .matches("return Err(VerifyError::MerkleProofFailed);")
-        .count();
-    assert!(
-        rejects >= TRACE_AUTH_CALL_SITES_EXPECTED,
-        "{VERIFY_SRC_PATH} has {on_disk_count} trace-authentication call sites but only \
-         {rejects} `return Err(VerifyError::MerkleProofFailed)` arms — at least one call \
-         site does not reject on failure"
+    // The count is necessary but not sufficient: calls that all ignore their
+    // result would pass it. Pin the reject arm too — PER CALL SITE.
+    //
+    // [B2-A] This used to be a single global `rejects >= TRACE_AUTH_CALL_SITES_
+    // EXPECTED`, i.e. `>= 4`, written when four was the total number of
+    // `verify_merkle_path_2seg` call sites in the file. B2 took that total to SIX
+    // by moving the quotient openings onto the same helper, and the floor stayed
+    // at 4 — so verify.rs could lose BOTH quotient reject arms and still satisfy
+    // it. MEASURED: deleting the `return Err(VerifyError::MerkleProofFailed);`
+    // inside `verify_merkle_proofs_legacy`'s quotient block, leaving the call-site
+    // string byte-identical, left this whole file at 22 passed / 0 failed and
+    // `b1_deep_binding` at 26 passed / 0 failed, with C0's quotient segments
+    // UNAUTHENTICATED. A `>=` floor against a stale total is not a tripwire.
+    //
+    // Now every call site is checked for its own reject arm, and the total is an
+    // equality, so a new unguarded call site cannot hide behind an old guarded one.
+    const ANY_2SEG_CALL: &str = "if !merkle::verify_merkle_path_2seg(";
+    const REJECT_ARM: &str = "return Err(VerifyError::MerkleProofFailed);";
+    let total_call_sites = on_disk_lf.matches(ANY_2SEG_CALL).count();
+    assert_eq!(
+        total_call_sites,
+        TRACE_AUTH_CALL_SITES_EXPECTED + QUOTIENT_AUTH_CALL_SITES_EXPECTED,
+        "\n\n  >>> UNACCOUNTED-FOR MERKLE CALL SITE <<<\
+         \n  {VERIFY_SRC_PATH} has {total_call_sites} `{ANY_2SEG_CALL}` call sites but\
+         \n  only {TRACE_AUTH_CALL_SITES_EXPECTED} trace + {QUOTIENT_AUTH_CALL_SITES_EXPECTED} quotient are named above. Every\
+         \n  two-segment Merkle call in the verifier must be one of the two kinds this\
+         \n  test knows about, or it is authenticating something nobody is counting.\n"
     );
+
+    // The reject arm belongs to the call site, so look for it inside the call
+    // site's own block rather than anywhere in the file. 400 chars covers the
+    // widest of the six blocks (arguments + brace + arm) with room to spare; a
+    // reformat that pushes it past that fails LOUD, which is the right direction.
+    for (n, piece) in on_disk_lf.split(ANY_2SEG_CALL).skip(1).enumerate() {
+        let window = &piece[..piece.len().min(400)];
+        assert!(
+            window.contains(REJECT_ARM),
+            "\n\n  >>> MERKLE CALL SITE {n} DOES NOT REJECT <<<\
+             \n  {VERIFY_SRC_PATH}: the {n}-th `{ANY_2SEG_CALL}` call is not followed by\
+             \n  `{REJECT_ARM}` within its own block. A call whose result is discarded\
+             \n  authenticates NOTHING, and the call-site counts above stay green through\
+             \n  it. DO NOT LAND THIS TREE.\n\n  block was:\n{window}\n"
+        );
+    }
 }
 
 // ============================================================================
