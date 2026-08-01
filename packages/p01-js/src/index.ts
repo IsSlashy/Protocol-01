@@ -247,9 +247,9 @@ export {
   // Computation helpers
   computeClaimable,
   computeClaimableAmount,
-  computeRefundable,
+  computeOutstandingToRetailer,
+  computeAlreadyPaidToRetailer,
   nextClaimableSlot,
-  computeReshieldNotes,
   parseVaultAccount,
 
   // Constants

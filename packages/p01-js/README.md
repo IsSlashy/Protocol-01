@@ -59,9 +59,11 @@ const sub = await p01.createSubscription({
 });
 console.log('Subscription ID:', sub.subscriptionId);
 
-// Manage subscriptions
+// Manage subscriptions. Pause and resume are the ONLY lifecycle controls —
+// there is no cancellation. See "No cancellation, no refunds" below.
 const subscriptions = await p01.getSubscriptions();
-await p01.cancelSubscription(subscriptions[0].id);
+await p01.pauseSubscription(subscriptions[0].id);
+await p01.resumeSubscription(subscriptions[0].id);
 
 // Listen for events
 const unsubscribe = p01.on('paymentComplete', (event) => {
@@ -128,6 +130,30 @@ ServiceRegistry.register({
   defaultToken: 'USDC',
 });
 ```
+
+## No cancellation, no refunds
+
+A Protocol 01 subscription is a **one-way prepaid envelope**. Money that enters a
+subscription vault can only ever leave it toward the merchant. The protocol has
+no cancellation instruction and no refund path, so **the protocol cannot return
+money to a subscriber under any circumstance**.
+
+The subscriber's only controls are:
+
+- **Pause** — freezes the subscription clock and cuts access. Prepaid days are
+  not lost while paused.
+- **Resume** — the clock picks up exactly where it stopped.
+
+Over the life of a vault the merchant receives exactly the amount deposited,
+always, eventually. Pause changes *when* the merchant is paid, never *how much*.
+
+**A merchant remains free to refund off-band from its own wallet.** Nothing here
+forbids a refund as a commercial act — it simply is not something the protocol
+executes, custodies or guarantees, so a merchant that offers refunds does so with
+its own funds on its own terms.
+
+Your checkout must tell the subscriber this **before** they pay. `SubscriptionCard`
+states it inline where a Cancel button would normally sit.
 
 ## Testing Without Wallet
 
@@ -285,7 +311,8 @@ When you provide a `webhookUrl` in your merchant config, Protocol 01 sends `POST
 | `payment.failed` | Payment transaction failed | `PaymentResult` (partial) |
 | `subscription.created` | New subscription created | `Subscription` |
 | `subscription.payment` | Recurring subscription payment made | `Subscription` |
-| `subscription.cancelled` | Subscription cancelled by user | `Subscription` |
+| `subscription.paused` | Subscriber paused the subscription | `Subscription` |
+| `subscription.resumed` | Subscriber resumed a paused subscription | `Subscription` |
 | `subscription.expired` | Subscription reached max payments | `Subscription` |
 
 ### Webhook Payload Structure
@@ -316,8 +343,11 @@ app.post('/p01/webhook', (req, res) => {
     case 'subscription.created':
       activateSubscription(payload.data as Subscription);
       break;
-    case 'subscription.cancelled':
-      deactivateSubscription(payload.data as Subscription);
+    case 'subscription.paused':
+      suspendAccess(payload.data as Subscription);
+      break;
+    case 'subscription.resumed':
+      restoreAccess(payload.data as Subscription);
       break;
   }
 
@@ -347,7 +377,8 @@ app.post('/p01/webhook', (req, res) => {
 | `createSubscription(options)` | Create a Stream Secure subscription |
 | `getSubscriptions()` | Get all subscriptions with this merchant |
 | `getSubscription(id)` | Get a specific subscription by ID |
-| `cancelSubscription(id)` | Cancel a subscription |
+| `pauseSubscription(id)` | Pause a subscription (freezes the clock, cuts access) |
+| `resumeSubscription(id)` | Resume a paused subscription |
 | `on(event, callback)` | Subscribe to events (returns unsubscribe function) |
 | `off(event, callback)` | Unsubscribe from events |
 | `getMerchantConfig()` | Get the current merchant configuration |

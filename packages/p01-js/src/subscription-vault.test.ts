@@ -12,9 +12,10 @@ import {
   type VaultPeriodState,
 } from '../../merchant-sdk/src/period-math';
 import {
+  computeAlreadyPaidToRetailer,
   computeClaimable,
   computeClaimableAmount,
-  computeRefundable,
+  computeOutstandingToRetailer,
   fundedPeriodsRemaining,
   nextClaimableSlot,
   periodsElapsed,
@@ -125,18 +126,47 @@ describe('the max_funded clamp this port was missing', () => {
     expect(computeClaimable(partiallyFunded(), 1_500)).toBe(3);
   });
 
-  it('MEASURED CONSEQUENCE: the subscriber gets their 50,000-lamport refund back', () => {
-    // Before the clamp, computeClaimable returned 5, total owed came out at
-    // 500,000 against a 350,000 deposit, and the refund was reported as 0.
-    expect(computeRefundable(partiallyFunded(), 1_500)).toBe(50_000);
+  it('MEASURED CONSEQUENCE: the 50,000-lamport remainder stays owed to the retailer', () => {
+    // Before the clamp, computeClaimable returned 5 and total owed came out at
+    // 500,000 against a 350,000 deposit. That number used to drive the refund
+    // preview; it now drives what the retailer is still owed. Either way it has
+    // to be 50,000 and not 0.
+    expect(computeOutstandingToRetailer(partiallyFunded())).toBe(350_000);
+    const afterThreeClaims = { ...partiallyFunded(), claimedPeriods: 3 };
+    expect(computeOutstandingToRetailer(afterThreeClaims)).toBe(50_000);
   });
 
-  it('pays whole funded periods only, leaving the sub-period dust to be refunded', () => {
-    // 3 whole periods × 100,000 = 300,000 to the retailer; the 50,000 that
-    // never bought a whole period is the subscriber's refund, not revenue.
+  it('pays whole funded periods only, and carries the sub-period remainder', () => {
+    // 3 whole periods × 100,000 = 300,000 claimable now; the 50,000 that never
+    // bought a whole period is NOT refundable — it is swept to the retailer
+    // when the vault is closed on the final claim.
     const v = partiallyFunded();
     expect(computeClaimableAmount(v, 9_999)).toBe(300_000);
-    expect(computeClaimableAmount(v, 9_999) + computeRefundable(v, 9_999)).toBe(v.totalDeposited);
+    const afterFinalClaim = { ...v, claimedPeriods: 3 };
+    expect(computeClaimableAmount(afterFinalClaim, 9_999)).toBe(0);
+    expect(computeOutstandingToRetailer(afterFinalClaim)).toBe(50_000);
+  });
+
+  it('THE FOUNDER INVARIANT: paid + outstanding is total_deposited at every slot', () => {
+    // Over the life of the vault the retailer receives exactly total_deposited.
+    // No lamport ever returns to the subscriber, so there is no third bucket.
+    const v = partiallyFunded();
+    for (let claimed = 0; claimed <= 3; claimed++) {
+      const at = { ...v, claimedPeriods: claimed };
+      expect(computeAlreadyPaidToRetailer(at) + computeOutstandingToRetailer(at))
+        .toBe(v.totalDeposited);
+    }
+  });
+
+  it('pause moves WHEN the retailer is paid, never HOW MUCH', () => {
+    const running = partiallyFunded();
+    const paused = { ...running, isPaused: true };
+    // Different amounts claimable right now…
+    expect(computeClaimable(running, 1_500)).toBe(3);
+    expect(computeClaimable(paused, 1_500)).toBe(0);
+    // …identical amounts owed over the life of the vault.
+    expect(computeOutstandingToRetailer(running)).toBe(350_000);
+    expect(computeOutstandingToRetailer(paused)).toBe(350_000);
   });
 
   it('an exhausted vault claims nothing even though isActive is still true', () => {

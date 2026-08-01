@@ -384,7 +384,8 @@ export class Protocol01 {
       requestPayment: () => mockMethod('requestPayment'),
       createSubscription: () => mockMethod('createSubscription'),
       getSubscriptions: () => mockMethod('getSubscriptions'),
-      cancelSubscription: () => mockMethod('cancelSubscription'),
+      pauseSubscription: () => mockMethod('pauseSubscription'),
+      resumeSubscription: () => mockMethod('resumeSubscription'),
       on: () => {},
       off: () => {},
     };
@@ -814,10 +815,21 @@ export class Protocol01 {
   }
 
   /**
-   * Cancel a subscription
-   * @param subscriptionId - Subscription ID to cancel
+   * Pause a subscription.
+   *
+   * Pausing freezes the subscription clock and cuts access. Prepaid days are
+   * not lost — they resume exactly where they stopped when {@link
+   * resumeSubscription} is called.
+   *
+   * BREAKING CHANGE: this replaces the removed `cancelSubscription`. A
+   * Protocol 01 subscription is a one-way prepaid envelope — money that enters
+   * it can only ever leave it toward the merchant. There is no cancellation and
+   * no protocol-level refund. A merchant remains free to refund off-band from
+   * its own wallet.
+   *
+   * @param subscriptionId - Subscription ID to pause
    */
-  async cancelSubscription(subscriptionId: string): Promise<void> {
+  async pauseSubscription(subscriptionId: string): Promise<void> {
     this.ensureConnected();
 
     if (!this.provider) {
@@ -827,9 +839,28 @@ export class Protocol01 {
       );
     }
 
-    await this.provider.cancelSubscription(subscriptionId);
+    await this.provider.pauseSubscription(subscriptionId);
 
-    this.emit('subscriptionCancelled', { subscriptionId });
+    this.emit('subscriptionPaused', { subscriptionId });
+  }
+
+  /**
+   * Resume a paused subscription. Prepaid days pick up where they stopped.
+   * @param subscriptionId - Subscription ID to resume
+   */
+  async resumeSubscription(subscriptionId: string): Promise<void> {
+    this.ensureConnected();
+
+    if (!this.provider) {
+      throw new Protocol01Error(
+        Protocol01ErrorCode.WALLET_NOT_INSTALLED,
+        'Subscription management requires Protocol 01 wallet'
+      );
+    }
+
+    await this.provider.resumeSubscription(subscriptionId);
+
+    this.emit('subscriptionResumed', { subscriptionId });
   }
 
   // ============ Event Methods ============

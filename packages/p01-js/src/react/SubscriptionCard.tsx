@@ -11,41 +11,43 @@ import { getIntervalName, formatDate, getTimeUntilPayment, fromRawAmount, getTok
 
 export function SubscriptionCard({
   subscription,
-  showCancel = true,
-  onCancel,
+  showPauseResume = true,
+  onPauseResume,
   onViewDetails,
   className = '',
   style,
 }: SubscriptionCardProps) {
   const sdk = useP01SDK();
   const theme = useP01Theme();
-  const [cancelling, setCancelling] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const intervalName = getIntervalName(subscription.periodSeconds);
   const nextPayment = getTimeUntilPayment(subscription.nextPaymentAt);
 
-  // Handle cancel
-  const handleCancel = useCallback(async () => {
-    if (cancelling) return;
+  // Pause / resume are the only lifecycle controls. There is no cancel button
+  // because the protocol has no cancellation and cannot return money to the
+  // subscriber — a subscription is a one-way prepaid envelope.
+  const isPaused = subscription.status === 'paused';
 
-    const confirmed = window.confirm(
-      `Are you sure you want to cancel your ${subscription.merchantName} subscription?`
-    );
+  const handlePauseResume = useCallback(async () => {
+    if (busy) return;
 
-    if (!confirmed) return;
-
-    setCancelling(true);
+    setBusy(true);
     try {
       if (sdk) {
-        await sdk.cancelSubscription(subscription.id);
+        if (isPaused) {
+          await sdk.resumeSubscription(subscription.id);
+        } else {
+          await sdk.pauseSubscription(subscription.id);
+        }
       }
-      onCancel?.(subscription.id);
+      onPauseResume?.(subscription.id, isPaused ? 'resumed' : 'paused');
     } catch (err) {
-      console.error('Failed to cancel subscription:', err);
+      console.error(`Failed to ${isPaused ? 'resume' : 'pause'} subscription:`, err);
     } finally {
-      setCancelling(false);
+      setBusy(false);
     }
-  }, [sdk, subscription, onCancel, cancelling]);
+  }, [sdk, subscription, onPauseResume, busy, isPaused]);
 
   // Status color
   const getStatusColor = () => {
@@ -267,28 +269,41 @@ export function SubscriptionCard({
           </button>
         )}
 
-        {showCancel && subscription.status === 'active' && (
+        {showPauseResume && (subscription.status === 'active' || isPaused) && (
           <button
-            onClick={handleCancel}
-            disabled={cancelling}
+            onClick={handlePauseResume}
+            disabled={busy}
             style={{
               flex: 1,
               padding: '10px 16px',
               backgroundColor: 'transparent',
-              color: theme.errorColor,
-              border: `1px solid ${theme.errorColor}40`,
+              color: theme.textColor,
+              border: `1px solid ${theme.borderColor}`,
               borderRadius: '8px',
               fontSize: '14px',
               fontWeight: 500,
-              cursor: cancelling ? 'not-allowed' : 'pointer',
-              opacity: cancelling ? 0.6 : 1,
+              cursor: busy ? 'not-allowed' : 'pointer',
+              opacity: busy ? 0.6 : 1,
               transition: 'all 0.2s ease',
             }}
           >
-            {cancelling ? 'Cancelling...' : 'Cancel'}
+            {busy ? 'Working…' : isPaused ? 'Resume' : 'Pause'}
           </button>
         )}
       </div>
+
+      {/* The no-refund rule, stated where the Cancel button used to be. */}
+      {(subscription.status === 'active' || isPaused) && (
+        <p style={{
+          color: theme.mutedColor,
+          fontSize: '12px',
+          lineHeight: 1.5,
+          margin: '12px 0 0 0',
+        }}>
+          This subscription cannot be cancelled or refunded. You can pause it at
+          any time and resume later — your prepaid days are not lost while paused.
+        </p>
+      )}
     </div>
   );
 }

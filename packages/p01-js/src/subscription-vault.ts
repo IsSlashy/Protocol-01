@@ -221,9 +221,11 @@ export function subscriptionIsCurrent(vault: VaultInfo, currentSlot: number): bo
  * (`programs/zk_shielded/src/state/subscription_vault.rs:133`), INCLUDING the
  * `max_funded` clamp. Without that clamp this returned the raw elapsed-period
  * count: 40 for a five-period subscription left running, and `Infinity` when
- * `intervalSlots` was 0. `computeRefundable` fed on it and under-reported the
- * subscriber's refund — for a 350,000-lamport deposit at 100,000/period, read
- * five periods after start, it said 0 where the program refunds 50,000.
+ * `intervalSlots` was 0. The since-removed `computeRefundable` fed on it and
+ * under-reported the subscriber's refund — for a 350,000-lamport deposit at
+ * 100,000/period, read five periods after start, it said 0 where the program
+ * refunded 50,000. Refunds no longer exist, so that consequence is historical;
+ * the clamp is still load-bearing for `computeClaimableAmount`.
  *
  * @param vault - Vault info
  * @param currentSlot - Current Solana slot
@@ -267,12 +269,31 @@ export function computeClaimableAmount(vault: VaultInfo, currentSlot: number): n
 }
 
 /**
- * Compute the refundable amount if the vault were cancelled now.
+ * Amount the retailer has not been paid yet, in atomic units.
+ *
+ * A subscription vault is a one-way prepaid envelope: money that enters it can
+ * only ever leave it toward the retailer. There is no cancellation and no
+ * refund, so this is NOT "what the subscriber could get back" — it is what the
+ * retailer is still owed and will eventually receive. Pause changes WHEN that
+ * happens, never HOW MUCH.
+ *
+ * Invariant: `computeAlreadyPaidToRetailer + computeOutstandingToRetailer`
+ * equals `totalDeposited` at every slot, for every vault shape.
+ *
+ * Replaces the removed `computeRefundable`, which answered "what would the
+ * subscriber get back if the vault were cancelled now". Cancellation no longer
+ * exists, so that number was value on paper only.
  */
-export function computeRefundable(vault: VaultInfo, currentSlot: number): number {
-  const claimable = computeClaimable(vault, currentSlot);
-  const totalOwed = (vault.claimedPeriods + claimable) * vault.rate;
-  return Math.max(0, vault.totalDeposited - totalOwed);
+export function computeOutstandingToRetailer(vault: VaultInfo): number {
+  return Math.max(0, vault.totalDeposited - vault.claimedPeriods * vault.rate);
+}
+
+/**
+ * Amount the retailer has already swept out of the vault, in atomic units.
+ * Counterpart of {@link computeOutstandingToRetailer}.
+ */
+export function computeAlreadyPaidToRetailer(vault: VaultInfo): number {
+  return Math.min(vault.totalDeposited, vault.claimedPeriods * vault.rate);
 }
 
 /**
@@ -456,15 +477,11 @@ export function parseVaultAccount(data: Buffer, address: string): VaultInfo {
   };
 }
 
-/**
- * For cancel_private: compute how many full denomination notes can be re-shielded.
+/*
+ * REMOVED: `computeReshieldNotes`.
+ *
+ * It sized the re-shield leg of `cancel_private_stark` — how many whole
+ * denomination notes the refunded residual bought back into the source pool.
+ * Cancellation and refunds are gone from the protocol, so there is no residual
+ * to re-shield and no inbound leg to size. See `computeOutstandingToRetailer`.
  */
-export function computeReshieldNotes(
-  refundableAmount: number,
-  denomination: number,
-): { notes: number; reshieldAmount: number; dustForfeited: number } {
-  const notes = Math.floor(refundableAmount / denomination);
-  const reshieldAmount = notes * denomination;
-  const dustForfeited = refundableAmount - reshieldAmount;
-  return { notes, reshieldAmount, dustForfeited };
-}
