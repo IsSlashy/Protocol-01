@@ -41,7 +41,7 @@ const updates: WeekUpdate[] = [
     highlights: [
       "Migrated all 6 ZK circuits from Groth16 to hash-based STARKs",
       "Custom FRI verifier running natively on Solana — no trusted setup",
-      "DEEP-ALI composition across every circuit, 124-bit soundness",
+      "DEEP-ALI composition across every circuit",
       "Merkle-Update AIR verifies on-chain at 1.32M compute units",
       "p01_liquidity program live — instant unshield pool on devnet",
       "Mobile WASM prover, extension, and SDK v2 all migrated — 138 tests green",

@@ -14,7 +14,7 @@ Protocol 01 is the privacy and payments layer Solana doesn't have yet. We ship a
 ## Core tech
 
 - **Post-quantum ZK-STARKs (Goldilocks end-to-end)** — Winterfell prover with Poseidon hashing. Six AIRs cover shield, unshield, transfer, confidential balance, pool commitment, and Merkle update. Hash-based, no trusted setup, no elliptic curves — quantum-resistant by design.
-- **Native on-chain FRI verifier** — single multi-circuit Solana program verifies STARK proofs in **<1.4M CU** (most circuits <900K). DEEP-ALI on all 6 circuits, 124-bit soundness, sha256-syscall hashing. Zero Winterfell dependency at runtime.
+- **Native on-chain FRI verifier** — single multi-circuit Solana program verifies STARK proofs in **<1.4M CU** (most circuits <900K). DEEP-ALI on all 7 circuits, sha256-syscall hashing. (Soundness in bits: measured per circuit, see the README — it is 42–52, it was never 124, and the deployed program predates the binding work.) Zero Winterfell dependency at runtime.
 - **Hybrid stealth addresses** — X25519 + ML-KEM-768 (NIST PQC standard) generate unlinkable one-time addresses, breaking the sender↔receiver link even against a quantum adversary.
 - **Quantum-safe vault** — Winternitz one-time signatures (WOTS+ 67 chains, SHA-256) provide application-layer defense if Ed25519 is ever broken by Shor's algorithm.
 - **On-chain stealth relayer with N-relayer failover** — `p01_relayer` lets a network of relayers submit unshields on behalf of users, breaking the depositor↔recipient tx-graph link. Auto-rotation across registered relayers with a liveness gate (`last_active_slot`) and chunked submission (`submit_job_chunked`) for proofs that exceed Solana's 1232-byte tx limit. Worker live on Railway.

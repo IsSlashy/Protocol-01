@@ -79,7 +79,8 @@ const starkProof = await starkProver.generateProof(secret);
 
 // Upload proof buffer → on-chain FRI verifier → ~889K CU
 await submitStarkProof(program, proofBuffer, commitment, circuitId);
-// 6 AIRs over Goldilocks field, 124-bit soundness with DEEP-ALI
+// 7 AIRs over Goldilocks field, DEEP-ALI composition
+// (soundness in bits: measured per circuit, see README)
 // Replaces legacy Groth16/BN254 (see "Legacy / Migration History")`,
   },
   {

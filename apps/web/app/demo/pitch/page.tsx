@@ -438,7 +438,7 @@ function Slide6Quantum() {
   const items = [
     {
       title: "STARK proofs",
-      detail: "no trusted setup, hash-based, post-quantum secure (Grover-resistant 124-bit)",
+      detail: "no trusted setup, hash-based, no elliptic curve in the proof path",
       tone: "cyan" as const,
     },
     {

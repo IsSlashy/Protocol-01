@@ -580,7 +580,7 @@
       </div>
       <div class="card card-yellow">
         <h4>Quantum-safe today</h4>
-        <p class="small">Authentication uses <strong>STARK over Goldilocks + Poseidon</strong>. Zero elliptic curves in the auth path. Shor cannot touch it. Grover only halves hash security &mdash; we use 256-bit hashes, so 128-bit PQ effective.</p>
+        <p class="small">Authentication uses <strong>STARK over Goldilocks + Poseidon</strong>. Zero elliptic curves in the auth path. Shor cannot touch it. Grover only halves hash security. (This line used to claim 128-bit PQ effective; that is the hash, not the proof. The measured classical proof soundness is 42-52 bits per circuit, so the quantum figure is ~21-26.)</p>
       </div>
     </div>
 

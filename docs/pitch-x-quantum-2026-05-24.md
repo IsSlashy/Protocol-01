@@ -146,7 +146,7 @@ style: |
   </div>
   <div class="card card-yellow">
     <h4 class="yellow">Quantum-safe today</h4>
-    <p class="small">Authentication uses <strong>STARK over Goldilocks + Poseidon</strong>. Zero elliptic curves in the auth path. Shor cannot touch it. 128-bit PQ effective security.</p>
+    <p class="small">Authentication uses <strong>STARK over Goldilocks + Poseidon</strong>. Zero elliptic curves in the auth path. Shor cannot touch it. (This line used to claim 128-bit PQ effective security; the measured classical soundness is 42-52 bits per circuit, so the quantum figure is ~21-26.)</p>
   </div>
 </div>
 
