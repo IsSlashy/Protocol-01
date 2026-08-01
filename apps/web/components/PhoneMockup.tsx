@@ -142,20 +142,12 @@ const WalletView = () => {
             <p className="text-white/80 font-medium text-[10px] tracking-wide">
               {t("mockup.privateBalance")}
             </p>
-            <span
-              className="inline-flex items-center gap-0.5 px-1 py-[1px] rounded"
-              style={{ backgroundColor: "rgba(245, 158, 11, 0.12)" }}
-            >
-              <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="3" strokeLinecap="round">
-                <circle cx="6" cy="6" r="2" />
-                <circle cx="18" cy="6" r="2" />
-                <circle cx="12" cy="18" r="2" />
-                <path d="M6 6l12 12M18 6L12 18M6 6l6 12" />
-              </svg>
-              <span className="text-[6px] font-bold tracking-wider" style={{ color: "#f59e0b" }}>
-                MPC
-              </span>
-            </span>
+            {/* An amber "MPC" badge sat here until 2026-07-27, hardcoded rather
+                than driven by i18n — which is why the Arcium removal sweep over
+                the translation catalogues never found it, and it kept rendering
+                on the homepage hero at first paint. Arcium is not part of
+                Protocol 01: privacy-sdk 1.0.2 dropped the mpc module. The badge
+                claimed a protection the shielded balance never had. */}
           </div>
           <p className="text-white text-[13px] font-bold mt-0.5">
             3.2000 <span className="text-white/50 text-[11px] font-semibold">SOL</span>
