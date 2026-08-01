@@ -281,6 +281,21 @@ pub const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
 // (ethSTARK Conjecture 8.4). Both are derived from `CircuitConfig` and asserted
 // in `tests/b1_deep_binding.rs`, which cannot publish one without the other.
 //
+// [B2-M] WHAT SEGMENTATION BOUGHT, AS A SUBTRACTION. Re-deriving both columns at
+// the B1 parameters (bound 8 of 16 generic / 7 of 16 legacy, one quotient column,
+// grinding 16) and subtracting:
+//
+//     conjectured gain  +4 / +7 / +7 / +9 / +5 / +9 / +9   (C0..C6)
+//     unconditional gain +18 / +19 / +19 / +17 / +19 / +17 / +17
+//
+// The query term gained 87 bits and the answer gained 4-9, because the field
+// floor absorbed the rest. That is the honest headline: B2 did not raise the
+// ceiling, it pushed the query term through it, and what is left is the ceiling.
+// So on the conjectured column `NUM_QUERIES` and `GRINDING_BITS` now buy exactly
+// nothing. The unconditional column is the one still query-bound, and it
+// saturates at 28-33 queries — 1.1x to 1.3x what ships — for +3 to +6 bits and
+// no wire change. Everything past that needs an extension field.
+//
 // 42-47 bits is SHORT for a product holding real funds — about 20 GPU-minutes to
 // 8 GPU-hours on one consumer card, and roughly half that many bits under Grover.
 // Lifting the floor needs the challenges drawn from an extension field, which is

@@ -474,6 +474,287 @@ fn the_conjectured_column_is_floor_bound_on_every_circuit() {
     }
 }
 
+/// The DUAL of the gate above, and the one that says where the next bit comes
+/// from.
+///
+/// The conjectured column is floor-bound, so queries and grinding buy nothing
+/// there. The UNCONDITIONAL column is the opposite: on all seven circuits its
+/// query term is BELOW the floor, so it is the one column that still responds to
+/// `num_queries`. Without this assertion the two-column story is half told, and
+/// "add queries" looks like a dead end when it is not.
+///
+/// If this ever fails it means the unconditional column has hit the field floor
+/// too, at which point NOTHING but an extension field moves either number and the
+/// commentary in `compact_proof.rs` has to say so.
+#[test]
+fn the_unconditional_column_is_query_bound_on_every_circuit() {
+    use p01_stark_verifier::compact_proof::GRINDING_BITS;
+    for id in 0u8..=6 {
+        let p = SoundnessParams::shipped(id);
+        let d = p.derive();
+        assert!(
+            d.query_uncond < d.field_floor,
+            "C{id}: the unconditional column is no longer query-bound (query \
+             {:.1} vs floor {:.2}). Every claim that raising `num_queries` still \
+             buys unconditional bits is now false; re-derive before touching the arrays.",
+            d.query_uncond,
+            d.field_floor,
+        );
+        // The headroom, printed so the cost of the next bit is visible: how many
+        // queries the unconditional column could still absorb before the field
+        // floor takes over.
+        let per_query = (2.0 / (1.0 + d.rho)).log2();
+        let max_nq = ((d.field_floor - GRINDING_BITS as f64) / per_query).floor();
+        println!(
+            "[B2 headroom] C{id}: unconditional {:.2} bits at nq={}, floor {:.2}, \
+             saturates at nq={:.0} ({:.1}x)",
+            d.query_uncond,
+            p.num_queries,
+            d.field_floor,
+            max_nq,
+            max_nq / p.num_queries as f64,
+        );
+    }
+}
+
+// ============================================================================
+// [B2-M] WHAT SEGMENTATION ACTUALLY BOUGHT, IN BITS
+// ============================================================================
+
+/// One point in this tree's history, as the parameters that determine a
+/// soundness column.
+///
+/// Everything about a column is a function of these eight numbers, so pinning
+/// the pre-B2 values and re-running the SAME derivation is what turns "B2 raised
+/// the soundness" from a claim into a subtraction.
+#[derive(Clone, Copy)]
+struct SoundnessParams {
+    trace_length: usize,
+    trace_width: usize,
+    quotient_segments: usize,
+    lde_size: usize,
+    fri_final_poly_size: usize,
+    fri_final_poly_degree_bound: usize,
+    num_queries: usize,
+    grinding_bits: u32,
+}
+
+struct SoundnessColumns {
+    rho: f64,
+    field_floor: f64,
+    query_conj: f64,
+    query_uncond: f64,
+    conjectured: u32,
+    unconditional: u32,
+}
+
+impl SoundnessParams {
+    /// The parameters this tree SHIPS, read out of `CircuitConfig` and the
+    /// shipped `GRINDING_BITS`. No literals.
+    fn shipped(id: u8) -> Self {
+        let c = p01_stark_verifier::compact_proof::get_circuit_config(id).unwrap();
+        Self {
+            trace_length: c.trace_length,
+            trace_width: c.trace_width,
+            quotient_segments: c.quotient_segments,
+            lde_size: c.lde_size,
+            fri_final_poly_size: c.fri_final_poly_size,
+            fri_final_poly_degree_bound: c.fri_final_poly_degree_bound,
+            num_queries: c.num_queries,
+            grinding_bits: p01_stark_verifier::compact_proof::GRINDING_BITS,
+        }
+    }
+
+    /// The same circuit as it stood at B1, i.e. commit `8aeb6f73`.
+    ///
+    /// Only three things differ and all three are recorded measurements, not
+    /// guesses:
+    ///
+    ///   * `quotient_segments = 1` — B1 committed ONE quotient column. (It only
+    ///     enters the field floor, as one term in `w + k + 1`, and moves it by
+    ///     less than a thousandth of a bit. It is carried anyway so the two runs
+    ///     differ in nothing but history.)
+    ///   * `fri_final_poly_degree_bound` — 8 of 16 on the generic path and 7 of
+    ///     16 on C0's legacy path. MEASURED at B1 and quoted in `T5` / `T5b`
+    ///     and on `LEGACY_FRI_FINAL_POLY_DEGREE_BOUND`.
+    ///   * `grinding_bits = 16`.
+    ///
+    /// Trace length, width, LDE size, terminal size and query count did not move
+    /// across B2, so they are read from the shipped config: a change to any of
+    /// them would show up in the delta as itself, which is what we want.
+    fn at_b1(id: u8) -> Self {
+        let mut p = Self::shipped(id);
+        p.quotient_segments = 1;
+        p.fri_final_poly_degree_bound = if id == 0 { 7 } else { 8 };
+        p.grinding_bits = 16;
+        p
+    }
+
+    /// The derivation, in one place, applied to both eras.
+    ///
+    /// Deliberately a SECOND implementation of what
+    /// `soundness_bits_are_derived_from_the_config` computes inline. The two are
+    /// cross-checked against each other below: a single shared helper could be
+    /// wrong in one way and agree with itself.
+    fn derive(&self) -> SoundnessColumns {
+        assert!(
+            self.fri_final_poly_degree_bound >= 1
+                && self.fri_final_poly_degree_bound < self.fri_final_poly_size,
+            "terminal check is VACUOUS or degenerate",
+        );
+        let rho = self.fri_final_poly_degree_bound as f64 / self.fri_final_poly_size as f64;
+        let num_folds =
+            (self.lde_size / self.fri_final_poly_size).trailing_zeros() as usize;
+        let field_terms = 8.0 * self.trace_length as f64
+            + (self.trace_width + self.quotient_segments + 1) as f64
+            + (num_folds * self.lde_size) as f64;
+        let field_floor = 64.0 - field_terms.log2();
+        let nq = self.num_queries as f64;
+        let g = self.grinding_bits as f64;
+        let query_conj = nq * (1.0 / rho).log2() + g;
+        let query_uncond = nq * (2.0 / (1.0 + rho)).log2() + g;
+        SoundnessColumns {
+            rho,
+            field_floor,
+            query_conj,
+            query_uncond,
+            conjectured: query_conj.min(field_floor).floor() as u32,
+            unconditional: query_uncond.min(field_floor).floor() as u32,
+        }
+    }
+}
+
+/// The B1 columns, re-derived at the B1 parameters. C0..C6.
+///
+/// C0 is 48 and not 43 because the number this project actually PINNED at B1 —
+/// `B1_RESIDUAL_FORGERY_BITS = [43, 43, 43, 38, 43, 38, 38]` — applied 1.000
+/// bits per query to all seven circuits, when C0's legacy terminal bound was 7
+/// of 16 and a C0 query was therefore worth `log2(16/7) = 1.193` bits. The B1
+/// pin was CONSERVATIVE on C0 by 5 bits. That is recorded, not corrected: see
+/// `B1_PINNED_FORGERY_BITS`.
+const PRE_B2_CONJECTURED_FORGERY_BITS: [u32; 7] = [48, 43, 43, 38, 43, 38, 38];
+const PRE_B2_UNCONDITIONAL_FORGERY_BITS: [u32; 7] = [28, 27, 27, 25, 27, 25, 25];
+
+/// What the project ACTUALLY claimed at B1, verbatim from
+/// `programs/p01_stark_verifier/tests/b1_deep_binding.rs:275` at commit
+/// `8aeb6f73`, where it carried an asserted equality so nobody could quietly
+/// quote more. It is kept here because the delta that matters to a reader is the
+/// delta against the published claim, not against a number nobody published.
+const B1_PINNED_FORGERY_BITS: [u32; 7] = [43, 43, 43, 38, 43, 38, 38];
+
+/// MEASURED gain, post-B2 conjectured minus the B1 PIN. C0..C6.
+const B2_GAIN_VS_B1_PIN: [i32; 7] = [9, 7, 7, 9, 5, 9, 9];
+/// MEASURED gain, post-B2 minus the re-derived B1 columns. C0..C6.
+const B2_GAIN_CONJECTURED: [i32; 7] = [4, 7, 7, 9, 5, 9, 9];
+const B2_GAIN_UNCONDITIONAL: [i32; 7] = [18, 19, 19, 17, 19, 17, 17];
+
+/// THE ANSWER TO "what did B2 buy, in bits", as a subtraction that runs.
+///
+/// # Why this test exists
+///
+/// B2 was specified, implemented and re-pinned without anything in the tree ever
+/// computing its own gain. The post-B2 arrays landed and the pre-B2 array was
+/// DELETED in the same wave, so the one number the change was made for — the
+/// difference — existed only in a commit message. This test restores the
+/// subtrahend and asserts the difference.
+///
+/// # What it shows, MEASURED
+///
+/// * The conjectured column gains 4 to 9 bits. It does NOT gain the 87 bits the
+///   query term gained (43 -> 130 on C0..C2/C4), because the base-field
+///   Fiat-Shamir floor eats every bit above ~48-52. B2 did not raise the
+///   ceiling; it raised the floor-adjacent term until the ceiling became the
+///   binding one. Post-B2 the conjectured figure IS the field floor on all seven
+///   circuits and is therefore INDEPENDENT of `num_queries` and `GRINDING_BITS`.
+/// * The unconditional column gains 17 to 19 bits, and is still query-bound, so
+///   that is where further queries would go.
+/// * The gain against the number the project PUBLISHED at B1 is +5 to +9. It
+///   differs from the derived gain only on C0, where the B1 pin was itself
+///   conservative by 5 bits.
+///
+/// Nothing here is above 52. B2 is a real improvement to a construction that is
+/// still not publishable as a security level.
+#[test]
+fn b2_bit_gain_is_a_subtraction_that_runs() {
+    println!(
+        "\n  id  | B1 conj | B2 conj | gain | B1 uncond | B2 uncond | gain | B1 PIN | gain"
+    );
+    for id in 0u8..=6 {
+        let i = id as usize;
+        let pre = SoundnessParams::at_b1(id).derive();
+        let post = SoundnessParams::shipped(id).derive();
+
+        // The shipped arrays and this second derivation must agree, or one of
+        // the two is wrong and neither may be quoted.
+        assert_eq!(
+            post.conjectured, B2_CONJECTURED_FORGERY_BITS[i],
+            "C{id}: the independent derivation disagrees with the shipped conjectured \
+             array. Two implementations of the same formula have drifted; do not \
+             publish either until they agree.",
+        );
+        assert_eq!(
+            post.unconditional, B2_UNCONDITIONAL_FORGERY_BITS[i],
+            "C{id}: the independent derivation disagrees with the shipped \
+             unconditional array.",
+        );
+
+        assert_eq!(
+            pre.conjectured, PRE_B2_CONJECTURED_FORGERY_BITS[i],
+            "C{id}: the B1-era conjectured column no longer re-derives. The pre-B2 \
+             parameters in `SoundnessParams::at_b1` are the subtrahend of every \
+             'B2 bought N bits' sentence in this tree.",
+        );
+        assert_eq!(
+            pre.unconditional, PRE_B2_UNCONDITIONAL_FORGERY_BITS[i],
+            "C{id}: the B1-era unconditional column no longer re-derives.",
+        );
+
+        let gain_conj = post.conjectured as i32 - pre.conjectured as i32;
+        let gain_uncond = post.unconditional as i32 - pre.unconditional as i32;
+        let gain_vs_pin = post.conjectured as i32 - B1_PINNED_FORGERY_BITS[i] as i32;
+
+        println!(
+            "  C{id}  |   {:>3}   |   {:>3}   |  {:>+3} |    {:>3}    |    {:>3}    |  {:>+3} \
+             |   {:>3}  |  {:>+3}   (rho 1/{:.0} -> 1/{:.0}, floor {:.2})",
+            pre.conjectured,
+            post.conjectured,
+            gain_conj,
+            pre.unconditional,
+            post.unconditional,
+            gain_uncond,
+            B1_PINNED_FORGERY_BITS[i],
+            gain_vs_pin,
+            1.0 / pre.rho,
+            1.0 / post.rho,
+            post.field_floor,
+        );
+
+        assert_eq!(gain_conj, B2_GAIN_CONJECTURED[i], "C{id} conjectured gain moved");
+        assert_eq!(gain_uncond, B2_GAIN_UNCONDITIONAL[i], "C{id} unconditional gain moved");
+        assert_eq!(gain_vs_pin, B2_GAIN_VS_B1_PIN[i], "C{id} gain against the B1 pin moved");
+
+        // The shape of the win, asserted rather than described. Pre-B2 the query
+        // term was the binding constraint on the conjectured column; post-B2 the
+        // field floor is. That transition IS what B2 did, and it is why the gain
+        // is 4-9 bits and not the 87 the query term picked up.
+        assert!(
+            pre.query_conj < pre.field_floor,
+            "C{id}: pre-B2 the conjectured column was query-bound. If it was not, \
+             the whole account of what B2 changed is wrong.",
+        );
+        assert!(
+            post.query_conj > post.field_floor,
+            "C{id}: post-B2 the conjectured column must be floor-bound",
+        );
+        assert!(
+            gain_conj < (post.query_conj - pre.query_conj) as i32,
+            "C{id}: the gain must be STRICTLY less than the query term's gain — the \
+             field floor is what makes B2 worth 4-9 bits and not 87. If these are \
+             equal the floor has stopped binding and every sentence about it is stale.",
+        );
+    }
+}
+
 /// T1 (C0, the FLAGSHIP) — coordinated forgery + honest terminal poly, against
 /// the shipped legacy verifier.
 ///
@@ -1458,9 +1739,17 @@ fn the_soundness_prose_matches_the_two_derived_arrays() {
     let fmt = |a: &[u32; 7]| {
         a.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" / ")
     };
+    let fmt_signed = |a: &[i32; 7]| {
+        a.iter().map(|v| format!("{v:+}")).collect::<Vec<_>>().join(" / ")
+    };
     let conj = format!("conjectured  {}   (C0..C6)", fmt(&B2_CONJECTURED_FORGERY_BITS));
     let uncond = format!("unconditional {}", fmt(&B2_UNCONDITIONAL_FORGERY_BITS));
-    for want in [conj, uncond] {
+    // [B2-M] The gain is a claim too, and it is the one a pitch deck reaches for.
+    let gain_conj =
+        format!("conjectured gain  {}   (C0..C6)", fmt_signed(&B2_GAIN_CONJECTURED));
+    let gain_uncond =
+        format!("unconditional gain {}", fmt_signed(&B2_GAIN_UNCONDITIONAL));
+    for want in [conj, uncond, gain_conj, gain_uncond] {
         assert!(
             src.contains(&want),
             "\n\n  >>> SOUNDNESS PROSE DRIFT <<<\n  {CONFIG_SRC_PATH}\n  must contain, \
