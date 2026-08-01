@@ -377,11 +377,19 @@ fn terminal_degree_bound_check_in_isolation() {
 ///
 /// # What these numbers mean in hours
 ///
-/// 2^47.8 is about 8 GPU-hours at 10 GH/s of SHA-256 on one consumer card;
-/// 2^42 is about 20 GPU-minutes. Under Grover the forgery is a search, so the
-/// quantum figures are roughly half: ~24 bits post-B2. Nothing here is
-/// publishable as a security level. Lifting the floor needs the challenges drawn
-/// from an extension field, which is a separate change and another wire break.
+/// At 10 GH/s of SHA-256 on one consumer card: 2^42 is ~7.3 GPU-MINUTES, 2^46 is
+/// ~2 GPU-hours, 2^47.75 is ~6.6 GPU-hours, 2^52.5 is ~7.5 GPU-days.
+///
+/// [B2-A] This block said "2^47.8 is about 8 GPU-hours at 10 GH/s ...; 2^42 is
+/// about 20 GPU-minutes". The two figures did not come from the same hash rate:
+/// 2^42 / 10^10 is 440 seconds, i.e. 7.3 minutes, not 20. Corrected in the
+/// direction that makes the construction look WORSE, which is the direction the
+/// error was hiding.
+///
+/// Under Grover the forgery is a search, so the quantum figures are roughly half:
+/// ~21-26 bits post-B2. Nothing here is publishable as a security level. Lifting
+/// the floor needs the challenges drawn from an extension field, which is a
+/// separate change and another wire break.
 const B2_CONJECTURED_FORGERY_BITS: [u32; 7] = [52, 50, 50, 47, 48, 47, 47];
 const B2_UNCONDITIONAL_FORGERY_BITS: [u32; 7] = [46, 46, 46, 42, 46, 42, 42];
 
@@ -1536,8 +1544,10 @@ fn the_blowup_formula_is_never_quoted_without_its_precondition() {
                  `num_queries * log2(blowup)` is only the query term when the terminal \
                  degree bound is 1, which is a property of the quotient split and not of \
                  the blowup. Quoting it bare is how this project came to publish 124 bits \
-                 for a construction worth 43. Name the bound within six lines or do not \
-                 write the formula.\n",
+                 for a construction worth 42-46 unconditional / 47-52 conjectured \
+                 ([B2-A] this message said \"worth 43\", the pre-B2 pin, which stopped \
+                 being the number in the same wave that wrote it). Name the bound within \
+                 six lines or do not write the formula.\n",
                 i + 1,
             );
         }
