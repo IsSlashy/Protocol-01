@@ -5764,3 +5764,204 @@ mod boundary_c0_tests {
 #[cfg(test)]
 #[path = "query_position_independence.rs"]
 mod query_position_independence;
+
+/// [B2-AUDIT] The grinding threshold is ENFORCED at both call sites, not merely
+/// declared as a constant.
+///
+/// `GRINDING_BITS = 22` was pinned twice before this module, and neither pin
+/// looked at the comparison the verifier actually performs:
+///
+///   * `compact_proof.rs` holds the verifier's copy of the number;
+///   * `b1_deep_binding::prover_and_verifier_agree_on_the_segmentation_constants`
+///     asserts the PROVER's SOURCE TEXT contains `const GRINDING_BITS: u32 = 22;`.
+///
+/// Both are satisfied by a tree in which the verifier compares against something
+/// else entirely. MEASURED at `58e5c77a`: replacing
+/// `verify_grinding(&state, grinding_nonce, crate::compact_proof::GRINDING_BITS)`
+/// with `verify_grinding(&state, grinding_nonce, 16)` at BOTH call sites, leaving
+/// the constant and the prover untouched, left the whole package at
+/// 173 passed / 1 failed / 1 ignored — byte-identical to the unmutated run, the
+/// one failure being the pre-existing `honest_liveness` red. Six bits is a factor
+/// of 64 off the prover's proof-of-work, and grinding is the only search a forger
+/// gets over the query positions, so it comes straight off the query term behind
+/// every soundness figure in `compact_proof.rs`.
+///
+/// Honest proofs cannot see this: the prover grinds to 22, and 22 clears any
+/// threshold at or below 22. The only witness is a nonce whose digest lands
+/// strictly between the weakened threshold and the real one, which no honest
+/// prover will ever emit — so it has to be constructed, which is what this does.
+///
+/// Both call sites are covered separately. They are different functions with
+/// different signatures, and the legacy one is the sole verifier for four shipped
+/// instructions (`zk_shielded::{pause,resume,cancel_private_stark}` and
+/// `p01_quantum_wallet`).
+#[cfg(test)]
+mod grinding_enforcement {
+    use super::*;
+
+    /// For every leading-zero count `z` in `0..GRINDING_BITS`, the smallest nonce
+    /// whose grinding digest has exactly `z` leading zero bits. One linear scan.
+    ///
+    /// A miss is a panic, not a skip: a test that silently tries fewer thresholds
+    /// than it claims is the failure mode this module exists to prevent.
+    fn nonces_by_leading_zeros(state: &[u8; 32]) -> Vec<(u32, u64)> {
+        let mut found: Vec<Option<u64>> = vec![None; GRINDING_BITS as usize];
+        let mut missing = GRINDING_BITS as usize;
+        for n in 0u64..(1u64 << 27) {
+            let h = hashv(&[state, &n.to_le_bytes()]).to_bytes();
+            let z = leading_zero_bits(&h) as usize;
+            if z < found.len() && found[z].is_none() {
+                found[z] = Some(n);
+                missing -= 1;
+                if missing == 0 {
+                    break;
+                }
+            }
+        }
+        let out: Vec<(u32, u64)> = found
+            .iter()
+            .enumerate()
+            .filter_map(|(z, n)| n.map(|n| (z as u32, n)))
+            .collect();
+        assert_eq!(
+            out.len(),
+            GRINDING_BITS as usize,
+            "could not find a nonce for every leading-zero count below {GRINDING_BITS} \
+             within 2^27 tries — the search, not the verifier, is what failed here",
+        );
+        out
+    }
+
+    /// GENERIC path (`derive_query_positions_generic`, circuits 1..=6).
+    #[test]
+    fn the_generic_grinding_call_site_enforces_the_whole_constant() {
+        let pd = p01_stark::compact::generate_pool_commitment_proof(1, 2, 3, 4);
+        let cfg = get_circuit_config(pd.circuit_id).expect("C1 config");
+        let proof =
+            GenericCompactProof::from_bytes(&pd.proof_bytes, cfg).expect("honest proof parses");
+
+        let pub_bytes = public_inputs_to_bytes(&pd.public_inputs);
+        let oc: Vec<u64> = proof.ood_current_iter().map(|f| f.as_u64()).collect();
+        let on: Vec<u64> = proof.ood_next_iter().map(|f| f.as_u64()).collect();
+
+        let positions = |nonce: u64| {
+            derive_query_positions_generic(
+                &proof.trace_root,
+                &proof.quotient_root,
+                &pub_bytes,
+                &oc,
+                &on,
+                proof.ood_quotient_bytes(),
+                proof.fri_layer_roots_bytes(),
+                proof.fri_final_poly_bytes(),
+                nonce,
+                cfg.lde_size,
+                cfg.num_queries,
+            )
+        };
+
+        // Positive control. Without it, "every forged nonce was rejected" could
+        // just mean this call rejects everything.
+        positions(proof.grinding_nonce)
+            .expect("the honest nonce must be accepted — otherwise the negative half is vacuous");
+
+        // Rebuild the exact state the call site grinds against, and check the
+        // honest nonce really does clear the shipped constant. If it does not,
+        // the reconstruction is wrong and everything below probes nothing.
+        let mut state = build_base_seed(
+            &proof.trace_root,
+            &proof.quotient_root,
+            &pub_bytes,
+            &oc,
+            &on,
+            proof.ood_quotient_bytes(),
+        );
+        for root in proof.fri_layer_roots_bytes().chunks_exact(32) {
+            state = extend_transcript(&state, root);
+        }
+        state = extend_transcript(&state, proof.fri_final_poly_bytes());
+        let honest_z =
+            leading_zero_bits(&hashv(&[&state, &proof.grinding_nonce.to_le_bytes()]).to_bytes());
+        assert!(
+            honest_z >= GRINDING_BITS,
+            "the reconstructed transcript disagrees with the verifier's: the honest \
+             nonce shows {honest_z} leading zero bits, below GRINDING_BITS={GRINDING_BITS}. \
+             The rest of this test would be probing the wrong state.",
+        );
+
+        for (z, nonce) in nonces_by_leading_zeros(&state) {
+            let res = positions(nonce);
+            assert!(
+                matches!(res, Err(VerifyError::InsufficientQueries)),
+                "\n\n  >>> GRINDING UNDER-ENFORCED (generic) <<<\n  a nonce whose digest \
+                 has {z} leading zero bits was NOT rejected by \
+                 `derive_query_positions_generic`; got {res:?}.\n  GRINDING_BITS is \
+                 {GRINDING_BITS}, so every count below it must fail with \
+                 InsufficientQueries. The constant being right is not the same as the \
+                 call site using it.\n",
+            );
+        }
+    }
+
+    /// LEGACY path (`derive_query_positions_legacy`, circuit 0). Separate
+    /// function, separate signature, separate shipped instructions.
+    #[test]
+    fn the_legacy_grinding_call_site_enforces_the_whole_constant() {
+        let pd = p01_stark::compact::generate_compact_proof(42);
+        let commitment = Felt::new(pd.commitment);
+        let proof = CompactStarkProof::from_bytes(&pd.proof_bytes).expect("honest C0 parses");
+
+        let oc: Vec<u64> = proof.ood_current.iter().map(|f| f.as_u64()).collect();
+        let on: Vec<u64> = proof.ood_next.iter().map(|f| f.as_u64()).collect();
+
+        let positions = |nonce: u64| {
+            derive_query_positions_legacy(
+                &proof.trace_root,
+                &proof.quotient_root,
+                commitment,
+                &oc,
+                &on,
+                proof.ood_quotient_bytes(),
+                proof.fri_layer_roots_bytes(),
+                proof.fri_final_poly_bytes(),
+                nonce,
+            )
+        };
+
+        positions(proof.grinding_nonce).expect(
+            "the honest C0 nonce must be accepted — otherwise the negative half is vacuous",
+        );
+
+        let mut state = build_base_seed(
+            &proof.trace_root,
+            &proof.quotient_root,
+            &commitment.to_le_bytes(),
+            &oc,
+            &on,
+            proof.ood_quotient_bytes(),
+        );
+        for root in proof.fri_layer_roots_bytes().chunks_exact(32) {
+            state = extend_transcript(&state, root);
+        }
+        state = extend_transcript(&state, proof.fri_final_poly_bytes());
+        let honest_z =
+            leading_zero_bits(&hashv(&[&state, &proof.grinding_nonce.to_le_bytes()]).to_bytes());
+        assert!(
+            honest_z >= GRINDING_BITS,
+            "the reconstructed legacy transcript disagrees with the verifier's: the \
+             honest nonce shows {honest_z} leading zero bits, below \
+             GRINDING_BITS={GRINDING_BITS}.",
+        );
+
+        for (z, nonce) in nonces_by_leading_zeros(&state) {
+            let res = positions(nonce);
+            assert!(
+                matches!(res, Err(VerifyError::InsufficientQueries)),
+                "\n\n  >>> GRINDING UNDER-ENFORCED (legacy C0) <<<\n  a nonce whose \
+                 digest has {z} leading zero bits was NOT rejected by \
+                 `derive_query_positions_legacy`; got {res:?}.\n  This path is the sole \
+                 verifier for pause / resume / cancel_private_stark.\n",
+            );
+        }
+    }
+}
