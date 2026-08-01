@@ -900,10 +900,30 @@ struct CuCeiling {
 /// for [B2].
 ///
 /// Artifact: `target/cu-budget/p01_stark_verifier.so`, 687,440 B, sha256
-/// `45bee6509e543edf58b8b00f1de94afcc8fb62c47728ec1406a58694c8f87dd0`, built by
+/// `42b8387a12576d90b3542357286e44c5d17dfea360d4d4092e075047dbb40738`, built by
 /// `solana-cargo-build-sbf 3.1.9 platform-tools v1.52`, build fp
-/// `267355fc5dc6ac9c8f2eebe079a259c9a0f39a91943f01cb5196c825dbf2ef95`, origin
-/// line `rebuilt`, from a `CARGO_TARGET_DIR` that did not exist.
+/// `fe03b46ef2a04411`, origin line `rebuilt`, from a `CARGO_TARGET_DIR` that did
+/// not exist.
+///
+/// # That artifact hash goes stale on a doc-comment edit, and did
+///
+/// This block first recorded sha256 `45bee650…` / build fp `267355fc…`. Both are
+/// real and both were measured — at `bd07e934`, the commit that re-anchored the
+/// pins. `567232bb` then rewrote soundness doc comments in `compact_proof.rs`
+/// (+25 lines) and `verify.rs` (+9, inside `mod merkle_update_e2e`), and the
+/// build embeds RELATIVE panic locations, so the line numbers inside them moved
+/// and the bytes moved with them. Same size, same thirteen CU numbers, different
+/// hash — so the record described a binary HEAD no longer produces, and nothing
+/// in this file asserts the hash, so the suite stayed green while it drifted.
+///
+/// RE-MEASURED at `6de57685`: four cold SBF builds, three at HEAD into three
+/// different output paths (`target/cu-budget` twice and a path outside the repo)
+/// all giving `42b8387a…`, and a fourth with `src/` checked out from `bd07e934`
+/// reproducing `45bee650…` exactly. So the build is bit-reproducible, output-path
+/// independent and reproducible across worktrees — `grep -a Protocol-01` on the
+/// `.so` finds no absolute path — and the hash is a function of `src/` alone.
+/// Re-record it whenever `src/` changes at all, comments included, or delete it;
+/// what must never happen is leaving a hash here that HEAD does not build.
 ///
 /// Every one of the 13 numbers below is a `compute_units_consumed` from that
 /// run, and a second run against the same artifact reproduces all 13: the
