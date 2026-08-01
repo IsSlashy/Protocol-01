@@ -99,14 +99,23 @@ pub struct ClaimPeriod<'info> {
 
     /// Retailer's token account (optional, only for SPL tokens).
     ///
-    /// Its OWNER must be the retailer. Nothing but the signature used to pin
-    /// this: the handler only ever checked the mint, so a permissionless claim
-    /// with no owner check would let any caller name their own token account
-    /// and take the whole SPL payout. This constraint is load-bearing for the
+    /// Either its OWNER is the retailer, or the retailer signed and therefore
+    /// chose it. The handler only ever checked the MINT, and the retailer's
+    /// signature was the only thing stopping the payout being aimed elsewhere —
+    /// so a permissionless claim without this constraint would hand every SPL
+    /// vault to whoever sent the transaction first. It is load-bearing for the
     /// permissionless change and must not be relaxed.
+    ///
+    /// The `|| retailer.is_signer` escape is not a weakening: it restores
+    /// exactly the freedom the signature already conferred. Paying into a
+    /// treasury account the retailer key does not own is a legitimate setup and
+    /// used to work, so a retailer that signs may still name any correct-mint
+    /// account. A caller who cannot sign gets one destination, the one the
+    /// retailer provably controls.
     #[account(
         mut,
-        constraint = retailer_token_account.owner == vault.retailer @ ZkShieldedError::Unauthorized
+        constraint = retailer_token_account.owner == vault.retailer || retailer.is_signer
+            @ ZkShieldedError::Unauthorized
     )]
     pub retailer_token_account: Option<Account<'info, TokenAccount>>,
 }
@@ -419,9 +428,14 @@ mod plumbing_guards {
         // ever checked its MINT. Without this constraint the permissionless
         // change alone hands every SPL vault to the first caller.
         assert!(
-            src.contains("constraint = retailer_token_account.owner == vault.retailer"),
-            "retailer_token_account is no longer owner-checked — any caller \
-             could name their own token account and take the whole SPL payout"
+            src.contains(
+                "constraint = retailer_token_account.owner == vault.retailer || retailer.is_signer"
+            ),
+            "retailer_token_account's destination check changed shape — without \
+             the owner half, any caller could name their own token account and \
+             take the whole SPL payout; without the is_signer half, a retailer \
+             paying into a treasury account it does not own can no longer claim \
+             at all, which used to work"
         );
         // And the vault side: the token program refuses an account the vault
         // PDA does not own, but not a second EMPTY one that it does.
