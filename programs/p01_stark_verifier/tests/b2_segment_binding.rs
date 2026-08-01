@@ -46,6 +46,31 @@
 //! `SUM_j gamma^(w+1+j) * (Q_j(x) - q_j) != 0` at `x = z`, i.e. the per-segment
 //! gamma powers. That is the acceptance criterion for B2 and this is the file
 //! that measures it.
+//!
+//! # The other leg, MEASURED, and what it corrected
+//!
+//! A rejection test proves nothing unless the same input is ACCEPTED with the
+//! mechanism disabled. Collapsing the segment powers onto one shared
+//! `gamma^(w+1)` in all three places they are built — `deep_composition_lde`,
+//! `verify_fri_generic`, `verify_fri_legacy` — was run against this file and
+//! MEASURED on 2026-08-01:
+//!
+//! * all seven HONEST proofs still verify, so the collapsed verifier is not
+//!   merely broken;
+//! * the segment-split forgery is ACCEPTED on C0, C1, C2, C3, C4 and C5, in both
+//!   terminal variants — 12 of 14 cases;
+//! * C6 alone rejected, and NOT by FRI: `TransitionConstraintFailed`, a
+//!   trace-only step-4 check that has nothing to do with the split.
+//!
+//! That measurement also falsifies half of what `deep_composition_lde`'s own doc
+//! says about this failure mode. It claims reusing a power across two segments
+//! "leaves every existing test green while un-binding the segments and returning
+//! `deg(D)` to `8n`". The first half is exactly right and is why this file exists.
+//! The second half is WRONG: `SUM_j Q_j(x)` still has degree `< n`, so `deg(D)`
+//! stays `n - 2`, the terminal degree bound stays 1 of 16, and the honest
+//! terminal-bound assert in both prover pipelines stays green. A collapsed
+//! implementation is INVISIBLE to the degree bound. There is no second line of
+//! defence behind the per-segment powers.
 
 use p01_stark::compact::{OodForgery, TerminalPoly};
 use p01_stark_verifier::compact_proof::{
@@ -635,6 +660,180 @@ fn copy_config(c: &CircuitConfig) -> CircuitConfig {
         quotient_segments: c.quotient_segments,
         num_queries: c.num_queries,
     }
+}
+
+// ============================================================================
+// S5 — WHICH mechanism actually fires, recorded rather than assumed.
+// ============================================================================
+
+/// B2 silently moved where every forgery dies.
+///
+/// PRE-B2 a coordinated forgery with the honest terminal polynomial was caught
+/// in the fold chain on the six generic circuits, and only C0 died at the
+/// one-shot `check_final_poly_degree_bound` — `b1_deep_binding.rs`'s coverage
+/// table records that as a C0-SPECIFIC note. POST-B2 the terminal degree bound
+/// is 1 of 16 instead of 8 of 16, so a forged `D`'s terminal interpolant spills
+/// past the bound on EVERY circuit and all seven now die at the degree check,
+/// before a single per-query DEEP multiplication runs. Nothing in the suite says
+/// so, and `matches!(err, ...three variants...)` cannot tell the difference.
+///
+/// That is not vacuity — MUT-A (collapsing the segment gamma powers) makes these
+/// same proofs verify, so the legs do discriminate — but it does mean the
+/// honest-terminal leg no longer exercises the mechanism its own doc names.
+///
+/// This test asserts the invariant that actually matters and holds in both
+/// eras: for EVERY circuit, the aliased-terminal leg must reject at
+/// `FriTerminalCheckFailed` specifically, i.e. the per-query fold chain must be
+/// reachable and load-bearing. The honest-terminal variant is PRINTED, not
+/// pinned, so a future change of mechanism shows up in the log instead of as a
+/// spurious red.
+#[test]
+fn s5_the_rejecting_mechanism_is_recorded_for_both_forgeries_on_every_circuit() {
+    let mut table: Vec<String> = Vec::new();
+
+    for (fname, ood) in [
+        ("coordinated", OodForgery::Coordinated { col: 0, delta: 1 }),
+        ("segment-split", OodForgery::SegmentSplit),
+    ] {
+        // C0, legacy: `AliasedFold` and `SubgroupAlias` coincide at bound 1.
+        for (tname, term) in
+            [("honest-terminal", TerminalPoly::Honest), ("aliased", TerminalPoly::SubgroupAlias)]
+        {
+            let f = p01_stark::compact::generate_compact_proof_with_forgery(42, ood, term);
+            let p = CompactStarkProof::from_bytes(&f.proof_bytes).expect("C0 parses");
+            let err = verify_subscriber_ownership(&p, Felt::new(f.commitment))
+                .expect_err("C0: every forgery leg must be REJECTED");
+            table.push(format!("C0 {fname:13} {tname:15} -> {err:?}"));
+            if tname == "aliased" {
+                assert_eq!(
+                    err,
+                    VerifyError::FriTerminalCheckFailed,
+                    "C0 {fname}: the aliased leg must reach the TERMINAL comparison. \
+                     Anything else means the per-query DEEP arithmetic was never run \
+                     and this circuit has no negative coverage of the fold chain at all.",
+                );
+            }
+        }
+
+        for id in 1u8..=6 {
+            let cfg = config_for(id);
+            for (tname, term) in
+                [("honest-terminal", TerminalPoly::Honest), ("aliased", TerminalPoly::AliasedFold)]
+            {
+                let f = generic_case(id, ood, term);
+                let p = GenericCompactProof::from_bytes(&f.proof_bytes, cfg)
+                    .unwrap_or_else(|| panic!("C{id} parses"));
+                let err = verify_generic(&p, id, &f.public_inputs, cfg)
+                    .expect_err("every forgery leg must be REJECTED");
+                table.push(format!("C{id} {fname:13} {tname:15} -> {err:?}"));
+                if tname == "aliased" {
+                    assert_eq!(
+                        err,
+                        VerifyError::FriTerminalCheckFailed,
+                        "C{id} {fname}: the aliased leg must reach the TERMINAL comparison",
+                    );
+                }
+            }
+        }
+    }
+
+    for row in table.iter() {
+        println!("[S5] {row}");
+    }
+    assert_eq!(table.len(), 28, "7 circuits x 2 forgeries x 2 terminal plays");
+}
+
+// ============================================================================
+// S6 — mixing segments ACROSS proofs.
+// ============================================================================
+
+/// Take one honest proof of statement A and splice segment 3 out of an honest
+/// proof of statement B into it, at both places segment 3 lives on the wire.
+///
+/// Neither splice should get anywhere, and the two are rejected by DIFFERENT
+/// mechanisms, which is the point of testing both:
+///
+/// * the header claim `Q_3(z)` is absorbed into `build_base_seed`, so replacing
+///   it moves gamma, every alpha, the grinding target and every query position —
+///   the transcript check catches it and the DEEP composition is never asked;
+/// * the per-query opened values are NOT absorbed anywhere. They are bound only
+///   by the quotient pair leaf, which is where `b4_pair_leaf.rs`'s 16 mutations
+///   live. Splicing them is the case that would survive if the leaf preimage
+///   ever narrowed again.
+#[test]
+fn s6_segments_cannot_be_mixed_across_proofs() {
+    let cfg = &CONFIG_POOL_COMMITMENT;
+    let a = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
+    let b = p01_stark::compact::generate_pool_commitment_proof(555, 666, 777, 888);
+    assert_ne!(a.public_inputs, b.public_inputs, "two DIFFERENT statements");
+    assert_eq!(a.proof_bytes.len(), b.proof_bytes.len(), "same circuit, same length");
+
+    let w = cfg.trace_width;
+    let k = cfg.quotient_segments;
+    const SEG: usize = 3;
+
+    // Control: both verify on their own.
+    for (label, p) in [("A", &a), ("B", &b)] {
+        let parsed = GenericCompactProof::from_bytes(&p.proof_bytes, cfg)
+            .unwrap_or_else(|| panic!("{label} parses"));
+        verify_generic(&parsed, 1, &p.public_inputs, cfg)
+            .unwrap_or_else(|e| panic!("{label} honest control must verify, got {e:?}"));
+    }
+
+    let nq = GenericCompactProof::from_bytes(&a.proof_bytes, cfg).unwrap().queries.len();
+    let tail = a.proof_bytes.len() - nq * k * 8;
+
+    // --- Splice 1: the header claim Q_3(z).
+    let mut h = a.proof_bytes.clone();
+    let off = 64 + 16 * w + 8 + SEG * 8;
+    h[off..off + 8].copy_from_slice(&b.proof_bytes[off..off + 8]);
+    assert_ne!(h, a.proof_bytes, "the header splice must actually change bytes");
+    let err = match GenericCompactProof::from_bytes(&h, cfg) {
+        None => "rejected at parse".to_string(),
+        Some(p) => format!(
+            "{:?}",
+            verify_generic(&p, 1, &a.public_inputs, cfg)
+                .expect_err("header splice of Q_3(z) must be REJECTED")
+        ),
+    };
+    println!("[S6] header Q_{SEG}(z) from another statement -> {err}");
+
+    // --- Splice 2: every opened value of segment 3, in the tail.
+    let mut t = a.proof_bytes.clone();
+    for q in 0..nq {
+        let o = tail + (q * k + SEG) * 8;
+        t[o..o + 8].copy_from_slice(&b.proof_bytes[o..o + 8]);
+    }
+    assert_ne!(t, a.proof_bytes, "the tail splice must actually change bytes");
+    let parsed = GenericCompactProof::from_bytes(&t, cfg).expect("tail splice still parses");
+    let err = verify_generic(&parsed, 1, &a.public_inputs, cfg).expect_err(
+        "splicing segment 3's opened values out of another statement's proof must be \
+         REJECTED. These values are absorbed into NO transcript — the quotient pair \
+         leaf is the only thing that binds them, and it must cover every segment.",
+    );
+    println!("[S6] tail Q_{SEG}(x) openings from another statement -> {err:?}");
+    assert_eq!(
+        err,
+        VerifyError::MerkleProofFailed,
+        "the tail splice must die at the QUOTIENT PAIR LEAF. Any later variant would \
+         mean the spliced values were authenticated by something weaker than the \
+         commitment, and any earlier one that the transcript caught it — which it \
+         cannot, because these bytes are absorbed nowhere.",
+    );
+
+    // --- Splice 3: both at once, which is what a naive "take segment 3 from the
+    // other proof" actually looks like.
+    let mut both = t.clone();
+    both[off..off + 8].copy_from_slice(&b.proof_bytes[off..off + 8]);
+    let err = match GenericCompactProof::from_bytes(&both, cfg) {
+        None => "rejected at parse".to_string(),
+        Some(p) => format!(
+            "{:?}",
+            verify_generic(&p, 1, &a.public_inputs, cfg)
+                .expect_err("full segment-3 splice must be REJECTED")
+        ),
+    };
+    println!("[S6] header + tail segment {SEG} from another statement -> {err}");
 }
 
 /// C0's `LEGACY_QUOTIENT_SEGMENTS` and `CONFIG_SUBSCRIBER_OWNERSHIP.quotient_segments`
