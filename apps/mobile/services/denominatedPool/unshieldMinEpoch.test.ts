@@ -1,0 +1,173 @@
+/**
+ * Tests for the `min_epoch` argument of the unshield instructions.
+ *
+ * Why these exist (docs/C7_SPEND_CIRCUIT_PLAN.md Step 1):
+ *
+ * `min_epoch` sits at instruction-data byte offset 72 on BOTH unshield
+ * instructions (`unshield_denominated_stark` v2 and
+ * `unshield_denominated_stark_v3`) — 8 discriminator + 32 nullifier + 32
+ * merkle_root. It is the same offset the web client writes it at.
+ *
+ * No unshield handler reads it:
+ *   - v3: `let _ = (amount, unshield_fee, min_epoch, current_epoch,
+ *     dynamic_delay, nullifier);` (unshield_denominated_stark_v3.rs:387)
+ *   - v2: enforcement was deliberately removed
+ *     (unshield_denominated_stark.rs:212-220)
+ *   - p01_liquidity `prefund` only stores it on the record (prefund.rs:197);
+ *     `settle` rebuilds the CPI with its own current_epoch (settle.rs:109-116)
+ *
+ * So anything note-derived written here is pure leakage. This client was
+ * writing the CURRENT epoch (harmless — it is already public from the block
+ * slot) while the extension was writing the note's DEPOSIT epoch (a real leak
+ * that narrows the anonymity set to one ~7200-slot deposit window). Both now
+ * write UNSHIELD_MIN_EPOCH = 0, which also makes the field useless as a
+ * client fingerprint and pre-empts the far worse regression: once this client
+ * adopts the PRF commitment blinding already shipped in apps/web
+ * (apps/web/lib/privacy/pool/noteBlinding.ts), `ShieldReceipt.depositEpoch`
+ * holds a 63-bit SECRET and publishing it here would defeat blinding entirely.
+ *
+ * `min_epoch` IS enforced on transfer / split / subscribe / escrow (e.g.
+ * transfer_denominated_stark_v3.rs:167-173) — those paths are deliberately NOT
+ * covered here and must keep passing a real epoch.
+ *
+ * Scope note: `@solana/web3.js` is aliased to test/__mocks__ in
+ * vitest.config.ts, and the mock's `findProgramAddressSync` is a fake sha256
+ * derivation. These tests therefore assert `ix.data` and `ix.programId` only —
+ * never an address or the account list.
+ *
+ * If one of these fails, do not "fix" the test.
+ */
+
+import { describe, it, expect } from 'vitest';
+import { Keypair } from '@solana/web3.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import {
+  UNSHIELD_MIN_EPOCH,
+  buildUnshieldDenominatedStarkIx,
+  buildUnshieldDenominatedStarkV3Ix,
+  ZK_SHIELDED_PROGRAM_ID,
+} from './index';
+
+const MIN_EPOCH_OFFSET = 72;
+
+const nullifierBytes = new Array(32).fill(0x11);
+const merkleRootBytes = new Array(32).fill(0x22);
+
+/**
+ * A plausible devnet deposit epoch (slot / 7200 was ~55k in mid-2026).
+ * Deliberately distinctive so the leak scan below cannot match it by accident
+ * against the 0x11 / 0x22 filler bytes.
+ */
+const FIXTURE_DEPOSIT_EPOCH = 123_456n;
+const STARK_COMMITMENT = 0xdead_beef_cafe_f00dn;
+
+const payer = Keypair.generate().publicKey;
+const recipient = Keypair.generate().publicKey;
+const pool = Keypair.generate().publicKey;
+const tree = Keypair.generate().publicKey;
+const nullifierPDA = Keypair.generate().publicKey;
+const bufA = Keypair.generate().publicKey;
+const bufB = Keypair.generate().publicKey;
+
+/** Every 8-byte little-endian window of a buffer. */
+function u64Windows(data: Buffer): bigint[] {
+  const out: bigint[] = [];
+  for (let off = 0; off + 8 <= data.length; off++) out.push(data.readBigUInt64LE(off));
+  return out;
+}
+
+describe('UNSHIELD_MIN_EPOCH', () => {
+  it('is exactly zero', () => {
+    expect(UNSHIELD_MIN_EPOCH).toBe(0n);
+  });
+});
+
+describe('buildUnshieldDenominatedStarkV3Ix — min_epoch@72 is always zero', () => {
+  // The builder takes NO min_epoch parameter — it writes UNSHIELD_MIN_EPOCH
+  // itself, so no call site can reintroduce a note-derived value.
+  const ix = buildUnshieldDenominatedStarkV3Ix(
+    payer, recipient, pool, tree, nullifierPDA, bufA, bufB,
+    nullifierBytes, merkleRootBytes, STARK_COMMITMENT,
+  );
+
+  it('targets zk_shielded with the right discriminator', () => {
+    expect(ix.programId.equals(ZK_SHIELDED_PROGRAM_ID)).toBe(true);
+    const expected = Buffer.from(
+      sha256(utf8ToBytes('global:unshield_denominated_stark_v3')).slice(0, 8),
+    );
+    expect(Buffer.from(ix.data.subarray(0, 8)).equals(expected)).toBe(true);
+  });
+
+  it('has the exact data length (8+32+32+8+8+32 = 120)', () => {
+    expect(ix.data.length).toBe(8 + 32 + 32 + 8 + 8 + 32);
+    expect(ix.data.length).toBe(120);
+  });
+
+  it('writes eight zero bytes at offset 72 — the same offset as the web client', () => {
+    expect(ix.data.readBigUInt64LE(MIN_EPOCH_OFFSET)).toBe(0n);
+    expect(Array.from(ix.data.subarray(MIN_EPOCH_OFFSET, MIN_EPOCH_OFFSET + 8)))
+      .toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it('leaves every other arg at its locked offset', () => {
+    expect(Array.from(ix.data.subarray(8, 40))).toEqual(nullifierBytes);
+    expect(Array.from(ix.data.subarray(40, 72))).toEqual(merkleRootBytes);
+    expect(ix.data.readBigUInt64LE(80)).toBe(STARK_COMMITMENT); // stark_commitment
+    expect(Array.from(ix.data.subarray(88, 120))).toEqual(Array.from(recipient.toBytes()));
+  });
+
+  it('does not carry an epoch in ANY 8-byte window of ix.data', () => {
+    expect(u64Windows(ix.data)).not.toContain(FIXTURE_DEPOSIT_EPOCH);
+  });
+
+  it('the leak scan is not vacuous: the old byte layout DOES trip it', () => {
+    const leaky = Buffer.from(ix.data);
+    leaky.writeBigUInt64LE(FIXTURE_DEPOSIT_EPOCH, MIN_EPOCH_OFFSET);
+    expect(u64Windows(leaky)).toContain(FIXTURE_DEPOSIT_EPOCH);
+  });
+});
+
+describe('buildUnshieldDenominatedStarkIx (v2) — min_epoch@72 is always zero', () => {
+  // Same contract on the v2 instruction, which the classic and instant
+  // (p01_liquidity prefund) paths both build.
+  const ix = buildUnshieldDenominatedStarkIx(
+    payer, recipient, pool, tree, nullifierPDA, bufA,
+    nullifierBytes, merkleRootBytes, STARK_COMMITMENT,
+  );
+
+  it('targets zk_shielded with the right discriminator', () => {
+    expect(ix.programId.equals(ZK_SHIELDED_PROGRAM_ID)).toBe(true);
+    const expected = Buffer.from(
+      sha256(utf8ToBytes('global:unshield_denominated_stark')).slice(0, 8),
+    );
+    expect(Buffer.from(ix.data.subarray(0, 8)).equals(expected)).toBe(true);
+  });
+
+  it('has the exact data length (8+32+32+8+8 = 88)', () => {
+    expect(ix.data.length).toBe(8 + 32 + 32 + 8 + 8);
+    expect(ix.data.length).toBe(88);
+  });
+
+  it('writes eight zero bytes at offset 72', () => {
+    expect(ix.data.readBigUInt64LE(MIN_EPOCH_OFFSET)).toBe(0n);
+    expect(Array.from(ix.data.subarray(MIN_EPOCH_OFFSET, MIN_EPOCH_OFFSET + 8)))
+      .toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it('leaves every other arg at its locked offset', () => {
+    expect(Array.from(ix.data.subarray(8, 40))).toEqual(nullifierBytes);
+    expect(Array.from(ix.data.subarray(40, 72))).toEqual(merkleRootBytes);
+    expect(ix.data.readBigUInt64LE(80)).toBe(STARK_COMMITMENT);
+  });
+
+  it('does not carry an epoch in ANY 8-byte window of ix.data', () => {
+    expect(u64Windows(ix.data)).not.toContain(FIXTURE_DEPOSIT_EPOCH);
+  });
+
+  it('the leak scan is not vacuous: the old byte layout DOES trip it', () => {
+    const leaky = Buffer.from(ix.data);
+    leaky.writeBigUInt64LE(FIXTURE_DEPOSIT_EPOCH, MIN_EPOCH_OFFSET);
+    expect(u64Windows(leaky)).toContain(FIXTURE_DEPOSIT_EPOCH);
+  });
+});
