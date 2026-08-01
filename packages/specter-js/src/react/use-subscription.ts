@@ -9,7 +9,14 @@ import type {
 
 interface UseSubscriptionReturn {
   subscribe: (options: SubscriptionOptions) => Promise<SubscriptionResult | null>;
-  cancelSubscription: (id: string) => Promise<boolean>;
+  /**
+   * Pause / resume are the ONLY lifecycle controls. BREAKING CHANGE: this
+   * replaces `cancelSubscription`. A subscription is a one-way prepaid envelope
+   * — the protocol cannot return money to the subscriber. Merchants remain free
+   * to refund off-band from their own wallet.
+   */
+  pauseSubscription: (id: string) => Promise<boolean>;
+  resumeSubscription: (id: string) => Promise<boolean>;
   getSubscriptions: () => Promise<Subscription[]>;
   subscriptions: Subscription[];
   isLoading: boolean;
@@ -80,13 +87,36 @@ export function useSubscription(): UseSubscriptionReturn {
     [specter, isConnected, connect]
   );
 
-  const cancelSubscription = useCallback(
+  const pauseSubscription = useCallback(
     async (subscriptionId: string): Promise<boolean> => {
       setIsLoading(true);
       setError(null);
 
       try {
-        await specter.cancelSubscription(subscriptionId);
+        await specter.pauseSubscription(subscriptionId);
+
+        // Refresh subscriptions list
+        const updated = await specter.getSubscriptions();
+        setSubscriptions(updated);
+
+        return true;
+      } catch (err) {
+        setError(err as SpecterError);
+        return false;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [specter]
+  );
+
+  const resumeSubscription = useCallback(
+    async (subscriptionId: string): Promise<boolean> => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        await specter.resumeSubscription(subscriptionId);
 
         // Refresh subscriptions list
         const updated = await specter.getSubscriptions();
@@ -121,7 +151,8 @@ export function useSubscription(): UseSubscriptionReturn {
 
   return {
     subscribe,
-    cancelSubscription,
+    pauseSubscription,
+    resumeSubscription,
     getSubscriptions,
     subscriptions,
     isLoading,

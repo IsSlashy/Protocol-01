@@ -163,3 +163,52 @@ describe('the fail-closed cases', () => {
     expect(claimablePeriods(vault({ rate: 0n }), 5_000n)).toBe(0n);
   });
 });
+
+describe('a subscription is a one-way prepaid envelope', () => {
+  // The founder's invariant, stated in the units this module works in.
+  // Over the life of a vault the retailer receives exactly totalDeposited.
+  // There is no path by which a lamport returns to the subscriber, so
+  // claimed + still-owed must account for the whole deposit at every slot.
+  function claimedSoFar(v: VaultPeriodState): bigint {
+    const claimed = v.claimedPeriods * v.rate;
+    return claimed < v.totalDeposited ? claimed : v.totalDeposited;
+  }
+  function stillOwed(v: VaultPeriodState): bigint {
+    return v.totalDeposited - claimedSoFar(v);
+  }
+
+  it('claimed + still owed is the whole deposit, at every generation', () => {
+    for (let claimed = 0n; claimed <= 5n; claimed++) {
+      const v = vault({ claimedPeriods: claimed });
+      expect(claimedSoFar(v) + stillOwed(v)).toBe(v.totalDeposited);
+    }
+  });
+
+  it('the sub-period remainder is owed to the retailer, not refundable', () => {
+    // 350,000 at 100,000/period buys 3 whole periods. The 50,000 that never
+    // bought a period used to be the subscriber's refund. Cancellation is gone,
+    // so claim_period sweeps it to the retailer when it closes the vault.
+    const v = vault({ totalDeposited: 350_000n, claimedPeriods: 3n });
+    expect(periodsPaidFor(v)).toBe(3n);
+    expect(claimablePeriods(v, 9_999n)).toBe(0n);   // nothing left to accrue
+    expect(stillOwed(v)).toBe(50_000n);             // …but 50,000 still to pay
+  });
+
+  it('pause moves WHEN the retailer is paid, never HOW MUCH', () => {
+    const running = vault();
+    const paused = vault({ isPaused: true });
+    // Claimable right now differs…
+    expect(claimablePeriods(running, 1_500n)).toBe(5n);
+    expect(claimablePeriods(paused, 1_500n)).toBe(0n);
+    // …the amount owed over the life of the vault does not.
+    expect(stillOwed(running)).toBe(stillOwed(paused));
+    expect(stillOwed(paused)).toBe(running.totalDeposited);
+  });
+
+  it('an exhausted vault owes nothing further, which is why it can be closed', () => {
+    const done = vault({ claimedPeriods: 5n });
+    expect(fundedPeriodsRemaining(done)).toBe(0n);
+    expect(stillOwed(done)).toBe(0n);
+    expect(subscriptionIsCurrent(done, 1_600n)).toBe(false);
+  });
+});

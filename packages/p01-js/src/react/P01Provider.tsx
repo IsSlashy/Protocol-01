@@ -189,18 +189,29 @@ export function useP01Subscriptions() {
   const { subscriptions, loadingSubscriptions, isConnected } = useP01();
   const sdk = useP01SDK();
 
-  const cancelSubscription = useCallback(async (subscriptionId: string) => {
+  // BREAKING CHANGE: `cancelSubscription` was removed. A Protocol 01
+  // subscription is a one-way prepaid envelope — the protocol cannot return
+  // money to the subscriber. Pause and resume are the only controls.
+  const pauseSubscription = useCallback(async (subscriptionId: string) => {
     if (!sdk) {
       throw new Error('SDK not initialized');
     }
-    await sdk.cancelSubscription(subscriptionId);
+    await sdk.pauseSubscription(subscriptionId);
+  }, [sdk]);
+
+  const resumeSubscription = useCallback(async (subscriptionId: string) => {
+    if (!sdk) {
+      throw new Error('SDK not initialized');
+    }
+    await sdk.resumeSubscription(subscriptionId);
   }, [sdk]);
 
   return {
     subscriptions,
     loading: loadingSubscriptions,
     isConnected,
-    cancelSubscription,
+    pauseSubscription,
+    resumeSubscription,
   };
 }
 

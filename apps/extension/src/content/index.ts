@@ -33,7 +33,8 @@ const ALLOWED_MESSAGE_TYPES = [
   // Protocol 01 specific
   'CREATE_SUBSCRIPTION',
   'GET_SUBSCRIPTIONS',
-  'CANCEL_SUBSCRIPTION',
+  'PAUSE_SUBSCRIPTION',
+  'RESUME_SUBSCRIPTION',
 ];
 
 // ============ Script Injection ============

@@ -13,7 +13,7 @@ import {
   type VaultPeriodState,
 } from '../../../../packages/merchant-sdk/src/period-math';
 import {
-  computeCancelPreview,
+  computeSubscriptionOutlook,
   computeClaimable,
   computeClaimableAmount,
   entitlementStatus,
@@ -100,20 +100,51 @@ describe('the max_funded clamp mobile was missing', () => {
     expect(computeClaimable(partiallyFunded(), 1_500)).toBe(3);
   });
 
-  it('MEASURED CONSEQUENCE: the cancel sheet shows the 50,000-lamport refund', () => {
-    // Denomination 100,000 → 0 whole notes to re-shield, 50,000 of dust.
-    const preview = computeCancelPreview(partiallyFunded(), 1_500, 100_000n);
-    expect(preview.claimablePeriods).toBe(3n);
-    expect(preview.claimableAmount).toBe(300_000n);
-    expect(preview.totalConsumed).toBe(300_000n);
-    expect(preview.refundable).toBe(50_000n);
-    expect(preview.dustAmount).toBe(50_000n);
+  it('MEASURED CONSEQUENCE: the 50,000-lamport remainder stays owed to the retailer', () => {
+    // This used to be the cancel sheet's refund quote: 3 whole periods claimable
+    // and 50,000 of sub-period dust handed back to the subscriber. Cancellation
+    // and refunds are gone, so the same 50,000 is now money the RETAILER is
+    // still owed and will receive when claim_period closes the vault.
+    const outlook = computeSubscriptionOutlook(partiallyFunded(), 1_500);
+    expect(outlook.claimablePeriods).toBe(3n);
+    expect(outlook.claimableAmount).toBe(300_000n);
+    expect(outlook.alreadyPaidToRetailer).toBe(0n);
+    expect(outlook.outstandingToRetailer).toBe(350_000n);
+
+    // …and after the retailer has swept those 3 periods, exactly 50,000 remains.
+    const afterThree = { ...partiallyFunded(), claimedPeriods: 3n };
+    const settled = computeSubscriptionOutlook(afterThree, 9_999);
+    expect(settled.claimableAmount).toBe(0n);
+    expect(settled.outstandingToRetailer).toBe(50_000n);
   });
 
-  it('the retailer payout plus the refund is exactly the deposit', () => {
-    const v = partiallyFunded();
-    const preview = computeCancelPreview(v, 9_999, 100_000n);
-    expect(preview.claimableAmount + preview.refundable).toBe(v.totalDeposited);
+  it('THE FOUNDER INVARIANT: paid + outstanding is total_deposited at every slot', () => {
+    // A subscription is a one-way prepaid envelope. Over its life the retailer
+    // receives exactly total_deposited and no lamport returns to the subscriber,
+    // so there is no third bucket for the split to leak into.
+    const base = partiallyFunded();
+    for (let claimed = 0n; claimed <= 3n; claimed++) {
+      const outlook = computeSubscriptionOutlook(
+        { ...base, claimedPeriods: claimed },
+        9_999,
+      );
+      expect(outlook.alreadyPaidToRetailer + outlook.outstandingToRetailer)
+        .toBe(base.totalDeposited);
+    }
+  });
+
+  it('pause moves WHEN the retailer is paid, never HOW MUCH', () => {
+    const running = computeSubscriptionOutlook(partiallyFunded(), 1_500);
+    const paused = computeSubscriptionOutlook(
+      { ...partiallyFunded(), isPaused: true },
+      1_500,
+    );
+    // Claimable right now differs...
+    expect(running.claimablePeriods).toBe(3n);
+    expect(paused.claimablePeriods).toBe(0n);
+    // ...the amount owed over the life of the vault does not.
+    expect(running.outstandingToRetailer).toBe(350_000n);
+    expect(paused.outstandingToRetailer).toBe(350_000n);
   });
 
   it('an exhausted vault claims nothing even though isActive is still true', () => {

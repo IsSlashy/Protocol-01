@@ -517,14 +517,31 @@ export class P01 {
   }
 
   /**
-   * Cancel a subscription
+   * Pause a subscription. Freezes the subscription clock and cuts access;
+   * prepaid days are not lost and resume picks them back up.
+   *
+   * BREAKING CHANGE: replaces the removed `cancelSubscription`. A subscription
+   * is a one-way prepaid envelope — the protocol has no cancellation and cannot
+   * refund the subscriber. A merchant remains free to refund off-band from its
+   * own wallet.
    */
-  async cancelSubscription(subscriptionId: string): Promise<void> {
+  async pauseSubscription(subscriptionId: string): Promise<void> {
     this.ensureConnected();
 
-    await this.provider!.cancelSubscription(subscriptionId);
+    await this.provider!.pauseSubscription(subscriptionId);
 
-    this.emit('subscriptionCancelled', { subscriptionId });
+    this.emit('subscriptionPaused', { subscriptionId });
+  }
+
+  /**
+   * Resume a paused subscription. Prepaid days pick up where they stopped.
+   */
+  async resumeSubscription(subscriptionId: string): Promise<void> {
+    this.ensureConnected();
+
+    await this.provider!.resumeSubscription(subscriptionId);
+
+    this.emit('subscriptionResumed', { subscriptionId });
   }
 
   // ============ Events ============
@@ -542,7 +559,8 @@ export class P01 {
    * | `paymentSent` | `PaymentOptions & { signature }` | Payment sent |
    * | `paymentReceived` | `{ signature, amount, from }` | Incoming payment detected |
    * | `subscriptionCreated` | `SubscriptionOptions & SubscriptionResult` | New subscription |
-   * | `subscriptionCancelled` | `{ subscriptionId }` | Subscription cancelled |
+   * | `subscriptionPaused` | `{ subscriptionId }` | Subscriber paused the subscription |
+   * | `subscriptionResumed` | `{ subscriptionId }` | Subscriber resumed a paused subscription |
    * | `subscriptionPayment` | `{ subscriptionId, signature, periodsPaid }` | Recurring payment |
    *
    * @param event - The event type to listen for
@@ -662,7 +680,12 @@ interface P01Provider {
     description?: string;
   }): Promise<{ subscriptionId: string; address: string; signature?: string }>;
   getSubscriptions(): Promise<Subscription[]>;
-  cancelSubscription(id: string): Promise<{ success: boolean }>;
+  /**
+   * Pause / resume are the ONLY subscription lifecycle controls. There is no
+   * `cancelSubscription` — the protocol cannot return money to a subscriber.
+   */
+  pauseSubscription(id: string): Promise<{ success: boolean }>;
+  resumeSubscription(id: string): Promise<{ success: boolean }>;
   on(event: string, callback: (...args: unknown[]) => void): void;
   off(event: string, callback: (...args: unknown[]) => void): void;
 }

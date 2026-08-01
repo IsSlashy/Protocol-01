@@ -186,10 +186,15 @@ export interface SubscriptionWidgetProps {
 export interface SubscriptionCardProps {
   /** Subscription data */
   subscription: Subscription;
-  /** Show cancel button */
-  showCancel?: boolean;
-  /** On cancel click */
-  onCancel?: (subscriptionId: string) => void;
+  /**
+   * Show the pause / resume button.
+   *
+   * BREAKING CHANGE: replaces `showCancel`. There is no cancel button — the
+   * protocol has no cancellation and cannot refund the subscriber.
+   */
+  showPauseResume?: boolean;
+  /** Called after a successful pause or resume. Replaces `onCancel`. */
+  onPauseResume?: (subscriptionId: string, state: 'paused' | 'resumed') => void;
   /** On view details */
   onViewDetails?: (subscription: Subscription) => void;
   /** Custom className */

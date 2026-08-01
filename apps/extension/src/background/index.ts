@@ -803,9 +803,19 @@ async function handleGetSubscriptions(
   return { subscriptions: storedData?.state?.subscriptions || [] };
 }
 
-async function handleCancelSubscription(
+/**
+ * Set a subscription's status. Backs PAUSE_SUBSCRIPTION / RESUME_SUBSCRIPTION.
+ *
+ * BREAKING CHANGE: replaces handleCancelSubscription. A Protocol 01
+ * subscription is a one-way prepaid envelope — money that enters it can only
+ * ever leave it toward the merchant, and the protocol has no instruction that
+ * could send any of it back. Pause and resume are the whole set of subscriber
+ * controls, so a dApp can no longer ask the wallet to cancel.
+ */
+async function handleSetSubscriptionStatus(
   payload: MessagePayload,
-  _sender: chrome.runtime.MessageSender
+  _sender: chrome.runtime.MessageSender,
+  status: 'paused' | 'active'
 ): Promise<{ success: boolean } | { error: string }> {
   const subscriptionId = payload.subscriptionId;
   if (!subscriptionId) {
@@ -821,7 +831,9 @@ async function handleCancelSubscription(
   if (storedData?.state?.subscriptions) {
     storedData.state.subscriptions = storedData.state.subscriptions.map(
       (sub: StreamSubscription) =>
-        sub.id === subscriptionId ? { ...sub, isActive: false } : sub
+        sub.id === subscriptionId
+          ? { ...sub, status, isActive: status === 'active' }
+          : sub
     );
     await chrome.storage.local.set({
       'p01-subscriptions': JSON.stringify(storedData),
@@ -1053,8 +1065,12 @@ registerHandler('CREATE_SUBSCRIPTION', async (payload, sender) => {
   return await handleCreateSubscription(payload as MessagePayload, sender);
 });
 
-registerHandler('CANCEL_SUBSCRIPTION', async (payload, sender) => {
-  return await handleCancelSubscription(payload as MessagePayload, sender);
+registerHandler('PAUSE_SUBSCRIPTION', async (payload, sender) => {
+  return await handleSetSubscriptionStatus(payload as MessagePayload, sender, 'paused');
+});
+
+registerHandler('RESUME_SUBSCRIPTION', async (payload, sender) => {
+  return await handleSetSubscriptionStatus(payload as MessagePayload, sender, 'active');
 });
 
 // Content script GET_ACCOUNTS (not covered by popup handler)

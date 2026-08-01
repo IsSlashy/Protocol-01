@@ -7,7 +7,7 @@
  *   zk-recurring              subscribePrivateStark (vault, ZK-funded)
  *   zk-oneshot                unshield -> retailer one-shot ZK payment
  *   vault-claim               retailer claimPeriod
- *   vault-cancel              cancelNormal / cancelPrivateStark
+ *   vault-pause-resume        pause/resume on a SubscriptionVault
  *   stream-create             escrow-based stream creation
  *   stream-process            scheduled stream payment processing
  *
@@ -27,7 +27,7 @@ export type PaymentMode =
   | 'zk-recurring'
   | 'zk-oneshot'
   | 'vault-claim'
-  | 'vault-cancel'
+  | 'vault-pause-resume'
   | 'stream-create'
   | 'stream-process'
   | 'stream-cancel'

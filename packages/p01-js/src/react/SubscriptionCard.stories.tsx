@@ -38,7 +38,7 @@ interface DemoSubscriptionCardProps {
   totalPaid: number;
   periodsPaid: number;
   privacyEnabled?: boolean;
-  showCancel?: boolean;
+  showPauseResume?: boolean;
   showDetails?: boolean;
 }
 
@@ -54,7 +54,7 @@ function DemoSubscriptionCard({
   totalPaid,
   periodsPaid,
   privacyEnabled = false,
-  showCancel = true,
+  showPauseResume = true,
   showDetails = true,
 }: DemoSubscriptionCardProps) {
   const statusColor =
@@ -164,22 +164,33 @@ function DemoSubscriptionCard({
             View Details
           </button>
         )}
-        {showCancel && status === 'active' && (
+        {showPauseResume && (status === 'active' || status === 'paused') && (
           <button style={{
             flex: 1,
             padding: '10px 16px',
             backgroundColor: 'transparent',
-            color: THEME.errorColor,
-            border: `1px solid ${THEME.errorColor}40`,
+            color: THEME.textColor,
+            border: `1px solid ${THEME.borderColor}`,
             borderRadius: '8px',
             fontSize: '14px',
             fontWeight: 500,
             cursor: 'pointer',
           }}>
-            Cancel
+            {status === 'paused' ? 'Resume' : 'Pause'}
           </button>
         )}
       </div>
+      {(status === 'active' || status === 'paused') && (
+        <p style={{
+          color: THEME.mutedColor,
+          fontSize: '12px',
+          lineHeight: 1.5,
+          margin: '12px 0 0 0',
+        }}>
+          This subscription cannot be cancelled or refunded. You can pause it at
+          any time and resume later — your prepaid days are not lost while paused.
+        </p>
+      )}
     </div>
   );
 }
@@ -216,9 +227,17 @@ A card component for displaying active subscription details.
 
 ### Features
 - Shows merchant info, amount, and payment schedule
-- Status badge (active, paused, cancelled, failed)
+- Status badge (active, paused, failed; \`cancelled\` is a legacy state only)
 - Privacy badge when stealth address is enabled
-- View details and cancel actions
+- View details, pause and resume actions
+- States the no-refund rule inline, where the Cancel button used to be
+
+### No cancellation
+A Protocol 01 subscription is a one-way prepaid envelope: money that enters the
+vault can only ever leave it toward the merchant. The protocol has no
+cancellation instruction and cannot refund a subscriber. Pause freezes the
+clock and cuts access; prepaid days are not lost and resume picks them back up.
+A merchant remains free to refund off-band from its own wallet.
 
 ### Usage
 \`\`\`tsx
@@ -226,8 +245,8 @@ import { SubscriptionCard } from '@protocol-01/p01-js/react';
 
 <SubscriptionCard
   subscription={subscription}
-  showCancel={true}
-  onCancel={(id) => console.log('Cancelled:', id)}
+  showPauseResume={true}
+  onPauseResume={(id, state) => console.log(id, state)}
   onViewDetails={(sub) => openModal(sub)}
 />
 \`\`\`
@@ -266,7 +285,7 @@ interface Subscription {
     totalPaid: { control: 'number', description: 'Total amount paid' },
     periodsPaid: { control: 'number', description: 'Number of payments made' },
     privacyEnabled: { control: 'boolean', description: 'Privacy features enabled' },
-    showCancel: { control: 'boolean', description: 'Show cancel button' },
+    showPauseResume: { control: 'boolean', description: 'Show pause / resume button' },
     showDetails: { control: 'boolean', description: 'Show details button' },
   },
 };
@@ -319,7 +338,12 @@ export const Paused: Story = {
   },
 };
 
-export const Cancelled: Story = {
+/**
+ * LEGACY STATE. Cancellation was removed from the protocol — no new
+ * subscription can reach this status. Kept so records written before the change
+ * still render.
+ */
+export const LegacyCancelled: Story = {
   args: {
     merchantName: 'Adobe CC',
     description: 'All Apps',
@@ -386,7 +410,7 @@ export const AllStatuses: Story = {
         periodsPaid={1}
       />
       <DemoSubscriptionCard
-        merchantName="Cancelled Service"
+        merchantName="Legacy Cancelled Service"
         description="Basic Plan"
         amount={4.99}
         interval="monthly"

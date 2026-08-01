@@ -19,14 +19,25 @@
  * `SubscriptionVault.is_active` carries no information. The program writes it
  * `true` at `subscribe_private_stark.rs:395` -- the only instruction that can
  * create a vault since `subscribe_normal` was removed -- and
- * `false` NOWHERE. Cancellation is not the hole — `cancel_normal.rs:42` and
- * `cancel_private_stark.rs:111` both `close` the account, so a cancelled vault
- * stops existing. The hole is running out of money, which nothing on chain
- * marks. MEASURED on devnet 2026-08-01: a vault with all five periods claimed
- * and a zero residual balance still reported `is_active: true`.
+ * `false` NOWHERE. Cancellation used to be one way a vault stopped existing, but
+ * cancellation has been REMOVED from the protocol entirely: there is no
+ * `cancel_normal` and no `cancel_private_stark` any more. `claim_period` closes
+ * the vault when its funded periods are exhausted, paying the remainder and the
+ * rent to the retailer. The hole is running out of money, which nothing on chain
+ * marks while the account is still open. MEASURED on devnet 2026-08-01: a vault
+ * with all five periods claimed and a zero residual balance still reported
+ * `is_active: true`.
  *
  * So "may this subscriber be served?" is a question about time and funding, and
  * is answered by {@link subscriptionIsCurrent}, never by `isActive` alone.
+ *
+ * ## There is no refund arithmetic here, on purpose
+ *
+ * A subscription vault is a one-way prepaid envelope. Money that enters it can
+ * only ever leave it toward the retailer, so the only meaningful split of
+ * `totalDeposited` is "already claimed" versus "still owed". Nothing in this
+ * module computes a subscriber-facing residual, because the protocol has no
+ * instruction that could pay one out.
  */
 
 // ---------------------------------------------------------------------------

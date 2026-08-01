@@ -15,21 +15,14 @@ import * as SecureStore from 'expo-secure-store';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import {
   type VaultInfo,
-  type CancelPreview,
-  computeCancelPreview,
+  type SubscriptionOutlook,
+  computeSubscriptionOutlook,
   entitlementStatus,
-  REFUND_KEEPER_FEE,
-  REFUND_MIN_RESIDUAL,
 } from '@/services/subscriptionVault';
-import { findPoolByPDA } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
-import CancelConfirmModal, {
-  type CancelPhase,
-  type RefundInfo,
-} from '@/components/privacy/CancelConfirmModal';
 
 const SECURE_SECRET_PREFIX = 'p01_vault_secret_';
 
@@ -56,10 +49,8 @@ export default function VaultDetailScreen() {
     refreshVault,
     pauseNormalAction,
     resumeNormalAction,
-    cancelNormalAction,
     pausePrivateStarkAction,
     resumePrivateStarkAction,
-    cancelPrivateStarkAction,
     isLoading,
     progress,
   } = useSubscriptionVaultStore();
@@ -72,14 +63,10 @@ export default function VaultDetailScreen() {
   // ever because the program never writes it false.
   const [currentSlot, setCurrentSlot] = useState<number | null>(null);
 
-  // Cancel modal state ──────────────────────────────────────────────────────
-  const [cancelVisible, setCancelVisible] = useState(false);
-  const [cancelPhase, setCancelPhase] = useState<CancelPhase>('preview');
-  const [cancelPreview, setCancelPreview] = useState<CancelPreview | null>(null);
-  const [cancelProgress, setCancelProgress] = useState<string | null>(null);
-  const [cancelError, setCancelError] = useState<string | null>(null);
-  const [cancelTx, setCancelTx] = useState<string | null>(null);
-  const [cancelPoolLabel, setCancelPoolLabel] = useState<string>('');
+  // Where the money stands. NOT a refund quote — `outstandingToRetailer` is
+  // what the RETAILER will still receive. A subscription is a one-way prepaid
+  // envelope and nothing here can ever return to the subscriber.
+  const [outlook, setOutlook] = useState<SubscriptionOutlook | null>(null);
 
   const storedVault = vaults.find(v => v.vaultAddress === vaultAddress);
   const isPrivate = storedVault?.isPrivateMode ?? false;
@@ -91,13 +78,23 @@ export default function VaultDetailScreen() {
         setVaultInfo(info);
       }
       try {
-        setCurrentSlot(await getConnection().getSlot('confirmed'));
+        const slot = await getConnection().getSlot('confirmed');
+        setCurrentSlot(slot);
       } catch {
         // Leave it null — the Status row says "Checking", never "Active".
       }
     };
     load();
   }, [vaultAddress, refreshVault]);
+
+  // Recompute where the money stands whenever the vault or the slot moves.
+  useEffect(() => {
+    if (vaultInfo && currentSlot !== null) {
+      setOutlook(computeSubscriptionOutlook(vaultInfo, currentSlot));
+    } else {
+      setOutlook(null);
+    }
+  }, [vaultInfo, currentSlot]);
 
   // Load subscriber secret from SecureStore
   const loadSecret = useCallback(async (): Promise<bigint> => {
@@ -166,78 +163,6 @@ export default function VaultDetailScreen() {
     } catch (err) {
       setStarkStatus(null);
       p01Alert('Error', (err as Error).message);
-    }
-  };
-
-  const openCancelModal = async () => {
-    if (!vaultAddress || !vaultInfo) return;
-    try {
-      // V2+V3/V4-aware lookup. V4 pools live in ALL_POOLS_V3, so the old
-      // ALL_POOLS.find missed every post-2026-05-07 vault and fell back to
-      // denom=0n — a misleading "all dust" refund preview. Guard before
-      // showing anything (mirrors (streams)/[id].tsx).
-      const pool = findPoolByPDA(vaultInfo.sourcePool ?? '');
-      if (!pool) {
-        p01Alert(
-          'Pool config missing',
-          `Source pool ${vaultInfo.sourcePool ?? 'unknown'} is not in this build. Update the app or contact support.`,
-        );
-        return;
-      }
-      const connection = getConnection();
-      const slot = await connection.getSlot('confirmed');
-      setCancelPreview(computeCancelPreview(vaultInfo, slot, pool.denominationAtomic));
-      setCancelPoolLabel(`${pool.denomination} ${pool.token}`);
-      setCancelPhase('preview');
-      setCancelProgress(null);
-      setCancelError(null);
-      setCancelTx(null);
-      setCancelVisible(true);
-    } catch (err) {
-      p01Alert('Error', (err as Error).message);
-    }
-  };
-
-  const confirmCancel = async () => {
-    if (!vaultAddress || !vaultInfo) return;
-    setCancelPhase('processing');
-    setCancelProgress('Preparing…');
-
-    try {
-      let sig = '';
-      if (isPrivate) {
-        if (!starkReady) {
-          throw new Error('STARK prover not ready yet — try again in a moment.');
-        }
-        const secret = await loadSecret();
-        setCancelProgress('Generating STARK ownership proof…');
-        const starkResult = await starkGenerate(secret.toString());
-
-        setCancelProgress('Submitting cancel transaction…');
-        sig = await cancelPrivateStarkAction(vaultAddress, secret, {
-          proofBytes: Buffer.from(starkResult.proofHex, 'hex'),
-          commitment: BigInt(starkResult.commitment),
-          proofSize: starkResult.proofSize,
-        });
-      } else {
-        setCancelProgress('Submitting cancel transaction…');
-        sig = await cancelNormalAction(vaultAddress, vaultInfo.retailer);
-      }
-
-      setCancelTx(sig);
-      setCancelPhase('success');
-    } catch (err) {
-      setCancelError((err as Error).message);
-      setCancelPhase('error');
-    }
-  };
-
-  const closeCancelModal = () => {
-    const wasSuccess = cancelPhase === 'success';
-    setCancelVisible(false);
-    // Slight delay so the modal fades out cleanly before we pop the screen.
-    if (wasSuccess) {
-      setTimeout(() => router.back(), 150);
     }
   };
 
@@ -345,15 +270,24 @@ export default function VaultDetailScreen() {
             </TouchableOpacity>
           )}
 
-          {vaultInfo.isActive && (
-            <TouchableOpacity
-              style={[styles.actionBtn, { backgroundColor: Colors.errorDim }]}
-              onPress={openCancelModal}
-              disabled={isLoading}
-            >
-              <Text style={[styles.actionText, { color: Colors.error }]}>Cancel</Text>
-            </TouchableOpacity>
-          )}
+        </View>
+
+        {/*
+          The no-refund rule, in the space the Cancel button used to occupy.
+          A subscription is a one-way prepaid envelope: money in this vault can
+          only ever be paid out to the retailer, and the protocol has no
+          instruction that could send any of it back.
+        */}
+        <View style={styles.noRefundCard}>
+          <Ionicons name="information-circle-outline" size={16} color={Colors.textSecondary} />
+          <Text style={styles.noRefundText}>
+            This subscription cannot be cancelled or refunded.
+            {outlook !== null
+              ? ` ${(Number(outlook.outstandingToRetailer) / 1e9).toFixed(3)} SOL is still owed to the retailer and will be paid out over time.`
+              : ''}
+            {' '}You can pause at any time and resume later - your prepaid days are
+            not lost while paused.
+          </Text>
         </View>
 
         {/* Progress from store */}
@@ -365,38 +299,6 @@ export default function VaultDetailScreen() {
         )}
       </ScrollView>
 
-      <CancelConfirmModal
-        visible={cancelVisible}
-        preview={cancelPreview}
-        denominationLabel={cancelPoolLabel}
-        retailerLabel={
-          vaultInfo?.retailer
-            ? `${vaultInfo.retailer.slice(0, 6)}…${vaultInfo.retailer.slice(-4)}`
-            : 'Retailer'
-        }
-        phase={cancelPhase}
-        progress={cancelProgress ?? progress ?? null}
-        errorMessage={cancelError}
-        txSignature={cancelTx}
-        refundInfo={
-          // Mirror [id].tsx: surface refund-via-relayer copy only when the
-          // vault has a stealth meta. Legacy vaults keep the reshield UX.
-          vaultInfo?.clientStealthMeta && cancelPreview
-            ? (cancelPreview.refundable >= REFUND_MIN_RESIDUAL
-                ? {
-                    kind: 'refund' as const,
-                    keeperFeeLamports: REFUND_KEEPER_FEE,
-                    netLamports: cancelPreview.refundable - REFUND_KEEPER_FEE,
-                  }
-                : {
-                    kind: 'dust-only' as const,
-                    residualLamports: cancelPreview.refundable,
-                  }) satisfies RefundInfo
-            : undefined
-        }
-        onConfirm={confirmCancel}
-        onClose={closeCancelModal}
-      />
     </SafeAreaView>
   );
 }
@@ -498,5 +400,23 @@ const styles = StyleSheet.create({
   actionText: {
     fontSize: 14,
     fontFamily: FontFamily.bold,
+  },
+  noRefundCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.sm,
+    marginTop: Spacing.lg,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  noRefundText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
   },
 });

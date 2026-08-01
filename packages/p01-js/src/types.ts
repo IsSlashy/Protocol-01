@@ -163,7 +163,11 @@ export type SubscriptionStatus =
   | 'pending'    // Awaiting first payment
   | 'active'     // Currently active
   | 'paused'     // Temporarily paused
-  | 'cancelled'  // Cancelled by user
+  // LEGACY ONLY. The protocol no longer has a cancellation instruction, so no
+  // new subscription can ever reach this state. Kept so records written before
+  // the change stay decodable and renderable — same reason the on-chain vault
+  // keeps its deprecated bytes.
+  | 'cancelled'
   | 'expired'    // Reached max payments
   | 'failed';    // Payment failed
 
@@ -278,7 +282,8 @@ export type Protocol01EventType =
   | 'paymentFailed'
   | 'subscriptionCreated'
   | 'subscriptionPayment'
-  | 'subscriptionCancelled'
+  | 'subscriptionPaused'
+  | 'subscriptionResumed'
   | 'subscriptionExpired'
   | 'error';
 
@@ -391,7 +396,8 @@ export type WebhookEventType =
   | 'payment.failed'
   | 'subscription.created'
   | 'subscription.payment'
-  | 'subscription.cancelled'
+  | 'subscription.paused'
+  | 'subscription.resumed'
   | 'subscription.expired';
 
 /**
@@ -426,7 +432,13 @@ export interface Protocol01Provider {
   requestPayment(options: InternalPaymentRequest): Promise<PaymentResult>;
   createSubscription(options: InternalSubscriptionRequest): Promise<SubscriptionResult>;
   getSubscriptions(merchantId?: string): Promise<Subscription[]>;
-  cancelSubscription(subscriptionId: string): Promise<{ success: boolean }>;
+  /**
+   * Pause / resume are the ONLY subscription lifecycle controls. There is no
+   * `cancelSubscription` — a Protocol 01 subscription is a one-way prepaid
+   * envelope and the protocol cannot return money to the subscriber.
+   */
+  pauseSubscription(subscriptionId: string): Promise<{ success: boolean }>;
+  resumeSubscription(subscriptionId: string): Promise<{ success: boolean }>;
   on(event: string, callback: (...args: unknown[]) => void): void;
   off(event: string, callback: (...args: unknown[]) => void): void;
 }

@@ -6,7 +6,7 @@
  *
  * Normal mode: Subscriber deposits from wallet, authenticates with wallet signature
  * Private mode: Subscriber deposits from a ZK shielded note, authenticates with
- *   STARK proof (circuit 0 = subscriber_ownership for pause/resume/cancel;
+ *   STARK proof (circuit 0 = subscriber_ownership for pause/resume;
  *   circuit 1 = pool_commitment for subscribe).
  *
  * ARCHITECTURE NOTE — private-subscribe note source:
@@ -19,7 +19,7 @@
  *
  *   `subscribePrivate` (below) generates the C1 proof via
  *   starkProver.generatePoolCommitmentProof and submits subscribe_private_stark.
- *   Circuit 0 (subscriber_ownership) drives pause/resume/cancel — the subscriber
+ *   Circuit 0 (subscriber_ownership) drives pause/resume — the subscriber
  *   secret is a Goldilocks bigint stored at vault creation time.
  *
  *   Denominated unshield (C1+C3) and note-to-note transfer (C1+C3+C6) live in
@@ -226,9 +226,10 @@ export function deriveSubscriberVkPDA(authority: PublicKey): PublicKey {
  * NOT `isActive`. The program writes that `true` at
  * `subscribe_private_stark.rs:395` -- the only instruction left that creates a
  * vault -- and `false` NOWHERE, so an exhausted
- * vault reports `true` for ever. Cancellation is not the hole either — both
- * cancel instructions `close` the account. Running out of money is the hole,
- * and nothing on chain marks it.
+ * vault reports `true` for ever. Cancellation was REMOVED from the protocol, so
+ * the only thing that ever closes a vault now is `claim_period` on the final
+ * claim. Running out of money before that lands is the hole, and nothing on
+ * chain marks it.
  */
 export function periodsPaidFor(vault: Pick<VaultInfo, 'totalDeposited' | 'rate'>): number {
   if (vault.rate === 0) return 0;
@@ -311,8 +312,9 @@ export function subscriptionEndSlot(vault: VaultInfo): number | null {
  * Faithful port of `SubscriptionVault::claimable_periods`
  * (`programs/zk_shielded/src/state/subscription_vault.rs:133`), INCLUDING the
  * `max_funded` clamp that was missing. Without it this returned the raw
- * elapsed-period count — and `Infinity` when `intervalSlots` was 0 — which
- * `computeRefundable` then turned into an under-reported subscriber refund.
+ * elapsed-period count — and `Infinity` when `intervalSlots` was 0 — which the
+ * since-removed `computeRefundable` then turned into an under-reported refund.
+ * Refunds no longer exist; the clamp still matters for `computeClaimableAmount`.
  */
 export function computeClaimable(vault: VaultInfo, currentSlot: number): number {
   if (!vault.isActive || vault.isPaused) {
@@ -340,10 +342,23 @@ export function computeClaimableAmount(vault: VaultInfo, currentSlot: number): n
   return Math.min(amount, available);
 }
 
-export function computeRefundable(vault: VaultInfo, currentSlot: number): number {
-  const claimable = computeClaimable(vault, currentSlot);
-  const totalOwed = (vault.claimedPeriods + claimable) * vault.rate;
-  return Math.max(0, vault.totalDeposited - totalOwed);
+/**
+ * Amount the retailer has not been paid yet, in atomic units.
+ *
+ * A subscription vault is a one-way prepaid envelope: money that enters it can
+ * only ever leave it toward the retailer. This is NOT "what the subscriber gets
+ * back" — there is no cancellation and no refund. It is what the retailer is
+ * still owed and will eventually receive; pause changes WHEN, never HOW MUCH.
+ *
+ * Replaces `computeRefundable`.
+ */
+export function computeOutstandingToRetailer(vault: VaultInfo): number {
+  return Math.max(0, vault.totalDeposited - vault.claimedPeriods * vault.rate);
+}
+
+/** Amount the retailer has already swept out of the vault, in atomic units. */
+export function computeAlreadyPaidToRetailer(vault: VaultInfo): number {
+  return Math.min(vault.totalDeposited, vault.claimedPeriods * vault.rate);
 }
 
 export function nextClaimableSlot(vault: VaultInfo): number | null {
@@ -520,28 +535,14 @@ function buildResumeNormalIx(
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
 }
 
-/**
- * Build cancel_normal instruction.
- * Mirrors mobile buildCancelNormalIx lines 297-314.
+/*
+ * REMOVED: buildCancelNormalIx / buildCancelPrivateStarkRefundIx.
+ *
+ * `cancel_normal` and `cancel_private_stark` no longer exist in zk_shielded. A
+ * subscription is a one-way prepaid envelope: money that enters a vault can only
+ * ever leave it toward the retailer, and `claim_period` closes the vault on the
+ * final claim. There is nothing left for a client to build.
  */
-function buildCancelNormalIx(
-  subscriber: PublicKey,
-  vaultPDA: PublicKey,
-  retailer: PublicKey,
-): TransactionInstruction {
-  const disc = getDiscriminator('cancel_normal');
-  const data = Buffer.alloc(8);
-  disc.copy(data, 0);
-
-  const keys = [
-    { pubkey: subscriber, isSigner: true, isWritable: true },
-    { pubkey: vaultPDA, isSigner: false, isWritable: true },
-    { pubkey: retailer, isSigner: false, isWritable: true },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-  ];
-
-  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
-}
 
 /**
  * Build claim_period instruction.
@@ -609,52 +610,6 @@ function buildResumePrivateStarkIx(
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
 }
 
-/**
- * Build cancel_private_stark instruction (refund-via-relayer path with empty
- * commitments). The extension always uses the refund-job path because it has
- * no denominated pool to reshield into.
- * Mirrors mobile buildCancelPrivateStarkIx lines 980-1050.
- */
-function buildCancelPrivateStarkRefundIx(
-  payer: PublicKey,
-  retailer: PublicKey,
-  vaultPDA: PublicKey,
-  merkleTreePDA: PublicKey,
-  starkProofBuffer: PublicKey,
-  refundJobPDA: PublicKey,
-  relayerProgramId: PublicKey,
-): TransactionInstruction {
-  const disc = getDiscriminator('cancel_private_stark');
-
-  // new_commitments: Vec<[u8;32]> — length 0, new_roots: Vec<[u8;32]> — length 0
-  const data = Buffer.alloc(8 + 4 + 4);
-  let offset = 0;
-  disc.copy(data, offset); offset += 8;
-  data.writeUInt32LE(0, offset); offset += 4; // new_commitments length
-  data.writeUInt32LE(0, offset);              // new_roots length
-
-  const keys = [
-    { pubkey: payer, isSigner: true, isWritable: true },
-    { pubkey: retailer, isSigner: false, isWritable: true },
-    { pubkey: vaultPDA, isSigner: false, isWritable: true },
-    // denominated_pool optional — use ZK_SHIELDED_PROGRAM_ID as Anchor None sentinel
-    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
-    // merkle_tree — REQUIRED even on refund path (target_tree for keeper)
-    { pubkey: merkleTreePDA, isSigner: false, isWritable: true },
-    { pubkey: starkProofBuffer, isSigner: false, isWritable: true },
-    { pubkey: refundJobPDA, isSigner: false, isWritable: true },
-    { pubkey: relayerProgramId, isSigner: false, isWritable: false },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    // SPL-token optional tails
-    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
-  ];
-
-  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
-}
-
 // ---------------------------------------------------------------------------
 // Goldilocks helpers (mirrors mobile goldilocksU64To32)
 // ---------------------------------------------------------------------------
@@ -710,24 +665,6 @@ export async function resumeNormal(vaultAddress: string): Promise<string> {
   if (!vault.isNormalMode) throw new Error('Vault is not in normal mode');
 
   const ix = buildResumeNormalIx(signer.publicKey, vaultPubkey);
-  const tx = new Transaction().add(ix);
-  return signSendConfirmTx(connection, tx, signer);
-}
-
-/**
- * Cancel a normal vault and refund remaining balance to subscriber.
- * Mirrors mobile cancelNormal lines 506-540.
- */
-export async function cancelNormal(vaultAddress: string): Promise<string> {
-  const { signer, connection } = createWalletSigner();
-  const vaultPubkey = new PublicKey(vaultAddress);
-
-  const vault = await fetchVault(vaultAddress);
-  if (!vault) throw new Error('Vault not found');
-  if (!vault.isNormalMode) throw new Error('Vault is not in normal mode');
-
-  const retailerPubkey = new PublicKey(vault.retailer);
-  const ix = buildCancelNormalIx(signer.publicKey, vaultPubkey, retailerPubkey);
   const tx = new Transaction().add(ix);
   return signSendConfirmTx(connection, tx, signer);
 }
@@ -880,7 +817,7 @@ function buildSubscribePrivateStarkIx(
  * and persisted to chrome.storage.local BEFORE the vault-creation tx is sent.
  * If the popup closes mid-proof (~2 min) or the tx confirms but the page
  * unmounts before the old post-creation save ran, the (encrypted) secret is
- * already on disk, so the vault stays controllable (pause/resume/cancel).
+ * already on disk, so the vault stays controllable (pause/resume).
  *
  * Mirrors mobile subscribePrivateStark + extension unshieldDenominatedStarkV3.
  * Adaptation: uses extension's legacy submitAndVerifyStarkProof (non-uniform).
@@ -1195,98 +1132,17 @@ export async function resumePrivate(
   return sig;
 }
 
-// ---------------------------------------------------------------------------
-// p01_relayer constants (mirrors mobile index.ts:67-89)
-// ---------------------------------------------------------------------------
-
-const P01_RELAYER_PROGRAM_ID = new PublicKey('2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW');
-
-function deriveRefundJobPDA(sourceVault: PublicKey): PublicKey {
-  const [pda] = PublicKey.findProgramAddressSync(
-    [Buffer.from('refund_job'), sourceVault.toBuffer()],
-    P01_RELAYER_PROGRAM_ID,
-  );
-  return pda;
-}
-
-/**
- * Cancel a private vault using STARK proof of subscriber secret (circuit 0).
+/*
+ * REMOVED: cancelPrivate, deriveRefundJobPDA and the p01_relayer program id.
  *
- * FEASIBLE: circuit 0 available in the extension.
+ * cancelPrivate built `cancel_private_stark`, generated the circuit-0 STARK
+ * ownership proof for it and derived the `refund_job` PDA so the keeper could
+ * pay the residual back to the subscriber's stealth address. That whole leg is
+ * gone: the instruction no longer exists on chain, and the refund it served was
+ * the only INBOUND operation in the system.
  *
- * Uses the refund-via-relayer path (vault.client_stealth_meta path) since
- * the extension has no denominated pool to reshield into. If the vault
- * predates client_stealth_meta (legacy), falls back to a forced-forfeit
- * cancel (passes zero merkle_tree and zero refund_job as sentinels).
- *
- * Mirrors mobile cancelPrivateStark lines 1068-1169.
- *
- * @param vaultAddress - Vault PDA address (base58)
- * @param subscriberSecret - Subscriber secret bigint
- * @param onProgress - Optional progress callback
+ * The circuit-0 proof itself is NOT dead — pauseVault / resumeVault still use it.
  */
-export async function cancelPrivate(
-  vaultAddress: string,
-  subscriberSecret: string,
-  onProgress?: (step: string) => void,
-): Promise<string> {
-  const { signer, connection } = createWalletSigner();
-  const vaultPubkey = new PublicKey(vaultAddress);
-
-  const vault = await fetchVault(vaultAddress);
-  if (!vault) throw new Error('Vault not found');
-  if (!vault.isPrivateMode) throw new Error('Vault is not in private mode');
-
-  onProgress?.('Generating STARK proof...');
-  await starkProver.start();
-  const proofResult = await starkProver.generateProof(subscriberSecret);
-
-  const proofBytes = hexToBytes(proofResult.proofHex);
-  const commitment = BigInt(proofResult.commitment);
-
-  onProgress?.('Submitting STARK proof on-chain...');
-  const { proofBuffer } = await submitAndVerifyStarkProof(
-    {
-      proofBytes,
-      circuitId: CIRCUIT_SUBSCRIBER_OWNERSHIP,
-      publicInputs: [commitment],
-      proofSize: proofResult.proofSize,
-    },
-    signer,
-    connection,
-    onProgress,
-  );
-
-  onProgress?.('Building cancel transaction...');
-  const retailerPubkey = new PublicKey(vault.retailer);
-  const refundJobPDA = deriveRefundJobPDA(vaultPubkey);
-
-  // Use ZK_SHIELDED_PROGRAM_ID as the Anchor None sentinel for merkle_tree
-  // when no denominated pool is present. The on-chain handler must have
-  // client_stealth_meta set for the refund path to succeed.
-  const merkleTreeSentinel = ZK_SHIELDED_PROGRAM_ID;
-
-  const ix = buildCancelPrivateStarkRefundIx(
-    signer.publicKey,
-    retailerPubkey,
-    vaultPubkey,
-    merkleTreeSentinel,
-    proofBuffer,
-    refundJobPDA,
-    P01_RELAYER_PROGRAM_ID,
-  );
-
-  const tx = new Transaction();
-  tx.add(...buildComputeBudgetIxs(400_000));
-  tx.add(ix);
-  const sig = await signSendConfirmTx(connection, tx, signer);
-
-  onProgress?.('Closing proof buffer...');
-  await closeStarkProofBuffer(proofBuffer, signer, connection);
-
-  onProgress?.('Done!');
-  return sig;
-}
 
 // ---------------------------------------------------------------------------
 // Hex helper
@@ -1344,9 +1200,10 @@ export async function fetchAllVaults(walletPubkey: string): Promise<VaultInfo[]>
     // because `subscriber_pubkey` is a plaintext wallet inside a public account,
     // which no client-side change can fix. It is bounded: no new normal-mode
     // vault can be created, so this can only ever return vaults that predate the
-    // removal, and each one stops being findable the moment its owner calls
-    // cancel_normal (which closes the account). Removing this function would
-    // leave those owners with no way to see the vault they need to close.
+    // removal, and each one stops being findable when `claim_period` closes it on the
+    // retailer's final claim. (cancel_normal used to be the owner-driven way out;
+    // cancellation has been removed from the protocol.) Removing this function
+    // would leave those owners with no way to see their vault at all.
     // Private vaults are keyed on a commitment and never match this filter.
     const filterBytes = Buffer.from([1, ...pubkey.toBytes()]);
     const accounts = await connection.getProgramAccounts(ZK_SHIELDED_PROGRAM_ID, {

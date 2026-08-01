@@ -15,14 +15,11 @@ import {
   pausePrivateStark,
   resumeNormal,
   resumePrivateStark,
-  cancelNormal,
-  cancelPrivateStark,
   fetchVault,
   computeClaimable,
   computeClaimableAmount,
   goldilocksU64To32,
   ZK_SHIELDED_PROGRAM_ID,
-  REFUND_MIN_RESIDUAL,
 } from '../services/subscriptionVault';
 import {
   receiptFromJSON,
@@ -87,7 +84,7 @@ interface SubscriptionVaultState {
    * `subscriberOwnershipCommitment` is the Goldilocks u64 Poseidon commitment of the
    * subscriber secret — same value returned by `StarkProverProvider.generateProof`
    * (circuit 0: subscriber_ownership). It is encoded as [u64_le, 24 zero bytes] and
-   * stored on-chain in `vault.subscriber_commitment`; pause/resume/cancel re-derive
+   * stored on-chain in `vault.subscriber_commitment`; pause/resume re-derive
    * the sha256 hash from those first 8 bytes to match the circuit-0 proof. */
   subscribePrivateStarkAction: (
     receipt: ShieldReceipt,
@@ -108,9 +105,12 @@ interface SubscriptionVaultState {
     c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
     /**
      * Optional v1 stealth meta address (64 bytes: spending_pub || viewing_pub)
-     * persisted on-chain in `vault.client_stealth_meta`. When set, cancel
-     * routes the residual through `p01_relayer::submit_refund_job` instead
-     * of the legacy reshield path. Build with `getOrCreateStealthMetaV1()`.
+     * persisted on-chain in `vault.client_stealth_meta`.
+     *
+     * DEAD FEATURE — PASS NOTHING. It addressed the subscriber for a refund,
+     * and cancellation and refunds have been removed from the protocol. Setting
+     * it publishes a 64-byte subscriber-controlled stealth address into a public
+     * account for something that can never fire.
      */
     clientStealthMeta?: Uint8Array,
     /**
@@ -122,16 +122,6 @@ interface SubscriptionVaultState {
      */
     serviceId?: string,
   ) => Promise<{ signature: string; vaultAddress: string }>;
-  /** STARK variant: quantum-resistant cancel_private_stark using pre-verified proof buffer.
-   *
-   * Re-shields the refundable balance back into the source pool as fresh notes owned
-   * by the subscriber, pays claimable periods to the retailer, and closes the vault.
-   * Dust below one denomination is forfeited (privacy tradeoff). */
-  cancelPrivateStarkAction: (
-    vaultAddress: string,
-    subscriberSecret: bigint,
-    starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
-  ) => Promise<string>;
   claimPeriodAction: (vaultAddress: string) => Promise<string>;
   pauseNormalAction: (vaultAddress: string) => Promise<string>;
   /** STARK variant: quantum-resistant pause_private using pre-verified proof buffer */
@@ -145,7 +135,6 @@ interface SubscriptionVaultState {
     vaultAddress: string,
     starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
   ) => Promise<string>;
-  cancelNormalAction: (vaultAddress: string, retailer: string) => Promise<string>;
   /** Force-clear a stuck subscribe/pause/resume/claim. Use when a flow was interrupted and isLoading refuses to release. */
   resetOperationState: () => void;
   /** Soft reset for wallet switches — clears the in-memory vault list but PRESERVES SecureStore secrets so archive/restore can rehydrate. */
@@ -658,226 +647,21 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         }
       },
 
-      // ------------------------------------------------------------------
-      // Cancel Private (STARK — quantum-resistant, re-shields refundable)
-      // ------------------------------------------------------------------
-
-      cancelPrivateStarkAction: async (vaultAddress, subscriberSecret, starkProofData) => {
-        set({ isLoading: true, error: null, progress: 'Cancelling (STARK)...' });
-
-        try {
-          const vaultPDA = new PublicKey(vaultAddress);
-          const connection = getConnection();
-
-          // 1. Fetch vault state to compute claimable/refundable
-          const vault = await fetchVault(vaultPDA);
-          if (!vault) throw new Error('Vault not found on-chain');
-          if (!vault.isPrivateMode) throw new Error('Vault is not in private mode');
-          if (!vault.sourcePool) throw new Error('Vault has no source pool');
-
-          // 2. Resolve source pool config (search V2 + V3 lists — V3 vaults
-          //    created on V4 pools post-2026-05-07 seed bump are NOT in V2 list).
-          //    We still need target_pool/target_tree for the refund-job path
-          //    so the keeper knows where to deliver the note.
-          const sourcePool = findPoolByPDA(vault.sourcePool);
-          if (!sourcePool) throw new Error(`Source pool not found: ${vault.sourcePool}`);
-          const sourceIsV3 = sourcePool.version === 'v3';
-          console.log('[Sub:Cancel] resolved source pool', {
-            poolPDA: sourcePool.poolPDA.toBase58(),
-            version: sourcePool.version,
-            denomination: sourcePool.denomination,
-            hasStealthMeta: !!vault.clientStealthMeta,
-          });
-
-          // 3. Compute refundable amount (matches on-chain handler math exactly)
-          const currentSlot = await connection.getSlot('confirmed');
-          const claimable = BigInt(computeClaimable(vault, currentSlot));
-          const totalOwed = (vault.claimedPeriods + claimable) * vault.rate;
-          const refundable = vault.totalDeposited > totalOwed
-            ? vault.totalDeposited - totalOwed
-            : 0n;
-
-          // Decide path: refund-via-relayer only when the vault has a
-          // stealth meta AND the residual is large enough to cover keeper
-          // fees + RefundJob rent. Otherwise fall back to legacy reshield
-          // (or dust-forfeit for sub-denomination residuals).
-          const useRefundJob =
-            !!vault.clientStealthMeta && refundable >= REFUND_MIN_RESIDUAL;
-
-          if (useRefundJob) {
-            console.log('[Sub:Cancel] refund-via-relayer path', {
-              refundableLamports: refundable.toString(),
-              targetPool: sourcePool.poolPDA.toBase58(),
-            });
-
-            // No commitments / new roots — the keeper computes those once it
-            // picks up the RefundJob. Caller only ships the cancel ix.
-            const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
-            const sig = await cancelPrivateStark(
-              vaultPDA,
-              new PublicKey(vault.retailer),
-              { poolPDA: sourcePool.poolPDA, treePDA: sourcePool.treePDA },
-              [],
-              [],
-              starkProofData,
-              (step) => { set({ progress: step }); },
-              walletSigner,
-              true, // useRefundJob
-            );
-
-            await deleteSecretSecurely(vaultAddress);
-            set(state => ({
-              vaults: state.vaults.filter(v => v.vaultAddress !== vaultAddress),
-            }));
-
-            notifySubscriptionEvent(
-              'Subscription Cancelled',
-              'Refund queued — note will land privately in a few minutes',
-              { transactionId: sig },
-            );
-
-            return sig;
-          }
-
-          // ───── Legacy reshield path (pre-stealth-meta vaults or dust) ─────
-          const notesToReshield = Number(refundable / sourcePool.denominationAtomic);
-
-          // 4. Derive deterministic output secrets from subscriber secret
-          const outputSecrets = deriveSplitOutputSecrets(subscriberSecret, notesToReshield);
-
-          // 5. Compute commitments + sequential new Merkle roots — pick V2/V3
-          //    hash family based on the source pool. Mismatch silently fails
-          //    on-chain at re-shield root verification.
-          set({ progress: 'Computing re-shield commitments...' });
-          const currentEpoch = slotToEpoch(currentSlot);
-          const tokenMintField = pubkeyToField(sourcePool.tokenMint);
-          const commitFn = sourceIsV3 ? createCommitmentV3 : createCommitment;
-          const newRootFn = sourceIsV3 ? computeNewRootFromSubtreesV3 : computeNewRootFromSubtrees;
-
-          const outputCommitments: bigint[] = [];
-          const newReceipts: ShieldReceipt[] = [];
-
-          for (let i = 0; i < notesToReshield; i++) {
-            const secret = outputSecrets[i];
-            const nullifierPreimage = poseidon2([secret, BigInt(i)]);
-            const commitment = commitFn(
-              nullifierPreimage, secret, currentEpoch, tokenMintField,
-            );
-            outputCommitments.push(commitment);
-            newReceipts.push({
-              secret,
-              nullifierPreimage,
-              depositEpoch: currentEpoch,
-              tokenMint: tokenMintField,
-              commitment,
-              leafIndex: -1,
-              denomination: sourcePool.denominationAtomic,
-              pool: sourcePool.poolPDA.toBase58(),
-              token: sourcePool.token,
-              denominationHuman: sourcePool.denomination,
-              shieldedAt: Date.now(),
-            });
-          }
-
-          let commitmentBytes: Uint8Array[] = [];
-          let rootBytes: Uint8Array[] = [];
-          if (notesToReshield > 0) {
-            const treeAccount = await connection.getAccountInfo(sourcePool.treePDA);
-            if (!treeAccount) throw new Error('Source Merkle tree account not found');
-            let { leafCount, subtrees } = parseFilledSubtrees(treeAccount.data);
-
-            commitmentBytes = outputCommitments.map(c => new Uint8Array(bigintToLeBytes32(c)));
-            for (let i = 0; i < notesToReshield; i++) {
-              const { newRoot, updatedSubtrees } = newRootFn(
-                outputCommitments[i], leafCount, subtrees,
-              );
-              rootBytes.push(new Uint8Array(bigintToLeBytes32(newRoot)));
-              subtrees = updatedSubtrees;
-              leafCount += 1;
-            }
-          }
-
-          // 6. Call on-chain cancel (STARK verify → cancel → close buffer)
-          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
-          const sig = await cancelPrivateStark(
-            vaultPDA,
-            new PublicKey(vault.retailer),
-            { poolPDA: sourcePool.poolPDA, treePDA: sourcePool.treePDA },
-            commitmentBytes,
-            rootBytes,
-            starkProofData,
-            (step) => { set({ progress: step }); },
-            walletSigner,
-          );
-
-          // 7. Save re-shielded notes to denom pool store + remove vault
-          if (newReceipts.length > 0) {
-            useDenominatedPoolStore.getState().addReshieldedNotes(newReceipts, sourcePool);
-          }
-          await deleteSecretSecurely(vaultAddress);
-
-          set(state => ({
-            vaults: state.vaults.filter(v => v.vaultAddress !== vaultAddress),
-          }));
-
-          notifySubscriptionEvent(
-            'Subscription Cancelled',
-            notesToReshield > 0
-              ? `Cancelled and re-shielded ${notesToReshield} note${notesToReshield === 1 ? '' : 's'}`
-              : 'Your subscription has been cancelled',
-            { transactionId: sig },
-          );
-
-          return sig;
-        } catch (err) {
-          console.error('[SubscriptionVault] cancelPrivateStark error:', err);
-          set({ error: (err as Error).message });
-          throw err;
-        } finally {
-          set({ isLoading: false, progress: null });
-        }
-      },
-
-      // ------------------------------------------------------------------
-      // Cancel Normal
-      // ------------------------------------------------------------------
-
-      cancelNormalAction: async (vaultAddress, retailer) => {
-        set({ isLoading: true, error: null, progress: 'Cancelling...' });
-
-        try {
-          const vaultPDA = new PublicKey(vaultAddress);
-          const retailerKey = new PublicKey(retailer);
-          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
-          const sig = await cancelNormal(
-            vaultPDA,
-            retailerKey,
-            (step) => {
-              set({ progress: step });
-            },
-            walletSigner,
-          );
-
-          // Remove vault from store
-          set(state => ({
-            isLoading: false,
-            progress: null,
-            vaults: state.vaults.filter(v => v.vaultAddress !== vaultAddress),
-          }));
-
-          notifySubscriptionEvent(
-            'Subscription Cancelled',
-            'Your subscription has been cancelled',
-            { transactionId: sig },
-          );
-
-          return sig;
-        } catch (err) {
-          console.error('[SubscriptionVault] cancelNormal error:', err);
-          set({ isLoading: false, progress: null, error: (err as Error).message });
-          throw err;
-        }
-      },
+      /*
+       * REMOVED: cancelPrivateStarkAction and cancelNormalAction.
+       *
+       * They drove the two deleted instructions. cancelPrivateStarkAction also
+       * carried the whole client-side refund machine: it re-derived the
+       * refundable residual, decided between the legacy re-shield (rebuilding
+       * the source pool's Merkle roots for `notes_to_reshield` fresh
+       * commitments) and the refund-via-relayer path, and wrote the resulting
+       * notes back into the denominated-pool store.
+       *
+       * A subscription is a one-way prepaid envelope: money that enters a vault
+       * can only ever leave it toward the retailer, and `claim_period` closes
+       * the vault on the final claim. Nothing returns to the subscriber, so
+       * there is nothing to re-shield and no inbound leg to schedule.
+       */
 
       resetOperationState: () => {
         set({ isLoading: false, progress: null, error: null });

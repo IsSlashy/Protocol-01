@@ -15,7 +15,8 @@ import {
 import {
   computeClaimable,
   computeClaimableAmount,
-  computeRefundable,
+  computeAlreadyPaidToRetailer,
+  computeOutstandingToRetailer,
   entitlementStatus,
   fundedPeriodsRemaining,
   nextClaimableSlot,
@@ -154,16 +155,44 @@ describe('the max_funded clamp the extension was missing', () => {
     expect(computeClaimable(partiallyFunded(), 1_500)).toBe(3);
   });
 
-  it('MEASURED CONSEQUENCE: the subscriber gets their 50,000-lamport refund back', () => {
+  it('MEASURED CONSEQUENCE: the 50,000-lamport remainder stays owed to the retailer', () => {
     // Before the clamp: claimable read 5, total owed came out at 500,000
-    // against a 350,000 deposit, and the cancel screen offered a 0 refund.
-    expect(computeRefundable(partiallyFunded(), 1_500)).toBe(50_000);
+    // against a 350,000 deposit. That number used to drive the cancel screen's
+    // refund quote; it now drives what the retailer is still owed. Either way
+    // it has to be 50,000 and not 0.
+    expect(computeOutstandingToRetailer(partiallyFunded())).toBe(350_000);
+    expect(computeOutstandingToRetailer({ ...partiallyFunded(), claimedPeriods: 3 })).toBe(50_000);
   });
 
-  it('pays whole funded periods only', () => {
+  it('pays whole funded periods only, and carries the remainder to the retailer', () => {
     const v = partiallyFunded();
     expect(computeClaimableAmount(v, 9_999)).toBe(300_000);
-    expect(computeClaimableAmount(v, 9_999) + computeRefundable(v, 9_999)).toBe(v.totalDeposited);
+    // The 50,000 that never bought a whole period is NOT refundable. claim_period
+    // sweeps it to the retailer when it closes the vault on the final claim.
+    const afterFinalClaim = { ...v, claimedPeriods: 3 };
+    expect(computeClaimableAmount(afterFinalClaim, 9_999)).toBe(0);
+    expect(computeOutstandingToRetailer(afterFinalClaim)).toBe(50_000);
+  });
+
+  it('THE FOUNDER INVARIANT: paid + outstanding is total_deposited at every slot', () => {
+    // A subscription is a one-way prepaid envelope. Over its life the retailer
+    // receives exactly total_deposited and no lamport returns to the subscriber,
+    // so there is no third bucket for the split to leak into.
+    const v = partiallyFunded();
+    for (let claimed = 0; claimed <= 3; claimed++) {
+      const at = { ...v, claimedPeriods: claimed };
+      expect(computeAlreadyPaidToRetailer(at) + computeOutstandingToRetailer(at))
+        .toBe(v.totalDeposited);
+    }
+  });
+
+  it('pause moves WHEN the retailer is paid, never HOW MUCH', () => {
+    const running = partiallyFunded();
+    const paused = { ...running, isPaused: true };
+    expect(computeClaimable(running, 1_500)).toBe(3);
+    expect(computeClaimable(paused, 1_500)).toBe(0);
+    expect(computeOutstandingToRetailer(running)).toBe(350_000);
+    expect(computeOutstandingToRetailer(paused)).toBe(350_000);
   });
 
   it('an exhausted vault claims nothing even though isActive is still true', () => {

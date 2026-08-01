@@ -73,7 +73,8 @@ function createMockProvider(overrides: Partial<Protocol01Provider> = {}): Protoc
         status: 'active',
       } satisfies Subscription,
     ]),
-    cancelSubscription: vi.fn().mockResolvedValue({ success: true }),
+    pauseSubscription: vi.fn().mockResolvedValue({ success: true }),
+    resumeSubscription: vi.fn().mockResolvedValue({ success: true }),
     on: vi.fn(),
     off: vi.fn(),
     ...overrides,
@@ -724,7 +725,7 @@ describe('Protocol01 - createSubscription', () => {
 });
 
 // ============================================================
-// getSubscriptions / getSubscription / cancelSubscription
+// getSubscriptions / getSubscription / pauseSubscription / resumeSubscription
 // ============================================================
 
 describe('Protocol01 - subscription management', () => {
@@ -787,13 +788,34 @@ describe('Protocol01 - subscription management', () => {
     expect(sub).toBeNull();
   });
 
-  it('should cancel a subscription', async () => {
+  it('should pause a subscription', async () => {
     const p01 = new Protocol01(VALID_CONFIG);
     await vi.advanceTimersByTimeAsync(3100);
     await p01.connect();
 
-    await p01.cancelSubscription('sub_test_123');
-    expect(mockProvider.cancelSubscription).toHaveBeenCalledWith('sub_test_123');
+    await p01.pauseSubscription('sub_test_123');
+    expect(mockProvider.pauseSubscription).toHaveBeenCalledWith('sub_test_123');
+  });
+
+  it('should resume a subscription', async () => {
+    const p01 = new Protocol01(VALID_CONFIG);
+    await vi.advanceTimersByTimeAsync(3100);
+    await p01.connect();
+
+    await p01.resumeSubscription('sub_test_123');
+    expect(mockProvider.resumeSubscription).toHaveBeenCalledWith('sub_test_123');
+  });
+
+  it('exposes NO cancellation verb — the protocol cannot refund a subscriber', () => {
+    // The founder's decision: a subscription is a one-way prepaid envelope.
+    // Money that enters a vault can only ever leave it toward the merchant.
+    // If a `cancelSubscription` is ever reintroduced on the SDK surface this
+    // test fails and the reviewer has to justify it.
+    const p01 = new Protocol01(VALID_CONFIG);
+    expect((p01 as unknown as Record<string, unknown>).cancelSubscription).toBeUndefined();
+    expect(
+      (Protocol01.prototype as unknown as Record<string, unknown>).cancelSubscription
+    ).toBeUndefined();
   });
 
   it('should throw WALLET_NOT_CONNECTED for getSubscriptions when not connected', async () => {
@@ -802,7 +824,7 @@ describe('Protocol01 - subscription management', () => {
     await expect(p01.getSubscriptions()).rejects.toThrow(Protocol01Error);
   });
 
-  it('should throw WALLET_NOT_INSTALLED for cancelSubscription without native provider', async () => {
+  it('should throw WALLET_NOT_INSTALLED for pauseSubscription without native provider', async () => {
     cleanupBrowserEnv();
     const solanaProvider = createMockSolanaProvider();
     setupBrowserEnv({ solanaProvider });
@@ -811,7 +833,7 @@ describe('Protocol01 - subscription management', () => {
     await vi.advanceTimersByTimeAsync(3100);
     await p01.connect();
 
-    await expect(p01.cancelSubscription('sub-1')).rejects.toThrow(Protocol01Error);
+    await expect(p01.pauseSubscription('sub-1')).rejects.toThrow(Protocol01Error);
   });
 });
 
@@ -922,19 +944,34 @@ describe('Protocol01 - event system', () => {
     expect(subHandler.mock.calls[0]![0].data.subscriptionId).toBe('sub_test_123');
   });
 
-  it('should emit "subscriptionCancelled" event when a subscription is cancelled', async () => {
+  it('should emit "subscriptionPaused" event when a subscription is paused', async () => {
     const p01 = new Protocol01(VALID_CONFIG);
     await vi.advanceTimersByTimeAsync(3100);
     await p01.connect();
 
-    const cancelHandler = vi.fn();
-    p01.on('subscriptionCancelled', cancelHandler);
+    const pauseHandler = vi.fn();
+    p01.on('subscriptionPaused', pauseHandler);
 
-    await p01.cancelSubscription('sub_test_123');
+    await p01.pauseSubscription('sub_test_123');
 
-    expect(cancelHandler).toHaveBeenCalledOnce();
-    expect(cancelHandler.mock.calls[0]![0].type).toBe('subscriptionCancelled');
-    expect(cancelHandler.mock.calls[0]![0].data.subscriptionId).toBe('sub_test_123');
+    expect(pauseHandler).toHaveBeenCalledOnce();
+    expect(pauseHandler.mock.calls[0]![0].type).toBe('subscriptionPaused');
+    expect(pauseHandler.mock.calls[0]![0].data.subscriptionId).toBe('sub_test_123');
+  });
+
+  it('should emit "subscriptionResumed" event when a subscription is resumed', async () => {
+    const p01 = new Protocol01(VALID_CONFIG);
+    await vi.advanceTimersByTimeAsync(3100);
+    await p01.connect();
+
+    const resumeHandler = vi.fn();
+    p01.on('subscriptionResumed', resumeHandler);
+
+    await p01.resumeSubscription('sub_test_123');
+
+    expect(resumeHandler).toHaveBeenCalledOnce();
+    expect(resumeHandler.mock.calls[0]![0].type).toBe('subscriptionResumed');
+    expect(resumeHandler.mock.calls[0]![0].data.subscriptionId).toBe('sub_test_123');
   });
 
   it('should support unsubscribing via the returned function', async () => {

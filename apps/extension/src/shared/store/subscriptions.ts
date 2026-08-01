@@ -14,7 +14,6 @@ import {
   createSubscription as createSub,
   pauseSubscription as pauseSub,
   resumeSubscription as resumeSub,
-  cancelSubscription as cancelSub,
   updateSubscription as updateSub,
   updateSubscriptionAfterPayment,
   calculateMonthlyCost,
@@ -46,7 +45,6 @@ export interface SubscriptionsState {
   removeSubscription: (id: string) => void;
   pauseSubscription: (id: string) => void;
   resumeSubscription: (id: string) => void;
-  cancelSubscription: (id: string) => void;
   updateSubscription: (
     id: string,
     updates: Partial<Pick<StreamSubscription, 'amount' | 'amountNoise' | 'timingNoise' | 'useStealthAddress'>>
@@ -60,6 +58,7 @@ export interface SubscriptionsState {
   getSubscription: (id: string) => StreamSubscription | undefined;
   getActiveSubscriptions: () => StreamSubscription[];
   getPausedSubscriptions: () => StreamSubscription[];
+  /** LEGACY status only — no user action can produce it any more. */
   getCancelledSubscriptions: () => StreamSubscription[];
   getDueSubscriptions: () => StreamSubscription[];
   getSubscriptionsByOrigin: (origin: string) => StreamSubscription[];
@@ -140,22 +139,6 @@ export const useSubscriptionsStore = create<SubscriptionsState>()(
         set((state) => {
           const newSubscriptions = state.subscriptions.map(s =>
             s.id === id ? resumeSub(s) : s
-          );
-          return {
-            subscriptions: newSubscriptions,
-            activeCount: newSubscriptions.filter(s => s.status === 'active').length,
-            pausedCount: newSubscriptions.filter(s => s.status === 'paused').length,
-            monthlyCost: calculateMonthlyCost(newSubscriptions),
-            yearlyCost: calculateYearlyCost(newSubscriptions),
-          };
-        });
-      },
-
-      // Cancel a subscription (permanent)
-      cancelSubscription: (id: string) => {
-        set((state) => {
-          const newSubscriptions = state.subscriptions.map(s =>
-            s.id === id ? cancelSub(s) : s
           );
           return {
             subscriptions: newSubscriptions,
@@ -251,7 +234,9 @@ export const useSubscriptionsStore = create<SubscriptionsState>()(
         return get().subscriptions.filter(s => s.status === 'paused');
       },
 
-      // Get cancelled subscriptions
+      // Get subscriptions carrying the LEGACY 'cancelled' status: records written
+      // before cancellation was removed from the protocol, plus subscriptions
+      // that ran out their maxPayments cap. No user action can reach it now.
       getCancelledSubscriptions: () => {
         return get().subscriptions.filter(s => s.status === 'cancelled');
       },

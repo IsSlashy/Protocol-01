@@ -486,7 +486,9 @@ export function updateSubscriptionAfterPayment(
     totalPaid: sub.totalPaid + payment.amount,
     nextPayment: sub.nextPayment + intervalSeconds * 1000,
     payments: [...sub.payments, payment],
-    // Auto-cancel if max payments reached
+    // Reached the payment cap — the subscription is DONE, not cancelled by
+    // anyone. The status value stays 'cancelled' so records already in storage
+    // keep decoding; there is no user-invokable cancellation any more.
     status: sub.maxPayments > 0 && sub.paymentsMade + 1 >= sub.maxPayments
       ? 'cancelled'
       : sub.status,
@@ -535,15 +537,18 @@ export function resumeSubscription(sub: StreamSubscription): StreamSubscription 
   };
 }
 
-/**
- * Cancel a subscription permanently
+/*
+ * REMOVED: cancelSubscription.
+ *
+ * A Protocol 01 subscription is a one-way prepaid envelope — money that has
+ * left the subscriber can only ever reach the merchant, and the protocol has no
+ * instruction that could send any of it back. Offering a "cancel" verb here
+ * promised something nothing downstream could deliver. Pause and resume are the
+ * whole set of subscriber controls.
+ *
+ * `status: 'cancelled'` survives as a LEGACY value: records written before this
+ * change, and subscriptions that hit their `maxPayments` cap, still carry it.
  */
-export function cancelSubscription(sub: StreamSubscription): StreamSubscription {
-  return {
-    ...sub,
-    status: 'cancelled',
-  };
-}
 
 /**
  * Update subscription settings
