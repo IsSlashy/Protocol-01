@@ -297,10 +297,11 @@ describe('verifyAccessToken — vault binding and re-check', () => {
     expect(r.reason).toMatch(/paused/);
   });
 
-  it('THE STABLE-SUB BUG: a token survives cancel + re-subscribe without the generation pin', () => {
+  it('THE STABLE-SUB BUG: a token survives close + re-subscribe without the generation pin', () => {
     const t = boundToken();
-    // Cancel closes the vault; re-subscribing writes the SAME PDA (the seeds
-    // are retailer + subscriber_id + mint) with a NEW start_slot.
+    // claim_period closes an exhausted vault (cancellation no longer exists);
+    // re-subscribing writes the SAME PDA (the seeds are retailer +
+    // subscriber_id + mint) with a NEW start_slot.
     const reborn = vault({ startSlot: 9_000n });
     const r = verifyAccessToken(t, merchant.publicKey, {
       subscription: { vault: reborn, currentSlot: 9_100n },

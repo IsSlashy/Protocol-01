@@ -55,10 +55,12 @@ import {
  *
  *   3. **`sub` is stable across subscription generations.** The vault PDA is
  *      `[b"subscription_vault", retailer, subscriber_id, token_mint]`, so a
- *      subscriber who cancels and re-subscribes gets the SAME `sub` and the
- *      same PDA. A token minted under the old subscription is therefore
- *      indistinguishable from one minted under the new one, and cancellation
- *      revokes nothing. {@link issueSubscriptionAccessToken} pins the token to
+ *      subscriber whose vault is closed and who re-subscribes gets the SAME
+ *      `sub` and the same PDA. (Closure is now only ever `claim_period`
+ *      closing an exhausted vault — cancellation was removed from the
+ *      protocol.) A token minted under the old subscription is therefore
+ *      indistinguishable from one minted under the new one, and the end of a
+ *      subscription revokes nothing by itself. {@link issueSubscriptionAccessToken} pins the token to
  *      `vaultStartSlot`, which the program rewrites on every subscribe, so
  *      tokens do not survive the subscription they were issued for.
  */
@@ -84,7 +86,7 @@ export interface AccessTokenClaims {
   /**
    * The vault's `start_slot` as a decimal string — the subscription's
    * generation. The program writes a fresh `start_slot` on every subscribe, so
-   * a token from a cancelled-and-resubscribed vault will not match.
+   * a token from a closed-and-resubscribed vault will not match.
    */
   vaultStartSlot?: string;
   /** Any additional fields the merchant wants to attach. */
@@ -233,7 +235,7 @@ export interface VerifyAccessTokenOptions {
   /**
    * Re-check the subscription itself against freshly-read chain state. This is
    * the only thing that can notice a subscription that ended, was paused, or
-   * was cancelled and re-created since the token was minted.
+   * was closed and re-created since the token was minted.
    */
   subscription?: {
     vault: AccessTokenVault;
@@ -342,7 +344,7 @@ export function verifyAccessToken(
       return bad(claims, `token names vault ${claims.vault}, not ${vault.pda.toBase58()}`);
     }
     // The generation check. `start_slot` is rewritten on every subscribe, so a
-    // token minted before a cancel + re-subscribe names a slot the live vault
+    // token minted before a close + re-subscribe names a slot the live vault
     // no longer has. Without it, `sub` being stable means the old token keeps
     // working inside the new subscription's window.
     if (

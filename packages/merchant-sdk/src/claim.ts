@@ -291,8 +291,9 @@ export async function assertSplClaimCanSettle(
         `0x4 "owner does not match", reported as InstructionError Custom(4), which is not an Anchor ` +
         `code and names no account. NOTE the subscribe side never checks this owner: ` +
         `subscribe_private_stark.rs:358 requires only that vault_token.mint match the pool mint, ` +
-        `and the removed subscribe_normal was the same, while cancel signs as the same PDA — so ` +
-        `such a vault can be neither claimed nor cancelled.`,
+        `and the removed subscribe_normal was the same. Cancellation has been removed from the ` +
+        `protocol, so claim_period is the ONLY way anything ever leaves this vault — such a vault ` +
+        `is permanently unclaimable, and there is no longer a cancel path to recover it either.`,
     );
   }
 
@@ -347,7 +348,8 @@ export interface BuildClaimPeriodOptions {
    * enforces that at subscribe time: `subscribe_private_stark.rs:358` checks the
    * mint and not the owner. MEASURED devnet 2026-08-01 (via subscribe_normal,
    * while it still existed), a vault created with a subscriber-owned token
-   * account here is permanently unclaimable AND uncancellable.
+   * account here is permanently unclaimable — and with cancellation removed
+   * there is no second instruction that could unwind it.
    */
   vaultTokenAccount?: PublicKey;
   /**

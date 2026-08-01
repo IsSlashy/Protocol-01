@@ -11,6 +11,40 @@ An entitlement check reads one account rather than your whole subscriber book
 (which does not make that book private — see the note at the end of section 3),
 and it does not trust the vault's `is_active` flag.
 
+## Subscriptions are one-way: no cancellation, no protocol refund
+
+Read this before you write your billing copy.
+
+A Protocol 01 subscription is a **prepaid envelope**. The subscriber deposits
+into a vault up front and that money can only ever leave the vault toward you.
+**The protocol has no cancellation instruction and no refund path**, so there is
+no call -- in this SDK or anywhere else -- that returns a lamport to a
+subscriber. Over the life of a vault you receive exactly `total_deposited`,
+always, eventually. `claim_period` sweeps it period by period and closes the
+vault on the final claim, paying you the sub-period remainder and the rent.
+
+The subscriber's only controls are **pause** and **resume**. Pause freezes the
+subscription clock and cuts access; prepaid days are not lost while paused, and
+resume picks the clock back up where it stopped. Pause changes *when* you are
+paid, never *how much*.
+
+**You remain free to refund a customer off-band, from your own wallet.** Nothing
+here forbids refunds as a commercial policy -- offer them, advertise them, honour
+them on whatever terms you like. What the protocol will not do is execute,
+custody, escrow or guarantee that refund for you. If you promise refunds, you are
+promising them as a merchant, and you pay them yourself.
+
+Two consequences for your integration:
+
+1. **Disclose it at checkout, before the subscriber pays.** "No cancellation, no
+   refund from the protocol; you may pause at any time and resume later, and your
+   prepaid days are not lost while paused." It is a condition of the payment, not
+   a detail of the account screen. The Protocol 01 mobile app and browser
+   extension both state it on the paying screen; a third-party checkout must do
+   the same.
+2. **Do not build a cancel button.** There is nothing behind it. Offer pause and
+   resume, and -- if you offer refunds -- a support path that you settle yourself.
+
 ## Status
 
 **This package is not yet published to npm.**
@@ -242,8 +276,9 @@ not close it. The deposit is no longer a caller-chosen `amount`: it is fixed to
 the pool's denomination (`:187`, `:390`). But the attacker still picks the rate,
 and a rate of 1 turns that denomination into `periodsPaidFor` — 100,000,000
 periods for the 0.1 SOL pools live on devnet — so the vault reads "current" for
-longer than the merchant will exist, and `cancel_private_stark` gives the
-deposit back when the attacker is done with it.
+longer than the merchant will exist. (The attacker no longer gets the deposit
+back -- cancellation was removed -- but a self-minted vault costs them the
+denomination either way, and the point is that it reads "current" to you.)
 
 The only thing that refuses it is `service`, because only the registry knows
 what you charge. `ServiceScope` compares the vault's `rate` and `interval_slots`
@@ -302,7 +337,9 @@ Minimal JWS-style token signed with the merchant Ed25519 key. Clients store it, 
 Issue it from the vault, not from a bare TTL. `issueSubscriptionAccessToken`
 clamps `exp` to the end of the funded window, so a 30-day session token cannot
 be handed to a subscriber with two days left, and pins the token to the vault's
-`start_slot` so it does not survive a cancel-and-resubscribe on the same PDA.
+`start_slot` so it does not survive a close-and-resubscribe on the same PDA
+(a vault whose funded periods are exhausted is closed by `claim_period`, and
+the subscriber may then subscribe again at the same address).
 
 ```typescript
 const token = issueSubscriptionAccessToken({
@@ -328,16 +365,17 @@ Pass `expectedService`. Without it the `svc` claim is not compared and a token
 minted for one of your services authenticates against every other one;
 `result.serviceChecked` tells you which happened. Pass `subscription` too when
 you want the chain re-consulted — that is the only thing that notices a
-subscription which ended, was paused, or was cancelled since the token was
-minted.
+subscription which ended or was paused since the token was minted.
 
 ### On not asking `isActive`
 
 `SubscriptionVault.is_active` is written `true` when the subscription is
 created and `false` nowhere in the program, so it is `true` on every vault that
-exists. Cancellation is not the exception — both cancel instructions `close`
-the account, so a cancelled subscription stops existing rather than flipping a
-flag. Running out of money is what the flag cannot express.
+exists. Nothing flips it: cancellation was removed from the protocol, and the
+one thing that does end a vault -- `claim_period` closing it once its funded
+periods are exhausted -- makes the account stop existing rather than flip a
+flag. Running out of money before that final claim lands is what the flag
+cannot express.
 
 Gate on `subscriptionIsCurrent(vault, currentSlot)`, which asks whether the
 period the subscription is in is one the subscriber paid for. `hasActiveVaultAccess`
