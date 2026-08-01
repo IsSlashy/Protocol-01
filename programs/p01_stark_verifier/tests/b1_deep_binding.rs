@@ -1217,6 +1217,333 @@ fn t2_legacy_c0_subgroup_alias_reaches_the_terminal_check() {
     println!("[T2 C0-legacy] rejected with {err:?}");
 }
 
+// ============================================================================
+// [B2] THE SEGMENTATION, MEASURED — and the gates that keep it from becoming a
+// constant nobody checks.
+// ============================================================================
+
+/// The replacement for `emit_deep_degree_table`.
+///
+/// # That function does not exist, and never did
+///
+/// Seven doc comments across two crates cite `emit_deep_degree_table` in
+/// `stark/src/compact.rs` as the thing that MEASURED the terminal degree bound.
+/// `git grep emit_deep_degree_table` at the B2 base commit returns nine hits and
+/// every one of them is prose — there is no such function, and there is no
+/// commit in which there was. The bound was therefore cited as measured while
+/// nothing in the tree measured it.
+///
+/// This test is what those comments should have pointed at. It reads the top
+/// non-zero terminal coefficient index straight off an honest proof of every
+/// shipping circuit and asserts the bound against it in BOTH directions:
+///
+///   * nothing above the bound may be non-zero — that is the honest-proof half
+///     of the terminal check, already covered by T6, repeated here so this test
+///     stands alone;
+///   * the coefficient AT `bound - 1` must be non-zero — the bound is TIGHT. A
+///     slack bound is an under-claim of the rate, which is safe, but it also
+///     means the constant stopped being a measurement, and the next person to
+///     quote `log2(fps/bound)` would be quoting a number the code does not
+///     support.
+///
+/// It also pins the two structural facts that make `log2(fps/bound)` a rate at
+/// all, both of which were silently assumed before B2.
+#[test]
+fn quotient_segmentation_is_measured_not_assumed() {
+    struct Row {
+        label: &'static str,
+        tw: usize,
+        segments: usize,
+        bound: usize,
+        bytes: Vec<u8>,
+    }
+
+    let mut rows: Vec<Row> = Vec::new();
+
+    // C0, legacy path.
+    rows.push(Row {
+        label: "C0",
+        tw: 3,
+        segments: LEGACY_QUOTIENT_SEGMENTS,
+        bound: LEGACY_FRI_FINAL_POLY_DEGREE_BOUND,
+        bytes: fixture_c0(),
+    });
+    for (label, id, build) in [
+        ("C1", 1u8, fixture_c1 as fn() -> Vec<u8>),
+        ("C2", 2, fixture_c2),
+        ("C3", 3, fixture_c3),
+        ("C4", 4, fixture_c4),
+        ("C5", 5, fixture_c5),
+        ("C6", 6, fixture_c6),
+    ] {
+        let c = p01_stark_verifier::compact_proof::get_circuit_config(id).unwrap();
+        rows.push(Row {
+            label,
+            tw: c.trace_width,
+            segments: c.quotient_segments,
+            bound: c.fri_final_poly_degree_bound,
+            bytes: build(),
+        });
+    }
+
+    for r in rows.iter() {
+        let poly = read_final_poly(&r.bytes, r.tw, r.segments);
+        let top = poly.iter().rposition(|&c| c != 0);
+        println!(
+            "[B2 degree] {} segments={} bound={} fps={} top_nonzero={:?} proof={} B",
+            r.label,
+            r.segments,
+            r.bound,
+            poly.len(),
+            top,
+            r.bytes.len(),
+        );
+
+        let top = top.unwrap_or_else(|| {
+            panic!(
+                "{} honest terminal polynomial is IDENTICALLY ZERO. That is not a tighter \
+                 bound, it is a degenerate proof — and a verifier that accepts it accepts \
+                 the zero polynomial from anybody.",
+                r.label,
+            )
+        });
+        assert!(
+            top < r.bound,
+            "{}: terminal coefficient {top} is non-zero but the pinned bound is {} — the \
+             bound is an OVER-CLAIM of the FRI rate and every bits-per-query figure \
+             derived from it is too high",
+            r.label,
+            r.bound,
+        );
+        assert_eq!(
+            top,
+            r.bound - 1,
+            "{}: the honest terminal polynomial's top non-zero coefficient is {top}, so \
+             the bound could be {} rather than {}. A slack bound is safe but it is no \
+             longer a MEASUREMENT, and `log2(fps/bound)` stops describing this circuit.",
+            r.label,
+            top + 1,
+            r.bound,
+        );
+    }
+
+    // Structural facts `log2(fps/bound)` depends on, asserted rather than assumed.
+    for id in 0u8..=6 {
+        let c = p01_stark_verifier::compact_proof::get_circuit_config(id).unwrap();
+        // `bound` cannot go below 1, so a blowup larger than the terminal domain
+        // clamps and the config would over-claim the rate while looking correct.
+        assert!(
+            c.blowup <= c.fri_final_poly_size,
+            "C{id}: blowup {} exceeds fri_final_poly_size {} — the terminal bound clamps \
+             at 1 and `log2(fps/bound)` silently stops tracking the real rate",
+            c.blowup,
+            c.fri_final_poly_size,
+        );
+        // The rate is a power of two, which is what makes the aliasing subgroup
+        // T5 measures exist at all.
+        assert_eq!(
+            c.fri_final_poly_size % c.fri_final_poly_degree_bound,
+            0,
+            "C{id}: fri_final_poly_size {} is not a multiple of the bound {}",
+            c.fri_final_poly_size,
+            c.fri_final_poly_degree_bound,
+        );
+        assert!(
+            (c.fri_final_poly_size / c.fri_final_poly_degree_bound).is_power_of_two(),
+            "C{id}: 1/rho = {} is not a power of two",
+            c.fri_final_poly_size / c.fri_final_poly_degree_bound,
+        );
+        // And the segment count has to be the one the DEEP composition needs.
+        assert_eq!(
+            c.quotient_segments,
+            if id == 0 { LEGACY_QUOTIENT_SEGMENTS } else { 8 },
+            "C{id}: quotient_segments",
+        );
+    }
+}
+
+/// The segment count is BOUND, not decorative.
+///
+/// A verifier that took `quotient_segments` as advisory would read `k` felts
+/// where the prover wrote 8, walk a different byte layout for every field after
+/// `ood_quotient`, and — if it were sloppy about lengths — could still be talked
+/// into accepting something. This drives that directly: an honest C1 proof,
+/// handed to a config that claims 4 segments instead of 8, must be REFUSED.
+///
+/// The refusal is expected at PARSE time. `ood_quotient` is `k` felts and every
+/// per-query quotient block is `k` felts, so a wrong `k` desynchronises the
+/// cursor and the tail length arithmetic cannot close. That is the correct place
+/// for it: the split is a wire parameter and it never travels on the wire.
+#[test]
+fn a_proof_parsed_with_the_wrong_segment_count_is_refused() {
+    let bytes = fixture_c1();
+    let real = &CONFIG_POOL_COMMITMENT;
+
+    // Sanity: the honest config parses and verifies. Without this the negative
+    // below would pass against a fixture that parses for nobody.
+    let ok = GenericCompactProof::from_bytes(&bytes, real).expect("C1 parses under its own config");
+    assert_eq!(ok.ood_quotient_len(), real.quotient_segments);
+
+    for wrong in [1usize, 2, 4, 7, 9, 16] {
+        let cfg = p01_stark_verifier::compact_proof::CircuitConfig {
+            quotient_segments: wrong,
+            ..copy_config(real)
+        };
+        let parsed = GenericCompactProof::from_bytes(&bytes, &cfg);
+        match parsed {
+            None => {}
+            Some(proof) => {
+                // If some `k` happens to keep the cursor arithmetic consistent,
+                // verification must still refuse it — the DEEP composition reads
+                // `k` gamma powers and `k` segment values per query.
+                let err = verify_generic(&proof, 1, &[42, 17, 7, 11], &cfg).expect_err(
+                    "a C1 proof must not verify under a config claiming a different \
+                     quotient_segments — the segment count is what makes the terminal \
+                     degree bound 1",
+                );
+                println!("[B2 wrong-k] k={wrong} parsed but was rejected with {err:?}");
+            }
+        }
+    }
+}
+
+/// `CircuitConfig` has no `Clone`, and adding one to a shipped type for a test's
+/// convenience is the wrong trade. Spelled out so a new field is a compile error
+/// here rather than a silently-defaulted value in the probe above.
+fn copy_config(
+    c: &p01_stark_verifier::compact_proof::CircuitConfig,
+) -> p01_stark_verifier::compact_proof::CircuitConfig {
+    p01_stark_verifier::compact_proof::CircuitConfig {
+        trace_width: c.trace_width,
+        trace_length: c.trace_length,
+        blowup: c.blowup,
+        lde_size: c.lde_size,
+        merkle_depth: c.merkle_depth,
+        num_rounds: c.num_rounds,
+        fri_final_poly_size: c.fri_final_poly_size,
+        fri_final_poly_degree_bound: c.fri_final_poly_degree_bound,
+        quotient_segments: c.quotient_segments,
+        num_queries: c.num_queries,
+    }
+}
+
+// ============================================================================
+// [B2] PROSE vs CONSTANTS, across the crate boundary.
+// ============================================================================
+
+const PROVER_SRC_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../stark/src/compact.rs");
+const CONFIG_SRC_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/compact_proof.rs");
+
+fn read_src(path: &str) -> String {
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("cannot read {path}: {e}"))
+        .replace("\r\n", "\n")
+}
+
+/// The two soundness columns are quoted in `compact_proof.rs` prose. Build both
+/// lines from the arrays and require them VERBATIM.
+///
+/// # Why this test exists
+///
+/// This tree has shipped a "re-pin CU" commit that changed only prose and moved
+/// no constant, and a guardrail that shipped a false claim about itself. The
+/// same failure mode is available here and is worse: a soundness figure in a
+/// comment is what a README, a pitch or a CV gets copied from, and nothing was
+/// checking that any of them matched the code. `cu_budget.rs` already has this
+/// gate for CU; this is its twin for bits.
+#[test]
+fn the_soundness_prose_matches_the_two_derived_arrays() {
+    let src = read_src(CONFIG_SRC_PATH);
+    let fmt = |a: &[u32; 7]| {
+        a.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" / ")
+    };
+    let conj = format!("conjectured  {}   (C0..C6)", fmt(&B2_CONJECTURED_FORGERY_BITS));
+    let uncond = format!("unconditional {}", fmt(&B2_UNCONDITIONAL_FORGERY_BITS));
+    for want in [conj, uncond] {
+        assert!(
+            src.contains(&want),
+            "\n\n  >>> SOUNDNESS PROSE DRIFT <<<\n  {CONFIG_SRC_PATH}\n  must contain, \
+             verbatim:\n\n    {want}\n\n  It is DERIVED from the two arrays in this file, \
+             which are themselves derived from CircuitConfig by \
+             `soundness_bits_are_derived_from_the_config`. A bits figure in a comment is \
+             what a README or a pitch gets copied from; it does not get to drift from the \
+             code.\n",
+        );
+    }
+}
+
+/// The prover's private constants and the verifier's public ones are twins, and
+/// nothing in the type system says so — the prover's are `const` in a different
+/// crate. Check the source text, which is what a reader diffs.
+#[test]
+fn prover_and_verifier_agree_on_the_segmentation_constants() {
+    let prover = read_src(PROVER_SRC_PATH);
+    use p01_stark_verifier::compact_proof::GRINDING_BITS;
+
+    let expect = [
+        format!("const GRINDING_BITS: u32 = {GRINDING_BITS};"),
+        format!("const LEGACY_QUOTIENT_SEGMENTS: usize = {LEGACY_QUOTIENT_SEGMENTS};"),
+        format!(
+            "const LEGACY_FRI_FINAL_POLY_DEGREE_BOUND: usize = {LEGACY_FRI_FINAL_POLY_DEGREE_BOUND};"
+        ),
+        format!(
+            "const GENERIC_QUOTIENT_SEGMENTS: usize = {};",
+            CONFIG_POOL_COMMITMENT.quotient_segments
+        ),
+        format!(
+            "const GENERIC_FRI_FINAL_POLY_DEGREE_BOUND: usize = {};",
+            CONFIG_POOL_COMMITMENT.fri_final_poly_degree_bound
+        ),
+    ];
+    for want in expect {
+        assert!(
+            prover.contains(&want),
+            "\n\n  >>> PROVER / VERIFIER CONSTANT SKEW <<<\n  {PROVER_SRC_PATH}\n  must \
+             contain, verbatim:\n\n    {want}\n\n  These are wire parameters held twice, \
+             once per crate, with no shared type. A disagreement makes every honest proof \
+             fail — the safe direction — but it fails at the LAST instruction of a slow \
+             chunked upload, so it is worth catching in a test instead.\n",
+        );
+    }
+}
+
+/// `num_queries * log2(blowup)` is the formula this project was told never to
+/// quote. Post-B2 it is arithmetically CORRECT for the query term, for the first
+/// time — but only because the terminal bound is 1, and only for the query term,
+/// which is not the security level.
+///
+/// So the rule is no longer "never write it" but "never write it without the
+/// condition next to it". This test enforces exactly that: every occurrence of
+/// the phrase in either source file must sit within a few lines of the word
+/// `bound`, and the ONE place that may state the formula bare is the historical
+/// note explaining why it was wrong.
+#[test]
+fn the_blowup_formula_is_never_quoted_without_its_precondition() {
+    for path in [PROVER_SRC_PATH, CONFIG_SRC_PATH] {
+        let src = read_src(path);
+        let lines: Vec<&str> = src.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if !line.contains("log2(blowup)") {
+                continue;
+            }
+            let lo = i.saturating_sub(6);
+            let hi = (i + 7).min(lines.len());
+            let window = lines[lo..hi].join("\n");
+            assert!(
+                window.contains("bound"),
+                "\n\n  >>> UNCONDITIONAL BLOWUP FORMULA <<<\n  {path}:{}\n  {line}\n\n  \
+                 `num_queries * log2(blowup)` is only the query term when the terminal \
+                 degree bound is 1, which is a property of the quotient split and not of \
+                 the blowup. Quoting it bare is how this project came to publish 124 bits \
+                 for a construction worth 43. Name the bound within six lines or do not \
+                 write the formula.\n",
+                i + 1,
+            );
+        }
+    }
+}
+
 /// MEASURE what `SubgroupAlias` is worth per query on the LEGACY path.
 ///
 /// PRE-B2 this was a SEPARATE figure from T5's: C0's bound was 7 of 16, the

@@ -60,8 +60,21 @@ const MAX_REALLOC_STEP = 10_240; // Solana MAX_PERMITTED_DATA_INCREASE per reall
 /** Phase C v1 — uniform proof size target. Padded zero bytes are tolerated by
  * the verifier's `from_bytes` (lower-bound length checks only).
  *
- * Sized to fit the largest active circuit (C3/C5/C6 ~ 138-140KB) plus headroom.
  * Closes leaks L13 (circuit_id at init) + L14 (proof_size variable).
+ *
+ * The "~138-140KB largest active circuit (C3/C5/C6)" this comment used to give
+ * as the sizing rationale has been wrong since B4 cut proofs by 45%. MEASURED on
+ * this tree, post-B2, by `cu_budget_real_circuits`: the largest is C4 at 81,457 B
+ * and the seven are 47,641 / 68,881 / 69,761 / 78,157 / 81,457 / 78,877 / 81,037.
+ * So 145,000 is not "the largest plus headroom" — it is 78% headroom, and it did
+ * not have to move for B2.
+ *
+ * That headroom is not free. EVERY circuit is padded to this size before upload,
+ * including a 47,641 B C0, so the pipeline pays 145 chunk transactions and
+ * ~1.01 SOL of transient rent whether the proof is 47 KB or 81 KB. Lowering the
+ * constant is a real cost saving and a founder decision, not a cleanup: it is
+ * safe only while it stays above the largest circuit, and it re-breaks the day
+ * any circuit grows. Out of scope for B2, which needed no change here.
  *
  * Cost: ~1.01 SOL transient rent per flow (refunded on close). 14 resize tx
  * @ ~5000 lamports each = ~0.07 SOL net.

@@ -4583,11 +4583,21 @@ fn apply_terminal_poly_probe(final_poly: &mut [u64], terminal: TerminalPoly, bou
 /// polynomial), forms the aliased `p_m = c_m + c_{m+8}`, and evaluates BOTH at
 /// all 16 terminal domain points `x_j = gen_final^j`.
 ///
-/// Returns `(agreeing indices, disagreeing indices)`. The result — 8 and 8,
-/// agreeing exactly on the EVEN indices — is the ONLY per-query rate figure that
-/// may be quoted anywhere: `-log2(8/16) = 1.000` bits. It matches the
-/// independently measured FRI rate (deg(Q) = 4088 on an 8192 LDE, i.e. ~1/2),
-/// and it is why `num_queries * log2(blowup)` was always wrong.
+/// Returns `(agreeing indices, disagreeing indices)`. The agreement count IS the
+/// per-query rate — `-log2(agree / fri_final_poly_size)` bits — and it is the
+/// ONLY per-query rate figure that may be quoted anywhere.
+///
+/// PRE-B2, MEASURED: 8 and 8, agreeing exactly on the EVEN indices, i.e.
+/// `-log2(8/16) = 1.000` bits, matching the independently measured FRI rate
+/// (deg(Q) = 4088 on an 8192 LDE, rho ~ 1/2). That is why
+/// `num_queries * log2(blowup)` was always wrong: the terminal degree BOUND was
+/// 8 of 16, not 1, so the rate was 1/2 and not 1/blowup.
+///
+/// POST-B2, MEASURED: 1 and 15, agreeing at index 0 alone —
+/// `-log2(1/16) = 4.000` bits, because segmentation drove the terminal degree
+/// BOUND to 1. `num_queries * log2(blowup)` is the query term now, and only
+/// because that bound is asserted to be 1; it is still not the security level,
+/// which is floored by the base-field Fiat-Shamir challenges.
 ///
 /// Compiled only under `test-probes`.
 #[cfg(any(test, feature = "test-probes"))]

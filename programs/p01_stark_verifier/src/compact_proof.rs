@@ -131,9 +131,11 @@ pub const CONFIG_BALANCE_PROOF: CircuitConfig = CircuitConfig {
 /// layers per query) fits under the 1.4M Solana BPF CU cap. DEEP-ALI is
 /// split off to `verify_deep_ali_phase2` (same as circuit 6).
 ///
-/// [B1] Soundness is 22 * 1.000 + 16 = ~38 bits at the MEASURED rate, not the
-/// 22*4 + 16 = 104 this comment used to claim. See `num_queries` on
-/// `CircuitConfig`.
+/// [B2] Soundness is 47 conjectured / 42 unconditional, FLOOR-BOUND. The query
+/// term is 22 * 4.000 + 22 = 110 at the MEASURED post-segmentation rate (it was
+/// 22 * 1.000 + 16 = ~38 pre-B2, and 104 in a claim that predated any
+/// measurement), but the base-field Fiat-Shamir floor is ~47.8 bits and the
+/// query term never reaches it. See `num_queries` on `CircuitConfig`.
 pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
     trace_width: 6,
     trace_length: 512, // depth 15: 15 * 32 = 480, next_pow2 = 512
@@ -167,8 +169,8 @@ pub const CONFIG_CONFIDENTIAL_BALANCE: CircuitConfig = CircuitConfig {
 /// LDE=8192 with the transition polynomial pushes phase-1 FRI above 1.4M CU
 /// at 27 queries.
 ///
-/// [B1] Soundness is ~38 bits (22 * 1.000 + 16), not the 104 this comment used
-/// to claim.
+/// [B2] Soundness is 47 conjectured / 42 unconditional, floor-bound — identical
+/// to C3 and C6, which share its query count and its LDE size.
 ///
 /// [#2 voie A — REBAKE DONE] The prover/AIR side in
 /// `stark/src/air/transfer.rs` enforces value conservation: trace width is
@@ -207,10 +209,15 @@ pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
 ///
 /// [B1] This block used to say `fri_final_poly_size = 256`, which was never true
 /// against the constant below (16), and to quote 124 -> 104 bits from
-/// `num_queries * log2(blowup)`, which is the wrong formula. The real figures are
-/// ~43 bits at 27 queries and ~38 at 22, at the MEASURED rate of 1.000 bits per
-/// query. verify.rs used to carry a THIRD number for the same 16 ("circuit 6
-/// uses 64"); that is gone too.
+/// `num_queries * log2(blowup)` without checking the terminal degree bound that
+/// formula depends on. The bound was 8 of 16, so the rate was 1/2 and the real
+/// figures were ~43 bits at 27 queries and ~38 at 22. verify.rs used to carry a
+/// THIRD number for the same 16 ("circuit 6 uses 64"); that is gone too.
+///
+/// [B2] The bound is 1 of 16 now, so the same formula finally gives the right
+/// query term — 22 * 4 + 22 = 110 bits. That is NOT this circuit's security
+/// level: the base-field Fiat-Shamir floor is ~47.8 bits and it binds. See
+/// `num_queries` on `CircuitConfig`.
 pub const CONFIG_MERKLE_UPDATE: CircuitConfig = CircuitConfig {
     trace_width: 10,
     trace_length: 512,

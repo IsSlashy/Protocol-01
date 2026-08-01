@@ -4788,7 +4788,10 @@ mod merkle_update_e2e {
         let md = cfg.merkle_depth;
         let num_commits = (cfg.lde_size / cfg.fri_final_poly_size).trailing_zeros() as usize - 1;
 
-        let mut off = 32 + 32 + tw * 8 + tw * 8 + 8 + 8;
+        // [B2] `ood_quotient`, each query's quotient mirror block and each tail
+        // entry are `quotient_segments` felts wide.
+        let k = cfg.quotient_segments;
+        let mut off = 32 + 32 + tw * 8 + tw * 8 + 8 + k * 8;
         assert_eq!(bytes[off] as usize, num_commits, "num_fri_layers byte drift");
         off += 1 + num_commits * 32;
         off += 2 + cfg.fri_final_poly_size * 8;
@@ -4797,10 +4800,10 @@ mod merkle_update_e2e {
         let fri_per_query: usize = (0..num_commits).map(|i| 16 + (md - i - 2) * 32).sum();
         // [ROUTE C] four rows + two depth-(md - 1) pair paths.
         let per_query =
-            4 + 4 * (tw * 8) + 2 * ((md - 1) * 32) + 8 + (md - 1) * 32 + fri_per_query;
+            4 + 4 * (tw * 8) + 2 * ((md - 1) * 32) + k * 8 + (md - 1) * 32 + fri_per_query;
 
         assert_eq!(
-            off + per_query * cfg.num_queries + cfg.num_queries * 8,
+            off + per_query * cfg.num_queries + cfg.num_queries * k * 8,
             bytes.len(),
             "Route C serializer layout drift — this offset arithmetic is stale",
         );
