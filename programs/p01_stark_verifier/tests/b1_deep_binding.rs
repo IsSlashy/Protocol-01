@@ -40,7 +40,7 @@ use p01_stark::compact::{OodForgery, TerminalPoly};
 use p01_stark_verifier::compact_proof::{
     CompactStarkProof, GenericCompactProof, CONFIG_BALANCE_PROOF, CONFIG_CONFIDENTIAL_BALANCE,
     CONFIG_MERKLE_PATH, CONFIG_MERKLE_UPDATE, CONFIG_POOL_COMMITMENT, CONFIG_TRANSFER,
-    LEGACY_FRI_FINAL_POLY_DEGREE_BOUND,
+    LEGACY_FRI_FINAL_POLY_DEGREE_BOUND, LEGACY_QUOTIENT_SEGMENTS,
 };
 use p01_stark_verifier::goldilocks::{Felt, MODULUS};
 use p01_stark_verifier::verify::{
@@ -56,9 +56,18 @@ use p01_stark_verifier::verify::{
 /// Byte offset of the `fri_final_poly` field inside a serialized proof.
 ///
 /// Header: `trace_root 32 | quotient_root 32 | ood_current 8w | ood_next 8w |
-/// ood_z 8 | ood_quotient 8 | num_fri_layers 1 | roots 32L | fps u16 | poly`.
-fn final_poly_offset(bytes: &[u8], trace_width: usize) -> (usize, usize) {
-    let mut c = 32 + 32 + trace_width * 8 * 2 + 8 + 8;
+/// ood_z 8 | ood_quotient 8k | num_fri_layers 1 | roots 32L | fps u16 | poly`.
+///
+/// [B2] `ood_quotient` is `k = quotient_segments` felts, not one. Every caller
+/// therefore has to say which circuit it is holding; passing the wrong `k`
+/// mis-reads `num_fri_layers` and the helper panics on the slice, which is the
+/// failure mode you want rather than a silently shifted read.
+fn final_poly_offset(
+    bytes: &[u8],
+    trace_width: usize,
+    quotient_segments: usize,
+) -> (usize, usize) {
+    let mut c = 32 + 32 + trace_width * 8 * 2 + 8 + quotient_segments * 8;
     let num_layers = bytes[c] as usize;
     c += 1 + num_layers * 32;
     let fps = u16::from_le_bytes([bytes[c], bytes[c + 1]]) as usize;
@@ -66,15 +75,21 @@ fn final_poly_offset(bytes: &[u8], trace_width: usize) -> (usize, usize) {
     (c, fps)
 }
 
-fn read_final_poly(bytes: &[u8], trace_width: usize) -> Vec<u64> {
-    let (off, fps) = final_poly_offset(bytes, trace_width);
+fn read_final_poly(bytes: &[u8], trace_width: usize, quotient_segments: usize) -> Vec<u64> {
+    let (off, fps) = final_poly_offset(bytes, trace_width, quotient_segments);
     (0..fps)
         .map(|i| u64::from_le_bytes(bytes[off + i * 8..off + i * 8 + 8].try_into().unwrap()))
         .collect()
 }
 
-fn write_final_poly_coeff(bytes: &mut [u8], trace_width: usize, index: usize, value: u64) {
-    let (off, fps) = final_poly_offset(bytes, trace_width);
+fn write_final_poly_coeff(
+    bytes: &mut [u8],
+    trace_width: usize,
+    quotient_segments: usize,
+    index: usize,
+    value: u64,
+) {
+    let (off, fps) = final_poly_offset(bytes, trace_width, quotient_segments);
     assert!(index < fps, "coefficient index {index} out of range (fps {fps})");
     bytes[off + index * 8..off + index * 8 + 8].copy_from_slice(&value.to_le_bytes());
 }
@@ -105,7 +120,7 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
     // C0, legacy path.
     {
         let data = p01_stark::compact::generate_compact_proof(42);
-        let poly = read_final_poly(&data.proof_bytes, 3);
+        let poly = read_final_poly(&data.proof_bytes, 3, LEGACY_QUOTIENT_SEGMENTS);
         assert_eq!(poly.len(), 16, "C0 fri_final_poly_size");
         for (i, &c) in poly.iter().enumerate().skip(LEGACY_FRI_FINAL_POLY_DEGREE_BOUND) {
             assert_eq!(c, 0, "C0 honest final poly coeff {i} must be zero under the bound");
@@ -163,7 +178,7 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
         let config = p01_stark_verifier::compact_proof::get_circuit_config(data.circuit_id)
             .expect("config for circuit id");
         assert_eq!(config.trace_width, *tw, "{label} trace width");
-        let poly = read_final_poly(&data.proof_bytes, *tw);
+        let poly = read_final_poly(&data.proof_bytes, *tw, config.quotient_segments);
         assert_eq!(poly.len(), config.fri_final_poly_size, "{label} fri_final_poly_size");
         assert!(
             config.fri_final_poly_degree_bound < config.fri_final_poly_size,
@@ -240,14 +255,14 @@ fn terminal_degree_bound_rejects_a_high_coefficient_generic() {
 
     // Control: the honest tail is all zeros, so the bound is not vacuous and the
     // rejection below cannot be a property every C1 proof has.
-    let honest_poly = read_final_poly(&honest.proof_bytes, config.trace_width);
+    let honest_poly = read_final_poly(&honest.proof_bytes, config.trace_width, config.quotient_segments);
     for (i, &c) in honest_poly.iter().enumerate().skip(config.fri_final_poly_degree_bound) {
         assert_eq!(c, 0, "honest C1 final poly coeff {i} must be zero under the bound");
     }
 
     // Premise: the forged proof really does publish a coefficient above the
     // bound. Without this the assertion below would pin a variant on nothing.
-    let poly = read_final_poly(&forged.proof_bytes, config.trace_width);
+    let poly = read_final_poly(&forged.proof_bytes, config.trace_width, config.quotient_segments);
     assert_eq!(poly.len(), config.fri_final_poly_size, "C1 fri_final_poly_size");
     let spilled: Vec<usize> = poly
         .iter()
@@ -298,7 +313,7 @@ fn terminal_degree_bound_check_in_isolation() {
     let data = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
     let config = &CONFIG_POOL_COMMITMENT;
     let mut bytes = data.proof_bytes.clone();
-    write_final_poly_coeff(&mut bytes, config.trace_width, 15, MODULUS);
+    write_final_poly_coeff(&mut bytes, config.trace_width, config.quotient_segments, 15, MODULUS);
     assert!(
         GenericCompactProof::from_bytes(&bytes, config).is_none(),
         "MODULUS in a final-poly slot must fail the parse-time canonicity check",
@@ -306,7 +321,7 @@ fn terminal_degree_bound_check_in_isolation() {
 
     // Same for a slot BELOW the bound: canonicity is not a property of the tail.
     let mut bytes = data.proof_bytes.clone();
-    write_final_poly_coeff(&mut bytes, config.trace_width, 0, MODULUS);
+    write_final_poly_coeff(&mut bytes, config.trace_width, config.quotient_segments, 0, MODULUS);
     assert!(
         GenericCompactProof::from_bytes(&bytes, config).is_none(),
         "MODULUS below the bound must fail the parse-time canonicity check too",
@@ -315,7 +330,7 @@ fn terminal_degree_bound_check_in_isolation() {
     // And on the legacy parser.
     let c0 = p01_stark::compact::generate_compact_proof(42);
     let mut bytes = c0.proof_bytes.clone();
-    write_final_poly_coeff(&mut bytes, 3, 15, MODULUS);
+    write_final_poly_coeff(&mut bytes, 3, LEGACY_QUOTIENT_SEGMENTS, 15, MODULUS);
     assert!(
         CompactStarkProof::from_bytes(&bytes).is_none(),
         "legacy parser must reject MODULUS in a final-poly slot",
@@ -326,23 +341,135 @@ fn terminal_degree_bound_check_in_isolation() {
 // T1 / T2 — the coordinated forgery. THE acceptance criterion.
 // ============================================================================
 
-/// Residual work a coordinated forgery still costs after B1, per circuit.
+/// Residual work a coordinated forgery still costs, per circuit, IN BOTH
+/// COLUMNS. C0..C6.
 ///
-/// This is ARITHMETIC on T5's measured 1.000 bits/query, not a measurement: the
-/// test runs the single-nonce version of the attack. Grinding to all-even
-/// terminal indices costs ~2^(num_queries + GRINDING_BITS) hashes. Asserted
-/// against the configs below so nobody can quietly quote a bigger number.
-const B1_RESIDUAL_FORGERY_BITS: [u32; 7] = [43, 43, 43, 38, 43, 38, 38];
+/// # Why there are two arrays and not one
+///
+/// A single number here has already been wrong twice. Pre-B1 it was
+/// `num_queries * log2(blowup) + grinding` = 124, off by 4x because the FRI rate
+/// was 1/2 and not 1/16. Post-B1 it was `num_queries * 1.000 + grinding`, which
+/// was right about the query term and silent about the fact that every
+/// Fiat-Shamir challenge in this construction is ONE base-field Goldilocks
+/// element — a hard ceiling the query term cannot cross.
+///
+/// So both columns ship, together, and `soundness_bits_are_derived_from_the_config`
+/// below DERIVES both from `CircuitConfig` rather than comparing them to each
+/// other. Neither can be published without the other.
+///
+/// * CONJECTURED — ethSTARK Conjecture 8.4, list decoding to capacity:
+///   `min( num_queries * log2(1/rho) + grinding , field_floor )`.
+/// * UNCONDITIONAL — unique decoding, a theorem, no conjecture:
+///   `min( num_queries * log2(2/(1+rho)) + grinding , field_floor )`.
+///
+/// with `rho = fri_final_poly_degree_bound / fri_final_poly_size` MEASURED (T5)
+/// and
+///
+/// ```text
+///   field_floor = 64 - log2( 8n + (w + k + 1) + num_folds * lde_size )
+/// ```
+///
+/// Post-B2 the query term is 110-130 bits on every circuit and the floor is
+/// 47.8-52.5, so the CONJECTURED column is floor-bound everywhere — B2 bought
+/// real bits, and then the base field ate the surplus. Grinding cannot lift the
+/// floor: the nonce is absorbed AFTER z, gamma and every alpha, so an adversary
+/// who wins the OOD or proximity lottery wins with zero grinding.
+///
+/// # What these numbers mean in hours
+///
+/// 2^47.8 is about 8 GPU-hours at 10 GH/s of SHA-256 on one consumer card;
+/// 2^42 is about 20 GPU-minutes. Under Grover the forgery is a search, so the
+/// quantum figures are roughly half: ~24 bits post-B2. Nothing here is
+/// publishable as a security level. Lifting the floor needs the challenges drawn
+/// from an extension field, which is a separate change and another wire break.
+const B2_CONJECTURED_FORGERY_BITS: [u32; 7] = [52, 50, 50, 47, 48, 47, 47];
+const B2_UNCONDITIONAL_FORGERY_BITS: [u32; 7] = [46, 46, 46, 42, 46, 42, 42];
 
+/// The DERIVED twin of the two arrays above.
+///
+/// [B2] The predecessor of this test hard-coded `const GRINDING_BITS: u32 = 16;`
+/// as a LOCAL shadow and asserted `bits == num_queries + grinding` — which bakes
+/// in 1.000 bits per query. It therefore stayed green through a grinding change
+/// (16 -> 22) AND through a rate change (1.000 -> 4.000 bits/query), asserting
+/// nothing about either. Everything below is read out of `CircuitConfig` and the
+/// shipped `GRINDING_BITS`; there are no literals in the derivation.
 #[test]
-fn residual_forgery_bits_match_num_queries_plus_grinding() {
-    const GRINDING_BITS: u32 = 16;
+fn soundness_bits_are_derived_from_the_config() {
+    use p01_stark_verifier::compact_proof::GRINDING_BITS;
+
     for id in 0u8..=6 {
-        let config = p01_stark_verifier::compact_proof::get_circuit_config(id).unwrap();
+        let c = p01_stark_verifier::compact_proof::get_circuit_config(id).unwrap();
+
+        // MEASURED rate. T5 / T5b show an aliased degree-<bound terminal poly
+        // agreeing at exactly `bound` of `fri_final_poly_size` points, so this
+        // ratio IS the per-query rate and not an assumption about the blowup.
+        assert!(
+            c.fri_final_poly_degree_bound >= 1
+                && c.fri_final_poly_degree_bound < c.fri_final_poly_size,
+            "C{id} terminal check is VACUOUS or degenerate: bound {} vs size {}",
+            c.fri_final_poly_degree_bound,
+            c.fri_final_poly_size,
+        );
+        let rho = c.fri_final_poly_degree_bound as f64 / c.fri_final_poly_size as f64;
+
+        // The base-field Fiat-Shamir floor. `w + k + 1` counts the OOD claims
+        // absorbed before gamma (trace current + next are folded into the 8n
+        // trace-degree term); `num_folds * lde_size` is the proximity term.
+        let num_folds = (c.lde_size / c.fri_final_poly_size).trailing_zeros() as usize;
+        let field_terms = 8.0 * c.trace_length as f64
+            + (c.trace_width + c.quotient_segments + 1) as f64
+            + (num_folds * c.lde_size) as f64;
+        let field_floor = 64.0 - field_terms.log2();
+
+        let nq = c.num_queries as f64;
+        let g = GRINDING_BITS as f64;
+        let conj = (nq * (1.0 / rho).log2() + g).min(field_floor).floor() as u32;
+        let uncond = (nq * (2.0 / (1.0 + rho)).log2() + g).min(field_floor).floor() as u32;
+
+        println!(
+            "[B2 bits] C{id}: rho=1/{:.0} query_conj={:.1} query_uncond={:.1}              floor={:.2} -> conjectured {conj}, unconditional {uncond}",
+            1.0 / rho,
+            nq * (1.0 / rho).log2() + g,
+            nq * (2.0 / (1.0 + rho)).log2() + g,
+            field_floor,
+        );
+
         assert_eq!(
-            B1_RESIDUAL_FORGERY_BITS[id as usize],
-            config.num_queries as u32 + GRINDING_BITS,
-            "C{id} residual-forgery figure must be num_queries + grinding_bits, nothing larger",
+            B2_CONJECTURED_FORGERY_BITS[id as usize], conj,
+            "C{id} conjectured figure must be min(num_queries*log2(1/rho) + grinding,              field_floor) at the MEASURED rho, nothing larger",
+        );
+        assert_eq!(
+            B2_UNCONDITIONAL_FORGERY_BITS[id as usize], uncond,
+            "C{id} unconditional figure must be min(num_queries*log2(2/(1+rho)) +              grinding, field_floor), nothing larger",
+        );
+        assert!(
+            uncond <= conj,
+            "C{id} unique decoding cannot beat list decoding to capacity",
+        );
+    }
+}
+
+/// The two columns must be quoted together, and the floor must actually bind.
+///
+/// If a future change makes the query term the smaller of the two, the
+/// conjectured column stops being a statement about the base field and the
+/// commentary above goes stale — fail loudly rather than let the arrays drift
+/// into meaning something else.
+#[test]
+fn the_conjectured_column_is_floor_bound_on_every_circuit() {
+    use p01_stark_verifier::compact_proof::GRINDING_BITS;
+    for id in 0u8..=6 {
+        let c = p01_stark_verifier::compact_proof::get_circuit_config(id).unwrap();
+        let rho = c.fri_final_poly_degree_bound as f64 / c.fri_final_poly_size as f64;
+        let num_folds = (c.lde_size / c.fri_final_poly_size).trailing_zeros() as usize;
+        let field_terms = 8.0 * c.trace_length as f64
+            + (c.trace_width + c.quotient_segments + 1) as f64
+            + (num_folds * c.lde_size) as f64;
+        let field_floor = 64.0 - field_terms.log2();
+        let query_term = c.num_queries as f64 * (1.0 / rho).log2() + GRINDING_BITS as f64;
+        assert!(
+            query_term > field_floor,
+            "C{id}: the conjectured column is no longer floor-bound (query {query_term:.1}              vs floor {field_floor:.2}). The arrays and their commentary describe a              floor-bound regime; re-derive both before touching them.",
         );
     }
 }
@@ -509,7 +636,7 @@ fn t1_t2_t3_c1_coordinated_forgery_matrix() {
     );
     let parsed = GenericCompactProof::from_bytes(&aliased.proof_bytes, config)
         .expect("aliased forged C1 proof still parses");
-    let poly = read_final_poly(&aliased.proof_bytes, config.trace_width);
+    let poly = read_final_poly(&aliased.proof_bytes, config.trace_width, config.quotient_segments);
     for (i, &c) in poly.iter().enumerate().skip(config.fri_final_poly_degree_bound) {
         assert_eq!(c, 0, "T2: the aliased poly must be WITHIN the degree bound (coeff {i})");
     }
@@ -726,7 +853,7 @@ fn run_generic_forgery_case(
     // --- T2.
     let parsed = GenericCompactProof::from_bytes(&aliased.proof_bytes, config)
         .unwrap_or_else(|| panic!("{label}: aliased forged proof still parses"));
-    let poly = read_final_poly(&aliased.proof_bytes, config.trace_width);
+    let poly = read_final_poly(&aliased.proof_bytes, config.trace_width, config.quotient_segments);
     for (i, &c) in poly.iter().enumerate().skip(config.fri_final_poly_degree_bound) {
         assert_eq!(c, 0, "{label} T2: the aliased poly must be WITHIN the bound (coeff {i})");
     }
@@ -908,32 +1035,69 @@ fn t1_t2_t3_c5_coordinated_forgery() {
 // ============================================================================
 
 /// Take the aliased terminal polynomial and evaluate the terminal fold check in
-/// isolation at every one of the 16 terminal indices. It must agree at all 8
-/// EVEN indices and disagree at all 8 ODD ones.
+/// isolation at every one of the 16 terminal indices.
 ///
-/// That is `-log2(8/16) = 1.000` bits per query as an OBSERVATION, not an
-/// argument, and it is exactly the already-measured FRI rate of ~1/2 that
-/// `deg(Q) = 4088` on an 8192 LDE implies. Never quote
-/// `num_queries * log2(blowup)`.
+/// # The number this test exists to produce
+///
+/// The agreement count IS the per-query rate: `-log2(agree / 16)` bits. It is an
+/// OBSERVATION, not an argument, and it is the only per-query rate figure that
+/// may be quoted anywhere.
+///
+/// * PRE-B2, MEASURED: `bound = 8` of 16, agreement at all 8 EVEN indices
+///   (`x_j^8 = (-1)^j`, so the aliasing error vanishes iff `j` is even) —
+///   `-log2(8/16) = 1.000` bits per query, matching `deg(Q) = 4088` on an 8192
+///   LDE, i.e. `rho = 1/2`.
+/// * POST-B2, MEASURED: `bound = 1` of 16, agreement at index 0 ALONE —
+///   `-log2(1/16) = 4.000` bits per query, i.e. `rho = 1/16`.
+///
+/// Both facts are pinned here. B2 did not change the code the adversary runs; it
+/// changed `deg(D)` from `8n - 9` to `n - 2` by splitting the quotient, which
+/// collapsed the terminal degree bound from 8 to 1 and took the achievable
+/// agreement with it. `num_queries * log2(blowup)` is the RIGHT formula for the
+/// query term for the first time now — but only because `bound == 1` is asserted
+/// below, and it must never be quoted without that check.
+///
+/// The query term is still not the security level: it overshoots the
+/// base-field Fiat-Shamir floor on all seven circuits. See
+/// `B2_CONJECTURED_FORGERY_BITS` / `B2_UNCONDITIONAL_FORGERY_BITS`.
 #[test]
 fn t5_aliased_terminal_poly_agrees_at_exactly_the_even_indices() {
     // The 16th root of unity over the terminal domain, i.e. the generator the
     // verifier uses for Horner: gen_final = lde_gen^(2^num_folds).
     let (agree, disagree) = p01_stark::compact::measure_aliased_terminal_agreement();
-    println!("[T5] terminal agreement: {} of 16 indices, disagreement at {:?}", agree.len(), disagree);
+    println!(
+        "[T5] terminal agreement: {} of 16 indices, agreement at {:?}, disagreement at {:?}",
+        agree.len(),
+        agree,
+        disagree,
+    );
+    let bound = CONFIG_POOL_COMMITMENT.fri_final_poly_degree_bound;
+    let fps = CONFIG_POOL_COMMITMENT.fri_final_poly_size;
+    assert_eq!(
+        bound, 1,
+        "[B2] the generic terminal bound must be 1 of {fps} post-segmentation. If it \
+         is not, the quotient split regressed and every bits-per-query figure in this \
+         tree is an over-claim.",
+    );
     assert_eq!(
         agree.len(),
-        8,
-        "an aliased degree-<8 poly must agree with the 16-value terminal layer at \
-         EXACTLY 8 points — that is the maximum a rate-1/2 code allows, and the \
-         source of the 1.000 bits/query figure",
+        bound,
+        "an aliased degree-<{bound} poly must agree with the {fps}-value terminal layer \
+         at EXACTLY {bound} points — that is the maximum a rate-{bound}/{fps} code allows, \
+         and it is the source of the {} bits/query figure. PRE-B2 this was 8 of 16 \
+         (1.000 bits).",
+        (fps as f64 / bound as f64).log2(),
+    );
+    let stride = fps / bound;
+    assert!(
+        agree.iter().all(|j| j % stride == 0),
+        "agreement must be at j = 0 mod {stride} (the order-{bound} subgroup of the \
+         terminal domain). Got {agree:?}",
     );
     assert!(
-        agree.iter().all(|j| j % 2 == 0),
-        "agreement must be at the EVEN terminal indices: x_j^8 = (-1)^j, so the \
-         aliasing error vanishes iff j is even. Got {agree:?}",
+        disagree.iter().all(|j| j % stride != 0),
+        "disagreement must be everything else",
     );
-    assert!(disagree.iter().all(|j| j % 2 == 1), "disagreement must be the odd indices");
 }
 
 // ============================================================================
@@ -995,7 +1159,7 @@ fn t2_legacy_c0_subgroup_alias_reaches_the_terminal_check() {
     // The published poly is INSIDE the bound, so the degree check CANNOT be what
     // rejects this proof. Assert that directly instead of inferring it from the
     // returned variant.
-    let poly = read_final_poly(&forged.proof_bytes, 3);
+    let poly = read_final_poly(&forged.proof_bytes, 3, LEGACY_QUOTIENT_SEGMENTS);
     assert_eq!(poly.len(), 16, "C0 fri_final_poly_size");
     for (i, &c) in poly.iter().enumerate().skip(LEGACY_FRI_FINAL_POLY_DEGREE_BOUND) {
         assert_eq!(c, 0, "SubgroupAlias must be within C0's bound of 7 (coeff {i})");
@@ -1055,12 +1219,16 @@ fn t2_legacy_c0_subgroup_alias_reaches_the_terminal_check() {
 
 /// MEASURE what `SubgroupAlias` is worth per query on the LEGACY path.
 ///
-/// This is a SEPARATE figure from T5's 1.000 bits/query and must never be quoted
-/// as one. T5 measures the `bound == fps/2` case on the generic path: 8 agreeing
-/// indices of 16. C0's bound is 7 of 16, so the largest usable subgroup is k = 4
-/// and the agreement is 4 of 16, i.e. 2.000 bits per query. Higher is WORSE for
-/// the adversary, so this neither improves nor weakens anything B2 will have to
-/// say about the generic path; it is a second, independent number.
+/// PRE-B2 this was a SEPARATE figure from T5's: C0's bound was 7 of 16, the
+/// largest usable subgroup was `k = 4`, and the agreement was 4 of 16 — 2.000
+/// bits per query, against the generic path's 1.000. The two had to be quoted
+/// separately or not at all.
+///
+/// POST-B2 both bounds are 1, so both paths measure 1 of 16 and 4.000 bits per
+/// query, and the split between them is gone. That is not a coincidence to be
+/// papered over: it is the point of segmentation. The bound is now a property of
+/// the CONSTRUCTION (`deg(D) = n - 2` whatever the AIR does) rather than of the
+/// AIR's periodic-factor count, so C0 stopped being special.
 #[test]
 fn t5b_subgroup_alias_terminal_agreement_on_the_legacy_path() {
     let (agree, disagree) = p01_stark::compact::measure_subgroup_alias_terminal_agreement_c0();
@@ -1072,22 +1240,38 @@ fn t5b_subgroup_alias_terminal_agreement_on_the_legacy_path() {
         disagree,
     );
     assert_eq!(
-        agree.len(),
-        4,
-        "c mod (x^4 - 1) agrees with the true 16-value terminal layer at exactly the \
-         4 points where x^4 = 1",
+        LEGACY_FRI_FINAL_POLY_DEGREE_BOUND, 1,
+        "[B2] C0's terminal bound must be 1 of 16 post-segmentation",
     );
-    assert!(agree.iter().all(|j| j % 4 == 0), "agreement must be at j = 0 mod 4, got {agree:?}");
-    assert!(disagree.iter().all(|j| j % 4 != 0), "disagreement must be everything else");
+    // Largest power of two <= bound, i.e. the biggest subgroup the alias can use.
+    let k = 1usize;
+    assert_eq!(
+        agree.len(),
+        k,
+        "c mod (x^{k} - 1) agrees with the true 16-value terminal layer at exactly the \
+         {k} points where x^{k} = 1. PRE-B2 that was 4 of 16 (bound 7, k = 4, 2.000 \
+         bits/query); it is now 1 of 16, i.e. 4.000 bits/query.",
+    );
+    let stride = 16 / k;
+    assert!(
+        agree.iter().all(|j| j % stride == 0),
+        "agreement must be at j = 0 mod {stride}, got {agree:?}",
+    );
+    assert!(disagree.iter().all(|j| j % stride != 0), "disagreement must be everything else");
 }
 
-/// `SubgroupAlias` and `AliasedFold` are the SAME play when the bound is exactly
-/// half the published size: `k == fps/2`, and `c mod (x^8 - 1)` is precisely
-/// `p_m = c_m + c_{m+8}`.
+/// `SubgroupAlias` and `AliasedFold` are the SAME play.
+///
+/// PRE-B2 that was true only at `bound == fps/2`, where `c mod (x^8 - 1)` is
+/// precisely `p_m = c_m + c_{m+8}`. [B2] `apply_terminal_poly_probe` now builds
+/// `AliasedFold` from the general subgroup form for every bound, because the
+/// `bound == fps/2` special case died with the bound moving to 1 — so the two
+/// variants are the same construction at ANY bound, and this test says so at the
+/// bound the tree actually ships.
 ///
 /// Asserted on C1 so the generalisation cannot silently diverge from the variant
 /// T5 measures. If these two ever produce different bytes, one of them has been
-/// changed and T5's 1.000 bits/query no longer describes what `SubgroupAlias`
+/// changed and T5's bits/query figure no longer describes what `SubgroupAlias`
 /// does on the generic path.
 #[test]
 fn subgroup_alias_equals_aliased_fold_when_the_bound_is_half_the_size() {
@@ -1280,19 +1464,19 @@ fn both_fri_paths_derive_the_deep_coefficient_and_check_the_degree_bound() {
 /// `FIXTURE_C0_SHA256` and `FIXTURE_C1_SHA256` keep their names because
 /// `wireFormat.test.ts` cites both by name.
 const FIXTURE_C0_SHA256: &str =
-    "e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7";
+    "5ea292acb52a3f352fbe9280c3b59291b77e92a066a6fbce743dbf8db456c09b";
 const FIXTURE_C1_SHA256: &str =
-    "935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b";
+    "09e9476db988eef4950ed2ef64c57d0ab9569f7eeb40e27bb2ab2cf1e204a83d";
 const FIXTURE_C2_SHA256: &str =
-    "063d86a18071ae369132c12a69c5af0e3c2efbe82f6340e6d7ec910be80fd49f";
+    "6541e57b85419fd87a4227bf08cfc2f151d0179870ba04d5011338843cd51ce8";
 const FIXTURE_C3_SHA256: &str =
-    "2d97f56ffc3157fe7c644679d2945130efed8ea39c890a24c6c16022e78d5d9c";
+    "abf0e733d82002ff74c45d2677fc213f893cb45b999578f84324c35f5907c5c0";
 const FIXTURE_C4_SHA256: &str =
-    "f877836723d0711e7190c2fd5c8a5c6d0476f21794d39ffd47a075f57d53e3e7";
+    "f4918f36632e011049366c079489b8f70858113f45831bcd76e0cf630d92929a";
 const FIXTURE_C5_SHA256: &str =
-    "78afe9bbd533913771d5c2438e279934114fe4c6db934b67b43c0644376ea125";
+    "28ef7176795111da1df5714dbc11ad3c32892de266242d30dec1cd60e9c252bd";
 const FIXTURE_C6_SHA256: &str =
-    "8e1166f5d08bd948bc70a407d9261d6b88c1de5b257c4545918d9c36d94524fc";
+    "b8dc81e070487ec827e488809f361fc982e0b9c435270855f1a0b95d658cb0be";
 
 fn hex32(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(64);
@@ -1351,13 +1535,13 @@ struct Fixture {
 }
 
 const FIXTURES: [Fixture; 7] = [
-    Fixture { label: "C0", len: 45_001, sha256: FIXTURE_C0_SHA256, build: fixture_c0 },
-    Fixture { label: "C1", len: 65_801, sha256: FIXTURE_C1_SHA256, build: fixture_c1 },
-    Fixture { label: "C2", len: 66_681, sha256: FIXTURE_C2_SHA256, build: fixture_c2 },
-    Fixture { label: "C3", len: 75_637, sha256: FIXTURE_C3_SHA256, build: fixture_c3 },
-    Fixture { label: "C4", len: 78_377, sha256: FIXTURE_C4_SHA256, build: fixture_c4 },
-    Fixture { label: "C5", len: 76_357, sha256: FIXTURE_C5_SHA256, build: fixture_c5 },
-    Fixture { label: "C6", len: 78_517, sha256: FIXTURE_C6_SHA256, build: fixture_c6 },
+    Fixture { label: "C0", len: 47_641, sha256: FIXTURE_C0_SHA256, build: fixture_c0 },
+    Fixture { label: "C1", len: 68_881, sha256: FIXTURE_C1_SHA256, build: fixture_c1 },
+    Fixture { label: "C2", len: 69_761, sha256: FIXTURE_C2_SHA256, build: fixture_c2 },
+    Fixture { label: "C3", len: 78_157, sha256: FIXTURE_C3_SHA256, build: fixture_c3 },
+    Fixture { label: "C4", len: 81_457, sha256: FIXTURE_C4_SHA256, build: fixture_c4 },
+    Fixture { label: "C5", len: 78_877, sha256: FIXTURE_C5_SHA256, build: fixture_c5 },
+    Fixture { label: "C6", len: 81_037, sha256: FIXTURE_C6_SHA256, build: fixture_c6 },
 ];
 
 #[test]
@@ -1374,20 +1558,38 @@ fn fixture_proofs_are_deterministic() {
 
 #[test]
 fn cross_language_fixture_digests() {
-    for f in FIXTURES.iter() {
-        let bytes = (f.build)();
-        let digest = hex32(&solana_sha256_hasher::hashv(&[&bytes]).to_bytes());
-        println!("[FIXTURE] {} {} bytes sha256 {digest}", f.label, bytes.len());
-        assert_eq!(bytes.len(), f.len, "{} fixture length pin", f.label);
-        assert_eq!(
-            digest, f.sha256,
-            "\n\n  >>> {} FIXTURE DIGEST DRIFT <<<\n  The Rust prover's output changed. If \
-             that was deliberate, RESHIP THE WASM PROVER and update BOTH this constant and \
-             the `Pin.sha256` twin in packages/stark-prover/src/wireFormat.test.ts. Do not \
-             update one of them.\n",
-            f.label,
-        );
+    // [B2] Measure ALL SEVEN first, print the whole table, and only then assert.
+    // The old body asserted inside the loop, so a wire-format change surfaced one
+    // circuit per run and re-pinning took seven rebuilds of a 20-minute suite —
+    // which is exactly the pressure that produces a half-updated pin set.
+    let measured: Vec<(&'static str, usize, String)> = FIXTURES
+        .iter()
+        .map(|f| {
+            let bytes = (f.build)();
+            let digest = hex32(&solana_sha256_hasher::hashv(&[&bytes]).to_bytes());
+            (f.label, bytes.len(), digest)
+        })
+        .collect();
+    for (label, len, digest) in measured.iter() {
+        println!("[FIXTURE] {label} {len} bytes sha256 {digest}");
     }
+    let mut drift: Vec<String> = Vec::new();
+    for (f, (label, len, digest)) in FIXTURES.iter().zip(measured.iter()) {
+        if *len != f.len {
+            drift.push(format!("{label} length: measured {len}, pinned {}", f.len));
+        }
+        if digest != f.sha256 {
+            drift.push(format!("{label} sha256: measured {digest}, pinned {}", f.sha256));
+        }
+    }
+    assert!(
+        drift.is_empty(),
+        "\n\n  >>> FIXTURE DRIFT <<<\n  {}\n\n  The Rust prover's output changed. If that \
+         was deliberate, RESHIP THE WASM PROVER and update BOTH these constants and the \
+         `Pin.absolute` / `Pin.sha256` twins in packages/stark-prover/src/wireFormat.test.ts \
+         and packages/stark-prover/scripts/prover-behaviour.mjs. Do not update one of them.\n",
+        drift.join("\n  "),
+    );
 }
 
 // ============================================================================

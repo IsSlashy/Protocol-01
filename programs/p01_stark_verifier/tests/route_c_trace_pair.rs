@@ -104,7 +104,10 @@ fn trace_block_offsets(cfg: &CircuitConfig, bytes: &[u8], q: usize) -> (usize, u
     let num_folds = (cfg.lde_size / cfg.fri_final_poly_size).trailing_zeros() as usize;
     let num_commits = num_folds - 1;
 
-    let mut off = 32 + 32 + tw * 8 + tw * 8 + 8 + 8;
+    // [B2] ood_quotient is `quotient_segments` felts, and each query's quotient
+    // mirror block and tail entry are too.
+    let k = cfg.quotient_segments;
+    let mut off = 32 + 32 + tw * 8 + tw * 8 + 8 + k * 8;
     assert_eq!(bytes[off] as usize, num_commits, "num_fri_layers byte drift");
     off += 1 + num_commits * 32;
     off += 2 + cfg.fri_final_poly_size * 8;
@@ -113,10 +116,10 @@ fn trace_block_offsets(cfg: &CircuitConfig, bytes: &[u8], q: usize) -> (usize, u
     let fri_per_query: usize = (0..num_commits).map(|i| 16 + (md - i - 2) * 32).sum();
     // [ROUTE C] four rows + two depth-(md-1) pair paths.
     let trace_block = 4 * (tw * 8) + 2 * ((md - 1) * 32);
-    let per_query = 4 + trace_block + 8 + (md - 1) * 32 + fri_per_query;
+    let per_query = 4 + trace_block + k * 8 + (md - 1) * 32 + fri_per_query;
 
     assert_eq!(
-        off + per_query * cfg.num_queries + cfg.num_queries * 8,
+        off + per_query * cfg.num_queries + cfg.num_queries * k * 8,
         bytes.len(),
         "Route C serializer layout drift — offsets in this test are stale",
     );
@@ -146,8 +149,28 @@ const VERIFY_SRC_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/verify.r
 /// verifier path for four shipped instructions
 /// (`zk_shielded::{pause,resume,cancel_private_stark}` and
 /// `p01_quantum_wallet/src/stark.rs:42`).
-const TRACE_AUTH_CALL_SITE: &str = "if !merkle::verify_merkle_path_2seg(";
+///
+/// [B2] The pattern now names `&proof.trace_root` explicitly. It used to be the
+/// bare `if !merkle::verify_merkle_path_2seg(`, which was unambiguous only while
+/// the trace tree was the sole two-segment leaf in the verifier. B2 gave the
+/// quotient pair leaf `quotient_segments` felts per half, so it moved onto the
+/// same helper against `&proof.quotient_root` — and the bare count went 4 -> 6.
+///
+/// Relaxing the count to 6 would have been the WRONG fix: it would let a future
+/// edit delete a trace site and add a quotient site and keep the tripwire green.
+/// Naming the root keeps this constant meaning exactly what it has always meant,
+/// and the quotient sites get their own count below.
+const TRACE_AUTH_CALL_SITE: &str =
+    "if !merkle::verify_merkle_path_2seg(\n            &proof.trace_root,";
 const TRACE_AUTH_CALL_SITES_EXPECTED: usize = 4;
+
+/// [B2] The quotient pair-leaf openings, same rule, separate count: one in
+/// `verify_merkle_proofs_generic`, one in `verify_merkle_proofs_legacy`. With
+/// either gone the verifier accepts UNAUTHENTICATED quotient segment values,
+/// which is the half of the DEEP composition that carries the AIR.
+const QUOTIENT_AUTH_CALL_SITE: &str =
+    "if !merkle::verify_merkle_path_2seg(\n            &proof.quotient_root,";
+const QUOTIENT_AUTH_CALL_SITES_EXPECTED: usize = 2;
 
 /// The pre-land assertion. If this is red, DO NOT LAND THE TREE.
 ///
@@ -175,8 +198,15 @@ fn all_four_trace_authentication_call_sites_are_present() {
     let on_disk = std::fs::read_to_string(VERIFY_SRC_PATH)
         .unwrap_or_else(|e| panic!("cannot read {VERIFY_SRC_PATH}: {e}"));
 
-    let on_disk_count = on_disk.matches(TRACE_AUTH_CALL_SITE).count();
-    let embedded_count = EMBEDDED_VERIFY_SRC.matches(TRACE_AUTH_CALL_SITE).count();
+    // [B2] Count on LF-normalised text. `src/verify.rs` is stored with CRLF, so a
+    // pattern that spans a line break has to say which line ending it means — and
+    // the answer must not be "whichever the checkout happened to produce", or the
+    // tripwire silently counts zero and this file's most important assertion
+    // becomes decorative. Staleness is still compared on the RAW bytes below.
+    let on_disk_lf = on_disk.replace("\r\n", "\n");
+    let embedded_lf = EMBEDDED_VERIFY_SRC.replace("\r\n", "\n");
+    let on_disk_count = on_disk_lf.matches(TRACE_AUTH_CALL_SITE).count();
+    let embedded_count = embedded_lf.matches(TRACE_AUTH_CALL_SITE).count();
 
     // Staleness first: a red below means nothing if the exe is not the source.
     if on_disk != EMBEDDED_VERIFY_SRC {
@@ -217,6 +247,25 @@ fn all_four_trace_authentication_call_sites_are_present() {
          \n  verify_merkle_proofs_legacy). With any of them gone the verifier accepts\
          \n  UNAUTHENTICATED trace rows. DO NOT LAND THIS TREE — restore the missing\
          \n  block(s) rather than adjusting this count.\n"
+    );
+
+    // [B2] Same tripwire for the quotient tree. Read live off disk, for the same
+    // reason: it is the assertion that still means something when the crate does
+    // not compile.
+    let q_on_disk = on_disk_lf.matches(QUOTIENT_AUTH_CALL_SITE).count();
+    let q_embedded = embedded_lf.matches(QUOTIENT_AUTH_CALL_SITE).count();
+    assert_eq!(
+        q_on_disk, q_embedded,
+        "source text identical but quotient call-site counts differ — impossible; \
+         re-read this test"
+    );
+    assert_eq!(
+        q_on_disk, QUOTIENT_AUTH_CALL_SITES_EXPECTED,
+        "\n\n  >>> QUOTIENT AUTHENTICATION MISSING <<<\
+         \n  {VERIFY_SRC_PATH} contains {q_on_disk} `{QUOTIENT_AUTH_CALL_SITE}` call\
+         \n  sites, expected {QUOTIENT_AUTH_CALL_SITES_EXPECTED} (one in verify_merkle_proofs_generic, one in\
+         \n  verify_merkle_proofs_legacy). With either gone the verifier accepts\
+         \n  UNAUTHENTICATED quotient segment values. DO NOT LAND THIS TREE.\n"
     );
 
     // The count is necessary but not sufficient: four calls that all ignore their
@@ -391,7 +440,11 @@ fn old_layout_trace_openings(
     let num_folds = (cfg.lde_size / cfg.fri_final_poly_size).trailing_zeros() as usize;
     let num_commits = num_folds - 1;
 
-    let mut off = 32 + 32 + tw * 8 + tw * 8 + 8 + 8;
+    // [B2] The proof this walks is built by `*_with_trace_leaf(LegacyRowLeaf)`,
+    // which is CURRENT in every respect except the trace-leaf rule — so it
+    // carries the k-wide quotient fields like any other proof of this tree.
+    let k = cfg.quotient_segments;
+    let mut off = 32 + 32 + tw * 8 + tw * 8 + 8 + k * 8;
     assert_eq!(bytes[off] as usize, num_commits, "num_fri_layers byte drift");
     off += 1 + num_commits * 32;
     off += 2 + cfg.fri_final_poly_size * 8;
@@ -399,9 +452,10 @@ fn old_layout_trace_openings(
 
     let fri_per_query: usize = (0..num_commits).map(|i| 16 + (md - i - 2) * 32).sum();
     // Pre-Route-C: TWO rows + TWO depth-md paths.
-    let per_query = 4 + 2 * (tw * 8) + 2 * (md * 32) + 8 + (md - 1) * 32 + fri_per_query;
+    let per_query =
+        4 + 2 * (tw * 8) + 2 * (md * 32) + k * 8 + (md - 1) * 32 + fri_per_query;
     assert_eq!(
-        off + per_query * cfg.num_queries + cfg.num_queries * 8,
+        off + per_query * cfg.num_queries + cfg.num_queries * k * 8,
         bytes.len(),
         "pre-Route-C layout drift in this test's offsets",
     );
@@ -526,8 +580,15 @@ fn route_c_legacy_c0_honest_proof_still_verifies() {
     }
 }
 
-/// C0's wire size is fixed, so pin it: `45,001` bytes, `432` fewer than the
-/// pre-Route-C `45,433` (`nq * (16*tw - 64) = 27 * (48 - 64) = -432`).
+/// C0's wire size is fixed, so pin it: `47,641` bytes.
+///
+/// Two closed-form terms, kept separate because they came from different changes
+/// and a single lumped delta would let one absorb a regression in the other:
+///
+/// * Route C: `nq * (16*tw - 64) = 27 * (48 - 64) = -432`
+/// * [B2]:    `8 * (k-1) * (2*nq + 1) = 8 * 6 * 55 = +2,640`
+///
+/// so `45,433 - 432 + 2,640 = 47,641` against the pre-Route-C baseline.
 #[test]
 fn route_c_legacy_c0_wire_size_matches_the_closed_form() {
     let pd = p01_stark::compact::generate_compact_proof(42);
@@ -535,22 +596,27 @@ fn route_c_legacy_c0_wire_size_matches_the_closed_form() {
     let tw = cfg.trace_width;
     let md = cfg.merkle_depth;
     let nq = cfg.num_queries;
+    let k = cfg.quotient_segments;
     let num_commits = (cfg.lde_size / cfg.fri_final_poly_size).trailing_zeros() as usize - 1;
     let fri_per_query: usize = (0..num_commits).map(|i| 16 + (md - i - 2) * 32).sum();
 
-    let expected = 32 + 32 + tw * 8 + tw * 8 + 8 + 8
+    let expected = 32 + 32 + tw * 8 + tw * 8 + 8 + 8 * k
         + 1 + num_commits * 32
         + 2 + cfg.fri_final_poly_size * 8
         + 8 + 2
-        + nq * (4 + 4 * (tw * 8) + 2 * ((md - 1) * 32) + 8 + (md - 1) * 32 + fri_per_query)
-        + nq * 8;
+        + nq * (4 + 4 * (tw * 8) + 2 * ((md - 1) * 32) + 8 * k + (md - 1) * 32 + fri_per_query)
+        + nq * 8 * k;
 
     assert_eq!(pd.proof_bytes.len(), expected, "C0 wire size drift");
-    assert_eq!(pd.proof_bytes.len(), 45_001, "C0 must be 45,001 bytes post-Route-C");
+    assert_eq!(pd.proof_bytes.len(), 47_641, "C0 must be 47,641 bytes post-B2");
+    let route_c_delta = nq as i64 * (16 * tw as i64 - 64);
+    let b2_delta = 8 * (k as i64 - 1) * (2 * nq as i64 + 1);
+    assert_eq!(route_c_delta, -432, "Route C's C0 term is nq*(16*tw-64)");
+    assert_eq!(b2_delta, 2_640, "B2's C0 term is 8*(k-1)*(2*nq+1)");
     assert_eq!(
-        45_433 - pd.proof_bytes.len() as i64,
-        -(nq as i64 * (16 * tw as i64 - 64)),
-        "C0 delta must match the closed form nq * (16*tw - 64) = -432",
+        pd.proof_bytes.len() as i64 - 45_433,
+        route_c_delta + b2_delta,
+        "C0 delta must be Route C's term plus B2's term, each pinned separately",
     );
 }
 
@@ -1107,19 +1173,27 @@ fn route_c_wire_sizes_match_the_closed_form() {
     // Absolute post-Route-C sizes, MEASURED with the `cu_budget` harness. Pinned
     // as literals as well as via the closed form: the closed form alone would stay
     // green if BOTH the baseline and the actual size drifted by the same amount.
-    let absolute: [usize; 7] = [45_001, 65_801, 66_681, 75_637, 78_377, 76_357, 78_517];
+    // [B2] Post-segmentation absolute sizes, MEASURED with `cross_language_fixture_digests`.
+    let absolute: [usize; 7] = [47_641, 68_881, 69_761, 78_157, 81_457, 78_877, 81_037];
 
     for (i, (label, baseline, cfg, actual)) in cases.into_iter().enumerate() {
-        let expected_delta = cfg.num_queries as i64 * (16 * cfg.trace_width as i64 - 64);
+        // Two independent terms against the SAME pre-Route-C baseline. Keeping
+        // them apart is the point: a lumped delta would let a Route C regression
+        // hide inside a B2 gain.
+        let route_c_delta = cfg.num_queries as i64 * (16 * cfg.trace_width as i64 - 64);
+        let b2_delta =
+            8 * (cfg.quotient_segments as i64 - 1) * (2 * cfg.num_queries as i64 + 1);
+        let expected_delta = route_c_delta + b2_delta;
         let measured_delta = actual as i64 - baseline as i64;
         assert_eq!(
             measured_delta, expected_delta,
             "{label}: byte delta {measured_delta} != closed form \
-             nq*(16*tw-64) = {expected_delta} (baseline {baseline}, actual {actual})",
+             nq*(16*tw-64) + 8*(k-1)*(2*nq+1) = {route_c_delta} + {b2_delta} \
+             (baseline {baseline}, actual {actual})",
         );
         assert_eq!(
             actual, absolute[i],
-            "{label}: absolute post-Route-C size drifted (expected {}, got {actual})",
+            "{label}: absolute post-B2 size drifted (expected {}, got {actual})",
             absolute[i],
         );
 
@@ -1128,17 +1202,19 @@ fn route_c_wire_sizes_match_the_closed_form() {
         let tw = cfg.trace_width;
         let md = cfg.merkle_depth;
         let nq = cfg.num_queries;
+        let ks = cfg.quotient_segments;
         let num_commits = (cfg.lde_size / cfg.fri_final_poly_size).trailing_zeros() as usize - 1;
         let fri_per_query: usize = (0..num_commits).map(|k| 16 + (md - k - 2) * 32).sum();
-        let from_config = 32 + 32 + tw * 8 + tw * 8 + 8 + 8
+        let from_config = 32 + 32 + tw * 8 + tw * 8 + 8 + 8 * ks
             + 1 + num_commits * 32
             + 2 + cfg.fri_final_poly_size * 8
             + 8 + 2
-            + nq * (4 + 4 * (tw * 8) + 2 * ((md - 1) * 32) + 8 + (md - 1) * 32 + fri_per_query)
-            + nq * 8;
+            + nq * (4 + 4 * (tw * 8) + 2 * ((md - 1) * 32) + 8 * ks + (md - 1) * 32
+                + fri_per_query)
+            + nq * 8 * ks;
         assert_eq!(
             actual, from_config,
-            "{label}: generator size {actual} != Route C layout re-derived from config \
+            "{label}: generator size {actual} != wire layout re-derived from config \
              {from_config}",
         );
     }

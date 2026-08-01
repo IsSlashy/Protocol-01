@@ -218,8 +218,8 @@ fn default_entry_points_are_canonical() {
 /// second path is caught. Sizes are computed from the format, not hard-coded.
 #[test]
 fn pair_leaf_wire_size_matches_the_format() {
-    // C1: tw=3, md=11, num_queries=27, lde=2048, final_poly=16.
-    let expect = expected_wire_size(3, 11, 27, 2048, 16);
+    // C1: tw=3, md=11, num_queries=27, lde=2048, final_poly=16, segments=8.
+    let expect = expected_wire_size(3, 11, 27, 2048, 16, 8);
     let data = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
     assert_eq!(data.proof_bytes.len(), expect, "C1 wire size drift");
 
@@ -235,10 +235,11 @@ fn pair_leaf_wire_size_matches_the_format() {
 // helpers
 // ============================================================================
 
-/// Byte offsets of (query 0's `quotient_mirror_value`, tail `quotient_values[0]`).
+/// Byte offsets of (query 0's quotient mirror BLOCK, tail `quotient_values`).
 ///
-/// Mirrors the prover's serializer exactly; if this drifts the test panics
-/// rather than silently probing the wrong bytes.
+/// [B2] Both are `quotient_segments` felts wide now, and the header's
+/// `ood_quotient` is too. Mirrors the prover's serializer exactly; if this
+/// drifts the test panics rather than silently probing the wrong bytes.
 fn quotient_pair_offsets(
     cfg: &p01_stark_verifier::compact_proof::CircuitConfig,
     bytes: &[u8],
@@ -248,8 +249,9 @@ fn quotient_pair_offsets(
     let num_folds = (cfg.lde_size / cfg.fri_final_poly_size).trailing_zeros() as usize;
     let num_commits = num_folds - 1;
 
-    // header
-    let mut off = 32 + 32 + tw * 8 + tw * 8 + 8 + 8;
+    // header ([B2] ood_quotient is k felts)
+    let k = cfg.quotient_segments;
+    let mut off = 32 + 32 + tw * 8 + tw * 8 + 8 + k * 8;
     assert_eq!(bytes[off] as usize, num_commits, "num_fri_layers byte drift");
     off += 1 + num_commits * 32;
     off += 2 + cfg.fri_final_poly_size * 8;
@@ -264,10 +266,10 @@ fn quotient_pair_offsets(
 
     // full per-query stride, to locate the tail array
     let fri_per_query: usize = (0..num_commits).map(|i| 16 + (md - i - 2) * 32).sum();
-    let per_query = 4 + trace_block + 8 + (md - 1) * 32 + fri_per_query;
+    let per_query = 4 + trace_block + k * 8 + (md - 1) * 32 + fri_per_query;
     let tail = q_start + per_query * cfg.num_queries;
     assert_eq!(
-        tail + cfg.num_queries * 8,
+        tail + cfg.num_queries * k * 8,
         bytes.len(),
         "serializer layout drift — offsets in this test are stale",
     );
@@ -284,18 +286,25 @@ fn write_u64(b: &mut [u8], off: usize, v: u64) {
 }
 
 /// [B4] Post-change wire size, derived from the format.
+///
+/// [B2] `quotient_segments` widens exactly three fields — the header
+/// `ood_quotient`, the per-query mirror block and the tail — for a total delta of
+/// `8*(k-1)*(2*num_queries + 1)`. Merkle depth, path length and layer count are
+/// untouched, which is the whole reason segmentation is affordable.
 fn expected_wire_size(
     tw: usize,
     md: usize,
     num_queries: usize,
     lde_size: usize,
     fri_final_poly_size: usize,
+    quotient_segments: usize,
 ) -> usize {
+    let k = quotient_segments;
     let num_folds = (lde_size / fri_final_poly_size).trailing_zeros() as usize;
     let num_commits = num_folds - 1;
     let fri_per_query: usize = (0..num_commits).map(|i| 16 + (md - i - 2) * 32).sum();
     32 + 32
-        + tw * 8 + tw * 8 + 8 + 8
+        + tw * 8 + tw * 8 + 8 + 8 * k
         + 1 + num_commits * 32
         + 2 + fri_final_poly_size * 8
         + 8 + 2
@@ -303,8 +312,8 @@ fn expected_wire_size(
             // [ROUTE C] four trace rows + two depth-(md-1) trace pair paths.
             4 + 4 * (tw * 8)
             + (md - 1) * 32 + (md - 1) * 32
-            + 8 + (md - 1) * 32
+            + 8 * k + (md - 1) * 32
             + fri_per_query
         )
-        + num_queries * 8
+        + num_queries * 8 * k
 }

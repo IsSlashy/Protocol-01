@@ -46,11 +46,23 @@ fn legacy_subscriber_ownership_roundtrip() {
 #[test]
 fn legacy_rejects_tampered_ood_quotient_via_the_transcript_not_the_identity() {
     let data = p01_stark::compact::generate_compact_proof(42);
-    let mut proof = CompactStarkProof::from_bytes(&data.proof_bytes)
-        .expect("legacy proof should parse");
+    // [B2] `ood_quotient` is no longer one owned felt on the parsed struct — it
+    // is a borrowed `quotient_segments`-wide slice into the proof buffer, so the
+    // tamper happens on the WIRE and the proof is re-parsed. Same property, and
+    // strictly closer to what an attacker can actually do.
+    //
+    // Legacy header: trace_root 32 | quotient_root 32 | ood_current 3*8 |
+    // ood_next 3*8 | ood_z 8, so segment 0 of ood_quotient starts at byte 120.
+    let mut bytes = data.proof_bytes.clone();
+    const OOD_QUOTIENT_OFF: usize = 32 + 32 + 24 + 24 + 8;
+    let original = u64::from_le_bytes(
+        bytes[OOD_QUOTIENT_OFF..OOD_QUOTIENT_OFF + 8].try_into().unwrap(),
+    );
+    let tampered = original.wrapping_add(1) % 0xFFFFFFFF00000001_u64;
+    bytes[OOD_QUOTIENT_OFF..OOD_QUOTIENT_OFF + 8].copy_from_slice(&tampered.to_le_bytes());
 
-    let original = proof.ood_quotient.as_u64();
-    proof.ood_quotient = Felt::new(original.wrapping_add(1) % 0xFFFFFFFF00000001_u64);
+    let proof = CompactStarkProof::from_bytes(&bytes)
+        .expect("legacy proof should still parse after a canonical tamper");
 
     let err = verify_subscriber_ownership(&proof, Felt::new(data.commitment))
         .expect_err("tampered ood_quotient must fail verification");
@@ -75,9 +87,15 @@ fn legacy_rejects_tampered_ood_quotient_via_the_transcript_not_the_identity() {
 fn final_poly_rejects_non_canonical_coefficients() {
     /// Byte offset + count of the `fri_final_poly` field.
     /// Header: trace_root 32 | quotient_root 32 | ood_current 8w | ood_next 8w |
-    /// ood_z 8 | ood_quotient 8 | num_fri_layers 1 | roots 32L | fps u16 | poly.
-    fn final_poly_offset(bytes: &[u8], trace_width: usize) -> (usize, usize) {
-        let mut c = 32 + 32 + trace_width * 8 * 2 + 8 + 8;
+    /// ood_z 8 | ood_quotient 8k | num_fri_layers 1 | roots 32L | fps u16 | poly.
+    ///
+    /// [B2] `ood_quotient` is `quotient_segments` felts, not one.
+    fn final_poly_offset(
+        bytes: &[u8],
+        trace_width: usize,
+        quotient_segments: usize,
+    ) -> (usize, usize) {
+        let mut c = 32 + 32 + trace_width * 8 * 2 + 8 + quotient_segments * 8;
         let num_layers = bytes[c] as usize;
         c += 1 + num_layers * 32;
         let fps = u16::from_le_bytes([bytes[c], bytes[c + 1]]) as usize;
@@ -87,7 +105,7 @@ fn final_poly_rejects_non_canonical_coefficients() {
     // Generic path (C1).
     let data = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
     let config = &CONFIG_POOL_COMMITMENT;
-    let (off, fps) = final_poly_offset(&data.proof_bytes, config.trace_width);
+    let (off, fps) = final_poly_offset(&data.proof_bytes, config.trace_width, config.quotient_segments);
     assert_eq!(fps, config.fri_final_poly_size);
     assert!(
         config.fri_final_poly_degree_bound < fps,
@@ -133,7 +151,7 @@ fn final_poly_rejects_non_canonical_coefficients() {
 
     // Legacy path (C0), whose bound is 7 rather than 8.
     let c0 = p01_stark::compact::generate_compact_proof(42);
-    let (off, fps) = final_poly_offset(&c0.proof_bytes, 3);
+    let (off, fps) = final_poly_offset(&c0.proof_bytes, 3, p01_stark_verifier::compact_proof::LEGACY_QUOTIENT_SEGMENTS);
     for i in p01_stark_verifier::compact_proof::LEGACY_FRI_FINAL_POLY_DEGREE_BOUND..fps {
         let raw =
             u64::from_le_bytes(c0.proof_bytes[off + i * 8..off + i * 8 + 8].try_into().unwrap());
