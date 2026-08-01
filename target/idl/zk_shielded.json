@@ -97,12 +97,18 @@
     {
       "name": "claim_period",
       "docs": [
-        "Claim accrued periods from a subscription vault (retailer only).",
+        "Claim accrued periods from a subscription vault. PERMISSIONLESS: the",
+        "funds can only ever reach `vault.retailer`, so nothing is gained by",
+        "requiring that key to sign — and requiring it stranded the revenue of",
+        "every merchant that lost one. A keeper, the subscriber or a bystander",
+        "can push the transaction and pay its fee.",
         "",
         "On the claim that spends the last funded period this also CLOSES the",
         "vault, paying the retailer the sub-period remainder and the rent. It is",
         "the only instruction that can close a SubscriptionVault. Refuses while",
-        "the vault is paused."
+        "the vault is paused UNLESS the vault is already exhausted, which is the",
+        "only way a paused vault can ever be closed now that cancellation is",
+        "gone."
       ],
       "discriminator": [
         72,
@@ -118,12 +124,14 @@
         {
           "name": "retailer",
           "docs": [
-            "Retailer claiming the payment. Also receives the vault's rent on the",
+            "Retailer receiving the payment. Also receives the vault's rent on the",
             "final claim — the subscriber has no refund path, so the rent cannot go",
-            "back to them."
+            "back to them.",
+            "",
+            "NOT a signer: see the struct doc. The `==` constraint below is what",
+            "makes that safe, and it is the only thing that does."
           ],
-          "writable": true,
-          "signer": true
+          "writable": true
         },
         {
           "name": "vault",
@@ -189,7 +197,17 @@
           "name": "vault_token_account",
           "docs": [
             "Vault's token account (optional, only for SPL tokens). Closed to the",
-            "retailer on the final claim so its rent is not stranded either."
+            "retailer on the final claim so its rent is not stranded either.",
+            "",
+            "The authority check is written out rather than left to the token",
+            "program. The transfer and the close both make the vault PDA sign, so the",
+            "token program would refuse a foreign account anyway — but it would NOT",
+            "refuse a second, empty account that the same PDA happens to own, and now",
+            "that anyone can send this instruction anyone could create one. Passing",
+            "that decoy on the final claim would close the decoy, hand its rent over,",
+            "close the vault, and strand the real balance behind a PDA that can never",
+            "sign again. The `vault_token.amount >= unpaid` require in the handler is",
+            "the other half of that guard."
           ],
           "writable": true,
           "optional": true
@@ -197,7 +215,13 @@
         {
           "name": "retailer_token_account",
           "docs": [
-            "Retailer's token account (optional, only for SPL tokens)"
+            "Retailer's token account (optional, only for SPL tokens).",
+            "",
+            "Its OWNER must be the retailer. Nothing but the signature used to pin",
+            "this: the handler only ever checked the mint, so a permissionless claim",
+            "with no owner check would let any caller name their own token account",
+            "and take the whole SPL payout. This constraint is load-bearing for the",
+            "permissionless change and must not be relaxed."
           ],
           "writable": true,
           "optional": true
@@ -2052,12 +2076,22 @@
       "docs": [
         "Create a private subscription vault using STARK proof (quantum-resistant).",
         "",
-        "`client_stealth_meta`: DEPRECATED and unused. It was a 64-byte stealth",
-        "address (`[spending_pub(32) | viewing_pub(32)]`) that routed the refund",
-        "through `p01_relayer` on cancel. There is no cancel and no refund, so",
-        "nothing on chain reads this any more. The parameter and the field are",
-        "kept so the instruction ABI and `SubscriptionVault::LEN` do not move",
-        "under the 16 vaults already live on devnet. Pass `None`."
+        "REMOVED ARGUMENT: `client_stealth_meta: Option<[u8; 64]>` used to sit",
+        "between `stark_commitment` and `license_commitment` as argument #9. It",
+        "carried a 64-byte subscriber-controlled stealth address",
+        "(`[spending_pub(32) | viewing_pub(32)]`) that routed the refund through",
+        "`p01_relayer` on cancel. There is no cancel and no refund, so it could",
+        "no longer do anything except publish a stealth address on a public",
+        "chain. Keeping it as an ignored parameter would have left those bytes in",
+        "the transaction payload, which is as public as the account they used to",
+        "land in — so the argument is gone, not merely unread. THIS MOVES THE",
+        "ARGUMENT ENCODING: every caller must drop the `Option` tag byte at that",
+        "offset. All in-tree callers were updated in the same commit.",
+        "",
+        "The `SubscriptionVault::client_stealth_meta` FIELD is untouched and",
+        "still occupies its 65 bytes, always `None`, so `SubscriptionVault::LEN`",
+        "and every account decoder keep working against the vaults already live",
+        "on devnet."
       ],
       "discriminator": [
         187,
@@ -2343,17 +2377,6 @@
         {
           "name": "stark_commitment",
           "type": "u64"
-        },
-        {
-          "name": "client_stealth_meta",
-          "type": {
-            "option": {
-              "array": [
-                "u8",
-                64
-              ]
-            }
-          }
         },
         {
           "name": "license_commitment",
@@ -5789,10 +5812,13 @@
           {
             "name": "has_stealth_meta",
             "docs": [
-              "DEPRECATED. True if the vault was created with a stealth meta address.",
-              "It selected the refund-via-relayer path on cancel; there is no cancel",
-              "and no refund, so this now reports a field nothing acts on. The 64 raw",
-              "bytes are NOT emitted, to avoid leaking the address itself."
+              "DEPRECATED and now permanently `false`. It reported whether the vault",
+              "was created with a stealth meta address, which selected the",
+              "refund-via-relayer path on cancel. There is no cancel, no refund, and",
+              "since the `client_stealth_meta` parameter was removed no way to supply",
+              "one either. Retained, and never removed, because Borsh decodes an event",
+              "sequentially and dropping a field silently shortens the buffer for every",
+              "decoder built against the old layout."
             ],
             "type": "bool"
           }

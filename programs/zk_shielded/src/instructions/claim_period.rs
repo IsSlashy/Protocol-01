@@ -50,10 +50,9 @@ pub struct ClaimPeriod<'info> {
     /// final claim — the subscriber has no refund path, so the rent cannot go
     /// back to them.
     ///
-    /// NOT a signer: see the struct doc. The `==` constraint is what makes that
-    /// safe, and it is the only thing that does.
-    /// CHECK: pinned to `vault.retailer` by the constraint below and used only
-    /// as a lamport destination.
+    /// NOT a signer: see the struct doc. The `==` constraint below is what
+    /// makes that safe, and it is the only thing that does.
+    /// CHECK: pinned to `vault.retailer` by that constraint, and used only as a lamport destination.
     #[account(
         mut,
         constraint = retailer.key() == vault.retailer @ ZkShieldedError::Unauthorized
