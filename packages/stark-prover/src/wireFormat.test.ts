@@ -88,7 +88,13 @@ interface Pin {
   numQueries: number;
   /** MEASURED pre-Route-C proof bytes (binary sha256 b5c7e01d…, 637,968 B). */
   preRouteC: number;
-  /** MEASURED post-Route-C proof bytes — `route_c_trace_pair.rs:1002`. */
+  /**
+   * [B2] MEASURED quotient segments, `ceil((deg(Q)+1)/trace_length)`. The Rust
+   * twin is `CircuitConfig.quotient_segments`. It appears here because the
+   * closed-form delta below is a function of it.
+   */
+  quotientSegments: number;
+  /** MEASURED post-B2 proof bytes — `route_c_trace_pair.rs`. */
   absolute: number;
   /**
    * MEASURED sha256 of the serialized proof for `inputs`, taken from the RUST
@@ -118,8 +124,9 @@ const PINS: Pin[] = [
     traceWidth: 3,
     numQueries: 27,
     preRouteC: 45_433,
-    absolute: 45_001,
-    sha256: 'e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7',
+    quotientSegments: 7,
+    absolute: 47_641,
+    sha256: '5ea292acb52a3f352fbe9280c3b59291b77e92a066a6fbce743dbf8db456c09b',
     inputs: { subscriberSecret: '42' },
   },
   {
@@ -128,8 +135,9 @@ const PINS: Pin[] = [
     traceWidth: 3,
     numQueries: 27,
     preRouteC: 66_233,
-    absolute: 65_801,
-    sha256: '935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b',
+    quotientSegments: 8,
+    absolute: 68_881,
+    sha256: '09e9476db988eef4950ed2ef64c57d0ab9569f7eeb40e27bb2ab2cf1e204a83d',
     inputs: { nullifierPreimage: '42', secret: '17', depositEpoch: '7', tokenMint: '11' },
   },
   {
@@ -138,8 +146,9 @@ const PINS: Pin[] = [
     traceWidth: 4,
     numQueries: 27,
     preRouteC: 66_681,
-    absolute: 66_681,
-    sha256: '063d86a18071ae369132c12a69c5af0e3c2efbe82f6340e6d7ec910be80fd49f',
+    quotientSegments: 8,
+    absolute: 69_761,
+    sha256: '6541e57b85419fd87a4227bf08cfc2f151d0179870ba04d5011338843cd51ce8',
     inputs: { spendingKey: '42', balance: '1000', salt: '777', tokenMint: '999' },
   },
   {
@@ -148,8 +157,9 @@ const PINS: Pin[] = [
     traceWidth: 6,
     numQueries: 22,
     preRouteC: 74_933,
-    absolute: 75_637,
-    sha256: '2d97f56ffc3157fe7c644679d2945130efed8ea39c890a24c6c16022e78d5d9c',
+    quotientSegments: 8,
+    absolute: 78_157,
+    sha256: 'abf0e733d82002ff74c45d2677fc213f893cb45b999578f84324c35f5907c5c0',
     inputs: {
       leaf: '777',
       pathElements: csv(Array.from({ length: 15 }, (_, i) => 1000 + i)),
@@ -162,8 +172,9 @@ const PINS: Pin[] = [
     traceWidth: 4,
     numQueries: 27,
     preRouteC: 78_377,
-    absolute: 78_377,
-    sha256: 'f877836723d0711e7190c2fd5c8a5c6d0476f21794d39ffd47a075f57d53e3e7',
+    quotientSegments: 8,
+    absolute: 81_457,
+    sha256: 'f4918f36632e011049366c079489b8f70858113f45831bcd76e0cf630d92929a',
     inputs: {
       spendingKey: '42',
       oldBalance: '1000',
@@ -181,8 +192,9 @@ const PINS: Pin[] = [
     traceWidth: 7,
     numQueries: 22,
     preRouteC: 75_301,
-    absolute: 76_357,
-    sha256: '78afe9bbd533913771d5c2438e279934114fe4c6db934b67b43c0644376ea125',
+    quotientSegments: 8,
+    absolute: 78_877,
+    sha256: '28ef7176795111da1df5714dbc11ad3c32892de266242d30dec1cd60e9c252bd',
     inputs: {
       spendingKey: '13',
       tokenMint: '500',
@@ -205,8 +217,9 @@ const PINS: Pin[] = [
     traceWidth: 10,
     numQueries: 22,
     preRouteC: 76_405,
-    absolute: 78_517,
-    sha256: '8e1166f5d08bd948bc70a407d9261d6b88c1de5b257c4545918d9c36d94524fc',
+    quotientSegments: 8,
+    absolute: 81_037,
+    sha256: 'b8dc81e070487ec827e488809f361fc982e0b9c435270855f1a0b95d658cb0be',
     inputs: {
       oldLeaf: '111',
       newLeaf: '222',
@@ -225,13 +238,13 @@ describe('checked-in WASM prover — Route C wire format', () => {
   }, 60_000);
 
   // The single most load-bearing assertion in this file, called out separately
-  // so a failure names the artifact rather than a table row. 45_001 is the same
-  // literal `route_c_trace_pair.rs:1002` pins against the Rust prover.
-  it('circuit 0 serializes to exactly 45,001 bytes — the Rust prover’s size', () => {
+  // so a failure names the artifact rather than a table row. 47_641 is the same
+  // literal `route_c_trace_pair.rs` pins against the Rust prover.
+  it('circuit 0 serializes to exactly 47,641 bytes — the Rust prover’s size', () => {
     const { proofBytes } = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {
       subscriberSecret: '42',
     });
-    expect(proofBytes.length).toBe(45_001);
+    expect(proofBytes.length).toBe(47_641);
   }, 60_000);
 
   it('every shipping circuit exists in the bundled WASM', () => {
@@ -247,10 +260,18 @@ describe('checked-in WASM prover — Route C wire format', () => {
       // (1) absolute pin — WASM output must equal the Rust prover byte for byte
       expect(proofBytes.length).toBe(pin.absolute);
 
-      // (2) closed-form pin — the delta from the pre-Route-C baseline must be
-      //     exactly nq * (16*trace_width - 64)
-      const expectedDelta = pin.numQueries * (16 * pin.traceWidth - 64);
-      expect(proofBytes.length - pin.preRouteC).toBe(expectedDelta);
+      // (2) closed-form pin — the delta from the pre-Route-C baseline is TWO
+      //     terms, kept apart because they came from different changes and a
+      //     lumped delta would let a regression in one hide inside a gain in
+      //     the other:
+      //       Route C : nq * (16*trace_width - 64)
+      //       [B2]    : 8 * (k - 1) * (2*nq + 1)
+      //     The old single term was Route-C-only and became wrong the moment
+      //     `ood_quotient`, the per-query quotient mirror block and the tail
+      //     entry each widened from 8 to 8k bytes.
+      const routeCDelta = pin.numQueries * (16 * pin.traceWidth - 64);
+      const b2Delta = 8 * (pin.quotientSegments - 1) * (2 * pin.numQueries + 1);
+      expect(proofBytes.length - pin.preRouteC).toBe(routeCDelta + b2Delta);
 
       // (3) CONTENT pin — the only one of the three that catches B1-class
       //     semantic skew. See `Pin.sha256`. Both length checks stay green
@@ -298,15 +319,15 @@ describe('checked-in WASM prover — Route C wire format', () => {
   // -------------------------------------------------------------------------
 
   const FIXTURE_C0_SHA256 =
-    'e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7';
+    '5ea292acb52a3f352fbe9280c3b59291b77e92a066a6fbce743dbf8db456c09b';
   const FIXTURE_C1_SHA256 =
-    '935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b';
+    '09e9476db988eef4950ed2ef64c57d0ab9569f7eeb40e27bb2ab2cf1e204a83d';
 
   it('C0 proof bytes hash to the digest the Rust prover produces', () => {
     const { proofBytes } = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {
       subscriberSecret: '42',
     });
-    expect(proofBytes.length).toBe(45_001);
+    expect(proofBytes.length).toBe(47_641);
     expect(sha256Hex(proofBytes)).toBe(FIXTURE_C0_SHA256);
   }, 60_000);
 
@@ -317,7 +338,7 @@ describe('checked-in WASM prover — Route C wire format', () => {
       depositEpoch: '7',
       tokenMint: '11',
     });
-    expect(proofBytes.length).toBe(65_801);
+    expect(proofBytes.length).toBe(68_881);
     expect(sha256Hex(proofBytes)).toBe(FIXTURE_C1_SHA256);
   }, 60_000);
 

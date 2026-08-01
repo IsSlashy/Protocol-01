@@ -204,18 +204,28 @@ const RECORD_DEFAULT = 'packages/stark-prover/deployed-verifier.json';
 // ---------------------------------------------------------------------------
 
 /**
- * Literals B1 added to the PROVER (stark/src/compact.rs).
+ * Literals B1 and B2 added to the PROVER (stark/src/compact.rs).
  *
  * These NO LONGER decide the blob's generation — scripts/prover-behaviour.mjs
  * does, by driving it. They are kept because they still detect two things the
  * proof digests are silent about: an artifact whose strings were stripped, and
  * an artifact that was not built from the source in this tree. And a blob whose
  * strings disagree with its proofs is reported as exactly that.
+ *
+ * [B2] `'break the committed-vector/ood_quotient agreement B1 depends on'` is
+ * gone from the source and therefore from the blob. It was the message on the
+ * `q_poly.len() <= lde_size` assert in the six quotient builders, and B2 moved
+ * that guarantee: each segment is asserted to fit in `trace_length <= lde_size`
+ * coefficients and its committed column is built by evaluating that very vector,
+ * so the divergence the message described cannot occur by construction. Replaced
+ * here, in the same commit, by the two `segment_quotient_poly` asserts — which
+ * are the strings that now carry the same job.
  */
 const BLOB_B1_MARKERS = [
   'B1 TERMINAL DEGREE BOUND VIOLATED',
   'DEEP denominator vanishes at LDE position ',
-  'break the committed-vector/ood_quotient agreement B1 depends on',
+  '[B2] UNDER-SEGMENTED: the quotient has ',
+  '[B2] OVER-SEGMENTED: the quotient has ',
 ];
 
 /**

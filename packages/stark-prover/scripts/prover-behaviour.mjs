@@ -45,6 +45,19 @@
  *   reachable by editing panic text: the doctored blob above, driven through
  *   this file, still produces all seven B1 digests.
  *
+ * # [B2] A THIRD generation
+ *
+ * B2 splits the composition polynomial into `quotient_segments` columns, which
+ * widens three wire fields, so unlike B1 it is NOT length-preserving: C0..C6 go
+ * to 47,641 / 68,881 / 69,761 / 78,157 / 81,457 / 78,877 / 81,037 bytes. Length
+ * therefore DOES separate B2 from the two earlier generations.
+ *
+ * That is not licence to classify on length. A blob can be given any length;
+ * only content is expensive to fake. The `bytes` column stays a recorded
+ * observation for the failure report and the verdict stays on the digest, now
+ * three-way. A blob matching NONE of the three is still refused rather than
+ * guessed at, which is the property that matters.
+ *
  * A proof digest cannot be renamed. To move it you have to change what the
  * prover computes, which is the thing the gate is trying to detect.
  *
@@ -83,26 +96,34 @@ const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 // ---------------------------------------------------------------------------
 
 /**
- * `b1` — MEASURED from the Rust prover in `stark/`, pinned independently in
- * `programs/p01_stark_verifier/tests/b1_deep_binding.rs` (FIXTURE_C*_SHA256) and
- * in `packages/stark-prover/src/wireFormat.test.ts` (Pin.sha256). Those two pins
- * are checked against this table at run time, so editing the seven digests here
- * to make a pre-B1 blob read as B1 means editing the same seven in a Rust test
- * and a vitest suite that both still run against the real artifacts.
+ * `b2` — MEASURED from the Rust prover in `stark/` on this tree, pinned
+ * independently in `programs/p01_stark_verifier/tests/b1_deep_binding.rs`
+ * (FIXTURE_C*_SHA256) and in `packages/stark-prover/src/wireFormat.test.ts`
+ * (Pin.sha256). Those two pins are checked against this table at run time, so
+ * editing the seven digests here to make an older blob read as current means
+ * editing the same seven in a Rust test and a vitest suite that both still run
+ * against the real artifacts.
+ *
+ * `b1` — the same seven, MEASURED against the pre-B2 (post-B1) prover. Kept, not
+ * replaced: the whole value of this table is that a blob matching NO column is
+ * refused, and deleting a known generation shrinks the set of things that can be
+ * named instead of guessed at.
  *
  * `preB1` — MEASURED 2026-07-31 by driving the last pre-B1 blob in git history,
  * 5fe610c90ff1fe15eb96abbbef3ca881b47923b68232335fda0df5546babd114 (194,540 B,
- * commit 4b375d7c), through this exact code path. It is ONE artifact, not a
- * generation: a blob that matches it is that prover, and a blob that matches
- * neither column is refused rather than guessed at.
+ * commit 4b375d7c), through this exact code path.
  *
- * `bytes` is the serialized proof length, identical in both columns — recorded
- * so a failure report can show that length was never going to separate them.
+ * `bytes` is the serialized proof length under B2. `bytesPreB2` is the length
+ * the two older generations share — recorded so a failure report can show that
+ * length never separated THOSE two, and that it separates them from B2 only by
+ * accident of the field widths.
  */
 const FIXTURES = [
   {
     label: 'C0 subscriber_ownership',
-    bytes: 45_001,
+    bytes: 47_641,
+    bytesPreB2: 45_001,
+    b2: '5ea292acb52a3f352fbe9280c3b59291b77e92a066a6fbce743dbf8db456c09b',
     b1: 'e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7',
     preB1: 'baf01d179f166d8f38729ac4e6dc1a766e089ba1e98665dea4b981fafd488986',
     entry: 'generate_stark_proof',
@@ -110,7 +131,9 @@ const FIXTURES = [
   },
   {
     label: 'C1 pool_commitment',
-    bytes: 65_801,
+    bytes: 68_881,
+    bytesPreB2: 65_801,
+    b2: '09e9476db988eef4950ed2ef64c57d0ab9569f7eeb40e27bb2ab2cf1e204a83d',
     b1: '935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b',
     preB1: 'df52ee3c7047442813b6d9b844cc8e4d260cff8ed70af603250e006b914d961c',
     entry: 'generate_pool_commitment_stark_proof',
@@ -118,7 +141,9 @@ const FIXTURES = [
   },
   {
     label: 'C2 balance_proof',
-    bytes: 66_681,
+    bytes: 69_761,
+    bytesPreB2: 66_681,
+    b2: '6541e57b85419fd87a4227bf08cfc2f151d0179870ba04d5011338843cd51ce8',
     b1: '063d86a18071ae369132c12a69c5af0e3c2efbe82f6340e6d7ec910be80fd49f',
     preB1: '5171c80e65ba6ed63c0b5a58f58b0bad11a060a60445be483f797d4777cc7d33',
     entry: 'generate_balance_stark_proof',
@@ -126,7 +151,9 @@ const FIXTURES = [
   },
   {
     label: 'C3 merkle_path',
-    bytes: 75_637,
+    bytes: 78_157,
+    bytesPreB2: 75_637,
+    b2: 'abf0e733d82002ff74c45d2677fc213f893cb45b999578f84324c35f5907c5c0',
     b1: '2d97f56ffc3157fe7c644679d2945130efed8ea39c890a24c6c16022e78d5d9c',
     preB1: '0db183b6a257d03b15bd6439ff0ea554b7006dd134a3ccd6f3f6433b971c6bf3',
     entry: 'generate_merkle_path_stark_proof',
@@ -134,7 +161,9 @@ const FIXTURES = [
   },
   {
     label: 'C4 confidential_balance',
-    bytes: 78_377,
+    bytes: 81_457,
+    bytesPreB2: 78_377,
+    b2: 'f4918f36632e011049366c079489b8f70858113f45831bcd76e0cf630d92929a',
     b1: 'f877836723d0711e7190c2fd5c8a5c6d0476f21794d39ffd47a075f57d53e3e7',
     preB1: 'fbb631a3146225798360fcf80defb748664b2848ae0e59c88e6c9ec6342b2818',
     entry: 'generate_confidential_balance_stark_proof',
@@ -142,7 +171,9 @@ const FIXTURES = [
   },
   {
     label: 'C5 transfer',
-    bytes: 76_357,
+    bytes: 78_877,
+    bytesPreB2: 76_357,
+    b2: '28ef7176795111da1df5714dbc11ad3c32892de266242d30dec1cd60e9c252bd',
     b1: '78afe9bbd533913771d5c2438e279934114fe4c6db934b67b43c0644376ea125',
     preB1: '373f74ccff5a6a1ff5cbbb284f670e1df66f6909ca5c7eb46d78aa872a5ff574',
     entry: 'generate_transfer_stark_proof',
@@ -150,7 +181,9 @@ const FIXTURES = [
   },
   {
     label: 'C6 merkle_update',
-    bytes: 78_517,
+    bytes: 81_037,
+    bytesPreB2: 78_517,
+    b2: 'b8dc81e070487ec827e488809f361fc982e0b9c435270855f1a0b95d658cb0be',
     b1: '8e1166f5d08bd948bc70a407d9261d6b88c1de5b257c4545918d9c36d94524fc',
     preB1: '8f815c4c3c09fb141d6eb256a66e4fda612624c1af59971c0c28a40dd4c408a2',
     entry: 'generate_merkle_update_stark_proof',
@@ -164,8 +197,8 @@ function csv(n, f) {
 }
 
 /**
- * The two files that pin the same B1 digests from the OTHER side of the
- * language boundary. Every `b1` digest above must appear in BOTH.
+ * The two files that pin the same CURRENT digests from the OTHER side of the
+ * language boundary. Every `b2` digest above must appear in BOTH.
  *
  * This is what stops the table above from being the next single point of
  * failure. `b1` and `preB1` are only useful to an attacker if he can swap them,
@@ -197,8 +230,12 @@ export function fixtureTableProblem() {
     lines.push(`  the table has ${FIXTURES.length} circuits; all 7 shipping circuits must be driven`);
   }
   for (const f of FIXTURES) {
-    if (!HEX64.test(f.b1) || !HEX64.test(f.preB1)) lines.push(`  ${f.label}: a digest is not 64 hex characters`);
-    if (f.b1 === f.preB1) lines.push(`  ${f.label}: the b1 and pre-b1 digests are the same string`);
+    if (!HEX64.test(f.b2) || !HEX64.test(f.b1) || !HEX64.test(f.preB1)) {
+      lines.push(`  ${f.label}: a digest is not 64 hex characters`);
+    }
+    // Any two generations sharing a digest collapses the verdict silently.
+    const gens = new Set([f.b2, f.b1, f.preB1]);
+    if (gens.size !== 3) lines.push(`  ${f.label}: two of the three generation digests are the same string`);
   }
   for (const rel of CORROBORATING_PINS) {
     let text;
@@ -208,8 +245,8 @@ export function fixtureTableProblem() {
       lines.push(`  cannot read ${rel}: ${e.message}`);
       continue;
     }
-    const missing = FIXTURES.filter((f) => !text.includes(f.b1)).map((f) => f.label);
-    if (missing.length > 0) lines.push(`  ${rel} no longer pins the B1 digest for ${missing.join(', ')}`);
+    const missing = FIXTURES.filter((f) => !text.includes(f.b2)).map((f) => f.label);
+    if (missing.length > 0) lines.push(`  ${rel} no longer pins the current digest for ${missing.join(', ')}`);
   }
   if (lines.length === 0) return null;
   return {
@@ -363,7 +400,9 @@ export function classifyProverBehaviour(bytes) {
       bytes: proof.length,
       expectedBytes: f.bytes,
       digest,
-      verdict: digest === f.b1 ? 'b1' : digest === f.preB1 ? 'pre-b1' : 'unknown',
+      verdict:
+        digest === f.b2 ? 'b2' : digest === f.b1 ? 'b1' : digest === f.preB1 ? 'pre-b1' : 'unknown',
+      b2: f.b2,
       b1: f.b1,
       preB1: f.preB1,
     });
