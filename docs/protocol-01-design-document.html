@@ -716,7 +716,7 @@ Hybrid Secret: HKDF-SHA256(X25519_shared || ML-KEM_shared, "p01-hybrid-stealth-v
       <tr><td>Key management</td><td>Spending key NEVER leaves device. No remote prover fallback.</td><td>N/A</td></tr>
       <tr><td>ZK soundness</td><td>Groth16: invalid proofs cannot pass verification</td><td>No (BN254)</td></tr>
       <tr><td>ZK completeness</td><td>Valid spends always produce valid proofs</td><td>N/A</td></tr>
-      <tr><td>STARK proofs</td><td>Hash-based (Poseidon over Goldilocks), 128-bit security</td><td class="cyan">Yes</td></tr>
+      <tr><td>STARK proofs</td><td>Hash-based (Poseidon over Goldilocks). Soundness is 42&ndash;52 bits per circuit, measured &mdash; not the 128 this row used to claim, which was never measured.</td><td class="cyan">Yes</td></tr>
       <tr><td>Stealth v2</td><td>X25519 + ML-KEM-768 (FIPS 203) hybrid ECDH</td><td class="cyan">Yes (lattice-based)</td></tr>
       <tr><td>Quantum vault</td><td>WOTS+ (SHA-256 hash chains), hash-timelock, commit-reveal</td><td class="cyan">Yes (hash-based)</td></tr>
       <tr><td>Commitments</td><td>Poseidon (algebraic hash, not ECC-based)</td><td class="cyan">Yes</td></tr>

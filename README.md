@@ -194,7 +194,7 @@ protocol-01/
 │   ├── p01_relayer/            # On-chain trustless relay + chunked submit + reputation decay
 │   ├── p01_quantum_vault/      # WOTS+ 67-chain, hash-timelock, commit-reveal
 │   ├── p01_registry/           # Stealth meta-address directory + Service Registry (retailers)
-│   ├── p01_stark_verifier/     # Custom FRI verifier (6 circuits + DEEP-ALI, Goldilocks)
+│   ├── p01_stark_verifier/     # Custom FRI verifier (7 circuits + DEEP-ALI, Goldilocks)
 │   ├── p01_liquidity/          # Instant-unshield liquidity pool (prefund)
 │   ├── p01_mugen/              # Mugen P2P escrow
 │   ├── p01_bundler/            # (in repo, not deployed) Tx bundling helper
@@ -218,9 +218,10 @@ Hash-based, transparent, and post-quantum. No trusted setup, no `.ptau` ceremony
 | Proving system | STARK (FRI-based) |
 | Field | Goldilocks (`p = 2^64 − 2^32 + 1`) |
 | Hash function | Poseidon (full S-box `x^7`, 30 rounds) |
-| Proof size | ~9–12 KB (Blake3 Merkle, 16 queries, blowup 8) |
-| On-chain verification | ~900K CU (shared multi-circuit FRI verifier) |
-| Circuits | 6 AIRs — subscriber ownership, pool commitment, balance proof, Merkle path, confidential balance, transfer |
+| Proof size | 47–81 KB, measured per circuit on the unmerged B1+B2 tree (the pre-B1 numbers this row used to carry were ~9–12 KB) |
+| FRI parameters | blowup 16, 27 queries (22 on circuits 3, 5, 6), 22 grinding bits, terminal degree bound 1 of 16 → **4.000 bits per query, measured** |
+| On-chain verification | Shared multi-circuit FRI verifier; the per-circuit CU figure is measured and pinned in `programs/p01_stark_verifier/tests/cu_budget.rs`, against a 1.4M cap |
+| Circuits | 7 AIRs — subscriber ownership, pool commitment, balance proof, Merkle path, confidential balance, transfer, Merkle update |
 
 The on-chain verifier is written from scratch (no Winterfell dependency at runtime) and fits in a 792 KB SBF binary.
 
@@ -414,7 +415,7 @@ await mpc.privateLookup(targetHash);
 | Note vault | CTR-HMAC-SHA256 (Encrypt-then-MAC, constant-time tag comparison) |
 | Session keys | Stored in SecureStore (Keychain/Keystore), never AsyncStorage |
 | Key management | Spending key never leaves the device — backend prover fallback removed |
-| STARK soundness | 124-bit, DEEP-ALI on all six circuits, sha256 syscall migration |
+| STARK soundness | See [STARK soundness, measured](#stark-soundness-measured) — 42–52 bits on the unmerged B1+B2 tree, and the deployed program is older than that. Never 124. |
 | Double-spend | Nullifiers as on-chain PDAs inside `zk_shielded` |
 | Quantum resistance | STARK (hash-based) + WOTS+ + ML-KEM-768 for stealth |
 | PIN | SHA-256(`p01_pin_v1:` + pin) via expo-crypto, progressive lockout (5→30 s, 8→60 s, 10→300 s) |
@@ -423,6 +424,39 @@ await mpc.privateLookup(targetHash);
 | Screenshot | `ScreenCapture.preventScreenCaptureAsync()` on seed/viewing-key/private-note screens |
 | Backup surface | `android:allowBackup="false"` to defeat `adb backup` |
 | MPC threshold | Arcium Cerberus — 1-of-N honest node guarantees correctness |
+
+### STARK soundness, measured
+
+This table used to say **124-bit**. That number was never measured and was never
+true: it came from `num_queries × log2(blowup)`, a formula that only holds when the
+FRI terminal degree bound is 1 of 16, and the bound was 8 of 16 (7 of 16 on circuit
+0). The real rate was 1.000 bits per query.
+
+What the tree can defend today, per circuit, is the residual cost of a coordinated
+out-of-domain forgery:
+
+| | Circuits 0–2, 4 | Circuits 3, 5, 6 |
+|---|---|---|
+| Unconditional (unique decoding — a theorem) | 2^46 | 2^42 |
+| Conjectured (ethSTARK Conj. 8.4, list decoding to capacity) | 2^48–2^52 | 2^47 |
+
+Measured inputs, not assumed: the FRI rate is 1/16, from a terminal degree bound of
+1 of 16 that is tight on all seven circuits, and the best in-bound adversarial
+terminal polynomial agrees with the committed layer at exactly 1 of 16 points — so a
+query is worth **4.000 bits**, measured on all seven circuits by
+`programs/p01_stark_verifier/tests/b2_bits_measured.rs`. Both columns are capped by a
+base-field Fiat-Shamir floor of 47.8–52.5 bits: every challenge in this construction
+is one Goldilocks element, so adding queries or grinding cannot raise the conjectured
+figure. Lifting it needs challenges drawn from an extension field, which is not built.
+
+Three things this table must not be read as saying:
+
+- **It is not deployed.** The devnet program predates the DEEP-binding work
+  entirely, so against a coordinated OOD forgery it has no binding at all. The
+  numbers above describe an unmerged tree.
+- **It is not a publishable security level.** 2^42 is on the order of GPU-minutes.
+- **It is not the post-quantum figure.** Forgery is a search, so Grover roughly
+  halves it: ~21–26 quantum bits.
 
 ---
 
@@ -477,7 +511,7 @@ solana program deploy target/sbf-solana-solana/release/<program_name>.so \
 | Layer | Suite | Tests | Status |
 |---|---|---|---|
 | On-chain programs | Anchor/Rust (12 deployed) | 340+ | Localnet / Devnet |
-| STARK verifier | Custom FRI + 6 circuits, DEEP-ALI on all | 103 STARK + 35 verifier | Passing |
+| STARK verifier | Custom FRI + 7 circuits, DEEP-ALI on all | 103 STARK + 35 verifier | Passing |
 | specter-sdk | Stealth, wallet, transfers, registry | 44 | Passing |
 | privacy-sdk | Shield / transfer / unshield / denominated | 238 | Passing |
 | privacy-toolkit | Merkle, Goldilocks-Poseidon, commitments | 100 | Passing |
@@ -520,7 +554,7 @@ anchor test                           # on-chain programs (localnet)
 - [x] Hybrid stealth addresses (X25519 + ML-KEM-768)
 - [x] Denominated privacy pools (fixed-amount Tornado model)
 - [x] Private ZK subscriptions (recurring payments with STARK proofs)
-- [x] STARK verifier on-chain (custom FRI, 6 circuits, Goldilocks)
+- [x] STARK verifier on-chain (custom FRI, 7 circuits, Goldilocks)
 - [x] Quantum vault (WOTS+ 67-chain, hash-timelock, commit-reveal)
 - [x] On-chain stealth meta-address registry
 - [x] **On-chain Service Registry** (retailers register as first-class merchants)

@@ -502,7 +502,7 @@ const fr: Translations = {
       },
       starkMigration: {
         title: 'Migration STARK \u2014 Groth16 retir\u00e9',
-        desc: 'Migration compl\u00e8te de Groth16/BN254 (classique, vuln\u00e9rable \u00e0 Shor) vers les STARKs sur Goldilocks (post-quantique, bas\u00e9 hachage). V\u00e9rificateur FRI on-chain custom, sans d\u00e9pendance Winterfell. 6 AIRs \u00b7 preuves ~9\u201315 Ko \u00b7 ~889K CU \u00b7 s\u00e9curit\u00e9 124 bits avec DEEP-ALI. La c\u00e9r\u00e9monie de setup de confiance n\u2019est plus n\u00e9cessaire. Les chemins legacy snarkjs/circomlib ont \u00e9t\u00e9 supprim\u00e9s de mobile + extension.',
+        desc: 'Migration compl\u00e8te de Groth16/BN254 (classique, vuln\u00e9rable \u00e0 Shor) vers les STARKs sur Goldilocks (post-quantique, bas\u00e9 hachage). V\u00e9rificateur FRI on-chain custom, sans d\u00e9pendance Winterfell. 7 AIRs \u00b7 composition DEEP-ALI. La c\u00e9r\u00e9monie de setup de confiance n\u2019est plus n\u00e9cessaire. Les chemins legacy snarkjs/circomlib ont \u00e9t\u00e9 supprim\u00e9s de mobile + extension.',
       },
       arciumMpc: {
         title: 'Int\u00e9gration MPC Arcium (9 circuits)',
@@ -1065,7 +1065,7 @@ const fr: Translations = {
         desc: 'Syst\u00e8me de preuves STARK post-quantique sur le corps de Goldilocks, propuls\u00e9 par Winterfell. Bas\u00e9 sur le hachage, sans hypoth\u00e8ses de courbe elliptique, donc l\u2019algorithme de Shor ne s\u2019applique pas \u2014 et seul syst\u00e8me de preuves utilis\u00e9 dans le mobile, l\u2019extension et le v\u00e9rificateur on-chain. Groth16/BN254 a \u00e9t\u00e9 retir\u00e9 en avril 2026 (voir \u00ab Legacy / Historique de migration \u00bb ci-dessous).',
         detail1: '6 AIRs STARK : subscriber_ownership, pool_commitment, balance_proof, merkle_path, confidential_balance, transfer',
         detail2: 'Prouveur Winterfell, corps de Goldilocks (2^64 - 2^32 + 1), Poseidon AIR (S-box x^7, 30 tours)',
-        detail3: 'Preuves compactes (9-15 Ko) avec arbres de Merkle Blake3, 16 requ\u00eates FRI, robustesse 124 bits avec DEEP-ALI',
+        detail3: 'Preuves compactes avec arbres de Merkle Blake3, 27 requ\u00eates FRI (22 sur les circuits les plus profonds), composition DEEP-ALI',
         detail4: 'V\u00e9rificateur FRI on-chain personnalis\u00e9 (sans d\u00e9pendance Winterfell \u2014 tient dans la pile 4 Ko), ~889K CU par v\u00e9rification',
         detail5: 'Prouveur WASM mobile via WebView (module 82 Ko, les 6 circuits)',
         detail6: 'Aucun setup de confiance requis \u2014 les STARKs sont transparents (contrairement \u00e0 la c\u00e9r\u00e9monie .ptau de Groth16)',
@@ -1301,7 +1301,7 @@ const fr: Translations = {
         detail1: 'Avril 2026 \u2014 migration Groth16 \u2192 STARK termin\u00e9e dans le mobile, l\u2019extension, le v\u00e9rificateur on-chain et les 7 circuits',
         detail2: 'Pourquoi retir\u00e9 : Groth16 utilise des appariements de courbe elliptique BN254 ; l\u2019algorithme de Shor casse le log discret sur courbes elliptiques d\u00e8s qu\u2019un CRQC existe. N\u00e9cessitait aussi une c\u00e9r\u00e9monie de setup multi-parties (.ptau) jamais totalement v\u00e9rifiable',
         detail3: 'Ce qui l\u2019a remplac\u00e9 : STARKs Winterfell sur le corps de Goldilocks (2^64 \u2212 2^32 + 1). Bas\u00e9 sur le hachage (Blake3 + Poseidon), sans courbes elliptiques, sans setup de confiance, transparent et r\u00e9sistant au quantique',
-        detail4: 'V\u00e9rificateur on-chain : impl\u00e9mentation FRI personnalis\u00e9e (sans d\u00e9pendance Winterfell \u2014 tient dans la pile SBF de 4 Ko), 6 AIRs, ~889K CU par v\u00e9rification, robustesse 124 bits avec DEEP-ALI sur chaque circuit',
+        detail4: 'V\u00e9rificateur on-chain : impl\u00e9mentation FRI personnalis\u00e9e (sans d\u00e9pendance Winterfell \u2014 tient dans la pile SBF de 4 Ko), 7 AIRs, composition DEEP-ALI sur chaque circuit',
         detail5: 'D\u00e9pendances supprim\u00e9es : snarkjs, circomlib, ark-circom, syscalls alt_bn128, fichiers .ptau de setup de confiance (~30 Mo), tous les artefacts .zkey/.wasm compil\u00e9s. Le bundle mobile a perdu 19 Mo',
         detail6: 'R\u00e9trocompatibilit\u00e9 : les notes legacy (commitments BN254) sont auto-d\u00e9tect\u00e9es au chargement et abandonn\u00e9es \u2014 les utilisateurs re-blindent une fois pour migrer au format STARK. Aucune migration on-chain requise',
       },

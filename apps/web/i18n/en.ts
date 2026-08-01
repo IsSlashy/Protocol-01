@@ -501,7 +501,7 @@ const en = {
       },
       starkMigration: {
         title: 'STARK Migration — Groth16 Retired',
-        desc: 'Full migration off Groth16/BN254 (classical, Shor-vulnerable) to STARKs over Goldilocks (post-quantum, hash-based). Custom on-chain FRI verifier with no Winterfell dep. 6 AIRs · ~9–15KB proofs · ~889K CU · 124-bit soundness with DEEP-ALI. Trusted setup ceremony no longer required. Legacy snarkjs/circomlib paths removed from mobile + extension.',
+        desc: 'Full migration off Groth16/BN254 (classical, Shor-vulnerable) to STARKs over Goldilocks (post-quantum, hash-based). Custom on-chain FRI verifier with no Winterfell dep. 7 AIRs · DEEP-ALI composition. Trusted setup ceremony no longer required. Legacy snarkjs/circomlib paths removed from mobile + extension.',
       },
       arciumMpc: {
         title: 'Arcium MPC Integration (9 Circuits)',
@@ -1066,7 +1066,7 @@ const en = {
         desc: 'Post-quantum STARK proof system over the Goldilocks field, powered by Winterfell. Hash-based, with no elliptic-curve assumptions, so Shor\'s algorithm does not apply — and the only proof system in use across mobile, extension, and on-chain verifier. Groth16/BN254 was retired in April 2026 (see Legacy / Migration History below).',
         detail1: '6 STARK AIRs: subscriber_ownership, pool_commitment, balance_proof, merkle_path, confidential_balance, transfer',
         detail2: 'Winterfell prover, Goldilocks field (2^64 - 2^32 + 1), Poseidon AIR (x^7 S-box, 30 rounds)',
-        detail3: 'Compact proofs (9-15KB) with Blake3 Merkle trees, 16 FRI queries, 124-bit soundness with DEEP-ALI',
+        detail3: 'Compact proofs with Blake3 Merkle trees, 27 FRI queries (22 on the deepest circuits), DEEP-ALI composition',
         detail4: 'Custom on-chain FRI verifier (no Winterfell dep — fits 4KB stack), ~889K CU per verification',
         detail5: 'Mobile WASM prover via WebView (82KB module, all 6 circuits)',
         detail6: 'No trusted setup required — STARKs are transparent (unlike Groth16\'s .ptau ceremony)',
@@ -1302,7 +1302,7 @@ const en = {
         detail1: 'April 2026 — Groth16 → STARK migration completed across mobile, extension, on-chain verifier, and all 7 circuits',
         detail2: 'Why retired: Groth16 uses BN254 elliptic-curve pairings; Shor\'s algorithm breaks discrete-log on elliptic curves once a CRQC exists. Also required a multi-party trusted setup ceremony (.ptau) that can never be fully verified',
         detail3: 'What replaced it: Winterfell-based STARKs over the Goldilocks field (2^64 − 2^32 + 1). Hash-based (Blake3 + Poseidon), no elliptic curves, no trusted setup, transparent and quantum-resistant',
-        detail4: 'On-chain verifier: custom FRI implementation (no Winterfell dep — fits the 4KB SBF stack), 6 AIRs, ~889K CU per verification, 124-bit soundness with DEEP-ALI on every circuit',
+        detail4: 'On-chain verifier: custom FRI implementation (no Winterfell dep — fits the 4KB SBF stack), 7 AIRs, DEEP-ALI composition on every circuit',
         detail5: 'Removed dependencies: snarkjs, circomlib, ark-circom, alt_bn128 syscalls, .ptau trusted setup files (~30 MB), all compiled .zkey/.wasm circuit artifacts. Mobile bundle dropped 19 MB',
         detail6: 'Backwards compatibility: legacy notes (BN254 commitments) auto-detected on load and dropped from active state — users re-shield once to migrate to the STARK note format. No on-chain migration required',
       },

@@ -45,7 +45,7 @@ L'utilisateur doit:
 | Adversaire | Capacité | Issue |
 |------------|----------|-------|
 | Quantum (Shor, ≥ 2030) | Casse Ed25519 du `fee_payer` | Peut payer des fees aléatoires, **mais ne peut pas mover les fonds** car custody = STARK preimage knowledge |
-| Quantum (Grover sur Poseidon) | Réduit security 124-bit → 62-bit | Toujours computationnellement infaisable (62-bit ≈ Bitcoin 2010-era) |
+| Quantum (Grover sur la recherche de forgerie) | Racine carrée du terme requêtes + grinding | **Ce n'était jamais 124 → 62.** La soundness classique mesurée est 42–52 bits par circuit (voir le tableau mesuré du README), donc la figure quantique est ~21–26 bits. Ce n'est pas infaisable. |
 | Quantum sur ML-KEM-768 | Module-LWE attack | Pas concerné — déjà PQ |
 | Vol seed | Identique à aujourd'hui | Identique — le seed dérive l'Ed25519 ET le secret Poseidon |
 

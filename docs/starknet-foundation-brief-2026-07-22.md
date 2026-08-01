@@ -32,7 +32,8 @@ Recherche web du 21/07. Sources en fin de document.
 | Système | STARK Winterfell, 7 circuits AIR écrits en Rust |
 | Corps | Goldilocks, p = 2^64 − 2^32 + 1 |
 | Hash | Blake3-256, commitments Merkle |
-| Paramètres | 32 requêtes, blowup 16, folding FRI 8, pas de grinding, pas d'extension de corps → 128 bits |
+| Paramètres | blowup 16, 27 requêtes (22 sur les circuits 3/5/6), 22 bits de grinding, borne de degré terminal 1 sur 16 → **4,000 bits par requête, mesuré**. Pas d'extension de corps, donc plancher Fiat-Shamir en corps de base à 47,8–52,5 bits. **Le « 32 requêtes, pas de grinding → 128 bits » de cette ligne était faux sur les quatre points.** |
+| Soundness | 42–46 bits inconditionnel / 47–52 bits sous la conjecture ethSTARK 8.4, par circuit, mesuré sur l'arbre B1+B2 non mergé. Le programme déployé est antérieur et n'a pas de liaison DEEP du tout. |
 | Taille de preuve | 60 à 120 KB |
 | Vérification | Programme Solana `p01_stark_verifier`, ~1,1M CU sur un budget de 1,4M |
 | Découpage | Vérification en deux phases: FRI puis DEEP-ALI |
