@@ -834,8 +834,18 @@ function SubscribeContent() {
                     );
                   })}
                 </View>
+                {/*
+                  This said "Residual refunded as fresh notes if you cancel."
+                  There is no cancel and no refund, and it sat on the paying
+                  screen a few hundred lines above the one-way warning that
+                  says so. What actually happens to a note bigger than the
+                  price is that the WHOLE note funds the vault, so the excess
+                  buys extra periods and, on the closing claim, whatever never
+                  bought a period goes to the retailer with the rest.
+                */}
                 <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 6, fontStyle: 'italic' }}>
-                  Smallest auto-picked if none selected. Residual refunded as fresh notes if you cancel.
+                  Smallest auto-picked if none selected. The whole note funds the vault — anything above
+                  the price buys extra periods and never comes back to you.
                 </Text>
               </Animated.View>
             );

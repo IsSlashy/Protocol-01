@@ -57,6 +57,17 @@ const SUBSCRIPTION_SCREENS: readonly string[] = [
  * Phrasings that PROMISE a cancellation or a refund of a vault. Nothing on
  * chain can do either, so any of these is a false claim. The negated forms the
  * screens are supposed to carry do not match.
+ *
+ * The first eight were written from the eight promises that had already been
+ * found, and that is exactly why they missed a ninth. `(streams)/subscribe.tsx`
+ * shipped "Residual refunded as fresh notes if you cancel." in rendered JSX, on
+ * the paying screen, a few hundred lines above the one-way warning — and this
+ * file, which runs against that very screen, stayed green because none of the
+ * eight literal phrasings matched it. A detector built only from the defects
+ * already found cannot find the next one.
+ *
+ * The rules below are therefore SHAPES, not phrasings: a refund verb anywhere
+ * near a cancel word, in any of the three shipped locales, in either order.
  */
 const CANCEL_PROMISES: readonly RegExp[] = [
   /pause or cancel/i,
@@ -67,7 +78,38 @@ const CANCEL_PROMISES: readonly RegExp[] = [
   /\bcancelNormal\b/,
   /\bcancelPrivateStark\b/,
   /computeCancelPreview/,
+  // Any refund promise within ~60 characters of a cancellation, in either
+  // order. `[^.]{0,60}` cannot cross a sentence boundary, which is what keeps
+  // "cannot be cancelled. Every lamport ... refunded" style prose from being
+  // matched only by accident rather than by meaning.
+  /refund(?:ed|able)?[^.]{0,60}\bcancel/i,
+  /\bcancel(?:led|ling)?\b[^.]{0,60}refund(?:ed|able)?/i,
+  // ...and the same shape in fr and ja, since all three locales ship.
+  /rembours[^.]{0,60}annul/i,
+  /annul[^.]{0,60}rembours/i,
+  /返金[^。]{0,40}(?:キャンセル|解約)/,
+  /(?:キャンセル|解約)[^。]{0,40}返金/,
 ];
+
+/**
+ * Sentences that state the rule and therefore contain both words legitimately.
+ * Kept as an explicit, enumerated allowlist rather than by weakening the rules
+ * above: a new true sentence has to be added here by hand, which is a decision
+ * someone makes on purpose, whereas a loosened regex silently forgives every
+ * future false claim as well.
+ */
+const TRUE_STATEMENTS: readonly RegExp[] = [
+  /cannot be cancelled or refunded/i,
+  /no cancellation and no refund/i,
+  /ni annulation ni remboursement/i,
+  /cannot be refunded/i,
+  /cannot be cancelled/i,
+  /nothing (?:in it )?can be refunded/i,
+];
+
+/** The screen text with every sentence that correctly states the rule removed. */
+const withoutTrueStatements = (src: string) =>
+  TRUE_STATEMENTS.reduce((s, re) => s.replace(new RegExp(re.source, 'gi'), ' '), src);
 
 /**
  * The keys that carry the rule. A paying screen must reference one of them —
@@ -107,7 +149,35 @@ describe('the no-refund rule reaches the subscriber before they pay', () => {
 
 describe('no mobile subscription screen promises a cancellation or a refund', () => {
   it.each(SUBSCRIPTION_SCREENS)('%s', (file) => {
-    const src = read(file);
+    const src = withoutTrueStatements(read(file));
     expect(CANCEL_PROMISES.filter((re) => re.test(src)).map(String)).toEqual([]);
+  });
+});
+
+describe('the promise detector is not just a list of the promises already found', () => {
+  // The regression that produced the shape rules. This exact sentence shipped
+  // in rendered JSX on `(streams)/subscribe.tsx` while every assertion above
+  // was green, because the eight literal phrasings were derived from the eight
+  // defects that had already been fixed.
+  const MISSED = 'Smallest auto-picked if none selected. Residual refunded as fresh notes if you cancel.';
+
+  it('catches the sentence that shipped past it', () => {
+    expect(CANCEL_PROMISES.some((re) => re.test(withoutTrueStatements(MISSED)))).toBe(true);
+  });
+
+  it.each([
+    'Cancel your plan and we refund the remainder.',
+    'Annulez et le reliquat vous est rembourse.',
+    'The residual is refunded to you when you cancel.',
+  ])('catches a phrasing nobody has written yet: %s', (sentence) => {
+    expect(CANCEL_PROMISES.some((re) => re.test(withoutTrueStatements(sentence)))).toBe(true);
+  });
+
+  it.each([
+    'This subscription cannot be cancelled or refunded.',
+    'There is no cancellation and no refund.',
+    'Pause/reprise a tout moment. Ni annulation ni remboursement.',
+  ])('and does not fire on the true statement: %s', (sentence) => {
+    expect(CANCEL_PROMISES.filter((re) => re.test(withoutTrueStatements(sentence)))).toEqual([]);
   });
 });
