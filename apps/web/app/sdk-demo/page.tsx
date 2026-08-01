@@ -1427,9 +1427,16 @@ const stream = await p01.streams.create({
 // ⛔ IMPOSSIBLE for developer to do:
 // stream.updatePrice("19.99") // ERROR: Price is immutable
 
-// ✅ Only the SUBSCRIBER can cancel:
+// ⛔ IMPOSSIBLE for ANYONE, including the subscriber:
+// stream.cancel() // ERROR: there is no cancellation instruction.
+// A subscription is a one-way prepaid envelope. The protocol cannot
+// return money to the subscriber. A merchant may refund off-band
+// from its own wallet, but that is the merchant's own transfer.
+
+// ✅ Only the SUBSCRIBER can pause and resume:
 // Called from subscriber's wallet only
-await p01.streams.cancel({ streamId: stream.id });`}
+await p01.streams.pause({ streamId: stream.id });
+await p01.streams.resume({ streamId: stream.id });`}
         />
       </div>
 
@@ -1457,9 +1464,10 @@ const activeStreams = await p01.streams.query({
 // Verify subscription with locked price
 const subscription = await p01.streams.get(streamId);
 
-// ✅ ONLY subscriber can cancel (from their wallet)
-// Developer CANNOT cancel or modify!
-await p01.streams.cancel({
+// ✅ ONLY the subscriber can pause and resume (from their wallet)
+// Developer CANNOT pause, resume or modify!
+// There is NO cancel: the protocol cannot refund a subscriber.
+await p01.streams.pause({
   streamId: "stream_abc123",
   // Requires subscriber's wallet signature
 });`}
@@ -1796,6 +1804,7 @@ function CardsSection() {
               description="All Apps"
               amount={54.99}
               interval="monthly"
+              /* LEGACY status: no new subscription can reach it. */
               status="cancelled"
               nextPayment="—"
               totalPaid={164.97}
@@ -1812,13 +1821,12 @@ function CardsSection() {
 const { streams } = useStreams({ wallet: publicKey });
 
 // Display on-chain subscription data
+// Pause and resume are the only controls: a subscription is a one-way
+// prepaid envelope and the protocol cannot refund the subscriber.
 <SubscriptionCard
   stream={streams[0]} // On-chain stream data
-  showCancel={true}
-  onCancel={async (streamId) => {
-    // Cancel via smart contract
-    await p01.streams.cancel({ streamId });
-  }}
+  showPauseResume={true}
+  onPauseResume={(id, state) => console.log(id, state)}
 />`}
         />
       </div>
@@ -2264,7 +2272,7 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
         merchantName: `Protocol 01 - ${tierName}`,
         amountPerPeriod: amountLamports,
         periodSeconds: periodSeconds,
-        maxPeriods: 0, // Unlimited until cancelled
+        maxPeriods: 0, // Unlimited: runs until the deposit is exhausted
         description: `${tierName} Plan - ${price} SOL/${interval} (Demo: 0.01 SOL)`,
         // Forward the on-page privacy selection so the wallet popup mirrors it.
         ...(privacyEnabled ? PRIVACY_PRESET : PRIVACY_OFF),
