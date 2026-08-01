@@ -1,6 +1,33 @@
 import '@testing-library/jest-dom/vitest';
 import { vi } from 'vitest';
 
+// ---------- Mock: @/i18n ----------
+// Components call `useT()`, which reads the translation function off
+// I18nContext. Tests render components without <I18nProvider>, so the context
+// default returns the key itself and every assertion on visible copy fails
+// against strings like "sdkDemo.heroSubtitle". Resolving against the real
+// English catalogue keeps the tests asserting what a user actually sees, and
+// means a renamed or deleted key fails the suite instead of passing silently.
+vi.mock('@/i18n', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  const en = (await import('@/i18n/en')).default as Record<string, unknown>;
+
+  const lookup = (path: string): string => {
+    let current: unknown = en;
+    for (const part of path.split('.')) {
+      if (current == null || typeof current !== 'object') return path;
+      current = (current as Record<string, unknown>)[part];
+    }
+    return typeof current === 'string' ? current : path;
+  };
+
+  return {
+    ...actual,
+    useT: () => lookup,
+    useLocale: () => ({ locale: 'en', setLocale: vi.fn(), t: lookup }),
+  };
+});
+
 // ---------- Mock: next/image ----------
 vi.mock('next/image', () => ({
   __esModule: true,
