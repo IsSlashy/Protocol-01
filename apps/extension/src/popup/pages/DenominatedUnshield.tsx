@@ -10,13 +10,13 @@
  * Keep the popup open throughout.
  *
  * Regular vs. emergency:
- *   Regular   — min_epoch = depositEpoch (normal flow, slightly more private).
- *   Emergency — min_epoch = 0 (bypasses the maturity epoch gate; less private
- *               because it signals urgency, but safe for any note age).
- *
- * Both paths call the same on-chain handler. The V3 handler does NOT enforce
- * maturity on-chain (it is UX-only), so either passes. Emergency is labelled
- * explicitly to inform the user.
+ *   Both paths now produce a BYTE-IDENTICAL instruction. `min_epoch` is always
+ *   0 (see UNSHIELD_MIN_EPOCH in shared/services/denominatedPool.ts) and the
+ *   V3 handler ignores the argument anyway
+ *   (unshield_denominated_stark_v3.rs:387). The toggle is UX only: it decides
+ *   whether the maturity warning blocks the button, not what goes on-chain.
+ *   Previously "regular" published the note's deposit epoch in the clear,
+ *   which narrowed the anonymity set to the deposits made in that epoch.
  */
 
 import { useState, useMemo } from 'react';
@@ -271,8 +271,8 @@ export default function DenominatedUnshield() {
                 <div>
                   <p className="text-white text-[10px] font-medium">Regular</p>
                   <p className="text-p01-chrome/70 text-[9px]">
-                    Standard withdrawal. Passes your deposit epoch as min_epoch. Slightly more private
-                    because it blends with normal matured-note withdrawals.
+                    Standard withdrawal. Your deposit epoch is never published — min_epoch is
+                    always 0, so the transaction reveals nothing about when the note was created.
                   </p>
                 </div>
               </div>
@@ -281,8 +281,9 @@ export default function DenominatedUnshield() {
                 <div>
                   <p className="text-yellow-300 text-[10px] font-medium">Emergency</p>
                   <p className="text-p01-chrome/70 text-[9px]">
-                    Bypasses the maturity epoch gate (min_epoch = 0). Use when you need to
-                    withdraw a fresh note immediately. Less private — signals urgency on-chain.
+                    Label only — it produces a byte-identical transaction, so nothing on-chain
+                    signals urgency. Neither mode is blocked by note age. Withdrawing a fresh note
+                    still shrinks your anonymity set by timing alone.
                   </p>
                 </div>
               </div>
@@ -313,7 +314,8 @@ export default function DenominatedUnshield() {
             <div className="mt-2 flex items-start gap-2 p-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
               <AlertTriangle className="w-3 h-3 text-yellow-400 shrink-0 mt-0.5" />
               <p className="text-yellow-300 text-[9px]">
-                Emergency mode bypasses the maturity delay. Use only if you need funds immediately.
+                Emergency mode is a label, not a different transaction. Withdrawing a note soon
+                after depositing it links the two by timing regardless of the mode you pick.
               </p>
             </div>
           )}

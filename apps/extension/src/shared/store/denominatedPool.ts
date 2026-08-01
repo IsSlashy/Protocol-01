@@ -134,7 +134,10 @@ interface DenominatedPoolState {
   unshieldNote: (params: {
     noteId: string; // commitment.toString() — uniquely identifies the note
     recipient?: string; // Solana address; defaults to own wallet
-    emergency?: boolean; // true = bypass maturity (min_epoch = 0)
+    // Accepted for call-site compatibility but INERT: min_epoch is always 0
+    // (UNSHIELD_MIN_EPOCH) and the V3 handler ignores it. Both modes produce a
+    // byte-identical instruction.
+    emergency?: boolean;
     onProgress?: (step: string) => void;
   }) => Promise<{ txSig: string }>;
   /**
