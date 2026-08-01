@@ -842,7 +842,7 @@ fn assert_artifact_is_current(so: &SoUnderTest) {
 ///
 /// Before this existed the only asserts in this file were "the measurement
 /// happened" and "there are seven rows". Nothing bounded CU from above except
-/// the 1,400,000 cap, so C0's 538,666 could become 1,399,000 and stay green —
+/// the 1,400,000 cap, so C0's 599,059 could become 1,399,000 and stay green —
 /// the number would just change in a table nobody diffs.
 ///
 /// # The numbers
@@ -896,19 +896,47 @@ struct CuCeiling {
     phase2_max: Option<u64>,
 }
 
-/// MEASURED by `cu_budget_real_circuits` on this tree, 2026-07-30.
+/// MEASURED by `cu_budget_real_circuits` on this tree, 2026-08-01, RE-ANCHORED
+/// for [B2].
 ///
-/// Artifact: `target/cu-budget/p01_stark_verifier.so`, 671,064 B, sha256
-/// `3d843e834f9a3a5fda0c2b6505b1b6d9b3d30ba64bb2584d5b7334f20b618f2e`, built by
+/// Artifact: `target/cu-budget/p01_stark_verifier.so`, 687,440 B, sha256
+/// `45bee6509e543edf58b8b00f1de94afcc8fb62c47728ec1406a58694c8f87dd0`, built by
 /// `solana-cargo-build-sbf 3.1.9 platform-tools v1.52`, build fp
-/// `28cc268b11fd8b8a`, origin line `rebuilt`, from a `CARGO_TARGET_DIR` that did
-/// not exist. `target/cu-budget` was moved aside before the run, so nothing could
-/// be served from cache, and the rebuild landed on the same sha256 as the build
-/// it replaced, byte for byte — the artifact is reproducible on this toolchain.
+/// `267355fc5dc6ac9c8f2eebe079a259c9a0f39a91943f01cb5196c825dbf2ef95`, origin
+/// line `rebuilt`, from a `CARGO_TARGET_DIR` that did not exist.
 ///
 /// Every one of the 13 numbers below is a `compute_units_consumed` from that
-/// run, and that run reproduces all 13: the `vs measured` column prints `+0` on
-/// all 13 pins.
+/// run, and a second run against the same artifact reproduces all 13: the
+/// `vs recorded` column prints `+0` on all 13 pins.
+///
+/// # Why they moved, and why the band was NOT widened
+///
+/// B2 splits the composition polynomial into `quotient_segments` columns, so the
+/// per-query DEEP arithmetic gains `k-1` extra `(Q_j(x) - Q_j(z))` terms at BOTH
+/// halves of the coset, the quotient pair-leaf preimage goes from 16 to 16k
+/// bytes, and `k(2nq+1)` more field elements are parsed and canonicity-checked.
+/// MEASURED cost, phase 1: +54,946 (C3) to +72,685 (C1), i.e. +7.5% to +10.7%.
+/// Phase 2 moved +1,953 to +2,773 (+1.1% to +2.5%), which is the parse widening
+/// alone — `verify_deep_ali_circuit_*` gained only the k-term recombination of
+/// `Q(z)`, which is `k-1` muls and `k-1` adds.
+///
+/// Two predictions were made before the run and BOTH were wrong, in opposite
+/// directions: a single-DEEP-point model said ~+45,000 on phase 1 and a
+/// two-point model said ~+90,000. The measurement is ~+60,000. It is recorded
+/// here because the models are not, and the number that governs is the one that
+/// was run.
+///
+/// This is a RE-ANCHOR to a new measured baseline after an intentional format
+/// change, in the same commit as the change, with the artifact and toolchain
+/// named — which is what the ratchet is for. The 2% band is UNCHANGED at
+/// `CU_BAND_NUMERATOR = 102`. Widening the band to absorb the drift would have
+/// been the other option and it is the wrong one: it would have left every
+/// future regression up to 10% invisible.
+///
+/// Worst absolute is C4 at 843,918 of 1,400,000 (60%); worst phase1+phase2 is
+/// C4 at 1,023,556, still inside one instruction, leaving ~376,000 CU of margin.
+/// Worst phase 2 alone is C5 at 201,422. The smallest phase-1 pin is C0 at
+/// 599,059. CU was never the binding constraint for B2 and it still is not.
 ///
 /// That sentence used to say "all seven rows", because only phase 1 HAD a
 /// `vs measured` column — the six phase-2 pins were asserted against their
@@ -925,8 +953,10 @@ struct CuCeiling {
 /// this harness — `d4b6ea12` measured a tree that still contained
 /// `verify_quotient_at_query` and its eight call sites, which no longer exist —
 /// and the `after B1` column contradicted the array twenty lines under it on all
-/// seven circuits: it said C0 538,720 where the array says 538,666, and so on
-/// down to C6 749,673 against 749,469.
+/// seven circuits: it said C0 538,720 where the array of the day said 538,666,
+/// and so on down to C6 749,673 against 749,469. Both of those arrays are now
+/// history twice over — B2 re-anchored all thirteen pins — which is exactly why
+/// the columns are gone rather than re-labelled.
 ///
 /// That is the second time a stale column in this doc drifted from the constants
 /// below it, so the columns are deleted rather than re-labelled. Nothing is
@@ -951,17 +981,14 @@ struct CuCeiling {
 /// attributed cause. That attribution is INFERENCE from the source, not a
 /// separate measurement.
 ///
-/// Worst absolute is C4 at 772,776 of 1,400,000 (55%); worst phase1+phase2 is
-/// C4 at 950,461, still inside one instruction. Worst phase 2 alone is C5 at
-/// 198,649.
 const CU_CEILINGS: [CuCeiling; 7] = [
-    CuCeiling { circuit_id: 0, phase1_measured: 538_666, phase1_max: 550_000, phase2_measured: None,           phase2_max: None },
-    CuCeiling { circuit_id: 1, phase1_measured: 678_142, phase1_max: 692_000, phase2_measured: Some(122_706), phase2_max: Some(126_000) },
-    CuCeiling { circuit_id: 2, phase1_measured: 687_645, phase1_max: 702_000, phase2_measured: Some( 90_077), phase2_max: Some( 92_000) },
-    CuCeiling { circuit_id: 3, phase1_measured: 730_461, phase1_max: 746_000, phase2_measured: Some(113_592), phase2_max: Some(116_000) },
-    CuCeiling { circuit_id: 4, phase1_measured: 772_776, phase1_max: 789_000, phase2_measured: Some(177_685), phase2_max: Some(182_000) },
-    CuCeiling { circuit_id: 5, phase1_measured: 735_492, phase1_max: 751_000, phase2_measured: Some(198_649), phase2_max: Some(203_000) },
-    CuCeiling { circuit_id: 6, phase1_measured: 749_469, phase1_max: 765_000, phase2_measured: Some(120_428), phase2_max: Some(123_000) },
+    CuCeiling { circuit_id: 0, phase1_measured: 599_059, phase1_max: 612_000, phase2_measured: None,           phase2_max: None },
+    CuCeiling { circuit_id: 1, phase1_measured: 750_827, phase1_max: 766_000, phase2_measured: Some(125_037), phase2_max: Some(128_000) },
+    CuCeiling { circuit_id: 2, phase1_measured: 756_358, phase1_max: 772_000, phase2_measured: Some( 92_348), phase2_max: Some( 95_000) },
+    CuCeiling { circuit_id: 3, phase1_measured: 785_407, phase1_max: 802_000, phase2_measured: Some(115_974), phase2_max: Some(119_000) },
+    CuCeiling { circuit_id: 4, phase1_measured: 843_918, phase1_max: 861_000, phase2_measured: Some(179_638), phase2_max: Some(184_000) },
+    CuCeiling { circuit_id: 5, phase1_measured: 793_372, phase1_max: 810_000, phase2_measured: Some(201_422), phase2_max: Some(206_000) },
+    CuCeiling { circuit_id: 6, phase1_measured: 809_654, phase1_max: 826_000, phase2_measured: Some(122_812), phase2_max: Some(126_000) },
 ];
 
 /// The band every `*_max` is computed with, as a percentage numerator over 100.
@@ -1305,13 +1332,23 @@ const THIS_FILE: &str = include_str!("cu_budget.rs");
 /// with the number quoted back at you. Entries are checked in BOTH directions:
 /// an entry that no longer appears in the prose is itself a failure, so this
 /// cannot rot into a list of numbers nobody wrote.
-const PROSE_FIGURES: [(u64, &str); 6] = [
+const PROSE_FIGURES: [(u64, &str); 16] = [
     (1_399_000, "illustrative: what C0 could have become before a ceiling existed"),
     (638_248, "byte size of the historical Route C .so this doc used to name"),
-    (671_064, "byte size of the .so CU_CEILINGS was measured from — provenance, not a pin"),
+    (687_440, "byte size of the .so CU_CEILINGS was measured from — provenance, not a pin"),
+    (54_946, "smallest measured B2 phase-1 CU delta (C3) — provenance, not a pin"),
+    (72_685, "largest measured B2 phase-1 CU delta (C1) — provenance, not a pin"),
+    (1_953, "smallest measured B2 phase-2 CU delta (C4) — provenance, not a pin"),
+    (2_773, "largest measured B2 phase-2 CU delta (C5) — provenance, not a pin"),
+    (81_457, "measured C4 proof bytes, the largest post-B2 — printed each run, not pinned"),
     (538_720, "the stale `after B1` column's C0, quoted to show it contradicted the array"),
     (749_673, "the same stale column's C6"),
-    (78_517, "measured C6 proof bytes — printed by the size table each run, not pinned"),
+    (538_666, "the pre-B2 C0 phase-1 pin, quoted where the stale column contradicted it"),
+    (749_469, "the pre-B2 C6 phase-1 pin, same sentence"),
+    (45_000, "a pre-measurement PREDICTION of B2's phase-1 CU delta, recorded as wrong"),
+    (90_000, "the other pre-measurement prediction, also wrong"),
+    (60_000, "the MEASURED B2 phase-1 delta, rounded — the exact per-circuit figures are pins"),
+    (376_000, "cap minus the worst phase1+phase2 total — derived from pins, rounded"),
 ];
 
 /// Every figure the constants in this file produce, in every form prose quotes
@@ -1405,7 +1442,7 @@ fn comma_grouped_numbers(s: &str) -> Vec<(String, u64)> {
 ///      historical figure. That is a number someone typed, and once the
 ///      constants move it is a number that used to be true.
 ///   2. The three summary sentences are DERIVED here and matched verbatim, so
-///      "worst is C4 at 772,776" cannot survive C4 becoming C5, or 772,776
+///      "worst is C4 at 843,918" cannot survive C4 becoming C5, or 843,918
 ///      becoming anything else.
 ///
 /// Between them, the `4b1347c3` failure mode — prose and constant disagreeing
@@ -1656,7 +1693,7 @@ fn proof_size_envelope_matches_the_mobile_client_constant() {
 /// The envelope check must be capable of failing, on a tree where it never does.
 ///
 /// Same reasoning as `cu_ceiling_check_rejects_a_regression_...`: on a healthy
-/// repo the largest proof is C6 at 78,517 B against a 145,000 B envelope, so the
+/// repo the largest proof is C4 at 81,457 B against a 145,000 B envelope, so the
 /// reject path of `check_proof_size_envelope` is never taken by a real row and
 /// "return no violations, always" would look exactly like a working gate.
 #[test]
@@ -1705,7 +1742,7 @@ fn proof_size_envelope_check_rejects_an_oversized_proof() {
 /// at all, only an assertion. Since the assertion is a 2% RATCHET and not an
 /// equality (see `CU_CEILINGS`, which explains why an equality pin would be
 /// deleted), a phase-2 movement of up to +2% was both unasserted AND invisible:
-/// C5 phase 2 could go 198,649 -> 203,000 and every line of output would still
+/// C5 phase 2 could go 201,422 -> 206,000 and every line of output would still
 /// read `ok`. B2 raises the FRI blowup and moves both phases at once, so
 /// without this column B2's cost on phase 2 would be a number nobody printed.
 struct Pin {
@@ -1950,7 +1987,7 @@ fn check_cu_ceilings(rows: &[CircuitRow], caveat: Option<&str>) -> Vec<String> {
 /// the chain will execute, `UNIFORM_PROOF_SIZE` bounds what the client can
 /// upload. The second one had no assertion anywhere in the repo — `cu_budget`
 /// carried `proof_bytes` on every row and only PRINTED it, and the largest
-/// shipping proof (C6, 78,517 B) is comfortable enough that the gap was easy to
+/// shipping proof (C4, 81,457 B) is comfortable enough that the gap was easy to
 /// miss. `docs/C7_SPEND_CIRCUIT_PLAN.md:15` already projects ~160 KB for C7,
 /// which is over the envelope, so this is the check that turns that from a
 /// sentence in a plan into a red run.
