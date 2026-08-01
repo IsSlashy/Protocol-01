@@ -1273,8 +1273,9 @@ function satSub(a: bigint, b: bigint): bigint {
  * Total periods the subscriber paid for at subscribe time — the only thing
  * that bounds entitlement.
  *
- * NOT `isActive`: the program writes it `true` at `subscribe_normal.rs:120` and
- * `subscribe_private_stark.rs:395` and `false` NOWHERE, so an exhausted vault
+ * NOT `isActive`: the program writes it `true` at
+ * `subscribe_private_stark.rs:395` -- the only instruction left that creates a
+ * vault -- and `false` NOWHERE, so an exhausted vault
  * reports `true` for ever. Cancellation is not the hole either — both cancel
  * instructions `close` the account. Running out of money is the hole, and
  * nothing on chain marks it.

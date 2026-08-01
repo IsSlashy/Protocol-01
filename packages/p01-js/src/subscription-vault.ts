@@ -167,7 +167,8 @@ export function deriveSubscriberVkPDA(
  * Total periods the subscriber paid for at subscribe time.
  *
  * This is what bounds entitlement — not `isActive`, which the program writes
- * `true` at `subscribe_normal.rs:120` / `subscribe_private_stark.rs:395` and
+ * `true` at `subscribe_private_stark.rs:395` (the only instruction left that
+ * creates a vault) and
  * `false` NOWHERE, so an exhausted vault reports `true` for ever.
  */
 export function periodsPaidFor(vault: Pick<VaultInfo, 'totalDeposited' | 'rate'>): number {

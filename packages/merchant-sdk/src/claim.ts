@@ -289,15 +289,17 @@ export async function assertSplClaimCanSettle(
         `${vaultToken.owner.toBase58()}, but only the vault PDA ${vaultPda.toBase58()} can sign for ` +
         `it — the CPI passes the vault as authority with its own seeds. On chain: SPL token error ` +
         `0x4 "owner does not match", reported as InstructionError Custom(4), which is not an Anchor ` +
-        `code and names no account. NOTE subscribe_normal accepts a wrong-owner vault_token_account ` +
-        `without complaint and cancel_normal signs as the same PDA, so such a vault can be neither ` +
-        `claimed nor cancelled.`,
+        `code and names no account. NOTE the subscribe side never checks this owner: ` +
+        `subscribe_private_stark.rs:358 requires only that vault_token.mint match the pool mint, ` +
+        `and the removed subscribe_normal was the same, while cancel signs as the same PDA — so ` +
+        `such a vault can be neither claimed nor cancelled.`,
     );
   }
 
   // 4. Balance. The program clamps the payout to total_deposited - claimed*rate,
   //    which is BOOKKEEPING; nothing ties the vault_token_account passed to
-  //    claim_period to the one passed to subscribe_normal. MEASURED: claiming
+  //    claim_period to the one recorded at subscribe time. MEASURED (against
+  //    subscribe_normal, before that instruction was removed): claiming
   //    from a different, correctly-owned, empty token account fails with SPL
   //    token 0x1 "insufficient funds", never with the program's own 6030
   //    InsufficientVaultBalance.
@@ -338,13 +340,14 @@ export interface BuildClaimPeriodOptions {
   /**
    * Vault's SPL token account. Required for SPL vaults, omit for native SOL.
    *
-   * The program does NOT create it — `subscribe_normal` and
-   * `subscribe_private_stark` both take it as an existing account — and its SPL
+   * The program does NOT create it — `subscribe_private_stark` takes it as an
+   * existing account, and the removed `subscribe_normal` did too — and its SPL
    * `owner` MUST be the vault PDA, because `claim_period` signs the transfer
    * with the vault's own seeds (`claim_period.rs:109-118`). Nothing on chain
-   * enforces that at subscribe time; MEASURED devnet 2026-08-01, a vault
-   * created with a subscriber-owned token account here is permanently
-   * unclaimable AND uncancellable.
+   * enforces that at subscribe time: `subscribe_private_stark.rs:358` checks the
+   * mint and not the owner. MEASURED devnet 2026-08-01 (via subscribe_normal,
+   * while it still existed), a vault created with a subscriber-owned token
+   * account here is permanently unclaimable AND uncancellable.
    */
   vaultTokenAccount?: PublicKey;
   /**

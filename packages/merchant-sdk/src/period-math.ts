@@ -17,7 +17,8 @@
  * ## What the arithmetic is for
  *
  * `SubscriptionVault.is_active` carries no information. The program writes it
- * `true` at `subscribe_normal.rs:120` and `subscribe_private_stark.rs:395`, and
+ * `true` at `subscribe_private_stark.rs:395` -- the only instruction that can
+ * create a vault since `subscribe_normal` was removed -- and
  * `false` NOWHERE. Cancellation is not the hole — `cancel_normal.rs:42` and
  * `cancel_private_stark.rs:111` both `close` the account, so a cancelled vault
  * stops existing. The hole is running out of money, which nothing on chain
@@ -94,8 +95,8 @@ export function claimablePeriods(
 
   // On chain this is a u64 division; `interval_slots == 0` would panic and the
   // transaction would fail. Refuse to build one rather than reproduce the panic.
-  // (`subscribe_normal.rs:68` and `subscribe_private_stark.rs:182` both require
-  // `interval_slots > 0`, so this is unreachable for vaults the program made.)
+  // (`subscribe_private_stark.rs:182` requires `interval_slots > 0`, so this is
+  // unreachable for vaults the program made.)
   if (vault.intervalSlots === 0n) return 0n;
 
   const totalPeriods = effectiveElapsed / vault.intervalSlots;
@@ -158,8 +159,8 @@ export function subscriptionIsCurrent(
   if (!vault.isActive || vault.isPaused) return false;
   // `intervalSlots === 0` makes the period length undefined: `periodsElapsed`
   // would report 0 forever and the subscription would never expire. No vault
-  // the program created can be in that state (`subscribe_normal.rs:68`,
-  // `subscribe_private_stark.rs:182` both require `interval_slots > 0`), so
+  // the program created can be in that state (`subscribe_private_stark.rs:182`
+  // requires `interval_slots > 0`), so
   // refusing costs nothing real and closes an "entitled forever" shape that
   // would otherwise sit in the gate.
   if (vault.intervalSlots === 0n) return false;

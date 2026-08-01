@@ -450,8 +450,9 @@ export async function updateStream(streamId: string, updates: Partial<Stream>): 
  * Map a decoded `SubscriptionVault` onto a `StreamStatus`.
  *
  * Deliberately does not consult `vault.isActive`. The program writes that
- * `true` at `subscribe_normal.rs:120` / `subscribe_private_stark.rs:395` and
- * `false` NOWHERE, so an exhausted subscription reports `true` for ever; a
+ * `true` at `subscribe_private_stark.rs:395` (the only instruction left that
+ * creates a vault) and `false` NOWHERE, so an exhausted subscription reports
+ * `true` for ever; a
  * recovered vault whose five periods had all elapsed used to be filed as
  * `active`. A subscription that ran out of the periods it paid for is
  * `completed`, which is a state this list already has.
