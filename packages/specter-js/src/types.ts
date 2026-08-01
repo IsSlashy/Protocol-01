@@ -135,7 +135,8 @@ export interface WalletInfo {
  * | `paymentSent` | `PaymentOptions & { signature: string }` | Payment sent (private or public) |
  * | `paymentReceived` | `{ signature: string; amount: number; from: string }` | Incoming payment detected |
  * | `subscriptionCreated` | `SubscriptionOptions & SubscriptionResult` | New subscription created |
- * | `subscriptionCancelled` | `{ subscriptionId: string }` | Subscription cancelled |
+ * | `subscriptionPaused` | `{ subscriptionId: string }` | Subscriber paused the subscription |
+ * | `subscriptionResumed` | `{ subscriptionId: string }` | Subscriber resumed a paused subscription |
  * | `subscriptionPayment` | `{ subscriptionId: string; signature: string; periodsPaid: number }` | Recurring payment executed |
  */
 export type P01EventType =
@@ -145,7 +146,8 @@ export type P01EventType =
   | 'paymentSent'
   | 'paymentReceived'
   | 'subscriptionCreated'
-  | 'subscriptionCancelled'
+  | 'subscriptionPaused'
+  | 'subscriptionResumed'
   | 'subscriptionPayment';
 
 /**
@@ -159,7 +161,8 @@ export interface P01EventMap {
   paymentSent: PaymentOptions & { signature: string };
   paymentReceived: { signature: string; amount: number; from: string };
   subscriptionCreated: SubscriptionOptions & SubscriptionResult;
-  subscriptionCancelled: { subscriptionId: string };
+  subscriptionPaused: { subscriptionId: string };
+  subscriptionResumed: { subscriptionId: string };
   subscriptionPayment: { subscriptionId: string; signature: string; periodsPaid: number };
 }
 

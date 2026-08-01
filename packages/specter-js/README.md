@@ -50,7 +50,8 @@ console.log('Subscription ID:', sub.subscriptionId);
 
 // Manage subscriptions
 const subscriptions = await p01.getSubscriptions();
-await p01.cancelSubscription(subscriptions[0].id);
+await p01.pauseSubscription(subscriptions[0].id);
+await p01.resumeSubscription(subscriptions[0].id);
 
 // Listen for events
 p01.on('paymentSent', (event) => {
@@ -81,7 +82,7 @@ function App() {
 function PaymentPage() {
   const { connect, disconnect, isConnected, isInstalled, publicKey } = useSpecter();
   const { pay, isLoading: payLoading, error: payError, lastPayment } = usePayment();
-  const { subscribe, cancelSubscription, subscriptions, isLoading: subLoading } = useSubscription();
+  const { subscribe, pauseSubscription, resumeSubscription, subscriptions, isLoading: subLoading } = useSubscription();
 
   if (!isInstalled) {
     return (
@@ -146,6 +147,29 @@ function PaymentPage() {
 }
 ```
 
+## No cancellation, no refunds
+
+A Protocol 01 subscription is a **one-way prepaid envelope**. Money that enters a
+subscription vault can only ever leave it toward the merchant. The protocol has
+no cancellation instruction and no refund path, so **the protocol cannot return
+money to a subscriber under any circumstance**.
+
+The subscriber has exactly two controls:
+
+- **Pause** -- freezes the subscription clock and cuts access. Prepaid days are
+  not lost while paused.
+- **Resume** -- the clock picks up exactly where it stopped.
+
+Over the life of a subscription the merchant receives exactly the amount
+deposited, always, eventually. Pause changes *when*, never *how much*.
+
+**A merchant remains free to refund off-band from its own wallet.** Nothing here
+forbids a refund as a commercial act -- it simply is not something the protocol
+executes, custodies or guarantees.
+
+Tell the subscriber this **before** they pay. It is a condition of the payment,
+not a detail of the account screen.
+
 ## Handling Missing Wallet
 
 The wallet extension injects itself asynchronously. Use these methods to handle the case where it is not yet available:
@@ -184,7 +208,8 @@ The `on()` method returns an unsubscribe function. Events and their payloads:
 | `paymentSent` | `PaymentOptions & { signature }` | Payment sent |
 | `paymentReceived` | `{ signature, amount, from }` | Incoming payment detected |
 | `subscriptionCreated` | `SubscriptionOptions & SubscriptionResult` | Subscription created |
-| `subscriptionCancelled` | `{ subscriptionId }` | Subscription cancelled |
+| `subscriptionPaused` | `{ subscriptionId }` | Subscriber paused the subscription |
+| `subscriptionResumed` | `{ subscriptionId }` | Subscriber resumed a paused subscription |
 | `subscriptionPayment` | `{ subscriptionId, signature, periodsPaid }` | Recurring payment made |
 
 ```typescript
@@ -291,7 +316,8 @@ The network determines which token mint addresses are used (e.g., mainnet USDC v
 | `pay(options)` | Send a one-time payment (private or public) |
 | `subscribe(options)` | Create a Stream Secure subscription |
 | `getSubscriptions()` | Get all subscriptions for the connected wallet |
-| `cancelSubscription(id)` | Cancel a subscription |
+| `pauseSubscription(id)` | Pause a subscription (freezes the clock, cuts access) |
+| `resumeSubscription(id)` | Resume a paused subscription |
 | `on(event, callback)` | Subscribe to events (returns unsubscribe function) |
 | `off(event, callback)` | Unsubscribe from events |
 
@@ -302,7 +328,7 @@ The network determines which token mint addresses are used (e.g., mainnet USDC v
 | `SpecterProvider` | Context provider -- wrap your app with this |
 | `useSpecter()` | Access connection state: `{ specter, connect, disconnect, isConnected, isInstalled, publicKey, walletInfo, error }` |
 | `usePayment()` | Payment hook: `{ pay, isLoading, error, lastPayment }` |
-| `useSubscription()` | Subscription hook: `{ subscribe, cancelSubscription, getSubscriptions, subscriptions, isLoading, error }` |
+| `useSubscription()` | Subscription hook: `{ subscribe, pauseSubscription, resumeSubscription, getSubscriptions, subscriptions, isLoading, error }` |
 | `PayButton` | Pre-built pay button component |
 | `SubscribeButton` | Pre-built subscribe button component |
 
