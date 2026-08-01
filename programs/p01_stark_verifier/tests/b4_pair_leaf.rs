@@ -157,6 +157,63 @@ fn generic_rejects_wire_level_pair_half_swap() {
     );
 }
 
+/// [B2] EVERY quotient segment is authenticated, not just segment 0.
+///
+/// The pair leaf went from 16 bytes to `16k` when the composition polynomial was
+/// split. A verifier that widened the wire but kept hashing only the first felt
+/// of each half would pass every other test in this file — the honest control,
+/// the half swap (which moves segment 0), the pair-indexing matrix — and would
+/// leave segments 1..k-1 completely unauthenticated. Those are `k-1` of the `k`
+/// committed columns that the DEEP composition reads, so an attacker could put
+/// anything in them.
+///
+/// So: corrupt ONE felt of ONE segment, one segment at a time, on both halves of
+/// the pair, and require a rejection for every single index.
+#[test]
+fn every_quotient_segment_is_covered_by_the_pair_leaf() {
+    let data = p01_stark::compact::generate_pool_commitment_proof(1, 2, 3, 4);
+    let cfg = &CONFIG_POOL_COMMITMENT;
+    let k = cfg.quotient_segments;
+    assert!(k > 1, "this test is vacuous at k = 1");
+
+    {
+        let proof = GenericCompactProof::from_bytes(&data.proof_bytes, cfg).expect("parse");
+        verify_generic(&proof, data.circuit_id, &data.public_inputs, cfg)
+            .expect("control: honest proof verifies");
+    }
+
+    let (q0_mirror_off, tail_q0_off) = quotient_pair_offsets(cfg, &data.proof_bytes);
+
+    for seg in 0..k {
+        for (label, base) in [("mirror", q0_mirror_off), ("at_pos", tail_q0_off)] {
+            let off = base + seg * 8;
+            let mut bytes = data.proof_bytes.clone();
+            let original = read_u64(&bytes, off);
+            // Stay canonical so the parser cannot reject on encoding instead.
+            write_u64(&mut bytes, off, original ^ 1);
+
+            let proof = GenericCompactProof::from_bytes(&bytes, cfg)
+                .unwrap_or_else(|| panic!("segment {seg} {label}: tampered proof must still parse"));
+            let err = match verify_generic(&proof, data.circuit_id, &data.public_inputs, cfg) {
+                Err(e) => e,
+                Ok(()) => panic!(
+                    "\n\n  >>> QUOTIENT SEGMENT {seg} IS UNAUTHENTICATED <<<\n  \
+                     Flipping one bit of segment {seg} ({label} half) of query 0 changed \
+                     nothing the verifier checks. The pair leaf is supposed to cover all \
+                     {k} segments on both halves; if it covers only some of them, {} of \
+                     the {k} committed quotient columns are free for an attacker to \
+                     choose, and the DEEP composition reads every one of them.\n",
+                    k - 1,
+                ),
+            };
+            assert!(
+                matches!(err, VerifyError::MerkleProofFailed),
+                "segment {seg} {label}: expected MerkleProofFailed, got {err:?}",
+            );
+        }
+    }
+}
+
 // ============================================================================
 // 2. POSITIVE — honest proofs still verify under the new format
 // ============================================================================
