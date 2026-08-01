@@ -290,7 +290,8 @@ Au bout de 6-12 mois, on peut considérer l'Ed25519 obsolete et arrêter le moni
 
 - [ ] V3 fully validated (mainnet, pas juste devnet)
 - [ ] Subscribe_private renewal validated live (en cours 2026-05-09)
-- [ ] cancel_private_stark V3 ported
+- [x] ~~cancel_private_stark V3 ported~~ — DROPPED. Cancellation and refunds
+      were removed from the protocol; the instruction no longer exists.
 - [ ] Internal audit of V3 closed
 - [ ] Hackathon Colosseum judging done (~14 mai)
 - [ ] Funding situation stabilisée (career-ops cash flow ou grant)

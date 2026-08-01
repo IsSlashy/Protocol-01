@@ -338,7 +338,7 @@ The post-quantum proof-system migration is complete. STARKs rely only on hash fu
 | `prove_balance` | Groth16 (balance_proof, circuit 2) | STARK circuit 2 |
 | `unshield_denominated_stark` | Groth16 → **removed** | STARK circuits 0-3 |
 | `transfer_denominated_stark` | Groth16 → **removed** | STARK (multi-circuit) |
-| `cancel_private_stark` | Groth16 → **removed** | STARK circuit 0 |
+| ~~`cancel_private_stark`~~ | Groth16 → **removed** | **Instruction DELETED.** Cancellation and refunds were removed from the protocol; `claim_period` closes an exhausted vault to the retailer and needs no proof. |
 | `emergency_unshield_denominated_stark` | **merged into `unshield_denominated_stark`** | `min_epoch == 0` bypasses maturity; ix/account/event layout identical to classic path. **Correction 2026-07-27:** `unshield_denominated_stark_v3` ignores `min_epoch` outright (`unshield_denominated_stark_v3.rs:387`, `let _ = (…, min_epoch, …)`), so there is no maturity to bypass; and because a non-emergency call writes the real epoch at instruction byte 72 while the emergency call writes 0, the two paths are **distinguishable** on-chain. Maturity is enforced only by `transfer_denominated_stark_v3` (`:167-173`). |
 | `split_note_stark` | Groth16 → **removed** | STARK circuit 6 (merkle_update — WIP P2.2 on-chain) |
 
