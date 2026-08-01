@@ -286,7 +286,6 @@ export default function SubscribePrivateScreen() {
           publicInputs: c3Inputs,
           proofSize: c3Result.proofSize,
         },
-        undefined, // clientStealthMeta — not used on this direct private flow
         // Service tag for the license-key commitment. This screen has no
         // Service Registry slug (free-form retailer), so the rule resolves to
         // the retailer address — the same value LicenseKeyCard now uses.

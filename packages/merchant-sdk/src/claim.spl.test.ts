@@ -155,9 +155,17 @@ describe('buildClaimPeriodInstruction — the SPL account shape that settled on 
   it('reproduces exactly the six accounts of the successful claim', () => {
     // tx 5Aym1ZiUZMD2w7DUUmWfCEqZoc9h1q7y7RiyMXJGwQqSpBsxqpCvfZoqYNFoHpr6TxBFMcDEofPjDnX8EnH3Gyuh
     // 9,935 CU, retailer ATA 0 -> 5, vault token account 5 -> 0, claimed_periods 0 -> 5.
+    //
+    // `retailerSigns: true` because that is what was measured: the deployed
+    // program declared `retailer: Signer`, so the retailer signed this
+    // transaction. It is NOT the default any more — the claim is permissionless
+    // and the default shape is asserted two tests below. Flipping this flag to
+    // match the new default would silently stop reproducing the measurement,
+    // which is the only thing this test is for.
     const ix = buildClaimPeriodInstruction(VAULT_PDA, RETAILER, {
       vaultTokenAccount: VAULT_TA,
       retailerTokenAccount: RETAILER_ATA,
+      retailerSigns: true,
     });
     expect(ix.programId.toBase58()).toBe(ZK_SHIELDED_PROGRAM_ID.toBase58());
     expect(ix.data).toEqual(Buffer.from(CLAIM_PERIOD_DISCRIMINATOR));
@@ -184,10 +192,24 @@ describe('buildClaimPeriodInstruction — the SPL account shape that settled on 
     expect(ix.keys[5]!.isWritable).toBe(true);
   });
 
-  it('never marks a token account a signer — only the retailer signs', () => {
+  it('asks for no signature at all on an SPL claim', () => {
+    // The claim is permissionless. The token accounts were never signers; the
+    // retailer stopped being one when `Signer` was dropped from ClaimPeriod, so
+    // a keeper can settle an SPL vault too.
     const ix = buildClaimPeriodInstruction(VAULT_PDA, RETAILER, {
       vaultTokenAccount: VAULT_TA,
       retailerTokenAccount: RETAILER_ATA,
+    });
+    expect(ix.keys.filter((k) => k.isSigner)).toEqual([]);
+  });
+
+  it('never marks a token account a signer even when the retailer opts in', () => {
+    // `retailerSigns` exists so a retailer can name a treasury token account it
+    // does not own. It must move exactly one flag.
+    const ix = buildClaimPeriodInstruction(VAULT_PDA, RETAILER, {
+      vaultTokenAccount: VAULT_TA,
+      retailerTokenAccount: RETAILER_ATA,
+      retailerSigns: true,
     });
     expect(ix.keys.filter((k) => k.isSigner).map((k) => k.pubkey.toBase58())).toEqual([
       RETAILER.toBase58(),

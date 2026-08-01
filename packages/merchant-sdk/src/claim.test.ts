@@ -176,9 +176,34 @@ describe('buildClaimPeriodInstruction', () => {
   it('orders accounts as ClaimPeriod<\'info> declares them', () => {
     const ix = buildClaimPeriodInstruction(vaultPda, retailer);
     expect(ix.keys).toHaveLength(6);
-    expect(ix.keys[0]).toMatchObject({ pubkey: retailer, isSigner: true, isWritable: true });
     expect(ix.keys[1]).toMatchObject({ pubkey: vaultPda, isSigner: false, isWritable: true });
     expect(ix.keys[2].pubkey).toEqual(SystemProgram.programId);
+  });
+
+  it('does not ask the retailer to sign, because the program no longer does', () => {
+    // The whole point of the permissionless claim: 13 devnet vaults holding
+    // ~5.52 SOL have retailer keys that were generated in a browser during
+    // testing and no longer exist. Marking the account as a signer here makes
+    // the RUNTIME reject the transaction for a missing signature before the
+    // program is ever reached, which would leave them exactly as stuck.
+    const ix = buildClaimPeriodInstruction(vaultPda, retailer);
+    expect(ix.keys[0]).toMatchObject({ pubkey: retailer, isSigner: false, isWritable: true });
+    // Writable is NOT optional: the retailer is the lamport destination for the
+    // payout and, on the final claim, for the vault's rent.
+    expect(ix.keys[0].isWritable).toBe(true);
+  });
+
+  it('marks the retailer a signer only when the caller says it is signing', () => {
+    // The one thing the signature still buys is a `retailerTokenAccount` that
+    // `vault.retailer` does not own — a treasury. Opt in explicitly.
+    const ix = buildClaimPeriodInstruction(vaultPda, retailer, { retailerSigns: true });
+    expect(ix.keys[0]).toMatchObject({ pubkey: retailer, isSigner: true, isWritable: true });
+    // And it stays off for every other value, including undefined.
+    for (const retailerSigns of [undefined, false] as const) {
+      expect(
+        buildClaimPeriodInstruction(vaultPda, retailer, { retailerSigns }).keys[0].isSigner,
+      ).toBe(false);
+    }
   });
 
   it('fills the three optional slots with the program ID for a native SOL vault', () => {

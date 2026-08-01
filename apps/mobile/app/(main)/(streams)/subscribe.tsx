@@ -375,13 +375,13 @@ function SubscribeContent() {
         );
 
         setProgressStep(4, 4, 'Uploading proof & sending transaction');
-        // Persist the user's v1 stealth meta on the vault — enables
-        // refund-via-relayer routing on future cancel. 64 raw bytes:
-        // [spending_pub(32) || viewing_pub(32)]. Same keys as the inbox
-        // scanner already uses, so the keeper-delivered refund note shows up
-        // through the existing stealth scan path.
-        const { getOrCreateStealthMetaV1 } = await import('../../../services/stealth/keys');
-        const clientStealthMeta = await getOrCreateStealthMetaV1();
+        // This screen used to load the user's v1 stealth meta address here and
+        // persist it on the vault, so a future cancel could route the refund
+        // back through the relayer. There is no cancel and no refund, and the
+        // on-chain instruction no longer accepts the argument — so the 64 bytes
+        // of [spending_pub(32) || viewing_pub(32)] are no longer read, no
+        // longer sent, and no longer published in a transaction anyone can
+        // read. `getOrCreateStealthMetaV1` still serves the inbox scanner.
         const subscribeResult = await subscribePrivateStarkAction(
           receipt,
           poolConfig,
@@ -399,7 +399,6 @@ function SubscribeContent() {
             proofSize: poolProof.proofSize,
           },
           c3ProofData,
-          clientStealthMeta,
           // Service tag for the license-key commitment (HKDF info). ONE rule,
           // shared with LicenseKeyCard — see licenseServiceTag. Inlining the
           // fallback on both sides is what let them drift apart.

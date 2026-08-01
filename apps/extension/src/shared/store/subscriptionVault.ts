@@ -94,7 +94,10 @@ interface SubscriptionVaultState {
   /** Resume a paused normal vault subscription. */
   resumeNormalVault: (vaultAddress: string) => Promise<string>;
 
-  /** Claim accrued periods (retailer only). */
+  /**
+   * Push a vault's accrued periods to its retailer. Permissionless — the local
+   * wallet only pays the fee, and the retailer is read off the vault.
+   */
   claimVaultPeriod: (vaultAddress: string) => Promise<string>;
 
   // -------------------------------------------------------------------

@@ -175,7 +175,17 @@ function getDiscriminator(name: string): Buffer {
 
 /**
  * Build claim_period instruction.
- * Allows the retailer to claim accumulated subscription payments.
+ *
+ * PERMISSIONLESS since the no-cancel lot: `retailer` is NOT a signer any more.
+ * The on-chain account struct pins it to `vault.retailer` with a `==`
+ * constraint and the vault PDA is the only authority over the funds, so the
+ * sender of the transaction cannot change where the money goes — only when it
+ * moves, and they pay the fee. Passing `isSigner: true` here would make the
+ * runtime demand a signature the program no longer asks for, which fails for
+ * exactly the merchants this change exists to rescue: the ones whose retailer
+ * key is gone.
+ *
+ * `retailer` MUST be read off the vault, never assumed to be the local wallet.
  */
 function buildClaimPeriodIx(
   retailer: PublicKey,
@@ -186,7 +196,7 @@ function buildClaimPeriodIx(
   disc.copy(data, 0);
 
   const keys = [
-    { pubkey: retailer, isSigner: true, isWritable: true },
+    { pubkey: retailer, isSigner: false, isWritable: true },
     { pubkey: vaultPDA, isSigner: false, isWritable: true },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
   ];
@@ -264,7 +274,12 @@ async function signAndSend(
 // ---------------------------------------------------------------------------
 
 /**
- * Retailer claims accumulated subscription payments.
+ * Push a subscription vault's accrued payment to its retailer.
+ *
+ * PERMISSIONLESS: the local wallet is only the fee payer. It used to be passed
+ * as the retailer account AND as the signer, so this function silently only
+ * worked when you happened to be the merchant. The retailer is now read off
+ * the vault, which is also the only address the program will pay.
  */
 export async function claimPeriod(
   vaultPDA: PublicKey,
@@ -277,11 +292,14 @@ export async function claimPeriod(
   const keypair = walletSigner ? null : await getKeypair();
   if (!keypair && !walletSigner) throw new Error('Wallet not found');
 
-  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
   const connection = getConnection();
 
+  onProgress?.('Reading vault...');
+  const vault = await fetchVault(vaultPDA);
+  if (!vault) throw new Error('Subscription vault not found on chain');
+
   onProgress?.('Building transaction...');
-  const ix = buildClaimPeriodIx(walletPubkey, vaultPDA);
+  const ix = buildClaimPeriodIx(new PublicKey(vault.retailer), vaultPDA);
 
   onProgress?.('Sending transaction...');
   const tx = new Transaction().add(ix);
@@ -388,11 +406,11 @@ export async function subscribePrivateStark(
   c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
-  clientStealthMeta?: Uint8Array,
   /**
    * 32-byte `license_commitment = blake3(licenseSecret)`, posted on-chain as
-   * the LAST subscribe arg (#10). Stored verbatim — no on-chain verification.
-   * Enables off-chain license-key verification by a merchant (no shared secret).
+   * the LAST subscribe arg (now #9, previously #10). Stored verbatim — no
+   * on-chain verification. Enables off-chain license-key verification by a
+   * merchant (no shared secret).
    */
   licenseCommitment?: Uint8Array,
 ): Promise<string> {
@@ -456,11 +474,6 @@ export async function subscribePrivateStark(
   // active pools and surfaces as EpochDelayNotMet (6023 / 0x1787).
   const minEpoch = receipt.depositEpoch;
 
-  if (clientStealthMeta && clientStealthMeta.length !== 64) {
-    throw new Error(
-      `subscribePrivateStark: clientStealthMeta must be 64 bytes, got ${clientStealthMeta.length}`,
-    );
-  }
   if (licenseCommitment && licenseCommitment.length !== 32) {
     throw new Error(
       `subscribePrivateStark: licenseCommitment must be 32 bytes, got ${licenseCommitment.length}`,
@@ -526,7 +539,6 @@ export async function subscribePrivateStark(
       vaultConfig.intervalSlots,
       vkHashSubscriber,
       starkCommitment,
-      clientStealthMeta,
       licenseCommitment,
     );
 
@@ -713,7 +725,6 @@ function buildSubscribePrivateStarkIx(
   intervalSlots: bigint,
   vkHashSubscriber: Uint8Array,
   starkCommitment: bigint,
-  clientStealthMeta?: Uint8Array,
   licenseCommitment?: Uint8Array,
 ): TransactionInstruction {
   const disc = getDiscriminator('subscribe_private_stark');
@@ -721,13 +732,16 @@ function buildSubscribePrivateStarkIx(
   // Args (in on-chain order): nullifier: [u8;32], merkle_root: [u8;32],
   //   min_epoch: u64, subscriber_commitment: [u8;32], rate: u64,
   //   interval_slots: u64, vk_hash_subscriber: [u8;32], stark_commitment: u64,
-  //   client_stealth_meta: Option<[u8;64]>  (arg #9, 1-byte tag + 64 if Some),
-  //   license_commitment:  Option<[u8;32]>  (arg #10 / LAST, 1-byte tag + 32 if Some)
-  const hasMeta = !!clientStealthMeta && clientStealthMeta.length === 64;
-  const metaOptionSize = 1 + (hasMeta ? 64 : 0);
+  //   license_commitment:  Option<[u8;32]>  (arg #9 / LAST, 1-byte tag + 32 if Some)
+  //
+  // REMOVED: `client_stealth_meta: Option<[u8;64]>` used to sit between
+  // `stark_commitment` and `license_commitment` as arg #9, and its Borsh tag
+  // byte was written even when None. The on-chain instruction no longer
+  // declares it, so that tag byte must NOT be emitted — an extra byte here and
+  // the program's `license_commitment` deserialises from the wrong offset.
   const hasLicense = !!licenseCommitment && licenseCommitment.length === 32;
   const licenseOptionSize = 1 + (hasLicense ? 32 : 0);
-  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8 + metaOptionSize + licenseOptionSize);
+  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8 + licenseOptionSize);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
@@ -739,23 +753,7 @@ function buildSubscribePrivateStarkIx(
   Buffer.from(vkHashSubscriber).copy(data, offset); offset += 32;
   data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
 
-  // arg #9 — Borsh Option<[u8;64]> client_stealth_meta: tag (0=None, 1=Some)
-  // followed by 64 bytes if Some. Persisted on-chain in
-  // `vault.client_stealth_meta`.
-  //
-  // DEAD FEATURE. It named the stealth address a refund would have been paid
-  // to, and there is no refund any more. Callers should pass None: writing it
-  // publishes a 64-byte subscriber-controlled address into a public account for
-  // something that can never fire. The PARAMETER stays because dropping it would
-  // move the instruction ABI, which is a program change and not a client one.
-  if (hasMeta) {
-    data.writeUInt8(1, offset); offset += 1;
-    Buffer.from(clientStealthMeta!).copy(data, offset); offset += 64;
-  } else {
-    data.writeUInt8(0, offset); offset += 1;
-  }
-
-  // arg #10 (LAST) — Borsh Option<[u8;32]> license_commitment: tag (0=None,
+  // arg #9 (LAST) — Borsh Option<[u8;32]> license_commitment: tag (0=None,
   // 1=Some) followed by 32 bytes if Some. This is blake3(licenseSecret); the
   // chain stores it verbatim with NO verification. A merchant later checks
   // blake3(decode(presentedKey)) == vault.license_commitment off-chain.

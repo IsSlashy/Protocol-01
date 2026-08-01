@@ -103,16 +103,12 @@ interface SubscriptionVaultState {
      * `generateMerklePathProof`, mirroring unshield_denominated_stark_v3.
      */
     c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
-    /**
-     * Optional v1 stealth meta address (64 bytes: spending_pub || viewing_pub)
-     * persisted on-chain in `vault.client_stealth_meta`.
-     *
-     * DEAD FEATURE — PASS NOTHING. It addressed the subscriber for a refund,
-     * and cancellation and refunds have been removed from the protocol. Setting
-     * it publishes a 64-byte subscriber-controlled stealth address into a public
-     * account for something that can never fire.
-     */
-    clientStealthMeta?: Uint8Array,
+    // REMOVED: `clientStealthMeta?: Uint8Array`. It was a 64-byte stealth meta
+    // address (spending_pub || viewing_pub) that addressed the subscriber for a
+    // refund. Cancellation and refunds are gone, and the on-chain instruction
+    // no longer takes the argument at all — so passing one is not merely
+    // useless, it is a subscriber-controlled address published in a public
+    // transaction for a feature that can never fire.
     /**
      * Service identifier (Service Registry slot, e.g. 'disney-plus'; falls back
      * to the stream id for custom recipients). Mixed into the license-key HKDF
@@ -316,7 +312,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         vkHashSubscriber,
         starkProofData,
         c3ProofData,
-        clientStealthMeta,
         serviceId,
       ) => {
         set({ isLoading: true, error: null, progress: 'Preparing STARK subscription...' });
@@ -333,7 +328,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             commitmentBigintPrefix: subscriberOwnershipCommitment.toString(16).slice(0, 16),
             vkHashPrefix: Buffer.from(vkHashSubscriber).slice(0, 4).toString('hex'),
             proofSize: starkProofData.proofSize,
-            hasStealthMeta: !!clientStealthMeta,
           });
         }
 
@@ -366,7 +360,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
               set({ progress: step });
             },
             walletSigner,
-            clientStealthMeta,
             licenseCommitmentBytes,
           );
 

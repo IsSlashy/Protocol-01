@@ -265,14 +265,14 @@ await program.methods.subscribePrivateStark(
   intervalSlots,         // u64 slots between periods
   vkHashSubscriber,      // [u8;32]
   starkCommitment,       // u64
-  clientStealthMeta,     // DEPRECATED, pass null — routed the deleted refund
-  licenseCommitment      // Option<[u8;32]>, or null
+  licenseCommitment      // Option<[u8;32]>, or null — LAST arg
 ).accounts({
   payer, retailer, vault, denominatedPool, merkleTree,
   nullifierRecord, c1ProofBuffer, c3ProofBuffer, systemProgram,
 }).rpc();
 
-// Retailer claims accrued periods (retailer signs)
+// Anyone can push the claim — the program pays vault.retailer and
+// nobody else, so no signature from the merchant is required.
 await program.methods.claimPeriod()
   .accounts({ retailer, vault, systemProgram })
   .rpc();`,

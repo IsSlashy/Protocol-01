@@ -112,19 +112,25 @@ export interface SplClaimAccounts {
 /**
  * Does the retailer actually control the token account the payout lands in?
  *
- * `claim_period` checks only `retailer_token.mint == vault.token_mint`
- * (`claim_period.rs:107`); it never checks who owns that account. MEASURED
- * devnet 2026-08-01, tx
+ * HISTORY, because the measurement below is now partly obsolete and the reason
+ * matters. `claim_period` used to check only `retailer_token.mint ==
+ * vault.token_mint` and never who owned that account. MEASURED devnet
+ * 2026-08-01, tx
  * `4G58G6xzgydec1d1CRMFPcSVYPHeNQT9GCXY84sHWyshEA6R3rweg9H2yhQWBdSDGH11ujmiwxbLVhteM2NM7hbd`:
  * a claim whose `retailer_token_account` was a correct-mint account owned by the
- * SUBSCRIBER succeeded — err null, 9,933 CU — and moved 3 units into it. The
- * retailer signs, so this is not an authorisation hole, but a mis-wired
- * integration sends the money to a token account the merchant cannot spend from
- * and nothing objects.
+ * SUBSCRIBER succeeded — err null, 9,933 CU — and moved 3 units into it. That
+ * was not an authorisation hole only because the retailer had to sign.
  *
- * Deliberately NOT enforced inside {@link assertRetailerCanReceiveClaim}:
+ * The retailer no longer has to sign, so the signature can no longer stand in
+ * for the check. The program now requires `retailer_token_account.owner ==
+ * vault.retailer || retailer.is_signer`. The measured transaction above would
+ * still succeed today — it was sent by the retailer — but the same accounts
+ * pushed by a third party are refused with `Unauthorized`.
+ *
+ * Still deliberately NOT enforced inside {@link assertRetailerCanReceiveClaim}:
  * paying into a treasury account the retailer key does not own is a legitimate
- * setup, and refusing it would break that.
+ * setup, it survives on chain whenever the retailer signs, and refusing it here
+ * would break it for the callers that can.
  */
 export function retailerTokenAccountIsControlledByRetailer(
   retailer: PublicKey,
@@ -277,12 +283,16 @@ export async function assertSplClaimCanSettle(
   }
 
   // 3. The vault token account must be owned by the vault PDA, because the CPI
-  //    passes the vault as `authority` with its own seeds (claim_period.rs:114).
-  //    MEASURED: otherwise the token program fails with 0x4 "owner does not
-  //    match", surfacing at the top level as InstructionError Custom(4). That is
-  //    NOT an Anchor code — Anchor codes start at 6000 — so looking it up in the
-  //    zk_shielded error table finds nothing, and the log line names no account.
+  //    passes the vault as `authority` with its own seeds.
+  //    MEASURED: the token program used to be the only thing that noticed,
+  //    failing with 0x4 "owner does not match", surfacing at the top level as
+  //    InstructionError Custom(4). That is NOT an Anchor code — Anchor codes
+  //    start at 6000 — so looking it up in the zk_shielded error table found
+  //    nothing, and the log line named no account.
   //    tx 4TWzg6J3SpABfMbkbRbimwP8EJhZLA2oMPamzdVZ6FNX9y4QnkGCmFyN8dk9b4Vi3be8fomX6ZUgPEeKmSH5isPN
+  //    `claim_period` now states it as an account constraint, so the expected
+  //    error becomes Unauthorized and names the account. NOT re-measured: the
+  //    program carrying that constraint is not deployed.
   if (!vaultToken.owner.equals(vaultPda)) {
     throw new Error(
       `claim_period: vault_token_account ${vaultTokenAccount.toBase58()} is owned by ` +
@@ -305,6 +315,14 @@ export async function assertSplClaimCanSettle(
   //    token 0x1 "insufficient funds", never with the program's own 6030
   //    InsufficientVaultBalance.
   //    tx 5a8s9EJQxkBmwshwE4Bpa6ijMwfNKdiSg3BmZWrxb3kXzVUVQ1khfpKm7YBEVfKsk2YqkyCBjhRqg26m7dG6h6e5
+  //
+  //    That substitution became an ATTACK when the claim went permissionless —
+  //    an empty decoy the vault PDA also owns would close the vault with its
+  //    real balance still inside — so `claim_period` now requires
+  //    `vault_token.amount >= unpaid` itself. The on-chain error for the
+  //    measured case is therefore 6030 InsufficientVaultBalance today, not SPL
+  //    0x1. NOT re-measured on devnet: no transaction has been sent against the
+  //    new program, which is not deployed.
   if (vaultToken.amount < payoutAmount) {
     throw new Error(
       `claim_period: vault_token_account ${vaultTokenAccount.toBase58()} holds ${vaultToken.amount} ` +
@@ -354,18 +372,42 @@ export interface BuildClaimPeriodOptions {
   vaultTokenAccount?: PublicKey;
   /**
    * Retailer's SPL token account. Required for SPL vaults, omit for native SOL.
-   * Must exist and be for `vault.token_mint`; the program checks the mint but
-   * not the owner. Costs {@link TOKEN_ACCOUNT_RENT_EXEMPT_LAMPORTS} of rent.
+   * Must exist and be for `vault.token_mint`. Its SPL `owner` must be
+   * `vault.retailer` UNLESS the retailer signs the transaction, in which case
+   * any correct-mint account is accepted — the claim is permissionless, so the
+   * program can no longer treat "the retailer chose it" as given. Costs
+   * {@link TOKEN_ACCOUNT_RENT_EXEMPT_LAMPORTS} of rent.
    */
   retailerTokenAccount?: PublicKey;
+  /**
+   * Mark the retailer as a transaction signer.
+   *
+   * The claim is PERMISSIONLESS and the default is `false`: `claim_period` pins
+   * the payee to `vault.retailer` with a `==` constraint and the vault PDA is
+   * the only authority over the funds, so a keeper, the subscriber or anyone
+   * else can push the transaction and pay its fee. It used to be a `Signer`,
+   * which is why 13 devnet vaults holding ~5.52 SOL are unclaimable: their
+   * retailer keys were generated in a browser during testing and are gone.
+   *
+   * Set it only when the retailer really is signing AND you need the one thing
+   * the signature still buys — naming a `retailerTokenAccount` that
+   * `vault.retailer` does not own, e.g. a treasury. Setting it without an
+   * actual signature makes the runtime reject the transaction for a missing
+   * signature before the program runs.
+   */
+  retailerSigns?: boolean;
 }
 
 /**
- * Build the `claim_period` instruction. The retailer is the only valid signer
- * (`constraint = retailer.key() == vault.retailer`).
+ * Build the `claim_period` instruction.
+ *
+ * PERMISSIONLESS: `retailer` is NOT marked as a signer unless
+ * {@link BuildClaimPeriodOptions.retailerSigns} says so. The program's
+ * `constraint = retailer.key() == vault.retailer` is what keeps the money
+ * pinned to one address; the sender picks only the timing and pays the fee.
  *
  * Account order mirrors `ClaimPeriod<'info>`
- * (`programs/zk_shielded/src/instructions/claim_period.rs:14`). The three
+ * (`programs/zk_shielded/src/instructions/claim_period.rs`). The three
  * trailing accounts are Anchor `Option<..>`; under Anchor 0.32 an absent
  * optional account is expressed by passing the program's own ID in its slot,
  * which is what the native-SOL path does here.
@@ -391,7 +433,7 @@ export function buildClaimPeriodInstruction(
   }
 
   const keys = [
-    { pubkey: retailer, isSigner: true, isWritable: true },
+    { pubkey: retailer, isSigner: opts.retailerSigns === true, isWritable: true },
     { pubkey: vaultPda, isSigner: false, isWritable: true },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     // token_program: Option<Program<Token>>
