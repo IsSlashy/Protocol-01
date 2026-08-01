@@ -897,15 +897,15 @@ struct CuCeiling {
 }
 
 /// MEASURED by `cu_budget_real_circuits` on this tree, 2026-08-01, RE-ANCHORED
-/// for [B2].
+/// for [B2] and RE-MEASURED at the [B2-INT] integration head.
 ///
 /// Artifact: `target/cu-budget/p01_stark_verifier.so`, 687,440 B, sha256
-/// `42b8387a12576d90b3542357286e44c5d17dfea360d4d4092e075047dbb40738`, built by
+/// `df4b325fd7e543dbb46b7af304e796299820090e9ac951f46a0a584a2c658a4e`, built by
 /// `solana-cargo-build-sbf 3.1.9 platform-tools v1.52`, build fp
-/// `fe03b46ef2a04411`, origin line `rebuilt`, from a `CARGO_TARGET_DIR` that did
+/// `1aaddf07001a1cc0`, origin line `rebuilt`, from a `CARGO_TARGET_DIR` that did
 /// not exist.
 ///
-/// # That artifact hash goes stale on a doc-comment edit, and did
+/// # That artifact hash goes stale on a doc-comment edit, and has now done it twice
 ///
 /// This block first recorded sha256 `45bee650…` / build fp `267355fc…`. Both are
 /// real and both were measured — at `bd07e934`, the commit that re-anchored the
@@ -916,12 +916,29 @@ struct CuCeiling {
 /// hash — so the record described a binary HEAD no longer produces, and nothing
 /// in this file asserts the hash, so the suite stayed green while it drifted.
 ///
-/// RE-MEASURED at `6de57685`: four cold SBF builds, three at HEAD into three
-/// different output paths (`target/cu-budget` twice and a path outside the repo)
-/// all giving `42b8387a…`, and a fourth with `src/` checked out from `bd07e934`
-/// reproducing `45bee650…` exactly. So the build is bit-reproducible, output-path
-/// independent and reproducible across worktrees — `grep -a Protocol-01` on the
-/// `.so` finds no absolute path — and the hash is a function of `src/` alone.
+/// It was then re-measured at `6de57685` as `42b8387a…`: four cold SBF builds,
+/// three at HEAD into three different output paths (`target/cu-budget` twice and
+/// a path outside the repo) all giving `42b8387a…`, and a fourth with `src/`
+/// checked out from `bd07e934` reproducing `45bee650…` exactly.
+///
+/// [B2-INT] It went stale AGAIN, in exactly the predicted way, the moment the six
+/// B2 branches were merged. Two of them edit `src/`: the bits-and-claims pass
+/// rewrote two soundness doc comments in `verify.rs` (the "~2^64" prose at the
+/// `verify_deep_ali_circuit_6` preamble and at `evaluate_transition_at_ood_circuit_4`,
+/// +8/-2 between them) and the claims-audit pass rewrote a doc comment in
+/// `compact_proof.rs` (+18/-5). Those edits sit ABOVE panicking code, so the
+/// relative panic locations below them shifted and the bytes shifted with them.
+/// Size is byte-identical at 687,440 and all thirteen CU numbers are byte-identical
+/// too, which is the signature of a pure line-number move. `src/query_position_independence.rs`
+/// (+331) contributes nothing to the binary: it is behind `#[cfg(test)]` and is
+/// declared at the very END of `verify.rs`, so it shifts no line number either.
+///
+/// RE-MEASURED at the integration head: two cold SBF builds, into
+/// `target/cu-budget` and into `target-sbf-b/out` with `CARGO_TARGET_DIR`
+/// `target-sbf-b/tgt`, three paths that had never existed, run SEQUENTIALLY —
+/// both give `df4b325f…` at 687,440 B. So the build is still bit-reproducible and
+/// output-path independent — `grep -a Protocol-01` on the `.so` finds no absolute
+/// path — and the hash is a function of `src/` alone.
 /// Re-record it whenever `src/` changes at all, comments included, or delete it;
 /// what must never happen is leaving a hash here that HEAD does not build.
 ///
