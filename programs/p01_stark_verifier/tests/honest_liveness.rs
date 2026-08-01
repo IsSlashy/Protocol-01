@@ -24,8 +24,21 @@
 //! verifier rejects, because the user cannot tell that failure apart from a
 //! forgery attempt, and on chain it costs them the fee and the transaction.
 //!
+//! # The precondition
+//!
+//! [2026-08-02] Every witness this file proves is now checked against its own
+//! AIR before it is verified — see `tests/common/mod.rs`. The witness family
+//! itself lives there, so this suite and `liveness_generator_semantics.rs`
+//! cannot drift apart. That check is not decoration: on 2026-08-01 the C5
+//! generator here was emitting mint-from-nothing witnesses, and their CORRECT
+//! rejection was read as a verifier liveness defect for a full day. A liveness
+//! number measured on invalid witnesses is not a number.
+//!
 //! Run with: `cargo test -p p01_stark_verifier --release --test honest_liveness -- --nocapture`
 
+mod common;
+
+use common::WITNESSES;
 use p01_stark_verifier::compact_proof::{
     get_circuit_config, CompactStarkProof, GenericCompactProof,
 };
@@ -35,14 +48,6 @@ use p01_stark_verifier::verify::{
     verify_deep_ali_circuit_4, verify_deep_ali_circuit_5, verify_deep_ali_circuit_6,
     verify_generic, verify_subscriber_ownership, VerifyError,
 };
-
-/// Witnesses per circuit. Each one is a full prove + verify.
-///
-/// [2026-08-01] Raised 32 → 160. At 32 witnesses × 22 queries × 1/16 aligned,
-/// a per-row defect confined to a handful of the 512 trace rows is seen a few
-/// times at best, which is how the C5 carry-capture rows (30/62/286/382) and
-/// the C6 padding rows (480..=509) stayed invisible for as long as they did.
-const WITNESSES: usize = 160;
 
 /// [2026-08-01] Phase 2 is a SEPARATE on-chain instruction
 /// (`verify_deep_ali_phase2`) and this suite used to skip it entirely, so it
@@ -158,7 +163,9 @@ fn every_honest_proof_verifies_on_every_circuit() {
         };
         let config = get_circuit_config(0).expect("C0 config");
         for i in 0..WITNESSES {
-            let data = p01_stark::compact::generate_compact_proof(42 + i as u64 * 7919);
+            let w = common::w0(i);
+            let data = common::prove0(&w);
+            common::check_semantics_0(&w, &data);
             let proof = CompactStarkProof::from_bytes(&data.proof_bytes)
                 .unwrap_or_else(|| panic!("C0 witness {i}: honest proof must parse"));
             let positions: Vec<u32> = proof.queries.iter().map(|q| q.position).collect();
@@ -179,30 +186,34 @@ fn every_honest_proof_verifies_on_every_circuit() {
     }
 
     let c1 = run_generic("C1", |i| {
-        let s = i as u64;
-        p01_stark::compact::generate_pool_commitment_proof(111 + s, 222 + s * 3, 333 + s * 5, 444 + s * 7)
+        let w = common::w1(i);
+        let d = common::prove1(&w);
+        common::check_semantics_1(&w, &d);
+        d
     });
     rejected.push(("C1", c1.failures.len()));
 
     let c2 = run_generic("C2", |i| {
-        let s = i as u64;
-        p01_stark::compact::generate_balance_compact_proof(42 + s, 1000 + s * 11, 777 + s, 999 + s * 3)
+        let w = common::w2(i);
+        let d = common::prove2(&w);
+        common::check_semantics_2(&w, &d);
+        d
     });
     rejected.push(("C2", c2.failures.len()));
 
     let c3 = run_generic("C3", |i| {
-        let s = i as u64;
-        let pe: Vec<u64> = (0..15u64).map(|j| 1000 + j + s * 31).collect();
-        let pi: Vec<u8> = (0..15u8).map(|j| ((j as usize + i) % 2) as u8).collect();
-        p01_stark::compact::generate_merkle_path_compact_proof(777 + s, &pe, &pi)
+        let w = common::w3(i);
+        let d = common::prove3(&w);
+        common::check_semantics_3(&w, &d);
+        d
     });
     rejected.push(("C3", c3.failures.len()));
 
     let c4 = run_generic("C4", |i| {
-        let s = i as u64;
-        p01_stark::compact::generate_confidential_balance_compact_proof(
-            42 + s, 1000 + s * 13, 111 + s, 800 + s * 13, 222 + s, 200, 333 + s, 999 + s,
-        )
+        let w = common::w4(i);
+        let d = common::prove4(&w);
+        common::check_semantics_4(&w, &d);
+        d
     });
     rejected.push(("C4", c4.failures.len()));
 
@@ -224,21 +235,23 @@ fn every_honest_proof_verifies_on_every_circuit() {
     // positions, still vary with every witness. The non-conserving case it used
     // to cover by accident is covered on purpose, and far more strongly, in
     // `tests/c5_conservation_probe.rs`.
+    //
+    // [2026-08-02] `common::w5` is now the ONLY definition of these numbers and
+    // `common::check_semantics_5` asserts the conservation relation on every
+    // single one before it is proved, so this cannot silently regress.
     let c5 = run_generic("C5", |i| {
-        let s = i as u64;
-        // in1 + in2 = 165 + 2s;  out1 + out2 = 215 + 2s;  difference == 50.
-        p01_stark::compact::generate_transfer_compact_proof(
-            13 + s, 500 + s * 17, 77 + s, 400 + s * 17, 88 + s, 100, 150 + 2 * s, 1234 + s,
-            555 + s, 65, 2222 + s, 333 + s, 50,
-        )
+        let w = common::w5(i);
+        let d = common::prove5(&w);
+        common::check_semantics_5(&w, &d);
+        d
     });
     rejected.push(("C5", c5.failures.len()));
 
     let c6 = run_generic("C6", |i| {
-        let s = i as u64;
-        let pe: Vec<u64> = (0..15u64).map(|j| 100 + j * 13 + s * 37).collect();
-        let pi: Vec<u8> = (0..15u8).map(|j| ((j as usize + i) % 2) as u8).collect();
-        p01_stark::compact::generate_merkle_update_compact_proof(111 + s, 222 + s * 3, &pe, &pi)
+        let w = common::w6(i);
+        let d = common::prove6(&w);
+        common::check_semantics_6(&w, &d);
+        d
     });
     rejected.push(("C6", c6.failures.len()));
 
