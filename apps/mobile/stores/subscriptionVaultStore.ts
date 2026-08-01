@@ -928,8 +928,16 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         if (computeStarkCommitment) {
           for (const c of candidates) {
             try {
-              const hexU64 = await computeStarkCommitment(c.secret.toString());
-              const bytes = goldilocksU64To32(BigInt(hexU64.startsWith('0x') ? hexU64 : '0x' + hexU64));
+              // DECIMAL, not hex. `compute_stark_commitment` (stark/src/lib.rs:133)
+              // returns `commitment.as_int().to_string()`, and StarkProver posts that
+              // string back verbatim. Parsing it as hex silently succeeds — every
+              // decimal digit is valid hex — and yields a different u64 that matches
+              // no vault on chain, which made ZK subscription recovery impossible
+              // while reporting "recovered: 0" as if the user simply had none.
+              // The other consumer of this same WASM output agrees: see
+              // `feltStringToCommitment` in services/quantumWallet/index.ts:308.
+              const commitmentDecimal = await computeStarkCommitment(c.secret.toString());
+              const bytes = goldilocksU64To32(BigInt(commitmentDecimal));
               c.starkHex = Buffer.from(bytes).toString('hex');
             } catch (err) {
               console.warn('[recoverOrphanedVaults] STARK commitment failed for candidate:', (err as Error).message);
