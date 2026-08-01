@@ -30,6 +30,7 @@ import { getConnection } from '@/services/solana/connection';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { licenseServiceTag } from '@/services/license/derive';
 import { useStarkProver } from '@/providers/StarkProverProvider';
+import { useT } from '@/i18n';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 import { withKeepAwake } from '@/utils/keepAwakeDuring';
@@ -53,6 +54,7 @@ function GlassCard({ children, style }: { children: React.ReactNode; style?: any
 
 export default function SubscribePrivateScreen() {
   const router = useRouter();
+  const t = useT();
   // Optional prefill — used by the P2P streams flow when the user toggles
   // "Private mode" on `(streams)/create.tsx` and gets routed here. Reading
   // params via the framework router so deep-links work too.
@@ -490,28 +492,22 @@ export default function SubscribePrivateScreen() {
           button that moves the money -- not in settings, not in a tooltip. The
           note is deposited into a SubscriptionVault in full and the protocol has
           no instruction that can ever pay any of it back.
+
+          It is read through `t()` DELIBERATELY, even though the rest of this
+          screen is English-only. This is the screen that opens the ZK vault, so
+          it is the one place the fr and ja copy has to be reachable -- the
+          i18n parity test asserts those translations exist and differ from
+          English, and a hardcoded English block here made that assertion
+          vacuous on exactly the path where the money becomes irrecoverable.
         */}
         <Animated.View entering={FadeInUp.delay(330)}>
           <View style={styles.oneWayCard}>
             <View style={styles.oneWayHeader}>
               <Ionicons name="warning-outline" size={16} color={P01Colors.yellow} />
-              <Text style={styles.oneWayTitle}>THIS PAYMENT IS ONE-WAY</Text>
+              <Text style={styles.oneWayTitle}>{t('subscribe.oneWayTitle')}</Text>
             </View>
-            <Text style={styles.oneWayBody}>
-              Your note is deposited in full and can only ever be paid out to the
-              retailer.{' '}
-              <Text style={styles.oneWayStrong}>
-                There is no cancellation and no refund
-              </Text>
-              {' '}- not from the retailer, not from Protocol 01.
-            </Text>
-            <Text style={styles.oneWayBody}>
-              <Text style={styles.oneWayStrong}>
-                You can pause at any time and resume later.
-              </Text>
-              {' '}Pausing freezes the clock and cuts access; your prepaid days are
-              not lost while paused.
-            </Text>
+            <Text style={styles.oneWayBody}>{t('subscribe.oneWayBody')}</Text>
+            <Text style={styles.oneWayBody}>{t('subscribe.pauseResumeBody')}</Text>
           </View>
         </Animated.View>
 

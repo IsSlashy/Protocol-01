@@ -23,6 +23,7 @@ import { getConnection } from '@/services/solana/connection';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
+import { useT } from '@/i18n';
 
 const SECURE_SECRET_PREFIX = 'p01_vault_secret_';
 
@@ -43,6 +44,7 @@ const STATUS_LABEL: Record<ReturnType<typeof entitlementStatus>, string> = {
 
 export default function VaultDetailScreen() {
   const router = useRouter();
+  const t = useT();
   const { vaultAddress } = useLocalSearchParams<{ vaultAddress: string }>();
   const {
     vaults,
@@ -280,13 +282,16 @@ export default function VaultDetailScreen() {
         */}
         <View style={styles.noRefundCard}>
           <Ionicons name="information-circle-outline" size={16} color={Colors.textSecondary} />
+          {/*
+            Read through `t()` so the fr and ja copy the i18n parity test
+            guarantees actually renders here. Hardcoding English made that
+            guarantee vacuous on this screen.
+          */}
           <Text style={styles.noRefundText}>
-            This subscription cannot be cancelled or refunded.
+            {t('streams.noRefundNotice')}
             {outlook !== null
-              ? ` ${(Number(outlook.outstandingToRetailer) / 1e9).toFixed(3)} SOL is still owed to the retailer and will be paid out over time.`
+              ? ` ${(Number(outlook.outstandingToRetailer) / 1e9).toFixed(3)} SOL ${t('streams.stillOwedSuffix')}`
               : ''}
-            {' '}You can pause at any time and resume later - your prepaid days are
-            not lost while paused.
           </Text>
         </View>
 
