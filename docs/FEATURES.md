@@ -25,7 +25,10 @@ Payment streams enable automated, recurring payments without requiring manual ap
 1. **User Creates Stream**: Specifies recipient, amount, interval, and duration
 2. **Funds Authorized**: User pre-authorizes total expected payments
 3. **Merchant Claims**: At each interval, merchant can claim payment
-4. **User Control**: Can cancel anytime, remaining funds returned
+4. **User Control**: Can pause and resume anytime. There is NO cancellation and
+   NO refund — a subscription vault is a one-way prepaid envelope and every
+   lamport in it goes to the merchant, including the sub-period remainder and
+   the account rent when `claim_period` closes it.
 
 ### Stream Parameters
 
@@ -69,8 +72,12 @@ Payment streams enable automated, recurring payments without requiring manual ap
 
 - `active`: Stream is running, payments can be claimed
 - `paused`: Temporarily stopped, can be resumed
-- `cancelled`: Terminated by user, funds returned
-- `completed`: All payments made, stream ended
+- `completed`: All funded periods claimed; `claim_period` closed the vault and
+  paid the remainder and the rent to the merchant
+
+There is no `cancelled` state. It used to read "Terminated by user, funds
+returned"; `cancel_normal` and `cancel_private_stark` are deleted and nothing
+returns funds to a subscriber.
 
 ---
 

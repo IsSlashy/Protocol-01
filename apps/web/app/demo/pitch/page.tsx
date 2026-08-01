@@ -421,14 +421,15 @@ function Slide5Subscriptions() {
           </div>
           <div className="mt-2 text-lg text-white">Sees only the period claim, never the payer</div>
           <div className="mt-4 text-xs text-p01-text-muted">
-            Cancel returns residual to subscriber as a stealth-encrypted note,
-            delivered by a keeper via on-chain RefundJob PDA.
+            A subscription is one-way: there is no cancellation and no refund.
+            claim_period closes the vault once its funding is spent and pays the
+            remainder and the rent to the retailer.
           </div>
         </GlowCard>
       </div>
       <div className="flex justify-center gap-3">
         <MonoPill>STARK circuit 0 · subscriber_ownership</MonoPill>
-        <MonoPill tone="pink">p01_relayer keeper · stealth-encrypted refund</MonoPill>
+        <MonoPill tone="pink">claim_period · one-way, no refund leg</MonoPill>
       </div>
     </div>
   );

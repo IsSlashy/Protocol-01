@@ -96,17 +96,22 @@ Streams tab → pick one of the on-chain demo merchants (Netflix, Spotify, YouTu
 
 The vault pulls from your shielded note; the retailer sees only the payment stream, nothing else.
 
-#### 3. Cancel with auto re-denomination
+#### 3. Pause and resume — there is no cancellation
 
-Privacy → **Subscription Vaults** → select a vault → **Cancel**.
+Privacy → **Subscription Vaults** → select a vault → **Pause** / **Resume**.
 
-A confirmation modal shows the automated breakdown:
+A subscription is a one-way prepaid envelope. **Money that enters a vault can
+only ever leave it toward the retailer.** There is no cancel instruction, no
+refund and no path by which a lamport returns to the subscriber; the subscriber
+is told this on the paying screen, before the deposit.
 
-- What the retailer is owed (claimable periods × rate)
-- `N × denomination` **notes re-shielded** into the pool
-- The **residual dust** routed to a self-stealth address so no clear balance ever touches your wallet
-
-Tap **Confirm** — the cancel tx goes through; the success screen shows the exact amounts recovered.
+- **Pause** freezes the clock and cuts access. Prepaid periods are not lost —
+  `total_paused_slots` is credited on resume, so pause moves *when* the retailer
+  is paid, never *how much*.
+- **Resume** restarts accrual from where it stopped.
+- `claim_period` closes the vault once its funded periods are spent, paying the
+  sub-period remainder and the rent to the retailer. It is the only instruction
+  that can close a `SubscriptionVault`.
 
 #### 4. Seed-based recovery
 
@@ -187,7 +192,7 @@ protocol-01/
 │   └── ui/                 # Shared design tokens + components
 ├── circuits/                   # Legacy Circom circuits (retired 2026-03, kept for migration history)
 ├── programs/                   # 15 Anchor programs (12 deployed on devnet)
-│   ├── zk_shielded/            # Shielded pool V4 — shield/transfer/unshield/subscribe/cancel (STARK V3)
+│   ├── zk_shielded/            # Shielded pool V4 — shield/transfer/unshield/subscribe/claim (STARK V3)
 │   ├── p01_zkspl/              # Confidential SPL balances (Poseidon commitments)
 │   ├── specter/                # Stealth address registry + private streams
 │   ├── p01_arcium/             # MPC bridge — 9 Arcis circuits + Phase D confidentialRelay scaffold
@@ -246,7 +251,7 @@ On-chain Anchor program (`zk_shielded`). Stores encrypted notes in a sparse Merk
 | `unshield_denominated_stark` | Withdraw with STARK proof |
 | `subscribe_private_stark` | Lock a note into a subscription vault |
 | `pause_private_stark` / `resume_private_stark` | Control a vault's billing clock |
-| `cancel_private_stark` | Cancel with auto re-denomination of the refund |
+| `claim_period` | Retailer claims accrued periods; closes the vault and sweeps the sub-period remainder + rent to the retailer once its funding is spent |
 
 ### zkSPL — Confidential SPL Balances
 
@@ -265,7 +270,7 @@ Circuits: `confidential_balance` (1,382 constraints, migrated to STARK AIR), `ba
 
 Clients read the registry through `fetchAllServices()` (SWR-cached, ~10 min TTL) and render a live merchant list. Users subscribe with a shielded note; the on-chain subscription vault lets the retailer pull the rate per period.
 
-**Cancel flow:** the client computes the cancel preview locally (`refundable = total_deposited − consumed`) and sends `cancel_private_stark` with the re-shield commitments. The handler pays the retailer what's due, re-shields as many full-denomination notes as possible, and surfaces the dust. The client then routes the dust to a self-stealth address so no clear balance ever lands on the user's wallet.
+**Exit flow:** there is none for the subscriber. A subscription is a one-way prepaid envelope — `cancel_normal` and `cancel_private_stark` were removed from the program, and no instruction can move a lamport from a `SubscriptionVault` to anyone but the retailer. The vault ends when `claim_period` finds its funded periods spent: that call pays the last periods, sweeps the sub-period remainder `total_deposited % rate` (which never bought a period and used to be quoted as the "refund"), closes the account and sends its rent to the retailer. The subscriber's controls are pause and resume, and the rule is stated on the paying screen before the deposit.
 
 ### Quantum-Safe Vault
 
@@ -306,7 +311,7 @@ Use cases: confidential relay, anonymous registry lookup, hidden nullifier, conf
 - All 4 tabs: Wallet, Privacy, Streams, Agent
 - Hybrid stealth addresses + ML-KEM-768
 - Auto-recovery on boot (blocking lazy-load modal)
-- Subscription vault cancel with automated breakdown UI
+- Subscription vaults: pause / resume, with the one-way no-refund rule stated before payment
 - Biometric unlock + PIN with progressive lockout + SHA-256 hashing
 - Clipboard auto-clear on sensitive copies
 
@@ -491,7 +496,7 @@ solana program deploy target/sbf-solana-solana/release/<program_name>.so \
 | Mobile app | Stores, services, crypto, payments | 208 (CI) | Passing |
 | Extension | Shared utils + services (popup tests deferred) | 45 (CI) | Passing |
 | Web app | API + lib utils (component tests deferred) | 24 (CI) | Passing |
-| E2E devnet | Shield → subscribe → cancel → recover | 8/8 | Green |
+| E2E devnet | Shield → subscribe → cancel → recover | — | **Stale — its `cancel` step no longer exists** |
 | **CI total** | TS unit suite | **~1,400 tests** | Green |
 | **Plus** | On-chain Anchor + STARK + e2e | **~480 more** | Local/devnet |
 
@@ -524,7 +529,7 @@ anchor test                           # on-chain programs (localnet)
 - [x] Quantum vault (WOTS+ 67-chain, hash-timelock, commit-reveal)
 - [x] On-chain stealth meta-address registry
 - [x] **On-chain Service Registry** (retailers register as first-class merchants)
-- [x] **Subscription vault cancel** with auto re-denomination + dust-to-stealth
+- [x] **Subscription vaults are one-way** — cancellation and refunds removed from the program; `claim_period` closes an exhausted vault and pays the remainder + rent to the retailer
 - [x] **Boot-time auto-recovery** (blocking lazy-load rescan from seed)
 - [x] Instant unshield via `p01_liquidity` prefund pool
 - [x] Arcium MPC integration (9 circuits, 6 use cases, mobile wired)
@@ -542,9 +547,7 @@ anchor test                           # on-chain programs (localnet)
 ### In Progress
 
 - [ ] **Subscribe_private renewal** live validation (Pay Now flow under logcat)
-- [ ] **`cancel_private_stark` V3 port** — port the on-chain cancel ix to `insert_with_root_v3` (subtrees + c6_verified)
 - [ ] **Phase D Arcium `confidentialRelay` deploy** — scaffold landed (`7c0841c`), pending devnet ship + mobile wiring
-- [ ] On-chain atomic dust-to-stealth routing in `cancel_private_stark`
 - [ ] Universal `LeafInserted` canonical event
 - [ ] DeFi composability spec (balance proof verification for lending/DEX)
 

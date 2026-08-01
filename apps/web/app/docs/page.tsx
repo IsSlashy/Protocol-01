@@ -265,7 +265,7 @@ await program.methods.subscribePrivateStark(
   intervalSlots,         // u64 slots between periods
   vkHashSubscriber,      // [u8;32]
   starkCommitment,       // u64
-  clientStealthMeta,     // Option<[u8;64]> refund route, or null
+  clientStealthMeta,     // DEPRECATED, pass null — routed the deleted refund
   licenseCommitment      // Option<[u8;32]>, or null
 ).accounts({
   payer, retailer, vault, denominatedPool, merkleTree,
