@@ -339,13 +339,48 @@ mod plumbing_guards {
     /// This very file, read at compile time.
     const SRC: &str = include_str!("claim_period.rs");
 
-    /// Everything before the guards themselves, so a pattern quoted in these
-    /// comments cannot satisfy its own assertion.
-    fn handler_src() -> &'static str {
+    /// Everything before the guards themselves, WITH EVERY COMMENT STRIPPED.
+    ///
+    /// Excluding the guard module is not enough, and that was measured rather
+    /// than argued: deleting `require!(vault_token.amount >= unpaid)` from the
+    /// handler outright left `cargo test -p zk_shielded` at 25 passed / 0
+    /// failed, because the doc comment on `vault_token_account` quotes the
+    /// pattern verbatim and the assertion matched the prose. A guard that a
+    /// comment can satisfy is worse than no guard: it reports a protection
+    /// that is not there. Every one of these assertions now runs against code
+    /// only.
+    fn handler_src() -> String {
         let end = SRC
             .find("mod plumbing_guards")
             .expect("guard module marker");
-        &SRC[..end]
+        SRC[..end]
+            .lines()
+            .map(|line| match line.find("//") {
+                Some(at) => &line[..at],
+                None => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn the_comment_stripper_actually_strips() {
+        // Self-check. If this ever regresses, every assertion below silently
+        // degrades back into a prose match. The doc on `vault_token_account`
+        // is the exact comment that made a real guard hollow.
+        assert!(
+            SRC.contains("// the other half of that guard"),
+            "the comment this fixture is built on was reworded — pick another",
+        );
+        let stripped = handler_src();
+        assert!(
+            !stripped.contains("the other half of that guard"),
+            "handler_src() is leaking comments again; every guard below is \
+             now satisfiable by prose alone",
+        );
+        // And it must not have eaten the code around them.
+        assert!(stripped.contains("pub fn handler(ctx: Context<ClaimPeriod>) -> Result<()> {"));
+        assert!(stripped.contains("token::close_account("));
     }
 
     #[test]
@@ -459,14 +494,15 @@ mod plumbing_guards {
         // key a payout or a close could be addressed to. Anchor rejects an
         // account the struct does not declare, so this holds regardless of
         // what the handler body does.
-        let accounts_start = handler_src()
+        let src = handler_src();
+        let accounts_start = src
             .find("pub struct ClaimPeriod<'info> {")
             .expect("ClaimPeriod accounts struct");
-        let accounts_end = handler_src()[accounts_start..]
+        let accounts_end = src[accounts_start..]
             .find("\n}\n")
             .expect("end of accounts struct")
             + accounts_start;
-        let accounts = &handler_src()[accounts_start..accounts_end];
+        let accounts = &src[accounts_start..accounts_end];
         // Declared fields only. `vault.subscriber_id_bytes()` appears in the
         // PDA seeds and is a read of the vault, not an account.
         let declared: Vec<&str> = accounts
