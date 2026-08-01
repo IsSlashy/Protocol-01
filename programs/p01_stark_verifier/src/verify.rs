@@ -5756,3 +5756,11 @@ mod boundary_c0_tests {
         );
     }
 }
+
+/// [ATTACK] Independence of the FRI query positions, measured directly on
+/// `derive_positions_from_seed`. Lives in its own file because it is long and
+/// because it is the first test this function has ever had; it is a child of
+/// this module so it can reach a private fn without widening its visibility.
+#[cfg(test)]
+#[path = "query_position_independence.rs"]
+mod query_position_independence;
