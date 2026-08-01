@@ -253,6 +253,123 @@ pub fn handler(ctx: Context<ClaimPeriod>) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Structural guards on the account plumbing.
+//
+// `settle()` is unit-tested in `state/subscription_vault.rs`, but NOTHING
+// executes this handler: the crate has no `tests/` directory and no
+// solana-program-test / litesvm dev-dependency, so no lamport ever moves in
+// CI. That gap was measured, not assumed — deleting the entire
+// `if is_final { .close(retailer) }` block below left `cargo test -p
+// zk_shielded` at 18 passed / 0 failed and `cargo clippy` at zero warnings.
+// Deleting the `!vault.is_paused` account constraint did the same.
+//
+// A source guard is a poor substitute for execution and is not offered as
+// one. It catches exactly the class that went uncaught: a deletion. It cannot
+// tell you the lamports actually land on the retailer, and only a
+// program-test or a devnet run can. Both are still owed.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod plumbing_guards {
+    /// This very file, read at compile time.
+    const SRC: &str = include_str!("claim_period.rs");
+
+    /// Everything before the guards themselves, so a pattern quoted in these
+    /// comments cannot satisfy its own assertion.
+    fn handler_src() -> &'static str {
+        let end = SRC
+            .find("mod plumbing_guards")
+            .expect("guard module marker");
+        &SRC[..end]
+    }
+
+    #[test]
+    fn claim_period_actually_closes_the_vault_and_only_on_the_final_claim() {
+        let src = handler_src();
+        // Cancellation was the only instruction that could close a
+        // SubscriptionVault. Without this call every subscription ever
+        // created leaks its rent, permanently and unrecoverably.
+        assert!(
+            src.contains(".close(ctx.accounts.retailer.to_account_info())"),
+            "claim_period no longer closes the vault to the retailer — every \
+             vault's rent and residual would be stranded forever"
+        );
+        let close_at = src
+            .find(".close(ctx.accounts.retailer.to_account_info())")
+            .unwrap();
+        // The nearest `if is_final {` opening BEFORE the close, and no block
+        // end between the two.
+        let guard_at = src[..close_at]
+            .rfind("if is_final {")
+            .expect("the close must be guarded by is_final");
+        assert!(
+            !src[guard_at..close_at].contains("\n    }"),
+            "the close is no longer inside the `if is_final` block — a vault \
+             with funding left would be closed out from under its subscriber"
+        );
+    }
+
+    #[test]
+    fn the_spl_final_claim_closes_the_vault_token_account_too() {
+        // The vault PDA is that account's authority and nothing can ever sign
+        // for it again once the vault closes, so its rent is a second silent
+        // leak if this CPI goes.
+        assert!(
+            handler_src().contains("token::close_account("),
+            "the SPL vault token account is no longer closed — its rent is \
+             stranded with no signer left that could reclaim it"
+        );
+    }
+
+    #[test]
+    fn a_paused_vault_is_still_refused_at_the_account_constraint() {
+        assert!(
+            handler_src().contains("constraint = !vault.is_paused"),
+            "claim_period would now accept a paused vault — pause must move \
+             WHEN the retailer is paid, and a claim while paused takes money \
+             for a period during which the subscriber had no access"
+        );
+    }
+
+    #[test]
+    fn no_lamport_can_reach_the_subscriber_because_the_instruction_cannot_name_one() {
+        // The one-way invariant, enforced structurally rather than by review:
+        // `ClaimPeriod` has no subscriber account of any kind, so there is no
+        // key a payout or a close could be addressed to. Anchor rejects an
+        // account the struct does not declare, so this holds regardless of
+        // what the handler body does.
+        let accounts_start = handler_src()
+            .find("pub struct ClaimPeriod<'info> {")
+            .expect("ClaimPeriod accounts struct");
+        let accounts_end = handler_src()[accounts_start..]
+            .find("\n}\n")
+            .expect("end of accounts struct")
+            + accounts_start;
+        let accounts = &handler_src()[accounts_start..accounts_end];
+        // Declared fields only. `vault.subscriber_id_bytes()` appears in the
+        // PDA seeds and is a read of the vault, not an account.
+        let declared: Vec<&str> = accounts
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("pub "))
+            .collect();
+        assert!(
+            !declared.iter().any(|l| l.contains("subscriber")),
+            "ClaimPeriod now declares a subscriber account ({declared:?}) — a \
+             subscription is a one-way prepaid envelope and nothing may return \
+             to the subscriber"
+        );
+        // `close = <account>` is how both deleted cancel instructions sent the
+        // vault's lamports somewhere. The close here is explicit, in the
+        // handler, and addressed to the retailer.
+        assert!(
+            !accounts.contains("close ="),
+            "an Anchor `close =` constraint reappeared on ClaimPeriod — the \
+             close destination must stay explicit and must stay the retailer"
+        );
+    }
+}
+
 #[event]
 pub struct ClaimPeriodEvent {
     pub vault: Pubkey,
