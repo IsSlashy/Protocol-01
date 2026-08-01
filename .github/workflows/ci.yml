@@ -620,9 +620,10 @@ jobs:
       # about which circuit ran, and a proof over that cannot be padded to it. Nothing
       # in Rust checked: `145_000` appeared in no .rs file, cu_budget carried proof_bytes
       # on every row and only PRINTED it, and the sole enforcement anywhere was a runtime
-      # `throw` in padProofToUniform on a user's phone, after proving. Largest today is C6
-      # at 78,517 B; docs/C7_SPEND_CIRCUIT_PLAN.md:15 already projects ~160 KB for C7,
-      # which is 15,000 B over. The Rust constant is parsed out of
+      # `throw` in padProofToUniform on a user's phone, after proving. Largest today is
+      # C4 at 81,457 B post-B2 (it was C6 at 78,517 B before the quotient split);
+      # docs/C7_SPEND_CIRCUIT_PLAN.md:15 already projects ~160 KB for C7, which is
+      # 15,000 B over. The Rust constant is parsed out of
       # apps/mobile/services/stark/index.ts so the two languages cannot drift.
       #
       # --release is not optional: the harness generates eleven real STARK proofs.
