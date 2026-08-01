@@ -161,14 +161,23 @@ pub enum ZkShieldedError {
     #[msg("Recipient pubkey does not match recipient arg")]
     MismatchedRecipient,
 
-    // Refund-via-relayer (cancel_private_stark) errors
-    #[msg("Required account is missing for this code path")]
+    // DEAD, RESERVED. These three were raised only by the refund-via-relayer
+    // path in `cancel_private_stark`, which has been deleted along with
+    // cancellation and refunds. No instruction can return them any more.
+    //
+    // They are KEPT rather than removed because `#[error_code]` numbers
+    // variants by position: deleting them would renumber `SlotMismatch` below,
+    // which `sweep_fee_escrow` still raises, and every client error catalogue
+    // and every already-deployed copy of this program would decode it wrong.
+    // Same reasoning as the deprecated `SubscriptionVault` fields — the slot
+    // costs nothing at runtime, moving it costs a client break.
+    #[msg("DEPRECATED — unused since cancellation was removed")]
     MissingAccount,
 
-    #[msg("Provided program account does not match the expected program id")]
+    #[msg("DEPRECATED — unused since cancellation was removed")]
     InvalidProgramId,
 
-    #[msg("PDA derivation does not match the provided account")]
+    #[msg("DEPRECATED — unused since cancellation was removed")]
     InvalidPda,
 
     #[msg("Slot mismatch — caller-supplied slot must match current clock within drift window")]

@@ -228,19 +228,32 @@ pub mod zk_shielded {
     // -----------------------------------------------------------------------
     // Subscription Vault instructions
     //
+    // A subscription is a ONE-WAY PREPAID ENVELOPE. Money that enters a vault
+    // can only ever leave it toward the retailer. The subscriber's controls are
+    // pause (freeze the clock, lose access) and resume. There is no
+    // cancellation and no refund — `cancel_normal` and `cancel_private_stark`
+    // have been removed; see instructions/mod.rs for why. The subscriber must
+    // be told this BEFORE they pay.
+    //
     // A vault can only be OPENED privately. `subscribe_normal` used to sit here
     // and seeded its vault PDA on the subscriber's wallet pubkey, which let
     // anyone re-derive the address for a (wallet, merchant) pair and read
-    // subscription membership straight off the chain. It has been removed; see
-    // instructions/mod.rs. The `*_normal` lifecycle instructions remain so the
-    // normal-mode vaults already on chain can still be paused, resumed,
-    // claimed and cancelled.
+    // subscription membership straight off the chain. It has been removed too.
+    // The `*_normal` lifecycle instructions remain so the normal-mode vaults
+    // already on chain can still be paused, resumed and claimed.
+    //
+    // `claim_period` is the only instruction that can close a vault, in either
+    // mode, and it does so on the claim that spends the last funded period.
     // -----------------------------------------------------------------------
 
     /// Create a private subscription vault using STARK proof (quantum-resistant).
-    /// `client_stealth_meta`: optional 64-byte stealth address
-    /// (`[spending_pub(32) | viewing_pub(32)]`) used to route the refund
-    /// through `p01_relayer` on cancel. `None` keeps the legacy reshield path.
+    ///
+    /// `client_stealth_meta`: DEPRECATED and unused. It was a 64-byte stealth
+    /// address (`[spending_pub(32) | viewing_pub(32)]`) that routed the refund
+    /// through `p01_relayer` on cancel. There is no cancel and no refund, so
+    /// nothing on chain reads this any more. The parameter and the field are
+    /// kept so the instruction ABI and `SubscriptionVault::LEN` do not move
+    /// under the 16 vaults already live on devnet. Pass `None`.
     pub fn subscribe_private_stark(
         ctx: Context<SubscribePrivateStark>,
         nullifier: [u8; 32],
@@ -267,15 +280,13 @@ pub mod zk_shielded {
         instructions::resume_private_stark::handler(ctx)
     }
 
-    /// Cancel a private subscription vault using STARK proof (quantum-resistant).
-    /// Re-shields remaining funds back into the source denominated pool.
-    pub fn cancel_private_stark(
-        ctx: Context<CancelPrivateStark>,
-        new_commitments: Vec<[u8; 32]>,
-        new_roots: Vec<[u8; 32]>,
-    ) -> Result<()> {
-        instructions::cancel_private_stark::handler(ctx, new_commitments, new_roots)
-    }
+    // === REMOVED: cancel_private_stark. It carried a circuit-0 STARK ownership
+    // proof, the stealth-meta CPI into `p01_relayer::submit_refund_job` and a
+    // re-shield back into the source denominated pool — all of it in service of
+    // a refund that no longer exists. Nothing else in this program used that
+    // machinery: every `*_stark` instruction carries its own private copy of
+    // the ProofBuffer constants and parser, so no shared helper went with it.
+    // See instructions/mod.rs for the decision. ===
 
     // === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
     // transfer_denominated_stark — superseded by transfer_denominated_stark_v3.
@@ -442,7 +453,12 @@ pub mod zk_shielded {
         instructions::store_escrow_vk_data::handler_write_escrow_vk(ctx, offset, data)
     }
 
-    /// Claim accrued periods from a subscription vault (retailer only)
+    /// Claim accrued periods from a subscription vault (retailer only).
+    ///
+    /// On the claim that spends the last funded period this also CLOSES the
+    /// vault, paying the retailer the sub-period remainder and the rent. It is
+    /// the only instruction that can close a SubscriptionVault. Refuses while
+    /// the vault is paused.
     pub fn claim_period(ctx: Context<ClaimPeriod>) -> Result<()> {
         instructions::claim_period::handler(ctx)
     }
@@ -461,12 +477,10 @@ pub mod zk_shielded {
         instructions::resume_normal::handler(ctx)
     }
 
-    /// Cancel a normal subscription vault, refund remaining to subscriber.
-    /// LEGACY, and the ONLY exit for a normal-mode vault: removing it would
-    /// strand both the deposit and the rent of every such vault on chain.
-    pub fn cancel_normal(ctx: Context<CancelNormal>) -> Result<()> {
-        instructions::cancel_normal::handler(ctx)
-    }
+    // === REMOVED: cancel_normal. It refunded the residual to the subscriber
+    // and closed the vault. There are no refunds, so it is gone; the exit for a
+    // normal-mode vault is now the same as for a private one — the retailer's
+    // final `claim_period`, which closes the account and takes the rent. ===
 
     // -----------------------------------------------------------------------
     // Compliance instructions (ZK-attested range proofs + sanctions innocence)

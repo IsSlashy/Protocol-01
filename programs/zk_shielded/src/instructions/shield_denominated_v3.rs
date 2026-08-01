@@ -52,7 +52,7 @@ const CIRCUIT_MERKLE_UPDATE: u8 = 6;
 /// All u64s are the low 8 bytes (LE) of the corresponding [u8; 32] —
 /// Goldilocks elements fit in 64 bits and the rest of the array is zero
 /// padding (matches the convention used elsewhere in this program; see
-/// `cancel_private_stark::handler` and `unshield_denominated_stark`).
+/// `unshield_denominated_stark_v3::handler` and `subscribe_private_stark`).
 fn verify_c6_proof_buffer(
     proof_info: &AccountInfo,
     depositor: &Pubkey,

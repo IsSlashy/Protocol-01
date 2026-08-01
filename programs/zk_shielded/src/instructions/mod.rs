@@ -32,18 +32,38 @@ pub mod resize_denominated_pool;
 // the same oracle at the same address. Removal takes away the convenient
 // constructor; the client is what keeps the seed unlinkable.
 // The `*_normal` lifecycle instructions below are DELIBERATELY KEPT: they are the
-// only exit for the normal-mode vaults that already exist on chain, and they
-// cannot create an account, so they carry no oracle of their own.
+// only controls the normal-mode vaults that already exist on chain still have,
+// and they cannot create an account, so they carry no oracle of their own.
+//
+// === REMOVED: cancel_normal and cancel_private_stark. A subscription is a
+// one-way prepaid envelope: money that enters a vault can only ever leave it
+// toward the retailer. The subscriber's controls are pause and resume, and they
+// are told before they pay that there is no cancellation and no refund.
+// Three reasons, in the order they matter:
+//   1. The residual on a small envelope was worth less than the STARK proof,
+//      the re-shield and the relayer fees needed to recover it privately, so
+//      the refund was value on paper only.
+//   2. The refund leg was the system's only INBOUND operation — the one place
+//      the subscriber had to RECEIVE money, and therefore the place the whole
+//      linkability budget was being spent. Deleting it removes the hard half
+//      of the privacy surface, along with the stealth-meta routing and the
+//      re-shield into the denominated pool that served it.
+//   3. It deletes a live fund-loss defect instead of fixing it:
+//      `claimable_periods` returns 0 while paused and both cancel instructions
+//      paid the retailer exactly `claimable * rate` with no `!is_paused`
+//      constraint, so pause-then-cancel drained a merchant's entire earned
+//      revenue to zero. No cancel instruction, no drain.
+// `claim_period` is now the only instruction that can close a
+// SubscriptionVault, in either mode; it does so on the claim that spends the
+// last funded period, paying the residual and the rent to the retailer. ===
 pub mod claim_period;
 pub mod pause_normal;
 pub mod resume_normal;
-pub mod cancel_normal;
 // === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
 // pub mod unshield_denominated_stark;
 pub mod subscribe_private_stark;
 pub mod pause_private_stark;
 pub mod resume_private_stark;
-pub mod cancel_private_stark;
 // === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
 // pub mod transfer_denominated_stark;
 pub mod transfer_denominated_stark_v3;
@@ -71,16 +91,16 @@ pub use shield_denominated_v3::*;
 pub use unshield_denominated_stark_v3::*;
 pub use resize_denominated_pool::*;
 // === REMOVED: subscribe_normal (see the module block above). ===
+// === REMOVED: cancel_normal (see the module block above). ===
 pub use claim_period::*;
 pub use pause_normal::*;
 pub use resume_normal::*;
-pub use cancel_normal::*;
 // === Deprecated v2 (circuit-1 only, no C3 membership proof). Production is v3-only. ===
 // pub use unshield_denominated_stark::*;
+// === REMOVED: cancel_private_stark (see the module block above). ===
 pub use subscribe_private_stark::*;
 pub use pause_private_stark::*;
 pub use resume_private_stark::*;
-pub use cancel_private_stark::*;
 // === Deprecated v2 (circuit-1 only, no C3 membership proof). Production is v3-only. ===
 // pub use transfer_denominated_stark::*;
 pub use transfer_denominated_stark_v3::*;

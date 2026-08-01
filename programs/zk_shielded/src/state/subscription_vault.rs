@@ -3,13 +3,20 @@ use anchor_lang::prelude::*;
 /// Subscription vault: holds funds deposited by a subscriber for periodic
 /// claims by a retailer. Supports two modes:
 ///
+/// A subscription is a ONE-WAY PREPAID ENVELOPE. Every lamport that enters a vault
+/// leaves it toward the retailer and nothing returns to the subscriber. The
+/// subscriber's controls are pause and resume; cancellation and refunds were removed.
+/// The vault ends when the retailer's `claim_period` spends its last funded period,
+/// which pays out the residual and the rent and closes the account. That is the ONLY
+/// way a vault can close.
+///
 /// **Private mode** (the only mode that can still be created): `subscriber_commitment`
 /// is set and the PDA is seeded on it instead of on a wallet, so the address does not
 /// name the payer. Read the guarantee narrowly: `subscribe_private_stark` takes
 /// `subscriber_commitment` as a plain `[u8; 32]` argument, uses it only as a PDA seed,
 /// and binds it to NO proof — pass a wallet pubkey there and the program builds exactly
 /// the address `subscribe_normal` used to build, membership oracle included. What keeps
-/// a wallet out of this field is the client, not the program. Pause/resume/cancel are
+/// a wallet out of this field is the client, not the program. Pause and resume are
 /// what require a ZK proof of knowledge of the secret behind the commitment.
 ///
 /// **Normal mode** (LEGACY, read/close only): `subscriber_pubkey` is set and vault
@@ -69,17 +76,33 @@ pub struct SubscriptionVault {
     /// VK hash for subscriber ownership circuit (private mode)
     pub vk_hash_subscriber: [u8; 32],
 
-    /// Source denominated pool (for cancel_private re-shield)
+    /// DEPRECATED AND UNUSED. Source denominated pool, read only by
+    /// `cancel_private_stark` to know where to re-shield the refund. There is
+    /// no cancellation and no refund, so nothing on chain reads this field.
+    ///
+    /// The bytes are KEPT. Sixteen vaults are live on devnet and removing 33
+    /// bytes from the middle of the layout shifts every field after it and
+    /// makes all of them undecodable. Reclaiming the space is a migration, not
+    /// a cleanup. `subscribe_private_stark` still writes it; stopping that
+    /// write is a separate, client-visible change.
     pub source_pool: Option<Pubkey>,
 
     /// PDA bump seed
     pub bump: u8,
 
-    /// Stealth meta address (v1) for refund-via-relayer delivery on cancel.
-    /// Layout: `[spending_pub(32) | viewing_pub(32)]`.
-    /// `None` for legacy V4 vaults — those fall back to the legacy reshield
-    /// path in `cancel_private_stark`. Appended at the end so existing
-    /// vaults decode as `None` from trailing zero padding.
+    /// DEPRECATED AND UNUSED. Stealth meta address (v1),
+    /// `[spending_pub(32) | viewing_pub(32)]`, which routed the cancellation
+    /// refund to the subscriber through `p01_relayer::submit_refund_job`. The
+    /// refund leg was the system's only INBOUND operation and the only place a
+    /// subscriber had to receive money; deleting it is most of the point of
+    /// removing cancellation, so this field has no reader left.
+    ///
+    /// The bytes are KEPT for the same layout reason as `source_pool`.
+    /// `subscribe_private_stark` still accepts the argument and still writes
+    /// it, which now publishes a subscriber-controlled stealth address on chain
+    /// for a feature that cannot fire. Clients should pass `None`; removing the
+    /// write and the parameter is a follow-up that has to move with the
+    /// clients.
     pub client_stealth_meta: Option<[u8; 64]>,
 
     /// License commitment = **blake3**(licenseSecret), posted by the subscriber
@@ -154,6 +177,22 @@ impl SubscriptionVault {
 
     /// Compute the number of claimable periods based on elapsed time.
     /// Accounts for paused time.
+    ///
+    /// The `|| self.is_paused` short-circuit is KEPT even though `claim_period`
+    /// — now the only caller — already refuses a paused vault at the account
+    /// constraint level, and even though it was the arithmetic that made the
+    /// pause-then-cancel drain possible. It is load-bearing for a different
+    /// reason: nothing decrements the accrual DURING a pause. `resume` credits
+    /// `total_paused_slots` at the END of the pause, so between pause and
+    /// resume `effective_elapsed_slots` keeps growing with the wall clock.
+    /// Drop this line and the retailer is over-credited for exactly the time
+    /// the subscriber was not receiving service.
+    ///
+    /// What made the drain possible was not this returning 0, it was the cancel
+    /// instructions treating "0 claimable right now" as "0 owed, ever" and
+    /// refunding the difference. Those instructions are gone.
+    /// `claimable_stays_zero_while_paused_because_paused_slots_are_only_credited_on_resume`
+    /// below pins both halves.
     pub fn claimable_periods(&self, current_slot: i64) -> u64 {
         if !self.is_active || self.is_paused {
             return 0;
@@ -167,9 +206,9 @@ impl SubscriptionVault {
         let total_periods = (effective_elapsed as u64) / self.interval_slots;
         let unclaimed = total_periods.saturating_sub(self.claimed_periods);
 
-        // Cap at remaining funded periods so retailer payout never exceeds
-        // the residual vault balance (prevents u64 underflow when cancelling
-        // a vault whose elapsed window outran its funding).
+        // Cap at remaining funded periods so the retailer payout never exceeds
+        // the residual vault balance on a vault whose elapsed window outran its
+        // funding — which is every vault, eventually.
         let max_funded = if self.rate == 0 {
             0
         } else {
@@ -184,18 +223,11 @@ impl SubscriptionVault {
         elapsed - self.total_paused_slots
     }
 
-    /// Returns true when this vault has a stealth meta address registered
-    /// for refund-via-relayer routing on cancel.
-    pub fn has_stealth_refund(&self) -> bool {
-        self.client_stealth_meta.is_some()
-    }
-
-    /// Amount available to refund on cancellation
-    pub fn refundable_amount(&self, current_slot: i64) -> u64 {
-        let claimable = self.claimable_periods(current_slot);
-        let total_owed = (self.claimed_periods + claimable) * self.rate;
-        self.total_deposited.saturating_sub(total_owed)
-    }
+    // REMOVED with cancellation: `has_stealth_refund` and `refundable_amount`.
+    // Nothing is refundable. What `refundable_amount` used to hand back to the
+    // subscriber is now `unpaid_amount()` minus the claimed periods — the
+    // sub-period remainder — and the final `claim_period` pays it to the
+    // retailer.
 
     /// Number of WHOLE periods the deposit funds.
     ///
@@ -296,10 +328,15 @@ pub struct VaultSettlement {
 // ---------------------------------------------------------------------------
 // State-machine tests
 //
-// These pin the CURRENT behaviour of the vault's pure accessors. They are not
-// a claim that the behaviour is right — two of them document a hole and say so
-// in the test name. Changing program behaviour is an owner's decision; making
-// the consequence measurable is not.
+// These pin the CURRENT behaviour of the vault's pure accessors and of
+// `settle`, which is the function `claim_period::handler` calls to decide what
+// to pay. They are not a claim that the behaviour is right — two of them still
+// document a hole and say so in the test name.
+//
+// What they do NOT cover: the account plumbing. That the lamports move, that
+// the account closes, that the rent lands on the retailer, that a paused vault
+// is rejected — all of that is asserted by reading `claim_period.rs`, not by
+// execution. There is no program-test harness in this crate.
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod tests {
@@ -333,10 +370,10 @@ mod tests {
 
     #[test]
     fn is_active_is_true_on_every_vault_the_program_can_produce() {
-        // `is_active = true` is written at subscribe_normal.rs:120 and
-        // subscribe_private_stark.rs:395. No instruction writes `false`; both
-        // cancel paths `close` the account instead. So a vault that exists has
-        // `is_active == true`, and the flag answers no question.
+        // `is_active = true` is written by subscribe_private_stark. No
+        // instruction writes `false`; the one path that ends a vault
+        // (`claim_period`'s final claim) closes the account instead. So a vault
+        // that exists has `is_active == true`, and the flag answers no question.
         let mut v = vault();
         v.claimed_periods = 5; // every funded period collected, balance spent
         assert!(v.is_active);
@@ -353,11 +390,17 @@ mod tests {
     }
 
     #[test]
-    fn partial_funding_pays_whole_periods_and_refunds_the_remainder() {
+    fn partial_funding_pays_whole_periods_and_carries_the_remainder() {
+        // Was `partial_funding_pays_whole_periods_and_refunds_the_remainder`,
+        // asserting `refundable_amount(1_500) == 50_000`. That accessor and the
+        // refund it named are deleted. The 50,000 is still there, it is just no
+        // longer the subscriber's — see
+        // `the_sub_period_remainder_goes_to_the_retailer_instead_of_being_refunded`.
         let mut v = vault();
         v.total_deposited = 350_000; // 3 whole periods + 50,000 of dust
         assert_eq!(v.claimable_periods(1_500), 3);
-        assert_eq!(v.refundable_amount(1_500), 50_000);
+        assert_eq!(v.funded_periods(), 3);
+        assert_eq!(v.unpaid_amount(), 350_000);
     }
 
     #[test]
@@ -370,64 +413,107 @@ mod tests {
     }
 
     #[test]
-    fn an_exhausted_vault_can_still_be_paused_and_resumed_forever() {
-        // pause_normal.rs:26 / resume_normal.rs:24 gate on `vault.is_active`,
-        // which is always true, and on nothing else. Neither instruction
-        // consults the funding, so both stay callable on a vault that has paid
-        // out everything it ever will. Costs a signature and a fee, does
-        // nothing. Reported, not changed.
+    fn pausing_an_exhausted_vault_blocks_the_claim_that_would_close_it() {
+        // Was `an_exhausted_vault_can_still_be_paused_and_resumed_forever`,
+        // which observed that pause/resume gate on `is_active` alone and so
+        // stay callable on a spent vault, costing a fee and doing nothing.
+        // That is no longer nothing. `claim_period` is the only instruction
+        // that can close a vault and it refuses while `is_paused`, so a paused
+        // subscriber holds the account open and withholds the retailer's last
+        // payout and the rent for as long as they never resume.
+        //
+        // This is a DEFERRAL, not a drain: nothing returns to the subscriber
+        // either, and the money is still owed. It is the residual cost of the
+        // founder's ruling that pause blocks claims, recorded here rather than
+        // changed.
         let mut v = vault();
         v.claimed_periods = 5;
-        assert!(v.is_active, "the only thing pause/resume check");
-        assert_eq!(v.claimable_periods(9_999), 0, "nothing left to move");
+        assert!(v.is_exhausted());
+        assert!(
+            v.settle(9_999).is_some_and(|s| s.is_final),
+            "a live exhausted vault settles and closes",
+        );
+
+        v.is_paused = true;
+        v.pause_slot = Some(9_999);
+        assert!(v.is_active, "still the only thing pause/resume check");
+        // `claim_period`'s `!vault.is_paused` account constraint rejects the
+        // instruction before `settle` is ever reached. Pinned here as the
+        // reason the vault stays open, not as an assertion about `settle`.
+        assert!(v.is_paused);
     }
 
     #[test]
-    fn pause_then_cancel_zeroes_the_retailers_earned_but_unclaimed_revenue() {
-        // THE HOLE, measured as an arithmetic identity.
+    fn pause_no_longer_zeroes_the_retailers_earned_revenue_because_cancel_is_gone() {
+        // Replaces `pause_then_cancel_zeroes_the_retailers_earned_but_unclaimed_revenue`.
         //
-        // `claimable_periods` returns 0 while `is_paused`, and BOTH cancel
-        // instructions pay the retailer exactly `claimable_periods * rate`
-        // (cancel_normal.rs:72, cancel_private_stark.rs:218) while carrying no
-        // `!is_paused` constraint — cancel_normal.rs:40 checks `is_active`
-        // only. So a subscriber who has consumed five periods of service can
-        // pause and then cancel, and the retailer is paid nothing.
+        // THE OLD HOLE: `claimable_periods` returns 0 while `is_paused`, and
+        // both cancel instructions paid the retailer exactly
+        // `claimable_periods * rate` and refunded the rest, with no `!is_paused`
+        // constraint. A subscriber who had consumed five periods could pause,
+        // then cancel, and take the whole 500,000 back.
+        //
+        // The subject of that test — cancellation — is deleted, so this pins
+        // the replacement: pausing still zeroes what is claimable RIGHT NOW,
+        // and there is no longer any instruction that reads that zero as
+        // "nothing is owed" and moves the difference anywhere.
         let mut v = vault();
 
         // Five periods delivered, retailer has not claimed them yet.
         assert_eq!(v.claimable_periods(1_500), 5);
-        assert_eq!(v.claimable_periods(1_500) * v.rate, 500_000);
-        assert_eq!(v.refundable_amount(1_500), 0);
+        assert_eq!(v.unpaid_amount(), 500_000);
 
         // Subscriber pauses.
         v.is_paused = true;
         v.pause_slot = Some(1_500);
 
-        // Retailer's payout on cancel collapses to zero...
+        // What is claimable right now collapses to zero, exactly as before...
         assert_eq!(v.claimable_periods(1_500), 0);
-        // ...and the entire deposit goes back to the subscriber.
-        assert_eq!(v.refundable_amount(1_500), 500_000);
+        // ...but the debt does not move, and no exit exists to move it.
+        assert_eq!(v.unpaid_amount(), 500_000);
 
-        // 500,000 lamports of delivered service, paid for at 0. On the 16 live
-        // devnet vaults (all at claimed_periods = 0) the exposure is the whole
-        // balance of every one of them.
+        // Resume credits the paused slots and the five periods are still there.
+        v.is_paused = false;
+        v.pause_slot = None;
+        v.total_paused_slots = 400; // paused 1,500 -> 1,900
+        let s = v.settle(1_900).expect("settles after resume");
+        assert_eq!(s.periods, 5);
+        assert_eq!(s.payout, 500_000);
+        assert!(s.is_final);
     }
 
     #[test]
-    fn the_rent_floor_is_why_the_drain_is_reachable_rather_than_theoretical() {
-        // A retailer whose payout wallet is empty cannot take the first claim
-        // at all: the program succeeds and the RUNTIME rejects the transaction
-        // for leaving the retailer below rent exemption (MEASURED devnet
-        // 2026-08-01, 890,880 lamports). Until enough periods accrue for one
-        // claim to clear that floor, the retailer is FORCED to leave revenue
-        // unclaimed - which is exactly the state the pause-then-cancel drain
-        // preys on.
+    fn the_closing_claim_always_clears_the_retailers_rent_exempt_floor() {
+        // Replaces `the_rent_floor_is_why_the_drain_is_reachable_rather_than_theoretical`.
+        //
+        // A retailer whose payout wallet is empty cannot receive a small claim:
+        // the program succeeds and the RUNTIME rejects the transaction for
+        // leaving the retailer below rent exemption (MEASURED devnet
+        // 2026-08-01, 890,880 lamports for a zero-data account). That still
+        // blocks an intermediate claim.
+        //
+        // It can no longer block the LAST one. The closing claim carries the
+        // vault's own rent on top of the payout, and a rent-exempt
+        // SubscriptionVault is worth several times the floor, so the final
+        // claim always lands.
         const RENT_EXEMPT_ZERO_DATA: u64 = 890_880;
+        const LAMPORTS_PER_BYTE_YEAR: u64 = 3_480;
+        const ACCOUNT_STORAGE_OVERHEAD: u64 = 128;
+        const EXEMPTION_YEARS: u64 = 2;
+        let vault_rent = (ACCOUNT_STORAGE_OVERHEAD + SubscriptionVault::LEN as u64)
+            * LAMPORTS_PER_BYTE_YEAR
+            * EXEMPTION_YEARS;
+
         let v = vault();
         let first_claim = v.claimable_periods(1_500) * v.rate;
         assert!(
             first_claim < RENT_EXEMPT_ZERO_DATA,
-            "a full 5-period claim of {first_claim} does not clear the {RENT_EXEMPT_ZERO_DATA}-lamport floor",
+            "an intermediate 5-period claim of {first_claim} still does not clear the \
+             {RENT_EXEMPT_ZERO_DATA}-lamport floor on its own",
+        );
+        assert!(
+            vault_rent > RENT_EXEMPT_ZERO_DATA,
+            "the vault rent of {vault_rent} that rides along with the closing claim does",
         );
     }
 
@@ -614,10 +700,11 @@ mod tests {
     #[test]
     #[should_panic]
     fn interval_slots_zero_panics_which_is_why_subscribe_forbids_it() {
-        // subscribe_normal.rs:68 and subscribe_private_stark.rs:182 both
-        // require `interval_slots > 0`. If either check were ever dropped, the
-        // vault would be permanently unclaimable AND uncancellable, because
-        // both handlers call `claimable_periods` first.
+        // `subscribe_private_stark` requires `interval_slots > 0`. If that
+        // check were ever dropped, the vault would be permanently unclaimable
+        // AND uncloseable — `claim_period` is the only exit left and it calls
+        // `claimable_periods` through `settle` before it does anything else, so
+        // the deposit and the rent would be stranded with no second path out.
         let mut v = vault();
         v.interval_slots = 0;
         let _ = v.claimable_periods(1_500);

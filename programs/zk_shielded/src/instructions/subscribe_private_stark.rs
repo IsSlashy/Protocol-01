@@ -433,7 +433,9 @@ pub struct SubscribePrivateStarkEvent {
     pub source_pool: Pubkey,
     pub nullifier: [u8; 32],
     pub start_slot: i64,
-    /// True if the vault was created with a stealth meta address (refund-via-relayer
-    /// path will trigger on cancel). The 64 raw bytes are NOT emitted to avoid leaks.
+    /// DEPRECATED. True if the vault was created with a stealth meta address.
+    /// It selected the refund-via-relayer path on cancel; there is no cancel
+    /// and no refund, so this now reports a field nothing acts on. The 64 raw
+    /// bytes are NOT emitted, to avoid leaking the address itself.
     pub has_stealth_meta: bool,
 }
