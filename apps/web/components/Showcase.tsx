@@ -37,11 +37,11 @@ const screens = [
     subtitle: "Shield & unshield in ~3 seconds",
     color: "#ff77a8",
     description:
-      "Deposit tokens into a Merkle tree pool using quantum-resistant STARK proofs. Funds become untraceable on-chain. The on-device WASM prover makes operations instant.",
+      "Deposit tokens into a Merkle tree pool using quantum-resistant STARK proofs. Membership is proven without naming the note. The on-device WASM prover keeps every secret on the device.",
     highlights: [
-      "Instant shield & unshield (~3s total)",
+      "Shield & unshield without a remote prover",
       "On-device STARK prover (no remote prover, ~9-15KB proofs)",
-      "1M+ commitment capacity (depth 20)",
+      "32,768 note capacity per pool (depth 15)",
       "Dual verification safety net",
     ],
     visual: {
@@ -112,12 +112,12 @@ const screens = [
     subtitle: "Fixed-denomination privacy",
     color: "#ff77a8",
     description:
-      "Deposit exact denominations into privacy pools. All notes share the same value, making deposits and withdrawals completely unlinkable. Share notes peer-to-peer via BLE or NFC.",
+      "Deposit exact denominations into privacy pools. All notes share the same value, so the amount you move is not distinctive. Withdrawals are not yet unlinkable to their deposits. Share notes peer-to-peer via BLE or NFC.",
     highlights: [
-      "Fixed denominations (0.1/1/10/100 SOL)",
-      "USDC pools (1/10/100/1000)",
+      "Fixed denominations (0.1/1/10/100/500/1000 SOL)",
+      "USDC pools (1/10/100/1K/10K/20K/50K)",
       "P2P note sharing (BLE + NFC)",
-      "Epoch-based maturity protection",
+      "Deposit-withdrawal unlinkability: not shipped",
     ],
     visual: {
       topLabel: "DENOMINATED POOL",
@@ -125,7 +125,7 @@ const screens = [
       centerSuffix: "",
       items: [
         { label: "Notes", value: "32K", accent: true },
-        { label: "Epoch", value: "Mature", accent: true },
+        { label: "Amount", value: "Quantised", accent: true },
         { label: "Pool", value: "Active", accent: false },
       ],
     },
