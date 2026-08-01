@@ -281,11 +281,24 @@ pub const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
 // (ethSTARK Conjecture 8.4). Both are derived from `CircuitConfig` and asserted
 // in `tests/b1_deep_binding.rs`, which cannot publish one without the other.
 //
-// 42-47 bits is SHORT for a product holding real funds — about 20 GPU-minutes to
-// 8 GPU-hours on one consumer card, and roughly half that many bits under Grover.
-// Lifting the floor needs the challenges drawn from an extension field, which is
-// a separate change and another wire break. No README, CV, pitch or tweet number
-// above the unconditional column.
+// 42-47 bits is SHORT for a product holding real funds. At 10 GH/s of SHA-256 on
+// one consumer card: 2^42 is ~7 GPU-MINUTES, 2^46 ~2 GPU-hours, 2^47.75 ~6.6
+// GPU-hours. ([B2-A] this line said "about 20 GPU-minutes to 8 GPU-hours"; 20
+// minutes does not follow from 10 GH/s at 2^42, it is 7.3, and the error was in
+// the direction that makes the construction look safer. Recomputed above.)
+// Roughly half that many bits under Grover. Lifting the floor needs the
+// challenges drawn from an extension field, which is a separate change and
+// another wire break.
+//
+// PUBLICATION RULE. [B2-A] This line used to read "No README, CV, pitch or tweet
+// number above the unconditional column" — which the tree does not obey and never
+// did: the README, docs/starknet-foundation-brief and docs/hackathon-pitch all
+// publish the CONJECTURED column, and `stark/src/compact.rs` states the rule the
+// other way ("no number above THOSE", meaning both arrays). Two files in the same
+// wave giving contradictory publication rules is how a false claim gets a defence.
+// The rule, stated once: nothing above the CONJECTURED column, and the
+// conjectured column never appears without the unconditional column beside it and
+// without ethSTARK Conjecture 8.4 named as what it rests on.
 pub const NUM_QUERIES: usize = 27;
 /// [B2] 16 -> 22. Post-segmentation the conjectured column is floor-bound, so
 /// grinding buys nothing there; its whole value is +6 bits in the unconditional

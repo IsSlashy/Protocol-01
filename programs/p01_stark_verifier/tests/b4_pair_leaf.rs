@@ -32,6 +32,7 @@
 use p01_stark::compact::PairIndexing;
 use p01_stark_verifier::compact_proof::{
     CompactStarkProof, GenericCompactProof, CONFIG_POOL_COMMITMENT,
+    CONFIG_SUBSCRIBER_OWNERSHIP,
 };
 use p01_stark_verifier::goldilocks::Felt;
 use p01_stark_verifier::verify::{verify_generic, verify_subscriber_ownership, VerifyError};
@@ -209,6 +210,65 @@ fn every_quotient_segment_is_covered_by_the_pair_leaf() {
             assert!(
                 matches!(err, VerifyError::MerkleProofFailed),
                 "segment {seg} {label}: expected MerkleProofFailed, got {err:?}",
+            );
+        }
+    }
+}
+
+/// [B2-A] The LEGACY twin of the test above. It did not exist.
+///
+/// `every_quotient_segment_is_covered_by_the_pair_leaf` runs on C1 only, through
+/// `verify_merkle_proofs_generic`. The legacy C0 path has its own serializer, its
+/// own parser and its own `verify_merkle_proofs_legacy`, it carries a DIFFERENT
+/// segment count (`LEGACY_QUOTIENT_SEGMENTS = 7`, not 8), and
+/// `route_c_trace_pair.rs`'s source-text tripwire asserts BOTH paths authenticate
+/// the quotient — while the only behavioural proof of it covered one.
+///
+/// The claim under test is the tripwire's own wording: "with either gone the
+/// verifier accepts UNAUTHENTICATED quotient segment values". That is a statement
+/// about two call sites, so it needs two behavioural tests.
+///
+/// Same method as the generic twin: flip one bit of one segment, one segment at a
+/// time, on both halves of query 0's pair, and require `MerkleProofFailed` every
+/// time.
+#[test]
+fn every_legacy_quotient_segment_is_covered_by_the_pair_leaf() {
+    let data = p01_stark::compact::generate_compact_proof(42);
+    let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    let k = cfg.quotient_segments;
+    assert!(k > 1, "this test is vacuous at k = 1");
+
+    {
+        let proof = CompactStarkProof::from_bytes(&data.proof_bytes).expect("parse legacy");
+        verify_subscriber_ownership(&proof, Felt::new(data.commitment))
+            .expect("control: honest legacy proof verifies");
+    }
+
+    let (q0_mirror_off, tail_q0_off) = quotient_pair_offsets(cfg, &data.proof_bytes);
+
+    for seg in 0..k {
+        for (label, base) in [("mirror", q0_mirror_off), ("at_pos", tail_q0_off)] {
+            let off = base + seg * 8;
+            let mut bytes = data.proof_bytes.clone();
+            let original = read_u64(&bytes, off);
+            // Stay canonical so the parser cannot reject on encoding instead.
+            write_u64(&mut bytes, off, original ^ 1);
+
+            let proof = CompactStarkProof::from_bytes(&bytes).unwrap_or_else(|| {
+                panic!("legacy segment {seg} {label}: tampered proof must still parse")
+            });
+            let err = match verify_subscriber_ownership(&proof, Felt::new(data.commitment)) {
+                Err(e) => e,
+                Ok(()) => panic!(
+                    "\n\n  >>> LEGACY QUOTIENT SEGMENT {seg} IS UNAUTHENTICATED <<<\n  \
+                     Flipping one bit of segment {seg} ({label} half) of query 0 changed \
+                     nothing `verify_subscriber_ownership` checks. C0's pair leaf is \
+                     supposed to cover all {k} segments on both halves.\n",
+                ),
+            };
+            assert!(
+                matches!(err, VerifyError::MerkleProofFailed),
+                "legacy segment {seg} {label}: expected MerkleProofFailed, got {err:?}",
             );
         }
     }
