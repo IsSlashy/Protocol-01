@@ -12,6 +12,6 @@ pub use pool_v3::DenominatedPoolV3;
 pub use merkle_tree::*;
 pub use merkle_tree_v3::{MerkleTreeStateV3, LeafInserted};
 pub use nullifier_set::{NullifierSet, NullifierBatch, NullifierRecord};
-pub use subscription_vault::SubscriptionVault;
+pub use subscription_vault::{SubscriptionVault, VaultSettlement};
 pub use route::PrivacyRoute;
 pub use auction_escrow::AuctionEscrow;

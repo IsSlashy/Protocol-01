@@ -196,6 +196,101 @@ impl SubscriptionVault {
         let total_owed = (self.claimed_periods + claimable) * self.rate;
         self.total_deposited.saturating_sub(total_owed)
     }
+
+    /// Number of WHOLE periods the deposit funds.
+    ///
+    /// `total_deposited % rate` is a sub-period remainder that never buys a
+    /// period. It is not a refund and never was reachable as one: it is swept
+    /// to the retailer by the final `claim_period`, together with the rent.
+    pub fn funded_periods(&self) -> u64 {
+        if self.rate == 0 {
+            0
+        } else {
+            self.total_deposited / self.rate
+        }
+    }
+
+    /// Value the retailer has not been paid yet — the unclaimed periods plus
+    /// the sub-period remainder. This is what the final `claim_period` moves.
+    ///
+    /// Only meaningful on a LIVE vault. `claimed_periods` counts whole periods
+    /// and cannot express the remainder, so after the final claim has swept it
+    /// this still reports the remainder as unpaid. That is harmless because the
+    /// account is closed at that moment and never read again — but do not use
+    /// this accessor as a settled-up check. `is_exhausted()` is that check.
+    pub fn unpaid_amount(&self) -> u64 {
+        self.total_deposited
+            .saturating_sub(self.claimed_periods.saturating_mul(self.rate))
+    }
+
+    /// True once every funded period has been claimed, i.e. the vault has
+    /// nothing left to deliver and must close.
+    ///
+    /// Note this is also true from slot zero for a vault funded with LESS than
+    /// one period's `rate` (`funded_periods() == 0`). `claimable_periods` can
+    /// never return a non-zero value for such a vault, so without this flag
+    /// `claim_period` would refuse it forever and its deposit and rent would be
+    /// stranded — which is exactly what happened to the cancel instructions'
+    /// job when they were removed.
+    pub fn is_exhausted(&self) -> bool {
+        self.claimed_periods >= self.funded_periods()
+    }
+
+    /// The whole money decision of `claim_period`, as a pure function.
+    ///
+    /// `claim_period::handler` calls exactly this and then does nothing but
+    /// account plumbing, so the tests at the bottom of this file cover the
+    /// arithmetic the instruction actually runs rather than a copy of it.
+    ///
+    /// `None` means there is nothing to settle and the instruction must reject.
+    /// `Some(s)` with `s.is_final` means the vault has delivered everything it
+    /// ever will: `s.payout` is its ENTIRE residual, dust included, and the
+    /// account must close to the retailer.
+    ///
+    /// Callers must still refuse a paused vault — `claim_period` does so at the
+    /// account-constraint level, before this is ever reached.
+    pub fn settle(&self, current_slot: i64) -> Option<VaultSettlement> {
+        let periods = self.claimable_periods(current_slot);
+
+        // Nothing accruing and funding still outstanding: a normal no-op claim.
+        if periods == 0 && !self.is_exhausted() {
+            return None;
+        }
+
+        let claimed_periods_after = self.claimed_periods.saturating_add(periods);
+        let is_final = claimed_periods_after >= self.funded_periods();
+
+        // `claimable_periods` is already clamped to the funded periods, so
+        // `periods * rate` cannot exceed `unpaid_amount()` and the saturating
+        // multiply never saturates. It is written saturating so that a future
+        // change to the clamp degrades into an under-payment rather than a wrap.
+        let payout = if is_final {
+            self.unpaid_amount()
+        } else {
+            periods.saturating_mul(self.rate)
+        };
+
+        Some(VaultSettlement {
+            periods,
+            payout,
+            claimed_periods_after,
+            is_final,
+        })
+    }
+}
+
+/// Result of one `claim_period` settlement. Not an account — pure arithmetic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VaultSettlement {
+    /// Periods credited by this claim.
+    pub periods: u64,
+    /// Value moved to the retailer by this claim. Equals `periods * rate`
+    /// except on the final claim, where it is the vault's entire residual.
+    pub payout: u64,
+    /// `claimed_periods` after this claim.
+    pub claimed_periods_after: u64,
+    /// True when this claim exhausts the vault, which must then close.
+    pub is_final: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +429,186 @@ mod tests {
             first_claim < RENT_EXEMPT_ZERO_DATA,
             "a full 5-period claim of {first_claim} does not clear the {RENT_EXEMPT_ZERO_DATA}-lamport floor",
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Settlement invariant
+    //
+    // These drive `SubscriptionVault::settle`, which is the function
+    // `claim_period::handler` calls — not a copy of its arithmetic. What they
+    // do NOT cover is the account plumbing around it: that the lamports really
+    // move, that the account really closes, that the rent really lands on the
+    // retailer. There is no program-test harness in this crate, so the wiring
+    // is asserted by reading `claim_period.rs`, not by execution.
+    // -----------------------------------------------------------------------
+
+    /// Settle repeatedly at the given slots exactly as `claim_period` does,
+    /// stopping at the claim that closes the vault.
+    /// Returns (total paid to the retailer, number of accepted claims, closed).
+    fn run(v: &mut SubscriptionVault, slots: &[i64]) -> (u64, u32, bool) {
+        let mut paid = 0u64;
+        let mut claims = 0u32;
+        for &slot in slots {
+            let Some(s) = v.settle(slot) else { continue };
+            paid += s.payout;
+            v.claimed_periods = s.claimed_periods_after;
+            claims += 1;
+            if s.is_final {
+                return (paid, claims, true);
+            }
+        }
+        (paid, claims, false)
+    }
+
+    #[test]
+    fn the_retailer_receives_exactly_total_deposited_over_the_life_of_the_vault() {
+        let mut v = vault();
+        let (paid, claims, closed) = run(&mut v, &[1_200, 1_400, 5_000]);
+        assert_eq!(paid, 500_000, "paid out is the whole deposit, no more, no less");
+        assert_eq!(claims, 3);
+        assert!(closed, "the last claim closes the vault");
+        assert!(v.is_exhausted(), "and it is settled up");
+    }
+
+    #[test]
+    fn a_single_late_claim_settles_the_whole_deposit_in_one_shot() {
+        let v = vault();
+        let s = v.settle(5_000).expect("a matured vault always settles");
+        assert_eq!(s.periods, 5);
+        assert_eq!(s.payout, 500_000);
+        assert!(s.is_final);
+    }
+
+    #[test]
+    fn the_sub_period_remainder_goes_to_the_retailer_instead_of_being_refunded() {
+        // 350,000 at 100,000 funds 3 whole periods and leaves 50,000 that never
+        // buys one. `refundable_amount` used to hand that 50,000 back to the
+        // subscriber on cancel. There is no cancel and no refund: the final
+        // claim pays it to the retailer with the rest.
+        let mut v = vault();
+        v.total_deposited = 350_000;
+        assert_eq!(v.funded_periods(), 3);
+
+        let s = v.settle(5_000).expect("settles");
+        assert_eq!(s.periods, 3);
+        assert_eq!(s.payout, 350_000, "3 periods + the 50,000 remainder");
+        assert!(s.is_final);
+    }
+
+    #[test]
+    fn pause_moves_when_the_retailer_is_paid_never_how_much() {
+        // Same vault, one of them paused for 300 slots and resumed (which is
+        // what `resume` writes into total_paused_slots).
+        let mut straight = vault();
+        let mut paused = vault();
+        paused.total_paused_slots = 300;
+
+        // Timing differs: at slot 1,500 the paused vault has delivered fewer
+        // periods, because 300 of those slots did not count.
+        assert_eq!(straight.claimable_periods(1_500), 5);
+        assert_eq!(paused.claimable_periods(1_500), 2);
+
+        // The total does not.
+        let (straight_paid, _, straight_closed) = run(&mut straight, &[1_500, 9_999]);
+        let (paused_paid, _, paused_closed) = run(&mut paused, &[1_500, 9_999]);
+        assert_eq!(straight_paid, 500_000);
+        assert_eq!(paused_paid, 500_000);
+        assert!(straight_closed && paused_closed);
+    }
+
+    #[test]
+    fn claimable_stays_zero_while_paused_because_paused_slots_are_only_credited_on_resume() {
+        // This is why the `|| self.is_paused` short-circuit in
+        // `claimable_periods` is KEPT even though `claim_period` already
+        // refuses a paused vault at the account-constraint level. Nothing
+        // decrements the accrual during a pause — `total_paused_slots` is
+        // written by `resume`, at the END of the pause. Drop the short-circuit
+        // and the raw arithmetic keeps ticking through the pause, over-crediting
+        // the retailer for time the subscriber did not receive.
+        let mut v = vault();
+        v.is_paused = true;
+        v.pause_slot = Some(1_500);
+
+        // What the guard returns.
+        assert_eq!(v.claimable_periods(1_500), 0);
+        assert_eq!(v.claimable_periods(1_900), 0);
+
+        // What the arithmetic underneath it would return, still growing.
+        let raw = |slot: i64| ((slot - v.start_slot - v.total_paused_slots) as u64) / v.interval_slots;
+        assert_eq!(raw(1_500), 5);
+        assert_eq!(raw(1_900), 9, "four periods of pause would have been billed");
+    }
+
+    #[test]
+    fn a_vault_funded_below_one_period_can_still_be_closed_to_the_retailer() {
+        // `subscribe_private_stark` sets total_deposited = pool.denomination and
+        // takes `rate` from the caller with no `rate <= amount` check, so a
+        // deposit smaller than one period's rate is reachable. Such a vault has
+        // 0 funded periods, `claimable_periods` is 0 at every slot forever, and
+        // cancellation used to be its only exit. It must settle and close.
+        let mut v = vault();
+        v.total_deposited = 50_000; // less than one 100,000 period
+        assert_eq!(v.funded_periods(), 0);
+        assert_eq!(v.claimable_periods(9_999_999), 0);
+        assert!(v.is_exhausted());
+
+        let s = v.settle(1_000).expect("must settle at any slot, or 50,000 is stranded");
+        assert_eq!(s.periods, 0);
+        assert_eq!(s.payout, 50_000);
+        assert!(s.is_final);
+    }
+
+    #[test]
+    fn a_vault_already_claimed_to_the_end_still_settles_so_its_rent_is_released() {
+        // The shape of a devnet vault claimed to exhaustion before
+        // `claim_period` learned how to close. Payout is 0 and the claim must
+        // still be accepted, otherwise its rent is stranded permanently.
+        let mut v = vault();
+        v.claimed_periods = 5;
+        let s = v.settle(9_999).expect("must settle");
+        assert_eq!(s.periods, 0);
+        assert_eq!(s.payout, 0);
+        assert!(s.is_final, "closes and releases the rent to the retailer");
+    }
+
+    #[test]
+    fn a_claim_with_nothing_accrued_and_funding_left_is_still_refused() {
+        // 50 slots into a 100-slot period. `settle` returns None and
+        // `claim_period` turns that into NoClaimablePeriods.
+        let v = vault();
+        assert!(v.settle(1_050).is_none());
+        assert!(!v.is_exhausted());
+    }
+
+    #[test]
+    fn no_shape_of_vault_ever_leaves_a_lamport_behind_for_the_subscriber() {
+        // deposit, rate, interval — including a deposit below one period and a
+        // deposit that does not divide by the rate.
+        let shapes: [(u64, u64, u64); 5] = [
+            (500_000, 100_000, 100),
+            (350_000, 100_000, 100),
+            (50_000, 100_000, 100),
+            (1, 7, 3),
+            (1_000_000, 1, 10),
+        ];
+
+        for (deposit, rate, interval) in shapes {
+            let mut v = vault();
+            v.total_deposited = deposit;
+            v.rate = rate;
+            v.interval_slots = interval;
+
+            let (paid, _, closed) = run(&mut v, &[1_100, 1_500, 2_000, 1_000_000_000]);
+            assert!(closed, "{deposit}/{rate}/{interval} never closed");
+            assert_eq!(
+                paid, deposit,
+                "{deposit}/{rate}/{interval} paid the retailer {paid}, not the deposit",
+            );
+            assert!(
+                v.is_exhausted(),
+                "{deposit}/{rate}/{interval} closed without being settled up",
+            );
+        }
     }
 
     #[test]
