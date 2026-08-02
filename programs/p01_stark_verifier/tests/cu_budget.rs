@@ -71,10 +71,23 @@
 //!
 //! # 3. The harness. --release is not optional: the STARK prover generates
 //! #    eleven proofs here and is orders of magnitude slower unoptimised.
-//! #    --test-threads=1 only keeps the tables from interleaving.
+//! #    --test-threads=1 is now COSMETIC: it keeps the tables from interleaving.
 //! cargo test --release -p p01_stark_verifier --test cu_budget \
 //!     -- --nocapture --test-threads=1
 //! ```
+//!
+//! It was not always cosmetic. Until 2026-08-02 this harness was NOT parallel-safe
+//! and every caller had to remember that flag: `cargo-build-sbf` reconciles the
+//! `solana` rustup toolchain before it does anything — `--version` included — so
+//! `build_fingerprint_changes_when_the_compiler_changes` asking for the version
+//! could uninstall the toolchain underneath a `cu_*` test's build, which then died
+//! with `0xc0000135 STATUS_DLL_NOT_FOUND` and looked like a broken install rather
+//! than a race. A guarantee that lives in a comment is not a guarantee, so the
+//! harness serialises its own builds now: see `SBF_TOOL_LOCK` and the `OnceLock`
+//! in `verifier_so_path`. Steps 1 and 2 above are still worth running by hand —
+//! step 1 only saves time, but step 2 is REQUIRED, because the c7 probe `.so` is
+//! gitignored and nothing builds it for you. A fresh worktree fails that test
+//! closed, correctly.
 //!
 //! Override the binaries with `P01_VERIFIER_SO` / `P01_C7_PROBE_SO` if needed.
 //!
@@ -238,6 +251,7 @@ fn repo_root() -> PathBuf {
 /// the "measure exactly what is on devnet" use case and it is legitimate — but
 /// in that mode `assert_artifact_is_current` requires the artifact to be at
 /// least as new as `src/`, so the stale-bytes trap is closed on both paths.
+#[derive(Clone)]
 enum SoUnderTest {
     /// Built by this harness from the `src/` tree next to it.
     SelfBuilt {
@@ -277,7 +291,126 @@ impl SoUnderTest {
     }
 }
 
+/// Serialises EVERY `cargo-build-sbf` invocation this test binary makes.
+///
+/// `cargo-build-sbf` is not reentrant against itself. It reconciles the `solana`
+/// rustup toolchain before it does anything else — including for `--version` —
+/// and reconciling means it can UNINSTALL and reinstall the sbpf toolchain
+/// underneath a sibling process. MEASURED: with the default test harness
+/// (`--test-threads` = core count) `build_fingerprint_changes_when_the_compiler_changes`
+/// runs `--version` while `cu_*` is mid-build and the build dies with
+/// `0xc0000135 STATUS_DLL_NOT_FOUND`, because its toolchain was removed out from
+/// under it.
+///
+/// This used to be a caller's problem: every invocation of this file was expected
+/// to remember `--test-threads=1`, and it was documented in the module header and
+/// in the founder's notes. That is a guarantee held by a convention, which is the
+/// same shape of defect as a gate that checks a constant instead of the
+/// enforcement — the first caller who forgets gets a build failure that looks
+/// like a broken toolchain rather than a race. The harness serialises itself now.
+/// `--test-threads=1` is no longer required; it is also no longer harmful.
+///
+/// The lock is held for the DURATION OF ONE SPAWN and never across a call that
+/// could take it again, so it cannot deadlock: `verifier_so_path` calls
+/// `compiler_identity` (takes and releases) and only afterwards runs the build
+/// (takes and releases). Poisoning is recovered from rather than propagated — a
+/// panic in another test's build says nothing about whether this one may run the
+/// tool, and turning that into a second panic would bury the first report.
+static SBF_TOOL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// How many `cargo-build-sbf` processes this binary has ever spawned, and the
+/// most that were ever in flight at once. Instrumentation, not bookkeeping:
+/// `harness_serialises_its_own_sbf_builds` asserts on both, because a lock that
+/// is merely present is the same kind of claim as a gate that reads a constant.
+static SBF_SPAWNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static SBF_IN_FLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static SBF_MAX_IN_FLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Run `cargo-build-sbf` with the process-wide lock held. See `SBF_TOOL_LOCK`.
+fn run_sbf_tool(
+    tool: &Path,
+    configure: impl FnOnce(&mut std::process::Command),
+) -> std::io::Result<std::process::Output> {
+    use std::sync::atomic::Ordering::SeqCst;
+    let _guard = SBF_TOOL_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    SBF_SPAWNS.fetch_add(1, SeqCst);
+    let live = SBF_IN_FLIGHT.fetch_add(1, SeqCst) + 1;
+    SBF_MAX_IN_FLIGHT.fetch_max(live, SeqCst);
+    let mut cmd = std::process::Command::new(tool);
+    configure(&mut cmd);
+    let out = cmd.output();
+    SBF_IN_FLIGHT.fetch_sub(1, SeqCst);
+    out
+}
+
+/// The serialisation is a property, so it is asserted rather than commented.
+///
+/// Eight threads ask for the artifact and the compiler identity at once. Whatever
+/// the caller passed for `--test-threads`, that is real concurrency through the
+/// two entry points that spawn `cargo-build-sbf`, and two things must hold:
+///
+///   * no two invocations of the tool ever overlapped (`SBF_MAX_IN_FLIGHT <= 1`),
+///     which is the race that killed builds with `0xc0000135
+///     STATUS_DLL_NOT_FOUND` when one process reconciled the rustup toolchain
+///     under another;
+///   * eight concurrent callers cause ZERO additional spawns, because both entry
+///     points are memoised. This half bites even when the artifact is already
+///     cached and no build would have run anyway, which is the common case and
+///     the one a weaker test would sleep through.
+///
+/// All eight must also agree about which artifact is under test. Disagreement
+/// would mean two builds raced into one output path and the CU numbers below
+/// describe whichever won.
+#[test]
+fn harness_serialises_its_own_sbf_builds() {
+    use std::sync::atomic::Ordering::SeqCst;
+
+    // Warm both memos first, so the count below measures the CONCURRENT calls
+    // and not the one-off work they may or may not have been first to trigger.
+    let expected = verifier_so_path().path().to_path_buf();
+    let compiler = compiler_identity();
+    let spawns_before = SBF_SPAWNS.load(SeqCst);
+
+    let paths: Vec<(PathBuf, String)> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..8)
+            .map(|_| s.spawn(|| (verifier_so_path().path().to_path_buf(), compiler_identity())))
+            .collect();
+        handles.into_iter().map(|h| h.join().expect("worker panicked")).collect()
+    });
+
+    for (i, (path, id)) in paths.iter().enumerate() {
+        assert_eq!(
+            path, &expected,
+            "thread {i} got a different .so than the main thread — two builds raced into one \
+             output path and the CU tables describe whichever finished last"
+        );
+        assert_eq!(&compiler, id, "thread {i} disagreed about the compiler identity");
+    }
+
+    assert_eq!(
+        SBF_SPAWNS.load(SeqCst),
+        spawns_before,
+        "eight concurrent callers spawned {} extra cargo-build-sbf process(es). Both entry points \
+         are supposed to be memoised; without that, N tests asking for the artifact is N builds \
+         writing one path.",
+        SBF_SPAWNS.load(SeqCst) - spawns_before
+    );
+
+    assert!(
+        SBF_MAX_IN_FLIGHT.load(SeqCst) <= 1,
+        "{} cargo-build-sbf processes ran at once. That tool reconciles the `solana` rustup \
+         toolchain before it does anything, --version included, so a second one can uninstall the \
+         sbpf toolchain underneath the first and kill it with 0xc0000135 STATUS_DLL_NOT_FOUND. \
+         SBF_TOOL_LOCK exists to make that impossible; it is not doing so.",
+        SBF_MAX_IN_FLIGHT.load(SeqCst)
+    );
+}
+
 /// The SBF compiler's identity, as it reports it, whitespace-normalised.
+///
+/// Memoised, because it spawns the tool: two tests asking the same question
+/// should not be two chances to collide with a build. The lock alone would make
+/// it correct; the `OnceLock` makes it happen once.
 ///
 /// `cargo-build-sbf --version` prints its own version and the platform-tools
 /// version it will invoke, and those two lines are what decide the bytecode:
@@ -292,25 +425,30 @@ impl SoUnderTest {
 /// function exists to close, so a tool that cannot report its version panics
 /// here rather than degrading to a source-only key.
 fn compiler_identity() -> String {
+    static CACHED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHED.get_or_init(compiler_identity_uncached).clone()
+}
+
+fn compiler_identity_uncached() -> String {
     let tool = cargo_build_sbf();
-    let out = std::process::Command::new(&tool)
-        .arg("--version")
-        .output()
-        .unwrap_or_else(|e| {
-            panic!(
-                "could not run `{} --version`: {}\n\n\
-                 The compiler's identity is part of the build fingerprint this harness caches\n\
-                 on, because CU is a property of BYTECODE and the same src/ compiled by two\n\
-                 different platform-tools is not the same bytecode. Falling back to a\n\
-                 source-only key here would let a toolchain switch report a cache hit and\n\
-                 re-print the previous compiler's numbers as if freshly measured, which is the\n\
-                 failure this check exists to prevent. Set P01_CARGO_BUILD_SBF to a working\n\
-                 cargo-build-sbf, or point the harness at a prebuilt artifact with\n\
-                 P01_VERIFIER_SO.\n",
-                tool.display(),
-                e
-            )
-        });
+    let out = run_sbf_tool(&tool, |cmd| {
+        cmd.arg("--version");
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "could not run `{} --version`: {}\n\n\
+             The compiler's identity is part of the build fingerprint this harness caches\n\
+             on, because CU is a property of BYTECODE and the same src/ compiled by two\n\
+             different platform-tools is not the same bytecode. Falling back to a\n\
+             source-only key here would let a toolchain switch report a cache hit and\n\
+             re-print the previous compiler's numbers as if freshly measured, which is the\n\
+             failure this check exists to prevent. Set P01_CARGO_BUILD_SBF to a working\n\
+             cargo-build-sbf, or point the harness at a prebuilt artifact with\n\
+             P01_VERIFIER_SO.\n",
+            tool.display(),
+            e
+        )
+    });
     if !out.status.success() {
         panic!(
             "`{} --version` exited {:?}\n--- stderr ---\n{}\n--- stdout ---\n{}",
@@ -437,7 +575,24 @@ fn cargo_build_sbf() -> PathBuf {
     PathBuf::from("cargo-build-sbf")
 }
 
+/// Memoised so the `.so` is built AT MOST ONCE per test binary.
+///
+/// `OnceLock::get_or_init` blocks every other caller until the first one
+/// finishes, which is what makes this harness parallel-safe rather than merely
+/// parallel-tolerant: without it two `cu_*` tests could each see `cached ==
+/// false`, each delete the artifact and the fingerprint, and each start a
+/// `cargo-build-sbf` — two builds writing one output path, plus the rustup
+/// toolchain race `SBF_TOOL_LOCK` describes.
+///
+/// It also makes the reported provenance honest. `cached` is now "this binary
+/// had already built it", one `rebuilt` line per run at most, instead of
+/// whichever of N racing threads happened to print last.
 fn verifier_so_path() -> SoUnderTest {
+    static BUILT: std::sync::OnceLock<SoUnderTest> = std::sync::OnceLock::new();
+    BUILT.get_or_init(verifier_so_path_uncached).clone()
+}
+
+fn verifier_so_path_uncached() -> SoUnderTest {
     if let Ok(p) = std::env::var("P01_VERIFIER_SO") {
         return SoUnderTest::Supplied { path: PathBuf::from(p) };
     }
@@ -472,24 +627,24 @@ fn verifier_so_path() -> SoUnderTest {
             tool.display(),
             compiler,
         );
-        let out = std::process::Command::new(&tool)
-            .arg("--manifest-path")
-            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
-            .arg("--sbf-out-dir")
-            .arg(&out_dir)
-            .env("CARGO_TARGET_DIR", out_dir.join("sbf-target"))
-            .output()
-            .unwrap_or_else(|e| {
-                panic!(
-                    "could not run {}: {}\n\n\
-                     This harness measures compute units of bytecode it builds itself, so a\n\
-                     missing build tool is a broken measurement, not a passing one. Set\n\
-                     P01_CARGO_BUILD_SBF to a working cargo-build-sbf, or point the harness at\n\
-                     a prebuilt artifact with P01_VERIFIER_SO.\n",
-                    tool.display(),
-                    e
-                )
-            });
+        let out = run_sbf_tool(&tool, |cmd| {
+            cmd.arg("--manifest-path")
+                .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+                .arg("--sbf-out-dir")
+                .arg(&out_dir)
+                .env("CARGO_TARGET_DIR", out_dir.join("sbf-target"));
+        })
+        .unwrap_or_else(|e| {
+            panic!(
+                "could not run {}: {}\n\n\
+                 This harness measures compute units of bytecode it builds itself, so a\n\
+                 missing build tool is a broken measurement, not a passing one. Set\n\
+                 P01_CARGO_BUILD_SBF to a working cargo-build-sbf, or point the harness at\n\
+                 a prebuilt artifact with P01_VERIFIER_SO.\n",
+                tool.display(),
+                e
+            )
+        });
         if !out.status.success() || !so.exists() {
             panic!(
                 "cargo-build-sbf failed for p01_stark_verifier (status {:?}, artifact present: \
