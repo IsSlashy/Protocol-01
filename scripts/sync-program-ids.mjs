@@ -249,6 +249,20 @@ const SKIP_DIRS = new Set([
   'coverage', '.expo', '.vercel', 'out', 'vendor', '.claude', '.venv', '__pycache__',
 ]);
 
+/**
+ * Trees inside a SKIP_DIRS directory that are swept anyway.
+ *
+ * `target/` is build output everywhere except `target/idl/`, which is TRACKED,
+ * is what `anchor idl`/`@coral-xyz/anchor` hand to `new Program(idl)`, and
+ * carries `idl.address` — the program id an Anchor TS client uses when the
+ * caller does not pass one. MEASURED 2026-08-02:
+ * target/idl/p01_stark_verifier.json carries EXmAQqm..., the abandoned lineage,
+ * because it was last written at commit 1023e5bb (v1.0.3). Skipping all of
+ * `target/` would have made this sweep silent about the single most
+ * client-facing copy of the wrong id.
+ */
+const SCAN_ANYWAY = ['target/idl'];
+
 const SCAN_EXT = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.rs', '.toml', '.json',
   '.md', '.yml', '.yaml', '.sh', '.py', '.kt', '.swift', '.java',
@@ -412,7 +426,8 @@ for (const [id, key] of Object.entries(RETIRED)) {
 
 const codeHits = [];
 const proseHits = [];
-for (const abs of walk(REPO)) {
+const scanned = [...walk(REPO), ...SCAN_ANYWAY.flatMap((d) => [...walk(resolve(REPO, d))])];
+for (const abs of scanned) {
   const path = rel(abs);
   if (DECLARATION_SITES.has(path)) continue;
   const ext = extname(abs);

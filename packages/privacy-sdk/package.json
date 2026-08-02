@@ -93,7 +93,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "check:deployed": "node ../stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain --cluster devnet",
+    "prepublishOnly": "node ../stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain --cluster devnet && npm run build"
   },
   "keywords": [
     "solana",
