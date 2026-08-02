@@ -1866,6 +1866,116 @@ fn cu_ceiling_ci_workflow_cannot_hold_a_stale_copy_of_a_pin() {
     );
 }
 
+/// Integration-test targets under `tests/` that `ci.yml` deliberately does NOT
+/// run, with the reason for each.
+///
+/// Empty is the correct state, and the entry cost is deliberately a written
+/// reason: this list is a place to record a coverage hole, not a place to make
+/// one quiet.
+const CI_UNRUN_TEST_TARGETS: [(&str, &str); 0] = [];
+
+/// `--test <name>` appears in `ci.yml` as a whole word.
+///
+/// A bare `contains` would let `--test cu_budget` be satisfied by a hypothetical
+/// `--test cu_budget_extra`, which is the direction that produces a false green.
+fn ci_names_test_target(name: &str) -> bool {
+    let needle = format!("--test {name}");
+    CI_WORKFLOW
+        .match_indices(&needle)
+        .any(|(i, _)| {
+            CI_WORKFLOW[i + needle.len()..]
+                .chars()
+                .next()
+                .is_none_or(char::is_whitespace)
+        })
+}
+
+/// Every integration test in `tests/` is named in `ci.yml`, or excluded on purpose.
+///
+/// # Why this exists
+///
+/// `ci.yml` runs the verifier's integration tests by naming them one `--test` at a
+/// time, and states the consequence itself: "this list IS the coverage, so a test
+/// file that is not named above executes nowhere". That makes the workflow a
+/// hand-maintained second copy of this directory, with the same standing to go
+/// stale as the CU pins the test above guards — and it had.
+///
+/// MEASURED 2026-08-02, before this test existed: `tests/` held 15 targets,
+/// `ci.yml` named 8. The seven that ran nowhere were `b2_bits_measured`,
+/// `b2_segment_binding`, `c5_conservation_probe`, `c6_padding_rows`,
+/// `honest_liveness`, `liveness_fix_attack` and `liveness_generator_semantics`.
+/// Every one of them was green when finally run, which is the point: nothing was
+/// broken, so nothing complained, and the coverage was absent anyway.
+///
+/// The directory is the enforcement and the workflow is the copy, so the
+/// directory is read off disk here rather than mirrored into a list in this file.
+#[test]
+fn every_verifier_integration_test_target_is_named_in_ci() {
+    let tests_dir = repo_root().join("programs/p01_stark_verifier/tests");
+    let mut targets: Vec<String> = std::fs::read_dir(&tests_dir)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", tests_dir.display()))
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("rs"))
+        .filter_map(|e| {
+            e.path()
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+        })
+        .collect();
+    targets.sort();
+
+    // Negative controls. Each of these failing silently would leave the loop
+    // below iterating over nothing and reporting a clean directory.
+    assert!(
+        targets.len() >= 10,
+        "only {} integration target(s) discovered in {} — this check is pointed at the \
+         wrong directory and would pass vacuously: {targets:?}",
+        targets.len(),
+        tests_dir.display(),
+    );
+    assert!(
+        targets.iter().any(|t| t == "cu_budget"),
+        "the directory scan did not find this very file; it is reading the wrong path"
+    );
+    assert!(
+        ci_names_test_target("cu_budget"),
+        "ci.yml does not name `--test cu_budget`, yet this test only runs because CI runs \
+         that target. The needle format is wrong, or the workflow moved, and every target \
+         would now look unrun."
+    );
+
+    for (name, why) in CI_UNRUN_TEST_TARGETS.iter() {
+        assert!(
+            targets.iter().any(|t| t == name),
+            "CI_UNRUN_TEST_TARGETS excuses `{name}` ({why}) but tests/{name}.rs does not \
+             exist — delete the entry rather than carry an allowlist of absent files"
+        );
+        assert!(
+            !ci_names_test_target(name),
+            "CI_UNRUN_TEST_TARGETS excuses `{name}` ({why}) but ci.yml runs it now — drop \
+             the entry"
+        );
+    }
+
+    let unrun: Vec<&str> = targets
+        .iter()
+        .map(String::as_str)
+        .filter(|t| !ci_names_test_target(t))
+        .filter(|t| !CI_UNRUN_TEST_TARGETS.iter().any(|(n, _)| n == t))
+        .collect();
+    assert!(
+        unrun.is_empty(),
+        "\n\n  >>> CI COVERAGE DRIFT <<<\n  These integration tests exist in {} and no CI \
+         step runs them, so they execute nowhere:\n\n    {unrun:?}\n\n  ci.yml runs the \
+         verifier suite by naming each target, so an unnamed file is not covered by \
+         anything — it only reads that way. Add\n    cargo test -p p01_stark_verifier \
+         --release --test <name>\n  to the verifier step in .github/workflows/ci.yml, or \
+         record the exclusion in CI_UNRUN_TEST_TARGETS with a reason.\n",
+        tests_dir.display(),
+    );
+}
+
 /// The prose check must be capable of failing, on a file where it never does.
 ///
 /// Same reasoning as every other negative control here: `comma_grouped_numbers`

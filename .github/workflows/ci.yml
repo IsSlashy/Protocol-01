@@ -140,9 +140,19 @@ jobs:
       # on the LAST instruction with FriFoldCheckFailed — which reads as an
       # unexplained transaction failure, not as a version skew.
       #
-      # EXPECTED RED as of 2026-07-30: packages/stark-prover/wasm/ holds the B1
-      # prover, devnet EXmAQqmk… still runs pre-B1 bytes (measured off the
+      # EXPECTED RED, re-measured 2026-08-02: packages/stark-prover/wasm/ holds a
+      # B2 prover — measured by DRIVING the blob, 7/7 circuits emit the b2 proof
+      # digest, not read off its panic strings — and devnet DGY37k3… still runs
+      # pre-B1 bytes (elf sha256 c1a26c17…, slot 469197514, measured off the
       # programdata account, see packages/stark-prover/deployed-verifier.json).
+      #
+      # This comment said "the B1 prover" and named EXmAQqmk… until 2026-08-02.
+      # Both were wrong, in the direction that matters: EXmAQqmk… is a DIFFERENT
+      # live devnet program, and a `.so` built from this tree carries
+      # `declare_id!(DGY37k3…)`, so it can never execute there — Anchor rejects
+      # every instruction with DeclaredProgramIdMismatch. Anchor.toml
+      # [programs.devnet] named EXmAQqmk… too, which meant this step's verdict was
+      # about a program the shipped SDK never addresses.
       # The ONLY legitimate way to turn it green is to deploy
       # programs/p01_stark_verifier and then re-measure the record with
       # `--measure`. Editing the record instead makes the OFFLINE half green and
@@ -484,6 +494,30 @@ jobs:
           # pass against a verifier with no binding whatsoever, because a byte
           # patch desynchronises the grinding transcript before FRI is reached.
           cargo test -p p01_stark_verifier --release --test b1_deep_binding
+          # [DRIFT] The seven below were in `tests/` and named nowhere in this file,
+          # so by the contract stated four lines up they executed nowhere — while
+          # reading, to anyone opening the directory, as covered. That is the B2
+          # soundness measurement, the B2 per-segment gamma binding, both C5/C6
+          # liveness probes, and `liveness_generator_semantics`, the guard whose
+          # own commit exists to prove the witness generators honest before their
+          # 1120/0 is quoted. MEASURED on this box, release, all seven green:
+          # 17.5s / 11.2s / 24.2s / 89.7s / 374.1s / 15.6s for the first six.
+          # `honest_liveness` at just over six minutes is the only one that costs
+          # anything, and it is the run that produces the 1120/0 figure, so it is
+          # also the one least worth taking on trust.
+          #
+          # Adding names to a hand-maintained list does not stop it drifting again,
+          # so `cu_budget.rs::every_verifier_integration_test_target_is_named_in_ci`
+          # now reads `tests/` off disk and fails when a target is not named here.
+          # Add the `--test` line when you add the file, or record the exclusion in
+          # `CI_UNRUN_TEST_TARGETS` with a reason.
+          cargo test -p p01_stark_verifier --release --test b2_bits_measured
+          cargo test -p p01_stark_verifier --release --test b2_segment_binding
+          cargo test -p p01_stark_verifier --release --test c5_conservation_probe
+          cargo test -p p01_stark_verifier --release --test c6_padding_rows
+          cargo test -p p01_stark_verifier --release --test honest_liveness
+          cargo test -p p01_stark_verifier --release --test liveness_fix_attack
+          cargo test -p p01_stark_verifier --release --test liveness_generator_semantics
 
       # [PROVER] The prover half of every pin above, plus the LDE coset sequencing
       # companion (`compact::lde_coset_sequencing::lde_has_no_coset_offset_measured_today`).
