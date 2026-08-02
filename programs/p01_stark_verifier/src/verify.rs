@@ -5696,27 +5696,26 @@ mod merkle_update_e2e {
     // `verify_constraints_{pool_commitment, balance_proof, merkle_path,
     // confidential_balance, transfer, merkle_update}` — i.e. deleting the whole
     // step-4 per-query transition layer for every live circuit at once — left
-    // the entire suite GREEN. 64 lib tests, b1_deep_binding, b2_bits_measured,
-    // b2_segment_binding, b4_pair_leaf, c5_conservation_probe, c6_padding_rows,
-    // liveness_fix_attack, fri_end_to_end, merkle_domain_sep, periodic_stride,
-    // a4_probe, route_c_trace_pair: 0 failures.
+    // the entire suite GREEN: 13 test binaries, 169 tests, `cargo test` exit 0.
     //
-    // Why the existing suite cannot see it:
+    // Why the suite could not see it, structurally rather than by oversight:
     //
-    //   * every phase-1 test is a LIVENESS test (`*_verify_generic_accepts_
-    //     honest_proof`, `honest_liveness`, `c6_padding_rows`,
-    //     `locate_the_c5_rows_*`). Deleting a rejection can never turn an
-    //     accept into a reject, so a loosening is invisible to all of them by
-    //     construction;
-    //   * the two negative sweeps that DO flip trace bytes
-    //     (`c5_tampered_openings_are_all_rejected` /
-    //     `c6_tampered_openings_are_all_rejected`) go through `verify_generic`,
-    //     where step 3 (Merkle) refuses a flipped opening before step 4 is
-    //     reached. Their file says so in a comment and then asserts only
-    //     `accepted.is_empty()`, which the Merkle step satisfies on its own.
+    //   * every phase-1 test here is a LIVENESS test (`*_verify_generic_accepts_
+    //     honest_proof`, `honest_liveness`, `c6_padding_rows`, its C5 twin).
+    //     Deleting a rejection can never turn an accept into a reject, so a
+    //     loosening is invisible to all of them by construction;
+    //   * the two sweeps that DO flip trace bytes
+    //     (`c5_tampered_openings_are_all_rejected` / its C6 twin) go through
+    //     `verify_generic`, where step 3 (Merkle) refuses a flipped opening
+    //     before step 4 is reached. Their own `tamper_and_verify` comment says
+    //     exactly that, and the assertion is still only `accepted.is_empty()`,
+    //     which the Merkle step satisfies on its own.
     //
-    // These tests call the ARM DIRECTLY, so the Merkle step cannot answer for
-    // it. They are the reason the arms are not free to rot.
+    // The C3 (2026-05-29) and C6 (2026-08-01) padding-row defects both lived in
+    // this layer. These tests call the ARM DIRECTLY, so Merkle cannot answer for
+    // it, and they cover BOTH branches of every arm — the Poseidon-round branch
+    // and the identity/padding branch — because the twin defects were in the
+    // second one.
     // ======================================================================
 
     /// A trace-aligned query whose row is genuinely constrained by the arm.
@@ -5725,72 +5724,47 @@ mod merkle_update_e2e {
     /// one of the six arms — and `trace_length - 1` is outside the transition
     /// vanishing polynomial. Corrupting either is legitimately accepted, so a
     /// test that picked one would measure nothing and pass for the wrong reason.
-    fn constrained_trace_aligned_query(
+    fn constrained_trace_aligned_rows(
         proof: &crate::compact_proof::GenericCompactProof,
         cfg: &crate::compact_proof::CircuitConfig,
-    ) -> Option<usize> {
-        (0..proof.queries.len()).find(|&i| {
-            let pos = proof.queries[i].position as usize;
-            if pos % cfg.blowup != 0 {
-                return false;
-            }
-            let row = (pos / cfg.blowup) % cfg.trace_length;
-            row % 32 != 31 && row != cfg.trace_length - 1
-        })
+    ) -> Vec<(usize, usize)> {
+        (0..proof.queries.len())
+            .filter_map(|i| {
+                let pos = proof.queries[i].position as usize;
+                if pos % cfg.blowup != 0 {
+                    return None;
+                }
+                let row = (pos / cfg.blowup) % cfg.trace_length;
+                if row % 32 == 31 || row == cfg.trace_length - 1 {
+                    return None;
+                }
+                Some((i, row))
+            })
+            .collect()
     }
 
-    /// Drive one phase-1 arm on an honest proof (control) and then on the same
-    /// proof with column 0 of ONE opened next-row corrupted (measurement).
+    /// Corrupt column 0 of ONE opened next-row and hand the proof to the arm.
     ///
     /// Column 0 of the next row is constrained at every row
-    /// `constrained_trace_aligned_query` returns, in all six arms: an active
-    /// Poseidon round demands `next[0] == poseidon_round(current)[0]`, a padding
-    /// row demands `next[0] == current[0]`. So one corruption exercises whichever
-    /// branch the drawn row lands in, and the expected error is the same either
-    /// way. No arm gets a free pass because of which branch its witness drew.
-    ///
-    /// `make(seed)` is retried because a proof draws only `num_queries/blowup`
-    /// trace-aligned positions on average (≈1.7 for the 27-query circuits), so a
-    /// single fixed witness has a ~17% chance of drawing none at all. Running out
-    /// of seeds PANICS — it is never silently skipped.
-    fn arm_must_reject_a_broken_next_row(
+    /// `constrained_trace_aligned_rows` returns, in all six arms: the
+    /// Poseidon-round branch demands `next[0] == poseidon_round(current)[0]`,
+    /// the identity/padding branch demands `next[0] == current[0]`. So one
+    /// corruption exercises whichever branch the drawn row lands in and the
+    /// expected error is the same either way — no arm gets a free pass because
+    /// of which branch its witness happened to draw.
+    fn corrupt_next_row_and_run(
         label: &str,
         cfg: &crate::compact_proof::CircuitConfig,
-        make: impl Fn(u64) -> p01_stark::compact::GenericCompactProofData,
-        arm: impl Fn(
+        pd: &p01_stark::compact::GenericCompactProofData,
+        q: usize,
+        arm: &impl Fn(
             &crate::compact_proof::GenericCompactProof,
             &crate::compact_proof::CircuitConfig,
             &[u64],
         ) -> Result<(), VerifyError>,
-    ) {
-        const SEEDS: u64 = 24;
-        let mut chosen: Option<(u64, p01_stark::compact::GenericCompactProofData, usize)> = None;
-        for seed in 0..SEEDS {
-            let pd = make(seed);
-            let parsed = crate::compact_proof::GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
-                .unwrap_or_else(|| panic!("{label}: honest proof (seed {seed}) must parse"));
-            if let Some(q) = constrained_trace_aligned_query(&parsed, cfg) {
-                chosen = Some((seed, pd, q));
-                break;
-            }
-        }
-        let (seed, pd, q) = chosen.unwrap_or_else(|| {
-            panic!(
-                "{label}: none of {SEEDS} witnesses drew a trace-aligned query on a constrained \
-                 row, so this arm cannot be measured. Raise SEEDS — do NOT skip, a skipped \
-                 measurement reads as a pass."
-            )
-        });
-
+    ) -> Result<(), VerifyError> {
         let honest = crate::compact_proof::GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
-            .expect("re-parse");
-        // Control. Without it the negative leg could be rejecting for a reason
-        // that has nothing to do with the corruption.
-        arm(&honest, cfg, &pd.public_inputs).unwrap_or_else(|e| {
-            panic!("{label}: the arm must ACCEPT the honest proof (seed {seed}), got {e:?}")
-        });
-
-        let row = (honest.queries[q].position as usize / cfg.blowup) % cfg.trace_length;
+            .unwrap_or_else(|| panic!("{label}: honest proof must parse"));
         let (trace_off, stride) = route_c_trace_block(cfg, &pd.proof_bytes, q);
         // Per-query wire order: position(4) | trace | trace_mirror | next_trace | …
         let next_off = trace_off + 2 * stride;
@@ -5807,7 +5781,8 @@ mod merkle_update_e2e {
                      measures the parser and not the constraint arm"
                 )
             });
-        // The corruption landed where this test claims it did.
+        // The corruption landed where this test claims it did. Without these two
+        // the negative leg could be green because the edit missed.
         assert_eq!(
             tampered.queries[q].next_trace_value(0).as_u64(),
             bumped,
@@ -5818,23 +5793,105 @@ mod merkle_update_e2e {
             honest.queries[q].trace_value(0).as_u64(),
             "{label}: the byte edit spilled into the CURRENT row block"
         );
+        arm(&tampered, cfg, &pd.public_inputs)
+    }
 
-        assert_eq!(
-            arm(&tampered, cfg, &pd.public_inputs),
-            Err(VerifyError::TransitionConstraintFailed),
-            "{label}: the phase-1 arm ACCEPTED a broken transition at trace row {row} \
-             (seed {seed}, query {q}). Nothing else in this repository covers that: every \
-             other phase-1 test is a liveness test, and the two tamper sweeps in \
-             tests/liveness_fix_attack.rs run through verify_generic, where the Merkle step \
-             refuses a flipped opening before the arm is reached."
+    /// Drive one phase-1 arm on honest proofs (control) and on the same proofs
+    /// with one opened next-row corrupted (measurement), until BOTH branches of
+    /// the arm have been exercised.
+    ///
+    /// `inactive_from` is the first row of the arm's inactive tail — 96 for C1
+    /// (`cycle < 3`), 480 for C3 and C6 (`CANONICAL_DEPTH * 32`), `None` for the
+    /// arms that hash every cycle. When it is `Some`, the sweep additionally
+    /// requires a corruption inside that tail to be rejected. That is precisely
+    /// the region the 2026-05-29 C3 fix and its 2026-08-01 C6 twin are about, and
+    /// nothing else in the suite constrains it.
+    ///
+    /// The branch classification below duplicates the arm's own condition. It is
+    /// used ONLY for coverage accounting — every corruption is required to be
+    /// rejected regardless of how it is classified — so a drift between the two
+    /// weakens the coverage claim but can never turn a real acceptance green.
+    ///
+    /// Witnesses are retried across seeds because a proof draws only
+    /// `num_queries / blowup` trace-aligned positions on average (~1.7 for the
+    /// 27-query circuits, ~1.4 for the 22-query ones), and a padding row is 1 in
+    /// 32 of those. Running out of seeds PANICS — never silently skipped.
+    fn arm_rejects_broken_transitions_in_both_branches(
+        label: &str,
+        cfg: &crate::compact_proof::CircuitConfig,
+        inactive_from: Option<usize>,
+        make: impl Fn(u64) -> p01_stark::compact::GenericCompactProofData,
+        arm: impl Fn(
+            &crate::compact_proof::GenericCompactProof,
+            &crate::compact_proof::CircuitConfig,
+            &[u64],
+        ) -> Result<(), VerifyError>,
+    ) {
+        const SEEDS: u64 = 96;
+        let mut n_round = 0usize;
+        let mut n_pad = 0usize;
+        let mut n_tail = 0usize;
+        let mut checked = 0usize;
+
+        for seed in 0..SEEDS {
+            let pd = make(seed);
+            let honest =
+                crate::compact_proof::GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+                    .unwrap_or_else(|| panic!("{label}: honest proof (seed {seed}) must parse"));
+            // Control. Without it the negative leg could be rejecting for a
+            // reason that has nothing to do with the corruption.
+            arm(&honest, cfg, &pd.public_inputs).unwrap_or_else(|e| {
+                panic!("{label}: the arm must ACCEPT the honest proof (seed {seed}), got {e:?}")
+            });
+
+            for (q, row) in constrained_trace_aligned_rows(&honest, cfg) {
+                let got = corrupt_next_row_and_run(label, cfg, &pd, q, &arm);
+                assert_eq!(
+                    got,
+                    Err(VerifyError::TransitionConstraintFailed),
+                    "{label}: the phase-1 arm ACCEPTED a broken transition at trace row {row} \
+                     (seed {seed}, query {q}). Nothing else in this repository covers that: \
+                     every other phase-1 test is a liveness test, and the tamper sweeps in \
+                     tests/liveness_fix_attack.rs run through verify_generic, where the Merkle \
+                     step refuses a flipped opening before the arm is reached."
+                );
+                checked += 1;
+                let in_tail = inactive_from.map_or(false, |a| row >= a);
+                if in_tail {
+                    n_tail += 1;
+                    n_pad += 1;
+                } else if row % 32 < cfg.num_rounds {
+                    n_round += 1;
+                } else {
+                    n_pad += 1;
+                }
+            }
+
+            if n_round > 0 && n_pad > 0 && (inactive_from.is_none() || n_tail > 0) {
+                println!(
+                    "[PHASE1 ARM] {label}: {checked} corruptions rejected over {} seeds \
+                     (round branch {n_round}, identity branch {n_pad}, inactive tail {n_tail})",
+                    seed + 1,
+                );
+                return;
+            }
+        }
+
+        panic!(
+            "{label}: {SEEDS} witnesses did not cover both branches of the arm \
+             (round {n_round}, identity {n_pad}, inactive tail {n_tail} over {checked} \
+             corruptions). Raise SEEDS — do NOT relax the coverage requirement, an \
+             uncovered branch is exactly where the C3 and C6 padding defects lived."
         );
     }
 
     #[test]
     fn c1_phase1_arm_rejects_a_broken_transition() {
-        arm_must_reject_a_broken_next_row(
+        arm_rejects_broken_transitions_in_both_branches(
             "C1 pool_commitment",
             &crate::compact_proof::CONFIG_POOL_COMMITMENT,
+            // `cycle < 3`: rows 96..=127 are the inactive tail.
+            Some(96),
             |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11),
             verify_constraints_pool_commitment,
         );
@@ -5842,9 +5899,10 @@ mod merkle_update_e2e {
 
     #[test]
     fn c2_phase1_arm_rejects_a_broken_transition() {
-        arm_must_reject_a_broken_next_row(
+        arm_rejects_broken_transitions_in_both_branches(
             "C2 balance_proof",
             &crate::compact_proof::CONFIG_BALANCE_PROOF,
+            None, // all four cycles hash
             |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999),
             verify_constraints_balance_proof,
         );
@@ -5852,9 +5910,11 @@ mod merkle_update_e2e {
 
     #[test]
     fn c3_phase1_arm_rejects_a_broken_transition() {
-        arm_must_reject_a_broken_next_row(
+        arm_rejects_broken_transitions_in_both_branches(
             "C3 merkle_path",
             &crate::compact_proof::CONFIG_MERKLE_PATH,
+            // CANONICAL_DEPTH * 32 — the region of the 2026-05-29 fix.
+            Some(480),
             |s| c3_sample_proof(777 + s),
             verify_constraints_merkle_path,
         );
@@ -5862,9 +5922,12 @@ mod merkle_update_e2e {
 
     #[test]
     fn c4_phase1_arm_rejects_a_broken_transition() {
-        arm_must_reject_a_broken_next_row(
+        arm_rejects_broken_transitions_in_both_branches(
             "C4 confidential_balance",
             &crate::compact_proof::CONFIG_CONFIDENTIAL_BALANCE,
+            // Cycle 7 is a real dummy Poseidon (`run_hash(trace, 7, 0, 0)`), so
+            // C4 has no inactive tail and the arm is right not to bound one.
+            None,
             |s| {
                 p01_stark::compact::generate_confidential_balance_compact_proof(
                     42 + s, 1000, 111, 800, 222, 200, 333, 999,
@@ -5876,9 +5939,10 @@ mod merkle_update_e2e {
 
     #[test]
     fn c5_phase1_arm_rejects_a_broken_transition() {
-        arm_must_reject_a_broken_next_row(
+        arm_rejects_broken_transitions_in_both_branches(
             "C5 transfer",
             &crate::compact_proof::CONFIG_TRANSFER,
+            None,
             // Conserving witness: in1+in2 == out1+out2, public_amount 0.
             |s| {
                 p01_stark::compact::generate_transfer_compact_proof(
@@ -5891,9 +5955,11 @@ mod merkle_update_e2e {
 
     #[test]
     fn c6_phase1_arm_rejects_a_broken_transition() {
-        arm_must_reject_a_broken_next_row(
+        arm_rejects_broken_transitions_in_both_branches(
             "C6 merkle_update",
             &crate::compact_proof::CONFIG_MERKLE_UPDATE,
+            // CANONICAL_DEPTH * 32 — the region of the 2026-08-01 twin fix.
+            Some(480),
             |s| {
                 let path_elements: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
                 let path_indices: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
