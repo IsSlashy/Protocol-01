@@ -94,6 +94,27 @@ pub enum VerifyError {
     /// so this is a ~2^-50 accident and the honest prover asserts against it at
     /// proof time rather than emitting an unprovable proof.
     DeepDenominatorZero,
+    /// [SEAM] `public_inputs.len()` does not equal the count the circuit's
+    /// boundary assertions consume, or a length-carrying public input (C3/C6
+    /// `depth`) is out of range.
+    ///
+    /// `get_boundary_assertions` used to DEFAULT every missing public input to
+    /// `Felt::ZERO`, and for C3/C6 it went further: `depth` is a
+    /// caller-supplied public input, and `depth == 0 || depth > 16` selected a
+    /// SHORTER assertion list that dropped the root bindings entirely (C6:
+    /// 4 assertions → 2, losing `old_root` and `new_root`; C3: 2 → 1, losing
+    /// `root`). Phase 1 never pinned `depth` — only `verify_deep_ali_circuit_3`
+    /// and `_6` do — so `verify_stark_proof_v2` would mark a C6 buffer
+    /// `verified = true` with NO root binding at all whenever the caller passed
+    /// `depth = 99`.
+    ///
+    /// The same defaulting made `verify_stark_proof` (the legacy single-`u64`
+    /// entry point, which has no gate against circuits 1..=6) able to set
+    /// `verified = true` on a generic buffer with 1 real public input and the
+    /// rest silently asserted against zero.
+    ///
+    /// Fails closed now: the count is exact and `depth` must be in `1..=16`.
+    PublicInputCountMismatch,
 }
 
 // ============================================================================
@@ -298,10 +319,129 @@ mod domain_generator_tests {
             assert_eq!(a.len(), expected, "assertion-count drift for circuit {circuit_id}");
             assert!(!a.is_empty());
         }
-        // Circuit 3 / 6 out-of-range depth still degrades to the leaf-only form
-        // (unchanged behaviour, deliberately not touched by this fix).
-        assert_eq!(get_boundary_assertions(3, &[1, 2, 99]).unwrap().len(), 1);
-        assert_eq!(get_boundary_assertions(6, &[1, 2, 3, 4, 99]).unwrap().len(), 2);
+    }
+
+    /// [SEAM] The degradation this test used to PIN AS CORRECT.
+    ///
+    /// It read:
+    /// ```ignore
+    /// // Circuit 3 / 6 out-of-range depth still degrades to the leaf-only form
+    /// // (unchanged behaviour, deliberately not touched by this fix).
+    /// assert_eq!(get_boundary_assertions(3, &[1, 2, 99]).unwrap().len(), 1);
+    /// assert_eq!(get_boundary_assertions(6, &[1, 2, 3, 4, 99]).unwrap().len(), 2);
+    /// ```
+    ///
+    /// `depth` is a CALLER-SUPPLIED public input. Dropping assertions on an
+    /// out-of-range value means the caller chose which bindings to enforce: at
+    /// `depth = 99` a C6 proof was checked against nothing but its two leaves,
+    /// and a C3 proof against nothing but its leaf. Phase 1 has no other pin on
+    /// `depth` — `verify_deep_ali_circuit_3/_6` do, but they are a SEPARATE
+    /// instruction, and `verified = true` is what four of the shipped consumer
+    /// paths read first.
+    ///
+    /// This is a tightening, not a weakening: the old assertion said "returns a
+    /// SHORTER list", the new one says "returns Err".
+    #[test]
+    fn out_of_range_depth_can_no_longer_switch_off_the_root_binding() {
+        for bad_depth in [0u64, 17, 32, 99, u32::MAX as u64, u64::MAX] {
+            assert!(
+                matches!(
+                    get_boundary_assertions(3, &[1, 2, bad_depth]),
+                    Err(VerifyError::PublicInputCountMismatch)
+                ),
+                "C3 depth {bad_depth} must be refused, not degraded"
+            );
+            assert!(
+                matches!(
+                    get_boundary_assertions(6, &[1, 2, 3, 4, bad_depth]),
+                    Err(VerifyError::PublicInputCountMismatch)
+                ),
+                "C6 depth {bad_depth} must be refused, not degraded"
+            );
+        }
+        // Every in-range depth keeps the FULL assertion set, and the root row it
+        // names is inside the trace (512 rows) — otherwise the assertion would
+        // be vacuous, since `verify_boundary_constraints` reduces every query
+        // position mod `trace_length`.
+        for depth in MIN_MERKLE_DEPTH..=MAX_MERKLE_DEPTH {
+            let d = depth as u64;
+            assert_eq!(get_boundary_assertions(3, &[1, 2, d]).unwrap().len(), 2);
+            let a6 = get_boundary_assertions(6, &[1, 2, 3, 4, d]).unwrap();
+            assert_eq!(a6.len(), 4);
+            for a in &a6 {
+                assert!(a.row < 512, "depth {depth} names unreachable row {}", a.row);
+            }
+        }
+    }
+
+    /// [SEAM] Short public inputs used to be DEFAULTED to `Felt::ZERO`, one
+    /// `else` arm per missing element. That made `verify_stark_proof` — the
+    /// legacy single-`u64` entry point, which has NO gate against circuits
+    /// 1..=6, unlike `verify_stark_proof_v2`'s `[C0 GATE]` — able to set
+    /// `verified = true` on a generic buffer with one real public input and the
+    /// rest asserted against zero.
+    #[test]
+    fn short_or_long_public_inputs_are_refused_not_defaulted() {
+        let full: [(u8, &[u64]); 7] = [
+            (0, &[42]),
+            (1, &[1, 2]),
+            (2, &[1, 2]),
+            (3, &[1, 2, 15]),
+            (4, &[1, 2, 3, 4]),
+            (5, &[1, 2, 3, 4, 5, 6]),
+            (6, &[1, 2, 3, 4, 15]),
+        ];
+        for (circuit_id, inputs) in full {
+            assert_eq!(
+                expected_public_input_count(circuit_id).unwrap(),
+                inputs.len(),
+                "arity table disagrees with the honest input list for C{circuit_id}"
+            );
+            get_boundary_assertions(circuit_id, inputs)
+                .unwrap_or_else(|e| panic!("C{circuit_id} honest arity must resolve: {e:?}"));
+
+            // Every strict prefix — including the empty one — must be refused.
+            for short in 0..inputs.len() {
+                assert!(
+                    matches!(
+                        get_boundary_assertions(circuit_id, &inputs[..short]),
+                        Err(VerifyError::PublicInputCountMismatch)
+                    ),
+                    "C{circuit_id} accepted {short} of {} public inputs",
+                    inputs.len()
+                );
+            }
+            // And so must a surplus: the buffer's `public_inputs_hash` covers
+            // every element supplied, so an element the assertions never read
+            // is a value the caller can move freely under a fixed hash.
+            let mut long = inputs.to_vec();
+            long.push(0xDEAD_BEEF);
+            assert!(
+                matches!(
+                    get_boundary_assertions(circuit_id, &long),
+                    Err(VerifyError::PublicInputCountMismatch)
+                ),
+                "C{circuit_id} accepted a surplus public input"
+            );
+        }
+    }
+
+    /// An unknown circuit id must still be diagnosed as `UnsupportedCircuit`,
+    /// not as an arity error — the arity check runs after the id lookup.
+    #[test]
+    fn arity_check_does_not_mask_an_unknown_circuit() {
+        for circuit_id in [7u8, 8, 100, 255] {
+            for n in 0..8usize {
+                let inputs: Vec<u64> = (0..n as u64).collect();
+                assert!(
+                    matches!(
+                        get_boundary_assertions(circuit_id, &inputs),
+                        Err(VerifyError::UnsupportedCircuit)
+                    ),
+                    "circuit {circuit_id} with {n} inputs got the wrong diagnosis"
+                );
+            }
+        }
     }
 }
 
@@ -315,6 +455,39 @@ struct BoundaryAssertion {
     row: usize,
     value: Felt,
 }
+
+/// [SEAM] How many `u64` public inputs each circuit's boundary assertions
+/// consume. This is the ONLY arity declaration in the verifier — every other
+/// site derives from it.
+///
+/// The counts match the prover (`stark/src/compact.rs`, which asserts
+/// `proof.public_inputs.len()` per circuit) and the consumers, all of which
+/// rebuild `sha256` over exactly this many little-endian `u64`s.
+///
+/// Unknown ids return `UnsupportedCircuit`, deliberately: an arity error for an
+/// id that does not exist would be the wrong diagnosis, and
+/// `boundary_assertions_reject_unknown_circuit` pins that ordering.
+pub fn expected_public_input_count(circuit_id: u8) -> Result<usize, VerifyError> {
+    match circuit_id {
+        0 => Ok(1), // [commitment]
+        1 => Ok(2), // [nullifier, commitment]
+        2 => Ok(2), // [commitment, token_mint]
+        3 => Ok(3), // [leaf, root, depth]
+        4 => Ok(4), // [old_commitment, new_commitment, amount_hash, token_mint]
+        5 => Ok(6), // [null_1, null_2, out_c1, out_c2, public_amount, token_mint]
+        6 => Ok(5), // [old_leaf, new_leaf, old_root, new_root, depth]
+        _ => Err(VerifyError::UnsupportedCircuit),
+    }
+}
+
+/// [SEAM] Legal range for the C3/C6 `depth` public input.
+///
+/// `depth` selects which trace row carries the root assertions
+/// (`output_row = (depth - 1) * 32 + 30`). Out of this range there IS no such
+/// row, and the old code responded by silently emitting a shorter assertion
+/// list — i.e. a caller-chosen public input could switch the root binding OFF.
+const MIN_MERKLE_DEPTH: usize = 1;
+const MAX_MERKLE_DEPTH: usize = 16;
 
 /// Get boundary assertions for a circuit given its public inputs.
 ///
@@ -334,6 +507,14 @@ fn get_boundary_assertions(
 ) -> Result<Vec<BoundaryAssertion>, VerifyError> {
     const HASH_CYCLE_LEN: usize = 32;
     const NUM_ROUNDS: usize = 30;
+    // [SEAM] Exact arity, checked BEFORE the arms so no arm can reach its
+    // `else { Felt::ZERO }` fallback. Unknown ids still fail as
+    // `UnsupportedCircuit`, not as an arity error — the ordering matters for
+    // `boundary_assertions_reject_unknown_circuit`.
+    let expected_len = expected_public_input_count(circuit_id)?;
+    if public_inputs.len() != expected_len {
+        return Err(VerifyError::PublicInputCountMismatch);
+    }
     // [#2 voie A] Circuit-5 row where the conservation accumulator (col 6)
     // holds its final value and is asserted == public_amount. Matches the
     // prover's `ROW_ACC_FINAL` = ROW_OUT_AMOUNT_2 + 1 = 12*32 + 1 = 385.
@@ -345,11 +526,7 @@ fn get_boundary_assertions(
         // Assertions: state[1] at row 0 = 0, state[2] at row 0 = 0,
         //             state[0] at row 30 = commitment
         0 => {
-            let commitment = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
+            let commitment = Felt::new(public_inputs[0]);
             vec![
                 BoundaryAssertion { col: 1, row: 0, value: Felt::ZERO },
                 BoundaryAssertion { col: 2, row: 0, value: Felt::ZERO },
@@ -361,16 +538,8 @@ fn get_boundary_assertions(
         // Assertions: nullifier at row 30 (col 0), commitment at row 94 (col 0),
         //             capacity=0 at row 0,32,64, chaining at row 64 (col 0) = nullifier
         1 => {
-            let nullifier = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
-            let commitment = if public_inputs.len() > 1 {
-                Felt::new(public_inputs[1])
-            } else {
-                Felt::ZERO
-            };
+            let nullifier = Felt::new(public_inputs[0]);
+            let commitment = Felt::new(public_inputs[1]);
             vec![
                 BoundaryAssertion { col: 0, row: NUM_ROUNDS, value: nullifier },
                 BoundaryAssertion { col: 0, row: 2 * HASH_CYCLE_LEN + NUM_ROUNDS, value: commitment },
@@ -385,16 +554,8 @@ fn get_boundary_assertions(
         // Assertions: col1=0,col2=0 at row 0, col1=token_mint at row 32,
         //             capacity=0 at rows 32,64,96, commitment at row 126 (3*32+30)
         2 => {
-            let commitment = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
-            let token_mint = if public_inputs.len() > 1 {
-                Felt::new(public_inputs[1])
-            } else {
-                Felt::ZERO
-            };
+            let commitment = Felt::new(public_inputs[0]);
+            let token_mint = Felt::new(public_inputs[1]);
             vec![
                 BoundaryAssertion { col: 1, row: 0, value: Felt::ZERO },
                 BoundaryAssertion { col: 2, row: 0, value: Felt::ZERO },
@@ -410,59 +571,33 @@ fn get_boundary_assertions(
         // Assertions: col5 at row 0 = leaf (carry), col0 at output_row = root
         // output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS
         3 => {
-            let leaf = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
-            let root = if public_inputs.len() > 1 {
-                Felt::new(public_inputs[1])
-            } else {
-                Felt::ZERO
-            };
-            let depth = if public_inputs.len() > 2 {
-                public_inputs[2] as usize
-            } else {
-                0
-            };
-            if depth > 0 && depth <= 32 {
-                let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS;
-                vec![
-                    BoundaryAssertion { col: 5, row: 0, value: leaf },
-                    BoundaryAssertion { col: 0, row: output_row, value: root },
-                ]
-            } else {
-                // depth missing or invalid — only check leaf
-                vec![
-                    BoundaryAssertion { col: 5, row: 0, value: leaf },
-                ]
+            let leaf = Felt::new(public_inputs[0]);
+            let root = Felt::new(public_inputs[1]);
+            let depth = public_inputs[2] as usize;
+            // [SEAM] Was `depth > 0 && depth <= 32`, with an `else` arm that
+            // dropped the root assertion. Two ways that lost the root binding:
+            // out-of-range `depth` took the else arm outright, and `depth` in
+            // 17..=32 produced `output_row >= 512 == trace_length`, a row
+            // `verify_boundary_constraints` can never match because it reduces
+            // every query mod `trace_length`. Both are now refused.
+            if !(MIN_MERKLE_DEPTH..=MAX_MERKLE_DEPTH).contains(&depth) {
+                return Err(VerifyError::PublicInputCountMismatch);
             }
+            let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS;
+            vec![
+                BoundaryAssertion { col: 5, row: 0, value: leaf },
+                BoundaryAssertion { col: 0, row: output_row, value: root },
+            ]
         }
         // Circuit 4: confidential_balance
         // Public inputs: [old_commitment, new_commitment, amount_hash, token_mint]
         // Assertions: col1=0,col2=0 at row 0, col1=token_mint at row 32,
         //             capacity=0 at cycle starts, output assertions for commitments
         4 => {
-            let old_commitment = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
-            let new_commitment = if public_inputs.len() > 1 {
-                Felt::new(public_inputs[1])
-            } else {
-                Felt::ZERO
-            };
-            let amount_hash = if public_inputs.len() > 2 {
-                Felt::new(public_inputs[2])
-            } else {
-                Felt::ZERO
-            };
-            let token_mint = if public_inputs.len() > 3 {
-                Felt::new(public_inputs[3])
-            } else {
-                Felt::ZERO
-            };
+            let old_commitment = Felt::new(public_inputs[0]);
+            let new_commitment = Felt::new(public_inputs[1]);
+            let amount_hash = Felt::new(public_inputs[2]);
+            let token_mint = Felt::new(public_inputs[3]);
             vec![
                 BoundaryAssertion { col: 1, row: 0, value: Felt::ZERO },
                 BoundaryAssertion { col: 2, row: 0, value: Felt::ZERO },
@@ -481,36 +616,12 @@ fn get_boundary_assertions(
         // Circuit 5: transfer
         // Public inputs: [nullifier_1, nullifier_2, output_commitment_1, output_commitment_2, public_amount, token_mint]
         5 => {
-            let nullifier_1 = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
-            let nullifier_2 = if public_inputs.len() > 1 {
-                Felt::new(public_inputs[1])
-            } else {
-                Felt::ZERO
-            };
-            let output_commitment_1 = if public_inputs.len() > 2 {
-                Felt::new(public_inputs[2])
-            } else {
-                Felt::ZERO
-            };
-            let output_commitment_2 = if public_inputs.len() > 3 {
-                Felt::new(public_inputs[3])
-            } else {
-                Felt::ZERO
-            };
-            let public_amount = if public_inputs.len() > 4 {
-                Felt::new(public_inputs[4])
-            } else {
-                Felt::ZERO
-            };
-            let token_mint = if public_inputs.len() > 5 {
-                Felt::new(public_inputs[5])
-            } else {
-                Felt::ZERO
-            };
+            let nullifier_1 = Felt::new(public_inputs[0]);
+            let nullifier_2 = Felt::new(public_inputs[1]);
+            let output_commitment_1 = Felt::new(public_inputs[2]);
+            let output_commitment_2 = Felt::new(public_inputs[3]);
+            let public_amount = Felt::new(public_inputs[4]);
+            let token_mint = Felt::new(public_inputs[5]);
             let mut assertions = Vec::new();
             // Capacity = 0 at start of each of 16 cycles
             for cycle in 0..16usize {
@@ -556,46 +667,26 @@ fn get_boundary_assertions(
         //             col0 at output_row = old_root, col3 at output_row = new_root
         // output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS
         6 => {
-            let old_leaf = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
-            let new_leaf = if public_inputs.len() > 1 {
-                Felt::new(public_inputs[1])
-            } else {
-                Felt::ZERO
-            };
-            let old_root = if public_inputs.len() > 2 {
-                Felt::new(public_inputs[2])
-            } else {
-                Felt::ZERO
-            };
-            let new_root = if public_inputs.len() > 3 {
-                Felt::new(public_inputs[3])
-            } else {
-                Felt::ZERO
-            };
-            let depth = if public_inputs.len() > 4 {
-                public_inputs[4] as usize
-            } else {
-                0
-            };
-            if depth > 0 && depth <= 16 {
-                let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS;
-                vec![
-                    BoundaryAssertion { col: 8, row: 0, value: old_leaf },
-                    BoundaryAssertion { col: 9, row: 0, value: new_leaf },
-                    BoundaryAssertion { col: 0, row: output_row, value: old_root },
-                    BoundaryAssertion { col: 3, row: output_row, value: new_root },
-                ]
-            } else {
-                // depth missing or invalid — only check leaf carries
-                vec![
-                    BoundaryAssertion { col: 8, row: 0, value: old_leaf },
-                    BoundaryAssertion { col: 9, row: 0, value: new_leaf },
-                ]
+            let old_leaf = Felt::new(public_inputs[0]);
+            let new_leaf = Felt::new(public_inputs[1]);
+            let old_root = Felt::new(public_inputs[2]);
+            let new_root = Felt::new(public_inputs[3]);
+            let depth = public_inputs[4] as usize;
+            // [SEAM] Was an `else` arm that dropped `old_root` and `new_root`
+            // whenever the CALLER supplied an out-of-range depth. Phase 1 never
+            // pinned depth (only `verify_deep_ali_circuit_6` does), so
+            // `verify_stark_proof_v2` would mark a C6 buffer `verified = true`
+            // on a proof bound to nothing but its two leaves.
+            if !(MIN_MERKLE_DEPTH..=MAX_MERKLE_DEPTH).contains(&depth) {
+                return Err(VerifyError::PublicInputCountMismatch);
             }
+            let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS;
+            vec![
+                BoundaryAssertion { col: 8, row: 0, value: old_leaf },
+                BoundaryAssertion { col: 9, row: 0, value: new_leaf },
+                BoundaryAssertion { col: 0, row: output_row, value: old_root },
+                BoundaryAssertion { col: 3, row: output_row, value: new_root },
+            ]
         }
         _ => return Err(VerifyError::UnsupportedCircuit),
     };

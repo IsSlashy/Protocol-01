@@ -36,6 +36,33 @@ use goldilocks::Felt;
 
 declare_id!("DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs");
 
+/// [SEAM] The one encoder behind `ProofBuffer.public_inputs_hash`.
+///
+/// Phase 1 (`verify_stark_proof`, `verify_stark_proof_v2`, `verify_uniform`)
+/// STORES this; phase 2 (`verify_deep_ali_phase2`) RECOMPUTES it and refuses to
+/// advance `deep_ali_verified` unless the two agree. Every consumer in the tree
+/// rebuilds it a fourth time from its own instruction arguments. That was four
+/// hand-copied loops with nothing pinning them together; the two inside this
+/// program are now literally the same code.
+///
+/// Injectivity: every element is a fixed 8 bytes, so `Vec<u64> -> Vec<u8>` is
+/// injective and no length framing is needed — two different input lists cannot
+/// produce the same byte string, and a shorter list cannot be a valid encoding
+/// of a longer one because the total length would differ. This is exactly why
+/// changing the encoding to anything variable-width would silently break the
+/// phase binding, and why `public_inputs_hash_is_injective_over_length` exists.
+///
+/// What it does NOT cover: `circuit_id`. The hash binds the VALUES only. The
+/// circuit is carried in a separate byte and every consumer must pin it
+/// independently — see the consumer-contract test.
+pub fn hash_public_inputs(public_inputs: &[u64]) -> [u8; 32] {
+    let mut pub_buf: Vec<u8> = Vec::with_capacity(public_inputs.len() * 8);
+    for v in public_inputs {
+        pub_buf.extend_from_slice(&v.to_le_bytes());
+    }
+    solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes()
+}
+
 pub const CIRCUIT_SUBSCRIBER_OWNERSHIP: u8 = 0;
 pub const CIRCUIT_POOL_COMMITMENT: u8 = 1;
 pub const CIRCUIT_BALANCE_PROOF: u8 = 2;
@@ -94,6 +121,18 @@ pub mod p01_stark_verifier {
         let mut account_data = info.data.borrow_mut();
         let start = ProofBuffer::PROOF_DATA_OFFSET + offset as usize;
         let end = start + data.len();
+        // [SEAM] The bound above is against `proof_size`, the DECLARED size.
+        // `init_proof_buffer` caps its allocation at `MAX_INIT_SIZE = 10_240`
+        // (`init_space`) whatever `proof_size` says, so until
+        // `resize_proof_buffer` has been called enough times the account is
+        // SHORTER than `proof_size` and this slice indexes past its end. That
+        // was an unhandled panic, not an error — same failure, worse
+        // diagnosis, and one that a client cannot distinguish from a bug in its
+        // own chunking.
+        require!(
+            end <= account_data.len(),
+            StarkVerifierError::ChunkOutOfBounds
+        );
         account_data[start..end].copy_from_slice(&data);
 
         Ok(())
@@ -154,8 +193,16 @@ pub mod p01_stark_verifier {
 
         // Compute hash of public inputs to bind them to the proof buffer.
         // Uses sol_sha256 syscall on BPF — always-active, ~85 CU/call.
-        let commitment_bytes = commitment.to_le_bytes();
-        let public_inputs_hash = solana_sha256_hasher::hashv(&[&commitment_bytes]).to_bytes();
+        // [SEAM] Same encoder as every other write site: `vec![commitment]` here
+        // is byte-identical to what `verify_stark_proof_v2` stores for a
+        // one-element `public_inputs`, so a buffer produced by either path is
+        // indistinguishable to phase 2 and to consumers. That is deliberate and
+        // harmless only because the generic branch above can no longer succeed:
+        // every circuit 1..=6 declares an arity of 2 or more
+        // (`verify::expected_public_input_count`), so `verify_generic` with one
+        // input now fails closed at the boundary check instead of asserting the
+        // missing inputs against zero.
+        let public_inputs_hash = hash_public_inputs(&[commitment]);
 
         // Mark verified and store public inputs hash
         drop(account_data);
@@ -220,11 +267,7 @@ pub mod p01_stark_verifier {
             .map_err(|_| StarkVerifierError::InvalidProof)?;
 
         // Compute hash of all public inputs via one sol_sha256 syscall.
-        let mut pub_buf: Vec<u8> = Vec::with_capacity(public_inputs.len() * 8);
-        for v in &public_inputs {
-            pub_buf.extend_from_slice(&v.to_le_bytes());
-        }
-        let public_inputs_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
+        let public_inputs_hash = hash_public_inputs(&public_inputs);
 
         // Mark verified and store public inputs hash
         drop(account_data);
@@ -282,11 +325,7 @@ pub mod p01_stark_verifier {
         // Bind to the exact same public inputs as phase 1 via the hash stored
         // when phase 1 completed. Prevents a caller from changing public
         // inputs between phases (would otherwise change α silently).
-        let mut pub_buf: Vec<u8> = Vec::with_capacity(public_inputs.len() * 8);
-        for v in &public_inputs {
-            pub_buf.extend_from_slice(&v.to_le_bytes());
-        }
-        let public_inputs_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
+        let public_inputs_hash = hash_public_inputs(&public_inputs);
         require!(
             public_inputs_hash == buffer.public_inputs_hash,
             StarkVerifierError::InvalidProof
@@ -455,11 +494,7 @@ pub mod p01_stark_verifier {
             .map_err(|_| StarkVerifierError::InvalidProof)?;
 
         // Hash public inputs to bind them to the buffer for phase-2 use.
-        let mut pub_buf: Vec<u8> = Vec::with_capacity(public_inputs.len() * 8);
-        for v in &public_inputs {
-            pub_buf.extend_from_slice(&v.to_le_bytes());
-        }
-        let public_inputs_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
+        let public_inputs_hash = hash_public_inputs(&public_inputs);
 
         drop(account_data);
         let buffer = &mut ctx.accounts.proof_buffer;
