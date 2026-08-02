@@ -19,7 +19,17 @@ p01_quantum_vault = "9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv"
 p01_quantum_wallet = "D7RBAFcMq2gGddwFvabZKuJB1eWZFvESVrcJ3i15FFtz"
 p01_registry = "QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB"
 p01_relayer = "Ud2JYaq4frePBy3L2DmddmtPT3nXC1nqxsXEX934Hbw"
-p01_stark_verifier = "EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z"
+# DGY37k3… is what `declare_id!` in programs/p01_stark_verifier/src/lib.rs names, and an
+# Anchor program rejects every instruction with DeclaredProgramIdMismatch when the address
+# it is deployed at is not the one it declares. So this is the ONLY address at which a .so
+# built from this tree can execute. This entry said EXmAQqm… until 2026-08-02. Both ids are
+# live on devnet under the same upgrade authority and each deployment embeds its OWN id
+# (MEASURED 2026-08-02: `solana program dump` of both, then a byte search for the 32-byte
+# pubkey — the 797,824 B one carries EXmAQqm… and not DGY37k3…, the 840,168 B one the
+# reverse), so EXmAQqm… is a deployment of an abandoned lineage that commit 04885979
+# ("P6.5 E2E smoke green — revert verifier declare_id to DGY37k") moved the source off.
+# Every shipped client already addresses DGY37k3…. Gate: scripts/sync-program-ids.mjs.
+p01_stark_verifier = "DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs"
 p01_stream = "C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx"
 p01_subscription = "3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW"
 p01_whitelist = "5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33"

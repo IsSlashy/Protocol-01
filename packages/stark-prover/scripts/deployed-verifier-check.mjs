@@ -224,9 +224,31 @@ const RECORD_DEFAULT = 'packages/stark-prover/deployed-verifier.json';
 const BLOB_B1_MARKERS = [
   'B1 TERMINAL DEGREE BOUND VIOLATED',
   'DEEP denominator vanishes at LDE position ',
+];
+
+/**
+ * Literals B2 added to the PROVER (stark/src/compact.rs), on top of B1's.
+ *
+ * These lived in BLOB_B1_MARKERS until 2026-08-02, and `classify` had a two-value
+ * vocabulary — B1 markers present meant `b1`, absent meant `pre-b1` — so a blob
+ * carrying all four scanned as `b1` no matter what. That is why this gate
+ * reported "the blob PROVES one generation and its panic strings CLAIM another,
+ * driving=b2 / scanning=b1" against a blob that is simply B2 and says so in four
+ * places. The failure was in the reader, not in the artifact: the scanner had no
+ * way to pronounce the generation the blob was carrying the literals for.
+ *
+ * Splitting them makes the scan a three-rung ladder and is strictly more
+ * discriminating, not less — a B1-era blob (B1 markers, no B2 markers) is now
+ * `b1` and no longer collides with a B2 one. Nothing here decides the verdict;
+ * the generation is still MEASURED by driving the blob in prover-behaviour.mjs.
+ */
+const BLOB_B2_MARKERS = [
   '[B2] UNDER-SEGMENTED: the quotient has ',
   '[B2] OVER-SEGMENTED: the quotient has ',
 ];
+
+/** Every generation marker, for the source/blob agreement check. */
+const BLOB_GEN_MARKERS = [...BLOB_B1_MARKERS, ...BLOB_B2_MARKERS];
 
 /**
  * Literals present in EVERY generation of the prover blob. If these are gone the
@@ -243,7 +265,25 @@ const BLOB_CONTROLS = [
   'proof_hex',
 ];
 
-/** Literals B1 added to the VERIFIER (programs/p01_stark_verifier/src/verify.rs). */
+/**
+ * Literals B1 added to the VERIFIER (programs/p01_stark_verifier/src/verify.rs).
+ *
+ * THERE IS NO ELF_B2_MARKERS AND THAT IS A KNOWN LIMIT OF THIS GATE, recorded
+ * here rather than left to be discovered. B2 (quotient segmentation) changed the
+ * verifier's arithmetic and its Fiat-Shamir absorption but added NOT ONE new
+ * `msg!` literal to verify.rs — MEASURED 2026-08-02, the nine `msg!` format
+ * strings in that file are all pre-B1 step markers and every `[B2]` annotation is
+ * a `//` comment, which never reaches the ELF. Adding one would move all 13 CU
+ * pins, so it is not a free fix.
+ *
+ * The consequence, stated plainly: the deployed side of this gate can report
+ * `pre-b1` or `b1` and nothing else. Today the deployment is pre-b1 and the
+ * client is b2, so the interlock is red for the right reason. After a CORRECT B2
+ * deploy this scan would still read `b1`, the interlock would still be red, and
+ * the only honest route to green is a hand measurement added to
+ * KNOWN_ELF_GENERATIONS — which is exactly what that table is for. Do not
+ * "solve" that red by widening ELF_B1_MARKERS.
+ */
 const ELF_B1_MARKERS = ['[verify] final poly coeff ', ' non-zero, bound is '];
 
 /** msg! literals that predate B1 and are still in the source today. */
@@ -464,14 +504,39 @@ function programIdFromAnchorToml(anchorSection) {
  * Nothing here prefers one file over another: the Anchor.toml id and every id the
  * SDK associates with the stark verifier must all be equal.
  *
- * `pnpm check-program-ids` would be the obvious other place to catch this. It is
- * not run by .github/workflows/ci.yml, and it could not catch it anyway: it runs
- * `tsx scripts/sync-program-ids.ts --check` and that file does not exist in this
- * tree (MEASURED 2026-07-31, `git ls-files` has no match).
+ * `pnpm check-program-ids` is the other place this is caught. It could not catch
+ * anything until 2026-08-02: it ran `tsx scripts/sync-program-ids.ts --check`
+ * and that file had never existed in this tree (MEASURED 2026-07-31 and again
+ * 2026-08-02, `git ls-files` has no match and there is no `scripts/` directory).
+ * It is now `node scripts/sync-program-ids.mjs --check`, it exists, it sweeps the
+ * WHOLE repo rather than the SDK, and it is keyed on `declare_id!`. It is still
+ * not run by .github/workflows/ci.yml, so this sweep stays here rather than
+ * delegating: the gate that gets run is the one that has to check.
+ *
+ * The roots below are every package and app that pins a verifier id in code. It
+ * was `packages/privacy-sdk/src` alone until 2026-08-02, which meant that the
+ * FOUR other client-side pins — packages/stark-prover/src/types.ts,
+ * packages/zkspl-sdk/src/constants.ts, apps/web, apps/extension, apps/mobile —
+ * were unchecked by the gate that exists to prove the client and the deployment
+ * interlock. They all happen to agree today; "happen to" is the problem.
  *
  * Returns `[{ file, symbol, id }]`, empty when nothing could be read.
  */
 const SDK_ROOT = 'packages/privacy-sdk/src';
+
+/**
+ * Every tree that compiles a verifier program id into a shipped artifact.
+ * Scanned for module-level `*STARK_VERIFIER*` constants; see the note above.
+ */
+const CLIENT_ID_ROOTS = [
+  'packages/privacy-sdk/src',
+  'packages/stark-prover/src',
+  'packages/zkspl-sdk/src',
+  'packages/react-native-zk/src',
+  'apps/web/lib',
+  'apps/extension/src',
+  'apps/mobile/services',
+];
 const SDK_PROGRAM_IDS = 'packages/privacy-sdk/src/constants.ts';
 const SDK_PROGRAM_KEY = 'starkVerifier';
 
@@ -513,32 +578,63 @@ function programIdFromPrivacySdk(sdkNetwork) {
  */
 function verifierConstantsInPrivacySdk() {
   const out = [];
-  let entries;
-  try {
-    entries = readdirSync(resolve(REPO, SDK_ROOT), { recursive: true, withFileTypes: true });
-  } catch {
-    return out;
-  }
+  // `new PublicKey('…')` OR a bare string literal: two of the five roots pin the
+  // id as a plain string (packages/stark-prover/src/types.ts
+  // DEFAULT_STARK_VERIFIER_PROGRAM_ID, packages/zkspl-sdk/src/constants.ts
+  // STARK_VERIFIER_PROGRAM_ID), and a regex that only understood PublicKey would
+  // have swept a root and found nothing, which reads identically to a clean root.
   const re = new RegExp(
-    `const\\s+([A-Za-z0-9_]*STARK_VERIFIER[A-Za-z0-9_]*)\\s*(?::[^=]*)?=\\s*new PublicKey\\(\\s*'(${B58_ID})'`,
+    `const\\s+([A-Za-z0-9_]*STARK_VERIFIER[A-Za-z0-9_]*)\\s*(?::[^=]*)?=\\s*(?:new PublicKey\\(\\s*)?'(${B58_ID})'`,
     'g',
   );
-  for (const ent of entries) {
-    if (!ent.isFile() || !ent.name.endsWith('.ts')) continue;
-    const abs = resolve(ent.parentPath ?? ent.path, ent.name);
-    let text;
+  for (const root of CLIENT_ID_ROOTS) {
+    let entries;
     try {
-      text = readFileSync(abs, 'utf8');
+      entries = readdirSync(resolve(REPO, root), { recursive: true, withFileTypes: true });
     } catch {
       continue;
     }
-    const rel = relative(REPO, abs).split('\\').join('/');
-    for (const m of text.matchAll(re)) {
-      const line = text.slice(0, m.index).split('\n').length;
-      out.push({ file: `${rel}:${line}`, symbol: m[1], id: m[2] });
+    for (const ent of entries) {
+      if (!ent.isFile() || !/\.(ts|tsx|mts|js|mjs)$/.test(ent.name)) continue;
+      const abs = resolve(ent.parentPath ?? ent.path, ent.name);
+      let text;
+      try {
+        text = readFileSync(abs, 'utf8');
+      } catch {
+        continue;
+      }
+      const rel = relative(REPO, abs).split('\\').join('/');
+      for (const m of text.matchAll(re)) {
+        const line = text.slice(0, m.index).split('\n').length;
+        out.push({ file: `${rel}:${line}`, symbol: m[1], id: m[2] });
+      }
     }
   }
   return out;
+}
+
+/**
+ * The address `declare_id!` bakes into the verifier bytecode.
+ *
+ * This is the check the Anchor.toml/SDK comparison above was missing: those two
+ * agreeing proves only that they agree, and a tree where they agree on an
+ * address the PROGRAM rejects is a tree where every instruction fails with
+ * `DeclaredProgramIdMismatch` before a single proof byte is read. MEASURED
+ * 2026-08-02: Anchor.toml [programs.devnet] named EXmAQqm… while declare_id!
+ * named DGY37k3…, both live on devnet, and `solana program dump` of each shows
+ * the 32-byte pubkey embedded in the ELF is its own address — so the bytes
+ * deployed at EXmAQqm… are not built from this tree and never can be.
+ */
+const VERIFIER_LIB_RS = 'programs/p01_stark_verifier/src/lib.rs';
+
+function verifierDeclaredId() {
+  let text;
+  try {
+    text = readFileSync(resolve(REPO, VERIFIER_LIB_RS), 'utf8');
+  } catch {
+    return null;
+  }
+  return text.match(new RegExp(`declare_id!\\(\\s*"(${B58_ID})"\\s*\\)`))?.[1] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -658,11 +754,38 @@ function classify(buf, markers, controls) {
   return { generation: hits.length > 0 ? 'b1' : 'pre-b1', hits, missingControls };
 }
 
-/** Which B1 markers the prover source in THIS TREE carries. null if unreadable. */
+/**
+ * The BLOB's string scan, as a three-rung ladder: pre-b1 -> b1 -> b2.
+ *
+ * `classify` above is left alone and still used for the deployed ELF, which has
+ * a genuinely two-value vocabulary (see the note on ELF_B2_MARKERS). The blob
+ * does not: B2 put two `[B2] …-SEGMENTED` asserts in stark/src/compact.rs, they
+ * are in the shipped artifact, and until 2026-08-02 they sat in BLOB_B1_MARKERS
+ * where `hits.length > 0 ? 'b1' : 'pre-b1'` could only ever call them b1. That is
+ * the whole of why this gate reported a B2 blob as "PROVES b2, CLAIMS b1": the
+ * artifact was not lying, the reader could not count past one.
+ *
+ * Strictly more discriminating than what it replaces — a post-B1/pre-B2 blob is
+ * now `b1` and no longer indistinguishable from a B2 one. It still decides
+ * nothing: prover-behaviour.mjs measures the generation by driving the blob.
+ */
+function classifyBlobStrings(buf) {
+  const missingControls = BLOB_CONTROLS.filter((c) => countOccurrences(buf, c) === 0);
+  const b1 = BLOB_B1_MARKERS.filter((m) => countOccurrences(buf, m) > 0);
+  const b2 = BLOB_B2_MARKERS.filter((m) => countOccurrences(buf, m) > 0);
+  const hits = [...b1, ...b2];
+  if (missingControls.length > 0) return { generation: null, hits, missingControls };
+  let generation = 'pre-b1';
+  if (b1.length > 0) generation = 'b1';
+  if (b2.length > 0) generation = 'b2';
+  return { generation, hits, missingControls };
+}
+
+/** Which generation markers the prover source in THIS TREE carries. null if unreadable. */
 function proverSourceMarkerHits() {
   const src = readSources(BLOB_MARKER_SOURCES);
   if (src.text === null) return null;
-  return BLOB_B1_MARKERS.filter((m) => src.text.includes(m));
+  return BLOB_GEN_MARKERS.filter((m) => src.text.includes(m));
 }
 
 /**
@@ -690,15 +813,15 @@ function blobSourceSkew(blobHits) {
       ],
     };
   }
-  const srcHits = BLOB_B1_MARKERS.filter((m) => src.text.includes(m));
+  const srcHits = BLOB_GEN_MARKERS.filter((m) => src.text.includes(m));
   const onlySource = srcHits.filter((m) => !blobHits.includes(m));
   const onlyBlob = blobHits.filter((m) => !srcHits.includes(m));
   if (onlySource.length === 0 && onlyBlob.length === 0) return null;
   return {
-    title: 'the prover blob and the prover source disagree about which B1 markers exist',
+    title: 'the prover blob and the prover source disagree about which generation markers exist',
     lines: [
-      `  source ${BLOB_MARKER_SOURCES.join(', ')}  ${srcHits.length}/${BLOB_B1_MARKERS.length}`,
-      `  blob   ${CANONICAL}  ${blobHits.length}/${BLOB_B1_MARKERS.length}`,
+      `  source ${BLOB_MARKER_SOURCES.join(', ')}  ${srcHits.length}/${BLOB_GEN_MARKERS.length}`,
+      `  blob   ${CANONICAL}  ${blobHits.length}/${BLOB_GEN_MARKERS.length}`,
       ...(onlySource.length > 0 ? ['', '  in the SOURCE but not in the BLOB:', ...onlySource.map((m) => `    ${JSON.stringify(m)}`)] : []),
       ...(onlyBlob.length > 0 ? ['', '  in the BLOB but not in the SOURCE:', ...onlyBlob.map((m) => `    ${JSON.stringify(m)}`)] : []),
       '',
@@ -714,7 +837,8 @@ function blobSourceSkew(blobHits) {
       '     with FriFoldCheckFailed. It no longer moves the verdict — the generation is measured by',
       '     driving the blob — but it is still an artifact nobody can account for.',
       '',
-      'If the messages were legitimately reworded, update BLOB_B1_MARKERS in this script in the same commit.',
+      'If the messages were legitimately reworded, update BLOB_B1_MARKERS / BLOB_B2_MARKERS in this script',
+      'in the same commit.',
       'Do not make the two sides agree by editing the artifact.',
     ],
   };
@@ -746,7 +870,7 @@ function treeGenerationSkew() {
   return {
     title: 'the prover source and the verifier source disagree about whether this tree is B1',
     lines: [
-      `  ${BLOB_MARKER_SOURCES.join(', ')}  ${proverHits.length}/${BLOB_B1_MARKERS.length} B1 markers`,
+      `  ${BLOB_MARKER_SOURCES.join(', ')}  ${proverHits.length}/${BLOB_GEN_MARKERS.length} generation markers`,
       `  ${ELF_MARKER_SOURCES.join(', ')}  ${verifierHits.length}/${ELF_B1_MARKERS.length} B1 markers`,
       '',
       'B1 changed the prover and the verifier together, so one half carrying its B1 literals while the',
@@ -754,7 +878,8 @@ function treeGenerationSkew() {
       'client generation no longer depends on this — it is measured by driving the blob — so this is a',
       'red about the sources, not about the interlock verdict.',
       '',
-      'If these messages were legitimately reworded, update BLOB_B1_MARKERS / ELF_B1_MARKERS in this',
+      'If these messages were legitimately reworded, update BLOB_B1_MARKERS / BLOB_B2_MARKERS /',
+      'ELF_B1_MARKERS in this',
       'script in the same commit.',
     ],
   };
@@ -1090,6 +1215,31 @@ if (typeof deployed.cluster === 'string' && deployed.cluster.length > 0) {
     ]);
   } else {
     programId = anchorId;
+    // declare_id! outranks both files below: it is enforced by the bytecode.
+    {
+      const declaredId = verifierDeclaredId();
+      if (declaredId === null) {
+        fail(`cannot read declare_id! out of ${VERIFIER_LIB_RS}`, [
+          'That macro is the address the verifier bytecode enforces. Without it this gate cannot tell',
+          'whether the program it is about to fetch is one a .so from this tree could even run as.',
+        ]);
+      } else if (declaredId !== anchorId) {
+        fail('Anchor.toml aims `anchor deploy` at an address the verifier itself rejects', [
+          `  ${VERIFIER_LIB_RS}  declare_id!  ${declaredId}`,
+          `  Anchor.toml [${TARGET.anchorSection}] ${ANCHOR_PROGRAM_KEY}  ${anchorId}`,
+          '',
+          'An Anchor program compares the id it is invoked with against declare_id! and rejects every',
+          'instruction with DeclaredProgramIdMismatch when they differ. So a .so built from this tree can',
+          'only ever execute at the declare_id! address, and this gate would otherwise be reading, and',
+          'vouching for, a deployment this source can never become.',
+          '',
+          'MEASURED 2026-08-02: this was exactly the state of the tree. Anchor.toml named EXmAQqm…,',
+          'declare_id! named DGY37k3…, both live on devnet under the same upgrade authority, and dumping',
+          'both ELFs shows each embeds its OWN id — the bytes at EXmAQqm… are from the lineage commit',
+          '04885979 reverted off. Fix Anchor.toml, or run `pnpm check-program-ids` for the whole picture.',
+        ]);
+      }
+    }
     if (TARGET.sdkNetwork !== null) {
       const sdkId = programIdFromPrivacySdk(TARGET.sdkNetwork);
       if (sdkId === null) {
@@ -1116,7 +1266,7 @@ if (typeof deployed.cluster === 'string' && deployed.cluster.length > 0) {
       // instructions are actually built against. See verifierConstantsInPrivacySdk.
       for (const c of verifierConstantsInPrivacySdk()) {
         if (c.id === anchorId) continue;
-        fail(`${c.symbol} in the privacy SDK names a different verifier than Anchor.toml`, [
+        fail(`${c.symbol} in ${c.file.split(':')[0]} names a different verifier than Anchor.toml`, [
           `  Anchor.toml [${TARGET.anchorSection}] ${ANCHOR_PROGRAM_KEY}  ${anchorId}`,
           `  ${c.file}  ${c.symbol}  ${c.id}`,
           '',
@@ -1125,9 +1275,9 @@ if (typeof deployed.cluster === 'string' && deployed.cluster.length > 0) {
           'green this gate can print is about a program that code never addresses. Both ids being pre-B1',
           'today is why the verdict does not change; it is not a reason to leave it unchecked.',
           '',
-          'Point them at the same program. There is no generator to run: package.json defines',
-          'sync-program-ids/check-program-ids as `tsx scripts/sync-program-ids.ts`, and that file is not in',
-          'this tree, so both commands fail before they check anything.',
+          'Point them at the same program. `pnpm check-program-ids` (node scripts/sync-program-ids.mjs',
+          '--check) sweeps the whole repo for this and reports every occurrence with the declare_id! it',
+          'should carry. That command existed only in package.json until 2026-08-02.',
         ]);
       }
     }
@@ -1170,7 +1320,7 @@ const blobBehaviour = classifyProverBehaviour(blob);
 // artifact, or a blob that was not built from the source in this tree — and
 // because a disagreement between what the blob says and what it does is itself
 // the signature of the measured four-byte edit. It no longer decides anything.
-const blobStrings = classify(blob, BLOB_B1_MARKERS, BLOB_CONTROLS);
+const blobStrings = classifyBlobStrings(blob);
 
 /** The generation the interlock is allowed to act on. Behavioural, or nothing. */
 const blobGen = tableProblem === null ? blobBehaviour.generation : null;
@@ -1186,9 +1336,9 @@ console.log(
 );
 console.log(
   `[deployed-verifier]          panic-string scan says ${blobStrings.generation ?? 'UNCLASSIFIABLE'} ` +
-    `(${blobStrings.hits.length}/${BLOB_B1_MARKERS.length} B1 markers) — corroboration, not the verdict`,
+    `(${blobStrings.hits.length}/${BLOB_GEN_MARKERS.length} generation markers) — corroboration, not the verdict`,
 );
-console.log(`[deployed-verifier] source   ${BLOB_MARKER_SOURCES.join(', ')} carries ${proverSourceMarkerHits()?.length ?? '?'}/${BLOB_B1_MARKERS.length} of the same markers`);
+console.log(`[deployed-verifier] source   ${BLOB_MARKER_SOURCES.join(', ')} carries ${proverSourceMarkerHits()?.length ?? '?'}/${BLOB_GEN_MARKERS.length} of the same markers`);
 console.log(`[deployed-verifier] deployed ${deployed.program_id} on ${deployed.cluster} (as the record has it)`);
 console.log(`[deployed-verifier]          generation ${deployed.proof_format_generation}, elf sha256 ${deployed.elf_sha256}, slot ${deployed.last_deployed_slot}`);
 
@@ -1239,7 +1389,7 @@ if (blobStrings.generation === null) {
 if (blobGen !== null && blobStrings.generation !== null && blobGen !== blobStrings.generation) {
   fail('the blob PROVES one generation and its panic strings CLAIM another', [
     `  driving the blob (seven proof digests)  ${blobGen}`,
-    `  scanning the blob for panic literals    ${blobStrings.generation} (${blobStrings.hits.length}/${BLOB_B1_MARKERS.length} B1 markers)`,
+    `  scanning the blob for panic literals    ${blobStrings.generation} (${blobStrings.hits.length}/${BLOB_GEN_MARKERS.length} generation markers)`,
     '',
     ...describeBehaviour(blobBehaviour),
     '',
