@@ -109,6 +109,149 @@ fn recorded_proof_sizes_hold() {
     }
 }
 
+/// **MEASURED: nothing in the Fiat-Shamir transcript binds the circuit.**
+///
+/// `derive_ood_point` hashes `(trace_root, quotient_root, public_inputs)`;
+/// `build_base_seed` adds the three OOD arrays; `derive_query_positions_generic`
+/// adds the FRI layer roots, the final poly and the grinding nonce. No circuit
+/// id, no config digest, no per-circuit domain tag — and there is no verifying
+/// key to hash either (`vk_hash` does not exist anywhere in this program; the
+/// `vk_hash_subscriber` on the subscription vault is a Groth16 key, unrelated).
+///
+/// The test states that behaviourally rather than by reading the source: run a
+/// genuine C3 proof through `verify_generic` under a FOREIGN `circuit_id`, with
+/// C3's own config and C3's own public inputs. Steps 0..3.5 — OOD derivation,
+/// query-position derivation, grinding, Merkle, FRI — do not read `circuit_id`,
+/// so if the transcript were bound they would reject. They do not. The refusal
+/// comes only from the step-4 constraint dispatch.
+///
+/// So circuit identity is enforced in exactly one place, the AIR the dispatch
+/// picks, and everything upstream of it is circuit-agnostic. That is what makes
+/// `verify_uniform`'s parse-only probe the whole of the separation, and it is
+/// why the tuple test below matters.
+#[test]
+fn the_transcript_does_not_bind_the_circuit_only_the_step4_dispatch_does() {
+    use p01_stark_verifier::verify::VerifyError as E;
+
+    let c3 = common::prove3(&common::w3(0));
+    let cfg3 = get_circuit_config(3).unwrap();
+    let proof = GenericCompactProof::from_bytes(&c3.proof_bytes, cfg3).unwrap();
+
+    p01_stark_verifier::verify::verify_generic(&proof, 3, &c3.public_inputs, cfg3)
+        .expect("control: honest C3 must verify");
+
+    for foreign in [1u8, 2, 4, 5, 6] {
+        let err = p01_stark_verifier::verify::verify_generic(
+            &proof, foreign, &c3.public_inputs, cfg3,
+        )
+        .expect_err("a C3 proof must not verify as another circuit");
+        println!("C3 proof under circuit_id={foreign} -> {err:?}");
+        assert!(
+            !matches!(
+                err,
+                E::OodConstraintFailed
+                    | E::InvalidQueryPosition
+                    | E::InsufficientQueries
+                    | E::MerkleProofFailed
+                    | E::FriFoldCheckFailed
+            ),
+            "circuit_id={foreign} was rejected at {err:?}, i.e. UPSTREAM of the constraint \
+             dispatch. If that is now true the transcript has gained a circuit binding — good, \
+             but this test's premise is stale and every claim resting on it must be re-read.",
+        );
+    }
+}
+
+/// **The separation is STRUCTURAL for only two of the seven, and for the rest it
+/// reduces to `trace_width` — a field that never travels on the wire.**
+///
+/// `verify_uniform` is a parse-only discriminator, so what separates the configs
+/// is exactly the tuple `from_bytes` can observe: the three exact-value fields it
+/// compares (`num_fri_layers`, `fri_final_poly_size`, `num_queries`) plus the
+/// offsets at which it reads them, which are set by `trace_width`,
+/// `merkle_depth` and `quotient_segments`.
+///
+/// Printing that tuple makes the real shape of the thing visible:
+///
+///   C0 tw=3  md=9  k=7 nq=27 nfl=4
+///   C1 tw=3  md=11 k=8 nq=27 nfl=6
+///   C2 tw=4  md=11 k=8 nq=27 nfl=6   <- differs from C1 in trace_width ALONE
+///   C3 tw=6  md=13 k=8 nq=22 nfl=8
+///   C4 tw=4  md=12 k=8 nq=27 nfl=7
+///   C5 tw=7  md=13 k=8 nq=22 nfl=8   <- differs from C3 in trace_width ALONE
+///   C6 tw=10 md=13 k=8 nq=22 nfl=8   <- same
+///
+/// For {C1,C2} and {C3,C5,C6} every wire-visible exact-value field is IDENTICAL.
+/// The only thing keeping a foreign buffer out is that `trace_width` shifts where
+/// those fields are read from, so the parser lands on bytes that mean something
+/// else — Merkle-root and OOD bytes — and they have to hit 1 + 2 + 2 = 5 exact
+/// bytes by luck. That is ~2^40 proof regenerations to force a mis-probe, which
+/// is not a practical attack (each proof costs seconds), but it is a
+/// probabilistic separation, not a structural one, and it is the whole of it:
+/// nothing in this system binds a circuit's identity cryptographically. See the
+/// module note on the transcript.
+///
+/// This test fails the moment a new circuit is added whose observable tuple
+/// collides with an existing one — the case where the argument above collapses
+/// from "2^40" to "0", and `PROBE_ORDER` silently decides which AIR a proof is
+/// checked against.
+#[test]
+fn no_two_configs_share_the_tuple_the_parser_can_observe() {
+    let mut tuples = Vec::new();
+    for cid in 0u8..=6 {
+        let c = get_circuit_config(cid).unwrap();
+        let nfl = (c.lde_size / c.fri_final_poly_size).trailing_zeros() as usize - 1;
+        println!(
+            "C{cid} tw={} md={} k={} nq={} nfl={} fps={}",
+            c.trace_width, c.merkle_depth, c.quotient_segments, c.num_queries, nfl,
+            c.fri_final_poly_size,
+        );
+        tuples.push((
+            cid,
+            (c.trace_width, c.merkle_depth, c.quotient_segments, c.num_queries, nfl,
+             c.fri_final_poly_size),
+        ));
+    }
+    for i in 0..tuples.len() {
+        for j in (i + 1)..tuples.len() {
+            assert_ne!(
+                tuples[i].1, tuples[j].1,
+                "C{} and C{} are INDISTINGUISHABLE to `from_bytes`. `verify_uniform` takes the \
+                 first config that parses, so PROBE_ORDER — not the proof — would decide which \
+                 AIR each is checked against.",
+                tuples[i].0, tuples[j].0,
+            );
+        }
+    }
+
+    // …and the sharper statement: for four of the pairs, deleting `trace_width`
+    // from the tuple makes them collide. Pinned so nobody concludes from the
+    // green matrix that the configs are well separated.
+    let collapsed: Vec<_> = tuples
+        .iter()
+        .map(|(cid, t)| (*cid, (t.1, t.2, t.3, t.4, t.5)))
+        .collect();
+    let mut collisions = 0usize;
+    for i in 0..collapsed.len() {
+        for j in (i + 1)..collapsed.len() {
+            if collapsed[i].1 == collapsed[j].1 {
+                collisions += 1;
+                println!(
+                    "C{} / C{}: separated by trace_width ALONE",
+                    collapsed[i].0, collapsed[j].0
+                );
+            }
+        }
+    }
+    assert_eq!(
+        collisions, 4,
+        "the number of config pairs separated by trace_width alone changed (was 4: C1/C2, \
+         C3/C5, C3/C6, C5/C6). Re-read `cross_circuit_parse_matrix_uniform_padded` before \
+         accepting the new number — a pair that becomes separated by nothing else is a pair \
+         whose separation is a byte-offset coincidence.",
+    );
+}
+
 #[test]
 fn probe_order_matches_lib() {
     let src = include_str!("../src/lib.rs");
@@ -289,8 +432,17 @@ fn cross_circuit_parse_matrix_uniform_padded() {
 /// only bounded by `> 256`, with the equality deferred to
 /// `verify_query_positions_generic` — i.e. AFTER the probe had already committed
 /// to a circuit. Moving it into the parser is a strict tightening (an honest
-/// proof always carries exactly `config.num_queries`) and it is the only one of
-/// the three that separates C1 (27) from C3/C5/C6 (22).
+/// proof always carries exactly `config.num_queries`).
+///
+/// [SEAM RUN 2, honest caveat] This test still passes with that tightening
+/// REVERTED, because tampering `num_queries` in place also changes the length
+/// the parser then requires — so the rejection here is length-mediated for that
+/// field, not value-mediated. The value check is isolated in
+/// `a_wire_query_count_that_disagrees_with_the_config_does_not_parse`, which
+/// re-lengths the buffer to match the count it declares and IS red under the
+/// revert. Do not read this test as evidence that `num_queries` discriminates
+/// circuits: `surplus_query_splices_do_not_parse_as_another_circuit` is green
+/// under the revert, so it does not.
 #[test]
 fn the_discriminator_is_three_exact_value_fields_not_length() {
     let bytes = genuine_proof_bytes(3);
@@ -336,12 +488,18 @@ fn the_discriminator_is_three_exact_value_fields_not_length() {
     }
 }
 
-/// The `num_queries` tightening restated as the property it buys, on the exact
-/// pair the probe order was written to worry about: C1 is probed FIRST, so a
-/// C3/C5/C6 proof that parsed as C1 would be mis-dispatched. C1 wants 27 queries
-/// and C3/C5/C6 carry 22 — a field the parser now reads.
+/// The pair the probe order was written to worry about, stated on its own: C1 is
+/// probed FIRST, so a C3/C5/C6 proof that parsed as C1 would be mis-dispatched.
+///
+/// [SEAM RUN 2] This was called `parse_time_query_count_separates_c1_from_the_22_
+/// query_circuits`, which claimed a mechanism it does not have. C1 wants 27
+/// queries and C3/C5/C6 carry 22, so the parse-time count check LOOKS like the
+/// thing keeping them apart — but reverting that check to `> 256` leaves this
+/// test green. The count field never gets read, because the shifted offsets
+/// break `num_fri_layers` or `fri_final_poly_size` first. Renamed to the property
+/// rather than the guess.
 #[test]
-fn parse_time_query_count_separates_c1_from_the_22_query_circuits() {
+fn the_22_query_circuits_do_not_parse_as_c1_which_is_probed_first() {
     for cid in [3u8, 5, 6] {
         let bytes = genuine_proof_bytes(cid);
         assert_eq!(get_circuit_config(cid).unwrap().num_queries, 22);
@@ -622,13 +780,19 @@ fn truncation_cannot_manufacture_a_cross_circuit_parse() {
 // ============================================================================
 
 /// Splice a proof so it carries `extra` MORE queries than its config wants: bump
-/// the wire count, append copies of query block 0, and extend the quotient tail
-/// with canonical zeros so the length arithmetic still closes.
+/// the wire count, append copies of query block 0, and append copies of query
+/// 0's quotient-value felts so the tail still closes the length arithmetic.
 ///
-/// The duplicated blocks are byte-identical to a genuine one — real position,
-/// real trace rows, real Merkle paths, real FRI openings — so nothing downstream
-/// of the count check can reject them on their contents. That is the point: the
-/// count check is the only thing in the way.
+/// **Everything duplicated is byte-identical to a genuine query.** Real position,
+/// real trace rows, real Merkle paths, real FRI openings, real quotient segment
+/// values. That is deliberate and it is what makes this an oracle rather than a
+/// smoke test: nothing downstream of the count check can reject the surplus on
+/// its CONTENTS, because its contents are honest. The count check is the only
+/// thing standing in the way.
+///
+/// (The first version of this helper zero-filled the surplus quotient values.
+/// It was useless: the constraint step rejected the zeros, so the test passed
+/// with BOTH guards reverted and would have certified a hole as closed.)
 fn with_surplus_queries(bytes: &[u8], circuit_id: u8, extra: usize) -> Vec<u8> {
     let l = layout(circuit_id, bytes.len());
     let nq = l.num_queries + extra;
@@ -645,8 +809,17 @@ fn with_surplus_queries(bytes: &[u8], circuit_id: u8, extra: usize) -> Vec<u8> {
         out.extend_from_slice(&bytes[body_start..body_start + l.query_block]);
     }
 
-    out.extend_from_slice(&bytes[body_end..]);
-    out.extend(std::iter::repeat(0u8).take(extra * l.k * 8));
+    // Quotient tail: `num_queries * k` felts, query-major. Duplicate query 0's
+    // k felts for each surplus query, matching the duplicated query blocks.
+    out.extend_from_slice(&bytes[body_end..body_end + l.num_queries * l.k * 8]);
+    for _ in 0..extra {
+        out.extend_from_slice(&bytes[body_end..body_end + l.k * 8]);
+    }
+    assert_eq!(
+        out.len(),
+        l.header_len + nq * l.query_block + nq * l.k * 8,
+        "splice did not produce a well-formed {nq}-query buffer",
+    );
     out
 }
 
@@ -688,10 +861,11 @@ fn legacy_c0_pipeline_refuses_surplus_queries() {
         let spliced = with_surplus_queries(&c0.proof_bytes, 0, extra);
         let n = 27 + extra;
         match CompactStarkProof::from_bytes(&spliced) {
-            None => {}
+            None => println!("C0 +{extra}: refused at the PARSER"),
             Some(p) => {
                 assert_eq!(p.queries.len(), n, "splice built the buffer it claimed to");
                 let r = p01_stark_verifier::verify::verify_subscriber_ownership(&p, commitment);
+                println!("C0 +{extra}: parsed {n} queries, verify -> {r:?}");
                 assert!(
                     r.is_err(),
                     "C0 ACCEPTED a proof carrying {n} queries where 27 are expected. The \
@@ -728,36 +902,94 @@ fn generic_pipeline_refuses_surplus_queries() {
         for extra in [1usize, 7] {
             let spliced = with_surplus_queries(&bytes, cid, extra);
             let n = config.num_queries + extra;
-            if let Some(p) = GenericCompactProof::from_bytes(&spliced, config) {
-                assert_eq!(p.queries.len(), n);
-                assert!(
-                    p01_stark_verifier::verify::verify_generic(&p, cid, &pubs, config).is_err(),
-                    "C{cid} ACCEPTED a proof carrying {n} queries where {} are expected",
-                    config.num_queries,
-                );
+            match GenericCompactProof::from_bytes(&spliced, config) {
+                None => println!("C{cid} +{extra}: refused at the PARSER"),
+                Some(p) => {
+                    assert_eq!(p.queries.len(), n);
+                    let r = p01_stark_verifier::verify::verify_generic(&p, cid, &pubs, config);
+                    println!("C{cid} +{extra}: parsed {n} queries, verify -> {r:?}");
+                    assert!(
+                        r.is_err(),
+                        "C{cid} ACCEPTED a proof carrying {n} queries where {} are expected",
+                        config.num_queries,
+                    );
+                }
             }
         }
     }
 }
 
-/// A surplus-query buffer must not become a CONFUSION either: bumping the count
-/// changes the length, and length is the one thing the probe cannot use. Sweep
-/// the spliced buffers across all seven configs.
+/// A surplus-query buffer must not become a CROSS-CIRCUIT confusion.
+///
+/// Re-counting is the one lever an attacker has over the wire that MOVES THE
+/// LENGTH without touching a single committed byte: bump `num_queries`, append
+/// duplicate blocks, and the buffer grows by a chosen multiple of the query
+/// block. Under the pre-seam parser (`num_queries > 256`) a C_n buffer could be
+/// re-counted to whatever length was wanted, and length is the only thing that
+/// varies freely between configs. This sweeps every ordered pair for the
+/// resulting parse.
+///
+/// Split from the self-pair check below on purpose: `n == k` is a query-count
+/// question, `n != k` is the confusion question, and running them in one loop
+/// meant the first self-pair failure masked every cross-pair result.
 #[test]
 fn surplus_query_splices_do_not_parse_as_another_circuit() {
+    let mut hits = Vec::new();
     for n in 0u8..=6 {
         let bytes = genuine_proof_bytes(n);
-        for extra in [1usize, 5] {
+        for extra in [1usize, 5, 17, 100] {
             let spliced = with_surplus_queries(&bytes, n, extra);
+            // Only some splices still fit the client's 145,000-byte envelope;
+            // the ones that do not could never be uploaded through
+            // `padProofToUniform` anyway, so the exact-length case is the whole
+            // question for those.
+            let padded = (spliced.len() <= UNIFORM_PROOF_SIZE).then(|| pad_uniform(&spliced));
             for k in 0u8..=6 {
-                assert!(
-                    !parses_as(&spliced, k),
-                    "a C{n} proof re-counted to +{extra} queries parses as C{k}",
-                );
-                assert!(
-                    !parses_as(&pad_uniform(&spliced), k),
-                    "…and under the padded envelope, C{n}+{extra} parses as C{k}",
-                );
+                if k == n {
+                    continue;
+                }
+                if parses_as(&spliced, k) {
+                    hits.push(format!("C{n}+{extra} parses as C{k} (exact length)"));
+                }
+                if let Some(p) = &padded {
+                    if parses_as(p, k) {
+                        hits.push(format!("C{n}+{extra} parses as C{k} (padded envelope)"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(hits.is_empty(), "CONFUSION BY RE-COUNTING:\n  {}", hits.join("\n  "));
+}
+
+/// …and the self-pair: a buffer whose wire count disagrees with its own config
+/// must not parse either. This is the parse-time `num_queries != config.num_
+/// queries` check, stated as the property it buys.
+///
+/// MEASURED: reverting that check to the pre-seam `num_queries > 256` turns this
+/// test red on the very first case (`C0+1 parses as C0`) while the 7×7 matrices
+/// stay diagonal — so the tightening is NOT what keeps genuine proofs apart, and
+/// the savepoint comment that called it "a third independent exact-value field"
+/// the probe rests on was overclaiming. What it actually buys is this: a
+/// re-counted buffer is refused at the parser instead of `Vec::with_capacity`-ing
+/// an attacker-chosen 256 and walking 256 query blocks before
+/// `verify_query_positions_*` says no.
+#[test]
+fn a_wire_query_count_that_disagrees_with_the_config_does_not_parse() {
+    for n in 0u8..=6 {
+        let bytes = genuine_proof_bytes(n);
+        for extra in [1usize, 5, 17, 100] {
+            let spliced = with_surplus_queries(&bytes, n, extra);
+            assert!(
+                !parses_as(&spliced, n),
+                "C{n}: a buffer declaring {} queries parses under C{n}'s own config, which \
+                 wants {}. The count is read from the WIRE; nothing downstream of the parser \
+                 should have to be the first line of defence.",
+                get_circuit_config(n).unwrap().num_queries + extra,
+                get_circuit_config(n).unwrap().num_queries,
+            );
+            if spliced.len() <= UNIFORM_PROOF_SIZE {
+                assert!(!parses_as(&pad_uniform(&spliced), n), "C{n}: …under the padded envelope");
             }
         }
     }

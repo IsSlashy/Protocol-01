@@ -437,21 +437,35 @@ pub mod p01_stark_verifier {
         // least as long as the proof and ignores the tail — and the client pads
         // EVERY proof to `UNIFORM_PROOF_SIZE = 145_000`, so all seven circuits
         // present exactly 145,000 bytes to this probe. Length discriminates
-        // nothing. What actually separates the configs is a set of exact-value
-        // field checks read at config-dependent offsets: `num_fri_layers` must
-        // equal `folds - 1` (1 byte), `fri_final_poly_size` must equal 16
-        // (2 bytes), `num_queries` must equal `config.num_queries` (2 bytes,
-        // added by the seam pass — 27 on C0/C1/C2/C4, 22 on C3/C5/C6), plus
-        // canonicity on `k + 16` felts. A foreign buffer has to hit all of them
-        // on bytes that mean something else.
+        // nothing.
+        //
+        // What DOES separate them, measured rather than asserted: two
+        // exact-value fields, `num_fri_layers == folds - 1` (1 byte) and
+        // `fri_final_poly_size == 16` (2 bytes), plus canonicity on `k + 16`
+        // felts — all read at offsets that `trace_width`, `merkle_depth` and
+        // `quotient_segments` determine. A foreign buffer reads them off bytes
+        // that mean something else (Merkle roots, OOD evaluations) and has to
+        // hit them by luck. `num_queries` was added to the parser by the seam
+        // pass and is NOT part of this: reverting it leaves both matrices
+        // diagonal (see `compact_proof.rs` for the measurement).
+        //
+        // The uncomfortable half, also measured
+        // (`no_two_configs_share_the_tuple_the_parser_can_observe`): for C1/C2
+        // and for C3/C5/C6 every wire-visible exact-value field is IDENTICAL and
+        // the pairs are separated by `trace_width` ALONE — a field that never
+        // travels on the wire. So the separation is ~5 exact bytes, i.e. roughly
+        // 2^40 proof regenerations to force a mis-probe. Not a practical attack,
+        // but probabilistic, not structural. Nothing binds circuit identity
+        // cryptographically: the Fiat-Shamir transcript carries no circuit id
+        // and there is no verifying-key hash in this program at all
+        // (`the_transcript_does_not_bind_the_circuit_only_the_step4_dispatch_does`).
         //
         // MEASURED, `tests/cross_circuit_confusion.rs`: across all 7×7 ordered
         // pairs, under BOTH the exact-length and the 145,000-byte padded
-        // envelope, no genuine proof for one circuit parses under another
-        // circuit's config. The probe order is therefore not load-bearing for
-        // correctness on honest inputs — but it is not free either, because the
-        // separation is data-dependent rather than structural. Do not add a
-        // circuit here without re-running that matrix.
+        // envelope, and under every prefix length, no genuine proof for one
+        // circuit parses under another circuit's config. The probe order is
+        // therefore not load-bearing for correctness on honest inputs. Do not add
+        // a circuit here without re-running that matrix.
         //
         // [C0 GATE] 0 stays out of this list, see above.
         const PROBE_ORDER: [u8; 4] = [1, 6, 3, 5];
