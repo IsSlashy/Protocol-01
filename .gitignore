@@ -119,6 +119,12 @@ target/idl/*
 !target/idl/*.json
 target/types/*
 !target/types/*.ts
+# Per-agent CARGO_TARGET_DIR overrides (target-<lot>/). These are SIBLINGS of
+# `target/`, so not one of the rules above reaches them. That gap is not
+# hypothetical: commit 7ada3bcd swept 3026 build artifacts into git this way,
+# and one of them was a blob left half-written by a hard reboot, which makes
+# that commit impossible to check out and aborts git's geometric-repack.
+/target-*/
 
 # Environment
 .env
