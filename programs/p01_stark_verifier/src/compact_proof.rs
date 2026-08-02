@@ -63,8 +63,26 @@ pub struct CircuitConfig {
     ///
     /// It is also a WIRE parameter and never travels on the wire: `ood_quotient`
     /// is `k` felts, each query carries `k` mirror felts, and the tail carries `k`
-    /// felts per query. A prover that disagrees with this constant produces a
-    /// buffer the parser rejects on length — it cannot renegotiate the split.
+    /// felts per query. A prover cannot renegotiate the split — the parser takes
+    /// `k` from this constant and from nowhere else.
+    ///
+    /// [SEAM 2026-08-02] This block used to end "produces a buffer the parser
+    /// rejects **on length**". That was not true and is now corrected, because a
+    /// claim about which check rejects is a claim someone will lean on.
+    /// `from_bytes` has NO length equality anywhere: every check is
+    /// `data.len() < cursor + X`, and the last one is
+    /// `data.len() < cursor + num_queries * k * 8`. A buffer longer than the
+    /// proof parses fine and the tail is ignored — which is not an oversight,
+    /// it is load-bearing: the shipped client pads every proof to
+    /// `UNIFORM_PROOF_SIZE = 145_000` with trailing zeros
+    /// (`apps/mobile/services/stark/index.ts`) and `verify_uniform` parses the
+    /// padded slice. So a wrong-`k` buffer is caught only if it is SHORT, or by
+    /// the field checks its shifted offsets happen to break
+    /// (`fri_final_poly_size != 16`, `num_fri_layers != folds - 1`,
+    /// `num_queries != config.num_queries`, non-canonical felts). Those are
+    /// exact-value checks on shifted, effectively random bytes — decisive in
+    /// practice, but data-dependent, not a length argument.
+    /// Measured in `tests/cross_circuit_confusion.rs`.
     pub quotient_segments: usize,
     /// [P2.2] Number of FRI queries.
     ///
@@ -783,7 +801,35 @@ impl<'a> GenericCompactProof<'a> {
         if data.len() < cursor + 2 { return None; }
         let num_queries = u16::from_le_bytes([data[cursor], data[cursor + 1]]) as usize;
         cursor += 2;
-        if num_queries > 256 { return None; }
+        // [SEAM] Was `if num_queries > 256 { return None; }` — the count was read
+        // from the WIRE and only loosely bounded, then compared to the config
+        // downstream in `verify_query_positions_generic`. Pinning it HERE is a
+        // strict tightening: an honest proof always carries exactly
+        // `config.num_queries`, and the downstream equality already refused
+        // anything else.
+        //
+        // [SEAM RUN 2] What it is worth was MEASURED, because the run-1 note here
+        // claimed more than it earns. It said `num_queries` was "a third
+        // independent exact-value field a foreign buffer must hit by luck" and
+        // therefore a DISCRIMINATOR for `verify_uniform`'s parse-only probe.
+        // Reverting this line to `> 256` and re-running
+        // `tests/cross_circuit_confusion.rs` leaves BOTH 7x7 matrices strictly
+        // diagonal and leaves `surplus_query_splices_do_not_parse_as_another_
+        // circuit` green. It is not what keeps the circuits apart. What is:
+        // `trace_width`, `merkle_depth` and `quotient_segments` set the OFFSETS
+        // at which `num_fri_layers` and `fri_final_poly_size` are read, so a
+        // foreign buffer lands on Merkle-root and OOD bytes and has to hit them
+        // by luck. See `no_two_configs_share_the_tuple_the_parser_can_observe`.
+        //
+        // What this line actually buys, both measured:
+        //  1. A wire count that disagrees with the config is refused HERE rather
+        //     than after `Vec::with_capacity(num_queries)` and a walk over up to
+        //     256 query blocks. Reverting it turns
+        //     `a_wire_query_count_that_disagrees_with_the_config_does_not_parse`
+        //     red on the first case.
+        //  2. The allocation is bounded by a program constant instead of by an
+        //     attacker-chosen u16.
+        if num_queries != config.num_queries { return None; }
 
         let mut queries = Vec::with_capacity(num_queries);
         for _ in 0..num_queries {
@@ -1271,7 +1317,13 @@ impl<'a> CompactStarkProof<'a> {
         if data.len() < cursor + 2 { return None; }
         let num_queries = u16::from_le_bytes([data[cursor], data[cursor + 1]]) as usize;
         cursor += 2;
-        if num_queries > 256 { return None; }
+        // [SEAM] Same tightening as the generic parser, and it matters more here:
+        // `verify_query_positions_legacy` gated on `< NUM_QUERIES`, so C0 — the
+        // sole verifier for four shipped instructions — accepted up to 256
+        // queries where 27 are expected, with the surplus positions never
+        // compared to the derived list. That is the exact hole B1 closed on the
+        // generic path. Both ends are closed now.
+        if num_queries != NUM_QUERIES { return None; }
 
         let mut queries = Vec::with_capacity(num_queries);
         for _ in 0..num_queries {

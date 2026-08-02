@@ -463,15 +463,50 @@ pub mod p01_stark_verifier {
         // adding 0 here would only produce a probe that always errors. C0 goes
         // through `verify_stark_proof`.
         //
-        // C6 MUST come before C3/C5: C3 and C5 share IDENTICAL config bytes
-        // (tw=6, len=512, queries=22, lde=8192, fri_final=16); C6 differs only
-        // by trace_width=10 (vs 6). A C6 proof fed to a C3/C5 parser would
-        // partial-parse — `from_bytes` reads tw*8=48 bytes for ood_current/next,
-        // leaving the C6's remaining 32 bytes per ood field as drift, then
-        // step-4 transition constraints fail with InvalidProof. Probing C6
-        // first means its strict tw=10 length checks (`data.len() < cursor +
-        // 80`) reject any C3/C5-shaped proof, so genuine C3/C5 proofs fall
-        // through to C3, while genuine C6 proofs match C6 cleanly.
+        // [SEAM 2026-08-02] What this comment used to say was stale and its
+        // mechanism was wrong, so it is restated from measurement.
+        //
+        // Stale: "C3 and C5 share IDENTICAL config bytes (tw=6, …)". C5's trace
+        // width is **7**, not 6, since the value-conservation rebake added the
+        // signed-amount accumulator column. C3 and C5 have differed for a while.
+        //
+        // Wrong mechanism: "probing C6 first means its strict tw=10 length
+        // checks reject any C3/C5-shaped proof". Length rejects almost nothing
+        // here. `from_bytes` has no length equality — it accepts any buffer at
+        // least as long as the proof and ignores the tail — and the client pads
+        // EVERY proof to `UNIFORM_PROOF_SIZE = 145_000`, so all seven circuits
+        // present exactly 145,000 bytes to this probe. Length discriminates
+        // nothing.
+        //
+        // What DOES separate them, measured rather than asserted: two
+        // exact-value fields, `num_fri_layers == folds - 1` (1 byte) and
+        // `fri_final_poly_size == 16` (2 bytes), plus canonicity on `k + 16`
+        // felts — all read at offsets that `trace_width`, `merkle_depth` and
+        // `quotient_segments` determine. A foreign buffer reads them off bytes
+        // that mean something else (Merkle roots, OOD evaluations) and has to
+        // hit them by luck. `num_queries` was added to the parser by the seam
+        // pass and is NOT part of this: reverting it leaves both matrices
+        // diagonal (see `compact_proof.rs` for the measurement).
+        //
+        // The uncomfortable half, also measured
+        // (`no_two_configs_share_the_tuple_the_parser_can_observe`): for C1/C2
+        // and for C3/C5/C6 every wire-visible exact-value field is IDENTICAL and
+        // the pairs are separated by `trace_width` ALONE — a field that never
+        // travels on the wire. So the separation is ~5 exact bytes, i.e. roughly
+        // 2^40 proof regenerations to force a mis-probe. Not a practical attack,
+        // but probabilistic, not structural. Nothing binds circuit identity
+        // cryptographically: the Fiat-Shamir transcript carries no circuit id
+        // and there is no verifying-key hash in this program at all
+        // (`the_transcript_does_not_bind_the_circuit_only_the_step4_dispatch_does`).
+        //
+        // MEASURED, `tests/cross_circuit_confusion.rs`: across all 7×7 ordered
+        // pairs, under BOTH the exact-length and the 145,000-byte padded
+        // envelope, and under every prefix length, no genuine proof for one
+        // circuit parses under another circuit's config. The probe order is
+        // therefore not load-bearing for correctness on honest inputs. Do not add
+        // a circuit here without re-running that matrix.
+        //
+        // [C0 GATE] 0 stays out of this list, see above.
         const PROBE_ORDER: [u8; 4] = [1, 6, 3, 5];
 
         let mut matched: Option<(u8, GenericCompactProof)> = None;
