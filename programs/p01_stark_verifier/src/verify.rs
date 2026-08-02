@@ -5688,6 +5688,222 @@ mod merkle_update_e2e {
             "tampered acc ood_current[6] must be rejected: got {:?}", res
         );
     }
+
+    // ======================================================================
+    // [MUTATION 2026-08-02] The six phase-1 per-query constraint arms.
+    //
+    // MEASURED, not argued: setting `is_trace_aligned = false` in ALL SIX of
+    // `verify_constraints_{pool_commitment, balance_proof, merkle_path,
+    // confidential_balance, transfer, merkle_update}` — i.e. deleting the whole
+    // step-4 per-query transition layer for every live circuit at once — left
+    // the entire suite GREEN. 64 lib tests, b1_deep_binding, b2_bits_measured,
+    // b2_segment_binding, b4_pair_leaf, c5_conservation_probe, c6_padding_rows,
+    // liveness_fix_attack, fri_end_to_end, merkle_domain_sep, periodic_stride,
+    // a4_probe, route_c_trace_pair: 0 failures.
+    //
+    // Why the existing suite cannot see it:
+    //
+    //   * every phase-1 test is a LIVENESS test (`*_verify_generic_accepts_
+    //     honest_proof`, `honest_liveness`, `c6_padding_rows`,
+    //     `locate_the_c5_rows_*`). Deleting a rejection can never turn an
+    //     accept into a reject, so a loosening is invisible to all of them by
+    //     construction;
+    //   * the two negative sweeps that DO flip trace bytes
+    //     (`c5_tampered_openings_are_all_rejected` /
+    //     `c6_tampered_openings_are_all_rejected`) go through `verify_generic`,
+    //     where step 3 (Merkle) refuses a flipped opening before step 4 is
+    //     reached. Their file says so in a comment and then asserts only
+    //     `accepted.is_empty()`, which the Merkle step satisfies on its own.
+    //
+    // These tests call the ARM DIRECTLY, so the Merkle step cannot answer for
+    // it. They are the reason the arms are not free to rot.
+    // ======================================================================
+
+    /// A trace-aligned query whose row is genuinely constrained by the arm.
+    ///
+    /// `pos_in_cycle == 31` is the cycle boundary — a FREE transition in every
+    /// one of the six arms — and `trace_length - 1` is outside the transition
+    /// vanishing polynomial. Corrupting either is legitimately accepted, so a
+    /// test that picked one would measure nothing and pass for the wrong reason.
+    fn constrained_trace_aligned_query(
+        proof: &crate::compact_proof::GenericCompactProof,
+        cfg: &crate::compact_proof::CircuitConfig,
+    ) -> Option<usize> {
+        (0..proof.queries.len()).find(|&i| {
+            let pos = proof.queries[i].position as usize;
+            if pos % cfg.blowup != 0 {
+                return false;
+            }
+            let row = (pos / cfg.blowup) % cfg.trace_length;
+            row % 32 != 31 && row != cfg.trace_length - 1
+        })
+    }
+
+    /// Drive one phase-1 arm on an honest proof (control) and then on the same
+    /// proof with column 0 of ONE opened next-row corrupted (measurement).
+    ///
+    /// Column 0 of the next row is constrained at every row
+    /// `constrained_trace_aligned_query` returns, in all six arms: an active
+    /// Poseidon round demands `next[0] == poseidon_round(current)[0]`, a padding
+    /// row demands `next[0] == current[0]`. So one corruption exercises whichever
+    /// branch the drawn row lands in, and the expected error is the same either
+    /// way. No arm gets a free pass because of which branch its witness drew.
+    ///
+    /// `make(seed)` is retried because a proof draws only `num_queries/blowup`
+    /// trace-aligned positions on average (≈1.7 for the 27-query circuits), so a
+    /// single fixed witness has a ~17% chance of drawing none at all. Running out
+    /// of seeds PANICS — it is never silently skipped.
+    fn arm_must_reject_a_broken_next_row(
+        label: &str,
+        cfg: &crate::compact_proof::CircuitConfig,
+        make: impl Fn(u64) -> p01_stark::compact::GenericCompactProofData,
+        arm: impl Fn(
+            &crate::compact_proof::GenericCompactProof,
+            &crate::compact_proof::CircuitConfig,
+            &[u64],
+        ) -> Result<(), VerifyError>,
+    ) {
+        const SEEDS: u64 = 24;
+        let mut chosen: Option<(u64, p01_stark::compact::GenericCompactProofData, usize)> = None;
+        for seed in 0..SEEDS {
+            let pd = make(seed);
+            let parsed = crate::compact_proof::GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+                .unwrap_or_else(|| panic!("{label}: honest proof (seed {seed}) must parse"));
+            if let Some(q) = constrained_trace_aligned_query(&parsed, cfg) {
+                chosen = Some((seed, pd, q));
+                break;
+            }
+        }
+        let (seed, pd, q) = chosen.unwrap_or_else(|| {
+            panic!(
+                "{label}: none of {SEEDS} witnesses drew a trace-aligned query on a constrained \
+                 row, so this arm cannot be measured. Raise SEEDS — do NOT skip, a skipped \
+                 measurement reads as a pass."
+            )
+        });
+
+        let honest = crate::compact_proof::GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+            .expect("re-parse");
+        // Control. Without it the negative leg could be rejecting for a reason
+        // that has nothing to do with the corruption.
+        arm(&honest, cfg, &pd.public_inputs).unwrap_or_else(|e| {
+            panic!("{label}: the arm must ACCEPT the honest proof (seed {seed}), got {e:?}")
+        });
+
+        let row = (honest.queries[q].position as usize / cfg.blowup) % cfg.trace_length;
+        let (trace_off, stride) = route_c_trace_block(cfg, &pd.proof_bytes, q);
+        // Per-query wire order: position(4) | trace | trace_mirror | next_trace | …
+        let next_off = trace_off + 2 * stride;
+        let mut broken = pd.proof_bytes.clone();
+        let v = u64::from_le_bytes(broken[next_off..next_off + 8].try_into().unwrap());
+        let bumped = (v + 1) % crate::goldilocks::MODULUS;
+        assert_ne!(v, bumped, "{label}: the corruption must actually change the felt");
+        broken[next_off..next_off + 8].copy_from_slice(&bumped.to_le_bytes());
+
+        let tampered = crate::compact_proof::GenericCompactProof::from_bytes(&broken, cfg)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label}: the tampered proof must still PARSE — if it does not, this test \
+                     measures the parser and not the constraint arm"
+                )
+            });
+        // The corruption landed where this test claims it did.
+        assert_eq!(
+            tampered.queries[q].next_trace_value(0).as_u64(),
+            bumped,
+            "{label}: the byte edit did not land in query {q}'s next-row block"
+        );
+        assert_eq!(
+            tampered.queries[q].trace_value(0).as_u64(),
+            honest.queries[q].trace_value(0).as_u64(),
+            "{label}: the byte edit spilled into the CURRENT row block"
+        );
+
+        assert_eq!(
+            arm(&tampered, cfg, &pd.public_inputs),
+            Err(VerifyError::TransitionConstraintFailed),
+            "{label}: the phase-1 arm ACCEPTED a broken transition at trace row {row} \
+             (seed {seed}, query {q}). Nothing else in this repository covers that: every \
+             other phase-1 test is a liveness test, and the two tamper sweeps in \
+             tests/liveness_fix_attack.rs run through verify_generic, where the Merkle step \
+             refuses a flipped opening before the arm is reached."
+        );
+    }
+
+    #[test]
+    fn c1_phase1_arm_rejects_a_broken_transition() {
+        arm_must_reject_a_broken_next_row(
+            "C1 pool_commitment",
+            &crate::compact_proof::CONFIG_POOL_COMMITMENT,
+            |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11),
+            verify_constraints_pool_commitment,
+        );
+    }
+
+    #[test]
+    fn c2_phase1_arm_rejects_a_broken_transition() {
+        arm_must_reject_a_broken_next_row(
+            "C2 balance_proof",
+            &crate::compact_proof::CONFIG_BALANCE_PROOF,
+            |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999),
+            verify_constraints_balance_proof,
+        );
+    }
+
+    #[test]
+    fn c3_phase1_arm_rejects_a_broken_transition() {
+        arm_must_reject_a_broken_next_row(
+            "C3 merkle_path",
+            &crate::compact_proof::CONFIG_MERKLE_PATH,
+            |s| c3_sample_proof(777 + s),
+            verify_constraints_merkle_path,
+        );
+    }
+
+    #[test]
+    fn c4_phase1_arm_rejects_a_broken_transition() {
+        arm_must_reject_a_broken_next_row(
+            "C4 confidential_balance",
+            &crate::compact_proof::CONFIG_CONFIDENTIAL_BALANCE,
+            |s| {
+                p01_stark::compact::generate_confidential_balance_compact_proof(
+                    42 + s, 1000, 111, 800, 222, 200, 333, 999,
+                )
+            },
+            verify_constraints_confidential_balance,
+        );
+    }
+
+    #[test]
+    fn c5_phase1_arm_rejects_a_broken_transition() {
+        arm_must_reject_a_broken_next_row(
+            "C5 transfer",
+            &crate::compact_proof::CONFIG_TRANSFER,
+            // Conserving witness: in1+in2 == out1+out2, public_amount 0.
+            |s| {
+                p01_stark::compact::generate_transfer_compact_proof(
+                    42 + s, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
+                )
+            },
+            verify_constraints_transfer,
+        );
+    }
+
+    #[test]
+    fn c6_phase1_arm_rejects_a_broken_transition() {
+        arm_must_reject_a_broken_next_row(
+            "C6 merkle_update",
+            &crate::compact_proof::CONFIG_MERKLE_UPDATE,
+            |s| {
+                let path_elements: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
+                let path_indices: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+                p01_stark::compact::generate_merkle_update_compact_proof(
+                    111 + s, 222, &path_elements, &path_indices,
+                )
+            },
+            verify_constraints_merkle_update,
+        );
+    }
 }
 
 /// [C2] Circuit-0 boundary-fold parity + auth-forgery rejection.
