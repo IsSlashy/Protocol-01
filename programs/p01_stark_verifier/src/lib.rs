@@ -419,20 +419,60 @@ pub mod p01_stark_verifier {
         // Probe order: V3 active circuits only (1=pool_commitment, 3=merkle_path,
         // 5=transfer, 6=merkle_update). C0/C2/C4 are not used in V3 hot paths.
         //
+        // MEASURED consequence for a client that sends one anyway
+        // (`tests/wire_parity.rs::every_circuit_resolves_through_the_uniform_probe_or_is_named_as_unsupported`,
+        // on proofs padded to the real 145,000-byte envelope): C0, C2 and C4 are
+        // resolved by NO probe — `matched` is `None` and the instruction returns
+        // `DeserializationError`. They are not mis-probed into a wrong circuit,
+        // which is the safe half; the unsafe half is that the client has by then
+        // paid for ~145 chunk transactions and ~1.01 SOL of transient rent.
+        // `submitAndVerifyStarkProofUniform` accepts any `GenericStarkProof` and
+        // has no guard for this. Its live call sites use C1/C3/C6 only, so this
+        // is latent, not live.
+        //
         // [C0 GATE] C0 must never appear in this list. It is not a "not needed
         // yet" omission: `verify::verify_generic` refuses circuit 0 outright, so
         // adding 0 here would only produce a probe that always errors. C0 goes
         // through `verify_stark_proof`.
         //
-        // C6 MUST come before C3/C5: C3 and C5 share IDENTICAL config bytes
-        // (tw=6, len=512, queries=22, lde=8192, fri_final=16); C6 differs only
-        // by trace_width=10 (vs 6). A C6 proof fed to a C3/C5 parser would
-        // partial-parse — `from_bytes` reads tw*8=48 bytes for ood_current/next,
-        // leaving the C6's remaining 32 bytes per ood field as drift, then
-        // step-4 transition constraints fail with InvalidProof. Probing C6
-        // first means its strict tw=10 length checks (`data.len() < cursor +
-        // 80`) reject any C3/C5-shaped proof, so genuine C3/C5 proofs fall
-        // through to C3, while genuine C6 proofs match C6 cleanly.
+        // C6 is probed before C3/C5. C3 and C5 differ from C6 only in
+        // `trace_width` (6 / 7 / 10) — same trace_length 512, same lde_size
+        // 8192, same 22 queries, same fri_final_poly_size — and `trace_width`
+        // never travels on the wire, so nothing in a buffer declares which of
+        // the three it is.
+        //
+        // CORRECTED, and this matters because the correction removes the
+        // argument this ordering used to rest on. The previous version of this
+        // comment said C6-first works because "its strict tw=10 length checks
+        // (`data.len() < cursor + 80`) reject any C3/C5-shaped proof". THAT IS
+        // NOT TRUE ON THE SHIPPED PATH. Every client that reaches this
+        // instruction goes through `submitAndVerifyStarkProofUniform`, which
+        // pads the proof to `UNIFORM_PROOF_SIZE = 145_000` before upload
+        // (apps/mobile/services/stark/index.ts). `proof_size` is therefore
+        // 145,000 for every circuit, `proof_bytes` is 145,000 bytes long, and
+        // every `data.len() < cursor + X` bound in `from_bytes` is satisfied
+        // for every config. Under padding, length rejects nothing at all —
+        // MEASURED in `tests/wire_parity.rs::the_parser_does_not_check_length_this_test_does`,
+        // which shows tails of 1..63,543 bytes of both 0x00 and 0xAB parsing
+        // cleanly.
+        //
+        // What DOES separate the three, measured on padded proofs by
+        // `tests/wire_parity.rs::under_uniform_padding_the_22_query_circuits_still_separate`,
+        // is the three EXACT-VALUE fields, each read at an offset that moves
+        // with `trace_width` / `merkle_depth` / `quotient_segments`:
+        // `fri_final_poly_size != config.fri_final_poly_size`,
+        // `num_fri_layers != num_folds - 1`, and the `num_queries` word. A
+        // foreign buffer has to hit all three at shifted offsets to mis-probe.
+        // That is probabilistic, not structural, and it is the honest
+        // description of this loop.
+        //
+        // MEASURED, on the ordering itself: reversing this constant to
+        // [1, 3, 5, 6] and re-running `wire_parity.rs` leaves every honest
+        // padded proof resolving to its own circuit. So the C6-first ordering
+        // is NOT exercised by any honest proof; it is a hardening choice about
+        // malformed and adversarial buffers, and the behavioural test cannot
+        // pin it. `the_probe_order_this_test_drives_is_the_one_the_program_implements`
+        // pins the literal instead, and says why.
         const PROBE_ORDER: [u8; 4] = [1, 6, 3, 5];
 
         let mut matched: Option<(u8, GenericCompactProof)> = None;
