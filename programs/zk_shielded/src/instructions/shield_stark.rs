@@ -3,52 +3,15 @@ use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkShieldedError;
+use crate::stark_buffer::{
+    parse_stark_proof_buffer, StarkProofBufferView, STARK_VERIFIER_PROGRAM_ID,
+};
 use crate::state::{MerkleTreeState, ShieldedPool};
-
-/// STARK Proof Buffer layout constants (must match p01_stark_verifier::ProofBuffer).
-/// We parse the raw account to check a STARK merkle_update proof was verified.
-const STARK_PROOF_BUFFER_DISCRIMINATOR: [u8; 8] = [71, 133, 225, 94, 9, 130, 40, 161];
-
-// DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs
-const STARK_VERIFIER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
-    0xb6, 0x47, 0x0c, 0x5e, 0xb3, 0x56, 0x43, 0x7f,
-    0xef, 0xf9, 0x2e, 0xd1, 0x86, 0x9b, 0x02, 0x2b,
-    0xc4, 0x60, 0x2e, 0x12, 0xb1, 0x13, 0x07, 0x44,
-    0xb3, 0x7a, 0x18, 0x7d, 0xe6, 0x39, 0xce, 0xd8,
-]);
-
-/// ProofBuffer layout offsets (must match p01_stark_verifier::ProofBuffer).
-/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written
-///       + 1 verified + 32 public_inputs_hash + 1 deep_ali_verified
-const PROOF_BUF_AUTHORITY: usize = 8;
-const PROOF_BUF_CIRCUIT_ID: usize = 40;
-const PROOF_BUF_VERIFIED: usize = 49;
-const PROOF_BUF_INPUTS_HASH: usize = 50;
-const PROOF_BUF_DEEP_ALI_VERIFIED: usize = 82;
-const PROOF_BUF_MIN_LEN: usize = 83;
 
 /// Canonical Merkle tree depth bound by circuit 6 (CANONICAL_DEPTH in the
 /// STARK verifier). Any other depth silently yields wrong constraint
 /// evaluations so we reject up front here too.
 const CANONICAL_DEPTH: u64 = 15;
-
-/// Parse a verified STARK proof buffer. Returns the fields relevant to binding
-/// a shield proof to the tree insertion.
-fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32], bool)> {
-    require!(data.len() >= PROOF_BUF_MIN_LEN, ZkShieldedError::InvalidProof);
-    require!(
-        data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
-        ZkShieldedError::InvalidProof
-    );
-    let authority = Pubkey::try_from(&data[PROOF_BUF_AUTHORITY..PROOF_BUF_CIRCUIT_ID])
-        .map_err(|_| ZkShieldedError::InvalidProof)?;
-    let circuit_id = data[PROOF_BUF_CIRCUIT_ID];
-    let verified = data[PROOF_BUF_VERIFIED] == 1;
-    let mut public_inputs_hash = [0u8; 32];
-    public_inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_DEEP_ALI_VERIFIED]);
-    let deep_ali_verified = data[PROOF_BUF_DEEP_ALI_VERIFIED] == 1;
-    Ok((authority, circuit_id, verified, public_inputs_hash, deep_ali_verified))
-}
 
 /// Shield tokens into the shielded pool using a STARK merkle_update proof.
 ///
@@ -170,8 +133,13 @@ pub fn handler(
     );
 
     let proof_data = proof_info.try_borrow_data()?;
-    let (authority, circuit_id, verified, stored_inputs_hash, deep_ali_verified) =
-        parse_stark_proof_buffer(&proof_data)?;
+    let StarkProofBufferView {
+        authority,
+        circuit_id,
+        verified,
+        deep_ali_verified,
+        public_inputs_hash: stored_inputs_hash,
+    } = parse_stark_proof_buffer(&proof_data)?;
 
     // Authority must be the depositor (binds the proof to this signer).
     require!(

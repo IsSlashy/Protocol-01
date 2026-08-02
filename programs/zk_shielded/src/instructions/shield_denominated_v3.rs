@@ -6,33 +6,15 @@ use crate::errors::ZkShieldedError;
 use crate::fee::{self, FEE_ESCROW_SEED_PREFIX};
 use crate::state::pool_v3::DenominatedPoolV3;
 use crate::state::merkle_tree_v3::MerkleTreeStateV3;
+use crate::stark_buffer::{
+    parse_stark_proof_buffer, StarkProofBufferView, STARK_VERIFIER_PROGRAM_ID,
+};
 
 // ---------------------------------------------------------------------------
 // C6 (merkle_update) STARK proof-buffer wiring
 // ---------------------------------------------------------------------------
-// Mirrors the v2 `unshield_denominated_stark` parser, with the added
-// `deep_ali_verified` flag check that circuit 6 requires (phase 1 + phase 2).
-
-/// Anchor discriminator for `p01_stark_verifier::ProofBuffer`.
-const STARK_PROOF_BUFFER_DISCRIMINATOR: [u8; 8] = [71, 133, 225, 94, 9, 130, 40, 161];
-
-/// p01_stark_verifier program id: DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs
-const STARK_VERIFIER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
-    0xb6, 0x47, 0x0c, 0x5e, 0xb3, 0x56, 0x43, 0x7f,
-    0xef, 0xf9, 0x2e, 0xd1, 0x86, 0x9b, 0x02, 0x2b,
-    0xc4, 0x60, 0x2e, 0x12, 0xb1, 0x13, 0x07, 0x44,
-    0xb3, 0x7a, 0x18, 0x7d, 0xe6, 0x39, 0xce, 0xd8,
-]);
-
-/// `ProofBuffer` layout offsets (must match `p01_stark_verifier::ProofBuffer`).
-/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written
-///       + 1 verified + 32 public_inputs_hash + 1 deep_ali_verified = 83
-const PROOF_BUF_AUTHORITY_OFF: usize = 8;
-const PROOF_BUF_CIRCUIT_ID_OFF: usize = 40;
-const PROOF_BUF_VERIFIED_OFF: usize = 49;
-const PROOF_BUF_INPUTS_HASH_OFF: usize = 50;
-const PROOF_BUF_DEEP_ALI_OFF: usize = 82;
-const PROOF_BUF_MIN_LEN: usize = 83;
+// The layout table and the parser live in `crate::stark_buffer`; this file only
+// adds the C6-specific bindings (circuit id, phase-2 flag, public-inputs hash).
 
 /// Circuit id for `merkle_update`.
 const CIRCUIT_MERKLE_UPDATE: u8 = 6;
@@ -66,32 +48,21 @@ fn verify_c6_proof_buffer(
         ZkShieldedError::InvalidProof
     );
     let data = proof_info.try_borrow_data()?;
-    require!(data.len() >= PROOF_BUF_MIN_LEN, ZkShieldedError::InvalidProof);
-    require!(
-        data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
-        ZkShieldedError::InvalidProof
-    );
+    let StarkProofBufferView {
+        authority,
+        circuit_id,
+        verified,
+        deep_ali_verified,
+        public_inputs_hash: stored_hash,
+    } = parse_stark_proof_buffer(&data)?;
 
     // Authority binding: the proof buffer must have been created by the
     // depositor (matches `shield_stark.rs`). Without this any verified C6
     // buffer could be replayed by an unrelated signer.
-    let authority = Pubkey::try_from(&data[PROOF_BUF_AUTHORITY_OFF..PROOF_BUF_CIRCUIT_ID_OFF])
-        .map_err(|_| ZkShieldedError::InvalidProof)?;
     require!(authority == *depositor, ZkShieldedError::InvalidProof);
-
-    let circuit_id = data[PROOF_BUF_CIRCUIT_ID_OFF];
     require!(circuit_id == CIRCUIT_MERKLE_UPDATE, ZkShieldedError::InvalidProof);
-
-    let verified = data[PROOF_BUF_VERIFIED_OFF] == 1;
     require!(verified, ZkShieldedError::InvalidProof);
-
-    let deep_ali_verified = data[PROOF_BUF_DEEP_ALI_OFF] == 1;
     require!(deep_ali_verified, ZkShieldedError::InvalidProof);
-
-    let mut stored_hash = [0u8; 32];
-    stored_hash.copy_from_slice(
-        &data[PROOF_BUF_INPUTS_HASH_OFF..PROOF_BUF_INPUTS_HASH_OFF + 32],
-    );
 
     // Recompute expected hash. C6 AIR public inputs are
     //   [old_leaf, new_leaf, old_root, new_root, depth]

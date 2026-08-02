@@ -30,6 +30,7 @@ pub mod compliance;
 pub mod errors;
 pub mod fee;
 pub mod instructions;
+pub mod stark_buffer;
 pub mod state;
 pub mod verifier;
 

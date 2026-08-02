@@ -4,45 +4,9 @@ use crate::errors::ZkShieldedError;
 use crate::state::NullifierRecord;
 use crate::state::pool_v3::DenominatedPoolV3;
 use crate::state::merkle_tree_v3::MerkleTreeStateV3;
-
-/// STARK Proof Buffer account discriminator (from p01_stark_verifier).
-const STARK_PROOF_BUFFER_DISCRIMINATOR: [u8; 8] = [71, 133, 225, 94, 9, 130, 40, 161];
-
-// DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs
-const STARK_VERIFIER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
-    0xb6, 0x47, 0x0c, 0x5e, 0xb3, 0x56, 0x43, 0x7f,
-    0xef, 0xf9, 0x2e, 0xd1, 0x86, 0x9b, 0x02, 0x2b,
-    0xc4, 0x60, 0x2e, 0x12, 0xb1, 0x13, 0x07, 0x44,
-    0xb3, 0x7a, 0x18, 0x7d, 0xe6, 0x39, 0xce, 0xd8,
-]);
-
-/// ProofBuffer layout offsets (must match p01_stark_verifier::ProofBuffer).
-/// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written
-///       + 1 verified + 32 public_inputs_hash + 1 deep_ali_verified = 83
-const PROOF_BUF_AUTHORITY: usize = 8;
-const PROOF_BUF_CIRCUIT_ID: usize = 40;
-const PROOF_BUF_VERIFIED: usize = 49;
-const PROOF_BUF_INPUTS_HASH: usize = 50;
-const PROOF_BUF_DEEP_ALI: usize = 82;
-const PROOF_BUF_MIN_LEN: usize = 83;
-
-/// Parse a verified STARK proof buffer.
-/// Returns (authority, circuit_id, verified, deep_ali_verified, public_inputs_hash).
-fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, bool, [u8; 32])> {
-    require!(data.len() >= PROOF_BUF_MIN_LEN, ZkShieldedError::InvalidProof);
-    require!(
-        data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
-        ZkShieldedError::InvalidProof
-    );
-    let authority = Pubkey::try_from(&data[PROOF_BUF_AUTHORITY..PROOF_BUF_CIRCUIT_ID])
-        .map_err(|_| ZkShieldedError::InvalidProof)?;
-    let circuit_id = data[PROOF_BUF_CIRCUIT_ID];
-    let verified = data[PROOF_BUF_VERIFIED] == 1;
-    let deep_ali_verified = data[PROOF_BUF_DEEP_ALI] == 1;
-    let mut public_inputs_hash = [0u8; 32];
-    public_inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_INPUTS_HASH + 32]);
-    Ok((authority, circuit_id, verified, deep_ali_verified, public_inputs_hash))
-}
+use crate::stark_buffer::{
+    parse_stark_proof_buffer, StarkProofBufferView, STARK_VERIFIER_PROGRAM_ID,
+};
 
 /// V3 transfer of a note within a denominated pool.
 ///
@@ -195,8 +159,13 @@ pub fn handler(
             ZkShieldedError::InvalidProof
         );
         let c1_data = c1_info.try_borrow_data()?;
-        let (c1_authority, c1_circuit_id, c1_verified, c1_deep, c1_inputs_hash) =
-            parse_stark_proof_buffer(&c1_data)?;
+        let StarkProofBufferView {
+            authority: c1_authority,
+            circuit_id: c1_circuit_id,
+            verified: c1_verified,
+            deep_ali_verified: c1_deep,
+            public_inputs_hash: c1_inputs_hash,
+        } = parse_stark_proof_buffer(&c1_data)?;
 
         require!(c1_authority == payer_key, ZkShieldedError::InvalidProof);
         require!(c1_circuit_id == 1, ZkShieldedError::InvalidProof);
@@ -229,8 +198,13 @@ pub fn handler(
             ZkShieldedError::InvalidProof
         );
         let c3_data = c3_info.try_borrow_data()?;
-        let (c3_authority, c3_circuit_id, c3_verified, c3_deep, c3_inputs_hash) =
-            parse_stark_proof_buffer(&c3_data)?;
+        let StarkProofBufferView {
+            authority: c3_authority,
+            circuit_id: c3_circuit_id,
+            verified: c3_verified,
+            deep_ali_verified: c3_deep,
+            public_inputs_hash: c3_inputs_hash,
+        } = parse_stark_proof_buffer(&c3_data)?;
 
         require!(c3_authority == payer_key, ZkShieldedError::InvalidProof);
         require!(c3_circuit_id == 3, ZkShieldedError::InvalidProof);
@@ -265,8 +239,13 @@ pub fn handler(
             ZkShieldedError::InvalidProof
         );
         let c6_data = c6_info.try_borrow_data()?;
-        let (c6_authority, c6_circuit_id, c6_verified, c6_deep_ali, c6_inputs_hash) =
-            parse_stark_proof_buffer(&c6_data)?;
+        let StarkProofBufferView {
+            authority: c6_authority,
+            circuit_id: c6_circuit_id,
+            verified: c6_verified,
+            deep_ali_verified: c6_deep_ali,
+            public_inputs_hash: c6_inputs_hash,
+        } = parse_stark_proof_buffer(&c6_data)?;
 
         require!(c6_authority == payer_key, ZkShieldedError::InvalidProof);
         require!(c6_circuit_id == 6, ZkShieldedError::InvalidProof);
