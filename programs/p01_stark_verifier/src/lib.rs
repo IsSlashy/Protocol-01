@@ -424,15 +424,36 @@ pub mod p01_stark_verifier {
         // adding 0 here would only produce a probe that always errors. C0 goes
         // through `verify_stark_proof`.
         //
-        // C6 MUST come before C3/C5: C3 and C5 share IDENTICAL config bytes
-        // (tw=6, len=512, queries=22, lde=8192, fri_final=16); C6 differs only
-        // by trace_width=10 (vs 6). A C6 proof fed to a C3/C5 parser would
-        // partial-parse — `from_bytes` reads tw*8=48 bytes for ood_current/next,
-        // leaving the C6's remaining 32 bytes per ood field as drift, then
-        // step-4 transition constraints fail with InvalidProof. Probing C6
-        // first means its strict tw=10 length checks (`data.len() < cursor +
-        // 80`) reject any C3/C5-shaped proof, so genuine C3/C5 proofs fall
-        // through to C3, while genuine C6 proofs match C6 cleanly.
+        // [SEAM 2026-08-02] What this comment used to say was stale and its
+        // mechanism was wrong, so it is restated from measurement.
+        //
+        // Stale: "C3 and C5 share IDENTICAL config bytes (tw=6, …)". C5's trace
+        // width is **7**, not 6, since the value-conservation rebake added the
+        // signed-amount accumulator column. C3 and C5 have differed for a while.
+        //
+        // Wrong mechanism: "probing C6 first means its strict tw=10 length
+        // checks reject any C3/C5-shaped proof". Length rejects almost nothing
+        // here. `from_bytes` has no length equality — it accepts any buffer at
+        // least as long as the proof and ignores the tail — and the client pads
+        // EVERY proof to `UNIFORM_PROOF_SIZE = 145_000`, so all seven circuits
+        // present exactly 145,000 bytes to this probe. Length discriminates
+        // nothing. What actually separates the configs is a set of exact-value
+        // field checks read at config-dependent offsets: `num_fri_layers` must
+        // equal `folds - 1` (1 byte), `fri_final_poly_size` must equal 16
+        // (2 bytes), `num_queries` must equal `config.num_queries` (2 bytes,
+        // added by the seam pass — 27 on C0/C1/C2/C4, 22 on C3/C5/C6), plus
+        // canonicity on `k + 16` felts. A foreign buffer has to hit all of them
+        // on bytes that mean something else.
+        //
+        // MEASURED, `tests/cross_circuit_confusion.rs`: across all 7×7 ordered
+        // pairs, under BOTH the exact-length and the 145,000-byte padded
+        // envelope, no genuine proof for one circuit parses under another
+        // circuit's config. The probe order is therefore not load-bearing for
+        // correctness on honest inputs — but it is not free either, because the
+        // separation is data-dependent rather than structural. Do not add a
+        // circuit here without re-running that matrix.
+        //
+        // [C0 GATE] 0 stays out of this list, see above.
         const PROBE_ORDER: [u8; 4] = [1, 6, 3, 5];
 
         let mut matched: Option<(u8, GenericCompactProof)> = None;

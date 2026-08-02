@@ -4420,7 +4420,20 @@ fn verify_query_positions_legacy(
     proof: &CompactStarkProof,
     expected: &[u32],
 ) -> Result<(), VerifyError> {
-    if proof.queries.len() < NUM_QUERIES {
+    // [SEAM] Was `<`. The generic twin was tightened to `!=` by B1 with the note
+    // "the legacy path already gates on the constant" — it gated on the constant
+    // with `<`, which is the same hole from the same side. Up to 256 queries
+    // (the parser's old cap) were accepted where 27 are expected, and the `i <
+    // expected.len()` guard below meant every surplus position went UNCOMPARED
+    // to the derived list, then straight into the per-query Merkle, FRI and
+    // constraint loops. On C0 that matters more than anywhere else: C0 is the
+    // sole verifier for `zk_shielded::{pause,resume,cancel}_private_stark` and
+    // `p01_quantum_wallet`.
+    //
+    // The parser now refuses a wire count other than `NUM_QUERIES`
+    // (`CompactStarkProof::from_bytes`), so this is belt and braces — kept
+    // because the two ends were allowed to drift once already.
+    if proof.queries.len() != NUM_QUERIES {
         return Err(VerifyError::InsufficientQueries);
     }
     for (i, query) in proof.queries.iter().enumerate() {
