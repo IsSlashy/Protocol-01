@@ -261,8 +261,25 @@ fn the_hardcoded_discriminator_is_the_real_one() {
 }
 
 /// The byte offsets a consumer must reach to see the phase-2 flag.
+///
+/// [ADVERSARY 2026-08-03] The first version of this test asserted
+/// `PROOF_DATA_OFFSET == 83` and stopped. That is a constant compared with a
+/// constant: it catches somebody editing the `8 + 32 + 1 + 4 + 4 + 1 + 32 + 1`
+/// expression and NOTHING ELSE. The offsets thirteen consumer files hard-code
+/// are properties of the `#[account] struct ProofBuffer` SERIALIZATION, not of
+/// that expression, and the two are joined only by hand. Add a field, reorder
+/// two, widen `proof_size` to `u64` — every consumer's `data[82]` starts reading
+/// a different field, `write_proof_chunk` starts writing proof bytes over the
+/// struct's own tail, and the arithmetic pin stays green through all of it.
+///
+/// So the layout is now MEASURED by serialising a real `ProofBuffer` with a
+/// distinct sentinel in every field and reading the bytes back at the offsets
+/// the consumers use. `PROOF_DATA_OFFSET` is then required to equal the length
+/// that serialisation actually produced.
 #[test]
 fn the_phase_two_flag_is_the_last_byte_before_the_proof_data() {
+    use anchor_lang::AccountSerialize;
+
     // 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written
     // + 1 verified + 32 public_inputs_hash + 1 deep_ali_verified
     assert_eq!(ProofBuffer::PROOF_DATA_OFFSET, 83);
@@ -270,6 +287,61 @@ fn the_phase_two_flag_is_the_last_byte_before_the_proof_data() {
     // gate it writes against phase 2 could ever fire. `p01_zkspl` and
     // `p01_liquidity` were both moved off 82 for this reason.
     assert_eq!(ProofBuffer::PROOF_DATA_OFFSET - 1, 82);
+
+    // Every field gets a value no other field could produce, so a swap is
+    // visible and not just a length change.
+    let authority = anchor_lang::prelude::Pubkey::new_from_array([0xA7u8; 32]);
+    let buffer = ProofBuffer {
+        authority,
+        circuit_id: 0xC1,
+        proof_size: 0x1122_3344,
+        bytes_written: 0x5566_7788,
+        verified: true,
+        public_inputs_hash: [0x9Eu8; 32],
+        deep_ali_verified: true,
+    };
+    let mut bytes: Vec<u8> = Vec::new();
+    buffer.try_serialize(&mut bytes).expect("ProofBuffer must serialise");
+
+    assert_eq!(
+        bytes.len(),
+        ProofBuffer::PROOF_DATA_OFFSET,
+        "the serialised ProofBuffer header is {} bytes but PROOF_DATA_OFFSET says {}. \
+         `write_proof_chunk` writes proof bytes at PROOF_DATA_OFFSET and the struct \
+         writes itself at 0, so these overlapping by even one byte corrupts both.",
+        bytes.len(),
+        ProofBuffer::PROOF_DATA_OFFSET
+    );
+
+    // The offsets every consumer hard-codes, checked against the real bytes.
+    assert_eq!(&bytes[..8], &PROOF_BUFFER_DISCRIMINATOR[..], "discriminator @0..8");
+    assert_eq!(&bytes[8..40], authority.as_ref(), "authority @8..40");
+    assert_eq!(bytes[40], 0xC1, "circuit_id @40");
+    assert_eq!(&bytes[41..45], &0x1122_3344u32.to_le_bytes(), "proof_size @41..45");
+    assert_eq!(&bytes[45..49], &0x5566_7788u32.to_le_bytes(), "bytes_written @45..49");
+    assert_eq!(bytes[49], 1, "verified @49");
+    assert_eq!(&bytes[50..82], &[0x9Eu8; 32], "public_inputs_hash @50..82");
+    assert_eq!(
+        bytes[82], 1,
+        "deep_ali_verified is not at byte 82. Thirteen consumer files read it there; \
+         every phase-2 gate in the tree is now reading some other field."
+    );
+
+    // …and the false half, so the sentinels above cannot be what makes it pass.
+    let mut off: Vec<u8> = Vec::new();
+    ProofBuffer {
+        authority,
+        circuit_id: 0,
+        proof_size: 0,
+        bytes_written: 0,
+        verified: false,
+        public_inputs_hash: [0u8; 32],
+        deep_ali_verified: false,
+    }
+    .try_serialize(&mut off)
+    .expect("serialise");
+    assert_eq!(off[49], 0, "verified @49 must be 0 when false");
+    assert_eq!(off[82], 0, "deep_ali_verified @82 must be 0 when false");
 }
 
 /// [SEAM] The enforcement the measurement never had.
@@ -285,6 +357,28 @@ fn the_phase_two_flag_is_the_last_byte_before_the_proof_data() {
 /// What it does buy: the trigger is the hard-coded `ProofBuffer` discriminator,
 /// which a new consumer CANNOT omit — reading the account requires it. So the
 /// scan sees every consumer that exists, including one added tomorrow.
+///
+/// [ADVERSARY 2026-08-03] That last sentence was FALSE and is now true. The
+/// trigger was the whitespace-exact substring `"71, 133, 225, 94, 9, 130, 40,
+/// 161"`. MEASURED by planting a real-shaped consumer under
+/// `programs/p01_zkspl/src/` that reads the buffer, `require!`s `verified` and
+/// has no phase-2 gate at all:
+///
+///   * `[71,133,225,94,9,130,40,161]`                       -> scan GREEN (invisible)
+///   * `[0x47, 0x85, 0xe1, 0x5e, 0x09, 0x82, 0x28, 0xa1]`    -> scan GREEN (invisible)
+///   * `[71, 133, 225, 94, 9, 130, 40, 161]`                 -> scan RED (control)
+///
+/// The `checked.len() >= 13` floor does not help: it catches a consumer
+/// vanishing, never one arriving. A gate whose reach is decided by whether a
+/// future author's rustfmt put spaces after the commas is a gate that reads a
+/// source string, which is the failure class this repo keeps producing.
+///
+/// The trigger is now `contains_discriminator`, which parses integer literals
+/// out of the whitespace-stripped source and looks for eight consecutive values
+/// equal to the discriminator — decimal or hex, suffixed or not, on one line or
+/// eight. `b"account:ProofBuffer"` also triggers, for a consumer that derives
+/// the discriminator instead of pasting it (which is the better style, and was
+/// invisible before too).
 ///
 /// The rule, stated as a counting argument rather than a keyword:
 ///
@@ -317,7 +411,7 @@ fn no_consumer_requires_phase_one_without_phase_two() {
             Ok(t) => t,
             Err(_) => continue,
         };
-        if !text.contains("71, 133, 225, 94, 9, 130, 40, 161") {
+        if !contains_discriminator(&text) {
             continue;
         }
 
@@ -336,7 +430,7 @@ fn no_consumer_requires_phase_one_without_phase_two() {
         // than skipped silently, and the assertion below is what keeps
         // "comment the file out" from becoming a way to pass this gate: a
         // dormant file must expose no handler at all.
-        if !code.contains("71, 133, 225, 94, 9, 130, 40, 161") {
+        if !contains_discriminator(&code) {
             assert!(
                 !code.contains("fn handler"),
                 "{rel}: the ProofBuffer discriminator is commented out but a live \
@@ -492,7 +586,139 @@ fn the_scanner_reads_statements_and_ignores_prose() {
     );
 }
 
+/// [ADVERSARY] The scan's TRIGGER decides which files it looks at, so a file it
+/// never opens is a file it grades as compliant. This tests the trigger on the
+/// spellings that actually made it blind.
+///
+/// The three cases below are transcriptions of a probe consumer planted under
+/// `programs/p01_zkspl/src/` during this pass: it read the buffer, `require!`d
+/// `verified`, and had no phase-2 gate. Under the old substring trigger the
+/// first two passed `no_consumer_requires_phase_one_without_phase_two`
+/// unnoticed and the third failed it.
+#[test]
+fn the_scan_trigger_does_not_depend_on_how_the_discriminator_is_spelled() {
+    let variants = [
+        ("canonical", "const D: [u8; 8] = [71, 133, 225, 94, 9, 130, 40, 161];"),
+        ("no spaces", "const D: [u8; 8] = [71,133,225,94,9,130,40,161];"),
+        (
+            "hex lower",
+            "const D: [u8; 8] = [0x47, 0x85, 0xe1, 0x5e, 0x09, 0x82, 0x28, 0xa1];",
+        ),
+        (
+            "hex upper, no leading zero",
+            "const D: [u8; 8] = [0X47,0X85,0XE1,0X5E,0X9,0X82,0X28,0XA1];",
+        ),
+        (
+            "suffixed",
+            "const D = [71u8, 133u8, 225u8, 94u8, 9u8, 130u8, 40u8, 161u8];",
+        ),
+        (
+            "rustfmt one per line",
+            "const D: [u8; 8] = [\n 71,\n 133,\n 225,\n 94,\n 9,\n 130,\n 40,\n 161,\n];",
+        ),
+        ("slice borrow", "if &data[..8] != &[71, 133, 225, 94, 9, 130, 40, 161] { }"),
+        ("derived", "let d = &hashv(&[b\"account:ProofBuffer\"]).to_bytes()[..8];"),
+    ];
+    for (label, src) in variants {
+        assert!(
+            contains_discriminator(src),
+            "the scan would not open a consumer written as `{label}`: {src}"
+        );
+    }
+
+    // …and it must not fire on things that are not the discriminator, or the
+    // scan grades unrelated files and someone deletes it.
+    let negatives = [
+        "const D: [u8; 8] = [71, 133, 225, 94, 9, 130, 40, 160];", // last byte off
+        "const D: [u8; 8] = [133, 225, 94, 9, 130, 40, 161, 71];", // rotated
+        "const D: [u8; 7] = [71, 133, 225, 94, 9, 130, 40];",      // short
+        "let x = 7133225949130401610u64;",                          // one long number
+        "const D = [710, 1330, 2250, 940, 90, 1300, 400, 1610];",   // ten-fold
+        "const OTHER: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];",
+    ];
+    for src in negatives {
+        assert!(!contains_discriminator(src), "false trigger on: {src}");
+    }
+
+    // A run must be CONSECUTIVE: an interruption resets it.
+    assert!(!contains_discriminator(
+        "[71, 133, 225, 94] and separately [9, 130, 40, 161]"
+    ));
+}
+
 // ---------------------------------------------------------------------------
+
+/// Does `src` carry the `ProofBuffer` discriminator in ANY spelling a Rust
+/// author could plausibly write?
+///
+/// Whitespace is stripped, then every integer literal in the file is parsed —
+/// decimal (`71`), hex (`0x47`, `0X47`, `0x9`), with or without a `u8`/`_u8`
+/// suffix — and the resulting value sequence is searched for eight consecutive
+/// entries equal to the discriminator. Non-numeric tokens break the run, so an
+/// unrelated array cannot bridge two halves.
+///
+/// A consumer that DERIVES the discriminator instead of pasting it must name
+/// the seed, so `account:ProofBuffer` triggers as well.
+fn contains_discriminator(src: &str) -> bool {
+    if src.contains("account:ProofBuffer") {
+        return true;
+    }
+    let flat: String = src.chars().filter(|c| !c.is_whitespace()).collect();
+    let b = flat.as_bytes();
+    let mut run: Vec<u8> = Vec::new();
+    let mut i = 0usize;
+    while i < b.len() {
+        // A literal must start a token: not preceded by an identifier char, and
+        // not part of a longer number (`1710` must not read as `171`, `0`).
+        let prev_is_word = i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_');
+        if !b[i].is_ascii_digit() || prev_is_word {
+            if b[i] != b',' {
+                run.clear();
+            }
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let (radix, digits_at) = if b[i] == b'0'
+            && i + 1 < b.len()
+            && (b[i + 1] == b'x' || b[i + 1] == b'X')
+        {
+            (16u32, i + 2)
+        } else {
+            (10u32, i)
+        };
+        let mut j = digits_at;
+        while j < b.len() && (b[j] as char).is_digit(radix) {
+            j += 1;
+        }
+        let text = &flat[digits_at..j];
+        // Skip an optional integer suffix so `71u8` is one token, not two.
+        let mut k = j;
+        for suffix in ["_u8", "u8", "_usize", "usize", "_u32", "u32", "_u64", "u64"] {
+            if flat[k..].starts_with(suffix) {
+                k += suffix.len();
+                break;
+            }
+        }
+        // Anything else glued to the number (an identifier, a decimal point)
+        // means this was not a standalone byte literal.
+        let glued = k < b.len() && (b[k].is_ascii_alphanumeric() || b[k] == b'_' || b[k] == b'.');
+        match (glued, u16::from_str_radix(text, radix)) {
+            (false, Ok(v)) if v <= u8::MAX as u16 => {
+                run.push(v as u8);
+                if run.len() > 8 {
+                    run.remove(0);
+                }
+                if run.as_slice() == PROOF_BUFFER_DISCRIMINATOR {
+                    return true;
+                }
+            }
+            _ => run.clear(),
+        }
+        i = if k > start { k } else { start + 1 };
+    }
+    false
+}
 
 /// Drop `//` line comments and `/* */` blocks. Every consumer file documents
 /// its gate in prose that names `require!` and `deep_ali_verified`, so a scan
