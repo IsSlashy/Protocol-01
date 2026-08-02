@@ -77,11 +77,14 @@ fn fixture_c6() -> Vec<u8> {
     p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi).proof_bytes
 }
 
-/// `(circuit_id, label, build)` for the six GENERIC circuits. C0 is on the
-/// legacy parser and is handled separately everywhere below, because it is a
-/// different function with a different signature — lumping the two is how a
-/// legacy-only defect gets a green from a generic-only sweep.
-const GENERIC: [(u8, &str, fn() -> Vec<u8>); 6] = [
+/// `(circuit_id, label, build)`.
+type Circuit = (u8, &'static str, fn() -> Vec<u8>);
+
+/// The six GENERIC circuits. C0 is on the legacy parser and is handled
+/// separately everywhere below, because it is a different function with a
+/// different signature — lumping the two is how a legacy-only defect gets a
+/// green from a generic-only sweep.
+const GENERIC: [Circuit; 6] = [
     (1, "C1 pool_commitment", fixture_c1),
     (2, "C2 balance_proof", fixture_c2),
     (3, "C3 merkle_path", fixture_c3),
@@ -658,7 +661,7 @@ fn under_uniform_padding_the_22_query_circuits_still_separate() {
         v.resize(uniform, 0u8);
         v
     };
-    let subjects: [(u8, &str, fn() -> Vec<u8>); 3] = [
+    let subjects: [Circuit; 3] = [
         (3, "C3 merkle_path", fixture_c3),
         (5, "C5 transfer", fixture_c5),
         (6, "C6 merkle_update", fixture_c6),

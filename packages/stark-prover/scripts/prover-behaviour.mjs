@@ -247,6 +247,20 @@ export function fixtureTableProblem() {
     }
     const missing = FIXTURES.filter((f) => !text.includes(f.b2)).map((f) => f.label);
     if (missing.length > 0) lines.push(`  ${rel} no longer pins the current digest for ${missing.join(', ')}`);
+    // A SUPERSEDED digest left behind in a corroborating pin is the half-updated
+    // pin set `cross_language_fixture_digests` warns about in its own failure
+    // text ("update BOTH ... do not update one of them"). Nothing checked for it.
+    // Presence of a current digest cannot: both can be in the file at once, one
+    // in the assertion and one in a comment, and the includes() above passes.
+    // Neither of these two files has any business carrying a digest from an
+    // older generation — this table is the only place those are kept, on purpose.
+    const stale = FIXTURES.filter((f) => text.includes(f.b1) || text.includes(f.preB1)).map((f) => f.label);
+    if (stale.length > 0) {
+      lines.push(
+        `  ${rel} still carries a SUPERSEDED digest for ${stale.join(', ')} — a pin set that was ` +
+          'updated in one place and not the other',
+      );
+    }
   }
   if (lines.length === 0) return null;
   return {
