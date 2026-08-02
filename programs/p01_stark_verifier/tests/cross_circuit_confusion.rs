@@ -428,29 +428,337 @@ fn sentinel_and_every_unknown_id_have_no_config() {
 /// 7/8/100/255. The OTHER dispatch arms were never swept. Every entry point that
 /// takes a `circuit_id` must refuse an unknown one — including the sentinel —
 /// rather than silently doing nothing.
+///
+/// [SEAM RUN 2] The killed agent's version of this test passed `[1, 2, 15]` as
+/// the public inputs of a genuine C3 proof. Those are not C3's public inputs, so
+/// every call died at step 1b with `OodConstraintFailed` — visible as five
+/// `[verify] OOD z mismatch` lines in its own output — and the step-4 dispatch it
+/// claimed to sweep was NEVER REACHED. It then asserted only that the error was
+/// not `CircuitZeroIsLegacyOnly`, which any error satisfies. A hollow green of
+/// exactly the class this repo keeps producing.
+///
+/// Fixed: the proof's OWN public inputs are used, so steps 0..3.5 (none of which
+/// read `circuit_id`) genuinely pass and the unknown id arrives at the step-4
+/// match. The assertion now names `UnsupportedCircuit`.
 #[test]
 fn every_circuit_id_dispatch_fails_closed_on_unknown_ids() {
-    // A structurally valid proof so the dispatch is reached with real data:
-    // parse a genuine C3 proof, then feed it under foreign ids.
-    let c3 = genuine_proof_bytes(3);
+    let c3 = common::prove3(&common::w3(0));
     let config3 = get_circuit_config(3).unwrap();
-    let proof = GenericCompactProof::from_bytes(&c3, config3).unwrap();
-    let public_inputs = [1u64, 2, 15];
+    let proof = GenericCompactProof::from_bytes(&c3.proof_bytes, config3).unwrap();
+    let public_inputs = &c3.public_inputs;
+
+    // Control: with these inputs and the honest id the proof verifies, which is
+    // what makes the unknown-id calls below reach step 4 rather than dying early.
+    p01_stark_verifier::verify::verify_generic(&proof, 3, public_inputs, config3)
+        .expect("genuine C3 proof with its own public inputs must verify");
 
     for cid in [7u8, 8, 100, 254, u8::MAX] {
-        // verify_generic's step-4 dispatch.
-        let err = p01_stark_verifier::verify::verify_generic(&proof, cid, &public_inputs, config3)
+        let err = p01_stark_verifier::verify::verify_generic(&proof, cid, public_inputs, config3)
             .unwrap_err();
         assert!(
-            !matches!(err, p01_stark_verifier::verify::VerifyError::CircuitZeroIsLegacyOnly),
-            "circuit {cid} produced the C0 error",
+            matches!(err, p01_stark_verifier::verify::VerifyError::UnsupportedCircuit),
+            "circuit {cid} must be refused by the step-4 dispatch as UnsupportedCircuit, got \
+             {err:?}. Anything else means the id was rejected somewhere earlier and this test \
+             is not exercising the dispatch at all.",
         );
     }
 
     // Circuit 0 must fail closed at get_boundary_assertions' CALLERS too — but
     // 0 itself is a listed id there, so the refusal lives in verify_generic.
     assert!(matches!(
-        p01_stark_verifier::verify::verify_generic(&proof, 0, &public_inputs, config3),
+        p01_stark_verifier::verify::verify_generic(&proof, 0, public_inputs, config3),
         Err(p01_stark_verifier::verify::VerifyError::CircuitZeroIsLegacyOnly),
     ));
+}
+
+// ============================================================================
+// 7. The wire layout, measured — and what truncation can and cannot buy
+// ============================================================================
+
+/// The byte layout `from_bytes` walks, derived from the CONFIG alone.
+///
+/// `header_len` is everything up to and including the 2-byte `num_queries`
+/// field; `query_block` is the per-query block; the tail is
+/// `num_queries * quotient_segments * 8`.
+///
+/// `query_block` is **not** written out from the wire spec — it is solved from
+/// the measured proof length, and `layout` asserts the division is exact. That
+/// makes this helper a measurement rather than a restatement of the parser, and
+/// it is what lets `wire_layout_is_a_config_constant` claim an EXACT length.
+struct Layout {
+    header_len: usize,
+    query_block: usize,
+    num_queries: usize,
+    k: usize,
+}
+
+fn layout(circuit_id: u8, proof_len: usize) -> Layout {
+    let c = get_circuit_config(circuit_id).expect("0..=6 has a config");
+    let k = c.quotient_segments;
+    let nq = c.num_queries;
+    let folds = (c.lde_size / c.fri_final_poly_size).trailing_zeros() as usize;
+    let num_fri_layers = folds - 1;
+
+    // trace_root | quotient_root | ood_current | ood_next | ood_z | ood_quotient
+    // | num_fri_layers(1) | fri_layer_roots | fri_final_poly_size(2)
+    // | fri_final_poly | grinding_nonce(8) | num_queries(2)
+    let header_len = 32
+        + 32
+        + c.trace_width * 8
+        + c.trace_width * 8
+        + 8
+        + k * 8
+        + 1
+        + num_fri_layers * 32
+        + 2
+        + c.fri_final_poly_size * 8
+        + 8
+        + 2;
+
+    let body = proof_len
+        .checked_sub(header_len + nq * k * 8)
+        .unwrap_or_else(|| panic!("C{circuit_id}: proof shorter than header+tail"));
+    assert_eq!(
+        body % nq,
+        0,
+        "C{circuit_id}: {body} body bytes do not divide into {nq} query blocks — the wire \
+         layout this helper assumes has drifted from the parser",
+    );
+    Layout { header_len, query_block: body / nq, num_queries: nq, k }
+}
+
+/// **MEASURED: the length `from_bytes` requires is a CONFIG CONSTANT, and it is
+/// exactly the length the prover emits.**
+///
+/// This is the missing half of `parser_length_check_is_a_minimum_not_an_equality`.
+/// That test shows the parser ignores a tail. This one shows the parser's
+/// *required* length `R_k` depends on nothing an attacker supplies: every
+/// variable-looking field (`num_fri_layers`, `fri_final_poly_size`,
+/// `num_queries`) is pinned to the config before it can move the cursor's final
+/// total. So `parses_as(bytes, k)` is monotone in `bytes.len()` with a single
+/// threshold `R_k`, and `R_k` equals the genuine proof size.
+///
+/// The consequence is the one that matters for the probe: **truncation cannot
+/// manufacture a cross-circuit parse.** A prefix of a C_n proof at any length
+/// either falls short of `R_k` or presents the same bytes the full-length matrix
+/// already rejected. `truncation_cannot_manufacture_a_cross_circuit_parse` shows
+/// that by brute force; this test shows why.
+#[test]
+fn wire_layout_is_a_config_constant_equal_to_the_emitted_proof_size() {
+    for cid in 0u8..=6 {
+        let bytes = genuine_proof_bytes(cid);
+        let l = layout(cid, bytes.len());
+        let reconstructed = l.header_len + l.num_queries * l.query_block + l.num_queries * l.k * 8;
+        assert_eq!(reconstructed, bytes.len(), "C{cid}: layout arithmetic missed the length");
+
+        // R_k by bisection on the prefix length. Monotone by the argument above;
+        // the assertions below are what actually prove it here.
+        let (mut lo, mut hi) = (0usize, bytes.len());
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if parses_as(&bytes[..mid], cid) { hi = mid } else { lo = mid + 1 }
+        }
+        assert_eq!(
+            lo,
+            bytes.len(),
+            "C{cid}: the parser accepts a {lo}-byte prefix of a {}-byte proof. The required \
+             length is supposed to be the whole proof — a parser that is satisfied early is a \
+             confusion oracle, because the bytes past {lo} are then free.",
+            bytes.len(),
+        );
+    }
+}
+
+/// Brute force behind `wire_layout_is_a_config_constant…`: for EVERY ordered
+/// pair and EVERY prefix length, no foreign parse exists.
+///
+/// This closes the one gap the 7×7 matrix leaves open. `proof_size` is chosen by
+/// the CALLER at `init_proof_buffer_v2`, and `verify_uniform` slices exactly
+/// `proof_size` bytes out of the account — so the attacker, not the prover,
+/// picks the length the probe sees. Truncation is free. The matrix only tested
+/// the full length and the 145,000-byte padding.
+#[test]
+fn truncation_cannot_manufacture_a_cross_circuit_parse() {
+    let proofs = all_genuine();
+    // Every parse threshold in the set, so the sweep cannot step over one.
+    let thresholds: Vec<usize> = proofs.iter().map(|p| p.len()).collect();
+
+    for n in 0..7usize {
+        for k in 0..7usize {
+            if n == k {
+                continue;
+            }
+            let src = &proofs[n];
+            // Dense sweep near every threshold, coarse sweep everywhere else.
+            let mut lens: Vec<usize> = (0..=src.len()).step_by(211).collect();
+            for t in &thresholds {
+                for d in 0..=8usize {
+                    if *t >= d {
+                        lens.push(t - d);
+                    }
+                    if t + d <= src.len() {
+                        lens.push(t + d);
+                    }
+                }
+            }
+            lens.push(src.len());
+            for len in lens {
+                if len > src.len() {
+                    continue;
+                }
+                assert!(
+                    !parses_as(&src[..len], k as u8),
+                    "CONFUSION BY TRUNCATION: the first {len} bytes of a genuine C{n} proof \
+                     parse as C{k}. `proof_size` is caller-chosen, so this length is free to \
+                     an attacker.",
+                );
+            }
+        }
+    }
+}
+
+// ============================================================================
+// 8. THE QUERY-COUNT HOLE — the claim the killed agent left unverified
+// ============================================================================
+
+/// Splice a proof so it carries `extra` MORE queries than its config wants: bump
+/// the wire count, append copies of query block 0, and extend the quotient tail
+/// with canonical zeros so the length arithmetic still closes.
+///
+/// The duplicated blocks are byte-identical to a genuine one — real position,
+/// real trace rows, real Merkle paths, real FRI openings — so nothing downstream
+/// of the count check can reject them on their contents. That is the point: the
+/// count check is the only thing in the way.
+fn with_surplus_queries(bytes: &[u8], circuit_id: u8, extra: usize) -> Vec<u8> {
+    let l = layout(circuit_id, bytes.len());
+    let nq = l.num_queries + extra;
+    assert!(nq <= 256, "the old cap was 256; a test above it proves nothing about the old code");
+
+    let mut out = Vec::with_capacity(bytes.len() + extra * (l.query_block + l.k * 8));
+    out.extend_from_slice(&bytes[..l.header_len - 2]);
+    out.extend_from_slice(&(nq as u16).to_le_bytes());
+
+    let body_start = l.header_len;
+    let body_end = body_start + l.num_queries * l.query_block;
+    out.extend_from_slice(&bytes[body_start..body_end]);
+    for _ in 0..extra {
+        out.extend_from_slice(&bytes[body_start..body_start + l.query_block]);
+    }
+
+    out.extend_from_slice(&bytes[body_end..]);
+    out.extend(std::iter::repeat(0u8).take(extra * l.k * 8));
+    out
+}
+
+/// **THE DEFECT, verified.**
+///
+/// `verify_query_positions_legacy` gated on `proof.queries.len() < NUM_QUERIES`,
+/// and the legacy parser bounded the wire count only by `> 256`. Together they
+/// accepted a C0 proof carrying up to 256 queries where 27 are expected, and the
+/// `i < expected.len()` guard in the comparison loop meant **every surplus
+/// position went uncompared to the Fiat-Shamir-derived list** before entering the
+/// per-query Merkle, FRI and constraint loops.
+///
+/// This is the exact hole B1 closed on the generic path (`verify_query_positions_
+/// generic`, `<` → `!=`) while its own note said "the legacy path already gates
+/// on the constant" — it did, with `<`, which is the same hole from the same
+/// side. C0 is the sole verifier for `zk_shielded::{pause,resume,cancel}_private_
+/// stark` and `p01_quantum_wallet`, so this was the widest-reach instance of it.
+///
+/// Both ends are closed now. This test goes RED if EITHER is reopened, which is
+/// why it runs the whole pipeline and not just the parser:
+///   * revert only the parser (`!= NUM_QUERIES` → `> 256`) and
+///     `verify_query_positions_legacy` still refuses;
+///   * revert only `verify_query_positions_legacy` (`!=` → `<`) and the parser
+///     still refuses;
+///   * revert both and a 28-query C0 proof VERIFIES.
+#[test]
+fn legacy_c0_pipeline_refuses_surplus_queries() {
+    let c0 = common::prove0(&common::w0(0));
+    let commitment = p01_stark_verifier::goldilocks::Felt::new(c0.commitment);
+
+    // Control: the honest 27-query proof still verifies end to end. Without this
+    // the test below could pass because the splice broke something unrelated.
+    let honest = CompactStarkProof::from_bytes(&c0.proof_bytes).expect("genuine C0 must parse");
+    assert_eq!(honest.queries.len(), 27, "C0 carries 27 queries");
+    p01_stark_verifier::verify::verify_subscriber_ownership(&honest, commitment)
+        .expect("honest C0 proof must verify");
+
+    for extra in [1usize, 5, 229] {
+        let spliced = with_surplus_queries(&c0.proof_bytes, 0, extra);
+        let n = 27 + extra;
+        match CompactStarkProof::from_bytes(&spliced) {
+            None => {}
+            Some(p) => {
+                assert_eq!(p.queries.len(), n, "splice built the buffer it claimed to");
+                let r = p01_stark_verifier::verify::verify_subscriber_ownership(&p, commitment);
+                assert!(
+                    r.is_err(),
+                    "C0 ACCEPTED a proof carrying {n} queries where 27 are expected. The \
+                     surplus {extra} positions were never compared to the derived list. C0 is \
+                     the sole verifier for four shipped instructions.",
+                );
+            }
+        }
+    }
+}
+
+/// The generic twin, on the two circuits `verify_uniform` probes first. B1 closed
+/// `verify_query_positions_generic`; the parser now refuses the count as well, so
+/// this pins both ends here too.
+#[test]
+fn generic_pipeline_refuses_surplus_queries() {
+    for cid in [1u8, 3] {
+        let (bytes, pubs) = match cid {
+            1 => {
+                let d = common::prove1(&common::w1(0));
+                (d.proof_bytes, d.public_inputs)
+            }
+            _ => {
+                let d = common::prove3(&common::w3(0));
+                (d.proof_bytes, d.public_inputs)
+            }
+        };
+        let config = get_circuit_config(cid).unwrap();
+
+        let honest = GenericCompactProof::from_bytes(&bytes, config).expect("genuine must parse");
+        p01_stark_verifier::verify::verify_generic(&honest, cid, &pubs, config)
+            .unwrap_or_else(|e| panic!("honest C{cid} proof must verify: {e:?}"));
+
+        for extra in [1usize, 7] {
+            let spliced = with_surplus_queries(&bytes, cid, extra);
+            let n = config.num_queries + extra;
+            if let Some(p) = GenericCompactProof::from_bytes(&spliced, config) {
+                assert_eq!(p.queries.len(), n);
+                assert!(
+                    p01_stark_verifier::verify::verify_generic(&p, cid, &pubs, config).is_err(),
+                    "C{cid} ACCEPTED a proof carrying {n} queries where {} are expected",
+                    config.num_queries,
+                );
+            }
+        }
+    }
+}
+
+/// A surplus-query buffer must not become a CONFUSION either: bumping the count
+/// changes the length, and length is the one thing the probe cannot use. Sweep
+/// the spliced buffers across all seven configs.
+#[test]
+fn surplus_query_splices_do_not_parse_as_another_circuit() {
+    for n in 0u8..=6 {
+        let bytes = genuine_proof_bytes(n);
+        for extra in [1usize, 5] {
+            let spliced = with_surplus_queries(&bytes, n, extra);
+            for k in 0u8..=6 {
+                assert!(
+                    !parses_as(&spliced, k),
+                    "a C{n} proof re-counted to +{extra} queries parses as C{k}",
+                );
+                assert!(
+                    !parses_as(&pad_uniform(&spliced), k),
+                    "…and under the padded envelope, C{n}+{extra} parses as C{k}",
+                );
+            }
+        }
+    }
 }
