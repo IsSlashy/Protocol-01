@@ -411,7 +411,13 @@ fn no_consumer_requires_phase_one_without_phase_two() {
             Ok(t) => t,
             Err(_) => continue,
         };
-        if !contains_discriminator(&text) {
+        if !reads_a_proof_buffer(&text) {
+            continue;
+        }
+        // A file that DEFINES the shared reader is not a consumer of it: its
+        // job is to return the flags, not to gate on them. See
+        // `reads_a_proof_buffer` for the measurement behind this.
+        if text.contains("pub fn parse_stark_proof_buffer") {
             continue;
         }
 
@@ -430,7 +436,7 @@ fn no_consumer_requires_phase_one_without_phase_two() {
         // than skipped silently, and the assertion below is what keeps
         // "comment the file out" from becoming a way to pass this gate: a
         // dormant file must expose no handler at all.
-        if !contains_discriminator(&code) {
+        if !reads_a_proof_buffer(&code) {
             assert!(
                 !code.contains("fn handler"),
                 "{rel}: the ProofBuffer discriminator is commented out but a live \
@@ -646,7 +652,100 @@ fn the_scan_trigger_does_not_depend_on_how_the_discriminator_is_spelled() {
     ));
 }
 
+/// [ADVERSARY] The trigger must survive the OTHER lineage's fix to the same
+/// problem. Transcriptions of real shapes from `seam-duplicated-divergence`.
+#[test]
+fn a_consumer_that_uses_the_shared_reader_is_still_a_consumer() {
+    // The post-migration consumer: no discriminator anywhere in the file.
+    let migrated_consumer = r#"
+        use crate::stark_buffer::{parse_stark_proof_buffer, StarkProofBufferView,
+                                  STARK_VERIFIER_PROGRAM_ID};
+        pub fn handler(ctx: Context<X>) -> Result<()> {
+            require!(*proof_info.owner == STARK_VERIFIER_PROGRAM_ID, E::InvalidProof);
+            let StarkProofBufferView { circuit_id, verified, .. } =
+                parse_stark_proof_buffer(&proof_data)?;
+            require!(verified, E::InvalidProof);
+            Ok(())
+        }
+    "#;
+    assert!(
+        !contains_discriminator(migrated_consumer),
+        "the premise of this test is that the migrated consumer has no discriminator"
+    );
+    assert!(
+        reads_a_proof_buffer(migrated_consumer),
+        "a consumer that reads the buffer through the shared reader is invisible to the scan"
+    );
+
+    // The reader module itself: it has the discriminator, and its require!s
+    // check length and discriminator, never `verified`. Scanned as a consumer
+    // it would be reported as unguarded, which is a false red, so the call site
+    // excludes it on `pub fn parse_stark_proof_buffer`.
+    let reader_module = r#"
+        pub const STARK_PROOF_BUFFER_DISCRIMINATOR: [u8; 8] = [71, 133, 225, 94, 9, 130, 40, 161];
+        pub fn parse_stark_proof_buffer(data: &[u8]) -> Result<StarkProofBufferView> {
+            require!(data.len() >= PROOF_BUF_MIN_LEN, E::InvalidProof);
+            require!(data[0..8] == STARK_PROOF_BUFFER_DISCRIMINATOR, E::InvalidProof);
+            Ok(StarkProofBufferView { verified: data[49] == 1, .. })
+        }
+    "#;
+    assert!(reads_a_proof_buffer(reader_module));
+    assert!(
+        reader_module.contains("pub fn parse_stark_proof_buffer"),
+        "the exclusion at the call site keys on this exact definition"
+    );
+    let stmts = require_statements(&strip_comments(reader_module));
+    let p1 = stmts.iter().filter(|s| !s.contains("deep") && s.contains("verified")).count();
+    assert_eq!(
+        p1, 0,
+        "the reader module scores zero phase-1 require!s, which is why it must be excluded \
+         rather than graded: {stmts:#?}"
+    );
+
+    // The exclusion must not swallow a real consumer that merely MENTIONS the
+    // reader by name in prose or an import.
+    assert!(!migrated_consumer.contains("pub fn parse_stark_proof_buffer"));
+}
+
 // ---------------------------------------------------------------------------
+
+/// Does `src` read a `ProofBuffer` at all — by pasting the discriminator, or by
+/// calling a shared reader that pastes it once?
+///
+/// [ADVERSARY 2026-08-03] The discriminator alone is not a durable trigger, and
+/// this is MEASURED against the other lineage rather than imagined. On
+/// `seam-duplicated-divergence` (subscription line, base b81755b9) the twelve
+/// hand-written `ProofBuffer` parsers inside `zk_shielded` were collapsed into
+/// one `stark_buffer.rs` — a strict improvement, and the right fix for the
+/// divergence it was written to close. But it also deletes the discriminator
+/// from all twelve consumer files:
+///
+/// ```text
+/// git grep -l "71, 133, 225, 94, 9, 130, 40, 161" seam-duplicated-divergence -- programs
+///   programs/p01_liquidity/src/instructions/prefund.rs
+///   programs/p01_quantum_wallet/src/stark.rs
+///   programs/p01_zkspl/src/stark_proof.rs
+///   programs/zk_shielded/src/instructions/transfer_denominated_stark.rs   (dormant)
+///   programs/zk_shielded/src/instructions/unshield_denominated_stark.rs   (dormant)
+///   programs/zk_shielded/src/stark_buffer.rs
+/// ```
+///
+/// Six files, of which four are consumers. The moment the two lineages meet,
+/// this scan's `checked.len() >= 13` floor fires — LOUDLY, which is the right
+/// failure — and the tempting repair is to lower the floor. That would silently
+/// stop grading twelve consumers. The repair is here instead: a file that CALLS
+/// the shared reader is a consumer of the buffer exactly as much as one that
+/// parses it inline.
+///
+/// The file that DEFINES the reader is excluded at the call site above: its
+/// `require!`s check the length and the discriminator, never `verified`, so the
+/// counting rule would score it `phase1 = 0` and report a parser module as an
+/// unguarded consumer.
+fn reads_a_proof_buffer(src: &str) -> bool {
+    contains_discriminator(src)
+        || src.contains("parse_stark_proof_buffer(")
+        || src.contains("StarkProofBufferView")
+}
 
 /// Does `src` carry the `ProofBuffer` discriminator in ANY spelling a Rust
 /// author could plausibly write?
