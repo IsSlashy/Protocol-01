@@ -350,15 +350,20 @@ fn no_consumer_requires_phase_one_without_phase_two() {
         let mut phase2 = 0usize;
         let mut pins_circuit_zero = false;
 
-        let compact_all: String = code.chars().filter(|c| !c.is_whitespace()).collect();
-        if compact_all.contains("circuit_id==0")
-            || compact_all.contains("circuit_id==CIRCUIT_SUBSCRIBER_OWNERSHIP")
-            || compact_all.contains("circuit_id==WALLET_AUTH_CIRCUIT_ID")
-        {
-            pins_circuit_zero = true;
-        }
-
         for stmt in require_statements(&code) {
+            // The C0 exemption must be a STANDALONE pin, not `circuit_id == 0`
+            // appearing anywhere in the file. `p01_quantum_wallet` contains that
+            // very text inside its phase-2 disjunction
+            // (`circuit_id == WALLET_AUTH_CIRCUIT_ID || deep_ali_verified`), and
+            // a substring test exempted the file wholesale — turning the one
+            // consumer whose circuit id is a PARAMETER, not a constant, into the
+            // one file this scan refused to look at.
+            let compact: String = stmt.chars().filter(|c| !c.is_whitespace()).collect();
+            if compact.starts_with("require!(circuit_id==0,")
+                || compact.starts_with("require!(circuit_id==CIRCUIT_SUBSCRIBER_OWNERSHIP,")
+            {
+                pins_circuit_zero = true;
+            }
             if stmt.contains("deep_ali") || stmt.contains("_deep") {
                 phase2 += 1;
             } else if stmt.contains("verified") {
@@ -382,7 +387,6 @@ fn no_consumer_requires_phase_one_without_phase_two() {
             ));
             continue;
         }
-        let _ = &dormant;
         if phase2 < phase1 {
             failures.push(format!(
                 "{rel}: {phase1} phase-1 require!(..verified..) but only {phase2} \
@@ -465,6 +469,27 @@ fn the_scanner_reads_statements_and_ignores_prose() {
     let p2 = stmts.iter().filter(|s| s.contains("deep_ali") || s.contains("_deep")).count();
     let p1 = stmts.iter().filter(|s| !s.contains("deep") && s.contains("verified")).count();
     assert_eq!((p1, p2), (1, 0), "the docstring was counted as the gate");
+
+    // The C0 exemption must be a STANDALONE pin. `p01_quantum_wallet` mentions
+    // `circuit_id == WALLET_AUTH_CIRCUIT_ID` inside its phase-2 disjunction, and
+    // a substring test over the whole file exempted it — the one consumer whose
+    // circuit id is a parameter rather than a constant became the one file the
+    // scan refused to look at.
+    let pinned = "require!(circuit_id == 0, E::X);";
+    let not_pinned =
+        "require!(parsed.circuit_id == WALLET_AUTH_CIRCUIT_ID || parsed.deep_ali_verified, E::X);";
+    let is_pin = |src: &str| {
+        require_statements(src).iter().any(|s| {
+            let c: String = s.chars().filter(|ch| !ch.is_whitespace()).collect();
+            c.starts_with("require!(circuit_id==0,")
+                || c.starts_with("require!(circuit_id==CIRCUIT_SUBSCRIBER_OWNERSHIP,")
+        })
+    };
+    assert!(is_pin(pinned), "a standalone C0 pin must exempt");
+    assert!(
+        !is_pin(not_pinned),
+        "a disjunction that MENTIONS circuit 0 must not exempt the file"
+    );
 }
 
 // ---------------------------------------------------------------------------
