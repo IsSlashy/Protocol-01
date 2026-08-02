@@ -154,13 +154,20 @@
  *
  * # The blob is ALSO corroborated against the source it is built from
  *
- * The panic-literal scan is kept, demoted to corroboration. BLOB_B1_MARKERS are
- * scanned in the blob and in `stark/src/compact.rs`, and the two sets must be
- * EQUAL. That still detects a blob that was not built from this tree, and a
- * string-stripped artifact, neither of which the digests speak to. And a blob
- * that PROVES one generation while its strings CLAIM another is now its own named
- * failure — that combination is the four-byte edit above and has no innocent
- * explanation.
+ * The panic-literal scan is kept, demoted to corroboration. BLOB_GEN_MARKERS
+ * (BLOB_B1_MARKERS + BLOB_B2_MARKERS) are scanned in the blob and in
+ * `stark/src/compact.rs`, and the two sets must be EQUAL. That still detects a
+ * blob that was not built from this tree, and a string-stripped artifact,
+ * neither of which the digests speak to. And a blob that PROVES one generation
+ * while its strings CLAIM another is now its own named failure — that
+ * combination is the four-byte edit above and has no innocent explanation.
+ *
+ * The two lists were ONE list until 2026-08-02, and `classify` could only say
+ * `b1` or `pre-b1`, so a B2 blob carrying both `[B2] …-SEGMENTED` asserts was
+ * reported as claiming b1 while proving b2 — a reader that could not count past
+ * one, dressed up as an accusation against the artifact. `classifyBlobStrings`
+ * is a three-rung ladder now. The deployed-ELF side is deliberately still
+ * two-valued; see the note on ELF_B1_MARKERS for the reason and the consequence.
  *
  * # An independent audit of this file, 2026-07-31, and what it found
  *

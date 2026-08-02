@@ -323,7 +323,8 @@ function* walk(dir) {
 
 const argv = process.argv.slice(2);
 const WRITE = argv.includes('--write');
-const CHECK = argv.includes('--check') || !WRITE;
+// --check is the default. It is still accepted explicitly because package.json
+// passes it, and naming the mode at the call site is worth the redundancy.
 if (WRITE && argv.includes('--check')) {
   console.error('usage: sync-program-ids.mjs [--check | --write]');
   process.exit(2);
