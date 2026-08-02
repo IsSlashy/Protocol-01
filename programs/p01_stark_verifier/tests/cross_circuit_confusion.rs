@@ -705,6 +705,25 @@ fn layout(circuit_id: u8, proof_len: usize) -> Layout {
 fn wire_layout_is_a_config_constant_equal_to_the_emitted_proof_size() {
     for cid in 0u8..=6 {
         let bytes = genuine_proof_bytes(cid);
+
+        // [ADVERSARY 2026-08-03] CONTROL, and it is load-bearing rather than
+        // decorative. Both assertions below pass VACUOUSLY when the parser
+        // rejects the full-length proof: the bisection then finds no accepting
+        // prefix at all, `lo` walks to `bytes.len()`, and `lo == bytes.len()`
+        // holds for "R_k is exactly the proof size" and for "R_k does not
+        // exist" alike. MEASURED: mutating `CONFIG_BALANCE_PROOF.merkle_depth`
+        // from 11 to 12 makes C2 unparseable at every length and this test
+        // stayed GREEN through it, while
+        // `parser_length_check_is_a_minimum_not_an_equality` and
+        // `wire_parity::every_wire_field_agrees_with_the_config_that_declares_it`
+        // both went red. A test whose headline claim survives its subject
+        // disappearing is not measuring the claim.
+        assert!(
+            parses_as(&bytes, cid),
+            "C{cid}: the genuine full-length proof does not parse, so the bisection below \
+             would measure nothing and pass. Fix the parse first."
+        );
+
         let l = layout(cid, bytes.len());
         let reconstructed = l.header_len + l.num_queries * l.query_block + l.num_queries * l.k * 8;
         assert_eq!(reconstructed, bytes.len(), "C{cid}: layout arithmetic missed the length");
@@ -738,6 +757,17 @@ fn wire_layout_is_a_config_constant_equal_to_the_emitted_proof_size() {
 #[test]
 fn truncation_cannot_manufacture_a_cross_circuit_parse() {
     let proofs = all_genuine();
+    // [ADVERSARY] CONTROL. This test is entirely negative, so it is satisfied by
+    // a parser that accepts NOTHING as well as by one that separates the
+    // circuits correctly. The diagonal is asserted here so the sweep below is
+    // known to be running against a parser that still parses.
+    for (cid, bytes) in proofs.iter().enumerate() {
+        assert!(
+            parses_as(bytes, cid as u8),
+            "C{cid}: genuine proof no longer parses as itself — every assertion below would \
+             then pass for the wrong reason"
+        );
+    }
     // Every parse threshold in the set, so the sweep cannot step over one.
     let thresholds: Vec<usize> = proofs.iter().map(|p| p.len()).collect();
 
