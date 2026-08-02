@@ -224,6 +224,192 @@ mod tests {
         assert!(parse_stark_proof_buffer(&encoded[..PROOF_BUF_MIN_LEN - 1]).is_err());
     }
 
+    /// [ADVERSARY 2026-08-03] The owner check is DELEGATED and was ENFORCED BY
+    /// NOTHING.
+    ///
+    /// `parse_stark_proof_buffer`'s own doc says it: "Does NOT check the account
+    /// owner — the caller must have already required
+    /// `*info.owner == STARK_VERIFIER_PROGRAM_ID`, because only the caller holds
+    /// the `AccountInfo`." That is correct as a design, and it is the single
+    /// most dangerous thing this module can get wrong: without it a consumer
+    /// reads any account whose first 83 bytes an attacker chose, including
+    /// `verified = 1` and `deep_ali_verified = 1` at bytes 49 and 82. The
+    /// discriminator is public, so forging the header costs one `create_account`
+    /// under a program the attacker controls.
+    ///
+    /// Every live consumer does check it — verified by hand at the time of
+    /// writing — but "every consumer happens to" is what the twelve duplicated
+    /// parsers this module replaced also had, right up until two of them
+    /// diverged. The obligation is now counted rather than trusted.
+    ///
+    /// The rule is a counting argument, deliberately not a keyword: a file may
+    /// not call `parse_stark_proof_buffer` more times than it `require!`s the
+    /// owner. `split_note_stark` parses two buffers and has two owner
+    /// require!s; `transfer_denominated_stark_v3` parses three and has three.
+    ///
+    /// What this CANNOT see, stated so it is not mistaken for more: whether the
+    /// owner require! guards the same `AccountInfo` the parse reads, and whether
+    /// either is on a reachable path. It is a floor, not a proof.
+    #[test]
+    fn every_caller_of_the_parser_requires_the_verifier_as_owner() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("programs/zk_shielded -> repo root")
+            .to_path_buf();
+
+        let mut checked = 0usize;
+        let mut failures: Vec<String> = Vec::new();
+        let mut stack = vec![root.join("programs")];
+        let mut files: Vec<std::path::PathBuf> = Vec::new();
+        while let Some(d) = stack.pop() {
+            let entries = match std::fs::read_dir(&d) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    if name == "target" || name == "node_modules" || name == ".git" {
+                        continue;
+                    }
+                    stack.push(p);
+                } else if p.extension().map(|e| e == "rs").unwrap_or(false) {
+                    files.push(p);
+                }
+            }
+        }
+        files.sort();
+
+        for path in files {
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            if !rel.contains("/src/") {
+                continue;
+            }
+            let text = match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            // The module that DEFINES the parser is not a caller of it.
+            if text.contains("pub fn parse_stark_proof_buffer") {
+                continue;
+            }
+            // Comments do not call anything. A consumer that documents the
+            // owner check it does not perform must not score for it — the
+            // recurring defect in this repo is a gate that reads prose.
+            let code = strip_rust_comments(&text);
+            let parses = code.matches("parse_stark_proof_buffer(").count();
+            if parses == 0 {
+                continue;
+            }
+            checked += 1;
+            let owner_checks = code.matches("owner == STARK_VERIFIER_PROGRAM_ID").count();
+            if owner_checks < parses {
+                failures.push(format!(
+                    "{rel}: parses {parses} proof buffer(s) but requires the verifier as owner \
+                     only {owner_checks} time(s). Without it the account is attacker-supplied \
+                     and `verified`/`deep_ali_verified` are whatever bytes it wrote."
+                ));
+            }
+        }
+
+        assert!(
+            checked >= 10,
+            "expected at least 10 files calling parse_stark_proof_buffer, found {checked} — \
+             the scan stopped seeing the consumers and is no longer guarding anything"
+        );
+        assert!(failures.is_empty(), "unowned proof-buffer reads:\n{}", failures.join("\n"));
+    }
+
+    /// The scan above is worth what its parser reads, so the comment stripper is
+    /// tested on the shape that would defeat it.
+    #[test]
+    fn the_owner_scan_does_not_count_prose() {
+        let liar = r#"
+            /// Requires *proof_info.owner == STARK_VERIFIER_PROGRAM_ID before parsing.
+            // require!(*proof_info.owner == STARK_VERIFIER_PROGRAM_ID, E::X);
+            /* require!(*p.owner == STARK_VERIFIER_PROGRAM_ID, E::X); */
+            let v = parse_stark_proof_buffer(&data)?;
+        "#;
+        let code = strip_rust_comments(liar);
+        assert_eq!(code.matches("parse_stark_proof_buffer(").count(), 1);
+        assert_eq!(
+            code.matches("owner == STARK_VERIFIER_PROGRAM_ID").count(),
+            0,
+            "the docstring was counted as the owner check"
+        );
+
+        let honest = r#"
+            require!(*proof_info.owner == STARK_VERIFIER_PROGRAM_ID, E::X);
+            let v = parse_stark_proof_buffer(&data)?;
+        "#;
+        let code = strip_rust_comments(honest);
+        assert_eq!(code.matches("owner == STARK_VERIFIER_PROGRAM_ID").count(), 1);
+    }
+
+    /// Drop `//` line comments and `/* */` blocks, keeping string literals.
+    fn strip_rust_comments(src: &str) -> String {
+        let b: Vec<char> = src.chars().collect();
+        let mut out = String::with_capacity(src.len());
+        let (mut i, mut in_str, mut block) = (0usize, false, 0usize);
+        while i < b.len() {
+            if block > 0 {
+                if b[i] == '/' && i + 1 < b.len() && b[i + 1] == '*' {
+                    block += 1;
+                    i += 2;
+                    continue;
+                }
+                if b[i] == '*' && i + 1 < b.len() && b[i + 1] == '/' {
+                    block -= 1;
+                    i += 2;
+                    continue;
+                }
+                if b[i] == '\n' {
+                    out.push('\n');
+                }
+                i += 1;
+                continue;
+            }
+            if in_str {
+                if b[i] == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if b[i] == '"' {
+                    in_str = false;
+                }
+                out.push(b[i]);
+                i += 1;
+                continue;
+            }
+            if b[i] == '"' {
+                in_str = true;
+                out.push(b[i]);
+                i += 1;
+                continue;
+            }
+            if b[i] == '/' && i + 1 < b.len() && b[i + 1] == '/' {
+                while i < b.len() && b[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i] == '/' && i + 1 < b.len() && b[i + 1] == '*' {
+                block = 1;
+                i += 2;
+                continue;
+            }
+            out.push(b[i]);
+            i += 1;
+        }
+        out
+    }
+
     #[test]
     fn a_foreign_discriminator_is_rejected() {
         let (buf, _, _) = distinct_fixture();
