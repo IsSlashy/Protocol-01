@@ -5970,6 +5970,161 @@ mod merkle_update_e2e {
             verify_constraints_merkle_update,
         );
     }
+
+    // ======================================================================
+    // [MUTATION 2026-08-02] Step 5, `verify_boundary_constraints`.
+    //
+    // MEASURED: short-circuiting it to `Ok(())` (verify.rs
+    // `if assertions.is_empty() {` -> `if true {`) left the WHOLE suite green —
+    // 70 lib tests including the six phase-1 arm tests above, plus all twelve
+    // integration binaries, `cargo test` exit 0. Nothing in the repository
+    // required the per-query public-input binding to fire even once.
+    //
+    // It matters most for C2 and C4. Those are the two circuits whose phase-2
+    // entry point does NOT fold the boundary into the OOD identity —
+    // `verify_deep_ali_circuit_2` and `verify_deep_ali_circuit_4` never call
+    // `boundary_fold_at_ood`, unlike C0/C1/C3/C5/C6 — so this trace-aligned
+    // per-query check is the ONLY thing that binds their trace to their public
+    // inputs. `balance_proof_deep_ali_fails_on_wrong_public_inputs` and its C4
+    // twin do not cover that: they pass because the public inputs feed the
+    // Fiat-Shamir RLC alpha, which binds the CLAIMED inputs to the transcript,
+    // not the trace to the inputs. A prover who simply re-runs with different
+    // public inputs satisfies them.
+    //
+    // Scope, stated rather than implied: this guard covers C1, C2, C4 and C5.
+    // C3 and C6 are left to phase 2, where `boundary_fold_at_ood` binds the SAME
+    // assertion list at the OOD point on EVERY proof and is already covered by
+    // `merkle_path_deep_ali_fails_on_wrong_public_inputs` and
+    // `merkle_update_deep_ali_fails_on_wrong_public_inputs`. Reaching their step-5
+    // rows here would need ~190 witnesses each (2 assertion rows in 512, ~1.375
+    // trace-aligned queries per proof), which is not worth the wall clock for a
+    // check phase 2 already makes unconditional.
+    // ======================================================================
+
+    /// Sweep witnesses until one of them has a trace-aligned query on a row
+    /// carrying a PUBLIC-INPUT-derived boundary assertion, then require step 5
+    /// to reject when that public input is changed.
+    ///
+    /// Which public input feeds which row is discovered, not hardcoded: every
+    /// index is bumped in turn and the check is required to reject for at least
+    /// one of them. So the test cannot drift out of step with
+    /// `get_boundary_assertions`, and a row whose assertion is a hardcoded
+    /// `Felt::ZERO` (the capacity rows) correctly counts as no hit instead of
+    /// being mistaken for one.
+    ///
+    /// The sweep is run to completion rather than stopped at the first hit,
+    /// because the HIT RATE is the measurement that matters: step 5 fires only
+    /// when a query happens to land on an assertion row, so the fraction of
+    /// honest proofs on which it can fire at all is the strength of the
+    /// mechanism. For C2 and C4 that fraction is the strength of their ONLY
+    /// public-input binding. It is printed, never asserted against a target —
+    /// a number nobody has measured is not a number to pin.
+    fn step5_binding_must_fire(
+        label: &str,
+        circuit_id: u8,
+        cfg: &crate::compact_proof::CircuitConfig,
+        seeds: u64,
+        make: impl Fn(u64) -> p01_stark::compact::GenericCompactProofData,
+    ) {
+        let mut hits = 0usize;
+        let mut first: Option<(u64, usize, usize)> = None;
+        for seed in 0..seeds {
+            let pd = make(seed);
+            let p = crate::compact_proof::GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+                .unwrap_or_else(|| panic!("{label}: honest proof (seed {seed}) must parse"));
+            // Control: step 5 accepts the honest proof under its own inputs.
+            verify_boundary_constraints(&p, circuit_id, cfg, &pd.public_inputs)
+                .unwrap_or_else(|e| {
+                    panic!("{label}: step 5 must ACCEPT the honest proof (seed {seed}), got {e:?}")
+                });
+
+            for i in 0..pd.public_inputs.len() {
+                let mut pi = pd.public_inputs.clone();
+                pi[i] = pi[i].wrapping_add(1);
+                if verify_boundary_constraints(&p, circuit_id, cfg, &pi)
+                    == Err(VerifyError::BoundaryConstraintFailed)
+                {
+                    hits += 1;
+                    if first.is_none() {
+                        first = Some((seed, i, pd.public_inputs.len()));
+                    }
+                    break;
+                }
+            }
+        }
+
+        let (seed, idx, n_inputs) = first.unwrap_or_else(|| {
+            panic!(
+                "{label}: none of {seeds} witnesses drew a trace-aligned query on a \
+                 public-input assertion row, so step 5 was never exercised. That is either a \
+                 seed-budget problem or step 5 has stopped binding — investigate, do not raise \
+                 the budget reflexively."
+            )
+        });
+        println!(
+            "[STEP5] {label}: step 5 could fire on {hits}/{seeds} honest witnesses \
+             ({:.2}%); first at seed {seed} (public input {idx} of {n_inputs}), and it \
+             rejected the change there.",
+            100.0 * hits as f64 / seeds as f64,
+        );
+    }
+
+    #[test]
+    fn c1_step5_public_input_binding_fires() {
+        step5_binding_must_fire(
+            "C1 pool_commitment",
+            1,
+            &crate::compact_proof::CONFIG_POOL_COMMITMENT,
+            300,
+            |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11),
+        );
+    }
+
+    /// C2 has NO boundary fold in phase 2, so this is its only public-input
+    /// binding anywhere in the verifier.
+    #[test]
+    fn c2_step5_public_input_binding_fires() {
+        step5_binding_must_fire(
+            "C2 balance_proof",
+            2,
+            &crate::compact_proof::CONFIG_BALANCE_PROOF,
+            300,
+            |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999),
+        );
+    }
+
+    /// C4 has NO boundary fold in phase 2 either — same standing as C2.
+    #[test]
+    fn c4_step5_public_input_binding_fires() {
+        step5_binding_must_fire(
+            "C4 confidential_balance",
+            4,
+            &crate::compact_proof::CONFIG_CONFIDENTIAL_BALANCE,
+            300,
+            |s| {
+                p01_stark::compact::generate_confidential_balance_compact_proof(
+                    42 + s, 1000, 111, 800, 222, 200, 333, 999,
+                )
+            },
+        );
+    }
+
+    #[test]
+    fn c5_step5_public_input_binding_fires() {
+        step5_binding_must_fire(
+            "C5 transfer",
+            5,
+            &crate::compact_proof::CONFIG_TRANSFER,
+            // C5 proofs are the most expensive of the four; 128 witnesses is
+            // enough to land several hits and keeps this test under a minute.
+            128,
+            |s| {
+                p01_stark::compact::generate_transfer_compact_proof(
+                    42 + s, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
+                )
+            },
+        );
+    }
 }
 
 /// [C2] Circuit-0 boundary-fold parity + auth-forgery rejection.
