@@ -20,6 +20,48 @@
 //! public inputs to `Felt::ZERO`, and for C3/C6 an out-of-range `depth` — a
 //! CALLER-SUPPLIED public input — selected a shorter assertion list that
 //! dropped the root bindings. See `verify::PublicInputCountMismatch`.
+//!
+//! # How far those two holes reach — measured, not assumed
+//!
+//! Neither is a live fund bug today, and this file does not claim one. What
+//! stops them is INCIDENTAL, and that is the point:
+//!
+//!  * Both are inside the transcript. `verify_generic` derives the OOD point
+//!    and the query positions from `public_inputs_to_bytes(public_inputs)`, so
+//!    a short input list or an out-of-range `depth` cannot be spliced onto an
+//!    honest proof — Fiat-Shamir refuses first. Reaching them needs a proof
+//!    GENERATED against the degraded statement, i.e. a bespoke prover. The
+//!    in-tree prover cannot emit one: `depth` is `path_elements.len()` and both
+//!    C3 and C6 have 512-row traces at 32 rows per level, capping it at 16.
+//!    A malicious prover is inside the threat model, so this bounds the demo,
+//!    not the hole.
+//!
+//!  * Such a proof would still die at the CONSUMER, because every consumer
+//!    rebuilds `sha256` over a FIXED number of `u64`s and compares. A one-input
+//!    C1 buffer stores `sha256(8 bytes)`; `subscribe_private_stark` rebuilds
+//!    `sha256(16 bytes)`. They do not match.
+//!
+//! So the phase-1 contract — "`verified = true` means these public inputs were
+//! proven" — was false, and the only thing keeping that from being a fund bug
+//! was that no consumer happens to rebuild a short hash.
+//! `the_verifier_arity_equals_what_every_consumer_rebuilds` and
+//! `the_legacy_single_input_entry_point_cannot_satisfy_any_generic_circuit`
+//! turn red the day one does. `p01_quantum_wallet::validate_wallet_proof` was
+//! already the shape that becomes one: it takes `expected_circuit_id` as a
+//! parameter and its callers pass a constant.
+//!
+//! # What this file does NOT cover
+//!
+//! **The proof buffer is a reusable capability, not a one-shot ticket.**
+//! Nothing marks a verified buffer consumed — not the verifier, not any
+//! consumer. A C1 buffer verified for `[nullifier, commitment]` satisfies
+//! `subscribe_private_stark`, `split_note_stark`,
+//! `unshield_denominated_stark_v3` and `transfer_denominated_stark_v3` alike,
+//! because all four rebuild the same two-element hash, and it keeps satisfying
+//! them in transaction after transaction until `close_proof_buffer` runs.
+//! Replay is prevented ENTIRELY by each consumer's own nullifier record. That
+//! is a property of the subscription lineage, not of this program, and it is
+//! stated here so it is not mistaken for something this seam enforces.
 
 use p01_stark_verifier::{hash_public_inputs, verify::expected_public_input_count, ProofBuffer};
 
@@ -257,6 +299,7 @@ fn the_phase_two_flag_is_the_last_byte_before_the_proof_data() {
 fn no_consumer_requires_phase_one_without_phase_two() {
     let root = repo_root();
     let mut checked = Vec::new();
+    let mut dormant = Vec::new();
     let mut failures = Vec::new();
 
     for path in rust_sources_under(&root.join("programs")) {
@@ -278,24 +321,47 @@ fn no_consumer_requires_phase_one_without_phase_two() {
             continue;
         }
 
+        // Comments first, then WHOLE `require!(..)` statements — a `require!`
+        // whose condition wraps onto the next line is the normal shape once the
+        // condition is a disjunction, and a line-based scan sees an empty
+        // condition and scores it zero in BOTH directions. That is a false
+        // green, and this scan produced one on its first run.
+        let code = strip_comments(&text);
+
+        // A file whose discriminator survives only inside a comment is not a
+        // consumer — `transfer_denominated_stark.rs` and
+        // `unshield_denominated_stark.rs` are the deprecated v2 handlers,
+        // commented out WHOLESALE (module, handler, and the `#[program]`
+        // registration in `zk_shielded/src/lib.rs`). They are recorded rather
+        // than skipped silently, and the assertion below is what keeps
+        // "comment the file out" from becoming a way to pass this gate: a
+        // dormant file must expose no handler at all.
+        if !code.contains("71, 133, 225, 94, 9, 130, 40, 161") {
+            assert!(
+                !code.contains("fn handler"),
+                "{rel}: the ProofBuffer discriminator is commented out but a live \
+                 `fn handler` remains — half-deleted consumer"
+            );
+            dormant.push(rel);
+            continue;
+        }
+
         let mut phase1 = 0usize;
         let mut phase2 = 0usize;
         let mut pins_circuit_zero = false;
-        for line in text.lines() {
-            let t = line.trim();
-            if t.starts_with("//") {
-                continue;
-            }
-            let compact: String = t.chars().filter(|c| !c.is_whitespace()).collect();
-            if compact.contains("circuit_id==0") || compact.contains("circuit_id==CIRCUIT_SUBSCRIBER_OWNERSHIP") {
-                pins_circuit_zero = true;
-            }
-            if !t.contains("require!(") {
-                continue;
-            }
-            if t.contains("deep_ali") || t.contains("_deep,") || t.contains("_deep ") {
+
+        let compact_all: String = code.chars().filter(|c| !c.is_whitespace()).collect();
+        if compact_all.contains("circuit_id==0")
+            || compact_all.contains("circuit_id==CIRCUIT_SUBSCRIBER_OWNERSHIP")
+            || compact_all.contains("circuit_id==WALLET_AUTH_CIRCUIT_ID")
+        {
+            pins_circuit_zero = true;
+        }
+
+        for stmt in require_statements(&code) {
+            if stmt.contains("deep_ali") || stmt.contains("_deep") {
                 phase2 += 1;
-            } else if t.contains("verified") {
+            } else if stmt.contains("verified") {
                 phase1 += 1;
             }
         }
@@ -306,11 +372,17 @@ fn no_consumer_requires_phase_one_without_phase_two() {
             continue;
         }
         if phase1 == 0 {
+            let stmts: Vec<String> = require_statements(&code)
+                .into_iter()
+                .map(|s| s.chars().take(90).collect::<String>())
+                .collect();
             failures.push(format!(
-                "{rel}: reads a ProofBuffer but never `require!`s `verified`"
+                "{rel}: reads a ProofBuffer but never `require!`s `verified` \
+                 (phase1={phase1} phase2={phase2}); statements seen: {stmts:#?}"
             ));
             continue;
         }
+        let _ = &dormant;
         if phase2 < phase1 {
             failures.push(format!(
                 "{rel}: {phase1} phase-1 require!(..verified..) but only {phase2} \
@@ -321,17 +393,183 @@ fn no_consumer_requires_phase_one_without_phase_two() {
         }
     }
 
+    // 15 files hard-code the discriminator; 2 of them are the commented-out v2
+    // handlers, leaving 13 live consumers across 4 programs. The floor is what
+    // stops a trigger or layout change from turning this into a green that
+    // scans nothing.
     assert!(
-        checked.len() >= 15,
-        "expected at least 15 ProofBuffer consumers under programs/*/src, found {}: {checked:#?}. \
-         The scan found too few files — the trigger or the tree layout changed and this \
-         guard has stopped guarding.",
+        checked.len() >= 13,
+        "expected at least 13 live ProofBuffer consumers under programs/*/src, found {}: \
+         {checked:#?} (dormant: {dormant:#?}). The scan found too few files — the trigger \
+         or the tree layout changed and this guard has stopped guarding.",
         checked.len()
     );
     assert!(failures.is_empty(), "unguarded proof-buffer consumers:\n{}", failures.join("\n"));
 }
 
+/// [SEAM] The scan above is only worth what its parser reads, so the parser is
+/// tested on the shapes that actually broke it.
+///
+/// The first run of `no_consumer_requires_phase_one_without_phase_two` scored
+/// `p01_quantum_wallet/src/stark.rs` at "1 phase-1, 0 phase-2" — while the
+/// phase-2 `require!` was sitting right there. It wraps onto a second line
+/// (the condition is a disjunction), and the scan was line-based, so it read an
+/// empty condition and scored it zero. It happened to fail LOUD there. On a
+/// file whose phase-1 require wrapped instead, it would have scored 0 phase-1
+/// and passed the file silently. Both directions are covered here.
+#[test]
+fn the_scanner_reads_statements_and_ignores_prose() {
+    // Multi-line condition — the shape that produced the false score.
+    let src = r#"
+        require!(
+            parsed.circuit_id == WALLET_AUTH_CIRCUIT_ID || parsed.deep_ali_verified,
+            QWalletError::ProofNotVerified
+        );
+        require!(parsed.verified, QWalletError::ProofNotVerified);
+    "#;
+    let stmts = require_statements(&strip_comments(src));
+    assert_eq!(stmts.len(), 2, "wrapped require! must be one statement: {stmts:#?}");
+    assert!(stmts[0].contains("deep_ali_verified"), "{:?}", stmts[0]);
+    assert!(!stmts[1].contains("deep_ali"), "{:?}", stmts[1]);
+
+    // Nested parens must not terminate the statement early.
+    let nested = "require!(data[..8] == DISC && (a || (b && c)), E::X);";
+    let s = require_statements(nested);
+    assert_eq!(s.len(), 1);
+    assert!(s[0].ends_with("E::X)"), "{:?}", s[0]);
+
+    // Prose must not score. Every consumer documents its gate in a doc comment
+    // that names both `require!` and `deep_ali_verified`; a scan that counted
+    // those would be grading a file on its own docstring.
+    let prose = r#"
+        /// `require!(deep_ali_verified, ..)` in `verify_stark_proof` is still there.
+        // require!(deep_ali_verified, E::X);
+        /* require!(deep_ali_verified, E::X); */
+        require!(verified, E::X);
+    "#;
+    let only_real = require_statements(&strip_comments(prose));
+    assert_eq!(
+        only_real.len(),
+        1,
+        "comments were counted as gates: {only_real:#?}"
+    );
+    assert!(only_real[0].contains("verified") && !only_real[0].contains("deep_ali"));
+
+    // A file that documents a gate it does not have must be caught, which is
+    // the whole point of stripping comments before counting.
+    let liar = r#"
+        /// This handler requires deep_ali_verified. Honest.
+        require!(verified, E::X);
+    "#;
+    let stmts = require_statements(&strip_comments(liar));
+    let p2 = stmts.iter().filter(|s| s.contains("deep_ali") || s.contains("_deep")).count();
+    let p1 = stmts.iter().filter(|s| !s.contains("deep") && s.contains("verified")).count();
+    assert_eq!((p1, p2), (1, 0), "the docstring was counted as the gate");
+}
+
 // ---------------------------------------------------------------------------
+
+/// Drop `//` line comments and `/* */` blocks. Every consumer file documents
+/// its gate in prose that names `require!` and `deep_ali_verified`, so a scan
+/// that reads comments scores a file on its own docstring — which is precisely
+/// the "gate that reads a comment instead of the behaviour" failure this repo
+/// keeps producing.
+fn strip_comments(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let b: Vec<char> = src.chars().collect();
+    let mut i = 0usize;
+    let mut in_str = false;
+    let mut in_block = 0usize;
+    while i < b.len() {
+        if in_block > 0 {
+            if b[i] == '/' && i + 1 < b.len() && b[i + 1] == '*' {
+                in_block += 1;
+                i += 2;
+                continue;
+            }
+            if b[i] == '*' && i + 1 < b.len() && b[i + 1] == '/' {
+                in_block -= 1;
+                i += 2;
+                continue;
+            }
+            if b[i] == '\n' {
+                out.push('\n');
+            }
+            i += 1;
+            continue;
+        }
+        if in_str {
+            if b[i] == '\\' {
+                i += 2;
+                continue;
+            }
+            if b[i] == '"' {
+                in_str = false;
+            }
+            out.push(b[i]);
+            i += 1;
+            continue;
+        }
+        if b[i] == '"' {
+            in_str = true;
+            out.push(b[i]);
+            i += 1;
+            continue;
+        }
+        if b[i] == '/' && i + 1 < b.len() && b[i + 1] == '/' {
+            while i < b.len() && b[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if b[i] == '/' && i + 1 < b.len() && b[i + 1] == '*' {
+            in_block = 1;
+            i += 2;
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    out
+}
+
+/// Every `require!(..)` invocation as a WHOLE statement, paren-balanced, so a
+/// condition that wraps across lines is read in full.
+fn require_statements(code: &str) -> Vec<String> {
+    const NEEDLE: &str = "require!(";
+    let mut out = Vec::new();
+    let mut search_from = 0usize;
+    while let Some(rel) = code[search_from..].find(NEEDLE) {
+        let start = search_from + rel;
+        // The call must start a token — do not match `try_require!` etc.
+        let ok_boundary = !code[..start]
+            .chars()
+            .next_back()
+            .map(|c| c.is_alphanumeric() || c == '_')
+            .unwrap_or(false);
+        let body_start = start + NEEDLE.len();
+        let mut depth = 1usize;
+        let mut end = code.len();
+        for (off, ch) in code[body_start..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = body_start + off + ch.len_utf8();
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if ok_boundary {
+            out.push(code[start..end].to_string());
+        }
+        search_from = body_start;
+    }
+    out
+}
 
 fn repo_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
