@@ -221,12 +221,41 @@ const RECORD_DEFAULT = 'packages/stark-prover/deployed-verifier.json';
  * here, in the same commit, by the two `segment_quotient_poly` asserts — which
  * are the strings that now carry the same job.
  */
-const BLOB_B1_MARKERS = [
+/**
+ * [B2 FIX] The eras are now SEPARATE lists, because lumping them made the string
+ * scan unable to name the generation the tree is actually on.
+ *
+ * These four literals were one array called `BLOB_B1_MARKERS`, and `classify`
+ * returned `'b1'` if ANY of them hit. Two of the four are `[B2]`-only strings,
+ * added when B2 landed, so on this tree the scan read `'b1'` while the blob
+ * PROVES `'b2'` — and the check named "the blob PROVES one generation and its
+ * panic strings CLAIM another" fired on a correctly reshipped artifact. MEASURED
+ * 2026-08-02: `node scripts/deployed-verifier-check.mjs` printed that block with
+ * source and blob markers in perfect agreement, and its remedy ("reship the blob
+ * from this tree") could never have cleared it. A guardrail that is permanently
+ * red for a reason the reader cannot act on is a guardrail that gets deleted.
+ *
+ * Split into eras, the scan is a genuine three-way discriminator again: a pre-B1
+ * blob carries neither list, a B1 blob carries the first and not the second, a B2
+ * blob carries both.
+ */
+const BLOB_MARKERS_B1 = [
   'B1 TERMINAL DEGREE BOUND VIOLATED',
   'DEEP denominator vanishes at LDE position ',
+];
+
+/**
+ * Literals B2 added to the PROVER — the two `segment_quotient_poly` asserts that
+ * check the split in both directions. They exist only in a tree where the
+ * quotient is segmented at all, which is what B2 is.
+ */
+const BLOB_MARKERS_B2 = [
   '[B2] UNDER-SEGMENTED: the quotient has ',
   '[B2] OVER-SEGMENTED: the quotient has ',
 ];
+
+/** Every marker, either era. Used where the question is "built from this tree?". */
+const BLOB_ALL_MARKERS = [...BLOB_MARKERS_B1, ...BLOB_MARKERS_B2];
 
 /**
  * Literals present in EVERY generation of the prover blob. If these are gone the
@@ -245,6 +274,40 @@ const BLOB_CONTROLS = [
 
 /** Literals B1 added to the VERIFIER (programs/p01_stark_verifier/src/verify.rs). */
 const ELF_B1_MARKERS = ['[verify] final poly coeff ', ' non-zero, bound is '];
+
+/**
+ * Literals B2 added to the VERIFIER. THERE ARE NONE, and that is a finding, not
+ * an omission in this file.
+ *
+ * MEASURED 2026-08-02 across `programs/p01_stark_verifier/src/`: B2 added the
+ * `quotient_segments` field, the segment recombination and the per-segment gamma
+ * powers, and not one runtime string. Every `msg!` in `verify.rs` predates B2
+ * (`grep -n 'msg!(' verify.rs` -> 11 sites, all step markers and B1's degree
+ * bound); no `#[error_code]` variant mentions segmentation; no new `b"..."`
+ * domain tag was added. So the deployed-ELF scan CANNOT SEPARATE B1 FROM B2.
+ *
+ * That is the sharp end of it, because B2 is NOT length-preserving — a B1
+ * verifier rejects every B2 proof at the parser — so B1 -> B2 is exactly the
+ * boundary that breaks every proof loudly, and it is the one boundary this scan
+ * is blind to. `classifyElf` therefore returns the AMBIGUOUS label `'b1+'` rather
+ * than guessing `'b1'`, and `generationsAreCompatible` treats `'b1+'` as
+ * satisfying a record that says `b1` OR `b2` and nothing else. The interlock
+ * still compares the record's exact label against the behaviourally measured
+ * client generation, so a B2 client against a record saying `b1` still fails.
+ *
+ * WHAT THAT LEAVES OPEN, stated rather than implied away: with the record saying
+ * `b2`, a deployment that is really B1 passes the on-chain leg, because nothing
+ * this script can do distinguishes them. `accepts_client_blob_sha256` and
+ * KNOWN_ELF_GENERATIONS are the only two things that would catch it, and both are
+ * human attestations. The real fix is a BEHAVIOURAL classifier for the deployed
+ * side — `programs/p01_stark_verifier/tests/cu_budget.rs` already loads a built
+ * `.so` into litesvm and executes it, so running a fixture proof against the
+ * programdata bytes fetched from the chain is a known-possible thing in this
+ * repo, just not from a build script. Until then: add a B2-only literal to the
+ * verifier and list it here, or do the litesvm classifier. Do not paper over it
+ * by pretending `'b1+'` means `b1`.
+ */
+const ELF_MARKERS_B2 = [];
 
 /** msg! literals that predate B1 and are still in the source today. */
 const ELF_CONTROLS = [
@@ -310,7 +373,11 @@ function knownElfContradiction(elfSha, claimedGeneration, where) {
   const known = KNOWN_ELF_GENERATIONS[elfSha];
   if (known === undefined) return null;
   if (claimedGeneration === null || claimedGeneration === undefined) return null;
-  if (claimedGeneration === known.generation) return null;
+  // `generationsAreCompatible`, not `===`, because the ELF scan's `'b1+'` is an
+  // inexact observation. It is still a CONTRADICTION against a hand-measured
+  // `pre-b1` — `'b1+'` excludes pre-B1 — so this loses no strength on the one
+  // pin that exists today.
+  if (generationsAreCompatible(claimedGeneration, known.generation)) return null;
   return {
     title: `${where} contradicts a deployment that was measured by hand`,
     lines: [
@@ -647,22 +714,71 @@ function countOccurrences(buf, needle) {
 }
 
 /**
- * Classify an artifact's proof-format generation from its own bytes.
- * Returns { generation: 'b1' | 'pre-b1' | null, hits, missingControls }.
- * `generation: null` means "refuses to classify" and MUST be treated as a failure.
+ * Classify a PROVER BLOB's proof-format generation from its own bytes.
+ *
+ * Returns { generation: 'b2' | 'b1' | 'pre-b1' | null, hits, missingControls }.
+ * `generation: null` means "refuses to classify" and MUST be treated as a
+ * failure. This DECIDES NOTHING — `prover-behaviour.mjs` decides, by driving the
+ * blob — it is corroboration, and the value of corroboration is that it can name
+ * the same generation the behaviour does. A two-label scan in a three-generation
+ * world could not, which is the bug this replaced.
  */
-function classify(buf, markers, controls) {
-  const missingControls = controls.filter((c) => countOccurrences(buf, c) === 0);
-  const hits = markers.filter((m) => countOccurrences(buf, m) > 0);
+function classifyBlob(buf) {
+  const missingControls = BLOB_CONTROLS.filter((c) => countOccurrences(buf, c) === 0);
+  const hits = BLOB_ALL_MARKERS.filter((m) => countOccurrences(buf, m) > 0);
   if (missingControls.length > 0) return { generation: null, hits, missingControls };
-  return { generation: hits.length > 0 ? 'b1' : 'pre-b1', hits, missingControls };
+  const b2 = BLOB_MARKERS_B2.filter((m) => countOccurrences(buf, m) > 0);
+  const b1 = BLOB_MARKERS_B1.filter((m) => countOccurrences(buf, m) > 0);
+  // Newest era first. A partial era is NOT that era: half the B2 asserts present
+  // is an artifact somebody edited, and `blobSourceSkew` reports it separately.
+  const generation =
+    b2.length === BLOB_MARKERS_B2.length ? 'b2' : b1.length > 0 ? 'b1' : 'pre-b1';
+  return { generation, hits, missingControls };
+}
+
+/**
+ * Classify a DEPLOYED ELF's proof-format generation from its own bytes.
+ *
+ * Returns { generation: 'b1+' | 'pre-b1' | null, hits, missingControls }.
+ *
+ * `'b1+'` means "B1 or newer, and this method cannot say which". It is NOT a
+ * synonym for `b1`; see `ELF_MARKERS_B2` for why there is no literal that would
+ * separate them and what it would take to get one. Compare it with
+ * `generationsAreCompatible`, never with `===`.
+ */
+function classifyElf(buf) {
+  const missingControls = ELF_CONTROLS.filter((c) => countOccurrences(buf, c) === 0);
+  const hits = ELF_B1_MARKERS.filter((m) => countOccurrences(buf, m) > 0);
+  if (missingControls.length > 0) return { generation: null, hits, missingControls };
+  if (ELF_MARKERS_B2.length > 0) {
+    // Kept live rather than commented out: the day somebody adds a B2 literal to
+    // the verifier and lists it above, this scan becomes exact with no other edit.
+    const b2 = ELF_MARKERS_B2.filter((m) => countOccurrences(buf, m) > 0);
+    if (b2.length === ELF_MARKERS_B2.length) return { generation: 'b2', hits, missingControls };
+    if (hits.length > 0) return { generation: 'b1', hits, missingControls };
+    return { generation: 'pre-b1', hits, missingControls };
+  }
+  return { generation: hits.length > 0 ? 'b1+' : 'pre-b1', hits, missingControls };
+}
+
+/**
+ * Is `claimed` (an exact generation somebody wrote down) consistent with
+ * `observed` (what a scan could actually see)?
+ *
+ * The only inexact observation is `'b1+'`. Everything else must match exactly, so
+ * this never loosens a comparison that used to be tight.
+ */
+function generationsAreCompatible(observed, claimed) {
+  if (observed === null || claimed === null || claimed === undefined) return true;
+  if (observed === 'b1+') return claimed === 'b1' || claimed === 'b2';
+  return observed === claimed;
 }
 
 /** Which B1 markers the prover source in THIS TREE carries. null if unreadable. */
 function proverSourceMarkerHits() {
   const src = readSources(BLOB_MARKER_SOURCES);
   if (src.text === null) return null;
-  return BLOB_B1_MARKERS.filter((m) => src.text.includes(m));
+  return BLOB_ALL_MARKERS.filter((m) => src.text.includes(m));
 }
 
 /**
@@ -690,15 +806,15 @@ function blobSourceSkew(blobHits) {
       ],
     };
   }
-  const srcHits = BLOB_B1_MARKERS.filter((m) => src.text.includes(m));
+  const srcHits = BLOB_ALL_MARKERS.filter((m) => src.text.includes(m));
   const onlySource = srcHits.filter((m) => !blobHits.includes(m));
   const onlyBlob = blobHits.filter((m) => !srcHits.includes(m));
   if (onlySource.length === 0 && onlyBlob.length === 0) return null;
   return {
     title: 'the prover blob and the prover source disagree about which B1 markers exist',
     lines: [
-      `  source ${BLOB_MARKER_SOURCES.join(', ')}  ${srcHits.length}/${BLOB_B1_MARKERS.length}`,
-      `  blob   ${CANONICAL}  ${blobHits.length}/${BLOB_B1_MARKERS.length}`,
+      `  source ${BLOB_MARKER_SOURCES.join(', ')}  ${srcHits.length}/${BLOB_ALL_MARKERS.length}`,
+      `  blob   ${CANONICAL}  ${blobHits.length}/${BLOB_ALL_MARKERS.length}`,
       ...(onlySource.length > 0 ? ['', '  in the SOURCE but not in the BLOB:', ...onlySource.map((m) => `    ${JSON.stringify(m)}`)] : []),
       ...(onlyBlob.length > 0 ? ['', '  in the BLOB but not in the SOURCE:', ...onlyBlob.map((m) => `    ${JSON.stringify(m)}`)] : []),
       '',
@@ -714,7 +830,7 @@ function blobSourceSkew(blobHits) {
       '     with FriFoldCheckFailed. It no longer moves the verdict — the generation is measured by',
       '     driving the blob — but it is still an artifact nobody can account for.',
       '',
-      'If the messages were legitimately reworded, update BLOB_B1_MARKERS in this script in the same commit.',
+      'If the messages were legitimately reworded, update BLOB_MARKERS_B1 / BLOB_MARKERS_B2 in this script in the same commit.',
       'Do not make the two sides agree by editing the artifact.',
     ],
   };
@@ -746,7 +862,7 @@ function treeGenerationSkew() {
   return {
     title: 'the prover source and the verifier source disagree about whether this tree is B1',
     lines: [
-      `  ${BLOB_MARKER_SOURCES.join(', ')}  ${proverHits.length}/${BLOB_B1_MARKERS.length} B1 markers`,
+      `  ${BLOB_MARKER_SOURCES.join(', ')}  ${proverHits.length}/${BLOB_ALL_MARKERS.length} markers`,
       `  ${ELF_MARKER_SOURCES.join(', ')}  ${verifierHits.length}/${ELF_B1_MARKERS.length} B1 markers`,
       '',
       'B1 changed the prover and the verifier together, so one half carrying its B1 literals while the',
@@ -754,7 +870,7 @@ function treeGenerationSkew() {
       'client generation no longer depends on this — it is measured by driving the blob — so this is a',
       'red about the sources, not about the interlock verdict.',
       '',
-      'If these messages were legitimately reworded, update BLOB_B1_MARKERS / ELF_B1_MARKERS in this',
+      'If these messages were legitimately reworded, update BLOB_MARKERS_B1 / ELF_B1_MARKERS in this',
       'script in the same commit.',
     ],
   };
@@ -940,7 +1056,7 @@ if (wantMeasure) {
     console.error(`[deployed-verifier] --measure could not read ${measureProgramId} on ${TARGET.endpoint}: ${e.message}`);
     process.exit(1);
   }
-  const cls = classify(chain.elf, ELF_B1_MARKERS, ELF_CONTROLS);
+  const cls = classifyElf(chain.elf);
   const observedSlot = await rpc(TARGET.endpoint, 'getSlot', []).catch(() => null);
   console.log(
     JSON.stringify(
@@ -1170,7 +1286,7 @@ const blobBehaviour = classifyProverBehaviour(blob);
 // artifact, or a blob that was not built from the source in this tree — and
 // because a disagreement between what the blob says and what it does is itself
 // the signature of the measured four-byte edit. It no longer decides anything.
-const blobStrings = classify(blob, BLOB_B1_MARKERS, BLOB_CONTROLS);
+const blobStrings = classifyBlob(blob);
 
 /** The generation the interlock is allowed to act on. Behavioural, or nothing. */
 const blobGen = tableProblem === null ? blobBehaviour.generation : null;
@@ -1186,9 +1302,9 @@ console.log(
 );
 console.log(
   `[deployed-verifier]          panic-string scan says ${blobStrings.generation ?? 'UNCLASSIFIABLE'} ` +
-    `(${blobStrings.hits.length}/${BLOB_B1_MARKERS.length} B1 markers) — corroboration, not the verdict`,
+    `(${blobStrings.hits.length}/${BLOB_ALL_MARKERS.length} era markers) — corroboration, not the verdict`,
 );
-console.log(`[deployed-verifier] source   ${BLOB_MARKER_SOURCES.join(', ')} carries ${proverSourceMarkerHits()?.length ?? '?'}/${BLOB_B1_MARKERS.length} of the same markers`);
+console.log(`[deployed-verifier] source   ${BLOB_MARKER_SOURCES.join(', ')} carries ${proverSourceMarkerHits()?.length ?? '?'}/${BLOB_ALL_MARKERS.length} of the same markers`);
 console.log(`[deployed-verifier] deployed ${deployed.program_id} on ${deployed.cluster} (as the record has it)`);
 console.log(`[deployed-verifier]          generation ${deployed.proof_format_generation}, elf sha256 ${deployed.elf_sha256}, slot ${deployed.last_deployed_slot}`);
 
@@ -1239,7 +1355,7 @@ if (blobStrings.generation === null) {
 if (blobGen !== null && blobStrings.generation !== null && blobGen !== blobStrings.generation) {
   fail('the blob PROVES one generation and its panic strings CLAIM another', [
     `  driving the blob (seven proof digests)  ${blobGen}`,
-    `  scanning the blob for panic literals    ${blobStrings.generation} (${blobStrings.hits.length}/${BLOB_B1_MARKERS.length} B1 markers)`,
+    `  scanning the blob for panic literals    ${blobStrings.generation} (${blobStrings.hits.length}/${BLOB_ALL_MARKERS.length} era markers)`,
     '',
     ...describeBehaviour(blobBehaviour),
     '',
@@ -1451,13 +1567,13 @@ if (wantOnchain) {
     const elfStale = elfMarkerSourceProblem(proverSourceMarkerHits()?.length > 0);
     if (elfStale !== null) fail(elfStale.title, elfStale.lines);
 
-    const chainCls = classify(chain.elf, ELF_B1_MARKERS, ELF_CONTROLS);
+    const chainCls = classifyElf(chain.elf);
     if (chainCls.generation === null) {
       fail('the deployed ELF could not be classified', [
         `Missing control literals: ${JSON.stringify(chainCls.missingControls)}`,
         'The deployed bytes carry none of the msg! literals this scan relies on. Refusing to classify.',
       ]);
-    } else if (chainCls.generation !== deployedGen) {
+    } else if (!generationsAreCompatible(chainCls.generation, deployedGen)) {
       fail('THE RECORD CLAIMS A GENERATION THE CHAIN DOES NOT HAVE', [
         `  record deployed.proof_format_generation  ${deployedGen}`,
         `  derived from the deployed bytes          ${chainCls.generation}`,
@@ -1468,6 +1584,18 @@ if (wantOnchain) {
         'offline half green and is caught here. Deploy the program.',
       ]);
     } else {
+      if (chainCls.generation === 'b1+') {
+        // Say the limit out loud on the PASS path, not only in a comment nobody
+        // reads while shipping. See ELF_MARKERS_B2.
+        console.log(
+          `[deployed-verifier] on-chain PARTIAL — the ELF scan can only say "B1 or newer"; the record's ` +
+            `"${deployedGen}" is compatible with that but was NOT confirmed by it.`,
+        );
+        console.log(
+          '[deployed-verifier]          No literal in programs/p01_stark_verifier/src/ separates B1 from B2, ' +
+            'and B1 -> B2 is the boundary that breaks every proof.',
+        );
+      }
       // The scan agreed with the record. Both of those can be reworded; the
       // bytes the chain just handed back cannot. If those bytes are a
       // deployment somebody measured by hand, the scan has to agree with THAT

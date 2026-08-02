@@ -458,6 +458,17 @@ pub mod p01_stark_verifier {
         // Probe order: V3 active circuits only (1=pool_commitment, 3=merkle_path,
         // 5=transfer, 6=merkle_update). C0/C2/C4 are not used in V3 hot paths.
         //
+        // MEASURED consequence for a client that sends one anyway
+        // (`tests/wire_parity.rs::every_circuit_resolves_through_the_uniform_probe_or_is_named_as_unsupported`,
+        // on proofs padded to the real 145,000-byte envelope): C0, C2 and C4 are
+        // resolved by NO probe — `matched` is `None` and the instruction returns
+        // `DeserializationError`. They are not mis-probed into a wrong circuit,
+        // which is the safe half; the unsafe half is that the client has by then
+        // paid for ~145 chunk transactions and ~1.01 SOL of transient rent.
+        // `submitAndVerifyStarkProofUniform` accepts any `GenericStarkProof` and
+        // has no guard for this. Its live call sites use C1/C3/C6 only, so this
+        // is latent, not live.
+        //
         // [C0 GATE] C0 must never appear in this list. It is not a "not needed
         // yet" omission: `verify::verify_generic` refuses circuit 0 outright, so
         // adding 0 here would only produce a probe that always errors. C0 goes
@@ -505,6 +516,20 @@ pub mod p01_stark_verifier {
         // circuit parses under another circuit's config. The probe order is
         // therefore not load-bearing for correctness on honest inputs. Do not add
         // a circuit here without re-running that matrix.
+        //
+        // The same loop is measured independently from the wire side in
+        // `tests/wire_parity.rs`:
+        // `the_parser_does_not_check_length_this_test_does` (tails of
+        // 1..63,543 bytes of 0x00 and of 0xAB all parse — length rejects
+        // nothing under padding),
+        // `every_circuit_resolves_through_the_uniform_probe_or_is_named_as_unsupported`
+        // (C0/C2/C4 resolve to `None`, i.e. `DeserializationError`, never to a
+        // wrong circuit), and
+        // `the_probe_order_this_test_drives_is_the_one_the_program_implements`
+        // (reversing this constant to [1, 3, 5, 6] leaves every honest padded
+        // proof resolving to its own circuit — the C6-first ordering is a
+        // hardening choice about adversarial buffers, not something an honest
+        // proof exercises, so no behavioural test can pin it).
         //
         // [C0 GATE] 0 stays out of this list, see above.
         const PROBE_ORDER: [u8; 4] = [1, 6, 3, 5];

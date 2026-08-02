@@ -262,8 +262,11 @@
       "UNKNOWN, and deliberately left null rather than guessed.",
       "",
       "What is established: the deployed program is pre-B1 (see generation_evidence) and the checked-in",
-      "blob 11e6f0041a23957b1624b89642a5b77a78c7a857ddfb56d4d26623665ec071a5 is B1, so the deployed",
-      "program does NOT accept the checked-in blob. That is enough to fail the gate correctly.",
+      "blob 2a962ca95642fdb72c4f9421ddc2b10f179953feaa589cdb98112efd45082943 is B2, so the deployed",
+      "program does NOT accept the checked-in blob. That is enough to fail the gate correctly. The gap is",
+      "TWO generations now, not one, and the second half of it fails differently: B1 -> B2 widens three",
+      "wire fields, so a B1 verifier refuses a B2 proof at the PARSER (DeserializationError) rather than",
+      "at the FRI fold. Neither failure is survivable and both happen after the whole upload is paid for.",
       "",
       "What is NOT established: which historical blob it does accept. The last pre-B1 blob in git is",
       "5fe610c90ff1fe15eb96abbbef3ca881b47923b68232335fda0df5546babd114 (194,540 B, commit 4b375d7c),",
@@ -277,30 +280,49 @@
 
   "client_blob": {
     "_note": "MEASURED from the working tree. Reconcile after every reship; the gate fails if these drift from the file on disk.",
+    "_RECONCILED_2026_08_02": [
+      "This block described the B1 blob (11e6f004..., 211,370 B) for as long as B2 had been in the tree.",
+      "B2 reshipped the artifact and nobody re-ran the documented reconcile step, so the record asserted a",
+      "generation and a byte count the file on disk did not have. Every field below was re-measured off the",
+      "working tree on 2026-08-02 by the same code path the gate uses:",
+      "",
+      "  node -e \"import('./scripts/prover-behaviour.mjs').then(m => ...)\"  from packages/stark-prover",
+      "  -> generation b2, 7/7 circuits, 14.6 s",
+      "  node packages/stark-prover/scripts/deployed-verifier-check.mjs   -> blob 211,749 B, sha 2a962ca9...",
+      "",
+      "NOTHING IN THE `deployed` BLOCK WAS TOUCHED. That block is about the chain, devnet is still pre-B1,",
+      "and the interlock is still RED — see interlock_status_when_this_record_was_written. Reconciling the",
+      "client half does not and must not green anything."
+    ],
     "path": "packages/stark-prover/wasm/p01_stark_bg.wasm",
-    "sha256": "11e6f0041a23957b1624b89642a5b77a78c7a857ddfb56d4d26623665ec071a5",
-    "bytes": 211370,
-    "proof_format_generation": "b1",
+    "sha256": "2a962ca95642fdb72c4f9421ddc2b10f179953feaa589cdb98112efd45082943",
+    "bytes": 211749,
+    "proof_format_generation": "b2",
     "generation_evidence": {
-      "method": "BEHAVIOURAL. scripts/prover-behaviour.mjs instantiates this blob under Node and generates one proof per shipping circuit on seven fixed witnesses, then sha256s each serialized proof. The generation is the column of its fixture table that ALL SEVEN digests match; a mixture, an unrecognised digest, a blob that will not instantiate and a blob that throws mid-proof all refuse to classify and fail the gate. Nothing about this reads a string out of the artifact or out of any Rust source, so renaming literals anywhere cannot move it. MEASURED cost on the dev box: ~5 s wall for all seven, no cache.",
+      "method": "BEHAVIOURAL. scripts/prover-behaviour.mjs instantiates this blob under Node and generates one proof per shipping circuit on seven fixed witnesses, then sha256s each serialized proof. The generation is the column of its fixture table that ALL SEVEN digests match; a mixture, an unrecognised digest, a blob that will not instantiate and a blob that throws mid-proof all refuse to classify and fail the gate. Nothing about this reads a string out of the artifact or out of any Rust source, so renaming literals anywhere cannot move it. MEASURED cost on the dev box: 14.6 s wall for all seven, no cache.",
       "measured_digests": {
-        "C0 subscriber_ownership": "45001 B  e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7",
-        "C1 pool_commitment": "65801 B  935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b",
-        "C2 balance_proof": "66681 B  063d86a18071ae369132c12a69c5af0e3c2efbe82f6340e6d7ec910be80fd49f",
-        "C3 merkle_path": "75637 B  2d97f56ffc3157fe7c644679d2945130efed8ea39c890a24c6c16022e78d5d9c",
-        "C4 confidential_balance": "78377 B  f877836723d0711e7190c2fd5c8a5c6d0476f21794d39ffd47a075f57d53e3e7",
-        "C5 transfer": "76357 B  78afe9bbd533913771d5c2438e279934114fe4c6db934b67b43c0644376ea125",
-        "C6 merkle_update": "78517 B  8e1166f5d08bd948bc70a407d9261d6b88c1de5b257c4545918d9c36d94524fc"
+        "C0 subscriber_ownership": "47641 B  5ea292acb52a3f352fbe9280c3b59291b77e92a066a6fbce743dbf8db456c09b",
+        "C1 pool_commitment": "68881 B  09e9476db988eef4950ed2ef64c57d0ab9569f7eeb40e27bb2ab2cf1e204a83d",
+        "C2 balance_proof": "69761 B  6541e57b85419fd87a4227bf08cfc2f151d0179870ba04d5011338843cd51ce8",
+        "C3 merkle_path": "78157 B  abf0e733d82002ff74c45d2677fc213f893cb45b999578f84324c35f5907c5c0",
+        "C4 confidential_balance": "81457 B  f4918f36632e011049366c079489b8f70858113f45831bcd76e0cf630d92929a",
+        "C5 transfer": "78877 B  28ef7176795111da1df5714dbc11ad3c32892de266242d30dec1cd60e9c252bd",
+        "C6 merkle_update": "81037 B  b8dc81e070487ec827e488809f361fc982e0b9c435270855f1a0b95d658cb0be"
       },
-      "why_not_length": "B1 changed WHAT FRI FOLDS without adding or removing a byte. MEASURED 2026-07-31 by driving both blobs: the pre-B1 blob 5fe610c9 emits the SAME SEVEN LENGTHS, to the byte, and SEVEN DIFFERENT DIGESTS (C0 baf01d17, C1 df52ee3c, C2 5171c80e, C3 0db183b6, C4 fbb631a3, C5 373f74cc, C6 8f815c4c). Content is the only discriminator there is.",
-      "corroboration": "The seven B1 digests above are pinned independently in packages/stark-prover/src/wireFormat.test.ts (Pin.sha256, driving this blob) and in programs/p01_stark_verifier/tests/b1_deep_binding.rs (FIXTURE_C*_SHA256, computed from the Rust prover over the same seven witnesses). The gate reads both files and refuses to classify if either stops carrying them, so the reference cannot be moved in one file.",
+      "why_not_length": "B1 changed WHAT FRI FOLDS without adding or removing a byte. MEASURED 2026-07-31 by driving both blobs: the pre-B1 blob 5fe610c9 and the B1 blob emit the SAME SEVEN LENGTHS, to the byte (45,001 / 65,801 / 66,681 / 75,637 / 78,377 / 76,357 / 78,517), and SEVEN DIFFERENT DIGESTS. Between those two generations content is the only discriminator there is. B2 is different — it widens three wire fields, so the seven lengths DID move (to the numbers above) — but that is not licence to classify on length: a blob can be given any length and only content is expensive to fake, so the verdict stays on the digest and the length stays an observation.",
+      "corroboration": "The seven B2 digests above are pinned independently in packages/stark-prover/src/wireFormat.test.ts (Pin.sha256, driving this blob) and in programs/p01_stark_verifier/tests/b1_deep_binding.rs (FIXTURE_C*_SHA256, computed from the Rust prover over the same seven witnesses). The gate reads both files and refuses to classify if either stops carrying them, so the reference cannot be moved in one file.",
       "string_scan_kept_as_corroboration": {
-        "method": "byte scan of the blob for panic and assert message literals that B1 introduced in stark/src/compact.rs, controlled by domain-separation tags present in every generation. This DECIDES NOTHING now. It is kept because it catches two things the digests are silent about — a string-stripped artifact, and an artifact that was not built from the source in this tree — and because a blob that proves one generation while its strings claim another is the measured four-byte edit and gets named as such.",
-        "b1_markers_present": [
+        "method": "byte scan of the blob for panic and assert message literals, split by ERA, controlled by domain-separation tags present in every generation. This DECIDES NOTHING. It is kept because it catches two things the digests are silent about — a string-stripped artifact, and an artifact that was not built from the source in this tree — and because a blob that proves one generation while its strings claim another is the measured four-byte edit and gets named as such.",
+        "_era_split_2026_08_02": "The four literals used to be ONE list called BLOB_B1_MARKERS, with the scan returning 'b1' if ANY of them hit. Two of the four are [B2]-only strings, so on a correct B2 tree the scan said 'b1' while the blob proved 'b2' and the check named 'the blob PROVES one generation and its panic strings CLAIM another' fired on an honest artifact, with a remedy ('reship the blob from this tree') that could never clear it. Now BLOB_MARKERS_B1 and BLOB_MARKERS_B2 are separate and the scan is a real three-way discriminator: pre-B1 carries neither, B1 carries the first, B2 carries both.",
+        "b1_era_markers_present": [
           "B1 TERMINAL DEGREE BOUND VIOLATED",
-          "DEEP denominator vanishes at LDE position ",
-          "break the committed-vector/ood_quotient agreement B1 depends on"
+          "DEEP denominator vanishes at LDE position "
         ],
+        "b2_era_markers_present": [
+          "[B2] UNDER-SEGMENTED: the quotient has ",
+          "[B2] OVER-SEGMENTED: the quotient has "
+        ],
+        "_deleted_marker": "'break the committed-vector/ood_quotient agreement B1 depends on' was listed here and is GONE from the source and therefore from the blob. It was the message on the `q_poly.len() <= lde_size` assert in the six quotient builders; B2 replaced that guarantee with the two segment_quotient_poly asserts above, which are the strings that now carry the same job.",
         "controls_present": [
           "the 8-byte NUL-padded domain tags rlc-c1, rlc-c2, rlc-c3, rlc-c5, bnd-c5, bnd-c6",
           "proof_hex (the wasm_api JSON key, 7 occurrences)"
@@ -310,10 +332,22 @@
   },
 
   "interlock_status_when_this_record_was_written": [
-    "RED, and correctly so.",
+    "RED, and correctly so. Re-measured 2026-08-02; it was RED before the client half was reconciled and",
+    "it is RED after, which is the point — reconciling the client block moves no verdict.",
     "",
-    "  client blob  : b1      (11e6f004..., 211,370 B, this tree)",
+    "  client blob  : b2      (2a962ca9..., 211,749 B, this tree)",
     "  deployed     : pre-b1  (c359ab53..., 780,249 B, devnet slot 456289287)",
+    "",
+    "ONE THING THE ON-CHAIN LEG CANNOT CHECK, and it became load-bearing with B2. The deployed side is",
+    "classified by scanning the ELF for msg! literals, and B2 ADDED NO LITERAL TO THE VERIFIER — measured",
+    "2026-08-02 across programs/p01_stark_verifier/src/: no new msg!, no new #[error_code] variant, no new",
+    "b\"...\" domain tag. So that scan cannot separate B1 from B2. It now returns the explicit label 'b1+'",
+    "('B1 or newer, and this method cannot say which') instead of silently reading 'b1', and the record's",
+    "exact label is only checked for COMPATIBILITY with it. Consequence, stated so it is not discovered",
+    "later: once this record says 'b2', a deployment that is really B1 passes the on-chain leg. Closing",
+    "that needs either a B2-only literal in the verifier, or a behavioural classifier for the deployed",
+    "bytes — litesvm can execute a fetched programdata payload, which tests/cu_budget.rs already does for",
+    "a locally built .so, so it is known-possible in this repo, just not from a build script.",
     "",
     "Shipping apps/web, apps/extension, apps/mobile or packages/react-native-zk from this tree makes",
     "EVERY proof those clients generate fail on chain with FriFoldCheckFailed. Ship the program first."
