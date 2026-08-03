@@ -674,16 +674,37 @@ jobs:
       # apps/mobile/services/stark/index.ts so the two languages cannot drift.
       #
       # --release is not optional: the harness generates eleven real STARK proofs.
-      # `cu_budget_c7_phase2_probe` is filtered out — its throwaway probe program is
-      # gitignored, and a missing artifact is a panic by design, so it cannot run here.
+      #
+      # [FILTER DRIFT 2026-08-03] This step used to pass an INCLUSION list of six
+      # positional name filters, and libtest silently ignores a test that matches
+      # none of them. MEASURED on the merge of the two STARK lineages: two tests
+      # matched no filter and executed nowhere —
+      # `every_verifier_integration_test_target_is_named_in_ci`, which is the gate
+      # whose whole subject is "a test named nowhere in ci.yml runs nowhere", and
+      # `harness_serialises_its_own_sbf_builds`, the assertion that the SBF tool
+      # lock is real. Both were green when finally run; that is the point, since
+      # nothing was broken, nothing complained, and the coverage was absent anyway.
+      # A name list guarding a name list has the same standing to drift as the
+      # `--test` list above, so this is an EXCLUSION now: everything in the file
+      # runs, one test is skipped by name, and a new test is covered by default.
+      # `cu_budget.rs::every_cu_budget_test_is_reachable_from_the_ci_filter` parses
+      # this invocation and fails on any test it would not select.
+      #
+      # `cu_budget_c7_phase2_probe` is the one exclusion — its throwaway probe
+      # program is gitignored, and a missing artifact is a panic by design, so it
+      # cannot run here. The reason is carried in CI_UNRUN_CU_BUDGET_TESTS too.
+      #
+      # `--test-threads=1` is belt and braces: the harness serialises its own
+      # cargo-build-sbf spawns now, and `harness_serialises_its_own_sbf_builds`
+      # is the assertion that it does — which is precisely one of the two tests
+      # that could not run under the old filter list.
       - name: cargo test (CU budget — measured CU + proof bytes, self-built SBF bytecode)
         run: |
           test -n "$P01_CARGO_BUILD_SBF" || { echo "::error title=SBF compiler not asserted::P01_CARGO_BUILD_SBF is unset, so the step that version-checks the SBF compiler against CU_MEASURED_WITH did not run. Restore it — do not re-derive the path here."; exit 1; }
           test -x "$P01_CARGO_BUILD_SBF" || { echo "cargo-build-sbf missing at $P01_CARGO_BUILD_SBF"; exit 1; }
           cargo test -p p01_stark_verifier --release --test cu_budget \
             -- --nocapture --test-threads=1 \
-            cu_budget_real_circuits cu_budget_verify_uniform_path cu_ceiling \
-            build_fingerprint proof_size_envelope toolchain_caveat
+            --skip cu_budget_c7_phase2_probe
 
       # [ROUTE C] `p01_stark_verifier` is split out and BLOCKING. It was under the
       # shared `continue-on-error: true` below, which made every warning on it

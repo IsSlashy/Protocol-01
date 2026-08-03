@@ -1976,6 +1976,249 @@ fn every_verifier_integration_test_target_is_named_in_ci() {
     );
 }
 
+/// Tests in THIS file that `ci.yml`'s CU-budget step deliberately does not run.
+///
+/// Same contract as `CI_UNRUN_TEST_TARGETS`: the entry cost is a written reason,
+/// each entry is checked both ways, and empty would be the ideal state.
+const CI_UNRUN_CU_BUDGET_TESTS: [(&str, &str); 1] = [(
+    "cu_budget_c7_phase2_probe",
+    "its throwaway probe program's .so is gitignored, so a fresh checkout has no artifact \
+     and the harness panics by design rather than measuring stale or absent bytecode",
+)];
+
+/// Every `#[test]` function name in this file, read out of this file.
+///
+/// The attribute is matched as a whole trimmed line, so the string literal that
+/// spells it here is not itself a hit.
+fn cu_budget_test_names() -> Vec<String> {
+    let attr = "#[test]";
+    let lines: Vec<&str> = THIS_FILE.lines().collect();
+    let mut names = Vec::new();
+    for (i, l) in lines.iter().enumerate() {
+        if l.trim() != attr {
+            continue;
+        }
+        if let Some(sig) = lines
+            .get(i + 1)
+            .map(|s| s.trim_start())
+            .and_then(|s| s.strip_prefix("fn "))
+        {
+            if let Some(n) = sig.split('(').next() {
+                names.push(n.trim().to_string());
+            }
+        }
+    }
+    names.sort();
+    names
+}
+
+/// Every `--test cu_budget` invocation in `ci.yml`, with `\` continuations joined.
+fn ci_cu_budget_invocations() -> Vec<String> {
+    let needle = "cargo test -p p01_stark_verifier --release --test cu_budget";
+    let lines: Vec<&str> = CI_WORKFLOW.lines().collect();
+    let mut out = Vec::new();
+    for (i, l) in lines.iter().enumerate() {
+        let t = l.trim();
+        let Some(rest) = t.strip_prefix(needle) else { continue };
+        // Whole word: `--test cu_budget_extra` must not be read as this target.
+        if !(rest.is_empty() || rest.starts_with(char::is_whitespace)) {
+            continue;
+        }
+        let mut joined = String::new();
+        let mut j = i;
+        loop {
+            let cur = lines[j].trim();
+            let continues = cur.ends_with('\\');
+            joined.push_str(cur.trim_end_matches('\\').trim_end());
+            joined.push(' ');
+            if !continues || j + 1 >= lines.len() {
+                break;
+            }
+            j += 1;
+        }
+        out.push(joined);
+    }
+    out
+}
+
+/// libtest's selection arguments, as they appear after the `--` separator.
+struct LibtestSelection {
+    filters: Vec<String>,
+    skips: Vec<String>,
+    exact: bool,
+}
+
+impl LibtestSelection {
+    /// libtest's own rule: `--skip` excludes, positional filters are an OR, and
+    /// no positional filter at all selects everything. `--exact` turns both from
+    /// substring into equality.
+    fn would_run(&self, test_name: &str) -> bool {
+        let hit = |pat: &String| {
+            if self.exact {
+                test_name == pat.as_str()
+            } else {
+                test_name.contains(pat.as_str())
+            }
+        };
+        if self.skips.iter().any(hit) {
+            return false;
+        }
+        self.filters.is_empty() || self.filters.iter().any(hit)
+    }
+}
+
+/// Parse the harness arguments of one shell invocation. Fails closed: an option
+/// this parser has never seen could take a value, and guessing would silently
+/// turn that value into a positional filter and change the answer.
+fn parse_libtest_selection(cmd: &str) -> LibtestSelection {
+    const FLAGS: [&str; 12] = [
+        "--nocapture",
+        "--exact",
+        "--ignored",
+        "--include-ignored",
+        "--show-output",
+        "--quiet",
+        "-q",
+        "--list",
+        "--force-run-in-process",
+        "--report-time",
+        "--exclude-should-panic",
+        "--bench",
+    ];
+    const TAKES_VALUE: [&str; 6] =
+        ["--skip", "--test-threads", "--format", "--logfile", "--color", "--shuffle-seed"];
+
+    let mut sel = LibtestSelection { filters: Vec::new(), skips: Vec::new(), exact: false };
+    let mut toks = cmd.split_whitespace().skip_while(|t| *t != "--").skip(1);
+    while let Some(tok) = toks.next() {
+        let (name, inline) = match tok.split_once('=') {
+            Some((n, v)) if n.starts_with('-') => (n, Some(v.to_string())),
+            _ => (tok, None),
+        };
+        if !name.starts_with('-') {
+            sel.filters.push(tok.to_string());
+            continue;
+        }
+        if FLAGS.contains(&name) {
+            if name == "--exact" {
+                sel.exact = true;
+            }
+            continue;
+        }
+        assert!(
+            TAKES_VALUE.contains(&name),
+            "ci.yml passes `{name}` to the cu_budget harness and this parser does not know \
+             whether it takes a value. Teach it, rather than letting an unrecognised option \
+             turn its value into a positional filter and quietly change which tests run."
+        );
+        let value = inline.or_else(|| toks.next().map(str::to_string));
+        if name == "--skip" {
+            sel.skips.push(value.expect("--skip with no value"));
+        }
+    }
+    sel
+}
+
+/// Every test in this file is executed by `ci.yml`, or excluded on purpose.
+///
+/// # Why this exists, and what it is a second copy of
+///
+/// `every_verifier_integration_test_target_is_named_in_ci` closes drift between
+/// `tests/` and the `--test` lines in `ci.yml`. It does not — and cannot — close
+/// the SAME hazard one level down: `ci.yml` runs this target with a hand-written
+/// list of positional name filters, and libtest silently ignores a test that
+/// matches none of them. A name list guarding a name list.
+///
+/// MEASURED on the merge of the two STARK lineages, 2026-08-03, before this test
+/// existed. The step passed six filters — `cu_budget_real_circuits`,
+/// `cu_budget_verify_uniform_path`, `cu_ceiling`, `build_fingerprint`,
+/// `proof_size_envelope`, `toolchain_caveat`. Two tests matched no filter and so
+/// executed nowhere:
+///
+///   * `every_verifier_integration_test_target_is_named_in_ci` — the drift gate
+///     itself. The guard whose entire subject is "a test named nowhere in ci.yml
+///     runs nowhere" was named nowhere in ci.yml.
+///   * `harness_serialises_its_own_sbf_builds` — the assertion that the SBF tool
+///     lock is real, added in the same window for the same reason.
+///
+/// Both were green when finally run, which is the point: nothing was broken, so
+/// nothing complained, and the coverage was absent anyway.
+///
+/// The fix is the shape of the argument, not two more names. `ci.yml` now passes
+/// `--skip cu_budget_c7_phase2_probe` and NO positional filter, so a new test is
+/// run by default and has to be excluded on purpose to be missed. This test is
+/// what makes that hold: it works against whatever form the arguments take, so
+/// reintroducing an inclusion list is allowed but cannot omit anything quietly.
+#[test]
+fn every_cu_budget_test_is_reachable_from_the_ci_filter() {
+    let names = cu_budget_test_names();
+
+    // Negative controls. Each of these failing silently leaves the loop below
+    // iterating over nothing and reporting a clean workflow.
+    assert!(
+        names.len() >= 12,
+        "only {} `#[test]` fn(s) parsed out of this file — the scanner is broken and this \
+         check is vacuous: {names:?}",
+        names.len()
+    );
+    assert!(
+        names.iter().any(|n| n == "every_cu_budget_test_is_reachable_from_the_ci_filter"),
+        "the scan did not find this very test; it is reading the wrong file or the wrong shape"
+    );
+    assert!(
+        names.iter().any(|n| n == "cu_budget_real_circuits"),
+        "the scan did not find the headline measurement test; the parser is wrong"
+    );
+
+    let invocations = ci_cu_budget_invocations();
+    assert_eq!(
+        invocations.len(),
+        1,
+        "expected exactly one `--test cu_budget` invocation in ci.yml, found {}. If the step \
+         was split, this check must consider a test covered when ANY invocation runs it — \
+         it currently reads one. {invocations:?}",
+        invocations.len()
+    );
+    let sel = parse_libtest_selection(&invocations[0]);
+    assert!(
+        sel.would_run("cu_budget_real_circuits"),
+        "the parsed selection would not run the headline measurement test, which ci.yml \
+         demonstrably does run. The argument parser is wrong, and every verdict below is \
+         noise. Parsed from: {}",
+        invocations[0]
+    );
+
+    for (name, why) in CI_UNRUN_CU_BUDGET_TESTS.iter() {
+        assert!(
+            names.iter().any(|n| n == name),
+            "CI_UNRUN_CU_BUDGET_TESTS excuses `{name}` ({why}) but this file has no such \
+             test — delete the entry rather than carry an allowlist of absent tests"
+        );
+        assert!(
+            !sel.would_run(name),
+            "CI_UNRUN_CU_BUDGET_TESTS excuses `{name}` ({why}) but ci.yml runs it now — \
+             drop the entry"
+        );
+    }
+
+    let unrun: Vec<&str> = names
+        .iter()
+        .map(String::as_str)
+        .filter(|n| !sel.would_run(n))
+        .filter(|n| !CI_UNRUN_CU_BUDGET_TESTS.iter().any(|(e, _)| e == n))
+        .collect();
+    assert!(
+        unrun.is_empty(),
+        "\n\n  >>> CI FILTER DRIFT <<<\n  These tests live in tests/cu_budget.rs and ci.yml's \
+         CU-budget step selects none of them, so they execute nowhere:\n\n    {unrun:?}\n\n  \
+         The step's harness arguments are the coverage. Prefer removing the positional \
+         filters entirely (`--skip <name>` for the one genuine exclusion) over appending \
+         names, or record the exclusion in CI_UNRUN_CU_BUDGET_TESTS with a reason.\n  \
+         Parsed from: {}\n",
+        invocations[0]
+    );
+}
+
 /// The prose check must be capable of failing, on a file where it never does.
 ///
 /// Same reasoning as every other negative control here: `comma_grouped_numbers`
