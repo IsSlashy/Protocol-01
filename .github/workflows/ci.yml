@@ -965,6 +965,10 @@ jobs:
       - name: cargo clippy (BLOCKING — dead_code pinned to exactly the 2 named findings)
         run: |
           set -uo pipefail
+          # This job has no actions/setup-node — it relies on the node the
+          # ubuntu-latest image ships. Say so out loud rather than letting the
+          # gate die on `node: command not found` and read as a lint verdict.
+          command -v node >/dev/null || { echo "::error title=node missing::this step needs node to classify clippy output and the runner has none; add actions/setup-node to the rust-programs-build job"; exit 1; }
           echo "::group::dead_code across p01_stark_verifier + p01-stark, all targets"
           rc=0
           cargo clippy -p p01_stark_verifier --all-targets --message-format=json \
