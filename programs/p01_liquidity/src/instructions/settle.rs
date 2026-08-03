@@ -87,6 +87,17 @@ pub struct Settle<'info> {
 }
 
 pub fn handler(ctx: Context<Settle>) -> Result<()> {
+    // The CPI below targets `zk_shielded::unshield_denominated_stark`, which
+    // was retired in f5bb7514 and is absent from the deployed binary (probe in
+    // `settlement_path.rs`). Fail here, naming the real problem, instead of
+    // letting the invoke bounce back as InstructionFallbackNotFound from a
+    // program the caller never invoked.
+    //
+    // The CPI construction below is deliberately kept and still type-checked:
+    // it is the account order and argument encoding the v3 port has to
+    // reproduce, and deleting it would mean reconstructing it from scratch.
+    crate::settlement_path::require_settlement_path_available()?;
+
     let clock = Clock::get()?;
     let record = &ctx.accounts.prefund_record;
     let pool_key = ctx.accounts.pool.key();

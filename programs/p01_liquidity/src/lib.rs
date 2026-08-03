@@ -1,15 +1,39 @@
 //! # Protocol 01 — Instant-unshield liquidity pool
 //!
-//! **Status: EXPERIMENTAL — not deployed on devnet or mainnet.**
+//! **Status: prefund/settle is CLOSED. See `settlement_path.rs` for why and
+//! for the checklist that must be worked before re-opening it.**
 //!
-//! This program is part of the workspace for development and CI builds, but
-//! it is intentionally absent from `Anchor.toml [programs.devnet]` and
-//! `[programs.mainnet]`. The address declared by `declare_id!` is a localnet
-//! placeholder.
+//! ## The "not deployed" claim that used to sit here was false
 //!
-//! Reference deployments and the production state of Protocol 01 use the
-//! programs declared in `Anchor.toml [programs.devnet]`. Do not assume any
-//! instruction here matches a live program ID.
+//! This header previously read "EXPERIMENTAL — not deployed on devnet or
+//! mainnet" and called `declare_id!` "a localnet placeholder". Measured on
+//! devnet 2026-08-03, read-only, by
+//! `node scripts/probe-liquidity-exposure.mjs`:
+//!
+//! ```text
+//!   6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg
+//!     executable = true, owner = BPFLoaderUpgradeab1e111...
+//!     programdata = FxuCU6synNFRchQkxNX4vHAA6BZNNj6gHjPUHQaB68UW
+//!     last deployed slot = 456503547
+//!     upgrade authority   = 7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU
+//!     3 owned accounts, 0.575387859 SOL:
+//!       DdqigYe… LiquidityPool  is_active=1  reserve 0.569708499 SOL
+//!       EAFRWmV… PrefundRecord  amount 0.005388032 SOL, opened slot 456495936
+//!       ECAgGt6… LPShare        575000000 shares, owner 7gWpzSZA…
+//! ```
+//!
+//! It is absent from `Anchor.toml` — which is a gap in the deploy manifest,
+//! not evidence of non-deployment. Being absent from `Anchor.toml` is exactly
+//! why nobody noticed it had gone live.
+//!
+//! The one live `PrefundRecord` cannot be settled by anything: its
+//! `denominated_pool` (`Djpj1PnM…`) is a **v2** `DenominatedPool`
+//! (discriminator `1015c623b15c448c`) and the v2 unshield is gone, and its
+//! `stark_proof_buffer` (`7iwbzT6Q…`) has been closed. Its rent
+//! (0.00279 SOL) is stranded with it — `close = settler` on `Settle` is the
+//! only thing that could return it. The LP's remaining 0.5697 SOL is NOT
+//! stranded: `withdraw` pays it out against the share balance and does not
+//! touch the record.
 //!
 //! ---
 //!
@@ -29,7 +53,13 @@
 //! This is the "on-chain" alternative to the off-chain bundler loan: no
 //! specific relay server required — any RPC works, any wallet can settle.
 //!
-//! ## Flow
+//! ## Flow — DESIGN INTENT ONLY, step 3 has never been executable
+//!
+//! Steps 1–2 work. Step 3 does not: `unshield_denominated_stark` has not
+//! existed since f5bb7514, so the cycle described below cannot close and both
+//! `prefund` and `settle` now return
+//! `LiquidityError::SettlementPathRetired` before doing anything. The text is
+//! kept because it is the specification the v3 port has to satisfy.
 //!
 //! 1. User uploads + verifies STARK proof (circuit 1) via `p01_stark_verifier`
 //!    as normal, authority = ephemeral signer E (single-use, HMAC-derived).
@@ -55,6 +85,7 @@ use anchor_lang::prelude::*;
 
 pub mod errors;
 pub mod instructions;
+pub mod settlement_path;
 pub mod state;
 
 use instructions::*;

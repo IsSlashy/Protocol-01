@@ -105,6 +105,13 @@ pub fn handler(
     stark_commitment: u64,
     amount: u64,
 ) -> Result<()> {
+    // `prefund` pays the recipient out of the LP reserve on the promise that
+    // `settle` pulls the note's lamports back in later. `settle` cannot
+    // complete (its CPI target was retired — see settlement_path.rs), so that
+    // promise cannot be kept and every call here would be an unrecoverable
+    // outflow. Both legs close together.
+    crate::settlement_path::require_settlement_path_available()?;
+
     let pool = &mut ctx.accounts.pool;
 
     // -----------------------------------------------------------------------

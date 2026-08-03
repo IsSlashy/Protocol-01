@@ -45,4 +45,11 @@ pub enum LiquidityError {
     Unauthorized,
     #[msg("Pool already initialized")]
     AlreadyInitialized,
+
+    // NOTE: new variants go at the END. Anchor assigns error codes by
+    // declaration index from 6000, so inserting above renumbers every
+    // downstream code and silently changes what an already-deployed client
+    // thinks it is reading.
+    #[msg("prefund/settle is closed: zk_shielded::unshield_denominated_stark was retired and its v3 replacement carries no prefund path, so a prefund could never be settled — see p01_liquidity/src/settlement_path.rs")]
+    SettlementPathRetired,
 }

@@ -21,6 +21,17 @@ idl-build = ["anchor-lang/idl-build"]
 anchor-lang = { workspace = true, features = ["init-if-needed"] }
 solana-sha256-hasher = { version = "2.3.0", features = ["sha2"] }
 
+[dev-dependencies]
+# Test-only, and load-bearing. `settlement_path::settlement_tests` asks
+# `zk_shielded` itself which instructions it registers, because `settle` CPIs
+# one that was retired. Anchor only generates `zk_shielded::instruction::X` for
+# instructions listed in `#[program]`, so naming a retired one stops compiling
+# — that is the guard. `no-entrypoint` keeps zk_shielded's BPF entrypoint out
+# of the host test binary. This is a dev-dependency only: it does not enter
+# p01_liquidity's .so, and it introduces no cycle (zk_shielded does not depend
+# on p01_liquidity).
+zk_shielded = { path = "../zk_shielded", features = ["no-entrypoint"] }
+
 [lints.rust.unexpected_cfgs]
 level = "allow"
 check-cfg = ['cfg(feature, values("anchor-debug", "custom-heap", "custom-panic"))']
