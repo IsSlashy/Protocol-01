@@ -1657,6 +1657,21 @@ fn boundary_assertions_for_circuit(
             (2, 2 * HASH_CYCLE_LEN, BaseElement::ZERO),
             (0, 2 * HASH_CYCLE_LEN, pi(0)),
         ],
+        // Circuit 2: balance_proof. Public inputs [commitment, token_mint].
+        // Byte-identical to the verifier's `get_boundary_assertions(2, ..)` and
+        // to `BalanceProofAir::get_assertions` (stark/src/air/balance_proof.rs:131),
+        // in that order — the `alpha_bnd^j` powers depend on the order, and the
+        // honest trace has to satisfy every one of them or `divide_by_x_minus_a`
+        // below silently drops a remainder.
+        2 => vec![
+            (1, 0, BaseElement::ZERO),
+            (2, 0, BaseElement::ZERO),
+            (1, 32, pi(1)),
+            (2, 32, BaseElement::ZERO),
+            (2, 64, BaseElement::ZERO),
+            (2, 96, BaseElement::ZERO),
+            (0, 3 * HASH_CYCLE_LEN + NUM_ROUNDS_B, pi(0)),
+        ],
         3 => {
             let leaf = pi(0);
             let root = pi(1);
@@ -1668,6 +1683,25 @@ fn boundary_assertions_for_circuit(
                 vec![(5, 0, leaf)]
             }
         }
+        // Circuit 4: confidential_balance. Public inputs
+        // [old_commitment, new_commitment, amount_hash, token_mint].
+        // Byte-identical to the verifier's `get_boundary_assertions(4, ..)` and
+        // to `ConfidentialBalanceAir::get_assertions`
+        // (stark/src/air/confidential_balance.rs:137), in that order.
+        4 => vec![
+            (1, 0, BaseElement::ZERO),
+            (2, 0, BaseElement::ZERO),
+            (1, 32, pi(3)),
+            (2, 32, BaseElement::ZERO),
+            (2, 64, BaseElement::ZERO),
+            (2, 96, BaseElement::ZERO),
+            (2, 128, BaseElement::ZERO),
+            (2, 160, BaseElement::ZERO),
+            (2, 192, BaseElement::ZERO),
+            (0, 2 * HASH_CYCLE_LEN + NUM_ROUNDS_B, pi(2)),
+            (0, 4 * HASH_CYCLE_LEN + NUM_ROUNDS_B, pi(0)),
+            (0, 6 * HASH_CYCLE_LEN + NUM_ROUNDS_B, pi(1)),
+        ],
         5 => {
             let mut a: Vec<(usize, usize, BaseElement)> = Vec::new();
             for cycle in 0..16usize {
@@ -4874,11 +4908,13 @@ fn boundary_c_at_ood_impl(
 /// `LegacyGeneric`. The gap is named rather than silently returning the honest
 /// value, which would make a forgery test pass for the wrong reason.
 ///
-/// C2 and C4 have no boundary fold (`boundary_spec_for_quotient` returns `None`
-/// and `boundary_assertions_for_circuit` has no arm), so `boundary_c_at_ood_impl`
-/// short-circuits to zero for them and their `bnd_tag` is never consumed. The two
-/// facts agree BY CONSTRUCTION, not by coincidence: the same
-/// `boundary_assertions_for_circuit` decides both.
+/// [BIND-C2C4 2026-08-03] C2 and C4 now have a boundary fold like the other five,
+/// so `boundary_c_at_ood_impl` contributes a NON-zero term for them and their
+/// `bnd_tag` is consumed. This function and the committed quotient still agree BY
+/// CONSTRUCTION rather than by coincidence — the same
+/// `boundary_assertions_for_circuit` decides both, and the same
+/// `boundary_spec_for_quotient` decides whether the prover folded it. `LegacyGeneric`
+/// is the only arm left with no boundary fold, and it returns `None` above.
 #[allow(clippy::too_many_arguments)]
 #[cfg(any(test, feature = "test-probes"))]
 fn solve_ood_quotient_for_spec(
@@ -6243,13 +6279,21 @@ pub(crate) enum QuotientSpec {
 fn boundary_spec_for_quotient(spec: &QuotientSpec) -> Option<(u8, [u8; 8])> {
     match spec {
         QuotientSpec::Circuit1 => Some((1, *b"bnd-c1\0\0")),
+        // [BIND-C2C4 2026-08-03] C2 and C4 used to return `None` here — "deferred,
+        // no live exploit". Measured (verify.rs `step5_binding_must_fire`): the
+        // trace-aligned per-query step-5 check, their ONLY public-input binding
+        // once this returns `None`, can fire on 7/300 honest C2 witnesses and
+        // 9/300 honest C4 witnesses. On the other ~97% a prover could attach any
+        // public inputs it liked to an honest-shaped proof. Wired now, on both
+        // sides at once: dropping either half breaks honest proofs, so the two
+        // can only be reverted together.
+        QuotientSpec::Circuit2 => Some((2, *b"bnd-c2\0\0")),
         QuotientSpec::Circuit3 { .. } => Some((3, *b"bnd-c3\0\0")),
+        QuotientSpec::Circuit4 => Some((4, *b"bnd-c4\0\0")),
         QuotientSpec::Circuit5 => Some((5, *b"bnd-c5\0\0")),
         QuotientSpec::Circuit6 { .. } => Some((6, *b"bnd-c6\0\0")),
-        // Circuits 2 and 4 boundary folds are deferred (no live exploit + extra
-        // CU budget review needed). LegacyGeneric (C0) folds in the dedicated
-        // legacy path, not here.
-        _ => None,
+        // LegacyGeneric (C0) folds in the dedicated legacy path, not here.
+        QuotientSpec::LegacyGeneric => None,
     }
 }
 
@@ -6844,6 +6888,30 @@ pub fn generate_pool_commitment_proof_with_forgery(
     )
 }
 
+/// [BIND-C2C4 fails-closed probe] C1's twin of
+/// `generate_balance_compact_proof_claiming`. C1's boundary fold has been wired
+/// since [C2], so this probe's proofs were ALREADY rejected before
+/// [BIND-C2C4 2026-08-03] — it exists so the C2/C4 guards are pinned against the
+/// standard the other circuits already meet, rather than against a bespoke
+/// arrangement. `claim_index` selects which of `[nullifier, commitment]` is
+/// lied about. Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn generate_pool_commitment_proof_claiming(
+    nullifier_preimage: u64,
+    secret: u64,
+    deposit_epoch: u64,
+    token_mint: u64,
+    claim_index: usize,
+    claimed_value: u64,
+) -> GenericCompactProofData {
+    generate_pool_commitment_proof_with_layout_and_claim(
+        nullifier_preimage, secret, deposit_epoch, token_mint,
+        PairIndexing::Canonical, TraceLeaf::Canonical, DeepProbe::HONEST,
+        Some((claim_index, claimed_value)),
+    )
+}
+
 fn generate_pool_commitment_proof_with_layout(
     nullifier_preimage: u64,
     secret: u64,
@@ -6852,6 +6920,25 @@ fn generate_pool_commitment_proof_with_layout(
     pair_indexing: PairIndexing,
     trace_leaf: TraceLeaf,
     probe: DeepProbe,
+) -> GenericCompactProofData {
+    generate_pool_commitment_proof_with_layout_and_claim(
+        nullifier_preimage, secret, deposit_epoch, token_mint, pair_indexing, trace_leaf, probe,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_pool_commitment_proof_with_layout_and_claim(
+    nullifier_preimage: u64,
+    secret: u64,
+    deposit_epoch: u64,
+    token_mint: u64,
+    pair_indexing: PairIndexing,
+    trace_leaf: TraceLeaf,
+    probe: DeepProbe,
+    // `Some((i, v))` replaces public input `i` with `v` BEFORE the transcript is
+    // built, leaving the trace honest. `None` on every production path.
+    claim_override: Option<(usize, u64)>,
 ) -> GenericCompactProofData {
     let np = BaseElement::new(nullifier_preimage);
     let s = BaseElement::new(secret);
@@ -6862,8 +6949,13 @@ fn generate_pool_commitment_proof_with_layout(
         crate::air::denominated_pool::build_pool_commitment_trace(np, s, epoch, mint);
 
     // Public inputs: nullifier, commitment
-    let null_u64 = nullifier.as_int();
-    let commit_u64 = commitment.as_int();
+    let mut public_inputs = vec![nullifier.as_int(), commitment.as_int()];
+    if let Some((i, v)) = claim_override {
+        assert!(i < public_inputs.len(), "C1 claim index {i} out of range");
+        public_inputs[i] = v;
+    }
+    let null_u64 = public_inputs[0];
+    let commit_u64 = public_inputs[1];
     let mut pub_bytes = Vec::new();
     pub_bytes.extend_from_slice(&null_u64.to_le_bytes());
     pub_bytes.extend_from_slice(&commit_u64.to_le_bytes());
@@ -6885,7 +6977,8 @@ fn generate_pool_commitment_proof_with_layout(
     GenericCompactProofData {
         proof_bytes,
         circuit_id: CIRCUIT_POOL_COMMITMENT,
-        public_inputs: vec![null_u64, commit_u64],
+        // The CLAIMED vector — the same one `pub_bytes` was built from.
+        public_inputs,
         root,
     }
 }
@@ -6908,10 +7001,12 @@ pub fn generate_balance_compact_proof(
 /// [B1 fails-closed probe] `generate_balance_compact_proof` (C2) with the
 /// coordinated-OOD-forgery and terminal-poly knobs exposed.
 ///
-/// C2 is one of the two circuits with NO boundary fold at the OOD point
-/// (`boundary_spec_for_quotient` returns `None` for it), so its public inputs
-/// bind the trace least well of the seven and the DEEP composition is doing
-/// proportionally more of the work. Compiled only under `test-probes`.
+/// C2 used to be one of the two circuits with NO boundary fold at the OOD point;
+/// [BIND-C2C4 2026-08-03] wired it, so `boundary_spec_for_quotient` now returns
+/// `Some((2, "bnd-c2"))` and its public inputs bind the trace on every proof
+/// rather than on the ~2.33% where a query lands trace-aligned. The DEEP
+/// composition is no longer carrying that load alone. Compiled only under
+/// `test-probes`.
 #[cfg(any(test, feature = "test-probes"))]
 #[doc(hidden)]
 pub fn generate_balance_compact_proof_with_forgery(
@@ -6931,12 +7026,65 @@ pub fn generate_balance_compact_proof_with_forgery(
     )
 }
 
+/// [BIND-C2C4 fails-closed probe] An HONEST C2 trace published under a FALSE
+/// public input.
+///
+/// This is the attack the boundary fold exists to stop, and the one the hollow
+/// `balance_proof_deep_ali_fails_on_wrong_public_inputs` never reached. That test
+/// tampers the verifier's `public_inputs` argument AFTER the proof is built, so
+/// the Fiat-Shamir `rlc-c2` alpha moves too and the transition identity fails for
+/// a reason that has nothing to do with public-input binding — it would still
+/// pass with the boundary fold ripped out.
+///
+/// Here the whole pipeline is re-run under the false claim, so it is entirely
+/// self-consistent: alpha, alpha_bnd, the OOD point, the query positions and the
+/// FRI layers are all derived from the SAME `pub_bytes` the verifier will be
+/// handed. The transition constraints never mention the public inputs, so
+/// `Q = C/Z_T` is still exact and FRI still passes. The one and only thing that
+/// breaks is `divide_by_x_minus_a` on `(T_col(x) − claimed)` at the assertion
+/// row: `T_col(g^row) != claimed`, so the synthetic division drops a non-zero
+/// remainder and the committed `Q` is short by `alpha_bnd^j · r/(x − g^row)`.
+/// The verifier's `boundary_fold_at_ood` reconstructs that missing term at `z`
+/// and the identity fails.
+///
+/// With `boundary_spec_for_quotient` returning `None` for C2 — i.e. before
+/// [BIND-C2C4] — this proof VERIFIES. `claim_index` selects which of
+/// `[commitment, token_mint]` is lied about. Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn generate_balance_compact_proof_claiming(
+    spending_key: u64,
+    balance: u64,
+    salt: u64,
+    token_mint: u64,
+    claim_index: usize,
+    claimed_value: u64,
+) -> GenericCompactProofData {
+    generate_balance_compact_proof_with_claim(
+        spending_key, balance, salt, token_mint, DeepProbe::HONEST,
+        Some((claim_index, claimed_value)),
+    )
+}
+
 fn generate_balance_compact_proof_inner(
     spending_key: u64,
     balance: u64,
     salt: u64,
     token_mint: u64,
     probe: DeepProbe,
+) -> GenericCompactProofData {
+    generate_balance_compact_proof_with_claim(spending_key, balance, salt, token_mint, probe, None)
+}
+
+fn generate_balance_compact_proof_with_claim(
+    spending_key: u64,
+    balance: u64,
+    salt: u64,
+    token_mint: u64,
+    probe: DeepProbe,
+    // `Some((i, v))` replaces public input `i` with `v` BEFORE the transcript is
+    // built, leaving the trace honest. `None` on every production path.
+    claim_override: Option<(usize, u64)>,
 ) -> GenericCompactProofData {
     let sk = BaseElement::new(spending_key);
     let bal = BaseElement::new(balance);
@@ -6946,8 +7094,13 @@ fn generate_balance_compact_proof_inner(
     let (trace, commitment) =
         crate::air::balance_proof::build_balance_proof_trace(sk, bal, s, mint);
 
-    let commit_u64 = commitment.as_int();
-    let mint_u64 = token_mint;
+    let mut public_inputs = vec![commitment.as_int(), token_mint];
+    if let Some((i, v)) = claim_override {
+        assert!(i < public_inputs.len(), "C2 claim index {i} out of range");
+        public_inputs[i] = v;
+    }
+    let commit_u64 = public_inputs[0];
+    let mint_u64 = public_inputs[1];
     let mut pub_bytes = Vec::new();
     pub_bytes.extend_from_slice(&commit_u64.to_le_bytes());
     pub_bytes.extend_from_slice(&mint_u64.to_le_bytes());
@@ -6969,7 +7122,8 @@ fn generate_balance_compact_proof_inner(
     GenericCompactProofData {
         proof_bytes,
         circuit_id: CIRCUIT_BALANCE_PROOF,
-        public_inputs: vec![commit_u64, mint_u64],
+        // The CLAIMED vector — the same one `pub_bytes` was built from.
+        public_inputs,
         root,
     }
 }
@@ -7133,6 +7287,35 @@ pub fn generate_confidential_balance_compact_proof_with_trace_leaf(
     )
 }
 
+/// [BIND-C2C4 fails-closed probe] An HONEST C4 trace published under a FALSE
+/// public input. C2's `generate_balance_compact_proof_claiming` carries the full
+/// argument; this is its twin. `claim_index` selects which of
+/// `[old_commitment, new_commitment, amount_hash, token_mint]` is lied about.
+///
+/// Before [BIND-C2C4] this proof VERIFIES under `verify_deep_ali_circuit_4`.
+/// Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn generate_confidential_balance_compact_proof_claiming(
+    spending_key: u64,
+    old_balance: u64,
+    old_salt: u64,
+    new_balance: u64,
+    new_salt: u64,
+    amount: u64,
+    amount_salt: u64,
+    token_mint: u64,
+    claim_index: usize,
+    claimed_value: u64,
+) -> GenericCompactProofData {
+    generate_confidential_balance_compact_proof_with_claim(
+        spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt,
+        token_mint, TraceLeaf::Canonical, DeepProbe::HONEST,
+        Some((claim_index, claimed_value)),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn generate_confidential_balance_compact_proof_inner(
     spending_key: u64,
@@ -7145,6 +7328,28 @@ fn generate_confidential_balance_compact_proof_inner(
     token_mint: u64,
     trace_leaf: TraceLeaf,
     probe: DeepProbe,
+) -> GenericCompactProofData {
+    generate_confidential_balance_compact_proof_with_claim(
+        spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt,
+        token_mint, trace_leaf, probe, None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_confidential_balance_compact_proof_with_claim(
+    spending_key: u64,
+    old_balance: u64,
+    old_salt: u64,
+    new_balance: u64,
+    new_salt: u64,
+    amount: u64,
+    amount_salt: u64,
+    token_mint: u64,
+    trace_leaf: TraceLeaf,
+    probe: DeepProbe,
+    // `Some((i, v))` replaces public input `i` with `v` BEFORE the transcript is
+    // built, leaving the trace honest. `None` on every production path.
+    claim_override: Option<(usize, u64)>,
 ) -> GenericCompactProofData {
     let sk = BaseElement::new(spending_key);
     let ob = BaseElement::new(old_balance);
@@ -7160,15 +7365,21 @@ fn generate_confidential_balance_compact_proof_inner(
             sk, ob, os, nb, ns, a, as_, mint,
         );
 
-    let oc_u64 = oc.as_int();
-    let nc_u64 = nc.as_int();
-    let ah_u64 = ah.as_int();
+    let mut public_inputs = vec![oc.as_int(), nc.as_int(), ah.as_int(), token_mint];
+    if let Some((i, v)) = claim_override {
+        assert!(i < public_inputs.len(), "C4 claim index {i} out of range");
+        public_inputs[i] = v;
+    }
+    let oc_u64 = public_inputs[0];
+    let nc_u64 = public_inputs[1];
+    let ah_u64 = public_inputs[2];
+    let mint_u64 = public_inputs[3];
 
     let mut pub_bytes = Vec::new();
     pub_bytes.extend_from_slice(&oc_u64.to_le_bytes());
     pub_bytes.extend_from_slice(&nc_u64.to_le_bytes());
     pub_bytes.extend_from_slice(&ah_u64.to_le_bytes());
-    pub_bytes.extend_from_slice(&token_mint.to_le_bytes());
+    pub_bytes.extend_from_slice(&mint_u64.to_le_bytes());
 
     let (proof_bytes, root) = generate_compact_proof_from_trace_with_pair_indexing(
         &trace,
@@ -7187,7 +7398,11 @@ fn generate_confidential_balance_compact_proof_inner(
     GenericCompactProofData {
         proof_bytes,
         circuit_id: CIRCUIT_CONFIDENTIAL_BALANCE,
-        public_inputs: vec![oc_u64, nc_u64, ah_u64, token_mint],
+        // `public_inputs` is what the verifier is handed, so it must be the
+        // CLAIMED vector — the same one `pub_bytes` was built from — not the
+        // honest one. Reading `token_mint` here instead of `mint_u64` would make
+        // the claim probe silently un-lie about input 3.
+        public_inputs,
         root,
     }
 }

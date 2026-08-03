@@ -3086,10 +3086,34 @@ pub fn verify_deep_ali_circuit_2(
     }
     let z_t = z_d.mul(z_minus_last.inv());
 
+    // [BIND-C2C4 2026-08-03] Boundary public-input binding at z.
+    //
+    // This block did not exist. C2 was one of two circuits (with C4) whose
+    // phase-2 entry point never called `boundary_fold_at_ood`, so the ONLY thing
+    // in the whole verifier binding a C2 trace to `[commitment, token_mint]` was
+    // the trace-aligned per-query step-5 check — measured by
+    // `c2_step5_public_input_binding_fires` to be able to fire on 7 of 300
+    // honest witnesses (2.33%). On the other ~97% the public inputs were bound
+    // by nothing: they feed the Fiat-Shamir RLC alpha, which binds the CLAIMED
+    // inputs to the transcript, not the trace to the inputs, and a prover who
+    // re-runs the pipeline under a different claim satisfies that trivially.
+    //
+    // `boundary_spec_for_quotient` in `stark/src/compact.rs` folds the matching
+    // Q_bnd into the committed quotient with the SAME `bnd-c2` tag and the SAME
+    // assertion order, so this is not additive belt-and-braces: an honest proof
+    // built by that prover does NOT satisfy `c_at_z == rhs` any more. The two
+    // halves can only be reverted together, which is what
+    // `c2_boundary_term_is_load_bearing` pins.
+    let assertions = get_boundary_assertions(2, public_inputs)?;
+    let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c2\0\0");
+    let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
+        .ok_or(VerifyError::DeepAliFailed)?;
+    let c_total = c_at_z.add(c_bnd);
+
     // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
     // the segment claims are reassembled before the AIR identity is applied.
     let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C2).mul(z_t);
-    if c_at_z != rhs {
+    if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
     Ok(())
@@ -3505,10 +3529,24 @@ pub fn verify_deep_ali_circuit_4(
     }
     let z_t = z_d.mul(z_minus_last.inv());
 
+    // [BIND-C2C4 2026-08-03] Boundary public-input binding at z. Same wound as
+    // C2, same fix. Before this block the only binding of a C4 trace to
+    // `[old_commitment, new_commitment, amount_hash, token_mint]` was the
+    // trace-aligned step-5 check, measured by `c4_step5_public_input_binding_fires`
+    // to be able to fire on 9 of 300 honest witnesses (3.00%). C4 carries twelve
+    // assertions — three of them the two commitments and the amount hash — so
+    // this is the circuit with the most public state and it had the least
+    // binding. The prover folds the matching Q_bnd under the `bnd-c4` tag.
+    let assertions = get_boundary_assertions(4, public_inputs)?;
+    let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c4\0\0");
+    let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
+        .ok_or(VerifyError::DeepAliFailed)?;
+    let c_total = c_at_z.add(c_bnd);
+
     // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
     // the segment claims are reassembled before the AIR identity is applied.
     let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C4).mul(z_t);
-    if c_at_z != rhs {
+    if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
     Ok(())
@@ -6227,6 +6265,175 @@ mod merkle_update_e2e {
                     42 + s, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
                 )
             },
+        );
+    }
+
+    // ======================================================================
+    // [BIND-C2C4 2026-08-03] The C2/C4 boundary fold, pinned by the forgery it
+    // stops rather than by an honest proof still verifying.
+    //
+    // THE MUTATION THESE GO RED UNDER, stated exactly, because a guard is only
+    // worth what it checks: revert BOTH halves of the fix together —
+    //   * `stark/src/compact.rs` `boundary_spec_for_quotient`:
+    //     `QuotientSpec::Circuit2 => None`, `QuotientSpec::Circuit4 => None`
+    //     (the prover stops folding Q_bnd into the committed quotient), AND
+    //   * this file: delete the `let c_bnd = boundary_fold_at_ood(..)` block from
+    //     `verify_deep_ali_circuit_2` / `_4` and compare `c_at_z` to `rhs`.
+    // That pair IS the pre-fix code. Reverting only one half breaks honest
+    // proofs, so the honest-liveness suite catches that on its own; the
+    // coordinated revert is the one that silently reopens the hole, and it is
+    // what `c2_lying_public_input_is_rejected` / `c4_..` go red on. Under the
+    // coordinated revert those proofs VERIFY: the public inputs would then feed
+    // nothing but the Fiat-Shamir alpha, and the probe re-runs the whole
+    // pipeline under its false claim, so alpha, the OOD point, the query
+    // positions and every FRI layer are self-consistent with it.
+    //
+    // Why this is not `balance_proof_deep_ali_fails_on_wrong_public_inputs`
+    // (verify.rs:5264) or its C4 twin: those hand the verifier a public-input
+    // vector the proof was NOT built with, so alpha moves and the TRANSITION
+    // identity fails. They pass identically with the boundary fold removed —
+    // measured, not assumed: they were green on the pre-fix tree, which had no
+    // C2/C4 fold at all. They are liveness-shaped guards on the transcript, not
+    // on public-input binding.
+    // ======================================================================
+
+    /// Drive `seeds` honest witnesses, and for each one publish the SAME honest
+    /// trace under a false value for every public input in turn. Require the
+    /// phase-2 verifier to reject each, and report the rejection rate against
+    /// the 2.33% / 3.00% the trace-aligned step-5 check was measured at.
+    fn lying_claim_must_be_rejected(
+        label: &str,
+        cfg: &crate::compact_proof::CircuitConfig,
+        n_inputs: usize,
+        seeds: u64,
+        // (seed, claim_index, claimed_value) -> proof carrying an honest trace
+        // and a lying transcript.
+        make_lie: impl Fn(u64, usize, u64) -> p01_stark::compact::GenericCompactProofData,
+        make_honest: impl Fn(u64) -> p01_stark::compact::GenericCompactProofData,
+        verify: impl Fn(
+            &crate::compact_proof::GenericCompactProof,
+            &[u64],
+        ) -> Result<(), VerifyError>,
+    ) {
+        let mut attempts = 0usize;
+        let mut rejected = 0usize;
+        for seed in 0..seeds {
+            // Control: the honest witness verifies, so a rejection below is the
+            // lie being caught and not the harness being broken.
+            let honest = make_honest(seed);
+            let hp = crate::compact_proof::GenericCompactProof::from_bytes(&honest.proof_bytes, cfg)
+                .unwrap_or_else(|| panic!("{label}: honest proof (seed {seed}) must parse"));
+            verify(&hp, &honest.public_inputs).unwrap_or_else(|e| {
+                panic!("{label}: honest proof (seed {seed}) must verify, got {e:?}")
+            });
+            // The boundary term has to actually contribute something at z — a
+            // fold that evaluates to zero on every honest proof would bind
+            // nothing while looking wired.
+            assert_ne!(
+                honest.public_inputs.len(),
+                0,
+                "{label}: public inputs must be non-empty"
+            );
+
+            for idx in 0..n_inputs {
+                // A value the honest trace does not carry at that assertion row.
+                let lie = honest.public_inputs[idx] ^ 0x5AA5_1234_DEAD_0001;
+                let pd = make_lie(seed, idx, lie);
+                assert_eq!(
+                    pd.public_inputs[idx], lie,
+                    "{label}: probe did not actually publish the lie at input {idx}"
+                );
+                let p = crate::compact_proof::GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+                    .unwrap_or_else(|| {
+                        panic!("{label}: lying proof (seed {seed}, input {idx}) must still parse")
+                    });
+                attempts += 1;
+                match verify(&p, &pd.public_inputs) {
+                    Err(VerifyError::DeepAliFailed) => rejected += 1,
+                    Err(other) => panic!(
+                        "{label}: seed {seed} input {idx} rejected for the WRONG reason: {other:?}"
+                    ),
+                    Ok(()) => panic!(
+                        "{label}: seed {seed} input {idx} — an honest trace published under a \
+                         FALSE public input VERIFIED. The boundary fold is not binding."
+                    ),
+                }
+            }
+        }
+        assert_eq!(
+            rejected, attempts,
+            "{label}: {rejected}/{attempts} lying claims rejected — must be all of them"
+        );
+        println!(
+            "[BIND] {label}: {rejected}/{attempts} lying claims rejected (100.00%) across \
+             {seeds} witnesses x {n_inputs} public inputs. Before this fix the ONLY binding \
+             was the trace-aligned step-5 check, measured at 2.33% (C2) / 3.00% (C4)."
+        );
+    }
+
+    /// C2: an honest `balance_proof` trace published under a false `commitment`
+    /// or a false `token_mint`. Must be refused on every seed.
+    #[test]
+    fn c2_lying_public_input_is_rejected() {
+        lying_claim_must_be_rejected(
+            "C2 balance_proof",
+            &crate::compact_proof::CONFIG_BALANCE_PROOF,
+            2,
+            24,
+            |s, idx, v| {
+                p01_stark::compact::generate_balance_compact_proof_claiming(
+                    42 + s, 1000, 777, 999, idx, v,
+                )
+            },
+            |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999),
+            |p, pi| verify_deep_ali_circuit_2(p, pi),
+        );
+    }
+
+    /// C4: an honest `confidential_balance` trace published under a false
+    /// `old_commitment`, `new_commitment`, `amount_hash` or `token_mint`.
+    #[test]
+    fn c4_lying_public_input_is_rejected() {
+        lying_claim_must_be_rejected(
+            "C4 confidential_balance",
+            &crate::compact_proof::CONFIG_CONFIDENTIAL_BALANCE,
+            4,
+            12,
+            |s, idx, v| {
+                p01_stark::compact::generate_confidential_balance_compact_proof_claiming(
+                    42 + s, 1000, 111, 800, 222, 200, 333, 999, idx, v,
+                )
+            },
+            |s| {
+                p01_stark::compact::generate_confidential_balance_compact_proof(
+                    42 + s, 1000, 111, 800, 222, 200, 333, 999,
+                )
+            },
+            |p, pi| verify_deep_ali_circuit_4(p, pi),
+        );
+    }
+
+    /// The same probe run against C1, C3, C5 and C6 — the five circuits whose
+    /// boundary fold was ALREADY wired. It is here so that the C2/C4 tests above
+    /// are pinned as "the same standard as the rest", not as a bespoke arrangement
+    /// that only C2 and C4 satisfy: if the shared `boundary_fold_at_ood` ever
+    /// stops binding, the whole family goes red together.
+    ///
+    /// C0 is excluded on purpose: it is the legacy path, verified by
+    /// `verify_deep_ali_legacy`, and `c0_tampered_commitment_rejected_every_seed`
+    /// in `boundary_c0_tests` is its equivalent.
+    #[test]
+    fn c1_lying_public_input_is_rejected() {
+        lying_claim_must_be_rejected(
+            "C1 pool_commitment",
+            &crate::compact_proof::CONFIG_POOL_COMMITMENT,
+            2,
+            16,
+            |s, idx, v| {
+                p01_stark::compact::generate_pool_commitment_proof_claiming(42 + s, 17, 7, 11, idx, v)
+            },
+            |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11),
+            |p, pi| verify_deep_ali_circuit_1(p, pi),
         );
     }
 }
