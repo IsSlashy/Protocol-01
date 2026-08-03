@@ -178,6 +178,57 @@ jobs:
       - name: STARK prover vs DEPLOYED verifier (BLOCKING — proof-format interlock)
         run: node packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain --cluster devnet
 
+      # THE PROGRAM-ID DRIFT GATE. `scripts/sync-program-ids.mjs` exists, works,
+      # and until this commit NOTHING CALLED IT. MEASURED 2026-08-03:
+      #   grep -rn 'check-program-ids\|sync-program-ids' .github/ package.json \
+      #        packages/*/package.json turbo.json
+      # returned only the two `package.json` script definitions themselves — no
+      # workflow, no prepublish hook, no turbo task. Three separate files
+      # (packages/privacy-sdk/src/constants.ts, packages/stark-prover/
+      # deployed-verifier.json, packages/stark-prover/scripts/
+      # deployed-verifier-check.mjs) cite those commands as the thing that would
+      # catch id drift. A declared command nothing runs reads as coverage and is
+      # not.
+      #
+      # It was not wired because a bare `--check` is RED, and would stay red.
+      # MEASURED on this tree: exit 1, reported as 10 failures — 9 Anchor.toml
+      # `[programs.*]` entries that do not match the crate's own `declare_id!`,
+      # plus one aggregate entry carrying 23 hardcoded ids in CODE. Every one
+      # of the 32 belongs to a program that is NOT
+      # p01_stark_verifier — the fee splitter, the relayer, the stream, the
+      # subscription, the whitelist, zkspl, specter, zk_shielded. Each is a real
+      # chain-measured defect (see the script header: three of those addresses
+      # are CLOSED or nonexistent on devnet), and fixing any of them changes
+      # which program a shipped client addresses. That is a product decision.
+      #
+      # The step below this one already argues, in its own words, that a
+      # permanently-red required check gets deleted rather than obeyed. So the
+      # wiring is split rather than uniform:
+      #
+      #   * BLOCKING on p01_stark_verifier, which measures ZERO divergences at
+      #     every rule as of this commit — so it can only ever go red for a
+      #     reason its owner can fix, and it bites the moment one appears. This
+      #     is not a weaker check: `--only` applies R1, R2 and R3 unchanged to
+      #     one program's ids, refuses a scope that names no declared program,
+      #     and prints how many ids it actually swept so "PASS" can never be a
+      #     claim about nothing.
+      #   * ADVISORY on the whole repo, running on every push with its true exit
+      #     code visible via continue-on-error, so all 32 stay legible instead of
+      #     being scoped out of existence.
+      #
+      # Promote the advisory step to blocking the moment the other lineages'
+      # addresses are decided. Do not fold the verifier back into it.
+      - name: Program-id drift (BLOCKING — p01_stark_verifier)
+        run: node scripts/sync-program-ids.mjs --check --only p01_stark_verifier
+
+      - name: Program-id drift (ADVISORY — whole repo, red by lineage)
+        run: |
+          echo "::group::program-id divergences across every program"
+          node scripts/sync-program-ids.mjs --check \
+            || echo "::warning title=Program-id drift::Program ids diverge from declare_id! outside p01_stark_verifier. Expanded output is in the group above. Blocking coverage is the step before this one."
+          echo "::endgroup::"
+        continue-on-error: true
+
       - name: Type check & Build
         run: pnpm turbo run build
 
@@ -737,14 +788,132 @@ jobs:
       #
       # MEASURED here, on the tree this comment ships with:
       #   cargo clippy -p p01_stark_verifier -- -D warnings           -> exit 0
-      #   cargo clippy -p p01_stark_verifier --all-targets -- -D ...  -> 105 errors
-      # so this is deliberately NOT `--all-targets`. `--all-targets` builds the
-      # dev-dependency `p01-stark`, which carries 105 untriaged clippy findings
-      # (`too_many_arguments` and friends). Widening the scope here would make the
-      # step permanently red and it would be reverted, which is worse than the
-      # narrower gate. Triaging `p01-stark` is a separate job.
-      - name: cargo clippy (BLOCKING — verifier)
+      # so this step stays exactly as it is: every lint, no exceptions, on the
+      # crate that actually ships on chain. The `--all-targets` widening the old
+      # comment argued against is now a SEPARATE step below rather than a
+      # widening of this one, so a style regression in a test can never be
+      # confused with a lint regression in `src/`.
+      - name: cargo clippy (BLOCKING — verifier src, every lint)
         run: cargo clippy -p p01_stark_verifier -- -D warnings
+
+      # [2026-08-03] THE TEST CODE WAS NOT LINT-GATED, AND THE TEST CODE IS WHERE
+      # EVERY GATE IN THIS PACKAGE LIVES.
+      #
+      # The step above is `-p p01_stark_verifier` with no `--all-targets`, so it
+      # compiles `src/` and nothing else. Its own comment is the reason this
+      # matters: it documents that clippy caught a PARTIAL deletion of the
+      # trace-commitment check through the `unused variable` locals it left
+      # behind. That instrument was pointed at `src/` only, while the thing a
+      # mutation has to get past is `tests/`.
+      #
+      # The obvious widening does not work, and the old comment's numbers were
+      # both stale and misattributed. RE-MEASURED on this tree:
+      #   cargo clippy -p p01_stark_verifier --all-targets -- -D warnings
+      #     -> exit 101, 102 errors (not 105), and ALL 102 are in `stark/src/`.
+      #        It aborts on the dev-dependency `p01-stark` lib and NEVER REACHES
+      #        a single one of the verifier's own test targets. So `--all-targets`
+      #        was not "the same gate, wider" — it was a gate that could not get
+      #        far enough to look at what it was being asked to look at.
+      # A JSON sweep of both packages with no `-D` (warnings do not abort, so the
+      # whole graph compiles) found 144 unique (lint, file, line):
+      #   120  stark/src/            the prover lib
+      #    22  programs/p01_stark_verifier/tests/
+      #     2  programs/p01_stark_verifier/src/   (cfg(test)-only, invisible above)
+      # Those 24 had never been reported by any gate in this repo.
+      #
+      # WHAT THIS STEP DENIES, AND WHY IT IS A POSITIVE CHOICE AND NOT AN ESCAPE
+      # `-D warnings` keeps every rustc lint at deny — `unused_variables`,
+      # `unused_mut`, `unreachable_code`, `unused_imports`, `unused_must_use`.
+      # That is precisely the class that catches a partial deletion, and it is
+      # now enforced over `tests/` for the first time. `clippy::correctness`,
+      # `clippy::suspicious` and `clippy::perf` stay denied with it.
+      # `clippy::style`, `clippy::complexity`, `clippy::pedantic` and
+      # `clippy::nursery` are allowed here because a `for i in 0..n { x[i] }`
+      # cannot hide a deleted check, and holding a soundness gate hostage to 136
+      # formatting opinions is how the widening got reverted the first time.
+      #
+      # THE RESIDUE, COUNTED, so this is a decision and not a silence. MEASURED:
+      #   cargo clippy -p p01_stark_verifier --all-targets -- -D warnings
+      #     -> exit 101, 138 unique findings, ALL in the allowed groups except 2:
+      #        (115 stark/src, 21 verifier tests, 2 verifier src)
+      #        53  clippy::assign_op_pattern        `a = a + b` in AIR/prover math
+      #        45  clippy::needless_range_loop      indexed loops in AIR/prover math
+      #        12  clippy::useless_conversion
+      #         7  clippy::manual_is_multiple_of
+      #         6  clippy::too_many_arguments       prover entry points, 8..13 args
+      #         4  clippy::unnecessary_cast
+      #         3  clippy::manual_repeat_n
+      #         2  clippy::manual_range_contains
+      #         1  each: print_literal, items_after_test_module,
+      #               unnecessary_map_or, assertions_on_constants
+      #         2  dead_code  <- NOT noise; see the advisory step below
+      # The 98 `assign_op_pattern` + `needless_range_loop` hits are in
+      # `stark/src/air/*` and `stark/src/compact.rs`, i.e. the constraint
+      # evaluators and the LDE/quotient loops. `clippy --fix` would rewrite them
+      # mechanically; on THIS code that is a soundness-relevant edit and it needs
+      # its own branch, its own mutation testing and its own reviewer, not a
+      # drive-by inside a CI-wiring change. Honest estimate for that job: several
+      # hours, dominated by re-proving the seven circuits after the rewrite.
+      # `too_many_arguments` is a signature change reaching the WASM prover and
+      # every test; it is not fixable here at all.
+      #
+      # Six findings WERE fixed rather than allowed, because each was real:
+      # `stark/src/compact.rs:1` and `stark/src/bin/gen_proof.rs:1` used `///`
+      # for module docs with a blank line after, so ten lines of documentation
+      # attached to nothing and rustdoc never showed them (`//!` now); three
+      # unused `winterfell::math::StarkField` imports in `stark/src/poseidon/
+      # mod.rs`; and `vec_init_then_push` in `tests/cu_budget.rs`.
+      #
+      # THIS STEP WAS PROVEN TO BITE, not assumed to. Mutation run and reverted
+      # on this tree: one orphan local added to
+      # `tests/phase_binding_seam.rs:82` — the residue a PARTIAL deletion of a
+      # check leaves behind, which is the exact shape the step above is
+      # documented as having caught in `src/`.
+      #   cargo clippy -p p01_stark_verifier -- -D warnings             -> exit 0. SILENT.
+      #   cargo clippy -p p01_stark_verifier --all-targets -- (this step)
+      #     -> exit 101, `unused variable: mutation_probe_orphan_local`,
+      #        named to the file and line.
+      # The narrow step cannot see it. That is the whole reason this one exists.
+      #
+      # `-A dead_code` is the one single-lint exception and it is NOT a silence:
+      # the step immediately after this re-runs with `dead_code` as the only
+      # denied lint, prints both findings, and is loud about a third being new.
+      - name: cargo clippy (BLOCKING — verifier tests + prover, correctness lints)
+        run: |
+          cargo clippy -p p01_stark_verifier --all-targets -- \
+            -D warnings -A dead_code \
+            -A clippy::style -A clippy::complexity -A clippy::pedantic -A clippy::nursery
+
+      # `dead_code` is the ONE lint held out of the blocking step above that is
+      # not noise, so it is reported here every run rather than hidden behind an
+      # `-A` nobody reads. Two findings, both MEASURED 2026-08-03, both in
+      # `stark/src/compact.rs`, and neither is fixable without a decision:
+      #
+      #   :5724  `FriCommitData.alphas` is never read outside `#[cfg(test)]`.
+      #          Its only reader is `test_fri_commit_layer_count_matches_domain_shrink`,
+      #          which is the sole assertion in the tree that the number of FRI
+      #          folds matches the domain shrink. Deleting the field to satisfy
+      #          the lint would delete that pin, which is a weakening.
+      #   :6308  `QuotientSpec::LegacyGeneric` is never CONSTRUCTED, anywhere,
+      #          including tests — while two `match` arms still handle it
+      #          (`solve_ood_quotient_for_spec` returns None, and the quotient
+      #          builder has a whole pointwise-LDE branch for it). Its own doc
+      #          says "will be deleted once all are migrated" and C1..C6 all have
+      #          their dedicated variants now, so the branch is unreachable
+      #          prover code. Deleting it cascades into
+      #          `compute_quotient_at_position_generic`, its only caller, which
+      #          two verifier source comments still reference. That is a prover
+      #          change, not a lint fix.
+      #
+      # A red here is expected. It goes green when someone owns either decision.
+      - name: cargo clippy (ADVISORY — dead_code on the prover, 2 known findings)
+        run: |
+          echo "::group::dead_code across p01_stark_verifier + p01-stark, all targets"
+          cargo clippy -p p01_stark_verifier --all-targets -- \
+            -A warnings -D dead_code \
+            || echo "::warning title=dead_code::Unreachable prover code. Two findings are known and named in ci.yml above this step; a THIRD would be new and is what this step exists to surface."
+          echo "::endgroup::"
+        continue-on-error: true
 
       # `p01_relayer` was advisory on the grounds that it "still carries
       # pre-existing warnings that nobody has triaged". It does not, and had not

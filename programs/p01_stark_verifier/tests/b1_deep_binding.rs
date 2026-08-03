@@ -1255,6 +1255,7 @@ fn t2_legacy_c0_subgroup_alias_reaches_the_terminal_check() {
 ///   * this test is verifier-side. It asserts each pinned bound TIGHT in both
 ///     directions against the honest proof, which is the claim
 ///     `log2(fps/bound)` actually rests on.
+///
 /// MEASURED 2026-08-03: both agree, bound 1 on all seven circuits.
 ///
 /// It reads the top non-zero terminal coefficient index straight off an honest proof of every

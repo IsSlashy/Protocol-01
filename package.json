@@ -32,7 +32,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "sync-program-ids": "node scripts/sync-program-ids.mjs --write",
-    "check-program-ids": "node scripts/sync-program-ids.mjs --check"
+    "check-program-ids": "node scripts/sync-program-ids.mjs --check",
+    "check-program-ids:verifier": "node scripts/sync-program-ids.mjs --check --only p01_stark_verifier"
   },
   "devDependencies": {
     "@coral-xyz/anchor": "^0.32.1",

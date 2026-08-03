@@ -2456,14 +2456,12 @@ struct CeilingReport {
 /// assertion, and let whoever owns the trade-off see the drift and decide.
 fn ceiling_report(rows: &[CircuitRow], caveat: Option<&str>) -> CeilingReport {
     let mut violations: Vec<String> = Vec::new();
-    let mut lines: Vec<String> = Vec::new();
-
-    lines.push(String::new());
-    lines.push(rule(104));
-    lines.push(
+    let mut lines: Vec<String> = vec![
+        String::new(),
+        rule(104),
         "CU CEILINGS — the regression gate (upper bound; ratchet, not an equality pin)".into(),
-    );
-    lines.push(rule(104));
+        rule(104),
+    ];
     match caveat {
         Some(note) => lines.push(format!("!! {note}")),
         None => lines.push(format!(
