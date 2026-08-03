@@ -1,14 +1,27 @@
-name: Settler Keeper
+name: Settler Keeper (report-only — settle cannot succeed)
 
-# Permissionless keeper that scans PrefundRecord PDAs owned by p01_liquidity
-# and fires settle() for any whose min_epoch has elapsed. Pays ~0.2 bps of the
-# prefund amount as `settler_reward` on success.
+# Scans PrefundRecord PDAs owned by p01_liquidity and REPORTS on them. It does
+# not settle anything, because nothing can:
 #
-# Manual trigger only. The cron schedule is disabled until mainnet traffic
-# justifies a keeper — on devnet there are typically zero PrefundRecords to
-# settle, and the scheduled runs were only producing failure emails.
+#   `p01_liquidity::settle` CPIs `zk_shielded::unshield_denominated_stark`,
+#   retired on purpose by f5bb7514 ("circuit-1 only, no C3 membership =
+#   unshield-undeposited risk") and replaced by
+#   `unshield_denominated_stark_v3`, which carries no prefund path. Both
+#   `settle` and `prefund` now return `LiquidityError::SettlementPathRetired`.
+#   See programs/p01_liquidity/src/settlement_path.rs.
 #
-# Required repo secrets (before re-enabling the schedule):
+# The workflow is kept rather than deleted, and it is deliberately still
+# runnable: as of 2026-08-03 it is the cheapest way to see that devnet holds a
+# permanently stranded PrefundRecord (EAFRWmV…, 0.005388032 SOL prefunded out
+# of the LP reserve plus 0.00279 SOL of rent, unrecoverable). Re-check with
+# `node scripts/probe-liquidity-exposure.mjs`, which is read-only.
+#
+# Manual trigger only, and it was already manual-only before this change —
+# there is no cron here to disable. Do NOT add one back until
+# `SETTLEMENT_PATH_AVAILABLE` in settlement_path.rs is true.
+#
+# Secrets are optional now. `SETTLER_KEYPAIR_JSON` is only needed to broadcast,
+# which requires SETTLER_FORCE_SEND=1, which will fail on chain today.
 #   SETTLER_KEYPAIR_JSON — raw 64-byte Solana keypair JSON (e.g. contents of
 #     `~/.config/solana/id.json`). Must be funded with a small amount of SOL
 #     on the target network to cover tx fees; reward income is paid to the
@@ -37,7 +50,9 @@ jobs:
       - name: Install tsx + web3.js
         run: npm install --no-save tsx @solana/web3.js@^1.98.4
 
-      - name: Run settler
+      # `scripts/run-settler.ts` is tracked despite the `/scripts/` entry in
+      # .gitignore (added with `git add -f`), so this checkout does contain it.
+      - name: Run settler (report-only)
         env:
           SETTLER_KEYPAIR_JSON: ${{ secrets.SETTLER_KEYPAIR_JSON }}
           RPC_URL: ${{ secrets.SETTLER_RPC_URL }}

@@ -27,6 +27,15 @@ solana-sha256-hasher = { version = "2.3.0", features = ["sha2"] }
 # Required for zero-copy accounts
 bytemuck = { version = "1.14", features = ["derive"] }
 
+[dev-dependencies]
+# Test-only. `stark_proof::phase2_debt` pins this crate's private copy of the
+# ProofBuffer layout against the REAL `p01_stark_verifier::ProofBuffer`, and
+# pins the known phase-2 gap so it cannot be forgotten or silently "fixed".
+# `no-entrypoint` keeps the verifier's BPF entrypoint out of the host test
+# binary; its heavy `p01-stark` dependency is dev-only over there and is not
+# pulled in here. Same pattern as `zk_shielded`'s `stark_buffer::tests`.
+p01_stark_verifier = { path = "../p01_stark_verifier", features = ["no-entrypoint"] }
+
 [lints.rust.unexpected_cfgs]
 level = "allow"
 check-cfg = [

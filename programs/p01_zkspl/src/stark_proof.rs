@@ -2,6 +2,56 @@
 //! `p01_stark_verifier`. zkSPL handlers never verify proofs inline — they only
 //! check that a proof buffer was verified and that its public-inputs hash
 //! matches the expected reconstruction for the instruction's arguments.
+//!
+//! # KNOWN GAP: this crate cannot see STARK phase 2, and it consumes circuits
+//! # that need it
+//!
+//! `p01_stark_verifier` splits verification in two. Phase 1 sets
+//! `ProofBuffer::verified`. Phase 2 (DEEP-ALI) sets a *separate* field,
+//! `deep_ali_verified`, via its own instruction, and phase 2 applies to
+//! **circuits 1 through 6** — `lib.rs`'s
+//! `require!(matches!(circuit_id, 1 | 2 | 3 | 4 | 5 | 6), UnsupportedCircuit)`.
+//! Only circuit 0 completes inside phase 1.
+//!
+//! This crate consumes circuit 2 (`balance_proof`) and circuit 4
+//! (`confidential_balance`). Both are in that range. `verify_stark_proof`
+//! requires `verified` and never looks at `deep_ali_verified` — and it could
+//! not look even if it wanted to, because `PROOF_BUF_MIN_LEN` here is 82 while
+//! the verifier's `ProofBuffer::PROOF_DATA_OFFSET` is 83: the phase-2 flag is
+//! the byte immediately past the end of this parser's window.
+//!
+//! So **a proof that has only completed phase 1 is accepted as final** for
+//! every zkSPL instruction. `phase2_debt` below pins that, deliberately, as a
+//! standing red flag rather than a comment nobody re-reads.
+//!
+//! ## Why this is not simply fixed here
+//!
+//! Adding `require!(deep_ali_verified)` would immediately reject every client
+//! that cannot yet submit the phase-2 leg, and no shipped zkSPL client
+//! currently does. The fix is a client change first, program change second:
+//!
+//!   1. The client must call the verifier's phase-2 instruction after phase 1
+//!      and before calling zkSPL, for circuits 2 and 4.
+//!   2. `PROOF_BUF_MIN_LEN` must become 83 and the parser must return
+//!      `deep_ali_verified`.
+//!   3. `verify_stark_proof` must require it for circuits in 1..=6.
+//!
+//! Do steps 1 and 2 first; step 3 is the one that brings clients down.
+//!
+//! ## And it is not hypothetical: the program is deployed
+//!
+//! `p01_zkspl` is live on devnet at
+//! `EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah` (`Anchor.toml
+//! [programs.devnet]`), deployed at slot 444402868, upgrade authority
+//! `7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU`, owning 8 accounts totalling
+//! 0.100251840 SOL. Measured read-only 2026-08-03 by
+//! `node scripts/probe-liquidity-exposure.mjs`.
+//!
+//! A previous pass recorded this program as "NOT DEPLOYED, the account does
+//! not exist" and downgraded this gap from exposure to debt on that basis. It
+//! had probed `AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT` — the
+//! `declare_id!` value, which is the `[programs.localnet]` entry. Two
+//! different keys. The probe script checks both so the mistake cannot recur.
 
 use anchor_lang::prelude::*;
 
@@ -62,6 +112,18 @@ pub fn u32_bytes_to_u64_le(bytes: &[u8; 32]) -> u64 {
     u64::from_le_bytes(bytes[..8].try_into().unwrap())
 }
 
+/// Circuits `p01_stark_verifier` requires a separate phase-2 (DEEP-ALI)
+/// instruction for. Mirrors the `require!(matches!(circuit_id, 1..=6))` in
+/// `p01_stark_verifier/src/lib.rs`'s DEEP-ALI handler.
+///
+/// NOTE: this is a hand-kept mirror, not a derived value — the verifier
+/// expresses the set as an inline `matches!` and exports no constant for it.
+/// `phase2_debt::zkspl_circuits_are_inside_the_phase_2_range` pins it; if the
+/// verifier's range changes, that test will NOT catch it. The verifier's own
+/// `ProofBuffer::deep_ali_verified` doc still claims phase 2 is "currently
+/// circuit 6 only", which contradicts its handler — believe the handler.
+pub const PHASE_2_CIRCUITS: [u8; 6] = [1, 2, 3, 4, 5, 6];
+
 /// Verify a STARK proof buffer and that its public-inputs hash equals
 /// `sha256(public_inputs_u64_le_packed)`.
 ///
@@ -106,5 +168,122 @@ pub fn verify_stark_proof(
 
     require!(stored_inputs_hash == expected_hash, ZkSplError::InvalidProof);
 
+    // NOTE: phase 2 (DEEP-ALI) is NOT checked here, and `parse_stark_proof_buffer`
+    // cannot report it. See this module's header for why, and for the order the
+    // fix has to happen in.
+
     Ok(())
+}
+
+#[cfg(test)]
+mod phase2_debt {
+    //! Pins the phase-2 gap described in this module's header.
+    //!
+    //! These tests go GREEN while the gap is open. That is deliberate: they
+    //! are a tripwire, not a proof of correctness. Each one names the exact
+    //! edit that should make it fail, so closing the gap forces a visible
+    //! decision here instead of a silent behaviour change.
+
+    use super::*;
+    use anchor_lang::AccountSerialize;
+    use p01_stark_verifier::ProofBuffer;
+
+    /// Serialize the REAL verifier account type: `try_serialize` writes the
+    /// real Anchor discriminator and the real Borsh field order, so nothing in
+    /// these fixtures is copied from this crate's offset table.
+    fn encode(b: ProofBuffer) -> Vec<u8> {
+        let mut out = Vec::new();
+        b.try_serialize(&mut out).expect("ProofBuffer serializes");
+        out
+    }
+
+    /// A circuit-4 buffer. `deep_ali` selects whether phase 2 has run.
+    fn confidential_balance_buffer(deep_ali: bool) -> ProofBuffer {
+        ProofBuffer {
+            authority: Pubkey::new_from_array([0xA7; 32]),
+            circuit_id: CIRCUIT_CONFIDENTIAL_BALANCE,
+            proof_size: 0x1122_3344,
+            bytes_written: 0x5566_7788,
+            verified: true,
+            public_inputs_hash: [0x5Au8; 32],
+            deep_ali_verified: deep_ali,
+        }
+    }
+
+    /// This crate's offsets land on the fields the verifier actually wrote.
+    ///
+    /// Without this, every claim below is a claim about a layout nobody
+    /// checked — and a one-byte disagreement here is a verification bypass.
+    #[test]
+    fn offsets_match_the_real_proof_buffer() {
+        let encoded = encode(confidential_balance_buffer(true));
+        let (authority, circuit_id, verified, hash) =
+            parse_stark_proof_buffer(&encoded).expect("parses");
+        assert_eq!(authority, Pubkey::new_from_array([0xA7; 32]));
+        assert_eq!(circuit_id, CIRCUIT_CONFIDENTIAL_BALANCE);
+        assert!(verified);
+        assert_eq!(hash, [0x5Au8; 32]);
+        assert_eq!(
+            &encoded[..8],
+            &STARK_PROOF_BUFFER_DISCRIMINATOR[..],
+            "STARK_PROOF_BUFFER_DISCRIMINATOR is not what p01_stark_verifier writes"
+        );
+        assert_eq!(STARK_VERIFIER_PROGRAM_ID, p01_stark_verifier::ID);
+    }
+
+    /// THE GAP, stated as an executable fact: two buffers that differ ONLY in
+    /// whether phase 2 ran are indistinguishable to this crate.
+    ///
+    /// Turns red the moment `parse_stark_proof_buffer` starts reporting
+    /// `deep_ali_verified` — which is step 2 of the fix in the module header.
+    /// When it does, delete this test and add the rejection test that replaces
+    /// it.
+    #[test]
+    fn a_phase_1_only_proof_is_indistinguishable_from_a_fully_verified_one() {
+        let with_phase_2 = encode(confidential_balance_buffer(true));
+        let without_phase_2 = encode(confidential_balance_buffer(false));
+
+        assert_ne!(
+            with_phase_2, without_phase_2,
+            "the fixtures must actually differ on the wire, or this proves nothing"
+        );
+        assert_eq!(
+            parse_stark_proof_buffer(&with_phase_2).unwrap(),
+            parse_stark_proof_buffer(&without_phase_2).unwrap(),
+            "p01_zkspl now distinguishes phase-1-only proofs — good. Delete this \
+             test and require deep_ali_verified for circuits in PHASE_2_CIRCUITS."
+        );
+    }
+
+    /// The phase-2 flag sits one byte past the end of this parser's window, so
+    /// the gap is structural and not an oversight in one `require!`.
+    #[test]
+    fn the_phase_2_flag_is_outside_this_crates_parser_window() {
+        assert_eq!(
+            PROOF_BUF_MIN_LEN + 1,
+            ProofBuffer::PROOF_DATA_OFFSET,
+            "the verifier's header size moved; re-derive every offset in this file"
+        );
+        assert!(
+            PROOF_BUF_MIN_LEN < ProofBuffer::PROOF_DATA_OFFSET,
+            "PROOF_BUF_MIN_LEN now covers the whole header — step 2 of the fix is \
+             done, so finish step 3 and delete this test"
+        );
+    }
+
+    /// The circuits this crate consumes are exactly the ones phase 2 covers,
+    /// so the gap applies to every zkSPL instruction rather than a corner.
+    #[test]
+    fn zkspl_circuits_are_inside_the_phase_2_range() {
+        for c in [CIRCUIT_BALANCE_PROOF, CIRCUIT_CONFIDENTIAL_BALANCE] {
+            assert!(
+                PHASE_2_CIRCUITS.contains(&c),
+                "circuit {c} is consumed here but is not in PHASE_2_CIRCUITS"
+            );
+        }
+        assert!(
+            !PHASE_2_CIRCUITS.contains(&0),
+            "circuit 0 completes DEEP-ALI inside phase 1 and must stay out of this set"
+        );
+    }
 }

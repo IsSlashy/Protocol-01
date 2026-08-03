@@ -1181,6 +1181,7 @@ dependencies = [
  "anchor-lang",
  "anchor-spl",
  "bytemuck",
+ "p01_stark_verifier",
  "solana-sha256-hasher",
 ]
 
