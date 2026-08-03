@@ -845,7 +845,19 @@ pub fn verify_generic(
         proof.grinding_nonce,
         config.lde_size, config.num_queries,
     )?;
-    anchor_lang::prelude::msg!("[verify] step2a ok (expected={} proof={})", expected.len(), proof.queries.len());
+    // [L13 2026-08-03] This line used to print `(expected={} proof={})`.
+    // `expected.len()` is `config.num_queries`, a per-circuit constant, so the
+    // log read `expected=27` for C1 and `expected=22` for C3/C5/C6 — MEASURED
+    // in transaction metadata by
+    // `cu_budget.rs::l13_uniform_path_program_logs_are_identical_across_circuits`,
+    // which was red on exactly this line plus `verify_uniform`'s trailer. A
+    // program log is public metadata that every RPC serves and every indexer
+    // keeps, so printing a circuit-derived number here partitioned the anonymity
+    // set that `init_proof_buffer_v2` and the 145,000-byte padding exist to
+    // create. The step marker stays; the number does not. Nothing is lost for
+    // debugging: `verify_query_positions_generic` on the next line is what
+    // rejects a count mismatch, and it returns a named error.
+    anchor_lang::prelude::msg!("[verify] step2a ok");
     verify_query_positions_generic(proof, &expected)?;
     anchor_lang::prelude::msg!("[verify] step2 ok");
 
@@ -1225,6 +1237,21 @@ fn check_final_poly_degree_bound(
         }
         let arr: [u8; 8] = chunk.try_into().unwrap();
         if Felt::from_le_bytes(arr) != Felt::ZERO {
+            // [L13 2026-08-03] CONSIDERED AND DELIBERATELY LEFT. `degree_bound`
+            // is `config`-derived, so this is structurally the same class as the
+            // `step2a` line — but it is NOT a live leak: `emit_deep_degree_table`
+            // measures the bound at 1 on all seven circuits, so the number is
+            // constant across the anonymity set, and this is an error path an
+            // honest proof never reaches. Against that, ` non-zero, bound is `
+            // is one of the two `ELF_B1_MARKERS` in
+            // `packages/stark-prover/scripts/deployed-verifier-check.mjs`, the
+            // strings the deployed-verifier interlock classifies a chain
+            // deployment by, and `elfMarkerSourceProblem` hard-fails if a marker
+            // stops existing in this source. Deleting it would have bought zero
+            // privacy and cost half the B1 discriminator on a live gate. If the
+            // bound ever stops being 1 on every circuit, this becomes a real
+            // leak and the fix is a B2-only literal in `ELF_MARKERS_B2` first,
+            // then this line.
             anchor_lang::prelude::msg!(
                 "[verify] final poly coeff {} non-zero, bound is {}",
                 i,

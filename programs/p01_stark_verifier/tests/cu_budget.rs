@@ -3832,9 +3832,23 @@ fn run_with_logs(rig: &mut Rig, ix: Instruction, program_id: &Address) -> (Measu
     }
 }
 
-/// Drive the uniform path for one circuit and return the `verify_uniform`
-/// transaction's CU, its logs, the `circuit_id` byte left in the buffer account
-/// afterwards, and the chunk count it took to upload.
+/// What one circuit's trip through the uniform path discloses.
+struct UniformLeak {
+    /// `verify_uniform`'s own CU, scraped from the runtime's `consumed` line.
+    cu: Measured,
+    /// Every log line of the `verify_uniform` transaction.
+    logs: Vec<String>,
+    /// Every log line of the `verify_deep_ali_phase2` transaction that follows
+    /// it. The uniform flow is two transactions, so a log sweep that stops at
+    /// the first one is a sweep that misses half the surface.
+    phase2_logs: Vec<String>,
+    /// `ProofBuffer::circuit_id` read off the raw account after the fact.
+    circuit_id_in_account: u8,
+    /// Chunks the padded proof took to upload.
+    chunks: usize,
+}
+
+/// Drive the uniform path for one circuit and collect everything it discloses.
 ///
 /// The proof is padded to `UNIFORM_PROOF_SIZE` exactly as the mobile client
 /// pads it (`apps/mobile/services/stark/index.ts`), because the padding is half
@@ -3845,7 +3859,7 @@ fn uniform_leak_probe(
     program: &Address,
     nonce_byte: u8,
     proof: &p01_stark::compact::GenericCompactProofData,
-) -> (Measured, Vec<String>, u8, usize) {
+) -> UniformLeak {
     let authority = rig.payer_pk;
     let nonce = [nonce_byte; 16];
     let (buffer, _bump) =
@@ -3888,7 +3902,7 @@ fn uniform_leak_probe(
         chunks += 1;
     }
 
-    let (m, logs) = run_with_logs(
+    let (cu, logs) = run_with_logs(
         rig,
         ix_with_public_inputs(
             program,
@@ -3903,13 +3917,30 @@ fn uniform_leak_probe(
     // `ProofBuffer` layout: 8-byte anchor discriminator, then `authority`
     // (32 B), then `circuit_id` (1 B). Read the byte off the raw account the
     // way any RPC client would, not through the program's own types.
-    let cid = rig
+    let circuit_id_in_account = rig
         .svm
         .get_account(&buffer)
         .map(|a| a.data[8 + 32])
         .unwrap_or(u8::MAX);
 
-    (m, logs, cid, chunks)
+    let phase2_logs = if cu.is_ok() {
+        run_with_logs(
+            rig,
+            ix_with_public_inputs(
+                program,
+                &buffer,
+                &authority,
+                "verify_deep_ali_phase2",
+                &proof.public_inputs,
+            ),
+            program,
+        )
+        .1
+    } else {
+        Vec::new()
+    };
+
+    UniformLeak { cu, logs, phase2_logs, circuit_id_in_account, chunks }
 }
 
 /// The four circuits `PROBE_ORDER` can resolve. C0/C2/C4 cannot reach this
@@ -3978,39 +4009,63 @@ fn l13_uniform_path_program_logs_are_identical_across_circuits() {
     let (_so, _len, _hash) = load_verifier_or_fail(&mut rig, &program);
 
     let mut seen: Vec<(String, Vec<String>)> = Vec::new();
+    let mut seen_p2: Vec<(String, Vec<String>)> = Vec::new();
     println!("\n{}", rule(104));
     println!("L13 - program-emitted log lines on the verify_uniform path");
     println!("{}", rule(104));
     for (label, nonce, proof) in uniform_leak_cases() {
-        let (m, logs, _cid, _chunks) = uniform_leak_probe(&mut rig, &program, nonce, &proof);
+        let leak = uniform_leak_probe(&mut rig, &program, nonce, &proof);
         assert!(
-            m.is_ok(),
+            leak.cu.is_ok(),
             "{label}: verify_uniform did not succeed, so its logs are not the honest-path logs"
         );
-        let lines = program_log_lines(&logs);
-        println!("{label}: {} program log line(s)", lines.len());
+        let lines = program_log_lines(&leak.logs);
+        let p2 = program_log_lines(&leak.phase2_logs);
+        println!("{label}: {} line(s) on verify_uniform", lines.len());
         for l in &lines {
             println!("    {l}");
         }
+        println!("{label}: {} line(s) on verify_deep_ali_phase2", p2.len());
+        for l in &p2 {
+            println!("    {l}");
+        }
         seen.push((label.to_string(), lines));
+        seen_p2.push((label.to_string(), p2));
     }
     println!("{}", rule(104));
 
-    let (base_label, base) = seen[0].clone();
+    // Negative control. `program_log_lines` filtering everything away would
+    // make the comparison below trivially true on four empty vectors — the
+    // hollow-green shape this repo keeps finding.
+    assert!(
+        seen.iter().all(|(_, l)| l.len() >= 5),
+        "fewer than 5 program log lines captured — the filter or the probe is broken and the \
+         identity check below would be vacuous: {seen:?}"
+    );
+    assert!(
+        seen_p2.iter().all(|(_, l)| !l.is_empty()),
+        "no phase-2 program log lines captured; the phase-2 half of this check is vacuous: \
+         {seen_p2:?}"
+    );
+
     let mut diverging: Vec<String> = Vec::new();
-    for (label, lines) in seen.iter().skip(1) {
-        if *lines != base {
-            diverging.push(format!(
-                "{label} differs from {base_label}:\n      {base_label}: {base:?}\n      {label}: {lines:?}"
-            ));
+    for (what, group) in [("verify_uniform", &seen), ("verify_deep_ali_phase2", &seen_p2)] {
+        let (base_label, base) = group[0].clone();
+        for (label, lines) in group.iter().skip(1) {
+            if *lines != base {
+                diverging.push(format!(
+                    "{what}: {label} differs from {base_label}:\n      {base_label}: {base:?}\n      {label}: {lines:?}"
+                ));
+            }
         }
     }
     assert!(
         diverging.is_empty(),
-        "L13 IS OPEN - the verify_uniform log transcript identifies the circuit.\n\
+        "L13 IS OPEN - the uniform flow's log transcript identifies the circuit.\n\
          Transaction logs are public metadata: every RPC serves them and every indexer keeps \
          them, so a `msg!` here defeats the nonce-seeded PDA and the 145,000-byte padding that \
-         exist to hide exactly this.\n  {}",
+         exist to hide exactly this. Both transactions of the flow are checked, because fixing \
+         only the first one re-publishes the id one transaction later.\n  {}",
         diverging.join("\n  ")
     );
 }
@@ -4039,11 +4094,12 @@ fn l13_is_not_closed_by_deleting_logs_two_public_channels_survive() {
 
     let mut rows: Vec<(String, u64, u8, usize)> = Vec::new();
     for (label, nonce, proof) in uniform_leak_cases() {
-        let (m, _logs, cid, chunks) = uniform_leak_probe(&mut rig, &program, nonce, &proof);
-        let cu = m
+        let leak = uniform_leak_probe(&mut rig, &program, nonce, &proof);
+        let cu = leak
+            .cu
             .cu_if_ok()
             .unwrap_or_else(|| panic!("{label}: verify_uniform must succeed"));
-        rows.push((label.to_string(), cu, cid, chunks));
+        rows.push((label.to_string(), cu, leak.circuit_id_in_account, leak.chunks));
     }
 
     println!("\n{}", rule(104));

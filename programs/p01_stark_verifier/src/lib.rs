@@ -210,6 +210,18 @@ pub mod p01_stark_verifier {
         buffer.verified = true;
         buffer.public_inputs_hash = public_inputs_hash;
 
+        // [L13 2026-08-03] CONSIDERED AND DELIBERATELY LEFT, twice over. It is
+        // not a live leak: this instruction only ever sees a v1 buffer, whose
+        // PDA seeds are `[b"stark_proof", authority, circuit_id]`, so the
+        // ADDRESS already discloses the circuit and the log adds nothing. And
+        // `STARK proof verified for circuit ` is one of the four `ELF_CONTROLS`
+        // in `packages/stark-prover/scripts/deployed-verifier-check.mjs` — the
+        // sibling literals that prove the deployed-ELF scan is reading a real
+        // verifier rather than silently matching nothing. `elfMarkerSourceProblem`
+        // hard-fails when a control stops existing in this source, and
+        // `classifyElf` refuses to classify at all when one is missing from the
+        // chain bytes. Dropping it would have bought zero privacy and blinded a
+        // live gate.
         msg!("STARK proof verified for circuit {}", circuit_id);
         Ok(())
     }
@@ -275,6 +287,11 @@ pub mod p01_stark_verifier {
         buffer.verified = true;
         buffer.public_inputs_hash = public_inputs_hash;
 
+        // [L13 2026-08-03] Left, same two reasons as the legacy path above (not
+        // a live leak; an `ELF_CONTROLS` literal). Not a live leak here either:
+        // a v2 nonce-seeded buffer carries `circuit_id == u8::MAX`, so
+        // `get_circuit_config` above rejects it and this instruction can only
+        // ever succeed on a v1 buffer whose seeds already name the circuit.
         msg!("STARK proof verified for circuit {}", circuit_id);
         Ok(())
     }
@@ -359,7 +376,14 @@ pub mod p01_stark_verifier {
         let buffer = &mut ctx.accounts.proof_buffer;
         buffer.deep_ali_verified = true;
 
-        msg!("DEEP-ALI phase 2 verified for circuit {}", circuit_id);
+        // [L13 2026-08-03] The circuit id is gone from this line. It was NOT in
+        // the brief's list and the sweep found it: on the uniform flow, phase 2
+        // is the transaction that immediately follows `verify_uniform`, so
+        // fixing only `verify_uniform`'s trailer would have re-published the id
+        // one transaction later. Guarded by the phase-2 half of
+        // `cu_budget.rs::l13_uniform_path_program_logs_are_identical_across_circuits`,
+        // which captures BOTH transactions of the flow.
+        msg!("DEEP-ALI phase 2 verified");
         Ok(())
     }
 
@@ -404,10 +428,40 @@ pub mod p01_stark_verifier {
     /// instead of `[circuit_id]`, and `circuit_id` is stored as a sentinel
     /// (u8::MAX = "unknown") until `verify_uniform` probes it.
     ///
-    /// Combined with `verify_uniform` and uniform-padding (mobile pads proofs
-    /// to a fixed N bytes regardless of circuit), an indexer cannot infer
-    /// which circuit the user is proving from the init/chunk/verify tx
-    /// envelopes. Closes leaks L13 (circuit_id) + L14 (proof_size variable).
+    /// Combined with `verify_uniform` and uniform padding (mobile pads proofs
+    /// to `UNIFORM_PROOF_SIZE = 145_000` bytes regardless of circuit), the
+    /// init/chunk **envelopes** carry no circuit id: the seeds do not, the
+    /// account length does not, and the chunk count does not — MEASURED at 162
+    /// chunks for every one of the four probed circuits in
+    /// `cu_budget.rs::l13_is_not_closed_by_deleting_logs_two_public_channels_survive`.
+    ///
+    /// # L13 is NOT closed, and this doc used to say it was
+    ///
+    /// What it said, verbatim: "an indexer cannot infer which circuit the user
+    /// is proving from the init/chunk/verify tx envelopes. Closes leaks L13
+    /// (circuit_id) + L14 (proof_size variable)." The first half is right about
+    /// init and chunk and wrong about verify. Measured on 2026-08-03 against
+    /// real transaction metadata, three channels disclosed the circuit and only
+    /// one of them was closable by editing this program's logs:
+    ///
+    /// 1. **Program logs.** `verify_uniform` ended with
+    ///    `msg!("verify_uniform: probed circuit {}")`, and `verify.rs`'s step-2a
+    ///    marker printed `expected=27` for C1 against `expected=22` for
+    ///    C3/C5/C6. `verify_deep_ali_phase2`, the very next transaction in this
+    ///    flow, printed the id again. **All three are now gone**, and
+    ///    `l13_uniform_path_program_logs_are_identical_across_circuits` plus its
+    ///    phase-2 sibling hold the four transcripts byte-identical.
+    /// 2. **Compute units.** The runtime — not this program — writes
+    ///    `Program <id> consumed N of 1400000 compute units`, and N was
+    ///    751,058 / 785,945 / 794,048 / 810,040 for C1 / C3 / C5 / C6. Distinct,
+    ///    deterministic, and unreachable from any `msg!` edit. **OPEN.**
+    /// 3. **Account data.** `verify_uniform` writes the circuit it probed into
+    ///    `ProofBuffer::circuit_id` because `verify_deep_ali_phase2` reads it
+    ///    back. Account data is public for as long as the buffer lives.
+    ///    **OPEN.**
+    ///
+    /// L14 (variable `proof_size`) IS closed by the padding, and that half is
+    /// measured rather than asserted — see the chunk column of the same test.
     pub fn init_proof_buffer_v2(
         ctx: Context<InitProofBufferV2>,
         proof_size: u32,
@@ -558,11 +612,24 @@ pub mod p01_stark_verifier {
 
         drop(account_data);
         let buffer = &mut ctx.accounts.proof_buffer;
+        // [L13 2026-08-03] This write is the leak that a log edit CANNOT close,
+        // and it is left in place because `verify_deep_ali_phase2` reads it.
+        // Account data is public: an indexer that fetches this buffer after the
+        // transaction reads the circuit off byte 8+32 with no logs at all.
+        // MEASURED, `cu_budget.rs::l13_is_not_closed_by_deleting_logs_two_public_channels_survive`
+        // (1 / 3 / 5 / 6, one per circuit). Closing it means giving phase 2
+        // another source for the id — passing it in instruction data would only
+        // move the disclosure, so it needs a real design, not a patch here.
         buffer.circuit_id = circuit_id; // post-hoc; was u8::MAX
         buffer.verified = true;
         buffer.public_inputs_hash = public_inputs_hash;
 
-        msg!("verify_uniform: probed circuit {}", circuit_id);
+        // [L13 2026-08-03] `msg!("verify_uniform: probed circuit {}", circuit_id)`
+        // used to stand here. It published, in plain text, the single fact this
+        // whole instruction exists to hide, into metadata every RPC serves.
+        // Nothing replaces it: the instruction's own Anchor log line
+        // (`Program log: Instruction: VerifyUniform`) already says what ran, and
+        // it is identical for all four probed circuits.
         Ok(())
     }
 }

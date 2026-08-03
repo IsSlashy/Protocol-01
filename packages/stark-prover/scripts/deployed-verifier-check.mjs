@@ -479,6 +479,37 @@ function readSources(rels) {
   return { text: parts.join('\n'), unreadable: null, message: null };
 }
 
+/**
+ * Does `needle` appear in `text` somewhere that will actually reach the ELF?
+ *
+ * MEASURED 2026-08-03, by mutation, and this function exists because of what the
+ * mutation found. `elfMarkerSourceProblem` used a plain `text.includes(needle)`
+ * over the concatenated verifier source. Both `msg!("STARK proof verified for
+ * circuit {}", …)` sites were replaced with a different string and the gate
+ * stayed SILENT under `--verify-onchain`, because a `//` comment three lines
+ * above happened to quote the literal while explaining why it mattered. Deleting
+ * that comment too made the gate fire and name the control. So the check was
+ * satisfiable by prose — and prose never reaches rodata, which is the one place
+ * the deployed-ELF scan looks.
+ *
+ * The rule is a line-level heuristic on purpose: a marker counts only if at
+ * least ONE line carrying it is not a comment line. It cannot be fooled by a
+ * doc block or a `//` note, and it cannot produce a false RED from over-eager
+ * comment stripping, because a real `msg!("…")` line is never a comment line.
+ * What it does not catch is a literal that survives only inside a `#[doc = "…"]`
+ * attribute or a raw string used as data; neither exists in this verifier, and
+ * both would be a strange way to keep a marker alive.
+ */
+function emittedInSource(text, needle) {
+  return text
+    .split('\n')
+    .some((line) => {
+      if (!line.includes(needle)) return false;
+      const t = line.trim();
+      return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*'));
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Where to look. Pinned HERE, chosen by the CALLER, never taken from the record.
 // ---------------------------------------------------------------------------
@@ -999,8 +1030,11 @@ function elfMarkerSourceProblem(treeIsB1) {
       lines: [`  ${src.message}`, 'That file is where the literals this scan classifies a deployment by come from.'],
     };
   }
-  const missingMarkers = treeIsB1 ? ELF_B1_MARKERS.filter((m) => !src.text.includes(m)) : [];
-  const missingControls = ELF_CONTROLS.filter((c) => !src.text.includes(c));
+  // `emittedInSource`, not `includes` — see that function. A literal that
+  // survives only in a comment is a literal the deployed ELF will not carry, and
+  // this check exists to say the scan's discriminators are still real.
+  const missingMarkers = treeIsB1 ? ELF_B1_MARKERS.filter((m) => !emittedInSource(src.text, m)) : [];
+  const missingControls = ELF_CONTROLS.filter((c) => !emittedInSource(src.text, c));
   if (missingMarkers.length === 0 && missingControls.length === 0) return null;
   return {
     title: 'the literals this gate classifies a DEPLOYMENT by no longer exist in the verifier source',
