@@ -11,7 +11,7 @@ use crate::state::{ConfidentialAccount, MintConfig, PendingCredit};
 ///
 /// The transfer amount is HIDDEN on-chain — only the amount_hash is stored.
 /// The recipient must later call `apply_pending` (with the plaintext amount
-/// + salt received out-of-band) to integrate the credit into their own
+/// and salt received out-of-band) to integrate the credit into their own
 /// balance commitment.
 ///
 /// Sender verification uses STARK circuit `confidential_balance` (ID 4),

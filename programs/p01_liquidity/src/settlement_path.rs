@@ -230,8 +230,12 @@ mod settlement_tests {
                 "the list entry labelled {name} is not that instruction"
             );
         }
+        // Read the flag through the guard rather than directly: asserting on a
+        // `const` is both a clippy error (`assertions_on_constants`) and a
+        // weaker statement, since what matters is that the handlers refuse,
+        // not that a constant holds a particular value.
         assert!(
-            !SETTLEMENT_PATH_AVAILABLE,
+            require_settlement_path_available().is_err(),
             "SETTLEMENT_PATH_AVAILABLE was flipped to true, but zk_shielded still \
              exposes no prefund-capable unshield instruction. Work the five-point \
              checklist in settlement_path.rs before re-opening prefund/settle."

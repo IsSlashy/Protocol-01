@@ -259,15 +259,16 @@ mod phase2_debt {
     /// the gap is structural and not an oversight in one `require!`.
     #[test]
     fn the_phase_2_flag_is_outside_this_crates_parser_window() {
+        // Exactly one byte short. This single equality catches BOTH ways the
+        // situation can change: the verifier's header growing or shrinking
+        // (re-derive every offset in this file), and someone widening
+        // PROOF_BUF_MIN_LEN to 83 to expose `deep_ali_verified` (step 2 of the
+        // fix is then done — finish step 3 and delete this module).
         assert_eq!(
             PROOF_BUF_MIN_LEN + 1,
             ProofBuffer::PROOF_DATA_OFFSET,
-            "the verifier's header size moved; re-derive every offset in this file"
-        );
-        assert!(
-            PROOF_BUF_MIN_LEN < ProofBuffer::PROOF_DATA_OFFSET,
-            "PROOF_BUF_MIN_LEN now covers the whole header — step 2 of the fix is \
-             done, so finish step 3 and delete this test"
+            "the parser window no longer stops exactly one byte before \
+             deep_ali_verified; see this module's header before touching offsets"
         );
     }
 
