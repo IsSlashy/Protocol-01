@@ -278,7 +278,7 @@ fn generate_compact_proof_with_layout(
         let x = lde_g.exp(pos as u64);
         evaluate_transition_constraint(&current, &next, x, trace_g, TRACE_LENGTH, NUM_ROUNDS)
     }).collect();
-    let c_poly = inverse_ntt(&c_lde, lde_g);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
     let c_poly_scaled = multiply_by_x_minus_a(&c_poly, last_row_x);
     let mut q_poly = divide_by_vanishing(&c_poly_scaled, TRACE_LENGTH);
 
@@ -450,6 +450,8 @@ fn generate_compact_proof_with_layout(
         &initial_fri_transcript,
         FRI_FINAL_POLY_SIZE,
         pair_indexing,
+        // [B7 step 1] Neutral. Becomes the real inverse shift in step 3.
+        BaseElement::ONE,
     );
 
     // [B1] Terminal probe + prover-side degree assert, before grinding absorbs
@@ -912,7 +914,7 @@ fn compute_quotient_lde_circuit_6(
     }
 
     // 3. INTT → coefficients on the LDE domain.
-    let c_poly = inverse_ntt(&c_lde, lde_g);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
 
     // 4. Multiply by (x − g^(n−1)) so the product vanishes on the full trace
     //    domain (the base constraint vanishes on rows 0..n−2 only).
@@ -1019,7 +1021,7 @@ fn compute_quotient_lde_circuit_1(
     }
 
     // 3. INTT → coefficients on the LDE domain.
-    let c_poly = inverse_ntt(&c_lde, lde_g);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
 
     // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
     let g_nm1 = trace_g.exp((trace_length - 1) as u64);
@@ -1127,7 +1129,7 @@ fn compute_quotient_lde_circuit_2(
     }
 
     // 3. INTT → coefficients on the LDE domain.
-    let c_poly = inverse_ntt(&c_lde, lde_g);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
 
     // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
     let g_nm1 = trace_g.exp((trace_length - 1) as u64);
@@ -1242,7 +1244,7 @@ fn compute_quotient_lde_circuit_3(
     }
 
     // 3. INTT → coefficients on the LDE domain.
-    let c_poly = inverse_ntt(&c_lde, lde_g);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
 
     // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
     let g_nm1 = trace_g.exp((trace_length - 1) as u64);
@@ -1356,7 +1358,7 @@ fn compute_quotient_lde_circuit_4(
     }
 
     // 3. INTT → coefficients on the LDE domain.
-    let c_poly = inverse_ntt(&c_lde, lde_g);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
 
     // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
     let g_nm1 = trace_g.exp((trace_length - 1) as u64);
@@ -1481,7 +1483,7 @@ fn compute_quotient_lde_circuit_5(
     }
 
     // 3. INTT → coefficients on the LDE domain.
-    let c_poly = inverse_ntt(&c_lde, lde_g);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
 
     // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
     let g_nm1 = trace_g.exp((trace_length - 1) as u64);
@@ -2339,7 +2341,7 @@ mod tests {
         }
 
         let alpha = BaseElement::new(42);
-        let folded = fri_fold_layer(&values, domain_gen, alpha);
+        let folded = fri_fold_layer(&values, domain_gen, alpha, BaseElement::ONE);
 
         assert_eq!(folded.len(), n / 2);
         // All folded values must equal: (a + α·b)
@@ -2360,7 +2362,7 @@ mod tests {
         let values: Vec<BaseElement> = (0..n).map(|i| BaseElement::new(i as u64 + 1)).collect();
 
         let transcript = [7u8; 32];
-        let fri = fri_commit_phase(&values, domain_gen, &transcript, FRI_FINAL_POLY_SIZE, PairIndexing::Canonical);
+        let fri = fri_commit_phase(&values, domain_gen, &transcript, FRI_FINAL_POLY_SIZE, PairIndexing::Canonical, BaseElement::ONE);
 
         // Starting at 512, folding to 16: 512→256→128→64→32→16 → 5 folds.
         let expected_folds = (n / FRI_FINAL_POLY_SIZE).trailing_zeros() as usize;
@@ -2382,8 +2384,8 @@ mod tests {
         let values: Vec<BaseElement> = (0..n).map(|i| BaseElement::new((i * 3 + 1) as u64)).collect();
         let transcript = [1u8; 32];
 
-        let a = fri_commit_phase(&values, gen, &transcript, FRI_FINAL_POLY_SIZE, PairIndexing::Canonical);
-        let b = fri_commit_phase(&values, gen, &transcript, FRI_FINAL_POLY_SIZE, PairIndexing::Canonical);
+        let a = fri_commit_phase(&values, gen, &transcript, FRI_FINAL_POLY_SIZE, PairIndexing::Canonical, BaseElement::ONE);
+        let b = fri_commit_phase(&values, gen, &transcript, FRI_FINAL_POLY_SIZE, PairIndexing::Canonical, BaseElement::ONE);
 
         assert_eq!(a.layer_roots, b.layer_roots);
         assert_eq!(a.final_poly, b.final_poly);
@@ -3118,7 +3120,7 @@ mod tests {
             let x = lde_g.exp(pos as u64);
             evaluate_transition_constraint(&current, &next, x, trace_g, TRACE_LENGTH, NUM_ROUNDS)
         }).collect();
-        let c_poly = inverse_ntt(&c_lde, lde_g);
+        let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
         let c_poly_scaled = multiply_by_x_minus_a(&c_poly, last_row_x);
         let q_poly_ref = divide_by_vanishing(&c_poly_scaled, TRACE_LENGTH);
         let all_q: Vec<u64> = (0..LDE_SIZE).map(|pos| {
@@ -3226,7 +3228,7 @@ mod tests {
             .collect();
 
         // Standard quotient pipeline: C(x) * (x - g^(n-1)) / (x^n - 1) = Q(x).
-        let c_poly = inverse_ntt(&c_lde, lde_g);
+        let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
         let last_row_x = trace_g.exp((trace_length - 1) as u64);
         let c_poly_scaled = multiply_by_x_minus_a(&c_poly, last_row_x);
         let q_poly = divide_by_vanishing(&c_poly_scaled, trace_length);
@@ -4601,7 +4603,6 @@ pub fn lde_coset_shift() -> BaseElement {
 /// has to think about which direction it is holding, and the type system cannot
 /// tell them apart. Passing `ONE` makes this exactly `inverse_ntt`, which is
 /// what the neutral wiring step relies on.
-#[allow(dead_code)]
 fn coset_inverse_ntt(
     values: &[BaseElement],
     omega: BaseElement,
@@ -6289,10 +6290,24 @@ fn batch_inverse_felts(inputs: &[BaseElement]) -> Vec<BaseElement> {
 ///   f_{i+1}(y²) = (f(y) + f(-y))/2 + α · (f(y) - f(-y))/(2y)
 ///
 /// Precondition: `values.len()` is even. Returns folded values of half length.
+/// [B7] `inv_shift` is `h^(-1)` for the domain THIS layer evaluates over, where
+/// the layer's points are `h * gen^i`.
+///
+/// It is a required parameter and not an `Option` defaulting to `ONE` on
+/// purpose: every caller must be made to state which domain it is folding, and
+/// a default is exactly how the assumption that got us here — `y_0 = 1` — would
+/// survive the change unnoticed.
+///
+/// ⚠️ The shift is NOT the same at every layer. Folding squares the domain, so
+/// a caller that folds repeatedly must square its shift alongside its
+/// generator: layer `k` lives on `h^(2^k) * <gen^(2^k)>`. `fri_commit_phase`
+/// does that. Passing the layer-0 shift to every layer is a silent break that
+/// still produces proofs — they simply verify against the wrong polynomial.
 fn fri_fold_layer(
     values: &[BaseElement],
     domain_gen: BaseElement,
     alpha: BaseElement,
+    inv_shift: BaseElement,
 ) -> Vec<BaseElement> {
     let n = values.len();
     let half = n / 2;
@@ -6300,7 +6315,9 @@ fn fri_fold_layer(
     let inv_gen = domain_gen.exp(((GOLDILOCKS_PRIME - 2) as u64).into());
 
     let mut result = Vec::with_capacity(half);
-    let mut inv_y = BaseElement::ONE; // y⁻¹ at i=0 is 1 (since y = gen⁰ = 1)
+    // y⁻¹ at i=0. On the unshifted domain y_0 = gen⁰ = 1; on a coset y_0 = h,
+    // so this is where the shift enters the fold. [B7]
+    let mut inv_y = inv_shift;
     for i in 0..half {
         let f_y = values[i];
         let f_neg_y = values[i + half];
@@ -6341,9 +6358,16 @@ pub(crate) fn fri_commit_phase(
     initial_transcript: &[u8; 32],
     fri_final_poly_size: usize,
     pair_indexing: PairIndexing,
+    // [B7] `h^(-1)` for the domain `initial_values` evaluate over. `ONE` means
+    // the unshifted subgroup. This function owns the per-layer squaring, so
+    // callers pass the LAYER-0 inverse shift only.
+    initial_inv_shift: BaseElement,
 ) -> FriCommitData {
     let mut current = initial_values.to_vec();
     let mut current_gen = initial_domain_gen;
+    // [B7] Squared in lockstep with `current_gen` below. `x -> x²` sends the
+    // coset `h * <g>` to `h² * <g²>`, so the inverse shift squares too.
+    let mut current_inv_shift = initial_inv_shift;
     let mut transcript = *initial_transcript;
 
     let mut layer_roots: Vec<[u8; 32]> = Vec::new();
@@ -6357,8 +6381,10 @@ pub(crate) fn fri_commit_phase(
         alphas.push(alpha);
 
         // Fold: domain halves, new generator is gen².
-        let folded = fri_fold_layer(&current, current_gen, alpha);
+        let folded = fri_fold_layer(&current, current_gen, alpha, current_inv_shift);
         let folded_gen = current_gen * current_gen;
+        // Same squaring as the generator, for the same reason. [B7]
+        let folded_inv_shift = current_inv_shift * current_inv_shift;
 
         // Only commit if this is NOT the final fold — the final folded layer
         // reaches fri_final_poly_size and is transmitted as polynomial
@@ -6377,6 +6403,7 @@ pub(crate) fn fri_commit_phase(
 
         current = folded;
         current_gen = folded_gen;
+        current_inv_shift = folded_inv_shift;
     }
 
     // Remaining `current` has exactly fri_final_poly_size evaluations.
@@ -6720,7 +6747,7 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
                     ))
                 })
                 .collect();
-            inverse_ntt(&vals, lde_g)
+            coset_inverse_ntt(&vals, lde_g, BaseElement::ONE)
         }
     };
 
@@ -6893,6 +6920,8 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
         &initial_fri_transcript,
         fri_final_poly_size,
         pair_indexing,
+        // [B7 step 1] Neutral. Becomes the real inverse shift in step 3.
+        BaseElement::ONE,
     );
 
     // [B1] Terminal probe, then the prover-side twin of the verifier's degree
