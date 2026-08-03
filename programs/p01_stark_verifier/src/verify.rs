@@ -3185,12 +3185,19 @@ pub fn verify_deep_ali_circuit_2(
     // This block did not exist. C2 was one of two circuits (with C4) whose
     // phase-2 entry point never called `boundary_fold_at_ood`, so the ONLY thing
     // in the whole verifier binding a C2 trace to `[commitment, token_mint]` was
-    // the trace-aligned per-query step-5 check — measured by
+    // the trace-aligned per-query step-5 check — measured PRE-FIX by
     // `c2_step5_public_input_binding_fires` to be able to fire on 7 of 300
     // honest witnesses (2.33%). On the other ~97% the public inputs were bound
     // by nothing: they feed the Fiat-Shamir RLC alpha, which binds the CLAIMED
     // inputs to the transcript, not the trace to the inputs, and a prover who
     // re-runs the pipeline under a different claim satisfies that trivially.
+    //
+    // POST-FIX, re-measured at `bd8be2b4`: C2's step-5 rate is UNCHANGED at
+    // 7/300 (2.33%). C4's fell to 4/300 (1.33%) from 3.00% — folding Q_bnd
+    // re-randomises the Fiat-Shamir draw that the query positions come from, so
+    // the per-query rate is redrawn for exactly the two circuits this fix
+    // touched. That is luck of the draw, not a step-5 regression, and it only
+    // does not matter because the fold below is unconditional on every proof.
     //
     // `boundary_spec_for_quotient` in `stark/src/compact.rs` folds the matching
     // Q_bnd into the committed quotient with the SAME `bnd-c2` tag and the SAME
@@ -3634,11 +3641,20 @@ pub fn verify_deep_ali_circuit_4(
     // [BIND-C2C4 2026-08-03] Boundary public-input binding at z. Same wound as
     // C2, same fix. Before this block the only binding of a C4 trace to
     // `[old_commitment, new_commitment, amount_hash, token_mint]` was the
-    // trace-aligned step-5 check, measured by `c4_step5_public_input_binding_fires`
+    // trace-aligned step-5 check, measured PRE-FIX by
+    // `c4_step5_public_input_binding_fires`
     // to be able to fire on 9 of 300 honest witnesses (3.00%). C4 carries twelve
     // assertions — three of them the two commitments and the amount hash — so
     // this is the circuit with the most public state and it had the least
     // binding. The prover folds the matching Q_bnd under the `bnd-c4` tag.
+    //
+    // POST-FIX, re-measured at `bd8be2b4`: that same probe now fires on
+    // 4 of 300 (1.33%), DOWN from the 3.00% above. 3.00% is the PRE-fix figure
+    // and must not be quoted as current. Cause: the query positions are drawn
+    // from the Fiat-Shamir transcript and folding Q_bnd changes the committed
+    // quotient, so the draw is re-randomised. Step 5 itself was not touched.
+    // The per-query layer on C4 is therefore weaker than it was, which is only
+    // acceptable because the fold below runs on every proof unconditionally.
     let assertions = get_boundary_assertions(4, public_inputs)?;
     let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c4\0\0");
     let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
@@ -6248,7 +6264,11 @@ mod merkle_update_e2e {
     // and `verify_deep_ali_circuit_4` were the only two phase-2 entry points that
     // never called `boundary_fold_at_ood`, so this trace-aligned per-query check
     // was the ONLY thing anywhere binding their trace to their public inputs —
-    // and the measurements below say it can fire on ~2-3% of honest witnesses.
+    // and the measurements below said it could fire on ~2-3% of honest witnesses.
+    // Re-measured POST-FIX at `bd8be2b4` the [STEP5] rates are C1 4.67%,
+    // C2 2.33%, C4 1.33%, C5 2.34% — so the honest range is now 1.3%-4.7%, and
+    // C4 in particular is BELOW the old "~2-3%" because folding Q_bnd
+    // re-randomised the draw the query positions come from.
     // Both now fold, so all seven circuits bind their public inputs at the OOD
     // point on EVERY proof, unconditionally, and this check is a second layer
     // rather than the only one.
@@ -6435,7 +6455,13 @@ mod merkle_update_e2e {
     /// Drive `seeds` honest witnesses, and for each one publish the SAME honest
     /// trace under a false value for every public input in turn. Require the
     /// phase-2 verifier to reject each, and report the rejection rate against
-    /// the 2.33% / 3.00% the trace-aligned step-5 check was measured at.
+    /// the PRE-FIX 2.33% (C2) / 3.00% (C4) the trace-aligned step-5 check was
+    /// measured at when it was the only binding there was.
+    ///
+    /// POST-FIX those same step-5 probes measure 2.33% (C2, unchanged) and
+    /// 1.33% (C4, down from 3.00% because folding Q_bnd re-randomises the
+    /// Fiat-Shamir draw the query positions come from). Neither is the number
+    /// this harness reports: this one is 100%, unconditionally.
     fn lying_claim_must_be_rejected(
         label: &str,
         cfg: &crate::compact_proof::CircuitConfig,
@@ -6513,7 +6539,9 @@ mod merkle_update_e2e {
         println!(
             "[BIND] {label}: {rejected}/{attempts} lying claims rejected (100.00%) across \
              {seeds} witnesses x {n_inputs} public inputs. Before this fix the ONLY binding \
-             was the trace-aligned step-5 check, measured at 2.33% (C2) / 3.00% (C4)."
+             was the trace-aligned step-5 check, measured PRE-FIX at 2.33% (C2) / 3.00% (C4); \
+             POST-FIX those probes read 2.33% (C2) / 1.33% (C4, re-randomised draw). \
+             See the [STEP5] lines in this same run for the current figures."
         );
     }
 
