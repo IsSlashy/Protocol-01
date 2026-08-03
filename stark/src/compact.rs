@@ -1,13 +1,18 @@
-/// Compact STARK proof generator for on-chain verification.
-///
-/// Converts a winterfell STARK proof into the compact format
-/// understood by the p01_stark_verifier on-chain program.
-///
-/// Hash choice: SHA-256 for Merkle commitments and Fiat-Shamir. The on-chain
-/// verifier uses `sol_sha256` (always-active syscall, ~85 CU/call). The
-/// alternative `sol_blake3` syscall is behind an inactive feature on
-/// devnet/mainnet, which forced software Blake3 (~15k CU/hash) and blew
-/// the 1.4M CU cap. `sha2::Sha256` on host matches the syscall output.
+//! Compact STARK proof generator for on-chain verification.
+//!
+//! Converts a winterfell STARK proof into the compact format
+//! understood by the p01_stark_verifier on-chain program.
+//!
+//! Hash choice: SHA-256 for Merkle commitments and Fiat-Shamir. The on-chain
+//! verifier uses `sol_sha256` (always-active syscall, ~85 CU/call). The
+//! alternative `sol_blake3` syscall is behind an inactive feature on
+//! devnet/mainnet, which forced software Blake3 (~15k CU/hash) and blew
+//! the 1.4M CU cap. `sha2::Sha256` on host matches the syscall output.
+//!
+//! These ten lines were `///` — an OUTER doc comment separated from the next
+//! item by a blank line, so they documented nothing and `rustdoc` never showed
+//! them. `//!` is the inner form that attaches them to the module, which is
+//! what they were always written as.
 
 use sha2::{Digest, Sha256};
 use winterfell::math::fields::f64::BaseElement;
@@ -3205,69 +3210,149 @@ mod tests {
     /// here is a SAFE UPPER BOUND on the bound `D` needs. The prover-side assert
     /// added in STEP 3 catches any circuit where the two differ.
     ///
-    /// Run with:
-    /// `cargo test -p p01-stark --lib --release emit_deep_degree_table -- --ignored --nocapture`
+    /// # It could not run between B2 and 2026-08-03, and that is the whole point
+    /// B2 split the committed quotient into `quotient_segments` columns and the
+    /// wire grew from ONE `ood_quotient` felt to `quotient_segments * 8` bytes —
+    /// 7 for C0, 8 for C1..C6. `parse_final_poly` here still stepped over a
+    /// single felt, so its cursor landed 48 bytes short on C0 and 56 short on
+    /// C1..C6, read a fold count and a `fri_final_poly_size` out of the middle
+    /// of the OOD section, and then indexed a slice from them. Every run of this
+    /// generator after B2 either panicked on the slice or printed a table of
+    /// noise — while seven doc comments across two crates went on citing it as
+    /// the thing that MEASURED `fri_final_poly_degree_bound`.
+    ///
+    /// So the fix is not only the cursor. This test now:
+    ///   * takes `quotient_segments` per row, from the same constants the
+    ///     generators are called with, so the offset cannot drift from the
+    ///     serialiser without the row changing too;
+    ///   * DERIVES the LDE size from the wire (`folds = num_layers + 1`,
+    ///     `lde = fps << folds`) instead of carrying hand-written `trace_length`
+    ///     and `blowup` literals — two of which were already wrong, C3 and C6
+    ///     both claiming 512 for proofs their generators build at 128;
+    ///   * asserts the parse landed where it thinks it did, BEFORE trusting any
+    ///     number it read. A wrong cursor now fails with a message naming the
+    ///     cursor rather than printing a plausible-looking table.
+    ///
+    /// The `#[ignore]` is gone with it. An ignored generator is exactly what let
+    /// this rot for a release cycle: nothing ran it, so nothing noticed. It is
+    /// cheap enough to run with the rest of the lib suite — seven honest proofs,
+    /// which `b1_deep_binding::quotient_segmentation_is_measured_not_assumed`
+    /// already builds on the verifier side every CI run.
+    ///
+    /// The ENFORCEMENT of these numbers lives in that verifier-side test, which
+    /// asserts each bound tight in both directions against
+    /// `CircuitConfig.fri_final_poly_degree_bound`. This one is the prover-side
+    /// generator: it is what you run to obtain the constant for a NEW circuit,
+    /// and its own assertion is only that no circuit's terminal check is vacuous.
+    ///
+    /// Run on its own with:
+    /// `cargo test -p p01-stark --lib --release emit_deep_degree_table -- --nocapture`
     #[test]
-    #[ignore]
     fn emit_deep_degree_table() {
         /// Pull `fri_final_poly` out of a serialized generic proof.
+        ///
         /// Header: trace_root 32 | quotient_root 32 | ood_current 8w |
-        /// ood_next 8w | ood_z 8 | ood_quotient 8 | num_fri_layers 1 |
+        /// ood_next 8w | ood_z 8 | ood_quotient 8*segments | num_fri_layers 1 |
         /// roots 32L | fps u16 | poly 8*fps
-        fn parse_final_poly(bytes: &[u8], trace_width: usize) -> Vec<u64> {
-            let mut c = 32 + 32 + trace_width * 8 * 2 + 8 + 8;
-            let num_layers = bytes[c] as usize;
-            c += 1 + num_layers * 32;
+        ///
+        /// Returns `(num_layers, poly)`. Panics with the cursor and the bytes it
+        /// read if the header does not look like a header — see the test's doc.
+        fn parse_final_poly(
+            label: &str,
+            bytes: &[u8],
+            trace_width: usize,
+            quotient_segments: usize,
+        ) -> (usize, Vec<u64>) {
+            let head = 32 + 32 + trace_width * 8 * 2 + 8 + quotient_segments * 8;
+            assert!(
+                head < bytes.len(),
+                "{label}: header cursor {head} is past the end of a {} byte proof",
+                bytes.len(),
+            );
+            let num_layers = bytes[head] as usize;
+            // A FRI chain folds a power-of-two LDE down to `fps` points, so on
+            // any shipping circuit this is a small single-digit number. Reading
+            // a byte of OOD payload instead gives an essentially uniform 0..=255.
+            assert!(
+                (1..=24).contains(&num_layers),
+                "{label}: read num_fri_layers = {num_layers} at offset {head}. That is not a \
+                 layer count — the header cursor is wrong. It is \
+                 `64 + trace_width*16 + 8 + quotient_segments*8` and BOTH of those must match \
+                 what `generate_*` was called with (trace_width {trace_width}, \
+                 quotient_segments {quotient_segments}).",
+            );
+            let c = head + 1 + num_layers * 32;
+            assert!(
+                c + 2 <= bytes.len(),
+                "{label}: fri_final_poly_size field at {c} is past the end of a {} byte proof",
+                bytes.len(),
+            );
             let fps = u16::from_le_bytes([bytes[c], bytes[c + 1]]) as usize;
-            c += 2;
-            (0..fps)
+            assert_eq!(
+                fps, FRI_FINAL_POLY_SIZE,
+                "{label}: read fri_final_poly_size = {fps} at offset {c}, expected \
+                 {FRI_FINAL_POLY_SIZE}. The header cursor is wrong.",
+            );
+            let c = c + 2;
+            assert!(
+                c + fps * 8 <= bytes.len(),
+                "{label}: final poly [{c}, {}) is past the end of a {} byte proof",
+                c + fps * 8,
+                bytes.len(),
+            );
+            let poly = (0..fps)
                 .map(|i| u64::from_le_bytes(bytes[c + i * 8..c + i * 8 + 8].try_into().unwrap()))
-                .collect()
+                .collect();
+            (num_layers, poly)
         }
 
-        // (label, trace_width, trace_length, blowup, proof_bytes)
-        let mut rows: Vec<(&str, usize, usize, usize, Vec<u8>)> = Vec::new();
+        // (label, trace_width, quotient_segments, proof_bytes). Trace LENGTH and
+        // blowup are deliberately absent: they are derived from the wire below,
+        // so no literal here can be stale.
+        let mut rows: Vec<(&str, usize, usize, Vec<u8>)> = Vec::new();
 
-        rows.push(("C0 subscriber_ownership", TRACE_WIDTH, TRACE_LENGTH, BLOWUP,
+        rows.push(("C0 subscriber_ownership", TRACE_WIDTH, LEGACY_QUOTIENT_SEGMENTS,
                    generate_compact_proof(42).proof_bytes));
-        rows.push(("C1 pool_commitment", 3, 128, GENERIC_BLOWUP,
+        rows.push(("C1 pool_commitment", 3, GENERIC_QUOTIENT_SEGMENTS,
                    generate_pool_commitment_proof(111, 222, 333, 444).proof_bytes));
-        rows.push(("C2 balance_proof", 4, 128, GENERIC_BLOWUP,
+        rows.push(("C2 balance_proof", 4, GENERIC_QUOTIENT_SEGMENTS,
                    generate_balance_compact_proof(42, 1000, 777, 999).proof_bytes));
         {
             let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
-            rows.push(("C3 merkle_path", 6, 512, GENERIC_BLOWUP,
+            rows.push(("C3 merkle_path", 6, GENERIC_QUOTIENT_SEGMENTS,
                        generate_merkle_path_compact_proof(42, &path_elements, &[0u8, 1, 0]).proof_bytes));
         }
-        rows.push(("C4 confidential_balance", 4, 256, GENERIC_BLOWUP,
+        rows.push(("C4 confidential_balance", 4, GENERIC_QUOTIENT_SEGMENTS,
                    generate_confidential_balance_compact_proof(42, 1000, 111, 800, 222, 200, 333, 999)
                        .proof_bytes));
-        rows.push(("C5 transfer", 7, 512, GENERIC_BLOWUP,
+        rows.push(("C5 transfer", 7, GENERIC_QUOTIENT_SEGMENTS,
                    generate_transfer_compact_proof(42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0)
                        .proof_bytes));
         {
             let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
-            rows.push(("C6 merkle_update", 10, 512, GENERIC_BLOWUP,
+            rows.push(("C6 merkle_update", 10, GENERIC_QUOTIENT_SEGMENTS,
                        generate_merkle_update_compact_proof(42, 1337, &path_elements, &[0u8, 1, 0])
                            .proof_bytes));
         }
 
         println!();
         println!("[B1 STEP 1] FRI terminal degree bound, MEASURED from honest proofs");
-        println!("{:<24} {:>6} {:>7} {:>6} {:>10} {:>9} {:>4}",
-                 "circuit", "n", "lde", "folds", "2^folds", "top nz i", "b");
+        println!("{:<24} {:>5} {:>4} {:>7} {:>6} {:>9} {:>4} {:>9}",
+                 "circuit", "segs", "fps", "lde", "folds", "top nz i", "b", "proof B");
         let mut bounds: Vec<(String, usize)> = Vec::new();
         let mut vacuous: Vec<String> = Vec::new();
-        for (label, tw, tl, blowup, bytes) in &rows {
-            let lde = tl * blowup;
-            let poly = parse_final_poly(bytes, *tw);
+        for (label, tw, segments, bytes) in &rows {
+            let (num_layers, poly) = parse_final_poly(label, bytes, *tw, *segments);
             let fps = poly.len();
-            let num_folds = (lde / fps).trailing_zeros() as usize;
+            // The final layer ships as coefficients instead of a Merkle root, so
+            // it contributes a fold without contributing a root: folds = L+1.
+            let num_folds = num_layers + 1;
+            let lde = fps << num_folds;
             let top = poly.iter().rposition(|&c| c != 0);
             let b = top.map(|i| i + 1).unwrap_or(0);
-            println!("{:<24} {:>6} {:>7} {:>6} {:>10} {:>9} {:>4}",
-                     label, tl, lde, num_folds, 1usize << num_folds,
-                     top.map(|i| i as i64).unwrap_or(-1), b);
+            println!("{:<24} {:>5} {:>4} {:>7} {:>6} {:>9} {:>4} {:>9}",
+                     label, segments, fps, lde, num_folds,
+                     top.map(|i| i as i64).unwrap_or(-1), b, bytes.len());
             if b >= fps {
                 vacuous.push(format!("{label} b={b} >= fri_final_poly_size={fps}"));
             }

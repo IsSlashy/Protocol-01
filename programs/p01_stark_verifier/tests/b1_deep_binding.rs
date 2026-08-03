@@ -1230,19 +1230,34 @@ fn t2_legacy_c0_subgroup_alias_reaches_the_terminal_check() {
 // constant nobody checks.
 // ============================================================================
 
-/// The replacement for `emit_deep_degree_table`.
+/// The ENFORCEMENT half of `stark/src/compact.rs::emit_deep_degree_table`.
 ///
-/// # That function does not exist, and never did
+/// # What this doc comment used to claim, and why it was wrong
 ///
-/// Seven doc comments across two crates cite `emit_deep_degree_table` in
-/// `stark/src/compact.rs` as the thing that MEASURED the terminal degree bound.
-/// `git grep emit_deep_degree_table` at the B2 base commit returns nine hits and
-/// every one of them is prose — there is no such function, and there is no
-/// commit in which there was. The bound was therefore cited as measured while
-/// nothing in the tree measured it.
+/// It read "that function does not exist, and never did". It does: commit
+/// d93674b9 ("step1+2(b1): measure the FRI terminal degree bound and enforce
+/// it") added `compact::tests::emit_deep_degree_table` and no commit ever
+/// removed it. `git log -S"fn emit_deep_degree_table" -- stark/src/compact.rs`
+/// returns that one commit, MEASURED 2026-08-03.
 ///
-/// This test is what those comments should have pointed at. It reads the top
-/// non-zero terminal coefficient index straight off an honest proof of every
+/// What was true is the part that mattered: it could not run. B2 widened the
+/// wire's `ood_quotient` field from one felt to `quotient_segments` felts and
+/// that generator's header cursor was never updated, so from B2 until
+/// 2026-08-03 it panicked or printed noise while seven doc comments went on
+/// citing it as the measurement. Its cursor is fixed, its `#[ignore]` is gone,
+/// and it now asserts its own parse before trusting any byte of it.
+///
+/// The two are not duplicates and neither replaces the other:
+///   * `emit_deep_degree_table` is prover-side. It is what you RUN to obtain
+///     `fri_final_poly_degree_bound` for a circuit that does not have one yet,
+///     and it can only assert that no circuit's terminal check is vacuous —
+///     the prover crate cannot see `CircuitConfig`.
+///   * this test is verifier-side. It asserts each pinned bound TIGHT in both
+///     directions against the honest proof, which is the claim
+///     `log2(fps/bound)` actually rests on.
+/// MEASURED 2026-08-03: both agree, bound 1 on all seven circuits.
+///
+/// It reads the top non-zero terminal coefficient index straight off an honest proof of every
 /// shipping circuit and asserts the bound against it in BOTH directions:
 ///
 ///   * nothing above the bound may be non-zero — that is the honest-proof half
