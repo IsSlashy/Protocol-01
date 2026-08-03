@@ -3787,3 +3787,307 @@ fn cu_budget_c7_phase2_probe() {
         probe_failures
     );
 }
+
+// ===========================================================================
+// L13 — the circuit-identity leak through PUBLIC transaction metadata
+// ===========================================================================
+
+/// Send one instruction and return BOTH its CU and the transaction's full log
+/// vector.
+///
+/// `Rig::run` throws the logs away after scraping the `consumed` line. For L13
+/// the logs ARE the measurement: a Solana transaction's log vector is public
+/// metadata, served by every RPC to anyone who asks and retained by every
+/// indexer. Reading the source to decide what a program discloses is exactly
+/// the mistake this file exists to stop, so this helper reads the wire.
+fn run_with_logs(rig: &mut Rig, ix: Instruction, program_id: &Address) -> (Measured, Vec<String>) {
+    let msg = Message::new(
+        &[set_cu_limit_ix(MAX_CU_PER_IX as u32), ix],
+        Some(&rig.payer_pk),
+    );
+    let tx = Transaction::new(&[&rig.payer], msg, rig.svm.latest_blockhash());
+    match rig.svm.send_transaction(tx) {
+        Ok(meta) => {
+            let logs = meta.logs.clone();
+            let m = match program_cu(&meta.logs, program_id) {
+                Some(cu) => Measured::Ok(cu),
+                None => Measured::Failed {
+                    cu: meta.compute_units_consumed,
+                    err: "no `consumed` line for this program".into(),
+                },
+            };
+            (m, logs)
+        }
+        Err(f) => {
+            let logs = f.meta.logs.clone();
+            (
+                Measured::Failed {
+                    cu: program_cu(&f.meta.logs, program_id)
+                        .unwrap_or(f.meta.compute_units_consumed),
+                    err: format!("{:?}", f.err),
+                },
+                logs,
+            )
+        }
+    }
+}
+
+/// Drive the uniform path for one circuit and return the `verify_uniform`
+/// transaction's CU, its logs, the `circuit_id` byte left in the buffer account
+/// afterwards, and the chunk count it took to upload.
+///
+/// The proof is padded to `UNIFORM_PROOF_SIZE` exactly as the mobile client
+/// pads it (`apps/mobile/services/stark/index.ts`), because the padding is half
+/// of what L13 claims to close: without it the account length and the chunk
+/// count identify the circuit before a single log line is read.
+fn uniform_leak_probe(
+    rig: &mut Rig,
+    program: &Address,
+    nonce_byte: u8,
+    proof: &p01_stark::compact::GenericCompactProofData,
+) -> (Measured, Vec<String>, u8, usize) {
+    let authority = rig.payer_pk;
+    let nonce = [nonce_byte; 16];
+    let (buffer, _bump) =
+        Address::find_program_address(&[b"stark_proof_v2", authority.as_ref(), &nonce], program);
+
+    // Pad to the real client envelope. `from_bytes` ignores the tail, which is
+    // measured in
+    // `tests/wire_parity.rs::the_parser_does_not_check_length_this_test_does`.
+    let mut padded = proof.proof_bytes.clone();
+    assert!(
+        padded.len() <= UNIFORM_PROOF_SIZE,
+        "proof is {} B, over the {} B client envelope, so it cannot be padded and this probe \
+         would be measuring a shape the client cannot send",
+        padded.len(),
+        UNIFORM_PROOF_SIZE
+    );
+    padded.resize(UNIFORM_PROOF_SIZE, 0u8);
+    let proof_size = padded.len();
+
+    rig.must(
+        ix_init_proof_buffer_v2(program, &buffer, &authority, proof_size as u32, &nonce),
+        "init_proof_buffer_v2",
+    );
+    let target_len = PROOF_DATA_OFFSET + proof_size;
+    while rig.svm.get_account(&buffer).map(|a| a.data.len()).unwrap_or(0) < target_len {
+        rig.must(
+            ix_resize_proof_buffer(program, &buffer, &authority),
+            "resize_proof_buffer (v2)",
+        );
+    }
+    let mut offset = 0usize;
+    let mut chunks = 0usize;
+    while offset < proof_size {
+        let end = (offset + CHUNK).min(proof_size);
+        rig.must(
+            ix_write_chunk(program, &buffer, &authority, offset as u32, &padded[offset..end]),
+            "write_proof_chunk (v2)",
+        );
+        offset = end;
+        chunks += 1;
+    }
+
+    let (m, logs) = run_with_logs(
+        rig,
+        ix_with_public_inputs(
+            program,
+            &buffer,
+            &authority,
+            "verify_uniform",
+            &proof.public_inputs,
+        ),
+        program,
+    );
+
+    // `ProofBuffer` layout: 8-byte anchor discriminator, then `authority`
+    // (32 B), then `circuit_id` (1 B). Read the byte off the raw account the
+    // way any RPC client would, not through the program's own types.
+    let cid = rig
+        .svm
+        .get_account(&buffer)
+        .map(|a| a.data[8 + 32])
+        .unwrap_or(u8::MAX);
+
+    (m, logs, cid, chunks)
+}
+
+/// The four circuits `PROBE_ORDER` can resolve. C0/C2/C4 cannot reach this
+/// instruction at all (measured in `tests/wire_parity.rs`), so they are not in
+/// the anonymity set and including them would flatter the result.
+fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCompactProofData)> {
+    let path_elements: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
+    let path_indices: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
+    let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+    vec![
+        (
+            "C1 pool_commitment",
+            1,
+            p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11),
+        ),
+        (
+            "C3 merkle_path",
+            3,
+            p01_stark::compact::generate_merkle_path_compact_proof(
+                777,
+                &path_elements,
+                &path_indices,
+            ),
+        ),
+        (
+            "C5 transfer",
+            5,
+            p01_stark::compact::generate_transfer_compact_proof(
+                13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50,
+            ),
+        ),
+        (
+            "C6 merkle_update",
+            6,
+            p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi),
+        ),
+    ]
+}
+
+/// Keep only the lines the PROGRAM wrote. The runtime's own framing
+/// (`Program <id> invoke [1]`, `... consumed N of M`, `... success`) is a
+/// different channel with a different fix and is measured separately below.
+fn program_log_lines(logs: &[String]) -> Vec<String> {
+    logs.iter()
+        .filter(|l| l.starts_with("Program log:") || l.starts_with("Program data:"))
+        .cloned()
+        .collect()
+}
+
+/// **L13.** `verify_uniform` exists so an observer cannot tell which circuit a
+/// user proved. `init_proof_buffer_v2` removes `circuit_id` from the PDA seeds,
+/// `UNIFORM_PROOF_SIZE` padding removes it from the account length and the
+/// chunk count, and the probe loop removes it from the instruction data. This
+/// test checks the one public channel the design never covered: **the
+/// transaction log vector**.
+///
+/// The assertion is deliberately not "no line contains the digit 5". It is that
+/// the four circuits' program-emitted transcripts are **byte-identical**. That
+/// is what indistinguishability means, and it is the only form of the check
+/// that a `msg!` added later cannot walk past.
+#[test]
+fn l13_uniform_path_program_logs_are_identical_across_circuits() {
+    let mut rig = Rig::new();
+    let program = Address::from_str(VERIFIER_ID).unwrap();
+    let (_so, _len, _hash) = load_verifier_or_fail(&mut rig, &program);
+
+    let mut seen: Vec<(String, Vec<String>)> = Vec::new();
+    println!("\n{}", rule(104));
+    println!("L13 - program-emitted log lines on the verify_uniform path");
+    println!("{}", rule(104));
+    for (label, nonce, proof) in uniform_leak_cases() {
+        let (m, logs, _cid, _chunks) = uniform_leak_probe(&mut rig, &program, nonce, &proof);
+        assert!(
+            m.is_ok(),
+            "{label}: verify_uniform did not succeed, so its logs are not the honest-path logs"
+        );
+        let lines = program_log_lines(&logs);
+        println!("{label}: {} program log line(s)", lines.len());
+        for l in &lines {
+            println!("    {l}");
+        }
+        seen.push((label.to_string(), lines));
+    }
+    println!("{}", rule(104));
+
+    let (base_label, base) = seen[0].clone();
+    let mut diverging: Vec<String> = Vec::new();
+    for (label, lines) in seen.iter().skip(1) {
+        if *lines != base {
+            diverging.push(format!(
+                "{label} differs from {base_label}:\n      {base_label}: {base:?}\n      {label}: {lines:?}"
+            ));
+        }
+    }
+    assert!(
+        diverging.is_empty(),
+        "L13 IS OPEN - the verify_uniform log transcript identifies the circuit.\n\
+         Transaction logs are public metadata: every RPC serves them and every indexer keeps \
+         them, so a `msg!` here defeats the nonce-seeded PDA and the 145,000-byte padding that \
+         exist to hide exactly this.\n  {}",
+        diverging.join("\n  ")
+    );
+}
+
+/// **L13 residual.** Deleting the `msg!`s is necessary and not sufficient, and
+/// this test exists so nobody can read the sibling test's green as "L13 is
+/// closed". Two public channels survive an empty log transcript:
+///
+/// 1. **Compute units.** `Program <id> consumed N of 1400000 compute units` is
+///    written by the runtime, not by the program, and N is a deterministic
+///    function of the circuit. No `msg!` edit touches it.
+/// 2. **Account data.** `verify_uniform` writes the circuit it discovered back
+///    into `ProofBuffer::circuit_id` (`lib.rs`, `buffer.circuit_id = circuit_id`)
+///    because `verify_deep_ali_phase2` reads it. Account data is public, so the
+///    id is readable off chain state for as long as the buffer lives.
+///
+/// If this test ever goes RED that is a WIN, not a regression: it means someone
+/// made the CU uniform or stopped persisting the id. Read the printed table,
+/// confirm which channel closed, and retire the corresponding half - do not
+/// relax the assertion.
+#[test]
+fn l13_is_not_closed_by_deleting_logs_two_public_channels_survive() {
+    let mut rig = Rig::new();
+    let program = Address::from_str(VERIFIER_ID).unwrap();
+    let (_so, _len, _hash) = load_verifier_or_fail(&mut rig, &program);
+
+    let mut rows: Vec<(String, u64, u8, usize)> = Vec::new();
+    for (label, nonce, proof) in uniform_leak_cases() {
+        let (m, _logs, cid, chunks) = uniform_leak_probe(&mut rig, &program, nonce, &proof);
+        let cu = m
+            .cu_if_ok()
+            .unwrap_or_else(|| panic!("{label}: verify_uniform must succeed"));
+        rows.push((label.to_string(), cu, cid, chunks));
+    }
+
+    println!("\n{}", rule(104));
+    println!("L13 RESIDUAL - what still identifies the circuit once every `msg!` is gone");
+    println!("{}", rule(104));
+    println!(
+        "{:<26} {:>13} {:>18} {:>10}",
+        "circuit", "uniform CU", "buffer.circuit_id", "chunks"
+    );
+    println!("{}", rule(104));
+    for (label, cu, cid, chunks) in &rows {
+        println!("{:<26} {:>13} {:>18} {:>10}", label, thousands(*cu), cid, chunks);
+    }
+    println!("{}", rule(104));
+    println!(
+        "        chunks are UNIFORM by construction (every proof padded to {} B) - that half of\n\
+         \x20       the design works. CU and the persisted circuit_id are not covered by it.",
+        thousands(UNIFORM_PROOF_SIZE as u64)
+    );
+
+    let uniform_chunks: std::collections::BTreeSet<usize> = rows.iter().map(|r| r.3).collect();
+    assert_eq!(
+        uniform_chunks.len(),
+        1,
+        "the padding half of L13 is broken: chunk counts differ across circuits: {:?}",
+        rows.iter().map(|r| (&r.0, r.3)).collect::<Vec<_>>()
+    );
+
+    let distinct_cu: std::collections::BTreeSet<u64> = rows.iter().map(|r| r.1).collect();
+    assert_eq!(
+        distinct_cu.len(),
+        rows.len(),
+        "CU no longer separates all four circuits. If that is deliberate, L13's CU channel is \
+         (partly) closed and this assertion should be RETIRED, not relaxed. rows: {:?}",
+        rows.iter().map(|r| (&r.0, r.1)).collect::<Vec<_>>()
+    );
+
+    let persisted = rows.iter().filter(|r| r.2 != u8::MAX).count();
+    assert_eq!(
+        persisted,
+        rows.len(),
+        "verify_uniform no longer persists the discovered circuit id for every circuit. If that \
+         is deliberate, check `verify_deep_ali_phase2` still has a source for it, then retire \
+         this half. rows: {:?}",
+        rows.iter().map(|r| (&r.0, r.2)).collect::<Vec<_>>()
+    );
+}
