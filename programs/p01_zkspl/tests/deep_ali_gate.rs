@@ -815,3 +815,110 @@ fn artifact_is_real_bytecode_built_from_this_tree() {
         "the cached artifact does not correspond to the current sources"
     );
 }
+
+/// **The owner check, run instead of read.**
+///
+/// `withdraw` takes the proof buffer as a bare `AccountInfo`
+/// (`instructions/withdraw.rs:55`), so Anchor performs no owner check on it.
+/// The only thing standing between the vault and a buffer somebody else wrote
+/// is one line in the shared helper — `require!(*proof_info.owner ==
+/// STARK_VERIFIER_PROGRAM_ID, ..)`, `src/stark_proof.rs:94-97` — and until now
+/// nothing executed it. Every other test in this file plants its buffer with
+/// `owner: verifier` and therefore walks straight past it.
+///
+/// Without that line the whole gate is decorative: the discriminator, the
+/// authority, the circuit id, both flags and the public-inputs hash are just
+/// bytes, and an attacker who can create an account can write all of them.
+///
+/// The two halves run in ONE test on ONE buffer whose bytes are produced once
+/// and never edited, so the only difference between the rejection and the
+/// payout is the `owner` field. A pair of separate tests would leave "the
+/// bytes were also different" as a live explanation for the rejection.
+#[test]
+fn withdraw_rejects_a_proof_buffer_owned_by_the_wrong_program() {
+    let mut rig = Rig::new();
+    let new_commitment = [0x77u8; 32];
+    let inputs = rig.withdraw_inputs(&new_commitment);
+
+    // The buffer the positive control accepts: fully verified, honest hash.
+    rig.plant_buffer(
+        CIRCUIT_CONFIDENTIAL_BALANCE,
+        &inputs,
+        /* verified */ true,
+        /* deep_ali_verified */ true,
+    );
+    let bytes = rig
+        .svm
+        .get_account(&rig.proof_buffer)
+        .expect("buffer exists")
+        .data;
+
+    let verifier = Address::from_str(VERIFIER_ID).unwrap();
+    // A program that is not the verifier. On chain this is an account the
+    // attacker's own program created and filled in; here it only has to not be
+    // the verifier, which is the whole content of the check.
+    let impostor = Address::new_from_array([0x9Au8; 32]);
+    assert_ne!(impostor, verifier, "the impostor must not be the verifier");
+
+    let set = |rig: &mut Rig, owner: Address, data: Vec<u8>| {
+        rig.svm
+            .set_account(
+                rig.proof_buffer,
+                Account {
+                    lamports: 2_000_000,
+                    data,
+                    owner,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .expect("set proof buffer");
+    };
+
+    // --- half one: the same bytes, the wrong owner ---------------------------
+    set(&mut rig, impostor, bytes.clone());
+    let ix = rig.withdraw_ix(&new_commitment);
+    let bad = rig.send(ix);
+    assert!(
+        !bad.accepted,
+        "HOLE OPEN: withdraw ACCEPTED a proof buffer owned by {impostor}, not by the STARK \
+         verifier. Every field the gate reads is attacker-writable on an account the attacker \
+         owns, so this is a forged proof, not a stale one.\n  \
+         vault lamports {} -> {} (drained {})\n  logs: {:?}",
+        bad.vault_before,
+        bad.vault_after,
+        bad.vault_before.saturating_sub(bad.vault_after),
+        tail(&bad.logs, 6),
+    );
+    assert_eq!(
+        bad.vault_before, bad.vault_after,
+        "withdraw was rejected but the vault balance still moved"
+    );
+
+    // --- half two: the same bytes, the right owner ---------------------------
+    //
+    // Anti-vacuity, and it is the half that matters. Nine things could make a
+    // transaction fail; this proves the owner was the one that did, because
+    // handing the identical account back to the verifier pays out.
+    set(&mut rig, verifier, bytes);
+    let ix = rig.withdraw_ix(&new_commitment);
+    let good = rig.send(ix);
+    assert!(
+        good.accepted,
+        "the SAME buffer bytes under the verifier's ownership must still be accepted — if this \
+         fails the rejection above proves nothing about the owner check.\n  err: {}\n  logs: {:?}",
+        good.err,
+        tail(&good.logs, 8),
+    );
+    assert_eq!(
+        good.vault_before - good.vault_after,
+        WITHDRAW_AMOUNT,
+        "accepted withdraw did not move the expected lamports"
+    );
+
+    eprintln!(
+        "[deep_ali_gate] owner check: rejected under {impostor} ({}), accepted under the verifier \
+         and moved {} lamports — same bytes both times",
+        bad.err, WITHDRAW_AMOUNT,
+    );
+}
