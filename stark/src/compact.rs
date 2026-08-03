@@ -233,6 +233,7 @@ fn generate_compact_proof_with_layout(
 
     // 1. Build execution trace (32 rows × 3 columns)
     let trace = crate::air::subscriber_ownership::build_trace(secret);
+    assert_air_agrees_with_trace_c0(&trace);
     let commitment = trace[0][NUM_ROUNDS].as_int();
 
     // 2. Compute LDE: evaluate trace polynomial at LDE_SIZE points
@@ -748,6 +749,64 @@ fn compute_quotient_at_position(
 ///
 /// For the Poseidon round, we need round constants at this evaluation point.
 /// The periodic columns are polynomials that interpolate the round constants over the trace domain.
+/// [B7] The independent AIR-vs-trace check, moved PROVER-SIDE.
+///
+/// # What this replaces, and why it had to move
+///
+/// `verify.rs` used to spot-check the transition at LDE positions where
+/// `pos % blowup == 0`, reading the opened value AS A RAW TRACE ROW. That only
+/// works because the LDE is evaluated on the raw subgroup — it is a CONSUMER of
+/// the witness leak B7 removes, so it cannot survive the coset.
+///
+/// It could not simply be deleted. MEASURED 2026-08-02 and recorded in
+/// `verify.rs`: disabling that layer in all six generic circuits left the whole
+/// suite GREEN (13 binaries, 169 tests), because every phase-1 test is a
+/// LIVENESS test and a loosening is invisible to those by construction. And the
+/// C3 (2026-05-29) and C6 (2026-08-01) padding-row defects both lived in exactly
+/// this layer. So it caught real bugs while the suite could not see its removal:
+/// the worst possible thing to drop quietly.
+///
+/// # Why it belongs here and not on chain
+///
+/// Its value was never soundness against an attacker — the transition is already
+/// enforced globally at the OOD point by DEEP-ALI. Its value was that it
+/// RE-DERIVES INDEPENDENTLY: the AIR polynomial on one side, the concretely
+/// built trace on the other. An AIR bug is invisible at the OOD point because
+/// the prover computes `C` from the same buggy AIR and both sides agree on the
+/// same error. Only an independent encoding sees it.
+///
+/// Both encodings exist prover-side, where the trace is in the clear. So the
+/// check moves here and gets STRICTLY STRONGER: every constrained row instead of
+/// whichever rows a query happened to land on. It costs zero on-chain CU, it
+/// fails closed at proof time exactly like the B1 terminal degree bound, and it
+/// does not need the leak.
+///
+/// The verifier keeps nothing here: what an attacker could exploit is the OOD
+/// identity, and that is untouched.
+fn assert_air_agrees_with_trace_c0(trace: &[Vec<BaseElement>]) {
+    let trace_g = get_trace_domain_generator();
+    // Rows 0..n-2 are the constrained transitions. Row n-1 wraps to row 0 and is
+    // deliberately unconstrained -- it is what `Z_T` divides out, and asserting
+    // it would fail on an honest trace.
+    for row in 0..(TRACE_LENGTH - 1) {
+        let current: Vec<BaseElement> = (0..TRACE_WIDTH).map(|c| trace[c][row]).collect();
+        let next: Vec<BaseElement> = (0..TRACE_WIDTH).map(|c| trace[c][row + 1]).collect();
+        let x = trace_g.exp(row as u64);
+        let c = evaluate_transition_constraint(
+            &current, &next, x, trace_g, TRACE_LENGTH, NUM_ROUNDS,
+        );
+        assert_eq!(
+            c,
+            BaseElement::ZERO,
+            "C0 AIR DISAGREES WITH ITS OWN TRACE at row {row}: the transition constraint is \
+             non-zero on an honestly built trace. Either the AIR encodes a different rule than \
+             `build_trace` executes, or a padding row is constrained when it should not be. \
+             Fail here, not on chain — this is the check that caught the C3 and C6 padding-row \
+             defects, moved prover-side by B7."
+        );
+    }
+}
+
 fn evaluate_transition_constraint(
     current: &[BaseElement],
     next: &[BaseElement],
