@@ -126,17 +126,60 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
         }
 
         const id = `stark_${++requestCounter.current}`;
+        const t0 = Date.now();
 
+        // [MEASURE 2026-08-03] 180s -> 600s. NOT a fix, an instrument.
+        //
+        // MEASURED on device 0019235AU004508 with release 1.0.3: an unshield
+        // (C1 + C3) hit the 180s ceiling and rejected, so the only thing anyone
+        // has ever learned about on-device proving is "more than 180,000 ms".
+        // `docs/MOBILE_PROVER_LATENCY.md` calls this the biggest hole in the
+        // budget and its only reference is a DESKTOP C6 at 1,571 ms.
+        //
+        // The ceiling has to move or the number cannot be obtained: the request
+        // is killed before the WebView ever reports its `durationMs`. This was
+        // already bumped once for exactly these circuits (60s -> 180s,
+        // 2026-05-23, Nothing A001) and that was treated as the fix rather than
+        // as the symptom. 600s is a measuring window, not a product decision —
+        // once the real figure exists, set this from it deliberately.
         const timer = setTimeout(() => {
+          console.log(
+            `[P01PERF] TIMEOUT after ${Date.now() - t0} ms — proof exceeded the ceiling`,
+          );
           if (pendingRequests.current.has(id)) {
             pendingRequests.current.delete(id);
             reject(new Error('STARK proof generation timed out'));
           }
-        }, 180000); // 180s — bumped from 60s 2026-05-23, circuit 1/3 on Nothing A001 was timing out
+        }, 600000);
 
         pendingRequests.current.set(id, {
-          resolve: (v: any) => { clearTimeout(timer); resolve(v); },
-          reject: (e: any) => { clearTimeout(timer); reject(e); },
+          resolve: (v: any) => {
+            clearTimeout(timer);
+            // [MEASURE 2026-08-03] The one line that was missing. `durationMs`
+            // already crossed the bridge and was assigned at all seven call
+            // sites, then discarded without ever being printed — see
+            // MOBILE_PROVER_LATENCY.md item I1. Logged HERE, at the single
+            // choke point every request returns through, so no circuit can be
+            // instrumented and another forgotten.
+            //
+            // Two numbers on purpose: `prover` is what the WebView measured for
+            // the proof itself, `bridge` is wall clock including marshalling a
+            // ~280 KB hex payload across the RN bridge. If they diverge, the
+            // cost is transport and not arithmetic, and that changes the fix.
+            const wall = Date.now() - t0;
+            const d = (v as any)?.durationMs;
+            const sz = (v as any)?.proofSize;
+            const cid = (v as any)?.circuitId;
+            console.log(
+              `[P01PERF] circuit=${cid ?? '?'} prover=${d ?? '?'} ms bridge=${wall} ms proofSize=${sz ?? '?'}`,
+            );
+            resolve(v);
+          },
+          reject: (e: any) => {
+            clearTimeout(timer);
+            console.log(`[P01PERF] FAILED after ${Date.now() - t0} ms: ${e?.message ?? e}`);
+            reject(e);
+          },
         });
 
         callFn(id);

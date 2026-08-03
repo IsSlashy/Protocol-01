@@ -2589,7 +2589,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
     }),
     {
       name: 'p01-denominated-pool',
-      version: 4,
+      version: 5,
       storage: createJSONStorage(() => encryptedStorage),
       partialize: (state) => ({
         notes: state.notes,
@@ -2601,6 +2601,33 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         if (version < 4 && state.notes) {
           // v3 → v4: fix incorrectly locked notes from old auto-lock bug
           console.log('[DenomPool] Migration v4: unlocking', state.notes.filter((n: any) => n.status === 'locked').length, 'notes');
+          state.notes = state.notes.map((n: any) =>
+            n.status === 'locked' ? { ...n, status: 'pending' } : n
+          );
+        }
+        // v4 → v5: same unlock, and the reason it is needed AGAIN.
+        //
+        // A `locked` note is unreachable from the UI. `denominated-unshield.tsx`
+        // only offers `mature` notes (plus `pending` behind the emergency
+        // toggle), so a locked note appears in NEITHER list, `selectedNote`
+        // stays null, and `disabled={!selectedNote || …}` greys the button
+        // forever. There is no `unlockNote` action anywhere.
+        //
+        // So the ONLY escape is this migration — and a one-shot `version < 4`
+        // guard cannot fire on a store already at 4. The v4 pass cleaned up the
+        // notes that existed that day and left every note locked afterwards
+        // permanently stuck, which is what a user reads as "my funds are gone".
+        // MEASURED 2026-08-03: an unshield that failed at simulation left a note
+        // in exactly that state, while its SOL sat untouched in the pool.
+        //
+        // 🚨 This is a CLEANUP, not the fix. Whatever locks a note without
+        // unlocking it on failure is still there; find it and this migration
+        // stops being needed. Until then, bumping the version is the only
+        // recovery path, so keep both branches: a v3 store still needs the v4
+        // one on the way through.
+        if (version < 5 && state.notes) {
+          const stuck = state.notes.filter((n: any) => n.status === 'locked').length;
+          console.log(`[DenomPool] Migration v5: unlocking ${stuck} note(s) stuck since v4`);
           state.notes = state.notes.map((n: any) =>
             n.status === 'locked' ? { ...n, status: 'pending' } : n
           );
