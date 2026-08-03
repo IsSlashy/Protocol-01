@@ -152,6 +152,21 @@ present). Every proof a client built from this tree generates would be rejected
 on chain with `FriFoldCheckFailed` — at the end of a full chunked upload, not at
 parse time.
 
+**2026-08-03, which deployment that paragraph is about.** `EXmAQqm…` is a second,
+still-live deployment of an abandoned source lineage; it is **not** the address
+this tree targets. `declare_id!` in `programs/p01_stark_verifier/src/lib.rs`
+names `DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs`, an Anchor program rejects
+every instruction at any other address with `DeclaredProgramIdMismatch`, and each
+deployment was shown by byte-probing its own dump to embed its own id — so a
+`.so` built from here can only ever execute at `DGY37k3…`. `deployed-verifier.json`
+was repointed at `DGY37k3…` on 2026-08-02 and `KNOWN_ELF_GENERATIONS` pins both:
+`DGY37k3…` is `c1a26c17…`, 817,617 B, deployed at slot 469,197,514, and it is
+**also pre-B1**, so the verdict above is unchanged and the numbers in it are simply
+the other deployment's. The measurements in this paragraph are left as recorded
+rather than restated, because nothing has re-measured `EXmAQqm…` since. Drift
+between the two is gated by `node scripts/sync-program-ids.mjs --check --only
+p01_stark_verifier`, which CI now runs blocking.
+
 The only legitimate way to make it green is to deploy the program and then
 re-measure the record. Editing the record instead turns the *offline* half green
 and changes nothing on chain, which is what `--verify-onchain` is for: it
