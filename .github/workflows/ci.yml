@@ -223,10 +223,26 @@ jobs:
 
       - name: Program-id drift (ADVISORY — whole repo, red by lineage)
         run: |
+          set -uo pipefail
           echo "::group::program-id divergences across every program"
-          node scripts/sync-program-ids.mjs --check \
-            || echo "::warning title=Program-id drift::Program ids diverge from declare_id! outside p01_stark_verifier. Expanded output is in the group above. Blocking coverage is the step before this one."
+          out="$(node scripts/sync-program-ids.mjs --check 2>&1)"; rc=$?
+          printf '%s\n' "$out"
           echo "::endgroup::"
+          # The COUNT is the point. An advisory that only says "there is drift"
+          # cannot show the number going the wrong way, and this one is expected
+          # to stay non-zero for a while — 2026-08-03 it is 10 divergences and 20
+          # prose mentions. If that becomes 11 the warning title says 11.
+          n="$(printf '%s\n' "$out" | sed -n 's/^\[program-ids\] FAIL — \([0-9][0-9]*\) divergence.*/\1/p' | head -1)"
+          if [ "$rc" -eq 0 ]; then
+            echo "Whole-repo program-id check is GREEN. Promote this step to blocking and delete the scoped one above it."
+          elif [ -n "$n" ]; then
+            echo "::warning title=Program-id drift: $n divergences::$n program ids diverge from their declare_id! outside p01_stark_verifier, on lineages whose addresses are a product decision. Expanded output is in the group above. Blocking coverage for the verifier is the step before this one."
+          else
+            # Non-zero exit with no divergence line means the script itself broke
+            # — a missing file, a parse error. That is not drift, it is the gate
+            # being blind, and it must not read as the known-red case.
+            echo "::error title=Program-id check did not run::sync-program-ids.mjs exited $rc without reporting a divergence count. This step measured NOTHING; do not read it as the known 10."
+          fi
         continue-on-error: true
 
       - name: Type check & Build
@@ -846,7 +862,7 @@ jobs:
       #         2  clippy::manual_range_contains
       #         1  each: print_literal, items_after_test_module,
       #               unnecessary_map_or, assertions_on_constants
-      #         2  dead_code  <- NOT noise; see the advisory step below
+      #         2  dead_code  <- NOT noise; pinned by the step below, exactly
       # The 98 `assign_op_pattern` + `needless_range_loop` hits are in
       # `stark/src/air/*` and `stark/src/compact.rs`, i.e. the constraint
       # evaluators and the LDE/quotient loops. `clippy --fix` would rewrite them
@@ -877,7 +893,8 @@ jobs:
       #
       # `-A dead_code` is the one single-lint exception and it is NOT a silence:
       # the step immediately after this re-runs with `dead_code` as the only
-      # denied lint, prints both findings, and is loud about a third being new.
+      # ENABLED lint and fails unless the finding set is EXACTLY the two named
+      # there — so the exception costs a pin rather than buying a blind spot.
       - name: cargo clippy (BLOCKING — verifier tests + prover, correctness lints)
         run: |
           cargo clippy -p p01_stark_verifier --all-targets -- \
@@ -905,15 +922,45 @@ jobs:
       #          two verifier source comments still reference. That is a prover
       #          change, not a lint fix.
       #
-      # A red here is expected. It goes green when someone owns either decision.
-      - name: cargo clippy (ADVISORY — dead_code on the prover, 2 known findings)
+      # SO THIS STEP IS BLOCKING AND PINS THE SET, rather than being an advisory
+      # nobody reads. It passes iff the dead_code findings are EXACTLY those two
+      # and nothing else. A third one — a field a partial deletion orphaned, an
+      # enum arm a refactor stranded — turns it red and names itself. So does an
+      # `#[allow(dead_code)]` slapped on either of the two, because that REMOVES
+      # a line from the expected set and the comparison is an equality, not a
+      # ceiling. That is the property an `-A dead_code` alone cannot have.
+      #
+      # Three details that are load-bearing and not stylistic:
+      #   * `-A warnings -W dead_code` (warn, not deny) so nothing ABORTS the
+      #     build. `-D dead_code` stops at the first crate that has one — which
+      #     is `p01-stark` — and never reaches the verifier's own targets, the
+      #     same trap the `--all-targets` widening fell into above.
+      #   * the pin is on FILE + MESSAGE, never on the line number. Line numbers
+      #     in `stark/src/compact.rs` move under every prover branch, and a gate
+      #     that has to be re-pinned after each refactor is a gate that gets
+      #     deleted.
+      #   * `tr '\\' '/'` because clippy prints Windows separators when this is
+      #     re-run locally, and the same pin has to hold on both.
+      - name: cargo clippy (BLOCKING — dead_code pinned to exactly the 2 named findings)
         run: |
+          set -uo pipefail
           echo "::group::dead_code across p01_stark_verifier + p01-stark, all targets"
-          cargo clippy -p p01_stark_verifier --all-targets -- \
-            -A warnings -D dead_code \
-            || echo "::warning title=dead_code::Unreachable prover code. Two findings are known and named in ci.yml above this step; a THIRD would be new and is what this step exists to surface."
+          out="$(cargo clippy -p p01_stark_verifier --all-targets --message-format=short -- \
+                   -A warnings -W dead_code 2>&1)" || true
+          printf '%s\n' "$out"
           echo "::endgroup::"
-        continue-on-error: true
+          got="$(printf '%s\n' "$out" | tr '\\' '/' \
+                 | sed -n 's#^\(.*\.rs\):[0-9][0-9]*:[0-9][0-9]*: warning: \(.*\)$#\1 :: \2#p' \
+                 | sort -u)"
+          want="$(printf '%s\n%s\n' 'stark/src/compact.rs :: field `alphas` is never read' 'stark/src/compact.rs :: variant `LegacyGeneric` is never constructed')"
+          if [ "$got" = "$want" ]; then
+            echo "dead_code: exactly the two findings ci.yml names above, and no others."
+            exit 0
+          fi
+          echo "::error title=dead_code set changed::The dead_code findings are no longer exactly the two documented in .github/workflows/ci.yml. A NEW one is unreachable code somebody just created — read it, do not allow it. A MISSING one means it was deleted or silenced: deleting FriCommitData.alphas deletes the only pin that FRI fold count matches domain shrink, and an #[allow] is not a fix. Update the pin in this step only together with the paragraph above it."
+          echo "--- expected ---"; printf '%s\n' "$want"
+          echo "--- got ---";      printf '%s\n' "$got"
+          exit 1
 
       # `p01_relayer` was advisory on the grounds that it "still carries
       # pre-existing warnings that nobody has triaged". It does not, and had not
