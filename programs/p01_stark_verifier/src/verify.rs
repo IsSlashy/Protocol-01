@@ -3196,8 +3196,16 @@ pub fn verify_deep_ali_circuit_2(
     // Q_bnd into the committed quotient with the SAME `bnd-c2` tag and the SAME
     // assertion order, so this is not additive belt-and-braces: an honest proof
     // built by that prover does NOT satisfy `c_at_z == rhs` any more. The two
-    // halves can only be reverted together, which is what
-    // `c2_boundary_term_is_load_bearing` pins.
+    // halves can only be reverted together. What pins THAT — naming tests that
+    // exist, checked with grep, because an earlier draft of this comment named
+    // one that never did:
+    //   * `c2_lying_public_input_is_rejected` (this file) goes red under the
+    //     coordinated revert — an honest trace published under a false
+    //     `commitment` or `token_mint` is accepted again.
+    //   * `balance_proof_satisfies_deep_ali_end_to_end` (stark/src/compact.rs)
+    //     goes red under the PROVER half alone: it asserts `c_bnd != 0` and that
+    //     `c_at_z != q_at_z * z_t`, so a prover that stops folding Q_bnd fails it
+    //     rather than quietly agreeing with a verifier that stopped too.
     let assertions = get_boundary_assertions(2, public_inputs)?;
     let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c2\0\0");
     let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
@@ -6235,16 +6243,26 @@ mod merkle_update_e2e {
     // integration binaries, `cargo test` exit 0. Nothing in the repository
     // required the per-query public-input binding to fire even once.
     //
-    // It matters most for C2 and C4. Those are the two circuits whose phase-2
-    // entry point does NOT fold the boundary into the OOD identity —
-    // `verify_deep_ali_circuit_2` and `verify_deep_ali_circuit_4` never call
-    // `boundary_fold_at_ood`, unlike C0/C1/C3/C5/C6 — so this trace-aligned
-    // per-query check is the ONLY thing that binds their trace to their public
-    // inputs. `balance_proof_deep_ali_fails_on_wrong_public_inputs` and its C4
-    // twin do not cover that: they pass because the public inputs feed the
-    // Fiat-Shamir RLC alpha, which binds the CLAIMED inputs to the transcript,
-    // not the trace to the inputs. A prover who simply re-runs with different
-    // public inputs satisfies them.
+    // WHY IT USED TO MATTER MOST FOR C2 AND C4, in the past tense because
+    // [BIND-C2C4 2026-08-03] changed it. Until that commit `verify_deep_ali_circuit_2`
+    // and `verify_deep_ali_circuit_4` were the only two phase-2 entry points that
+    // never called `boundary_fold_at_ood`, so this trace-aligned per-query check
+    // was the ONLY thing anywhere binding their trace to their public inputs —
+    // and the measurements below say it can fire on ~2-3% of honest witnesses.
+    // Both now fold, so all seven circuits bind their public inputs at the OOD
+    // point on EVERY proof, unconditionally, and this check is a second layer
+    // rather than the only one.
+    //
+    // What has NOT changed, and is the reason these tests stay: this check is
+    // still the only per-query public-input binding, and
+    // `balance_proof_deep_ali_fails_on_wrong_public_inputs` and its C4 twin still
+    // do not cover public-input binding at all. They pass because the public
+    // inputs feed the Fiat-Shamir RLC alpha, which binds the CLAIMED inputs to
+    // the transcript, not the trace to the inputs — measured, not argued: they
+    // were green on the pre-fix tree, which had no C2/C4 fold whatsoever. A
+    // prover who simply re-runs the pipeline under a different claim satisfies
+    // them. `c2_lying_public_input_is_rejected` / `c4_..` are the tests that do
+    // cover it.
     //
     // Scope, stated rather than implied: this guard covers C1, C2, C4 and C5.
     // C3 and C6 are left to phase 2, where `boundary_fold_at_ood` binds the SAME
@@ -6271,9 +6289,11 @@ mod merkle_update_e2e {
     /// because the HIT RATE is the measurement that matters: step 5 fires only
     /// when a query happens to land on an assertion row, so the fraction of
     /// honest proofs on which it can fire at all is the strength of the
-    /// mechanism. For C2 and C4 that fraction is the strength of their ONLY
-    /// public-input binding. It is printed, never asserted against a target —
-    /// a number nobody has measured is not a number to pin.
+    /// mechanism. Until [BIND-C2C4 2026-08-03] that fraction WAS, for C2 and
+    /// C4, the strength of their only public-input binding; it is now the
+    /// strength of the per-query layer sitting on top of an unconditional OOD
+    /// fold. It is printed, never asserted against a target — a number nobody
+    /// has measured is not a number to pin.
     fn step5_binding_must_fire(
         label: &str,
         circuit_id: u8,
@@ -6335,8 +6355,10 @@ mod merkle_update_e2e {
         );
     }
 
-    /// C2 has NO boundary fold in phase 2, so this is its only public-input
-    /// binding anywhere in the verifier.
+    /// C2 now DOES fold the boundary in phase 2 ([BIND-C2C4 2026-08-03]), so
+    /// this is no longer its only public-input binding. Kept because it is
+    /// still the only PER-QUERY one, and because the rate it prints is the
+    /// "before" half of that fix's before/after pair.
     #[test]
     fn c2_step5_public_input_binding_fires() {
         step5_binding_must_fire(
@@ -6348,7 +6370,7 @@ mod merkle_update_e2e {
         );
     }
 
-    /// C4 has NO boundary fold in phase 2 either — same standing as C2.
+    /// C4 folds in phase 2 now too — same standing as C2 above, before and after.
     #[test]
     fn c4_step5_public_input_binding_fires() {
         step5_binding_must_fire(
@@ -6526,15 +6548,26 @@ mod merkle_update_e2e {
         );
     }
 
-    /// The same probe run against C1, C3, C5 and C6 — the five circuits whose
-    /// boundary fold was ALREADY wired. It is here so that the C2/C4 tests above
-    /// are pinned as "the same standard as the rest", not as a bespoke arrangement
-    /// that only C2 and C4 satisfy: if the shared `boundary_fold_at_ood` ever
-    /// stops binding, the whole family goes red together.
+    /// The same probe run against C1 — a circuit whose boundary fold was ALREADY
+    /// wired before this fix. It is the CONTROL: it rules out the C2/C4 greens
+    /// above coming from the probe being trivially rejected for some reason
+    /// unrelated to binding, and it means that if the shared
+    /// `boundary_fold_at_ood` ever stops binding, C1 goes red alongside them.
     ///
-    /// C0 is excluded on purpose: it is the legacy path, verified by
-    /// `verify_deep_ali_legacy`, and `c0_tampered_commitment_rejected_every_seed`
-    /// in `boundary_c0_tests` is its equivalent.
+    /// SCOPE, stated exactly rather than implied. C3, C5 and C6 have NO probe of
+    /// this shape, because a lying-claim probe has to re-run the entire prover
+    /// pipeline under the false public input, and only three such generators
+    /// exist: `generate_pool_commitment_proof_claiming` (C1),
+    /// `generate_balance_compact_proof_claiming` (C2) and
+    /// `generate_confidential_balance_compact_proof_claiming` (C4). Writing the
+    /// other three was deliberately not done here — see `founder_decisions` —
+    /// so C3/C5/C6 public-input binding rests on `boundary_fold_at_ood` being
+    /// the SAME code path this test exercises, not on a probe of their own.
+    /// Do not read this test as covering them.
+    ///
+    /// C0 is a separate path either way: legacy, verified by
+    /// `verify_deep_ali_legacy`, with `c0_tampered_commitment_rejected_every_seed`
+    /// in `boundary_c0_tests` as its equivalent.
     #[test]
     fn c1_lying_public_input_is_rejected() {
         lying_claim_must_be_rejected(
