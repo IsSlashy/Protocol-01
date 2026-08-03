@@ -94,6 +94,118 @@ import {
 } from '../services/zk/goldilocks-poseidon';
 
 // ---------------------------------------------------------------------------
+// Ephemeral ("stealth") signer derivation
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the deterministic per-operation ephemeral signer.
+ *
+ * # The defect this replaces
+ *
+ * Every one of the six call sites used to do:
+ *
+ *   hmac(sha256, key = utf8(walletAddress), msg = utf8(label))
+ *
+ * and every input to that was PUBLIC. `walletAddress` is a public key. The
+ * labels are built from public values too: `stealth_unshield_v3_${noteId}`
+ * where `noteId` is the first 16 hex chars of a commitment that travels in
+ * cleartext in the shield instruction data, and — worse — the shield path used
+ * `stealth_shield_v1_${poolPDA}_${counter}` where the pool PDA is public and
+ * the counter is a small integer starting at 0.
+ *
+ * An HMAC over two public values is not a key derivation. Anyone could
+ * enumerate a candidate wallet's ephemeral signers offline and recover their
+ * PRIVATE keys, which gave them two things:
+ *
+ *   * the funds sitting at that address. On the shield path that is the WHOLE
+ *     DENOMINATION plus rent, transferred there before the shield executes;
+ *     on the others it is the pre-funded buffer rent (~1.01 SOL per buffer).
+ *   * a total deanonymisation oracle: derive a candidate wallet's stealth
+ *     address for a known public commitment, check the chain, and the
+ *     wallet↔note link is proven.
+ *
+ * The reasoning in the old comments was "privacy is preserved because each
+ * (pool, counter) tuple is used at most once". That is an argument about
+ * COLLISION, not about SECRECY. Uniqueness is not unpredictability.
+ *
+ * # What replaces it
+ *
+ * The same construction keyed on the local wallet's SECRET seed
+ * (`deriveLocalNoteSeed().noteSeed`, the first 32 bytes of the secret key —
+ * already the key material this store uses for note derivation). Determinism
+ * and therefore crash-resumability are unchanged: same wallet, same label,
+ * same signer. What changes is that an observer cannot compute it.
+ *
+ * # Why `legacy` exists and must not be deleted yet
+ *
+ * Changing the derivation makes previously-funded addresses unreachable by the
+ * app. A user who updates mid-flow would strand real lamports. `legacy`
+ * reproduces the OLD address so recovery paths can sweep it. It is
+ * deliberately NOT used to sign anything new.
+ *
+ * Deleting it is safe only once no funded legacy address remains on any
+ * cluster this app talks to. That is an observation about the chain, not about
+ * the code, so it cannot be decided here.
+ */
+async function deriveStealthSigners(
+  label: string,
+  legacyWalletAddr: string,
+): Promise<{ current: SolKeypair; legacy: SolKeypair | null }> {
+  const { noteSeed } = await deriveLocalNoteSeed();
+  const current = SolKeypair.fromSeed(
+    hmac(sha256, noteSeed, new TextEncoder().encode(label)),
+  );
+  const legacy = legacyWalletAddr
+    ? SolKeypair.fromSeed(
+        hmac(
+          sha256,
+          new TextEncoder().encode(legacyWalletAddr),
+          new TextEncoder().encode(label),
+        ),
+      )
+    : null;
+  return { current, legacy };
+}
+
+/**
+ * Move everything at the legacy ephemeral address to `destination`, if any
+ * lamports are still there.
+ *
+ * Called from the crash-sweep paths alongside the current signer so that an
+ * operation started before this fix is not stranded. Best-effort by design: a
+ * failure here must never mask the real error the caller is handling, and an
+ * empty legacy address is the expected case.
+ */
+async function sweepLegacyStealth(
+  connection: Connection,
+  legacy: SolKeypair | null,
+  destination: PublicKey,
+): Promise<void> {
+  if (!legacy) return;
+  try {
+    const bal = await connection.getBalance(legacy.publicKey, 'confirmed');
+    if (bal <= 5000) return;
+    const tx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: legacy.publicKey,
+        toPubkey: destination,
+        lamports: bal - 5000,
+      }),
+    );
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = legacy.publicKey;
+    tx.sign(legacy);
+    await sendAndConfirmTransaction(connection, tx, [legacy], { commitment: 'confirmed' });
+    console.log(
+      `[DenomStore] legacy-sweep recovered ${bal - 5000} lamports from ${legacy.publicKey.toBase58()}`,
+    );
+  } catch (e) {
+    console.warn('[DenomStore] legacy-sweep failed (pre-fix funds may remain):', e);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -826,23 +938,22 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               console.warn('[DenomStore] No seed source available — note will NOT be seed-recoverable');
             }
 
-            // ── Stealth intermediary keypair — DETERMINISTIC ──
-            // Seeded from (walletAddr, poolKey, counter), NOT Date.now().
-            // This is the exact pattern the unshield/transfer flows use
-            // (see `stealth_unshield_${noteId}` ~L1167 and
-            // `stealth_transfer_v3_${noteId}` ~L1841): a stable per-operation
-            // identifier so a crashed attempt re-derives the SAME stealth
-            // address and previously-funded SOL is recoverable rather than
-            // stranded forever. Privacy is preserved because each (pool,
-            // counter) tuple is used at most once — the nullifier enforces
-            // single-spend on-chain, so no two shields share a stealth signer.
+            // ── Stealth intermediary keypair — DETERMINISTIC AND SECRET ──
+            // Stable per-(pool, counter) so a crashed attempt re-derives the
+            // SAME address and previously-funded SOL is recoverable rather than
+            // stranded. Keyed on the wallet's SECRET seed, not its address —
+            // see `deriveStealthSigners`. This site was the worst of the six:
+            // the label is built from a public pool PDA and a counter starting
+            // at 0, so an attacker needed no commitment at all, just a wallet
+            // address and a loop — and this address receives the FULL
+            // DENOMINATION before the shield executes.
             const stealthLabel = `stealth_shield_v1_${poolKey}_${counter}`;
-            const seed = hmac(
-              sha256,
-              new TextEncoder().encode(walletAddr),
-              new TextEncoder().encode(stealthLabel),
-            );
-            const stealthKp = SolKeypair.fromSeed(seed);
+            const { current: stealthKp, legacy: legacyStealthKp } =
+              await deriveStealthSigners(stealthLabel, walletAddr);
+            // A shield attempted before the derivation fix parked the FULL
+            // denomination at the old, publicly-derivable address. Reclaim it
+            // into the current one before funding anything new.
+            await sweepLegacyStealth(connection, legacyStealthKp, stealthKp.publicKey);
 
             console.log(`[DenomStore] Stealth: ${stealthKp.publicKey.toBase58().slice(0, 12)}... (deterministic, counter=${counter})`);
 
@@ -957,14 +1068,16 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             const deterministic = walletSeed ? { walletSeed, counter } : undefined;
 
             // Re-derive the SAME deterministic stealth keypair for this
-            // (pool, counter) and inspect its balance.
+            // (pool, counter) and inspect its balance. Recovery path, so it
+            // also carries the legacy address: an attempt started before the
+            // derivation was fixed funded the OLD one, and that is exactly the
+            // money this branch exists to find.
             const stealthLabel = `stealth_shield_v1_${poolKey}_${counter}`;
-            const seed = hmac(
-              sha256,
-              new TextEncoder().encode(walletAddr),
-              new TextEncoder().encode(stealthLabel),
-            );
-            const stealthKp = SolKeypair.fromSeed(seed);
+            const { current: stealthKp, legacy: legacyStealthKp } =
+              await deriveStealthSigners(stealthLabel, walletAddr);
+            if (legacyStealthKp) {
+              await sweepLegacyStealth(connection, legacyStealthKp, stealthKp.publicKey);
+            }
             const lamports = pool.denomination === 0.1 ? 100_000_000 : pool.denomination === 0.5 ? 500_000_000 : pool.denomination * 1_000_000_000;
             const transferAmount = lamports + 5_000_000;
             let stealthBalance = 0;
@@ -1225,6 +1338,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         // to the user's wallet if the unshield crashes after funding. See
         // the catch block at the bottom of this try/catch for the recovery path.
         let stealthKp: SolKeypair | null = null;
+        // Pre-fix address for the same operation. Held so the crash-sweep can
+        // recover an attempt that was funded before the derivation was fixed.
+        let legacyStealthKp: SolKeypair | null = null;
 
         try {
           const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
@@ -1262,8 +1378,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           // because each noteId is used at most once (the nullifier enforces
           // this on-chain), so no two unshields ever share a stealth signer.
           const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
-          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_unshield_${noteId}`));
-          stealthKp = SolKeypair.fromSeed(seed);
+          const unshieldSigners = await deriveStealthSigners(`stealth_unshield_${noteId}`, walletAddr);
+          stealthKp = unshieldSigners.current;
+          legacyStealthKp = unshieldSigners.legacy;
           console.log(`[DenomStore] Stealth signer: ${stealthKp.publicKey.toBase58().slice(0, 12)}...`);
 
           // Fund signer for STARK buffer rent + tx fees (dynamic from actual proof size).
@@ -1419,6 +1536,11 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           if (stealthKp) {
             try {
               const connection = getConnection();
+              // An attempt started before the derivation fix funded the OLD,
+              // publicly-derivable address. Pull it back first so the sweep
+              // below carries it too, instead of leaving it for whoever else
+              // derived the same key.
+              await sweepLegacyStealth(connection, legacyStealthKp, stealthKp.publicKey);
               const stealthBal = await connection.getBalance(stealthKp.publicKey);
               const FEE_RESERVE = 5000;
               if (stealthBal > FEE_RESERVE) {
@@ -1528,6 +1650,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         set({ isLoading: true, isProving: false, error: null, progress: 'Preparing V3 STARK unshield...' });
 
         let stealthKp: SolKeypair | null = null;
+        // Pre-fix address for the same operation. Held so the crash-sweep can
+        // recover an attempt that was funded before the derivation was fixed.
+        let legacyStealthKp: SolKeypair | null = null;
 
         try {
           const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
@@ -1542,8 +1667,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
           // Deterministic per-note ephemeral signer (resumable on crash).
           const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
-          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_unshield_v3_${noteId}`));
-          stealthKp = SolKeypair.fromSeed(seed);
+          const unshieldV3Signers = await deriveStealthSigners(`stealth_unshield_v3_${noteId}`, walletAddr);
+          stealthKp = unshieldV3Signers.current;
+          legacyStealthKp = unshieldV3Signers.legacy;
 
           // V3 = TWO proof buffers. Pre-fund covers both rents + tx fees.
           // Phase C v1: BOTH buffers are padded to UNIFORM_PROOF_SIZE so the
@@ -1712,6 +1838,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           // amount matches; this also rides the RPC retry in resilientFetch.
           if (stealthKp) {
             const connection = getConnection();
+            // Same reason as the v2 path: recover a pre-fix attempt's funds
+            // into the current address before sweeping.
+            await sweepLegacyStealth(connection, legacyStealthKp, stealthKp.publicKey);
             const FEE_RESERVE = 5000;
             const SWEEP_ATTEMPTS = 5;
             let swept = false;
@@ -1784,6 +1913,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
         // Hoisted for crash-sweep (see catch block).
         let stealthKp: SolKeypair | null = null;
+        // Pre-fix address for the same operation. Held so the crash-sweep can
+        // recover an attempt that was funded before the derivation was fixed.
+        let legacyStealthKp: SolKeypair | null = null;
 
         try {
           const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
@@ -1793,8 +1925,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           // Deterministic per-note seed — reproducible after a crash so the
           // ephemeral signer can be recovered. Privacy holds because each
           // note is transferred at most once (nullifier enforced on-chain).
-          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_transfer_stark_${noteId}`));
-          stealthKp = SolKeypair.fromSeed(seed);
+          const transferSigners = await deriveStealthSigners(`stealth_transfer_stark_${noteId}`, walletAddr);
+          stealthKp = transferSigners.current;
+          legacyStealthKp = transferSigners.legacy;
 
           // Fund stealth for STARK buffer rent + tx fees (dynamic from proof size).
           // Buffer rent refunded on close_proof_buffer; leftover swept back. Net ~0.002 SOL.
@@ -1927,6 +2060,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
         // Hoisted for crash-sweep (mirrors v2 transferNoteStark).
         let stealthKp: SolKeypair | null = null;
+        // Pre-fix address for the same operation. Held so the crash-sweep can
+        // recover an attempt that was funded before the derivation was fixed.
+        let legacyStealthKp: SolKeypair | null = null;
 
         try {
           const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
@@ -1935,8 +2071,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
           // Deterministic per-note stealth signer — namespace differs from v2
           // so a v2/v3 collision on the same noteId can't happen.
-          const seed = hmac(sha256, new TextEncoder().encode(walletAddr), new TextEncoder().encode(`stealth_transfer_v3_${noteId}`));
-          stealthKp = SolKeypair.fromSeed(seed);
+          const transferV3Signers = await deriveStealthSigners(`stealth_transfer_v3_${noteId}`, walletAddr);
+          stealthKp = transferV3Signers.current;
+          legacyStealthKp = transferV3Signers.legacy;
 
           // V3 transfer = THREE proof buffers (C1 + C3 + C6). Pre-fund covers
           // all three rents + nullifier PDA + tx fees. Buffers are closed in
