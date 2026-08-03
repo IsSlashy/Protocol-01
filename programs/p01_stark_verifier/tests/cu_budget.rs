@@ -351,10 +351,15 @@ fn run_sbf_tool(
 /// the caller passed for `--test-threads`, that is real concurrency through the
 /// two entry points that spawn `cargo-build-sbf`, and two things must hold:
 ///
-///   * no two invocations of the tool ever overlapped (`SBF_MAX_IN_FLIGHT <= 1`),
-///     which is the race that killed builds with `0xc0000135
-///     STATUS_DLL_NOT_FOUND` when one process reconciled the rustup toolchain
-///     under another;
+///   * exactly one child-process spawn site exists in this file and it is the
+///     locked helper. [ADVERSARY 2026-08-03] This replaces
+///     `assert!(SBF_MAX_IN_FLIGHT <= 1)`, which could not fail: the counter is
+///     incremented inside the very critical section it was supposed to be
+///     evidence about. The race it named — one `cargo-build-sbf` reconciling the
+///     rustup toolchain under another and killing it with `0xc0000135
+///     STATUS_DLL_NOT_FOUND` — can only be reintroduced by a spawn that skips
+///     the lock, and a skipped spawn increments nothing, so only a source-level
+///     check can see it;
 ///   * eight concurrent callers cause ZERO additional spawns, because both entry
 ///     points are memoised. This half bites even when the artifact is already
 ///     cached and no build would have run anyway, which is the common case and
@@ -398,13 +403,63 @@ fn harness_serialises_its_own_sbf_builds() {
         SBF_SPAWNS.load(SeqCst) - spawns_before
     );
 
-    assert!(
-        SBF_MAX_IN_FLIGHT.load(SeqCst) <= 1,
-        "{} cargo-build-sbf processes ran at once. That tool reconciles the `solana` rustup \
-         toolchain before it does anything, --version included, so a second one can uninstall the \
-         sbpf toolchain underneath the first and kill it with 0xc0000135 STATUS_DLL_NOT_FOUND. \
-         SBF_TOOL_LOCK exists to make that impossible; it is not doing so.",
-        SBF_MAX_IN_FLIGHT.load(SeqCst)
+    // [ADVERSARY 2026-08-03] `assert!(SBF_MAX_IN_FLIGHT.load(SeqCst) <= 1, ..)`
+    // stood here and was a TAUTOLOGY. `SBF_IN_FLIGHT` is incremented and
+    // decremented entirely INSIDE the `SBF_TOOL_LOCK` critical section
+    // (`run_sbf_tool`), so the high-water mark cannot exceed 1 whatever the lock
+    // does — the instrumentation lives inside the thing it claims to measure.
+    // Its own doc block said "a lock that is merely present is the same kind of
+    // claim as a gate that reads a constant", and then read a constant. There is
+    // no mutation of the lock that turns it red, which is the definition of a
+    // guard worth nothing.
+    //
+    // The real hazard it was reaching for is a spawn that never takes the lock
+    // at all — and such a spawn is not counted either, so the runtime check
+    // could not have seen it. That IS checkable, at the source level, and this
+    // is what replaces it. `SBF_MAX_IN_FLIGHT` is kept as instrumentation and
+    // printed, not asserted on.
+    let needle = concat!("Command", "::new(");
+    let src: Vec<&str> = THIS_FILE.lines().collect();
+    let mut spawn_sites: Vec<(usize, String)> = Vec::new();
+    for (i, l) in src.iter().enumerate() {
+        let code = l.split("//").next().unwrap_or("");
+        if !code.contains(needle) {
+            continue;
+        }
+        let owner = src[..i]
+            .iter()
+            .rev()
+            .find_map(|p| {
+                p.trim_start()
+                    .strip_prefix("fn ")
+                    .and_then(|s| s.split('(').next())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "<top level>".to_string());
+        spawn_sites.push((i + 1, owner));
+    }
+    assert_eq!(
+        spawn_sites.len(),
+        1,
+        "this file spawns a child process from {} places: {spawn_sites:?}. Exactly one may \
+         exist and it must be the locked helper — a second spawn site is how a sibling \
+         cargo-build-sbf reconciles the `solana` rustup toolchain out from under a build in \
+         progress and kills it with 0xc0000135 STATUS_DLL_NOT_FOUND. Route it through \
+         `run_sbf_tool` instead of adding an entry here.",
+        spawn_sites.len()
+    );
+    assert_eq!(
+        spawn_sites[0].1, "run_sbf_tool",
+        "the only child-process spawn in this file is inside `{}` (line {}), not inside the \
+         locked helper `run_sbf_tool`. It bypasses SBF_TOOL_LOCK entirely, and no runtime \
+         counter can see a spawn that never took the lock.",
+        spawn_sites[0].1, spawn_sites[0].0
+    );
+    println!(
+        "[sbf-lock] {} spawn(s) this run, max {} in flight, 1 locked spawn site at line {}",
+        SBF_SPAWNS.load(SeqCst),
+        SBF_MAX_IN_FLIGHT.load(SeqCst),
+        spawn_sites[0].0
     );
 }
 
