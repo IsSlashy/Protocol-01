@@ -904,9 +904,10 @@ jobs:
       # The narrow step cannot see it. That is the whole reason this one exists.
       #
       # `-A dead_code` is the one single-lint exception and it is NOT a silence:
-      # the step immediately after this re-runs with `dead_code` as the only
-      # ENABLED lint and fails unless the finding set is EXACTLY the two named
-      # there — so the exception costs a pin rather than buying a blind spot.
+      # the step immediately after this re-runs clippy at its DEFAULT levels,
+      # SELECTS the dead_code findings out of the JSON by lint code, and fails
+      # unless that set is EXACTLY the two named there — so the exception costs a
+      # pin rather than buying a blind spot.
       - name: cargo clippy (BLOCKING — verifier tests + prover, correctness lints)
         run: |
           cargo clippy -p p01_stark_verifier --all-targets -- \
