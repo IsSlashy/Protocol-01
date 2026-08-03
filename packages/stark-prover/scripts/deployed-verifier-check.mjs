@@ -154,13 +154,24 @@
  *
  * # The blob is ALSO corroborated against the source it is built from
  *
- * The panic-literal scan is kept, demoted to corroboration. BLOB_B1_MARKERS are
- * scanned in the blob and in `stark/src/compact.rs`, and the two sets must be
- * EQUAL. That still detects a blob that was not built from this tree, and a
- * string-stripped artifact, neither of which the digests speak to. And a blob
- * that PROVES one generation while its strings CLAIM another is now its own named
- * failure — that combination is the four-byte edit above and has no innocent
- * explanation.
+ * The panic-literal scan is kept, demoted to corroboration. BLOB_ALL_MARKERS
+ * (BLOB_MARKERS_B1 + BLOB_MARKERS_B2) are scanned in the blob and in
+ * `stark/src/compact.rs`, and the two sets must be EQUAL. That still detects a
+ * blob that was not built from this tree, and a string-stripped artifact,
+ * neither of which the digests speak to. And a blob that PROVES one generation
+ * while its strings CLAIM another is now its own named failure — that
+ * combination is the four-byte edit above and has no innocent explanation.
+ *
+ * The two lists were ONE list until 2026-08-02, and `classify` could only say
+ * `b1` or `pre-b1`, so a B2 blob carrying both `[B2] …-SEGMENTED` asserts was
+ * reported as claiming b1 while proving b2 — a reader that could not count past
+ * one, dressed up as an accusation against the artifact. `classifyBlob` is a
+ * three-rung ladder now. The deployed-ELF side cannot be a three-rung ladder,
+ * because the verifier carries no B2-distinguishing literal at all; `classifyElf`
+ * therefore answers `'b1+'` — "B1 or newer, and this method cannot say which" —
+ * rather than guessing `b1`, and that label is compared with
+ * `generationsAreCompatible`. See the notes on ELF_B1_MARKERS and ELF_MARKERS_B2
+ * for the reason and for what it leaves open.
  *
  * # An independent audit of this file, 2026-07-31, and what it found
  *
@@ -245,9 +256,19 @@ const BLOB_MARKERS_B1 = [
 ];
 
 /**
- * Literals B2 added to the PROVER — the two `segment_quotient_poly` asserts that
- * check the split in both directions. They exist only in a tree where the
- * quotient is segmented at all, which is what B2 is.
+ * Literals B2 added to the PROVER (stark/src/compact.rs), on top of B1's — the
+ * two `segment_quotient_poly` asserts that check the split in both directions.
+ * They exist only in a tree where the quotient is segmented at all, which is
+ * what B2 is.
+ *
+ * [MERGE 2026-08-03] Two lots of work fixed this same defect independently and
+ * this file carries ONE of the two fixes, deliberately, not a blend. The other
+ * lot's `classifyBlobStrings` called a blob `b2` on ANY B2 marker; the version
+ * kept here requires the WHOLE era (see `classifyBlob`), because half the B2
+ * asserts present is an edited artifact rather than a generation, and
+ * `blobSourceSkew` reports that case on its own. Neither reading can be silently
+ * greener than the other today — the shipped blob carries both markers — and the
+ * partial-era cases were checked to stay red under both.
  */
 const BLOB_MARKERS_B2 = [
   '[B2] UNDER-SEGMENTED: the quotient has ',
@@ -272,7 +293,28 @@ const BLOB_CONTROLS = [
   'proof_hex',
 ];
 
-/** Literals B1 added to the VERIFIER (programs/p01_stark_verifier/src/verify.rs). */
+/**
+ * Literals B1 added to the VERIFIER (programs/p01_stark_verifier/src/verify.rs).
+ *
+ * ELF_MARKERS_B2 IS EMPTY AND THAT IS A KNOWN LIMIT OF THIS GATE, recorded here
+ * rather than left to be discovered. B2 (quotient segmentation) changed the
+ * verifier's arithmetic and its Fiat-Shamir absorption but added NOT ONE new
+ * `msg!` literal to verify.rs — MEASURED 2026-08-02 and re-counted 2026-08-03,
+ * the 11 `msg!` sites in that file are all pre-B1 step markers plus B1's degree
+ * bound, and every `[B2]` annotation is a `//` comment, which never reaches the
+ * ELF. Adding one would move all 13 CU pins, so it is not a free fix.
+ *
+ * The consequence, stated plainly: the deployed side of this gate can observe
+ * `pre-b1` or `b1+` and nothing else, and `b1+` is NOT a synonym for `b1` — it
+ * means "B1 or newer, and this method cannot say which". Today the deployment is
+ * pre-b1 and the client is b2, so the interlock is red for the right reason.
+ * After a CORRECT B2 deploy this scan reads `b1+`, which is compatible with a
+ * record saying `b2` but does not confirm it, and the run says so out loud on the
+ * PASS path. Do not "solve" a red here by widening ELF_B1_MARKERS. The two things
+ * that would make this exact are a B2-only literal in the verifier listed in
+ * ELF_MARKERS_B2, or a hand measurement in KNOWN_ELF_GENERATIONS — which is
+ * exactly what that table is for.
+ */
 const ELF_B1_MARKERS = ['[verify] final poly coeff ', ' non-zero, bound is '];
 
 /**
@@ -531,14 +573,39 @@ function programIdFromAnchorToml(anchorSection) {
  * Nothing here prefers one file over another: the Anchor.toml id and every id the
  * SDK associates with the stark verifier must all be equal.
  *
- * `pnpm check-program-ids` would be the obvious other place to catch this. It is
- * not run by .github/workflows/ci.yml, and it could not catch it anyway: it runs
- * `tsx scripts/sync-program-ids.ts --check` and that file does not exist in this
- * tree (MEASURED 2026-07-31, `git ls-files` has no match).
+ * `pnpm check-program-ids` is the other place this is caught. It could not catch
+ * anything until 2026-08-02: it ran `tsx scripts/sync-program-ids.ts --check`
+ * and that file had never existed in this tree (MEASURED 2026-07-31 and again
+ * 2026-08-02, `git ls-files` has no match and there is no `scripts/` directory).
+ * It is now `node scripts/sync-program-ids.mjs --check`, it exists, it sweeps the
+ * WHOLE repo rather than the SDK, and it is keyed on `declare_id!`. It is still
+ * not run by .github/workflows/ci.yml, so this sweep stays here rather than
+ * delegating: the gate that gets run is the one that has to check.
+ *
+ * The roots below are every package and app that pins a verifier id in code. It
+ * was `packages/privacy-sdk/src` alone until 2026-08-02, which meant that the
+ * FOUR other client-side pins — packages/stark-prover/src/types.ts,
+ * packages/zkspl-sdk/src/constants.ts, apps/web, apps/extension, apps/mobile —
+ * were unchecked by the gate that exists to prove the client and the deployment
+ * interlock. They all happen to agree today; "happen to" is the problem.
  *
  * Returns `[{ file, symbol, id }]`, empty when nothing could be read.
  */
 const SDK_ROOT = 'packages/privacy-sdk/src';
+
+/**
+ * Every tree that compiles a verifier program id into a shipped artifact.
+ * Scanned for module-level `*STARK_VERIFIER*` constants; see the note above.
+ */
+const CLIENT_ID_ROOTS = [
+  'packages/privacy-sdk/src',
+  'packages/stark-prover/src',
+  'packages/zkspl-sdk/src',
+  'packages/react-native-zk/src',
+  'apps/web/lib',
+  'apps/extension/src',
+  'apps/mobile/services',
+];
 const SDK_PROGRAM_IDS = 'packages/privacy-sdk/src/constants.ts';
 const SDK_PROGRAM_KEY = 'starkVerifier';
 
@@ -580,32 +647,63 @@ function programIdFromPrivacySdk(sdkNetwork) {
  */
 function verifierConstantsInPrivacySdk() {
   const out = [];
-  let entries;
-  try {
-    entries = readdirSync(resolve(REPO, SDK_ROOT), { recursive: true, withFileTypes: true });
-  } catch {
-    return out;
-  }
+  // `new PublicKey('…')` OR a bare string literal: two of the five roots pin the
+  // id as a plain string (packages/stark-prover/src/types.ts
+  // DEFAULT_STARK_VERIFIER_PROGRAM_ID, packages/zkspl-sdk/src/constants.ts
+  // STARK_VERIFIER_PROGRAM_ID), and a regex that only understood PublicKey would
+  // have swept a root and found nothing, which reads identically to a clean root.
   const re = new RegExp(
-    `const\\s+([A-Za-z0-9_]*STARK_VERIFIER[A-Za-z0-9_]*)\\s*(?::[^=]*)?=\\s*new PublicKey\\(\\s*'(${B58_ID})'`,
+    `const\\s+([A-Za-z0-9_]*STARK_VERIFIER[A-Za-z0-9_]*)\\s*(?::[^=]*)?=\\s*(?:new PublicKey\\(\\s*)?'(${B58_ID})'`,
     'g',
   );
-  for (const ent of entries) {
-    if (!ent.isFile() || !ent.name.endsWith('.ts')) continue;
-    const abs = resolve(ent.parentPath ?? ent.path, ent.name);
-    let text;
+  for (const root of CLIENT_ID_ROOTS) {
+    let entries;
     try {
-      text = readFileSync(abs, 'utf8');
+      entries = readdirSync(resolve(REPO, root), { recursive: true, withFileTypes: true });
     } catch {
       continue;
     }
-    const rel = relative(REPO, abs).split('\\').join('/');
-    for (const m of text.matchAll(re)) {
-      const line = text.slice(0, m.index).split('\n').length;
-      out.push({ file: `${rel}:${line}`, symbol: m[1], id: m[2] });
+    for (const ent of entries) {
+      if (!ent.isFile() || !/\.(ts|tsx|mts|js|mjs)$/.test(ent.name)) continue;
+      const abs = resolve(ent.parentPath ?? ent.path, ent.name);
+      let text;
+      try {
+        text = readFileSync(abs, 'utf8');
+      } catch {
+        continue;
+      }
+      const rel = relative(REPO, abs).split('\\').join('/');
+      for (const m of text.matchAll(re)) {
+        const line = text.slice(0, m.index).split('\n').length;
+        out.push({ file: `${rel}:${line}`, symbol: m[1], id: m[2] });
+      }
     }
   }
   return out;
+}
+
+/**
+ * The address `declare_id!` bakes into the verifier bytecode.
+ *
+ * This is the check the Anchor.toml/SDK comparison above was missing: those two
+ * agreeing proves only that they agree, and a tree where they agree on an
+ * address the PROGRAM rejects is a tree where every instruction fails with
+ * `DeclaredProgramIdMismatch` before a single proof byte is read. MEASURED
+ * 2026-08-02: Anchor.toml [programs.devnet] named EXmAQqm… while declare_id!
+ * named DGY37k3…, both live on devnet, and `solana program dump` of each shows
+ * the 32-byte pubkey embedded in the ELF is its own address — so the bytes
+ * deployed at EXmAQqm… are not built from this tree and never can be.
+ */
+const VERIFIER_LIB_RS = 'programs/p01_stark_verifier/src/lib.rs';
+
+function verifierDeclaredId() {
+  let text;
+  try {
+    text = readFileSync(resolve(REPO, VERIFIER_LIB_RS), 'utf8');
+  } catch {
+    return null;
+  }
+  return text.match(new RegExp(`declare_id!\\(\\s*"(${B58_ID})"\\s*\\)`))?.[1] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -774,7 +872,14 @@ function generationsAreCompatible(observed, claimed) {
   return observed === claimed;
 }
 
-/** Which B1 markers the prover source in THIS TREE carries. null if unreadable. */
+// [MERGE 2026-08-03] `classifyBlobStrings` stood here — the other lot's version
+// of the same three-rung ladder `classifyBlob` above implements. It is deleted
+// rather than kept beside it: two classifiers over the same markers, one called
+// and one not, is precisely the shape of a guard that reads as covering
+// something and covers nothing. The difference between them was the partial-era
+// rule, recorded on BLOB_MARKERS_B2.
+
+/** Which generation markers the prover source in THIS TREE carries. null if unreadable. */
 function proverSourceMarkerHits() {
   const src = readSources(BLOB_MARKER_SOURCES);
   if (src.text === null) return null;
@@ -811,7 +916,7 @@ function blobSourceSkew(blobHits) {
   const onlyBlob = blobHits.filter((m) => !srcHits.includes(m));
   if (onlySource.length === 0 && onlyBlob.length === 0) return null;
   return {
-    title: 'the prover blob and the prover source disagree about which B1 markers exist',
+    title: 'the prover blob and the prover source disagree about which generation markers exist',
     lines: [
       `  source ${BLOB_MARKER_SOURCES.join(', ')}  ${srcHits.length}/${BLOB_ALL_MARKERS.length}`,
       `  blob   ${CANONICAL}  ${blobHits.length}/${BLOB_ALL_MARKERS.length}`,
@@ -830,7 +935,8 @@ function blobSourceSkew(blobHits) {
       '     with FriFoldCheckFailed. It no longer moves the verdict — the generation is measured by',
       '     driving the blob — but it is still an artifact nobody can account for.',
       '',
-      'If the messages were legitimately reworded, update BLOB_MARKERS_B1 / BLOB_MARKERS_B2 in this script in the same commit.',
+      'If the messages were legitimately reworded, update BLOB_MARKERS_B1 / BLOB_MARKERS_B2 in this script',
+      'in the same commit.',
       'Do not make the two sides agree by editing the artifact.',
     ],
   };
@@ -862,7 +968,7 @@ function treeGenerationSkew() {
   return {
     title: 'the prover source and the verifier source disagree about whether this tree is B1',
     lines: [
-      `  ${BLOB_MARKER_SOURCES.join(', ')}  ${proverHits.length}/${BLOB_ALL_MARKERS.length} markers`,
+      `  ${BLOB_MARKER_SOURCES.join(', ')}  ${proverHits.length}/${BLOB_ALL_MARKERS.length} generation markers`,
       `  ${ELF_MARKER_SOURCES.join(', ')}  ${verifierHits.length}/${ELF_B1_MARKERS.length} B1 markers`,
       '',
       'B1 changed the prover and the verifier together, so one half carrying its B1 literals while the',
@@ -870,7 +976,8 @@ function treeGenerationSkew() {
       'client generation no longer depends on this — it is measured by driving the blob — so this is a',
       'red about the sources, not about the interlock verdict.',
       '',
-      'If these messages were legitimately reworded, update BLOB_MARKERS_B1 / ELF_B1_MARKERS in this',
+      'If these messages were legitimately reworded, update BLOB_MARKERS_B1 / BLOB_MARKERS_B2 /',
+      'ELF_B1_MARKERS in this',
       'script in the same commit.',
     ],
   };
@@ -1206,6 +1313,31 @@ if (typeof deployed.cluster === 'string' && deployed.cluster.length > 0) {
     ]);
   } else {
     programId = anchorId;
+    // declare_id! outranks both files below: it is enforced by the bytecode.
+    {
+      const declaredId = verifierDeclaredId();
+      if (declaredId === null) {
+        fail(`cannot read declare_id! out of ${VERIFIER_LIB_RS}`, [
+          'That macro is the address the verifier bytecode enforces. Without it this gate cannot tell',
+          'whether the program it is about to fetch is one a .so from this tree could even run as.',
+        ]);
+      } else if (declaredId !== anchorId) {
+        fail('Anchor.toml aims `anchor deploy` at an address the verifier itself rejects', [
+          `  ${VERIFIER_LIB_RS}  declare_id!  ${declaredId}`,
+          `  Anchor.toml [${TARGET.anchorSection}] ${ANCHOR_PROGRAM_KEY}  ${anchorId}`,
+          '',
+          'An Anchor program compares the id it is invoked with against declare_id! and rejects every',
+          'instruction with DeclaredProgramIdMismatch when they differ. So a .so built from this tree can',
+          'only ever execute at the declare_id! address, and this gate would otherwise be reading, and',
+          'vouching for, a deployment this source can never become.',
+          '',
+          'MEASURED 2026-08-02: this was exactly the state of the tree. Anchor.toml named EXmAQqm…,',
+          'declare_id! named DGY37k3…, both live on devnet under the same upgrade authority, and dumping',
+          'both ELFs shows each embeds its OWN id — the bytes at EXmAQqm… are from the lineage commit',
+          '04885979 reverted off. Fix Anchor.toml, or run `pnpm check-program-ids` for the whole picture.',
+        ]);
+      }
+    }
     if (TARGET.sdkNetwork !== null) {
       const sdkId = programIdFromPrivacySdk(TARGET.sdkNetwork);
       if (sdkId === null) {
@@ -1232,7 +1364,7 @@ if (typeof deployed.cluster === 'string' && deployed.cluster.length > 0) {
       // instructions are actually built against. See verifierConstantsInPrivacySdk.
       for (const c of verifierConstantsInPrivacySdk()) {
         if (c.id === anchorId) continue;
-        fail(`${c.symbol} in the privacy SDK names a different verifier than Anchor.toml`, [
+        fail(`${c.symbol} in ${c.file.split(':')[0]} names a different verifier than Anchor.toml`, [
           `  Anchor.toml [${TARGET.anchorSection}] ${ANCHOR_PROGRAM_KEY}  ${anchorId}`,
           `  ${c.file}  ${c.symbol}  ${c.id}`,
           '',
@@ -1241,9 +1373,9 @@ if (typeof deployed.cluster === 'string' && deployed.cluster.length > 0) {
           'green this gate can print is about a program that code never addresses. Both ids being pre-B1',
           'today is why the verdict does not change; it is not a reason to leave it unchecked.',
           '',
-          'Point them at the same program. There is no generator to run: package.json defines',
-          'sync-program-ids/check-program-ids as `tsx scripts/sync-program-ids.ts`, and that file is not in',
-          'this tree, so both commands fail before they check anything.',
+          'Point them at the same program. `pnpm check-program-ids` (node scripts/sync-program-ids.mjs',
+          '--check) sweeps the whole repo for this and reports every occurrence with the declare_id! it',
+          'should carry. That command existed only in package.json until 2026-08-02.',
         ]);
       }
     }

@@ -50,7 +50,16 @@ apps/mobile/android/app/build/
 
 # Scripts, services, tools (kept in Protocol-01-backup) — anchored to repo
 # root so they don't swallow apps/*/services, apps/*/scripts, etc.
-/scripts/
+#
+# `/scripts/*` and not `/scripts/`: git cannot re-include a file whose PARENT
+# DIRECTORY is excluded, so with the directory form the negation below is
+# silently dead and `git add scripts/sync-program-ids.mjs` does nothing. That is
+# not hypothetical — it is why package.json had declared `sync-program-ids` and
+# `check-program-ids` as `tsx scripts/sync-program-ids.ts` for months against a
+# file `git ls-files` has never had a match for. Anything committed under
+# scripts/ has to be listed here explicitly.
+/scripts/*
+!/scripts/sync-program-ids.mjs
 /services/
 /tools/
 /p01/
@@ -110,6 +119,12 @@ target/idl/*
 !target/idl/*.json
 target/types/*
 !target/types/*.ts
+# Per-agent CARGO_TARGET_DIR overrides (target-<lot>/). These are SIBLINGS of
+# `target/`, so not one of the rules above reaches them. That gap is not
+# hypothetical: commit 7ada3bcd swept 3026 build artifacts into git this way,
+# and one of them was a blob left half-written by a hard reboot, which makes
+# that commit impossible to check out and aborts git's geometric-repack.
+/target-*/
 
 # Environment
 .env

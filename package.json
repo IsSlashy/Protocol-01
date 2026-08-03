@@ -31,8 +31,8 @@
     "test:stress-all": "ts-mocha -p tsconfig.test.json tests/stress-*.test.ts --timeout 600000",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "sync-program-ids": "tsx scripts/sync-program-ids.ts --write",
-    "check-program-ids": "tsx scripts/sync-program-ids.ts --check"
+    "sync-program-ids": "node scripts/sync-program-ids.mjs --write",
+    "check-program-ids": "node scripts/sync-program-ids.mjs --check"
   },
   "devDependencies": {
     "@coral-xyz/anchor": "^0.32.1",

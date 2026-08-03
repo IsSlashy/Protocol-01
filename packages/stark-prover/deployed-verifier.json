@@ -213,24 +213,27 @@
 
     "_cluster_is_checked_not_obeyed": "cluster does NOT select anything. The caller passes --cluster, that label selects an RPC endpoint from the CLUSTERS table in deployed-verifier-check.mjs and a program id from Anchor.toml, and the two fields below are then checked against the caller's choice: a record that names a different cluster, or a different program id than Anchor.toml carries for it, fails the run. Two rounds of the same defect are why. First the endpoint lived here as rpc_url, and a record that names its own endpoint can name one that does not answer, which combined with an unreachable endpoint being a skip let a three-field edit pass --verify-onchain with exit code 0 and the chain never contacted. Deleting rpc_url was not enough: the LABEL was still this file's to write and localnet was one of the labels, so setting cluster to localnet, program_id to the id Anchor.toml [programs.localnet] genuinely carries, generation to b1 and accepts_client_blob_sha256 to the blob's own hash, then answering getAccountInfo on 127.0.0.1:8899 with 149 fabricated bytes, printed a full PASS at exit code 0 (MEASURED 2026-07-30), and killing the listener made the same record exit 1, so the pass came from the listener alone. The forgery was not even necessary, since a real solana-test-validator answers all of it honestly, but that variant was not run and is not claimed as measured. The gate now refuses localnet outright for any run that could be a shipping verdict.",
 
+    "_which_of_the_two_live_deployments_this_is": "It changed on 2026-08-02, and NOT by a deploy: this record used to describe EXmAQqm... (35Xxrn..., slot 456289287, elf c359ab53..., 780,249 B), which is the address Anchor.toml [programs.devnet] carried until that date. Anchor.toml now carries DGY37k3..., because that is what declare_id! in programs/p01_stark_verifier/src/lib.rs names and an Anchor program rejects every instruction with DeclaredProgramIdMismatch at any other address — so EXmAQqm... is an address a .so built from this tree can never execute at, and a record describing it was a record about a program this source cannot become. MEASURED 2026-08-02, read-only: `solana program dump` of both, then a byte search for each 32-byte pubkey, shows the 797,824 B image at EXmAQqm... embeds EXmAQqm... and not DGY37k3..., and the 840,168 B image at DGY37k3... the reverse. Commit 04885979 ('P6.5 E2E smoke green -- revert verifier declare_id to DGY37k') is the source moving off EXmAQqm.... NOTHING WAS DEPLOYED to produce this block; it is the same chain read pointed at the id the tree actually targets, and the verdict is unchanged because BOTH deployments are pre-B1.",
+
     "cluster": "devnet",
-    "program_id": "EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z",
-    "programdata_address": "35XxrnBYPTWjir8Zc3BdS9LQA9Fjh6JB73iM3WaxKr57",
+    "program_id": "DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs",
+    "programdata_address": "Dmndh5d1SMr54vjGMHVcvsfC1Dy3LXHfAhn58RM1eWJi",
     "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
     "upgrade_authority": "7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU",
-    "last_deployed_slot": 456289287,
+    "last_deployed_slot": 469197514,
 
-    "elf_sha256": "c359ab535f42d2d8a91a2b0228521b17d26c0bde32dc526538d92987c7019f5c",
-    "elf_bytes": 780249,
-    "elf_sha256_with_loader_padding": "17fc3f2b40b472a9dfa218e20eb4ddc26cec4a1e056eae2eb66f7de11f3a63b0",
-    "elf_bytes_with_loader_padding": 797824,
-    "programdata_account_space": 797869,
+    "elf_sha256": "c1a26c1772a27f46d50570127bfa0b18ea3f46594ded4b80d9e40e3f87c03755",
+    "elf_bytes": 817617,
+    "elf_sha256_with_loader_padding": "58fe8d232a3093366e60e716fe9bbc67f48193f130d63fe64965f3c7a0b89ade",
+    "elf_bytes_with_loader_padding": 840168,
+    "programdata_account_space": 840213,
 
     "proof_format_generation": "pre-b1",
 
     "generation_evidence": {
       "method": "byte scan of the deployed ELF for msg! format-string literals that B1 introduced in programs/p01_stark_verifier/src/verify.rs, controlled by sibling literals from the same file that predate B1. This side is STILL a string scan, unlike the client side, because nothing in a build script can execute a BPF program and putting a real proof in front of one needs funding and a ~78 KB chunked upload.",
-      "identity_pin": "elf_sha256 c359ab53... is listed in KNOWN_ELF_GENERATIONS in deployed-verifier-check.mjs as measured pre-b1 by hand on 2026-07-31, together with the other live deployment c1a26c17... (DGY37k3...). The scan and the pin must agree; a disagreement about the same bytes is a hard failure, offline and on chain. That is what keeps the two literals below from being the only thing this side rests on.",
+      "identity_pin": "elf_sha256 c1a26c17... is listed in KNOWN_ELF_GENERATIONS in deployed-verifier-check.mjs as measured pre-b1 by hand on 2026-07-31, together with the other live deployment c359ab53... (EXmAQqm...). The scan and the pin must agree; a disagreement about the same bytes is a hard failure, offline and on chain. That is what keeps the two literals below from being the only thing this side rests on. Re-read 2026-08-02 with --measure: the same hash came back, so the pin is a fresh reading and not a stale one.",
+      "this_scan_cannot_say_b2": "The deployed side tops out at `b1`. B2 added no msg! literal to verify.rs -- MEASURED 2026-08-02, all nine msg! format strings there are pre-B1 step markers and every [B2] annotation is a // comment, which never reaches the ELF -- and adding one would move all 13 CU pins. So after a CORRECT B2 deploy this field would read b1 against a b2 client and the interlock would still be red. The honest route to green then is a hand measurement added to KNOWN_ELF_GENERATIONS, not a widened marker list.",
       "b1_markers_absent": [
         "[verify] final poly coeff ",
         " non-zero, bound is ",
@@ -245,16 +248,17 @@
         "STARK proof verified for circuit ",
         "rlc-c1 (the 8-byte NUL-padded domain tag b\"rlc-c1\\0\\0\")"
       ],
-      "reading": "The B1 degree-bound msg! at verify.rs:1032 is absent while five sibling msg! literals from the same file are present, so the scan is working and the deployed bytes simply predate check_final_poly_degree_bound. `deep-v1` is the DEEP_COEFF_TAG byte string at verify.rs:962; its absence is corroborating but weaker, because an 8-byte byte-string literal can be materialised inline rather than kept in rodata.",
+      "reading": "The B1 degree-bound msg! at verify.rs:1032 is absent while five sibling msg! literals from the same file are present, so the scan is working and the deployed bytes simply predate check_final_poly_degree_bound. `deep-v1` is the DEEP_COEFF_TAG byte string at verify.rs:962; its absence is corroborating but weaker, because an 8-byte byte-string literal can be materialised inline rather than kept in rodata. Unchanged by the 2026-08-02 switch to DGY37k3...: --measure re-derived pre-b1 from that deployment's own bytes, and the marker lists above are the ones it used.",
       "the_gap_is_wider_than_b1": "Also absent from the deployed ELF: the C6 merkle_update boundary tag bnd-c6 (verify.rs:2592) and `verify_uniform: probed circuit ` (lib.rs:470, landed in commit 4bc69cb4). The deployment is several generations behind HEAD, not one. Redeploying fixes all of them at once; this record only tracks the B1 boundary because that is the one that silently breaks every proof."
     },
 
     "measured_at": {
-      "date_utc": "2026-07-30",
-      "observed_slot": 480007942,
-      "slots_since_deploy": 23718655,
-      "approximate_age": "~110 days at the nominal 0.4 s/slot. NOT exact: getBlockTime(456289287) returns `Block 456289287 cleaned up, does not exist on node. First available block: 479111617`, so the deploy block has been pruned and the wall-clock date cannot be read back. The slot number is the hard fact; the age is arithmetic.",
-      "corroboration": "The tracked IDL target/idl/p01_stark_verifier.json carries address EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z and was last written at commit 1023e5bb (release v1.0.3), which is before Route C and before B1. That is the same era the marker scan puts the deployment in."
+      "date_utc": "2026-08-02",
+      "observed_slot": 480573439,
+      "slots_since_deploy": 11375925,
+      "approximate_age": "~53 days at the nominal 0.4 s/slot. NOT exact, and arithmetic rather than a reading: slot 469197514 predates the node's first available block, so getBlockTime cannot return a wall-clock date for it. The slot number is the hard fact.",
+      "corroboration": "Independently dumped on the same day with `solana program dump DGY37k3... --url https://api.devnet.solana.com`: 840,168 B, sha256 58fe8d23..., which is elf_sha256_with_loader_padding above. Trimming the loader's zero padding gives elf_sha256 c1a26c17..., which is what KNOWN_ELF_GENERATIONS pinned by hand on 2026-07-31 -- two readings a day apart and two code paths agreeing about the same account.",
+      "the_other_deployment": "EXmAQqm... was last read on 2026-07-30 at observed slot 480007942: elf c359ab53..., 780,249 B, deployed at slot 456289287, ~110 days old, also pre-b1. It is no longer what this record describes; see _which_of_the_two_live_deployments_this_is. The tracked IDL target/idl/p01_stark_verifier.json still carries EXmAQqm... and was last written at commit 1023e5bb (release v1.0.3), before Route C and before B1 -- so the IDL is stale in the same direction Anchor.toml was, and it is the next thing to regenerate."
     },
 
     "accepts_client_blob_sha256": null,
@@ -309,6 +313,7 @@
         "C5 transfer": "78877 B  28ef7176795111da1df5714dbc11ad3c32892de266242d30dec1cd60e9c252bd",
         "C6 merkle_update": "81037 B  b8dc81e070487ec827e488809f361fc982e0b9c435270855f1a0b95d658cb0be"
       },
+      "_previous_b1_digests": "The seven above are the B2 column. The B1 column this block used to carry, for whoever needs to recognise the older artifact: C0 45001 B e4aad105..., C1 65801 B 935d918c..., C2 66681 B 063d86a1..., C3 75637 B 2d97f56f..., C4 78377 B f8778367..., C5 76357 B 78afe9bb..., C6 78517 B 8e1166f5.... All seven are still pinned as the `b1` column of the fixture table in scripts/prover-behaviour.mjs, so the gate can still name a B1 blob rather than merely refusing to classify it.",
       "why_not_length": "B1 changed WHAT FRI FOLDS without adding or removing a byte. MEASURED 2026-07-31 by driving both blobs: the pre-B1 blob 5fe610c9 and the B1 blob emit the SAME SEVEN LENGTHS, to the byte (45,001 / 65,801 / 66,681 / 75,637 / 78,377 / 76,357 / 78,517), and SEVEN DIFFERENT DIGESTS. Between those two generations content is the only discriminator there is. B2 is different — it widens three wire fields, so the seven lengths DID move (to the numbers above) — but that is not licence to classify on length: a blob can be given any length and only content is expensive to fake, so the verdict stays on the digest and the length stays an observation.",
       "corroboration": "The seven B2 digests above are pinned independently in packages/stark-prover/src/wireFormat.test.ts (Pin.sha256, driving this blob) and in programs/p01_stark_verifier/tests/b1_deep_binding.rs (FIXTURE_C*_SHA256, computed from the Rust prover over the same seven witnesses). The gate reads both files and refuses to classify if either stops carrying them, so the reference cannot be moved in one file.",
       "string_scan_kept_as_corroboration": {
@@ -323,6 +328,7 @@
           "[B2] OVER-SEGMENTED: the quotient has "
         ],
         "_deleted_marker": "'break the committed-vector/ood_quotient agreement B1 depends on' was listed here and is GONE from the source and therefore from the blob. It was the message on the `q_poly.len() <= lde_size` assert in the six quotient builders; B2 replaced that guarantee with the two segment_quotient_poly asserts above, which are the strings that now carry the same job.",
+        "_merged_2026_08_03": "Two lots split this list independently on 2026-08-02 and the merge kept ONE of them, not a blend: BLOB_MARKERS_B1 / BLOB_MARKERS_B2 in deployed-verifier-check.mjs, with classifyBlob requiring the WHOLE B2 era before it says b2. The other lot's classifyBlobStrings said b2 on any single B2 marker and is deleted; the difference is recorded on BLOB_MARKERS_B2. The deployed-ELF side is NOT two-valued as that lot's note said: classifyElf answers 'b1+' when it can only see 'B1 or newer', and generationsAreCompatible is what compares it. See deployed.generation_evidence.this_scan_cannot_say_b2.",
         "controls_present": [
           "the 8-byte NUL-padded domain tags rlc-c1, rlc-c2, rlc-c3, rlc-c5, bnd-c5, bnd-c6",
           "proof_hex (the wasm_api JSON key, 7 occurrences)"
@@ -336,7 +342,17 @@
     "it is RED after, which is the point — reconciling the client block moves no verdict.",
     "",
     "  client blob  : b2      (2a962ca9..., 211,749 B, this tree)",
-    "  deployed     : pre-b1  (c359ab53..., 780,249 B, devnet slot 456289287)",
+    "  deployed     : pre-b1  (c1a26c17..., 817,617 B, devnet slot 469197514)",
+    "",
+    "Re-derived 2026-08-02. The gap got WIDER, not narrower: the client moved B1 -> B2 while the chain",
+    "did not move at all, and the deployment named on the second line is a different account from the",
+    "one this file used to name -- the one the tree actually targets now. NO DEPLOY WAS MADE. See",
+    "deployed._which_of_the_two_live_deployments_this_is.",
+    "",
+    "MERGED 2026-08-03: the other lot's copy of this block still named EXmAQqm... (c359ab53..., 780,249 B,",
+    "slot 456289287) on the second line while its own `deployed` block above named DGY37k3.... The line",
+    "above is the one that agrees with the block that was actually measured. No deploy was made for this",
+    "merge either, and the verdict is unchanged: both deployments are pre-B1.",
     "",
     "ONE THING THE ON-CHAIN LEG CANNOT CHECK, and it became load-bearing with B2. The deployed side is",
     "classified by scanning the ELF for msg! literals, and B2 ADDED NO LITERAL TO THE VERIFIER — measured",
