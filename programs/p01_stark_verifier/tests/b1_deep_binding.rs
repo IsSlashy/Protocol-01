@@ -1832,12 +1832,37 @@ const FIXTURE_C0_SHA256: &str =
     "5ea292acb52a3f352fbe9280c3b59291b77e92a066a6fbce743dbf8db456c09b";
 const FIXTURE_C1_SHA256: &str =
     "09e9476db988eef4950ed2ef64c57d0ab9569f7eeb40e27bb2ab2cf1e204a83d";
+/// [BIND-C2C4 2026-08-03] MOVED. Wiring C2's boundary fold changes the
+/// committed quotient, so every C2 proof this tree produces is a different 69,761
+/// bytes. Length is unchanged — the fold adds `deg(Q_bnd) <= n-2` to a polynomial
+/// that already spans 8 segments, so no wire field moves. Measured, not guessed:
+/// `cross_language_fixture_digests` printed it.
+///
+/// 🚨 THE SHIPPED WASM PROVER HAS NOT MOVED WITH IT. `packages/stark-prover/wasm/
+/// p01_stark_bg.wasm` (sha256 2a962ca9…) was built before this commit, so it is
+/// still emitting the old 6541e57b… C2 proof — and the on-chain verifier in this
+/// tree now REJECTS that proof, because its `Q` is missing the boundary term
+/// `verify_deep_ali_circuit_2` reconstructs at `z`. Same for C4. Any client
+/// shipped from this tree fails every C2 and C4 proof until the blob is rebuilt.
+///
+/// The three files that pin the OLD digest — `wireFormat.test.ts` (`Pin.sha256`),
+/// `scripts/prover-behaviour.mjs` (the `b2` column) and `deployed-verifier.json`
+/// (`measured_digests`) — are deliberately NOT updated here. All three are
+/// statements about that shipped blob, and all three are still TRUE of it;
+/// rewriting them to match an artifact nobody has built would be pinning an
+/// unmeasured number. `fixtureTableProblem()` in prover-behaviour.mjs will now
+/// report this file as no longer carrying the current C2/C4 digest, which is the
+/// divergence being real rather than the gate being wrong. Reship the blob, then
+/// re-pin all four together.
 const FIXTURE_C2_SHA256: &str =
-    "6541e57b85419fd87a4227bf08cfc2f151d0179870ba04d5011338843cd51ce8";
+    "d21c888724a773f1e37598ac1f8a9ce9f784d5390b0314aa8d57503e64d25a7c";
 const FIXTURE_C3_SHA256: &str =
     "abf0e733d82002ff74c45d2677fc213f893cb45b999578f84324c35f5907c5c0";
+/// [BIND-C2C4 2026-08-03] MOVED, same cause and same 🚨 as `FIXTURE_C2_SHA256`
+/// above: C4's boundary fold changes its committed quotient. 81,457 bytes
+/// unchanged.
 const FIXTURE_C4_SHA256: &str =
-    "f4918f36632e011049366c079489b8f70858113f45831bcd76e0cf630d92929a";
+    "94fe0535645eef6feab54ec6fa72d2370299d27c4522474cf66d601c28002d42";
 const FIXTURE_C5_SHA256: &str =
     "28ef7176795111da1df5714dbc11ad3c32892de266242d30dec1cd60e9c252bd";
 const FIXTURE_C6_SHA256: &str =
