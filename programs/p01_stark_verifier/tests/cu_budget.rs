@@ -2014,6 +2014,31 @@ const CI_UNRUN_CU_BUDGET_TESTS: [(&str, &str); 1] = [(
 ///
 /// The attribute is matched as a whole trimmed line, so the string literal that
 /// spells it here is not itself a hit.
+///
+/// # [ADVERSARY 2026-08-03] Why this walks forward instead of reading line i+1
+///
+/// It used to require the `fn` to be on the line immediately after `#[test]`.
+/// MEASURED, not argued: two genuine `#[test]`s were appended to this file, both
+/// named so that `ci.yml`'s `--skip cu_budget_c7_phase2_probe` excludes them, so
+/// both executed nowhere —
+///
+/// ```text
+/// #[test]                                     #[test]
+/// fn ..._adversary_plain() { .. }             #[should_panic(expected = "probe")]
+///                                             fn ..._adversary_attrgap() { .. }
+/// ```
+///
+/// `every_cu_budget_test_is_reachable_from_the_ci_filter` named the LEFT one and
+/// reported the RIGHT one as covered. `#[should_panic]`, `#[ignore]` and
+/// `#[cfg_attr(..)]` are the commonest attributes in Rust test code, and a guard
+/// whose entire subject is "no test in this file executes nowhere" was blind to
+/// every one of them. Neither of the scan's own negative controls can see this:
+/// `names.len() >= 12` and "the scan found this very test" are both satisfied by
+/// a scanner that silently under-counts.
+///
+/// So: skip attribute / comment / blank lines to reach the signature, and
+/// **panic** if a `#[test]` yields no name at all. Under-reporting is the
+/// failure mode that makes the gate above vacuous, so this fails closed.
 fn cu_budget_test_names() -> Vec<String> {
     let attr = "#[test]";
     let lines: Vec<&str> = THIS_FILE.lines().collect();
@@ -2022,15 +2047,38 @@ fn cu_budget_test_names() -> Vec<String> {
         if l.trim() != attr {
             continue;
         }
-        if let Some(sig) = lines
-            .get(i + 1)
-            .map(|s| s.trim_start())
-            .and_then(|s| s.strip_prefix("fn "))
-        {
-            if let Some(n) = sig.split('(').next() {
-                names.push(n.trim().to_string());
+        // Walk to the signature. Anything between the attribute and `fn` that is
+        // an attribute, a comment, or blank is skipped; `#[cfg_attr(` spanning
+        // several lines is covered because its continuation lines are neither a
+        // `fn` nor a new `#[test]`.
+        let mut found: Option<String> = None;
+        for l2 in lines.iter().skip(i + 1).take(24) {
+            let t = l2.trim_start();
+            if t.trim() == attr {
+                break; // ran into the next test without ever seeing a `fn`
+            }
+            // Strip the qualifiers a test fn is allowed to carry.
+            let mut sig = t;
+            for kw in ["pub(crate) ", "pub ", "async ", "unsafe ", "extern \"C\" "] {
+                sig = sig.strip_prefix(kw).unwrap_or(sig);
+            }
+            if let Some(rest) = sig.strip_prefix("fn ") {
+                found = rest.split('(').next().map(|n| n.trim().to_string());
+                break;
             }
         }
+        let name = found.unwrap_or_else(|| {
+            panic!(
+                "cu_budget.rs line {}: a `#[test]` attribute with no reachable `fn` signature \
+                 within 24 lines. The scanner would silently drop this test and \
+                 `every_cu_budget_test_is_reachable_from_the_ci_filter` would report it as \
+                 covered — which is exactly the hole that made an attribute between `#[test]` \
+                 and `fn` invisible. Teach the walk about this form rather than letting it \
+                 under-count.",
+                i + 1
+            )
+        });
+        names.push(name);
     }
     names.sort();
     names
@@ -2192,6 +2240,23 @@ fn every_cu_budget_test_is_reachable_from_the_ci_filter() {
     assert!(
         names.iter().any(|n| n == "cu_budget_real_circuits"),
         "the scan did not find the headline measurement test; the parser is wrong"
+    );
+    // [ADVERSARY 2026-08-03] The control that closes the hole the two controls
+    // above cannot see. `names.len() >= 12` and "it found itself" are both
+    // satisfied by a scanner that silently drops tests, and one did: a `#[test]`
+    // with `#[should_panic]` between it and the `fn` was invisible, so this gate
+    // reported an unrun test as covered. This is an EQUALITY against an
+    // independent count of the attribute itself, so any under-count — including
+    // a revert of `cu_budget_test_names` to its read-the-next-line form — is a
+    // red here rather than a quieter gate.
+    let attr_lines = THIS_FILE.lines().filter(|l| l.trim() == "#[test]").count();
+    assert_eq!(
+        names.len(),
+        attr_lines,
+        "the scan produced {} names from {attr_lines} `#[test]` attributes in this file. \
+         Every missing name is a test this gate then reports as covered without looking at \
+         it. Fix `cu_budget_test_names`, do not relax this count.",
+        names.len()
     );
 
     let invocations = ci_cu_budget_invocations();
@@ -4509,3 +4574,4 @@ fn write_proof_chunk_is_bounded_by_the_real_account_length_not_the_declared_proo
         wrong.join("\n  "),
     );
 }
+
