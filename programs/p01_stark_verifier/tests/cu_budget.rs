@@ -1242,9 +1242,16 @@ struct CuCeiling {
 /// future regression up to 10% invisible.
 ///
 /// Worst absolute is C4 at 843,918 of 1,400,000 (60%); worst phase1+phase2 is
-/// C4 at 1,023,556, still inside one instruction, leaving ~376,000 CU of margin.
-/// Worst phase 2 alone is C5 at 201,422. The smallest phase-1 pin is C0 at
+/// C4 at 1,051,138, still inside one instruction, leaving ~349,000 CU of margin.
+/// Worst phase 2 alone is C4 at 207,220. The smallest phase-1 pin is C0 at
 /// 599,059. CU was never the binding constraint for B2 and it still is not.
+///
+/// [BIND-C2C4 2026-08-03] The last three of those figures moved with the C2/C4
+/// boundary fold: the worst total was C4 at 1,023,556 with ~376,000 of margin,
+/// and the worst phase 2 alone was C5 at 201,422 — C4 has now overtaken it. The
+/// fold is what binds those two circuits' public inputs to the proof, so this is
+/// the cost of a soundness fix and it was accepted as such; see the note on the
+/// C2 row of `CU_CEILINGS`.
 ///
 /// That sentence used to say "all seven rows", because only phase 1 HAD a
 /// `vs measured` column — the six phase-2 pins were asserted against their
@@ -1292,9 +1299,30 @@ struct CuCeiling {
 const CU_CEILINGS: [CuCeiling; 7] = [
     CuCeiling { circuit_id: 0, phase1_measured: 599_059, phase1_max: 612_000, phase2_measured: None,           phase2_max: None },
     CuCeiling { circuit_id: 1, phase1_measured: 750_827, phase1_max: 766_000, phase2_measured: Some(125_037), phase2_max: Some(128_000) },
-    CuCeiling { circuit_id: 2, phase1_measured: 756_358, phase1_max: 772_000, phase2_measured: Some( 92_348), phase2_max: Some( 95_000) },
+    // [BIND-C2C4 2026-08-03] C2 and C4 phase-2 re-pinned UPWARD. The cause is the
+    // public-input boundary fold: `verify_deep_ali_circuit_2` and `_4` now
+    // reconstruct the boundary term of `Q` at `z` and fold it into the DEEP
+    // check, which is what binds those two circuits' public inputs to the proof.
+    // Before it, the OOD quotient was bound to nothing on C2/C4 and a forged
+    // public input was accepted; that is closed and mutation-proven.
+    //
+    // The price is MEASURED, not budgeted, and it lands entirely on phase 2. The
+    // end-to-end totals and the remaining margin are DERIVED from these pins and
+    // stated once, in the doc block above — deliberately not restated here, since
+    // two copies of a derived figure is how the stale columns this file already
+    // deleted got written. The band is untouched: every `*_max` here is still
+    // `measured * 1.02` rounded up to 1,000, so nothing was loosened beyond what
+    // was measured, and `cu_ceilings_are_the_documented_band` still proves it.
+    //
+    // THIS IS A RECORDED ACCEPTANCE OF A KNOWN COST, decided 2026-08-03, and not
+    // a step taken to make CI green. If a future change moves these again, the
+    // question to answer first is what moved and why — never what number would
+    // pass.
+    CuCeiling { circuit_id: 2, phase1_measured: 756_358, phase1_max: 772_000, phase2_measured: Some(111_913), phase2_max: Some(115_000) },
     CuCeiling { circuit_id: 3, phase1_measured: 785_407, phase1_max: 802_000, phase2_measured: Some(115_974), phase2_max: Some(119_000) },
-    CuCeiling { circuit_id: 4, phase1_measured: 843_918, phase1_max: 861_000, phase2_measured: Some(179_638), phase2_max: Some(184_000) },
+    // [BIND-C2C4 2026-08-03] see the note on C2 above — same cause, same band,
+    // same recorded acceptance. C4 is the circuit that pays the most.
+    CuCeiling { circuit_id: 4, phase1_measured: 843_918, phase1_max: 861_000, phase2_measured: Some(207_220), phase2_max: Some(212_000) },
     // [LIVENESS 2026-08-01] phase1_measured re-recorded: C5 793_372 -> 793_355
     // (-17, the capture-edge compare) and C6 809_654 -> 809_658 (+4, the
     // active_rows bound). The CEILINGS are unchanged and neither was approached.
@@ -1643,7 +1671,7 @@ const THIS_FILE: &str = include_str!("cu_budget.rs");
 /// with the number quoted back at you. Entries are checked in BOTH directions:
 /// an entry that no longer appears in the prose is itself a failure, so this
 /// cannot rot into a list of numbers nobody wrote.
-const PROSE_FIGURES: [(u64, &str); 21] = [
+const PROSE_FIGURES: [(u64, &str); 23] = [
     (1_399_000, "illustrative: what C0 could have become before a ceiling existed"),
     (638_248, "byte size of the historical Route C .so this doc used to name"),
     (687_736, "byte size of the .so CU_CEILINGS is measured from TODAY — provenance, not a pin"),
@@ -1667,7 +1695,13 @@ const PROSE_FIGURES: [(u64, &str); 21] = [
     (45_000, "a pre-measurement PREDICTION of B2's phase-1 CU delta, recorded as wrong"),
     (90_000, "the other pre-measurement prediction, also wrong"),
     (60_000, "the MEASURED B2 phase-1 delta, rounded — the exact per-circuit figures are pins"),
-    (376_000, "cap minus the worst phase1+phase2 total — derived from pins, rounded"),
+    // [BIND-C2C4 2026-08-03] The margin figure moved with the fold. Both are
+    // registered: the new one because prose quotes it, the old one because prose
+    // still quotes it AS the superseded value — deleting it would make the
+    // sentence that records the move unwriteable.
+    (349_000, "cap minus the worst phase1+phase2 total — derived from pins, rounded"),
+    (376_000, "the SUPERSEDED margin, pre-C2/C4-fold, quoted beside the 349,000 that replaced it"),
+    (1_023_556, "the SUPERSEDED worst phase1+phase2 total (C4), same sentence"),
 ];
 
 /// Every figure the constants in this file produce, in every form prose quotes
