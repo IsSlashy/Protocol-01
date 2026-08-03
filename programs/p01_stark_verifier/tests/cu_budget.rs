@@ -2219,6 +2219,95 @@ fn every_cu_budget_test_is_reachable_from_the_ci_filter() {
     );
 }
 
+/// `.gitignore`, embedded at COMPILE time for the same reason as `CI_WORKFLOW`.
+const GITIGNORE: &str = include_str!("../../../.gitignore");
+
+/// Every `scripts/*` file `ci.yml` invokes is on disk AND is not gitignored.
+///
+/// # Why this exists, and what it caught
+///
+/// `.gitignore` excludes the WHOLE `scripts/` directory (`/scripts/*`) and adds
+/// the handful of committed files back one negation at a time. Its own comment
+/// records that this has already burned this repo once: `package.json` declared
+/// `sync-program-ids` against a path `git ls-files` never had a match for, for
+/// months.
+///
+/// MEASURED 2026-08-03, while writing the step this test guards: exactly the
+/// same thing happened again. `scripts/dead-code-set.mjs` was written, `git
+/// status` reported a CLEAN tree because the file was ignored, and a BLOCKING
+/// ci.yml step already invoked it. Committing that would have pushed a workflow
+/// whose gate fails on `MODULE_NOT_FOUND` — and the local tree would have looked
+/// perfect. `git status` is not a coverage check when a directory is ignored
+/// wholesale; a missing negation is invisible to every other gate here.
+///
+/// This reads `.gitignore` rather than shelling out to `git`, so it needs no
+/// repository and gives the same answer in a source tarball.
+#[test]
+fn every_script_ci_invokes_is_on_disk_and_not_gitignored() {
+    // The paths ci.yml actually runs: `node scripts/<file>` / `scripts/<file>`.
+    let mut invoked: Vec<String> = Vec::new();
+    for (i, _) in CI_WORKFLOW.match_indices("scripts/") {
+        let rest = &CI_WORKFLOW[i + "scripts/".len()..];
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
+            .unwrap_or(rest.len());
+        let name = &rest[..end];
+        // Only files, and only ones that look like a script rather than a
+        // directory prefix such as `scripts/foo/bar`.
+        if name.ends_with(".mjs") || name.ends_with(".js") || name.ends_with(".sh") {
+            let owned = name.to_string();
+            if !invoked.contains(&owned) {
+                invoked.push(owned);
+            }
+        }
+    }
+    invoked.sort();
+
+    // Negative controls. Without these, a scanner that found nothing would
+    // report a clean workflow.
+    assert!(
+        !invoked.is_empty(),
+        "no `scripts/<file>` invocation was parsed out of ci.yml at all — the scanner is \
+         broken and this check is vacuous"
+    );
+    assert!(
+        invoked.iter().any(|s| s == "sync-program-ids.mjs"),
+        "the scan did not find `scripts/sync-program-ids.mjs`, which ci.yml demonstrably \
+         runs. The needle shape is wrong and every verdict below is noise. Found: {invoked:?}"
+    );
+    assert!(
+        GITIGNORE.lines().any(|l| l.trim() == "/scripts/*"),
+        "`.gitignore` no longer excludes `/scripts/*`, so the negation reasoning below does \
+         not apply. Either the exclusion moved — re-point this check — or scripts/ is \
+         tracked normally now and this check can go."
+    );
+
+    let negated: Vec<&str> = GITIGNORE
+        .lines()
+        .map(str::trim)
+        .filter_map(|l| l.strip_prefix("!/scripts/"))
+        .collect();
+
+    for name in &invoked {
+        let path = repo_root().join("scripts").join(name);
+        assert!(
+            path.exists(),
+            "ci.yml invokes `scripts/{name}` and {} does not exist. The step would fail on a \
+             missing file, not on the thing it checks.",
+            path.display()
+        );
+        assert!(
+            negated.iter().any(|n| n == name),
+            "\n\n  >>> A CI SCRIPT IS GITIGNORED <<<\n  ci.yml runs `scripts/{name}`, the \
+             file exists locally, and `.gitignore` excludes `/scripts/*` without a \
+             `!/scripts/{name}` negation.\n\n  So it is NOT committed, `git status` shows a \
+             clean tree, and the workflow step that runs it fails on a file nobody can see \
+             is absent.\n  Add `!/scripts/{name}` to .gitignore.\n  Negations present: \
+             {negated:?}\n"
+        );
+    }
+}
+
 /// The prose check must be capable of failing, on a file where it never does.
 ///
 /// Same reasoning as every other negative control here: `comma_grouped_numbers`

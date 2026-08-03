@@ -942,29 +942,44 @@ jobs:
       # a line from the expected set and the comparison is an equality, not a
       # ceiling. That is the property an `-A dead_code` alone cannot have.
       #
-      # Three details that are load-bearing and not stylistic:
-      #   * `-A warnings -W dead_code` (warn, not deny) so nothing ABORTS the
-      #     build. `-D dead_code` stops at the first crate that has one — which
-      #     is `p01-stark` — and never reaches the verifier's own targets, the
-      #     same trap the `--all-targets` widening fell into above.
-      #   * the pin is on FILE + MESSAGE, never on the line number. Line numbers
-      #     in `stark/src/compact.rs` move under every prover branch, and a gate
-      #     that has to be re-pinned after each refactor is a gate that gets
-      #     deleted.
-      #   * `tr '\\' '/'` because clippy prints Windows separators when this is
-      #     re-run locally, and the same pin has to hold on both.
+      # Two details that are load-bearing and not stylistic:
+      #   * clippy runs at its DEFAULT lint levels — no `-A`, no `-D`. dead_code
+      #     is a warning there, so nothing aborts and every target gets checked.
+      #     Both obvious alternatives were tried and MEASURED on 2026-08-03 and
+      #     both are wrong: `-A warnings -D dead_code` reports correctly but
+      #     ABORTS at `p01-stark` and never reaches the verifier's own targets
+      #     (the same trap `--all-targets` fell into above), and
+      #     `-A warnings -W dead_code` compiles everything and reports NOTHING,
+      #     because `warnings` is a pseudo-group rustc applies over the
+      #     individual specifications. A gate built on that second pair looks
+      #     reasonable and measures nothing at all.
+      #   * selection is on the LINT CODE, via `scripts/dead-code-set.mjs`, not
+      #     on rendered text and not on line numbers. Line numbers in
+      #     `stark/src/compact.rs` move under every prover branch; rustc's
+      #     wording changes on its own (it switches to "fields `a` and `b` are
+      #     never read" when there are two). Both make a pin that quietly stops
+      #     matching, which is the failure this pass exists to remove.
+      #     That script exits 2 rather than printing an empty set when it is
+      #     handed no JSON at all, so "no findings" can never be produced by the
+      #     gate having failed to run.
       - name: cargo clippy (BLOCKING — dead_code pinned to exactly the 2 named findings)
         run: |
           set -uo pipefail
           echo "::group::dead_code across p01_stark_verifier + p01-stark, all targets"
-          out="$(cargo clippy -p p01_stark_verifier --all-targets --message-format=short -- \
-                   -A warnings -W dead_code 2>&1)" || true
-          printf '%s\n' "$out"
+          rc=0
+          cargo clippy -p p01_stark_verifier --all-targets --message-format=json \
+            > /tmp/clippy-dead-code.json 2> /tmp/clippy-dead-code.err || rc=$?
+          cat /tmp/clippy-dead-code.err
           echo "::endgroup::"
-          got="$(printf '%s\n' "$out" | tr '\\' '/' \
-                 | sed -n 's#^\(.*\.rs\):[0-9][0-9]*:[0-9][0-9]*: warning: \(.*\)$#\1 :: \2#p' \
-                 | sort -u)"
-          want="$(printf '%s\n%s\n' 'stark/src/compact.rs :: field `alphas` is never read' 'stark/src/compact.rs :: variant `LegacyGeneric` is never constructed')"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=clippy did not run::cargo clippy exited $rc before a finding set could be read. That is a build failure, not a dead_code verdict — fix the build, do not touch the pin."
+            exit 1
+          fi
+          got="$(node scripts/dead-code-set.mjs < /tmp/clippy-dead-code.json)" || {
+            echo "::error title=dead_code set unreadable::scripts/dead-code-set.mjs refused the clippy output; its reason is on stderr above. This step measured NOTHING and must not be read as green or as drift."
+            exit 1
+          }
+          want="$(printf '%s\n%s' 'stark/src/compact.rs :: field `alphas` is never read' 'stark/src/compact.rs :: variant `LegacyGeneric` is never constructed')"
           if [ "$got" = "$want" ]; then
             echo "dead_code: exactly the two findings ci.yml names above, and no others."
             exit 0

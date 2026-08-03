@@ -60,6 +60,11 @@ apps/mobile/android/app/build/
 # scripts/ has to be listed here explicitly.
 /scripts/*
 !/scripts/sync-program-ids.mjs
+# [2026-08-03] Fell straight into the trap the paragraph above describes:
+# `scripts/dead-code-set.mjs` was written, `git status` showed a clean tree, and
+# the file it feeds is a BLOCKING ci.yml step — so the workflow would have gone
+# red on a missing script that looked, locally, like it had been committed.
+!/scripts/dead-code-set.mjs
 /services/
 /tools/
 /p01/
