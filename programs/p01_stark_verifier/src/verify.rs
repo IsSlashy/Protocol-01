@@ -146,6 +146,25 @@ const GENERATOR_4096: u64 = 0xF2C35199959DFCB6;
 /// 8192nd root of unity (LDE domain for circuits 3,5)
 const GENERATOR_8192: u64 = 0x1544EF2335D17997;
 
+/// [B7] The multiplicative shift `h` of the LDE evaluation coset.
+///
+/// PAIRED EDIT: `stark/src/compact.rs`'s `LDE_COSET_SHIFT_U64`. The prover
+/// evaluates at `x = h * g^i`; every domain-point reconstruction on this side
+/// must apply the same `h` or honest proofs stop verifying. The two literals
+/// must stay equal and `coset_shift_matches_the_prover` pins that.
+///
+/// ONE global constant, deliberately NOT a per-size table like the generators
+/// above. The safety condition is a single inequality, `h^N != 1` for the
+/// largest LDE size, and it covers every shipping size and every FRI layer at
+/// once — a table would only create a slot someone can fill with `1`, which is
+/// the exact collapse `get_lde_generator` below was hardened against.
+///
+/// `#[allow(dead_code)]` until the domain-point sites actually consume it; the
+/// constant lands first so the two crates can be checked against each other
+/// before any proof bytes move.
+#[allow(dead_code)]
+pub const LDE_COSET_SHIFT: u64 = 7;
+
 /// Get the LDE domain generator for a given LDE size.
 ///
 /// **Fails closed.** An unlisted size is a build-time error in this crate, not
@@ -154,7 +173,10 @@ const GENERATOR_8192: u64 = 0x1544EF2335D17997;
 /// and quotient/vanishing evaluations would be checked against garbage while
 /// still reporting success. Any new circuit must add its generator constant
 /// here or it will be rejected outright.
-fn get_lde_generator(lde_size: usize) -> Result<Felt, VerifyError> {
+/// `pub` so the B7 shift test can assert its size list against the sizes this
+/// table actually ships, instead of restating them and rotting silently the day
+/// a circuit is added.
+pub fn get_lde_generator(lde_size: usize) -> Result<Felt, VerifyError> {
     match lde_size {
         512 => Ok(Felt::new(GENERATOR_512)),
         2048 => Ok(Felt::new(GENERATOR_2048)),

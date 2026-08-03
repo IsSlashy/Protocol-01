@@ -4539,6 +4539,158 @@ pub struct GenericCompactProofData {
 
 /// Get a primitive Nth root of unity in the Goldilocks field.
 /// N must be a power of 2 and <= 2^32.
+/// [B7] The multiplicative shift `h` that moves the LDE off the subgroup.
+///
+/// # What it is for
+///
+/// The LDE is evaluated on the subgroup itself today, so LDE position
+/// `i * blowup` IS trace row `i` and an aligned query hands the verifier — and
+/// anyone reading the chain — a RAW WITNESS ROW. `air/denominated_pool.rs`
+/// writes the Poseidon input state, which carries the note secret, straight
+/// into the trace, so that is a real leak. Evaluating at `x = h * g^i` instead
+/// removes the coincidence.
+///
+/// # Why 7, and why it is not a free choice
+///
+/// `get_domain_generator_generic` below already derives every domain generator
+/// from `BaseElement::new(7)`, calling it "a generator of the multiplicative
+/// group". More importantly the POSITIVE CONTROL for this whole change,
+/// `aligned_hits_is_zero_once_the_domain_is_shifted`, already hard-codes
+/// `let shift = BaseElement::new(7)` and states the condition it relies on.
+/// That test is the specification; picking another value would make the
+/// implementation disagree with the test that proves the fix is not vacuous.
+///
+/// # The one inequality that makes it safe, everywhere
+///
+/// `h^N != 1` for the largest LDE size `N`. It is necessary and sufficient for
+/// all three obligations at once:
+///
+/// * **Trace subgroup.** The trace domain is contained in the LDE domain, so
+///   `h` outside the LDE subgroup puts the whole coset outside the trace
+///   subgroup. That is the leak closing.
+/// * **Every FRI layer, not just the first.** Folding squares the domain, so
+///   layer `k` lives on `h^(2^k) * <g^(2^k)>`. And
+///   `h^(2^k)` is in `<g_N^(2^k)>` exactly when `(h^(2^k))^(N/2^k) = h^N = 1`.
+///   The SAME inequality, for every layer simultaneously — no layer can fall
+///   back onto a subgroup.
+/// * **The vanishing polynomial never hits zero on the evaluation domain.**
+///   `x^n = 1` would force `h^(n*blowup) = h^N = 1`.
+///
+/// ⚠️ `Z` is non-zero on the coset but it is NOT constant there. `x^n` equals
+/// `h^n * (g_N^n)^i` and `g_N^n` has order `blowup`, so `x^n - 1` takes
+/// `blowup` distinct values. Do not "optimise" it into a scalar.
+pub const LDE_COSET_SHIFT_U64: u64 = 7;
+
+/// `LDE_COSET_SHIFT_U64` as a field element. A function rather than a `const`
+/// because this crate has no precedent for a `const BaseElement` and the
+/// const-ness of `BaseElement::new` is not something to bet a build on.
+#[inline]
+pub fn lde_coset_shift() -> BaseElement {
+    BaseElement::new(LDE_COSET_SHIFT_U64)
+}
+
+/// Interpolate values sampled on the COSET `shift * <omega>` back to the
+/// coefficients of the underlying polynomial.
+///
+/// `inverse_ntt` interpolates over a subgroup. Given `v_i = f(h * omega^i)`, it
+/// returns the coefficients of `f'(y) = f(h * y)`, not of `f`. Since
+/// `f(x) = f'(x/h) = sum_j c'_j * h^(-j) * x^j`, recovering `f` is one pass
+/// scaling coefficient `j` by `h^(-j)`.
+///
+/// Takes `inv_shift = h^(-1)` rather than `h` on purpose: every caller already
+/// has to think about which direction it is holding, and the type system cannot
+/// tell them apart. Passing `ONE` makes this exactly `inverse_ntt`, which is
+/// what the neutral wiring step relies on.
+#[allow(dead_code)]
+fn coset_inverse_ntt(
+    values: &[BaseElement],
+    omega: BaseElement,
+    inv_shift: BaseElement,
+) -> Vec<BaseElement> {
+    let mut coeffs = inverse_ntt(values, omega);
+    let mut p = BaseElement::ONE;
+    for c in coeffs.iter_mut() {
+        *c = *c * p;
+        p = p * inv_shift;
+    }
+    coeffs
+}
+
+#[cfg(test)]
+mod b7_coset_shift {
+    use super::*;
+
+    /// The shift must sit outside EVERY evaluation domain this prover builds.
+    ///
+    /// Asserting `h^N != 1` for each shipping LDE size is the exact necessary
+    /// and sufficient condition derived on `LDE_COSET_SHIFT_U64`, and it covers
+    /// every FRI layer for free. Deliberately NOT a test that `ord(7) = p-1`:
+    /// that is a stronger claim, harder to check, and not what is needed.
+    #[test]
+    fn shift_is_outside_every_shipping_lde_domain() {
+        let h = lde_coset_shift();
+        assert_ne!(h, BaseElement::ZERO, "a zero shift collapses the domain");
+        assert_ne!(h, BaseElement::ONE, "a shift of one IS the unshifted domain");
+        for size in [512u64, 2048, 4096, 8192] {
+            assert_ne!(
+                h.exp(size.into()),
+                BaseElement::ONE,
+                "shift^{size} == 1, so the coset falls back onto the subgroup of that size \
+                 and an aligned query would still reproduce a raw trace row",
+            );
+        }
+    }
+
+    /// `coset_inverse_ntt` with `inv_shift = ONE` must be `inverse_ntt`.
+    /// This is what licenses wiring the plumbing in before the algebra moves.
+    #[test]
+    fn coset_inverse_ntt_is_neutral_at_one() {
+        let omega = get_domain_generator_generic(16);
+        let vals: Vec<BaseElement> = (0..16u64).map(|i| BaseElement::new(i * 7 + 3)).collect();
+        assert_eq!(
+            coset_inverse_ntt(&vals, omega, BaseElement::ONE),
+            inverse_ntt(&vals, omega),
+            "the neutral wiring step is only safe if this holds exactly",
+        );
+    }
+
+    /// And it must NOT be neutral at the real shift — otherwise the helper is
+    /// vacuous and step 3 would silently change nothing.
+    #[test]
+    fn coset_inverse_ntt_is_not_vacuous_at_the_real_shift() {
+        let omega = get_domain_generator_generic(16);
+        let vals: Vec<BaseElement> = (0..16u64).map(|i| BaseElement::new(i * 7 + 3)).collect();
+        let inv_h = lde_coset_shift().exp(((GOLDILOCKS_PRIME - 2) as u64).into());
+        assert_ne!(
+            coset_inverse_ntt(&vals, omega, inv_h),
+            inverse_ntt(&vals, omega),
+        );
+    }
+
+    /// Round trip: sample a known polynomial ON THE COSET, interpolate with the
+    /// coset INTT, and get the original coefficients back. This is the property
+    /// the whole change rests on, and it is cheap enough to keep forever.
+    #[test]
+    fn coset_inverse_ntt_recovers_the_polynomial_sampled_on_the_coset() {
+        let n = 16usize;
+        let omega = get_domain_generator_generic(n);
+        let h = lde_coset_shift();
+        let inv_h = h.exp(((GOLDILOCKS_PRIME - 2) as u64).into());
+        let coeffs: Vec<BaseElement> =
+            (0..n as u64).map(|i| BaseElement::new(i * 11 + 5)).collect();
+
+        let sampled: Vec<BaseElement> = (0..n)
+            .map(|i| evaluate_poly(&coeffs, h * omega.exp(i as u64)))
+            .collect();
+
+        assert_eq!(
+            coset_inverse_ntt(&sampled, omega, inv_h),
+            coeffs,
+            "coset interpolation did not recover the polynomial it was sampled from",
+        );
+    }
+}
+
 fn get_domain_generator_generic(domain_size: usize) -> BaseElement {
     assert!(domain_size.is_power_of_two());
     let k = domain_size.trailing_zeros(); // log2(domain_size)
