@@ -6052,6 +6052,25 @@ mod merkle_update_e2e {
     /// `num_queries / blowup` trace-aligned positions on average (~1.7 for the
     /// 27-query circuits, ~1.4 for the 22-query ones), and a padding row is 1 in
     /// 32 of those. Running out of seeds PANICS — never silently skipped.
+    ///
+    /// [BIND-C2C4 2026-08-03] `SEEDS` raised 96 -> 512, and the reason is worth
+    /// recording because it is a property of this harness, not of the fix that
+    /// exposed it. Coverage here is drawn from the QUERY POSITIONS, which come
+    /// out of the Fiat-Shamir transcript via `quotient_root`. Wiring the C2/C4
+    /// boundary fold changes the committed quotient, so it re-randomises that
+    /// draw for those two circuits. On the new draw C2 went 96 seeds / 167
+    /// corruptions without hitting the identity branch — every one of the 167
+    /// was still correctly REJECTED, only the coverage accounting came up short.
+    /// `constrained_trace_aligned_rows` drops `row % 32 == 31`, so the identity
+    /// branch is reachable only at `row % 32 == 30`: 1 trace-aligned query in 32,
+    /// and P(0 hits in 167) ~ (31/32)^167 ~ 0.5%. Unlucky, not broken —
+    /// confirmed by driving the SAME harness against the pre-fix transcript,
+    /// where C2 covers both branches by seed 4.
+    ///
+    /// The loop returns the moment coverage is complete, so a larger cap costs
+    /// nothing on a normal draw and only lengthens the unlucky tail. At 512 the
+    /// miss probability is ~(31/32)^890 ~ 1e-12. Raised rather than the coverage
+    /// requirement relaxed, which is what the panic below demands.
     fn arm_rejects_broken_transitions_in_both_branches(
         label: &str,
         cfg: &crate::compact_proof::CircuitConfig,
@@ -6063,7 +6082,7 @@ mod merkle_update_e2e {
             &[u64],
         ) -> Result<(), VerifyError>,
     ) {
-        const SEEDS: u64 = 96;
+        const SEEDS: u64 = 512;
         let mut n_round = 0usize;
         let mut n_pad = 0usize;
         let mut n_tail = 0usize;

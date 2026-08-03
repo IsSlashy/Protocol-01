@@ -4040,9 +4040,32 @@ mod tests {
         let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
         let z_t = z_d * (z - last_row_x).inv();
 
+        // [BIND-C2C4 2026-08-03] Add the boundary contribution the prover now
+        // folds into Q for C2, exactly as the C1/C3/C5/C6 harnesses above and
+        // below already did. This harness compared `c_at_z` to `q_at_z * z_t`
+        // directly, which was correct only while `boundary_spec_for_quotient`
+        // returned `None` for C2 — i.e. only while C2's public inputs bound
+        // nothing at the OOD point.
+        let c_bnd = boundary_c_at_ood(
+            CIRCUIT_BALANCE_PROOF, &proof.public_inputs, &trace_root, &pub_bytes,
+            b"bnd-c2\0\0", &ood_current, z, z_t, trace_g,
+        );
+        assert_ne!(
+            c_bnd,
+            BaseElement::ZERO,
+            "C2 boundary term at z is zero — the fold is present but binding nothing"
+        );
+        let c_total = c_at_z + c_bnd;
+
         let q_at_z = recombine_ood_quotient(&ood_quotient_segments, z, trace_length);
-        assert_eq!(
+        assert_ne!(
             c_at_z,
+            q_at_z * z_t,
+            "the C2 identity closed WITHOUT the boundary term — the prover has stopped \
+             folding Q_bnd and the public inputs are unbound again"
+        );
+        assert_eq!(
+            c_total,
             q_at_z * z_t,
             "end-to-end DEEP-ALI on generated circuit-2 proof failed"
         );
@@ -4245,9 +4268,28 @@ mod tests {
         let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
         let z_t = z_d * (z - last_row_x).inv();
 
+        // [BIND-C2C4 2026-08-03] Same as the C2 harness: the boundary term the
+        // prover now folds into Q for C4.
+        let c_bnd = boundary_c_at_ood(
+            CIRCUIT_CONFIDENTIAL_BALANCE, &proof.public_inputs, &trace_root, &pub_bytes,
+            b"bnd-c4\0\0", &ood_current, z, z_t, trace_g,
+        );
+        assert_ne!(
+            c_bnd,
+            BaseElement::ZERO,
+            "C4 boundary term at z is zero — the fold is present but binding nothing"
+        );
+        let c_total = c_at_z + c_bnd;
+
         let q_at_z = recombine_ood_quotient(&ood_quotient_segments, z, trace_length);
-        assert_eq!(
+        assert_ne!(
             c_at_z,
+            q_at_z * z_t,
+            "the C4 identity closed WITHOUT the boundary term — the prover has stopped \
+             folding Q_bnd and the public inputs are unbound again"
+        );
+        assert_eq!(
+            c_total,
             q_at_z * z_t,
             "end-to-end DEEP-ALI on generated circuit-4 proof failed"
         );
