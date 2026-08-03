@@ -127,10 +127,12 @@
 use litesvm::LiteSVM;
 use solana_address::Address;
 use solana_instruction::{AccountMeta, Instruction};
+use solana_instruction_error::InstructionError;
 use solana_keypair::Keypair;
 use solana_message::Message;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
+use solana_transaction_error::TransactionError;
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -901,6 +903,28 @@ impl Rig {
                 cu: program_cu(&f.meta.logs, program_id).unwrap_or(f.meta.compute_units_consumed),
                 err: format!("{:?} | last logs: {:?}", f.err, tail(&f.meta.logs, 4)),
             },
+        }
+    }
+
+    /// Send one instruction and hand back the STRUCTURED outcome.
+    ///
+    /// `run` flattens every failure into a `String`, which is fine when the only
+    /// question is "what did this cost". It is not fine when the question is
+    /// "did the program REJECT this or did it CRASH on it", because those two
+    /// differ only in the `InstructionError` variant and a string comparison
+    /// would be checking the Debug formatter rather than the error.
+    fn try_run(
+        &mut self,
+        ix: Instruction,
+    ) -> std::result::Result<Vec<String>, (TransactionError, Vec<String>)> {
+        let msg = Message::new(
+            &[set_cu_limit_ix(MAX_CU_PER_IX as u32), ix],
+            Some(&self.payer_pk),
+        );
+        let tx = Transaction::new(&[&self.payer], msg, self.svm.latest_blockhash());
+        match self.svm.send_transaction(tx) {
+            Ok(meta) => Ok(meta.logs),
+            Err(f) => Err((f.err, f.meta.logs)),
         }
     }
 
@@ -4145,5 +4169,343 @@ fn l13_is_not_closed_by_deleting_logs_two_public_channels_survive() {
          is deliberate, check `verify_deep_ali_phase2` still has a source for it, then retire \
          this half. rows: {:?}",
         rows.iter().map(|r| (&r.0, r.2)).collect::<Vec<_>>()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `write_proof_chunk` — the account-length bound
+// ---------------------------------------------------------------------------
+
+/// What the program did with one `write_proof_chunk`, as a value rather than a
+/// formatted string.
+///
+/// The distinction this enum exists to carry is the whole point of the test
+/// below: a program that REJECTS a bad chunk and a program that CRASHES on it
+/// both produce a failed transaction, and telling them apart by grepping a
+/// Debug string is the same shape of check that has already let a hollow gate
+/// through in this tree.
+#[derive(Debug, PartialEq, Eq)]
+enum ChunkOutcome {
+    /// The write landed.
+    Accepted,
+    /// The program returned an error of its own — a `require!` fired. Carries
+    /// the Anchor error number.
+    Rejected(u32),
+    /// The instruction did not complete on its own terms. An unhandled Rust
+    /// panic inside SBF bytecode arrives here as `ProgramFailedToComplete`,
+    /// and that is precisely the pre-fix behaviour.
+    Crashed(String),
+}
+
+type SendResult = std::result::Result<Vec<String>, (TransactionError, Vec<String>)>;
+
+fn chunk_outcome(r: SendResult) -> (ChunkOutcome, Vec<String>) {
+    match r {
+        Ok(logs) => (ChunkOutcome::Accepted, logs),
+        Err((TransactionError::InstructionError(_, InstructionError::Custom(c)), logs)) => {
+            (ChunkOutcome::Rejected(c), logs)
+        }
+        Err((e, logs)) => (ChunkOutcome::Crashed(format!("{e:?}")), logs),
+    }
+}
+
+fn outcome_cell(o: &ChunkOutcome) -> String {
+    match o {
+        ChunkOutcome::Accepted => "accepted".to_string(),
+        ChunkOutcome::Rejected(n) => format!("rejected {n}"),
+        ChunkOutcome::Crashed(_) => "CRASHED".to_string(),
+    }
+}
+
+/// One chunk write to attempt against the undersized buffer.
+struct ChunkCase {
+    label: &'static str,
+    offset: u32,
+    len: usize,
+    want: ChunkOutcome,
+    why: &'static str,
+}
+
+/// `write_proof_chunk` must bound the write against the account it is writing
+/// into, not against the size the caller DECLARED at init.
+///
+/// # The defect
+///
+/// `ProofBuffer::init_space` caps the allocation at `MAX_INIT_SIZE` whatever
+/// `proof_size` says, because `create_account` cannot exceed that many bytes.
+/// Anything larger is meant to be grown afterwards by `resize_proof_buffer`.
+/// Until that has happened the account is SHORTER than the declared
+/// `proof_size`, and the only bound the chunk writer used to have was
+/// `offset + data.len() <= proof_size`. A chunk that satisfies it and still
+/// points past the end of the account indexed a slice out of range — an
+/// unhandled panic, not an error.
+///
+/// # There are two defects here and only one of them was fixed
+///
+/// * `init_proof_buffer` accepting a `proof_size` its own allocation cannot
+///   hold is SILENTLY ACCEPTED, before and after. Case A below measures it. It
+///   is the enabling condition, it is still open, and it is not what the fix
+///   changed.
+/// * Writing past the end of the account PANICKED, and now returns
+///   `ChunkOutOfBounds`. Cases B1/B2 are that one.
+///
+/// # Why the shape of the assertion matters
+///
+/// `Rejected` and `Crashed` are both failed transactions. A test that only
+/// asserted "this chunk does not succeed" would have been green against the
+/// pre-fix binary, which is the liveness trap this repo has paid for twice. The
+/// assertion is on the OUTCOME VARIANT and on an error number derived from
+/// `StarkVerifierError` itself, so renumbering the enum cannot make it lie
+/// either.
+///
+/// Cases 0, C and E are the other half: an over-broad "fix" that refused
+/// legitimate writes would pass B1/B2 and fail these.
+#[test]
+fn write_proof_chunk_is_bounded_by_the_real_account_length_not_the_declared_proof_size() {
+    use p01_stark_verifier::{ProofBuffer, StarkVerifierError};
+
+    let mut rig = Rig::new();
+    let program = Address::from_str(VERIFIER_ID).unwrap();
+    let (so, _len, _hash) = load_verifier_or_fail(&mut rig, &program);
+    println!("\n{}", rule(104));
+    println!("write_proof_chunk BOUNDS — real SBF bytecode, litesvm");
+    println!("{}", rule(104));
+    println!("  artifact: {}", so.provenance());
+
+    // This file keeps its own copy of the layout constant so the harness can be
+    // read without the program. Pin it to the real one rather than trusting the
+    // comment next to it.
+    assert_eq!(
+        PROOF_DATA_OFFSET,
+        ProofBuffer::PROOF_DATA_OFFSET,
+        "this file's PROOF_DATA_OFFSET mirror has drifted from the program's"
+    );
+    let max_init = ProofBuffer::MAX_INIT_SIZE;
+    let want_code = u32::from(StarkVerifierError::ChunkOutOfBounds);
+
+    let authority = rig.payer_pk;
+
+    // A declared size the init allocation provably cannot hold.
+    const DECLARED: u32 = 20_000;
+    assert!(
+        PROOF_DATA_OFFSET + DECLARED as usize > max_init,
+        "DECLARED must exceed what init_proof_buffer can allocate, or there is no gap to test"
+    );
+
+    // --- case A: init accepts a proof_size larger than the account ----------
+    let circuit_id: u8 = 1;
+    let (buffer, _bump) = Address::find_program_address(
+        &[b"stark_proof", authority.as_ref(), &[circuit_id]],
+        &program,
+    );
+    rig.must(
+        ix_init_proof_buffer(&program, &buffer, &authority, DECLARED, circuit_id),
+        "init_proof_buffer (undersized allocation, oversized declaration)",
+    );
+    let acct = rig
+        .svm
+        .get_account(&buffer)
+        .expect("buffer must exist after init");
+    let acct_len = acct.data.len();
+    // Layout: 8 disc | 32 authority | 1 circuit_id | 4 proof_size | …
+    let size_at = 8 + 32 + 1;
+    let stored_proof_size =
+        u32::from_le_bytes(acct.data[size_at..size_at + 4].try_into().unwrap());
+    assert_eq!(
+        acct_len, max_init,
+        "init_space is expected to cap the allocation at MAX_INIT_SIZE"
+    );
+    assert_eq!(
+        stored_proof_size, DECLARED,
+        "the program stored the declared size verbatim"
+    );
+    assert!(
+        PROOF_DATA_OFFSET + stored_proof_size as usize > acct_len,
+        "CASE A NO LONGER HOLDS: init_proof_buffer now refuses (or allocates for) a proof_size \
+         larger than its own allocation. That is an IMPROVEMENT and it closes the second, still-\
+         open defect this test documents — but it also removes the gap cases B1/B2 exercise, so \
+         rewrite them against whatever the new enabling condition is rather than deleting them."
+    );
+    let usable = acct_len - PROOF_DATA_OFFSET;
+
+    // --- the cases ----------------------------------------------------------
+    let cases = vec![
+        ChunkCase {
+            label: "0  well inside both bounds",
+            offset: 0,
+            len: 64,
+            want: ChunkOutcome::Accepted,
+            why: "positive control: the fix must not have made the writer refuse honest chunks",
+        },
+        ChunkCase {
+            label: "B1 straddles the account end",
+            offset: (usable - 32) as u32,
+            len: 64,
+            want: ChunkOutcome::Rejected(want_code),
+            why: "inside the DECLARED proof_size, past the REAL account end — PANICKED pre-fix",
+        },
+        ChunkCase {
+            label: "B2 far past the account end",
+            offset: 15_000,
+            len: 64,
+            want: ChunkOutcome::Rejected(want_code),
+            why: "same defect with no boundary arithmetic to hide behind — PANICKED pre-fix",
+        },
+        ChunkCase {
+            label: "D  past the declared size",
+            offset: DECLARED - 32,
+            len: 64,
+            want: ChunkOutcome::Rejected(want_code),
+            why: "control: the PRE-EXISTING proof_size guard, rejected before and after the fix",
+        },
+        ChunkCase {
+            label: "C  ends exactly at the account end",
+            offset: (usable - 64) as u32,
+            len: 64,
+            want: ChunkOutcome::Accepted,
+            why: "off-by-one guard: `end == len` is in bounds and must still be written",
+        },
+    ];
+
+    println!(
+        "  account {} B  |  declared proof_size {} B  |  writable region {} B",
+        thousands(acct_len as u64),
+        thousands(DECLARED as u64),
+        thousands(usable as u64),
+    );
+    println!("{}", rule(104));
+    println!(
+        "{:<34} {:>8} {:>6} {:>10} {:>13}  {}",
+        "case", "offset", "len", "end", "outcome", "vs account"
+    );
+    println!("{}", rule(104));
+
+    let mut wrong: Vec<String> = Vec::new();
+    for c in &cases {
+        let fill = vec![0xC3u8 ^ (c.offset as u8); c.len];
+        let end = PROOF_DATA_OFFSET + c.offset as usize + c.len;
+        let (got, logs) = chunk_outcome(rig.try_run(ix_write_chunk(
+            &program,
+            &buffer,
+            &authority,
+            c.offset,
+            &fill,
+        )));
+        println!(
+            "{:<34} {:>8} {:>6} {:>10} {:>13}  {}",
+            c.label,
+            c.offset,
+            c.len,
+            end,
+            outcome_cell(&got),
+            if end <= acct_len { "in bounds" } else { "PAST END" },
+        );
+        if got != c.want {
+            wrong.push(format!(
+                "{}: want {:?}, got {:?}\n      why this case exists: {}\n      last logs: {:?}",
+                c.label,
+                c.want,
+                got,
+                c.why,
+                tail(&logs, 4),
+            ));
+        }
+        // An accepted write must actually have landed. An "accepted" that wrote
+        // nothing is the same false green in the other direction.
+        if matches!(c.want, ChunkOutcome::Accepted) && got == ChunkOutcome::Accepted {
+            let data = rig.svm.get_account(&buffer).expect("buffer").data;
+            let start = PROOF_DATA_OFFSET + c.offset as usize;
+            assert_eq!(
+                &data[start..start + c.len],
+                &fill[..],
+                "{}: the transaction succeeded but the bytes are not in the account",
+                c.label
+            );
+        }
+    }
+    println!("{}", rule(104));
+
+    // --- case E: the same far write, on a buffer that was actually grown ----
+    //
+    // The bound is against the account, so growing the account must make the
+    // write legal. Without this the test could be satisfied by a program that
+    // simply refuses every large proof, which would break every circuit whose
+    // proof exceeds the init cap — i.e. all of them.
+    let circuit_id_big: u8 = 3;
+    let (big, _b) = Address::find_program_address(
+        &[b"stark_proof", authority.as_ref(), &[circuit_id_big]],
+        &program,
+    );
+    rig.must(
+        ix_init_proof_buffer(&program, &big, &authority, DECLARED, circuit_id_big),
+        "init_proof_buffer (to be grown)",
+    );
+    let target_len = PROOF_DATA_OFFSET + DECLARED as usize;
+    let mut resizes = 0usize;
+    while rig
+        .svm
+        .get_account(&big)
+        .map(|a| a.data.len())
+        .unwrap_or(0)
+        < target_len
+    {
+        rig.must(
+            ix_resize_proof_buffer(&program, &big, &authority),
+            "resize_proof_buffer",
+        );
+        resizes += 1;
+        assert!(
+            resizes < 64,
+            "resize_proof_buffer stopped growing the account before it reached {target_len} B"
+        );
+    }
+    let grown_len = rig.svm.get_account(&big).expect("grown buffer").data.len();
+    assert_eq!(grown_len, target_len, "the grown account is the declared size");
+
+    let far_offset = DECLARED - 64;
+    let fill = vec![0x5Au8; 64];
+    let (got, logs) = chunk_outcome(rig.try_run(ix_write_chunk(
+        &program,
+        &big,
+        &authority,
+        far_offset,
+        &fill,
+    )));
+    println!(
+        "  E  same far write after {} resize(s): account {} B, offset {} -> {}",
+        resizes,
+        thousands(grown_len as u64),
+        far_offset,
+        outcome_cell(&got),
+    );
+    if got != ChunkOutcome::Accepted {
+        wrong.push(format!(
+            "E  grown buffer, last chunk: want Accepted, got {got:?}\n      \
+             the account is exactly the declared size, so this write is in bounds by both \
+             rules; refusing it breaks every proof larger than the init cap.\n      \
+             last logs: {:?}",
+            tail(&logs, 4),
+        ));
+    } else {
+        let data = rig.svm.get_account(&big).expect("grown buffer").data;
+        let start = PROOF_DATA_OFFSET + far_offset as usize;
+        assert_eq!(
+            &data[start..start + 64],
+            &fill[..],
+            "E: accepted but the bytes are not in the account"
+        );
+        assert_eq!(start + 64, grown_len, "E must end exactly at the account end");
+    }
+    println!("{}", rule(104));
+
+    assert!(
+        wrong.is_empty(),
+        "write_proof_chunk does not bound the write the way it claims to.\n  {}\n\n\
+         `Rejected` means a `require!` fired and the caller got a diagnosable error.\n\
+         `Crashed` means the instruction did not complete — an out-of-range slice index \
+         inside SBF bytecode surfaces as ProgramFailedToComplete, and that is the pre-fix \
+         behaviour this test exists to keep out. They are not interchangeable and neither \
+         one may be swapped for the other to make this green.",
+        wrong.join("\n  "),
     );
 }
