@@ -148,7 +148,11 @@ const PINS: Pin[] = [
     preRouteC: 66_681,
     quotientSegments: 8,
     absolute: 69_761,
-    sha256: '6541e57b85419fd87a4227bf08cfc2f151d0179870ba04d5011338843cd51ce8',
+    // [BIND-C2C4 2026-08-03] MOVED by the C2 boundary fold. Copied from the RUST
+    // pin (b1_deep_binding.rs FIXTURE_C2_SHA256), not out of the WASM run this
+    // file drives — the reshipped blob then reproduced it independently, which is
+    // the cross-language agreement this pin exists to assert.
+    sha256: 'd21c888724a773f1e37598ac1f8a9ce9f784d5390b0314aa8d57503e64d25a7c',
     inputs: { spendingKey: '42', balance: '1000', salt: '777', tokenMint: '999' },
   },
   {
@@ -174,7 +178,9 @@ const PINS: Pin[] = [
     preRouteC: 78_377,
     quotientSegments: 8,
     absolute: 81_457,
-    sha256: 'f4918f36632e011049366c079489b8f70858113f45831bcd76e0cf630d92929a',
+    // [BIND-C2C4 2026-08-03] MOVED by the C4 boundary fold, same cause and same
+    // provenance as C2 above: from FIXTURE_C4_SHA256, reproduced by the new blob.
+    sha256: '94fe0535645eef6feab54ec6fa72d2370299d27c4522474cf66d601c28002d42',
     inputs: {
       spendingKey: '42',
       oldBalance: '1000',

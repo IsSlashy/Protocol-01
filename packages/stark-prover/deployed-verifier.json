@@ -267,7 +267,7 @@
       "UNKNOWN, and deliberately left null rather than guessed.",
       "",
       "What is established: the deployed program is pre-B1 (see generation_evidence) and the checked-in",
-      "blob 2a962ca95642fdb72c4f9421ddc2b10f179953feaa589cdb98112efd45082943 is B2, so the deployed",
+      "blob 2613ffed1d69139b405418a74c3b8bbc343adae484c578e313ef572e2b2e93ad is B2, so the deployed",
       "program does NOT accept the checked-in blob. That is enough to fail the gate correctly. The gap is",
       "TWO generations now, not one, and the second half of it fails differently: B1 -> B2 widens three",
       "wire fields, so a B1 verifier refuses a B2 proof at the PARSER (DeserializationError) rather than",
@@ -299,18 +299,37 @@
       "and the interlock is still RED — see interlock_status_when_this_record_was_written. Reconciling the",
       "client half does not and must not green anything."
     ],
+    "_RESHIPPED_2026_08_03": [
+      "The C2/C4 public-input boundary fold landed in the verifier and the prover, which changes the",
+      "committed quotient for those two circuits and therefore every C2 and C4 proof this tree emits.",
+      "The blob described below PREDATED the fold, so it emitted proofs this tree's verifier rejects on",
+      "the first seed -- a total functional break of the shipped proving path for C2 and C4, measured by",
+      "a one-sided revert. Rebuilt and reshipped here:",
+      "",
+      "  wasm-pack build stark --target web --out-dir wasm-out -- --features wasm   (no test-probes)",
+      "  -> 213,254 B, sha 2613ffed...   (was 211,749 B, sha 2a962ca9...)",
+      "  node packages/stark-prover/scripts/stark-wasm-twins.mjs --write   -> 4 twins, --check PASS",
+      "",
+      "The two moved digests below were NOT copied out of this blob's run. They were pinned first by the",
+      "Rust prover (b1_deep_binding.rs FIXTURE_C2_SHA256 / FIXTURE_C4_SHA256) and the reshipped blob then",
+      "reproduced both byte for byte, at unchanged lengths -- two languages, one number. The other five",
+      "circuits are untouched and still B2.",
+      "",
+      "AGAIN, NOTHING IN THE `deployed` BLOCK WAS TOUCHED. Devnet is still pre-B1 and the interlock is",
+      "still RED. Reshipping the client blob does not and must not green anything on the chain side."
+    ],
     "path": "packages/stark-prover/wasm/p01_stark_bg.wasm",
-    "sha256": "2a962ca95642fdb72c4f9421ddc2b10f179953feaa589cdb98112efd45082943",
-    "bytes": 211749,
+    "sha256": "2613ffed1d69139b405418a74c3b8bbc343adae484c578e313ef572e2b2e93ad",
+    "bytes": 213254,
     "proof_format_generation": "b2",
     "generation_evidence": {
       "method": "BEHAVIOURAL. scripts/prover-behaviour.mjs instantiates this blob under Node and generates one proof per shipping circuit on seven fixed witnesses, then sha256s each serialized proof. The generation is the column of its fixture table that ALL SEVEN digests match; a mixture, an unrecognised digest, a blob that will not instantiate and a blob that throws mid-proof all refuse to classify and fail the gate. Nothing about this reads a string out of the artifact or out of any Rust source, so renaming literals anywhere cannot move it. MEASURED cost on the dev box: 14.6 s wall for all seven, no cache.",
       "measured_digests": {
         "C0 subscriber_ownership": "47641 B  5ea292acb52a3f352fbe9280c3b59291b77e92a066a6fbce743dbf8db456c09b",
         "C1 pool_commitment": "68881 B  09e9476db988eef4950ed2ef64c57d0ab9569f7eeb40e27bb2ab2cf1e204a83d",
-        "C2 balance_proof": "69761 B  6541e57b85419fd87a4227bf08cfc2f151d0179870ba04d5011338843cd51ce8",
+        "C2 balance_proof": "69761 B  d21c888724a773f1e37598ac1f8a9ce9f784d5390b0314aa8d57503e64d25a7c",
         "C3 merkle_path": "78157 B  abf0e733d82002ff74c45d2677fc213f893cb45b999578f84324c35f5907c5c0",
-        "C4 confidential_balance": "81457 B  f4918f36632e011049366c079489b8f70858113f45831bcd76e0cf630d92929a",
+        "C4 confidential_balance": "81457 B  94fe0535645eef6feab54ec6fa72d2370299d27c4522474cf66d601c28002d42",
         "C5 transfer": "78877 B  28ef7176795111da1df5714dbc11ad3c32892de266242d30dec1cd60e9c252bd",
         "C6 merkle_update": "81037 B  b8dc81e070487ec827e488809f361fc982e0b9c435270855f1a0b95d658cb0be"
       },
@@ -331,9 +350,10 @@
         "_deleted_marker": "'break the committed-vector/ood_quotient agreement B1 depends on' was listed here and is GONE from the source and therefore from the blob. It was the message on the `q_poly.len() <= lde_size` assert in the six quotient builders; B2 replaced that guarantee with the two segment_quotient_poly asserts above, which are the strings that now carry the same job.",
         "_merged_2026_08_03": "Two lots split this list independently on 2026-08-02 and the merge kept ONE of them, not a blend: BLOB_MARKERS_B1 / BLOB_MARKERS_B2 in deployed-verifier-check.mjs, with classifyBlob requiring the WHOLE B2 era before it says b2. The other lot's classifyBlobStrings said b2 on any single B2 marker and is deleted; the difference is recorded on BLOB_MARKERS_B2. The deployed-ELF side is NOT two-valued as that lot's note said: classifyElf answers 'b1+' when it can only see 'B1 or newer', and generationsAreCompatible is what compares it. See deployed.generation_evidence.this_scan_cannot_say_b2.",
         "controls_present": [
-          "the 8-byte NUL-padded domain tags rlc-c1, rlc-c2, rlc-c3, rlc-c5, bnd-c5, bnd-c6",
+          "the 8-byte NUL-padded domain tags rlc-c1, rlc-c2, rlc-c3, rlc-c5",
           "proof_hex (the wasm_api JSON key, 7 occurrences)"
-        ]
+        ],
+        "_controls_shrunk_2026_08_03": "bnd-c5 and bnd-c6 were in the list above and were REMOVED, because a CORRECT build of this tree no longer emits them and the remedy the gate printed ('reship the blob') could never have cleared it. That is the second time a byte scan here fired on an honest artifact -- see _era_split_2026_08_02 for the first. MEASURED over both blobs, raw byte occurrences of all six boundary tags: old (2a962ca9) had bnd-c1 1, bnd-c3 1, bnd-c5 1, bnd-c6 1 and bnd-c2 0, bnd-c4 0 -- exactly the four circuits that HAD a boundary fold; new (2613ffed) has all six at 0, while rlc-c1/c2/c3/c5 and proof_hex are untouched, so nothing was stripped. CAUSE: commit 109a4aa6, the C2/C4 binding fix, routed all six tags through one match returning *b\"bnd-cN\\0\\0\" BY VALUE as [u8;8]; a value needs no address, so LLVM emits immediates instead of a data-segment constant, and the only surviving by-reference use is inside #[cfg(test)] mod tests, which no wasm-pack build sees. PROOF THE BEHAVIOUR DID NOT MOVE WITH THE STRINGS: C5 and C6 emit proofs byte-identical to the pre-fold blob (28ef7176, b8dc81e0), impossible if their tag had stopped being absorbed, and C2/C4 match the digests the Rust prover pins independently. The presence of a tag STRING is a codegen artifact, not a semantic invariant; what remains in the list is a stripped-artifact canary and nothing more."
       }
     }
   },
@@ -342,7 +362,7 @@
     "RED, and correctly so. Re-measured 2026-08-02; it was RED before the client half was reconciled and",
     "it is RED after, which is the point — reconciling the client block moves no verdict.",
     "",
-    "  client blob  : b2      (2a962ca9..., 211,749 B, this tree)",
+    "  client blob  : b2      (2613ffed..., 213,254 B, this tree, reshipped 2026-08-03 with the C2/C4 fold)",
     "  deployed     : pre-b1  (c1a26c17..., 817,617 B, devnet slot 469197514)",
     "",
     "Re-derived 2026-08-02. The gap got WIDER, not narrower: the client moved B1 -> B2 while the chain",

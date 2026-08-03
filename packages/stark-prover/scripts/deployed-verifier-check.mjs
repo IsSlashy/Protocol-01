@@ -288,10 +288,45 @@ const BLOB_CONTROLS = [
   'rlc-c2\0\0',
   'rlc-c3\0\0',
   'rlc-c5\0\0',
-  'bnd-c5\0\0',
-  'bnd-c6\0\0',
   'proof_hex',
 ];
+
+/**
+ * `bnd-c5\0\0` and `bnd-c6\0\0` WERE in the list above and were REMOVED
+ * 2026-08-03. This is the second time a byte scan in this gate fired on an
+ * honest artifact with a remedy that could never clear it — see
+ * `_era_split_2026_08_02` in deployed-verifier.json for the first — so the
+ * reasoning is recorded rather than left to be rediscovered.
+ *
+ * MEASURED across the pre-fold blob (2a962ca9…) and the reshipped one
+ * (2613ffed…), counting raw byte occurrences of all six boundary tags:
+ *
+ *   bnd-c1  old 1  new 0        bnd-c4  old 0  new 0
+ *   bnd-c2  old 0  new 0        bnd-c5  old 1  new 0
+ *   bnd-c3  old 1  new 0        bnd-c6  old 1  new 0
+ *
+ * The old blob carried exactly the four circuits that HAD a boundary fold and
+ * lacked the two that did not. The new blob carries none of the six, while
+ * `rlc-c1/c2/c3/c5` and `proof_hex` are untouched — so nothing was stripped.
+ *
+ * The cause is codegen, and the fold is provably still applied. `109a4aa6` (the
+ * C2/C4 binding fix) routed all six tags through one `match` that returns
+ * `*b"bnd-cN\0\0"` BY VALUE as `[u8; 8]`. A value needs no address, so LLVM
+ * materialises each as immediate stores instead of a data-segment constant. The
+ * only remaining by-reference use of `b"bnd-c5\0\0"` is inside
+ * `#[cfg(test)] mod tests`, which never reaches a `wasm-pack` build.
+ *
+ * What proves the behaviour did not move with the strings: C5 and C6 emit
+ * proofs BYTE-IDENTICAL to the pre-fold blob (28ef7176…, b8dc81e0…), which they
+ * could not if their tag had stopped being absorbed, and C2/C4 now match the
+ * digests the Rust prover pins independently. The digests are the measurement;
+ * this scan was only ever corroboration and says so.
+ *
+ * THE STANDING LESSON: the presence of a tag STRING is a codegen artifact, not a
+ * semantic invariant. Anything left in this list is only a stripped-artifact
+ * canary. Re-measure it against a freshly built blob whenever the prover's tag
+ * plumbing changes, and never add a literal here to make a build look right.
+ */
 
 /**
  * Literals B1 added to the VERIFIER (programs/p01_stark_verifier/src/verify.rs).

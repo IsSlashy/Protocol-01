@@ -143,7 +143,16 @@ const FIXTURES = [
     label: 'C2 balance_proof',
     bytes: 69_761,
     bytesPreB2: 66_681,
-    b2: '6541e57b85419fd87a4227bf08cfc2f151d0179870ba04d5011338843cd51ce8',
+    // [BIND-C2C4 2026-08-03] MOVED by the C2 boundary fold, and the blob was
+    // reshipped in the SAME commit, so this column still describes the artifact on
+    // disk — which is the only thing that makes it a measurement rather than a wish.
+    // MEASURED off the freshly built blob and equal, byte for byte, to the digest
+    // the Rust prover pins independently at b1_deep_binding.rs FIXTURE_C2_SHA256.
+    // Superseded pre-fold B2 digest, recorded so a stale artifact stays legible in a
+    // bisect: 6541e57b85419fd87a4227bf08cfc2f151d0179870ba04d5011338843cd51ce8.
+    // It is deliberately NOT given a column: a pre-fold blob must refuse to classify,
+    // because this tree's verifier rejects every proof it emits.
+    b2: 'd21c888724a773f1e37598ac1f8a9ce9f784d5390b0314aa8d57503e64d25a7c',
     b1: '063d86a18071ae369132c12a69c5af0e3c2efbe82f6340e6d7ec910be80fd49f',
     preB1: '5171c80e65ba6ed63c0b5a58f58b0bad11a060a60445be483f797d4777cc7d33',
     entry: 'generate_balance_stark_proof',
@@ -163,7 +172,11 @@ const FIXTURES = [
     label: 'C4 confidential_balance',
     bytes: 81_457,
     bytesPreB2: 78_377,
-    b2: 'f4918f36632e011049366c079489b8f70858113f45831bcd76e0cf630d92929a',
+    // [BIND-C2C4 2026-08-03] MOVED by the C4 boundary fold, same cause and same
+    // reshipped-in-the-same-commit rule as C2 above. MEASURED off the freshly built
+    // blob, equal to b1_deep_binding.rs FIXTURE_C4_SHA256. Superseded pre-fold B2
+    // digest: f4918f36632e011049366c079489b8f70858113f45831bcd76e0cf630d92929a.
+    b2: '94fe0535645eef6feab54ec6fa72d2370299d27c4522474cf66d601c28002d42',
     b1: 'f877836723d0711e7190c2fd5c8a5c6d0476f21794d39ffd47a075f57d53e3e7',
     preB1: 'fbb631a3146225798360fcf80defb748664b2848ae0e59c88e6c9ec6342b2818',
     entry: 'generate_confidential_balance_stark_proof',

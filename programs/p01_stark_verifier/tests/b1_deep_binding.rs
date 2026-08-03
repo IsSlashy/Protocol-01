@@ -1838,22 +1838,34 @@ const FIXTURE_C1_SHA256: &str =
 /// that already spans 8 segments, so no wire field moves. Measured, not guessed:
 /// `cross_language_fixture_digests` printed it.
 ///
-/// 🚨 THE SHIPPED WASM PROVER HAS NOT MOVED WITH IT. `packages/stark-prover/wasm/
-/// p01_stark_bg.wasm` (sha256 2a962ca9…) was built before this commit, so it is
-/// still emitting the old 6541e57b… C2 proof — and the on-chain verifier in this
-/// tree now REJECTS that proof, because its `Q` is missing the boundary term
-/// `verify_deep_ali_circuit_2` reconstructs at `z`. Same for C4. Any client
-/// shipped from this tree fails every C2 and C4 proof until the blob is rebuilt.
+/// ✅ RESOLVED 2026-08-03 — the shipped WASM prover has now moved with it.
 ///
-/// The three files that pin the OLD digest — `wireFormat.test.ts` (`Pin.sha256`),
-/// `scripts/prover-behaviour.mjs` (the `b2` column) and `deployed-verifier.json`
-/// (`measured_digests`) — are deliberately NOT updated here. All three are
-/// statements about that shipped blob, and all three are still TRUE of it;
-/// rewriting them to match an artifact nobody has built would be pinning an
-/// unmeasured number. `fixtureTableProblem()` in prover-behaviour.mjs will now
-/// report this file as no longer carrying the current C2/C4 digest, which is the
-/// divergence being real rather than the gate being wrong. Reship the blob, then
-/// re-pin all four together.
+/// It had not. `packages/stark-prover/wasm/p01_stark_bg.wasm` (sha256 2a962ca9…,
+/// 211,749 B) was built before the fold, so it still emitted the old 6541e57b… C2
+/// proof — and the on-chain verifier in this tree REJECTS that proof, because its
+/// `Q` is missing the boundary term `verify_deep_ali_circuit_2` reconstructs at
+/// `z`. Same for C4. Every client shipped from this tree failed every C2 and C4
+/// proof, on the first seed. That is a functional break of the shipped proving
+/// path, not a soundness hole — it fails closed — but it is total.
+///
+/// The blob was rebuilt with the command the CI comment documents (no
+/// `test-probes`), giving 2613ffed…, 213,254 B, and the four inlined base64 twins
+/// were regenerated from it in the same commit. The three files that pinned the
+/// OLD digest — `wireFormat.test.ts` (`Pin.sha256`), `scripts/prover-behaviour.mjs`
+/// (the `b2` column) and `deployed-verifier.json` (`measured_digests`) — were
+/// deliberately left stale until that happened, because all three are statements
+/// about the shipped blob and all three were still TRUE of it; re-pinning them to
+/// an artifact nobody had built would have been pinning an unmeasured number. They
+/// are re-pinned in that same commit, now that the artifact exists.
+///
+/// What makes the two numbers below a measurement rather than a copy: they were
+/// pinned HERE FIRST, from the Rust prover, and the reshipped blob reproduced both
+/// byte for byte under `classifyProverBehaviour` — at unchanged proof lengths
+/// (69,761 / 81,457), so length could not have carried the agreement. Two
+/// independent implementations, one number. The superseded pre-fold digests
+/// (6541e57b… C2, f4918f36… C4) are recorded in `prover-behaviour.mjs` as comments
+/// and given no classifier column on purpose: a pre-fold blob must refuse to
+/// classify, because this tree rejects every proof it emits.
 const FIXTURE_C2_SHA256: &str =
     "d21c888724a773f1e37598ac1f8a9ce9f784d5390b0314aa8d57503e64d25a7c";
 const FIXTURE_C3_SHA256: &str =
