@@ -6461,14 +6461,25 @@ mod merkle_update_e2e {
             verify(&hp, &honest.public_inputs).unwrap_or_else(|e| {
                 panic!("{label}: honest proof (seed {seed}) must verify, got {e:?}")
             });
-            // The boundary term has to actually contribute something at z — a
-            // fold that evaluates to zero on every honest proof would bind
-            // nothing while looking wired.
-            assert_ne!(
-                honest.public_inputs.len(),
-                0,
-                "{label}: public inputs must be non-empty"
-            );
+            // A HOLLOW GUARD USED TO SIT HERE. It was commented "the boundary
+            // term has to actually contribute something at z — a fold that
+            // evaluates to zero on every honest proof would bind nothing while
+            // looking wired", and what it actually asserted was
+            // `honest.public_inputs.len() != 0` — a constant property of the
+            // generator two lines above, true whether or not anything folds.
+            // Deleted rather than kept as decoration: a comment claiming a check
+            // that is not in the code is the defect this whole run exists to
+            // find, and leaving it would have let a reader believe
+            // non-degeneracy was covered here.
+            //
+            // Non-degeneracy IS covered, twice, and neither place is this line:
+            //   * the `for idx in 0..n_inputs` sweep immediately below lies about
+            //     EVERY public input in turn and requires every one of them to be
+            //     refused, so a fold whose assertion list bound only hardcoded
+            //     `Felt::ZERO` capacity rows fails here on the first index.
+            //   * `balance_proof_satisfies_deep_ali_end_to_end` and
+            //     `confidential_balance_..` in stark/src/compact.rs assert
+            //     `c_bnd != 0` on the prover side directly.
 
             for idx in 0..n_inputs {
                 // A value the honest trace does not carry at that assertion row.
