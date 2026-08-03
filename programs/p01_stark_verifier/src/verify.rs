@@ -374,6 +374,100 @@ mod domain_generator_tests {
         }
     }
 
+    /// [BIND-DEPTH 2026-08-03] The half of `61903e76` that was left behind.
+    ///
+    /// That commit closed the fail-open `depth` window in THIS file. The prover's
+    /// mirror of the same table, `boundary_assertions_for_circuit` in
+    /// `stark/src/compact.rs`, kept its own windows — `depth > 0 && depth <= 32`
+    /// for C3, `<= 16` for C6 — each with an `else` arm that dropped the root
+    /// assertions and folded a Q_bnd binding only the leaves. Nothing was
+    /// unsound, because the chain had become the stricter of the two, but a
+    /// prover would build a proof that no verifier on earth accepts and only find
+    /// out on chain.
+    ///
+    /// Two restatements of one window in two crates is the shape that let this
+    /// survive, so this test does not restate it a third time: it DRIVES both
+    /// sides and requires them to agree — same acceptance window, same assertion
+    /// count, same (col, row, value) triples in the same order, because the
+    /// `alpha_bnd^j` powers are positional.
+    ///
+    /// Mutation it goes red under: restore either `else` arm in
+    /// `boundary_assertions_for_circuit`, or widen its C3 window back to `<= 32`.
+    #[test]
+    fn prover_depth_window_matches_the_verifier() {
+        use p01_stark::compact::boundary_assertions_probe;
+
+        assert_eq!(p01_stark::compact::MIN_MERKLE_DEPTH, MIN_MERKLE_DEPTH);
+        assert_eq!(p01_stark::compact::MAX_MERKLE_DEPTH, MAX_MERKLE_DEPTH);
+
+        // Silence the panic spew from the refusal half; restored at the end.
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+
+        let cases: [(u8, &[u64], usize); 2] = [(3, &[1, 2, 0], 2), (6, &[1, 2, 3, 4, 0], 4)];
+        for (circuit_id, template, depth_idx) in cases {
+            for depth in [0u64, 1, 2, 15, 16, 17, 32, 33, 99, u32::MAX as u64, u64::MAX] {
+                let mut pi = template.to_vec();
+                pi[depth_idx] = depth;
+                let in_window = depth >= MIN_MERKLE_DEPTH as u64
+                    && depth <= MAX_MERKLE_DEPTH as u64;
+
+                let chain = get_boundary_assertions(circuit_id, &pi);
+                let prover = std::panic::catch_unwind(|| boundary_assertions_probe(circuit_id, &pi));
+
+                assert_eq!(
+                    chain.is_ok(),
+                    prover.is_ok(),
+                    "C{circuit_id} depth {depth}: chain accepts={} but prover accepts={} — the \
+                     two windows have diverged",
+                    chain.is_ok(),
+                    prover.is_ok(),
+                );
+                assert_eq!(
+                    chain.is_ok(),
+                    in_window,
+                    "C{circuit_id} depth {depth}: expected accept={in_window}",
+                );
+
+                if let (Ok(c), Ok(p)) = (chain, prover) {
+                    let c_triples: Vec<(usize, usize, u64)> =
+                        c.iter().map(|a| (a.col, a.row, a.value.as_u64())).collect();
+                    assert_eq!(
+                        c_triples, p,
+                        "C{circuit_id} depth {depth}: assertion tables differ. Order is \
+                         load-bearing — alpha_bnd^j is indexed by position.",
+                    );
+                }
+            }
+        }
+
+        // The same triple-for-triple parity on every circuit, not just the two
+        // that carry a depth: a value or ordering drift anywhere here silently
+        // changes which public input binds which trace cell.
+        let full: [(u8, &[u64]); 7] = [
+            (0, &[42]),
+            (1, &[11, 22]),
+            (2, &[33, 44]),
+            (3, &[55, 66, 15]),
+            (4, &[77, 88, 99, 111]),
+            (5, &[1, 2, 3, 4, 5, 6]),
+            (6, &[7, 8, 9, 10, 15]),
+        ];
+        for (circuit_id, pi) in full {
+            let c = get_boundary_assertions(circuit_id, pi)
+                .unwrap_or_else(|e| panic!("C{circuit_id} must resolve on chain: {e:?}"));
+            let p = boundary_assertions_probe(circuit_id, pi);
+            let c_triples: Vec<(usize, usize, u64)> =
+                c.iter().map(|a| (a.col, a.row, a.value.as_u64())).collect();
+            assert_eq!(
+                c_triples, p,
+                "C{circuit_id}: prover and verifier boundary tables differ",
+            );
+        }
+
+        std::panic::set_hook(hook);
+    }
+
     /// [SEAM] Short public inputs used to be DEFAULTED to `Felt::ZERO`, one
     /// `else` arm per missing element. That made `verify_stark_proof` — the
     /// legacy single-`u64` entry point, which has NO gate against circuits

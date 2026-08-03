@@ -1676,12 +1676,27 @@ fn boundary_assertions_for_circuit(
             let leaf = pi(0);
             let root = pi(1);
             let depth = if public_inputs.len() > 2 { public_inputs[2] as usize } else { 0 };
-            if depth > 0 && depth <= 32 {
-                let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS_B;
-                vec![(5, 0, leaf), (0, output_row, root)]
-            } else {
-                vec![(5, 0, leaf)]
-            }
+            // [BIND-DEPTH 2026-08-03] Was `depth > 0 && depth <= 32` with an
+            // `else` arm returning `vec![(5, 0, leaf)]` — the root assertion
+            // dropped, so the prover folded a Q_bnd that bound the leaf and
+            // nothing else. The on-chain verifier stopped accepting that in
+            // `61903e76` (`MIN_MERKLE_DEPTH..=MAX_MERKLE_DEPTH`, verify.rs:583),
+            // and this side was left behind: it would still BUILD such a proof,
+            // silently, and only the chain would say no. Two windows that must
+            // be identical were maintained in two places; they are pinned
+            // together now by `prover_depth_window_matches_the_verifier`.
+            //
+            // 17..=32 was never a real window either: `output_row >= 512 ==
+            // trace_length`, a row `verify_boundary_constraints` reduces away and
+            // can never match.
+            assert!(
+                (MIN_MERKLE_DEPTH..=MAX_MERKLE_DEPTH).contains(&depth),
+                "C3 depth {depth} is outside {MIN_MERKLE_DEPTH}..={MAX_MERKLE_DEPTH}; the \
+                 on-chain verifier refuses it, so building the proof would only defer the \
+                 failure to the chain",
+            );
+            let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS_B;
+            vec![(5, 0, leaf), (0, output_row, root)]
         }
         // Circuit 4: confidential_balance. Public inputs
         // [old_commitment, new_commitment, amount_hash, token_mint].
@@ -1733,20 +1748,52 @@ fn boundary_assertions_for_circuit(
             let old_root = pi(2);
             let new_root = pi(3);
             let depth = if public_inputs.len() > 4 { public_inputs[4] as usize } else { 0 };
-            if depth > 0 && depth <= 16 {
-                let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS_B;
-                vec![
-                    (8, 0, old_leaf),
-                    (9, 0, new_leaf),
-                    (0, output_row, old_root),
-                    (3, output_row, new_root),
-                ]
-            } else {
-                vec![(8, 0, old_leaf), (9, 0, new_leaf)]
-            }
+            // [BIND-DEPTH 2026-08-03] Same wound as C3 above: the `else` arm
+            // dropped BOTH roots and folded a Q_bnd binding only the two leaves.
+            assert!(
+                (MIN_MERKLE_DEPTH..=MAX_MERKLE_DEPTH).contains(&depth),
+                "C6 depth {depth} is outside {MIN_MERKLE_DEPTH}..={MAX_MERKLE_DEPTH}; the \
+                 on-chain verifier refuses it, so building the proof would only defer the \
+                 failure to the chain",
+            );
+            let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS_B;
+            vec![
+                (8, 0, old_leaf),
+                (9, 0, new_leaf),
+                (0, output_row, old_root),
+                (3, output_row, new_root),
+            ]
         }
         _ => Vec::new(),
     }
+}
+
+/// [BIND-DEPTH 2026-08-03] Legal range for the C3/C6 `depth` public input.
+///
+/// These MUST equal `MIN_MERKLE_DEPTH` / `MAX_MERKLE_DEPTH` in
+/// `programs/p01_stark_verifier/src/verify.rs`. Outside the range there is no
+/// trace row carrying the root assertions, and the on-chain verifier returns
+/// `PublicInputCountMismatch` rather than silently emitting a shorter list.
+/// `prover_depth_window_matches_the_verifier` drives both sides and fails if
+/// they ever diverge.
+pub const MIN_MERKLE_DEPTH: usize = 1;
+pub const MAX_MERKLE_DEPTH: usize = 16;
+
+/// [BIND-DEPTH 2026-08-03] Read-only view of `boundary_assertions_for_circuit`
+/// so the on-chain verifier's test suite can drive the PROVER's assertion table
+/// directly instead of re-describing it. Returns `(col, row, value)` triples.
+///
+/// This is what lets `prover_depth_window_matches_the_verifier` be a real
+/// cross-crate parity check rather than two independent restatements of the same
+/// window — the shape that let this divergence survive `61903e76`.
+/// Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn boundary_assertions_probe(circuit_id: u8, public_inputs: &[u64]) -> Vec<(usize, usize, u64)> {
+    boundary_assertions_for_circuit(circuit_id, public_inputs)
+        .into_iter()
+        .map(|(c, r, v)| (c, r, v.as_int()))
+        .collect()
 }
 
 /// [C2] Fold the boundary quotient into `q_poly` (coefficients low-to-high).
