@@ -225,14 +225,26 @@ jobs:
         run: |
           set -uo pipefail
           echo "::group::program-id divergences across every program"
-          out="$(node scripts/sync-program-ids.mjs --check 2>&1)"; rc=$?
+          # `rc=0; cmd || rc=$?` and NOT `out="$(cmd)"; rc=$?`. GitHub runs a
+          # `run:` block under errexit, and a bare assignment from a failing
+          # command substitution kills the shell BEFORE the next line — MEASURED
+          # here by executing this step's own body under `bash -e`: it died right
+          # after the group header and printed no warning at all. The `||` puts
+          # the assignment in a list, where errexit is suspended.
+          rc=0
+          out="$(node scripts/sync-program-ids.mjs --check 2>&1)" || rc=$?
           printf '%s\n' "$out"
           echo "::endgroup::"
           # The COUNT is the point. An advisory that only says "there is drift"
           # cannot show the number going the wrong way, and this one is expected
           # to stay non-zero for a while — 2026-08-03 it is 10 divergences and 20
           # prose mentions. If that becomes 11 the warning title says 11.
-          n="$(printf '%s\n' "$out" | sed -n 's/^\[program-ids\] FAIL — \([0-9][0-9]*\) divergence.*/\1/p' | head -1)"
+          # No `| head -1` here on purpose: a pipeline that closes early raises
+          # SIGPIPE in `sed`, and GitHub runs `run:` under errexit — with
+          # pipefail on that combination kills the step and the warning is never
+          # printed. Take the first line with parameter expansion instead.
+          n="$(printf '%s\n' "$out" | sed -n 's/^\[program-ids\] FAIL — \([0-9][0-9]*\) divergence.*/\1/p')"
+          n="${n%%$'\n'*}"
           if [ "$rc" -eq 0 ]; then
             echo "Whole-repo program-id check is GREEN. Promote this step to blocking and delete the scoped one above it."
           elif [ -n "$n" ]; then
