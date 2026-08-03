@@ -5,7 +5,7 @@
  * IDL can be found at `target/idl/p01_stark_verifier.json`.
  */
 export type P01StarkVerifier = {
-  "address": "EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z",
+  "address": "DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs",
   "metadata": {
     "name": "p01StarkVerifier",
     "version": "0.1.0",
@@ -38,7 +38,7 @@ export type P01StarkVerifier = {
           "writable": true,
           "signer": true,
           "relations": [
-            "proof_buffer"
+            "proofBuffer"
           ]
         }
       ],
@@ -86,6 +86,91 @@ export type P01StarkVerifier = {
       ]
     },
     {
+      "name": "initProofBufferV2",
+      "docs": [
+        "Phase C v1 — Initialize a proof buffer WITHOUT exposing circuit_id at",
+        "init time. The buffer's PDA seed uses a 16-byte caller-supplied nonce",
+        "instead of `[circuit_id]`, and `circuit_id` is stored as a sentinel",
+        "(u8::MAX = \"unknown\") until `verify_uniform` probes it.",
+        "",
+        "Combined with `verify_uniform` and uniform-padding (mobile pads proofs",
+        "to a fixed N bytes regardless of circuit), an indexer cannot infer",
+        "which circuit the user is proving from the init/chunk/verify tx",
+        "envelopes. Closes leaks L13 (circuit_id) + L14 (proof_size variable)."
+      ],
+      "discriminator": [
+        195,
+        42,
+        231,
+        101,
+        125,
+        247,
+        122,
+        16
+      ],
+      "accounts": [
+        {
+          "name": "proofBuffer",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  114,
+                  107,
+                  95,
+                  112,
+                  114,
+                  111,
+                  111,
+                  102,
+                  95,
+                  118,
+                  50
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "arg",
+                "path": "nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "proofSize",
+          "type": "u32"
+        },
+        {
+          "name": "nonce",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "resizeProofBuffer",
       "docs": [
         "Resize a proof buffer to accommodate larger proofs (>10KB).",
@@ -111,7 +196,7 @@ export type P01StarkVerifier = {
           "writable": true,
           "signer": true,
           "relations": [
-            "proof_buffer"
+            "proofBuffer"
           ]
         },
         {
@@ -162,7 +247,7 @@ export type P01StarkVerifier = {
           "name": "authority",
           "signer": true,
           "relations": [
-            "proof_buffer"
+            "proofBuffer"
           ]
         }
       ],
@@ -201,7 +286,7 @@ export type P01StarkVerifier = {
           "name": "authority",
           "signer": true,
           "relations": [
-            "proof_buffer"
+            "proofBuffer"
           ]
         }
       ],
@@ -243,7 +328,7 @@ export type P01StarkVerifier = {
           "name": "authority",
           "signer": true,
           "relations": [
-            "proof_buffer"
+            "proofBuffer"
           ]
         }
       ],
@@ -259,7 +344,17 @@ export type P01StarkVerifier = {
       "docs": [
         "Verify a STARK proof with multiple public inputs.",
         "",
-        "Used for circuits that need more than one public input value."
+        "Used for circuits that need more than one public input value.",
+        "",
+        "**Circuits 1..=6 only.** `circuit_id == 0` is refused here, not routed:",
+        "C0 has exactly one verifier, the legacy `verify_stark_proof` path, and the",
+        "generic path cannot verify an honest C0 proof (wrong vanishing polynomial,",
+        "no recomputation of C0's folded boundary term). See",
+        "`verify::VerifyError::CircuitZeroIsLegacyOnly`. Four shipped instructions",
+        "hard-require `circuit_id == 0`",
+        "(`zk_shielded::{pause,resume,cancel_private_stark}`,",
+        "`p01_quantum_wallet/src/stark.rs:42`), so the legacy path stays and this",
+        "one says no."
       ],
       "discriminator": [
         149,
@@ -280,7 +375,56 @@ export type P01StarkVerifier = {
           "name": "authority",
           "signer": true,
           "relations": [
-            "proof_buffer"
+            "proofBuffer"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "publicInputs",
+          "type": {
+            "vec": "u64"
+          }
+        }
+      ]
+    },
+    {
+      "name": "verifyUniform",
+      "docs": [
+        "Phase C v1 — Verify a STARK proof without exposing `circuit_id` in the",
+        "instruction data. Probes the V3 active circuit configs in fixed order",
+        "(1, 3, 5, 6) — the first config whose `from_bytes` succeeds is the",
+        "candidate. After parse succeeds, runs ONE `verify_generic` against",
+        "that config; if it fails, errors (does NOT fall through to the next",
+        "config — that would multiply CU cost beyond the 1.4M cap).",
+        "",
+        "CU cost: ~3-12K CU for failed parses (length-check arithmetic only)",
+        "+ ~700K-1.3M CU for the matched circuit's verify_generic. Stays under",
+        "the per-ix 1.4M cap.",
+        "",
+        "On success, stores the discovered `circuit_id` in the buffer for",
+        "downstream `verify_deep_ali_phase2` consumption."
+      ],
+      "discriminator": [
+        132,
+        164,
+        86,
+        87,
+        3,
+        165,
+        212,
+        103
+      ],
+      "accounts": [
+        {
+          "name": "proofBuffer",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "proofBuffer"
           ]
         }
       ],
@@ -317,7 +461,7 @@ export type P01StarkVerifier = {
           "name": "authority",
           "signer": true,
           "relations": [
-            "proof_buffer"
+            "proofBuffer"
           ]
         }
       ],
@@ -346,6 +490,48 @@ export type P01StarkVerifier = {
         40,
         161
       ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "alreadyVerified",
+      "msg": "Proof has already been verified"
+    },
+    {
+      "code": 6001,
+      "name": "chunkOutOfBounds",
+      "msg": "Proof chunk exceeds buffer bounds"
+    },
+    {
+      "code": 6002,
+      "name": "incompleteProof",
+      "msg": "Proof upload incomplete"
+    },
+    {
+      "code": 6003,
+      "name": "invalidProof",
+      "msg": "Invalid proof: verification failed"
+    },
+    {
+      "code": 6004,
+      "name": "deserializationError",
+      "msg": "Failed to deserialize proof bytes"
+    },
+    {
+      "code": 6005,
+      "name": "unsupportedCircuit",
+      "msg": "Unsupported circuit ID"
+    },
+    {
+      "code": 6006,
+      "name": "notYetVerified",
+      "msg": "Proof has not been verified yet"
+    },
+    {
+      "code": 6007,
+      "name": "circuitZeroIsLegacyOnly",
+      "msg": "Circuit 0 is verified only by the legacy verify_stark_proof path"
     }
   ],
   "types": [
@@ -401,45 +587,6 @@ export type P01StarkVerifier = {
           }
         ]
       }
-    }
-  ],
-  "constants": [],
-  "events": [],
-  "errors": [
-    {
-      "code": 6000,
-      "name": "alreadyVerified",
-      "msg": "Proof has already been verified"
-    },
-    {
-      "code": 6001,
-      "name": "chunkOutOfBounds",
-      "msg": "Proof chunk exceeds buffer bounds"
-    },
-    {
-      "code": 6002,
-      "name": "incompleteProof",
-      "msg": "Proof upload incomplete"
-    },
-    {
-      "code": 6003,
-      "name": "invalidProof",
-      "msg": "Invalid proof: verification failed"
-    },
-    {
-      "code": 6004,
-      "name": "deserializationError",
-      "msg": "Failed to deserialize proof bytes"
-    },
-    {
-      "code": 6005,
-      "name": "unsupportedCircuit",
-      "msg": "Unsupported circuit ID"
-    },
-    {
-      "code": 6006,
-      "name": "notYetVerified",
-      "msg": "Proof has not been verified yet"
     }
   ]
 };

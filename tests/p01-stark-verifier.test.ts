@@ -5,7 +5,13 @@
  * The compact proof is generated off-chain (Rust: stark/src/compact.rs)
  * and verified on-chain by the p01_stark_verifier program.
  *
- * Program ID: EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z (devnet, per Anchor.toml)
+ * Program ID: DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs — what
+ * `programs/p01_stark_verifier/src/lib.rs` declares, what Anchor.toml
+ * [programs.devnet] names, and what `PROGRAM_ID` below has always used. This
+ * line said EXmAQqm… "per Anchor.toml" and BOTH halves were false: Anchor.toml
+ * has named DGY37k3 since 2026-08-02, and the code twenty lines down never
+ * agreed with the comment. Gate: `node scripts/sync-program-ids.mjs --check
+ * --only p01_stark_verifier`.
  */
 
 import * as anchor from '@coral-xyz/anchor';

@@ -76,7 +76,7 @@ Every link below points to Solana Explorer on devnet.
 | Program | Role | Devnet program id |
 | --- | --- | --- |
 | `p01_registry` | Stealth meta-address directory + on-chain merchant registry (the PMF surface) | [`QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB`](https://explorer.solana.com/address/QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB?cluster=devnet) |
-| `p01_stark_verifier` | Custom on-chain FRI verifier, 6 circuits | [`EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z`](https://explorer.solana.com/address/EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z?cluster=devnet) |
+| `p01_stark_verifier` | Custom on-chain FRI verifier, 6 circuits | [`DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs`](https://explorer.solana.com/address/DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs?cluster=devnet) |
 | `zk_shielded` | Shielded pool (shield, transfer, unshield, subscribe, cancel) | [`2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms`](https://explorer.solana.com/address/2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms?cluster=devnet) |
 | `p01_zkspl` | Confidential SPL balances (Poseidon commitments) | [`AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT`](https://explorer.solana.com/address/AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT?cluster=devnet) |
 | `specter` | Stealth address + private streams | [`8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh`](https://explorer.solana.com/address/8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh?cluster=devnet) |

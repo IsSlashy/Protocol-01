@@ -277,7 +277,7 @@ The following eight workspace packages have moved off Groth16 on the hot path an
 ### On-chain hot path
 
 `zk_shielded` and `p01_zkspl` are STARK-only on devnet.
-Shield, transfer, unshield, subscribe, cancel-subscription, and merkle-update all route through `p01_stark_verifier` (`EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z`).
+Shield, transfer, unshield, subscribe, cancel-subscription, and merkle-update all route through `p01_stark_verifier` (`DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs` — what `declare_id!` names, and the only address a `.so` built from this tree can execute at).
 The legacy Groth16 instruction handlers have been deleted from these programs, and `p01_trustless` has been removed from the workspace.
 
 ### Retained Groth16 surfaces (by design, off hot path)
