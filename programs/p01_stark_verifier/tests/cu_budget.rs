@@ -2244,18 +2244,30 @@ const GITIGNORE: &str = include_str!("../../../.gitignore");
 /// repository and gives the same answer in a source tarball.
 #[test]
 fn every_script_ci_invokes_is_on_disk_and_not_gitignored() {
-    // The paths ci.yml actually runs: `node scripts/<file>` / `scripts/<file>`.
+    // Every repo-relative script path ci.yml runs. `packages/stark-prover/
+    // scripts/deployed-verifier-check.mjs` counts as much as `scripts/x.mjs`,
+    // so the whole path is taken, not the tail after the last `scripts/` —
+    // MEASURED while writing this: the tail-only form reported
+    // `deployed-verifier-check.mjs` as a ROOT script and failed on a file that
+    // is present and tracked exactly where ci.yml says it is.
+    fn path_ch(c: char) -> bool {
+        c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '/'
+    }
+    let bytes = CI_WORKFLOW.as_bytes();
     let mut invoked: Vec<String> = Vec::new();
     for (i, _) in CI_WORKFLOW.match_indices("scripts/") {
+        // Walk left to the start of the path token, so a nested `scripts/`
+        // keeps its package prefix instead of masquerading as a root one.
+        let mut start = i;
+        while start > 0 && path_ch(bytes[start - 1] as char) {
+            start -= 1;
+        }
         let rest = &CI_WORKFLOW[i + "scripts/".len()..];
-        let end = rest
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
-            .unwrap_or(rest.len());
-        let name = &rest[..end];
-        // Only files, and only ones that look like a script rather than a
-        // directory prefix such as `scripts/foo/bar`.
-        if name.ends_with(".mjs") || name.ends_with(".js") || name.ends_with(".sh") {
-            let owned = name.to_string();
+        let end = rest.find(|c: char| !path_ch(c)).unwrap_or(rest.len());
+        let path = &CI_WORKFLOW[start..i + "scripts/".len() + end];
+        // Files only — a bare directory prefix is not something CI runs.
+        if path.ends_with(".mjs") || path.ends_with(".js") || path.ends_with(".sh") {
+            let owned = path.to_string();
             if !invoked.contains(&owned) {
                 invoked.push(owned);
             }
@@ -2271,9 +2283,17 @@ fn every_script_ci_invokes_is_on_disk_and_not_gitignored() {
          broken and this check is vacuous"
     );
     assert!(
-        invoked.iter().any(|s| s == "sync-program-ids.mjs"),
+        invoked.iter().any(|s| s == "scripts/sync-program-ids.mjs"),
         "the scan did not find `scripts/sync-program-ids.mjs`, which ci.yml demonstrably \
          runs. The needle shape is wrong and every verdict below is noise. Found: {invoked:?}"
+    );
+    assert!(
+        invoked
+            .iter()
+            .any(|s| s == "packages/stark-prover/scripts/deployed-verifier-check.mjs"),
+        "the scan did not find the deployed-verifier interlock script at its FULL path, so \
+         it is truncating nested paths and would judge them against the wrong directory. \
+         Found: {invoked:?}"
     );
     assert!(
         GITIGNORE.lines().any(|l| l.trim() == "/scripts/*"),
@@ -2287,24 +2307,35 @@ fn every_script_ci_invokes_is_on_disk_and_not_gitignored() {
         .map(str::trim)
         .filter_map(|l| l.strip_prefix("!/scripts/"))
         .collect();
+    assert!(
+        !negated.is_empty(),
+        "`.gitignore` excludes `/scripts/*` and negates nothing, yet ci.yml runs \
+         {invoked:?}. Either the negation syntax changed — re-point this check — or every \
+         root script CI runs is uncommitted."
+    );
 
-    for name in &invoked {
-        let path = repo_root().join("scripts").join(name);
+    for path in &invoked {
+        let on_disk = repo_root().join(path);
         assert!(
-            path.exists(),
-            "ci.yml invokes `scripts/{name}` and {} does not exist. The step would fail on a \
+            on_disk.exists(),
+            "ci.yml invokes `{path}` and {} does not exist. The step would fail on a \
              missing file, not on the thing it checks.",
-            path.display()
+            on_disk.display()
         );
-        assert!(
-            negated.iter().any(|n| n == name),
-            "\n\n  >>> A CI SCRIPT IS GITIGNORED <<<\n  ci.yml runs `scripts/{name}`, the \
-             file exists locally, and `.gitignore` excludes `/scripts/*` without a \
-             `!/scripts/{name}` negation.\n\n  So it is NOT committed, `git status` shows a \
-             clean tree, and the workflow step that runs it fails on a file nobody can see \
-             is absent.\n  Add `!/scripts/{name}` to .gitignore.\n  Negations present: \
-             {negated:?}\n"
-        );
+        // Only the repo-root `scripts/` directory is excluded wholesale, so
+        // only those need a negation. A package's own scripts/ is tracked
+        // normally and asserting a negation for one would be wrong.
+        if let Some(name) = path.strip_prefix("scripts/") {
+            assert!(
+                negated.contains(&name),
+                "\n\n  >>> A CI SCRIPT IS GITIGNORED <<<\n  ci.yml runs `{path}`, the file \
+                 exists locally, and `.gitignore` excludes `/scripts/*` without a \
+                 `!/scripts/{name}` negation.\n\n  So it is NOT committed, `git status` \
+                 shows a clean tree, and the workflow step that runs it fails on a file \
+                 nobody can see is absent.\n  Add `!/scripts/{name}` to .gitignore.\n  \
+                 Negations present: {negated:?}\n"
+            );
+        }
     }
 }
 
