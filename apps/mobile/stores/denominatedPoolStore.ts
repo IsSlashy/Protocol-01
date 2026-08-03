@@ -2589,7 +2589,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
     }),
     {
       name: 'p01-denominated-pool',
-      version: 5,
+      version: 6,
       storage: createJSONStorage(() => encryptedStorage),
       partialize: (state) => ({
         notes: state.notes,
@@ -2631,6 +2631,37 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           state.notes = state.notes.map((n: any) =>
             n.status === 'locked' ? { ...n, status: 'pending' } : n
           );
+        }
+        // v5 → v6: FOUNDER-REQUESTED CLEAN SLATE 2026-08-03.
+        //
+        // Drops every locally-known note so the pool flows can be exercised from
+        // scratch against the current on-chain programs. This is a LOCAL wipe:
+        // the notes remain on-chain and their SOL stays in the pool. It does not
+        // and cannot touch the wallet, which lives in SecureStore under a
+        // different key — that separation is the whole reason this is a
+        // migration and not `pm clear`, which would take the wallet with it.
+        //
+        // The ids are PRINTED BEFORE THEY GO. They are the only key material for
+        // re-deriving the ephemeral signers that still hold ~30.18 SOL of rent in
+        // 54 orphaned proof buffers (MEASURED 2026-08-03), because the label is
+        // `stealth_unshield_v3_${noteId}` and nothing else records those ids.
+        // Losing them silently would make that rent unrecoverable; a log line
+        // costs nothing and keeps the option open.
+        //
+        // ⚠️ `shieldCounters` is deliberately NOT reset. It is what
+        // `findSafeShieldCounter` walks to avoid re-using a (pool, counter) whose
+        // nullifier is already spent on chain. Zeroing it alongside the notes
+        // would point the next shield straight at a consumed nullifier.
+        if (version < 6 && state.notes) {
+          const doomed = state.notes as any[];
+          console.log(`[DenomPool] Migration v6: WIPING ${doomed.length} local note(s). On-chain funds are untouched.`);
+          for (const n of doomed) {
+            console.log(
+              `[DenomPool] v6 wiped note id=${n.id} status=${n.status} denom=${n.denomination} ` +
+              `token=${n.token} pool=${n.poolPDA} shieldedAt=${new Date(n.shieldedAt).toISOString()}`,
+            );
+          }
+          state.notes = [];
         }
         return state;
       },
