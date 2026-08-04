@@ -199,12 +199,20 @@ export default function SubscribePanel({
   connection,
   signOne,
   token,
+  onBusyChange,
 }: {
   meta: string;
   owner: PublicKey;
   connection: Connection;
   signOne: ((tx: Transaction) => Promise<Transaction>) | null;
   token: PoolToken;
+  /**
+   * Raised while this panel is running something that locks funds or must not
+   * be perceived as vanished. PayApp badges the tab with it, so a user who
+   * navigates away mid-operation can find their way back instead of assuming it
+   * died and starting a second one, which would lock a second proof buffer.
+   */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   // ── Vendors ──────────────────────────────────────────────────────────────
   const [registry, setRegistry] = useState<RegistrySnapshot | null>(null);
@@ -281,6 +289,17 @@ export default function SubscribePanel({
 
   // ── Subscribe ────────────────────────────────────────────────────────────
   const [submitting, setSubmitting] = useState(false);
+
+  // One boolean for the whole panel, derived rather than raised by hand in every
+  // try/finally: a single missed exit path would leave the tab badged forever.
+  // The cleanup also clears it when the panel unmounts, which is exactly the
+  // case that motivated the badge, a user switching tabs mid-operation.
+  const panelBusy = submitting;
+  useEffect(() => {
+    onBusyChange?.(panelBusy);
+    return () => onBusyChange?.(false);
+  }, [panelBusy, onBusyChange]);
+
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SubscribeFromPoolResult | null>(null);

@@ -71,6 +71,7 @@ export default function PoolPanel({
   signOne,
   signMessage: signMessageProp,
   token,
+  onBusyChange,
 }: {
   token: PoolToken;
   meta: string;
@@ -86,6 +87,13 @@ export default function PoolPanel({
    * rather than silently falling back to naming the wallet.
    */
   signMessage?: ((message: Uint8Array) => Promise<Uint8Array>) | null;
+  /**
+   * Raised while this panel is running something that locks funds or must not
+   * be perceived as vanished. PayApp badges the tab with it, so a user who
+   * navigates away mid-operation can find their way back instead of assuming it
+   * died and starting a second one, which would lock a second proof buffer.
+   */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const denominations = denominationsFor(token);
   const [denomination, setDenomination] = useState(denominations[0]!);
@@ -141,6 +149,17 @@ export default function PoolPanel({
   const [sweeping, setSweeping] = useState<string | null>(null);
   const [sweepTo, setSweepTo] = useState("");
   const [sweepError, setSweepError] = useState<string | null>(null);
+
+  // One boolean for the whole panel, derived rather than raised by hand in every
+  // try/finally: a single missed exit path would leave the tab badged forever.
+  // The cleanup also clears it when the panel unmounts, which is exactly the
+  // case that motivated the badge, a user switching tabs mid-operation.
+  const panelBusy = shielding || !!busyNote || !!sweeping || recovering;
+  useEffect(() => {
+    onBusyChange?.(panelBusy);
+    return () => onBusyChange?.(false);
+  }, [panelBusy, onBusyChange]);
+
   const [swept, setSwept] = useState<string | null>(null);
 
   // Drop the root whenever the wallet changes: a payout key belongs to exactly

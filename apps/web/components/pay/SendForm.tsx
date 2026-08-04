@@ -118,6 +118,7 @@ export default function SendForm({
   asset,
   meta,
   owner,
+  onBusyChange,
 }: {
   adapter: ChainStealthAdapter;
   asset: Asset;
@@ -131,6 +132,13 @@ export default function SendForm({
    */
   meta?: string | null;
   owner?: PublicKey | null;
+  /**
+   * Raised while this panel is running something that locks funds or must not
+   * be perceived as vanished. PayApp badges the tab with it, so a user who
+   * navigates away mid-operation can find their way back instead of assuming it
+   * died and starting a second one, which would lock a second proof buffer.
+   */
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const poolReady = !!meta && !!owner;
   const [mode, setMode] = useState<Mode>(poolReady ? "note" : "stealth");
@@ -172,6 +180,17 @@ export default function SendForm({
   const [selected, setSelected] = useState<string | null>(null);
   const [noteAddress, setNoteAddress] = useState("");
   const [sealing, setSealing] = useState(false);
+
+  // One boolean for the whole panel, derived rather than raised by hand in every
+  // try/finally: a single missed exit path would leave the tab badged forever.
+  // The cleanup also clears it when the panel unmounts, which is exactly the
+  // case that motivated the badge, a user switching tabs mid-operation.
+  const panelBusy = sending || sealing;
+  useEffect(() => {
+    onBusyChange?.(panelBusy);
+    return () => onBusyChange?.(false);
+  }, [panelBusy, onBusyChange]);
+
   const [sealStep, setSealStep] = useState<string | null>(null);
   const [sealError, setSealError] = useState<string | null>(null);
   const [sealed, setSealed] = useState<SealedNoteHandoff | null>(null);
