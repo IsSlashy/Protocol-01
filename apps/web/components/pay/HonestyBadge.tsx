@@ -21,6 +21,13 @@ import type { ChainId } from "@/lib/privacy/chains/types";
  * technically retains spend authority over the stealth account until the
  * recipient claims. The STRK20 pool integration is still gated externally.
  *
+ * The Starknet variant below is UNREACHABLE as of 2026-08-04: STRK, ETH and
+ * Starknet USDC were retired from the selector, so `asset.chainId` — the only
+ * thing SendForm passes here (SendForm.tsx:188) — can only be 'solana'. It is
+ * kept verbatim rather than deleted so the copy comes back with the chain, in
+ * one edit. Reason for the retirement and the steps to undo it:
+ * packages/pay-core/src/assets.ts, file header.
+ *
  * Do not remove or soften either variant until the corresponding work lands.
  */
 export default function HonestyBadge({ chain }: { chain: ChainId }) {

@@ -225,33 +225,68 @@ export default function PoolPanel({
       </div>
 
       {/* What this does and does not hide. This product's first rule is that
-          copy never claims more than the shipped path provides — and the V3
-          withdrawal instruction publishes the note commitment in cleartext, so
-          it must NOT be described as unlinkable. Verified on devnet
-          2026-07-25: tx 2FhzBLHc… carries stark_commitment
-          1126946528953530644 at instruction bytes 80..88, the exact value the
-          deposit emitted for leaf 28. */}
+          copy never claims more than the shipped path provides.
+
+          Text replaced 2026-08-04 with the wording produced by the measurement
+          pass, which traced a full shield/unshield pair on devnet rather than
+          reasoning from the source. Three clauses changed:
+
+          1. The old text said only "the deposit is public too: this wallet
+             funds a one-time key". That understated one half and omitted the
+             other. The deposit instruction's depositor and fee payer is the
+             ephemeral E, not the wallet (shieldEphemeral.ts:278-297 builds
+             eSigner; denominatedPool.ts:828 passes signer.publicKey as
+             depositor) — so the wallet genuinely is NOT named in the deposit.
+             But the WITHDRAWAL pays out to the connected wallet by name
+             (PoolPanel.tsx:125 passes `owner` as recipient), which the old text
+             never said at all. Both halves are now stated.
+
+          2. NEW clause: /pay has no relayer. signSendV3 in
+             denominatedPool.ts:691-705 calls signSendConfirmTx directly —
+             comment at :697, "Step 1 (web /pay): no relayer yet — submit
+             directly." So the submitting IP reaches the RPC. The mobile
+             parenthetical is measured too: a relayed mobile shield still
+             carries the user's wallet as depositor on chain (devnet
+             RcsL4pYy… , relayed via 3pF5wSmF…), because the inner tx is signed
+             before encryption (v3RelayerWrapper.ts:122-129).
+
+          3. The anonymity-set-of-one clause is unchanged in substance but is
+             now backed by a fresh pair rather than the 2026-07-25 tx: leaf 16,
+             commitment 8901821612542787864, published in the clear by BOTH the
+             deposit RcsL4pYy… (LeafInserted) and the withdrawal 4Uwqht…
+             (stark_commitment at instruction bytes 80..88). */}
       <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
-        <p className="font-medium">Devnet. This does NOT yet make you anonymous</p>
-        <ul className="mt-1.5 list-disc space-y-1 pl-4 text-p01-red/90">
-          <li>
-            <strong>Withdrawal reveals which deposit it spends.</strong> The withdrawal transaction
-            includes the note commitment in the clear, and the deposit published that same value —
-            so anyone can match the two. The anonymity set is effectively one, not the note count
-            above.
-          </li>
-          <li>The deposit is public too: this wallet funds a one-time key that deposits into the pool.</li>
-          <li>
-            What you do get today: the amount is quantised to a denomination, and the note itself is
-            post-quantum encrypted. That is all.
-          </li>
-          <li>
-            A shield needs about {(denomination * 1.003 + 1.006).toFixed(3)} SOL for a few minutes —
-            the denomination, a 0.3% protocol fee, and ~1 SOL of proof-buffer rent that is returned
-            when the buffer closes. Withdrawal charges 0.5%.
-          </li>
-        </ul>
+        <p className="font-medium">Devnet. Here is exactly what this hides.</p>
+        <div className="mt-1.5 space-y-2 text-p01-red/90">
+          <p>
+            The deposit is signed by a one-time key, not your wallet, so your wallet is not named
+            in the deposit transaction. Your wallet does publicly fund that key first, and the
+            withdrawal pays out to your wallet by name.
+          </p>
+          <p>
+            The withdrawal publishes the note commitment in the clear, and the deposit published
+            that same value, so anyone can match a withdrawal to its exact deposit. The anonymity
+            set is one, not the note count above.
+          </p>
+          <p>
+            /pay submits every transaction directly: there is no relayer here, so your IP reaches
+            the RPC. (On mobile a relayer does submit, but it only hides the IP — the pool
+            instruction is still signed by the user&apos;s own key.)
+          </p>
+          <p>
+            What you get today: the amount is quantised to a denomination, and the note itself is
+            post-quantum encrypted. That is the whole list.
+          </p>
+        </div>
       </div>
+
+      {/* Cost, not privacy. Kept out of the disclosure box above so nothing
+          reads as a fifth thing the pool hides. */}
+      <p className="text-xs text-p01-text-muted">
+        A shield needs about {(denomination * 1.003 + 1.006).toFixed(3)} SOL for a few minutes —
+        the denomination, a 0.3% protocol fee, and ~1 SOL of proof-buffer rent that is returned
+        when the buffer closes. Withdrawal charges 0.5%.
+      </p>
 
       {error && (
         <p className="flex items-start gap-1.5 text-sm text-p01-red">

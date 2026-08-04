@@ -10,6 +10,7 @@ import {
   Coins,
   KeyRound,
   Loader2,
+  Repeat,
   Send,
   Inbox as InboxIcon,
   Smartphone,
@@ -25,28 +26,35 @@ import {
   clearStealthSessions,
 } from "@/lib/privacy/chains";
 import type { Asset, ChainId, DerivedIdentity } from "@/lib/privacy/chains/types";
-import {
-  clearStarknetSessions,
-  configureStarknet,
-  deriveStarknetIdentity,
-  isStarknetConfigured,
-  setStarknetSignerRuntime,
-  type ConnectedStarknet,
-} from "@protocol-01/pay-core/chains/starknet";
+import type { PoolToken } from "@/lib/privacy/pool/denominatedPool";
 import { buildDerivationMessage } from "@/lib/privacy/message";
 import { initStealthWorker } from "@/lib/privacy/workerClient";
 import ChainCoinSelector from "./ChainCoinSelector";
 import SendForm from "./SendForm";
 import ReceivePanel from "./ReceivePanel";
 import PoolPanel from "./PoolPanel";
+import SubscribePanel from "@/components/pay/SubscribePanel";
 import P01ConnectModal from "./P01ConnectModal";
 import Stepper from "./Stepper";
 import { truncate } from "./util";
 
+/**
+ * Solana-only as of 2026-08-04.
+ *
+ * The Starknet wiring that used to live in this file — `configureStarknet`, the
+ * `isStarknetConfigured` gate, `deriveStarknetIdentity`, the ArgentX/Braavos
+ * connect card and the per-chain `snWallet` state — was removed because
+ * `ALL_ASSETS` no longer contains a Starknet asset, so none of it was reachable:
+ * `asset.chainId` can only be `'solana'`. It is NOT a deletion of the Starknet
+ * work. `starknetAdapter`, the asset constants and the e2e tests all still exist
+ * in @protocol-01/pay-core; the reason for the retirement and the exact steps to
+ * undo it are recorded at the top of packages/pay-core/src/assets.ts. Restore
+ * this wiring in the same commit that moves those assets back into ALL_ASSETS.
+ */
 const CHAIN_TAG = "solana:devnet";
 const firstLive = ALL_ASSETS.find((a) => a.status === "live") ?? ALL_ASSETS[0];
 
-type Tab = "send" | "receive" | "pool";
+type Tab = "send" | "receive" | "pool" | "subscribe";
 
 export default function PayApp() {
   const { publicKey, connected, signMessage, signTransaction, signAllTransactions, disconnect } =
@@ -64,12 +72,8 @@ export default function PayApp() {
   const [p01Keypair, setP01Keypair] = useState<Keypair | null>(null);
   const [showP01, setShowP01] = useState(false);
 
-  // Starknet wallet (ArgentX / Braavos via get-starknet).
-  const [snWallet, setSnWallet] = useState<ConnectedStarknet | null>(null);
-  // Runtime-config gate: without an RPC + deployed pq_announcer, Starknet
-  // assets render as coming-soon (set after configureStarknet runs).
-  const [snConfigured, setSnConfigured] = useState(false);
-
+  // Always "solana" today — ALL_ASSETS is Solana-only (see the note above).
+  // Kept as a variable, not inlined, so restoring a second chain is mechanical.
   const chain: ChainId = asset.chainId;
   const identity = identities[chain] ?? null;
   const adapter = useMemo(() => getAdapter(chain), [chain]);
@@ -87,20 +91,6 @@ export default function PayApp() {
   useEffect(() => {
     initStealthWorker({ rpcUrl: connection.rpcEndpoint, cluster: "devnet" });
   }, [connection.rpcEndpoint]);
-
-  // Starknet chain config (Sepolia; announcer address comes from env once the
-  // contract is deployed there — until then scan is empty and send gates).
-  useEffect(() => {
-    configureStarknet({
-      nodeUrl:
-        process.env.NEXT_PUBLIC_STARKNET_RPC_URL ||
-        "https://starknet-sepolia-rpc.publicnode.com",
-      announcerAddress: process.env.NEXT_PUBLIC_PQ_ANNOUNCER_ADDRESS || "",
-      explorerBase: "https://sepolia.starkscan.co",
-      accountClassHash: process.env.NEXT_PUBLIC_STARKNET_ACCOUNT_CLASS_HASH || undefined,
-    });
-    setSnConfigured(isStarknetConfigured());
-  }, []);
 
   // Expose the active Solana wallet to the (secret-free) adapter so it can
   // sign + submit the unsigned transactions the worker builds. deriveMeta now
@@ -175,7 +165,7 @@ export default function PayApp() {
     return signTransaction ?? null;
   }, [p01Keypair, signTransaction]);
 
-  const chainConnected = chain === "solana" ? solConnected : !!snWallet;
+  const chainConnected = solConnected;
   const step: 0 | 1 | 2 = !chainConnected ? 0 : !identity ? 1 : 2;
 
   async function deriveSolana() {
@@ -220,56 +210,25 @@ export default function PayApp() {
     }
   }
 
-  async function connectStarknet() {
-    setDeriveError(null);
-    setDeriving(true);
-    try {
-      // Wallet switch: a derived identity belongs to ONE wallet — wipe the
-      // previous wallet's secret sessions (and its identity) before the new
-      // connection replaces it. No-op on first connect.
-      clearStarknetSessions();
-      setIdentities((prev) => {
-        if (!prev.starknet) return prev;
-        const { starknet: _dropped, ...rest } = prev;
-        return rest;
-      });
-      const { connection: sn, identity: snId } = await deriveStarknetIdentity();
-      setSnWallet(sn);
-      setStarknetSignerRuntime({ account: sn.account, address: sn.address });
-      setIdentities((prev) => ({ ...prev, starknet: snId }));
-    } catch (e) {
-      setDeriveError((e as Error).message || "Starknet connection rejected.");
-    } finally {
-      setDeriving(false);
-    }
-  }
-
   function reset() {
     setIdentities({});
     void clearStealthSessions();
-    clearStarknetSessions();
     // Best-effort zeroization of the paired P01 keypair before dropping it.
     p01Keypair?.secretKey.fill(0);
     setP01Keypair(null);
-    setSnWallet(null);
-    setStarknetSignerRuntime(null);
     void disconnect();
   }
 
-  const destination =
-    chain === "solana" ? (solPub ? solPub.toBase58() : "") : (snWallet?.address ?? "");
+  const destination = solPub ? solPub.toBase58() : "";
 
-  // Starknet "Live" is honest only once the runtime config can reach the chain
-  // (RPC + deployed pq_announcer). Until then its assets gate as coming-soon.
-  const selectorAssets = useMemo(
-    () =>
-      snConfigured
-        ? ALL_ASSETS
-        : ALL_ASSETS.map((a) =>
-            a.chainId === "starknet" ? { ...a, status: "coming-soon" as const } : a
-          ),
-    [snConfigured]
-  );
+  // The catalog is already the product surface: retirements are declared in
+  // packages/pay-core/src/assets.ts, not filtered here. There is no longer a
+  // runtime gate to apply on top of it.
+  const selectorAssets = ALL_ASSETS;
+
+  // The pool and subscribe tabs both drive a denominated pool, so they take the
+  // same token as the header selector. USDC_POOLS_V3 has real devnet pools.
+  const poolToken: PoolToken = asset.symbol === "USDC" ? "USDC" : "SOL";
 
   return (
     <div className="mx-auto w-full max-w-md">
@@ -285,8 +244,8 @@ export default function PayApp() {
         <ChainCoinSelector assets={selectorAssets} selected={asset} onSelect={setAsset} />
       </div>
 
-      {/* Gate 1 — connect (per chain) */}
-      {!chainConnected && chain === "solana" && (
+      {/* Gate 1 — connect */}
+      {!chainConnected && (
         <div className="glass space-y-4 p-7 text-center">
           <Wallet className="mx-auto h-8 w-8 text-p01-cyan" />
           <div>
@@ -311,46 +270,8 @@ export default function PayApp() {
         </div>
       )}
 
-      {!chainConnected && chain === "starknet" && !snConfigured && (
-        <div className="glass space-y-4 p-7 text-center">
-          <Wallet className="mx-auto h-8 w-8 text-p01-cyan" />
-          <p className="text-sm text-p01-text-muted">
-            Starknet testnet configuration pending — coming soon.
-          </p>
-        </div>
-      )}
-
-      {!chainConnected && chain === "starknet" && snConfigured && (
-        <div className="glass space-y-4 p-7 text-center">
-          <Wallet className="mx-auto h-8 w-8 text-p01-cyan" />
-          <div>
-            <p className="font-display text-p01-text">Connect a Starknet wallet</p>
-            <p className="mt-1 text-sm text-p01-text-muted">
-              ArgentX or Braavos. One signature derives your post-quantum stealth keys — the
-              same meta-address works on Solana and Starknet.
-            </p>
-          </div>
-          {deriveError && <p className="text-sm text-p01-red">{deriveError}</p>}
-          <button
-            className="btn-primary flex w-full items-center justify-center gap-2 disabled:opacity-50"
-            onClick={connectStarknet}
-            disabled={deriving}
-          >
-            {deriving ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" /> Connecting…
-              </>
-            ) : (
-              <>
-                <Wallet className="h-4 w-4" /> Connect ArgentX / Braavos
-              </>
-            )}
-          </button>
-        </div>
-      )}
-
-      {/* Gate 2 — derive keys (Solana; Starknet derives during connect) */}
-      {chainConnected && !identity && chain === "solana" && (
+      {/* Gate 2 — derive keys */}
+      {chainConnected && !identity && (
         <div className="glass space-y-4 p-6">
           <div className="flex items-center gap-2">
             <KeyRound className="h-5 w-5 text-p01-cyan" />
@@ -389,30 +310,21 @@ export default function PayApp() {
         </div>
       )}
 
-      {chainConnected && !identity && chain === "starknet" && (
-        <div className="glass space-y-4 p-6 text-center">
-          {deriveError && <p className="text-sm text-p01-red">{deriveError}</p>}
-          <button
-            className="btn-primary flex w-full items-center justify-center gap-2 disabled:opacity-50"
-            onClick={connectStarknet}
-            disabled={deriving}
-          >
-            <KeyRound className="h-4 w-4" /> Sign to derive keys
-          </button>
-        </div>
-      )}
-
       {/* Ready — tabs */}
       {chainConnected && identity && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="inline-flex rounded-lg border border-p01-border bg-p01-surface p-1">
-              {((chain === "solana" ? ["send", "receive", "pool"] : ["send", "receive"]) as Tab[]).map((t) => (
+              {/* Pool and subscribe are Solana-only: both drive the denominated
+                  pool, which exists on Solana alone. */}
+              {((chain === "solana"
+                ? ["send", "receive", "pool", "subscribe"]
+                : ["send", "receive"]) as Tab[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
                   className={clsx(
-                    "inline-flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium capitalize transition",
+                    "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium capitalize transition",
                     tab === t ? "bg-p01-cyan text-p01-void" : "text-p01-text-muted hover:text-p01-text"
                   )}
                 >
@@ -420,8 +332,10 @@ export default function PayApp() {
                     <Send className="h-3.5 w-3.5" />
                   ) : t === "receive" ? (
                     <InboxIcon className="h-3.5 w-3.5" />
-                  ) : (
+                  ) : t === "pool" ? (
                     <Coins className="h-3.5 w-3.5" />
+                  ) : (
+                    <Repeat className="h-3.5 w-3.5" />
                   )}
                   {t}
                 </button>
@@ -430,10 +344,9 @@ export default function PayApp() {
             <button
               onClick={reset}
               className="inline-flex items-center gap-1 text-xs text-p01-text-muted hover:text-p01-red"
-              title={chain === "solana" ? solLabel : truncate(snWallet?.address ?? "", 6, 4)}
+              title={solLabel}
             >
-              <Power className="h-3.5 w-3.5" />{" "}
-              {chain === "solana" ? solLabel : truncate(snWallet?.address ?? "", 6, 4)}
+              <Power className="h-3.5 w-3.5" /> {solLabel}
             </button>
           </div>
 
@@ -447,7 +360,20 @@ export default function PayApp() {
               owner={solPub}
               connection={connection}
               signOne={signSolanaTx}
-              token={asset.symbol === 'USDC' ? 'USDC' : 'SOL'}
+              token={poolToken}
+            />
+          ) : tab === "subscribe" && chain === "solana" && solPub ? (
+            // Same shape as the pool tab: subscribing pre-funds an ephemeral
+            // with ONE wallet-signed transfer, then the ephemeral does the rest.
+            // `signSolanaTx` is passed through nullable on purpose — the panel
+            // reports a watch-only wallet itself, with a reason, instead of
+            // being hidden behind a generic card here.
+            <SubscribePanel
+              meta={identity.meta}
+              owner={solPub}
+              connection={connection}
+              signOne={signSolanaTx}
+              token={poolToken}
             />
           ) : tab === "send" ? (
             <SendForm adapter={adapter} asset={asset} />
