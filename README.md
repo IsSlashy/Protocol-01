@@ -123,9 +123,9 @@ solana airdrop 2 --url devnet
 ```
 
 **Smart contracts — declared program IDs (devnet).** These are the
-`declare_id!` constants in `programs/`; the shielded pool was last redeployed
-2026-08-04. ⏳ *A STARK-verifier redeployment (coset LDE) is in flight; the
-verifier's on-chain figures below will be refreshed when it lands.*
+`declare_id!` constants in `programs/`; the shielded pool and the STARK
+verifier (coset LDE) were both redeployed 2026-08-04, and every verifier figure
+in this README is measured against that deployment on the real devnet cluster.
 
 | Program | ID |
 |---|---|
@@ -254,8 +254,8 @@ Hash-based, transparent, and post-quantum. No trusted setup, no `.ptau` ceremony
 | Proving system | STARK (FRI-based) |
 | Field | Goldilocks (`p = 2^64 − 2^32 + 1`) |
 | Hash function | Poseidon (full S-box `x^7`, 30 rounds) |
-| Configured FRI parameters | 27 queries, blowup 16 (Blake3 Merkle) ⏳ *may change with the in-flight verifier redeployment* |
-| On-chain verification cost | ⏳ *pending re-measurement after the in-flight verifier redeployment* |
+| Configured FRI parameters | 27 queries, blowup 16 (Blake3 Merkle) — stated as configuration; no security-bit figure is derived from them |
+| On-chain verification cost | **809,812 CU** measured on devnet 2026-08-04 for an accepted honest proof (C1 `pool_commitment` via `verify_uniform`, tx budget 1,400,000 — sig `2sLVyzPW…jZiBR`) |
 | Circuits | 6 AIRs — subscriber ownership, pool commitment, balance proof, Merkle path, confidential balance, transfer |
 
 **On soundness, plainly:** an earlier revision of this README advertised
@@ -264,13 +264,31 @@ naive formula it came from (`queries × log2(blowup)`) does not survive
 measurement: the effective FRI rate was measured at 1/2, not the nominal 1/16,
 which collapses that arithmetic. The soundness of the current construction is
 under active hardening (DEEP binding of the out-of-domain sample landed
-2026-07-30; low-degree-extension coset work is in flight), **no audited
+2026-07-30; the coset low-degree extension deployed 2026-08-04), **no audited
 soundness figure is claimed**, and the protocol is not audited. Treat devnet as
 devnet.
 
+Since the 2026-08-04 coset-LDE deployment, **no raw trace cells are
+transmitted** in the proofs the devnet verifier accepts. Said precisely,
+because the imprecise version would oversell it: what the coset removes is the
+verbatim-cell line — recovering trace values by Lagrange interpolation remains
+possible, so this is *not* "the witness is hidden". The prover that produces
+coset proofs currently lives on the unmerged `b7-drop-aligned-checks` branch;
+**the deployed web app, the installed APK, and `@protocol-01/stark-prover@0.1.2`
+still carry the pre-coset blob and are rejected by the chain** until they are
+rebuilt from that branch.
+
 The on-chain verifier is written from scratch (no Winterfell dependency at
-runtime). ⏳ *Binary size and per-verification CU will be restated from
-measurement once the in-flight redeployment lands.*
+runtime) and fits in a **667,000-byte** SBF binary (sha `90c75a0e…`), upgraded
+in place on devnet 2026-08-04. Its post-deploy verification gate passes exit 0,
+and rejection is attributed, not assumed — measured on devnet, all three
+outcomes: an honest proof accepted at 809,812 CU; a proof forged by one byte
+rejected `InvalidProof` (6003) at 542,150 CU, deep in the DEEP/FRI work; a
+tampered public input rejected at **19,777 CU** on an `OOD z mismatch` right
+after step 1. The 27× gap between the two rejections is the interesting part:
+a forgery consistent with its own transcript costs the full DEEP/FRI pass to
+catch, while a tampered input breaks Fiat-Shamir and dies immediately. Two
+defect classes, two mechanisms, both closed.
 
 ### Stealth Addresses (Hybrid Post-Quantum)
 
@@ -555,7 +573,7 @@ figure.
 | Web app | API + lib utils | 399 (+29 skipped) | Passing |
 | rpc-config / zkspl-sdk / specter-js | — | 0 | **No test suite** — an earlier revision claimed 361 for rpc-config; that suite does not exist |
 | Mobile app / Extension | Jest / vitest CI suites | not re-measured 2026-08-04 | — |
-| STARK prover/verifier (Rust) | `stark/` + `programs/p01_stark_verifier` | ⏳ re-measured with the in-flight verifier redeployment | — |
+| STARK prover/verifier (Rust) | verifier lib 81, CU-pin suite 21, DEEP-binding 26 | 128 | Passing — measured 2026-08-04 on the coset branch (`b7-drop-aligned-checks`, unmerged) |
 | E2E devnet | Shield → subscribe → recover | — | **Stale — its `cancel` step no longer exists in the program** |
 
 ```bash
@@ -594,6 +612,7 @@ anchor test                           # on-chain programs (localnet)
 - [x] On-chain trustless relayer + Tor-routed RPC middleware
 - [x] **Permissionless `claim_period` + close-on-exhaustion** (2026-08-04, proven on devnet by a third-party signer: the program pins where the money goes, not who sends the claim)
 - [x] **MIT license everywhere** (2026-08-04 — root LICENSE, site, and docs now agree with what npm shipped)
+- [x] **Coset-LDE STARK verifier redeployed on devnet** (2026-08-04 — honest proof accepted at 809,812 CU, deployed-verifier gate exit 0, rejection attributed per cause)
 - [x] Mugen — reference fiat-to-crypto P2P exchange
 - [x] **V3 STARK migration end-to-end** (transfer/shield/unshield validated live, Goldilocks parity-locked)
 - [x] **Tx-Opacity Phase A** — `p01_relayer` wired V3 (closes RPC IP leak L19)
@@ -606,7 +625,12 @@ anchor test                           # on-chain programs (localnet)
 
 ### In Progress
 
-- [ ] ⏳ **STARK verifier coset-LDE redeployment** — in flight on devnet; the verifier's CU, binary size, and the "no raw trace cells transmitted" property will be stated here from measurement once it lands
+- [ ] **Ship the coset prover to the clients.** The chain now runs the coset
+  verifier, but the deployed web app, the installed APK, and
+  `@protocol-01/stark-prover@0.1.2` still carry the pre-coset proof blob and
+  are **rejected by the chain** until rebuilt from the (unmerged)
+  `b7-drop-aligned-checks` branch. The desynchronization did not disappear —
+  it changed sides, and this line exists so nobody reads the redeploy as "done"
 - [ ] **Soundness hardening** of the FRI/DEEP construction (see the plain-language note in the STARK section)
 - [ ] **Subscribe_private renewal** live validation (Pay Now flow under logcat)
 - [ ] Universal `LeafInserted` canonical event
