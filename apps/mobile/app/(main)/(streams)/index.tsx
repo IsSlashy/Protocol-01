@@ -82,10 +82,19 @@ export default function StreamsDashboard() {
         try {
           const { processAllDuePayments } = useStreamStore.getState();
           await processAllDuePayments();
+          // Then ask the chain what is actually still alive. Status used to be
+          // purely local, so a vault closed on chain kept its green card
+          // indefinitely — MEASURED on the Disney+ subscription, cancelled at
+          // slot 481,031,335 and still displaying as active. Since the
+          // 2026-08-04 redeploy the final claim CLOSES the vault, so this is
+          // now the normal way every subscription ends, not an edge case.
+          const { reconcileStreamsWithChain } = await import('../../../services/solana/streams');
+          const r = await reconcileStreamsWithChain();
+          if (r.changed > 0) await refresh(publicKey || undefined);
         } catch {} finally { isProcessingRef.current = false; }
       });
       return () => handle.cancel();
-    }, [])
+    }, [publicKey, refresh])
   );
 
   const onRefresh = async () => {

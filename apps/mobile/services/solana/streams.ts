@@ -462,6 +462,89 @@ export async function updateStream(streamId: string, updates: Partial<Stream>): 
  * writing `cancelled` on an unknown would be sticky, because `loadStreams`
  * re-applies the cancelled-ids list on every load.
  */
+/**
+ * Bring every stream's status back in line with the chain.
+ *
+ * # The bug this exists for
+ *
+ * A stream's status was local state. `loadStreams` replays `cancelledIds` and
+ * `pausedIds` out of storage, and nothing ever asked the chain whether the vault
+ * was still there. MEASURED 2026-08-04 on the founder's own device: the Disney+
+ * subscription still displayed as active although its vault
+ * `N5Ldp6QUPX43UP7J6NRZZXwZ3v7m9DG9HMm3MDqirQu` was subscribed at slot
+ * 469,884,398, paused at 470,050,952 and CANCELLED at 481,031,335 — closed on
+ * chain, green in the app.
+ *
+ * # Why it is about to matter far more than one stale card
+ *
+ * Since the 2026-08-04 redeploy, `claim_period` CLOSES the vault on the final
+ * claim and pays its rent to the merchant. **A vault disappearing is now the
+ * normal end of a subscription's life, not an anomaly.** Without this
+ * reconciliation every subscription that runs to completion would stay green
+ * forever, and the Disney+ card is simply the first instance of that class.
+ *
+ * # What absence means
+ *
+ * `completed`, not `cancelled`. Both cancel instructions were deleted from the
+ * program and are gone from the deployed binary (verified: zero occurrences), so
+ * a missing vault can no longer mean "the subscriber cancelled" — it means the
+ * envelope was drawn down to the end. Streams the user cancelled while that
+ * instruction still existed keep their `cancelled` status, because `loadStreams`
+ * re-applies `cancelledIds` after this runs.
+ *
+ * Cheap enough to call on focus: one `getAccountInfo` per stream that still has
+ * a vault and is not already in a terminal state.
+ */
+export async function reconcileStreamsWithChain(opts?: {
+  currentSlot?: number;
+}): Promise<{ checked: number; ended: number; changed: number }> {
+  const streams = await loadStreams();
+  const live = streams.filter(
+    (s) => s.vaultAddress && s.status !== 'completed' && s.status !== 'cancelled' && s.status !== 'failed',
+  );
+  if (live.length === 0) return { checked: 0, ended: 0, changed: 0 };
+
+  const { fetchVault } = await import('../subscriptionVault');
+  const { PublicKey } = await import('@solana/web3.js');
+
+  let currentSlot: number | null = opts?.currentSlot ?? null;
+  if (currentSlot === null) {
+    try {
+      currentSlot = await getConnection().getSlot('confirmed');
+    } catch {
+      // A slot we cannot read must not be invented: `mapVaultStatusToStream`
+      // treats null as "do not judge the clock", which keeps a live vault
+      // `active` rather than guessing it ended.
+      currentSlot = null;
+    }
+  }
+
+  let ended = 0;
+  let changed = 0;
+  for (const s of live) {
+    let next: StreamStatus;
+    try {
+      const vault = await fetchVault(new PublicKey(s.vaultAddress!));
+      if (vault === null) {
+        next = 'completed';
+        ended += 1;
+      } else {
+        next = mapVaultStatusToStream(vault, currentSlot);
+      }
+    } catch {
+      // An RPC failure is not evidence about the subscription. Leave it alone —
+      // reporting a subscription dead because the network blinked is worse than
+      // a stale card, which is the whole lesson of the defect above.
+      continue;
+    }
+    if (next !== s.status) {
+      await updateStream(s.id, { status: next });
+      changed += 1;
+    }
+  }
+  return { checked: live.length, ended, changed };
+}
+
 export function mapVaultStatusToStream(
   vault: import('../subscriptionVault').VaultInfo,
   currentSlot: number | null,

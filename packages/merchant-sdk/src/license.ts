@@ -88,7 +88,8 @@ export const LICENSE_SCHEME = {
   CLASSIC_SIGN_PREFIX: 'p01-license-v1:',
   /** Commitment = blake3(licenseSecret), 32 bytes, posted on-chain. */
   commitment: 'blake3(licenseSecret) -> 32 bytes',
-  /** Key string = "P01-" + Crockford-base32(licenseSecret) grouped in 4s. */
+  /** Key string = "P01-" + Crockford-base32(licenseSecret) grouped in 4s.
+   *  The prefix is UNIFORM across merchants on purpose — see encodeLicenseKey. */
   keyPrefix: 'P01-',
   CROCKFORD: '0123456789ABCDEFGHJKMNPQRSTVWXYZ',
 } as const;
@@ -145,6 +146,39 @@ function decodeCrockford(s: string): Uint8Array {
  * Encode a 16-byte `licenseSecret` into the user-facing key string
  * `P01-XXXX-XXXX-...`. The inverse of `decodeLicenseKey`.
  */
+/**
+ * Render a license key for presentation: `P01-` + Crockford-base32(secret),
+ * grouped in 4s. The inverse of {@link decodeLicenseKey}.
+ *
+ * The `P01-` prefix is deliberately UNIFORM across every merchant. A
+ * per-merchant prefix (`PO-` for Proton, `ND-` for Nord) was considered on
+ * 2026-08-04 and rejected: the key is a bearer string the subscriber stores,
+ * screenshots and pastes into support chats, and a brand-stamped prefix makes it
+ * self-identifying in every one of those places. Private-mode vaults are keyed
+ * on a commitment rather than on a wallet precisely so that "this person
+ * subscribes to that service" is not derivable — putting the service name on the
+ * key hands back, in plaintext, the exact fact the vault design spends its
+ * complexity hiding. It buys the merchant nothing either: the merchant knows
+ * which service it is when the key is presented to it, and verification is
+ * against its own `license_commitment` regardless.
+ *
+ * The key IS service-specific, cryptographically: the secret is derived through
+ * HKDF with `INFO_LABEL || serviceId` (see {@link LICENSE_SCHEME}), so a key for
+ * one service cannot verify against another. That binding is real; it is simply
+ * not advertised on the string.
+ *
+ * NOT DONE, deliberately, and costed 2026-08-04: appending 2 Crockford chars of
+ * blake3 checksum so a mistyped key is caught on the subscriber's own screen
+ * instead of returning from the merchant as a generic rejection. Compatibility
+ * was verified in both directions — a 26-char decoder recovers the correct
+ * secret from a 28-char key because base32 is prefix-preserving at the 5-bit
+ * boundary, and a checksum-aware decoder can tell the two apart by length. It
+ * was reverted because this format is mirrored byte-for-byte in
+ * `apps/mobile/services/license/derive.ts` and
+ * `apps/extension/src/shared/services/license.ts`, and pinned by a frozen
+ * conformance vector in `license-scheme-vectors.ts`. Changing it is a
+ * coordinated six-file change and a deliberate re-freeze — not a side effect.
+ */
 export function encodeLicenseKey(licenseSecret: Uint8Array): string {
   if (licenseSecret.length !== LICENSE_SECRET_BYTES) {
     throw new Error(`licenseSecret must be exactly ${LICENSE_SECRET_BYTES} bytes, got ${licenseSecret.length}`);
@@ -162,6 +196,7 @@ export function decodeLicenseKey(key: string): Uint8Array {
   let s = key.trim().toUpperCase().replace(/-/g, '').replace(/\s+/g, '');
   if (s.startsWith('P01')) s = s.slice(3);
   if (s.length === 0) throw new Error('empty license key');
+
   const bytes = decodeCrockford(s);
   // 16 bytes → 26 Crockford chars (130 bits) where the last char carries 2
   // significant + 3 padding bits, so decode yields exactly 16 bytes.
