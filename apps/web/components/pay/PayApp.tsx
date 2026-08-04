@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { Keypair, Transaction } from "@solana/web3.js";
@@ -74,9 +74,39 @@ export default function PayApp() {
   const [deriveError, setDeriveError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("send");
 
+  // Tabs the user has opened this session. A visited panel is never unmounted
+  // again, only hidden (see the keep-alive render below): switching tabs
+  // mid-shield used to unmount the panel WITH its progress bar, so on screen a
+  // multi-minute operation with ~1 SOL in proof buffers simply vanished, and a
+  // user who believed it dead would start a second one, the exact mechanism
+  // behind this project's orphaned buffers. Hidden-not-unmounted keeps the
+  // operation, its progress and its busy reporting alive off-screen.
+  const [visited, setVisited] = useState<ReadonlySet<Tab>>(() => new Set<Tab>(["send"]));
+  useEffect(() => {
+    setVisited((prev) => (prev.has(tab) ? prev : new Set([...prev, tab])));
+  }, [tab]);
+
   // P01 mobile wallet (paired via QR — an in-memory Solana keypair).
   const [p01Keypair, setP01Keypair] = useState<Keypair | null>(null);
   const [showP01, setShowP01] = useState(false);
+
+  // Which tabs have an operation in flight, fed by the panels' onBusyChange.
+  // The tab bar stays CLICKABLE during an operation on purpose: locking a user
+  // out of navigation for several minutes is aggressive, and the worker keeps
+  // running either way. What must not happen is the operation looking vanished
+  // after a tab switch: during those minutes roughly 1 SOL sits in proof
+  // buffers, and a user who believes it died starts a second one and locks a
+  // second float (the exact mechanism behind this project's orphaned buffers).
+  // So the busy tab keeps a pulsing dot, making the way back unmissable.
+  const [busyTabs, setBusyTabs] = useState<Partial<Record<Tab, boolean>>>({});
+  const setTabBusy = useCallback((t: Tab, busy: boolean) => {
+    setBusyTabs((prev) => (!!prev[t] === busy ? prev : { ...prev, [t]: busy }));
+  }, []);
+  // Stable identities: the panels run their onBusyChange inside an effect, so
+  // a new function every render would churn that effect on every keystroke.
+  const onPoolBusy = useCallback((b: boolean) => setTabBusy("pool", b), [setTabBusy]);
+  const onSubscribeBusy = useCallback((b: boolean) => setTabBusy("subscribe", b), [setTabBusy]);
+  const onSendBusy = useCallback((b: boolean) => setTabBusy("send", b), [setTabBusy]);
 
   // Always "solana" today — ALL_ASSETS is Solana-only (see the note above).
   // Kept as a variable, not inlined, so restoring a second chain is mechanical.
@@ -335,6 +365,7 @@ export default function PayApp() {
                 <button
                   key={t}
                   onClick={() => setTab(t)}
+                  title={busyTabs[t] ? "An operation is still running in this tab" : undefined}
                   className={clsx(
                     "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium capitalize transition",
                     tab === t ? "bg-p01-cyan text-p01-void" : "text-p01-text-muted hover:text-p01-text"
@@ -352,6 +383,12 @@ export default function PayApp() {
                     <CreditCard className="h-3.5 w-3.5" />
                   )}
                   {t}
+                  {busyTabs[t] && (
+                    <span className="relative flex h-2 w-2" aria-label="operation in progress">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-p01-yellow opacity-75" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-p01-yellow" />
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -364,52 +401,90 @@ export default function PayApp() {
             </button>
           </div>
 
-          {asset.status === "coming-soon" ? (
+          {asset.status === "coming-soon" && (
             <div className="card p-6 text-center text-sm text-p01-text-muted">
               {asset.name} private transactions are coming soon.
             </div>
-          ) : tab === "pool" && chain === "solana" && solPub ? (
-            <PoolPanel
-              meta={identity.meta}
-              owner={solPub}
-              connection={connection}
-              signOne={signSolanaTx}
-              token={poolToken}
-            />
-          ) : tab === "subscribe" && chain === "solana" && solPub ? (
-            // Same shape as the pool tab: subscribing pre-funds an ephemeral
-            // with ONE wallet-signed transfer, then the ephemeral does the rest.
-            // `signSolanaTx` is passed through nullable on purpose — the panel
-            // reports a watch-only wallet itself, with a reason, instead of
-            // being hidden behind a generic card here.
-            <SubscribePanel
-              meta={identity.meta}
-              owner={solPub}
-              connection={connection}
-              signOne={signSolanaTx}
-              token={poolToken}
-            />
-          ) : tab === "subs" && chain === "solana" && solPub ? (
-            // Read-only: the subscriptions this browser opened, their standing
-            // and their license key, re-derived in the Worker on demand. No
-            // signer on purpose; this tab never sends a transaction. `meta`
-            // identifies the Worker session that holds the note secrets.
-            <SubscriptionsPanel meta={identity.meta} owner={solPub} connection={connection} />
-          ) : tab === "send" ? (
-            // The note handoff needs the pool session key and the wallet that
-            // owns the local note blobs. Both were already in scope for the
-            // pool and subscribe tabs but never reached here, so `poolReady`
-            // was permanently false and the tab told the user to reconnect and
-            // sign — which could not have helped. Solana-only, like the pools.
-            <SendForm
-              adapter={adapter}
-              asset={asset}
-              meta={chain === "solana" ? identity.meta : null}
-              owner={chain === "solana" ? solPub : null}
-            />
-          ) : (
-            <ReceivePanel adapter={adapter} identity={identity} destination={destination} />
           )}
+
+          {/* Keep-alive panels: each mounts on first visit and is then only
+              HIDDEN on tab switch, never unmounted. The panels report their
+              in-flight state through onBusyChange from an effect whose cleanup
+              clears the flag on unmount, which is correct precisely because,
+              with this structure, unmount only happens on disconnect. A shield
+              left mid-flight keeps its progress bar, keeps its badge, and is
+              exactly where the user left it when they come back. It also means
+              a tab's scan runs once per session, not once per visit. */}
+          {(() => {
+            const comingSoon = asset.status === "coming-soon";
+            const show = (t: Tab) => (tab === t && !comingSoon ? undefined : "hidden");
+            return (
+              <>
+                {visited.has("send") && (
+                  // The note handoff needs the pool session key and the wallet
+                  // that owns the local note blobs. Solana-only, like the pools.
+                  <div className={show("send")}>
+                    <SendForm
+                      adapter={adapter}
+                      asset={asset}
+                      meta={chain === "solana" ? identity.meta : null}
+                      owner={chain === "solana" ? solPub : null}
+                      onBusyChange={onSendBusy}
+                    />
+                  </div>
+                )}
+                {visited.has("receive") && (
+                  <div className={show("receive")}>
+                    <ReceivePanel adapter={adapter} identity={identity} destination={destination} />
+                  </div>
+                )}
+                {visited.has("pool") && chain === "solana" && solPub && (
+                  <div className={show("pool")}>
+                    <PoolPanel
+                      meta={identity.meta}
+                      owner={solPub}
+                      connection={connection}
+                      signOne={signSolanaTx}
+                      token={poolToken}
+                      onBusyChange={onPoolBusy}
+                    />
+                  </div>
+                )}
+                {visited.has("subscribe") && chain === "solana" && solPub && (
+                  // Same shape as the pool tab: subscribing pre-funds an
+                  // ephemeral with ONE wallet-signed transfer, then the
+                  // ephemeral does the rest. `signSolanaTx` is passed through
+                  // nullable on purpose: the panel reports a watch-only wallet
+                  // itself, with a reason, instead of being hidden behind a
+                  // generic card here.
+                  <div className={show("subscribe")}>
+                    <SubscribePanel
+                      meta={identity.meta}
+                      owner={solPub}
+                      connection={connection}
+                      signOne={signSolanaTx}
+                      token={poolToken}
+                      onBusyChange={onSubscribeBusy}
+                    />
+                  </div>
+                )}
+                {visited.has("subs") && chain === "solana" && solPub && (
+                  // Read-only: the subscriptions this browser opened, their
+                  // standing and their license key, re-derived in the Worker on
+                  // demand. No signer on purpose; this tab never sends a
+                  // transaction. `meta` identifies the Worker session that
+                  // holds the note secrets.
+                  <div className={show("subs")}>
+                    <SubscriptionsPanel
+                      meta={identity.meta}
+                      owner={solPub}
+                      connection={connection}
+                    />
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 
