@@ -3341,7 +3341,7 @@ mod tests {
 
         // Q(z) via inverse NTT of LDE quotient.
         let q_felts: Vec<BaseElement> = all_q.iter().map(|&v| BaseElement::new(v)).collect();
-        let q_poly = inverse_ntt(&q_felts, lde_g);
+        let q_poly = coset_inverse_ntt(&q_felts, lde_g, lde_coset_shift_inv()); // [B7]
         let q_at_z = evaluate_poly(&q_poly, z);
         // Z_T(z) = (z^n - 1) / (z - trace_g^(n-1))
         let z_d = z.exp(TRACE_LENGTH as u64) - BaseElement::ONE;
