@@ -154,3 +154,16 @@ export const SEAL_PHASES: FlowPhase[] = [
 export const STEALTH_SEND_PHASES: FlowPhase[] = [
   { id: 'wallet', label: 'Approve in your wallet; Solana sends', weight: 1, match: /one-time address|approve/i },
 ];
+
+/**
+ * Importing a received note (the Receive tab). Everything is local
+ * cryptography except one nullifier read that answers "is this note still
+ * unspent", so that read carries the weight: on a slow devnet RPC it is the
+ * only part of the flow a user can actually wait on. Steps come from
+ * `handlePoolImportNote` in `worker/poolHandlers.ts`.
+ */
+export const RECEIVE_NOTE_PHASES: FlowPhase[] = [
+  { id: 'open', label: 'Opening the sealed note', weight: 0.2, match: /opening the sealed note/i },
+  { id: 'check', label: 'Checking it is still unspent', weight: 0.6, match: /checking the note against the chain/i },
+  { id: 'file', label: 'Filing it with your notes', weight: 0.2, match: /filing it with your notes/i },
+];

@@ -33,6 +33,7 @@ import {
   isNullifierSpent,
   type PoolToken,
   type ShareableNote,
+  shareableNoteToReceipt,
   ALL_POOLS_V3,
 } from '../pool/denominatedPool';
 import {
@@ -49,6 +50,7 @@ import {
   createNoteEncryptionAddress,
   decryptNote,
   encryptNote,
+  isEncryptedNoteBlob,
   isNoteEncryptionAddress,
 } from '../pool/noteCrypto';
 import type { StoredMerklePath } from '../pool/unshieldFromPath';
@@ -254,6 +256,78 @@ export interface PoolExportNoteRequest {
   encryptedNotes?: string[];
 }
 
+/**
+ * Open a sealed `p01enc1:` note handed to THIS identity, validate it, and give
+ * the page a blob it can persist. The receiving mirror of `poolExportNote`.
+ *
+ * WHY THE WHOLE CHAIN RUNS IN HERE
+ * ────────────────────────────────
+ * The plaintext inside a sealed note is three spendable secrets. Decrypting on
+ * the page would put them on the main thread, which is the exact boundary this
+ * worker exists to hold, so decryption, validation and re-encryption all happen
+ * here and only ciphertext plus public fields cross back.
+ *
+ * The validation is `shareableNoteToReceipt`, the same integrity guard the
+ * extension's import runs: it recomputes the commitment from the secrets and
+ * refuses a mismatch, so a corrupted or fabricated note cannot enter the store
+ * looking like money.
+ *
+ * WHY IT RE-ENCRYPTS INSTEAD OF STORING WHAT ARRIVED
+ * ──────────────────────────────────────────────────
+ * The incoming blob is sealed to us, so it would technically keep. But the
+ * local note store is read by `poolScanLocal`, `poolResolveSpent` and
+ * `extractStoredPath`, all of which decrypt with this identity's own seeds and
+ * expect the exact JSON shape `poolShieldExecute` writes. Re-encrypting into
+ * that shape makes a received note a first-class citizen of the store: it
+ * paints in the note lists with no pool scan, and its spent status resolves
+ * through the same nullifier read as every other local note.
+ *
+ * KNOWN LIMIT, STATED RATHER THAN HIDDEN: `locateOwnedNote` re-derives note
+ * secrets from the pool seed, and a received note's secrets came from the
+ * sender's seed, so the seed-based withdraw/subscribe path cannot spend it
+ * yet. The import keeps the secrets safe and listed; wiring a receipt-based
+ * spend path is a separate, additive change.
+ */
+export interface PoolImportNoteRequest {
+  kind: 'poolImportNote';
+  meta: string;
+  /** The pasted `p01enc1:` blob, sealed to this identity's note address. */
+  sealedNote: string;
+  /** Blobs already stored locally, so importing the same note twice is refused
+   *  instead of silently drawing the same money as two rows. */
+  encryptedNotes?: string[];
+}
+
+export interface PoolImportNoteResponse {
+  kind: 'poolImportNote';
+  /** The note re-encrypted to the caller's OWN address, in the store's blob
+   *  shape. Safe to persist as-is; `poolScanLocal` lists it from here on. */
+  encryptedNote: string;
+  /** Public view of what was received. No secret crosses back. */
+  note: PoolNoteView;
+  /** Whether a Merkle path travelled inside the sealed note ('stored') or the
+   *  eventual spend will have to rebuild it from pool history ('none'). */
+  merklePath: 'stored' | 'none';
+}
+
+/**
+ * This identity's own `p01pq:` note address, the one a sender seals notes to.
+ *
+ * A read of PUBLIC material only (`noteCrypto.ts`: addresses are public-key
+ * bytes, safe to share anywhere), but it is a function of the pool seed, which
+ * never leaves this worker, so the derivation has to happen here.
+ */
+export interface PoolNoteAddressRequest {
+  kind: 'poolNoteAddress';
+  meta: string;
+}
+
+export interface PoolNoteAddressResponse {
+  kind: 'poolNoteAddress';
+  /** `p01pq:<base64>`, derived from the ACTIVE seed: the address to publish. */
+  address: string;
+}
+
 export interface PoolRecoverRequest {
   kind: 'poolRecover';
   meta: string;
@@ -355,7 +429,9 @@ export interface PoolSetPassphraseRequest {
 
 export type PoolRequest =
   | PoolExportNoteRequest
+  | PoolImportNoteRequest
   | PoolLicenseKeyRequest
+  | PoolNoteAddressRequest
   | PoolRecoverRequest
   | PoolResolveSpentRequest
   | PoolShieldPrepareRequest
@@ -529,7 +605,9 @@ export interface PoolRecoverResponse {
 
 export type PoolResponse =
   | PoolExportNoteResponse
+  | PoolImportNoteResponse
   | PoolLicenseKeyResponse
+  | PoolNoteAddressResponse
   | PoolRecoverResponse
   | PoolResolveSpentResponse
   | PoolShieldPrepareResponse
@@ -1169,6 +1247,168 @@ async function handlePoolExportNote(
 }
 
 /**
+ * Decrypt + validate + re-encrypt one received sealed note. See
+ * `PoolImportNoteRequest` for why every step of the chain lives in here.
+ *
+ * Order of operations is load-bearing:
+ *   1. prefix check, before any cryptography, so a pasted wallet address or a
+ *      `p01pq:` address (the classic mix-up) is named for what it is;
+ *   2. decrypt under every seed derivation, active first, because the address
+ *      the sender sealed to may have been published before a passphrase was
+ *      adopted, and only the legacy seed opens those;
+ *   3. `shareableNoteToReceipt`, the commitment-recomputation integrity guard;
+ *   4. duplicate check against the stored blobs, so the same note cannot enter
+ *      the store as two rows of apparent money;
+ *   5. one nullifier read against the chain, BEST EFFORT: a note that is
+ *      provably spent is refused (it looks exactly like a good one and is worth
+ *      exactly nothing), but an RPC failure imports anyway and says the status
+ *      is unverified, because losing the note over a 429 would be the worse
+ *      outcome.
+ */
+async function handlePoolImportNote(
+  req: PoolImportNoteRequest,
+  onProgress?: (step: string) => void,
+): Promise<PoolImportNoteResponse> {
+  const candidates = seedsInSearchOrder(requireSeeds(req.meta));
+
+  const sealed = req.sealedNote.trim();
+  if (!isEncryptedNoteBlob(sealed)) {
+    throw new Error(
+      'That is not a sealed note. A sealed note starts with "p01enc1:". ' +
+        'Nothing was imported.',
+    );
+  }
+
+  onProgress?.('Opening the sealed note...');
+  let plaintext: Uint8Array | null = null;
+  for (const candidate of candidates) {
+    try {
+      plaintext = decryptNote(candidate.seed, sealed);
+      break;
+    } catch {
+      // Not this derivation's blob. Try the next.
+    }
+  }
+  if (!plaintext) {
+    throw new Error(
+      'This note is not sealed to your address, so it cannot be opened here. ' +
+        'Ask the sender to seal it to the address shown on this screen. Nothing was imported.',
+    );
+  }
+
+  let shared: ShareableNote;
+  try {
+    shared = JSON.parse(new TextDecoder().decode(plaintext)) as ShareableNote;
+  } catch {
+    throw new Error('The sealed note opened, but what is inside is not a note.');
+  }
+
+  // The integrity guard: recomputes the commitment from the secrets and throws
+  // on any mismatch, unknown pool or unsupported version. Do NOT bypass it.
+  const receipt = shareableNoteToReceipt(shared);
+
+  // Refuse a second row for the same note. `decryptOwnedBlob` runs the same
+  // candidate search over the stored blobs, so a note imported before a
+  // passphrase was adopted is still recognised as already present.
+  const key = `${receipt.pool}:${receipt.leafIndex}`;
+  for (const blob of req.encryptedNotes ?? []) {
+    const own = decryptOwnedBlob(candidates, blob);
+    if (own && `${own.pool}:${own.leafIndex}` === key) {
+      throw new Error(
+        'This note is already in your list. Importing it again would only draw the same money twice.',
+      );
+    }
+  }
+
+  // `shareableNoteToReceipt` already resolved the pool, so the lookup cannot
+  // miss; it is repeated here only because the receipt carries the base58 form.
+  const pool = ALL_POOLS_V3.find((p) => p.poolPDA.toBase58() === receipt.pool)!;
+
+  let spent: boolean | null = null;
+  try {
+    onProgress?.('Checking the note against the chain...');
+    spent = await isNullifierSpent(
+      requireConnection(),
+      pool.poolPDA,
+      receipt.nullifierPreimage,
+      receipt.secret,
+    );
+  } catch {
+    // RPC hiccup: import anyway and report the status as unverified, exactly
+    // like `poolScanLocal` does for the notes it paints.
+  }
+  if (spent === true) {
+    throw new Error(
+      'This note has already been withdrawn, so it is spent and worth nothing. ' +
+        'Ask the sender for a fresh one. Nothing was imported.',
+    );
+  }
+
+  // Same JSON shape `poolShieldExecute` writes, so every consumer of the store
+  // treats this note like one of its own. The wire key `deposit_epoch` and the
+  // `merklePath` sub-shape are both load-bearing for `extractStoredPath`.
+  onProgress?.('Filing it with your notes...');
+  const hasPath =
+    !!shared.merkle_root &&
+    Array.isArray(shared.merkle_path_elements) &&
+    Array.isArray(shared.merkle_path_indices);
+  const encryptedNote = encryptNote(
+    createNoteEncryptionAddress(requireActiveSeed(req.meta)),
+    utf8ToBytes(
+      JSON.stringify({
+        version: 1,
+        pool: receipt.pool,
+        secret: receipt.secret.toString(),
+        nullifier_preimage: receipt.nullifierPreimage.toString(),
+        deposit_epoch: receipt.noteBlinding.toString(),
+        token_mint: receipt.tokenMint.toString(),
+        commitment: receipt.commitment.toString(),
+        leafIndex: receipt.leafIndex,
+        ...(hasPath
+          ? {
+              merklePath: {
+                pathElements: shared.merkle_path_elements!.map(String),
+                pathIndices: shared.merkle_path_indices!.map(Number),
+                root: String(shared.merkle_root),
+              },
+            }
+          : {}),
+        token: receipt.token,
+        denominationHuman: receipt.denominationHuman,
+        shieldedAt: receipt.shieldedAt,
+        source: 'received',
+      }),
+    ),
+  );
+
+  return {
+    kind: 'poolImportNote',
+    encryptedNote,
+    note: {
+      pool: receipt.pool,
+      token: receipt.token,
+      denomination: receipt.denominationHuman,
+      counter: 0,
+      leafIndex: receipt.leafIndex,
+      commitment: receipt.commitment.toString(),
+      spent: false,
+      // True only when the chain actually answered the nullifier read above.
+      spentKnown: spent !== null,
+      derivation: candidates[0].derivation,
+    },
+    merklePath: hasPath ? 'stored' : 'none',
+  };
+}
+
+/** This identity's own note address. Public material; seed stays in here. */
+function handlePoolNoteAddress(req: PoolNoteAddressRequest): PoolNoteAddressResponse {
+  return {
+    kind: 'poolNoteAddress',
+    address: createNoteEncryptionAddress(requireActiveSeed(req.meta)),
+  };
+}
+
+/**
  * WHERE THE TWO SECRET-DERIVED VALUES ARE COMPUTED, AND WHY THERE
  * ───────────────────────────────────────────────────────────────
  * `subscriber_commitment` — HERE, in prepare. It is the circuit-0
@@ -1474,6 +1714,12 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolExportNote':
       res = await handlePoolExportNote(req, onProgress);
+      break;
+    case 'poolImportNote':
+      res = await handlePoolImportNote(req, onProgress);
+      break;
+    case 'poolNoteAddress':
+      res = handlePoolNoteAddress(req);
       break;
     case 'poolRecover':
       res = await handlePoolRecover(req, onProgress);

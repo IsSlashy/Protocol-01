@@ -27,6 +27,7 @@ import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { poolRequest } from './workerClient';
 import { loadSubscriptions } from '../pay/subscriptions';
+import type { PoolNoteView } from './worker/poolHandlers';
 
 /** Sign one transaction with the connected wallet. */
 export type SignOne = (tx: Transaction) => Promise<Transaction>;
@@ -336,6 +337,60 @@ export function scanPoolLocal(meta: string, walletPubkey: string) {
   return poolRequest({ kind: 'poolScanLocal', meta, blobs: loadEncryptedNotes(walletPubkey) });
 }
 
+export interface ImportNoteOutcome {
+  /** Public view of the received note. Carries `spentKnown: false` when the
+   *  chain could not be asked whether it is still unspent; say so on screen. */
+  note: PoolNoteView;
+  /** Whether a withdrawal path travelled with the note. */
+  merklePath: 'stored' | 'none';
+}
+
+/**
+ * Import a sealed `p01enc1:` note somebody handed this wallet.
+ *
+ * The worker opens it, recomputes its commitment from the secrets (refusing a
+ * mismatch), refuses a duplicate or provably spent note, and returns it
+ * re-encrypted to this identity's own address. The blob is persisted into the
+ * same local store the shield writes, which is exactly what makes the note
+ * appear in the note lists with no pool scan: `scanPoolLocal` reads that store,
+ * and `resolveSpentNotes` covers the note's spent status from then on.
+ *
+ * NO transaction is involved in receiving. What the mechanism does not give:
+ * when this note is later withdrawn, the withdrawal republishes the commitment
+ * the original deposit published, and the sender keeps a spendable copy until
+ * someone spends it. Every surface that shows the import must say both.
+ */
+export async function importReceivedNote(params: {
+  meta: string;
+  walletPubkey: string;
+  sealedNote: string;
+  onProgress?: (step: string) => void;
+}): Promise<ImportNoteOutcome> {
+  const res = await poolRequest(
+    {
+      kind: 'poolImportNote',
+      meta: params.meta,
+      sealedNote: params.sealedNote,
+      encryptedNotes: loadEncryptedNotes(params.walletPubkey),
+    },
+    params.onProgress,
+  );
+  // The blob IS the note's existence on this device; store it before reporting
+  // success so a render error can never lose what was just received.
+  storeEncryptedNote(params.walletPubkey, res.encryptedNote);
+  return { note: res.note, merklePath: res.merklePath };
+}
+
+/**
+ * This identity's `p01pq:` note address, the one to hand to whoever wants to
+ * seal a note to this wallet. Public key material, safe to display and share;
+ * derived in the worker because it is a function of the pool seed.
+ */
+export async function fetchNoteReceiveAddress(meta: string): Promise<string> {
+  const res = await poolRequest({ kind: 'poolNoteAddress', meta });
+  return res.address;
+}
+
 // ---------------------------------------------------------------------------
 // Note persistence (opaque blobs only)
 // ---------------------------------------------------------------------------
@@ -346,12 +401,14 @@ const NOTE_STORE_KEY = 'p01_pay_notes_v1';
  * Persist an encrypted note blob. The main thread cannot read these — only the
  * worker, holding the pool seed, can decrypt them.
  *
- * NOTE ON WHAT THIS IS AND IS NOT: nothing currently reads these blobs back.
- * `loadEncryptedNotes` is used only to show a count, and `decryptNote` has no
- * caller. Discovery and withdrawal both work from the pool seed plus on-chain
- * event history (`pool/poolNotes.ts`), so the blob is a forward-looking record,
- * not a recovery path — and it could not be one anyway while withdrawal needs
- * event history to rebuild the Merkle proof. Do not describe it as a fallback.
+ * NOTE ON WHAT THIS IS AND IS NOT. For a SHIELDED note the blob is the fast
+ * path, not the recovery path: `scanPoolLocal` paints the lists from it,
+ * `resolveSpentNotes` resolves spent status through it, and the stored Merkle
+ * path spares the withdrawal a history rebuild, but a wiped store loses nothing
+ * because discovery re-derives everything from the pool seed plus on-chain
+ * history (`pool/poolNotes.ts`). For a RECEIVED note (`importReceivedNote`)
+ * the blob is the ONLY record: its secrets are not derivable from this wallet's
+ * seed, so no rescan brings it back. Do not treat this store as disposable.
  */
 export function storeEncryptedNote(walletPubkey: string, blob: string): void {
   if (typeof localStorage === 'undefined') return;

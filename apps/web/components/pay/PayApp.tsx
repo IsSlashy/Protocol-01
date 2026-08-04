@@ -107,6 +107,7 @@ export default function PayApp() {
   const onPoolBusy = useCallback((b: boolean) => setTabBusy("pool", b), [setTabBusy]);
   const onSubscribeBusy = useCallback((b: boolean) => setTabBusy("subscribe", b), [setTabBusy]);
   const onSendBusy = useCallback((b: boolean) => setTabBusy("send", b), [setTabBusy]);
+  const onReceiveBusy = useCallback((b: boolean) => setTabBusy("receive", b), [setTabBusy]);
 
   // Always "solana" today — ALL_ASSETS is Solana-only (see the note above).
   // Kept as a variable, not inlined, so restoring a second chain is mechanical.
@@ -434,8 +435,19 @@ export default function PayApp() {
                   </div>
                 )}
                 {visited.has("receive") && (
+                  // Receiving means importing a sealed note, which needs the
+                  // pool session key and the wallet that owns the local note
+                  // store. Same nullable contract as SendForm; the panel
+                  // explains a missing session itself.
                   <div className={show("receive")}>
-                    <ReceivePanel adapter={adapter} identity={identity} destination={destination} />
+                    <ReceivePanel
+                      adapter={adapter}
+                      identity={identity}
+                      destination={destination}
+                      meta={chain === "solana" ? identity.meta : null}
+                      owner={chain === "solana" ? solPub : null}
+                      onBusyChange={onReceiveBusy}
+                    />
                   </div>
                 )}
                 {visited.has("pool") && chain === "solana" && solPub && (
