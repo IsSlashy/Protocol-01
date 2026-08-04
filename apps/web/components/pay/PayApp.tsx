@@ -376,7 +376,17 @@ export default function PayApp() {
               token={poolToken}
             />
           ) : tab === "send" ? (
-            <SendForm adapter={adapter} asset={asset} />
+            // The note handoff needs the pool session key and the wallet that
+            // owns the local note blobs. Both were already in scope for the
+            // pool and subscribe tabs but never reached here, so `poolReady`
+            // was permanently false and the tab told the user to reconnect and
+            // sign — which could not have helped. Solana-only, like the pools.
+            <SendForm
+              adapter={adapter}
+              asset={asset}
+              meta={chain === "solana" ? identity.meta : null}
+              owner={chain === "solana" ? solPub : null}
+            />
           ) : (
             <ReceivePanel adapter={adapter} identity={identity} destination={destination} />
           )}
