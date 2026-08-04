@@ -629,16 +629,19 @@ export default function PoolPanel({
                   <p className="font-mono text-sm text-p01-text">{n.denomination} SOL</p>
                   <p className="truncate font-mono text-xs text-p01-text-muted">
                     leaf #{n.leafIndex} · {truncate(n.commitment, 6, 4)}
+                    {notesProvisional && " · unconfirmed"}
                   </p>
                 </div>
                 <button
                   onClick={() => handleUnshield(n)}
-                  disabled={
-                    !!busyNote || shielding || !signOne || !signMessage || notesProvisional
-                  }
+                  disabled={!!busyNote || shielding || !signOne || !signMessage}
+                  // Not disabled while provisional: the chain walk enumerates
+                  // candidate epochs per note per pool and can run for minutes,
+                  // and locking withdrawal behind it makes the app unusable.
+                  // The row says the status is unconfirmed instead.
                   title={
                     notesProvisional
-                      ? "Checking on chain whether this note is already spent."
+                      ? "Not yet confirmed against the chain: this note may already be spent."
                       : undefined
                   }
                   className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
@@ -648,7 +651,7 @@ export default function PoolPanel({
                   ) : (
                     <Download className="h-3.5 w-3.5" />
                   )}
-                  {notesProvisional ? "Checking…" : "Withdraw"}
+                  Withdraw
                 </button>
               </li>
             ))}
