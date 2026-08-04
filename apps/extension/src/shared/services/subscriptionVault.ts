@@ -757,6 +757,15 @@ export async function claimPeriod(vaultAddress: string): Promise<string> {
  * present on unshield_denominated_stark_v3). Both buffers are read-only here;
  * the handler does not write to them (the caller closes them after).
  */
+/**
+ * The ONLY value this client publishes as `min_epoch` on a subscribe.
+ *
+ * See the reasoning at the call site. Kept as a constant rather than a parameter
+ * so no future call site can reintroduce a note-derived value — the same shape
+ * as `UNSHIELD_MIN_EPOCH` and `TRANSFER_MIN_EPOCH` in `denominatedPool.ts`.
+ */
+export const SUBSCRIBE_MIN_EPOCH = 0n;
+
 function buildSubscribePrivateStarkIx(
   payer: PublicKey,
   retailer: PublicKey,
@@ -984,7 +993,20 @@ export async function subscribePrivate(params: {
   // binds (root[..8]); high 24 bytes zero. Must reproduce a root in the pool's
   // valid-root ring (is_valid_root account constraint).
   const merkleRootBytes = goldilocksToLeBytes32(merkleRoot);
-  const minEpoch = receipt.depositEpoch;
+  // TWIN OF THE TRANSFER LANDMINE, same fix. `subscribe_private_stark.rs:196-204`
+  // enforces `current_epoch >= min_epoch + dynamic_delay` exactly as the transfer
+  // handler does, so passing the note's deposit epoch here is not a maturity
+  // check — it is a timer that a PRF-blinded note can never satisfy. A blinding
+  // is ~2^62 and the absolute epoch is ~66,800, so every blinded note would
+  // become permanently un-SUBSCRIBABLE the day Part A lands. Silent capability
+  // loss, not fund loss, which is why nothing would have caught it.
+  //
+  // Passing 0 costs no security: `min_epoch` is a public input of NONE of the
+  // proof buffers this instruction reads (C1 binds [nullifier, commitment], C3
+  // binds [commitment, root, depth]), so it was never bound to the note and a
+  // hostile client could always have passed 0 anyway. Maturity intent stays where
+  // it can actually be enforced — the client pre-flight before proving.
+  const minEpoch = SUBSCRIBE_MIN_EPOCH;
 
   const createdBuffers: PublicKey[] = [];
   let c1ProofBuffer: PublicKey | undefined;

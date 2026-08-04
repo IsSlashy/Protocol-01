@@ -671,13 +671,23 @@ export default function SendForm({
             disabled={!canSend}
             className="btn-primary flex w-full items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
+            {/*
+              The label used to read "Shield & send" / "Shielding…". This path
+              does not shield: `workerCore.ts:352` builds a plain
+              SystemProgram.transfer from the connected wallet to a fresh stealth
+              address, fee payer the wallet. The button is the last thing read
+              before committing, and it contradicted the disclosure directly
+              above it — which is the exact failure this file's own header warns
+              about. Shielding is the Pool tab; handing over a note is the other
+              mode of this one.
+            */}
             {sending ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin" /> Shielding…
+                <Loader2 className="h-4 w-4 animate-spin" /> Sending…
               </>
             ) : (
               <>
-                Shield &amp; send <ArrowRight className="h-4 w-4" />
+                Send to a one-time address <ArrowRight className="h-4 w-4" />
               </>
             )}
           </button>
