@@ -5,10 +5,37 @@ import DepthBackground from "@/components/DepthBackground";
 import { WalletProvider } from "@/components/WalletProvider";
 import PayApp from "@/components/pay/PayApp";
 
+/**
+ * The hero is the first privacy claim a visitor reads, so it is held to the
+ * same standard as the in-app disclosures rather than to marketing licence.
+ *
+ * What the code supports, and therefore what this page may say:
+ *   · A stealth send names a one-time address as the payee, not a wallet —
+ *     `SystemProgram.transfer({ toPubkey: stealth.address })`,
+ *     packages/pay-core/src/worker/workerCore.ts:352.
+ *   · The sender is NOT hidden on any leg. The same transfer has
+ *     `fromPubkey: sender` and every tx in the batch carries
+ *     `tx.feePayer = sender` (workerCore.ts:352, 363), and the browser submits
+ *     them itself (PayApp.tsx:120-133) — there is no relayer on /pay.
+ *   · A pool withdrawal no longer pays the connected wallet: the payee is a
+ *     per-note derived payout address (PoolPanel.tsx:286-295) and
+ *     `executeUnshield` refuses `recipient.equals(ownerPubkey)` outright
+ *     (lib/privacy/pool/unshieldEphemeral.ts:228). But the wallet still
+ *     pre-funds the ephemeral signer in a public transfer one hop earlier
+ *     (unshieldEphemeral.ts:209-215), and the withdrawal republishes the
+ *     commitment its deposit published — devnet leaf 16, commitment
+ *     8901821612542787864, present in both transactions.
+ *
+ * The previous subline ("unshielding to a public wallet is a visible hop") is
+ * now stale in the SAFE direction — the withdrawal stopped naming the wallet in
+ * f7e74a96 — but understating is not free either: it described the product as
+ * worse than it is while leaving the actually-unfixed hop (the pre-fund, and
+ * the republished commitment) unmentioned. Both are corrected here together.
+ */
 export const metadata: Metadata = {
   title: "Private Pay — Protocol 01",
   description:
-    "Post-quantum stealth payments. The recipient is hidden behind a one-time ML-KEM-768 hybrid stealth address.",
+    "Post-quantum stealth payments. The payee is a one-time ML-KEM-768 hybrid stealth address, never a wallet. Your own wallet and the amount stay public.",
 };
 
 export default function PayPage() {
@@ -26,12 +53,12 @@ export default function PayPage() {
           </span>
 
           <h1 className="mt-6 font-display text-3xl font-black tracking-tight text-white sm:text-4xl">
-            The recipient is never named on-chain.
+            The payee is a one-time address, not a wallet.
           </h1>
 
           <p className="mx-auto mt-4 max-w-md font-mono text-sm leading-relaxed text-p01-text-muted">
-            Post-quantum stealth payments. The recipient hides behind a one-time stealth
-            address; unshielding to a public wallet is a visible hop.
+            Post-quantum stealth payments. Nothing here hides you: your wallet signs and pays for
+            every transaction, and a pool withdrawal republishes its deposit&apos;s commitment.
           </p>
 
           <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 font-mono text-[11px] uppercase tracking-widest text-p01-text-dim">

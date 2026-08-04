@@ -315,6 +315,26 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       expect(screen.getByRole('heading', { level: 2, name: 'Guarantees' })).toBeInTheDocument();
     });
 
+    /**
+     * The three unlinkability absolutes were dropped from the rendered threat
+     * model on 2026-08-04 (app/docs/page.tsx, `threats`). Each is contradicted by
+     * a measured fact, not by a matter of taste: a pool withdrawal republishes the
+     * commitment its deposit published (devnet leaf 16, commitment
+     * 8901821612542787864, in both transactions), so senders and recipients ARE
+     * linkable, spending patterns ARE analysable and a third party CAN track a
+     * balance. The strings still exist in i18n/en.ts:1316-1319, so a one-word
+     * edit to the array puts them straight back on the page — this test is what
+     * makes that show up as a failure instead of as a shipped claim.
+     */
+    it('does not publish the retracted unlinkability absolutes', () => {
+      openTopic('Security Model');
+      expect(
+        screen.queryAllByText(/observers cannot link senders and recipients/i),
+      ).toHaveLength(0);
+      expect(screen.queryAllByText(/Spending patterns cannot be analyzed/i)).toHaveLength(0);
+      expect(screen.queryAllByText(/Balance tracking is impossible/i)).toHaveLength(0);
+    });
+
     it('guarantees soundness: invalid proofs cannot be generated', () => {
       openTopic('Security Model');
       expect(screen.getByText('Sound: Invalid proofs cannot be generated')).toBeInTheDocument();
@@ -339,6 +359,78 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       expect(
         screen.getByText('No double-spending: Nullifiers are unique per commitment'),
       ).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * The code samples on /docs are raw English that lives in app/docs/page.tsx,
+   * not in i18n — which made them the one place on the page an honesty pass over
+   * the locale files could not reach, and they had drifted furthest. Each
+   * assertion below pins one retired claim against one measured fact:
+   *
+   *   · "never the user's wallet" / "Wallet NEVER appears" — the wallet publicly
+   *     funds the ephemeral one hop before the shield and the unshield, so it is
+   *     one hop away, not absent.
+   *   · "Both sender + receiver hidden on-chain" — the stealth transfer is
+   *     signed and fee-paid by the sender's own wallet
+   *     (packages/pay-core/src/worker/workerCore.ts:352, 363).
+   *   · "for decorrelation" on the mobile auto-sweep — the delay is a few
+   *     seconds and was deliberately left that short; it is convenience, not a
+   *     privacy mechanism.
+   *   · "124-bit soundness" — the arithmetic that produced it was measured wrong
+   *     for this FRI configuration and no measured figure replaced it.
+   *
+   * These are substring assertions on purpose. The wording of the honest
+   * replacement is free to change; the retired claims are not free to come back.
+   */
+  describe('Code samples — retired privacy claims stay retired', () => {
+    function codeOf(topicTitle: string, sectionId: string): string {
+      openTopic(topicTitle);
+      const pre = document.querySelector(`#${sectionId}-code pre`);
+      expect(pre).not.toBeNull();
+      return pre!.textContent ?? '';
+    }
+
+    it('does not claim the shielded-pool observer never sees the wallet', () => {
+      const code = codeOf('Shielded Pool & Relayer', 'shielded-pool');
+      expect(code).not.toMatch(/never the user's wallet/i);
+      expect(code).toMatch(/pre-funds the ephemeral signer/i);
+    });
+
+    it('does not claim the wallet never appears in the denominated-pool flow', () => {
+      const code = codeOf('Denominated Privacy Pools', 'denominated-pools');
+      expect(code).not.toMatch(/Wallet NEVER appears/i);
+      expect(code).not.toMatch(/for decorrelation/i);
+      expect(code).toMatch(/NOT unlinkable/);
+    });
+
+    it('does not claim the sender is hidden on the stealth meta-address path', () => {
+      const code = codeOf('Stealth Meta-Addresses (P01-to-P01)', 'stealth-meta-addresses');
+      expect(code).not.toMatch(/Both sender \+ receiver hidden/i);
+      expect(code).toMatch(/The SENDER is not/);
+    });
+
+    it('does not claim the main wallet is never visible on the auto-shield path', () => {
+      const code = codeOf('Auto-Shield Receive', 'auto-shield');
+      expect(code).not.toMatch(/Main wallet never visible on-chain/i);
+    });
+
+    it('publishes no STARK soundness bit-count', () => {
+      const code = codeOf('Zero-Knowledge Proofs (STARK)', 'zk-proofs');
+      expect(code).not.toMatch(/124-bit/);
+      expect(code).toMatch(/DEEP-ALI/);
+    });
+
+    it('says the web client submits its own transactions rather than relaying', () => {
+      const code = codeOf('On-Chain Relayer (Trustless)', 'private-relay');
+      expect(code).toMatch(/The web app does not/);
+      expect(code).toMatch(/The IP address and the outer/);
+      expect(code).toMatch(/Not the signer/);
+    });
+
+    it('says the multi-hop router does not produce an unlinkable path today', () => {
+      const code = codeOf('Multi-Hop Privacy Router', 'privacy-router');
+      expect(code).toMatch(/NOT an unlinkable/);
     });
   });
 

@@ -4,18 +4,42 @@ import { Eye, ShieldCheck } from "lucide-react";
 import type { ChainId } from "@/lib/privacy/chains/types";
 
 /**
- * Persistent, honest disclosure of the v1 privacy envelope, per chain.
+ * Persistent, honest disclosure of the STEALTH SEND envelope, per chain.
  *
- * This renders on the SEND tab. A send does NOT route through the denominated
- * pool — it is the plain stealth-address path, so the transfer amount is public
- * on both chains (docs/PAY_HANDOFF_OPUS5.md §10: "The send flow still does not
- * route through the pool. A /pay send is the same stealth-address path as
- * before, amounts public"). The Pool tab is a separate, manual shield/withdraw
- * flow; do not let this badge imply the two are connected.
+ * SCOPE — READ THIS BEFORE EDITING THE COPY
+ * ─────────────────────────────────────────
+ * The Send tab now has TWO modes and they hide opposite things, so this badge
+ * describes exactly one of them. SendForm renders it only inside the stealth
+ * branch (SendForm.tsx:645, inside the `mode === "note" ? … : …` else-arm that
+ * opens at SendForm.tsx:553); the note-handoff mode carries its own disclosure
+ * block at SendForm.tsx:506-525. That split is correct and this badge must not
+ * try to cover both — "a send does not go through the pool" was true of both
+ * modes but for opposite reasons (stealth pays a wallet-funded address; the
+ * handoff broadcasts nothing at all), and one sentence covering both can only
+ * do it by being vague.
  *
- * Solana: the funding transfer publishes the sender's address and the amount
- * on-chain; only the recipient is hidden (via the one-time stealth address).
- * Sender unlinkability (relayer/feeder) is deferred.
+ * SOLANA — what the code actually publishes
+ * ─────────────────────────────────────────
+ * The funds leg is a plain transfer out of the connected wallet:
+ * `SystemProgram.transfer({ fromPubkey: sender, toPubkey: stealth.address,
+ * lamports: amount })` (packages/pay-core/src/worker/workerCore.ts:352) with
+ * `tx.feePayer = sender` on every transaction in the batch (workerCore.ts:363).
+ * The browser signs and submits them itself — `signAll(txs)` then
+ * `connection.sendRawTransaction(...)` in PayApp.tsx:120-133. There is no
+ * relayer on /pay. So the sender is not merely "not yet unlinkable": nothing on
+ * this path is even attempting to hide the sender, and the badge says that
+ * instead of the softer "on the roadmap", which reads as a missing feature
+ * rather than as a property of the mechanism.
+ *
+ * Only the recipient is hidden, via the one-time hybrid stealth address
+ * (workerCore.ts:308-311 refuses a recipient without an ML-KEM ciphertext).
+ *
+ * The pointer to the other tab is deliberately not a privacy upsell. The note
+ * handoff broadcasts nothing, which is real; it does NOT make the money
+ * untraceable, because the recipient's eventual withdrawal republishes the
+ * commitment the original deposit published — measured on devnet, leaf 16,
+ * commitment 8901821612542787864, in both the deposit and the withdrawal. Both
+ * halves of that have to travel together or the pointer becomes the overstate.
  *
  * Starknet: same recipient-only envelope, plus one extra caveat — the sender
  * technically retains spend authority over the stealth account until the
@@ -56,7 +80,10 @@ export default function HonestyBadge({ chain }: { chain: ChainId }) {
         <span className="inline-flex items-center gap-1 text-p01-yellow">
           <Eye className="h-3.5 w-3.5" /> Sender and amount public on this path.
         </span>{" "}
-        A send does not go through the pool; sender unlinkability is on the roadmap.
+        Your wallet signs the transfer, pays the fee and funds the one-time address, and this
+        page submits it straight from your browser — there is no relayer, so nothing here hides
+        the sender. Handing over a note instead (other tab) broadcasts nothing at all, but the
+        recipient&apos;s later withdrawal still republishes your deposit&apos;s commitment.
       </p>
     </div>
   );

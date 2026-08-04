@@ -79,7 +79,12 @@ const starkProof = await starkProver.generateProof(secret);
 
 // Upload proof buffer → on-chain FRI verifier → ~889K CU
 await submitStarkProof(program, proofBuffer, commitment, circuitId);
-// 6 AIRs over Goldilocks field, 124-bit soundness with DEEP-ALI
+// 6 AIRs over the Goldilocks field. DEEP-ALI quotient check at the OOD
+// point is implemented (programs/p01_stark_verifier/src/verify.rs:670-673).
+// No soundness bit-count is published here. The one this line used to
+// carry came from "queries x log2(blowup)", arithmetic that was measured
+// to be wrong for this FRI configuration, and no measured figure has
+// replaced it. Do not reinstate a bit-count without one.
 // Replaces legacy Groth16/BN254 (see "Legacy / Migration History")`,
   },
   {
@@ -96,9 +101,18 @@ const starkProof = await starkProver.generateProof(noteInputs);
 await liquidity.prefund({ ephemeralSigner, proofBuffer, amount });
 
 // 3. Buffer verifies on-chain → funds release to a one-time
-//    ECDH + ML-KEM-768 stealth recipient. Observer sees only
-//    "ephemeral signer → stealth recipient" — never the user's wallet.
-const tx = await unshieldDenominatedStark({ proofBuffer, stealthRecipient });`,
+//    recipient. The unshield transaction itself names an ephemeral
+//    signer and that one-time recipient, not the user's wallet.
+const tx = await unshieldDenominatedStark({ proofBuffer, stealthRecipient });
+
+// WHAT THIS DOES NOT HIDE. The wallet pre-funds the ephemeral signer in
+// a public transfer one hop earlier, so an observer sees
+// "wallet -> ephemeral" and then "ephemeral -> one-time recipient" a
+// minute apart for a distinctive amount. And the unshield republishes
+// the note commitment the DEPOSIT published, so the exit is publicly
+// matchable to the deposit (measured on devnet: leaf 16, commitment
+// 8901821612542787864, present in both transactions). The anonymity set
+// is 1 until the C7 spend circuit ships.`,
   },
   {
     id: "poseidon-hash",
@@ -169,7 +183,21 @@ for pos in positions {
     i18nKey: "privateRelay",
     icon: <Zap className="w-6 h-6" />,
     detailCount: 6,
-    codeExample: `// Trustless on-chain relay flow (v1.0.2 — STARK V3 + relayer-routed)
+    codeExample: `// Trustless on-chain relay flow (v1.0.2 — STARK V3)
+//
+// WHICH CLIENTS ACTUALLY RELAY. Mobile does. The web app does not: /pay
+// submits every transaction straight from the browser, including the
+// ~280 proof-buffer chunk transactions, each under the same ephemeral
+// key whose pubkey seeds the buffer PDAs. Relaying only the final
+// transaction would buy nothing while those chunks are self-submitted,
+// so it was deliberately not done.
+//
+// WHAT THE RELAYER HIDES WHEN IT IS USED. The IP address and the outer
+// fee payer. Not the signer: the inner transaction is signed with the
+// user's key BEFORE it is encrypted to the relayer, so the relayer
+// cannot rewrite the signer set and the user's key is still in the
+// transaction that lands on chain.
+//
 // 1. Client generates a STARK proof locally via the WASM prover
 //    (spending key stays on device; no remote prover fallback)
 const starkProof = await starkProver.generateProof({
@@ -210,21 +238,35 @@ await p01.createSubscription({
     i18nKey: "denominatedPools",
     icon: <Layers className="w-6 h-6" />,
     detailCount: 8,
-    codeExample: `// Shield: stealth intermediary hides wallet origin
+    codeExample: `// Shield: the deposit is signed by an ephemeral, not by the wallet.
+// The wallet is still what funds that ephemeral, in the clear, on the
+// line above the deposit — so the wallet is one public hop away, not
+// removed. (SOL only. USDC deposits still use the wallet directly:
+// the ephemeral has no funded token account.)
 const stealthKp = deriveStealthSigner(wallet, timestamp);
-await fundStealth(wallet, stealthKp, 0.1); // small fee fund
+await fundStealth(wallet, stealthKp, 0.1); // <- public: wallet -> ephemeral
 await program.methods.shieldDenominated(commitment, epoch)
   .accounts({ pool, depositor: stealthKp.publicKey })
   .signers([stealthKp]).rpc();
 
-// Unshield: stealth signer + stealth ECDH recipient
-// Wallet NEVER appears as signer, fee payer, or recipient
+// Unshield: ephemeral signer + a one-time recipient.
+// The wallet is not the signer, the fee payer, or the payee of THIS
+// transaction. It is not absent from the flow: it pre-funded the
+// ephemeral, and on web the withdrawal explicitly refuses to pay the
+// wallet that pre-funded it, so the funds land on a derived payout
+// address the user moves on separately, when they choose to.
 const signer = deriveEphemeralSigner();
-const recipient = generateStealthAddress(metaAddress); // ECDH one-time
+const recipient = derivePayoutAddress(root, pool, leafIndex); // per-note
 await program.methods.unshieldDenominatedStark(starkProof)
   .accounts({ pool, recipient: recipient.address, nullifierPda })
   .signers([signer]).rpc();
-// Auto-sweep: recipient → wallet (delayed 3-7s for decorrelation)`,
+
+// Deposit and withdrawal are NOT unlinkable. The withdrawal publishes
+// the same note commitment the deposit published, so the two are
+// publicly matchable by anyone. Fixed denominations remove the amount
+// as a distinguisher; they do not break that link. The mobile client
+// also sweeps the one-time recipient to the wallet a few seconds later,
+// which is a convenience, not decorrelation.`,
   },
   {
     id: "zkspl",
@@ -346,7 +388,11 @@ const keypair = Keypair.fromSeed(seed);
 const balance = await connection.getBalance(stealthAddress);
 if (balance > MIN_THRESHOLD) {
   await shield(pool, progressCb, undefined, keypair);
-  // Main wallet never visible on-chain
+  // The deposit is signed by the stealth keypair, so the main wallet is
+  // not the depositor on this path. It is only absent while the funds
+  // never touch it: the wallet still appears the moment it tops the
+  // stealth address up, and the later withdrawal republishes this
+  // deposit's commitment either way.
 }`,
   },
   {
@@ -363,7 +409,10 @@ const metaAddress = createMetaAddress(keys);
 if (isMetaAddress(destination)) {
   const stealth = deriveStealthForRecipient(destination);
   finalDestination = stealth.address;
-  // Both sender + receiver hidden on-chain
+  // The RECEIVER is hidden: the payee on-chain is a fresh one-time
+  // address that nothing links back to the meta-address.
+  // The SENDER is not. The transfer is signed and fee-paid by the
+  // sender's own wallet, so the sender and the amount are both public.
 }`,
   },
   {
@@ -396,7 +445,13 @@ const route = await startPrivateRoute({
 });
 // → 14 hops over ~2 days
 // → Shield → Unshield → Reshield → ... → Final delivery
-// → Each hop uses a different stealth address`,
+// → Each hop uses a different stealth address
+//
+// What the hops buy today is time and address churn, NOT an unlinkable
+// path: every unshield republishes the commitment of the deposit it
+// spends, so each hop can be matched to the one before it by commitment
+// alone. The chain of hops is walkable until the C7 spend circuit
+// removes that republication.`,
   },
   {
     id: "ai-agent",
@@ -792,7 +847,28 @@ function ArchitectureTopic({ t }: { t: (k: string) => string }) {
 }
 
 function SecurityTopic({ t }: { t: (k: string) => string }) {
-  const threats = ['threatObservers', 'threatAmounts', 'threatPatterns', 'threatBalance'];
+  // 'threatObservers', 'threatPatterns' and 'threatBalance' removed 2026-08-04.
+  //
+  // They published, as the security model, three absolutes the protocol is
+  // measured NOT to deliver today:
+  //   · "Blockchain observers cannot link senders and recipients" — a pool
+  //     withdrawal republishes the note commitment its deposit published, so the
+  //     two are publicly matchable. Confirmed on devnet: leaf 16, commitment
+  //     8901821612542787864, present in both the deposit and the withdrawal
+  //     transaction. The anonymity set is 1 until the C7 spend circuit ships
+  //     (docs/C7_SPEND_CIRCUIT_PLAN.md). On the stealth path the sender is not
+  //     hidden at all — the wallet signs and pays the transfer.
+  //   · "Spending patterns cannot be analyzed" and "Balance tracking is
+  //     impossible for third parties" — both follow from the same link. With
+  //     deposits and withdrawals matchable and pool denominations public, a
+  //     third party can reconstruct exactly that.
+  //
+  // Same treatment as 'guaranteeMpc' below: the claim is deleted from what the
+  // page renders rather than softened, because the honest replacement wording
+  // has to be added to i18n/en.ts + fr.ts + ja.ts (which this pass does not own)
+  // and shipping a vaguer version of a false claim is still shipping it.
+  // Reinstate only alongside a measured anonymity set greater than 1.
+  const threats = ['threatAmounts'];
   // 'guaranteeMpc' removed 2026-07-27: it published "MPC threshold: 1-of-N honest
   // node via Arcium Cerberus protocol" as a SECURITY GUARANTEE. Arcium was removed
   // from Protocol 01 (privacy-sdk 1.0.2 dropped the mpc module), so nothing
