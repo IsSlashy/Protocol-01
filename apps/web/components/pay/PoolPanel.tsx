@@ -454,6 +454,34 @@ export default function PoolPanel({
     // minmax(0,...) tracks keep long mono strings from ever forcing a
     // horizontal scroll; overflow inside a row truncates instead.
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)] lg:items-start">
+      {/* Progress spans BOTH columns while an operation runs. During those
+          minutes the user does nothing else, so the screen is honestly in one
+          state and the one thing that moves gets the full width: room for the
+          step list, and visible whichever column the click came from. Both
+          flows report through the same worker `step` string; only one runs at
+          a time, so each bar keys off its own running flag. The wrappers are
+          conditional so an idle bar leaves no empty grid cell behind. */}
+      {shielding && (
+        <div className="min-w-0 lg:col-span-2">
+          <FlowProgress
+            phases={SHIELD_PHASES}
+            step={step}
+            running={shielding}
+            note={`About ${shieldCost} SOL is committed while this runs. Most of it is a refundable deposit, returned at the end.`}
+          />
+        </div>
+      )}
+      {busyNote && (
+        <div className="min-w-0 lg:col-span-2">
+          <FlowProgress
+            phases={WITHDRAW_PHASES}
+            step={step}
+            running={!!busyNote}
+            note="About 1 SOL sits in a refundable deposit while this runs and comes back when it finishes."
+          />
+        </div>
+      )}
+
       {/* ── Action column: what you came here to do ───────────────────────── */}
       <div className="min-w-0 space-y-5">
         {/* Denomination */}
@@ -531,24 +559,6 @@ export default function PoolPanel({
         {shieldReason && !shielding && (
           <p className="text-center text-xs text-p01-text-dim">{shieldReason}</p>
         )}
-
-        {/* Both flows report through the same worker `step` string; only one
-            runs at a time, so each bar keys off its own running flag and
-            renders null otherwise. The bar receives the step verbatim and does
-            the mapping. Both live in this wider column on purpose: FlowProgress
-            lists the steps ahead and needs the room. */}
-        <FlowProgress
-          phases={SHIELD_PHASES}
-          step={step}
-          running={shielding}
-          note={`About ${shieldCost} SOL is committed while this runs. Most of it is a refundable deposit, returned at the end.`}
-        />
-        <FlowProgress
-          phases={WITHDRAW_PHASES}
-          step={step}
-          running={!!busyNote}
-          note="About 1 SOL sits in a refundable deposit while this runs and comes back when it finishes."
-        />
 
         {result && !shielding && (
           <div className="space-y-2">
