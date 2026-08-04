@@ -546,7 +546,7 @@ function buildResumeNormalIx(
 
 /**
  * Build claim_period instruction.
- * Mirrors mobile buildClaimPeriodIx.
+ * Mirrors mobile `buildClaimPeriodIx`.
  *
  * PERMISSIONLESS since the no-cancel lot: `retailer` is NOT a signer. The
  * program pins it to `vault.retailer` with a `==` constraint and the vault PDA
@@ -557,6 +557,25 @@ function buildResumeNormalIx(
  * rescue, the ones whose retailer key is gone.
  *
  * `retailer` MUST be read off the vault, never assumed to be the local wallet.
+ *
+ * SIX accounts, not three. `ClaimPeriod<'info>` ends with token_program /
+ * vault_token_account / retailer_token_account, all `Option<..>`. This builder
+ * emitted only the first three until 2026-08-04, so every claim it produced died
+ * with AccountNotEnoughKeys (3005 / 0xbbd) inside Anchor's account resolver —
+ * before the handler ran, with an error naming neither the vault nor the money.
+ * Anchor 0.32 tolerates missing trailing optionals only under the
+ * `allow-missing-optionals` feature, which this program does not enable; an
+ * absent optional is the executing program's OWN id.
+ *
+ * MEASURED on devnet 2026-08-04 against the pre-landing program: the six-account
+ * form settled (tx `649EaoTP95ZS3oWhiKvWhvHHrGyoijhd5Zb5ZsyaTuejxxqMTNNPW34FS79qDvpSUVnb2uJAje7H4E4jaDcMwymY`,
+ * 7,343 CU) while the three-account form returned 3005 on the very same vault.
+ * `subscriptionVault.claimAccounts.test.ts` keeps the count tied to the Rust struct.
+ *
+ * Native SOL only, which is every vault the product creates. For an SPL vault use
+ * `buildClaimPeriodInstruction` from `@protocol-01/merchant-sdk`; with the
+ * sentinels an SPL vault fails in the handler with MissingTokenProgram, which
+ * names the real problem, instead of 3005.
  */
 function buildClaimPeriodIx(
   retailer: PublicKey,
@@ -570,6 +589,12 @@ function buildClaimPeriodIx(
     { pubkey: retailer, isSigner: false, isWritable: true },
     { pubkey: vaultPDA, isSigner: false, isWritable: true },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    // token_program: Option<Program<Token>> — absent
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    // vault_token_account: Option<Account<TokenAccount>> — absent
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
+    // retailer_token_account: Option<Account<TokenAccount>> — absent
+    { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
