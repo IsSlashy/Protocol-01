@@ -1,15 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { Connection, PublicKey, Transaction } from "@solana/web3.js";
-import { Coins, Download, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { PublicKey } from "@solana/web3.js";
+import type { Connection, Transaction } from "@solana/web3.js";
+import { Coins, Download, Loader2, RefreshCw, TriangleAlert, Wallet } from "lucide-react";
 import {
+  buildPoolPayoutMessage,
+  derivePoolPayoutKeypair,
+  derivePoolPayoutRoot,
   loadEncryptedNotes,
+  loadPayouts,
+  recordPayout,
   scanPool,
   shieldToPool,
   recoverStuckFunds,
   storeEncryptedNote,
+  sweepPayout,
   unshieldFromPool,
+  type PayoutRecord,
   type ShieldOutcome,
 } from "@/lib/privacy/shieldClient";
 import type { PoolNoteView, PoolSizeView } from "@/lib/privacy/worker/poolHandlers";
@@ -26,11 +35,17 @@ function denominationsFor(token: PoolToken): number[] {
   return getPoolsForTokenV3(token).map((p) => p.denomination).sort((a, b) => a - b);
 }
 
+/** A payout address the user can still move funds out of. */
+interface PayoutView extends PayoutRecord {
+  lamports: number;
+}
+
 export default function PoolPanel({
   meta,
   owner,
   connection,
   signOne,
+  signMessage: signMessageProp,
   token,
 }: {
   token: PoolToken;
@@ -38,6 +53,15 @@ export default function PoolPanel({
   owner: PublicKey;
   connection: Connection;
   signOne: ((tx: Transaction) => Promise<Transaction>) | null;
+  /**
+   * Message signer for the payout-address root. Optional: the connected browser
+   * wallet is picked up from the adapter when this is absent. It exists so the
+   * QR-paired P01 keypair path — which has no wallet-adapter session, and whose
+   * local nacl signer lives in `PayApp` — can supply one instead of losing the
+   * ability to withdraw. Until it does, withdrawal is disabled on that path
+   * rather than silently falling back to naming the wallet.
+   */
+  signMessage?: ((message: Uint8Array) => Promise<Uint8Array>) | null;
 }) {
   const denominations = denominationsFor(token);
   const [denomination, setDenomination] = useState(denominations[0]!);
@@ -53,9 +77,35 @@ export default function PoolPanel({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ShieldOutcome | null>(null);
   const [busyNote, setBusyNote] = useState<string | null>(null);
-  const [withdrawn, setWithdrawn] = useState<{ txSig: string; denomination: number } | null>(null);
+  const [withdrawn, setWithdrawn] = useState<
+    { txSig: string; denomination: number; payout: string } | null
+  >(null);
   const [recovering, setRecovering] = useState(false);
   const [recovered, setRecovered] = useState<string | null>(null);
+
+  // ── Payout addresses ─────────────────────────────────────────────────────
+  // The root is held in component state and nowhere else: never localStorage,
+  // never the worker. It is re-derivable from the wallet at any time, so losing
+  // it on reload costs one signature, not funds.
+  const { publicKey: adapterPubkey, signMessage: adapterSignMessage } = useWallet();
+  const signMessage =
+    signMessageProp ??
+    (adapterPubkey && adapterPubkey.equals(owner) ? adapterSignMessage ?? null : null);
+  const [payoutRoot, setPayoutRoot] = useState<Uint8Array | null>(null);
+  const [payouts, setPayouts] = useState<PayoutView[]>([]);
+  const [sweeping, setSweeping] = useState<string | null>(null);
+  const [sweepTo, setSweepTo] = useState("");
+  const [sweepError, setSweepError] = useState<string | null>(null);
+  const [swept, setSwept] = useState<string | null>(null);
+
+  // Drop the root whenever the wallet changes — a payout key belongs to exactly
+  // one wallet, and keeping a stale root across a switch would show one wallet
+  // the other's addresses.
+  const ownerKey = owner.toBase58();
+  useEffect(() => {
+    setPayoutRoot(null);
+    setPayouts([]);
+  }, [ownerKey]);
 
   const rescan = useCallback(async () => {
     setScanning(true);
@@ -76,6 +126,118 @@ export default function PoolPanel({
   useEffect(() => {
     void rescan();
   }, [rescan]);
+
+  /**
+   * Unlock this wallet's payout addresses: one message signature, cached for the
+   * session. Throws (rather than falling back to the wallet as recipient) when
+   * no message signer is available — see the `signMessage` prop.
+   */
+  const requirePayoutRoot = useCallback(async (): Promise<Uint8Array> => {
+    if (payoutRoot) return payoutRoot;
+    if (!signMessage) {
+      throw new Error(
+        "This wallet cannot sign messages here, so a recoverable payout address cannot be " +
+          "derived. Connect the browser wallet that owns these notes and try again.",
+      );
+    }
+    const message = buildPoolPayoutMessage({
+      walletPubkey: ownerKey,
+      origin: typeof window !== "undefined" ? window.location.origin : "",
+    });
+    // Signed once per session. This wallet's Ed25519 determinism was already
+    // proven before this panel could render: PayApp signs the identity message
+    // twice and refuses the whole session if the two differ (PayApp.tsx:186-196).
+    // Determinism is a property of the signer, not of the message, so it carries.
+    const sig = await signMessage(new TextEncoder().encode(message));
+    const root = derivePoolPayoutRoot(sig);
+    sig.fill(0);
+    setPayoutRoot(root);
+    return root;
+  }, [payoutRoot, signMessage, ownerKey]);
+
+  /**
+   * List every payout address that still holds something.
+   *
+   * Two independent sources, unioned on purpose. The local records survive an
+   * RPC that has pruned the pool's history; re-deriving from the scanned notes
+   * survives a cleared browser. Either one alone would hide funds in the case
+   * the other covers.
+   */
+  const refreshPayouts = useCallback(
+    async (root: Uint8Array) => {
+      const byAddress = new Map<string, PayoutRecord>();
+      for (const rec of loadPayouts(ownerKey)) byAddress.set(rec.address, rec);
+      for (const n of notes) {
+        const address = derivePoolPayoutKeypair(root, n.pool, n.leafIndex).publicKey.toBase58();
+        if (!byAddress.has(address)) {
+          byAddress.set(address, {
+            pool: n.pool,
+            leafIndex: n.leafIndex,
+            address,
+            txSig: "",
+            denomination: n.denomination,
+          });
+        }
+      }
+      const recs = [...byAddress.values()];
+      if (recs.length === 0) {
+        setPayouts([]);
+        return;
+      }
+      const infos = await connection.getMultipleAccountsInfo(
+        recs.map((r) => new PublicKey(r.address)),
+      );
+      setPayouts(
+        recs
+          .map((r, i) => ({ ...r, lamports: infos[i]?.lamports ?? 0 }))
+          .filter((r) => r.lamports > 0),
+      );
+    },
+    [connection, notes, ownerKey],
+  );
+
+  async function handleShowPayouts() {
+    setSweepError(null);
+    try {
+      await refreshPayouts(await requirePayoutRoot());
+    } catch (e) {
+      setSweepError((e as Error).message || "Could not read your payout addresses.");
+    }
+  }
+
+  async function handleSweep(p: PayoutView) {
+    setSweepError(null);
+    setSwept(null);
+    const destination = sweepTo.trim();
+    if (!destination) {
+      setSweepError("Enter the address that should receive these funds.");
+      return;
+    }
+    let to: PublicKey;
+    try {
+      to = new PublicKey(destination);
+    } catch {
+      setSweepError("That is not a valid Solana address.");
+      return;
+    }
+    setSweeping(p.address);
+    try {
+      const root = await requirePayoutRoot();
+      const payout = derivePoolPayoutKeypair(root, p.pool, p.leafIndex);
+      // Belt and braces: a mismatch here would mean the derivation drifted and
+      // the transaction would be signed by a key that owns nothing.
+      if (payout.publicKey.toBase58() !== p.address) {
+        throw new Error("Payout key mismatch — rescan before sweeping.");
+      }
+      const { txSig, lamports } = await sweepPayout({ connection, payout, destination: to });
+      setSwept(`Swept ${(lamports / 1e9).toFixed(4)} SOL — ${truncate(txSig, 8, 6)}`);
+      await refreshPayouts(root);
+    } catch (e) {
+      setSweepError((e as Error).message || "Sweep failed.");
+    } finally {
+      setSweeping(null);
+    }
+  }
 
   async function handleShield() {
     if (!signOne) {
@@ -115,6 +277,14 @@ export default function PoolPanel({
     setResult(null);
     setBusyNote(`${note.pool}:${note.leafIndex}`);
     try {
+      // The payout address, NOT `owner`. Passing the connected wallet here is
+      // what put it in the withdrawal transaction by name until 2026-08-04;
+      // `executeUnshield` now refuses that outright, so this is the only shape
+      // that works. The address is derived from a wallet signature, so it is
+      // recoverable on any device — see `shieldClient.derivePoolPayoutKeypair`.
+      const root = await requirePayoutRoot();
+      const payout = derivePoolPayoutKeypair(root, note.pool, note.leafIndex);
+
       // The worker picks the blob whose commitment matches and uses its Merkle
       // path; anything that does not decrypt or match is ignored there.
       const out = await unshieldFromPool({
@@ -122,14 +292,22 @@ export default function PoolPanel({
         token: "SOL",
         denomination: note.denomination,
         leafIndex: note.leafIndex,
-        recipient: owner,
+        recipient: payout.publicKey,
         owner,
         encryptedNotes: loadEncryptedNotes(owner.toBase58()),
         connection,
         signOne,
         onProgress: setStep,
       });
-      setWithdrawn(out);
+      recordPayout(ownerKey, {
+        pool: note.pool,
+        leafIndex: note.leafIndex,
+        address: payout.publicKey.toBase58(),
+        txSig: out.txSig,
+        denomination: out.denomination,
+      });
+      setWithdrawn({ ...out, payout: payout.publicKey.toBase58() });
+      void refreshPayouts(root);
       void rescan();
     } catch (e) {
       setError((e as Error).message || "Withdrawal failed.");
@@ -254,14 +432,35 @@ export default function PoolPanel({
              now backed by a fresh pair rather than the 2026-07-25 tx: leaf 16,
              commitment 8901821612542787864, published in the clear by BOTH the
              deposit RcsL4pYy… (LeafInserted) and the withdrawal 4Uwqht…
-             (stark_commitment at instruction bytes 80..88). */}
+             (stark_commitment at instruction bytes 80..88).
+
+          2026-08-04, second pass — the payout clause changed because the code
+          changed. `handleUnshield` above now passes a derived payout address,
+          not `owner`, and `unshieldEphemeral.executeUnshield` refuses the
+          pre-funder outright. What did NOT change, and is stated as plainly as
+          the old leak was: `shieldClient.unshieldFromPool` still builds
+          `owner -> E` and has the wallet sign it, so the wallet is still on
+          chain next to this withdrawal. A fresh payee is not unlinkability.
+
+          The relayer clause also got sharper rather than being deleted. Routing
+          only the final unshield transaction through the relayer would not close
+          the IP channel. A withdrawal first uploads C1 and C3 in 1000-byte
+          chunks (`stark.ts:43`, `stark.ts:517-529`), one direct
+          `sendRawTransaction` each, all signed by the same ephemeral E
+          (`denominatedPool.ts:1689,1701` pass the same `signer`), into buffers
+          whose PDA is seeded on E's own pubkey (`stark.ts:92-100`) — and the
+          final transaction names those buffers. So the RPC has already seen this
+          browser create everything the relayed transaction would refer to. The
+          sentence below therefore says "every transaction", which is what is
+          true; do not soften it to "some". */}
       <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
         <p className="font-medium">Devnet. Here is exactly what this hides.</p>
         <div className="mt-1.5 space-y-2 text-p01-red/90">
           <p>
-            The deposit is signed by a one-time key, not your wallet, so your wallet is not named
-            in the deposit transaction. Your wallet does publicly fund that key first, and the
-            withdrawal pays out to your wallet by name.
+            Neither the deposit nor the withdrawal names your wallet: the deposit is signed by a
+            one-time key, and the withdrawal now pays a fresh address derived for that one note.
+            But your wallet publicly funds the one-time key in both cases, in a transaction it
+            signs itself — so your wallet is still on chain, one hop away, at the same moment.
           </p>
           <p>
             The withdrawal publishes the note commitment in the clear, and the deposit published
@@ -269,13 +468,14 @@ export default function PoolPanel({
             set is one, not the note count above.
           </p>
           <p>
-            /pay submits every transaction directly: there is no relayer here, so your IP reaches
-            the RPC. (On mobile a relayer does submit, but it only hides the IP — the pool
-            instruction is still signed by the user&apos;s own key.)
+            /pay submits every transaction directly, including the hundreds of proof-chunk uploads
+            a withdrawal needs, so your IP reaches the RPC throughout. There is no relayer here,
+            and relaying only the last transaction would not change that.
           </p>
           <p>
-            What you get today: the amount is quantised to a denomination, and the note itself is
-            post-quantum encrypted. That is the whole list.
+            What you get today: the amount is quantised to a denomination, the note itself is
+            post-quantum encrypted, and the money does not land in your wallet unless you move it
+            there. That is the whole list.
           </p>
         </div>
       </div>
@@ -285,7 +485,8 @@ export default function PoolPanel({
       <p className="text-xs text-p01-text-muted">
         A shield needs about {(denomination * 1.003 + 1.006).toFixed(3)} SOL for a few minutes —
         the denomination, a 0.3% protocol fee, and ~1 SOL of proof-buffer rent that is returned
-        when the buffer closes. Withdrawal charges 0.5%.
+        when the buffer closes. Withdrawal charges 0.5%, and moving the payout off its one-time
+        address afterwards costs one more transaction fee (0.000005 SOL).
       </p>
 
       {error && (
@@ -319,8 +520,10 @@ export default function PoolPanel({
             Withdrew {withdrawn.denomination} SOL
           </p>
           <p className="mt-1 text-xs text-p01-text-muted">
-            Sent to your connected wallet. This withdrawal is publicly matchable to the deposit it
-            spends (the commitment appears in both), so treat it as a transparent transfer.
+            Paid to {truncate(withdrawn.payout, 6, 6)}, an address derived for this note alone.
+            Only your wallet&apos;s signature reaches it — sweep it below, whenever and wherever
+            you want. This withdrawal is still publicly matchable to the deposit it spends (the
+            commitment appears in both), so treat it as a transparent transfer.
           </p>
           <a
             href={`https://explorer.solana.com/tx/${withdrawn.txSig}?cluster=devnet`}
@@ -386,7 +589,7 @@ export default function PoolPanel({
                 </div>
                 <button
                   onClick={() => handleUnshield(n)}
-                  disabled={!!busyNote || shielding || !signOne}
+                  disabled={!!busyNote || shielding || !signOne || !signMessage}
                   className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
                 >
                   {busyNote === `${n.pool}:${n.leafIndex}` ? (
@@ -399,8 +602,99 @@ export default function PoolPanel({
               </li>
             ))}
           </ul>
+          {!signMessage && (
+            <p className="mt-2 text-xs text-p01-red">
+              Withdrawal is disabled: this session has no message signer, so the one-time payout
+              address a withdrawal pays into could not be re-derived later. Connect the browser
+              wallet that owns these notes. Paying your wallet directly instead is not offered —
+              that is the leak this replaced.
+            </p>
+          )}
         </div>
       )}
+
+      {/* Payout addresses.
+          Deliberately its own section rather than a line on the withdrawal
+          receipt: the funds sit here until the user moves them, and a balance
+          the user cannot see is a balance they have lost. Two independent ways
+          to find these addresses are unioned in `refreshPayouts` — the local
+          record and re-derivation from the note list — so neither a cleared
+          browser nor a pruning RPC hides one. */}
+      <div>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="font-display text-sm text-p01-text">Withdrawn, waiting to be moved</p>
+          <button
+            onClick={handleShowPayouts}
+            disabled={!!sweeping || !!busyNote}
+            className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Check
+          </button>
+        </div>
+        <p className="mb-2 text-xs text-p01-text-muted">
+          Each withdrawal pays a fresh address derived from your wallet signature — not your
+          wallet. Nothing moves it automatically. Sending it to the wallet that funded the
+          withdrawal is the one destination that links the two together again on chain.
+        </p>
+
+        {payouts.length === 0 ? (
+          <p className="text-xs text-p01-text-dim">
+            Nothing waiting. Press Check after a withdrawal, or on a new device, to re-derive your
+            payout addresses and read their balances.
+          </p>
+        ) : (
+          <>
+            <div className="mb-2 flex gap-2">
+              <input
+                value={sweepTo}
+                onChange={(e) => setSweepTo(e.target.value)}
+                placeholder="Destination address"
+                spellCheck={false}
+                className="min-w-0 flex-1 rounded-lg border border-p01-border bg-p01-void px-3 py-2 font-mono text-xs text-p01-text placeholder:text-p01-text-dim"
+              />
+              <button
+                onClick={() => setSweepTo(ownerKey)}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-p01-border px-3 py-2 text-xs text-p01-text-muted hover:text-p01-text"
+                title="Links this payout back to your wallet on chain"
+              >
+                <Wallet className="h-3.5 w-3.5" /> My wallet
+              </button>
+            </div>
+            <ul className="space-y-2">
+              {payouts.map((p) => (
+                <li
+                  key={p.address}
+                  className="card flex items-center justify-between gap-3 p-3"
+                >
+                  <div className="min-w-0">
+                    <p className="font-mono text-sm text-p01-text">
+                      {Number((p.lamports / 1e9).toFixed(6))} SOL
+                    </p>
+                    <p className="truncate font-mono text-xs text-p01-text-muted">
+                      leaf #{p.leafIndex} · {truncate(p.address, 6, 6)}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleSweep(p)}
+                    disabled={!!sweeping || !!busyNote || shielding}
+                    className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
+                  >
+                    {sweeping === p.address ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
+                    Sweep
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {swept && <p className="mt-2 text-xs text-p01-cyan">{swept}</p>}
+        {sweepError && <p className="mt-2 text-xs text-p01-red">{sweepError}</p>}
+      </div>
     </div>
   );
 }

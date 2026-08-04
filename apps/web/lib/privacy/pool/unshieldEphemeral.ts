@@ -41,6 +41,15 @@
  *
  * Until that lands, this path buys amount quantisation and a post-quantum note,
  * NOT unlinkability. Do not describe it as unlinkable anywhere.
+ *
+ * THE RECIPIENT IS NOT ALLOWED TO BE THE PRE-FUNDER
+ * ─────────────────────────────────────────────────
+ * `executeUnshield` refuses `recipient === ownerPubkey`. The reasoning is at the
+ * check itself; the short version is that the wallet already appears on-chain
+ * funding this ephemeral, and paying the note back to it puts the wallet in the
+ * withdrawal too. That refusal removes the payee leak and NOTHING else — the
+ * `owner -> E` pre-fund transfer is untouched and still ties the wallet to this
+ * withdrawal. Do not read a fresh payout address as unlinkability.
  */
 
 import {
@@ -198,6 +207,32 @@ export async function executeUnshield(
   };
 
   try {
+    // THE PRE-FUNDER MAY NOT ALSO BE THE PAYEE.
+    //
+    // `ownerPubkey` is by construction the wallet that pre-funded this
+    // ephemeral: `shieldClient.unshieldFromPool` builds `owner -> E` and has the
+    // wallet sign it, then passes the same `owner` here as the sweep target. So
+    // that transfer already names the wallet on-chain. Paying the withdrawal
+    // back to it puts the wallet in the withdrawal transaction as well, and the
+    // note's whole value lands in it — which is what /pay shipped until
+    // 2026-08-04 (`PoolPanel.tsx:125` passed `owner` as `recipient`).
+    //
+    // Refusing is deliberately absolute rather than a warning: this is the exact
+    // line that regressed once, it is one word to get wrong, and every caller
+    // has a derived payout address available (`shieldClient.derivePoolPayoutKeypair`).
+    // A third-party recipient is still allowed — only the pre-funder is refused.
+    //
+    // It lives INSIDE the try for the same reason the underfunded check below
+    // does: the pre-fund has ALREADY landed by the time this function runs, so
+    // throwing before the `finally` would strand ~1 SOL of it on the ephemeral.
+    if (recipient.equals(ownerPubkey)) {
+      throw new Error(
+        'Refusing to withdraw to the wallet that funded this withdrawal — that names it ' +
+          'on-chain as the pool payee. Pass a derived payout address as the recipient and ' +
+          'move the funds on separately.',
+      );
+    }
+
     // The underfunded check lives INSIDE the try deliberately — see the same
     // reasoning in shieldEphemeral.ts. Throwing before the try skips the
     // `finally` sweep below, so a merely-lagging RPC read (pre-fund confirmed
