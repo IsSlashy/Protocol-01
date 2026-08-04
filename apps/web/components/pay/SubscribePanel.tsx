@@ -273,6 +273,17 @@ export default function SubscribePanel({
         // A missing or unreadable blob store is not an error worth showing:
         // the authoritative scan runs next regardless.
       }
+
+      // Ask the chain which of these are already spent. The full pool walk would
+      // answer eventually and does not finish in any time a user waits, while
+      // this is one getAccountInfo per locally known note, so a note spent in an
+      // earlier session or on another device drops out within seconds. It only
+      // ever confirms spent, never un-spends, so a failed read leaves the note
+      // exactly where it was. Fire and forget: the filter below does the rest.
+      void shieldClient
+        .resolveSpentNotes(meta, owner.toBase58())
+        .then(() => setSpentHere(shieldClient.knownSpentNoteKeys(owner.toBase58())))
+        .catch(() => {});
       const res = await shieldClient.scanPool(meta, 'SOL', setScanStep);
       setNotes(res.notes);
     } catch (e) {

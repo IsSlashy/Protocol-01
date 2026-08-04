@@ -47,6 +47,10 @@ vi.mock("@/lib/privacy/shieldClient", () => ({
   // from a scan, not about the local spent record. A test that wants that
   // behaviour should override this rather than rely on the default.
   knownSpentNoteKeys: () => new Set<string>(),
+  // The chain resolution is fire-and-forget in the component. Resolving to
+  // nothing keeps these tests about what the form offers from a scan, which is
+  // what they were written for.
+  resolveSpentNotes: async () => undefined,
 }));
 
 const sealNoteFor = vi.fn();

@@ -76,6 +76,7 @@ import type { PoolNoteView } from "@/lib/privacy/worker/poolHandlers";
 import {
   loadEncryptedNotes,
   knownSpentNoteKeys,
+  resolveSpentNotes,
   scanPool,
   scanPoolLocal,
 } from "@/lib/privacy/shieldClient";
@@ -232,6 +233,19 @@ export default function SendForm({
         // A missing or unreadable blob store is not an error worth showing:
         // the authoritative scan runs next regardless.
       }
+
+      // Ask the chain which of these are already spent. The full pool walk would
+      // answer eventually and does not finish in any time a user waits, while
+      // this is one getAccountInfo per locally known note, so a note spent in an
+      // earlier session or on another device drops out within seconds. It only
+      // ever confirms spent, never un-spends, so a failed read leaves the note
+      // exactly where it was. Fire and forget: the filter below does the rest.
+      if (owner) {
+        const ownerKey = owner.toBase58();
+        void resolveSpentNotes(meta, ownerKey)
+          .then(() => setSpentHere(knownSpentNoteKeys(ownerKey)))
+          .catch(() => {});
+      }
       const res = await scanPool(meta, "SOL", setScanStep);
       setNotes(res.notes);
     } catch (e) {
@@ -249,10 +263,12 @@ export default function SendForm({
   // `spent` on a locally-painted note is a default, not a reading, so also drop
   // what this browser has already withdrawn. Handing over a spent note would
   // give the recipient something they can never claim.
-  const spentHere = useMemo(
-    () => (owner ? knownSpentNoteKeys(owner.toBase58()) : new Set<string>()),
-    [owner],
-  );
+  // State, not a memo: the chain resolution below adds to it, and a memo keyed
+  // on `owner` would not recompute after that write.
+  const [spentHere, setSpentHere] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    setSpentHere(owner ? knownSpentNoteKeys(owner.toBase58()) : new Set<string>());
+  }, [owner]);
   const unspent = notes.filter((n) => !n.spent && !spentHere.has(noteKey(n)));
   const chosen = unspent.find((n) => noteKey(n) === selected) ?? null;
   const addressLooksRight = isP01NoteAddress(noteAddress);
