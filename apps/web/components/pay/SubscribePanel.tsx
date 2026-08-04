@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 /**
  * SubscribePanel: pick a vendor, pick a note, subscribe, show the key.
@@ -21,8 +21,8 @@
  * Simplifying the vocabulary never means softening either sentence.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Connection, PublicKey, Transaction } from "@solana/web3.js";
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import {
   BadgeCheck,
   Check,
@@ -33,12 +33,12 @@ import {
   ShieldAlert,
   Store,
   TriangleAlert,
-} from "lucide-react";
+} from 'lucide-react';
 
-import * as shieldClient from "@/lib/privacy/shieldClient";
-import { licenseServiceTag } from "@/lib/privacy/license";
-import type { PoolToken } from "@/lib/privacy/pool/denominatedPool";
-import type { PoolNoteView } from "@/lib/privacy/worker/poolHandlers";
+import * as shieldClient from '@/lib/privacy/shieldClient';
+import { licenseServiceTag } from '@/lib/privacy/license';
+import type { PoolToken } from '@/lib/privacy/pool/denominatedPool';
+import type { PoolNoteView } from '@/lib/privacy/worker/poolHandlers';
 import {
   NATIVE_SOL_SENTINEL_MINT,
   formatInterval,
@@ -46,11 +46,11 @@ import {
   loadServiceRegistry,
   type RegistrySnapshot,
   type ServiceEntry,
-} from "@/lib/privacy/serviceRegistry";
-import { SUBSCRIBE_PHASES } from "@/lib/pay/flowProgress";
-import FlowProgress from "./FlowProgress";
-import SuccessBurst from "./SuccessBurst";
-import { truncate } from "./util";
+} from '@/lib/privacy/serviceRegistry';
+import { SUBSCRIBE_PHASES } from '@/lib/pay/flowProgress';
+import FlowProgress from './FlowProgress';
+import SuccessBurst from './SuccessBurst';
+import { truncate } from './util';
 
 // ---------------------------------------------------------------------------
 // The contract with `subscribeFromPool`
@@ -97,13 +97,13 @@ const subscribeModule: Partial<SubscribeModule> = shieldClient;
 
 /** Atomic units per whole token, by pool. Mirrors `PoolConfig.decimals`. */
 function decimalsForPoolToken(token: PoolToken): number {
-  return token === "SOL" ? 9 : 6;
+  return token === 'SOL' ? 9 : 6;
 }
 
 /** A service is payable from this pool only if it prices in the same mint. */
 function pricedInPoolToken(service: ServiceEntry, token: PoolToken): boolean {
   const isNative = service.tokenMint.toBase58() === NATIVE_SOL_SENTINEL_MINT;
-  return token === "SOL" ? isNative : !isNative;
+  return token === 'SOL' ? isNative : !isNative;
 }
 
 /**
@@ -113,11 +113,7 @@ function pricedInPoolToken(service: ServiceEntry, token: PoolToken): boolean {
  * settles `floor(elapsed / interval_slots)` periods at `rate` each until the
  * balance cannot cover another one.
  */
-function periodsFunded(
-  denomination: number,
-  decimals: number,
-  priceAtomic: bigint,
-): bigint {
+function periodsFunded(denomination: number, decimals: number, priceAtomic: bigint): bigint {
   if (priceAtomic <= 0n) return 0n;
   const atomic = BigInt(Math.round(denomination * 10 ** decimals));
   return atomic / priceAtomic;
@@ -133,6 +129,49 @@ function StepBadge({ n }: { n: number }) {
     <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-p01-cyan/60 font-mono text-[11px] text-p01-cyan">
       {n}
     </span>
+  );
+}
+
+/**
+ * What subscribing costs. Everything in this box is a statement about the
+ * deployed program, cited, because every line of it is a surprise.
+ *
+ * Rendered twice on purpose: in the left column on wide screens so the terms
+ * sit beside the action, and after the action on narrow ones so the stack
+ * stays vendor, note, summary, button. The founder ruled redundancy over
+ * elegance for exactly this content, and the compact reminder above the
+ * button repeats the two hard sentences a third time at the moment of click.
+ */
+function CostDisclosure() {
+  return (
+    <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
+      <p className="font-medium">Devnet. The whole note is locked, and none of it comes back</p>
+      <ul className="mt-1.5 list-disc space-y-1 pl-4 text-p01-red/90">
+        <li>
+          <strong>Your entire note funds the subscription</strong>, not just rate times the number
+          of periods you want. A 10 SOL note buys a 10 SOL subscription.{' '}
+          <span className="font-mono text-p01-red/70">
+            subscribe_private_stark.rs:185 sets amount = pool.denomination.
+          </span>
+        </li>
+        <li>
+          <strong>There is no cancel and no refund.</strong> Only the vendor collecting its periods
+          can close the vault, and the final collection sweeps everything left in it (leftover
+          balance, dust, and the vault&apos;s own rent) to the vendor.{' '}
+          <span className="font-mono text-p01-red/70">claim_period.rs:309-315.</span>
+        </li>
+        <li>
+          On top of the note, your wallet signs one deposit of roughly 1 SOL to hold space for the
+          two proofs. It comes back when they close, minus about 0.006 SOL of fees that does not.
+          Same deposit as a withdrawal: this operation needs the same two proofs.
+        </li>
+        <li>
+          The subscription hides your wallet only as well as the pool does, which today is not at
+          all: the note commitment is published in the clear by the deposit, so treat this spend as
+          matchable to it. The Pool tab&apos;s disclosure has the details.
+        </li>
+      </ul>
+    </div>
   );
 }
 
@@ -167,12 +206,12 @@ export default function SubscribePanel({
         // "we could not read the registry" are different sentences and the user
         // is entitled to the true one.
         setRegistry(null);
-        setRegistryError((e as Error).message || "Could not read the service registry.");
+        setRegistryError((e as Error).message || 'Could not read the service registry.');
       } finally {
         setRegistryLoading(false);
       }
     },
-    [connection],
+    [connection]
   );
 
   useEffect(() => {
@@ -208,10 +247,10 @@ export default function SubscribePanel({
         // A missing or unreadable blob store is not an error worth showing:
         // the authoritative scan runs next regardless.
       }
-      const res = await shieldClient.scanPool(meta, "SOL", setScanStep);
+      const res = await shieldClient.scanPool(meta, 'SOL', setScanStep);
       setNotes(res.notes);
     } catch (e) {
-      setScanError((e as Error).message || "Pool scan failed.");
+      setScanError((e as Error).message || 'Pool scan failed.');
     } finally {
       setScanning(false);
       setScanStep(null);
@@ -241,7 +280,7 @@ export default function SubscribePanel({
   }, [owner]);
   const unspent = useMemo(
     () => notes.filter((n) => !n.spent && !spentHere.has(noteKey(n))),
-    [notes, spentHere],
+    [notes, spentHere]
   );
   const services = registry?.services ?? [];
   const service = services.find((s) => s.pda.toBase58() === selectedPda) ?? null;
@@ -252,19 +291,19 @@ export default function SubscribePanel({
   const periods =
     service && note ? periodsFunded(note.denomination, decimals, service.priceAtomic) : null;
 
-  const usdcUnsupported = token !== "SOL";
+  const usdcUnsupported = token !== 'SOL';
   const blockedReason = usdcUnsupported
     ? `The note scanner only lists SOL pool notes today, so a ${token} subscription cannot be funded from this panel.`
     : !signOne
-      ? "This wallet cannot sign transactions."
+      ? 'This wallet cannot sign transactions.'
       : !service
-        ? "Choose a vendor first."
+        ? 'Choose a vendor first.'
         : tokenMismatch
           ? `${service.name} prices in a different token than the ${token} pool, so a ${token} note cannot fund it.`
           : !note
-            ? "Now choose a note to lock."
+            ? 'Now choose a note to lock.'
             : periods !== null && periods === 0n
-              ? "This note is smaller than one billing period, so it would fund nothing."
+              ? 'This note is smaller than one billing period, so it would fund nothing.'
               : null;
 
   async function handleSubscribe() {
@@ -272,8 +311,8 @@ export default function SubscribePanel({
     const call = subscribeModule.subscribeFromPool;
     if (!call) {
       setError(
-        "subscribeFromPool has not been wired into lib/privacy/shieldClient.ts yet, so nothing " +
-          "was sent. No funds moved.",
+        'subscribeFromPool has not been wired into lib/privacy/shieldClient.ts yet, so nothing ' +
+          'was sent. No funds moved.'
       );
       return;
     }
@@ -310,7 +349,7 @@ export default function SubscribePanel({
       setSpentHere((prev) => new Set(prev).add(noteKey(note)));
       void rescan();
     } catch (e) {
-      setError((e as Error).message || "Subscription failed.");
+      setError((e as Error).message || 'Subscription failed.');
     } finally {
       setSubmitting(false);
       setStep(null);
@@ -335,345 +374,359 @@ export default function SubscribePanel({
   const busy = submitting;
 
   return (
-    <div className="space-y-5">
-      {/* Step 1: vendor */}
-      <div className="card p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <StepBadge n={1} />
-            <Store className="h-4 w-4 text-p01-cyan" />
-            <p className="font-display text-sm text-p01-text">Choose a vendor</p>
+    // Two columns from lg so the choice and its consequence sit side by side
+    // and the action stays above the fold on a 1080p screen. One column below
+    // lg: vendor, then note, then summary, then the button. Never a horizontal
+    // scrollbar at any width.
+    <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+      {/* Left column on lg: pick the vendor, full terms underneath. */}
+      <div className="space-y-5">
+        {/* Step 1: vendor */}
+        <div className="card p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <StepBadge n={1} />
+              <Store className="h-4 w-4 text-p01-cyan" />
+              <p className="font-display text-sm text-p01-text">Choose a vendor</p>
+            </div>
+            <button
+              onClick={() => void loadVendors(true)}
+              disabled={registryLoading || submitting}
+              className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
+            >
+              <RefreshCw className={registryLoading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
+              {registryLoading ? 'Reading…' : 'Refresh'}
+            </button>
           </div>
-          <button
-            onClick={() => void loadVendors(true)}
-            disabled={registryLoading || submitting}
-            className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
-          >
-            <RefreshCw className={registryLoading ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-            {registryLoading ? "Reading…" : "Refresh"}
-          </button>
+
+          {registryError && (
+            <div className="mt-3 rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
+              <p className="font-medium">Could not read the vendor registry</p>
+              <p className="mt-1 text-p01-red/90">{registryError}</p>
+              <p className="mt-1 text-p01-red/90">
+                This is a failed read, not an empty roster. Vendors are registered on chain and this
+                client could not see them.
+              </p>
+            </div>
+          )}
+
+          {!registryError && registry && registry.matchedAccounts === 0 && (
+            <p className="mt-3 text-xs text-p01-text-muted">
+              The registry program answered and holds no service accounts on this endpoint. Six
+              vendors are registered on devnet, so this usually means the RPC is pointed elsewhere.
+            </p>
+          )}
+
+          {!registryError && registry && registry.decodeFailures > 0 && (
+            <p className="mt-3 text-xs text-p01-yellow">
+              {registry.decodeFailures} of {registry.matchedAccounts} registry entries could not be
+              decoded and are not listed. The on-chain layout may have changed.
+            </p>
+          )}
+
+          {registryLoading && !registry && (
+            <p className="mt-3 text-xs text-p01-text-dim">Reading the registry…</p>
+          )}
+
+          {services.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {services.map((s) => {
+                const payable = pricedInPoolToken(s, token);
+                const active = s.pda.toBase58() === selectedPda;
+                return (
+                  <li key={s.pda.toBase58()}>
+                    <button
+                      onClick={() => setSelectedPda(s.pda.toBase58())}
+                      disabled={submitting || !payable}
+                      className={
+                        active
+                          ? 'flex w-full items-center justify-between gap-3 rounded-lg border border-p01-cyan bg-p01-cyan/10 p-3 text-left'
+                          : 'flex w-full items-center justify-between gap-3 rounded-lg border border-p01-border bg-p01-void p-3 text-left hover:border-p01-border-hover disabled:opacity-50'
+                      }
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p
+                            className={
+                              active
+                                ? 'truncate font-display text-sm text-p01-cyan'
+                                : 'truncate font-display text-sm text-p01-text'
+                            }
+                          >
+                            {s.name}
+                          </p>
+                          {s.verified ? (
+                            <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-p01-cyan" />
+                          ) : (
+                            <span className="shrink-0 rounded border border-p01-yellow/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-p01-yellow">
+                              Unverified
+                            </span>
+                          )}
+                        </div>
+                        <p className="truncate text-xs text-p01-text-muted">
+                          {s.category || 'uncategorised'} · {s.slug}
+                        </p>
+                        {!payable && (
+                          <p className="mt-0.5 text-xs text-p01-text-dim">
+                            Priced in another token, so a {token} note cannot pay for it.
+                          </p>
+                        )}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="font-mono text-sm text-p01-text">{formatServicePrice(s)}</p>
+                        <p className="text-xs text-p01-text-muted">
+                          {formatInterval(s.intervalSlots)}
+                        </p>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
 
-        {registryError && (
-          <div className="mt-3 rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
-            <p className="font-medium">Could not read the vendor registry</p>
-            <p className="mt-1 text-p01-red/90">{registryError}</p>
-            <p className="mt-1 text-p01-red/90">
-              This is a failed read, not an empty roster. Vendors are registered on chain and this
-              client could not see them.
-            </p>
+        {/* The full terms live beside the action on lg. Below lg they render at
+          the end of the stack instead (the `lg:hidden` copy), so the order
+          stays vendor, note, summary, button. */}
+        <div className="hidden lg:block">
+          <CostDisclosure />
+        </div>
+      </div>
+
+      {/* Right column on lg: pick the note, see the consequence, act. */}
+      <div className="space-y-5">
+        {/* Step 2: note */}
+        <div className="card p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <StepBadge n={2} />
+              <KeyRound className="h-4 w-4 text-p01-cyan" />
+              <p className="font-display text-sm text-p01-text">Choose a note to lock</p>
+            </div>
+            <button
+              onClick={rescan}
+              disabled={scanning || submitting}
+              className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
+            >
+              <RefreshCw className={scanning ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
+              {scanning ? 'Scanning…' : 'Rescan'}
+            </button>
           </div>
-        )}
 
-        {!registryError && registry && registry.matchedAccounts === 0 && (
-          <p className="mt-3 text-xs text-p01-text-muted">
-            The registry program answered and holds no service accounts on this endpoint. Six
-            vendors are registered on devnet, so this usually means the RPC is pointed elsewhere.
-          </p>
-        )}
+          {scanStep && <p className="mt-2 text-xs text-p01-text-dim">{scanStep}</p>}
+          {scanError && <p className="mt-2 text-sm text-p01-red">{scanError}</p>}
 
-        {!registryError && registry && registry.decodeFailures > 0 && (
-          <p className="mt-3 text-xs text-p01-yellow">
-            {registry.decodeFailures} of {registry.matchedAccounts} registry entries could not be
-            decoded and are not listed. The on-chain layout may have changed.
-          </p>
-        )}
+          {usdcUnsupported && (
+            <p className="mt-2 text-xs text-p01-yellow">
+              Only SOL pool notes are listed. The scan path is typed to the SOL pools
+              (shieldClient.ts:191), so a {token} note cannot be found or spent from here yet.
+            </p>
+          )}
 
-        {registryLoading && !registry && (
-          <p className="mt-3 text-xs text-p01-text-dim">Reading the registry…</p>
-        )}
+          {!scanning && unspent.length === 0 && !scanError && (
+            <p className="mt-2 text-xs text-p01-text-muted">
+              No unspent notes. Shield one in the Pool tab first. The note you shield is the whole
+              budget of the subscription.
+            </p>
+          )}
 
-        {services.length > 0 && (
-          <ul className="mt-3 space-y-2">
-            {services.map((s) => {
-              const payable = pricedInPoolToken(s, token);
-              const active = s.pda.toBase58() === selectedPda;
-              return (
-                <li key={s.pda.toBase58()}>
-                  <button
-                    onClick={() => setSelectedPda(s.pda.toBase58())}
-                    disabled={submitting || !payable}
-                    className={
-                      active
-                        ? "flex w-full items-center justify-between gap-3 rounded-lg border border-p01-cyan bg-p01-cyan/10 p-3 text-left"
-                        : "flex w-full items-center justify-between gap-3 rounded-lg border border-p01-border bg-p01-void p-3 text-left hover:border-p01-border-hover disabled:opacity-50"
-                    }
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
+          {unspent.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {unspent.map((n) => {
+                // Key on `k`, NOT on `n.counter`: local-storage notes all carry 0,
+                // so those keys collide and React may omit or duplicate rows,
+                // which is how a shielded note failed to appear in this selector.
+                const k = noteKey(n);
+                const active = k === selectedNote;
+                return (
+                  <li key={k}>
+                    <button
+                      onClick={() => setSelectedNote(k)}
+                      disabled={submitting}
+                      className={
+                        active
+                          ? 'flex w-full items-center justify-between gap-3 rounded-lg border border-p01-cyan bg-p01-cyan/10 p-3 text-left'
+                          : 'flex w-full items-center justify-between gap-3 rounded-lg border border-p01-border bg-p01-void p-3 text-left hover:border-p01-border-hover disabled:opacity-50'
+                      }
+                    >
+                      <div className="min-w-0">
                         <p
                           className={
                             active
-                              ? "truncate font-display text-sm text-p01-cyan"
-                              : "truncate font-display text-sm text-p01-text"
+                              ? 'font-mono text-sm text-p01-cyan'
+                              : 'font-mono text-sm text-p01-text'
                           }
                         >
-                          {s.name}
+                          {n.denomination} {n.token} note
                         </p>
-                        {s.verified ? (
-                          <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-p01-cyan" />
-                        ) : (
-                          <span className="shrink-0 rounded border border-p01-yellow/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-p01-yellow">
-                            Unverified
-                          </span>
-                        )}
+                        {/* Protocol detail stays available, in the second plane. */}
+                        <p className="truncate font-mono text-[11px] text-p01-text-dim">
+                          leaf #{n.leafIndex} · {truncate(n.commitment, 6, 4)}
+                        </p>
                       </div>
-                      <p className="truncate text-xs text-p01-text-muted">
-                        {s.category || "uncategorised"} · {s.slug}
-                      </p>
-                      {!payable && (
-                        <p className="mt-0.5 text-xs text-p01-text-dim">
-                          Priced in another token, so a {token} note cannot pay for it.
-                        </p>
-                      )}
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <p className="font-mono text-sm text-p01-text">{formatServicePrice(s)}</p>
-                      <p className="text-xs text-p01-text-muted">
-                        {formatInterval(s.intervalSlots)}
-                      </p>
-                    </div>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-
-      {/* Step 2: note */}
-      <div className="card p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <StepBadge n={2} />
-            <KeyRound className="h-4 w-4 text-p01-cyan" />
-            <p className="font-display text-sm text-p01-text">Choose a note to lock</p>
-          </div>
-          <button
-            onClick={rescan}
-            disabled={scanning || submitting}
-            className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
-          >
-            <RefreshCw className={scanning ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-            {scanning ? "Scanning…" : "Rescan"}
-          </button>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
 
-        {scanStep && <p className="mt-2 text-xs text-p01-text-dim">{scanStep}</p>}
-        {scanError && <p className="mt-2 text-sm text-p01-red">{scanError}</p>}
-
-        {usdcUnsupported && (
-          <p className="mt-2 text-xs text-p01-yellow">
-            Only SOL pool notes are listed. The scan path is typed to the SOL pools
-            (shieldClient.ts:191), so a {token} note cannot be found or spent from here yet.
-          </p>
-        )}
-
-        {!scanning && unspent.length === 0 && !scanError && (
-          <p className="mt-2 text-xs text-p01-text-muted">
-            No unspent notes. Shield one in the Pool tab first. The note you shield is the whole
-            budget of the subscription.
-          </p>
-        )}
-
-        {unspent.length > 0 && (
-          <ul className="mt-3 space-y-2">
-            {unspent.map((n) => {
-              // Key on `k`, NOT on `n.counter`: local-storage notes all carry 0,
-              // so those keys collide and React may omit or duplicate rows,
-              // which is how a shielded note failed to appear in this selector.
-              const k = noteKey(n);
-              const active = k === selectedNote;
-              return (
-                <li key={k}>
-                  <button
-                    onClick={() => setSelectedNote(k)}
-                    disabled={submitting}
-                    className={
-                      active
-                        ? "flex w-full items-center justify-between gap-3 rounded-lg border border-p01-cyan bg-p01-cyan/10 p-3 text-left"
-                        : "flex w-full items-center justify-between gap-3 rounded-lg border border-p01-border bg-p01-void p-3 text-left hover:border-p01-border-hover disabled:opacity-50"
-                    }
-                  >
-                    <div className="min-w-0">
-                      <p
-                        className={
-                          active
-                            ? "font-mono text-sm text-p01-cyan"
-                            : "font-mono text-sm text-p01-text"
-                        }
-                      >
-                        {n.denomination} {n.token} note
-                      </p>
-                      {/* Protocol detail stays available, in the second plane. */}
-                      <p className="truncate font-mono text-[11px] text-p01-text-dim">
-                        leaf #{n.leafIndex} · {truncate(n.commitment, 6, 4)}
-                      </p>
-                    </div>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-
-      {/* The plain sentence of the deal, once both halves are picked. */}
-      {service && note && !tokenMismatch && periods !== null && periods > 0n && (
-        <div className="rounded-lg border border-p01-cyan/40 bg-p01-cyan/5 p-3 text-sm text-p01-text">
-          You lock <span className="font-mono text-p01-cyan">{note.denomination} {note.token}</span>.{" "}
-          {service.name} charges{" "}
-          <span className="font-mono text-p01-cyan">{formatServicePrice(service)}</span>{" "}
-          {formatInterval(service.intervalSlots)}, so that pays for{" "}
-          <span className="font-mono text-p01-cyan">{periods.toString()}</span> billing period
-          {periods === 1n ? "" : "s"}. Then the subscription ends and anything left over goes to
-          the vendor.
-        </div>
-      )}
-
-      {/* What subscribing costs. Everything in this box is a statement about
-          the deployed program, cited, because every line of it is a surprise. */}
-      <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
-        <p className="font-medium">Devnet. The whole note is locked, and none of it comes back</p>
-        <ul className="mt-1.5 list-disc space-y-1 pl-4 text-p01-red/90">
-          <li>
-            <strong>Your entire note funds the subscription</strong>, not just rate times the
-            number of periods you want. A 10 SOL note buys a 10 SOL subscription.{" "}
-            <span className="font-mono text-p01-red/70">
-              subscribe_private_stark.rs:185 sets amount = pool.denomination.
+        {/* The plain sentence of the deal, once both halves are picked. */}
+        {service && note && !tokenMismatch && periods !== null && periods > 0n && (
+          <div className="rounded-lg border border-p01-cyan/40 bg-p01-cyan/5 p-3 text-sm text-p01-text">
+            You lock{' '}
+            <span className="font-mono text-p01-cyan">
+              {note.denomination} {note.token}
             </span>
-          </li>
-          <li>
-            <strong>There is no cancel and no refund.</strong> Only the vendor collecting its
-            periods can close the vault, and the final collection sweeps everything left in it
-            (leftover balance, dust, and the vault&apos;s own rent) to the vendor.{" "}
-            <span className="font-mono text-p01-red/70">claim_period.rs:309-315.</span>
-          </li>
-          <li>
-            On top of the note, your wallet signs one deposit of roughly 1 SOL to hold space for
-            the two proofs. It comes back when they close, minus about 0.006 SOL of fees that does
-            not. Same deposit as a withdrawal: this operation needs the same two proofs.
-          </li>
-          <li>
-            The subscription hides your wallet only as well as the pool does, which today is not at
-            all: the note commitment is published in the clear by the deposit, so treat this spend
-            as matchable to it. The Pool tab&apos;s disclosure has the details.
-          </li>
-        </ul>
-      </div>
-
-      {error && (
-        <p className="flex items-start gap-1.5 text-sm text-p01-red">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {error}
-        </p>
-      )}
-
-      {/* A disabled button always says why, right next to itself. */}
-      {blockedReason && !result && (
-        <p className="text-center text-xs text-p01-text-muted">{blockedReason}</p>
-      )}
-
-      <button
-        type="button"
-        onClick={handleSubscribe}
-        disabled={busy || !!blockedReason}
-        className="btn-primary flex w-full items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {submitting ? (
-          <>
-            <Loader2 className="h-4 w-4 animate-spin" /> Subscribing…
-          </>
-        ) : service && note ? (
-          <>
-            Lock {note.denomination} {note.token} with {service.name}
-          </>
-        ) : (
-          <>Subscribe</>
+            . {service.name} charges{' '}
+            <span className="font-mono text-p01-cyan">{formatServicePrice(service)}</span>{' '}
+            {formatInterval(service.intervalSlots)}, so that pays for{' '}
+            <span className="font-mono text-p01-cyan">{periods.toString()}</span> billing period
+            {periods === 1n ? '' : 's'}. Then the subscription ends and anything left over goes to
+            the vendor.
+          </div>
         )}
-      </button>
 
-      {/* The longest flow in the product: two proofs, two uploads, ~150
+        {/* The two hard sentences, in the field of vision at the moment of
+          click no matter where the full terms box has scrolled to. This is a
+          deliberate repetition of CostDisclosure, ruled by the founder:
+          redundancy over elegance, and never softened. */}
+        <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
+          <p>
+            <strong>The whole note is locked</strong>
+            {note ? (
+              <>
+                , all {note.denomination} {note.token} of it
+              </>
+            ) : (
+              <>, not just the periods you want</>
+            )}
+            , and <strong>there is no cancel and no refund</strong>: whatever is left when the
+            subscription ends goes to the vendor, rent included.
+          </p>
+        </div>
+
+        {error && (
+          <p className="flex items-start gap-1.5 text-sm text-p01-red">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {error}
+          </p>
+        )}
+
+        {/* A disabled button always says why, right next to itself. */}
+        {blockedReason && !result && (
+          <p className="text-center text-xs text-p01-text-muted">{blockedReason}</p>
+        )}
+
+        <button
+          type="button"
+          onClick={handleSubscribe}
+          disabled={busy || !!blockedReason}
+          className="btn-primary flex w-full items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {submitting ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" /> Subscribing…
+            </>
+          ) : service && note ? (
+            <>
+              Lock {note.denomination} {note.token} with {service.name}
+            </>
+          ) : (
+            <>Subscribe</>
+          )}
+        </button>
+
+        {/* The longest flow in the product: two proofs, two uploads, ~150
           transactions. The bar moves on the worker's real steps; the raw step
           string stays visible underneath as the second-plane detail. */}
-      {submitting && (
-        <>
-          <FlowProgress
-            phases={SUBSCRIBE_PHASES}
-            step={step}
-            running={submitting}
-            note="About 1 SOL sits in a refundable deposit while this runs; it is returned when the proof buffers close."
-          />
-          {step && (
-            <p className="text-center font-mono text-[11px] text-p01-text-dim">{step}</p>
-          )}
-        </>
-      )}
+        {submitting && (
+          <>
+            <FlowProgress
+              phases={SUBSCRIBE_PHASES}
+              step={step}
+              running={submitting}
+              note="About 1 SOL sits in a refundable deposit while this runs; it is returned when the proof buffers close."
+            />
+            {step && <p className="text-center font-mono text-[11px] text-p01-text-dim">{step}</p>}
+          </>
+        )}
 
-      {/* Outcome. The license key is the product of this whole flow. */}
-      {result && (
-        <div className="card p-4">
-          <SuccessBurst label="Subscription open" />
+        {/* Outcome. The license key is the product of this whole flow. */}
+        {result && (
+          <div className="card p-4">
+            <SuccessBurst label="Subscription open" />
 
-          <div className="mt-3 rounded-lg border border-p01-cyan/40 bg-p01-void p-3">
-            <div className="flex items-center justify-between gap-3">
-              <p className="flex items-center gap-2 text-xs uppercase tracking-wider text-p01-text-muted">
-                <KeyRound className="h-3.5 w-3.5 text-p01-cyan" /> License key
+            <div className="mt-3 rounded-lg border border-p01-cyan/40 bg-p01-void p-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="flex items-center gap-2 text-xs uppercase tracking-wider text-p01-text-muted">
+                  <KeyRound className="h-3.5 w-3.5 text-p01-cyan" /> License key
+                </p>
+                <button
+                  onClick={() => void copyKey(result.licenseKey)}
+                  className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                >
+                  {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+              <p className="mt-2 break-all font-mono text-xl leading-relaxed text-p01-cyan">
+                {result.licenseKey}
               </p>
-              <button
-                onClick={() => void copyKey(result.licenseKey)}
-                className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
-              >
-                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                {copied ? "Copied" : "Copy"}
-              </button>
             </div>
-            <p className="mt-2 break-all font-mono text-xl leading-relaxed text-p01-cyan">
-              {result.licenseKey}
-            </p>
-          </div>
 
-          {/* The two facts about this key, each on its own line so neither
+            {/* The two facts about this key, each on its own line so neither
               hides the other: it is never stored, and it is a bearer credential. */}
-          <div className="mt-3 space-y-2">
-            <p className="flex items-start gap-2 text-xs text-p01-text-muted">
-              <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
-              <span>
-                <strong className="text-p01-text">Never stored, never lost.</strong> The key is
-                recomputed from the secret of the note you just spent, so any device holding that
-                note shows the same key. Nothing to back up.
-              </span>
-            </p>
-            <p className="flex items-start gap-2 text-xs text-p01-text-muted">
-              <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
-              <span>
-                <strong className="text-p01-text">It works for whoever holds it.</strong> Anyone
-                with this key can present it to the vendor as you. Show it to the vendor and no one
-                else.
-              </span>
-            </p>
-          </div>
+            <div className="mt-3 space-y-2">
+              <p className="flex items-start gap-2 text-xs text-p01-text-muted">
+                <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
+                <span>
+                  <strong className="text-p01-text">Never stored, never lost.</strong> The key is
+                  recomputed from the secret of the note you just spent, so any device holding that
+                  note shows the same key. Nothing to back up.
+                </span>
+              </p>
+              <p className="flex items-start gap-2 text-xs text-p01-text-muted">
+                <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
+                <span>
+                  <strong className="text-p01-text">It works for whoever holds it.</strong> Anyone
+                  with this key can present it to the vendor as you. Show it to the vendor and no
+                  one else.
+                </span>
+              </p>
+            </div>
 
-          {/* Protocol detail, second plane. */}
-          <div className="mt-3 border-t border-p01-border pt-3">
-            <p className="font-mono text-xs text-p01-text-dim">
-              vault{" "}
-              {truncate(
-                typeof result.vaultPDA === "string" ? result.vaultPDA : result.vaultPDA.toBase58(),
-                6,
-                4,
-              )}
-            </p>
-            <a
-              href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-1 inline-block font-mono text-xs text-p01-cyan hover:underline"
-            >
-              {truncate(result.txSig, 10, 8)} ↗
-            </a>
+            {/* Protocol detail, second plane. */}
+            <div className="mt-3 border-t border-p01-border pt-3">
+              <p className="font-mono text-xs text-p01-text-dim">
+                vault{' '}
+                {truncate(
+                  typeof result.vaultPDA === 'string'
+                    ? result.vaultPDA
+                    : result.vaultPDA.toBase58(),
+                  6,
+                  4
+                )}
+              </p>
+              <a
+                href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-block font-mono text-xs text-p01-cyan hover:underline"
+              >
+                {truncate(result.txSig, 10, 8)} ↗
+              </a>
+            </div>
           </div>
+        )}
+
+        {/* Full terms on narrow screens, at the end of the stack (see the note
+          on CostDisclosure for why the box exists twice). */}
+        <div className="lg:hidden">
+          <CostDisclosure />
         </div>
-      )}
+      </div>
     </div>
   );
 }
