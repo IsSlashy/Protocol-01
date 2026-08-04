@@ -610,6 +610,8 @@ jobs:
           cargo test -p p01_stark_verifier --release --test cross_circuit_confusion
           cargo test -p p01_stark_verifier --release --test phase_binding_seam
           cargo test -p p01_stark_verifier --release --test wire_parity
+          cargo test -p p01_stark_verifier --release --test b7_coset_shift_pairing
+          cargo test -p p01_stark_verifier --release --test ood_column_probe
 
       # [PROVER] The prover half of every pin above, plus the LDE coset sequencing
       # companion (`compact::lde_coset_sequencing::lde_has_no_coset_offset_measured_today`).
