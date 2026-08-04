@@ -75,6 +75,9 @@ export default function PoolPanel({
   /** Notes this session withdrew, keyed `pool:leafIndex`. Never un-set: a spent
    *  note cannot become unspent, so this only ever corrects a stale scan. */
   const [spentLocally, setSpentLocally] = useState<ReadonlySet<string>>(new Set());
+  /** True while the list comes from local storage, whose `spent` is a default
+   *  rather than a reading. Cleared once the chain walk has answered. */
+  const [notesProvisional, setNotesProvisional] = useState(false);
   const [poolSizes, setPoolSizes] = useState<PoolSizeView[]>([]);
   const [balance, setBalance] = useState(0);
   const [scanning, setScanning] = useState(false);
@@ -126,17 +129,23 @@ export default function PoolPanel({
       // walk below costs tens of seconds on the public devnet RPC and the user
       // was watching "Scanning the 0.1 SOL pool..." the whole time.
       //
-      // These arrive with `spentKnown: false` — nothing here has seen a nullifier
-      // PDA — so they are provisional until the scan below replaces them.
+      // Nothing here has seen a nullifier PDA, so `spent` on these is a default
+      // and not a reading — a note withdrawn on another device, or in an earlier
+      // session, paints as spendable. `notesProvisional` says so, and the
+      // Withdraw button stays disabled until the chain walk below answers.
       try {
         const local = await scanPoolLocal(meta, owner.toBase58());
-        if (local.notes.length > 0) setNotes(local.notes);
+        if (local.notes.length > 0) {
+          setNotes(local.notes);
+          setNotesProvisional(true);
+        }
       } catch {
         // A missing or unreadable blob store is not an error worth showing:
         // the authoritative scan runs next regardless.
       }
       const res = await scanPool(meta, "SOL", setScanStep);
       setNotes(res.notes);
+      setNotesProvisional(false);
       setPoolSizes(res.poolSizes);
       setBalance(res.shieldedBalance);
     } catch (e) {
@@ -620,7 +629,14 @@ export default function PoolPanel({
                 </div>
                 <button
                   onClick={() => handleUnshield(n)}
-                  disabled={!!busyNote || shielding || !signOne || !signMessage}
+                  disabled={
+                    !!busyNote || shielding || !signOne || !signMessage || notesProvisional
+                  }
+                  title={
+                    notesProvisional
+                      ? "Checking on chain whether this note is already spent."
+                      : undefined
+                  }
                   className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
                 >
                   {busyNote === `${n.pool}:${n.leafIndex}` ? (
@@ -628,7 +644,7 @@ export default function PoolPanel({
                   ) : (
                     <Download className="h-3.5 w-3.5" />
                   )}
-                  Withdraw
+                  {notesProvisional ? "Checking…" : "Withdraw"}
                 </button>
               </li>
             ))}
