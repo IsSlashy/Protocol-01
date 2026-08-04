@@ -158,8 +158,21 @@ jobs:
       # after building the artifact with the absolute 3.1.9 cargo-build-sbf path
       # named in that file's header. It is the acceptance criterion for the
       # no-cancel landing: the same file, unchanged, on HEAD and on the branch.
-      - name: cargo test (zk_shielded — the subscription state machine)
-        run: cargo test -p zk_shielded --lib
+      # `--lib` and `--test landed_invariants` are BOTH needed, and the second is
+      # not redundant. MEASURED 2026-08-04: resolving `claim_period.rs` to the
+      # pre-landing version — the shape the STARK/B7 line still carries — compiles
+      # cleanly, and `--lib` goes from 30 tests to 23 with every one of them
+      # PASSING. The lot's own `mod plumbing_guards` lives inside
+      # `claim_period.rs`, so a resolution that deletes the behaviour deletes the
+      # guards in the same stroke and nothing turns red.
+      #
+      # `tests/landed_invariants.rs` sits outside that file and fired 4 failures
+      # on the same mutation, each naming the property lost. It reads source text,
+      # so it needs no `.so` and runs here.
+      - name: cargo test (zk_shielded — the subscription state machine + the merge guard)
+        run: |
+          cargo test -p zk_shielded --lib
+          cargo test -p zk_shielded --test landed_invariants
 
       # `continue-on-error: true` was on this step, which made it advisory: a real
       # failure still passed the job, so `-D warnings` pinned nothing. Removed.
