@@ -143,10 +143,27 @@ function StepBadge({ n }: { n: number }) {
  * button repeats the two hard sentences a third time at the moment of click.
  */
 function CostDisclosure() {
+  // Collapsed by default. Four paragraphs of red text is a wall the user scrolls
+  // past, which is the same as not reading it, and it pushed the action out of
+  // sight. The summary line stays visible at all times and carries the whole
+  // point in one sentence; the detail is one click away and unchanged, word for
+  // word. Nothing here is softened, only folded.
+  //
+  // Safe to collapse precisely because it is NOT the last word on the subject:
+  // a compact red reminder of the same two facts sits directly above the Lock
+  // button at every width, so the two sentences that matter are unavoidable at
+  // the moment of the click.
   return (
-    <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
-      <p className="font-medium">Devnet. The whole note is locked, and none of it comes back</p>
-      <ul className="mt-1.5 list-disc space-y-1 pl-4 text-p01-red/90">
+    <details className="group rounded-lg border border-p01-red/30 bg-p01-red/5 text-xs text-p01-red">
+      <summary className="cursor-pointer list-none p-3 font-medium marker:content-none">
+        <span className="flex items-start justify-between gap-2">
+          <span>Devnet. The whole note is locked, and none of it comes back</span>
+          <span className="shrink-0 font-mono text-[10px] text-p01-red/60 group-open:hidden">
+            read
+          </span>
+        </span>
+      </summary>
+      <ul className="list-disc space-y-1 px-3 pb-3 pl-7 text-p01-red/90">
         <li>
           <strong>Your entire note funds the subscription</strong>, not just rate times the number
           of periods you want. A 10 SOL note buys a 10 SOL subscription.{' '}
@@ -171,7 +188,7 @@ function CostDisclosure() {
           matchable to it. The Pool tab&apos;s disclosure has the details.
         </li>
       </ul>
-    </div>
+    </details>
   );
 }
 
