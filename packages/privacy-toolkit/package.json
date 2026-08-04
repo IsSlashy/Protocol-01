@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/privacy-toolkit",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "TypeScript primitives for building privacy protocols on Solana. Merkle trees, Poseidon commitments, nullifiers, and proof format conversion.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

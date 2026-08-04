@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/stark-prover",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Quantum-resistant STARK prover for Protocol 01 — drop-in WASM-backed proof generator + on-chain verifier submitter for @protocol-01/privacy-sdk. No trusted setup, no elliptic curves, post-quantum safe.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

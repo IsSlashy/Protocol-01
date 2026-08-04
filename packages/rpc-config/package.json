@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/rpc-config",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Shared RPC configuration for Protocol 01 — priority-based endpoint resolution, connection management with automatic fallback, URL sanitization, and explorer URL builders.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

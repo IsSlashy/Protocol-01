@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/auth-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Protocol 01 Authentication SDK - Login with blockchain subscriptions",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

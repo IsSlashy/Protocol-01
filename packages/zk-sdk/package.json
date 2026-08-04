@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/zk-sdk",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "STARK-native, quantum-resistant ZK SDK for Protocol 01 shielded transactions on Solana",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
