@@ -132,6 +132,35 @@ vi.mock('./shieldEphemeral', () => ({
  * receipt-driven. The real thing proves C1 + C3 for minutes against a cluster.
  */
 const unshieldJobs: Array<{ receipt: Record<string, unknown>; storedPath: unknown }> = [];
+const subscribeJobs: Array<{ receipt: Record<string, unknown>; storedPath: unknown }> = [];
+vi.mock('./subscribeEphemeral', () => ({
+  prepareSubscribeJob: async (
+    receipt: Record<string, unknown>,
+    _pool: unknown,
+    _conn: unknown,
+    _seed: unknown,
+    _onProgress: unknown,
+    storedPath: unknown,
+  ) => {
+    subscribeJobs.push({ receipt, storedPath });
+    return {
+      jobId: 'subscribe-job-under-test',
+      ephemeral: { publicKey: { toBase58: () => 'SubscribeEphemeral' } },
+      requiredLamports: 43,
+      receipt,
+    };
+  },
+  executeSubscribe: async () => {
+    throw new Error('not exercised');
+  },
+}));
+
+// The subscribe prepare computes the subscriber commitment through the STARK
+// wasm; a canned value keeps this suite free of the prover.
+vi.mock('./starkProver', () => ({
+  starkProver: { start: async () => undefined, computeCommitment: async () => '424242' },
+}));
+
 vi.mock('./unshieldEphemeral', () => ({
   prepareUnshieldJob: async (
     receipt: Record<string, unknown>,
@@ -180,6 +209,7 @@ beforeEach(() => {
   chain.fail = false;
   chain.reads = 0;
   unshieldJobs.length = 0;
+  subscribeJobs.length = 0;
   // By default the RPC serves the received note's leaf, sitting where the
   // note says it does.
   chainLeaves.clear();
@@ -401,10 +431,37 @@ describe('the EXISTING withdraw path can spend a received note', () => {
     expect(unshieldJobs).toHaveLength(1);
     const receipt = unshieldJobs[0]!.receipt;
     expect(receipt.secret).toBe(SECRET);
+    // The nullifier is a function of the NOTE's own secrets, never of the
+    // bearer's seed: a wrong preimage here would produce a proof that fails
+    // on-chain after ~150 chunk uploads and ~1 SOL of locked buffer rent.
     expect(receipt.nullifierPreimage).toBe(NULLIFIER_PREIMAGE);
     expect(receipt.noteBlinding).toBe(BLINDING);
+    expect(receipt.commitment).toBe(BigInt(shareable().commitment));
     expect(receipt.leafIndex).toBe(LEAF);
     expect(receipt.source).toBe('received');
+  });
+
+  it('poolSubscribePrepare finds it through the same fallback: a received note can pay a subscription', async () => {
+    const imported = await handlePoolRequest(importReq());
+    const prep = await handlePoolRequest({
+      kind: 'poolSubscribePrepare' as const,
+      meta: META,
+      token: 'SOL' as const,
+      denomination: DENOM,
+      leafIndex: LEAF,
+      encryptedNotes: [imported.encryptedNote],
+    });
+
+    expect(prep).toMatchObject({
+      ephemeralPubkey: 'SubscribeEphemeral',
+      denomination: DENOM,
+      derivation: 2,
+    });
+    expect(subscribeJobs).toHaveLength(1);
+    const receipt = subscribeJobs[0]!.receipt;
+    expect(receipt.secret).toBe(SECRET);
+    expect(receipt.nullifierPreimage).toBe(NULLIFIER_PREIMAGE);
+    expect(receipt.commitment).toBe(BigInt(shareable().commitment));
   });
 
   it('feeds the Merkle path that travelled with the note as the stored path', async () => {
