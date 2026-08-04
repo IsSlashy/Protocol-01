@@ -46,6 +46,21 @@ export interface ClaimPeriodResult {
 
 export interface ClaimPeriodSendOptions extends BuildClaimPeriodOptions {
   /**
+   * Who signs and pays. Defaults to `retailerSigner`.
+   *
+   * Supply this to use the capability the 2026-08-04 redeploy exists for: since
+   * that deploy `claim_period` takes the retailer as an `UncheckedAccount` pinned
+   * by `retailer.key() == vault.retailer`, NOT as a signer, so anyone can trigger
+   * a merchant's payment and the money still goes only to the merchant. Proven on
+   * chain the same day — tx `2CyRn6MAKdXKaW3e…`, sent by a key holding no retailer
+   * secret. That is what rescues a merchant whose retailer key is lost, which is
+   * ~5.5 SOL of devnet vaults today.
+   *
+   * When it is set, `retailerSigner` is not required to sign at all and may be a
+   * bare public key wrapped as a Signer-shaped object; only `payer` signs.
+   */
+  payer?: Signer;
+  /**
    * Skip the rent-floor preflight. Only reason to pass this is that you have
    * already run it yourself; it does not make the failure go away, it makes it
    * arrive as `Transaction results in an account (1) with insufficient funds for
@@ -100,12 +115,19 @@ export async function claimPeriod(
   }
   const vault = decodeSubscriptionVault(info.data, vaultPda);
 
+  // The program pins the DESTINATION, not the sender: `retailer.key() ==
+  // vault.retailer`. So the only thing that must match this vault is the retailer
+  // ADDRESS. Requiring the caller to hold that key as well would re-impose, in
+  // the SDK, exactly the constraint the redeploy removed from the program — and
+  // would lock out the case the change exists for, a merchant whose key is gone.
   if (!vault.retailer.equals(retailerSigner.publicKey)) {
     throw new Error(
-      `signer ${retailerSigner.publicKey.toBase58()} is not this vault's retailer ` +
+      `${retailerSigner.publicKey.toBase58()} is not this vault's retailer ` +
         `(${vault.retailer.toBase58()}). claim_period would fail with Unauthorized (6004). ` +
-        `The retailer is a PDA seed and can never be rotated, so this is the wrong key, ` +
-        `not a stale vault.`,
+        `The retailer is a PDA seed and can never be rotated, so this is the wrong address, ` +
+        `not a stale vault. Note you do NOT need the retailer's key to claim — pass ` +
+        `opts.payer and the correct retailer address, and the payout still goes to the ` +
+        `merchant.`,
     );
   }
   if (vault.isPaused) {
@@ -125,8 +147,9 @@ export async function claimPeriod(
       `nothing to claim at slot ${slot}: ${vault.claimedPeriods} of ${funded} funded periods ` +
         `already collected. claim_period would fail with NoClaimablePeriods (6029). ` +
         (vault.claimedPeriods >= funded
-          ? `This vault is exhausted — it will never pay again, and on the currently deployed ` +
-            `program nothing can close it, so its rent stays locked.`
+          ? `This vault is exhausted — it will never pay again. Since the 2026-08-04 redeploy a ` +
+            `claim on an exhausted vault still settles: it CLOSES the account and pays its rent ` +
+            `(~0.0027-0.0034 SOL) to the retailer, so it is worth sending once to release that.`
           : `Wait for the next interval of ${vault.intervalSlots} slots to elapse.`),
     );
   }
@@ -136,7 +159,11 @@ export async function claimPeriod(
   const tx = new Transaction().add(ix);
   const { blockhash } = await connection.getLatestBlockhash(opts.commitment ?? 'confirmed');
   tx.recentBlockhash = blockhash;
-  tx.feePayer = retailerSigner.publicKey;
+  // Permissionless when a payer is supplied: only the payer signs, and the
+  // retailer appears as a plain writable account, exactly as the program declares it.
+  const payer = opts.payer ?? retailerSigner;
+  const signers = opts.payer ? [opts.payer] : [retailerSigner];
+  tx.feePayer = payer.publicKey;
 
   // Quote the REAL fee rather than assuming the 5,000-lamport base: a caller that
   // attached compute-budget instructions pays more, and the retailer pays it out
@@ -167,16 +194,18 @@ export async function claimPeriod(
           `Without them claim_period fails in the handler with MissingTokenProgram.`,
       );
     }
+    // The fee leaves the PAYER's balance, so it only eats into the payout when the
+    // payer and the retailer are the same account.
     await assertRetailerCanReceiveClaim(
       connection,
       retailerSigner.publicKey,
       amountClaimed,
       spl,
-      feeLamports,
+      opts.payer ? 0n : feeLamports,
     );
   }
 
-  const signature = await sendAndConfirmTransaction(connection, tx, [retailerSigner], {
+  const signature = await sendAndConfirmTransaction(connection, tx, signers, {
     commitment: opts.commitment ?? 'confirmed',
   });
 
