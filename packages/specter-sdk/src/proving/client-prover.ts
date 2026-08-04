@@ -32,7 +32,11 @@ import {
   type StarkProofGenerator,
   type StarkProofOutcome,
   type StarkProverConfig,
-} from '@protocol-01/stark-prover';
+} from '../../../stark-prover/src/index'; // relative on purpose: tsup inlines
+// the JS either way (noExternal), but its d.ts bundler resolves with node10
+// semantics and would leave a bare '@protocol-01/stark-prover' specifier in
+// the emitted d.ts — a package the tgz consumer does not have. Same fix as
+// merchant-sdk's service-registry import; measured 2026-08-04.
 
 import {
   ProofInputValidationError,

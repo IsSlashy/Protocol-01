@@ -37,6 +37,17 @@ export * from './claim-send';
 export * from './service-scope';
 
 // Re-export the lower-level registry helpers so merchants only need one dep.
+//
+// Imported by RELATIVE path into specter-sdk's source, not via the
+// `@protocol-01/specter-sdk/service-registry` specifier, deliberately: tsup
+// bundles the JS either way (`noExternal` used to do it), but its d.ts
+// bundler resolves with node10 semantics, cannot see subpath `exports`, and
+// silently left the specifier in the emitted `dist/index.d.ts`. A standalone
+// `npm install` of the packed tgz then ran fine and failed `tsc --noEmit`
+// with TS2307 — the JS was self-contained, the types were not. MEASURED
+// 2026-08-04 on a clean consumer outside the workspace. A relative import is
+// internal to both bundlers, so the types are inlined too. The slice's own
+// imports stay within deps this package already declares (web3.js, bs58).
 export {
   buildRegisterServiceIx,
   buildUpdateServiceIx,
@@ -57,4 +68,4 @@ export {
   type RegisterServiceArgs,
   type UpdateServiceArgs,
   type FetchServicesOptions,
-} from '@protocol-01/specter-sdk/service-registry';
+} from '../../specter-sdk/src/service-registry/index';

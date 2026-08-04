@@ -16,7 +16,7 @@
 //
 // ============================================================================
 
-import type { StarkProofOutcome } from '@protocol-01/stark-prover';
+import type { StarkProofOutcome } from '../../../stark-prover/src/types'; // relative — see client-prover.ts
 
 // ---------------------------------------------------------------------------
 // Field element alias
@@ -210,7 +210,7 @@ export type ZkSplProofInputs =
  * such as `zk_shielded`) plus the public inputs that were bound into the
  * transcript.
  */
-export type { StarkProofOutcome } from '@protocol-01/stark-prover';
+export type { StarkProofOutcome } from '../../../stark-prover/src/types'; // relative — see client-prover.ts
 
 // ---------------------------------------------------------------------------
 // Prover configuration
@@ -220,7 +220,7 @@ export type { StarkProofOutcome } from '@protocol-01/stark-prover';
  * Re-export the STARK prover config so callers can construct a
  * `StarkClientProver` with the same shape used by the rest of the SDK.
  */
-export type { StarkProverConfig } from '@protocol-01/stark-prover';
+export type { StarkProverConfig } from '../../../stark-prover/src/types'; // relative — see client-prover.ts
 
 // ---------------------------------------------------------------------------
 // Validation error

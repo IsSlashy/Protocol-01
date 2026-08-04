@@ -14,7 +14,7 @@ import {
   type RegisterServiceArgs,
   type UpdateServiceArgs,
   type ServiceEntry,
-} from '@protocol-01/specter-sdk/service-registry';
+} from '../../specter-sdk/src/service-registry/index'; // relative on purpose — see the note in index.ts
 import { type MerchantSdkConfig, resolveProgramIds } from './config';
 
 /**

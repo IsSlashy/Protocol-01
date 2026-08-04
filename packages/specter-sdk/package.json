@@ -7,64 +7,115 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
     },
     "./core": {
-      "import": "./dist/core.mjs",
-      "require": "./dist/core.js",
-      "types": "./dist/core.d.ts"
+      "import": {
+        "types": "./dist/core.d.mts",
+        "default": "./dist/core.mjs"
+      },
+      "require": {
+        "types": "./dist/core.d.ts",
+        "default": "./dist/core.js"
+      }
     },
     "./wallet": {
-      "import": "./dist/wallet/index.mjs",
-      "require": "./dist/wallet/index.js",
-      "types": "./dist/wallet/index.d.ts"
+      "import": {
+        "types": "./dist/wallet/index.d.mts",
+        "default": "./dist/wallet/index.mjs"
+      },
+      "require": {
+        "types": "./dist/wallet/index.d.ts",
+        "default": "./dist/wallet/index.js"
+      }
     },
     "./stealth": {
-      "import": "./dist/stealth/index.mjs",
-      "require": "./dist/stealth/index.js",
-      "types": "./dist/stealth/index.d.ts"
+      "import": {
+        "types": "./dist/stealth/index.d.mts",
+        "default": "./dist/stealth/index.mjs"
+      },
+      "require": {
+        "types": "./dist/stealth/index.d.ts",
+        "default": "./dist/stealth/index.js"
+      }
     },
     "./transfer": {
-      "import": "./dist/transfer/index.mjs",
-      "require": "./dist/transfer/index.js",
-      "types": "./dist/transfer/index.d.ts"
+      "import": {
+        "types": "./dist/transfer/index.d.mts",
+        "default": "./dist/transfer/index.mjs"
+      },
+      "require": {
+        "types": "./dist/transfer/index.d.ts",
+        "default": "./dist/transfer/index.js"
+      }
     },
     "./streams": {
-      "import": "./dist/streams/index.mjs",
-      "require": "./dist/streams/index.js",
-      "types": "./dist/streams/index.d.ts"
+      "import": {
+        "types": "./dist/streams/index.d.mts",
+        "default": "./dist/streams/index.mjs"
+      },
+      "require": {
+        "types": "./dist/streams/index.d.ts",
+        "default": "./dist/streams/index.js"
+      }
     },
     "./proving": {
-      "import": "./dist/proving/index.mjs",
-      "require": "./dist/proving/index.js",
-      "types": "./dist/proving/index.d.ts"
+      "import": {
+        "types": "./dist/proving/index.d.mts",
+        "default": "./dist/proving/index.mjs"
+      },
+      "require": {
+        "types": "./dist/proving/index.d.ts",
+        "default": "./dist/proving/index.js"
+      }
     },
     "./indexing": {
-      "import": "./dist/indexing/index.mjs",
-      "require": "./dist/indexing/index.js",
-      "types": "./dist/indexing/index.d.ts"
+      "import": {
+        "types": "./dist/indexing/index.d.mts",
+        "default": "./dist/indexing/index.mjs"
+      },
+      "require": {
+        "types": "./dist/indexing/index.d.ts",
+        "default": "./dist/indexing/index.js"
+      }
     },
     "./relay": {
-      "import": "./dist/relay/index.mjs",
-      "require": "./dist/relay/index.js",
-      "types": "./dist/relay/index.d.ts"
+      "import": {
+        "types": "./dist/relay/index.d.mts",
+        "default": "./dist/relay/index.mjs"
+      },
+      "require": {
+        "types": "./dist/relay/index.d.ts",
+        "default": "./dist/relay/index.js"
+      }
     },
     "./service-registry": {
-      "import": "./dist/service-registry/index.mjs",
-      "require": "./dist/service-registry/index.js",
-      "types": "./dist/service-registry/index.d.ts"
+      "import": {
+        "types": "./dist/service-registry/index.d.mts",
+        "default": "./dist/service-registry/index.mjs"
+      },
+      "require": {
+        "types": "./dist/service-registry/index.d.ts",
+        "default": "./dist/service-registry/index.js"
+      }
     }
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "wasm"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/core.ts src/wallet/index.ts src/stealth/index.ts src/transfer/index.ts src/streams/index.ts src/proving/index.ts src/indexing/index.ts src/relay/index.ts src/service-registry/index.ts --format cjs,esm --dts --clean --out-dir dist",
+    "build": "tsup --config tsup.config.ts",
     "build:core": "tsup src/core.ts --format cjs,esm --dts --clean --out-dir dist",
-    "dev": "tsup src/index.ts src/core.ts src/wallet/index.ts src/stealth/index.ts src/transfer/index.ts src/streams/index.ts src/proving/index.ts src/indexing/index.ts src/relay/index.ts src/service-registry/index.ts --format cjs,esm --dts --watch",
+    "dev": "tsup --config tsup.config.ts --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
@@ -93,7 +144,6 @@
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "@noble/post-quantum": "^0.6.1",
-    "@protocol-01/stark-prover": "workspace:^",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "bip39": "^3.1.0",
@@ -107,12 +157,44 @@
     "eslint": "^8.57.1",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "@protocol-01/stark-prover": "workspace:^"
   },
   "peerDependencies": {
     "@solana/web3.js": "^1.98.0"
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "typesVersions": {
+    "*": {
+      "core": [
+        "./dist/core.d.ts"
+      ],
+      "wallet": [
+        "./dist/wallet/index.d.ts"
+      ],
+      "stealth": [
+        "./dist/stealth/index.d.ts"
+      ],
+      "transfer": [
+        "./dist/transfer/index.d.ts"
+      ],
+      "streams": [
+        "./dist/streams/index.d.ts"
+      ],
+      "proving": [
+        "./dist/proving/index.d.ts"
+      ],
+      "indexing": [
+        "./dist/indexing/index.d.ts"
+      ],
+      "relay": [
+        "./dist/relay/index.d.ts"
+      ],
+      "service-registry": [
+        "./dist/service-registry/index.d.ts"
+      ]
+    }
   }
 }
