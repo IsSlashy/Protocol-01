@@ -101,25 +101,46 @@ export async function prepareUnshieldFromPath(
     return null;
   }
 
-  await starkProver.start();
+  // Heartbeat across BOTH proofs. The main thread re-arms its request timeout
+  // on every progress message, so a silent stretch longer than that timeout
+  // kills a job that is working fine. Loading the prover and running two
+  // proofs is the longest silence on this path, and the coset blob (229,640
+  // bytes against 213,254) made it longer. Measured in production 2026-08-05:
+  // a shield died this way on the sibling path.
+  //
+  // Elapsed seconds, not a percentage: nothing here can measure its own
+  // progress, and a bar moving on a dead prover would be worse than none.
+  const proofStartedAt = Date.now();
+  let stage = 'Proving you own the note';
+  const proofHeartbeat = setInterval(() => {
+    const seconds = Math.round((Date.now() - proofStartedAt) / 1000);
+    onProgress?.(`${stage} (${seconds}s)...`);
+  }, 10_000);
+  let c1Raw, c3Raw;
+  try {
+    await starkProver.start();
 
-  onProgress?.('Generating C1 (pool_commitment) STARK proof...');
-  const c1Raw = await starkProver.generatePoolCommitmentProof(
+    onProgress?.('Generating C1 (pool_commitment) STARK proof...');
+    c1Raw = await starkProver.generatePoolCommitmentProof(
     receipt.nullifierPreimage.toString(),
     receipt.secret.toString(),
     // Commitment's third slot — a PRF blinding for new notes, a real epoch for
     // legacy ones. Private witness either way (C1 publishes only
     // [nullifier, commitment]).
     receipt.noteBlinding.toString(),
-    receipt.tokenMint.toString(),
-  );
+      receipt.tokenMint.toString(),
+    );
 
-  onProgress?.('Generating C3 (merkle_path) STARK proof from the stored path...');
-  const c3Raw = await starkProver.generateMerklePathProof(
-    receipt.commitment.toString(),
-    path.pathElements,
-    path.pathIndices,
-  );
+    stage = 'Proving the note is in the pool';
+    onProgress?.('Generating C3 (merkle_path) STARK proof from the stored path...');
+    c3Raw = await starkProver.generateMerklePathProof(
+      receipt.commitment.toString(),
+      path.pathElements,
+      path.pathIndices,
+    );
+  } finally {
+    clearInterval(proofHeartbeat);
+  }
 
   const c1PublicInputs = c1Raw.publicInputs.map((s) => BigInt(s));
   const c3PublicInputs = c3Raw.publicInputs.map((s) => BigInt(s));

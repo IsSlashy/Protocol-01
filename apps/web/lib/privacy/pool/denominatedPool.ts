@@ -988,14 +988,36 @@ export async function prepareShieldInsert(
   const { newRoot, updatedSubtrees, pathElements, pathIndices } = chosen;
 
   // 6. Generate C6 STARK proof.
-  onProgress?.('Generating C6 (merkle_update) STARK proof (30-60s)...');
-  await starkProver.start();
-  const c6Result = await starkProver.generateMerkleUpdateProof(
-    '0',                          // oldLeaf = 0 (empty slot)
-    newLeaf.toString(),           // newLeaf = commitment u64
-    pathElements.map(e => e.toString()),
-    pathIndices,
-  );
+  //
+  // Heartbeat, for the same reason as the pool history walk: the main thread
+  // re-arms its request timeout on every progress message, so a silent stretch
+  // longer than that timeout kills a job that is working fine. Loading the
+  // prover and proving say nothing between them, and the '30-60s' in the label
+  // was measured against the PRE-COSET blob: the coset one is 229,640 bytes
+  // against 213,254, so it takes longer to fetch, compile and run. Measured in
+  // production 2026-08-05: a shield died on 'The private-payment worker timed
+  // out' during exactly this stretch.
+  //
+  // Elapsed seconds, not a percentage. Nothing here can measure its own
+  // progress, and a bar that moved on a dead prover would be worse than none.
+  onProgress?.('Generating the deposit proof, this takes a minute...');
+  const proofStartedAt = Date.now();
+  const proofHeartbeat = setInterval(() => {
+    const seconds = Math.round((Date.now() - proofStartedAt) / 1000);
+    onProgress?.(`Generating the deposit proof (${seconds}s)...`);
+  }, 10_000);
+  let c6Result;
+  try {
+    await starkProver.start();
+    c6Result = await starkProver.generateMerkleUpdateProof(
+      '0',                          // oldLeaf = 0 (empty slot)
+      newLeaf.toString(),           // newLeaf = commitment u64
+      pathElements.map(e => e.toString()),
+      pathIndices,
+    );
+  } finally {
+    clearInterval(proofHeartbeat);
+  }
 
   const proofBytes = hexToBytes(c6Result.proofHex);
 
