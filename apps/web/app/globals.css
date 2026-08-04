@@ -1078,3 +1078,50 @@
 .founder-glow:hover {
   filter: drop-shadow(0 0 11px rgba(0, 255, 229, 0.6));
 }
+
+/* ---------------------------------------------------------------------------
+   /pay success confirmation (components/pay/SuccessBurst.tsx)
+
+   Defined here rather than with styled-jsx so the component ships no <style jsx>
+   attribute. React warns "Received `true` for a non-boolean attribute `jsx`" in
+   any environment that does not transform styled-jsx, vitest among them, and
+   that warning reaches every consumer of the component rather than its author.
+
+   The ring runs ONCE with `forwards`. Tailwind's animate-ping repeats forever,
+   which turns a confirmation into something that keeps demanding attention long
+   after the news is old. A beat should land, then stop.
+   --------------------------------------------------------------------------- */
+@keyframes p01-burst-mark {
+  from {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes p01-burst-ring {
+  from {
+    transform: scale(0.9);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+.p01-burst-ring {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .p01-burst-mark {
+    animation: p01-burst-mark 220ms ease-out both;
+  }
+  .p01-burst-ring {
+    animation: p01-burst-ring 700ms ease-out 1 forwards;
+  }
+}

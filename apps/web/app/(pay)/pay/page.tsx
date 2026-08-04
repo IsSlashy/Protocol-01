@@ -74,8 +74,13 @@ export default function PayPage() {
           </div>
         </div>
 
-        {/* App card with a soft glow bloom behind it */}
-        <div className="relative mx-auto mt-12 w-full max-w-md">
+        {/* App card with a soft glow bloom behind it.
+            Widens past `md` on large screens so the panels can lay their action
+            and their context side by side. While this box was 448px wide, every
+            two-column grid inside it was decorative: the columns existed and had
+            no room to open, so the whole app stayed a tall single strip on a
+            wide display. */}
+        <div className="relative mx-auto mt-12 w-full max-w-md lg:max-w-5xl">
           <p className="mb-3 flex items-center justify-center gap-2 border border-p01-yellow/40 bg-p01-surface px-3 py-1.5 text-center font-mono text-[11px] uppercase tracking-widest text-p01-yellow">
             <span className="h-1 w-1 shrink-0 bg-p01-yellow" />
             Devnet only — test tokens, not real funds.
