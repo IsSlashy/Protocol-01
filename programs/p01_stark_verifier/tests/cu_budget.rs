@@ -1241,10 +1241,18 @@ struct CuCeiling {
 /// been the other option and it is the wrong one: it would have left every
 /// future regression up to 10% invisible.
 ///
-/// Worst absolute is C4 at 843,918 of 1,400,000 (60%); worst phase1+phase2 is
-/// C4 at 1,051,138, still inside one instruction, leaving ~349,000 CU of margin.
-/// Worst phase 2 alone is C4 at 207,220. The smallest phase-1 pin is C0 at
-/// 599,059. CU was never the binding constraint for B2 and it still is not.
+/// Worst absolute is C4 at 920,897 of 1,400,000 (66%); worst phase1+phase2 is
+/// C4 at 1,128,502, still inside one instruction, leaving ~271,000 CU of margin.
+/// Worst phase 2 alone is C4 at 207,605. The smallest phase-1 pin is C0 at
+/// 633,547. CU was never the binding constraint and it still is not.
+///
+/// [B7 2026-08-04] All thirteen pins moved with the LDE coset. The price is
+/// +34,874 to +79,303 CU per circuit, +6% to +9%, and it buys the end of the
+/// witness leak: an aligned query no longer returns a raw trace row. C4 goes
+/// from 60% to 66% of the cap. Superseded figures, kept so the sentence that
+/// records the move stays writeable: worst absolute was 843,918, worst total
+/// 1,051,138 with ~349,000 of margin, worst phase 2 alone 207,220, smallest
+/// phase-1 pin 599,059.
 ///
 /// [BIND-C2C4 2026-08-03] The last three of those figures moved with the C2/C4
 /// boundary fold: the worst total was C4 at 1,023,556 with ~376,000 of margin,
@@ -1297,8 +1305,8 @@ struct CuCeiling {
 /// separate measurement.
 ///
 const CU_CEILINGS: [CuCeiling; 7] = [
-    CuCeiling { circuit_id: 0, phase1_measured: 599_059, phase1_max: 612_000, phase2_measured: None,           phase2_max: None },
-    CuCeiling { circuit_id: 1, phase1_measured: 750_827, phase1_max: 766_000, phase2_measured: Some(125_037), phase2_max: Some(128_000) },
+    CuCeiling { circuit_id: 0, phase1_measured: 633_547, phase1_max: 647_000, phase2_measured: None,           phase2_max: None },
+    CuCeiling { circuit_id: 1, phase1_measured: 810_012, phase1_max: 827_000, phase2_measured: Some(124_932), phase2_max: Some(128_000) },
     // [BIND-C2C4 2026-08-03] C2 and C4 phase-2 re-pinned UPWARD. The cause is the
     // public-input boundary fold: `verify_deep_ali_circuit_2` and `_4` now
     // reconstruct the boundary term of `Q` at `z` and fold it into the DEEP
@@ -1318,16 +1326,16 @@ const CU_CEILINGS: [CuCeiling; 7] = [
     // a step taken to make CI green. If a future change moves these again, the
     // question to answer first is what moved and why — never what number would
     // pass.
-    CuCeiling { circuit_id: 2, phase1_measured: 756_358, phase1_max: 772_000, phase2_measured: Some(111_913), phase2_max: Some(115_000) },
-    CuCeiling { circuit_id: 3, phase1_measured: 785_407, phase1_max: 802_000, phase2_measured: Some(115_974), phase2_max: Some(119_000) },
+    CuCeiling { circuit_id: 2, phase1_measured: 815_286, phase1_max: 832_000, phase2_measured: Some(112_043), phase2_max: Some(115_000) },
+    CuCeiling { circuit_id: 3, phase1_measured: 864_400, phase1_max: 882_000, phase2_measured: Some(115_905), phase2_max: Some(119_000) },
     // [BIND-C2C4 2026-08-03] see the note on C2 above — same cause, same band,
     // same recorded acceptance. C4 is the circuit that pays the most.
-    CuCeiling { circuit_id: 4, phase1_measured: 843_918, phase1_max: 861_000, phase2_measured: Some(207_220), phase2_max: Some(212_000) },
+    CuCeiling { circuit_id: 4, phase1_measured: 920_897, phase1_max: 940_000, phase2_measured: Some(207_605), phase2_max: Some(212_000) },
     // [LIVENESS 2026-08-01] phase1_measured re-recorded: C5 793_372 -> 793_355
     // (-17, the capture-edge compare) and C6 809_654 -> 809_658 (+4, the
     // active_rows bound). The CEILINGS are unchanged and neither was approached.
-    CuCeiling { circuit_id: 5, phase1_measured: 793_355, phase1_max: 810_000, phase2_measured: Some(201_422), phase2_max: Some(206_000) },
-    CuCeiling { circuit_id: 6, phase1_measured: 809_658, phase1_max: 826_000, phase2_measured: Some(122_812), phase2_max: Some(126_000) },
+    CuCeiling { circuit_id: 5, phase1_measured: 870_591, phase1_max: 889_000, phase2_measured: Some(201_325), phase2_max: Some(206_000) },
+    CuCeiling { circuit_id: 6, phase1_measured: 888_220, phase1_max: 906_000, phase2_measured: Some(122_739), phase2_max: Some(126_000) },
 ];
 
 /// The band every `*_max` is computed with, as a percentage numerator over 100.
@@ -1671,7 +1679,7 @@ const THIS_FILE: &str = include_str!("cu_budget.rs");
 /// with the number quoted back at you. Entries are checked in BOTH directions:
 /// an entry that no longer appears in the prose is itself a failure, so this
 /// cannot rot into a list of numbers nobody wrote.
-const PROSE_FIGURES: [(u64, &str); 23] = [
+const PROSE_FIGURES: [(u64, &str); 35] = [
     (1_399_000, "illustrative: what C0 could have become before a ceiling existed"),
     (638_248, "byte size of the historical Route C .so this doc used to name"),
     (687_736, "byte size of the .so CU_CEILINGS is measured from TODAY — provenance, not a pin"),
@@ -1702,6 +1710,22 @@ const PROSE_FIGURES: [(u64, &str); 23] = [
     (349_000, "cap minus the worst phase1+phase2 total — derived from pins, rounded"),
     (376_000, "the SUPERSEDED margin, pre-C2/C4-fold, quoted beside the 349,000 that replaced it"),
     (1_023_556, "the SUPERSEDED worst phase1+phase2 total (C4), same sentence"),
+    // [B7 2026-08-04] All thirteen pins moved with the LDE coset. The
+    // superseded values stay registered because the prose quotes them AS
+    // superseded — deleting them would make the sentence that records the
+    // move unwriteable, which is how a re-pin ends up moving only prose.
+    (599_059, "the PRE-B7 C0 phase-1 pin, quoted beside the 633,547 that replaced it"),
+    (793_355, "the PRE-B7 C5 phase-1 pin"),
+    (809_658, "the PRE-B7 C6 phase-1 pin"),
+    (810_000, "the PRE-B7 C5 phase-1 ceiling"),
+    (826_000, "the PRE-B7 C6 phase-1 ceiling"),
+    (843_918, "the PRE-B7 C4 phase-1 pin, the old worst absolute"),
+    (1_051_138, "the PRE-B7 worst phase1+phase2 total (C4)"),
+    (207_220, "the PRE-B7 C4 phase-2 pin"),
+    (201_422, "the PRE-B7 C5 phase-2 pin"),
+    (271_000, "cap minus the worst phase1+phase2 total — derived from pins, rounded"),
+    (34_874, "smallest per-circuit CU delta the coset cost (C0) — provenance, not a pin"),
+    (79_303, "largest per-circuit CU delta the coset cost (C3) — provenance, not a pin"),
 ];
 
 /// Every figure the constants in this file produce, in every form prose quotes

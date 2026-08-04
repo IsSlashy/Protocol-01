@@ -727,7 +727,7 @@ jobs:
       #     So a red here is a regression, and on the day it is not, it says so itself.
       #   * `CU_CEILINGS` pins phase-1 and phase-2 CU per circuit at measured*1.02.
       #     Before that, nothing bounded CU from above except the 1,400,000 cap, so C0's
-      #     599,059 could have become 1,399,000 and stayed green.
+      #     633,547 could have become 1,399,000 and stayed green.
       #     `cu_ceiling_check_rejects_a_regression_and_accepts_the_recorded_numbers`
       #     carries the positive and negative controls, so "reject nothing" cannot make
       #     this step green.
