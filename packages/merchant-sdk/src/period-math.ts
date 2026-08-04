@@ -297,10 +297,22 @@ export function claimWouldStrandRetailer(
   retailerBalanceLamports: bigint,
   payoutLamports: bigint,
   rentExemptMinimum: bigint = SYSTEM_ACCOUNT_RENT_EXEMPT_LAMPORTS,
+  feeLamports: bigint = 0n,
 ): boolean {
   if (payoutLamports === 0n) return false;
-  const after = retailerBalanceLamports + payoutLamports;
-  return after > 0n && after < rentExemptMinimum;
+  // The retailer is the only signer `claim_period` accepts, so on every claim
+  // built by this SDK the retailer is ALSO the fee payer: the fee comes out of
+  // the same balance the payout goes into. Omitting it made this predicate
+  // optimistic by exactly the fee — it answered `false` for a balance sitting
+  // within one fee of the floor, which is the case a merchant onboarding with an
+  // empty wallet actually hits. Defaults to 0 so the three-argument form keeps
+  // its old meaning ("would the payout alone strand it").
+  const after = retailerBalanceLamports + payoutLamports - feeLamports;
+  // Not enough to cover the fee at all: a different failure from the rent floor
+  // (the transaction never lands rather than being unwound after the program
+  // succeeded), but it is still a refusal, and the caller is told which it is.
+  if (after <= 0n) return true;
+  return after < rentExemptMinimum;
 }
 
 // ---------------------------------------------------------------------------

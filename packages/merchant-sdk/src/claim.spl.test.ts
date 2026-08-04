@@ -335,7 +335,18 @@ describe('assertRetailerCanReceiveClaim — SPL vs native', () => {
     await expect(
       assertRetailerCanReceiveClaim(conn, RETAILER, 5n, HEALTHY),
     ).resolves.toBeUndefined();
+    // The native branch refuses the identical numbers. On THIS fixture — an empty
+    // retailer taking a 5-unit payout — the binding constraint is the 5,000-lamport
+    // transaction fee, not the 890,880 rent floor: the retailer signs its own claim
+    // and so pays for it, and 0 + 5 - 5000 is negative before rent is even reached.
+    // The rent-floor wording is pinned by the next test, whose 300,000-lamport
+    // payout clears the fee and lands under the floor.
     await expect(assertRetailerCanReceiveClaim(conn, RETAILER, 5n)).rejects.toThrow(
+      /cannot settle.*PAYS for its own claim/s,
+    );
+    // ...and with the fee explicitly zeroed it is the rent floor that bites,
+    // which is what this assertion used to be measuring.
+    await expect(assertRetailerCanReceiveClaim(conn, RETAILER, 5n, undefined, 0n)).rejects.toThrow(
       /strand the retailer below rent exemption/,
     );
   });

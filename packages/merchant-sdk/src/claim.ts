@@ -48,6 +48,21 @@ export const CLAIM_PERIOD_DISCRIMINATOR = Buffer.from([
 // ---------------------------------------------------------------------------
 
 /** Serialized length of an SPL `TokenAccount` (spl-token 3.x `Account::LEN`). */
+/**
+ * Base transaction fee for a claim, in lamports: 5,000 per signature and
+ * `claim_period` accepts exactly one signer, the retailer.
+ *
+ * It matters because the retailer is both the signer and the payee, so the fee
+ * is taken out of the very balance the payout lands in. MEASURED on devnet
+ * 2026-08-04 (tx `649EaoTP…`): `fee paid: 5000 lamports`, and the retailer's
+ * balance moved by `payout - 5000` exactly.
+ *
+ * A priority fee, if the caller adds compute-budget instructions, is ON TOP of
+ * this; pass the real number from `getFeeForMessage` when you have a compiled
+ * message, which is what {@link claimPeriod} does.
+ */
+export const CLAIM_TX_BASE_FEE_LAMPORTS = 5_000n;
+
 export const TOKEN_ACCOUNT_LEN = 165;
 
 /**
@@ -170,6 +185,7 @@ export async function assertRetailerCanReceiveClaim(
   retailer: PublicKey,
   payoutAmount: bigint,
   splAccounts?: SplClaimAccounts,
+  feeLamports: bigint = CLAIM_TX_BASE_FEE_LAMPORTS,
 ): Promise<void> {
   if (splAccounts) {
     await assertSplClaimCanSettle(connection, payoutAmount, splAccounts);
@@ -180,10 +196,19 @@ export async function assertRetailerCanReceiveClaim(
     connection.getBalance(retailer),
     connection.getMinimumBalanceForRentExemption(0),
   ]);
-  if (!claimWouldStrandRetailer(BigInt(balance), payoutAmount, BigInt(floor))) return;
+  if (!claimWouldStrandRetailer(BigInt(balance), payoutAmount, BigInt(floor), feeLamports)) return;
+
+  const after = BigInt(balance) + payoutAmount - feeLamports;
+  if (after <= 0n) {
+    throw new Error(
+      `claim_period cannot settle: retailer ${retailer.toBase58()} holds ${balance} lamports, and ` +
+        `after the ${payoutAmount}-lamport payout and the ${feeLamports}-lamport fee the balance ` +
+        `would be ${after}. The retailer signs and therefore PAYS for its own claim; fund it first.`,
+    );
+  }
   throw new Error(
     `claim_period would strand the retailer below rent exemption: balance ${balance} + payout ` +
-      `${payoutAmount} = ${BigInt(balance) + payoutAmount}, under the ${floor}-lamport floor. ` +
+      `${payoutAmount} - fee ${feeLamports} = ${after}, under the ${floor}-lamport floor. ` +
       `The program succeeds and the RUNTIME then rejects the transaction with a message naming ` +
       `insufficient funds for rent, which reads as though the vault were empty. Fund ${retailer.toBase58()} ` +
       `to at least ${floor} lamports once, or wait until enough periods accrue for a single claim to clear it.`,

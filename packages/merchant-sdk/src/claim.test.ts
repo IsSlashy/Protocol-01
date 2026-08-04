@@ -161,6 +161,39 @@ describe('claimWouldStrandRetailer — the rent floor', () => {
   it('does not flag a zero payout, which moves nothing', () => {
     expect(claimWouldStrandRetailer(0n, 0n, FLOOR)).toBe(false);
   });
+
+  // The retailer is the only signer claim_period accepts, so it is also the fee
+  // payer: the fee leaves the same balance the payout enters. Ignoring it made
+  // this predicate optimistic by exactly one fee, which is the width of the band
+  // a merchant onboarding with an empty wallet actually lands in.
+  describe('the fee comes out of the balance the payout goes into', () => {
+    const FEE = 5_000n;
+
+    it('is the difference between served and stranded at the boundary', () => {
+      // Exactly on the floor once the payout lands...
+      expect(claimWouldStrandRetailer(0n, FLOOR, FLOOR)).toBe(false);
+      // ...and one fee short of it once the retailer pays for its own claim.
+      expect(claimWouldStrandRetailer(0n, FLOOR, FLOOR, FEE)).toBe(true);
+      // One fee more of payout puts it back over.
+      expect(claimWouldStrandRetailer(0n, FLOOR + FEE, FLOOR, FEE)).toBe(false);
+    });
+
+    it('refuses when the balance cannot even cover the fee', () => {
+      // MEASURED shape: the SPL claim that settled had a retailer holding 0
+      // lamports. On the NATIVE branch those numbers cannot pay for themselves.
+      expect(claimWouldStrandRetailer(0n, 5n, FLOOR, FEE)).toBe(true);
+    });
+
+    it('defaults to zero so the three-argument form keeps its old meaning', () => {
+      expect(claimWouldStrandRetailer(0n, FLOOR, FLOOR)).toBe(
+        claimWouldStrandRetailer(0n, FLOOR, FLOOR, 0n),
+      );
+    });
+
+    it('leaves a well-funded retailer unaffected', () => {
+      expect(claimWouldStrandRetailer(1_000_000_000n, 50_000_000n, FLOOR, FEE)).toBe(false);
+    });
+  });
 });
 
 describe('buildClaimPeriodInstruction', () => {

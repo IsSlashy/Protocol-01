@@ -31,6 +31,9 @@ export * from './vaults';
 export * from './access-token';
 export * from './license';
 export * from './claim';
+// The send path for the revenue leg. Separate module so `vaults.ts -> claim.ts`
+// stays the only edge between those two and nothing becomes a cycle.
+export * from './claim-send';
 export * from './service-scope';
 
 // Re-export the lower-level registry helpers so merchants only need one dep.
