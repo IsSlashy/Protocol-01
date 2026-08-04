@@ -217,10 +217,13 @@ export default function SubscribePanel({
   // `spent` on a locally-painted note is a default, not a reading, so also drop
   // what this browser has already withdrawn — escrowing a spent note into a
   // subscription vault would fail after ~150 chunk uploads.
-  const spentHere = useMemo(
-    () => shieldClient.knownSpentNoteKeys(owner.toBase58()),
-    [owner],
-  );
+  // State, not a memo: subscribing adds to it, and a memo keyed on `owner`
+  // would not recompute after that write — the note just escrowed would stay
+  // in the picker until a reload.
+  const [spentHere, setSpentHere] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    setSpentHere(shieldClient.knownSpentNoteKeys(owner.toBase58()));
+  }, [owner]);
   const unspent = useMemo(
     () => notes.filter((n) => !n.spent && !spentHere.has(noteKey(n))),
     [notes, spentHere],
@@ -283,6 +286,13 @@ export default function SubscribePanel({
         onProgress: setStep,
       });
       setResult(out);
+      // Subscribing SPENDS the note — its nullifier is now on chain and the
+      // whole denomination is escrowed. Record it exactly as a withdrawal does,
+      // or every list keeps offering it until the pool scan catches up, which
+      // takes minutes: another ~1 SOL of buffer rent and ~150 uploads to reach
+      // a nullifier collision.
+      shieldClient.recordSpentNote(owner.toBase58(), noteKey(note));
+      setSpentHere((prev) => new Set(prev).add(noteKey(note)));
       void rescan();
     } catch (e) {
       setError((e as Error).message || "Subscription failed.");
