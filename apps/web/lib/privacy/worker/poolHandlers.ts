@@ -24,11 +24,14 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import {
+  buildMerkleProofFromLeavesV3,
   fetchPoolCommitments,
   findPoolV3,
   getPoolsForTokenV3,
+  type OnChainCommitment,
   type PoolConfig,
   type PoolToken,
+  type ShareableNote,
 } from '../pool/denominatedPool';
 import {
   assertPassphraseAcceptable,
@@ -44,6 +47,7 @@ import {
   createNoteEncryptionAddress,
   decryptNote,
   encryptNote,
+  isNoteEncryptionAddress,
 } from '../pool/noteCrypto';
 import type { StoredMerklePath } from '../pool/unshieldFromPath';
 import { recoverNotes, scanPoolForSeed, type RecoveredNote } from '../pool/poolNotes';
@@ -179,6 +183,43 @@ export interface PoolSubscribeExecuteRequest {
   vkHashSubscriber?: number[];
 }
 
+/**
+ * Seal one of the caller's own notes to somebody else's published note address.
+ *
+ * WHY THIS HANDLER EXISTS AT ALL, AND WHY IT CANNOT LIVE ON THE PAGE
+ * ─────────────────────────────────────────────────────────────────
+ * Handing a note over is the only path in this product that moves value with
+ * NO transaction: the recipient ends up holding the note's secrets and spends
+ * it later as their own. Nothing is broadcast, so there is no send transaction
+ * for an observer to pair with anything. (What that does NOT buy is stated on
+ * the UI — see SendForm.tsx — because the recipient's eventual withdrawal still
+ * republishes the commitment this note's deposit already published, so the exit
+ * is matchable to the sender's deposit. Only C7 closes that.)
+ *
+ * A `ShareableNote` is made almost entirely of note SECRETS (`secret`,
+ * `nullifier_preimage`, the blinding). `PoolNoteView` — the only note shape the
+ * main thread ever sees — deliberately carries none of them, so the page
+ * physically cannot assemble one. The encode AND the encryption therefore both
+ * happen in here and only the sealed ciphertext crosses back.
+ *
+ * DO NOT "simplify" this by returning the plaintext note and encrypting on the
+ * page. That would put three spendable secrets on the main thread for every
+ * handoff, which is the exact boundary this worker exists to hold.
+ */
+export interface PoolExportNoteRequest {
+  kind: 'poolExportNote';
+  meta: string;
+  token: PoolToken;
+  denomination: number;
+  /** Which note to hand over, by the leaf index it occupies. */
+  leafIndex: number;
+  /** Recipient's published `p01pq:` note address. Validated before any work. */
+  recipientAddress: string;
+  /** Note blobs stored at shield time; the matching one supplies the Merkle
+   *  path, so the recipient can withdraw without an RPC history rebuild. */
+  encryptedNotes?: string[];
+}
+
 export interface PoolRecoverRequest {
   kind: 'poolRecover';
   meta: string;
@@ -207,6 +248,7 @@ export interface PoolSetPassphraseRequest {
 }
 
 export type PoolRequest =
+  | PoolExportNoteRequest
   | PoolRecoverRequest
   | PoolShieldPrepareRequest
   | PoolShieldExecuteRequest
@@ -331,6 +373,35 @@ export interface PoolSubscribeExecuteResponse {
   denomination: number;
 }
 
+/**
+ * WHAT IS DELIBERATELY ABSENT FROM THIS TYPE: the note itself. `sealedNote` is
+ * ciphertext under the RECIPIENT's public key, so even the tab that asked for it
+ * cannot read it back. Every other field here is already public on chain.
+ */
+export interface PoolExportNoteResponse {
+  kind: 'poolExportNote';
+  /** `p01enc1:<base64>` — hybrid X25519 + ML-KEM-768, sealed to the recipient. */
+  sealedNote: string;
+  denomination: number;
+  leafIndex: number;
+  /** Public: the deposit already published it on chain. */
+  commitment: string;
+  /** Seed derivation the note was found under, resolved in the worker. */
+  derivation: DerivationVersion;
+  /**
+   * Where the Merkle path in the sealed note came from, so the UI can say
+   * whether the recipient will need this pool's RPC history to withdraw.
+   *   'stored'  — the exact witness captured at shield time (never wrong).
+   *   'rebuilt' — recomputed from the leaves this RPC still serves (best
+   *               effort: a pruned RPC yields a root the pool will reject).
+   *   'none'    — no path travels with the note; the recipient rebuilds.
+   * In every case the receiving side re-checks the root against the pool's
+   * historical ring before it uses it (`unshieldFromPath.ts:isRootAccepted`)
+   * and falls back to a full rebuild, so a stale path costs time, not funds.
+   */
+  merklePath: 'stored' | 'rebuilt' | 'none';
+}
+
 export interface PoolRecoverResponse {
   kind: 'poolRecover';
   /** Total lamports swept back to the owner. */
@@ -340,6 +411,7 @@ export interface PoolRecoverResponse {
 }
 
 export type PoolResponse =
+  | PoolExportNoteResponse
   | PoolRecoverResponse
   | PoolShieldPrepareResponse
   | PoolShieldExecuteResponse
@@ -639,6 +711,10 @@ async function locateOwnedNote(
   candidate: SeedCandidate;
   note: RecoveredNote;
   storedPath: StoredMerklePath | undefined;
+  /** The pool's leaves as this RPC serves them. Returned rather than refetched
+   *  because `poolExportNote` needs them to rebuild a Merkle path, and a second
+   *  full history pull is the heaviest call on the path — see below. */
+  commitments: Map<string, OnChainCommitment>;
 }> {
   const conn = requireConnection();
   const candidates = seedsInSearchOrder(requireSeeds(req.meta));
@@ -688,6 +764,7 @@ async function locateOwnedNote(
     candidate,
     note,
     storedPath: extractStoredPath(candidate.seed, req.encryptedNotes, note.receipt.commitment),
+    commitments,
   };
 }
 
@@ -768,6 +845,147 @@ async function handlePoolUnshieldExecute(
   } finally {
     preparedUnshields.delete(req.jobId);
   }
+}
+
+/**
+ * Densify a commitment map into the leaf array `buildMerkleProofFromLeavesV3`
+ * expects, without a second trip to the RPC.
+ *
+ * This is `fetchPoolLeavesByIndex` (denominatedPool.ts:1300) minus its
+ * `fetchPoolCommitments` call, because `locateOwnedNote` has already made
+ * exactly that call with exactly the same default (`maxSignatures: 1000`).
+ * Calling the exported helper here would double the heaviest RPC operation on
+ * this path for no new information — and a Helius devnet 429 arrives as HTTP
+ * 200 with a JSON-RPC -32429 body, so the second pull failing does not look
+ * like a failure.
+ *
+ * The array is FILLED, never sparse: `buildMerkleProofFromLeavesV3` maps over
+ * it, and `Array.prototype.map` preserves holes, so a hole would reach
+ * `poseidonHash2` as `undefined`. `0n` is `ZERO_VALUE_V3`
+ * (denominatedPool.ts:1063), the empty-leaf marker that function already
+ * substitutes with `zeros[0]`.
+ */
+function leavesFromCommitments(commitments: Map<string, OnChainCommitment>): bigint[] {
+  let maxIdx = -1;
+  for (const e of commitments.values()) {
+    if (e.leafIndex > maxIdx) maxIdx = e.leafIndex;
+  }
+  const leaves: bigint[] = maxIdx >= 0 ? new Array<bigint>(maxIdx + 1).fill(0n) : [];
+  for (const e of commitments.values()) leaves[e.leafIndex] = e.commitment;
+  return leaves;
+}
+
+/**
+ * Encode + seal one owned note to a recipient's `p01pq:` address.
+ *
+ * NOTHING IS SENT. No transaction is built, signed or broadcast anywhere in
+ * this function; the only chain access is the read `locateOwnedNote` performs
+ * to find the note and prove it is unspent. That is the entire point of the
+ * mechanism and also its main hazard, so both are handled explicitly:
+ *
+ *   - The note is NOT consumed. Its secrets are derived from THIS wallet's pool
+ *     seed (`poolNotes.ts:recoverNotes` → `deriveNoteMaterial`), so the sender
+ *     keeps the ability to withdraw it for as long as it is unspent. Sealing it
+ *     to somebody else does not, and cannot, revoke that. The UI must say so;
+ *     see SendForm.tsx.
+ *   - The sealed blob is a BEARER instrument once opened. It is encrypted to
+ *     the recipient, so the ciphertext is safe on any channel, but whoever ends
+ *     up holding the plaintext can spend the note.
+ *
+ * Wire format is fixed by the only client that can currently open one of these:
+ * `apps/extension/src/shared/store/denominatedPool.ts:449-470` decrypts the
+ * blob and then does `JSON.parse(decode(plaintext))` straight into a
+ * `ShareableNote`. So the plaintext is `JSON.stringify(ShareableNote)` — NOT
+ * the base64 `encodeShareableNote` form — matching what the extension's own
+ * transfer produces at `denominatedPool.ts:2161`. Changing the plaintext shape
+ * here silently breaks every recipient.
+ */
+async function handlePoolExportNote(
+  req: PoolExportNoteRequest,
+  onProgress?: (step: string) => void,
+): Promise<PoolExportNoteResponse> {
+  // BEFORE any RPC work. A pool scan is minutes of history-walking on devnet,
+  // and a typo in the address would otherwise be reported only after all of it
+  // — at the one moment the user has stopped watching.
+  if (!isNoteEncryptionAddress(req.recipientAddress)) {
+    throw new Error(
+      'That is not a Protocol 01 note address. It must start with "p01pq:" and is shown ' +
+        'on the recipient\'s own Import note screen. Nothing was read or sent.',
+    );
+  }
+
+  // Same lookup the withdrawal uses, so a note that can be withdrawn can be
+  // handed over and vice versa — including the derivation search, which is what
+  // keeps a pre-passphrase note exportable. It also refuses an already-spent
+  // note, which matters more here than anywhere else: a sealed note that was
+  // already withdrawn looks exactly like a good one to the recipient.
+  const { pool, candidate, note, storedPath, commitments } = await locateOwnedNote(req, onProgress);
+
+  // The Merkle path is what lets the recipient withdraw with no history rebuild.
+  // Stored first: it is the exact witness the shield captured and was accepted
+  // on chain. The rebuild is a fallback because it can only see the leaves this
+  // RPC still serves, and a pruned history yields a root the pool never had.
+  let merkleRoot: string | undefined;
+  let merklePathElements: string[] | undefined;
+  let merklePathIndices: number[] | undefined;
+  let merklePath: PoolExportNoteResponse['merklePath'] = 'none';
+
+  if (storedPath) {
+    merkleRoot = storedPath.root;
+    merklePathElements = storedPath.pathElements;
+    merklePathIndices = storedPath.pathIndices;
+    merklePath = 'stored';
+  } else {
+    try {
+      onProgress?.('Building the Merkle path the recipient will withdraw with...');
+      const built = buildMerkleProofFromLeavesV3({
+        leavesByIndex: leavesFromCommitments(commitments),
+        targetLeafIndex: note.receipt.leafIndex,
+      });
+      merkleRoot = built.root.toString();
+      merklePathElements = built.pathElements.map((e) => e.toString());
+      merklePathIndices = built.pathIndices;
+      merklePath = 'rebuilt';
+    } catch {
+      // Leave the path off rather than ship a wrong one. The recipient then
+      // rebuilds from history, which is slower but always correct.
+      merklePath = 'none';
+    }
+  }
+
+  const shareable: ShareableNote = {
+    version: 1,
+    pool: note.receipt.pool,
+    secret: note.receipt.secret.toString(),
+    nullifier_preimage: note.receipt.nullifierPreimage.toString(),
+    // Wire key stays `deposit_epoch`; it carries `noteBlinding`. See ShareableNote.
+    deposit_epoch: note.receipt.noteBlinding.toString(),
+    token_mint: note.receipt.tokenMint.toString(),
+    commitment: note.receipt.commitment.toString(),
+    leafIndex: note.receipt.leafIndex,
+    token: note.receipt.token,
+    denominationHuman: note.receipt.denominationHuman,
+    shieldedAt: note.receipt.shieldedAt,
+    merkle_root: merkleRoot,
+    merkle_path_elements: merklePathElements,
+    merkle_path_indices: merklePathIndices,
+  };
+
+  onProgress?.('Sealing the note to the recipient (X25519 + ML-KEM-768)...');
+  const sealedNote = encryptNote(
+    req.recipientAddress,
+    utf8ToBytes(JSON.stringify(shareable)),
+  );
+
+  return {
+    kind: 'poolExportNote',
+    sealedNote,
+    denomination: pool.denomination,
+    leafIndex: note.receipt.leafIndex,
+    commitment: note.receipt.commitment.toString(),
+    derivation: candidate.derivation,
+    merklePath,
+  };
 }
 
 /**
@@ -955,6 +1173,9 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolShieldExecute':
       res = await handlePoolShieldExecute(req, onProgress);
+      break;
+    case 'poolExportNote':
+      res = await handlePoolExportNote(req, onProgress);
       break;
     case 'poolRecover':
       res = await handlePoolRecover(req, onProgress);

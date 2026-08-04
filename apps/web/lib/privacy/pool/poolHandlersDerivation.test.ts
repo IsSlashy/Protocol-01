@@ -151,6 +151,12 @@ vi.mock('./noteCrypto', () => ({
   decryptNote: () => {
     throw new Error('not ours');
   },
+  // Added when `poolExportNote` landed: the handler validates the recipient
+  // address before doing any work, so poolHandlers now imports this too and an
+  // incomplete mock would fail the whole module's import, not just that test.
+  // The real function is exercised in `poolExportNote.test.ts`, which does not
+  // mock noteCrypto at all.
+  isNoteEncryptionAddress: (s: string) => s.startsWith('p01pq:'),
 }));
 
 vi.mock('./unshieldEphemeral', () => ({
