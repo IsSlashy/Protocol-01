@@ -26,6 +26,7 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { poolRequest } from './workerClient';
+import { loadSubscriptions } from '../pay/subscriptions';
 
 /** Sign one transaction with the connected wallet. */
 export type SignOne = (tx: Transaction) => Promise<Transaction>;
@@ -416,10 +417,21 @@ export function loadSpentNotes(walletPubkey: string): string[] {
  * introduced. Without that second source the fix would only protect notes spent
  * from this version onward, and would leave exactly the note that exposed the
  * bug still sitting in the list.
+ *
+ * Subscription records are the third source, by the same argument: one is
+ * written only when a subscribe has succeeded, and it names the note that was
+ * escrowed (`pool` + `leafIndex`). Records imported by vault address carry no
+ * note identity and contribute nothing here; for those, and for anything
+ * recorded by no one, `resolveSpentNotes` below reads the chain itself.
  */
 export function knownSpentNoteKeys(walletPubkey: string): Set<string> {
   const keys = new Set(loadSpentNotes(walletPubkey));
   for (const p of loadPayouts(walletPubkey)) keys.add(`${p.pool}:${p.leafIndex}`);
+  for (const s of loadSubscriptions(walletPubkey)) {
+    if (s.pool !== undefined && s.leafIndex !== undefined) {
+      keys.add(`${s.pool}:${s.leafIndex}`);
+    }
+  }
   return keys;
 }
 
