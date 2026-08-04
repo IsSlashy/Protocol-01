@@ -668,3 +668,93 @@ export async function sweepPayout(params: {
   }
   return { txSig, lamports };
 }
+
+// ---------------------------------------------------------------------------
+// Spent resolution for locally stored notes
+// ---------------------------------------------------------------------------
+
+export interface ResolveSpentOutcome {
+  /** Note keys ("pool:leafIndex") the chain confirms SPENT, now recorded. */
+  confirmedSpent: string[];
+  /** Notes checked against the chain. */
+  checked: number;
+  /** Blobs that decrypted under no seed this identity holds. */
+  skipped: number;
+  /** Notes whose nullifier read failed; their status is unchanged. */
+  unresolved: number;
+}
+
+/**
+ * Ask the chain which of this browser's notes are actually spent, and record
+ * the confirmations.
+ *
+ * Closes the gap `scanPoolLocal` documents: the locally painted list carries
+ * `spentKnown: false`, and the full `poolScan` that would reconcile it walks
+ * candidate epochs across six denominations first: it does not finish in a
+ * time a user waits. This resolves ONLY the notes already known locally, one
+ * nullifier-PDA read each, a few seconds total. It catches spends nothing
+ * recorded: a subscription made before `recordSubscription` existed, a spend
+ * from another device, a wiped session.
+ *
+ * One-directional on purpose: confirmations are written through
+ * `recordSpentNote`, so a note only ever moves from unspent to spent. A note
+ * the chain reports unspent is left exactly as it was, because the chain saying "no
+ * nullifier yet" must never resurrect a note something else knows is gone.
+ *
+ * Callers should re-read `knownSpentNoteKeys` afterwards and re-filter.
+ */
+export async function resolveSpentNotes(
+  meta: string,
+  walletPubkey: string,
+  onProgress?: (step: string) => void,
+): Promise<ResolveSpentOutcome> {
+  const res = await poolRequest(
+    { kind: 'poolResolveSpent', meta, blobs: loadEncryptedNotes(walletPubkey) },
+    onProgress,
+  );
+  const confirmedSpent = Object.entries(res.spent)
+    .filter(([, isSpent]) => isSpent)
+    .map(([key]) => key);
+  for (const key of confirmedSpent) recordSpentNote(walletPubkey, key);
+  return {
+    confirmedSpent,
+    checked: res.checked,
+    skipped: res.skipped,
+    unresolved: res.unresolved,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// License key re-derivation
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-derive the license key of a subscription paid for by one of this
+ * browser's notes. Derived on demand in the worker from the note secret, which
+ * is why no store anywhere has to hold it; the same key the subscribe flow
+ * showed once. Throws when this browser does not hold the paying note's blob
+ * (spent from another device, or storage wiped); the key is then only
+ * re-derivable on a device that does.
+ *
+ * ⛔ The returned key is a bearer credential. Show it, let the user copy it,
+ * and never log or persist it.
+ */
+export async function deriveSubscriptionLicenseKey(params: {
+  meta: string;
+  walletPubkey: string;
+  /** Pool PDA (base58) + leaf index of the note that paid, from the record. */
+  pool: string;
+  leafIndex: number;
+  /** The tag the key is scoped to: registry slug, else retailer address. */
+  serviceTag: string;
+}): Promise<string> {
+  const res = await poolRequest({
+    kind: 'poolLicenseKey',
+    meta: params.meta,
+    blobs: loadEncryptedNotes(params.walletPubkey),
+    pool: params.pool,
+    leafIndex: params.leafIndex,
+    serviceTag: params.serviceTag,
+  });
+  return res.licenseKey;
+}

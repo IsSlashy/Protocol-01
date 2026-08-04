@@ -30,6 +30,7 @@ import {
   getPoolsForTokenV3,
   type OnChainCommitment,
   type PoolConfig,
+  isNullifierSpent,
   type PoolToken,
   type ShareableNote,
   ALL_POOLS_V3,
@@ -262,6 +263,78 @@ export interface PoolRecoverRequest {
 }
 
 /**
+ * Resolve `spent` for the notes this browser holds locally, against the chain.
+ *
+ * WHY THIS EXISTS: `poolScanLocal` paints the list in milliseconds but marks
+ * every note `spentKnown: false`, because whether a note is spent lives in an on-chain
+ * nullifier PDA. The full `poolScan` would answer, but it enumerates candidate
+ * epochs across six denominations first and does not finish in a time a user
+ * waits. Meanwhile a note spent by an early subscription (before the local
+ * spent record existed), on another device, or in a wiped session keeps being
+ * OFFERED in the pickers. The blobs already carry `secret` and
+ * `nullifier_preimage`, so the worker can compute each note's nullifier
+ * directly and check PDA existence: one `getAccountInfo` per local note,
+ * seconds instead of never.
+ *
+ * Read-only: no transaction, no state written, nothing stored.
+ */
+export interface PoolResolveSpentRequest {
+  kind: 'poolResolveSpent';
+  meta: string;
+  /** The encrypted blobs from local storage, same contract as `poolScanLocal`. */
+  blobs: string[];
+}
+
+export interface PoolResolveSpentResponse {
+  kind: 'poolResolveSpent';
+  /**
+   * `"<poolPDA>:<leafIndex>"` -> whether the nullifier PDA exists on chain.
+   * `true` is definitive (the note is spent). `false` is the chain's answer at
+   * this instant; callers must only ever promote a note from unspent to spent
+   * off this map, never the reverse: a locally recorded spend stays spent.
+   * Notes whose RPC read failed are ABSENT from the map, not reported false.
+   */
+  spent: Record<string, boolean>;
+  /** Notes checked against the chain. */
+  checked: number;
+  /** Blobs that decrypted under no seed this identity holds. */
+  skipped: number;
+  /** Notes whose nullifier read failed; absent from `spent`. */
+  unresolved: number;
+}
+
+/**
+ * Re-derive the license key of a subscription paid for by a local note.
+ *
+ * `poolSubscribeExecute` already returns this exact key to the page at
+ * purchase time, so answering again later moves the MOMENT, not the trust
+ * boundary: the key is a 128-bit HKDF leg of the note secret, scoped by the
+ * service tag, and cannot be inverted to spend the note. The secret itself
+ * still never leaves the worker, and the key is derived on demand precisely so
+ * that no store anywhere has to hold a bearer credential.
+ *
+ * ⛔ Never log the key, and never put it in an error message.
+ */
+export interface PoolLicenseKeyRequest {
+  kind: 'poolLicenseKey';
+  meta: string;
+  /** The encrypted blobs from local storage; the matching one holds the secret. */
+  blobs: string[];
+  /** Pool PDA (base58) + leaf index identifying the note that paid. */
+  pool: string;
+  leafIndex: number;
+  /** The string the key is scoped to: registry slug, else retailer address. */
+  serviceTag: string;
+}
+
+export interface PoolLicenseKeyResponse {
+  kind: 'poolLicenseKey';
+  /** The "P01-…" key, re-derived. Displayed, never stored, never logged. */
+  licenseKey: string;
+  serviceTag: string;
+}
+
+/**
  * Arm the passphrase that the NEXT `deriveMeta` will mix into the pool seed.
  *
  * Why it is a separate message and why it clears state: the pool seed is built
@@ -282,7 +355,9 @@ export interface PoolSetPassphraseRequest {
 
 export type PoolRequest =
   | PoolExportNoteRequest
+  | PoolLicenseKeyRequest
   | PoolRecoverRequest
+  | PoolResolveSpentRequest
   | PoolShieldPrepareRequest
   | PoolShieldExecuteRequest
   | PoolScanRequest
@@ -454,7 +529,9 @@ export interface PoolRecoverResponse {
 
 export type PoolResponse =
   | PoolExportNoteResponse
+  | PoolLicenseKeyResponse
   | PoolRecoverResponse
+  | PoolResolveSpentResponse
   | PoolShieldPrepareResponse
   | PoolShieldExecuteResponse
   | PoolScanResponse
@@ -1259,6 +1336,122 @@ function handlePoolSetPassphrase(req: PoolSetPassphraseRequest): PoolSetPassphra
 }
 
 // ---------------------------------------------------------------------------
+// Local-note helpers (used by the two read-only resolution handlers below)
+// ---------------------------------------------------------------------------
+
+/** The blob fields the resolution handlers read. All written at shield time. */
+interface OwnedBlobNote {
+  pool: string;
+  leafIndex: number;
+  secret: bigint;
+  nullifierPreimage: bigint;
+}
+
+/**
+ * Decrypt one stored blob with every seed candidate, active first, the same
+ * search `handlePoolScanLocal` does, for the same reason: a note shielded
+ * before a passphrase was adopted only opens under the legacy seed. Returns
+ * null for a blob this identity does not own or that lacks the needed fields.
+ */
+function decryptOwnedBlob(candidates: SeedCandidate[], blob: string): OwnedBlobNote | null {
+  for (const candidate of candidates) {
+    let note: Record<string, unknown>;
+    try {
+      note = JSON.parse(new TextDecoder().decode(decryptNote(candidate.seed, blob)));
+    } catch {
+      continue; // not this seed's blob, try the next derivation
+    }
+    try {
+      const pool = typeof note.pool === 'string' ? note.pool : null;
+      const leafIndex = Number(note.leafIndex);
+      if (!pool || !Number.isInteger(leafIndex) || leafIndex < 0) return null;
+      return {
+        pool,
+        leafIndex,
+        secret: BigInt(String(note.secret)),
+        nullifierPreimage: BigInt(String(note.nullifier_preimage)),
+      };
+    } catch {
+      return null; // decrypted, but the shape is not a stored note
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve `spent` for the local notes against the chain: one nullifier-PDA
+ * existence read per note. Read-only; see `PoolResolveSpentRequest`.
+ *
+ * A single note's failed read must not sink the rest: it lands in
+ * `unresolved` and stays absent from the map, which callers treat as unknown.
+ */
+async function handlePoolResolveSpent(
+  req: PoolResolveSpentRequest,
+  onProgress?: (step: string) => void,
+): Promise<PoolResolveSpentResponse> {
+  const conn = requireConnection();
+  const candidates = seedsInSearchOrder(requireSeeds(req.meta));
+
+  const spent: Record<string, boolean> = {};
+  let checked = 0;
+  let skipped = 0;
+  let unresolved = 0;
+  const seen = new Set<string>();
+
+  for (const blob of req.blobs ?? []) {
+    const note = decryptOwnedBlob(candidates, blob);
+    if (!note) {
+      skipped += 1;
+      continue;
+    }
+    const key = `${note.pool}:${note.leafIndex}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const pool = ALL_POOLS_V3.find((p) => p.poolPDA.toBase58() === note.pool);
+    if (!pool) {
+      skipped += 1;
+      continue;
+    }
+
+    onProgress?.(`Checking note ${checked + unresolved + 1} against the chain...`);
+    try {
+      spent[key] = await isNullifierSpent(conn, pool.poolPDA, note.nullifierPreimage, note.secret);
+      checked += 1;
+    } catch {
+      // RPC hiccup for this one note: report it unresolved rather than guess.
+      unresolved += 1;
+    }
+  }
+
+  return { kind: 'poolResolveSpent', spent, checked, skipped, unresolved };
+}
+
+/**
+ * Re-derive a subscription's license key from the local note that paid for it.
+ * Same derivation `handlePoolSubscribeExecute` performs at purchase time, on
+ * the same secret, scoped by the same tag. See `PoolLicenseKeyRequest`.
+ *
+ * ⛔ The key must never be logged and never appear in an error message.
+ */
+function handlePoolLicenseKey(req: PoolLicenseKeyRequest): PoolLicenseKeyResponse {
+  const candidates = seedsInSearchOrder(requireSeeds(req.meta));
+
+  for (const blob of req.blobs ?? []) {
+    const note = decryptOwnedBlob(candidates, blob);
+    if (!note || note.pool !== req.pool || note.leafIndex !== req.leafIndex) continue;
+
+    const licenseKey = encodeLicenseKey(deriveLicenseSecret(note.secret, req.serviceTag));
+    return { kind: 'poolLicenseKey', licenseKey, serviceTag: req.serviceTag };
+  }
+
+  throw new Error(
+    'This browser does not hold the note that paid for this subscription, so the key ' +
+      'cannot be re-derived here. Any device holding that note secret can.',
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
@@ -1287,6 +1480,12 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolSetPassphrase':
       res = handlePoolSetPassphrase(req);
+      break;
+    case 'poolResolveSpent':
+      res = await handlePoolResolveSpent(req, onProgress);
+      break;
+    case 'poolLicenseKey':
+      res = handlePoolLicenseKey(req);
       break;
     case 'poolSubscribePrepare':
       res = await handlePoolSubscribePrepare(req, onProgress);
