@@ -146,6 +146,23 @@ export function slotToEpoch(slot: number): bigint {
 // Pool configuration types (mirror mobile lines 114-130)
 // ---------------------------------------------------------------------------
 
+/**
+ * Which denominated pool family a request targets.
+ *
+ * This used to be the literal `'SOL'` in every request type, which meant the
+ * Pool tab silently kept shielding SOL after the header switched to USDC — the
+ * user believed they were shielding one asset while the worker shielded another.
+ * `findPoolV3` and `getPoolsForTokenV3` already handled both; only the types
+ * were closed.
+ *
+ * Starknet assets are deliberately NOT in this union. Their pool path is the
+ * STRK20 Privacy Pool, whose SDK is access-gated (`chains/starknet.ts:205`
+ * wires `shieldToStealth` to a throwing gate), so there is no pool this client
+ * can reach for STRK or ETH today and pretending otherwise in a type would be
+ * the same defect one layer down.
+ */
+export type PoolToken = PoolConfig['token'];
+
 export interface PoolConfig {
   token: 'SOL' | 'USDC';
   tokenMint: PublicKey;

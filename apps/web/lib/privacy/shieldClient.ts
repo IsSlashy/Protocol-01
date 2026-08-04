@@ -1,3 +1,4 @@
+import type { PoolToken } from './pool/denominatedPool';
 /**
  * shieldClient — main-thread driver for a denominated-pool shield.
  *
@@ -28,7 +29,7 @@ export type SignOne = (tx: Transaction) => Promise<Transaction>;
 export interface ShieldParams {
   /** Session key from `deriveMeta`. */
   meta: string;
-  token: 'SOL';
+  token: PoolToken;
   denomination: number;
   owner: PublicKey;
   connection: Connection;
@@ -95,7 +96,7 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
 
 export interface UnshieldParams {
   meta: string;
-  token: 'SOL';
+  token: PoolToken;
   denomination: number;
   /** Which note to spend, by the leaf index it occupies. */
   leafIndex: number;

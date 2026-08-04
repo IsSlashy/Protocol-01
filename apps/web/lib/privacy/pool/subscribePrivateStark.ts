@@ -1,0 +1,287 @@
+/**
+ * `subscribe_private_stark` for the web client — pay a merchant from a shielded
+ * note and walk away with a license key.
+ *
+ * ## Shape
+ *
+ * Structurally this is the WITHDRAWAL path, not a lighter one. The instruction
+ * requires BOTH proof buffers — C1 (pool_commitment) and C3 (merkle_path) — and
+ * checks their circuit ids at `subscribe_private_stark.rs:233` and `:285`. An
+ * older comment in the extension calls this "the C3-free path"; that is wrong
+ * against the deployed program and reading it cost an hour. The upside is that
+ * `prepareUnshieldJob` already produces exactly the pair this needs, so the
+ * expensive half of the work is shared.
+ *
+ * ## The argument layout is the part that fails silently
+ *
+ * Borsh args, in on-chain order (`lib.rs:267-280`):
+ *
+ *   nullifier[32] | merkle_root[32] | min_epoch u64 | subscriber_commitment[32]
+ *   | rate u64 | interval_slots u64 | vk_hash_subscriber[32]
+ *   | stark_commitment u64 | license_commitment Option<[u8;32]>
+ *
+ * `client_stealth_meta: Option<[u8;64]>` USED to sit between `stark_commitment`
+ * and `license_commitment`, and its tag byte was written even when None. The
+ * program no longer declares it. Emitting that byte now does not fail — it
+ * shifts `license_commitment` by one and the vault stores a corrupt commitment,
+ * so the subscriber's key verifies against nothing and nobody finds out until a
+ * merchant rejects it. The test beside this file pins every offset for that
+ * reason.
+ */
+
+import {
+  Connection,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+} from '@solana/web3.js';
+import {
+  ZK_SHIELDED_PROGRAM_ID,
+  deriveNullifierPDA,
+  goldilocksToLeBytes32,
+  type PoolConfig,
+  type PrepareUnshieldResult,
+  type ShieldReceipt,
+} from './denominatedPool';
+
+/** `min_epoch` is ignored by this handler, and publishing anything else leaks. */
+export const SUBSCRIBE_MIN_EPOCH = 0n;
+
+/** Anchor discriminator: sha256("global:<name>")[..8]. */
+async function discriminator(name: string): Promise<Buffer> {
+  const { sha256 } = await import('@noble/hashes/sha2.js');
+  const { utf8ToBytes } = await import('@noble/hashes/utils.js');
+  return Buffer.from(sha256(utf8ToBytes(`global:${name}`)).slice(0, 8));
+}
+
+/**
+ * Encode a Goldilocks u64 into the 32-byte field the vault stores.
+ *
+ * Little-endian in the low 8 bytes, zeroes above. The program reads
+ * `commitment[..8]` as a u64 and compares it against the circuit-0 proof's
+ * inputs hash, and the PDA is seeded on all 32 bytes — so the high 24 MUST be
+ * zero or the vault derived here is not the vault the program derives.
+ */
+export function goldilocksU64To32(commitment: bigint): Uint8Array {
+  const out = new Uint8Array(32);
+  let v = commitment & 0xffffffffffffffffn;
+  for (let i = 0; i < 8; i++) {
+    out[i] = Number(v & 0xffn);
+    v >>= 8n;
+  }
+  return out;
+}
+
+/** PDA: `[b"subscription_vault", retailer, subscriber_id, token_mint]`. */
+export function deriveSubscriptionVaultPDA(
+  retailer: PublicKey,
+  subscriberIdBytes: Uint8Array,
+  tokenMint: PublicKey,
+  programId: PublicKey = ZK_SHIELDED_PROGRAM_ID,
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [
+      Buffer.from('subscription_vault'),
+      retailer.toBuffer(),
+      Buffer.from(subscriberIdBytes),
+      tokenMint.toBuffer(),
+    ],
+    programId,
+  );
+}
+
+export interface SubscribeIxParams {
+  payer: PublicKey;
+  retailer: PublicKey;
+  vaultPDA: PublicKey;
+  poolPDA: PublicKey;
+  treePDA: PublicKey;
+  nullifierPDA: PublicKey;
+  c1ProofBuffer: PublicKey;
+  c3ProofBuffer: PublicKey;
+  nullifierBytes: Uint8Array;
+  merkleRootBytes: Uint8Array;
+  subscriberCommitmentBytes: Uint8Array;
+  rate: bigint;
+  intervalSlots: bigint;
+  vkHashSubscriber: Uint8Array;
+  starkCommitment: bigint;
+  /** blake3(licenseSecret). Stored verbatim, never verified on chain. */
+  licenseCommitment?: Uint8Array;
+  programId?: PublicKey;
+}
+
+/** Byte offsets of every argument, exported so the test cannot drift from the code. */
+export const SUBSCRIBE_ARG_OFFSETS = {
+  discriminator: 0,
+  nullifier: 8,
+  merkleRoot: 40,
+  minEpoch: 72,
+  subscriberCommitment: 80,
+  rate: 112,
+  intervalSlots: 120,
+  vkHashSubscriber: 128,
+  starkCommitment: 160,
+  licenseTag: 168,
+  licenseValue: 169,
+} as const;
+
+export async function buildSubscribePrivateStarkIx(
+  p: SubscribeIxParams,
+): Promise<TransactionInstruction> {
+  const programId = p.programId ?? ZK_SHIELDED_PROGRAM_ID;
+  const disc = await discriminator('subscribe_private_stark');
+
+  const hasLicense = !!p.licenseCommitment && p.licenseCommitment.length === 32;
+  const data = Buffer.alloc(SUBSCRIBE_ARG_OFFSETS.licenseTag + 1 + (hasLicense ? 32 : 0));
+
+  disc.copy(data, SUBSCRIBE_ARG_OFFSETS.discriminator);
+  Buffer.from(p.nullifierBytes).copy(data, SUBSCRIBE_ARG_OFFSETS.nullifier);
+  Buffer.from(p.merkleRootBytes).copy(data, SUBSCRIBE_ARG_OFFSETS.merkleRoot);
+  data.writeBigUInt64LE(SUBSCRIBE_MIN_EPOCH, SUBSCRIBE_ARG_OFFSETS.minEpoch);
+  Buffer.from(p.subscriberCommitmentBytes).copy(data, SUBSCRIBE_ARG_OFFSETS.subscriberCommitment);
+  data.writeBigUInt64LE(p.rate, SUBSCRIBE_ARG_OFFSETS.rate);
+  data.writeBigUInt64LE(p.intervalSlots, SUBSCRIBE_ARG_OFFSETS.intervalSlots);
+  Buffer.from(p.vkHashSubscriber).copy(data, SUBSCRIBE_ARG_OFFSETS.vkHashSubscriber);
+  data.writeBigUInt64LE(p.starkCommitment, SUBSCRIBE_ARG_OFFSETS.starkCommitment);
+  data.writeUInt8(hasLicense ? 1 : 0, SUBSCRIBE_ARG_OFFSETS.licenseTag);
+  if (hasLicense) {
+    Buffer.from(p.licenseCommitment!).copy(data, SUBSCRIBE_ARG_OFFSETS.licenseValue);
+  }
+
+  // Account order mirrors `SubscribePrivateStark<'info>`. The three trailing
+  // Option accounts must be present even for a native-SOL pool — Anchor 0.32
+  // rejects a short list with AccountNotEnoughKeys (3005) inside the resolver,
+  // before the handler runs, and an absent optional is the program's own id.
+  const sentinel = programId;
+  return new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: p.payer, isSigner: true, isWritable: true },
+      { pubkey: p.retailer, isSigner: false, isWritable: false },
+      { pubkey: p.vaultPDA, isSigner: false, isWritable: true },
+      { pubkey: p.poolPDA, isSigner: false, isWritable: true },
+      { pubkey: p.treePDA, isSigner: false, isWritable: false },
+      { pubkey: p.nullifierPDA, isSigner: false, isWritable: true },
+      { pubkey: p.c1ProofBuffer, isSigner: false, isWritable: false },
+      { pubkey: p.c3ProofBuffer, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: sentinel, isSigner: false, isWritable: false }, // token_program
+      { pubkey: sentinel, isSigner: false, isWritable: false }, // pool_vault
+      { pubkey: sentinel, isSigner: false, isWritable: false }, // vault_token_account
+    ],
+    data,
+  });
+}
+
+export interface SubscribeOnChainParams {
+  receipt: ShieldReceipt;
+  poolConfig: PoolConfig;
+  prepared: PrepareUnshieldResult;
+  retailer: PublicKey;
+  subscriberCommitment: bigint;
+  rate: bigint;
+  intervalSlots: bigint;
+  vkHashSubscriber: Uint8Array;
+  licenseCommitment?: Uint8Array;
+}
+
+/**
+ * Upload C1 + C3 and send the subscribe. `signer` is the ephemeral that was
+ * pre-funded; it pays the rent for both proof buffers and the vault.
+ *
+ * Deliberately mirrors `unshieldDenominatedStarkV3`'s ordering: both buffers are
+ * uploaded and verified BEFORE the subscribe is built, so a proof that fails
+ * verification costs buffer rent (recoverable) rather than a half-created vault.
+ */
+export async function subscribePrivateStark(
+  params: SubscribeOnChainParams,
+  signer: import('./stark').WalletSigner,
+  connection: Connection,
+  onProgress?: (step: string) => void,
+): Promise<{ txSig: string; vaultPDA: PublicKey }> {
+  const { submitAndVerifyStarkProof, closeStarkProofBuffer } = await import('./stark');
+  const { CIRCUIT_POOL_COMMITMENT, CIRCUIT_MERKLE_PATH } = await import('./denominatedPool');
+
+  const { prepared, poolConfig } = params;
+  const createdBuffers: PublicKey[] = [];
+
+  try {
+    onProgress?.('Uploading the ownership proof...');
+    const c1 = await submitAndVerifyStarkProof(
+      {
+        proofBytes: prepared.c1ProofResult.proofBytes,
+        circuitId: CIRCUIT_POOL_COMMITMENT,
+        publicInputs: prepared.c1ProofResult.publicInputs,
+        proofSize: prepared.c1ProofResult.proofSize,
+      },
+      signer,
+      connection,
+      onProgress,
+    );
+    createdBuffers.push(c1.proofBuffer);
+
+    onProgress?.('Uploading the membership proof...');
+    const c3 = await submitAndVerifyStarkProof(
+      {
+        proofBytes: prepared.c3ProofResult.proofBytes,
+        circuitId: CIRCUIT_MERKLE_PATH,
+        publicInputs: prepared.c3ProofResult.publicInputs,
+        proofSize: prepared.c3ProofResult.proofSize,
+      },
+      signer,
+      connection,
+      onProgress,
+    );
+    createdBuffers.push(c3.proofBuffer);
+
+    const nullifierBytes = Uint8Array.from(goldilocksToLeBytes32(prepared.nullifierGoldilocks));
+    const merkleRootBytes = Uint8Array.from(goldilocksToLeBytes32(prepared.merkleRoot));
+    const subscriberCommitmentBytes = goldilocksU64To32(params.subscriberCommitment);
+    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+    const [vaultPDA] = deriveSubscriptionVaultPDA(
+      params.retailer,
+      subscriberCommitmentBytes,
+      poolConfig.tokenMint,
+    );
+
+    onProgress?.('Opening the subscription vault...');
+    const ix = await buildSubscribePrivateStarkIx({
+      payer: signer.publicKey,
+      retailer: params.retailer,
+      vaultPDA,
+      poolPDA: poolConfig.poolPDA,
+      treePDA: poolConfig.treePDA,
+      nullifierPDA,
+      c1ProofBuffer: c1.proofBuffer,
+      c3ProofBuffer: c3.proofBuffer,
+      nullifierBytes,
+      merkleRootBytes,
+      subscriberCommitmentBytes,
+      rate: params.rate,
+      intervalSlots: params.intervalSlots,
+      vkHashSubscriber: params.vkHashSubscriber,
+      starkCommitment: prepared.starkCommitment,
+      licenseCommitment: params.licenseCommitment,
+    });
+
+    const tx = new Transaction().add(ix);
+    const signed = await signer.signTransaction(tx);
+    const txSig = await connection.sendRawTransaction(signed.serialize());
+    const bh = await connection.getLatestBlockhash('confirmed');
+    await connection.confirmTransaction({ signature: txSig, ...bh }, 'confirmed');
+
+    return { txSig, vaultPDA };
+  } finally {
+    // Buffer rent is only reclaimable by the ephemeral that opened it, so this
+    // runs even on failure — the same reason the withdrawal path does it.
+    for (const b of createdBuffers) {
+      try {
+        await closeStarkProofBuffer(b, signer, connection);
+      } catch (e) {
+        console.warn('[pool/subscribe] buffer close failed, rent recoverable later:', e);
+      }
+    }
+  }
+}

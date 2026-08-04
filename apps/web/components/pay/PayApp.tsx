@@ -447,6 +447,7 @@ export default function PayApp() {
               owner={solPub}
               connection={connection}
               signOne={signSolanaTx}
+              token={asset.symbol === 'USDC' ? 'USDC' : 'SOL'}
             />
           ) : tab === "send" ? (
             <SendForm adapter={adapter} asset={asset} />

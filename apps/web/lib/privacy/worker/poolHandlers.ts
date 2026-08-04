@@ -28,6 +28,7 @@ import {
   findPoolV3,
   getPoolsForTokenV3,
   type PoolConfig,
+  type PoolToken,
 } from '../pool/denominatedPool';
 import {
   assertPassphraseAcceptable,
@@ -70,7 +71,7 @@ export interface PoolShieldPrepareRequest {
   kind: 'poolShieldPrepare';
   /** Session key — the encoded meta returned by `deriveMeta`. */
   meta: string;
-  token: 'SOL';
+  token: PoolToken;
   denomination: number;
 }
 
@@ -84,7 +85,7 @@ export interface PoolShieldExecuteRequest {
 export interface PoolScanRequest {
   kind: 'poolScan';
   meta: string;
-  token: 'SOL';
+  token: PoolToken;
   /** Omit to scan every denomination of the token. */
   denomination?: number;
 }
@@ -95,7 +96,7 @@ export interface PoolScanRequest {
 export interface PoolUnshieldPrepareRequest {
   kind: 'poolUnshieldPrepare';
   meta: string;
-  token: 'SOL';
+  token: PoolToken;
   denomination: number;
   leafIndex: number;
   /** Note blobs stored at shield time. The one whose commitment matches this
@@ -117,7 +118,7 @@ export interface PoolUnshieldExecuteRequest {
 export interface PoolRecoverRequest {
   kind: 'poolRecover';
   meta: string;
-  token: 'SOL';
+  token: PoolToken;
   denomination: number;
   ownerPubkey: string;
 }
@@ -345,7 +346,7 @@ function requireConnection(): Connection {
   return connection;
 }
 
-function requirePool(token: 'SOL', denomination: number): PoolConfig {
+function requirePool(token: PoolToken, denomination: number): PoolConfig {
   const pool = findPoolV3(token, denomination);
   if (!pool) {
     const available = getPoolsForTokenV3(token).map((p) => p.denomination).join(', ');

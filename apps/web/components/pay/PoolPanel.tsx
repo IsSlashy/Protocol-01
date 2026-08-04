@@ -13,25 +13,34 @@ import {
   type ShieldOutcome,
 } from "@/lib/privacy/shieldClient";
 import type { PoolNoteView, PoolSizeView } from "@/lib/privacy/worker/poolHandlers";
+import { getPoolsForTokenV3, type PoolToken } from "@/lib/privacy/pool/denominatedPool";
 import { truncate } from "./util";
 
 /** The live V4 SOL pools. Shielding snaps to one of these — a denominated pool
  *  cannot hold an arbitrary amount, and that is the whole point: every note in
  *  a pool looks identical. */
-const SOL_DENOMINATIONS = [0.1, 1, 10, 100, 500, 1000];
+// Denominations are no longer a hardcoded SOL list: they come from the pool
+// configs for whichever token the header selected. The list used to be SOL-only
+// while the header could say USDC, so the panel shielded SOL and said USDC.
+function denominationsFor(token: PoolToken): number[] {
+  return getPoolsForTokenV3(token).map((p) => p.denomination).sort((a, b) => a - b);
+}
 
 export default function PoolPanel({
   meta,
   owner,
   connection,
   signOne,
+  token,
 }: {
+  token: PoolToken;
   meta: string;
   owner: PublicKey;
   connection: Connection;
   signOne: ((tx: Transaction) => Promise<Transaction>) | null;
 }) {
-  const [denomination, setDenomination] = useState(SOL_DENOMINATIONS[0]);
+  const denominations = denominationsFor(token);
+  const [denomination, setDenomination] = useState(denominations[0]!);
   const [notes, setNotes] = useState<PoolNoteView[]>([]);
   const [poolSizes, setPoolSizes] = useState<PoolSizeView[]>([]);
   const [balance, setBalance] = useState(0);
@@ -186,7 +195,7 @@ export default function PoolPanel({
           Denomination
         </label>
         <div className="flex flex-wrap gap-2">
-          {SOL_DENOMINATIONS.map((d) => (
+          {denominations.map((d) => (
             <button
               key={d}
               onClick={() => setDenomination(d)}
