@@ -39,7 +39,12 @@ import { getPoolsForTokenV3, type PoolToken } from "@/lib/privacy/pool/denominat
 import { SHIELD_PHASES, WITHDRAW_PHASES } from "@/lib/pay/flowProgress";
 import FlowProgress from "./FlowProgress";
 import SuccessBurst from "./SuccessBurst";
-import { HANDOFFS_CHANGED_EVENT, forgetHandoff, handoffKeys } from "@/lib/pay/handoffs";
+import {
+  HANDOFFS_CHANGED_EVENT,
+  forgetHandoff,
+  handoffKeys,
+  recordHandoff,
+} from "@/lib/pay/handoffs";
 import { truncate } from "./util";
 
 /** The live V4 SOL pools. Shielding snaps to one of these: a denominated pool
@@ -844,6 +849,28 @@ export default function PoolPanel({
                           ? "Still being checked against the chain; may already be spent."
                           : "In the pool, ready to withdraw."}
                     </p>
+                    {!handedOver.has(noteKey(n)) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          recordHandoff(ownerKey, {
+                            pool: n.pool,
+                            leafIndex: n.leafIndex,
+                            sealedAt: Date.now(),
+                          });
+                          setHandedOver(handoffKeys(ownerKey));
+                        }}
+                        // Sealing records this by itself. The manual entry
+                        // exists because a handoff leaves NO trace anywhere,
+                        // by design, so nothing can be recovered after the
+                        // fact: a note handed over from another device, or
+                        // before this state existed, can only be declared.
+                        title="Marks this note as given to someone. It keeps the note out of the handoff and subscription pickers, and does not change anything on chain."
+                        className="mt-1 text-xs text-p01-text-dim underline underline-offset-2 hover:text-p01-text"
+                      >
+                        Mark as handed over
+                      </button>
+                    )}
                     {handedOver.has(noteKey(n)) && (
                       <button
                         type="button"
