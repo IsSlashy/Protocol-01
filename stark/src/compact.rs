@@ -1710,7 +1710,7 @@ fn compute_lde(trace: &[Vec<BaseElement>]) -> Vec<Vec<BaseElement>> {
             // [B7] x = h * g^i. C0 has its own builder and is the sole
             // verifier path for four shipped instructions, so leaving it
             // unshifted would leave the leak open where it is most used.
-            let x = g.exp(i as u64);
+            let x = lde_coset_shift() * g.exp(i as u64);
             lde[col][i] = evaluate_poly(&poly, x);
         }
     }
