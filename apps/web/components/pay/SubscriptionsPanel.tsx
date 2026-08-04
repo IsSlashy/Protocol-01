@@ -64,6 +64,7 @@ import {
   formatAtomic,
   isBase58Address,
   loadSubscriptions,
+  SUBSCRIPTIONS_CHANGED_EVENT,
   recordSubscription,
   summarizeSubscription,
   symbolForVaultMint,
@@ -265,6 +266,25 @@ export default function SubscriptionsPanel({
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  // Catch up when a subscription is opened elsewhere in the app.
+  //
+  // This panel used to be remounted on every visit, so reading once on mount
+  // was the same as reading on every visit. Visited panels now stay mounted and
+  // are only hidden with CSS, which is what lets a progress bar survive a tab
+  // switch, so "once on mount" became "once per session" and a subscription
+  // opened on the Subscribe tab never appeared here. `storage` alone would not
+  // fix it: the browser fires that in OTHER documents, never the one that
+  // wrote. Both listeners, so a second tab is covered too.
+  useEffect(() => {
+    const catchUp = () => void refresh();
+    window.addEventListener(SUBSCRIPTIONS_CHANGED_EVENT, catchUp);
+    window.addEventListener('storage', catchUp);
+    return () => {
+      window.removeEventListener(SUBSCRIPTIONS_CHANGED_EVENT, catchUp);
+      window.removeEventListener('storage', catchUp);
+    };
   }, [refresh]);
 
   // ── License key reveal (re-derived in the Worker, never stored) ──────────

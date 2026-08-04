@@ -477,9 +477,35 @@ export function recordSubscription(walletPubkey: string, rec: StoredSubscription
     list.push(clean);
     all[walletPubkey] = list;
     localStorage.setItem(SUB_STORE_KEY, JSON.stringify(all));
+    announceSubscriptionsChanged();
   } catch {
     // Quota or private-mode failure. The vault is still on chain and still
     // trackable by address, so this loss is cosmetic.
+  }
+}
+
+/**
+ * Name of the event a writer raises so an already-rendered list can catch up.
+ *
+ * WHY IT EXISTS. Visited panels are no longer unmounted, only hidden with CSS,
+ * so a progress bar survives a tab switch. The cost is that a panel which reads
+ * its data once on mount now reads it once per SESSION: a subscription opened
+ * on the Subscribe tab never reached the Subscriptions list, which had already
+ * loaded an empty one and had no reason to look again. Measured on the founder's
+ * second subscription.
+ *
+ * A `storage` event would not do: the browser fires it in OTHER documents, never
+ * in the one that wrote. This covers the same document; the `storage` listener
+ * next to it covers a second tab.
+ */
+export const SUBSCRIPTIONS_CHANGED_EVENT = 'p01:subscriptions-changed';
+
+function announceSubscriptionsChanged(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(new Event(SUBSCRIPTIONS_CHANGED_EVENT));
+  } catch {
+    // An environment without CustomEvent is not worth failing a write over.
   }
 }
 
@@ -497,6 +523,7 @@ export function forgetSubscription(walletPubkey: string, vaultPDA: string): void
     const list = (all[walletPubkey] ?? []).filter((r) => r.vaultPDA !== vaultPDA);
     all[walletPubkey] = list;
     localStorage.setItem(SUB_STORE_KEY, JSON.stringify(all));
+    announceSubscriptionsChanged();
   } catch {
     // Same contract as recordSubscription.
   }
