@@ -1001,7 +1001,29 @@ async function locateOwnedNote(
   // a Helius devnet 429 arrives as HTTP 200 with a JSON-RPC -32429 body, so the
   // second pull failing does not look like a failure.
   onProgress?.('Locating your note on-chain...');
-  const commitments = await fetchPoolCommitments(conn, pool.poolPDA);
+  // Heartbeat while the history walk runs.
+  //
+  // `fetchPoolCommitments` is the heaviest RPC call on this path and it says
+  // nothing for its whole duration. The main thread re-arms its request timeout
+  // on every progress message, so a silent stretch longer than that timeout
+  // kills a job that was working fine: measured on devnet 2026-08-05, a note
+  // handoff died with "The private-payment worker timed out" while the walk was
+  // still going. It also left the user watching one frozen sentence, unable to
+  // tell work from a hang.
+  //
+  // Counting elapsed seconds is honest here: it is the one number we actually
+  // know. Nothing else about this call is measurable from outside it.
+  const walkStartedAt = Date.now();
+  const heartbeat = setInterval(() => {
+    const seconds = Math.round((Date.now() - walkStartedAt) / 1000);
+    onProgress?.(`Reading the pool's history from the RPC (${seconds}s)...`);
+  }, 10_000);
+  let commitments: Awaited<ReturnType<typeof fetchPoolCommitments>>;
+  try {
+    commitments = await fetchPoolCommitments(conn, pool.poolPDA);
+  } finally {
+    clearInterval(heartbeat);
+  }
   let owner: { candidate: SeedCandidate; note: RecoveredNote } | null = null;
   for (const candidate of candidates) {
     const notes = await recoverNotes(conn, pool, candidate.seed, { commitments, onProgress });
