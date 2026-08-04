@@ -621,29 +621,18 @@ jobs:
       # control, so `hits == checked` cannot be a predicate that is simply always true.
       - name: cargo test (prover — p01-stark lib pins incl. the LDE coset companion)
         run: cargo test -p p01-stark --lib --release
-
-      # [SEQUENCING] Route C's mirror rows are authenticated and NEVER READ in this
-      # revision (probed: 1,296 single-bit flips on C1 produced exactly one outcome,
-      # MerkleProofFailed — no constraint/DEEP/FRI step reads them). So on its own
-      # Route C buys +704/+1,056/+2,112 bytes on the three largest circuits and a 2x
-      # amplification of the LIVE raw-witness leak, with the soundness benefit arriving
-      # only when step 4's H recomputation consumes those rows.
+      # [B7 2026-08-04] The "LDE coset sequencing tripwire (ADVISORY)" step was
+      # deleted here, and deleting it is what keeps CI honest.
       #
-      # This step prints the verdict and does NOT fail the job. The tripwire test is
-      # RED when run, by design, and a permanently-red required step gets deleted
-      # rather than obeyed (see the clippy --all-targets note above for the same
-      # failure mode). The MECHANICAL enforcement is the companion test in the
-      # blocking step above, which goes red when the coset fix lands.
+      # It ran the tripwire with `-- --ignored` under `continue-on-error: true`.
+      # That made sense while the tripwire carried `#[ignore]`. It no longer does:
+      # the coset landed, the tripwire runs and PASSES, and a `--ignored` filter
+      # now selects ZERO tests and exits 0. The step would have reported success
+      # for the rest of time without executing anything — a green light wired to
+      # nothing, in the one file nobody re-reads.
       #
-      # Two ways to clear it: land the LDE coset offset, or hold the Route C wire
-      # change until step 4 ships with it.
-      - name: LDE coset sequencing tripwire (ADVISORY — RED BY DESIGN until the coset fix)
-        run: |
-          echo "::group::LDE coset sequencing verdict"
-          cargo test -p p01-stark --lib --release lde_coset_sequencing -- --ignored --nocapture \
-            || echo "::warning title=Route C sequencing::LDE has no coset offset — Route C must NOT reach a deployed verifier. Land the coset offset, or hold the Route C wire change until step 4."
-          echo "::endgroup::"
-        continue-on-error: true
+      # Nothing is lost: `cargo test -p p01-stark --lib --release` above already
+      # runs `lde_coset_sequencing`, tripwire included, and fails the job on it.
 
       # STARK verification of circuits 1-6 is two instructions:
       #   verify_stark_proof_v2   -> ProofBuffer.verified          (byte 49)
