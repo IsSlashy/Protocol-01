@@ -1829,9 +1829,9 @@ fn both_fri_paths_derive_the_deep_coefficient_and_check_the_degree_bound() {
 /// `FIXTURE_C0_SHA256` and `FIXTURE_C1_SHA256` keep their names because
 /// `wireFormat.test.ts` cites both by name.
 const FIXTURE_C0_SHA256: &str =
-    "5ea292acb52a3f352fbe9280c3b59291b77e92a066a6fbce743dbf8db456c09b";
+    "157f45be56f966afeaa0bbb43255e17e16e0de07a2817429c7d554923b30930e";
 const FIXTURE_C1_SHA256: &str =
-    "09e9476db988eef4950ed2ef64c57d0ab9569f7eeb40e27bb2ab2cf1e204a83d";
+    "b41897fa3cb7b1f091e33fa89961d94124f56b3f944454e0a3f6b139487302ed";
 /// [BIND-C2C4 2026-08-03] MOVED. Wiring C2's boundary fold changes the
 /// committed quotient, so every C2 proof this tree produces is a different 69,761
 /// bytes. Length is unchanged — the fold adds `deg(Q_bnd) <= n-2` to a polynomial
@@ -1867,18 +1867,18 @@ const FIXTURE_C1_SHA256: &str =
 /// and given no classifier column on purpose: a pre-fold blob must refuse to
 /// classify, because this tree rejects every proof it emits.
 const FIXTURE_C2_SHA256: &str =
-    "d21c888724a773f1e37598ac1f8a9ce9f784d5390b0314aa8d57503e64d25a7c";
+    "c3961423c1573f04e4c62ea4b0cf7e15c6146507fa2b015cc7a5f473cfbb8a7c";
 const FIXTURE_C3_SHA256: &str =
-    "abf0e733d82002ff74c45d2677fc213f893cb45b999578f84324c35f5907c5c0";
+    "86a572a2dbe86446ac46457de930001d0aa620db8b70a42b2fdd6f8afb1f4aca";
 /// [BIND-C2C4 2026-08-03] MOVED, same cause and same 🚨 as `FIXTURE_C2_SHA256`
 /// above: C4's boundary fold changes its committed quotient. 81,457 bytes
 /// unchanged.
 const FIXTURE_C4_SHA256: &str =
-    "94fe0535645eef6feab54ec6fa72d2370299d27c4522474cf66d601c28002d42";
+    "6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0";
 const FIXTURE_C5_SHA256: &str =
-    "28ef7176795111da1df5714dbc11ad3c32892de266242d30dec1cd60e9c252bd";
+    "a9e3805e504ac0468632739d615ac7d90e34843f27442685f8b30efb7723b5ed";
 const FIXTURE_C6_SHA256: &str =
-    "b8dc81e070487ec827e488809f361fc982e0b9c435270855f1a0b95d658cb0be";
+    "65497bd9d2b35feefb285101353d5b3485e27e00c2985bfbd3d20cb80196e47a";
 
 fn hex32(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(64);

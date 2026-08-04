@@ -276,10 +276,10 @@ fn generate_compact_proof_with_layout(
         let next_pos = (pos + BLOWUP) % LDE_SIZE;
         let current: Vec<BaseElement> = (0..TRACE_WIDTH).map(|col| lde[col][pos]).collect();
         let next: Vec<BaseElement> = (0..TRACE_WIDTH).map(|col| lde[col][next_pos]).collect();
-        let x = lde_g.exp(pos as u64);
+        let x = lde_coset_shift() * lde_g.exp(pos as u64); // [B7] coset point
         evaluate_transition_constraint(&current, &next, x, trace_g, TRACE_LENGTH, NUM_ROUNDS)
     }).collect();
-    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, lde_coset_shift_inv());
     let c_poly_scaled = multiply_by_x_minus_a(&c_poly, last_row_x);
     let mut q_poly = divide_by_vanishing(&c_poly_scaled, TRACE_LENGTH);
 
@@ -451,8 +451,9 @@ fn generate_compact_proof_with_layout(
         &initial_fri_transcript,
         FRI_FINAL_POLY_SIZE,
         pair_indexing,
-        // [B7 step 1] Neutral. Becomes the real inverse shift in step 3.
-        BaseElement::ONE,
+        // [B7] Layer 0 evaluates over h * <g>, so y_0 = h. This function
+        // squares the shift per layer on its own.
+        lde_coset_shift_inv(),
     );
 
     // [B1] Terminal probe + prover-side degree assert, before grinding absorbs
@@ -706,7 +707,7 @@ fn compute_quotient_at_position(
     let next: Vec<BaseElement> = (0..trace_width).map(|col| lde[col][next_pos]).collect();
 
     // The LDE domain point: omega^pos
-    let domain_point = lde_g.exp(pos as u64);
+    let domain_point = lde_coset_shift() * lde_g.exp(pos as u64); // [B7] coset point
 
     // Compute the constraint evaluation
     // We need to evaluate the combined constraint that uses periodic columns.
@@ -1051,7 +1052,10 @@ fn compute_quotient_lde_circuit_6(
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
         for i in 0..lde_size {
-            let x = lde_g.exp(i as u64);
+            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
+            // together -- trace and periodic columns alike -- or a
+            // constraint would mix a coset evaluation with a subgroup one.
+            let x = lde_coset_shift() * lde_g.exp(i as u64);
             periodic_lde[k][i] = evaluate_poly(&poly, x);
         }
     }
@@ -1080,7 +1084,7 @@ fn compute_quotient_lde_circuit_6(
     }
 
     // 3. INTT → coefficients on the LDE domain.
-    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, lde_coset_shift_inv());
 
     // 4. Multiply by (x − g^(n−1)) so the product vanishes on the full trace
     //    domain (the base constraint vanishes on rows 0..n−2 only).
@@ -1161,7 +1165,10 @@ fn compute_quotient_lde_circuit_1(
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
         for i in 0..lde_size {
-            let x = lde_g.exp(i as u64);
+            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
+            // together -- trace and periodic columns alike -- or a
+            // constraint would mix a coset evaluation with a subgroup one.
+            let x = lde_coset_shift() * lde_g.exp(i as u64);
             periodic_lde[k][i] = evaluate_poly(&poly, x);
         }
     }
@@ -1187,7 +1194,7 @@ fn compute_quotient_lde_circuit_1(
     }
 
     // 3. INTT → coefficients on the LDE domain.
-    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, lde_coset_shift_inv());
 
     // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
     let g_nm1 = trace_g.exp((trace_length - 1) as u64);
@@ -1269,7 +1276,10 @@ fn compute_quotient_lde_circuit_2(
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
         for i in 0..lde_size {
-            let x = lde_g.exp(i as u64);
+            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
+            // together -- trace and periodic columns alike -- or a
+            // constraint would mix a coset evaluation with a subgroup one.
+            let x = lde_coset_shift() * lde_g.exp(i as u64);
             periodic_lde[k][i] = evaluate_poly(&poly, x);
         }
     }
@@ -1295,7 +1305,7 @@ fn compute_quotient_lde_circuit_2(
     }
 
     // 3. INTT → coefficients on the LDE domain.
-    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, lde_coset_shift_inv());
 
     // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
     let g_nm1 = trace_g.exp((trace_length - 1) as u64);
@@ -1384,7 +1394,10 @@ fn compute_quotient_lde_circuit_3(
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
         for i in 0..lde_size {
-            let x = lde_g.exp(i as u64);
+            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
+            // together -- trace and periodic columns alike -- or a
+            // constraint would mix a coset evaluation with a subgroup one.
+            let x = lde_coset_shift() * lde_g.exp(i as u64);
             periodic_lde[k][i] = evaluate_poly(&poly, x);
         }
     }
@@ -1410,7 +1423,7 @@ fn compute_quotient_lde_circuit_3(
     }
 
     // 3. INTT → coefficients on the LDE domain.
-    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, lde_coset_shift_inv());
 
     // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
     let g_nm1 = trace_g.exp((trace_length - 1) as u64);
@@ -1498,7 +1511,10 @@ fn compute_quotient_lde_circuit_4(
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
         for i in 0..lde_size {
-            let x = lde_g.exp(i as u64);
+            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
+            // together -- trace and periodic columns alike -- or a
+            // constraint would mix a coset evaluation with a subgroup one.
+            let x = lde_coset_shift() * lde_g.exp(i as u64);
             periodic_lde[k][i] = evaluate_poly(&poly, x);
         }
     }
@@ -1524,7 +1540,7 @@ fn compute_quotient_lde_circuit_4(
     }
 
     // 3. INTT → coefficients on the LDE domain.
-    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, lde_coset_shift_inv());
 
     // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
     let g_nm1 = trace_g.exp((trace_length - 1) as u64);
@@ -1623,7 +1639,10 @@ fn compute_quotient_lde_circuit_5(
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
         for i in 0..lde_size {
-            let x = lde_g.exp(i as u64);
+            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
+            // together -- trace and periodic columns alike -- or a
+            // constraint would mix a coset evaluation with a subgroup one.
+            let x = lde_coset_shift() * lde_g.exp(i as u64);
             periodic_lde[k][i] = evaluate_poly(&poly, x);
         }
     }
@@ -1649,7 +1668,7 @@ fn compute_quotient_lde_circuit_5(
     }
 
     // 3. INTT → coefficients on the LDE domain.
-    let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, lde_coset_shift_inv());
 
     // 4. Multiply by (x − g^{n−1}) to kill the wrap row.
     let g_nm1 = trace_g.exp((trace_length - 1) as u64);
@@ -1688,7 +1707,10 @@ fn compute_lde(trace: &[Vec<BaseElement>]) -> Vec<Vec<BaseElement>> {
         let poly = interpolate_poly(&trace[col]);
         let g = get_lde_domain_generator();
         for i in 0..LDE_SIZE {
-            let x = g.exp(i as u64);
+            // [B7] x = h * g^i. C0 has its own builder and is the sole
+            // verifier path for four shipped instructions, so leaving it
+            // unshifted would leave the leak open where it is most used.
+            let x = lde_coset_shift() * g.exp(i as u64);
             lde[col][i] = evaluate_poly(&poly, x);
         }
     }
@@ -2108,7 +2130,14 @@ fn segment_quotient_poly(
     let mut lde: Vec<Vec<u64>> = Vec::with_capacity(segments);
     for seg in coeffs.iter() {
         let mut col = vec![0u64; lde_size];
-        let mut x = BaseElement::ONE;
+        // [B7] Starts at h, not at ONE. This walks the domain MULTIPLICATIVELY
+        // instead of exponentiating, which is why no search for `lde_g.exp(`
+        // finds it — and why it was the last site left evaluating the quotient
+        // on the raw subgroup while trace, periodic columns and constraints had
+        // all moved to the coset. MEASURED: that single mismatch made the
+        // committed quotient disagree with the composition it is supposed to be,
+        // and `B1 TERMINAL DEGREE BOUND VIOLATED` fired at proof time on C0.
+        let mut x = lde_coset_shift();
         for slot in col.iter_mut() {
             *slot = evaluate_poly(seg, x).as_int();
             x *= lde_g;
@@ -3283,14 +3312,14 @@ mod tests {
             let next_pos = (pos + BLOWUP) % LDE_SIZE;
             let current: Vec<BaseElement> = (0..TRACE_WIDTH).map(|col| lde[col][pos]).collect();
             let next: Vec<BaseElement> = (0..TRACE_WIDTH).map(|col| lde[col][next_pos]).collect();
-            let x = lde_g.exp(pos as u64);
+            let x = lde_coset_shift() * lde_g.exp(pos as u64); // [B7] coset point
             evaluate_transition_constraint(&current, &next, x, trace_g, TRACE_LENGTH, NUM_ROUNDS)
         }).collect();
-        let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
+        let c_poly = coset_inverse_ntt(&c_lde, lde_g, lde_coset_shift_inv());
         let c_poly_scaled = multiply_by_x_minus_a(&c_poly, last_row_x);
         let q_poly_ref = divide_by_vanishing(&c_poly_scaled, TRACE_LENGTH);
         let all_q: Vec<u64> = (0..LDE_SIZE).map(|pos| {
-            let x = lde_g.exp(pos as u64);
+            let x = lde_coset_shift() * lde_g.exp(pos as u64); // [B7] coset point
             evaluate_poly(&q_poly_ref, x).as_int()
         }).collect();
 
@@ -3377,7 +3406,7 @@ mod tests {
                     (0..10).map(|col| lde[col][pos]).collect();
                 let next: Vec<BaseElement> =
                     (0..10).map(|col| lde[col][next_pos]).collect();
-                let x = lde_g.exp(pos as u64);
+                let x = lde_coset_shift() * lde_g.exp(pos as u64); // [B7] coset point
                 let periodic_at_x: Vec<BaseElement> = periodic_polys
                     .iter()
                     .map(|p| evaluate_poly(p, x))
@@ -3394,7 +3423,7 @@ mod tests {
             .collect();
 
         // Standard quotient pipeline: C(x) * (x - g^(n-1)) / (x^n - 1) = Q(x).
-        let c_poly = coset_inverse_ntt(&c_lde, lde_g, BaseElement::ONE);
+        let c_poly = coset_inverse_ntt(&c_lde, lde_g, lde_coset_shift_inv());
         let last_row_x = trace_g.exp((trace_length - 1) as u64);
         let c_poly_scaled = multiply_by_x_minus_a(&c_poly, last_row_x);
         let q_poly = divide_by_vanishing(&c_poly_scaled, trace_length);
@@ -4757,6 +4786,19 @@ pub fn lde_coset_shift() -> BaseElement {
     BaseElement::new(LDE_COSET_SHIFT_U64)
 }
 
+/// `h^(-1)`, computed rather than written down.
+///
+/// Every consumer of the shift downstream of the evaluation wants the INVERSE —
+/// the fold divides by `y`, the coset interpolation divides by `h^j`. The two
+/// directions are the same type and the compiler cannot tell them apart, and
+/// getting it backwards does not fail loudly: it produces proofs that verify
+/// against the wrong polynomial. So there is exactly ONE place that inverts,
+/// here, and `shift_times_its_inverse_is_one` pins it.
+#[inline]
+pub fn lde_coset_shift_inv() -> BaseElement {
+    lde_coset_shift().exp(((GOLDILOCKS_PRIME - 2) as u64).into())
+}
+
 /// Interpolate values sampled on the COSET `shift * <omega>` back to the
 /// coefficients of the underlying polynomial.
 ///
@@ -4895,7 +4937,10 @@ fn compute_lde_generic(
         let poly = inverse_ntt(&trace[col], trace_g);
         // Evaluate at all LDE domain points
         for i in 0..lde_size {
-            let x = lde_g.exp(i as u64);
+            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
+            // together -- trace and periodic columns alike -- or a
+            // constraint would mix a coset evaluation with a subgroup one.
+            let x = lde_coset_shift() * lde_g.exp(i as u64);
             lde[col][i] = evaluate_poly(&poly, x);
         }
     }
@@ -6393,7 +6438,7 @@ fn deep_composition_lde(
     // Denominators first, then ONE batch inversion. `x` walks the domain
     // multiplicatively rather than via `lde_g.exp(pos)`.
     let mut dens: Vec<BaseElement> = Vec::with_capacity(lde_size);
-    let mut x = BaseElement::ONE;
+    let mut x = lde_coset_shift(); // [B7] the walk starts at h, not 1
     for _ in 0..lde_size {
         dens.push(x * x - s * x + pz);
         x *= lde_g;
@@ -6411,7 +6456,7 @@ fn deep_composition_lde(
     let inv_dens = batch_inverse_felts(&dens);
 
     let mut out: Vec<BaseElement> = Vec::with_capacity(lde_size);
-    let mut x = BaseElement::ONE;
+    let mut x = lde_coset_shift(); // [B7] the walk starts at h, not 1
     for pos in 0..lde_size {
         let mut s_x = BaseElement::ZERO;
         for c in 0..width {
@@ -6480,17 +6525,17 @@ fn fri_fold_layer(
     let two_inv = BaseElement::new(2).exp(((GOLDILOCKS_PRIME - 2) as u64).into());
     let inv_gen = domain_gen.exp(((GOLDILOCKS_PRIME - 2) as u64).into());
 
-    let mut result = Vec::with_capacity(half);
     // y⁻¹ at i=0. On the unshifted domain y_0 = gen⁰ = 1; on a coset y_0 = h,
     // so this is where the shift enters the fold. [B7]
+    let mut result = Vec::with_capacity(half);
     let mut inv_y = inv_shift;
     for i in 0..half {
         let f_y = values[i];
         let f_neg_y = values[i + half];
 
         let even = (f_y + f_neg_y) * two_inv;
-        let odd = (f_y - f_neg_y) * two_inv * inv_y;
 
+        let odd = (f_y - f_neg_y) * two_inv * inv_y;
         result.push(even + alpha * odd);
 
         inv_y = inv_y * inv_gen;
@@ -6918,7 +6963,7 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
                     ))
                 })
                 .collect();
-            coset_inverse_ntt(&vals, lde_g, BaseElement::ONE)
+            coset_inverse_ntt(&vals, lde_g, lde_coset_shift_inv())
         }
     };
 
@@ -7091,8 +7136,9 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
         &initial_fri_transcript,
         fri_final_poly_size,
         pair_indexing,
-        // [B7 step 1] Neutral. Becomes the real inverse shift in step 3.
-        BaseElement::ONE,
+        // [B7] Layer 0 evaluates over h * <g>, so y_0 = h. This function
+        // squares the shift per layer on its own.
+        lde_coset_shift_inv(),
     );
 
     // [B1] Terminal probe, then the prover-side twin of the verifier's degree

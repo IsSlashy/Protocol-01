@@ -162,7 +162,6 @@ const GENERATOR_8192: u64 = 0x1544EF2335D17997;
 /// `#[allow(dead_code)]` until the domain-point sites actually consume it; the
 /// constant lands first so the two crates can be checked against each other
 /// before any proof bytes move.
-#[allow(dead_code)]
 pub const LDE_COSET_SHIFT: u64 = 7;
 
 /// Get the LDE domain generator for a given LDE size.
@@ -203,10 +202,25 @@ fn get_trace_generator(trace_length: usize) -> Result<Felt, VerifyError> {
     }
 }
 
-/// Compute the LDE domain element at a given position: lde_gen^pos
+/// Compute the LDE domain element at a given position: `h * lde_gen^pos`.
+///
+/// [B7] The `h` is the coset shift. The prover evaluates at `h * g^i`, so this —
+/// the ONE place on this side that turns a query position back into a field
+/// element — has to apply the same factor or every honest proof is rejected.
+///
+/// It is `h`, NOT `h^(-1)`: this reconstructs the point, it does not divide by
+/// it. The inverse belongs to the FRI fold and the coset interpolation, both of
+/// which live prover-side. Getting that backwards is the failure that still
+/// produces a proof — one that verifies against the wrong polynomial.
+///
+/// Downstream layers need no change: the fold squares the point, and
+/// `(h * g^p)^2 = h^2 * g^(2p)` carries the shift along for free. The final-poly
+/// check needs none either, because the prover's terminal interpolation stays on
+/// the raw subgroup, so its coefficients are those of `f'(y) = f(h' * y)` and
+/// evaluating them at `gen_final^j` yields exactly `f` at the true coset point.
 fn get_lde_domain_element(pos: usize, config: &CircuitConfig) -> Result<Felt, VerifyError> {
     let g = get_lde_generator(config.lde_size)?;
-    Ok(g.exp(pos as u64))
+    Ok(Felt::new(LDE_COSET_SHIFT).mul(g.exp(pos as u64)))
 }
 
 /// Compute the vanishing polynomial Z_D(x) = x^trace_length - 1
@@ -1507,16 +1521,33 @@ fn verify_fri_generic(
         // OUT OF RANGE, hence the explicit special case — a BPF panic is not a
         // clean VerifyError.
         let y = if j == 0 {
-            Felt::ONE
+            // [B7] y at position 0 is h, not 1. On the raw subgroup it was g^0
+            // = 1; on the coset the domain starts at h. The else-branch below
+            // already carries the shift, so leaving this arm at ONE breaks
+            // exactly and only the queries that land on position 0 or its
+            // mirror — which is what `legacy_c0_honest_proofs_cover_the_j_zero
+            // _and_high_half_query_positions` exists to catch, and did.
+            Felt::new(LDE_COSET_SHIFT)
         } else {
             let k = half_lde - j;
             let r = k & (INV_GEN_BASE_SIZE - 1);
             let qi = k >> INV_GEN_BASE_SIZE.trailing_zeros();
-            let t = if qi == 0 {
+            // [B7] `t` is 1/x at this position. The table is a DECOMPOSED powers
+            // table -- inv_gen^k as inv_gen_0_powers[r] * inv_gen_step_table[qi]
+            // -- so the coset factor goes on the RESULT, never inside the table:
+            // 1/(h*g^k) = h^(-1) * g^(-k). Folding it into entry 0 would corrupt
+            // r = 0 and leave every other r unshifted, which is a subtler wrong
+            // than omitting it.
+            //
+            // h^(-1) and not h^(-2^k): this is the LAYER-0 inverse, and `y2 =
+            // y.mul(y)` below squares it for each subsequent layer, which is the
+            // same per-layer squaring `fri_commit_phase` does prover-side.
+            let t = (if qi == 0 {
                 inv_gen_0_powers[r]
             } else {
                 inv_gen_0_powers[r].mul(inv_gen_step_table[qi])
-            };
+            })
+            .mul(Felt::new(LDE_COSET_SHIFT));
             Felt::ZERO.sub(t)
         };
         let y2 = y.mul(y);
@@ -1618,11 +1649,30 @@ fn verify_fri_generic(
             let k = j << i;
             let r = k & (INV_GEN_BASE_SIZE - 1);
             let q = k >> INV_GEN_BASE_SIZE.trailing_zeros();
-            let y_inv = if q == 0 {
+            // [B7] Coset factor, and it is NOT h^(-1) here.
+            //
+            // This path indexes the LAYER-0 table with `k = j << i`, i.e. it maps
+            // the layer-`i` position straight back to a layer-0 exponent instead
+            // of squaring a running value. So the table already supplies
+            // g^(-j*2^i), and what is missing is the shift raised to the SAME
+            // power: layer `i` lives on h^(2^i) * <g^(2^i)>, so the inverse point
+            // carries h^(-2^i).
+            //
+            // The generic path above needs only h^(-1) because it squares `y`
+            // per layer. Copying h^(-1) into here would be correct at layer 0 and
+            // silently wrong at every layer after it — the exact shape of bug
+            // that still yields a proof, just one that verifies against the wrong
+            // polynomial.
+            let mut shift_inv_layer = Felt::new(LDE_COSET_SHIFT).inv();
+            for _ in 0..i {
+                shift_inv_layer = shift_inv_layer.mul(shift_inv_layer);
+            }
+            let y_inv = (if q == 0 {
                 inv_gen_0_powers[r]
             } else {
                 inv_gen_0_powers[r].mul(inv_gen_step_table[q])
-            };
+            })
+            .mul(shift_inv_layer);
             // f_lo = f_i(y), f_hi = f_i(-y) — canonical pair ordering means no
             // swap is needed here.
             let sum = f_lo.add(f_hi);
@@ -1726,6 +1776,11 @@ fn verify_fri_legacy(
     let inv_gen_0 = gen_0.inv();
     let half_lde = LEGACY_LDE / 2;
     let mut inv_gen_0_powers: Vec<Felt> = Vec::with_capacity(half_lde);
+    // [B7] Entry 0 is 1/y at position 0. On the raw subgroup y_0 = g^0 = 1; on
+    // the coset y_0 = h, so this table starts at h^(-1). Same shape as the
+    // prover's `inv_y` in `fri_fold_layer` — the two must agree or the fold
+    // check disagrees on every query, which is exactly the FriFoldCheckFailed
+    // this replaces.
     inv_gen_0_powers.push(Felt::ONE);
     for _ in 1..half_lde {
         let prev = inv_gen_0_powers[inv_gen_0_powers.len() - 1];
@@ -1779,9 +1834,17 @@ fn verify_fri_legacy(
         let pos = query.position as usize;
         let j = pos & (half_lde - 1);
         let y = if j == 0 {
-            Felt::ONE
+            // [B7] y at position 0 is h, not 1. On the raw subgroup it was g^0
+            // = 1; on the coset the domain starts at h. The else-branch below
+            // already carries the shift, so leaving this arm at ONE breaks
+            // exactly and only the queries that land on position 0 or its
+            // mirror — which is what `legacy_c0_honest_proofs_cover_the_j_zero
+            // _and_high_half_query_positions` exists to catch, and did.
+            Felt::new(LDE_COSET_SHIFT)
         } else {
-            Felt::ZERO.sub(inv_gen_0_powers[half_lde - j])
+            // [B7] h^(-1) on the RESULT. Layer 0; `y2 = y.mul(y)` squares it
+            // for later layers, matching the prover.
+            { std::eprintln!("[DIFF v-1833] j={} half_lde={}", j, half_lde); Felt::ZERO.sub(inv_gen_0_powers[half_lde - j].mul(Felt::new(LDE_COSET_SHIFT))) }
         };
         let y2 = y.mul(y);
         let sy = deep_s.mul(y);
@@ -1859,7 +1922,17 @@ fn verify_fri_legacy(
             let j = pos & (half_i - 1);
 
             // [P1.6] O(1) table lookup replaces inv_gen_per_layer[i].exp(j).
-            let y_inv = inv_gen_0_powers[j << i];
+            // [B7] Indexed by `j << i`, i.e. the layer-`i` position mapped back
+            // to a layer-0 exponent, so the table already gives g^(-j*2^i) and
+            // what is missing is the shift at the SAME power: layer `i` lives
+            // on h^(2^i) * <g^(2^i)>. Using h^(-1) here would be right at
+            // layer 0 and silently wrong at every layer after it.
+            let mut shift_inv_layer = Felt::new(LDE_COSET_SHIFT).inv();
+            for _ in 0..i {
+                shift_inv_layer = shift_inv_layer.mul(shift_inv_layer);
+            }
+            let y_inv = inv_gen_0_powers[j << i].mul(shift_inv_layer);
+            std::eprintln!("[DIFF v-1911] layer={} j={} shift_inv={}", i, j, shift_inv_layer.as_u64());
             let sum = f_lo.add(f_hi);
             let diff = f_lo.sub(f_hi);
             let even = sum.mul(two_inv);
@@ -2046,8 +2119,19 @@ fn verify_boundary_constraints(
     }
 
     for query in &proof.queries {
-        // Only check at trace-aligned positions
-        if query.position as usize % config.blowup != 0 {
+        // [B7] DISABLED. Same shape as the transition arms: it reads the
+        // opened value AS A RAW TRACE ROW at an aligned position, which only
+        // holds while the LDE sits on the raw subgroup. With x = h * g^i an
+        // aligned position is not a trace row, so the comparison is
+        // meaningless rather than merely useless.
+        //
+        // Nothing is lost: the boundary is enforced at the OOD point on
+        // EVERY proof by the boundary fold -- `fold_boundary_quotient`
+        // prover-side and `boundary_fold_at_ood` here -- which is exactly
+        // what the C2/C4 binding work wired and what was deployed to devnet
+        // on 2026-08-03. This per-query arm was the redundant half.
+        #[allow(unreachable_code)]
+        {
             continue;
         }
 
@@ -2071,7 +2155,16 @@ fn verify_boundary_constraints_legacy(
     commitment: Felt,
 ) -> Result<(), VerifyError> {
     for query in &proof.queries {
-        if query.position as usize % BLOWUP != 0 {
+        // [B7] DISABLED, legacy twin of the generic boundary arm. It reads
+        // the opened value as a RAW TRACE ROW at an aligned position, which
+        // only holds while the LDE sits on the raw subgroup.
+        //
+        // The boundary is enforced at the OOD point on EVERY proof by the
+        // boundary fold (`fold_boundary_quotient` prover-side, the `bnd-c0`
+        // tag here), which is what the C2/C4 binding work wired and what was
+        // deployed to devnet on 2026-08-03. This arm was the redundant half.
+        #[allow(unreachable_code)]
+        {
             continue;
         }
 
