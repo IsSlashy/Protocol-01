@@ -41,6 +41,11 @@ interface PayoutView extends PayoutRecord {
   lamports: number;
 }
 
+/** Identifies a note across rescans. Same shape as `SendForm` and `SubscribePanel`. */
+function noteKey(n: PoolNoteView): string {
+  return `${n.pool}:${n.leafIndex}`;
+}
+
 export default function PoolPanel({
   meta,
   owner,
@@ -67,6 +72,9 @@ export default function PoolPanel({
   const denominations = denominationsFor(token);
   const [denomination, setDenomination] = useState(denominations[0]!);
   const [notes, setNotes] = useState<PoolNoteView[]>([]);
+  /** Notes this session withdrew, keyed `pool:leafIndex`. Never un-set: a spent
+   *  note cannot become unspent, so this only ever corrects a stale scan. */
+  const [spentLocally, setSpentLocally] = useState<ReadonlySet<string>>(new Set());
   const [poolSizes, setPoolSizes] = useState<PoolSizeView[]>([]);
   const [balance, setBalance] = useState(0);
   const [scanning, setScanning] = useState(false);
@@ -323,6 +331,7 @@ export default function PoolPanel({
         denomination: out.denomination,
       });
       setWithdrawn({ ...out, payout: payout.publicKey.toBase58() });
+      setSpentLocally((prev) => new Set(prev).add(`${note.pool}:${note.leafIndex}`));
       void refreshPayouts(root);
       void rescan();
     } catch (e) {
@@ -352,7 +361,13 @@ export default function PoolPanel({
     }
   }
 
-  const unspent = notes.filter((n) => !n.spent);
+  // A note we just withdrew is spent, whatever the next scan says. `spent` is
+  // resolved by looking up the nullifier PDA, and the rescan fired right after a
+  // withdrawal usually beats that PDA into existence — so the note comes back
+  // "unspent" and keeps a Withdraw button that can only fail, after locking ~1
+  // SOL of buffer rent and minutes of upload. Trust what we did over what we
+  // read; the chain scan agrees on the following pass.
+  const unspent = notes.filter((n) => !n.spent && !spentLocally.has(noteKey(n)));
   const selectedSize = poolSizes.find((p) => p.denomination === denomination);
   const storedNotes = loadEncryptedNotes(owner.toBase58()).length;
 
