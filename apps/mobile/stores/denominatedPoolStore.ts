@@ -1798,6 +1798,52 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               }
             }
 
+            // [FIX 2026-08-04] Sweep the EPHEMERAL too, not just the recipient.
+            //
+            // The block above drains `stealthRecipientKp` — the ECDH address the
+            // unshielded value lands on. It never touched `stealthKp`, the
+            // ephemeral that PAID the fees and, crucially, is where
+            // `close_proof_buffer` refunds the rent: `close = authority`, and the
+            // authority is the ephemeral.
+            //
+            // MEASURED on device 2026-08-04, which is the only reason this was
+            // found: `finally: closing 2 buffer(s)` then `reclaimed 1.0107 SOL`
+            // twice, so 2.0214 SOL landed on the ephemeral — and the only sweep
+            // that ran moved 0.994995 SOL off a DIFFERENT account. On the failure
+            // path the catch-block crash-sweep covers this; on the SUCCESS path
+            // nothing did, so the better the operation went, the more was left
+            // behind.
+            //
+            // Read the balance HERE, after the buffers are closed. Anything
+            // computed earlier is short by exactly the rent that had not been
+            // refunded yet.
+            try {
+              if (stealthKp) {
+                const ephBal = await connection.getBalance(stealthKp.publicKey, 'confirmed');
+                if (ephBal > 5000) {
+                  const ephTx = new Transaction().add(
+                    SystemProgram.transfer({
+                      fromPubkey: stealthKp.publicKey,
+                      toPubkey: new PK(recipientAddress),
+                      lamports: ephBal - 5000,
+                    }),
+                  );
+                  const { blockhash } = await connection.getLatestBlockhash();
+                  ephTx.recentBlockhash = blockhash;
+                  ephTx.feePayer = stealthKp.publicKey;
+                  ephTx.sign(stealthKp);
+                  const ephSig = await connection.sendRawTransaction(ephTx.serialize());
+                  await connection.confirmTransaction(ephSig, 'confirmed');
+                  console.log(
+                    `[DenomStore/V3] ✅ Sweep ephemeral → wallet (${(ephBal - 5000) / 1e9} SOL)`,
+                  );
+                }
+              }
+            } catch (e: any) {
+              // Best effort: never let reclaiming rent mask a successful unshield.
+              console.warn('[DenomStore/V3] ephemeral sweep failed (rent stays recoverable):', e?.message ?? String(e));
+            }
+
             // Drain leftover from signer back to wallet
             const signerBal = await connection.getBalance(stealthKp.publicKey);
             if (signerBal > 5000) {

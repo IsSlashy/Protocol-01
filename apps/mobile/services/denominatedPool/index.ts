@@ -3406,10 +3406,23 @@ export async function unshieldDenominatedStarkV3(
   } finally {
     // Close every buffer that was successfully created/verified, regardless
     // of whether the final unshield tx succeeded.
+    // [DIAG 2026-08-04] MEASURED: an unshield pre-funded 2.0763 SOL and swept
+    // back only 0.994995 — about one buffer rent (1.0107) short, on a SUCCESSFUL
+    // flow. No close failure was logged, and `console.warn` would have shown one,
+    // so the question is whether this loop runs at all and over how many buffers.
+    // `onProgress` is a UI callback and never reaches logcat, which is why the
+    // absence of "Closing proof buffer" proved nothing. These are console.log.
+    console.log(`[DenomPool/V3] finally: closing ${createdBuffers.length} buffer(s)`);
     for (const buf of createdBuffers) {
       try {
         onProgress?.('Closing proof buffer...');
+        const balBefore = await connection.getBalance(starkSigner.publicKey, 'confirmed');
         await closeStarkProofBuffer(buf, starkSigner, connection);
+        const balAfter = await connection.getBalance(starkSigner.publicKey, 'confirmed');
+        console.log(
+          `[DenomPool/V3] closed ${buf.toBase58().slice(0, 12)}… reclaimed ` +
+          `${((balAfter - balBefore) / 1e9).toFixed(4)} SOL`,
+        );
       } catch (closeErr: any) {
         console.warn('[DenomPool/V3] closeStarkProofBuffer (unshield) failed:', closeErr?.message ?? String(closeErr));
       }
