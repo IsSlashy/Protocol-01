@@ -374,12 +374,21 @@ export async function submitStarkProof(
     }
   }
 
-  const { blockhash: chunkBlockhash } = await connection.getLatestBlockhash('confirmed');
+  // A blockhash is valid for ~150 slots (60-90 s), but a ~140 KB proof takes
+  // minutes to upload. One blockhash fetched up front expires mid-loop and every
+  // remaining chunk dies with "Blockhash not found". Refresh it as we go.
+  const CHUNK_BLOCKHASH_MAX_AGE_MS = 30_000;
+  let chunkBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
+  let chunkBlockhashAt = Date.now();
   const totalChunks = Math.ceil(proof.proofBytes.length / MAX_CHUNK_SIZE);
   const chunkSigs: string[] = [];
 
   for (let i = 0, offset = 0; offset < proof.proofBytes.length; i++, offset += MAX_CHUNK_SIZE) {
     onProgress?.(`Uploading proof chunk ${i + 1}/${totalChunks}...`);
+    if (Date.now() - chunkBlockhashAt > CHUNK_BLOCKHASH_MAX_AGE_MS) {
+      chunkBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
+      chunkBlockhashAt = Date.now();
+    }
     const end = Math.min(offset + MAX_CHUNK_SIZE, proof.proofBytes.length);
     const chunk = proof.proofBytes.slice(offset, end);
     const chunkTx = new Transaction().add(
@@ -510,12 +519,21 @@ export async function submitAndVerifyStarkProof(
     }
   }
 
-  const { blockhash: chunkBlockhash } = await connection.getLatestBlockhash('confirmed');
+  // A blockhash is valid for ~150 slots (60-90 s), but a ~140 KB proof takes
+  // minutes to upload. One blockhash fetched up front expires mid-loop and every
+  // remaining chunk dies with "Blockhash not found". Refresh it as we go.
+  const CHUNK_BLOCKHASH_MAX_AGE_MS = 30_000;
+  let chunkBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
+  let chunkBlockhashAt = Date.now();
   const totalChunks = Math.ceil(proof.proofBytes.length / MAX_CHUNK_SIZE);
   const chunkSigs: string[] = [];
 
   for (let i = 0, offset = 0; offset < proof.proofBytes.length; i++, offset += MAX_CHUNK_SIZE) {
     onProgress?.(`Uploading proof chunk ${i + 1}/${totalChunks}...`);
+    if (Date.now() - chunkBlockhashAt > CHUNK_BLOCKHASH_MAX_AGE_MS) {
+      chunkBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
+      chunkBlockhashAt = Date.now();
+    }
     const end = Math.min(offset + MAX_CHUNK_SIZE, proof.proofBytes.length);
     const chunk = proof.proofBytes.slice(offset, end);
     const chunkTx = new Transaction().add(
