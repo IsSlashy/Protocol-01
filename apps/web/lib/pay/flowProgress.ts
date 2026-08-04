@@ -124,3 +124,33 @@ export function progressFor(
 
   return { percent: Math.max(floor, Math.min(99, percent)), index, current: phase, detail };
 }
+
+// ---------------------------------------------------------------------------
+// Send-tab flows. Appended for SendForm; nothing above this line moves.
+// ---------------------------------------------------------------------------
+
+/**
+ * Sealing a note for handoff. No transaction and no proof: the worker finds
+ * the note on chain, packs the Merkle path the recipient will withdraw with,
+ * and encrypts the note's secrets to the recipient's address. The weight sits
+ * on the lookup because that is the RPC history walk; the cryptography at the
+ * end is near-instant. Steps come from `handlePoolExportNote` and
+ * `locateOwnedNote` in `worker/poolHandlers.ts`.
+ */
+export const SEAL_PHASES: FlowPhase[] = [
+  { id: 'locate', label: 'Finding your note in the pool', weight: 0.7, match: /locating|reading pool history|matching notes/i },
+  { id: 'path', label: 'Packing its withdrawal path', weight: 0.15, match: /merkle/i },
+  { id: 'seal', label: 'Sealing it to the recipient', weight: 0.15, match: /sealing the note/i },
+];
+
+/**
+ * The stealth send has no worker step stream: `adapter.send` is one opaque
+ * call that builds the transfer, opens the wallet for approval and submits.
+ * The page cannot observe those boundaries, so this table refuses to invent
+ * them: one phase, driven by the single step the form synthesizes itself.
+ * Listing sub-steps nothing measures would be exactly the moving-anyway
+ * animation the header of this file exists to prevent.
+ */
+export const STEALTH_SEND_PHASES: FlowPhase[] = [
+  { id: 'wallet', label: 'Approve in your wallet; Solana sends', weight: 1, match: /one-time address|approve/i },
+];
