@@ -94,6 +94,32 @@ import { formatAmount, truncate } from "./util";
 
 type Mode = "note" | "stealth";
 
+/**
+ * The stealth send is PARKED, not deleted. Founder call, 2026-08-05.
+ *
+ * WHY. It hides the recipient and nothing else: the wallet signs, pays, funds
+ * the one-time address and the amount is public, which the disclosure had to
+ * spell out under a tab named "Stealth send". A name that promises more than
+ * the mechanism gives is the exact defect this project audited out of its own
+ * README. And the capability is not what anyone comes here for: a plain send is
+ * Phantom's, stealth addressing is Umbra's, both are one click away elsewhere.
+ * What is ours is the shielded note: post-quantum encryption, ZK proofs,
+ * unlinkability from the funding wallet, and a subscription to a vetted privacy
+ * merchant. Offering a weaker version of someone else's product beside it
+ * dilutes the proposition instead of widening it.
+ *
+ * NOTHING IS DELETED. The whole stealth branch below still compiles, its tests
+ * still run, `adapter.send` and the pay-core stealth path are untouched. This
+ * mirrors how Starknet was retired from this app: out of the UI, reason and
+ * undo recorded in the source, code intact.
+ *
+ * TO BRING IT BACK: set this to false. That restores the mode switch and the
+ * initial-mode fallback, and nothing else needs to change. If it comes back,
+ * rename it for what it hides ("Pay a private address"), because the old name
+ * is what made it misread.
+ */
+const STEALTH_SEND_PARKED = true;
+
 function noteKey(n: PoolNoteView): string {
   return `${n.pool}:${n.leafIndex}`;
 }
@@ -142,7 +168,7 @@ export default function SendForm({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const poolReady = !!meta && !!owner;
-  const [mode, setMode] = useState<Mode>(poolReady ? "note" : "stealth");
+  const [mode, setMode] = useState<Mode>(poolReady || STEALTH_SEND_PARKED ? "note" : "stealth");
 
   // ── Disclosure fold (both modes) ─────────────────────────────────────────
   const [disclosureOpen, setDisclosureOpen] = useState(false);
@@ -507,7 +533,10 @@ export default function SendForm({
   return (
     <div className="space-y-4">
       {/* The two paths are not settings of one send: they hide different
-          things, so they get a switch and separate disclosures. */}
+          things, so they get a switch and separate disclosures. Hidden while
+          the stealth path is parked, since a switch with one option is just a
+          label that moves. */}
+      {!STEALTH_SEND_PARKED && (
       <div className="inline-flex w-full rounded-lg border border-p01-border bg-p01-surface p-1 lg:max-w-md">
         <button
           type="button"
@@ -532,6 +561,7 @@ export default function SendForm({
           Stealth send
         </button>
       </div>
+      )}
 
       {mode === "note" ? (
         !poolReady ? (

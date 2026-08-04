@@ -287,28 +287,25 @@ describe("the disclosures say what the mechanism actually gives", () => {
   });
 });
 
-describe("the stealth send stays reachable and stays labelled", () => {
-  it("is one switch away and keeps its free-form amount", async () => {
-    const user = userEvent.setup();
+describe("the stealth send is parked, and parked means invisible not deleted", () => {
+  it("offers no way in: no switch, no amount box, whatever the session", async () => {
     renderForm();
-    await user.click(screen.getByRole("button", { name: "Stealth send" }));
-
-    const amount = screen.getByLabelText("Amount");
-    expect(amount).toBeInTheDocument();
-    await user.type(amount, "0.5");
-    expect(
-      screen.getByText(/This amount and your wallet will be public/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("0.1 SOL")).toBeInTheDocument();
+    // The founder parked this path on 2026-08-05: it hid the recipient and
+    // nothing else, under a name that promised more, and a plain send is
+    // Phantom's while stealth addressing is Umbra's. The note handoff is what
+    // this product has that others do not.
+    expect(screen.queryByRole("button", { name: "Stealth send" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Amount")).not.toBeInTheDocument();
   });
 
-  it("is where the form lands when there are no pool keys, with the reason", async () => {
-    const user = userEvent.setup();
+  it("lands on the note path even with no pool keys, and says why it cannot proceed", async () => {
     renderForm({ meta: null, owner: null });
     // No session, so no scan is attempted at all.
     expect(scanPool).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("Amount")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Hand over a note" }));
+    // It used to fall back to the stealth form here. With that path parked the
+    // honest answer is the reason, not a different product.
     expect(screen.getByText(/needs your derived pool keys/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Amount")).not.toBeInTheDocument();
   });
 });
