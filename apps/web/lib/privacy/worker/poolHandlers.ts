@@ -62,6 +62,17 @@ import {
   recordShieldBreadcrumb,
   type PreparedShield,
 } from '../pool/shieldEphemeral';
+import {
+  executeSubscribe,
+  prepareSubscribeJob,
+  type PreparedSubscribe,
+} from '../pool/subscribeEphemeral';
+import {
+  deriveLicenseSecret,
+  encodeLicenseKey,
+  licenseCommitment,
+  licenseServiceTag,
+} from '../license';
 
 // ---------------------------------------------------------------------------
 // Wire protocol
@@ -115,6 +126,59 @@ export interface PoolUnshieldExecuteRequest {
   ownerPubkey: string;
 }
 
+/**
+ * Open a subscription vault from a note. Identical selection shape to
+ * `poolUnshieldPrepare` — pool + leaf index, secrets re-derived in here — because
+ * `subscribe_private_stark` consumes the same note, the same way, with the same
+ * C1 + C3 pair.
+ */
+export interface PoolSubscribePrepareRequest {
+  kind: 'poolSubscribePrepare';
+  meta: string;
+  token: PoolToken;
+  denomination: number;
+  leafIndex: number;
+  /** Note blobs stored at shield time; see `PoolUnshieldPrepareRequest`. */
+  encryptedNotes?: string[];
+}
+
+/**
+ * Finish a prepared subscription.
+ *
+ * WHAT IS DELIBERATELY ABSENT FROM THIS TYPE
+ * ──────────────────────────────────────────
+ * `subscriberCommitment` and `licenseCommitment` are NOT wire fields, and adding
+ * them would be a security regression, not a convenience. Both are functions of
+ * the note secret, so the main thread cannot compute them — it has never seen a
+ * secret and must not. Accepting them from the page would mean either the page
+ * holds the secret (defeating the worker boundary outright) or it supplies values
+ * it cannot check, in which case a wrong `subscriberCommitment` silently opens a
+ * vault at an address the subscriber can never prove ownership of. They are
+ * computed in here instead; see the two handlers for where and why.
+ *
+ * `vkHashSubscriber` IS a wire field: it is inert metadata, not secret-derived.
+ */
+export interface PoolSubscribeExecuteRequest {
+  kind: 'poolSubscribeExecute';
+  jobId: string;
+  /** Wallet that pre-funded the ephemeral; receives the swept residual. */
+  ownerPubkey: string;
+  /** Merchant who can claim each period. */
+  retailer: string;
+  /** u64 decimal strings — the worker boundary carries JSON-safe primitives. */
+  rate: string;
+  intervalSlots: string;
+  /**
+   * Registry `serviceId` the license key is scoped to. Omitted (free-form
+   * merchant) falls back to the retailer address, exactly as
+   * `licenseServiceTag` defines it — the same rule mobile and the merchant SDK
+   * apply, and normalising it here would orphan every key already issued.
+   */
+  serviceId?: string | null;
+  /** 32 bytes of inert vault metadata. Defaults to zeros, as the extension does. */
+  vkHashSubscriber?: number[];
+}
+
 export interface PoolRecoverRequest {
   kind: 'poolRecover';
   meta: string;
@@ -148,6 +212,8 @@ export type PoolRequest =
   | PoolShieldExecuteRequest
   | PoolScanRequest
   | PoolSetPassphraseRequest
+  | PoolSubscribePrepareRequest
+  | PoolSubscribeExecuteRequest
   | PoolUnshieldPrepareRequest
   | PoolUnshieldExecuteRequest;
 
@@ -238,6 +304,33 @@ export interface PoolUnshieldExecuteResponse {
   denomination: number;
 }
 
+export interface PoolSubscribePrepareResponse {
+  kind: 'poolSubscribePrepare';
+  jobId: string;
+  ephemeralPubkey: string;
+  requiredLamports: number;
+  denomination: number;
+  derivation: DerivationVersion;
+}
+
+export interface PoolSubscribeExecuteResponse {
+  kind: 'poolSubscribeExecute';
+  txSig: string;
+  /** Base58 subscription vault PDA. Public — it is derivable from the chain. */
+  vaultPDA: string;
+  /**
+   * The "P01-…" license key. This crosses the boundary ON PURPOSE: it is the
+   * product the user is buying, and it is the ONE derived value that must reach
+   * the page. It is a 128-bit HKDF leg of the note secret, not the secret — it
+   * cannot be inverted to spend the note, and a merchant only ever sees
+   * `blake3` of it.
+   */
+  licenseKey: string;
+  /** The string the key is scoped to. A merchant needs it to check the key. */
+  serviceTag: string;
+  denomination: number;
+}
+
 export interface PoolRecoverResponse {
   kind: 'poolRecover';
   /** Total lamports swept back to the owner. */
@@ -252,6 +345,8 @@ export type PoolResponse =
   | PoolShieldExecuteResponse
   | PoolScanResponse
   | PoolSetPassphraseResponse
+  | PoolSubscribePrepareResponse
+  | PoolSubscribeExecuteResponse
   | PoolUnshieldPrepareResponse
   | PoolUnshieldExecuteResponse;
 
@@ -280,6 +375,18 @@ const prepared = new Map<string, { ctx: PreparedShield; meta: string; counter: n
 
 /** In-flight withdrawals, awaiting their pre-fund. */
 const preparedUnshields = new Map<string, { ctx: PreparedUnshield; meta: string }>();
+
+/**
+ * In-flight subscriptions, awaiting their pre-fund.
+ *
+ * `subscriberCommitment` is carried here rather than recomputed at execute time:
+ * it is a wasm call, and a wasm failure must land in PREPARE, before the wallet
+ * has moved the float, not after ~150 chunk uploads.
+ */
+const preparedSubscribes = new Map<
+  string,
+  { ctx: PreparedSubscribe; meta: string; subscriberCommitment: bigint }
+>();
 
 export function configurePoolHandlers(rpcUrl: string): void {
   // Paced transport: a shield is ~150 chunk uploads plus polling, which public
@@ -322,6 +429,7 @@ export function clearPoolState(): void {
   armedPassphrase = null;
   prepared.clear();
   preparedUnshields.clear();
+  preparedSubscribes.clear();
 }
 
 function requireSeeds(meta: string): PoolSeedSet {
@@ -514,10 +622,24 @@ async function handlePoolShieldExecute(
   }
 }
 
-async function handlePoolUnshieldPrepare(
-  req: PoolUnshieldPrepareRequest,
+/**
+ * Find the caller's note at `leafIndex`, under whichever seed derivation owns
+ * it, and hand back everything a spend needs.
+ *
+ * Extracted so the withdrawal and the subscribe run the SAME lookup rather than
+ * two copies that drift. Both spend a note the same way, and the derivation
+ * search below is the part that a copy would get subtly wrong.
+ */
+async function locateOwnedNote(
+  req: { meta: string; token: PoolToken; denomination: number; leafIndex: number; encryptedNotes?: string[] },
   onProgress?: (step: string) => void,
-): Promise<PoolUnshieldPrepareResponse> {
+): Promise<{
+  conn: Connection;
+  pool: PoolConfig;
+  candidate: SeedCandidate;
+  note: RecoveredNote;
+  storedPath: StoredMerklePath | undefined;
+}> {
   const conn = requireConnection();
   const candidates = seedsInSearchOrder(requireSeeds(req.meta));
   const pool = requirePool(req.token, req.denomination);
@@ -560,9 +682,24 @@ async function handlePoolUnshieldPrepare(
   const { candidate, note } = owner;
   if (note.spent) throw new Error('This note has already been withdrawn.');
 
-  const seed = candidate.seed;
-  const storedPath = extractStoredPath(seed, req.encryptedNotes, note.receipt.commitment);
-  const ctx = await prepareUnshieldJob(note.receipt, pool, conn, seed, onProgress, storedPath);
+  return {
+    conn,
+    pool,
+    candidate,
+    note,
+    storedPath: extractStoredPath(candidate.seed, req.encryptedNotes, note.receipt.commitment),
+  };
+}
+
+async function handlePoolUnshieldPrepare(
+  req: PoolUnshieldPrepareRequest,
+  onProgress?: (step: string) => void,
+): Promise<PoolUnshieldPrepareResponse> {
+  const { conn, pool, candidate, note, storedPath } = await locateOwnedNote(req, onProgress);
+
+  const ctx = await prepareUnshieldJob(
+    note.receipt, pool, conn, candidate.seed, onProgress, storedPath,
+  );
   preparedUnshields.set(ctx.jobId, { ctx, meta: req.meta });
 
   return {
@@ -634,6 +771,115 @@ async function handlePoolUnshieldExecute(
 }
 
 /**
+ * WHERE THE TWO SECRET-DERIVED VALUES ARE COMPUTED, AND WHY THERE
+ * ───────────────────────────────────────────────────────────────
+ * `subscriber_commitment` — HERE, in prepare. It is the circuit-0
+ * (`subscriber_ownership`) Poseidon commitment over the note secret and it seeds
+ * the vault PDA, so it is the value that later lets the subscriber prove
+ * ownership without naming a wallet. It depends on nothing but the secret, so it
+ * CAN be computed this early — and it must be, because it is a wasm call and
+ * every other wasm failure on this path (C1, C3) also lands in prepare, before
+ * the wallet has moved a lamport. Computing it at execute time would turn a wasm
+ * fault into ~150 wasted chunk uploads and a stranded float.
+ *
+ * The license key — in EXECUTE, not here. It is scoped by the service tag, and
+ * the merchant is only chosen at execute time. Unlike the commitment it is a
+ * pure HKDF over material already in memory, so it cannot fail and gains nothing
+ * from being computed early.
+ *
+ * Neither value's input leaves the worker.
+ */
+async function handlePoolSubscribePrepare(
+  req: PoolSubscribePrepareRequest,
+  onProgress?: (step: string) => void,
+): Promise<PoolSubscribePrepareResponse> {
+  const { conn, pool, candidate, note, storedPath } = await locateOwnedNote(req, onProgress);
+
+  const ctx = await prepareSubscribeJob(
+    note.receipt, pool, conn, candidate.seed, onProgress, storedPath,
+  );
+
+  // `compute_stark_commitment` returns the Goldilocks felt as a DECIMAL string
+  // (stark/src/lib.rs:129-135). `goldilocksU64To32` then puts it in bytes 0..8
+  // with 24 zeroes above, which is the exact 32 bytes the vault PDA is seeded on.
+  onProgress?.('Computing your subscriber commitment...');
+  const { starkProver } = await import('../pool/starkProver');
+  await starkProver.start();
+  const subscriberCommitment = BigInt(
+    await starkProver.computeCommitment(note.receipt.secret.toString()),
+  );
+
+  preparedSubscribes.set(ctx.jobId, { ctx, meta: req.meta, subscriberCommitment });
+
+  return {
+    kind: 'poolSubscribePrepare',
+    jobId: ctx.jobId,
+    ephemeralPubkey: ctx.ephemeral.publicKey.toBase58(),
+    requiredLamports: ctx.requiredLamports,
+    denomination: pool.denomination,
+    derivation: candidate.derivation,
+  };
+}
+
+async function handlePoolSubscribeExecute(
+  req: PoolSubscribeExecuteRequest,
+  onProgress?: (step: string) => void,
+): Promise<PoolSubscribeExecuteResponse> {
+  const conn = requireConnection();
+  const job = preparedSubscribes.get(req.jobId);
+  if (!job) {
+    throw new Error('Unknown subscription job — prepare it again (the worker was restarted).');
+  }
+
+  try {
+    const retailer = new PublicKey(req.retailer);
+    const serviceTag = licenseServiceTag(req.serviceId, retailer.toBase58());
+
+    // Derived from the SAME master note secret the vault's subscriber_commitment
+    // comes from, scoped by the service tag — so a merchant can check a presented
+    // key against `blake3(licenseSecret)` with no shared secret anywhere, and the
+    // user can reproduce the key on any device holding the note. The SECRET stays
+    // here; only the encoded key and its blake3 leave this function.
+    const licenseSecret = deriveLicenseSecret(job.ctx.receipt.secret, serviceTag);
+    const licenseKey = encodeLicenseKey(licenseSecret);
+    const licenseCommitmentBytes = licenseCommitment(licenseSecret);
+
+    // Inert on-chain metadata; zeros unless the caller has something to put there.
+    // See `SubscribeExecuteParams.vkHashSubscriber`.
+    const vkHashSubscriber =
+      req.vkHashSubscriber && req.vkHashSubscriber.length === 32
+        ? Uint8Array.from(req.vkHashSubscriber)
+        : new Uint8Array(32);
+
+    const { txSig, vaultPDA } = await executeSubscribe(
+      job.ctx,
+      conn,
+      {
+        ownerPubkey: new PublicKey(req.ownerPubkey),
+        retailer,
+        rate: BigInt(req.rate),
+        intervalSlots: BigInt(req.intervalSlots),
+        subscriberCommitment: job.subscriberCommitment,
+        vkHashSubscriber,
+        licenseCommitment: licenseCommitmentBytes,
+      },
+      onProgress,
+    );
+
+    return {
+      kind: 'poolSubscribeExecute',
+      txSig,
+      vaultPDA: vaultPDA.toBase58(),
+      licenseKey,
+      serviceTag,
+      denomination: job.ctx.poolConfig.denomination,
+    };
+  } finally {
+    preparedSubscribes.delete(req.jobId);
+  }
+}
+
+/**
  * Reclaim SOL stranded on ephemerals from earlier failed runs. Refuses while a
  * job is in flight for safety — it closes proof buffers, and a live upload is
  * writing into one.
@@ -646,8 +892,8 @@ async function handlePoolRecover(
   const candidates = seedsInSearchOrder(requireSeeds(req.meta));
   const pool = requirePool(req.token, req.denomination);
 
-  if (prepared.size > 0 || preparedUnshields.size > 0) {
-    throw new Error('A shield or withdrawal is still in progress — finish it before recovering.');
+  if (prepared.size > 0 || preparedUnshields.size > 0 || preparedSubscribes.size > 0) {
+    throw new Error('A shield, withdrawal or subscription is still in progress — finish it before recovering.');
   }
 
   onProgress?.('Looking for funds left on earlier attempts...');
@@ -715,6 +961,12 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolSetPassphrase':
       res = handlePoolSetPassphrase(req);
+      break;
+    case 'poolSubscribePrepare':
+      res = await handlePoolSubscribePrepare(req, onProgress);
+      break;
+    case 'poolSubscribeExecute':
+      res = await handlePoolSubscribeExecute(req, onProgress);
       break;
     case 'poolUnshieldPrepare':
       res = await handlePoolUnshieldPrepare(req, onProgress);

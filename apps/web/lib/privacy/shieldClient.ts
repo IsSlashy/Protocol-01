@@ -170,6 +170,119 @@ export async function unshieldFromPool(
   return { txSig: done.txSig, denomination: done.denomination };
 }
 
+export interface SubscribeParams {
+  meta: string;
+  token: PoolToken;
+  denomination: number;
+  /** Which note pays for the subscription, by the leaf index it occupies. */
+  leafIndex: number;
+  /** Merchant who can claim each period. */
+  retailer: PublicKey;
+  /** Per-period amount, in the pool token's smallest unit. */
+  rate: bigint;
+  /** Slots between claimable periods. Must be > 0; the program rejects 0. */
+  intervalSlots: bigint;
+  /** Registry `serviceId`. Omitted, the key is scoped to the retailer address. */
+  serviceId?: string | null;
+  /** Wallet paying the proof float; receives the swept residual. */
+  owner: PublicKey;
+  /** Note blobs stored at shield time; the worker uses the matching Merkle path. */
+  encryptedNotes?: string[];
+  connection: Connection;
+  signOne: SignOne;
+  onProgress?: (step: string) => void;
+}
+
+export interface SubscribeOutcome {
+  txSig: string;
+  /** Base58 subscription vault PDA. */
+  vaultPDA: string;
+  /** The "P01-…" key to show the user. Reproducible from the note, so losing it
+   *  is recoverable — but nothing else stores it, so show it. */
+  licenseKey: string;
+  /** The string the key is scoped to; a merchant needs it to verify. */
+  serviceTag: string;
+  denomination: number;
+  fundedLamports: number;
+}
+
+/**
+ * Open a subscription vault from one shielded note. Same two-phase shape as a
+ * withdrawal, and for the same reason: the worker proves C1 + C3 and prices the
+ * job, the wallet signs a single pre-fund, the worker uploads ~150 proof chunks
+ * and sends the subscribe.
+ *
+ * The pre-fund is larger than a withdrawal's by the subscription vault's rent
+ * (361 bytes), and that part does NOT come back — the vault stays open until the
+ * merchant's final `claim_period` closes it.
+ *
+ * No secret crosses this boundary in either direction. The license key comes
+ * back derived; the note secret it came from does not.
+ */
+export async function subscribeFromPool(params: SubscribeParams): Promise<SubscribeOutcome> {
+  const {
+    meta, token, denomination, leafIndex, retailer, rate, intervalSlots,
+    owner, connection, signOne, onProgress,
+  } = params;
+
+  const prep = await poolRequest(
+    {
+      kind: 'poolSubscribePrepare',
+      meta,
+      token,
+      denomination,
+      leafIndex,
+      encryptedNotes: params.encryptedNotes,
+    },
+    onProgress,
+  );
+
+  onProgress?.('Approve the funding transaction in your wallet...');
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+  const fundTx = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: owner,
+      toPubkey: new PublicKey(prep.ephemeralPubkey),
+      lamports: prep.requiredLamports,
+    }),
+  );
+  fundTx.recentBlockhash = blockhash;
+  fundTx.feePayer = owner;
+
+  const signed = await signOne(fundTx);
+  const fundSig = await connection.sendRawTransaction(signed.serialize());
+  const conf = await connection.confirmTransaction(
+    { signature: fundSig, blockhash, lastValidBlockHeight },
+    'confirmed',
+  );
+  if (conf.value.err) {
+    throw new Error(`Funding transaction failed: ${JSON.stringify(conf.value.err)}`);
+  }
+
+  const done = await poolRequest(
+    {
+      kind: 'poolSubscribeExecute',
+      jobId: prep.jobId,
+      ownerPubkey: owner.toBase58(),
+      retailer: retailer.toBase58(),
+      // u64 decimal strings — the worker boundary carries JSON-safe primitives.
+      rate: rate.toString(),
+      intervalSlots: intervalSlots.toString(),
+      serviceId: params.serviceId ?? null,
+    },
+    onProgress,
+  );
+
+  return {
+    txSig: done.txSig,
+    vaultPDA: done.vaultPDA,
+    licenseKey: done.licenseKey,
+    serviceTag: done.serviceTag,
+    denomination: done.denomination,
+    fundedLamports: prep.requiredLamports,
+  };
+}
+
 /**
  * Reclaim SOL left on ephemerals by earlier failed runs. Proof-buffer rent can
  * only be released by the ephemeral that created it, so this is the only way
