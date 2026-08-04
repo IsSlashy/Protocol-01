@@ -48,6 +48,7 @@ import {
   type ServiceEntry,
 } from '@/lib/privacy/serviceRegistry';
 import { SUBSCRIBE_PHASES } from '@/lib/pay/flowProgress';
+import { recordSubscription } from '@/lib/pay/subscriptions';
 import FlowProgress from './FlowProgress';
 import SuccessBurst from './SuccessBurst';
 import { truncate } from './util';
@@ -364,6 +365,25 @@ export default function SubscribePanel({
       // ~150 uploads to reach a nullifier collision.
       shieldClient.recordSpentNote(owner.toBase58(), noteKey(note));
       setSpentHere((prev) => new Set(prev).add(noteKey(note)));
+      // Remember the vault locally so the Subscriptions view can list it
+      // without an on-chain sweep, the same convenience `recordPayout` gives
+      // withdrawals. Public fields only: the license key is re-derivable from
+      // the note secret, is never stored, and `recordSubscription` would drop
+      // it anyway.
+      recordSubscription(owner.toBase58(), {
+        vaultPDA: typeof out.vaultPDA === 'string' ? out.vaultPDA : out.vaultPDA.toBase58(),
+        retailer: service.retailer.toBase58(),
+        serviceTag: licenseServiceTag(service.slug, service.retailer.toBase58()),
+        serviceName: service.name,
+        token: note.token,
+        denomination: note.denomination,
+        rate: service.priceAtomic.toString(),
+        intervalSlots: service.intervalSlots.toString(),
+        openTxSig: out.txSig,
+        pool: note.pool,
+        leafIndex: note.leafIndex,
+        openedAt: Date.now(),
+      });
       void rescan();
     } catch (e) {
       setError((e as Error).message || 'Subscription failed.');
