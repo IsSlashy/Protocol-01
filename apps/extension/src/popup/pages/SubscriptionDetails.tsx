@@ -268,7 +268,7 @@ export default function SubscriptionDetails() {
           </motion.div>
         )}
 
-        {/* ZK Private Payment Badge */}
+        {/* ZK Shielded Payment Badge */}
         {subscription.useZkPool && (
           <motion.div
             initial={{ y: 10, opacity: 0 }}
@@ -278,13 +278,15 @@ export default function SubscriptionDetails() {
             <div className="flex items-center gap-2 mb-2">
               <EyeOff className="w-5 h-5 text-p01-pink" />
               <span className="text-sm font-semibold text-p01-pink">
-                ZK Private Payment
+                ZK Shielded Payment
               </span>
             </div>
             <div className="flex items-start gap-2">
               <Lock className="w-3 h-3 text-p01-pink flex-shrink-0 mt-0.5" />
               <p className="text-xs text-p01-chrome/60">
-                Payments are routed through the ZK shielded pool. Your identity is fully hidden from the merchant and on-chain observers.
+                Payments are funded from the shielded pool and this vault is keyed on-chain by
+                a commitment, not by your address, so it cannot be looked up from your wallet.
+                Your wallet did sign the setup transaction, and the merchant is named in it.
               </p>
             </div>
           </motion.div>

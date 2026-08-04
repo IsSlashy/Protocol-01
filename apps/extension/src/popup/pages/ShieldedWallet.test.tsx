@@ -117,7 +117,10 @@ describe('ShieldedWallet', () => {
     );
 
     expect(screen.getByText('2.5000 SOL')).toBeInTheDocument();
-    expect(screen.getByText(/Fully private/)).toBeInTheDocument();
+    // The subtitle deliberately does NOT claim privacy: the anonymity set of a
+    // denominated note is one (deposit and withdrawal publish the same
+    // commitment), so this asserts the honest wording, not "Fully private".
+    expect(screen.getByText(/Shielded balance/)).toBeInTheDocument();
   });
 
   it('displays the ZK address', () => {

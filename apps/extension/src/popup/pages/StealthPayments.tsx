@@ -1,3 +1,17 @@
+/**
+ * StealthPayments — pending payments received on per-payment stealth addresses.
+ *
+ * What is real here: each incoming payment lands on its own fresh address, so a
+ * sender cannot group your payments under one published address.
+ *
+ * What copy on this screen must NOT claim: claiming is a sweep to the user's
+ * own wallet — `claimPayment(payment.id, publicKey, network)` below passes the
+ * connected wallet as the destination — so the moment a payment is claimed, that
+ * stealth address is publicly tied to the wallet. Unlike mobile, where the
+ * recipient sweeps automatically a few seconds after receipt, here the sweep is
+ * user-initiated: it only happens when the Claim button is pressed.
+ */
+
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -108,7 +122,7 @@ export default function StealthPayments() {
           <div className="flex items-center gap-2 mt-2">
             <EyeOff className="w-3 h-3 text-p01-cyan" />
             <span className="text-[10px] text-p01-cyan font-mono">
-              {unclaimedPayments.length} PRIVATE PAYMENT{unclaimedPayments.length !== 1 ? 'S' : ''}{' '}
+              {unclaimedPayments.length} STEALTH PAYMENT{unclaimedPayments.length !== 1 ? 'S' : ''}{' '}
               PENDING
             </span>
           </div>
@@ -144,7 +158,7 @@ export default function StealthPayments() {
               <Eye className="w-12 h-12 text-p01-chrome/30 mx-auto mb-3" />
               <p className="text-p01-chrome font-mono text-sm mb-1">No pending payments</p>
               <p className="text-p01-chrome/60 font-mono text-xs">
-                Share your stealth meta-address to receive private payments
+                Share your stealth meta-address — each payment lands on its own fresh address
               </p>
             </div>
           ) : (

@@ -1,10 +1,25 @@
 /**
- * DenominatedShield — create a private denominated note.
+ * DenominatedShield — create a shielded denominated note.
  *
  * Lets the user pick a token (SOL/USDC) and denomination, then shields
  * the fixed amount into the corresponding V3 Goldilocks pool via
  * circuit 6 (merkle_update) STARK proof. The resulting ShieldReceipt is
- * stored in the denominated pool store and can be used for private subscribe.
+ * stored in the denominated pool store and can be used to fund a shielded
+ * subscription.
+ *
+ * WHAT THE DEPOSIT PUBLISHES. The user's own wallet is the depositor and the
+ * fee payer (shared/services/denominatedPool.ts shieldV3 passes
+ * `signer.publicKey` to buildShieldDenominatedV3Ix), and the note commitment
+ * travels in the same instruction. So the deposit is a public, wallet-attributed
+ * transaction. What the pool buys is that the note's OWNER is not on-chain
+ * afterwards — not that the deposit is unattributable.
+ *
+ * The withdrawal republishes this same commitment (it is `stark_commitment`,
+ * ix data byte 80, of unshield_denominated_stark_v3), so deposit and withdrawal
+ * are matchable to each other by anyone. Confirmed on devnet: leaf 16,
+ * commitment 8901821612542787864, present in both the deposit and the
+ * withdrawal transaction. Closing that needs the C7 spend circuit
+ * (docs/C7_SPEND_CIRCUIT_PLAN.md), which is not built.
  *
  * Proof generation (C6) takes 30-60s in the browser extension WASM.
  */
@@ -71,7 +86,7 @@ export default function DenominatedShield() {
             SHIELD
           </h1>
           <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
-            PRIVATE DENOMINATED POOL
+            SHIELDED DENOMINATED POOL
           </p>
         </div>
         <div className="w-9" />
@@ -89,8 +104,11 @@ export default function DenominatedShield() {
               Note created!
             </p>
             <p className="text-p01-chrome text-xs text-center">
-              {denomination} {token} shielded into a private Goldilocks pool. No link
-              between your wallet and the note on-chain.
+              {denomination} {token} shielded into the Goldilocks pool. Your wallet
+              signed this deposit and the note commitment is in the same transaction,
+              so the deposit itself is public. From here on the note has no on-chain
+              owner — but withdrawing it republishes this commitment, which matches
+              it back to this deposit.
             </p>
             {txSig && (
               <p className="text-p01-chrome/50 text-[9px] font-mono break-all text-center">
@@ -198,7 +216,7 @@ export default function DenominatedShield() {
               ) : (
                 <>
                   <Lock className="w-4 h-4" />
-                  Create Private Note
+                  Create Shielded Note
                 </>
               )}
             </button>

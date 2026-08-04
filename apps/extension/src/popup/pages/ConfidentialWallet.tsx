@@ -430,7 +430,10 @@ export default function ConfidentialWallet() {
                 <p className="text-white font-medium">zkSPL Confidential Balances</p>
                 <p className="text-p01-chrome text-xs mt-1">
                   Your balance is hidden on-chain as a Poseidon commitment. Deposits and withdrawals
-                  use ZK proofs to update your balance without revealing it. Transfers are fully private.
+                  use ZK proofs to update your balance without revealing it. The accounts involved
+                  are still ordinary public accounts — the amount is what is hidden, not who is
+                  transacting. Confidential transfer is not wired in the extension yet
+                  (shared/store/confidential.ts throws); use the mobile app.
                 </p>
               </div>
             </div>
@@ -581,7 +584,7 @@ export default function ConfidentialWallet() {
                   Confidential Transfer
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
-                  Send {tokenSymbol} privately to another wallet
+                  Send {tokenSymbol} to another wallet with the amount hidden on-chain
                 </p>
               </div>
             </div>
@@ -734,8 +737,10 @@ export default function ConfidentialWallet() {
               <div className="bg-p01-void rounded-xl p-4">
                 <h4 className="text-white font-medium mb-2">Confidential Transfer</h4>
                 <p className="text-p01-chrome/80">
-                  Send tokens to another wallet where the amount is hidden on-chain as an amount hash.
-                  The recipient receives a pending credit they must apply to update their balance.
+                  Send tokens to another wallet where the amount is hidden on-chain as an amount
+                  hash. Both wallet addresses are still visible. The recipient receives a pending
+                  credit they must apply to update their balance. Not available in the extension
+                  yet — it needs the STARK prover, which is wired on mobile only.
                 </p>
               </div>
 

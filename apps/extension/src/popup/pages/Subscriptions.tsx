@@ -196,12 +196,16 @@ export default function Subscriptions() {
     !services.some(svc => s.name.toLowerCase().includes(svc.name.toLowerCase()))
   );
 
-  // Graded privacy score per subscription, averaged over active ones.
-  //  - Standard (classic, fully visible on-chain): 0%
-  //  - amount noise / timing noise: partial (25% each)
-  //  - stealth address: +50%
-  //  - ZK shielded pool: full privacy = 100%
-  // A classic subscription therefore scores 0%, never 100%.
+  // Graded score for how many privacy FEATURES a subscription has switched on,
+  // averaged over active ones. It counts features; it does not measure how much
+  // an observer can learn, and 100 does not mean anonymous — a ZK-shielded
+  // subscription is still set up by a transaction the user's wallet signs, with
+  // the merchant named in it (subscriptionVault.ts:806-807, 1023). Labelled
+  // "Privacy Features" in the UI for that reason, never "Privacy Score".
+  //  - Standard (classic, fully visible on-chain): 0
+  //  - amount noise / timing noise: 25 each
+  //  - stealth address: +50
+  //  - ZK shielded pool: 100
   const subPrivacyScore = (s: typeof subscriptions[number]): number => {
     if (s.useZkPool) return 100;
     let v = 0;
@@ -300,7 +304,7 @@ export default function Subscriptions() {
           {subscriptions.length > 0 && (
             <div className="mt-3 pt-3 border-t border-p01-border/50">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-p01-chrome/60">Privacy Score</span>
+                <span className="text-xs text-p01-chrome/60">Privacy Features On</span>
                 <span className="text-xs font-medium text-p01-cyan">{privacyScore}%</span>
               </div>
               <div className="h-1.5 bg-p01-border rounded-full overflow-hidden">
@@ -780,7 +784,7 @@ function SubscriptionCard({
             {sub.useZkPool && (
               <span className="px-1.5 py-0.5 text-[9px] bg-p01-pink/25 text-p01-pink rounded font-medium flex items-center gap-0.5">
                 <EyeOff className="w-2 h-2" />
-                ZK PRIVATE
+                ZK SHIELDED
               </span>
             )}
           </div>

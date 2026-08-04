@@ -165,8 +165,10 @@ export default function Send() {
                     [ STEALTH SEND DETECTED ]
                   </p>
                   <p className="text-[10px] text-p01-chrome font-mono leading-relaxed">
-                    This payment will be sent to a unique stealth address. The recipient&apos;s
-                    identity will remain private and unlinkable to their main wallet.
+                    This payment goes to a fresh address derived for this payment alone, so it
+                    is not tied to the recipient&apos;s published address. Your wallet still
+                    signs and pays for it, and the link breaks only until the recipient sweeps
+                    the funds to their own wallet.
                   </p>
                 </div>
               </div>
@@ -259,17 +261,16 @@ export default function Send() {
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-p01-cyan" />
                 <span className="text-[10px] text-p01-cyan font-mono tracking-wider">
-                  MAXIMUM PRIVACY
+                  STEALTH ADDRESS
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-mono font-bold text-p01-cyan">100</span>
-                <span className="text-[10px] text-p01-cyan/60">(STEALTH)</span>
-              </div>
+              {/* No score here on purpose: the old "100" was hardcoded and
+                  measured nothing. A stealth send has one property, stated
+                  below, and it is not a number. */}
             </div>
             <p className="text-[10px] text-p01-chrome/70 mt-2">
-              Stealth addresses provide the highest level of privacy. The recipient&apos;s address
-              will be completely unlinkable.
+              The recipient&apos;s receiving address is fresh and not derivable from their
+              published address. It stays that way until they sweep the funds onward.
             </p>
           </div>
         )}

@@ -72,7 +72,7 @@ const PRIVACY_MODES = [
   {
     id: 'standard' as PrivacyMode,
     name: 'Standard',
-    desc: 'Direct payment, fully visible on-chain (0% privacy)',
+    desc: 'Direct payment from your wallet, fully visible on-chain',
     icon: Zap,
     color: '#39c5bb',
     features: ['Fast execution', 'Lowest fees'],
@@ -80,12 +80,18 @@ const PRIVACY_MODES = [
     disabledReason: undefined,
   },
   {
+    // Funded by a shielded note and keyed on-chain by a commitment instead of
+    // your address, so the vault cannot be looked up from a wallet. It is NOT
+    // anonymous: subscriptionVault.ts:1023 makes the local wallet the payer and
+    // signer of subscribe_private_stark, and the merchant is account #1 of that
+    // same instruction (subscriptionVault.ts:806-807). Do not restore any
+    // "100% privacy" / "no wallet link" wording here.
     id: 'zk' as PrivacyMode,
-    name: 'ZK Private',
-    desc: 'Pay from a shielded denominated note, no wallet link (100% privacy)',
+    name: 'ZK Shielded',
+    desc: 'Funded by a shielded note; the vault is keyed by a commitment, not your address',
     icon: Shield,
     color: '#39c5bb',
-    features: ['STARK proof (C1)', 'No wallet link', 'Goldilocks pool'],
+    features: ['STARK proof (C1)', 'Commitment-keyed vault', 'Goldilocks pool'],
     disabled: false,
     disabledReason: undefined,
   },
@@ -654,7 +660,7 @@ export default function CreateSubscription() {
               <h2 className="text-white font-display font-bold text-base">Subscription active</h2>
               <p className="text-p01-chrome text-[11px] font-mono mt-1">
                 {createdLicense.mode === 'zk'
-                  ? 'Paid privately from your shielded note.'
+                  ? 'Funded from your shielded note.'
                   : 'First payment sent.'}
               </p>
             </div>
@@ -768,7 +774,7 @@ export default function CreateSubscription() {
               <div className="p-3 rounded-lg bg-p01-cyan/5 border border-p01-cyan/20 flex items-center gap-2">
                 <Lock className="w-4 h-4 text-p01-cyan shrink-0" />
                 <p className="text-p01-chrome text-[10px] font-mono">
-                  ZK Private needs a denominated pool note. If you have one shielded,
+                  ZK Shielded needs a denominated pool note. If you have one shielded,
                   continuing will use it. If not, you will be taken to the shield screen first.
                 </p>
               </div>
@@ -1054,7 +1060,8 @@ export default function CreateSubscription() {
               <p className="text-p01-chrome text-[10px] font-mono">
                 {privacyMode === 'standard'
                   ? 'Payments visible on-chain. Fast and minimal fees.'
-                  : 'Fully untraceable. Each payment from shielded pool with ZK proof.'}
+                  : 'Funded from a shielded note with a STARK proof. Your wallet still signs '
+                    + 'this setup transaction and the merchant is named in it.'}
               </p>
             </div>
 

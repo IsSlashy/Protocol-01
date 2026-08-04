@@ -27,7 +27,7 @@ export default function AuthLayout() {
               [ SYSTEM STATUS ]
             </span>
             <span className="text-white text-lg font-black tracking-wider">
-              UNTRACEABLE
+              SHIELDED
             </span>
             <div className="flex items-center mt-2">
               <div className="w-2 h-2 bg-p01-cyan mr-2" />

@@ -564,7 +564,7 @@ export default function ApproveSubscription() {
               <li className="flex items-start gap-2 text-xs text-p01-chrome">
                 <Shield className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
                 <span>
-                  Privacy features will hide payment patterns
+                  Privacy features vary the amount and timing of payments
                 </span>
               </li>
             )}

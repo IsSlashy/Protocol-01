@@ -351,7 +351,7 @@ export default function Receive() {
               </p>
               <p className="text-[10px] text-p01-text-dim font-mono tracking-wider leading-relaxed">
                 {stealthModeEnabled
-                  ? 'SHARE THIS META-ADDRESS FOR PRIVATE PAYMENTS. EACH PAYMENT WILL BE SENT TO A UNIQUE STEALTH ADDRESS.'
+                  ? 'SHARE THIS META-ADDRESS. EACH PAYMENT LANDS ON ITS OWN FRESH ADDRESS, SO PAYMENTS TO YOU ARE NOT GROUPED UNDER ONE ADDRESS. CLAIMING ONE MOVES IT TO YOUR WALLET, WHICH LINKS THAT ADDRESS TO YOU.'
                   : `SCAN THIS QR CODE OR SHARE YOUR ADDRESS TO RECEIVE SOL OR SPL TOKENS ON THE ${network.toUpperCase()} NETWORK.`}
               </p>
             </div>

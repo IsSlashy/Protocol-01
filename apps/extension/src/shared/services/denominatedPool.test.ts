@@ -33,6 +33,7 @@ import {
   buildTransferDenominatedStarkV3Ix,
   buildUnshieldDenominatedStarkV3Ix,
   UNSHIELD_MIN_EPOCH,
+  TRANSFER_MIN_EPOCH,
   encodeShareableNote,
   decodeShareableNote,
   importNote,
@@ -362,9 +363,11 @@ describe('buildTransferDenominatedStarkV3Ix', () => {
   const c3 = Keypair.generate().publicKey;
   const c6 = Keypair.generate().publicKey;
 
+  // The builder takes NO min_epoch parameter — it writes TRANSFER_MIN_EPOCH
+  // itself. See the dedicated min_epoch@72 suite below.
   const ix = buildTransferDenominatedStarkV3Ix(
     payer, pool, tree, nullifierPDA, c1, c3, c6,
-    nullifierBytes, merkleRootBytes, 5n, 7n,
+    nullifierBytes, merkleRootBytes, 7n,
     newCommitmentBytes, newRootBytes, subtrees,
   );
 
@@ -388,7 +391,7 @@ describe('buildTransferDenominatedStarkV3Ix', () => {
     const d = ix.data;
     expect(Array.from(d.subarray(8, 40))).toEqual(nullifierBytes);
     expect(Array.from(d.subarray(40, 72))).toEqual(merkleRootBytes);
-    expect(d.readBigUInt64LE(72)).toBe(5n); // min_epoch
+    expect(d.readBigUInt64LE(72)).toBe(0n); // min_epoch — always TRANSFER_MIN_EPOCH
     expect(d.readBigUInt64LE(80)).toBe(7n); // stark_commitment
     expect(Array.from(d.subarray(88, 120))).toEqual(newCommitmentBytes);
     expect(Array.from(d.subarray(120, 152))).toEqual(newRootBytes);
@@ -592,5 +595,121 @@ describe('buildUnshieldDenominatedStarkV3Ix — min_epoch@72 is always zero', ()
       windows.push(leaky.readBigUInt64LE(off));
     }
     expect(windows).toContain(FIXTURE_DEPOSIT_EPOCH);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// transfer_denominated_stark_v3 — min_epoch must never carry note data either
+//
+// This one is NOT the same case as unshield. The transfer handler really does
+// read the argument: transfer_denominated_stark_v3.rs:165-173 computes
+// `effective_min_epoch = min_epoch + pool.get_dynamic_delay()` and
+// `require!(current_epoch >= effective_min_epoch, EpochDelayNotMet)`.
+//
+// This client used to pass `min_epoch = receipt.depositEpoch`. Two problems:
+//
+//  - it published the deposit's ~7200-slot epoch window in the clear, the same
+//    leak already closed on unshield;
+//  - it is a fund-freezing landmine. `ShieldReceipt.depositEpoch` is the field
+//    that carries the PRF blinding factor once this client adopts the note
+//    blinding already shipped in apps/web. A ~2^62 blinding value can never
+//    satisfy `current_epoch >= blinding + delay` against an absolute epoch in
+//    the tens of thousands (pool_v3.rs:214-216), so every blinded note would
+//    become permanently un-transferable. Not fund loss — capability loss, and
+//    silent until someone tries to transfer.
+//
+// The tests below pin byte window 72..80 to zero. The last one is the one that
+// fails on the old value: it drives the maturity arithmetic the handler does,
+// and shows depositEpoch-as-min_epoch is unsatisfiable for a blinded note
+// while 0 is always satisfiable.
+// ---------------------------------------------------------------------------
+
+describe('buildTransferDenominatedStarkV3Ix — min_epoch@72 is always zero', () => {
+  const nullifierBytes = new Array(32).fill(0x11);
+  const merkleRootBytes = new Array(32).fill(0x22);
+  const newCommitmentBytes = new Array(32).fill(0x33);
+  const newRootBytes = new Array(32).fill(0x44);
+  const subtrees = Array.from({ length: MERKLE_DEPTH }, () => new Array(32).fill(0x55));
+
+  // A REAL devnet deposit epoch: slot 480,000,000 / SLOTS_PER_EPOCH (7200,
+  // pool.rs:155). Must be <= the current epoch below or the control assertion
+  // in the maturity test is meaningless.
+  const FIXTURE_DEPOSIT_EPOCH = 480_000_000n / 7_200n; // 66,666
+  const STARK_COMMITMENT = 0xdead_beef_cafe_f00dn;
+
+  const payer = Keypair.generate().publicKey;
+  const pool = Keypair.generate().publicKey;
+  const tree = Keypair.generate().publicKey;
+  const nullifierPDA = Keypair.generate().publicKey;
+  const c1 = Keypair.generate().publicKey;
+  const c3 = Keypair.generate().publicKey;
+  const c6 = Keypair.generate().publicKey;
+
+  const ix = buildTransferDenominatedStarkV3Ix(
+    payer, pool, tree, nullifierPDA, c1, c3, c6,
+    nullifierBytes, merkleRootBytes, STARK_COMMITMENT,
+    newCommitmentBytes, newRootBytes, subtrees,
+  );
+
+  it('TRANSFER_MIN_EPOCH is exactly zero', () => {
+    expect(TRANSFER_MIN_EPOCH).toBe(0n);
+  });
+
+  it('writes eight zero bytes at offset 72', () => {
+    expect(ix.data.readBigUInt64LE(72)).toBe(0n);
+    expect(Array.from(ix.data.subarray(72, 80))).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it('leaves every other arg at its locked offset', () => {
+    expect(Array.from(ix.data.subarray(8, 40))).toEqual(nullifierBytes);
+    expect(Array.from(ix.data.subarray(40, 72))).toEqual(merkleRootBytes);
+    expect(ix.data.readBigUInt64LE(80)).toBe(STARK_COMMITMENT);
+    expect(Array.from(ix.data.subarray(88, 120))).toEqual(newCommitmentBytes);
+    expect(Array.from(ix.data.subarray(120, 152))).toEqual(newRootBytes);
+  });
+
+  it('does not carry the deposit epoch in ANY 8-byte window of ix.data', () => {
+    const windows: bigint[] = [];
+    for (let off = 0; off + 8 <= ix.data.length; off++) {
+      windows.push(ix.data.readBigUInt64LE(off));
+    }
+    expect(windows).not.toContain(FIXTURE_DEPOSIT_EPOCH);
+  });
+
+  it('the leak scan is not vacuous: the old byte layout DOES trip it', () => {
+    const leaky = Buffer.from(ix.data);
+    leaky.writeBigUInt64LE(FIXTURE_DEPOSIT_EPOCH, 72);
+    const windows: bigint[] = [];
+    for (let off = 0; off + 8 <= leaky.length; off++) {
+      windows.push(leaky.readBigUInt64LE(off));
+    }
+    expect(windows).toContain(FIXTURE_DEPOSIT_EPOCH);
+  });
+
+  it('survives the handler maturity check that the old value cannot', () => {
+    // Reproduces transfer_denominated_stark_v3.rs:165-173 exactly.
+    //   current_epoch  = slot / SLOTS_PER_EPOCH        (pool_v3.rs:214-216)
+    //   dynamic_delay ∈ {0,1,2}                        (pool_v3.rs:279-289)
+    //   require!(current_epoch >= min_epoch + dynamic_delay)
+    const handlerAccepts = (minEpoch: bigint, currentEpoch: bigint, delay: bigint) =>
+      currentEpoch >= minEpoch + delay;
+
+    // A real devnet slot at the time of writing (481,006,155 / 7200).
+    const currentEpoch = 481_006_155n / 7_200n;
+    const worstDelay = 2n; // smallest anonymity set ⇒ largest delay
+
+    // What the builder emits now: always accepted.
+    expect(handlerAccepts(ix.data.readBigUInt64LE(72), currentEpoch, worstDelay)).toBe(true);
+
+    // The OLD value on a plain note: accepted, but only because the epoch is
+    // real. This is the case that made the bug invisible.
+    expect(handlerAccepts(FIXTURE_DEPOSIT_EPOCH, currentEpoch, worstDelay)).toBe(true);
+
+    // The OLD value once `depositEpoch` carries a PRF blinding factor: the
+    // note is permanently un-transferable. This assertion is the whole point
+    // of the fix — it fails the moment anyone reintroduces the old value.
+    const blinding = 0x3fff_ffff_ffff_ffffn; // ~2^62, the blinding domain
+    expect(handlerAccepts(blinding, currentEpoch, worstDelay)).toBe(false);
+    expect(handlerAccepts(ix.data.readBigUInt64LE(72), currentEpoch, worstDelay)).toBe(true);
   });
 });

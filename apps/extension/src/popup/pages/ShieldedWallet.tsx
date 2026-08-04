@@ -400,7 +400,7 @@ export default function ShieldedWallet() {
               </p>
             </div>
             <p className="text-p01-chrome text-xs mt-2">
-              Fully private • Zero-knowledge protected
+              Shielded balance • STARK proofs
             </p>
           </div>
 
@@ -662,7 +662,11 @@ export default function ShieldedWallet() {
               <div>
                 <p className="text-white font-medium">ZK-STARK Protection</p>
                 <p className="text-p01-chrome text-xs mt-1">
-                  Your shielded transactions use post-quantum STARK proofs. No one can see amounts, senders, or recipients on-chain.
+                  Your shielded transactions are proved with post-quantum STARKs, so a note&apos;s
+                  owner is never written on-chain. In the denominated pool the deposit and the
+                  withdrawal are still public transactions signed by your wallet, and both
+                  publish the note&apos;s commitment — enough for anyone to match one to the
+                  other.
                 </p>
               </div>
             </div>
@@ -812,24 +816,29 @@ export default function ShieldedWallet() {
               <div className="bg-p01-void rounded-xl p-4">
                 <h4 className="text-white font-medium mb-2">How it works</h4>
                 <p className="text-p01-chrome/80">
-                  Shielded transactions use zero-knowledge proofs (ZK-SNARKs) to hide
-                  amounts, senders, and recipients while proving the transaction is valid.
+                  Shielded transactions use zero-knowledge STARK proofs to show a spend is
+                  valid without revealing the note secret that authorises it. They prove
+                  ownership without naming an owner; they do not erase the transactions
+                  themselves.
                 </p>
               </div>
 
               <div className="bg-p01-void rounded-xl p-4">
                 <h4 className="text-white font-medium mb-2">Shield</h4>
                 <p className="text-p01-chrome/80">
-                  Convert transparent SOL into shielded notes. Your deposit amount is visible,
-                  but from then on, all movements are completely private.
+                  Convert transparent SOL into shielded notes. Your wallet signs the deposit
+                  and the amount is a fixed denomination, so the deposit is public. What is
+                  not public is who owns the note afterwards.
                 </p>
               </div>
 
               <div className="bg-p01-void rounded-xl p-4">
                 <h4 className="text-white font-medium mb-2">Transfer</h4>
                 <p className="text-p01-chrome/80">
-                  Send shielded SOL to any ZK address. The amount, sender, and recipient
-                  are all hidden. Only you and the recipient know the details.
+                  Move a note to a new note for someone else. The recipient is never an
+                  account in the transaction and the note itself is handed over off-chain.
+                  The commitments on both sides are public, so the transfer still sits on the
+                  chain between your deposit and their withdrawal.
                 </p>
               </div>
 
@@ -837,7 +846,9 @@ export default function ShieldedWallet() {
                 <h4 className="text-white font-medium mb-2">Unshield</h4>
                 <p className="text-p01-chrome/80">
                   Withdraw shielded SOL back to a transparent address. The withdrawal
-                  amount becomes visible, but the source remains hidden.
+                  republishes the note&apos;s commitment, the same value the deposit
+                  published, so the source deposit is identifiable. Treat this note&apos;s
+                  anonymity set as one.
                 </p>
               </div>
 

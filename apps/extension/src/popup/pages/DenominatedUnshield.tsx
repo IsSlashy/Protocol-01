@@ -16,7 +16,27 @@
  *   (unshield_denominated_stark_v3.rs:387). The toggle is UX only: it decides
  *   whether the maturity warning blocks the button, not what goes on-chain.
  *   Previously "regular" published the note's deposit epoch in the clear,
- *   which narrowed the anonymity set to the deposits made in that epoch.
+ *   which narrowed the candidate deposits to the ones made in that epoch.
+ *
+ * WHAT THIS WITHDRAWAL PUBLISHES — the copy on this screen must respect it:
+ *   1. The note commitment goes on-chain again. It is `stark_commitment`, ix
+ *      data byte 80 (shared/services/denominatedPool.ts
+ *      buildUnshieldDenominatedStarkV3Ix), and it is the same value the deposit
+ *      published. Anyone can match this withdrawal to that deposit — the
+ *      anonymity set is ONE. Confirmed on devnet: leaf 16, commitment
+ *      8901821612542787864, present in both transactions. Only the C7 spend
+ *      circuit changes this (docs/C7_SPEND_CIRCUIT_PLAN.md). Nothing on this
+ *      screen may imply it is fixed.
+ *   2. The user's own wallet signs. unshieldDenominatedStarkV3 passes
+ *      `signer.publicKey` as the unshield payer AND as the proof-buffer
+ *      authority (shared/services/denominatedPool.ts) — unlike the extension's
+ *      transfer leg, which uses an ephemeral, and unlike the web client, which
+ *      derives a per-note payout address and refuses to pay the connected
+ *      wallet. Here the recipient field defaults to the user's own wallet, so
+ *      the default is deposit and withdrawal from the same address.
+ *   3. The relayer, when it is on, hides the submission IP and the outer fee
+ *      payer only (signSendV3). The inner unshield is still signed by the
+ *      user's key, so the inner signer stays visible on-chain.
  */
 
 import { useState, useMemo } from 'react';
@@ -110,7 +130,7 @@ export default function DenominatedUnshield() {
           <div className="flex-1 text-center">
             <h1 className="text-white font-display font-bold tracking-wide text-sm">UNSHIELD</h1>
             <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
-              PRIVATE DENOMINATED POOL
+              SHIELDED DENOMINATED POOL
             </p>
           </div>
           <div className="w-9" />
@@ -164,7 +184,7 @@ export default function DenominatedUnshield() {
         <div className="flex-1 text-center">
           <h1 className="text-white font-display font-bold tracking-wide text-sm">UNSHIELD</h1>
           <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
-            PRIVATE DENOMINATED POOL
+            SHIELDED DENOMINATED POOL
           </p>
         </div>
         <div className="w-9" />
@@ -179,7 +199,7 @@ export default function DenominatedUnshield() {
               <Lock className="w-8 h-8 text-p01-chrome/30 mx-auto mb-2" />
               <p className="text-p01-chrome text-sm">No shielded notes found</p>
               <p className="text-p01-chrome/60 text-xs mt-1">
-                Shield some SOL first to create a private note.
+                Shield some SOL first to create a shielded note.
               </p>
             </div>
           ) : (
@@ -242,9 +262,32 @@ export default function DenominatedUnshield() {
           )}
           {!recipientInput && (
             <p className="text-p01-chrome/50 text-[9px] mt-1">
-              Leave blank to withdraw to your own wallet.
+              Leave blank to withdraw to your own wallet — the same wallet that signs this
+              transaction and that made the deposit.
             </p>
           )}
+        </div>
+
+        {/* What this transaction publishes. Always visible, never behind a
+            toggle: every claim here is verifiable from the instruction this
+            screen sends. See the file header for the file:line citations. */}
+        <div className="p-3 rounded-xl bg-p01-surface border border-p01-border space-y-1.5">
+          <p className="text-p01-chrome text-[10px] font-mono tracking-wider">
+            WHAT THIS PUBLISHES
+          </p>
+          <p className="text-p01-chrome/70 text-[9px] leading-relaxed">
+            This withdrawal writes the note&apos;s commitment on-chain — the same value your
+            deposit wrote. Anyone can match the two, so this note&apos;s anonymity set is one.
+            The proof hides which note secret you hold, not which deposit you are spending.
+          </p>
+          <p className="text-p01-chrome/70 text-[9px] leading-relaxed">
+            Your wallet signs this transaction and pays for it. If the relayer is on it hides
+            your IP and the outer fee payer; the inner signer is still your key.
+          </p>
+          <p className="text-p01-chrome/70 text-[9px] leading-relaxed">
+            Paying out to a different address does not break the match either — it only moves
+            where the funds land.
+          </p>
         </div>
 
         {/* Regular / Emergency toggle */}
@@ -271,8 +314,9 @@ export default function DenominatedUnshield() {
                 <div>
                   <p className="text-white text-[10px] font-medium">Regular</p>
                   <p className="text-p01-chrome/70 text-[9px]">
-                    Standard withdrawal. Your deposit epoch is never published — min_epoch is
-                    always 0, so the transaction reveals nothing about when the note was created.
+                    Standard withdrawal. The min_epoch field is always 0, so the deposit
+                    epoch is not written into it. That field is not the leak, though: the
+                    note commitment IS republished here, and it names the exact deposit.
                   </p>
                 </div>
               </div>
@@ -282,8 +326,8 @@ export default function DenominatedUnshield() {
                   <p className="text-yellow-300 text-[10px] font-medium">Emergency</p>
                   <p className="text-p01-chrome/70 text-[9px]">
                     Label only — it produces a byte-identical transaction, so nothing on-chain
-                    signals urgency. Neither mode is blocked by note age. Withdrawing a fresh note
-                    still shrinks your anonymity set by timing alone.
+                    signals urgency. Neither mode is blocked by note age, and neither mode
+                    changes what is published.
                   </p>
                 </div>
               </div>
@@ -314,8 +358,9 @@ export default function DenominatedUnshield() {
             <div className="mt-2 flex items-start gap-2 p-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
               <AlertTriangle className="w-3 h-3 text-yellow-400 shrink-0 mt-0.5" />
               <p className="text-yellow-300 text-[9px]">
-                Emergency mode is a label, not a different transaction. Withdrawing a note soon
-                after depositing it links the two by timing regardless of the mode you pick.
+                Emergency mode is a label, not a different transaction. Waiting longer does not
+                unlink anything either — this withdrawal republishes the deposit&apos;s commitment
+                whichever mode you pick.
               </p>
             </div>
           )}

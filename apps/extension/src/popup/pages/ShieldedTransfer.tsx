@@ -118,7 +118,7 @@ export default function ShieldedTransfer() {
           </button>
           <div className="flex items-center gap-2">
             <Zap className="w-5 h-5 text-p01-cyan" />
-            <h1 className="text-white font-display font-bold tracking-wide">Private Transfer</h1>
+            <h1 className="text-white font-display font-bold tracking-wide">Shielded Transfer</h1>
           </div>
         </div>
       </header>
@@ -256,11 +256,12 @@ export default function ShieldedTransfer() {
             <Shield className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-[10px] font-mono font-bold text-p01-cyan tracking-wider mb-1">
-                [ FULLY PRIVATE TRANSFER ]
+                [ SHIELDED TRANSFER ]
               </p>
               <p className="text-[10px] text-p01-chrome font-mono leading-relaxed">
-                This transfer uses zero-knowledge proofs. The amount, sender, and recipient
-                are completely hidden on-chain. Only you and the recipient know the details.
+                This transfer uses zero-knowledge proofs, so no account in the transaction
+                names you or the recipient. The transaction itself is public and the note
+                history it belongs to is on-chain.
               </p>
             </div>
           </div>
@@ -320,7 +321,7 @@ export default function ShieldedTransfer() {
           ) : (
             <>
               <Zap className="w-5 h-5" />
-              TRANSFER PRIVATELY
+              SEND SHIELDED
             </>
           )}
         </button>

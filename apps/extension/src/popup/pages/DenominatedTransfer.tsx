@@ -1,18 +1,37 @@
 /**
- * DenominatedTransfer — private note-to-note transfer of a denominated note.
+ * DenominatedTransfer — note-to-note transfer of a denominated note.
  *
  * Spends a MATURE denominated note (C1 + C3 ownership/membership) and mints a
  * brand-new note for the recipient (C6 insertion), then hands the recipient an
- * encoded "shareable note" string out-of-band. Funds never leave the pool, the
- * sender and recipient are unlinkable on-chain.
+ * encoded "shareable note" string out-of-band. Funds never leave the pool.
+ *
+ * WHAT IS AND IS NOT HIDDEN — the copy on this screen must respect it:
+ *   - No recipient IDENTITY is written on-chain. The transaction names an
+ *     ephemeral payer and two commitments; the recipient is never an account
+ *     in it, and the handoff blob travels off-chain. That part is real.
+ *   - The transaction is NOT unlinkable from the sender. It republishes the
+ *     spent note's commitment as `stark_commitment` (ix data byte 80,
+ *     transfer_denominated_stark_v3.rs:205-211 binds it into C1), which is the
+ *     same value the sender's deposit published. And it publishes the new
+ *     commitment (bytes 88-120), which the recipient's eventual withdrawal will
+ *     republish in turn. So deposit -> transfer -> withdrawal is a chain any
+ *     observer can follow. Only the C7 spend circuit breaks it
+ *     (docs/C7_SPEND_CIRCUIT_PLAN.md); it is not built.
+ *   - The ephemeral payer is funded by the user's wallet in a plain SystemProgram
+ *     transfer immediately beforehand (shared/services/denominatedPool.ts
+ *     transferDenominatedStarkV3), so the payer is one public hop from the
+ *     wallet. Not signing is real; it is not anonymity.
  *
  * The recipient's note secrets are RANDOM (not seed-derived): if the encoded
  * string is lost, the funds are permanently unrecoverable — surfaced loudly on
  * the success screen.
  *
  * Proof generation (C1 + C3 + C6) takes roughly 90-180s in the browser WASM.
- * Keep the popup open throughout. The note must be matured (the on-chain
- * handler enforces current_epoch >= deposit_epoch + dynamic_delay).
+ * Keep the popup open throughout. The note must be matured: the on-chain
+ * handler checks `current_epoch >= min_epoch + dynamic_delay`
+ * (transfer_denominated_stark_v3.rs:165-173), but this client pins min_epoch to
+ * 0 (TRANSFER_MIN_EPOCH) and refuses immature notes in the store pre-flight
+ * instead, so the deposit epoch is never published here.
  */
 
 import { useState, useMemo } from 'react';
@@ -97,7 +116,7 @@ export default function DenominatedTransfer() {
           <div className="flex-1 text-center">
             <h1 className="text-white font-display font-bold tracking-wide text-sm">TRANSFER</h1>
             <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
-              PRIVATE DENOMINATED POOL
+              SHIELDED DENOMINATED POOL
             </p>
           </div>
           <div className="w-9" />
@@ -114,8 +133,9 @@ export default function DenominatedTransfer() {
               Note Transferred!
             </p>
             <p className="text-p01-chrome text-xs text-center">
-              {selectedNote?.denominationHuman} {selectedNote?.token} sent privately.
-              Send the encrypted blob below to the recipient.
+              {selectedNote?.denominationHuman} {selectedNote?.token} moved to a new note.
+              Send the encrypted blob below to the recipient — it is the only way they can
+              claim it.
             </p>
 
             {/* Encryption + irrecoverable note */}
@@ -184,7 +204,7 @@ export default function DenominatedTransfer() {
         <div className="flex-1 text-center">
           <h1 className="text-white font-display font-bold tracking-wide text-sm">TRANSFER</h1>
           <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
-            PRIVATE DENOMINATED POOL
+            SHIELDED DENOMINATED POOL
           </p>
         </div>
         <div className="w-9" />
@@ -199,7 +219,7 @@ export default function DenominatedTransfer() {
               <Lock className="w-8 h-8 text-p01-chrome/30 mx-auto mb-2" />
               <p className="text-p01-chrome text-sm">No shielded notes found</p>
               <p className="text-p01-chrome/60 text-xs mt-1">
-                Shield some SOL first to create a private note.
+                Shield some SOL first to create a shielded note.
               </p>
             </div>
           ) : (
@@ -279,12 +299,20 @@ export default function DenominatedTransfer() {
             <Zap className="w-4 h-4 text-p01-cyan shrink-0 mt-0.5" />
             <div>
               <p className="text-[10px] font-mono font-bold text-p01-cyan tracking-wider mb-1">
-                [ NOTE-TO-NOTE PRIVATE TRANSFER ]
+                [ NOTE-TO-NOTE TRANSFER ]
               </p>
               <p className="text-p01-chrome text-[10px] leading-relaxed">
                 Generates C1 + C3 + C6 STARK proofs (~90-180s). The note must be matured. The
                 output note is encrypted to the recipient (post-quantum X25519 + ML-KEM-768), so
                 the blob is safe to share. Proof rent is recovered after the tx confirms.
+              </p>
+              <p className="text-p01-chrome/70 text-[9px] leading-relaxed mt-2">
+                The recipient is never named on-chain: the transaction carries an ephemeral
+                payer and two commitments, and the blob is handed over off-chain. But the
+                commitment of the note you are spending goes on-chain here — the same value
+                your deposit published — so this transfer is still matchable to your deposit,
+                and the recipient&apos;s later withdrawal is matchable back to this transfer.
+                The ephemeral payer is funded by your wallet moments earlier, in the clear.
               </p>
             </div>
           </div>
@@ -327,7 +355,7 @@ export default function DenominatedTransfer() {
           ) : (
             <>
               <Zap className="w-4 h-4" />
-              Transfer Privately
+              Transfer Note
             </>
           )}
         </button>

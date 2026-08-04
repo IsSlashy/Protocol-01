@@ -1754,6 +1754,11 @@ export async function unshieldDenominatedStarkV3(
 // fresh RANDOM secrets, which are handed to the recipient as an encoded
 // "shareable note". Funds never leave the pool — no recipient/vault accounts,
 // no fee_escrow. Mirrors transfer_denominated_stark_v3.rs exactly.
+//
+// No recipient IDENTITY is written on-chain: the tx names the sender's
+// ephemeral payer and two commitments, never the recipient. The commitments
+// themselves are public, so the tx is still linkable to the sender's deposit
+// and to the recipient's later withdrawal — see transferDenominatedStarkV3.
 // ===========================================================================
 
 /**
@@ -1808,6 +1813,58 @@ export function secureRandomU64(): bigint {
 }
 
 /**
+ * The ONLY value this client publishes in the `min_epoch` argument of a
+ * transfer instruction (instruction-data byte 72).
+ *
+ * Unlike unshield, the transfer handler DOES read this argument:
+ * `transfer_denominated_stark_v3.rs:165-173` computes
+ * `effective_min_epoch = min_epoch + pool.get_dynamic_delay()` and
+ * `require!(current_epoch >= effective_min_epoch, EpochDelayNotMet)`.
+ * Three facts decide what to put there:
+ *
+ *  1. It is UNBOUND to the note. Nothing in the handler ties `min_epoch` to
+ *     the spent note: the three proof buffers bind
+ *     C1 = [nullifier, commitment] (transfer_denominated_stark_v3.rs:205-211),
+ *     C3 = [commitment, root, depth] (…:245-251) and
+ *     C6 = [0, new_leaf, old_root, new_root, depth] (…:279-290). The note's
+ *     deposit epoch is not a public input of any of them. A caller may pass
+ *     any u64, so the check is honesty-based, not enforced — see the DEFECT
+ *     note at the bottom of this comment.
+ *  2. Passing the real deposit epoch LEAKS. `current_epoch` is absolute
+ *     (`slot / SLOTS_PER_EPOCH`, pool_v3.rs:214-216), so publishing the note's
+ *     deposit epoch narrows the set of candidate deposits to the ~7200-slot
+ *     window it names — exactly the leak already closed on the unshield leg
+ *     (see UNSHIELD_MIN_EPOCH).
+ *  3. It is the blinding landmine. Once this client adopts the PRF commitment
+ *     blinding shipped in apps/web (apps/web/lib/privacy/pool/noteBlinding.ts),
+ *     `ShieldReceipt.depositEpoch` stops being an epoch and becomes a ~2^62
+ *     blinding value. `min_epoch = blinding` can never satisfy
+ *     `current_epoch >= blinding + delay`, so EVERY blinded note would become
+ *     permanently un-transferable — a silent capability loss, no funds at risk
+ *     but no recovery either. Pinning to 0 now means that migration cannot
+ *     regress.
+ *
+ * Zero is the only value that is simultaneously leak-free, blinding-safe and
+ * always satisfiable: `current_epoch >= 0 + dynamic_delay` holds for any pool
+ * on a live cluster (dynamic_delay is 0..2, pool_v3.rs:279-289, against an
+ * absolute epoch in the tens of thousands).
+ *
+ * The maturity intent is NOT dropped — it moves to where it was already
+ * enforced honestly, the client-side pre-flight in
+ * shared/store/denominatedPool.ts (`noteMaturity(receipt.depositEpoch, …)`
+ * before any proving), so an immature note is still refused by this client.
+ *
+ * DEFECT, reported not fixed: because `min_epoch` is unbound to the note, the
+ * on-chain maturity delay is not enforceable against a hostile client, which
+ * can always pass 0. Binding it needs a circuit change (deposit_epoch as a
+ * public input of C1), which is a soundness change, not a copy change.
+ *
+ * Do not turn this back into a builder parameter — it is written inline below
+ * precisely so no call site can reintroduce a note-derived value.
+ */
+export const TRANSFER_MIN_EPOCH = 0n;
+
+/**
  * Build `transfer_denominated_stark_v3` instruction.
  *
  * Matches transfer_denominated_stark_v3.rs exactly:
@@ -1818,6 +1875,8 @@ export function secureRandomU64(): bigint {
  *   merkle_tree(MUT — a leaf is inserted), nullifier_record(init,mut),
  *   c1_proof_buffer(ro), c3_proof_buffer(ro), c6_proof_buffer(ro), system_program.
  *   NO fee_escrow, NO token/vault/recipient — funds stay in the pool.
+ *
+ * Takes NO min_epoch parameter: it writes TRANSFER_MIN_EPOCH itself.
  */
 export function buildTransferDenominatedStarkV3Ix(
   payer: PublicKey,
@@ -1829,7 +1888,6 @@ export function buildTransferDenominatedStarkV3Ix(
   c6ProofBuffer: PublicKey,
   nullifierBytes: number[],
   merkleRootBytes: number[],
-  minEpoch: bigint,
   starkCommitment: bigint,
   newCommitmentBytes: number[],
   newRootBytes: number[],
@@ -1842,7 +1900,8 @@ export function buildTransferDenominatedStarkV3Ix(
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
   Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
-  data.writeBigUInt64LE(minEpoch, offset); offset += 8;
+  // min_epoch @ byte 72 — pinned to 0. See TRANSFER_MIN_EPOCH.
+  data.writeBigUInt64LE(TRANSFER_MIN_EPOCH, offset); offset += 8;
   data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
   Buffer.from(newCommitmentBytes).copy(data, offset); offset += 32;
   Buffer.from(newRootBytes).copy(data, offset); offset += 32;
@@ -1989,10 +2048,22 @@ export async function prepareTransfer(
  *      via nullifier + inserts the new leaf).
  *   3. Close all 3 buffers in finally (rent recovery).
  *
- * Returns the tx signature + the recipient's shareable note. min_epoch =
- * receipt.depositEpoch — the on-chain handler ENFORCES maturity for transfer
- * (current_epoch >= min_epoch + dynamic_delay), unlike unshield. An immature
- * note fails with EpochDelayNotMet (buffers still close → rent recovered).
+ * Returns the tx signature + the recipient's shareable note.
+ *
+ * min_epoch is pinned to TRANSFER_MIN_EPOCH (0) — see that constant for why
+ * the note's deposit epoch must never go there. The handler still evaluates
+ * `current_epoch >= min_epoch + dynamic_delay`
+ * (transfer_denominated_stark_v3.rs:165-173), which 0 always satisfies on a
+ * live cluster. Maturity is refused by the store pre-flight instead, before
+ * any proving, so an immature note never reaches this function.
+ *
+ * WHAT THIS TRANSFER PUBLISHES. `stark_commitment` (ix data byte 80) is the
+ * OLD note's commitment — the same value the deposit wrote on-chain — and
+ * `new_commitment` (bytes 88-120) is the note the recipient will later spend.
+ * So the transfer is matchable to the sender's deposit, and the recipient's
+ * eventual withdrawal (which republishes new_commitment) is matchable back to
+ * this transfer. Passing a note through here does not break that chain; only
+ * the C7 spend circuit does (docs/C7_SPEND_CIRCUIT_PLAN.md).
  */
 export async function transferDenominatedStarkV3(
   receipt: ShieldReceipt,
@@ -2110,8 +2181,11 @@ export async function transferDenominatedStarkV3(
     const newCommitmentBytes = goldilocksToLeBytes32(insertParams.newCommitment);
     const newRootBytes = goldilocksToLeBytes32(insertParams.newRoot);
     const newSubtreesBytes = insertParams.newSubtrees.map(goldilocksToLeBytes32);
-    const minEpoch = receipt.depositEpoch;
-
+    // min_epoch is no longer a parameter: the builder pins it to
+    // TRANSFER_MIN_EPOCH (0). It used to be `receipt.depositEpoch`, which both
+    // published the deposit's epoch window in the clear and would have made
+    // every PRF-blinded note permanently un-transferable. Maturity is still
+    // refused by this client, in the store pre-flight before any proving.
     const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
 
     const ix = buildTransferDenominatedStarkV3Ix(
@@ -2124,7 +2198,6 @@ export async function transferDenominatedStarkV3(
       c6Result.proofBuffer,
       nullifierBytes,
       merkleRootBytes,
-      minEpoch,
       starkCommitment,
       newCommitmentBytes,
       newRootBytes,

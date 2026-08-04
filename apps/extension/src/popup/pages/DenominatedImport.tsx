@@ -5,6 +5,12 @@
  * Decodes + previews the token/denomination/pool, then imports it into the
  * denominated pool store. After import the note can be unshielded like any other
  * (the recipient does NOT need to wait for maturity on unshield).
+ *
+ * Importing is purely local — no transaction, so it publishes nothing. The
+ * withdrawal that follows does: it republishes this note's commitment, which the
+ * sender's transfer transaction already put on-chain, so the exit is matchable
+ * back to that transfer and through it to the sender's deposit. Copy on this
+ * screen must not suggest that receiving a note detaches it from its history.
  */
 
 import { useState, useMemo } from 'react';
@@ -94,7 +100,7 @@ export default function DenominatedImport() {
           <div className="flex-1 text-center">
             <h1 className="text-white font-display font-bold tracking-wide text-sm">IMPORT NOTE</h1>
             <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
-              PRIVATE DENOMINATED POOL
+              SHIELDED DENOMINATED POOL
             </p>
           </div>
           <div className="w-9" />
@@ -108,7 +114,9 @@ export default function DenominatedImport() {
             <CheckCircle className="w-16 h-16 text-p01-cyan" />
             <p className="text-white font-display font-bold text-lg tracking-wide">Note Imported!</p>
             <p className="text-p01-chrome text-xs text-center">
-              The note is now in your shielded funds. You can unshield it any time.
+              The note is now in your shielded funds. You can unshield it any time. That
+              withdrawal republishes this note&apos;s commitment, which the sender&apos;s
+              transfer already put on-chain — it links your exit to that transfer.
             </p>
             <button
               onClick={() => navigate(-1)}
@@ -135,7 +143,7 @@ export default function DenominatedImport() {
         <div className="flex-1 text-center">
           <h1 className="text-white font-display font-bold tracking-wide text-sm">IMPORT NOTE</h1>
           <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
-            PRIVATE DENOMINATED POOL
+            SHIELDED DENOMINATED POOL
           </p>
         </div>
         <div className="w-9" />

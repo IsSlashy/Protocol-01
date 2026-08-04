@@ -286,9 +286,9 @@ export default function Home() {
               <ShieldCheck className="w-5 h-5 text-p01-cyan" />
             </div>
             <div className="text-left">
-              <p className="text-white font-medium">Privacy Pool</p>
+              <p className="text-white font-medium">Shielded Pool</p>
               <p className="text-p01-chrome text-xs">
-                Fixed-denomination anonymous pool
+                Fixed-denomination shielded notes
               </p>
             </div>
           </div>
