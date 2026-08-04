@@ -13,16 +13,23 @@
  *    from the connected wallet. It hides the recipient and nothing else; the
  *    sender's wallet and the amount both land on chain.
  *
- * LAYOUT RULE (2026-08-04 rework)
+ * LAYOUT RULE (2026-08-05 rework)
  * ───────────────────────────────
- * Action first, disclosure behind a fold. Each mode keeps its full disclosure
- * text verbatim, but delivers it as a one-line summary that is always visible
- * plus a fold holding the detail, open on the first visit and closed after.
- * Protocol vocabulary (leaf, commitment, ML-KEM) stays available but moves to
- * the second plane; the first plane says "0.1 SOL note" and "recipient's note
- * address". Both modes drive a FlowProgress bar while they run and a
- * SuccessBurst when they land, per the founder's ruling that every flow gets
- * progress and every success gets a confirmation beat.
+ * Two columns from `lg`, one below. The main column is the action: the note
+ * picker (the note IS the amount), the recipient, the button, the progress.
+ * The secondary column is the context: the folded disclosure, replaced by the
+ * result when one lands. On mobile everything stacks, action first; a result
+ * that lands below the fold there scrolls itself into view. Nothing important
+ * may sit below the fold on a 1080p screen, and nothing may ever force
+ * horizontal scrolling: the sealed string breaks inside its own box, the QR
+ * is fixed-size, and both columns carry `min-w-0` so a long mono string can
+ * never widen the page. Each mode keeps its full disclosure text verbatim,
+ * delivered as a one-line summary that is always visible plus a fold holding
+ * the detail, open on the first visit and closed after. Protocol vocabulary
+ * (leaf, commitment, ML-KEM) stays available but moves to the second plane.
+ * Both modes drive a FlowProgress bar while they run and a SuccessBurst when
+ * they land, per the founder's ruling that every flow gets progress and every
+ * success gets a confirmation beat.
  *
  * WHY THE AMOUNT BOX IS GONE FROM (1)
  * ───────────────────────────────────
@@ -169,6 +176,17 @@ export default function SendForm({
   const [sealError, setSealError] = useState<string | null>(null);
   const [sealed, setSealed] = useState<SealedNoteHandoff | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // On a stacked (sub-lg) screen the result lands in the context block below
+  // the form, i.e. possibly below the fold. A success the user has to find is
+  // not a confirmation, so it scrolls itself into view. At lg the columns sit
+  // side by side and `block: "nearest"` makes this a no-op.
+  const resultRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (sealed || result) {
+      resultRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    }
+  }, [sealed, result]);
 
   const amountNum = Number(amount) || 0;
   const quote = useMemo(() => adapter.quoteFees(asset, amountNum), [adapter, asset, amountNum]);
@@ -317,15 +335,13 @@ export default function SendForm({
     setTimeout(() => setCopied(false), 1500);
   }
 
-  // ── Result screens ───────────────────────────────────────────────────────
+  // ── Context-column blocks ────────────────────────────────────────────────
 
-  if (sealed) {
-    const qrFits = sealed.sealedNote.length <= QR_BYTE_CAPACITY;
+  function renderSealedResult(s: SealedNoteHandoff) {
+    const qrFits = s.sealedNote.length <= QR_BYTE_CAPACITY;
     return (
-      <div className="space-y-4">
-        <SuccessBurst
-          label={`Sealed a ${sealed.denomination} ${chosen?.token ?? "SOL"} note`}
-        />
+      <div ref={resultRef} className="space-y-4">
+        <SuccessBurst label={`Sealed a ${s.denomination} ${chosen?.token ?? "SOL"} note`} />
 
         <div className="card p-4">
           <p className="text-sm text-p01-text-muted">
@@ -337,7 +353,7 @@ export default function SendForm({
             data-testid="sealed-note"
             className="mt-4 block max-h-40 overflow-y-auto break-all rounded-lg border border-p01-border bg-p01-void p-3 font-mono text-xs text-p01-cyan"
           >
-            {sealed.sealedNote}
+            {s.sealedNote}
           </code>
 
           <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -350,23 +366,23 @@ export default function SendForm({
             </button>
             {/* Second-plane reference: lets the sender tell two handoffs apart. */}
             <span className="font-mono text-xs text-p01-text-dim">
-              leaf #{sealed.leafIndex} · {truncate(sealed.commitment, 6, 4)}
+              leaf #{s.leafIndex} · {truncate(s.commitment, 6, 4)}
             </span>
           </div>
 
           {qrFits ? (
             <div className="mt-4 flex flex-col items-center gap-2">
               <div className="rounded-lg bg-white p-2">
-                <QRCode value={sealed.sealedNote} size={180} />
+                <QRCode value={s.sealedNote} size={180} />
               </div>
               <p className="text-center text-xs text-p01-text-dim">
-                {sealed.sealedNote.length.toLocaleString()} characters, a dense code. If a camera
+                {s.sealedNote.length.toLocaleString()} characters, a dense code. If a camera
                 struggles with it, copy the text instead.
               </p>
             </div>
           ) : (
             <p className="mt-4 text-xs text-p01-text-muted">
-              Too long for a QR code ({sealed.sealedNote.length.toLocaleString()} characters, the
+              Too long for a QR code ({s.sealedNote.length.toLocaleString()} characters, the
               format tops out around {QR_BYTE_CAPACITY.toLocaleString()}). Copy the text.
             </p>
           )}
@@ -388,7 +404,7 @@ export default function SendForm({
               of you spends it. Whoever goes first wins and the other copy stops working.
             </p>
             <p>
-              {sealed.merklePath === "none"
+              {s.merklePath === "none"
                 ? "No Merkle path travelled with this note, so the recipient's wallet has to rebuild it from this pool's history before withdrawing."
                 : "The note carries its Merkle path, so the recipient can withdraw without rebuilding the pool's history."}
             </p>
@@ -410,16 +426,16 @@ export default function SendForm({
     );
   }
 
-  if (result) {
+  function renderSendResult(r: TxRef) {
     return (
-      <div className="space-y-4">
+      <div ref={resultRef} className="space-y-4">
         {/*
-          The success screen used to read "Private send submitted … hidden behind
-          a one-time stealth address", which contradicted the HonestyBadge on the
-          form it came from. The badge is the accurate one: this path does not
-          touch the pool, so the sender's wallet and the amount are both public
-          and only the recipient is hidden. The success screen is what a user
-          remembers, so it is the last place that should overstate.
+          This block used to read "Private send submitted … hidden behind a
+          one-time stealth address", which contradicted the HonestyBadge it sat
+          next to. The badge is the accurate one: this path does not touch the
+          pool, so the sender's wallet and the amount are both public and only
+          the recipient is hidden. The success block is what a user remembers,
+          so it is the last place that should overstate.
         */}
         <SuccessBurst label="Sent to a one-time address" />
         <div className="card p-4">
@@ -428,12 +444,12 @@ export default function SendForm({
             hidden; your wallet and the amount are on-chain in the clear.
           </p>
           <a
-            href={result.explorerUrl}
+            href={r.explorerUrl}
             target="_blank"
             rel="noreferrer"
             className="mt-2 inline-block font-mono text-xs text-p01-cyan hover:underline"
           >
-            {truncate(result.signature, 10, 8)} ↗
+            {truncate(r.signature, 10, 8)} ↗
           </a>
         </div>
         <button
@@ -457,7 +473,7 @@ export default function SendForm({
     <div className="space-y-4">
       {/* The two paths are not settings of one send: they hide different
           things, so they get a switch and separate disclosures. */}
-      <div className="inline-flex w-full rounded-lg border border-p01-border bg-p01-surface p-1">
+      <div className="inline-flex w-full rounded-lg border border-p01-border bg-p01-surface p-1 lg:max-w-md">
         <button
           type="button"
           onClick={() => setMode("note")}
@@ -489,330 +505,352 @@ export default function SendForm({
             sign to derive, then come back.
           </div>
         ) : (
-          <>
-            {/* Note picker first: the note IS the amount, so picking it is the
-                action the rest of the form serves. */}
-            <div>
-              <div className="mb-1.5 flex items-center justify-between">
-                <span className="block text-xs uppercase tracking-wider text-p01-text-muted">
-                  Note to hand over
-                </span>
-                <button
-                  type="button"
-                  onClick={rescan}
-                  disabled={scanning || sealing}
-                  className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
-                >
-                  <RefreshCw className={scanning ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-                  {scanning ? "Scanning…" : "Rescan"}
-                </button>
+          <div className="grid gap-5 lg:grid-cols-2">
+            {/* Main column: the action. */}
+            <div className="min-w-0 space-y-4">
+              {/* Note picker first: the note IS the amount, so picking it is
+                  the action the rest of the form serves. */}
+              <div>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="block text-xs uppercase tracking-wider text-p01-text-muted">
+                    Note to hand over
+                  </span>
+                  <button
+                    type="button"
+                    onClick={rescan}
+                    disabled={scanning || sealing}
+                    className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
+                  >
+                    <RefreshCw className={scanning ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
+                    {scanning ? "Scanning…" : "Rescan"}
+                  </button>
+                </div>
+
+                {scanStep && <p className="mb-2 text-xs text-p01-text-dim">{scanStep}</p>}
+                {scanError && <p className="mb-2 text-sm text-p01-red">{scanError}</p>}
+
+                {!scanning && unspent.length === 0 && !scanError && (
+                  <p className="text-xs text-p01-text-muted">
+                    No unspent notes. Shield one in the Pool tab first: you cannot hand over 0.2
+                    SOL, you hand over a note, and a note is one of the fixed pool sizes.
+                  </p>
+                )}
+
+                {unspent.length > 0 && (
+                  <ul className="space-y-2">
+                    {unspent.map((n) => {
+                      // Key on `k`, NOT on `n.counter`: local-storage notes all
+                      // carry 0, so those keys collide and React may omit or
+                      // duplicate rows.
+                      const k = noteKey(n);
+                      const active = k === selected;
+                      return (
+                        <li key={k}>
+                          <button
+                            type="button"
+                            onClick={() => setSelected(k)}
+                            disabled={sealing}
+                            aria-pressed={active}
+                            className={
+                              active
+                                ? "flex w-full items-center justify-between gap-3 rounded-lg border border-p01-cyan bg-p01-cyan/10 p-3 text-left"
+                                : "flex w-full items-center justify-between gap-3 rounded-lg border border-p01-border bg-p01-void p-3 text-left hover:border-p01-border-hover disabled:opacity-50"
+                            }
+                          >
+                            <div className="min-w-0">
+                              <p
+                                className={
+                                  active
+                                    ? "font-mono text-sm text-p01-cyan"
+                                    : "font-mono text-sm text-p01-text"
+                                }
+                              >
+                                {n.denomination} {n.token}
+                              </p>
+                              {/* Second plane: the protocol's name for this note. */}
+                              <p className="truncate font-mono text-xs text-p01-text-dim">
+                                leaf #{n.leafIndex} · {truncate(n.commitment, 6, 4)}
+                              </p>
+                            </div>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
 
-              {scanStep && <p className="mb-2 text-xs text-p01-text-dim">{scanStep}</p>}
-              {scanError && <p className="mb-2 text-sm text-p01-red">{scanError}</p>}
+              {/* Recipient's note address */}
+              <div>
+                <label
+                  htmlFor="p01-note-address"
+                  className="mb-1.5 block text-xs uppercase tracking-wider text-p01-text-muted"
+                >
+                  Recipient&apos;s note address
+                </label>
+                <input
+                  id="p01-note-address"
+                  value={noteAddress}
+                  onChange={(e) => setNoteAddress(e.target.value)}
+                  placeholder="p01pq:…"
+                  className="card w-full bg-p01-void px-4 py-3 font-mono text-sm text-p01-text outline-none placeholder:text-p01-text-dim focus:border-p01-cyan"
+                />
+                {noteAddress.trim().length > 0 &&
+                  (addressLooksRight ? (
+                    <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-cyan">
+                      <Check className="h-3.5 w-3.5" /> Valid note address
+                    </p>
+                  ) : (
+                    <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-yellow">
+                      <TriangleAlert className="h-3.5 w-3.5" /> Not a note address. It starts with
+                      &quot;p01pq:&quot;.
+                    </p>
+                  ))}
+                <p className="mt-1.5 text-xs text-p01-text-muted">
+                  Not a wallet address. The recipient finds theirs on the Import note screen of
+                  the Protocol 01 extension.
+                </p>
+              </div>
 
-              {!scanning && unspent.length === 0 && !scanError && (
-                <p className="text-xs text-p01-text-muted">
-                  No unspent notes. Shield one in the Pool tab first: you cannot hand over 0.2 SOL,
-                  you hand over a note, and a note is one of the fixed pool sizes.
+              {sealError && (
+                <p className="flex items-start gap-1.5 text-sm text-p01-red">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {sealError}
                 </p>
               )}
 
-              {unspent.length > 0 && (
-                <ul className="space-y-2">
-                  {unspent.map((n) => {
-                    // Key on `k`, NOT on `n.counter`: local-storage notes all
-                    // carry 0, so those keys collide and React may omit or
-                    // duplicate rows.
-                    const k = noteKey(n);
-                    const active = k === selected;
-                    return (
-                      <li key={k}>
-                        <button
-                          type="button"
-                          onClick={() => setSelected(k)}
-                          disabled={sealing}
-                          aria-pressed={active}
-                          className={
-                            active
-                              ? "flex w-full items-center justify-between gap-3 rounded-lg border border-p01-cyan bg-p01-cyan/10 p-3 text-left"
-                              : "flex w-full items-center justify-between gap-3 rounded-lg border border-p01-border bg-p01-void p-3 text-left hover:border-p01-border-hover disabled:opacity-50"
-                          }
-                        >
-                          <div className="min-w-0">
-                            <p
-                              className={
-                                active
-                                  ? "font-mono text-sm text-p01-cyan"
-                                  : "font-mono text-sm text-p01-text"
-                              }
-                            >
-                              {n.denomination} {n.token}
-                            </p>
-                            {/* Second plane: the protocol's name for this note. */}
-                            <p className="truncate font-mono text-xs text-p01-text-dim">
-                              leaf #{n.leafIndex} · {truncate(n.commitment, 6, 4)}
-                            </p>
-                          </div>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+              <button
+                type="button"
+                onClick={handleSeal}
+                disabled={!canSeal}
+                className="btn-primary flex w-full items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {sealing ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" /> Sealing…
+                  </>
+                ) : (
+                  <>
+                    Seal this note to them <ArrowRight className="h-4 w-4" />
+                  </>
+                )}
+              </button>
+              {!sealing && sealReason && (
+                <p className="text-center text-xs text-p01-text-dim">{sealReason}</p>
+              )}
+
+              <FlowProgress phases={SEAL_PHASES} step={sealStep} running={sealing} />
+            </div>
+
+            {/* Secondary column: the context, replaced by the result when it
+                lands. */}
+            <div className="min-w-0 space-y-4">
+              {sealed ? (
+                renderSealedResult(sealed)
+              ) : (
+                /* What this path does and does not hide. Full text unchanged;
+                   folded behind its one-line summary after the first visit. */
+                <details
+                  className="group rounded-lg border border-p01-cyan/30 bg-p01-cyan/5"
+                  open={disclosureOpen}
+                  onToggle={onDisclosureToggle}
+                >
+                  <summary className="flex cursor-pointer select-none items-start gap-2 p-3 text-xs text-p01-cyan [&::-webkit-details-marker]:hidden">
+                    <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
+                    <span>
+                      Nothing goes on chain now. The note&apos;s later exit from the pool can
+                      still be linked to your deposit.
+                    </span>
+                  </summary>
+                  <div className="space-y-2 px-3 pb-3 text-xs text-p01-cyan/90">
+                    <p className="font-medium text-p01-cyan">
+                      No transaction is sent. That is what makes it private.
+                    </p>
+                    <p>
+                      Handing over a note moves nothing on chain: the recipient simply ends up
+                      holding its secrets. There is no transfer to observe, so there is no
+                      sender, no recipient, no amount and no timing for anyone to correlate, and
+                      no fee.
+                    </p>
+                    <p className="text-p01-yellow">
+                      What it does not hide: when they withdraw, the withdrawal publishes the
+                      same note commitment your deposit published, so that exit is publicly
+                      matchable to your deposit. Measured on devnet. The handoff is invisible;
+                      the note leaving the pool is not.
+                    </p>
+                    <p className="text-p01-yellow">
+                      You keep a spendable copy. The note is not consumed or locked by handing it
+                      over; whoever withdraws first wins.
+                    </p>
+                    <p className="text-p01-cyan/70">
+                      For the curious: a note is identified by its leaf number and public
+                      commitment, and the sealed string is encrypted to the recipient&apos;s
+                      p01pq: address with X25519 plus ML-KEM-768, a post-quantum scheme.
+                    </p>
+                  </div>
+                </details>
+              )}
+            </div>
+          </div>
+        )
+      ) : (
+        <div className="grid gap-5 lg:grid-cols-2">
+          {/* Main column: the action. */}
+          <div className="min-w-0 space-y-4">
+            {/* Recipient */}
+            <div>
+              <label
+                htmlFor="p01-stealth-recipient"
+                className="mb-1.5 block text-xs uppercase tracking-wider text-p01-text-muted"
+              >
+                Recipient
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="p01-stealth-recipient"
+                  value={recipientInput}
+                  onChange={(e) => {
+                    setRecipientInput(e.target.value);
+                    recipientRef.current = e.target.value;
+                    setResolved(null);
+                  }}
+                  onBlur={handleResolve}
+                  placeholder="Wallet address or st… meta-address"
+                  className="card w-full bg-p01-void px-4 py-3 font-mono text-sm text-p01-text outline-none placeholder:text-p01-text-dim focus:border-p01-cyan"
+                />
+                <button
+                  type="button"
+                  onClick={handleResolve}
+                  disabled={resolving || !recipientInput.trim()}
+                  className="btn-ghost flex items-center gap-2 px-4 disabled:opacity-50"
+                >
+                  {resolving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Search className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+              {resolved && (
+                <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-cyan">
+                  <Check className="h-3.5 w-3.5" /> Resolved {resolved.label} · v2 hybrid
+                </p>
               )}
             </div>
 
-            {/* Recipient's note address */}
+            {/* Amount */}
             <div>
               <label
-                htmlFor="p01-note-address"
+                htmlFor="p01-stealth-amount"
                 className="mb-1.5 block text-xs uppercase tracking-wider text-p01-text-muted"
               >
-                Recipient&apos;s note address
+                Amount
               </label>
-              <input
-                id="p01-note-address"
-                value={noteAddress}
-                onChange={(e) => setNoteAddress(e.target.value)}
-                placeholder="p01pq:…"
-                className="card w-full bg-p01-void px-4 py-3 font-mono text-sm text-p01-text outline-none placeholder:text-p01-text-dim focus:border-p01-cyan"
-              />
-              {noteAddress.trim().length > 0 &&
-                (addressLooksRight ? (
-                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-cyan">
-                    <Check className="h-3.5 w-3.5" /> Valid note address
-                  </p>
-                ) : (
-                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-yellow">
-                    <TriangleAlert className="h-3.5 w-3.5" /> Not a note address. It starts with
-                    &quot;p01pq:&quot;.
-                  </p>
-                ))}
-              <p className="mt-1.5 text-xs text-p01-text-muted">
-                Not a wallet address. The recipient finds theirs on the Import note screen of the
-                Protocol 01 extension.
-              </p>
+              <div className="card flex items-center gap-3 bg-p01-void px-4 py-3">
+                <input
+                  id="p01-stealth-amount"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+                  inputMode="decimal"
+                  placeholder="0.0"
+                  className="w-full bg-transparent font-mono text-lg text-p01-text outline-none placeholder:text-p01-text-dim"
+                />
+                <span className="font-mono text-sm text-p01-text-muted">{asset.symbol}</span>
+              </div>
+              {belowMin && (
+                <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-yellow">
+                  <TriangleAlert className="h-3.5 w-3.5" /> Minimum send is{" "}
+                  {formatAmount(quote.minSend, asset.symbol)}
+                </p>
+              )}
+              {/*
+                A free-form amount box on a privacy product reads as "type a number and
+                it is private". It is not: this path funds a one-time address straight
+                from the connected wallet, so the number typed here lands on chain
+                beside the sender. Saying so AT THE INPUT, not only in the badge in the
+                context column, is the difference between a disclosure and a warning
+                someone reads.
+
+                The other tab is the path that hides the amount, and it does it by
+                removing the choice: a note is one of six fixed sizes, which is what
+                makes two notes of the same size indistinguishable.
+              */}
+              {asset.chainId === "solana" && amountNum > 0 && (
+                <p className="mt-1.5 text-xs text-p01-text-muted">
+                  <span className="text-p01-yellow">
+                    This amount and your wallet will be public.
+                  </span>{" "}
+                  To hide them, shield into the pool and hand over a note instead: notes are
+                  fixed at 0.1, 1, 10, 100, 500 or 1000 SOL, and a free-form amount cannot be
+                  hidden because it identifies itself.
+                </p>
+              )}
             </div>
 
-            {sealError && (
-              <p className="flex items-start gap-1.5 text-sm text-p01-red">
-                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {sealError}
+            <FeeRow quote={quote} assetSymbol={asset.symbol} chainId={asset.chainId} />
+
+            {error && (
+              <p className="flex items-center gap-1.5 text-sm text-p01-red">
+                <TriangleAlert className="h-4 w-4" /> {error}
               </p>
             )}
 
             <button
               type="button"
-              onClick={handleSeal}
-              disabled={!canSeal}
+              onClick={handleSend}
+              disabled={!canSend}
               className="btn-primary flex w-full items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {sealing ? (
+              {/*
+                The label used to read "Shield & send" / "Shielding…". This path
+                does not shield: `workerCore.ts:352` builds a plain
+                SystemProgram.transfer from the connected wallet to a fresh stealth
+                address, fee payer the wallet. The button is the last thing read
+                before committing, and it contradicted the disclosure directly
+                above it, which is the exact failure this file's own header warns
+                about. Shielding is the Pool tab; handing over a note is the other
+                mode of this one.
+              */}
+              {sending ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Sealing…
+                  <Loader2 className="h-4 w-4 animate-spin" /> Sending…
                 </>
               ) : (
                 <>
-                  Seal this note to them <ArrowRight className="h-4 w-4" />
+                  Send to a one-time address <ArrowRight className="h-4 w-4" />
                 </>
               )}
             </button>
-            {!sealing && sealReason && (
-              <p className="text-center text-xs text-p01-text-dim">{sealReason}</p>
+            {!sending && sendReason && (
+              <p className="text-center text-xs text-p01-text-dim">{sendReason}</p>
             )}
 
-            <FlowProgress phases={SEAL_PHASES} step={sealStep} running={sealing} />
-
-            {/* What this path does and does not hide. Full text unchanged;
-                folded behind its one-line summary after the first visit. */}
-            <details
-              className="group rounded-lg border border-p01-cyan/30 bg-p01-cyan/5"
-              open={disclosureOpen}
-              onToggle={onDisclosureToggle}
-            >
-              <summary className="flex cursor-pointer select-none items-start gap-2 p-3 text-xs text-p01-cyan [&::-webkit-details-marker]:hidden">
-                <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
-                <span>
-                  Nothing goes on chain now. The note&apos;s later exit from the pool can still be
-                  linked to your deposit.
-                </span>
-              </summary>
-              <div className="space-y-2 px-3 pb-3 text-xs text-p01-cyan/90">
-                <p className="font-medium text-p01-cyan">
-                  No transaction is sent. That is what makes it private.
-                </p>
-                <p>
-                  Handing over a note moves nothing on chain: the recipient simply ends up holding
-                  its secrets. There is no transfer to observe, so there is no sender, no
-                  recipient, no amount and no timing for anyone to correlate, and no fee.
-                </p>
-                <p className="text-p01-yellow">
-                  What it does not hide: when they withdraw, the withdrawal publishes the same note
-                  commitment your deposit published, so that exit is publicly matchable to your
-                  deposit. Measured on devnet. The handoff is invisible; the note leaving the pool
-                  is not.
-                </p>
-                <p className="text-p01-yellow">
-                  You keep a spendable copy. The note is not consumed or locked by handing it
-                  over; whoever withdraws first wins.
-                </p>
-                <p className="text-p01-cyan/70">
-                  For the curious: a note is identified by its leaf number and public commitment,
-                  and the sealed string is encrypted to the recipient&apos;s p01pq: address with
-                  X25519 plus ML-KEM-768, a post-quantum scheme.
-                </p>
-              </div>
-            </details>
-          </>
-        )
-      ) : (
-        <>
-          {/* Recipient */}
-          <div>
-            <label
-              htmlFor="p01-stealth-recipient"
-              className="mb-1.5 block text-xs uppercase tracking-wider text-p01-text-muted"
-            >
-              Recipient
-            </label>
-            <div className="flex gap-2">
-              <input
-                id="p01-stealth-recipient"
-                value={recipientInput}
-                onChange={(e) => {
-                  setRecipientInput(e.target.value);
-                  recipientRef.current = e.target.value;
-                  setResolved(null);
-                }}
-                onBlur={handleResolve}
-                placeholder="Wallet address or st… meta-address"
-                className="card w-full bg-p01-void px-4 py-3 font-mono text-sm text-p01-text outline-none placeholder:text-p01-text-dim focus:border-p01-cyan"
-              />
-              <button
-                type="button"
-                onClick={handleResolve}
-                disabled={resolving || !recipientInput.trim()}
-                className="btn-ghost flex items-center gap-2 px-4 disabled:opacity-50"
-              >
-                {resolving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Search className="h-4 w-4" />
-                )}
-              </button>
-            </div>
-            {resolved && (
-              <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-cyan">
-                <Check className="h-3.5 w-3.5" /> Resolved {resolved.label} · v2 hybrid
-              </p>
-            )}
+            <FlowProgress phases={STEALTH_SEND_PHASES} step={sendStep} running={sending} />
           </div>
 
-          {/* Amount */}
-          <div>
-            <label
-              htmlFor="p01-stealth-amount"
-              className="mb-1.5 block text-xs uppercase tracking-wider text-p01-text-muted"
-            >
-              Amount
-            </label>
-            <div className="card flex items-center gap-3 bg-p01-void px-4 py-3">
-              <input
-                id="p01-stealth-amount"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
-                inputMode="decimal"
-                placeholder="0.0"
-                className="w-full bg-transparent font-mono text-lg text-p01-text outline-none placeholder:text-p01-text-dim"
-              />
-              <span className="font-mono text-sm text-p01-text-muted">{asset.symbol}</span>
-            </div>
-            {belowMin && (
-              <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-yellow">
-                <TriangleAlert className="h-3.5 w-3.5" /> Minimum send is{" "}
-                {formatAmount(quote.minSend, asset.symbol)}
-              </p>
-            )}
-            {/*
-              A free-form amount box on a privacy product reads as "type a number and
-              it is private". It is not: this path funds a one-time address straight
-              from the connected wallet, so the number typed here lands on chain
-              beside the sender. Saying so AT THE INPUT, not only in the badge below,
-              is the difference between a disclosure and a warning someone reads.
-
-              The other tab is the path that hides the amount, and it does it by
-              removing the choice: a note is one of six fixed sizes, which is what
-              makes two notes of the same size indistinguishable.
-            */}
-            {asset.chainId === "solana" && amountNum > 0 && (
-              <p className="mt-1.5 text-xs text-p01-text-muted">
-                <span className="text-p01-yellow">
-                  This amount and your wallet will be public.
-                </span>{" "}
-                To hide them, shield into the pool and hand over a note instead: notes are fixed
-                at 0.1, 1, 10, 100, 500 or 1000 SOL, and a free-form amount cannot be hidden
-                because it identifies itself.
-              </p>
-            )}
-          </div>
-
-          <FeeRow quote={quote} assetSymbol={asset.symbol} chainId={asset.chainId} />
-
-          {error && (
-            <p className="flex items-center gap-1.5 text-sm text-p01-red">
-              <TriangleAlert className="h-4 w-4" /> {error}
-            </p>
-          )}
-
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!canSend}
-            className="btn-primary flex w-full items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {/*
-              The label used to read "Shield & send" / "Shielding…". This path
-              does not shield: `workerCore.ts:352` builds a plain
-              SystemProgram.transfer from the connected wallet to a fresh stealth
-              address, fee payer the wallet. The button is the last thing read
-              before committing, and it contradicted the disclosure directly
-              above it, which is the exact failure this file's own header warns
-              about. Shielding is the Pool tab; handing over a note is the other
-              mode of this one.
-            */}
-            {sending ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" /> Sending…
-              </>
+          {/* Secondary column: the context, replaced by the result when it
+              lands. */}
+          <div className="min-w-0 space-y-4">
+            {result ? (
+              renderSendResult(result)
             ) : (
-              <>
-                Send to a one-time address <ArrowRight className="h-4 w-4" />
-              </>
+              /* The full stealth disclosure is HonestyBadge, unchanged; folded
+                 behind its one-line summary after the first visit. */
+              <details
+                className="group rounded-lg border border-p01-border bg-p01-surface"
+                open={disclosureOpen}
+                onToggle={onDisclosureToggle}
+              >
+                <summary className="flex cursor-pointer select-none items-start gap-2 p-3 text-xs text-p01-text-muted [&::-webkit-details-marker]:hidden">
+                  <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
+                  <span>Hides the recipient only. Your wallet and the amount stay public.</span>
+                </summary>
+                <div className="px-3 pb-3">
+                  <HonestyBadge chain={asset.chainId} />
+                </div>
+              </details>
             )}
-          </button>
-          {!sending && sendReason && (
-            <p className="text-center text-xs text-p01-text-dim">{sendReason}</p>
-          )}
-
-          <FlowProgress phases={STEALTH_SEND_PHASES} step={sendStep} running={sending} />
-
-          {/* The full stealth disclosure is HonestyBadge, unchanged; folded
-              behind its one-line summary after the first visit. */}
-          <details
-            className="group rounded-lg border border-p01-border bg-p01-surface"
-            open={disclosureOpen}
-            onToggle={onDisclosureToggle}
-          >
-            <summary className="flex cursor-pointer select-none items-start gap-2 p-3 text-xs text-p01-text-muted [&::-webkit-details-marker]:hidden">
-              <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
-              <span>
-                Hides the recipient only. Your wallet and the amount stay public.
-              </span>
-            </summary>
-            <div className="px-3 pb-3">
-              <HonestyBadge chain={asset.chainId} />
-            </div>
-          </details>
-        </>
+          </div>
+        </div>
       )}
     </div>
   );
