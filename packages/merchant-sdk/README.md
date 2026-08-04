@@ -467,11 +467,20 @@ address whether or not the key that once controlled it still exists. (It is
 also why the SDK accepts a bare `PublicKey` here: requiring a `Signer` would
 re-impose, client-side, exactly the constraint the program removed.)
 
-**The final claim closes the vault.** Once every funded period is collected,
-one more `claim_period` pays the sub-period remainder plus the account's rent
-(~0.003 SOL) to the retailer and deletes the account. An exhausted vault is
-worth one last claim for the rent alone; the SDK's `nothing to claim` error
-says so when it applies.
+**The final claim closes the vault.** The claim that collects the last funded
+period also deletes the account and pays its rent (~0.003 SOL) to the retailer;
+the result reports it as `closesVault: true` with `rentReleasedLamports`. A
+vault that is already exhausted — every period collected, nothing accruing — is
+still worth one last claim for the rent alone, but because that claim deletes
+the account, sending it is an explicit opt-in:
+
+```typescript
+// Releases the sub-period remainder + the account's rent, and closes the vault.
+const res = await claimPeriod(connection, vaultPda, retailerAddress, {
+  payer: keeperKp,
+  closeExhausted: true,
+});
+```
 
 **Native SOL has a first-claim rent floor.** The payout must leave the
 retailer's system account at or above rent exemption (890,880 lamports).

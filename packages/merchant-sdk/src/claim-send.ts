@@ -42,6 +42,18 @@ export interface ClaimPeriodResult {
   slot: bigint;
   /** Fee actually quoted for the transaction, in lamports. */
   feeLamports: bigint;
+  /**
+   * True when this claim collected (or had already collected) every funded
+   * period, which makes the program CLOSE the vault account in the same
+   * transaction — the address stops existing and the rent goes to the retailer.
+   */
+  closesVault: boolean;
+  /**
+   * The vault account's lamports, released to the retailer by the close.
+   * `0n` unless {@link closesVault}. Always lamports, even for an SPL vault —
+   * rent is rent; `amountClaimed` stays in the vault's own unit.
+   */
+  rentReleasedLamports: bigint;
 }
 
 export interface ClaimPeriodSendOptions extends BuildClaimPeriodOptions {
@@ -70,6 +82,24 @@ export interface ClaimPeriodSendOptions extends BuildClaimPeriodOptions {
   skipPreflight?: boolean;
   /** Commitment for send + confirm. Default `'confirmed'`. */
   commitment?: 'processed' | 'confirmed' | 'finalized';
+  /**
+   * Send the claim even when ZERO periods are claimable, provided the vault is
+   * EXHAUSTED (every funded period already collected).
+   *
+   * Since the 2026-08-04 redeploy such a claim still settles: the program pays
+   * the sub-period remainder plus the account's rent (~0.0027-0.0034 SOL,
+   * depending on the vault's size — they exist in three) to the retailer and
+   * CLOSES the vault. Proven on devnet the same day. Off by default because it
+   * deletes the account: a poll loop that calls `claimPeriod` on every vault it
+   * sees should not silently close them, and a closed vault's address can be
+   * re-subscribed at the same PDA (`issueSubscriptionAccessToken` pins tokens
+   * to `start_slot` for exactly that reason).
+   *
+   * Has no effect on a vault that still has funded periods coming: a zero-
+   * claimable claim there really would fail with NoClaimablePeriods (6029),
+   * and it still throws.
+   */
+  closeExhausted?: boolean;
 }
 
 /**
@@ -161,18 +191,35 @@ export async function claimPeriod(
 
   const slot = BigInt(await connection.getSlot(opts.commitment ?? 'confirmed'));
   const periodsClaimed = claimablePeriods(vault, slot);
-  const amountClaimed = claimableAmount(vault, slot);
+  let amountClaimed = claimableAmount(vault, slot);
+  const funded = vault.rate === 0n ? 0n : vault.totalDeposited / vault.rate;
+  const exhausted = vault.claimedPeriods >= funded;
+  // The program closes the vault on the claim that collects (or finds
+  // collected) its last funded period, releasing the account's lamports to the
+  // retailer. `info.lamports` is that release, read from the very account
+  // fetched above rather than re-derived from a size table — vaults exist in
+  // three sizes and their rent differs.
+  const closesVault = exhausted || vault.claimedPeriods + periodsClaimed >= funded;
+  const rentReleasedLamports = closesVault ? BigInt(info.lamports) : 0n;
   if (amountClaimed === 0n) {
-    const funded = vault.rate === 0n ? 0n : vault.totalDeposited / vault.rate;
-    throw new Error(
-      `nothing to claim at slot ${slot}: ${vault.claimedPeriods} of ${funded} funded periods ` +
-        `already collected. claim_period would fail with NoClaimablePeriods (6029). ` +
-        (vault.claimedPeriods >= funded
-          ? `This vault is exhausted — it will never pay again. Since the 2026-08-04 redeploy a ` +
-            `claim on an exhausted vault still settles: it CLOSES the account and pays its rent ` +
-            `(~0.0027-0.0034 SOL) to the retailer, so it is worth sending once to release that.`
-          : `Wait for the next interval of ${vault.intervalSlots} slots to elapse.`),
-    );
+    if (exhausted && opts.closeExhausted) {
+      // Nothing accrues, but the claim still settles: it pays the sub-period
+      // remainder (whatever integer division left behind) plus the rent, and
+      // closes the account. This branch is what releases the ~0.003 SOL a
+      // fully-collected vault otherwise locks up for ever.
+      amountClaimed = vault.totalDeposited - vault.claimedPeriods * vault.rate;
+    } else {
+      throw new Error(
+        `nothing to claim at slot ${slot}: ${vault.claimedPeriods} of ${funded} funded periods ` +
+          `already collected. claim_period would fail with NoClaimablePeriods (6029). ` +
+          (exhausted
+            ? `This vault is exhausted — it will never pay again. Since the 2026-08-04 redeploy a ` +
+              `claim on an exhausted vault still settles: it CLOSES the account and pays its rent ` +
+              `(~0.0027-0.0034 SOL) to the retailer. Pass closeExhausted: true to send it and ` +
+              `release that.`
+            : `Wait for the next interval of ${vault.intervalSlots} slots to elapse.`),
+      );
+    }
   }
 
   const isNative = vault.tokenMint.equals(SystemProgram.programId);
@@ -225,12 +272,15 @@ export async function claimPeriod(
           `Without them claim_period fails in the handler with MissingTokenProgram.`,
       );
     }
-    // The fee leaves the PAYER's balance, so it only eats into the payout when the
-    // payer and the retailer are the same account.
+    // The fee leaves the PAYER's balance, so it only eats into the payout when
+    // the payer and the retailer are the same account. On a closing claim the
+    // rent lands in the retailer's system account too, so the native rent-floor
+    // check counts it — for SPL it stays out: `amountClaimed` is in mint units
+    // there and the SPL checks compare token balances, not lamports.
     await assertRetailerCanReceiveClaim(
       connection,
       retailerKey,
-      amountClaimed,
+      isNative ? amountClaimed + rentReleasedLamports : amountClaimed,
       spl,
       payer.publicKey.equals(retailerKey) ? feeLamports : 0n,
     );
@@ -240,5 +290,5 @@ export async function claimPeriod(
     commitment: opts.commitment ?? 'confirmed',
   });
 
-  return { signature, periodsClaimed, amountClaimed, slot, feeLamports };
+  return { signature, periodsClaimed, amountClaimed, slot, feeLamports, closesVault, rentReleasedLamports };
 }

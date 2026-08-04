@@ -104,11 +104,19 @@ function stubConnection(opts: {
   vaultData: Buffer;
   slot?: number;
   retailerBalance?: number;
+  /** Vault account lamports — the rent a closing claim releases. */
+  vaultLamports?: number;
 }): Connection {
   return {
     async getAccountInfo(pk: PublicKey) {
       if (!pk.equals(opts.vaultPda)) return null;
-      return { data: opts.vaultData, owner: PROGRAM, lamports: 1, executable: false, rentEpoch: 0 };
+      return {
+        data: opts.vaultData,
+        owner: PROGRAM,
+        lamports: opts.vaultLamports ?? 2_616_960, // measured shape: rent for a mid-size vault
+        executable: false,
+        rentEpoch: 0,
+      };
     },
     async getSlot() { return opts.slot ?? 1_550; }, // 5 periods past start
     async getLatestBlockhash() {
@@ -242,6 +250,97 @@ describe('claimPeriod with the retailer as its own Signer', () => {
     ]);
     expect(tx.instructions[0]!.keys[0]!.isSigner).toBe(true);
     expect(tx.compileMessage().header.numRequiredSignatures).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Close-on-exhaustion — the rent release the 2026-08-04 program supports
+// ---------------------------------------------------------------------------
+
+describe('claimPeriod on an exhausted vault', () => {
+  const retailer = Keypair.generate().publicKey;
+  const keeper = Keypair.generate();
+  const vaultPda = Keypair.generate().publicKey;
+  // 12 funded periods, all collected, with a 500-lamport sub-period remainder
+  // integer division left behind (12_000_000_500 / 1e9 = 12).
+  const exhausted = () =>
+    buildVault({ retailer, totalDeposited: 12_000_000_500n, claimedPeriods: 12n });
+
+  it('still refuses by default, and the error names the closeExhausted opt-in', async () => {
+    const conn = stubConnection({ vaultPda, vaultData: exhausted() });
+    await expect(claimPeriod(conn, vaultPda, retailer, { payer: keeper })).rejects.toThrow(
+      /closeExhausted: true/,
+    );
+    expect(sent).not.toHaveBeenCalled();
+  });
+
+  it('closeExhausted sends the closing claim, permissionless, and reports the rent release', async () => {
+    const conn = stubConnection({ vaultPda, vaultData: exhausted(), vaultLamports: 2_616_960 });
+    const res = await claimPeriod(conn, vaultPda, retailer, {
+      payer: keeper,
+      closeExhausted: true,
+    });
+    expect(res.periodsClaimed).toBe(0n);
+    expect(res.amountClaimed).toBe(500n); // the sub-period remainder
+    expect(res.closesVault).toBe(true);
+    expect(res.rentReleasedLamports).toBe(2_616_960n);
+
+    // Still the permissionless shape: the retailer signs nothing.
+    const { tx, signers } = lastSend();
+    expect(signers.map((s) => s.publicKey.toBase58())).toEqual([keeper.publicKey.toBase58()]);
+    expect(tx.instructions[0]!.keys[0]!.isSigner).toBe(false);
+  });
+
+  it('clears the native rent floor on the rent alone — an empty retailer can still be closed into', async () => {
+    // Remainder 500 is far under the 890,880 floor; the released rent is what
+    // makes the transaction land. If the preflight ignored it, this would
+    // throw the strand error.
+    const conn = stubConnection({
+      vaultPda,
+      vaultData: exhausted(),
+      retailerBalance: 0,
+      vaultLamports: 2_616_960,
+    });
+    await expect(
+      claimPeriod(conn, vaultPda, retailer, { payer: keeper, closeExhausted: true }),
+    ).resolves.toBeDefined();
+  });
+
+  it('does NOT let closeExhausted force a claim on a vault that is merely between periods', async () => {
+    // 12 funded, 5 collected, and the clock has not reached period 6 yet:
+    // a claim here really would fail on chain with NoClaimablePeriods.
+    const conn = stubConnection({
+      vaultPda,
+      vaultData: buildVault({ retailer, claimedPeriods: 5n }),
+      slot: 1_550, // 5 periods elapsed, all 5 already claimed
+    });
+    await expect(
+      claimPeriod(conn, vaultPda, retailer, { payer: keeper, closeExhausted: true }),
+    ).rejects.toThrow(/Wait for the next interval/);
+    expect(sent).not.toHaveBeenCalled();
+  });
+
+  it('reports the close on the ORDINARY final claim too', async () => {
+    // 7 of 12 collected, clock far past the end: this claim sweeps the last 5
+    // periods and the program closes the vault in the same transaction.
+    const conn = stubConnection({
+      vaultPda,
+      vaultData: buildVault({ retailer, claimedPeriods: 7n }),
+      slot: 99_999,
+      vaultLamports: 2_616_960,
+    });
+    const res = await claimPeriod(conn, vaultPda, retailer, { payer: keeper });
+    expect(res.periodsClaimed).toBe(5n);
+    expect(res.amountClaimed).toBe(5_000_000_000n);
+    expect(res.closesVault).toBe(true);
+    expect(res.rentReleasedLamports).toBe(2_616_960n);
+  });
+
+  it('reports no close on a mid-life claim', async () => {
+    const conn = stubConnection({ vaultPda, vaultData: buildVault({ retailer }) }); // 5 of 12
+    const res = await claimPeriod(conn, vaultPda, retailer, { payer: keeper });
+    expect(res.closesVault).toBe(false);
+    expect(res.rentReleasedLamports).toBe(0n);
   });
 });
 
