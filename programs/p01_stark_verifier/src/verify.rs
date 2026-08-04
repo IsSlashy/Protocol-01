@@ -4142,7 +4142,26 @@ pub(crate) fn verify_constraints_subscriber_ownership(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
         let trace_row = (pos / config.blowup) % config.trace_length;
 
         // [C5] Check transition constraints at trace-aligned positions.
@@ -4198,7 +4217,26 @@ fn verify_constraints_pool_commitment(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         // [C5] Transition constraint check at trace-aligned positions
         if is_trace_aligned {
@@ -4252,7 +4290,26 @@ fn verify_constraints_balance_proof(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         if is_trace_aligned {
             let trace_row = (pos / config.blowup) % config.trace_length;
@@ -4319,7 +4376,26 @@ fn verify_constraints_merkle_path(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         if is_trace_aligned {
             let trace_row = (pos / config.blowup) % config.trace_length;
@@ -4397,7 +4473,26 @@ fn verify_constraints_confidential_balance(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         if is_trace_aligned {
             let trace_row = (pos / config.blowup) % config.trace_length;
@@ -4462,7 +4557,26 @@ fn verify_constraints_transfer(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         if is_trace_aligned {
             let trace_row = (pos / config.blowup) % config.trace_length;
@@ -4594,7 +4708,26 @@ fn verify_constraints_merkle_update(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         if is_trace_aligned {
             let trace_row = (pos / config.blowup) % config.trace_length;
@@ -4813,7 +4946,26 @@ fn verify_transition_legacy(proof: &CompactStarkProof) -> Result<(), VerifyError
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
         let trace_row = (pos / BLOWUP) % TRACE_LENGTH;
-        let is_trace_aligned = pos % BLOWUP == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         // [C5] Transition constraints at trace-aligned positions.
         //
