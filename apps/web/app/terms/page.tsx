@@ -166,24 +166,22 @@ export default function TermsOfService() {
               6.2 Current Open-Source License
             </h3>
             <p>
-              Portions of Protocol 01 are currently available under the{" "}
-              <strong className="text-white">
-                Business Source License 1.1 (BSL-1.1)
-              </strong>
-              . This license permits viewing, forking, and non-commercial use of
-              the source code. Commercial use, redistribution for production
-              purposes, and derivative works intended for competing products
-              require explicit written permission from the Protocol 01 team.
+              Protocol 01 is released under the{" "}
+              <strong className="text-white">MIT License</strong>. You may use,
+              copy, modify, merge, publish, distribute, sublicense, and sell
+              copies of the software, subject to the license&apos;s copyright and
+              permission notice. The @protocol-01 SDK packages published to npm
+              have declared MIT since their first release.
             </p>
             <h3 className="text-lg font-semibold text-white mt-6 mb-2">
               6.3 License Transition
             </h3>
             <p>
-              We reserve the right to change the licensing terms of the protocol
-              at any time, including transitioning to a closed-source or
-              proprietary license. Existing grants made under previous license
-              versions will be honored according to their terms, but no future
-              rights are guaranteed.
+              We reserve the right to change the licensing terms of future
+              releases. Code already released under the MIT License keeps the
+              rights that license grants — an MIT grant on distributed code is
+              not revocable — but no particular license is guaranteed for
+              versions not yet published.
             </p>
             <h3 className="text-lg font-semibold text-white mt-6 mb-2">
               6.4 User Content

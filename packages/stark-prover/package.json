@@ -55,7 +55,7 @@
     "proof-system"
   ],
   "author": "Protocol 01 Team",
-  "license": "SEE LICENSE IN ../../LICENSE",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/protocol-01/sdk"

@@ -24,27 +24,16 @@
 
 ---
 
-> **PROPRIETARY SOFTWARE &mdash; ALL RIGHTS RESERVED**
+> **MIT LICENSE &mdash; OPEN SOURCE**
 >
 > &copy; 2025-2026 Volta Team | Developed by Slashy Fx
 >
-> This repository is publicly visible for **demonstration and evaluation purposes only**.
-> Public visibility does **not** constitute a grant of any license.
-> No permission is granted to use, copy, modify, fork, or distribute this code.
+> This repository is released under the [MIT License](./LICENSE): use it, fork it,
+> build on it, audit it. A privacy protocol earns trust by being verifiable, and
+> the `@protocol-01` SDK packages on npm have shipped under MIT from the start —
+> the repository now says the same thing everywhere.
 >
-> **Colosseum Frontier Hackathon Evaluation Grant.**
-> Solely for the duration of the Colosseum Frontier Hackathon judging period, Colosseum,
-> its designated judges, reviewers, mentors, and operators are granted a limited,
-> non-exclusive, non-transferable, revocable right to **clone, read, build, run, and
-> evaluate** this repository for the sole purpose of reviewing and scoring the project
-> in the context of the hackathon. This grant **does not** authorize redistribution,
-> publication, derivative works, commercial use, or any use outside the official
-> Colosseum Frontier Hackathon evaluation. All other parties are bound by the
-> proprietary terms below.
->
-> For licensing, investment, or partnership inquiries &mdash; [reach out](https://x.com/Protocol01_).
->
-> See [LICENSE](./LICENSE) for full terms.
+> For investment or partnership inquiries &mdash; [reach out](https://x.com/Protocol01_).
 
 ---
 
@@ -579,5 +568,5 @@ anchor test                           # on-chain programs (localnet)
 
 <p align="center">
   <strong>Built on Solana</strong><br/>
-  <sub>&copy; 2026 Volta Team &mdash; All rights reserved</sub>
+  <sub>&copy; 2026 Volta Team &mdash; Released under the <a href="./LICENSE">MIT License</a></sub>
 </p>

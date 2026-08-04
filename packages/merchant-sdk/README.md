@@ -612,4 +612,4 @@ duplicated by hand.
 
 ## License
 
-Proprietary — see [LICENSE](../../LICENSE).
+MIT — see [LICENSE](../../LICENSE). (The published npm packages have declared MIT since 0.1.0.)

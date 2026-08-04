@@ -1,121 +1,22 @@
-PROPRIETARY SOFTWARE LICENSE
+MIT License
 
 Copyright (c) 2025-2026 Volta Team
 Developed by Slashy Fx
 
-ALL RIGHTS RESERVED
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-================================================================================
-TERMS AND CONDITIONS
-================================================================================
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-1. OWNERSHIP
-   All source code, documentation, circuits, smart contracts, SDKs, designs,
-   and associated materials in this repository ("the Software") are the
-   exclusive property of Volta Team.
-
-2. NO LICENSE GRANTED
-   No license, right, or permission is granted to any person or entity to use,
-   copy, modify, merge, publish, distribute, sublicense, sell, reverse-engineer,
-   decompile, or create derivative works of the Software, in whole or in part,
-   without prior written authorization from Volta Team.
-
-3. VIEWING PERMISSION
-   This repository is publicly visible for demonstration and evaluation purposes
-   only. Public visibility does NOT constitute a grant of any license or right
-   to use the Software.
-
-4. COLOSSEUM FRONTIER HACKATHON EVALUATION GRANT
-   Notwithstanding Sections 2, 3, and 5, Volta Team grants Colosseum
-   (colosseum.org), and its officially designated judges, reviewers, mentors,
-   operators, and contractors (collectively, "Colosseum Evaluators"), a
-   limited, non-exclusive, non-transferable, non-sublicensable, revocable
-   license to:
-     (a) clone and download this repository,
-     (b) read and inspect the source code, documentation, and assets,
-     (c) build, install, and run the Software in private, non-production
-         environments, and
-     (d) evaluate, score, and provide feedback on the Software,
-   solely for the purpose of reviewing this submission as part of the
-   Colosseum Frontier Hackathon ("the Hackathon").
-
-   This grant is strictly limited to the Hackathon's official evaluation
-   period and the activities listed in (a)-(d) above. It does NOT permit:
-     - public redistribution, publication, or mirroring of the Software,
-     - creation of derivative works beyond what is strictly necessary to
-       build and run the Software locally for evaluation,
-     - commercial use, deployment to production, or use by any third party
-       outside the Colosseum Evaluators,
-     - retention or continued use of the Software after the Hackathon's
-       evaluation period concludes, except as required by Colosseum's
-       internal record-keeping obligations.
-
-   Volta Team may revoke this grant at any time by written notice. Any use
-   of the Software outside the scope defined in this Section 4 is governed
-   by the remainder of this License.
-
-5. PROHIBITED ACTIVITIES
-   Without explicit written consent from Volta Team (or, for Colosseum
-   Evaluators, beyond the scope of Section 4), you may NOT:
-   - Copy, fork, or clone this repository for any purpose other than viewing
-   - Use any portion of the code in your own projects
-   - Deploy, host, or run the Software or any derivative thereof
-   - Redistribute the Software in any form
-   - Use the Software for commercial or non-commercial purposes
-   - Incorporate any part of the Software into other software
-
-6. OPEN SOURCE COMPONENTS
-   SDK packages published from this repository's packages/ directory under
-   the @protocol-01 npm scope are released under the license declared in
-   each package's package.json "license" field. That field is the
-   authoritative license declaration for the package as published to npm.
-   This carve-out exists to allow third-party developers to integrate
-   Protocol 01 privacy primitives into their own products.
-
-   At the date of this LICENSE, the SDK packages whose package.json
-   declares a permissive license (typically "MIT") are released under
-   that license. The @protocol-01/stark-prover package, whose package.json
-   declares "SEE LICENSE IN ../../LICENSE", remains governed by Sections
-   1-5 of this LICENSE, with a soft license-key gate for production use
-   documented in packages/stark-prover/src/license.ts.
-
-   All other materials in this repository — including but not limited to
-   apps/, programs/, circuits/, stark/, scripts/, services/, and tools/ —
-   remain proprietary as defined in Sections 1-5 above. Volta Team retains
-   the right to relicense any SDK package, or to revoke the permissive
-   grant on future releases, at its sole discretion. Existing forks of
-   permissively-released versions retain their granted rights only for
-   the code as it existed at the time of forking.
-
-7. PRIOR MIT LICENSE PERIOD
-   This repository was temporarily licensed under MIT for the Privacy Hack
-   Hackathon evaluation period (ending February 10, 2026). That license has
-   expired. Forks created during the MIT period retain MIT rights only for
-   the code as it existed at the time of forking. All subsequent code is
-   proprietary.
-
-8. INVESTMENT & PARTNERSHIP INQUIRIES
-   For licensing, investment, partnership, or collaboration inquiries,
-   contact Volta Team:
-   - Twitter/X: @Protocol01_
-   - Discord: discord.gg/EfqnVmb2dV
-   - GitHub: github.com/IsSlashy
-
-9. DISCLAIMER
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-   VOLTA TEAM BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-   AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-   CONNECTION WITH THE SOFTWARE.
-
-10. ENFORCEMENT
-   Volta Team reserves the right to pursue legal action against any
-   unauthorized use, reproduction, or distribution of the Software.
-
-================================================================================
-
-For the avoidance of doubt: viewing this code on GitHub does not grant you
-any rights. If you want to use Protocol 01, reach out to us.
-
-(c) 2025-2026 Volta Team — All rights reserved.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

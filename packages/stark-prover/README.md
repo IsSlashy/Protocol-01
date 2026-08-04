@@ -85,6 +85,6 @@ cross-program.
 
 ## License
 
-This package is released under the same terms as the Protocol 01 monorepo. See the [LICENSE](../../LICENSE) file at the repository root.
+MIT — see the [LICENSE](../../LICENSE) file at the repository root. (Earlier manifests pointed at a proprietary root license; the repository is MIT everywhere as of 2026-08-04.)
 
 A soft license gate (`license.ts`) is included for production use. Development, evaluation, testing and hackathon use require no license key. For commercial production deployments, contact contact@protocol01.com.

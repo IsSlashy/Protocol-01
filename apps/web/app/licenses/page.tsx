@@ -12,9 +12,9 @@ export const metadata: Metadata = {
 const P01_PACKAGES = [
   {
     name: "Protocol 01 — Core Protocol & Applications",
-    license: "BSL-1.1",
+    license: "MIT",
     description:
-      "The wallet application, browser extension, smart contracts, ZK circuits, and SDK packages are licensed under the Business Source License 1.1. Source code is viewable and forkable for non-commercial purposes. Commercial use requires explicit written permission.",
+      "The wallet application, browser extension, smart contracts, ZK circuits, and SDK packages are released under the MIT License. Use, copy, modify, and redistribute freely — a privacy protocol earns trust by being verifiable, and the @protocol-01 npm packages have declared MIT since their first release.",
     url: "https://github.com/IsSlashy/Protocol-01-releases",
   },
 ];
@@ -139,34 +139,19 @@ export default function OpenSourceLicenses() {
                 </p>
                 <div className="mt-4 bg-p01-void rounded-lg p-4 text-xs font-mono text-p01-text-dim leading-relaxed">
                   <p>
-                    Business Source License 1.1 — Copyright (c) 2024-2026 Protocol 01
-                    Team. All rights reserved.
+                    MIT License — Copyright (c) 2025-2026 Volta Team. Developed
+                    by Slashy Fx.
                   </p>
                   <p className="mt-2">
-                    Licensed under the Business Source License 1.1 (the
-                    &quot;License&quot;); you may not use this software except in
-                    compliance with the License. You may obtain a copy of the
-                    License at{" "}
-                    <a
-                      href="https://mariadb.com/bsl11/"
-                      className="text-p01-cyan hover:underline"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      mariadb.com/bsl11
-                    </a>
-                    .
-                  </p>
-                  <p className="mt-2">
-                    Additional Use Grant: You may use the Licensed Work for
-                    non-commercial and evaluation purposes. Production commercial
-                    use requires a separate commercial license from the Protocol 01
-                    team.
-                  </p>
-                  <p className="mt-2">
-                    Change Date: Four years from each release date.
-                    <br />
-                    Change License: Apache License, Version 2.0.
+                    Permission is hereby granted, free of charge, to any person
+                    obtaining a copy of this software and associated
+                    documentation files (the &quot;Software&quot;), to deal in the
+                    Software without restriction, including without limitation
+                    the rights to use, copy, modify, merge, publish, distribute,
+                    sublicense, and/or sell copies of the Software, subject to
+                    including the above copyright notice and this permission
+                    notice in all copies or substantial portions of the
+                    Software.
                   </p>
                   <p className="mt-2">
                     THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY

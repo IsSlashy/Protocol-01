@@ -136,11 +136,12 @@ These five paths give the densest view of the work in the shortest time.
 
 ## Licensing for evaluation
 
-This repository is proprietary, but the [LICENSE](../LICENSE) file (Section 4) carries an explicit Colosseum Frontier Hackathon Evaluation Grant.
-Colosseum, its judges, reviewers, mentors, operators, and contractors may clone, read, build, install, and run the software in private non-production environments for the duration of the official evaluation period.
-Cloning the repo, running `pnpm install`, building the APK, and installing it on a test device is therefore explicitly authorised for hackathon evaluation.
-
-Anything beyond evaluation (redistribution, derivative works, production deployment, commercial use) still requires written authorisation from Volta Team.
+This repository is released under the [MIT License](../LICENSE). Cloning the
+repo, running `pnpm install`, building the APK, installing it on a test device,
+redistributing, and building derivative works are all permitted — for judges
+and for everyone else. (An earlier revision of this file described a
+proprietary license with a judge-only evaluation grant; the repository moved to
+MIT on 2026-08-04.)
 
 ---
 
