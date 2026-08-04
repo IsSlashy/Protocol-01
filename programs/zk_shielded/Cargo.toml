@@ -35,6 +35,39 @@ solana-sha256-hasher = { version = "2.3.0", features = ["sha2"] }
 # Required for zero-copy accounts
 bytemuck = { version = "1.14", features = ["derive"] }
 
+# ---------------------------------------------------------------------------
+# Lot 3: the subscription lifecycle harness (`tests/subscription_lifecycle.rs`).
+#
+# `claim_period` — the entire revenue leg — had never been executed by any
+# automated test in this repository. This crate had no [dev-dependencies] and no
+# tests/ directory at all; `ci.yml` only ever ran `cargo check` over it, which
+# COMPILES the state-machine tests in `src/state/subscription_vault.rs` without
+# running them. Changing what `claimable_periods` RETURNS stayed green.
+#
+# litesvm loads the built `target/deploy/zk_shielded.so` into an in-process SBF
+# VM, so the program under test is the real artifact and slots can be warped —
+# which is the only way to observe periods accruing one interval at a time. All
+# 16 live devnet vaults are time-saturated, so the drip cannot be measured on
+# chain at all.
+#
+# Dev-dependencies never reach `cargo build-sbf`, so the on-chain artifact is
+# unchanged by anything below. Stanza transposed from
+# `programs/p01_stark_verifier/Cargo.toml:29-54`, which has been working on this
+# box; see the note there for why `five8_core`'s `std` feature is required.
+# ---------------------------------------------------------------------------
+[dev-dependencies]
+litesvm = "0.15.1"
+five8_core = { version = "0.1.2", features = ["std"] }
+solana-keypair = "3.1"
+solana-signer = "3.0"
+solana-instruction = "3.4"
+solana-message = "4.2"
+solana-transaction = "4.1"
+solana-address = { version = "2.6", features = ["curve25519", "decode", "std"] }
+# `set_account` is how the harness seeds a funded vault directly, instead of
+# driving `subscribe_private_stark` and having to synthesise STARK proof buffers.
+solana-account = "4.3"
+
 [lints.rust.unexpected_cfgs]
 level = "allow"
 check-cfg = [

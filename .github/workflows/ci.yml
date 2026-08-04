@@ -139,6 +139,28 @@ jobs:
           cargo test -p p01_stark_verifier --release --test fri_end_to_end
           cargo test -p p01_stark_verifier --release --test b4_pair_leaf
 
+      # The subscription state machine — `claimable_periods` and the funding
+      # clamp — decides how much money a merchant is owed, and until this step
+      # existed NOTHING in CI executed it. The step above runs `cargo check
+      # --all-targets`, which COMPILES the eight tests in
+      # `src/state/subscription_vault.rs` and never runs them: renaming or
+      # deleting `claimable_periods` went red, while silently changing what it
+      # RETURNS stayed green. Verified locally 2026-08-04, first execution in the
+      # project's history: 9 passed.
+      #
+      # `--lib` only, deliberately. `tests/subscription_lifecycle.rs` executes the
+      # real `target/deploy/zk_shielded.so` in litesvm, and this job has no
+      # `cargo-build-sbf` — the same reason `cu_budget.rs` is absent above. That
+      # harness fails closed rather than skipping when the `.so` is missing, so
+      # adding it here without a toolchain step would fail the job for a reason
+      # that has nothing to do with the code. Run it locally:
+      #   cargo test -p zk_shielded --test subscription_lifecycle
+      # after building the artifact with the absolute 3.1.9 cargo-build-sbf path
+      # named in that file's header. It is the acceptance criterion for the
+      # no-cancel landing: the same file, unchanged, on HEAD and on the branch.
+      - name: cargo test (zk_shielded — the subscription state machine)
+        run: cargo test -p zk_shielded --lib
+
       # `continue-on-error: true` was on this step, which made it advisory: a real
       # failure still passed the job, so `-D warnings` pinned nothing. Removed.
       # zk_shielded's three warnings (an unused import and two constants orphaned
