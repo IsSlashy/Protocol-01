@@ -302,7 +302,12 @@ export default function SubscribePanel({
     }
   }
 
-  const busy = submitting || scanning;
+  // NOT `|| scanning`. The chain walk enumerates candidate epochs per note per
+  // denomination and does not finish in any time a user will wait, so gating the
+  // action on it left the button greyed out forever with a note selected and no
+  // reason shown. The note list is already usable from local storage, and notes
+  // this browser has spent are filtered out above; the scan only refreshes it.
+  const busy = submitting;
 
   return (
     <div className="space-y-5">
