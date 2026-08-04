@@ -68,5 +68,10 @@
     "neon"
   ],
   "author": "Protocol 01",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IsSlashy/Protocol-01.git",
+    "directory": "packages/ui"
+  }
 }

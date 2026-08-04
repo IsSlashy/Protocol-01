@@ -115,11 +115,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/IsSlashy/protocol-01.git",
+    "url": "git+https://github.com/IsSlashy/Protocol-01.git",
     "directory": "packages/p01-js"
   },
   "bugs": {
-    "url": "https://github.com/IsSlashy/protocol-01/issues"
+    "url": "https://github.com/IsSlashy/Protocol-01/issues"
   },
-  "homepage": "https://protocol01.com"
+  "homepage": "https://protocol-01.dev"
 }

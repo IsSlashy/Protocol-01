@@ -63,5 +63,10 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IsSlashy/Protocol-01.git",
+    "directory": "packages/arcium-sdk"
   }
 }

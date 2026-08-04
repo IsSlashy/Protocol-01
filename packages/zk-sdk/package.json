@@ -58,7 +58,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/protocol-01/zk-sdk"
+    "url": "git+https://github.com/P-01SDK/zk-sdk.git"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

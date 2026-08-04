@@ -20,11 +20,10 @@
   ],
   "license": "MIT",
   "author": "Protocol 01",
-  "homepage": "https://github.com/IsSlashy/Protocol-01",
+  "homepage": "https://github.com/P-01SDK/privacy-toolkit#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/IsSlashy/Protocol-01",
-    "directory": "packages/privacy-toolkit"
+    "url": "git+https://github.com/P-01SDK/privacy-toolkit.git"
   },
   "dependencies": {
     "poseidon-lite": "^0.3.0"

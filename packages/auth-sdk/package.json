@@ -49,5 +49,9 @@
     "subscription",
     "protocol-01"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/P-01SDK/auth-sdk.git"
+  }
 }

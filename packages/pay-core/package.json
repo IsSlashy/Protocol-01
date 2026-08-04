@@ -37,5 +37,10 @@
   "devDependencies": {
     "typescript": "^5.9.3",
     "vitest": "^2.1.9"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IsSlashy/Protocol-01.git",
+    "directory": "packages/pay-core"
   }
 }

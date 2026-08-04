@@ -50,5 +50,10 @@
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IsSlashy/Protocol-01.git",
+    "directory": "packages/merchant-sdk"
   }
 }

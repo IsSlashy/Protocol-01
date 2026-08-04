@@ -38,7 +38,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/protocol-01/sdk"
+    "url": "git+https://github.com/IsSlashy/Protocol-01.git",
+    "directory": "packages/rpc-config"
   },
   "publishConfig": {
     "access": "public"

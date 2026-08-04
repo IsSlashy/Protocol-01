@@ -110,7 +110,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/protocol-01/privacy-sdk"
+    "url": "git+https://github.com/P-01SDK/privacy-sdk.git"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

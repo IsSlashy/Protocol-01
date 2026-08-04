@@ -32,7 +32,7 @@
   "homepage": "https://github.com/IsSlashy/Protocol-01",
   "repository": {
     "type": "git",
-    "url": "https://github.com/IsSlashy/Protocol-01",
+    "url": "git+https://github.com/IsSlashy/Protocol-01.git",
     "directory": "packages/react-native-zk"
   },
   "publishConfig": {
