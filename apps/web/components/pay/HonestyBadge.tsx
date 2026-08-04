@@ -6,13 +6,20 @@ import type { ChainId } from "@/lib/privacy/chains/types";
 /**
  * Persistent, honest disclosure of the STEALTH SEND envelope, per chain.
  *
- * SCOPE — READ THIS BEFORE EDITING THE COPY
+ * SCOPE, READ THIS BEFORE EDITING THE COPY
  * ─────────────────────────────────────────
- * The Send tab now has TWO modes and they hide opposite things, so this badge
+ * The Send tab has TWO modes and they hide opposite things, so this badge
  * describes exactly one of them. SendForm renders it only inside the stealth
- * branch (SendForm.tsx:645, inside the `mode === "note" ? … : …` else-arm that
- * opens at SendForm.tsx:553); the note-handoff mode carries its own disclosure
- * block at SendForm.tsx:506-525. That split is correct and this badge must not
+ * branch, in the context column, folded behind a one-line summary that stays
+ * visible when closed ("Hides the recipient only. Your wallet and the amount
+ * stay public."); the badge text itself is unchanged and is still the full
+ * disclosure. The note-handoff mode carries its own disclosure fold in its own
+ * context column.
+ *
+ * No line numbers here on purpose: the previous version of this paragraph
+ * pointed at three of them and all three rotted within a day of the rework.
+ *
+ * That split is correct and this badge must not
  * try to cover both — "a send does not go through the pool" was true of both
  * modes but for opposite reasons (stealth pays a wallet-funded address; the
  * handoff broadcasts nothing at all), and one sentence covering both can only
