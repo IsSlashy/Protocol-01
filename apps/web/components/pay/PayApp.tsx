@@ -8,6 +8,7 @@ import { Buffer } from "buffer";
 import nacl from "tweetnacl";
 import {
   Coins,
+  CreditCard,
   KeyRound,
   Loader2,
   Repeat,
@@ -34,6 +35,7 @@ import SendForm from "./SendForm";
 import ReceivePanel from "./ReceivePanel";
 import PoolPanel from "./PoolPanel";
 import SubscribePanel from "@/components/pay/SubscribePanel";
+import SubscriptionsPanel from "@/components/pay/SubscriptionsPanel";
 import P01ConnectModal from "./P01ConnectModal";
 import Stepper from "./Stepper";
 import { truncate } from "./util";
@@ -54,7 +56,11 @@ import { truncate } from "./util";
 const CHAIN_TAG = "solana:devnet";
 const firstLive = ALL_ASSETS.find((a) => a.status === "live") ?? ALL_ASSETS[0];
 
-type Tab = "send" | "receive" | "pool" | "subscribe";
+// "subs" is the read side of "subscribe": the vaults this browser already
+// opened, their standing and their detail. It is its own tab because reviewing
+// what you pay for and buying something new are different activities (mobile
+// separates them the same way), and the Subscribe tab is already dense.
+type Tab = "send" | "receive" | "pool" | "subscribe" | "subs";
 
 export default function PayApp() {
   const { publicKey, connected, signMessage, signTransaction, signAllTransactions, disconnect } =
@@ -319,11 +325,12 @@ export default function PayApp() {
       {chainConnected && identity && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <div className="inline-flex rounded-lg border border-p01-border bg-p01-surface p-1">
-              {/* Pool and subscribe are Solana-only: both drive the denominated
-                  pool, which exists on Solana alone. */}
+            {/* flex-wrap: five tabs no longer fit one row inside max-w-md. */}
+            <div className="inline-flex flex-wrap rounded-lg border border-p01-border bg-p01-surface p-1">
+              {/* Pool, subscribe and subs are Solana-only: all three drive the
+                  denominated pool, which exists on Solana alone. */}
               {((chain === "solana"
-                ? ["send", "receive", "pool", "subscribe"]
+                ? ["send", "receive", "pool", "subscribe", "subs"]
                 : ["send", "receive"]) as Tab[]).map((t) => (
                 <button
                   key={t}
@@ -339,8 +346,10 @@ export default function PayApp() {
                     <InboxIcon className="h-3.5 w-3.5" />
                   ) : t === "pool" ? (
                     <Coins className="h-3.5 w-3.5" />
-                  ) : (
+                  ) : t === "subscribe" ? (
                     <Repeat className="h-3.5 w-3.5" />
+                  ) : (
+                    <CreditCard className="h-3.5 w-3.5" />
                   )}
                   {t}
                 </button>
@@ -380,6 +389,11 @@ export default function PayApp() {
               signOne={signSolanaTx}
               token={poolToken}
             />
+          ) : tab === "subs" && chain === "solana" && solPub ? (
+            // Read-only: the subscriptions this browser opened, their standing
+            // and their license-key provenance. No signer on purpose; this tab
+            // never sends a transaction.
+            <SubscriptionsPanel owner={solPub} connection={connection} />
           ) : tab === "send" ? (
             // The note handoff needs the pool session key and the wallet that
             // owns the local note blobs. Both were already in scope for the
