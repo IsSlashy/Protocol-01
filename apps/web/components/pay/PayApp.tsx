@@ -391,9 +391,10 @@ export default function PayApp() {
             />
           ) : tab === "subs" && chain === "solana" && solPub ? (
             // Read-only: the subscriptions this browser opened, their standing
-            // and their license-key provenance. No signer on purpose; this tab
-            // never sends a transaction.
-            <SubscriptionsPanel owner={solPub} connection={connection} />
+            // and their license key, re-derived in the Worker on demand. No
+            // signer on purpose; this tab never sends a transaction. `meta`
+            // identifies the Worker session that holds the note secrets.
+            <SubscriptionsPanel meta={identity.meta} owner={solPub} connection={connection} />
           ) : tab === "send" ? (
             // The note handoff needs the pool session key and the wallet that
             // owns the local note blobs. Both were already in scope for the

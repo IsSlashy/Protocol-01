@@ -5,6 +5,16 @@
  * detail of each one. Read-only by design: nothing here signs or sends a
  * transaction, and the chain stays the source of truth for every amount.
  *
+ * ## Shape: horizontal master-detail
+ *
+ * From lg the list is the left column and the selected subscription's detail
+ * is the right one, so clicking a merchant shows its key and remaining time
+ * without navigation or context loss. Below lg the list stands alone and a
+ * selection replaces it with the detail plus a back button, the same shape as
+ * mobile's subscription-vaults -> vault-detail pair. Long strings (key, vault
+ * address) are truncated with copy buttons; the page never scrolls
+ * horizontally.
+ *
  * ## How the list is populated
  *
  * A private vault's address is a PDA seeded on `subscriber_commitment`, which
@@ -17,18 +27,22 @@
  *      existed or on another device: paste the vault address, and the account
  *      is validated (owner + discriminator + decode) before it is remembered.
  *
- * ## What is deliberately NOT shown
+ * ## The license key is re-derived, never stored
  *
- * The license key. It derives from the note secret, which never leaves the
- * Worker, and no store anywhere holds the derived key. The detail card says
- * where the key came from and what it is (a bearer credential) instead of
- * pretending this page could reprint it.
+ * "Reveal key" asks the Worker to re-derive it from the note secret on demand
+ * (`deriveSubscriptionLicenseKey`), which is what lets the screen say
+ * truthfully that the key is stored nowhere. It only works when this browser
+ * holds the paying note's blob; a vault tracked by address alone says so
+ * instead of pretending.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { PublicKey, type Connection } from "@solana/web3.js";
+import clsx from "clsx";
 import {
   ArrowLeft,
+  Check,
+  Copy,
   CreditCard,
   Loader2,
   KeyRound,
@@ -59,6 +73,7 @@ import {
   type StoredSubscription,
   type SubscriptionSummary,
 } from "@/lib/pay/subscriptions";
+import { deriveSubscriptionLicenseKey } from "@/lib/privacy/shieldClient";
 import { licenseServiceTag } from "@/lib/privacy/license";
 import {
   NATIVE_SOL_SENTINEL_MINT,
@@ -110,6 +125,27 @@ function ClosedBadge() {
   );
 }
 
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        void navigator.clipboard
+          .writeText(text)
+          .then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          })
+          .catch(() => setCopied(false));
+      }}
+      className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
+    >
+      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? "Copied" : label}
+    </button>
+  );
+}
+
 /** The one-line, plain-words answer to "where does this subscription stand?". */
 function plainStanding(summary: SubscriptionSummary): string {
   const total = summary.totalPeriods.toString();
@@ -156,9 +192,11 @@ function serviceForVault(
 // ---------------------------------------------------------------------------
 
 export default function SubscriptionsPanel({
+  meta,
   owner,
   connection,
 }: {
+  meta: string;
   owner: PublicKey;
   connection: Connection;
 }) {
@@ -229,6 +267,38 @@ export default function SubscriptionsPanel({
     void refresh();
   }, [refresh]);
 
+  // ── License key reveal (re-derived in the Worker, never stored) ──────────
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [revealBusy, setRevealBusy] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+
+  // The key belongs to ONE subscription; switching selection drops it.
+  useEffect(() => {
+    setRevealedKey(null);
+    setRevealBusy(false);
+    setRevealError(null);
+  }, [selected]);
+
+  async function handleReveal(rec: StoredSubscription) {
+    if (rec.pool === undefined || rec.leafIndex === undefined) return;
+    setRevealBusy(true);
+    setRevealError(null);
+    try {
+      const key = await deriveSubscriptionLicenseKey({
+        meta,
+        walletPubkey: walletKey,
+        pool: rec.pool,
+        leafIndex: rec.leafIndex,
+        serviceTag: rec.serviceTag,
+      });
+      setRevealedKey(key);
+    } catch (e) {
+      setRevealError((e as Error).message || "Could not re-derive the key.");
+    } finally {
+      setRevealBusy(false);
+    }
+  }
+
   // ── Track a vault by address ─────────────────────────────────────────────
   const [trackAddr, setTrackAddr] = useState("");
   const [tracking, setTracking] = useState(false);
@@ -298,46 +368,39 @@ export default function SubscriptionsPanel({
     return rec.serviceName ?? truncate(rec.retailer, 6, 4);
   }
 
-  // ── Detail view ──────────────────────────────────────────────────────────
   const selectedRec = selected ? (records.find((r) => r.vaultPDA === selected) ?? null) : null;
-  if (selectedRec) {
-    const state = live[selectedRec.vaultPDA] ?? { kind: "loading" as const };
+
+  // ── Detail pane ──────────────────────────────────────────────────────────
+  function renderDetail(rec: StoredSubscription) {
+    const state = live[rec.vaultPDA] ?? { kind: "loading" as const };
     const decoded = state.kind === "open" ? state.decoded : null;
     const summary = decoded
       ? summarizeSubscription(toPeriodState(decoded), currentSlot ?? 0n)
       : null;
     const decimals = decoded
       ? decimalsForVaultMint(decoded.tokenMint)
-      : selectedRec.token === "SOL"
+      : rec.token === "SOL"
         ? 9
         : 6;
-    const symbol = decoded ? symbolForVaultMint(decoded.tokenMint) : selectedRec.token;
+    const symbol = decoded ? symbolForVaultMint(decoded.tokenMint) : rec.token;
+    const canReveal = rec.pool !== undefined && rec.leafIndex !== undefined;
 
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <button
-            onClick={() => setSelected(null)}
-            className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> All subscriptions
-          </button>
-          <button
-            onClick={() => void refresh()}
-            disabled={refreshing}
-            className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
-          >
-            <RefreshCw className={refreshing ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-            {refreshing ? "Reading…" : "Refresh"}
-          </button>
-        </div>
+        {/* Back exists only below lg; on lg the list stays on screen. */}
+        <button
+          onClick={() => setSelected(null)}
+          className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan lg:hidden"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> All subscriptions
+        </button>
 
         {/* Who and where it stands */}
         <div className="card p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
               <Store className="h-4 w-4 shrink-0 text-p01-cyan" />
-              <p className="truncate font-display text-p01-text">{merchantName(selectedRec)}</p>
+              <p className="truncate font-display text-p01-text">{merchantName(rec)}</p>
             </div>
             {state.kind === "closed" ? (
               <ClosedBadge />
@@ -381,24 +444,68 @@ export default function SubscriptionsPanel({
           )}
         </div>
 
-        {/* The license key: what it is and where it lives */}
+        {/* The license key: re-derived on demand, stored nowhere */}
         <div className="card p-4">
           <div className="flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-p01-cyan" />
             <p className="font-display text-sm text-p01-text">License key</p>
           </div>
           <p className="mt-2 text-xs text-p01-text-muted">
-            Your key was shown once, right after subscribing. It is stored nowhere: it re-derives
-            from the secret of the note that paid for this vault, so any device holding that note
-            secret can recompute the same key.
+            The key is stored nowhere: it re-derives from the secret of the note that paid for
+            this vault, so any device holding that note secret can recompute the same key.
           </p>
           <p className="mt-2 text-xs text-p01-text-muted">
             It is a bearer credential. Anyone who holds the key can present it to the merchant as
             you, so share it like you would share cash.
           </p>
-          <p className="mt-2 font-mono text-xs text-p01-text-dim">
-            scoped to: {selectedRec.serviceTag}
-          </p>
+
+          {canReveal ? (
+            revealedKey ? (
+              <div className="mt-3">
+                <p className="break-all font-mono text-xl leading-relaxed text-p01-cyan">
+                  {revealedKey}
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <CopyButton text={revealedKey} label="Copy key" />
+                  <button
+                    onClick={() => setRevealedKey(null)}
+                    className="text-xs text-p01-text-muted underline hover:text-p01-cyan"
+                  >
+                    Hide
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => void handleReveal(rec)}
+                disabled={revealBusy}
+                className="btn-secondary mt-3 inline-flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
+              >
+                {revealBusy ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Re-deriving…
+                  </>
+                ) : (
+                  <>
+                    <KeyRound className="h-3.5 w-3.5" /> Reveal key
+                  </>
+                )}
+              </button>
+            )
+          ) : (
+            <p className="mt-3 text-xs text-p01-text-dim">
+              This vault was tracked by its address, so this browser does not know which note paid
+              for it and cannot re-derive the key here. Reveal it on the device that holds the
+              note secret.
+            </p>
+          )}
+          {revealError && (
+            <p className="mt-2 flex items-start gap-1.5 text-xs text-p01-red">
+              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {revealError}
+            </p>
+          )}
+
+          <p className="mt-3 font-mono text-xs text-p01-text-dim">scoped to: {rec.serviceTag}</p>
           {decoded?.licenseCommitment && (
             <p className="mt-1 text-xs text-p01-text-dim">
               The vault stores a blake3 fingerprint of the key, never the key itself; a merchant
@@ -424,23 +531,26 @@ export default function SubscriptionsPanel({
         </p>
 
         {/* Links out */}
-        <div className="card space-y-1.5 p-4">
-          <a
-            href={explorerAddressUrl(selectedRec.vaultPDA)}
-            target="_blank"
-            rel="noreferrer"
-            className="block font-mono text-xs text-p01-cyan hover:underline"
-          >
-            vault {truncate(selectedRec.vaultPDA, 8, 6)} ↗
-          </a>
-          {selectedRec.openTxSig && (
+        <div className="card space-y-2 p-4">
+          <div className="flex flex-wrap items-center gap-2">
             <a
-              href={explorerTxUrl(selectedRec.openTxSig)}
+              href={explorerAddressUrl(rec.vaultPDA)}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-xs text-p01-cyan hover:underline"
+            >
+              vault {truncate(rec.vaultPDA, 8, 6)} ↗
+            </a>
+            <CopyButton text={rec.vaultPDA} label="Copy address" />
+          </div>
+          {rec.openTxSig && (
+            <a
+              href={explorerTxUrl(rec.openTxSig)}
               target="_blank"
               rel="noreferrer"
               className="block font-mono text-xs text-p01-cyan hover:underline"
             >
-              opening tx {truncate(selectedRec.openTxSig, 8, 6)} ↗
+              opening tx {truncate(rec.openTxSig, 8, 6)} ↗
             </a>
           )}
         </div>
@@ -453,11 +563,11 @@ export default function SubscriptionsPanel({
           <dl className="mt-3 space-y-1.5 font-mono">
             <div className="flex justify-between gap-3">
               <dt>vault PDA</dt>
-              <dd className="break-all text-right">{selectedRec.vaultPDA}</dd>
+              <dd className="break-all text-right">{rec.vaultPDA}</dd>
             </div>
             <div className="flex justify-between gap-3">
               <dt>merchant</dt>
-              <dd className="break-all text-right">{selectedRec.retailer}</dd>
+              <dd className="break-all text-right">{rec.retailer}</dd>
             </div>
             {decoded && summary && (
               <>
@@ -503,7 +613,7 @@ export default function SubscriptionsPanel({
             wired on the web yet.
           </p>
           <button
-            onClick={() => handleForget(selectedRec.vaultPDA)}
+            onClick={() => handleForget(rec.vaultPDA)}
             className="mt-3 font-sans text-p01-text-muted underline hover:text-p01-red"
           >
             Untrack this vault (forgets the local record only; the vault itself is untouched)
@@ -513,114 +623,144 @@ export default function SubscriptionsPanel({
     );
   }
 
-  // ── List view ────────────────────────────────────────────────────────────
+  // ── Master-detail frame ──────────────────────────────────────────────────
   return (
-    <div className="space-y-4">
-      <div className="card p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <CreditCard className="h-4 w-4 text-p01-cyan" />
-            <p className="font-display text-sm text-p01-text">Your subscriptions</p>
+    <div className="lg:grid lg:grid-cols-5 lg:items-start lg:gap-4">
+      {/* Left: the list. Below lg it yields the screen to the detail. */}
+      <div className={clsx("space-y-4 lg:col-span-2", selectedRec && "hidden lg:block")}>
+        <div className="card p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CreditCard className="h-4 w-4 text-p01-cyan" />
+              <p className="font-display text-sm text-p01-text">Your subscriptions</p>
+            </div>
+            <button
+              onClick={() => void refresh()}
+              disabled={refreshing}
+              className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
+            >
+              <RefreshCw className={refreshing ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
+              {refreshing ? "Reading…" : "Refresh"}
+            </button>
           </div>
-          <button
-            onClick={() => void refresh()}
-            disabled={refreshing}
-            className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
-          >
-            <RefreshCw className={refreshing ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-            {refreshing ? "Reading…" : "Refresh"}
-          </button>
+
+          {records.length === 0 && (
+            <p className="mt-3 text-xs text-p01-text-muted">
+              No subscriptions tracked in this browser yet. Subscribe from the Subscribe tab, or
+              track an existing vault by its address below. Subscriptions made here before this
+              list existed are found the second way.
+            </p>
+          )}
+
+          {records.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {records.map((rec) => {
+                const state = live[rec.vaultPDA] ?? { kind: "loading" as const };
+                const summary =
+                  state.kind === "open"
+                    ? summarizeSubscription(toPeriodState(state.decoded), currentSlot ?? 0n)
+                    : null;
+                const active = rec.vaultPDA === selected;
+                return (
+                  <li key={rec.vaultPDA}>
+                    <button
+                      onClick={() => setSelected(rec.vaultPDA)}
+                      className={
+                        active
+                          ? "flex w-full items-center justify-between gap-3 rounded-lg border border-p01-cyan bg-p01-cyan/10 p-3 text-left"
+                          : "flex w-full items-center justify-between gap-3 rounded-lg border border-p01-border bg-p01-void p-3 text-left hover:border-p01-border-hover"
+                      }
+                    >
+                      <div className="min-w-0">
+                        <p
+                          className={clsx(
+                            "truncate font-display text-sm",
+                            active ? "text-p01-cyan" : "text-p01-text",
+                          )}
+                        >
+                          {merchantName(rec)}
+                        </p>
+                        <p className="mt-0.5 truncate text-xs text-p01-text-muted">
+                          {state.kind === "loading" && "Reading the vault…"}
+                          {state.kind === "closed" && "Closed, fully paid out to the merchant"}
+                          {state.kind === "error" && "Could not read the vault"}
+                          {summary && plainStanding(summary)}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        {state.kind === "closed" ? (
+                          <ClosedBadge />
+                        ) : summary ? (
+                          <StatusBadge status={summary.status} />
+                        ) : null}
+                        <span className="font-mono text-xs text-p01-text-muted">
+                          {rec.denomination} {rec.token}
+                        </span>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
 
-        {records.length === 0 && (
-          <p className="mt-3 text-xs text-p01-text-muted">
-            No subscriptions tracked in this browser yet. Subscribe from the Subscribe tab, or
-            track an existing vault by its address below. Subscriptions made here before this list
-            existed are found the second way.
+        {/* Track an existing vault */}
+        <div className="card p-4">
+          <div className="flex items-center gap-2">
+            <Plus className="h-4 w-4 text-p01-cyan" />
+            <p className="font-display text-sm text-p01-text">Track a vault</p>
+          </div>
+          <p className="mt-2 text-xs text-p01-text-muted">
+            Paste a subscription vault address to add it to this list, for subscriptions opened
+            before this page existed or from another browser.
           </p>
-        )}
-
-        {records.length > 0 && (
-          <ul className="mt-3 space-y-2">
-            {records.map((rec) => {
-              const state = live[rec.vaultPDA] ?? { kind: "loading" as const };
-              const summary =
-                state.kind === "open"
-                  ? summarizeSubscription(toPeriodState(state.decoded), currentSlot ?? 0n)
-                  : null;
-              return (
-                <li key={rec.vaultPDA}>
-                  <button
-                    onClick={() => setSelected(rec.vaultPDA)}
-                    className="flex w-full items-center justify-between gap-3 rounded-lg border border-p01-border bg-p01-void p-3 text-left hover:border-p01-border-hover"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-display text-sm text-p01-text">
-                        {merchantName(rec)}
-                      </p>
-                      <p className="mt-0.5 truncate text-xs text-p01-text-muted">
-                        {state.kind === "loading" && "Reading the vault…"}
-                        {state.kind === "closed" && "Closed, fully paid out to the merchant"}
-                        {state.kind === "error" && "Could not read the vault"}
-                        {summary && plainStanding(summary)}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 flex-col items-end gap-1">
-                      {state.kind === "closed" ? (
-                        <ClosedBadge />
-                      ) : summary ? (
-                        <StatusBadge status={summary.status} />
-                      ) : null}
-                      <span className="font-mono text-xs text-p01-text-muted">
-                        {rec.denomination} {rec.token}
-                      </span>
-                    </div>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-
-      {/* Track an existing vault */}
-      <div className="card p-4">
-        <div className="flex items-center gap-2">
-          <Plus className="h-4 w-4 text-p01-cyan" />
-          <p className="font-display text-sm text-p01-text">Track a vault</p>
+          <div className="mt-3 flex gap-2">
+            <input
+              value={trackAddr}
+              onChange={(e) => setTrackAddr(e.target.value)}
+              placeholder="Vault address"
+              spellCheck={false}
+              className="min-w-0 flex-1 rounded-lg border border-p01-border bg-p01-void px-3 py-2 font-mono text-xs text-p01-text placeholder:text-p01-text-dim focus:border-p01-cyan focus:outline-none"
+            />
+            <button
+              onClick={() => void handleTrack()}
+              disabled={tracking || trackAddr.trim().length === 0}
+              className="btn-secondary inline-flex shrink-0 items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-50"
+            >
+              {tracking ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Plus className="h-3.5 w-3.5" />
+              )}
+              Track
+            </button>
+          </div>
+          {trackError && (
+            <p className="mt-2 flex items-start gap-1.5 text-xs text-p01-red">
+              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {trackError}
+            </p>
+          )}
         </div>
-        <p className="mt-2 text-xs text-p01-text-muted">
-          Paste a subscription vault address to add it to this list, for subscriptions opened
-          before this page existed or from another browser.
+
+        <p className="text-xs text-p01-text-muted">
+          A subscription is a one-way prepaid envelope: no cancel, no refund, and the
+          merchant&apos;s final claim closes the vault with everything left inside going to the
+          merchant.
         </p>
-        <div className="mt-3 flex gap-2">
-          <input
-            value={trackAddr}
-            onChange={(e) => setTrackAddr(e.target.value)}
-            placeholder="Vault address"
-            spellCheck={false}
-            className="min-w-0 flex-1 rounded-lg border border-p01-border bg-p01-void px-3 py-2 font-mono text-xs text-p01-text placeholder:text-p01-text-dim focus:border-p01-cyan focus:outline-none"
-          />
-          <button
-            onClick={() => void handleTrack()}
-            disabled={tracking || trackAddr.trim().length === 0}
-            className="btn-secondary inline-flex shrink-0 items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-50"
-          >
-            {tracking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-            Track
-          </button>
-        </div>
-        {trackError && (
-          <p className="mt-2 flex items-start gap-1.5 text-xs text-p01-red">
-            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {trackError}
-          </p>
-        )}
       </div>
 
-      <p className="text-xs text-p01-text-muted">
-        A subscription is a one-way prepaid envelope: no cancel, no refund, and the merchant&apos;s
-        final claim closes the vault with everything left inside going to the merchant.
-      </p>
+      {/* Right: the detail of the selected merchant. Below lg it only exists
+          while something is selected; on lg it is always on screen. */}
+      <div className={clsx("mt-4 lg:col-span-3 lg:mt-0", !selectedRec && "hidden lg:block")}>
+        {selectedRec ? (
+          renderDetail(selectedRec)
+        ) : (
+          <div className="card p-6 text-center text-sm text-p01-text-muted">
+            Select a subscription to see its standing, its license key and its detail.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

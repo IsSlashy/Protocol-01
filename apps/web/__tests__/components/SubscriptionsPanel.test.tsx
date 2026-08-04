@@ -43,6 +43,14 @@ vi.mock("@/lib/privacy/serviceRegistry", () => ({
   formatInterval: (slots: bigint) => `every ${Math.round(Number(slots) * 0.4)} s`,
 }));
 
+// The reveal path posts to the Worker; here it answers with a canned key.
+vi.mock("@/lib/privacy/shieldClient", () => ({
+  deriveSubscriptionLicenseKey: vi.fn(),
+}));
+
+import { deriveSubscriptionLicenseKey } from "@/lib/privacy/shieldClient";
+const mockDeriveKey = vi.mocked(deriveSubscriptionLicenseKey);
+
 // ---------------------------------------------------------------------------
 // Fixtures: the real devnet vault, byte for byte.
 // ---------------------------------------------------------------------------
@@ -113,13 +121,14 @@ function seedRecord(over: Partial<Parameters<typeof recordSubscription>[1]> = {}
 
 beforeEach(() => {
   localStorage.clear();
+  mockDeriveKey.mockReset();
 });
 
 // ---------------------------------------------------------------------------
 
 describe("empty state", () => {
   it("says nothing is tracked and offers both ways in", async () => {
-    render(<SubscriptionsPanel owner={OWNER} connection={fakeConnection({ slot: 1 })} />);
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={fakeConnection({ slot: 1 })} />);
     expect(
       await screen.findByText(/No subscriptions tracked in this browser yet/i),
     ).toBeInTheDocument();
@@ -136,7 +145,7 @@ describe("list standing", () => {
       slot: START_SLOT + 1_500,
       accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
     });
-    render(<SubscriptionsPanel owner={OWNER} connection={conn} />);
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
     expect(
       await screen.findByText("19 of 20 periods left, about 3 hours"),
     ).toBeInTheDocument();
@@ -147,7 +156,7 @@ describe("list standing", () => {
   it("a missing account renders CLOSED with the merchant-gets-everything truth", async () => {
     seedRecord();
     const conn = fakeConnection({ slot: START_SLOT + 1_500, accounts: {} });
-    render(<SubscriptionsPanel owner={OWNER} connection={conn} />);
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
     expect(
       await screen.findByText(/Closed, fully paid out to the merchant/i),
     ).toBeInTheDocument();
@@ -160,7 +169,7 @@ describe("list standing", () => {
       slot: null,
       accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
     });
-    render(<SubscriptionsPanel owner={OWNER} connection={conn} />);
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
     expect(await screen.findByText("Checking")).toBeInTheDocument();
     expect(screen.queryByText("Active")).not.toBeInTheDocument();
   });
@@ -173,7 +182,7 @@ describe("detail page", () => {
       slot: START_SLOT + 1_500,
       accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
     });
-    render(<SubscriptionsPanel owner={OWNER} connection={conn} />);
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
     await userEvent.click(await screen.findByText("Bitwarden Test"));
   }
 
@@ -214,7 +223,7 @@ describe("detail page", () => {
 
 describe("track a vault", () => {
   it("refuses a non-address before touching the network", async () => {
-    render(<SubscriptionsPanel owner={OWNER} connection={fakeConnection({ slot: 1 })} />);
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={fakeConnection({ slot: 1 })} />);
     await userEvent.type(screen.getByPlaceholderText("Vault address"), "not-an-address");
     await userEvent.click(screen.getByRole("button", { name: /Track/ }));
     expect(await screen.findByText("That is not a Solana address.")).toBeInTheDocument();
@@ -227,7 +236,7 @@ describe("track a vault", () => {
       accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
       ownerOverride: "SomeOtherProgram1111111111111111111111111111",
     });
-    render(<SubscriptionsPanel owner={OWNER} connection={conn} />);
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
     await userEvent.type(screen.getByPlaceholderText("Vault address"), VAULT_ADDR);
     await userEvent.click(screen.getByRole("button", { name: /Track/ }));
     expect(
@@ -241,7 +250,7 @@ describe("track a vault", () => {
       slot: START_SLOT + 1_500,
       accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
     });
-    render(<SubscriptionsPanel owner={OWNER} connection={conn} />);
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
     await userEvent.type(screen.getByPlaceholderText("Vault address"), VAULT_ADDR);
     await userEvent.click(screen.getByRole("button", { name: /Track/ }));
 
@@ -255,5 +264,105 @@ describe("track a vault", () => {
     expect(rec.denomination).toBe(1);
     // Tracking lands on the detail page for the vault just added.
     expect(await screen.findByText("No cancel, no refund")).toBeInTheDocument();
+  });
+});
+
+describe("license key reveal", () => {
+  async function openDetailWithNote() {
+    // The record knows which note paid (pool + leafIndex), as the subscribe
+    // flow writes it, so the key is re-derivable in this browser.
+    seedRecord({ pool: "PoolPda11111111111111111111111111111111111", leafIndex: 19 });
+    const conn = fakeConnection({
+      slot: START_SLOT + 1_500,
+      accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
+    });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    await userEvent.click(await screen.findByText("Bitwarden Test"));
+  }
+
+  it("re-derives the key in the Worker on demand and shows it with a copy button", async () => {
+    mockDeriveKey.mockResolvedValue("P01-000G-40R4-0M30-E209-185G-R38E-1W");
+    await openDetailWithNote();
+
+    // Nothing shows a key before the user asks.
+    expect(document.body.textContent).not.toMatch(/P01-[0-9A-Z]{4}-/);
+
+    await userEvent.click(await screen.findByRole("button", { name: /Reveal key/ }));
+    expect(await screen.findByText("P01-000G-40R4-0M30-E209-185G-R38E-1W")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Copy key/ })).toBeInTheDocument();
+
+    // The exact identity of the derivation call: this browser's session, the
+    // paying note, and the tag the vault's commitment is scoped to.
+    expect(mockDeriveKey).toHaveBeenCalledWith({
+      meta: "meta-test",
+      walletPubkey: "wallet1",
+      pool: "PoolPda11111111111111111111111111111111111",
+      leafIndex: 19,
+      serviceTag: "bitwarden-test",
+    });
+
+    // Hide takes it back off the screen.
+    await userEvent.click(screen.getByRole("button", { name: /^Hide$/ }));
+    expect(screen.queryByText("P01-000G-40R4-0M30-E209-185G-R38E-1W")).not.toBeInTheDocument();
+  });
+
+  it("a failed re-derivation shows the reason, not a key", async () => {
+    mockDeriveKey.mockRejectedValue(
+      new Error("This browser does not hold the note that paid for this subscription."),
+    );
+    await openDetailWithNote();
+    await userEvent.click(await screen.findByRole("button", { name: /Reveal key/ }));
+    expect(
+      await screen.findByText(/does not hold the note that paid/i),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/P01-[0-9A-Z]{4}-/);
+  });
+
+  it("a vault tracked by address alone says the key lives elsewhere, no Reveal", async () => {
+    seedRecord(); // no pool, no leafIndex: exactly what track-by-address writes
+    const conn = fakeConnection({
+      slot: START_SLOT + 1_500,
+      accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
+    });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    await userEvent.click(await screen.findByText("Bitwarden Test"));
+
+    expect(
+      await screen.findByText(/cannot re-derive the key here/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reveal key/ })).not.toBeInTheDocument();
+    expect(mockDeriveKey).not.toHaveBeenCalled();
+  });
+});
+
+describe("master-detail", () => {
+  it("keeps the list mounted beside the open detail (columns from lg)", async () => {
+    seedRecord();
+    const conn = fakeConnection({
+      slot: START_SLOT + 1_500,
+      accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
+    });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    await userEvent.click(await screen.findByText("Bitwarden Test"));
+
+    // Both panes exist at once: the detail is open AND the list (with its
+    // Track form) is still mounted. Below lg the list pane is hidden by CSS
+    // only, which is what lets the selection survive a viewport resize.
+    expect(await screen.findByText("No cancel, no refund")).toBeInTheDocument();
+    expect(screen.getByText("Track a vault")).toBeInTheDocument();
+    // The back button exists for the narrow layout.
+    expect(screen.getByRole("button", { name: /All subscriptions/ })).toBeInTheDocument();
+  });
+
+  it("shows a placeholder in the detail pane until something is selected", async () => {
+    seedRecord();
+    const conn = fakeConnection({
+      slot: START_SLOT + 1_500,
+      accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
+    });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    expect(
+      await screen.findByText(/Select a subscription to see its standing/i),
+    ).toBeInTheDocument();
   });
 });
