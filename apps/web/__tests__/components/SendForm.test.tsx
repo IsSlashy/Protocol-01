@@ -43,6 +43,10 @@ vi.mock("@/lib/privacy/shieldClient", () => ({
   scanPool: (meta: string, token: string, onProgress?: (s: string) => void) =>
     scanPool(meta, token, onProgress),
   loadEncryptedNotes: (wallet: string) => loadEncryptedNotes(wallet),
+  // Nothing spent in this browser: these tests are about what the form offers
+  // from a scan, not about the local spent record. A test that wants that
+  // behaviour should override this rather than rely on the default.
+  knownSpentNoteKeys: () => new Set<string>(),
 }));
 
 const sealNoteFor = vi.fn();

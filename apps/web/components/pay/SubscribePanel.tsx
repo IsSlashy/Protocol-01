@@ -214,7 +214,17 @@ export default function SubscribePanel({
   const [result, setResult] = useState<SubscribeFromPoolResult | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const unspent = useMemo(() => notes.filter((n) => !n.spent), [notes]);
+  // `spent` on a locally-painted note is a default, not a reading, so also drop
+  // what this browser has already withdrawn — escrowing a spent note into a
+  // subscription vault would fail after ~150 chunk uploads.
+  const spentHere = useMemo(
+    () => shieldClient.knownSpentNoteKeys(owner.toBase58()),
+    [owner],
+  );
+  const unspent = useMemo(
+    () => notes.filter((n) => !n.spent && !spentHere.has(noteKey(n))),
+    [notes, spentHere],
+  );
   const services = registry?.services ?? [];
   const service = services.find((s) => s.pda.toBase58() === selectedPda) ?? null;
   const note = unspent.find((n) => noteKey(n) === selectedNote) ?? null;

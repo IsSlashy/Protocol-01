@@ -369,6 +369,72 @@ export function loadEncryptedNotes(walletPubkey: string): string[] {
   return readNoteStore()[walletPubkey] ?? [];
 }
 
+const SPENT_STORE_KEY = 'p01_pay_spent_notes_v1';
+
+/**
+ * Notes this browser has withdrawn, keyed `pool:leafIndex`.
+ *
+ * WHY THIS EXISTS. Whether a note is spent lives in an on-chain nullifier PDA,
+ * and reading it means the full pool scan — which enumerates candidate epochs
+ * per note per denomination and runs for minutes on devnet. Until it answers,
+ * every list is drawn from the local blobs, whose `spent` is a default and not
+ * a reading, so a note withdrawn ten minutes ago comes back offering Withdraw.
+ * Measured on devnet 2026-08-04: leaf #18 survived its own withdrawal, the
+ * sweep, and a page reload.
+ *
+ * Acting on one of those rows locks ~1 SOL of proof-buffer rent and spends
+ * minutes uploading before it can only fail on a nullifier collision.
+ *
+ * APPEND-ONLY AND NON-DESTRUCTIVE ON PURPOSE. The note blob is left alone, so
+ * nothing is lost if this record is wrong; and since a spent note cannot become
+ * unspent, an entry here can only ever correct a stale read, never hide a live
+ * note. It is a local memory of our own actions, not a substitute for the chain.
+ */
+export function recordSpentNote(walletPubkey: string, noteKey: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const all = readSpentStore();
+    const list = all[walletPubkey] ?? [];
+    if (!list.includes(noteKey)) list.push(noteKey);
+    all[walletPubkey] = list;
+    localStorage.setItem(SPENT_STORE_KEY, JSON.stringify(all));
+  } catch {
+    // Quota or private-mode failure. The chain scan still resolves it, slowly.
+  }
+}
+
+export function loadSpentNotes(walletPubkey: string): string[] {
+  return readSpentStore()[walletPubkey] ?? [];
+}
+
+/**
+ * Every note this browser knows it has spent, keyed `pool:leafIndex`.
+ *
+ * Unions the explicit record above with the payout history, because a payout
+ * record is written only when a withdrawal has succeeded — it is already proof
+ * of a spend, and it exists for withdrawals made before the explicit record was
+ * introduced. Without that second source the fix would only protect notes spent
+ * from this version onward, and would leave exactly the note that exposed the
+ * bug still sitting in the list.
+ */
+export function knownSpentNoteKeys(walletPubkey: string): Set<string> {
+  const keys = new Set(loadSpentNotes(walletPubkey));
+  for (const p of loadPayouts(walletPubkey)) keys.add(`${p.pool}:${p.leafIndex}`);
+  return keys;
+}
+
+function readSpentStore(): Record<string, string[]> {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(SPENT_STORE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string[]>) : {};
+  } catch {
+    return {};
+  }
+}
+
 function readNoteStore(): Record<string, string[]> {
   if (typeof localStorage === 'undefined') return {};
   try {

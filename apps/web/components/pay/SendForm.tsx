@@ -53,7 +53,12 @@ import type {
   TxRef,
 } from "@/lib/privacy/chains/types";
 import type { PoolNoteView } from "@/lib/privacy/worker/poolHandlers";
-import { loadEncryptedNotes, scanPool, scanPoolLocal } from "@/lib/privacy/shieldClient";
+import {
+  loadEncryptedNotes,
+  knownSpentNoteKeys,
+  scanPool,
+  scanPoolLocal,
+} from "@/lib/privacy/shieldClient";
 import {
   isP01NoteAddress,
   sealNoteFor,
@@ -162,7 +167,14 @@ export default function SendForm({
     if (mode === "note" && poolReady) void rescan();
   }, [mode, poolReady, rescan]);
 
-  const unspent = notes.filter((n) => !n.spent);
+  // `spent` on a locally-painted note is a default, not a reading, so also drop
+  // what this browser has already withdrawn. Handing over a spent note would
+  // give the recipient something they can never claim.
+  const spentHere = useMemo(
+    () => (owner ? knownSpentNoteKeys(owner.toBase58()) : new Set<string>()),
+    [owner],
+  );
+  const unspent = notes.filter((n) => !n.spent && !spentHere.has(noteKey(n)));
   const chosen = unspent.find((n) => noteKey(n) === selected) ?? null;
   const addressLooksRight = isP01NoteAddress(noteAddress);
   const canSeal = !!chosen && addressLooksRight && !sealing;

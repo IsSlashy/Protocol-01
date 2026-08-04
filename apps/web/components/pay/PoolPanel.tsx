@@ -11,7 +11,9 @@ import {
   derivePoolPayoutRoot,
   loadEncryptedNotes,
   loadPayouts,
+  knownSpentNoteKeys,
   recordPayout,
+  recordSpentNote,
   scanPool,
   shieldToPool,
   recoverStuckFunds,
@@ -72,8 +74,10 @@ export default function PoolPanel({
   const denominations = denominationsFor(token);
   const [denomination, setDenomination] = useState(denominations[0]!);
   const [notes, setNotes] = useState<PoolNoteView[]>([]);
-  /** Notes this session withdrew, keyed `pool:leafIndex`. Never un-set: a spent
-   *  note cannot become unspent, so this only ever corrects a stale scan. */
+  /** Notes this browser withdrew, keyed `pool:leafIndex`. Seeded from local
+   *  storage so it survives a reload, which is the case that actually bit:
+   *  session state forgot, and the list offered a spent note again. Never
+   *  un-set — a spent note cannot become unspent. */
   const [spentLocally, setSpentLocally] = useState<ReadonlySet<string>>(new Set());
   /** True while the list comes from local storage, whose `spent` is a default
    *  rather than a reading. Cleared once the chain walk has answered. */
@@ -117,6 +121,9 @@ export default function PoolPanel({
   useEffect(() => {
     setPayoutRoot(null);
     setPayouts([]);
+    // Spent notes are per wallet and persisted, so re-read them on a switch
+    // rather than carrying one wallet's history into another's list.
+    setSpentLocally(knownSpentNoteKeys(ownerKey));
   }, [ownerKey]);
 
   const rescan = useCallback(async () => {
@@ -340,7 +347,10 @@ export default function PoolPanel({
         denomination: out.denomination,
       });
       setWithdrawn({ ...out, payout: payout.publicKey.toBase58() });
-      setSpentLocally((prev) => new Set(prev).add(`${note.pool}:${note.leafIndex}`));
+      // Persist it: this is the only record that survives the reload, and the
+      // chain walk that would otherwise settle it takes minutes.
+      recordSpentNote(ownerKey, noteKey(note));
+      setSpentLocally((prev) => new Set(prev).add(noteKey(note)));
       void refreshPayouts(root);
       void rescan();
     } catch (e) {
