@@ -76,6 +76,7 @@ import type { PoolNoteView } from "@/lib/privacy/worker/poolHandlers";
 import {
   loadEncryptedNotes,
   knownSpentNoteKeys,
+  mergeScanWithLocal,
   resolveSpentNotes,
   scanPool,
   scanPoolLocal,
@@ -251,10 +252,14 @@ export default function SendForm({
       // was watching "Scanning the 0.1 SOL pool..." the whole time.
       //
       // These arrive with `spentKnown: false`; nothing here has seen a nullifier
-      // PDA, so they are provisional until the scan below replaces them.
+      // PDA, so they are provisional until the scan below reconciles them.
+      let localNotes: PoolNoteView[] = [];
       try {
         const local = await scanPoolLocal(meta, owner.toBase58());
-        if (local.notes.length > 0) setNotes(local.notes);
+        if (local.notes.length > 0) {
+          localNotes = local.notes;
+          setNotes(local.notes);
+        }
       } catch {
         // A missing or unreadable blob store is not an error worth showing:
         // the authoritative scan runs next regardless.
@@ -273,7 +278,10 @@ export default function SendForm({
           .catch(() => {});
       }
       const res = await scanPool(meta, "SOL", setScanStep);
-      setNotes(res.notes);
+      // MERGE, not replace: a RECEIVED note's secrets came from the sender's
+      // seed, so the seed-deriving chain scan can never return it; replacing
+      // wholesale dropped it from this picker the moment the slow scan landed.
+      setNotes(mergeScanWithLocal(res.notes, localNotes));
     } catch (e) {
       setScanError((e as Error).message || "Pool scan failed.");
     } finally {

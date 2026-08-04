@@ -266,12 +266,10 @@ export default function ReceivePanel({
           </div>
         </div>
 
-        {/* Honest limit of today's app, said here rather than discovered after
-            a minutes-long doomed withdrawal attempt in the Pool tab. */}
         <p className="text-xs text-p01-text-dim">
-          Withdrawing a received note from this app is not wired up yet: the withdraw path
-          currently only finds notes created by your own keys. The note stays safe in your
-          list until that lands.
+          To spend it, open the Pool tab: the note sits under Your notes with the same
+          Withdraw button as a note you shielded yourself. It can also pay for a
+          subscription, or be handed on from the Send tab.
         </p>
 
         <button className="btn-secondary w-full" onClick={() => setReceived(null)}>

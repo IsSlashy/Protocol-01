@@ -76,6 +76,10 @@ export interface SubscribeFromPoolParams {
   intervalSlots: bigint;
   serviceId: string;
   owner: PublicKey;
+  /** Note blobs from the local store. The worker uses the matching one's
+   *  Merkle path, and for a RECEIVED note (secrets from the sender's seed,
+   *  invisible to the seed scan) the blob is what identifies the note at all. */
+  encryptedNotes?: string[];
   connection: Connection;
   signOne: (tx: Transaction) => Promise<Transaction>;
   onProgress?: (step: string) => void;
@@ -266,9 +270,13 @@ export default function SubscribePanel({
       //
       // These arrive with `spentKnown: false` (nothing here has seen a nullifier
       // PDA) so they are provisional until the scan below replaces them.
+      let localNotes: PoolNoteView[] = [];
       try {
         const local = await shieldClient.scanPoolLocal(meta, owner.toBase58());
-        if (local.notes.length > 0) setNotes(local.notes);
+        if (local.notes.length > 0) {
+          localNotes = local.notes;
+          setNotes(local.notes);
+        }
       } catch {
         // A missing or unreadable blob store is not an error worth showing:
         // the authoritative scan runs next regardless.
@@ -285,7 +293,10 @@ export default function SubscribePanel({
         .then(() => setSpentHere(shieldClient.knownSpentNoteKeys(owner.toBase58())))
         .catch(() => {});
       const res = await shieldClient.scanPool(meta, 'SOL', setScanStep);
-      setNotes(res.notes);
+      // MERGE, not replace: a RECEIVED note's secrets came from the sender's
+      // seed, so the seed-deriving chain scan can never return it; replacing
+      // wholesale dropped it from this picker the moment the slow scan landed.
+      setNotes(shieldClient.mergeScanWithLocal(res.notes, localNotes));
     } catch (e) {
       setScanError((e as Error).message || 'Pool scan failed.');
     } finally {
@@ -383,6 +394,9 @@ export default function SubscribePanel({
         // no merchant will accept.
         serviceId: licenseServiceTag(service.slug, service.retailer.toBase58()),
         owner,
+        // Lets the worker skip the Merkle-history rebuild for a shielded note,
+        // and is the ONLY way it can find a received one.
+        encryptedNotes: shieldClient.loadEncryptedNotes(owner.toBase58()),
         connection,
         signOne,
         onProgress: setStep,

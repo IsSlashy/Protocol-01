@@ -20,6 +20,7 @@ import {
   loadEncryptedNotes,
   loadPayouts,
   knownSpentNoteKeys,
+  mergeScanWithLocal,
   resolveSpentNotes,
   recordPayout,
   recordSpentNote,
@@ -189,9 +190,11 @@ export default function PoolPanel({
       // and not a reading: a note withdrawn on another device, or in an earlier
       // session, paints as spendable. `notesProvisional` says so, and the
       // Withdraw button stays disabled until the chain walk below answers.
+      let localNotes: PoolNoteView[] = [];
       try {
         const local = await scanPoolLocal(meta, owner.toBase58());
         if (local.notes.length > 0) {
+          localNotes = local.notes;
           setNotes(local.notes);
           setNotesProvisional(true);
         }
@@ -210,7 +213,11 @@ export default function PoolPanel({
         .then(() => setSpentLocally(knownSpentNoteKeys(owner.toBase58())))
         .catch(() => {});
       const res = await scanPool(meta, "SOL", setScanStep);
-      setNotes(res.notes);
+      // MERGE, not replace: the chain scan re-derives from the pool seed, so a
+      // RECEIVED note (secrets from the sender's seed) is invisible to it, and
+      // replacing wholesale made received money vanish exactly when the slow
+      // scan finished. The chain wins every leaf it can see; see the helper.
+      setNotes(mergeScanWithLocal(res.notes, localNotes));
       setNotesProvisional(false);
       setPoolSizes(res.poolSizes);
     } catch (e) {

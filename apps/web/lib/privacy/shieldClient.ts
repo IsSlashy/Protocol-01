@@ -337,6 +337,32 @@ export function scanPoolLocal(meta: string, walletPubkey: string) {
   return poolRequest({ kind: 'poolScanLocal', meta, blobs: loadEncryptedNotes(walletPubkey) });
 }
 
+/**
+ * Merge the authoritative chain scan into the locally painted note list.
+ *
+ * WHY THIS EXISTS. Every panel paints from `scanPoolLocal` first and then used
+ * to REPLACE the list with the chain scan's result wholesale. The chain scan
+ * re-derives notes from the pool seed, so there are exactly two kinds of note
+ * it can never return: a RECEIVED note (its secrets came from the sender's
+ * seed; only the local blob knows them) and a note whose leaf events this RPC
+ * has pruned. Wholesale replacement therefore made received money vanish from
+ * the lists tens of seconds after it appeared, precisely when the slow scan
+ * finished. The rule here: the chain scan wins for every leaf it can see (its
+ * `spent` is a reading, the local one a default), and a local note the scan
+ * has NO row for is kept, because for those two kinds the local store is the
+ * only witness. A seed-derived, RPC-visible note always has a chain row, spent
+ * or not, so nothing stale is ever resurrected by keeping the remainder.
+ */
+export function mergeScanWithLocal(
+  chainNotes: PoolNoteView[],
+  localNotes: PoolNoteView[],
+): PoolNoteView[] {
+  const seen = new Set(chainNotes.map((n) => `${n.pool}:${n.leafIndex}`));
+  return [...chainNotes, ...localNotes.filter((n) => !seen.has(`${n.pool}:${n.leafIndex}`))].sort(
+    (a, b) => a.denomination - b.denomination || a.leafIndex - b.leafIndex,
+  );
+}
+
 export interface ImportNoteOutcome {
   /** Public view of the received note. Carries `spentKnown: false` when the
    *  chain could not be asked whether it is still unspent; say so on screen. */

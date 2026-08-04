@@ -150,10 +150,13 @@ export interface PoolUnshieldPrepareRequest {
   token: PoolToken;
   denomination: number;
   leafIndex: number;
-  /** Note blobs stored at shield time. The one whose commitment matches this
-   *  note supplies the Merkle path, letting the withdrawal skip the history
-   *  rebuild. Untrusted: each is authenticated by decryption and cross-checked
-   *  against the derived note, and anything that fails is ignored. */
+  /** Note blobs from the local store. Two jobs: the one whose commitment
+   *  matches this note supplies the Merkle path, letting the withdrawal skip
+   *  the history rebuild; and when the seed derivation finds nothing at this
+   *  leaf, they identify a RECEIVED note (secrets from the sender's seed, so
+   *  only the blob knows them). Untrusted either way: each is authenticated by
+   *  decryption under this identity's own seeds, the commitment is recomputed
+   *  from the secrets, and anything that fails is ignored. */
   encryptedNotes?: string[];
 }
 
@@ -282,11 +285,12 @@ export interface PoolExportNoteRequest {
  * paints in the note lists with no pool scan, and its spent status resolves
  * through the same nullifier read as every other local note.
  *
- * KNOWN LIMIT, STATED RATHER THAN HIDDEN: `locateOwnedNote` re-derives note
- * secrets from the pool seed, and a received note's secrets came from the
- * sender's seed, so the seed-based withdraw/subscribe path cannot spend it
- * yet. The import keeps the secrets safe and listed; wiring a receipt-based
- * spend path is a separate, additive change.
+ * HOW A RECEIVED NOTE IS LATER SPENT: through the exact same paths as a
+ * shielded one. `locateOwnedNote` first searches the seed derivations (a
+ * received note's secrets came from the sender's seed, so that search always
+ * misses) and then falls back to rebuilding the receipt from these stored
+ * blobs, so the existing withdraw, subscribe and hand-over handlers all find
+ * it without any dedicated path.
  */
 export interface PoolImportNoteRequest {
   kind: 'poolImportNote';
@@ -1007,6 +1011,31 @@ async function locateOwnedNote(
       break;
     }
   }
+
+  // FALLBACK: a RECEIVED note. Its secrets came from the SENDER's seed, so the
+  // derivation search above can never find it; what does know them is the blob
+  // `poolImportNote` filed in the local store, which every spending caller
+  // already passes in as `encryptedNotes`. Rebuilding the receipt from that
+  // blob is what lets the EXISTING withdraw, subscribe and hand-over paths
+  // spend a received note with no dedicated machinery: everything downstream
+  // of this function is receipt-driven (`prepareUnshieldJob` proves from the
+  // receipt; the seed it also takes only derives the withdrawal ephemeral,
+  // which is correctly OURS, not the sender's).
+  if (!owner) {
+    const received = await receivedNoteFromBlobs(
+      candidates,
+      req.encryptedNotes,
+      pool,
+      req.leafIndex,
+      commitments,
+      conn,
+    );
+    // The ACTIVE candidate on purpose: it drives the ephemeral derivation and
+    // the subscribe path's own-blob address, both of which belong to the
+    // current derivation regardless of which seed decrypted the blob.
+    if (received) owner = { candidate: candidates[0], note: received };
+  }
+
   if (!owner) {
     throw new Error(
       `No note of yours found at leaf #${req.leafIndex} in the ${pool.denomination} ` +
@@ -1075,6 +1104,73 @@ function extractStoredPath(
     }
   }
   return undefined;
+}
+
+/**
+ * Rebuild a RECEIVED note's full receipt from the local blob store, for the
+ * `locateOwnedNote` fallback. Returns null when no stored blob describes an
+ * intact note at (pool, leafIndex).
+ *
+ * A blob is trusted only after the same three checks a fresh import runs:
+ * it decrypts under one of this identity's own seeds, its commitment
+ * recomputes from its secrets (`shareableNoteToReceipt`; the stored shape is
+ * a superset of `ShareableNote`, written by `poolShieldExecute` and
+ * `handlePoolImportNote`), and, when this RPC still serves the leaf, the
+ * commitment actually sits at the claimed leaf on chain. A commitment the RPC
+ * no longer serves is NOT refused: the stored Merkle path can still carry the
+ * withdrawal, and `prepareUnshieldJob`'s root-ring pre-flight is the guard
+ * that no proof rent is burned on a wrong claim. The spent check mirrors what
+ * `recoverNotes` does per note, so the caller's "already been withdrawn"
+ * refusal applies to received notes exactly as to shielded ones.
+ */
+async function receivedNoteFromBlobs(
+  candidates: SeedCandidate[],
+  blobs: string[] | undefined,
+  pool: PoolConfig,
+  leafIndex: number,
+  commitments: Map<string, OnChainCommitment>,
+  conn: Connection,
+): Promise<RecoveredNote | null> {
+  for (const blob of blobs ?? []) {
+    let parsed: ShareableNote | null = null;
+    for (const candidate of candidates) {
+      try {
+        parsed = JSON.parse(
+          new TextDecoder().decode(decryptNote(candidate.seed, blob)),
+        ) as ShareableNote;
+        break;
+      } catch {
+        // Not this derivation's blob. Try the next.
+      }
+    }
+    if (!parsed) continue;
+    if (parsed.pool !== pool.poolPDA.toBase58() || Number(parsed.leafIndex) !== leafIndex) {
+      continue;
+    }
+
+    let receipt;
+    try {
+      receipt = shareableNoteToReceipt(parsed);
+    } catch {
+      // Corrupted or mismatched blob: skip it rather than block a good one.
+      continue;
+    }
+
+    // When the RPC still serves this commitment, it must sit at the claimed
+    // leaf; a blob pointing at somebody else's leaf would otherwise send the
+    // prover after a membership it can never prove.
+    const onChain = commitments.get(receipt.commitment.toString());
+    if (onChain && onChain.leafIndex !== leafIndex) continue;
+
+    const spent = await isNullifierSpent(
+      conn,
+      pool.poolPDA,
+      receipt.nullifierPreimage,
+      receipt.secret,
+    );
+    return { counter: leafIndex, spent, receipt: { ...receipt, source: 'received' } };
+  }
+  return null;
 }
 
 async function handlePoolUnshieldExecute(

@@ -39,19 +39,26 @@ import type { Asset, ChainStealthAdapter } from "@/lib/privacy/chains/types";
 const scanPool = vi.fn();
 const loadEncryptedNotes = vi.fn((_wallet: string): string[] => ["p01enc1:stored-blob"]);
 
-vi.mock("@/lib/privacy/shieldClient", () => ({
-  scanPool: (meta: string, token: string, onProgress?: (s: string) => void) =>
-    scanPool(meta, token, onProgress),
-  loadEncryptedNotes: (wallet: string) => loadEncryptedNotes(wallet),
-  // Nothing spent in this browser: these tests are about what the form offers
-  // from a scan, not about the local spent record. A test that wants that
-  // behaviour should override this rather than rely on the default.
-  knownSpentNoteKeys: () => new Set<string>(),
-  // The chain resolution is fire-and-forget in the component. Resolving to
-  // nothing keeps these tests about what the form offers from a scan, which is
-  // what they were written for.
-  resolveSpentNotes: async () => undefined,
-}));
+vi.mock("@/lib/privacy/shieldClient", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/privacy/shieldClient")>();
+  return {
+    scanPool: (meta: string, token: string, onProgress?: (s: string) => void) =>
+      scanPool(meta, token, onProgress),
+    loadEncryptedNotes: (wallet: string) => loadEncryptedNotes(wallet),
+    // Nothing spent in this browser: these tests are about what the form offers
+    // from a scan, not about the local spent record. A test that wants that
+    // behaviour should override this rather than rely on the default.
+    knownSpentNoteKeys: () => new Set<string>(),
+    // The chain resolution is fire-and-forget in the component. Resolving to
+    // nothing keeps these tests about what the form offers from a scan, which is
+    // what they were written for.
+    resolveSpentNotes: async () => undefined,
+    // The REAL merge: a pure function on the scan results, and the thing that
+    // keeps a received note in this picker after the chain scan lands. Stubbing
+    // it would let the form pass while dropping received money.
+    mergeScanWithLocal: actual.mergeScanWithLocal,
+  };
+});
 
 const sealNoteFor = vi.fn();
 

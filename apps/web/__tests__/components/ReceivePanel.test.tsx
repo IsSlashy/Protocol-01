@@ -214,6 +214,16 @@ describe("importing", () => {
     expect(screen.getByText(/This device holds your only copy/i)).toBeInTheDocument();
   });
 
+  it("points at the Pool tab's existing Withdraw button as the way to spend it", async () => {
+    // The founder's criterion: a received note is withdrawn from the Pool tab
+    // with the button that already exists, so the success screen may say so.
+    await importSealed();
+    await screen.findByText("Received a 0.1 SOL note");
+    expect(
+      screen.getByText(/same\s+Withdraw button as a note you shielded yourself/i),
+    ).toBeInTheDocument();
+  });
+
   it("says when the unspent check could not run, instead of implying it did", async () => {
     importReceivedNote.mockResolvedValue(outcome({ spentKnown: false }));
     await importSealed();

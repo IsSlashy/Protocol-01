@@ -93,6 +93,9 @@ function seal(note: ShareableNote, address = MY_ADDRESS): string {
 
 const chain = { spent: false, fail: false, reads: 0 };
 
+/** The pool's leaves as the RPC serves them, used by `locateOwnedNote`. */
+const chainLeaves = new Map<string, { commitment: bigint; leafIndex: number }>();
+
 vi.mock('./denominatedPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./denominatedPool')>();
   return {
@@ -102,6 +105,7 @@ vi.mock('./denominatedPool', async (importOriginal) => {
       if (chain.fail) throw new Error('rpc down');
       return chain.spent;
     },
+    fetchPoolCommitments: async () => chainLeaves,
   };
 });
 
@@ -122,9 +126,27 @@ vi.mock('./shieldEphemeral', () => ({
   },
   recordShieldBreadcrumb: async () => undefined,
 }));
+/**
+ * The withdraw handler's proving half, captured instead of run: what matters
+ * here is WHAT locateOwnedNote hands it, because everything downstream is
+ * receipt-driven. The real thing proves C1 + C3 for minutes against a cluster.
+ */
+const unshieldJobs: Array<{ receipt: Record<string, unknown>; storedPath: unknown }> = [];
 vi.mock('./unshieldEphemeral', () => ({
-  prepareUnshieldJob: async () => {
-    throw new Error('not exercised');
+  prepareUnshieldJob: async (
+    receipt: Record<string, unknown>,
+    _pool: unknown,
+    _conn: unknown,
+    _seed: unknown,
+    _onProgress: unknown,
+    storedPath: unknown,
+  ) => {
+    unshieldJobs.push({ receipt, storedPath });
+    return {
+      jobId: 'job-under-test',
+      ephemeral: { publicKey: { toBase58: () => 'EphemeralPubkey' } },
+      requiredLamports: 42,
+    };
   },
   executeUnshield: async () => {
     throw new Error('not exercised');
@@ -157,6 +179,12 @@ beforeEach(() => {
   chain.spent = false;
   chain.fail = false;
   chain.reads = 0;
+  unshieldJobs.length = 0;
+  // By default the RPC serves the received note's leaf, sitting where the
+  // note says it does.
+  chainLeaves.clear();
+  const c = shareable().commitment;
+  chainLeaves.set(c, { commitment: BigInt(c), leafIndex: LEAF });
   configurePoolHandlers('http://localhost:8899');
   setPoolSeed(META, SIGNATURE, PASSPHRASE);
 });
@@ -337,5 +365,101 @@ describe('poolNoteAddress', () => {
     await expect(
       handlePoolRequest({ kind: 'poolNoteAddress' as const, meta: META }),
     ).rejects.toThrow(/No pool keys/);
+  });
+});
+
+describe('the EXISTING withdraw path can spend a received note', () => {
+  // The founder's success criterion, as a test: import the note, then run the
+  // same poolUnshieldPrepare the Pool tab's Withdraw button runs, passing the
+  // stored blobs it already passes. The seed scan misses (the secrets are the
+  // sender's), the blob fallback must produce the exact receipt.
+
+  function prepareReq(encryptedNotes: string[], overrides: Record<string, unknown> = {}) {
+    return {
+      kind: 'poolUnshieldPrepare' as const,
+      meta: META,
+      token: 'SOL' as const,
+      denomination: DENOM,
+      leafIndex: LEAF,
+      encryptedNotes,
+      ...overrides,
+    };
+  }
+
+  it('rebuilds the exact receipt from the stored blob and hands it to the prover', async () => {
+    const imported = await handlePoolRequest(importReq());
+    const prep = await handlePoolRequest(prepareReq([imported.encryptedNote]));
+
+    expect(prep).toMatchObject({
+      jobId: 'job-under-test',
+      ephemeralPubkey: 'EphemeralPubkey',
+      denomination: DENOM,
+      // The ACTIVE derivation: the withdrawal ephemeral is ours, whatever seed
+      // minted the note.
+      derivation: 2,
+    });
+    expect(unshieldJobs).toHaveLength(1);
+    const receipt = unshieldJobs[0]!.receipt;
+    expect(receipt.secret).toBe(SECRET);
+    expect(receipt.nullifierPreimage).toBe(NULLIFIER_PREIMAGE);
+    expect(receipt.noteBlinding).toBe(BLINDING);
+    expect(receipt.leafIndex).toBe(LEAF);
+    expect(receipt.source).toBe('received');
+  });
+
+  it('feeds the Merkle path that travelled with the note as the stored path', async () => {
+    const withPath = shareable({
+      merkle_root: '123456789',
+      merkle_path_elements: ['11', '22', '33'],
+      merkle_path_indices: [1, 0, 1],
+    });
+    const imported = await handlePoolRequest(importReq({ sealedNote: seal(withPath) }));
+    await handlePoolRequest(prepareReq([imported.encryptedNote]));
+
+    expect(unshieldJobs[0]!.storedPath).toEqual({
+      pathElements: ['11', '22', '33'],
+      pathIndices: [1, 0, 1],
+      root: '123456789',
+    });
+  });
+
+  it('refuses once the chain says the note was spent, e.g. by the sender', async () => {
+    // The race the UI warns about: the sender kept a spendable copy and used
+    // it first. The location step must refuse before any proving or funding.
+    const imported = await handlePoolRequest(importReq());
+    chain.spent = true;
+    await expect(handlePoolRequest(prepareReq([imported.encryptedNote]))).rejects.toThrow(
+      /already been withdrawn/i,
+    );
+    expect(unshieldJobs).toHaveLength(0);
+  });
+
+  it('skips a blob whose commitment sits at a different on-chain leaf', async () => {
+    // A wrong leaf claim would send the prover after a membership it can never
+    // prove; the blob is dropped and the honest not-found error stands.
+    const imported = await handlePoolRequest(importReq());
+    const c = shareable().commitment;
+    chainLeaves.clear();
+    chainLeaves.set(c, { commitment: BigInt(c), leafIndex: LEAF + 1 });
+    await expect(handlePoolRequest(prepareReq([imported.encryptedNote]))).rejects.toThrow(
+      /No note of yours found/,
+    );
+  });
+
+  it('proceeds when the RPC no longer serves the leaf at all', async () => {
+    // A pruned RPC cannot disprove the note, and the stored Merkle path can
+    // still carry the withdrawal; prepareUnshieldJob's root-ring pre-flight is
+    // the guard that no rent is burned on a wrong claim.
+    const imported = await handlePoolRequest(importReq());
+    chainLeaves.clear();
+    await handlePoolRequest(prepareReq([imported.encryptedNote]));
+    expect(unshieldJobs).toHaveLength(1);
+  });
+
+  it('still refuses a leaf that no seed and no blob can explain', async () => {
+    await expect(handlePoolRequest(prepareReq([], { leafIndex: 999 }))).rejects.toThrow(
+      /No note of yours found/,
+    );
+    expect(unshieldJobs).toHaveLength(0);
   });
 });
