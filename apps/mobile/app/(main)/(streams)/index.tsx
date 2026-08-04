@@ -419,19 +419,41 @@ function ServiceCard({ service: svc, index, subscribed, onPress }: {
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={st.cardName} numberOfLines={1}>{svc.name}</Text>
+            {/*
+              `numberOfLines={1}` alone does NOT truncate here. A Text in a flex
+              row keeps its full intrinsic width unless it is allowed to shrink,
+              so a long name overflowed the row, pushed the tick out of this
+              column, and landed it on top of the price. MEASURED on device with
+              "Bitwarden (10-min test loop)" (28 chars); every name in the live
+              registry is now 4-14 chars, which is why it looked fine again — the
+              layout was still wrong, just not currently provoked.
+              flexShrink on the label, flexShrink:0 on the tick so the icon is
+              never the thing that gives way.
+            */}
+            <Text style={[st.cardName, { flexShrink: 1 }]} numberOfLines={1} ellipsizeMode="tail">
+              {svc.name}
+            </Text>
             {svc.verified && (
-              <Ionicons name="checkmark-circle" size={14} color={P01Colors.cyan} />
+              <Ionicons
+                name="checkmark-circle"
+                size={14}
+                color={P01Colors.cyan}
+                style={{ flexShrink: 0 }}
+              />
             )}
             {isNew && <Badge text="NEW" color={P01Colors.cyan} />}
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
             {subscribed && <Badge text={t('common.active').toUpperCase()} color={P01Colors.green} />}
             {!svc.verified && <Badge text="UNVERIFIED" color={P01Colors.yellow} />}
-            <Text style={st.cardSub}>{svc.category || '—'}</Text>
+            <Text style={st.cardSub} numberOfLines={1} ellipsizeMode="tail">
+              {svc.category || '—'}
+            </Text>
           </View>
         </View>
-        <View style={{ alignItems: 'flex-end' }}>
+        {/* The price is the one thing that must never be squeezed: it is what the
+            user is deciding on. flexShrink:0 makes the name give way instead. */}
+        <View style={{ alignItems: 'flex-end', flexShrink: 0 }}>
           <Text style={st.cardAmount}>{priceLabel}</Text>
           <Text style={st.cardFreq}>/{intervalLabel}</Text>
         </View>
