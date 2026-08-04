@@ -46,7 +46,8 @@ export interface ClaimPeriodResult {
 
 export interface ClaimPeriodSendOptions extends BuildClaimPeriodOptions {
   /**
-   * Who signs and pays. Defaults to `retailerSigner`.
+   * Who signs and pays. Defaults to the retailer, when the retailer was passed
+   * as a `Signer`; REQUIRED when the retailer was passed as a bare `PublicKey`.
    *
    * Supply this to use the capability the 2026-08-04 redeploy exists for: since
    * that deploy `claim_period` takes the retailer as an `UncheckedAccount` pinned
@@ -56,8 +57,8 @@ export interface ClaimPeriodSendOptions extends BuildClaimPeriodOptions {
    * secret. That is what rescues a merchant whose retailer key is lost, which is
    * ~5.5 SOL of devnet vaults today.
    *
-   * When it is set, `retailerSigner` is not required to sign at all and may be a
-   * bare public key wrapped as a Signer-shaped object; only `payer` signs.
+   * When it is set, only `payer` signs (plus the retailer if `retailerSigns`
+   * explicitly opts it in for the treasury case).
    */
   payer?: Signer;
   /**
@@ -79,16 +80,36 @@ export interface ClaimPeriodSendOptions extends BuildClaimPeriodOptions {
  * not a drip: nothing on chain schedules it. Call it on whatever cadence suits
  * the merchant's books.
  *
- * @param retailerSigner must be the vault's `retailer`; the program's only
- *   constraint is `retailer.key() == vault.retailer`, and the same key pays the
- *   transaction fee.
+ * @param retailer the vault's `retailer` — an ADDRESS, not a key. The program's
+ *   only constraint is `retailer.key() == vault.retailer`: it pins where the
+ *   money goes, not who sends the transaction. Pass a bare `PublicKey` together
+ *   with `opts.payer` to claim on a merchant's behalf without holding any of
+ *   their keys — the permissionless shape the 2026-08-04 redeploy exists for.
+ *   Passing a `Signer` keeps the classic self-claim: the retailer signs and
+ *   pays its own fee. If this parameter ever demands a `Signer` again, the SDK
+ *   has re-imposed in software the constraint the program deliberately removed;
+ *   `claim-send.test.ts` pins that.
  */
 export async function claimPeriod(
   connection: Connection,
   vaultPda: PublicKey,
-  retailerSigner: Signer,
+  retailer: PublicKey | Signer,
   opts: ClaimPeriodSendOptions = {},
 ): Promise<ClaimPeriodResult> {
+  // Address-only is the first-class shape. A Signer is accepted for the
+  // self-claim, and is only USED as one — nothing below reads `secretKey`
+  // until the transaction is actually signed.
+  const retailerKey = 'publicKey' in retailer ? retailer.publicKey : retailer;
+  const retailerSigner: Signer | undefined =
+    'publicKey' in retailer && retailer.secretKey ? retailer : undefined;
+  const payer = opts.payer ?? retailerSigner;
+  if (!payer) {
+    throw new Error(
+      `claim_period: retailer ${retailerKey.toBase58()} was given as an address, so it cannot ` +
+        `sign — pass opts.payer to carry the signature and the fee. The claim stays ` +
+        `permissionless: any funded key works, and the payout still goes only to the retailer.`,
+    );
+  }
   const programId = opts.sdkConfig
     ? resolveProgramIds(opts.sdkConfig).zkShielded
     : (opts.programId ?? ZK_SHIELDED_PROGRAM_ID_DEVNET);
@@ -120,9 +141,9 @@ export async function claimPeriod(
   // ADDRESS. Requiring the caller to hold that key as well would re-impose, in
   // the SDK, exactly the constraint the redeploy removed from the program — and
   // would lock out the case the change exists for, a merchant whose key is gone.
-  if (!vault.retailer.equals(retailerSigner.publicKey)) {
+  if (!vault.retailer.equals(retailerKey)) {
     throw new Error(
-      `${retailerSigner.publicKey.toBase58()} is not this vault's retailer ` +
+      `${retailerKey.toBase58()} is not this vault's retailer ` +
         `(${vault.retailer.toBase58()}). claim_period would fail with Unauthorized (6004). ` +
         `The retailer is a PDA seed and can never be rotated, so this is the wrong address, ` +
         `not a stale vault. Note you do NOT need the retailer's key to claim — pass ` +
@@ -155,14 +176,24 @@ export async function claimPeriod(
   }
 
   const isNative = vault.tokenMint.equals(SystemProgram.programId);
-  const ix = buildClaimPeriodInstruction(vaultPda, retailerSigner.publicKey, opts);
+  const ix = buildClaimPeriodInstruction(vaultPda, retailerKey, opts);
   const tx = new Transaction().add(ix);
   const { blockhash } = await connection.getLatestBlockhash(opts.commitment ?? 'confirmed');
   tx.recentBlockhash = blockhash;
-  // Permissionless when a payer is supplied: only the payer signs, and the
-  // retailer appears as a plain writable account, exactly as the program declares it.
-  const payer = opts.payer ?? retailerSigner;
-  const signers = opts.payer ? [opts.payer] : [retailerSigner];
+  // Permissionless by default: the payer signs, and the retailer travels as a
+  // plain writable account, exactly as the program declares it. The retailer
+  // co-signs only when `retailerSigns` opts into the one thing the signature
+  // still buys (a treasury `retailerTokenAccount` the retailer key does not own).
+  const signers: Signer[] = [payer];
+  if (opts.retailerSigns) {
+    if (!retailerSigner) {
+      throw new Error(
+        `claim_period: retailerSigns is set but the retailer was given as an address — there is ` +
+          `no key to sign with. Pass the retailer as a Signer, or drop retailerSigns.`,
+      );
+    }
+    if (!retailerSigner.publicKey.equals(payer.publicKey)) signers.push(retailerSigner);
+  }
   tx.feePayer = payer.publicKey;
 
   // Quote the REAL fee rather than assuming the 5,000-lamport base: a caller that
@@ -198,10 +229,10 @@ export async function claimPeriod(
     // payer and the retailer are the same account.
     await assertRetailerCanReceiveClaim(
       connection,
-      retailerSigner.publicKey,
+      retailerKey,
       amountClaimed,
       spl,
-      opts.payer ? 0n : feeLamports,
+      payer.publicKey.equals(retailerKey) ? feeLamports : 0n,
     );
   }
 
