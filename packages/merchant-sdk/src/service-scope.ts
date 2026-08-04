@@ -119,6 +119,27 @@ export interface ServiceScopedOptions {
    * discriminate. Cheap to pass if the merchant already caches its registry.
    */
   otherServices?: ServiceScope[];
+  /**
+   * Refuse to answer at all when `service` was not supplied, instead of quietly
+   * answering a weaker question. Recommended in production.
+   *
+   * Without it, omitting `service` degrades the check silently: the caller gets
+   * a confident `true` for "a vault naming this merchant exists and is inside a
+   * period someone paid for", which a stranger can arrange without ever talking
+   * to the merchant. That is the self-minted-vault hole, and the shape of the
+   * failure — a boolean that is simply weaker than the caller believes — is why
+   * it needs an explicit opt-out rather than a comment.
+   */
+  requireService?: boolean;
+  /**
+   * Called when the scope check was SKIPPED because `service` was absent.
+   *
+   * The companion to `requireService` for callers who cannot fail closed yet:
+   * a channel to discover the omission in logs. `verifyAccessToken` already
+   * reports the same fact as `serviceChecked` in its result; the vault helpers
+   * return a vault or `null` and have nowhere to put it.
+   */
+  onServiceUnchecked?: (info: { vault: string; retailer: string }) => void;
 }
 
 /** Build a {@link ServiceScope} from a decoded registry entry. */

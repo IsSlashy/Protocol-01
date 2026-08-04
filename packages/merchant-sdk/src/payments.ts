@@ -174,6 +174,21 @@ export interface WatchPaymentsOptions {
   /** RPC commitment. `getSignaturesForAddress` accepts `Finality` only
    *  (no `processed`). Default `confirmed`. */
   commitment?: 'confirmed' | 'finalized';
+  /**
+   * Called once per signature that was inspected and NOT returned as a receipt.
+   *
+   * Exists because the silence was the defect. This function used to drop every
+   * non-match without a word, so a merchant polling correctly, against the right
+   * wallet, while customers really paid, saw an empty array forever and had no
+   * channel to learn why. MEASURED 2026-08-04: no shipped client writes
+   * {@link MEMO_INVOICE_PREFIX} at all, so the honest result today IS empty —
+   * but "empty because nobody paid" and "empty because the memo format nobody
+   * writes did not match" are opposite problems and looked identical.
+   *
+   * Optional, and never throws into the caller's loop: an exception raised here
+   * is swallowed, because a diagnostic hook must not be able to break polling.
+   */
+  onSkipped?: (info: { signature: string; reason: string }) => void;
 }
 
 /**
@@ -197,9 +212,21 @@ export async function pollPaymentsForRetailer(
     opts.commitment ?? 'confirmed',
   );
 
+  const skipped = (signature: string, reason: string): void => {
+    if (!opts.onSkipped) return;
+    try {
+      opts.onSkipped({ signature, reason });
+    } catch {
+      // A diagnostic hook must never break the poll it is diagnosing.
+    }
+  };
+
   const receipts: PaymentReceipt[] = [];
   for (const sig of sigs) {
-    if (sig.err) continue;
+    if (sig.err) {
+      skipped(sig.signature, 'transaction failed on chain');
+      continue;
+    }
     try {
       const r = await verifyOneShotPayment(connection, sig.signature, retailer, {
         expectedSlug: opts.slugFilter,
@@ -207,9 +234,12 @@ export async function pollPaymentsForRetailer(
         commitment: opts.commitment ?? 'confirmed',
       });
       receipts.push(r);
-    } catch {
-      // Silently drop non-matches (e.g. balance delta 0, missing memo, or
-      // failed TXs). This function returns only valid receipts.
+    } catch (e) {
+      // Still returns only valid receipts — but the reason is now reachable.
+      // Dropping these without a word is what made a correctly-configured
+      // merchant unable to distinguish "nobody paid" from "the memo format
+      // nobody writes did not match".
+      skipped(sig.signature, e instanceof Error ? e.message : String(e));
     }
   }
 

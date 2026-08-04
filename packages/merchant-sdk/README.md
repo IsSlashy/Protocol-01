@@ -188,7 +188,22 @@ The entry starts **unverified**. To be shown in the default client feed, ask the
 
 ### 2. Poll for incoming one-shot payments
 
-Subscribers can pay with a single ZK unshield — the client embeds an invoice memo `p01:<slug>:<periods>m` in the tx. The SDK parses every signature to the retailer and returns matching receipts.
+> ⚠️ **No shipped client writes this memo today.** Read this section as a
+> parser you can target, not as a flow that already works end to end.
+> MEASURED 2026-08-04: the only memo any Protocol 01 client has ever written is
+> `P01_SUB_V1:` (`apps/mobile/app/(main)/(streams)/subscribe.tsx`,
+> `apps/extension/src/shared/services/onchain-sync.ts`), it describes a
+> subscription rather than an invoice, and it is attached only on the
+> cleartext-wallet branch — the ZK unshield branch attaches no memo at all.
+> A ZK one-shot payment also leaves nothing on chain to hang a slug on, so no
+> parser change alone would make this work. Until a client writes
+> `MEMO_INVOICE_PREFIX`, `pollPaymentsForRetailer` returns an empty array.
+> That silence is now reported: pass `onSkipped` (below) to see what was
+> dropped instead of guessing.
+
+The intended shape: the payer embeds an invoice memo `p01:<slug>:<periods>m` in
+the transaction, and the SDK parses every signature to the retailer and returns
+the matching receipts.
 
 ```typescript
 const receipts = await pollPaymentsForRetailer(connection, merchantKp.publicKey, {

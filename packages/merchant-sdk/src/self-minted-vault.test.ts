@@ -281,6 +281,56 @@ describe('a vault the merchant never sold — the shape subscribe_private_stark 
     expect(got!.rate).toBe(1n);
   });
 
+  it('REFUSES to answer at all when requireService is set and the scope is absent', async () => {
+    // The test above is the whole hole: omitting the scope silently degrades the
+    // question, so the caller gets a confident answer to a weaker one than it
+    // asked. `requireService` turns that into a refusal instead, and the message
+    // says what the weaker question actually answers.
+    await expect(
+      hasActiveVaultAccessForVault(conn, pda, MERCHANT, ATTACKER, { requireService: true }),
+    ).rejects.toThrow(/requireService is set but no service scope was supplied/);
+  });
+
+  it('does NOT refuse when requireService is set and the scope IS supplied', async () => {
+    // Fail-closed must not become fail-always: with the scope present the check
+    // runs normally and denies this vault on its merits, not on a missing option.
+    await expect(
+      hasActiveVaultAccessForVault(conn, pda, MERCHANT, ATTACKER, {
+        requireService: true,
+        service: REAL_SERVICE,
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('reports the skipped scope check for callers that cannot fail closed yet', async () => {
+    const seen: Array<{ vault: string; retailer: string }> = [];
+    const got = await hasActiveVaultAccessForVault(conn, pda, MERCHANT, ATTACKER, {
+      onServiceUnchecked: (i) => seen.push(i),
+    });
+    expect(got).not.toBeNull();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.retailer).toBe(MERCHANT.toBase58());
+    expect(seen[0]!.vault).toBe(pda.toBase58());
+  });
+
+  it('does not fire the hook when the scope WAS checked', async () => {
+    const seen: unknown[] = [];
+    await hasActiveVaultAccessForVault(conn, pda, MERCHANT, ATTACKER, {
+      service: REAL_SERVICE,
+      onServiceUnchecked: (i) => seen.push(i),
+    });
+    expect(seen).toHaveLength(0);
+  });
+
+  it('never lets a throwing diagnostic hook break the check', async () => {
+    const got = await hasActiveVaultAccessForVault(conn, pda, MERCHANT, ATTACKER, {
+      onServiceUnchecked: () => {
+        throw new Error('merchant logging blew up');
+      },
+    });
+    expect(got).not.toBeNull();
+  });
+
   it('is DENIED once the merchant passes what it actually charges', async () => {
     // The interval matches REAL_SERVICE exactly; only the price refuses it.
     const got = await hasActiveVaultAccessForVault(conn, pda, MERCHANT, ATTACKER, {

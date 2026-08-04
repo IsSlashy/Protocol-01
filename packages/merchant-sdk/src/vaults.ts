@@ -517,6 +517,21 @@ export async function hasActiveVaultAccessForVault(
   if (opts.service) {
     const m = vaultMatchesService(vault, opts.service, { otherServices: opts.otherServices });
     if (!m.matches) return null;
+  } else if (opts.requireService) {
+    // Fail closed rather than answer a weaker question than the caller asked.
+    throw new Error(
+      `hasActiveVaultAccessForVault: requireService is set but no service scope was supplied, so ` +
+        `only the merchant could be checked. Without the registry facts this call answers "a vault ` +
+        `naming ${retailer.toBase58()} exists and is inside a paid period", which a stranger can ` +
+        `arrange by self-minting a vault at the canonical PDA — it costs one pool note and grants ` +
+        `access the merchant never sold. Pass opts.service, or drop requireService to accept that.`,
+    );
+  } else if (opts.onServiceUnchecked) {
+    try {
+      opts.onServiceUnchecked({ vault: vaultPda.toBase58(), retailer: retailer.toBase58() });
+    } catch {
+      // A diagnostic hook must never break the check it is diagnosing.
+    }
   }
   return vault;
 }
