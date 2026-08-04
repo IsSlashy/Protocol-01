@@ -32,6 +32,7 @@ import {
   type PoolConfig,
   type PoolToken,
   type ShareableNote,
+  ALL_POOLS_V3,
 } from '../pool/denominatedPool';
 import {
   assertPassphraseAcceptable,
@@ -103,6 +104,38 @@ export interface PoolScanRequest {
   token: PoolToken;
   /** Omit to scan every denomination of the token. */
   denomination?: number;
+}
+
+/**
+ * Read the caller's notes out of the blobs stored at shield time — NO RPC.
+ *
+ * A full `poolScan` walks every denomination's transaction history and then
+ * re-derives per seed candidate: on the public devnet RPC that is tens of
+ * seconds, and the user stares at "Scanning the 0.1 SOL pool…" while the app
+ * already holds everything it needs to draw the list. A note shielded from this
+ * browser was written to local storage encrypted under the pool seed, and that
+ * blob carries the pool, the denomination, the leaf index, the commitment and
+ * the Merkle path.
+ *
+ * WHAT THIS CANNOT KNOW, AND WHY IT MATTERS: whether the note has been SPENT.
+ * That lives in a nullifier PDA on chain. So every note this returns is marked
+ * `spentKnown: false`, and the caller must treat it as provisional and reconcile
+ * with a real `poolScan`. Rendering a spent note as available would be a worse
+ * defect than the delay this removes — it would invite the user to try to spend
+ * money that is gone.
+ */
+export interface PoolScanLocalRequest {
+  kind: 'poolScanLocal';
+  meta: string;
+  /** The encrypted blobs from local storage. The page holds them; the worker holds the key. */
+  blobs: string[];
+}
+
+export interface PoolScanLocalResponse {
+  kind: 'poolScanLocal';
+  notes: PoolNoteView[];
+  /** Blobs that decrypted under no seed this identity holds — someone else's, or corrupt. */
+  skipped: number;
 }
 
 /** Withdraw a note. The note is identified by the pool + leaf index it occupies;
@@ -257,7 +290,8 @@ export type PoolRequest =
   | PoolSubscribePrepareRequest
   | PoolSubscribeExecuteRequest
   | PoolUnshieldPrepareRequest
-  | PoolUnshieldExecuteRequest;
+  | PoolUnshieldExecuteRequest
+  | PoolScanLocalRequest;
 
 export interface PoolShieldPrepareResponse {
   kind: 'poolShieldPrepare';
@@ -291,6 +325,14 @@ export interface PoolNoteView {
    *  2 = signature + passphrase. Notes shielded before a passphrase was adopted
    *  stay at 1 forever and remain spendable from the signature alone. */
   derivation: DerivationVersion;
+  /**
+   * Has `spent` actually been checked against the chain?
+   *
+   * `false` for a note read from local storage by `poolScanLocal`, which cannot
+   * see a nullifier PDA. A caller showing such a note must say it is provisional
+   * and must not offer to spend it as if the status were known.
+   */
+  spentKnown?: boolean;
 }
 
 /**
@@ -420,7 +462,8 @@ export type PoolResponse =
   | PoolSubscribePrepareResponse
   | PoolSubscribeExecuteResponse
   | PoolUnshieldPrepareResponse
-  | PoolUnshieldExecuteResponse;
+  | PoolUnshieldExecuteResponse
+  | PoolScanLocalResponse;
 
 export type PoolResponseFor<R extends PoolRequest> = Extract<PoolResponse, { kind: R['kind'] }>;
 
@@ -538,6 +581,66 @@ function requirePool(token: PoolToken, denomination: number): PoolConfig {
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
+
+/**
+ * Decrypt the locally stored note blobs and return them as views. No RPC call is
+ * made, so this returns in milliseconds and works offline.
+ *
+ * Every seed candidate is tried, active first, for the same reason the on-chain
+ * scan does it: a note shielded before the wallet adopted a passphrase is a v1
+ * note and only the legacy seed decrypts its blob.
+ */
+function handlePoolScanLocal(req: PoolScanLocalRequest): PoolScanLocalResponse {
+  const candidates = seedsInSearchOrder(requireSeeds(req.meta));
+  const notes: PoolNoteView[] = [];
+  const seen = new Set<string>();
+  let skipped = 0;
+
+  for (const blob of req.blobs ?? []) {
+    let placed = false;
+    for (const candidate of candidates) {
+      let note: Record<string, unknown>;
+      try {
+        note = JSON.parse(new TextDecoder().decode(decryptNote(candidate.seed, blob)));
+      } catch {
+        continue; // not this seed's blob — try the next derivation
+      }
+      const poolStr = typeof note.pool === 'string' ? note.pool : null;
+      const leafIndex = Number(note.leafIndex);
+      const commitment = note.commitment === undefined ? null : String(note.commitment);
+      if (!poolStr || !Number.isInteger(leafIndex) || leafIndex < 0 || !commitment) break;
+
+      // Resolve the pool from its PDA rather than trusting the blob's own
+      // denomination field: the blob is ours, but the pool table is the
+      // authority on what a denomination means.
+      const pool = ALL_POOLS_V3.find((p) => p.poolPDA.toBase58() === poolStr);
+      if (!pool) break;
+
+      const key = `${poolStr}:${leafIndex}`;
+      if (seen.has(key)) { placed = true; break; }
+      seen.add(key);
+
+      notes.push({
+        pool: poolStr,
+        token: pool.token,
+        denomination: pool.denomination,
+        counter: Number(note.counter ?? 0),
+        leafIndex,
+        commitment,
+        // NOT a claim. Nothing here has seen a nullifier PDA.
+        spent: false,
+        spentKnown: false,
+        derivation: candidate.derivation,
+      });
+      placed = true;
+      break;
+    }
+    if (!placed) skipped += 1;
+  }
+
+  notes.sort((a, b) => a.denomination - b.denomination || a.leafIndex - b.leafIndex);
+  return { kind: 'poolScanLocal', notes, skipped };
+}
 
 async function handlePoolScan(
   req: PoolScanRequest,
@@ -1165,6 +1268,8 @@ export async function handlePoolRequest<R extends PoolRequest>(
 ): Promise<PoolResponseFor<R>> {
   let res: PoolResponse;
   switch (req.kind) {
+    case 'poolScanLocal':
+      return handlePoolScanLocal(req as PoolScanLocalRequest) as never;
     case 'poolScan':
       res = await handlePoolScan(req, onProgress);
       break;

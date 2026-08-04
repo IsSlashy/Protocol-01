@@ -307,10 +307,32 @@ export function recoverStuckFunds(
 /** Read the shielded balance + note list for this identity. */
 export function scanPool(
   meta: string,
-  token: 'SOL',
+  token: PoolToken,
   onProgress?: (step: string) => void,
 ) {
   return poolRequest({ kind: 'poolScan', meta, token }, onProgress);
+}
+
+/**
+ * The caller's notes, instantly, from the blobs written at shield time.
+ *
+ * `scanPool` walks every denomination's on-chain history and re-derives per seed
+ * candidate — tens of seconds against the public devnet RPC, during which the UI
+ * can only say "Scanning the 0.1 SOL pool...". Everything needed to DRAW the
+ * list is already in local storage, encrypted under the pool seed. This reads it
+ * without touching the network.
+ *
+ * 🚨 The returned notes carry `spentKnown: false`. Whether a note has been spent
+ * lives in an on-chain nullifier PDA and nothing here has seen one. Show these
+ * as provisional and follow with a real `scanPool`; presenting a spent note as
+ * available would invite the user to spend money that is gone, which is worse
+ * than the wait this removes.
+ *
+ * Notes shielded on another device are absent — the blob is local. That is why
+ * this is a fast FIRST paint, never a replacement.
+ */
+export function scanPoolLocal(meta: string, walletPubkey: string) {
+  return poolRequest({ kind: 'poolScanLocal', meta, blobs: loadEncryptedNotes(walletPubkey) });
 }
 
 // ---------------------------------------------------------------------------

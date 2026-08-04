@@ -53,7 +53,7 @@ import type {
   TxRef,
 } from "@/lib/privacy/chains/types";
 import type { PoolNoteView } from "@/lib/privacy/worker/poolHandlers";
-import { loadEncryptedNotes, scanPool } from "@/lib/privacy/shieldClient";
+import { loadEncryptedNotes, scanPool, scanPoolLocal } from "@/lib/privacy/shieldClient";
 import {
   isP01NoteAddress,
   sealNoteFor,
@@ -133,6 +133,21 @@ export default function SendForm({
     setScanning(true);
     setScanError(null);
     try {
+      // FIRST PAINT, no network. Notes shielded from this browser are already in
+      // local storage, encrypted under the pool seed, and carry pool, leaf index,
+      // denomination and commitment. Drawing them costs milliseconds; the chain
+      // walk below costs tens of seconds on the public devnet RPC and the user
+      // was watching "Scanning the 0.1 SOL pool..." the whole time.
+      //
+      // These arrive with `spentKnown: false` — nothing here has seen a nullifier
+      // PDA — so they are provisional until the scan below replaces them.
+      try {
+        const local = await scanPoolLocal(meta, owner!.toBase58());
+        if (local.notes.length > 0) setNotes(local.notes);
+      } catch {
+        // A missing or unreadable blob store is not an error worth showing:
+        // the authoritative scan runs next regardless.
+      }
       const res = await scanPool(meta, "SOL", setScanStep);
       setNotes(res.notes);
     } catch (e) {
