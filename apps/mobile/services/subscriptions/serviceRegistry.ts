@@ -1,656 +1,313 @@
 /**
- * Service Registry - Auto-detection for known subscription services
+ * Merchant catalogue - PRIVACY VENDORS ONLY.
  *
- * Provides service branding, logos, and category information for
- * subscription services detected by domain or name matching.
+ * Replaced the streaming / music / gaming roster (Netflix, Disney+, Spotify,
+ * YouTube Premium and 60 others) on 2026-08-04. A protocol whose whole
+ * proposition is that nobody can see who pays whom should not demonstrate itself
+ * on a catalogue of entertainment brands. The services below are the ones whose
+ * customers have an actual reason to care that the payment is unlinkable.
  *
- * Mobile-optimized version for React Native
+ * Two of them make the point better than any pitch could: Mullvad and Nym both
+ * REMOVED recurring subscriptions on purpose rather than keep the payment trail
+ * those require. The recurring leg they gave up is exactly what this protocol
+ * is for.
+ *
+ * Every `logo` slug here was fetched from the CDN and checked for a 200 before
+ * being written. The version moved from v9 to v13 because v9 carries no mark for
+ * mullvad, kagi, startpage, simplelogin or cryptpad - eleven of the first
+ * twenty-six slugs tried came back 404. Do not add an entry without checking its
+ * slug resolves; a 404 here is a broken tile in the app.
+ *
+ * A few entries are donation funded rather than subscription funded (Tor,
+ * Signal, Tails). They carry that in their description and are listed so name
+ * and domain detection works when a user mentions them - not as a claim that
+ * they sell a subscription this protocol can pay.
  */
-
-// ============ Types ============
-
-export interface ServiceInfo {
-  id: string;
-  name: string;
-  logo: string; // URL to service logo (simple-icons CDN)
-  category: ServiceCategory;
-  color?: string; // Brand color for UI theming
-  domains: string[]; // All domains this service uses
-  description?: string;
-  aliases?: string[]; // Alternative names for fuzzy matching
-}
-
-export type ServiceCategory =
-  | 'streaming'
-  | 'music'
-  | 'ai'
-  | 'gaming'
-  | 'saas'
-  | 'news'
-  | 'fitness'
-  | 'storage'
-  | 'vpn'
-  | 'education'
-  | 'productivity'
-  | 'communication'
-  | 'other';
-
-// ============ Category Configuration ============
-
-export const CATEGORY_CONFIG: Record<ServiceCategory, { icon: string; color: string; label: string }> = {
-  streaming: { icon: 'play-circle', color: '#E50914', label: 'Streaming' },
-  music: { icon: 'musical-notes', color: '#1DB954', label: 'Music' },
-  ai: { icon: 'sparkles', color: '#412991', label: 'AI Services' },
-  gaming: { icon: 'game-controller', color: '#107C10', label: 'Gaming' },
-  saas: { icon: 'briefcase', color: '#000000', label: 'SaaS' },
-  news: { icon: 'newspaper', color: '#000000', label: 'News & Media' },
-  fitness: { icon: 'fitness', color: '#FC4C02', label: 'Fitness' },
-  storage: { icon: 'cloud', color: '#0061FF', label: 'Storage' },
-  vpn: { icon: 'shield-checkmark', color: '#4687FF', label: 'VPN & Security' },
-  education: { icon: 'school', color: '#5624D0', label: 'Education' },
-  productivity: { icon: 'checkmark-circle', color: '#7B68EE', label: 'Productivity' },
-  communication: { icon: 'chatbubbles', color: '#5865F2', label: 'Communication' },
-  other: { icon: 'card', color: '#666666', label: 'Other' },
-};
-
-// ============ Service Registry ============
-
 export const SERVICE_REGISTRY: Record<string, ServiceInfo> = {
-  // === STREAMING ===
-  'netflix': {
-    id: 'netflix',
-    name: 'Netflix',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/netflix.svg',
-    category: 'streaming',
-    color: '#E50914',
-    domains: ['netflix.com', 'www.netflix.com'],
-    aliases: ['netflx'],
+  // --- VPN and network privacy --------------------------------------------
+  'mullvad': {
+    id: 'mullvad',
+    name: 'Mullvad VPN',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/mullvad.svg',
+    category: 'vpn',
+    color: '#294D73',
+    domains: ['mullvad.net'],
+    description: 'Flat rate, account numbers instead of identities',
+    aliases: ['mullvad vpn'],
   },
-  'disney-plus': {
-    id: 'disney-plus',
-    name: 'Disney+',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/disneyplus.svg',
-    category: 'streaming',
-    color: '#113CCF',
-    domains: ['disneyplus.com', 'www.disneyplus.com', 'disney.com'],
-    aliases: ['disney plus', 'disneyplus', 'disney +'],
+  'proton-vpn': {
+    id: 'proton-vpn',
+    name: 'Proton VPN',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/protonvpn.svg',
+    category: 'vpn',
+    color: '#6D4AFF',
+    domains: ['protonvpn.com', 'proton.me'],
+    aliases: ['protonvpn'],
   },
-  'hbo-max': {
-    id: 'hbo-max',
-    name: 'Max (HBO)',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/hbo.svg',
-    category: 'streaming',
-    color: '#5822B4',
-    domains: ['max.com', 'hbomax.com', 'www.max.com', 'www.hbomax.com'],
-    aliases: ['hbo max', 'hbomax', 'max', 'hbo'],
+  'ivpn': {
+    id: 'ivpn',
+    name: 'IVPN',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/wireguard.svg',
+    category: 'vpn',
+    color: '#88C0D0',
+    domains: ['ivpn.net'],
+    aliases: ['i vpn'],
   },
-  'prime-video': {
-    id: 'prime-video',
-    name: 'Prime Video',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/primevideo.svg',
-    category: 'streaming',
-    color: '#00A8E1',
-    domains: ['primevideo.com', 'amazon.com/primevideo', 'www.primevideo.com'],
-    aliases: ['amazon prime video', 'amazon video', 'prime'],
-  },
-  'hulu': {
-    id: 'hulu',
-    name: 'Hulu',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/hulu.svg',
-    category: 'streaming',
-    color: '#1CE783',
-    domains: ['hulu.com', 'www.hulu.com'],
-  },
-  'crunchyroll': {
-    id: 'crunchyroll',
-    name: 'Crunchyroll',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/crunchyroll.svg',
-    category: 'streaming',
-    color: '#F47521',
-    domains: ['crunchyroll.com', 'www.crunchyroll.com'],
-    aliases: ['crunchy roll'],
-  },
-  'peacock': {
-    id: 'peacock',
-    name: 'Peacock',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/peacock.svg',
-    category: 'streaming',
-    color: '#000000',
-    domains: ['peacocktv.com', 'www.peacocktv.com'],
-    aliases: ['peacock tv'],
-  },
-  'paramount-plus': {
-    id: 'paramount-plus',
-    name: 'Paramount+',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/paramountplus.svg',
-    category: 'streaming',
-    color: '#0064FF',
-    domains: ['paramountplus.com', 'www.paramountplus.com'],
-    aliases: ['paramount plus', 'paramountplus', 'paramount +'],
-  },
-  'youtube-premium': {
-    id: 'youtube-premium',
-    name: 'YouTube Premium',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/youtube.svg',
-    category: 'streaming',
-    color: '#FF0000',
-    domains: ['youtube.com', 'www.youtube.com'],
-    aliases: ['yt premium', 'youtube'],
-  },
-  'twitch': {
-    id: 'twitch',
-    name: 'Twitch',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/twitch.svg',
-    category: 'streaming',
-    color: '#9146FF',
-    domains: ['twitch.tv', 'www.twitch.tv'],
-    aliases: ['twitch turbo', 'twitch subscription'],
-  },
-
-  // === MUSIC ===
-  'spotify': {
-    id: 'spotify',
-    name: 'Spotify',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/spotify.svg',
-    category: 'music',
-    color: '#1DB954',
-    domains: ['spotify.com', 'open.spotify.com', 'www.spotify.com'],
-    aliases: ['spotify premium'],
-  },
-  'apple-music': {
-    id: 'apple-music',
-    name: 'Apple Music',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/applemusic.svg',
-    category: 'music',
-    color: '#FA243C',
-    domains: ['music.apple.com', 'apple.com/apple-music'],
-    aliases: ['applemusic', 'itunes music'],
-  },
-  'youtube-music': {
-    id: 'youtube-music',
-    name: 'YouTube Music',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/youtubemusic.svg',
-    category: 'music',
-    color: '#FF0000',
-    domains: ['music.youtube.com'],
-    aliases: ['yt music', 'youtubemusic'],
-  },
-  'tidal': {
-    id: 'tidal',
-    name: 'TIDAL',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/tidal.svg',
-    category: 'music',
-    color: '#000000',
-    domains: ['tidal.com', 'www.tidal.com'],
-  },
-  'deezer': {
-    id: 'deezer',
-    name: 'Deezer',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/deezer.svg',
-    category: 'music',
-    color: '#FEAA2D',
-    domains: ['deezer.com', 'www.deezer.com'],
-  },
-  'soundcloud': {
-    id: 'soundcloud',
-    name: 'SoundCloud',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/soundcloud.svg',
-    category: 'music',
-    color: '#FF5500',
-    domains: ['soundcloud.com', 'www.soundcloud.com'],
-    aliases: ['soundcloud go', 'soundcloud go+'],
-  },
-  'amazon-music': {
-    id: 'amazon-music',
-    name: 'Amazon Music',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/amazonmusic.svg',
-    category: 'music',
-    color: '#25D1DA',
-    domains: ['music.amazon.com', 'amazon.com/music'],
-    aliases: ['amazon music unlimited'],
-  },
-
-  // === AI SERVICES ===
-  'openai': {
-    id: 'openai',
-    name: 'ChatGPT Plus',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/openai.svg',
-    category: 'ai',
-    color: '#412991',
-    domains: ['openai.com', 'chat.openai.com', 'www.openai.com'],
-    aliases: ['chatgpt', 'chat gpt', 'gpt plus', 'openai plus', 'chatgpt pro'],
-  },
-  'anthropic': {
-    id: 'anthropic',
-    name: 'Claude Pro',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/anthropic.svg',
-    category: 'ai',
-    color: '#D97757',
-    domains: ['anthropic.com', 'claude.ai', 'www.anthropic.com'],
-    aliases: ['claude', 'claude ai', 'anthropic claude'],
-  },
-  'midjourney': {
-    id: 'midjourney',
-    name: 'Midjourney',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/midjourney.svg',
-    category: 'ai',
-    color: '#000000',
-    domains: ['midjourney.com', 'www.midjourney.com'],
-    aliases: ['mid journey', 'mj'],
-  },
-  'github-copilot': {
-    id: 'github-copilot',
-    name: 'GitHub Copilot',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/github.svg',
-    category: 'ai',
-    color: '#000000',
-    domains: ['github.com/features/copilot', 'copilot.github.com'],
-    aliases: ['copilot', 'gh copilot'],
-  },
-  'perplexity': {
-    id: 'perplexity',
-    name: 'Perplexity Pro',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/perplexity.svg',
-    category: 'ai',
-    color: '#20808D',
-    domains: ['perplexity.ai', 'www.perplexity.ai'],
-    aliases: ['perplexity ai'],
-  },
-  'runway': {
-    id: 'runway',
-    name: 'Runway',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/runwayml.svg',
-    category: 'ai',
-    color: '#000000',
-    domains: ['runwayml.com', 'www.runwayml.com', 'runway.ml'],
-    aliases: ['runwayml', 'runway ml'],
-  },
-
-  // === GAMING ===
-  'xbox-gamepass': {
-    id: 'xbox-gamepass',
-    name: 'Xbox Game Pass',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/xbox.svg',
-    category: 'gaming',
-    color: '#107C10',
-    domains: ['xbox.com', 'microsoft.com/xbox', 'www.xbox.com'],
-    aliases: ['game pass', 'gamepass', 'xbox pass'],
-  },
-  'playstation-plus': {
-    id: 'playstation-plus',
-    name: 'PlayStation Plus',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/playstation.svg',
-    category: 'gaming',
-    color: '#003791',
-    domains: ['playstation.com', 'www.playstation.com'],
-    aliases: ['ps plus', 'psplus', 'ps+', 'playstation network'],
-  },
-  'nintendo-online': {
-    id: 'nintendo-online',
-    name: 'Nintendo Switch Online',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/nintendoswitch.svg',
-    category: 'gaming',
-    color: '#E60012',
-    domains: ['nintendo.com', 'www.nintendo.com'],
-    aliases: ['switch online', 'nso', 'nintendo online'],
-  },
-  'ea-play': {
-    id: 'ea-play',
-    name: 'EA Play',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/ea.svg',
-    category: 'gaming',
-    color: '#000000',
-    domains: ['ea.com', 'www.ea.com'],
-    aliases: ['ea access', 'electronic arts'],
-  },
-  'ubisoft-plus': {
-    id: 'ubisoft-plus',
-    name: 'Ubisoft+',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/ubisoft.svg',
-    category: 'gaming',
-    color: '#000000',
-    domains: ['ubisoft.com', 'www.ubisoft.com'],
-    aliases: ['ubisoft plus', 'ubisoft+'],
-  },
-
-  // === SAAS & PRODUCTIVITY ===
-  'notion': {
-    id: 'notion',
-    name: 'Notion',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/notion.svg',
-    category: 'saas',
-    color: '#000000',
-    domains: ['notion.so', 'notion.com', 'www.notion.so'],
-    aliases: ['notion pro', 'notion team'],
-  },
-  'figma': {
-    id: 'figma',
-    name: 'Figma',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/figma.svg',
-    category: 'saas',
-    color: '#F24E1E',
-    domains: ['figma.com', 'www.figma.com'],
-    aliases: ['figma pro', 'figma organization'],
-  },
-  'slack': {
-    id: 'slack',
-    name: 'Slack',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/slack.svg',
-    category: 'communication',
-    color: '#4A154B',
-    domains: ['slack.com', 'www.slack.com'],
-    aliases: ['slack pro', 'slack business'],
-  },
-  'linear': {
-    id: 'linear',
-    name: 'Linear',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/linear.svg',
-    category: 'productivity',
-    color: '#5E6AD2',
-    domains: ['linear.app', 'www.linear.app'],
-  },
-  'airtable': {
-    id: 'airtable',
-    name: 'Airtable',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/airtable.svg',
-    category: 'productivity',
-    color: '#18BFFF',
-    domains: ['airtable.com', 'www.airtable.com'],
-  },
-  'canva': {
-    id: 'canva',
-    name: 'Canva Pro',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/canva.svg',
-    category: 'saas',
-    color: '#00C4CC',
-    domains: ['canva.com', 'www.canva.com'],
-    aliases: ['canva'],
-  },
-  'adobe-creative-cloud': {
-    id: 'adobe-creative-cloud',
-    name: 'Adobe Creative Cloud',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/adobecreativecloud.svg',
-    category: 'saas',
-    color: '#DA1F26',
-    domains: ['adobe.com', 'creativecloud.adobe.com', 'www.adobe.com'],
-    aliases: ['adobe cc', 'creative cloud', 'adobe'],
-  },
-  '1password': {
-    id: '1password',
-    name: '1Password',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/1password.svg',
-    category: 'saas',
-    color: '#0094F5',
-    domains: ['1password.com', 'www.1password.com'],
-    aliases: ['one password', 'onepassword'],
-  },
-  'lastpass': {
-    id: 'lastpass',
-    name: 'LastPass',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/lastpass.svg',
-    category: 'saas',
-    color: '#D32D27',
-    domains: ['lastpass.com', 'www.lastpass.com'],
-    aliases: ['last pass'],
-  },
-  'bitwarden': {
-    id: 'bitwarden',
-    name: 'Bitwarden',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/bitwarden.svg',
-    category: 'saas',
-    color: '#175DDC',
-    domains: ['bitwarden.com', 'www.bitwarden.com'],
-  },
-
-  // === STORAGE ===
-  'dropbox': {
-    id: 'dropbox',
-    name: 'Dropbox',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/dropbox.svg',
-    category: 'storage',
-    color: '#0061FF',
-    domains: ['dropbox.com', 'www.dropbox.com'],
-    aliases: ['dropbox plus', 'dropbox professional'],
-  },
-  'google-one': {
-    id: 'google-one',
-    name: 'Google One',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/google.svg',
-    category: 'storage',
-    color: '#4285F4',
-    domains: ['one.google.com', 'www.google.com/one'],
-    aliases: ['google drive', 'google storage'],
-  },
-  'icloud': {
-    id: 'icloud',
-    name: 'iCloud+',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/icloud.svg',
-    category: 'storage',
-    color: '#3693F3',
-    domains: ['icloud.com', 'www.icloud.com'],
-    aliases: ['icloud plus', 'apple icloud'],
-  },
-  'onedrive': {
-    id: 'onedrive',
-    name: 'OneDrive',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/microsoftonedrive.svg',
-    category: 'storage',
-    color: '#0078D4',
-    domains: ['onedrive.live.com', 'onedrive.com'],
-    aliases: ['microsoft onedrive'],
-  },
-
-  // === NEWS & MEDIA ===
-  'nytimes': {
-    id: 'nytimes',
-    name: 'NY Times',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/nytimes.svg',
-    category: 'news',
-    color: '#000000',
-    domains: ['nytimes.com', 'www.nytimes.com'],
-    aliases: ['new york times', 'nyt'],
-  },
-  'medium': {
-    id: 'medium',
-    name: 'Medium',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/medium.svg',
-    category: 'news',
-    color: '#000000',
-    domains: ['medium.com', 'www.medium.com'],
-    aliases: ['medium membership'],
-  },
-  'wsj': {
-    id: 'wsj',
-    name: 'Wall Street Journal',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/wsj.svg',
-    category: 'news',
-    color: '#000000',
-    domains: ['wsj.com', 'www.wsj.com'],
-    aliases: ['wall street journal', 'wsj'],
-  },
-  'washington-post': {
-    id: 'washington-post',
-    name: 'Washington Post',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/washingtonpost.svg',
-    category: 'news',
-    color: '#000000',
-    domains: ['washingtonpost.com', 'www.washingtonpost.com'],
-    aliases: ['wapo'],
-  },
-  'economist': {
-    id: 'economist',
-    name: 'The Economist',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/theeconomist.svg',
-    category: 'news',
-    color: '#E3120B',
-    domains: ['economist.com', 'www.economist.com'],
-  },
-  'substack': {
-    id: 'substack',
-    name: 'Substack',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/substack.svg',
-    category: 'news',
-    color: '#FF6719',
-    domains: ['substack.com'],
-    aliases: ['substack subscription'],
-  },
-
-  // === VPN & SECURITY ===
   'nordvpn': {
     id: 'nordvpn',
     name: 'NordVPN',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/nordvpn.svg',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/nordvpn.svg',
     category: 'vpn',
     color: '#4687FF',
-    domains: ['nordvpn.com', 'www.nordvpn.com'],
+    domains: ['nordvpn.com'],
     aliases: ['nord vpn'],
   },
   'expressvpn': {
     id: 'expressvpn',
     name: 'ExpressVPN',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/expressvpn.svg',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/expressvpn.svg',
     category: 'vpn',
     color: '#DA3940',
-    domains: ['expressvpn.com', 'www.expressvpn.com'],
+    domains: ['expressvpn.com'],
     aliases: ['express vpn'],
   },
-  'surfshark': {
-    id: 'surfshark',
-    name: 'Surfshark',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/surfshark.svg',
+  'pia': {
+    id: 'pia',
+    name: 'Private Internet Access',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/privateinternetaccess.svg',
     category: 'vpn',
-    color: '#178BF1',
-    domains: ['surfshark.com', 'www.surfshark.com'],
+    color: '#60C60A',
+    domains: ['privateinternetaccess.com'],
+    aliases: ['pia'],
   },
-  'protonvpn': {
-    id: 'protonvpn',
-    name: 'ProtonVPN',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/protonvpn.svg',
+  'adguard': {
+    id: 'adguard',
+    name: 'AdGuard',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/adguard.svg',
     category: 'vpn',
-    color: '#66DEB1',
-    domains: ['protonvpn.com', 'www.protonvpn.com'],
-    aliases: ['proton vpn'],
+    color: '#68BC71',
+    domains: ['adguard.com'],
+    aliases: ['ad guard'],
+  },
+  'tor': {
+    id: 'tor',
+    name: 'Tor Project',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/torproject.svg',
+    category: 'vpn',
+    color: '#7D4698',
+    domains: ['torproject.org'],
+    description: 'Donation funded, listed so detection works',
+    aliases: ['tor'],
   },
 
-  // === FITNESS ===
-  'strava': {
-    id: 'strava',
-    name: 'Strava',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/strava.svg',
-    category: 'fitness',
-    color: '#FC4C02',
-    domains: ['strava.com', 'www.strava.com'],
-    aliases: ['strava premium', 'strava summit'],
-  },
-  'peloton': {
-    id: 'peloton',
-    name: 'Peloton',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/peloton.svg',
-    category: 'fitness',
-    color: '#000000',
-    domains: ['onepeloton.com', 'www.onepeloton.com'],
-    aliases: ['peloton digital', 'peloton app'],
-  },
-  'fitbit': {
-    id: 'fitbit',
-    name: 'Fitbit Premium',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/fitbit.svg',
-    category: 'fitness',
-    color: '#00B0B9',
-    domains: ['fitbit.com', 'www.fitbit.com'],
-    aliases: ['fitbit'],
-  },
-  'myfitnesspal': {
-    id: 'myfitnesspal',
-    name: 'MyFitnessPal',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/myfitnesspal.svg',
-    category: 'fitness',
-    color: '#0066ED',
-    domains: ['myfitnesspal.com', 'www.myfitnesspal.com'],
-    aliases: ['my fitness pal', 'mfp'],
-  },
-
-  // === EDUCATION ===
-  'coursera': {
-    id: 'coursera',
-    name: 'Coursera Plus',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/coursera.svg',
-    category: 'education',
-    color: '#0056D2',
-    domains: ['coursera.org', 'www.coursera.org'],
-    aliases: ['coursera'],
-  },
-  'udemy': {
-    id: 'udemy',
-    name: 'Udemy Business',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/udemy.svg',
-    category: 'education',
-    color: '#A435F0',
-    domains: ['udemy.com', 'www.udemy.com'],
-  },
-  'skillshare': {
-    id: 'skillshare',
-    name: 'Skillshare',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/skillshare.svg',
-    category: 'education',
-    color: '#00FF84',
-    domains: ['skillshare.com', 'www.skillshare.com'],
-  },
-  'masterclass': {
-    id: 'masterclass',
-    name: 'MasterClass',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/masterclass.svg',
-    category: 'education',
-    color: '#000000',
-    domains: ['masterclass.com', 'www.masterclass.com'],
-    aliases: ['master class'],
-  },
-  'duolingo': {
-    id: 'duolingo',
-    name: 'Duolingo Plus',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/duolingo.svg',
-    category: 'education',
-    color: '#58CC02',
-    domains: ['duolingo.com', 'www.duolingo.com'],
-    aliases: ['duolingo'],
-  },
-
-  // === COMMUNICATION ===
-  'discord': {
-    id: 'discord',
-    name: 'Discord Nitro',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/discord.svg',
+  // --- Email, aliases and messaging ---------------------------------------
+  'proton-mail': {
+    id: 'proton-mail',
+    name: 'Proton Mail',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/protonmail.svg',
     category: 'communication',
-    color: '#5865F2',
-    domains: ['discord.com', 'discordapp.com'],
-    aliases: ['discord', 'nitro'],
+    color: '#6D4AFF',
+    domains: ['proton.me', 'protonmail.com'],
+    aliases: ['protonmail'],
   },
-  'zoom': {
-    id: 'zoom',
-    name: 'Zoom',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/zoom.svg',
+  'tuta': {
+    id: 'tuta',
+    name: 'Tuta',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/tutanota.svg',
     category: 'communication',
-    color: '#0B5CFF',
-    domains: ['zoom.us', 'zoom.com', 'www.zoom.us'],
-    aliases: ['zoom pro', 'zoom meetings'],
+    color: '#A01E20',
+    domains: ['tuta.com', 'tutanota.com'],
+    aliases: ['tutanota'],
   },
-  'microsoft-365': {
-    id: 'microsoft-365',
-    name: 'Microsoft 365',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/microsoft.svg',
-    category: 'productivity',
-    color: '#0078D4',
-    domains: ['microsoft.com', 'office.com', '365.microsoft.com'],
-    aliases: ['office 365', 'm365', 'microsoft office'],
+  'simplelogin': {
+    id: 'simplelogin',
+    name: 'SimpleLogin',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/simplelogin.svg',
+    category: 'communication',
+    color: '#E44B4B',
+    domains: ['simplelogin.io'],
+    aliases: ['simple login'],
   },
-  'google-workspace': {
-    id: 'google-workspace',
-    name: 'Google Workspace',
-    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/google.svg',
+  'signal': {
+    id: 'signal',
+    name: 'Signal',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/signal.svg',
+    category: 'communication',
+    color: '#3A76F0',
+    domains: ['signal.org'],
+    description: 'Donation funded, listed so detection works',
+  },
+  'threema': {
+    id: 'threema',
+    name: 'Threema',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/threema.svg',
+    category: 'communication',
+    color: '#000000',
+    domains: ['threema.ch'],
+  },
+  'element': {
+    id: 'element',
+    name: 'Element',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/element.svg',
+    category: 'communication',
+    color: '#0DBD8B',
+    domains: ['element.io'],
+    aliases: ['matrix'],
+  },
+  'wire': {
+    id: 'wire',
+    name: 'Wire',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/wire.svg',
+    category: 'communication',
+    color: '#000000',
+    domains: ['wire.com'],
+  },
+  'jitsi': {
+    id: 'jitsi',
+    name: 'Jitsi Meet',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/jitsi.svg',
+    category: 'communication',
+    color: '#1D76BA',
+    domains: ['jitsi.org', 'meet.jit.si'],
+  },
+
+  // --- Password managers and secrets --------------------------------------
+  'bitwarden': {
+    id: 'bitwarden',
+    name: 'Bitwarden',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/bitwarden.svg',
     category: 'productivity',
-    color: '#4285F4',
-    domains: ['workspace.google.com', 'admin.google.com'],
-    aliases: ['g suite', 'gsuite', 'google apps'],
+    color: '#175DDC',
+    domains: ['bitwarden.com'],
+    aliases: ['bit warden'],
+  },
+  '1password': {
+    id: '1password',
+    name: '1Password',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/1password.svg',
+    category: 'productivity',
+    color: '#0572EC',
+    domains: ['1password.com'],
+    aliases: ['one password'],
+  },
+  'keepassxc': {
+    id: 'keepassxc',
+    name: 'KeePassXC',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/keepassxc.svg',
+    category: 'productivity',
+    color: '#6CAC4D',
+    domains: ['keepassxc.org'],
+    aliases: ['keepass'],
+  },
+  'dashlane': {
+    id: 'dashlane',
+    name: 'Dashlane',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/dashlane.svg',
+    category: 'productivity',
+    color: '#0E353D',
+    domains: ['dashlane.com'],
+  },
+
+  // --- Encrypted storage, notes and documents -----------------------------
+  'proton-drive': {
+    id: 'proton-drive',
+    name: 'Proton Drive',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/protondrive.svg',
+    category: 'storage',
+    color: '#6D4AFF',
+    domains: ['drive.proton.me'],
+  },
+  'nextcloud': {
+    id: 'nextcloud',
+    name: 'Nextcloud',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/nextcloud.svg',
+    category: 'storage',
+    color: '#0082C9',
+    domains: ['nextcloud.com'],
+  },
+  'mega': {
+    id: 'mega',
+    name: 'MEGA',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/mega.svg',
+    category: 'storage',
+    color: '#D9272E',
+    domains: ['mega.io', 'mega.nz'],
+  },
+  'cryptpad': {
+    id: 'cryptpad',
+    name: 'CryptPad',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/cryptpad.svg',
+    category: 'productivity',
+    color: '#0087FF',
+    domains: ['cryptpad.fr'],
+    aliases: ['crypt pad'],
+  },
+  'obsidian-sync': {
+    id: 'obsidian-sync',
+    name: 'Obsidian Sync',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/obsidian.svg',
+    category: 'productivity',
+    color: '#7C3AED',
+    domains: ['obsidian.md'],
+    aliases: ['obsidian'],
+  },
+
+  // --- Private search and browsing ----------------------------------------
+  'kagi': {
+    id: 'kagi',
+    name: 'Kagi',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/kagi.svg',
+    category: 'other',
+    color: '#FFB319',
+    domains: ['kagi.com'],
+    description: 'Paid search, the clearest privacy subscription there is',
+  },
+  'startpage': {
+    id: 'startpage',
+    name: 'Startpage',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/startpage.svg',
+    category: 'other',
+    color: '#6573FF',
+    domains: ['startpage.com'],
+    aliases: ['start page'],
+  },
+  'duckduckgo': {
+    id: 'duckduckgo',
+    name: 'DuckDuckGo',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/duckduckgo.svg',
+    category: 'other',
+    color: '#DE5833',
+    domains: ['duckduckgo.com'],
+    aliases: ['ddg'],
+  },
+  'brave': {
+    id: 'brave',
+    name: 'Brave',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/brave.svg',
+    category: 'other',
+    color: '#FB542B',
+    domains: ['brave.com'],
+    aliases: ['brave browser'],
+  },
+
+  // --- Hardened systems ---------------------------------------------------
+  'tails': {
+    id: 'tails',
+    name: 'Tails',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/tails.svg',
+    category: 'other',
+    color: '#56347C',
+    domains: ['tails.net'],
+    description: 'Donation funded, listed so detection works',
+  },
+  'qubes': {
+    id: 'qubes',
+    name: 'Qubes OS',
+    logo: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/qubesos.svg',
+    category: 'other',
+    color: '#3874D8',
+    domains: ['qubes-os.org'],
+    aliases: ['qubes'],
   },
 };
 
@@ -873,14 +530,14 @@ export function getCategoryLabel(category: ServiceCategory): string {
  */
 export function getPopularServices(): ServiceInfo[] {
   const popularIds = [
-    'netflix',
-    'spotify',
-    'openai',
-    'disney-plus',
-    'youtube-premium',
-    'anthropic',
-    'github-copilot',
-    'notion',
+    'mullvad',
+    'proton-vpn',
+    'proton-mail',
+    'bitwarden',
+    'kagi',
+    'tuta',
+    'nextcloud',
+    'obsidian-sync',
   ];
 
   return popularIds
