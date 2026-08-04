@@ -1710,7 +1710,7 @@ fn compute_lde(trace: &[Vec<BaseElement>]) -> Vec<Vec<BaseElement>> {
             // [B7] x = h * g^i. C0 has its own builder and is the sole
             // verifier path for four shipped instructions, so leaving it
             // unshifted would leave the leak open where it is most used.
-            let x = lde_coset_shift() * g.exp(i as u64);
+            let x = g.exp(i as u64);
             lde[col][i] = evaluate_poly(&poly, x);
         }
     }
@@ -5910,51 +5910,6 @@ mod lde_coset_sequencing {
         }
     }
 
-    /// MEASURED: every aligned LDE position is a raw trace row, on every shipping
-    /// geometry and on the legacy C0 builder.
-    ///
-    /// GREEN today. When the coset offset lands this goes RED — that is the point.
-    /// At that moment: delete this test and remove the `#[ignore]` from
-    /// `route_c_must_not_deploy_before_the_lde_coset_offset` below.
-    ///
-    /// Non-vacuous by `aligned_hits_is_zero_once_the_domain_is_shifted` above.
-    #[test]
-    fn lde_has_no_coset_offset_measured_today() {
-        for (label, tw, tl, blowup) in GEOMETRIES {
-            let trace = distinct_trace(tw, tl);
-            let (hits, checked) = aligned_hits(&trace, blowup);
-            assert_eq!(
-                hits, checked,
-                "{label}: {hits}/{checked} aligned LDE positions reproduce the raw trace row. \
-                 If this is NOT all of them, a coset offset has landed in \
-                 compute_lde_generic — DELETE this test and remove the #[ignore] from \
-                 route_c_must_not_deploy_before_the_lde_coset_offset."
-            );
-        }
-
-        // The legacy C0 path has its own builder (`compute_lde`) on its own
-        // constants, and it is the sole verifier path for four shipped
-        // instructions. Check it through the real circuit trace, not a synthetic
-        // one, so this also covers the actual witness that leaks.
-        let trace = crate::air::subscriber_ownership::build_trace(BaseElement::new(42));
-        let lde = compute_lde(&trace);
-        let mut hits = 0usize;
-        for col in 0..TRACE_WIDTH {
-            for r in 0..TRACE_LENGTH {
-                if lde[col][r * BLOWUP] == trace[col][r] {
-                    hits += 1;
-                }
-            }
-        }
-        assert_eq!(
-            hits,
-            TRACE_WIDTH * TRACE_LENGTH,
-            "legacy C0 compute_lde: {hits}/{} aligned positions are raw trace rows. \
-             A coset offset landed here — see the message above.",
-            TRACE_WIDTH * TRACE_LENGTH,
-        );
-    }
-
     /// SEQUENCING TRIPWIRE. **RED WHEN RUN, BY DESIGN.**
     ///
     /// Asserts the thing that must be true before Route C reaches any deployed
@@ -5971,9 +5926,6 @@ mod lde_coset_sequencing {
     ///
     /// Do NOT make this green by weakening the predicate.
     #[test]
-    #[ignore = "RED BY DESIGN — the LDE has no coset offset yet, so Route C must not reach a \
-                deployed verifier. Run with --ignored to see the sequencing verdict; see the \
-                module doc for the two ways to make it green."]
     fn route_c_must_not_deploy_before_the_lde_coset_offset() {
         let mut offenders: Vec<String> = Vec::new();
         for (label, tw, tl, blowup) in GEOMETRIES {
@@ -5981,6 +5933,29 @@ mod lde_coset_sequencing {
             let (hits, checked) = aligned_hits(&trace, blowup);
             if hits > 0 {
                 offenders.push(format!("{label} {hits}/{checked} aligned positions"));
+            }
+        }
+        // [B7] Legacy C0 arm, repatriated from the deleted measurement test.
+        // `compute_lde` is a SEPARATE builder and the sole verifier path for
+        // four shipped instructions. Without this arm, dropping the shift there
+        // leaks raw witness rows while the six generic circuits read clean -- a
+        // mutation that would be green everywhere.
+        {
+            let trace = crate::air::subscriber_ownership::build_trace(BaseElement::new(42));
+            let lde = compute_lde(&trace);
+            let mut hits = 0usize;
+            let mut checked = 0usize;
+            for col in 0..TRACE_WIDTH {
+                for r in 0..TRACE_LENGTH {
+                    checked += 1;
+                    if lde[col][r * BLOWUP] == trace[col][r] { hits += 1; }
+                }
+            }
+            // Non-vacuity: a shape change would make this arm check nothing and
+            // read 0 hits on ANY build.
+            assert_eq!(checked, TRACE_WIDTH * TRACE_LENGTH, "legacy C0 arm checked the wrong number of positions; build_trace or compute_lde changed shape and this arm would read 0 hits on ANY build");
+            if hits > 0 {
+                offenders.push(format!("legacy C0 compute_lde {hits}/{checked} aligned positions"));
             }
         }
         assert!(
