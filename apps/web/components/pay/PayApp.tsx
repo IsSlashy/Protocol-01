@@ -231,7 +231,12 @@ export default function PayApp() {
   const poolToken: PoolToken = asset.symbol === "USDC" ? "USDC" : "SOL";
 
   return (
-    <div className="mx-auto w-full max-w-md">
+    {/* Widens past `md` on large screens. While this was max-w-md, every panel's
+        two-column grid was decorative: the columns opened inside 448px, so each
+        got ~200px and the content truncated to "Bitward...", "communicatio...".
+        Measured from the running app. The page wrapper carries the matching
+        width; neither change works alone. */}
+    <div className="mx-auto w-full max-w-md lg:max-w-5xl">
       <div className="mb-6">
         <Stepper current={step} />
       </div>
