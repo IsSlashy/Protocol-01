@@ -81,9 +81,14 @@ Privacy tab → **Shield** → choose a denomination (0.1 / 1 / 5 / 10 SOL). A Z
 
 #### 2. Subscribe to a live service
 
-Streams tab → pick one of the on-chain demo merchants (Netflix, Spotify, YouTube, Disney+ are seeded on devnet) → **Subscribe Private**.
+Streams tab → pick one of the demo merchants (the catalogue lists privacy
+vendors — Mullvad, Proton VPN, IVPN, AdGuard, and others) → **Subscribe
+Private**.
 
-The vault pulls from your shielded note; the retailer sees only the payment stream, nothing else.
+The demo services on devnet are seeded by us; no third-party merchant is
+registered yet. The vault pulls from your shielded note, and the retailer's
+claim is permissionless — anyone can trigger the payout, and it can only ever
+land on the retailer's registered address.
 
 #### 3. Pause and resume — there is no cancellation
 
@@ -117,7 +122,10 @@ No cloud, no backend. Your seed is the only thing that ties you to your history.
 solana airdrop 2 --url devnet
 ```
 
-**Smart Contracts (devnet):**
+**Smart contracts — declared program IDs (devnet).** These are the
+`declare_id!` constants in `programs/`; the shielded pool was last redeployed
+2026-08-04. ⏳ *A STARK-verifier redeployment (coset LDE) is in flight; the
+verifier's on-chain figures below will be refreshed when it lands.*
 
 | Program | ID |
 |---|---|
@@ -137,22 +145,53 @@ solana airdrop 2 --url devnet
 
 ## What is Protocol 01?
 
-Protocol 01 is a **post-quantum privacy layer for Solana**, shipped as composable SDKs and a set of on-chain programs.
+Protocol 01 is a **post-quantum-oriented privacy layer for Solana**, shipped as composable SDKs and a set of on-chain programs.
 
-The stack combines **ZK-STARKs**, **hybrid stealth addresses** (X25519 + ML-KEM-768), **Winternitz one-time signatures**, and a **custom on-chain FRI verifier** to deliver untraceable transactions that stay secure even against a future quantum adversary.
+The stack combines **ZK-STARKs** (hash-based, no trusted setup), **hybrid stealth addresses** (X25519 + ML-KEM-768, the NIST-standardized post-quantum KEM), **Winternitz one-time signatures**, and a **custom on-chain FRI verifier**. The cryptography is chosen so that a future quantum adversary — including one harvesting today's traffic to decrypt later — does not get the note secrets: no pairing-based proofs, no trusted setup, hash commitments throughout.
 
-Unlike mixers, Protocol 01 provides **cryptographic privacy at the protocol level**: amounts, senders, and recipients are hidden by default through hash-based proofs and MPC threshold operations, not operational obfuscation.
+### What is hidden, and what is not
+
+A privacy protocol owes its users a precise answer here, so this section states
+what the code does rather than what a mixer brochure would say:
+
+**Hidden:**
+- **Your funding wallet never appears in the pool's transactions.** Both the
+  deposit and the withdrawal are signed and paid by one-time ephemeral keys, so
+  neither leg carries your main wallet's address.
+- **Stealth payments create a unique one-time address per payment** — an
+  observer cannot connect two payments to the same recipient from the addresses
+  alone.
+- **zkSPL balances and transfer amounts** sit behind Poseidon commitments; the
+  chain stores the commitment, not the number.
+- **Note contents** (owner, blinding) are never posted in clear.
+
+**NOT hidden — read this before relying on the pool:**
+- **A withdrawal is linkable to its deposit.** The withdrawal proof publishes
+  the note's commitment, which the deposit already published: matching the two
+  is trivial for any observer, and this is a property of the circuit's public
+  inputs — no client-side change can remove it. The pool's anonymity set is
+  effectively 1 today.
+- **Amounts in the denominated pool are public by denomination** (0.1 / 1 / 5 /
+  10 SOL).
+- **A merchant's retailer address and subscription vault fields are public** —
+  anyone can enumerate a merchant's subscriber vaults.
+
+So the honest claim is: the pool hides *who you are* (your wallet), not *which
+deposit you are*. Work on stronger unlinkability (encrypted off-chain note
+transfer, which has no transaction to link at all) is in progress and will be
+claimed here when it ships, not before.
 
 ```
-User generates a STARK proof on-device (Winterfell, Goldilocks/Poseidon)
-    -> Proof submitted to the on-chain FRI verifier (~900K CU)
+User generates a STARK proof (Winterfell prover, Goldilocks/Poseidon)
+    -> Proof submitted to the on-chain FRI verifier
         -> Shielded program applies the state transition
-            -> Funds land at a stealth address (X25519 + ML-KEM-768)
-                -> No on-chain link between sender and recipient
-    (optional) MPC threshold decryption via Arcium Cerberus
+            -> Funds land at a one-time stealth address (X25519 + ML-KEM-768)
+                -> The user's funding wallet appears in neither transaction
 ```
 
-> **Groth16 was fully retired in the March 2026 migration.** Six Circom circuits remain in `circuits/` for migration history only — they are not wired into any shipping client path. All runtime proofs are STARK.
+> **Groth16 was fully retired in the March 2026 migration.** The Circom
+> circuits themselves have since been deleted too — `circuits/` now holds only
+> a design note. All runtime proofs are STARK.
 
 ---
 
@@ -165,37 +204,40 @@ protocol-01/
 │   ├── mobile/             # React Native (Expo) wallet + full STARK prover (WebView WASM)
 │   ├── web/                # Next.js 16 marketing site + docs
 │   └── mugen/              # Gojo-themed fiat-to-crypto P2P exchange — reference integration
-├── packages/
-│   ├── specter-sdk/        # @protocol-01/specter-sdk — stealth wallets, transfers, service registry
-│   ├── merchant-sdk/       # @protocol-01/merchant-sdk — server-side: register, payment polling, vaults, access tokens
-│   ├── privacy-sdk/        # @protocol-01/privacy-sdk — shield/transfer/unshield with STARK proofs
-│   ├── zkspl-sdk/          # @protocol-01/zkspl-sdk — confidential SPL balances (Poseidon commitments)
-│   ├── zk-sdk/             # @protocol-01/zk-sdk — low-level note + Merkle primitives
-│   ├── arcium-sdk/         # @protocol-01/arcium-sdk — MPC confidential compute (9 circuits, 6 use cases)
-│   ├── auth-sdk/           # @protocol-01/auth-sdk — "Login with P-01"
-│   ├── whitelist-sdk/      # @protocol-01/whitelist-sdk — developer whitelist
-│   ├── p01-js/             # @protocol-01/p01-js — merchant pay button & browser SDK
-│   ├── privacy-toolkit/    # Merkle trees, Goldilocks-Poseidon, commitment helpers
-│   ├── react-native-zk/    # STARK prover packaged for React Native
-│   ├── rpc-config/         # Shared RPC connection manager
-│   └── ui/                 # Shared design tokens + components
-├── circuits/                   # Legacy Circom circuits (retired 2026-03, kept for migration history)
-├── programs/                   # 15 Anchor programs (12 deployed on devnet)
-│   ├── zk_shielded/            # Shielded pool V4 — shield/transfer/unshield/subscribe/claim (STARK V3)
+├── packages/                   # 16 packages, 11 published to npm under @protocol-01
+│   ├── specter-sdk/        # npm 0.4.1 — stealth wallets, transfers, service registry
+│   ├── merchant-sdk/       # npm 0.1.2 — server-side: register, payment polling, vaults, permissionless claims, access tokens
+│   ├── privacy-sdk/        # npm 1.0.2 — shield/transfer/unshield with STARK proofs
+│   ├── zkspl-sdk/          # npm 0.1.2 — confidential SPL balances (Poseidon commitments)
+│   ├── zk-sdk/             # npm 1.0.1 — low-level note + Merkle primitives
+│   ├── arcium-sdk/         # npm 0.1.1 — MPC compute client (client integration removed 2026-07, see below)
+│   ├── auth-sdk/           # npm 0.1.0 — "Login with P-01"
+│   ├── p01-js/             # npm 0.3.1 — merchant pay button & browser SDK
+│   ├── privacy-toolkit/    # npm 1.0.2 — Merkle trees, Goldilocks-Poseidon, commitment helpers
+│   ├── rpc-config/         # npm 0.1.1 — shared RPC connection manager
+│   ├── stark-prover/       # npm 0.1.1 — WASM STARK prover bindings
+│   ├── whitelist-sdk/      # unpublished — developer whitelist
+│   ├── react-native-zk/    # unpublished — STARK prover packaged for React Native
+│   ├── pay-core/           # unpublished — /pay page core
+│   ├── specter-js/         # unpublished
+│   └── ui/                 # unpublished — shared design tokens + components
+├── circuits/                   # One design note (ZKSPL.md). The legacy Circom circuits are gone.
+├── programs/                   # 15 Anchor programs (declared IDs; deployment status varies — see table above)
+│   ├── zk_shielded/            # Shielded pool V4 — shield/unshield/subscribe/pause/resume/claim (STARK)
 │   ├── p01_zkspl/              # Confidential SPL balances (Poseidon commitments)
 │   ├── specter/                # Stealth address registry + private streams
-│   ├── p01_arcium/             # MPC bridge — 9 Arcis circuits + Phase D confidentialRelay scaffold
-│   ├── p01_relayer/            # On-chain trustless relay + chunked submit + reputation decay
+│   ├── p01_arcium/             # MPC bridge program (clients no longer call it)
+│   ├── p01_relayer/            # On-chain relay + chunked submit + reputation decay
 │   ├── p01_quantum_vault/      # WOTS+ 67-chain, hash-timelock, commit-reveal
+│   ├── p01_quantum_wallet/     # STARK-authorized wallet (design stage)
 │   ├── p01_registry/           # Stealth meta-address directory + Service Registry (retailers)
-│   ├── p01_stark_verifier/     # Custom FRI verifier (6 circuits + DEEP-ALI, Goldilocks)
+│   ├── p01_stark_verifier/     # Custom FRI verifier (6 circuit AIRs, Goldilocks)
 │   ├── p01_liquidity/          # Instant-unshield liquidity pool (prefund)
 │   ├── p01_mugen/              # Mugen P2P escrow
-│   ├── p01_bundler/            # (in repo, not deployed) Tx bundling helper
-│   ├── subscription/           # (in repo, logic merged into zk_shielded V3)
+│   ├── subscription/           # (in repo, logic merged into zk_shielded)
 │   ├── stream/                 # (in repo, not deployed) Time-locked payment streaming
 │   ├── whitelist/              # (in repo, not deployed) Developer access control
-│   └── p01-fee-splitter/       # Fee routing (0.3–0.5% protocol fee)
+│   └── p01-fee-splitter/       # Fee routing
 └── stark/                      # Winterfell STARK prover (Goldilocks field, Poseidon AIR, WASM)
 ```
 
@@ -212,11 +254,23 @@ Hash-based, transparent, and post-quantum. No trusted setup, no `.ptau` ceremony
 | Proving system | STARK (FRI-based) |
 | Field | Goldilocks (`p = 2^64 − 2^32 + 1`) |
 | Hash function | Poseidon (full S-box `x^7`, 30 rounds) |
-| Proof size | ~9–12 KB (Blake3 Merkle, 16 queries, blowup 8) |
-| On-chain verification | ~900K CU (shared multi-circuit FRI verifier) |
+| Configured FRI parameters | 27 queries, blowup 16 (Blake3 Merkle) ⏳ *may change with the in-flight verifier redeployment* |
+| On-chain verification cost | ⏳ *pending re-measurement after the in-flight verifier redeployment* |
 | Circuits | 6 AIRs — subscriber ownership, pool commitment, balance proof, Merkle path, confidential balance, transfer |
 
-The on-chain verifier is written from scratch (no Winterfell dependency at runtime) and fits in a 792 KB SBF binary.
+**On soundness, plainly:** an earlier revision of this README advertised
+"124-bit" security. That figure was wrong — it was never implemented, and the
+naive formula it came from (`queries × log2(blowup)`) does not survive
+measurement: the effective FRI rate was measured at 1/2, not the nominal 1/16,
+which collapses that arithmetic. The soundness of the current construction is
+under active hardening (DEEP binding of the out-of-domain sample landed
+2026-07-30; low-degree-extension coset work is in flight), **no audited
+soundness figure is claimed**, and the protocol is not audited. Treat devnet as
+devnet.
+
+The on-chain verifier is written from scratch (no Winterfell dependency at
+runtime). ⏳ *Binary size and per-verification CU will be restated from
+measurement once the in-flight redeployment lands.*
 
 ### Stealth Addresses (Hybrid Post-Quantum)
 
@@ -251,13 +305,18 @@ Balance on-chain = Poseidon(balance, salt, owner_pubkey, token_mint)
                    ↑ nobody can reverse this without the salt
 ```
 
-Circuits: `confidential_balance` (1,382 constraints, migrated to STARK AIR), `balance_proof` (644 constraints, STARK).
+Circuits: `confidential_balance` and `balance_proof`, both STARK AIRs (the constraint counts previously quoted here were from the retired Circom versions).
 
 ### Service Registry + Private Subscriptions
 
 **Any wallet can register as a merchant** via the `p01_registry` program — the entry is a PDA keyed by `["service", owner, slug]` that holds the retailer pubkey, token mint, price per period, interval (slots), and a `verified` flag flipped by the protocol authority.
 
-Clients read the registry through `fetchAllServices()` (SWR-cached, ~10 min TTL) and render a live merchant list. Users subscribe with a shielded note; the on-chain subscription vault lets the retailer pull the rate per period.
+Clients read the registry through `fetchAllServices()` (SWR-cached, ~10 min TTL) and render a live merchant list. Users subscribe with a shielded note; the on-chain subscription vault lets the retailer pull the rate per period — and since 2026-08-04 the claim is **permissionless**: anyone can trigger it, the program pins the payout to the registered retailer address, so a merchant who loses their key keeps getting paid.
+
+Full disclosure on the current registry state: every entry live on devnet today
+is a demo service seeded and attested by us. No third-party merchant has
+registered yet — if you integrate, you are early, and the
+[merchant-sdk README](./packages/merchant-sdk/README.md) is written for you.
 
 **Exit flow:** there is none for the subscriber. A subscription is a one-way prepaid envelope — `cancel_normal` and `cancel_private_stark` were removed from the program, and no instruction can move a lamport from a `SubscriptionVault` to anyone but the retailer. The vault ends when `claim_period` finds its funded periods spent: that call pays the last periods, sweeps the sub-period remainder `total_deposited % rate` (which never bought a period and used to be quoted as the "refund"), closes the account and sends its rent to the retailer. The subscriber's controls are pause and resume, and the rule is stated on the paying screen before the deposit.
 
@@ -277,18 +336,15 @@ Ed25519 is still required for Solana transactions, but it's no longer the securi
 
 No backend server. The `p01_relayer` program accepts encrypted relay jobs; an ephemeral keypair posts the job; the relayer executes it. Only `Relayer PDA → stealth address` is visible on-chain. Client middleware optionally bounces the RPC through Tor + a Railway proxy.
 
-### Multi-Party Computation (Arcium MPC)
+### Multi-Party Computation (Arcium MPC) — program and SDK only
 
-Decentralized threshold compute via Arcium's **Cerberus protocol** — security holds as long as at least one honest node exists in the cluster.
-
-| Parameter | Value |
-|---|---|
-| Network | Arcium (Cerberus) |
-| Circuits | 9 Arcis circuits |
-| Cluster | Devnet offset 456 |
-| Fallback | Every MPC op degrades gracefully to the standard path |
-
-Use cases: confidential relay, anonymous registry lookup, hidden nullifier, confidential balance audit, threshold stealth scan, private governance vote.
+The `p01_arcium` bridge program and `@protocol-01/arcium-sdk` (9 Arcis
+circuits) exist and are published, but **the client integration was removed
+from the shipping apps in July 2026** — no mobile or extension flow calls MPC
+today. The circuits cover confidential relay, anonymous registry lookup, hidden
+nullifier, confidential balance audit, threshold stealth scan, and private
+governance vote; they are available to developers who want to build on them,
+and nothing in the current privacy claims of this README depends on MPC.
 
 ---
 
@@ -296,7 +352,10 @@ Use cases: confidential relay, anonymous registry lookup, hidden nullifier, conf
 
 ### Mobile App (primary client)
 
-- STARK prover runs on-device inside a hidden WebView (WASM)
+- STARK prover runs on-device inside a hidden WebView (WASM). Shield proofs
+  complete in seconds; the heavier unshield circuits currently exceed practical
+  on-device time limits (measured >180 s on real hardware, 2026-08-03) and are
+  being optimized — the honest state, not the aspirational one
 - All 4 tabs: Wallet, Privacy, Streams, Agent
 - Hybrid stealth addresses + ML-KEM-768
 - Auto-recovery on boot (blocking lazy-load modal)
@@ -327,6 +386,12 @@ A Gojo-themed fiat-to-crypto P2P exchange built on Protocol 01 — used internal
 ---
 
 ## SDK
+
+11 of the 16 packages are published to npm under the `@protocol-01` scope
+(MIT): arcium-sdk 0.1.1, auth-sdk 0.1.0, merchant-sdk 0.1.2, p01-js 0.3.1,
+privacy-sdk 1.0.2, privacy-toolkit 1.0.2, rpc-config 0.1.1, specter-sdk 0.4.1,
+stark-prover 0.1.1, zk-sdk 1.0.1, zkspl-sdk 0.1.2. The packed tarballs also
+install and typecheck standalone, outside any workspace (verified 2026-08-04).
 
 ```typescript
 // @protocol-01/specter-sdk — stealth wallets + service registry
@@ -404,19 +469,20 @@ await mpc.privateLookup(targetHash);
 
 | Layer | Mechanism |
 |-------|-----------|
-| Seed phrase | AES-256-GCM, PBKDF2-SHA256 (600K iterations, OWASP 2026) |
-| Note vault | CTR-HMAC-SHA256 (Encrypt-then-MAC, constant-time tag comparison) |
+| Seed / vault encryption | AES-256-GCM with PBKDF2-derived keys, 100,000 iterations (extension); authenticated encryption with HMAC on the mobile note vault |
 | Session keys | Stored in SecureStore (Keychain/Keystore), never AsyncStorage |
 | Key management | Spending key never leaves the device — backend prover fallback removed |
-| STARK soundness | 124-bit, DEEP-ALI on all six circuits, sha256 syscall migration |
+| STARK soundness | Under active hardening; **no audited figure is claimed** — see the plain-language note in the STARK section above |
 | Double-spend | Nullifiers as on-chain PDAs inside `zk_shielded` |
-| Quantum resistance | STARK (hash-based) + WOTS+ + ML-KEM-768 for stealth |
+| Quantum resistance | STARK (hash-based) + WOTS+ + ML-KEM-768 for stealth — a design choice, not an "immunity" claim |
 | PIN | SHA-256(`p01_pin_v1:` + pin) via expo-crypto, progressive lockout (5→30 s, 8→60 s, 10→300 s) |
-| App lock | Device-level auth enforced even when `security_method='none'` |
-| Clipboard | Auto-clear after 60 s on all sensitive copies |
+| Clipboard | Auto-clear on sensitive copies |
 | Screenshot | `ScreenCapture.preventScreenCaptureAsync()` on seed/viewing-key/private-note screens |
 | Backup surface | `android:allowBackup="false"` to defeat `adb backup` |
-| MPC threshold | Arcium Cerberus — 1-of-N honest node guarantees correctness |
+
+**Not audited.** No external security audit has been performed yet; it is on
+the roadmap, and until it happens the protocol should be treated as
+experimental software on devnet.
 
 ---
 
@@ -468,26 +534,29 @@ solana program deploy target/sbf-solana-solana/release/<program_name>.so \
 
 ## Testing
 
+Every number below was **measured on 2026-08-04** by running the suite, not
+carried forward. Suites not re-run that day say so instead of quoting a stale
+figure.
+
 | Layer | Suite | Tests | Status |
 |---|---|---|---|
-| On-chain programs | Anchor/Rust (12 deployed) | 340+ | Localnet / Devnet |
-| STARK verifier | Custom FRI + 6 circuits, DEEP-ALI on all | 103 STARK + 35 verifier | Passing |
-| specter-sdk | Stealth, wallet, transfers, registry | 44 | Passing |
-| privacy-sdk | Shield / transfer / unshield / denominated | 238 | Passing |
-| privacy-toolkit | Merkle, Goldilocks-Poseidon, commitments | 100 | Passing |
-| zk-sdk | Note + Merkle primitives | 85 | Passing |
+| specter-sdk | Stealth, wallet, transfers, registry | 240 | Passing |
+| merchant-sdk | Registry, vaults, entitlement, permissionless claims, licenses | 273 | Passing |
+| privacy-sdk | Shield / transfer / unshield / denominated | 111 | Passing |
+| privacy-toolkit | Merkle, Goldilocks-Poseidon, commitments | 44 | Passing |
+| zk-sdk | Note + Merkle primitives | 99 | Passing |
 | arcium-sdk | MPC client, Mugen P2P, encryption | 18 | Passing |
 | auth-sdk | Login with P-01 | 123 | Passing |
 | whitelist-sdk | Encrypted access requests + IPFS | 40 | Passing |
-| p01-js | Merchant pay button + browser SDK | 99 | Passing |
-| stark-prover | WASM packaging + license | 23 | Passing |
-| rpc-config | RPC connection manager | 361 | Passing |
-| Mobile app | Stores, services, crypto, payments | 208 (CI) | Passing |
-| Extension | Shared utils + services (popup tests deferred) | 45 (CI) | Passing |
-| Web app | API + lib utils (component tests deferred) | 24 (CI) | Passing |
-| E2E devnet | Shield → subscribe → cancel → recover | — | **Stale — its `cancel` step no longer exists** |
-| **CI total** | TS unit suite | **~1,400 tests** | Green |
-| **Plus** | On-chain Anchor + STARK + e2e | **~480 more** | Local/devnet |
+| p01-js | Merchant pay button + browser SDK | 393 | Passing |
+| stark-prover | WASM packaging + license keys | 23 | Passing |
+| pay-core | /pay page core | 3 (+4 skipped) | Passing |
+| ui | Shared components | 85 | Passing |
+| Web app | API + lib utils | 399 (+29 skipped) | Passing |
+| rpc-config / zkspl-sdk / specter-js | — | 0 | **No test suite** — an earlier revision claimed 361 for rpc-config; that suite does not exist |
+| Mobile app / Extension | Jest / vitest CI suites | not re-measured 2026-08-04 | — |
+| STARK prover/verifier (Rust) | `stark/` + `programs/p01_stark_verifier` | ⏳ re-measured with the in-flight verifier redeployment | — |
+| E2E devnet | Shield → subscribe → recover | — | **Stale — its `cancel` step no longer exists in the program** |
 
 ```bash
 pnpm test                             # all unit tests
@@ -521,8 +590,10 @@ anchor test                           # on-chain programs (localnet)
 - [x] **Subscription vaults are one-way** — cancellation and refunds removed from the program; `claim_period` closes an exhausted vault and pays the remainder + rent to the retailer
 - [x] **Boot-time auto-recovery** (blocking lazy-load rescan from seed)
 - [x] Instant unshield via `p01_liquidity` prefund pool
-- [x] Arcium MPC integration (9 circuits, 6 use cases, mobile wired)
+- [x] Arcium MPC bridge program + SDK (9 circuits — client integration later removed, 2026-07)
 - [x] On-chain trustless relayer + Tor-routed RPC middleware
+- [x] **Permissionless `claim_period` + close-on-exhaustion** (2026-08-04, proven on devnet by a third-party signer: the program pins where the money goes, not who sends the claim)
+- [x] **MIT license everywhere** (2026-08-04 — root LICENSE, site, and docs now agree with what npm shipped)
 - [x] Mugen — reference fiat-to-crypto P2P exchange
 - [x] **V3 STARK migration end-to-end** (transfer/shield/unshield validated live, Goldilocks parity-locked)
 - [x] **Tx-Opacity Phase A** — `p01_relayer` wired V3 (closes RPC IP leak L19)
@@ -535,8 +606,9 @@ anchor test                           # on-chain programs (localnet)
 
 ### In Progress
 
+- [ ] ⏳ **STARK verifier coset-LDE redeployment** — in flight on devnet; the verifier's CU, binary size, and the "no raw trace cells transmitted" property will be stated here from measurement once it lands
+- [ ] **Soundness hardening** of the FRI/DEEP construction (see the plain-language note in the STARK section)
 - [ ] **Subscribe_private renewal** live validation (Pay Now flow under logcat)
-- [ ] **Phase D Arcium `confidentialRelay` deploy** — scaffold landed (`7c0841c`), pending devnet ship + mobile wiring
 - [ ] Universal `LeafInserted` canonical event
 - [ ] DeFi composability spec (balance proof verification for lending/DEX)
 
