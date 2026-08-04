@@ -807,6 +807,113 @@ fn assert_air_agrees_with_trace_c0(trace: &[Vec<BaseElement>]) {
     }
 }
 
+/// [B7] Generic twin of `assert_air_agrees_with_trace_c0`, all six circuits.
+///
+/// Pits the AIR polynomial against the concretely built trace, row by row. An
+/// AIR bug is invisible at the OOD point because the prover computes `C` from
+/// the same buggy AIR and both sides agree on the same error; only a second
+/// encoding sees it. That is what the verifier-side trace-aligned check gave --
+/// and it gave it by CONSUMING the witness leak B7 removes, so it had to move
+/// rather than be deleted. The C3 and C6 padding-row defects lived there.
+///
+/// Stronger than what it replaces: every constrained row, not whichever rows a
+/// query landed on. Zero on-chain CU. Fails closed at proof time.
+///
+/// Row n-1 is excluded: it wraps to row 0, it is what `Z_T` divides out, and
+/// asserting it fails an honest trace -- which is the mutation that proves this
+/// guard discriminates.
+fn assert_air_agrees_with_trace_generic(trace: &[Vec<BaseElement>], spec: QuotientSpec) {
+    let trace_length = trace[0].len();
+    let width = trace.len();
+    match spec {
+        QuotientSpec::Circuit1 => {
+            use crate::air::denominated_pool::{build_pool_commitment_periodic_columns, evaluate_pool_commitment_transition, POOL_COMMITMENT_NUM_CONSTRAINTS, POOL_COMMITMENT_NUM_PERIODIC};
+            let periodic = build_pool_commitment_periodic_columns(trace_length);
+            let mut constraints = vec![BaseElement::ZERO; POOL_COMMITMENT_NUM_CONSTRAINTS];
+            for row in 0..(trace_length - 1) {
+                let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
+                let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
+                let prow: Vec<BaseElement> = (0..POOL_COMMITMENT_NUM_PERIODIC).map(|k| periodic[k][row]).collect();
+                evaluate_pool_commitment_transition(&current, &next, &prow, &mut constraints);
+                for (k, c) in constraints.iter().enumerate() {
+                    assert_eq!(*c, BaseElement::ZERO, "C1 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
+                }
+            }
+        }
+        QuotientSpec::Circuit2 => {
+            use crate::air::balance_proof::{build_balance_proof_periodic_columns, evaluate_balance_proof_transition, BALANCE_PROOF_NUM_CONSTRAINTS, BALANCE_PROOF_NUM_PERIODIC};
+            let periodic = build_balance_proof_periodic_columns(trace_length);
+            let mut constraints = vec![BaseElement::ZERO; BALANCE_PROOF_NUM_CONSTRAINTS];
+            for row in 0..(trace_length - 1) {
+                let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
+                let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
+                let prow: Vec<BaseElement> = (0..BALANCE_PROOF_NUM_PERIODIC).map(|k| periodic[k][row]).collect();
+                evaluate_balance_proof_transition(&current, &next, &prow, &mut constraints);
+                for (k, c) in constraints.iter().enumerate() {
+                    assert_eq!(*c, BaseElement::ZERO, "C2 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
+                }
+            }
+        }
+        QuotientSpec::Circuit3 { depth } => {
+            use crate::air::merkle_path::{build_merkle_path_periodic_columns, evaluate_merkle_path_transition, MERKLE_PATH_NUM_CONSTRAINTS, MERKLE_PATH_NUM_PERIODIC};
+            let periodic = build_merkle_path_periodic_columns(depth, trace_length);
+            let mut constraints = vec![BaseElement::ZERO; MERKLE_PATH_NUM_CONSTRAINTS];
+            for row in 0..(trace_length - 1) {
+                let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
+                let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
+                let prow: Vec<BaseElement> = (0..MERKLE_PATH_NUM_PERIODIC).map(|k| periodic[k][row]).collect();
+                evaluate_merkle_path_transition(&current, &next, &prow, &mut constraints);
+                for (k, c) in constraints.iter().enumerate() {
+                    assert_eq!(*c, BaseElement::ZERO, "C3 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
+                }
+            }
+        }
+        QuotientSpec::Circuit4 => {
+            use crate::air::confidential_balance::{build_confidential_balance_periodic_columns, evaluate_confidential_balance_transition, CONFIDENTIAL_BALANCE_NUM_CONSTRAINTS, CONFIDENTIAL_BALANCE_NUM_PERIODIC};
+            let periodic = build_confidential_balance_periodic_columns();
+            let mut constraints = vec![BaseElement::ZERO; CONFIDENTIAL_BALANCE_NUM_CONSTRAINTS];
+            for row in 0..(trace_length - 1) {
+                let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
+                let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
+                let prow: Vec<BaseElement> = (0..CONFIDENTIAL_BALANCE_NUM_PERIODIC).map(|k| periodic[k][row]).collect();
+                evaluate_confidential_balance_transition(&current, &next, &prow, &mut constraints);
+                for (k, c) in constraints.iter().enumerate() {
+                    assert_eq!(*c, BaseElement::ZERO, "C4 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
+                }
+            }
+        }
+        QuotientSpec::Circuit5 => {
+            use crate::air::transfer::{build_transfer_periodic_columns, evaluate_transfer_transition, TRANSFER_NUM_CONSTRAINTS, TRANSFER_NUM_PERIODIC};
+            let periodic = build_transfer_periodic_columns();
+            let mut constraints = vec![BaseElement::ZERO; TRANSFER_NUM_CONSTRAINTS];
+            for row in 0..(trace_length - 1) {
+                let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
+                let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
+                let prow: Vec<BaseElement> = (0..TRANSFER_NUM_PERIODIC).map(|k| periodic[k][row]).collect();
+                evaluate_transfer_transition(&current, &next, &prow, &mut constraints);
+                for (k, c) in constraints.iter().enumerate() {
+                    assert_eq!(*c, BaseElement::ZERO, "C5 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
+                }
+            }
+        }
+        QuotientSpec::Circuit6 { depth } => {
+            use crate::air::merkle_update::{build_merkle_update_periodic_columns, evaluate_merkle_update_transition, MERKLE_UPDATE_NUM_CONSTRAINTS, MERKLE_UPDATE_NUM_PERIODIC};
+            let periodic = build_merkle_update_periodic_columns(depth, trace_length);
+            let mut constraints = vec![BaseElement::ZERO; MERKLE_UPDATE_NUM_CONSTRAINTS];
+            for row in 0..(trace_length - 1) {
+                let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
+                let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
+                let prow: Vec<BaseElement> = (0..MERKLE_UPDATE_NUM_PERIODIC).map(|k| periodic[k][row]).collect();
+                evaluate_merkle_update_transition(&current, &next, &prow, &mut constraints);
+                for (k, c) in constraints.iter().enumerate() {
+                    assert_eq!(*c, BaseElement::ZERO, "C6 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
+                }
+            }
+        }
+        QuotientSpec::LegacyGeneric => {}
+    }
+}
+
 fn evaluate_transition_constraint(
     current: &[BaseElement],
     next: &[BaseElement],
@@ -6745,6 +6852,11 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
 ) -> (Vec<u8>, [u8; 32]) {
     let trace_width = trace.len();
     let trace_length = trace[0].len();
+
+    // [B7] AIR-vs-trace agreement, prover-side, all six generic circuits.
+    // See `assert_air_agrees_with_trace_c0` for why it exists and why it
+    // cannot live in the verifier once the LDE sits on a coset.
+    assert_air_agrees_with_trace_generic(trace, quotient_spec);
     let lde_size = trace_length * blowup;
     let merkle_depth = (lde_size as f64).log2() as usize;
 
