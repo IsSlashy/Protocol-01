@@ -1844,7 +1844,7 @@ fn verify_fri_legacy(
         } else {
             // [B7] h^(-1) on the RESULT. Layer 0; `y2 = y.mul(y)` squares it
             // for later layers, matching the prover.
-            { std::eprintln!("[DIFF v-1833] j={} half_lde={}", j, half_lde); Felt::ZERO.sub(inv_gen_0_powers[half_lde - j].mul(Felt::new(LDE_COSET_SHIFT))) }
+            Felt::ZERO.sub(inv_gen_0_powers[half_lde - j].mul(Felt::new(LDE_COSET_SHIFT)))
         };
         let y2 = y.mul(y);
         let sy = deep_s.mul(y);
@@ -1932,7 +1932,6 @@ fn verify_fri_legacy(
                 shift_inv_layer = shift_inv_layer.mul(shift_inv_layer);
             }
             let y_inv = inv_gen_0_powers[j << i].mul(shift_inv_layer);
-            std::eprintln!("[DIFF v-1911] layer={} j={} shift_inv={}", i, j, shift_inv_layer.as_u64());
             let sum = f_lo.add(f_hi);
             let diff = f_lo.sub(f_hi);
             let even = sum.mul(two_inv);
