@@ -833,7 +833,7 @@ fn assert_air_agrees_with_trace_generic(trace: &[Vec<BaseElement>], spec: Quotie
             for row in 0..(trace_length - 1) {
                 let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
                 let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
-                let prow: Vec<BaseElement> = (0..POOL_COMMITMENT_NUM_PERIODIC).map(|k| periodic[k][row]).collect();
+                let prow: Vec<BaseElement> = (0..POOL_COMMITMENT_NUM_PERIODIC).map(|k| periodic[k][row % periodic[k].len()]).collect();
                 evaluate_pool_commitment_transition(&current, &next, &prow, &mut constraints);
                 for (k, c) in constraints.iter().enumerate() {
                     assert_eq!(*c, BaseElement::ZERO, "C1 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
@@ -847,7 +847,7 @@ fn assert_air_agrees_with_trace_generic(trace: &[Vec<BaseElement>], spec: Quotie
             for row in 0..(trace_length - 1) {
                 let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
                 let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
-                let prow: Vec<BaseElement> = (0..BALANCE_PROOF_NUM_PERIODIC).map(|k| periodic[k][row]).collect();
+                let prow: Vec<BaseElement> = (0..BALANCE_PROOF_NUM_PERIODIC).map(|k| periodic[k][row % periodic[k].len()]).collect();
                 evaluate_balance_proof_transition(&current, &next, &prow, &mut constraints);
                 for (k, c) in constraints.iter().enumerate() {
                     assert_eq!(*c, BaseElement::ZERO, "C2 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
@@ -861,7 +861,7 @@ fn assert_air_agrees_with_trace_generic(trace: &[Vec<BaseElement>], spec: Quotie
             for row in 0..(trace_length - 1) {
                 let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
                 let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
-                let prow: Vec<BaseElement> = (0..MERKLE_PATH_NUM_PERIODIC).map(|k| periodic[k][row]).collect();
+                let prow: Vec<BaseElement> = (0..MERKLE_PATH_NUM_PERIODIC).map(|k| periodic[k][row % periodic[k].len()]).collect();
                 evaluate_merkle_path_transition(&current, &next, &prow, &mut constraints);
                 for (k, c) in constraints.iter().enumerate() {
                     assert_eq!(*c, BaseElement::ZERO, "C3 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
@@ -875,7 +875,7 @@ fn assert_air_agrees_with_trace_generic(trace: &[Vec<BaseElement>], spec: Quotie
             for row in 0..(trace_length - 1) {
                 let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
                 let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
-                let prow: Vec<BaseElement> = (0..CONFIDENTIAL_BALANCE_NUM_PERIODIC).map(|k| periodic[k][row]).collect();
+                let prow: Vec<BaseElement> = (0..CONFIDENTIAL_BALANCE_NUM_PERIODIC).map(|k| periodic[k][row % periodic[k].len()]).collect();
                 evaluate_confidential_balance_transition(&current, &next, &prow, &mut constraints);
                 for (k, c) in constraints.iter().enumerate() {
                     assert_eq!(*c, BaseElement::ZERO, "C4 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
@@ -889,7 +889,7 @@ fn assert_air_agrees_with_trace_generic(trace: &[Vec<BaseElement>], spec: Quotie
             for row in 0..(trace_length - 1) {
                 let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
                 let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
-                let prow: Vec<BaseElement> = (0..TRANSFER_NUM_PERIODIC).map(|k| periodic[k][row]).collect();
+                let prow: Vec<BaseElement> = (0..TRANSFER_NUM_PERIODIC).map(|k| periodic[k][row % periodic[k].len()]).collect();
                 evaluate_transfer_transition(&current, &next, &prow, &mut constraints);
                 for (k, c) in constraints.iter().enumerate() {
                     assert_eq!(*c, BaseElement::ZERO, "C5 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
@@ -903,7 +903,7 @@ fn assert_air_agrees_with_trace_generic(trace: &[Vec<BaseElement>], spec: Quotie
             for row in 0..(trace_length - 1) {
                 let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
                 let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
-                let prow: Vec<BaseElement> = (0..MERKLE_UPDATE_NUM_PERIODIC).map(|k| periodic[k][row]).collect();
+                let prow: Vec<BaseElement> = (0..MERKLE_UPDATE_NUM_PERIODIC).map(|k| periodic[k][row % periodic[k].len()]).collect();
                 evaluate_merkle_update_transition(&current, &next, &prow, &mut constraints);
                 for (k, c) in constraints.iter().enumerate() {
                     assert_eq!(*c, BaseElement::ZERO, "C6 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
