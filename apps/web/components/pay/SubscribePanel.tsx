@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * SubscribePanel — pick a vendor, pick a note, subscribe, show the key.
+ * SubscribePanel: pick a vendor, pick a note, subscribe, show the key.
  *
  * Same two-phase shape as every other pool operation: nothing here proves,
  * signs or sends. `subscribeFromPool` (in `lib/privacy/shieldClient.ts`) drives
@@ -11,12 +11,14 @@
  * The two facts this panel exists to make un-missable, because both surprise
  * people and both are true:
  *
- *   1. Subscribing escrows the WHOLE note denomination, not `rate × periods`.
+ *   1. Subscribing locks the WHOLE note, not `rate x periods`.
  *      `subscribe_private_stark.rs:185` sets `let amount = pool.denomination;`.
  *   2. There is no way back. `claim_period` is the only instruction that can
  *      close a vault, and on the final claim Anchor's `close` moves every
- *      remaining lamport — leftover balance, dust and the vault's own rent — to
+ *      remaining lamport (leftover balance, dust and the vault's own rent) to
  *      the retailer (`claim_period.rs:309-315`).
+ *
+ * Simplifying the vocabulary never means softening either sentence.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -28,6 +30,7 @@ import {
   KeyRound,
   Loader2,
   RefreshCw,
+  ShieldAlert,
   Store,
   TriangleAlert,
 } from "lucide-react";
@@ -44,6 +47,9 @@ import {
   type RegistrySnapshot,
   type ServiceEntry,
 } from "@/lib/privacy/serviceRegistry";
+import { SUBSCRIBE_PHASES } from "@/lib/pay/flowProgress";
+import FlowProgress from "./FlowProgress";
+import SuccessBurst from "./SuccessBurst";
 import { truncate } from "./util";
 
 // ---------------------------------------------------------------------------
@@ -101,7 +107,7 @@ function pricedInPoolToken(service: ServiceEntry, token: PoolToken): boolean {
 }
 
 /**
- * Periods the escrow buys: `floor(denomination / rate)`.
+ * Periods the locked note buys: `floor(denomination / rate)`.
  *
  * This is a display of the on-chain arithmetic, not a promise: `claim_period`
  * settles `floor(elapsed / interval_slots)` periods at `rate` each until the
@@ -119,6 +125,15 @@ function periodsFunded(
 
 function noteKey(n: PoolNoteView): string {
   return `${n.pool}:${n.leafIndex}`;
+}
+
+/** The numbered badge that makes the two-step journey read as one. */
+function StepBadge({ n }: { n: number }) {
+  return (
+    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-p01-cyan/60 font-mono text-[11px] text-p01-cyan">
+      {n}
+    </span>
+  );
 }
 
 export default function SubscribePanel({
@@ -184,8 +199,8 @@ export default function SubscribePanel({
       // walk below costs tens of seconds on the public devnet RPC and the user
       // was watching "Scanning the 0.1 SOL pool..." the whole time.
       //
-      // These arrive with `spentKnown: false` — nothing here has seen a nullifier
-      // PDA — so they are provisional until the scan below replaces them.
+      // These arrive with `spentKnown: false` (nothing here has seen a nullifier
+      // PDA) so they are provisional until the scan below replaces them.
       try {
         const local = await shieldClient.scanPoolLocal(meta, owner.toBase58());
         if (local.notes.length > 0) setNotes(local.notes);
@@ -215,10 +230,10 @@ export default function SubscribePanel({
   const [copied, setCopied] = useState(false);
 
   // `spent` on a locally-painted note is a default, not a reading, so also drop
-  // what this browser has already withdrawn — escrowing a spent note into a
+  // what this browser has already withdrawn: locking a spent note into a
   // subscription vault would fail after ~150 chunk uploads.
   // State, not a memo: subscribing adds to it, and a memo keyed on `owner`
-  // would not recompute after that write — the note just escrowed would stay
+  // would not recompute after that write. The note just locked would stay
   // in the picker until a reload.
   const [spentHere, setSpentHere] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => {
@@ -239,15 +254,15 @@ export default function SubscribePanel({
 
   const usdcUnsupported = token !== "SOL";
   const blockedReason = usdcUnsupported
-    ? `The note scanner only enumerates SOL pool notes today, so a ${token} subscription cannot be funded from this panel.`
+    ? `The note scanner only lists SOL pool notes today, so a ${token} subscription cannot be funded from this panel.`
     : !signOne
       ? "This wallet cannot sign transactions."
       : !service
-        ? "Choose a vendor."
+        ? "Choose a vendor first."
         : tokenMismatch
-          ? `${service.name} prices in a different mint than the ${token} pool, so a ${token} note cannot fund it.`
+          ? `${service.name} prices in a different token than the ${token} pool, so a ${token} note cannot fund it.`
           : !note
-            ? "Choose a note to escrow."
+            ? "Now choose a note to lock."
             : periods !== null && periods === 0n
               ? "This note is smaller than one billing period, so it would fund nothing."
               : null;
@@ -275,7 +290,7 @@ export default function SubscribePanel({
         rate: service.priceAtomic,
         intervalSlots: service.intervalSlots,
         // The tag the key is scoped to. `licenseServiceTag(slug, retailer)`
-        // reproduces exactly what mobile posts — its subscribe screen passes
+        // reproduces exactly what mobile posts: its subscribe screen passes
         // `serviceId: svc.slug` (streams/index.tsx:334) into the same helper
         // (streams/subscribe.tsx:405). Sending anything else here mints a key
         // no merchant will accept.
@@ -286,11 +301,11 @@ export default function SubscribePanel({
         onProgress: setStep,
       });
       setResult(out);
-      // Subscribing SPENDS the note — its nullifier is now on chain and the
-      // whole denomination is escrowed. Record it exactly as a withdrawal does,
-      // or every list keeps offering it until the pool scan catches up, which
-      // takes minutes: another ~1 SOL of buffer rent and ~150 uploads to reach
-      // a nullifier collision.
+      // Subscribing SPENDS the note: its nullifier is now on chain and the
+      // whole denomination is locked in the vault. Record it exactly as a
+      // withdrawal does, or every list keeps offering it until the pool scan
+      // catches up, which takes minutes: another ~1 SOL of buffer rent and
+      // ~150 uploads to reach a nullifier collision.
       shieldClient.recordSpentNote(owner.toBase58(), noteKey(note));
       setSpentHere((prev) => new Set(prev).add(noteKey(note)));
       void rescan();
@@ -321,12 +336,13 @@ export default function SubscribePanel({
 
   return (
     <div className="space-y-5">
-      {/* Vendors */}
+      {/* Step 1: vendor */}
       <div className="card p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
+            <StepBadge n={1} />
             <Store className="h-4 w-4 text-p01-cyan" />
-            <p className="font-display text-sm text-p01-text">Vendors</p>
+            <p className="font-display text-sm text-p01-text">Choose a vendor</p>
           </div>
           <button
             onClick={() => void loadVendors(true)}
@@ -343,7 +359,7 @@ export default function SubscribePanel({
             <p className="font-medium">Could not read the vendor registry</p>
             <p className="mt-1 text-p01-red/90">{registryError}</p>
             <p className="mt-1 text-p01-red/90">
-              This is a failed read, not an empty roster — vendors are registered on chain and this
+              This is a failed read, not an empty roster. Vendors are registered on chain and this
               client could not see them.
             </p>
           </div>
@@ -407,7 +423,7 @@ export default function SubscribePanel({
                       </p>
                       {!payable && (
                         <p className="mt-0.5 text-xs text-p01-text-dim">
-                          Priced in another mint — not payable from a {token} note.
+                          Priced in another token, so a {token} note cannot pay for it.
                         </p>
                       )}
                     </div>
@@ -425,12 +441,13 @@ export default function SubscribePanel({
         )}
       </div>
 
-      {/* Notes */}
+      {/* Step 2: note */}
       <div className="card p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
+            <StepBadge n={2} />
             <KeyRound className="h-4 w-4 text-p01-cyan" />
-            <p className="font-display text-sm text-p01-text">Note to escrow</p>
+            <p className="font-display text-sm text-p01-text">Choose a note to lock</p>
           </div>
           <button
             onClick={rescan}
@@ -454,7 +471,7 @@ export default function SubscribePanel({
 
         {!scanning && unspent.length === 0 && !scanError && (
           <p className="mt-2 text-xs text-p01-text-muted">
-            No unspent notes. Shield one in the Pool tab first — the note you shield is the whole
+            No unspent notes. Shield one in the Pool tab first. The note you shield is the whole
             budget of the subscription.
           </p>
         )}
@@ -463,7 +480,7 @@ export default function SubscribePanel({
           <ul className="mt-3 space-y-2">
             {unspent.map((n) => {
               // Key on `k`, NOT on `n.counter`: local-storage notes all carry 0,
-              // so those keys collide and React may omit or duplicate rows —
+              // so those keys collide and React may omit or duplicate rows,
               // which is how a shielded note failed to appear in this selector.
               const k = noteKey(n);
               const active = k === selectedNote;
@@ -486,9 +503,10 @@ export default function SubscribePanel({
                             : "font-mono text-sm text-p01-text"
                         }
                       >
-                        {n.denomination} {n.token}
+                        {n.denomination} {n.token} note
                       </p>
-                      <p className="truncate font-mono text-xs text-p01-text-muted">
+                      {/* Protocol detail stays available, in the second plane. */}
+                      <p className="truncate font-mono text-[11px] text-p01-text-dim">
                         leaf #{n.leafIndex} · {truncate(n.commitment, 6, 4)}
                       </p>
                     </div>
@@ -500,41 +518,46 @@ export default function SubscribePanel({
         )}
       </div>
 
+      {/* The plain sentence of the deal, once both halves are picked. */}
+      {service && note && !tokenMismatch && periods !== null && periods > 0n && (
+        <div className="rounded-lg border border-p01-cyan/40 bg-p01-cyan/5 p-3 text-sm text-p01-text">
+          You lock <span className="font-mono text-p01-cyan">{note.denomination} {note.token}</span>.{" "}
+          {service.name} charges{" "}
+          <span className="font-mono text-p01-cyan">{formatServicePrice(service)}</span>{" "}
+          {formatInterval(service.intervalSlots)}, so that pays for{" "}
+          <span className="font-mono text-p01-cyan">{periods.toString()}</span> billing period
+          {periods === 1n ? "" : "s"}. Then the subscription ends and anything left over goes to
+          the vendor.
+        </div>
+      )}
+
       {/* What subscribing costs. Everything in this box is a statement about
           the deployed program, cited, because every line of it is a surprise. */}
       <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
-        <p className="font-medium">Devnet. The whole note is escrowed, and none of it comes back</p>
+        <p className="font-medium">Devnet. The whole note is locked, and none of it comes back</p>
         <ul className="mt-1.5 list-disc space-y-1 pl-4 text-p01-red/90">
           <li>
-            <strong>The vault is funded with the entire note denomination</strong>, not with rate ×
-            the number of periods you want. `subscribe_private_stark.rs:185` sets{" "}
-            <code className="font-mono">amount = pool.denomination</code>. A 10 SOL note buys a
-            10 SOL subscription.
-            {service && note && periods !== null && !tokenMismatch && (
-              <>
-                {" "}
-                This pairing escrows {note.denomination} {note.token} and funds{" "}
-                {periods.toString()} {formatInterval(service.intervalSlots)} period
-                {periods === 1n ? "" : "s"} at {formatServicePrice(service)} each.
-              </>
-            )}
+            <strong>Your entire note funds the subscription</strong>, not just rate times the
+            number of periods you want. A 10 SOL note buys a 10 SOL subscription.{" "}
+            <span className="font-mono text-p01-red/70">
+              subscribe_private_stark.rs:185 sets amount = pool.denomination.
+            </span>
           </li>
           <li>
-            <strong>There is no cancel and no refund.</strong> `claim_period` is the only
-            instruction that can close a vault, and on the final claim every remaining lamport —
-            leftover balance, dust, and the vault&apos;s own rent — is moved to the merchant
-            (`claim_period.rs:309-315`).
+            <strong>There is no cancel and no refund.</strong> Only the vendor collecting its
+            periods can close the vault, and the final collection sweeps everything left in it
+            (leftover balance, dust, and the vault&apos;s own rent) to the vendor.{" "}
+            <span className="font-mono text-p01-red/70">claim_period.rs:309-315.</span>
           </li>
           <li>
-            On top of the denomination the wallet signs one pre-fund of roughly 1 SOL: rent for the
-            two proof buffers (returned when they close) plus about 0.006 SOL of nullifier rent and
-            transaction fees that is not returned. Same float as a withdrawal — this instruction
-            requires the same C1 and C3 proofs.
+            On top of the note, your wallet signs one deposit of roughly 1 SOL to hold space for
+            the two proofs. It comes back when they close, minus about 0.006 SOL of fees that does
+            not. Same deposit as a withdrawal: this operation needs the same two proofs.
           </li>
           <li>
-            The subscription is unlinkable to your wallet only to the extent the pool is. Read the
-            Pool tab&apos;s disclosure: the note commitment is published in the clear by the
-            deposit, so treat the spend as matchable to it.
+            The subscription hides your wallet only as well as the pool does, which today is not at
+            all: the note commitment is published in the clear by the deposit, so treat this spend
+            as matchable to it. The Pool tab&apos;s disclosure has the details.
           </li>
         </ul>
       </div>
@@ -545,6 +568,7 @@ export default function SubscribePanel({
         </p>
       )}
 
+      {/* A disabled button always says why, right next to itself. */}
       {blockedReason && !result && (
         <p className="text-center text-xs text-p01-text-muted">{blockedReason}</p>
       )}
@@ -561,67 +585,93 @@ export default function SubscribePanel({
           </>
         ) : service && note ? (
           <>
-            Escrow {note.denomination} {note.token} with {service.name}
+            Lock {note.denomination} {note.token} with {service.name}
           </>
         ) : (
           <>Subscribe</>
         )}
       </button>
 
-      {step && (
-        <p className="text-center text-xs text-p01-text-dim">
-          {step}
-          <br />
-          <span className="text-p01-text-muted">
-            Two proofs are uploaded in ~140 KB chunks. This takes a few minutes. Keep this tab open.
-          </span>
-        </p>
+      {/* The longest flow in the product: two proofs, two uploads, ~150
+          transactions. The bar moves on the worker's real steps; the raw step
+          string stays visible underneath as the second-plane detail. */}
+      {submitting && (
+        <>
+          <FlowProgress
+            phases={SUBSCRIBE_PHASES}
+            step={step}
+            running={submitting}
+            note="About 1 SOL sits in a refundable deposit while this runs; it is returned when the proof buffers close."
+          />
+          {step && (
+            <p className="text-center font-mono text-[11px] text-p01-text-dim">{step}</p>
+          )}
+        </>
       )}
 
-      {/* Outcome — the license key is the product of this whole flow. */}
+      {/* Outcome. The license key is the product of this whole flow. */}
       {result && (
         <div className="card p-4">
-          <div className="flex items-center gap-2">
-            <KeyRound className="h-4 w-4 text-p01-cyan" />
-            <p className="font-display text-sm text-p01-text">Your license key</p>
+          <SuccessBurst label="Subscription open" />
+
+          <div className="mt-3 rounded-lg border border-p01-cyan/40 bg-p01-void p-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="flex items-center gap-2 text-xs uppercase tracking-wider text-p01-text-muted">
+                <KeyRound className="h-3.5 w-3.5 text-p01-cyan" /> License key
+              </p>
+              <button
+                onClick={() => void copyKey(result.licenseKey)}
+                className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
+              >
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <p className="mt-2 break-all font-mono text-xl leading-relaxed text-p01-cyan">
+              {result.licenseKey}
+            </p>
           </div>
 
-          <p className="mt-3 break-all font-mono text-xl leading-relaxed text-p01-cyan">
-            {result.licenseKey}
-          </p>
+          {/* The two facts about this key, each on its own line so neither
+              hides the other: it is never stored, and it is a bearer credential. */}
+          <div className="mt-3 space-y-2">
+            <p className="flex items-start gap-2 text-xs text-p01-text-muted">
+              <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
+              <span>
+                <strong className="text-p01-text">Never stored, never lost.</strong> The key is
+                recomputed from the secret of the note you just spent, so any device holding that
+                note shows the same key. Nothing to back up.
+              </span>
+            </p>
+            <p className="flex items-start gap-2 text-xs text-p01-text-muted">
+              <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
+              <span>
+                <strong className="text-p01-text">It works for whoever holds it.</strong> Anyone
+                with this key can present it to the vendor as you. Show it to the vendor and no one
+                else.
+              </span>
+            </p>
+          </div>
 
-          <button
-            onClick={() => void copyKey(result.licenseKey)}
-            className="btn-secondary mt-3 inline-flex items-center gap-2 px-4 py-2 text-xs"
-          >
-            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            {copied ? "Copied" : "Copy key"}
-          </button>
-
-          <p className="mt-3 text-xs text-p01-text-muted">
-            This key is derived from the note secret you just spent, scoped to this service — so any
-            device holding that note secret re-derives the same key, and you never have to store it.
-            It is still a bearer credential: anyone you show it to can present it to the merchant as
-            you.
-          </p>
-
-          <p className="mt-2 font-mono text-xs text-p01-text-dim">
-            vault{" "}
-            {truncate(
-              typeof result.vaultPDA === "string" ? result.vaultPDA : result.vaultPDA.toBase58(),
-              6,
-              4,
-            )}
-          </p>
-
-          <a
-            href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-2 inline-block font-mono text-xs text-p01-cyan hover:underline"
-          >
-            {truncate(result.txSig, 10, 8)} ↗
-          </a>
+          {/* Protocol detail, second plane. */}
+          <div className="mt-3 border-t border-p01-border pt-3">
+            <p className="font-mono text-xs text-p01-text-dim">
+              vault{" "}
+              {truncate(
+                typeof result.vaultPDA === "string" ? result.vaultPDA : result.vaultPDA.toBase58(),
+                6,
+                4,
+              )}
+            </p>
+            <a
+              href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-block font-mono text-xs text-p01-cyan hover:underline"
+            >
+              {truncate(result.txSig, 10, 8)} ↗
+            </a>
+          </div>
         </div>
       )}
     </div>
