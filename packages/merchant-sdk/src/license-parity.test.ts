@@ -35,6 +35,7 @@ import * as sdk from './license';
 import { LICENSE_SCHEME } from './license';
 import * as mobile from '../../../apps/mobile/services/license/derive';
 import * as extension from '../../../apps/extension/src/shared/services/license';
+import * as web from '../../../apps/web/lib/privacy/license';
 import {
   EXPECTED_CODEC_FINGERPRINT,
   EXPECTED_DERIVATION_FINGERPRINT,
@@ -56,12 +57,18 @@ const CODECS = [
   ['merchant-sdk', sdk],
   ['mobile', mobile],
   ['extension', extension],
+  // Fourth implementation, added 2026-08-04 when the /pay page grew a subscribe
+  // compartment. A key minted in a browser has to verify against a merchant that
+  // has never seen apps/web, so it belongs in this table, not in a comment
+  // claiming it was copied carefully.
+  ['web', web],
 ] as const;
 
 /** Every implementation that derives the secret (the clients). */
 const CLIENTS = [
   ['mobile', mobile],
   ['extension', extension],
+  ['web', web],
 ] as const;
 
 // ===========================================================================
