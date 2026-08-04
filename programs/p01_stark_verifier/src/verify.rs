@@ -163,6 +163,21 @@ const GENERATOR_8192: u64 = 0x1544EF2335D17997;
 /// constant lands first so the two crates can be checked against each other
 /// before any proof bytes move.
 pub const LDE_COSET_SHIFT: u64 = 7;
+/// [B7] `h^(-1)`, precomputed. NOT `Felt::new(LDE_COSET_SHIFT_INV)`.
+///
+/// MEASURED, and this is why it is a constant: `inv()` is a Fermat
+/// exponentiation, roughly a hundred multiplications. Calling it inside the
+/// per-query, per-layer FRI loop cost ~500,000 CU and pushed ALL SEVEN circuits
+/// over the 1,400,000 cap — `consumed 1399850 of 1399850, exceeded CUs meter`.
+/// The value depends on neither the query nor the layer, so it has no business
+/// being computed there, and since `h` is a compile-time constant it has no
+/// business being computed at runtime at all.
+///
+/// 7 * 2635249152773512046 == 1 mod (2^64 - 2^32 + 1). Cross-checked against
+/// the prover, which printed exactly this as its layer-0 `inv_shift` during the
+/// B7 differential debugging — two paths that do not talk to each other.
+/// `coset_shift_inverse_is_exact` pins it rather than trusting this comment.
+pub const LDE_COSET_SHIFT_INV: u64 = 2635249152773512046;
 
 /// Get the LDE domain generator for a given LDE size.
 ///
@@ -1663,7 +1678,7 @@ fn verify_fri_generic(
             // silently wrong at every layer after it — the exact shape of bug
             // that still yields a proof, just one that verifies against the wrong
             // polynomial.
-            let mut shift_inv_layer = Felt::new(LDE_COSET_SHIFT).inv();
+            let mut shift_inv_layer = Felt::new(LDE_COSET_SHIFT_INV);
             for _ in 0..i {
                 shift_inv_layer = shift_inv_layer.mul(shift_inv_layer);
             }
@@ -1927,7 +1942,7 @@ fn verify_fri_legacy(
             // what is missing is the shift at the SAME power: layer `i` lives
             // on h^(2^i) * <g^(2^i)>. Using h^(-1) here would be right at
             // layer 0 and silently wrong at every layer after it.
-            let mut shift_inv_layer = Felt::new(LDE_COSET_SHIFT).inv();
+            let mut shift_inv_layer = Felt::new(LDE_COSET_SHIFT_INV);
             for _ in 0..i {
                 shift_inv_layer = shift_inv_layer.mul(shift_inv_layer);
             }
