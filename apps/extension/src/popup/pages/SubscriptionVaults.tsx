@@ -263,9 +263,26 @@ export default function SubscriptionVaults() {
           >
             <div className="bg-p01-surface rounded-xl p-6 text-center border border-p01-border">
               <Calendar className="w-12 h-12 text-p01-chrome/40 mx-auto mb-3" />
-              <p className="text-white font-medium mb-1">No subscription vaults yet</p>
+              {/*
+                This list is built by a memcmp on `subscriber_pubkey`
+                (`services/subscriptionVault.ts::fetchAllVaults`), which only
+                legacy wallet-keyed vaults ever set. `subscribe_private_stark` —
+                the only vault constructor left — writes that field as `None`, so
+                a private subscription can never appear here. It is not a bug:
+                being unfindable from a wallet address is the privacy property
+                that got `subscribe_normal` deleted.
+
+                So "no vaults yet" was a claim this screen cannot make. It said
+                the user owns nothing when the truth is that this screen cannot
+                see what they own, and then invited them to create a second one.
+              */}
+              <p className="text-white font-medium mb-1">No listed subscription vaults</p>
               <p className="text-p01-chrome text-xs mb-4">
-                Create a vault to enable recurring payments to retailers
+                Private subscriptions are keyed to a secret, not to your wallet, so they cannot be
+                looked up from this address — that is what keeps them private. Only older
+                wallet-keyed vaults appear here. If you subscribed privately, your vault still
+                exists and is still being paid out; open it from the receipt you saved when you
+                subscribed.
               </p>
               <button
                 onClick={() => setActionModal(null)} // TODO: Navigate to create vault page
