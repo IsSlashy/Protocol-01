@@ -39,6 +39,7 @@ import { getPoolsForTokenV3, type PoolToken } from "@/lib/privacy/pool/denominat
 import { SHIELD_PHASES, WITHDRAW_PHASES } from "@/lib/pay/flowProgress";
 import FlowProgress from "./FlowProgress";
 import SuccessBurst from "./SuccessBurst";
+import { HANDOFFS_CHANGED_EVENT, forgetHandoff, handoffKeys } from "@/lib/pay/handoffs";
 import { truncate } from "./util";
 
 /** The live V4 SOL pools. Shielding snaps to one of these: a denominated pool
@@ -108,6 +109,12 @@ export default function PoolPanel({
   /** True while the list comes from local storage, whose `spent` is a default
    *  rather than a reading. Cleared once the chain walk has answered. */
   const [notesProvisional, setNotesProvisional] = useState(false);
+  /** Notes handed to someone and not yet claimed. They STAY in this list on
+   *  purpose: sealing consumes nothing, both sides hold a spendable copy, and
+   *  hiding them would tell the user their money is gone while it is still
+   *  entirely theirs. What changes is that the row says so, and Withdraw is
+   *  how they take it back. */
+  const [handedOver, setHandedOver] = useState<ReadonlySet<string>>(new Set());
   const [poolSizes, setPoolSizes] = useState<PoolSizeView[]>([]);
   const [scanning, setScanning] = useState(false);
   const [scanStep, setScanStep] = useState<string | null>(null);
@@ -174,6 +181,15 @@ export default function PoolPanel({
     // Spent notes are per wallet and persisted, so re-read them on a switch
     // rather than carrying one wallet's history into another's list.
     setSpentLocally(knownSpentNoteKeys(ownerKey));
+    setHandedOver(handoffKeys(ownerKey));
+  }, [ownerKey]);
+
+  // A handoff sealed on the Send tab must reach this list without a reload:
+  // visited panels stay mounted, so reading once on mount reads once a session.
+  useEffect(() => {
+    const catchUp = () => setHandedOver(handoffKeys(ownerKey));
+    window.addEventListener(HANDOFFS_CHANGED_EVENT, catchUp);
+    return () => window.removeEventListener(HANDOFFS_CHANGED_EVENT, catchUp);
   }, [ownerKey]);
 
   const rescan = useCallback(async () => {
@@ -822,10 +838,28 @@ export default function PoolPanel({
                   <div className="min-w-0">
                     <p className="font-mono text-sm text-p01-text">{n.denomination} SOL note</p>
                     <p className="text-xs text-p01-text-muted">
-                      {notesProvisional
-                        ? "Still being checked against the chain; may already be spent."
-                        : "In the pool, ready to withdraw."}
+                      {handedOver.has(noteKey(n))
+                        ? "Handed over, waiting to be claimed. Still yours until one of you spends it."
+                        : notesProvisional
+                          ? "Still being checked against the chain; may already be spent."
+                          : "In the pool, ready to withdraw."}
                     </p>
+                    {handedOver.has(noteKey(n)) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          forgetHandoff(ownerKey, n.pool, n.leafIndex);
+                          setHandedOver(handoffKeys(ownerKey));
+                        }}
+                        // Says what it does and, more importantly, what it does
+                        // not: the recipient keeps their copy either way. The
+                        // only real way to take a note back is to spend it.
+                        title="Stops treating this note as handed over, so it can be handed over or subscribed with again. It does NOT take it back: the recipient still holds their copy."
+                        className="mt-1 text-xs text-p01-cyan underline underline-offset-2 hover:text-p01-text"
+                      >
+                        Use it freely again
+                      </button>
+                    )}
                     <p className="truncate font-mono text-xs text-p01-text-dim">
                       leaf #{n.leafIndex} · {truncate(n.commitment, 6, 4)}
                     </p>

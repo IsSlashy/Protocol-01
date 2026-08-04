@@ -144,6 +144,11 @@ function renderForm(props: { meta?: string | null; owner?: PublicKey | null } = 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Sealing now records a handoff in localStorage, and an in-transit note is
+  // withheld from this picker. Without this line the first test to seal would
+  // hide the fixture note from every test after it, which would be a property
+  // of the suite rather than of the component.
+  localStorage.clear();
   scanPool.mockResolvedValue({
     notes: [noteView(), noteView({ counter: 22, leafIndex: 22, denomination: 1, commitment: "42" })],
     shieldedBalance: 1.1,

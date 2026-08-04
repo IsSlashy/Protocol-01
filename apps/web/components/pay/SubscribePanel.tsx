@@ -48,6 +48,7 @@ import {
   type ServiceEntry,
 } from '@/lib/privacy/serviceRegistry';
 import { SUBSCRIBE_PHASES } from '@/lib/pay/flowProgress';
+import { HANDOFFS_CHANGED_EVENT, handoffKeys } from '@/lib/pay/handoffs';
 import { recordSubscription } from '@/lib/pay/subscriptions';
 import FlowProgress from './FlowProgress';
 import SuccessBurst from './SuccessBurst';
@@ -334,12 +335,23 @@ export default function SubscribePanel({
   // would not recompute after that write. The note just locked would stay
   // in the picker until a reload.
   const [spentHere, setSpentHere] = useState<ReadonlySet<string>>(new Set());
+  /** Notes handed to someone and not yet claimed. Locking one into a vault
+   *  would escrow a coin the recipient can still take first, and a subscription
+   *  can never be cancelled or refunded once opened. */
+  const [handedOver, setHandedOver] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => {
     setSpentHere(shieldClient.knownSpentNoteKeys(owner.toBase58()));
+    setHandedOver(handoffKeys(owner.toBase58()));
+    const catchUp = () => setHandedOver(handoffKeys(owner.toBase58()));
+    window.addEventListener(HANDOFFS_CHANGED_EVENT, catchUp);
+    return () => window.removeEventListener(HANDOFFS_CHANGED_EVENT, catchUp);
   }, [owner]);
   const unspent = useMemo(
-    () => notes.filter((n) => !n.spent && !spentHere.has(noteKey(n))),
-    [notes, spentHere]
+    () =>
+      notes.filter(
+        (n) => !n.spent && !spentHere.has(noteKey(n)) && !handedOver.has(noteKey(n))
+      ),
+    [notes, spentHere, handedOver]
   );
   const services = registry?.services ?? [];
   const service = services.find((s) => s.pda.toBase58() === selectedPda) ?? null;

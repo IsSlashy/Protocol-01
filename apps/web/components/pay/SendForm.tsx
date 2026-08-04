@@ -87,6 +87,7 @@ import {
   type SealedNoteHandoff,
 } from "@/lib/privacy/noteTransfer";
 import { SEAL_PHASES, STEALTH_SEND_PHASES } from "@/lib/pay/flowProgress";
+import { handoffKeys, recordHandoff } from "@/lib/pay/handoffs";
 import FeeRow from "./FeeRow";
 import FlowProgress from "./FlowProgress";
 import HonestyBadge from "./HonestyBadge";
@@ -300,10 +301,19 @@ export default function SendForm({
   // State, not a memo: the chain resolution below adds to it, and a memo keyed
   // on `owner` would not recompute after that write.
   const [spentHere, setSpentHere] = useState<ReadonlySet<string>>(new Set());
+  /** Notes already handed to someone and not yet claimed. Not spendable-safe to
+   *  hand over a second time: that would promise one coin to two people. */
+  const [handedOver, setHandedOver] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => {
     setSpentHere(owner ? knownSpentNoteKeys(owner.toBase58()) : new Set<string>());
+    setHandedOver(owner ? handoffKeys(owner.toBase58()) : new Set<string>());
   }, [owner]);
-  const unspent = notes.filter((n) => !n.spent && !spentHere.has(noteKey(n)));
+  // A note already handed to someone is withheld from this picker: handing the
+  // same coin to a second person promises both of them money only one can take.
+  // It stays withdrawable in the Pool tab, which is how a sender takes it back.
+  const unspent = notes.filter(
+    (n) => !n.spent && !spentHere.has(noteKey(n)) && !handedOver.has(noteKey(n)),
+  );
   const chosen = unspent.find((n) => noteKey(n) === selected) ?? null;
   const addressLooksRight = isP01NoteAddress(noteAddress);
   const canSeal = !!chosen && addressLooksRight && !sealing;
@@ -389,6 +399,16 @@ export default function SendForm({
           onProgress: setSealStep,
         }),
       );
+      // The note is NOT spent by sealing, so it stays in the lists. What
+      // changed is that somebody else can now spend it at any moment, and this
+      // record is what lets the UI say so, and keep the note out of the pickers
+      // that would hand it over twice or lock it into a subscription.
+      recordHandoff(owner.toBase58(), {
+        pool: chosen.pool,
+        leafIndex: chosen.leafIndex,
+        sealedAt: Date.now(),
+      });
+      setHandedOver((prev) => new Set(prev).add(noteKey(chosen)));
     } catch (e) {
       setSealError((e as Error).message || "Could not seal this note.");
     } finally {
