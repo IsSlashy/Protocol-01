@@ -1622,24 +1622,41 @@ export async function prepareUnshield(
   // third argument is the commitment's third slot, a PRIVATE witness. It is a
   // real epoch for legacy notes and a PRF blinding for new ones; C1 accepts any
   // field element, which is what keeps legacy notes provable.
-  onProgress?.('Generating C1 (pool_commitment) STARK proof (~60s)...');
-  await prover.start();
-  const c1Raw = await prover.generatePoolCommitmentProof(
-    receipt.nullifierPreimage.toString(),
-    receipt.secret.toString(),
-    receipt.noteBlinding.toString(),
-    receipt.tokenMint.toString(),
-  );
+  // Heartbeat across BOTH proofs, same reason as every other prover call: the
+  // main thread re-arms its request timeout on each progress message, so a
+  // silence longer than that timeout kills a job that is working. This is the
+  // history-rebuild route, taken when the stored Merkle path is no longer
+  // accepted, so it is the SLOWEST of the two and the likeliest to trip it.
+  const proofStartedAt = Date.now();
+  let stage = 'Proving you own the note';
+  const proofHeartbeat = setInterval(() => {
+    const seconds = Math.round((Date.now() - proofStartedAt) / 1000);
+    onProgress?.(`${stage} (${seconds}s)...`);
+  }, 10_000);
+  let c1Raw, c3Raw;
+  try {
+    onProgress?.('Proving you own the note...');
+    await prover.start();
+    c1Raw = await prover.generatePoolCommitmentProof(
+      receipt.nullifierPreimage.toString(),
+      receipt.secret.toString(),
+      receipt.noteBlinding.toString(),
+      receipt.tokenMint.toString(),
+    );
 
   // --- Generate C3 (merkle_path) proof ---
   // publicInputs layout: [leaf_u64, root_u64, depth] — depth bound on-chain.
   // starkProver.generateMerklePathProof(leaf, pathElements, pathIndices)
-  onProgress?.('Generating C3 (merkle_path) STARK proof (~60s)...');
-  const c3Raw = await prover.generateMerklePathProof(
-    receipt.commitment.toString(),
-    merkleResult.pathElements.map((e) => e.toString()),
-    merkleResult.pathIndices,
-  );
+    stage = 'Proving the note is in the pool';
+    onProgress?.('Proving the note is in the pool...');
+    c3Raw = await prover.generateMerklePathProof(
+      receipt.commitment.toString(),
+      merkleResult.pathElements.map((e) => e.toString()),
+      merkleResult.pathIndices,
+    );
+  } finally {
+    clearInterval(proofHeartbeat);
+  }
 
   const c1ProofBytes = hexToBytes(c1Raw.proofHex);
   const c1PublicInputs = c1Raw.publicInputs.map((s) => BigInt(s));
