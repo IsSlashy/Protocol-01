@@ -437,10 +437,13 @@ export default function SubscribePanel({
         {unspent.length > 0 && (
           <ul className="mt-3 space-y-2">
             {unspent.map((n) => {
+              // Key on `k`, NOT on `n.counter`: local-storage notes all carry 0,
+              // so those keys collide and React may omit or duplicate rows —
+              // which is how a shielded note failed to appear in this selector.
               const k = noteKey(n);
               const active = k === selectedNote;
               return (
-                <li key={`${n.pool}:${n.counter}`}>
+                <li key={k}>
                   <button
                     onClick={() => setSelectedNote(k)}
                     disabled={submitting}

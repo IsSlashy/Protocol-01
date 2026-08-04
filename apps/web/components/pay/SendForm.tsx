@@ -480,10 +480,13 @@ export default function SendForm({
               {unspent.length > 0 && (
                 <ul className="space-y-2">
                   {unspent.map((n) => {
+                    // Key on `k`, NOT on `n.counter`: local-storage notes all
+                    // carry 0, so those keys collide and React may omit or
+                    // duplicate rows.
                     const k = noteKey(n);
                     const active = k === selected;
                     return (
-                      <li key={`${n.pool}:${n.counter}`}>
+                      <li key={k}>
                         <button
                           type="button"
                           onClick={() => setSelected(k)}

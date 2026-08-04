@@ -618,7 +618,11 @@ export default function PoolPanel({
           <ul className="space-y-2">
             {unspent.map((n) => (
               <li
-                key={`${n.pool}:${n.counter}`}
+                // NOT `counter`: notes painted from local storage all carry 0,
+                // so two of them collide and React may duplicate or omit rows —
+                // which is how a withdrawn note kept its place in this list.
+                // `leafIndex` is unique within a pool by construction.
+                key={noteKey(n)}
                 className="card flex items-center justify-between gap-3 p-3"
               >
                 <div className="min-w-0">
