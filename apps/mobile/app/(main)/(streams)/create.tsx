@@ -211,9 +211,18 @@ export default function CreatePersonalStreamScreen() {
           </View>
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Text style={st.privacyTitle}>Private mode</Text>
+            {/*
+              'STARK proof breaks the on-chain link to your wallet' was false in
+              both halves. The wallet is passed as the `payer: Signer` of
+              subscribe_private_stark (services/subscriptionVault/index.ts:552),
+              so it is on chain by name; and the instruction republishes the
+              deposit's note commitment as `stark_commitment` (:549, :768), so
+              the note is linkable to the deposit that created it. What is true
+              is where the money comes from: the pool, not the wallet balance.
+            */}
             <Text style={st.privacySub}>
               {isPrivate
-                ? 'Funded from a shielded note. STARK proof breaks the on-chain link to your wallet.'
+                ? 'Funded from a shielded note rather than your wallet balance. Your wallet still signs the transaction and appears on chain.'
                 : 'Public stream. Recipient and amount visible on chain.'}
             </Text>
           </View>

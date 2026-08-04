@@ -318,8 +318,19 @@ export default function PrivacyDashboard() {
             <ProtectionBadge icon="hardware-chip" label="On-device proofs" active />
             <ProtectionBadge icon="lock-closed" label="Encrypted" active />
           </View>
+          {/*
+            'No private data ever leaves your device' was false as written. The
+            proof is uploaded to the chain along with its public inputs, and
+            `publicInputs[1]` of the C1 proof IS the note commitment
+            (services/denominatedPool/index.ts:3192) — the same value the
+            deposit published, which is why the anonymity set is still one.
+            What is true is the narrower claim: no secret is sent to a server,
+            because the witness never leaves the phone.
+          */}
           <Text style={s.protectionHint}>
-            All proofs are generated on your phone. No private data ever leaves your device.
+            Proofs are generated on your phone — your note's secrets are never sent to a server.
+            The proof itself goes on chain, and it carries the same note commitment your deposit
+            published, so a deposit and its withdrawal can still be matched.
           </Text>
         </Animated.View>
 

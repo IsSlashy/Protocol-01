@@ -163,7 +163,12 @@ export default {
     stillMaturing: 'Still maturing.',
     mustBeMature: 'Must be mature.',
     emergencyUnshield: 'Emergency Unshield',
-    emergencyDesc: 'Bypasses maturity — reduces privacy. Only use if urgent.',
+    // Was 'Bypasses maturity — reduces privacy.' The maturity delay is this
+    // client's own rule: `min_epoch` is pinned to 0 on every unshield and the
+    // handler ignores it (services/denominatedPool/index.ts:1678-1707, guarded
+    // by services/denominatedPool/unshieldMinEpoch.test.ts), so emergency
+    // changes no instruction byte and cannot be detected on chain.
+    emergencyDesc: 'Skips this app’s own waiting period. The on-chain transaction is unchanged.',
     proceed: 'Proceed',
     backup: 'Backup',
     backupNotes: 'Backup Notes',
@@ -186,14 +191,23 @@ export default {
     reshare: 'Re-share',
     notesStoredLocally: 'Notes are stored locally. Back up before clearing app data.',
     availableIn: 'Available in %{time}',
-    zeroWalletFootprint: 'Zero wallet footprint — maximum privacy',
+    // Was 'Zero wallet footprint — maximum privacy'. There is no such thing on
+    // either leg: the wallet publicly funds every one-time key it uses
+    // (stores/denominatedPoolStore.ts:1207-1223 on deposit, :1460-1473 on
+    // withdrawal) and the residual is swept straight back to it (:1256-1259).
+    zeroWalletFootprint: 'One-time addresses instead of your wallet — your wallet still funds them publicly',
     selectNotes: 'Select Notes',
     batchTapToSelect: 'Tap mature notes to select',
     batchSelectedCount: '%{count} selected',
     batchMixedTokens: 'Batch must be single-token',
     batchUnshieldTitle: 'Batch Unshield',
     batchRecipientLabel: 'Recipient for all selected notes',
-    batchRecipientHelp: 'All selected notes are unshielded to this address (sequential). Each note uses a fresh stealth intermediary — the recipient only sees the final consolidated total after sweep.',
+    // Was '…the recipient only sees the final consolidated total after sweep.'
+    // Nothing consolidates. The batch is a per-note loop
+    // (app/(main)/(privacy)/denominated-unshield-batch.tsx:149) and each note
+    // sweeps on its own (stores/denominatedPoolStore.ts:1566-1570), so the
+    // recipient receives one transfer of one denomination per note.
+    batchRecipientHelp: 'All selected notes are unshielded to this address, one after another. Each note passes through its own one-time address and then arrives separately — the recipient sees one transfer per note, not one total.',
     batchStart: 'Start Unshield',
     batchRunning: 'Unshielding…',
     batchDone: 'All Notes Unshielded',
@@ -235,7 +249,10 @@ export default {
     confirmPrivateSend: 'Confirm Private Send',
     irreversible: 'This is IRREVERSIBLE.',
     routeActive: 'Route Active',
-    routeDesc: '%{hops} hops from shielded note. Zero wallet footprint.',
+    // 'Zero wallet footprint' deleted: the wallet-sourced route funds the first
+    // hop with a plain public transfer signed by the wallet
+    // (app/(main)/(privacy)/private-send.tsx:145).
+    routeDesc: '%{hops} hops from the shielded note.',
     minimumAmount: 'The minimum routable amount is 0.1 SOL.',
   },
 
@@ -259,13 +276,18 @@ export default {
     shareNote: 'Share via secure channels only',
     normal: 'Normal',
     emergency: 'Emergency',
-    emergencyWarning: 'Emergency mode bypasses the maturity delay. This reduces your privacy by linking deposit and withdrawal timing. Only use if you urgently need funds.',
+    // Was '…reduces your privacy by linking deposit and withdrawal timing',
+    // which implied the two are otherwise unlinked. They never were: the
+    // withdrawal republishes the deposit's note commitment
+    // (services/denominatedPool/index.ts:3192, 3277 → 2941). And emergency
+    // changes no instruction byte — min_epoch is 0 on both paths.
+    emergencyWarning: 'Emergency mode only skips this app’s own waiting period. The on-chain transaction is byte-identical either way; all it changes is that less time passes between your deposit and this withdrawal.',
     privacyWarning: 'Privacy Warning',
     selectMatureNote: 'Select a Mature Note',
     selectANote: 'Select a Note',
     noNotesFound: 'No notes found. Shield some funds first.',
     goToShield: 'Go to Shield',
-    notesMaturing: '%{count} note(s) still maturing. Notes need ~1 epoch (~1 hour) before withdrawal. Use Emergency mode to bypass.',
+    notesMaturing: '%{count} note(s) still maturing. This app waits ~1 epoch (~1 hour) before offering a withdrawal; the pool does not enforce that wait. Use Emergency mode to skip it.',
     recipientAddress: 'Recipient Address',
     myWallet: 'My Wallet',
     custom: 'Custom',
@@ -274,7 +296,22 @@ export default {
     emergencyWithdraw: 'Emergency Withdraw %{amount} %{token}',
     withdraw: 'Withdraw %{amount} %{token}',
     immature: 'Immature',
-    starkOnDevice: 'STARK proof generated on-device (quantum-resistant). No private data leaves your phone.',
+    // 'No private data leaves your phone' deleted. The proof and its public
+    // inputs are uploaded to the chain, and publicInputs[1] IS the note
+    // commitment your deposit published (services/denominatedPool/index.ts
+    // :3192). fr and ja never carried that sentence; en was the outlier.
+    starkOnDevice: 'STARK proof generated on-device (quantum-resistant).',
+    // ── Who signs, and who the money reaches ──────────────────────
+    // Deposit: SOL routes through a seed-derived one-time key
+    // (stores/denominatedPoolStore.ts:1176, :1233); USDC cannot, because the
+    // ephemeral has no funded ATA, so the wallet stays the depositor and the
+    // store warns about it at :1235-1239.
+    depositSignerSol: 'Your wallet does not sign this deposit — a one-time key does. Your wallet still funds that key with a public transfer, one hop away.',
+    depositSignerUsdc: 'Your wallet signs this USDC deposit and appears on chain as the depositor.',
+    // Withdrawal: the pool pays a one-time address, then this app forwards it
+    // on automatically after 3-7s (stores/denominatedPoolStore.ts:1566-1570;
+    // measured at ~8s, :1424-1426). It is a relay, not a hiding place.
+    recipientRelayNotice: 'The pool pays a one-time address, then this app forwards it to the address above automatically, within seconds. The withdrawal also republishes the note commitment your deposit published, so the two can be matched on chain.',
     starkNotReady: 'STARK prover is still loading. Please wait.',
     authRequired: 'You must authenticate to unshield funds.',
     invalidRecipient: 'Please enter a valid Solana address.',
@@ -351,7 +388,9 @@ export default {
     wallet: 'Wallet',
     directPayment: 'Direct payment',
     privateWallet: 'Private Wallet',
-    anonymousViaZK: 'Anonymous via ZK proof',
+    // Was 'Anonymous via ZK proof'. It is not anonymous: the wallet signs the
+    // subscribe ix and the ix republishes the deposit's commitment.
+    anonymousViaZK: 'Paid from a shielded note via ZK proof',
     privacyShield: 'Privacy Shield',
     noiseAndStealth: 'Noise + stealth addresses',
     summary: 'Summary',
@@ -521,8 +560,19 @@ export default {
     cancelAnytime: 'Pause anytime, no penalties',
     protectedByStream: 'Protected by Stream Secure',
     automaticPayments: 'Automatic recurring payments',
-    zkHidesIdentity: 'Zero-knowledge proof hides your identity',
-    merchantCantTrace: 'Merchant cannot trace the payment source',
+    // No screen reads these two today, but a dictionary is shipped code — the
+    // next screen reaching for a privacy bullet gets whatever sits here. They
+    // read 'Zero-knowledge proof hides your identity' and 'Merchant cannot
+    // trace the payment source'; the subscribe instruction publishes the
+    // deposit's commitment like every other spend path
+    // (services/subscriptionVault/index.ts:753, :781), so a merchant with the
+    // deposit in view can trace exactly that.
+    // What is actually true on this path: the money leaves the pool, not your
+    // wallet balance — but your wallet still signs the instruction
+    // (services/subscriptionVault/index.ts:552 passes `walletPubkey` as the
+    // `payer: Signer`), so it is on chain by name.
+    zkHidesIdentity: 'Funded from a shielded note, proved with a STARK',
+    merchantCantTrace: 'The subscription is paid out of the pool, not out of your wallet balance',
     stealthTransfer: 'Preparing stealth transfer...',
     fundingStealth: 'Funding stealth for fees...',
     timingPrivacy: 'Waiting (timing privacy)...',
@@ -583,7 +633,10 @@ export default {
     getStarted: 'Get Started',
     // Welcome screen
     systemStatus: '[ SYSTEM STATUS ]',
-    untraceable: 'UNTRACEABLE',
+    // Was 'UNTRACEABLE'. The anonymity set is one: a withdrawal republishes the
+    // commitment its deposit published, so any deposit/withdrawal pair can be
+    // matched by anyone. 'SHIELDED' names the product without claiming that.
+    untraceable: 'SHIELDED',
     ready: 'READY',
     alreadyHaveWallet: 'Already have a wallet?',
     import: 'Import',
@@ -642,13 +695,17 @@ export default {
     // Features screen
     stealthWallet: 'Stealth Wallet',
     invisibleTransfers: 'Invisible Transfers',
-    stealthWalletDesc: 'Send and receive funds without leaving a trace. Your transactions are completely private.',
+    // Was 'without leaving a trace… completely private'. Deposits of one size
+    // do look alike, which is the real and only claim available today.
+    stealthWalletDesc: 'Shielded notes and one-time addresses. Every deposit of a given size looks the same — though a withdrawal can still be matched to its deposit.',
     privateStreams: 'Private Streams',
     streamingPayments: 'Streaming Payments',
     privateStreamsDesc: 'Create continuous payment flows. Perfect for salaries, subscriptions, and recurring payments.',
     encryptedSocial: 'Encrypted Social',
     privateContacts: 'Private Contacts',
-    encryptedSocialDesc: 'End-to-end encrypted messaging and payments with your contacts. No one can see who you talk to.',
+    // 'No one can see who you talk to' deleted — nothing in this repo
+    // establishes metadata privacy for the contacts feature.
+    encryptedSocialDesc: 'End-to-end encrypted messaging and payments with your contacts.',
     aiAgent: 'AI Agent',
     yourAssistant: 'Your Assistant',
     aiAgentDesc: 'Intelligent automation for DeFi. Let AI manage your portfolio while you focus on what matters.',

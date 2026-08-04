@@ -163,7 +163,9 @@ export default {
     stillMaturing: 'Encore en maturation.',
     mustBeMature: 'Doit \u00eatre mature.',
     emergencyUnshield: 'Retrait d\u2019urgence',
-    emergencyDesc: 'Contourne la maturation \u2014 r\u00e9duit la confidentialit\u00e9. \u00c0 utiliser uniquement en cas d\u2019urgence.',
+    // Voir en.ts : le delai de maturation est une regle de ce client, pas de la
+    // chaine (min_epoch vaut toujours 0 et le handler l'ignore).
+    emergencyDesc: 'Ignore le d\u00e9lai d\u2019attente propre \u00e0 cette app. La transaction on-chain est inchang\u00e9e.',
     proceed: 'Continuer',
     backup: 'Sauvegarde',
     backupNotes: 'Sauvegarder les notes',
@@ -186,14 +188,20 @@ export default {
     reshare: 'Repartager',
     notesStoredLocally: 'Les notes sont stock\u00e9es localement. Sauvegardez avant de supprimer les donn\u00e9es.',
     availableIn: 'Disponible dans %{time}',
-    zeroWalletFootprint: 'Aucune trace du portefeuille \u2014 confidentialit\u00e9 maximale',
+    // Etait \u00ab Aucune trace du portefeuille \u2014 confidentialite maximale \u00bb. Le
+    // portefeuille finance publiquement chaque cle a usage unique puis en
+    // recupere le solde (stores/denominatedPoolStore.ts:1207-1223, :1256-1259).
+    zeroWalletFootprint: 'Adresses \u00e0 usage unique au lieu de votre portefeuille \u2014 qui les finance toujours publiquement',
     selectNotes: 'S\u00e9lectionner des notes',
     batchTapToSelect: 'Touchez les notes mat\u00fbres pour les s\u00e9lectionner',
     batchSelectedCount: '%{count} s\u00e9lectionn\u00e9es',
     batchMixedTokens: 'Le lot doit \u00eatre d\u2019un seul token',
     batchUnshieldTitle: 'Unshield group\u00e9',
     batchRecipientLabel: 'Destinataire pour toutes les notes',
-    batchRecipientHelp: 'Toutes les notes s\u00e9lectionn\u00e9es sont d\u00e9shield\u00e9es vers cette adresse (s\u00e9quentiellement). Chaque note passe par un stealth \u00e9ph\u00e9m\u00e8re diff\u00e9rent — le destinataire ne voit que le total consolid\u00e9 apr\u00e8s sweep.',
+    // Rien n'est consolide : le lot est une boucle note par note
+    // (denominated-unshield-batch.tsx:149) et chaque note est balayee
+    // separement (stores/denominatedPoolStore.ts:1566-1570).
+    batchRecipientHelp: 'Toutes les notes s\u00e9lectionn\u00e9es sont d\u00e9shield\u00e9es vers cette adresse, l\u2019une apr\u00e8s l\u2019autre. Chaque note passe par sa propre adresse \u00e0 usage unique puis arrive s\u00e9par\u00e9ment \u2014 le destinataire voit un transfert par note, pas un total.',
     batchStart: 'Lancer l\u2019unshield',
     batchRunning: 'Unshielding en cours\u2026',
     batchDone: 'Toutes les notes d\u00e9shield\u00e9es',
@@ -235,7 +243,9 @@ export default {
     confirmPrivateSend: 'Confirmer l\u2019envoi priv\u00e9',
     irreversible: 'Cette action est IRR\u00c9VERSIBLE.',
     routeActive: 'Route active',
-    routeDesc: '%{hops} sauts depuis la note prot\u00e9g\u00e9e. Aucune trace.',
+    // « Aucune trace » supprime : le portefeuille finance publiquement le
+    // premier saut (private-send.tsx:145).
+    routeDesc: '%{hops} sauts depuis la note prot\u00e9g\u00e9e.',
     minimumAmount: 'Le montant minimum routable est 0.1 SOL.',
   },
 
@@ -259,13 +269,16 @@ export default {
     shareNote: 'Partagez uniquement via des canaux sécurisés',
     normal: 'Normal',
     emergency: 'Urgence',
-    emergencyWarning: 'Le mode urgence contourne le délai de maturation. Cela réduit votre confidentialité. À utiliser uniquement si urgent.',
+    // Le mode urgence ne change aucun octet de l'instruction : min_epoch vaut
+    // 0 sur les deux chemins. Et le retrait republie l'engagement du depot,
+    // donc le lien n'a jamais dependu du temps.
+    emergencyWarning: 'Le mode urgence ignore seulement le d\u00e9lai d\u2019attente propre \u00e0 cette app. La transaction on-chain est identique octet pour octet ; tout ce qui change, c\u2019est qu\u2019il s\u2019\u00e9coule moins de temps entre votre d\u00e9p\u00f4t et ce retrait.',
     privacyWarning: 'Avertissement',
     selectMatureNote: 'Sélectionner une note mature',
     selectANote: 'Sélectionner une note',
     noNotesFound: 'Aucune note. Protégez des fonds d\'abord.',
     goToShield: 'Aller à Shield',
-    notesMaturing: '%{count} note(s) en maturation (~1h). Utilisez le mode Urgence pour contourner.',
+    notesMaturing: '%{count} note(s) en maturation. Cette app attend ~1 \u00e9poque (~1 h) avant de proposer un retrait ; le pool ne l\u2019impose pas. Utilisez le mode Urgence pour l\u2019ignorer.',
     recipientAddress: 'Adresse du destinataire',
     myWallet: 'Mon portefeuille',
     custom: 'Personnalisé',
@@ -275,6 +288,15 @@ export default {
     withdraw: 'Retirer %{amount} %{token}',
     immature: 'Immature',
     starkOnDevice: 'Preuve STARK générée sur l\'appareil (résistante au quantique).',
+    // Qui signe, et ou va l'argent. Depot : SOL passe par une cle a usage
+    // unique derivee de la graine (stores/denominatedPoolStore.ts:1176, :1233) ;
+    // USDC ne le peut pas (pas d'ATA finance) et garde le portefeuille comme
+    // deposant, ce que le store signale a :1235-1239.
+    // Retrait : le pool paie une adresse a usage unique, puis l'app la balaie
+    // automatiquement apres 3-7 s (:1566-1570 ; ~8 s mesure a :1424-1426).
+    depositSignerSol: 'Votre portefeuille ne signe pas ce d\u00e9p\u00f4t \u2014 une cl\u00e9 \u00e0 usage unique le fait. Votre portefeuille finance toujours cette cl\u00e9 par un transfert public, \u00e0 un saut de l\u00e0.',
+    depositSignerUsdc: 'Votre portefeuille signe ce d\u00e9p\u00f4t USDC et appara\u00eet on-chain comme d\u00e9posant.',
+    recipientRelayNotice: 'Le pool paie une adresse \u00e0 usage unique, puis cette app la transf\u00e8re automatiquement vers l\u2019adresse ci-dessus, en quelques secondes. Le retrait republie aussi l\u2019engagement de note publi\u00e9 par votre d\u00e9p\u00f4t : les deux peuvent donc \u00eatre reli\u00e9s on-chain.',
     starkNotReady: 'Le prouveur STARK charge encore. Patientez.',
     authRequired: 'Authentification requise pour retirer.',
     invalidRecipient: 'Adresse Solana invalide.',
@@ -349,7 +371,8 @@ export default {
     wallet: 'Portefeuille',
     directPayment: 'Paiement direct',
     privateWallet: 'Portefeuille priv\u00e9',
-    anonymousViaZK: 'Anonyme via preuve ZK',
+    // « Anonyme » supprime : le portefeuille signe et l'engagement est republie.
+    anonymousViaZK: 'Pay\u00e9 depuis une note prot\u00e9g\u00e9e via preuve ZK',
     privacyShield: 'Bouclier de confidentialit\u00e9',
     noiseAndStealth: 'Bruit + adresses stealth',
     summary: 'R\u00e9sum\u00e9',
@@ -519,8 +542,11 @@ export default {
     cancelAnytime: 'Mettez en pause \u00e0 tout moment, sans p\u00e9nalit\u00e9',
     protectedByStream: 'Prot\u00e9g\u00e9 par Stream Secure',
     automaticPayments: 'Paiements r\u00e9currents automatiques',
-    zkHidesIdentity: 'La preuve ZK masque votre identit\u00e9',
-    merchantCantTrace: 'Le marchand ne peut pas tracer la source',
+    // Aucun ecran ne lit ces deux cles aujourd'hui, mais un dictionnaire est
+    // du code livre. Le wallet signe l'ix subscribe
+    // (services/subscriptionVault/index.ts:552) et l'ix republie l'engagement.
+    zkHidesIdentity: 'Financ\u00e9 par une note prot\u00e9g\u00e9e, prouv\u00e9 par un STARK',
+    merchantCantTrace: 'L\u2019abonnement est pay\u00e9 depuis le pool, pas depuis le solde de votre portefeuille',
     stealthTransfer: 'Pr\u00e9paration du transfert stealth...',
     fundingStealth: 'Financement du stealth pour les frais...',
     timingPrivacy: 'Attente (confidentialit\u00e9 temporelle)...',
@@ -580,7 +606,9 @@ export default {
     skip: 'Passer',
     getStarted: 'Commencer',
     systemStatus: '[ \u00c9TAT DU SYST\u00c8ME ]',
-    untraceable: 'INTRA\u00c7ABLE',
+    // Etait « INTRACABLE ». L'ensemble d'anonymat vaut un : un retrait republie
+    // l'engagement publie par son depot, donc toute paire depot/retrait se relie.
+    untraceable: 'PROT\u00c9G\u00c9',
     ready: 'PR\u00caT',
     alreadyHaveWallet: 'D\u00e9j\u00e0 un portefeuille ?',
     import: 'Importer',
@@ -634,13 +662,16 @@ export default {
     goBack: 'Retour',
     stealthWallet: 'Portefeuille furtif',
     invisibleTransfers: 'Transferts invisibles',
-    stealthWalletDesc: 'Envoyez et recevez des fonds sans laisser de trace. Vos transactions sont totalement priv\u00e9es.',
+    // « sans laisser de trace / totalement privees » supprime.
+    stealthWalletDesc: 'Notes prot\u00e9g\u00e9es et adresses \u00e0 usage unique. Tous les d\u00e9p\u00f4ts d\u2019un m\u00eame montant se ressemblent \u2014 mais un retrait reste rattachable \u00e0 son d\u00e9p\u00f4t.',
     privateStreams: 'Flux priv\u00e9s',
     streamingPayments: 'Paiements en continu',
     privateStreamsDesc: 'Cr\u00e9ez des flux de paiement continus. Id\u00e9al pour les salaires, abonnements et paiements r\u00e9currents.',
     encryptedSocial: 'Social chiffr\u00e9',
     privateContacts: 'Contacts priv\u00e9s',
-    encryptedSocialDesc: 'Messagerie et paiements chiffr\u00e9s de bout en bout. Personne ne peut voir \u00e0 qui vous parlez.',
+    // « Personne ne peut voir a qui vous parlez » supprime : rien dans ce depot
+    // n'etablit la confidentialite des metadonnees.
+    encryptedSocialDesc: 'Messagerie et paiements chiffr\u00e9s de bout en bout avec vos contacts.',
     aiAgent: 'Agent IA',
     yourAssistant: 'Votre assistant',
     aiAgentDesc: 'Automatisation intelligente pour la DeFi. Laissez l\u2019IA g\u00e9rer votre portefeuille.',

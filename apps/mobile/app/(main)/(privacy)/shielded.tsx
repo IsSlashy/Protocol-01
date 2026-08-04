@@ -35,22 +35,46 @@ import AmountInputModal from '@/components/privacy/AmountInputModal';
 import StealthRecoveryModal from '@/components/privacy/StealthRecoveryModal';
 import ZkProgressOverlay from '@/components/privacy/ZkProgressOverlay';
 
+/**
+ * What this modal is allowed to claim.
+ *
+ * Every one of these four cards previously ended in an absolute — "completely
+ * private", "all hidden", "the source remains hidden", "only you and the
+ * recipient know". None of them survived measurement:
+ *
+ *  - The spend proof publishes the note commitment as `stark_commitment`
+ *    (services/denominatedPool/index.ts:3192 → :3277 → :2941), and the deposit
+ *    published that same value. A deposit/withdrawal pair is therefore
+ *    matchable by anyone, confirmed on devnet. Only the C7 spend circuit
+ *    changes this (docs/C7_SPEND_CIRCUIT_PLAN.md).
+ *  - The wallet publicly funds the one-time key on both legs
+ *    (stores/denominatedPoolStore.ts:1207-1223, :1460-1473) and the residual
+ *    is swept back to it (:1256-1259, :1566-1570).
+ *
+ * What genuinely holds is the denomination argument: a pool has one amount, so
+ * the size you moved is not distinctive. That is the claim these cards make now.
+ */
 const SHIELDED_INFO_SECTIONS = [
   {
     title: 'How it works',
-    text: 'Shielded transactions use zero-knowledge proofs (ZK-SNARKs) to hide amounts, senders, and recipients while proving the transaction is valid.',
+    text: 'Shielded transactions carry a zero-knowledge proof that you own a valid note, without revealing which key signed for it. The proof still names the note on chain, so it is not an anonymity system yet.',
   },
   {
     title: 'Shield',
-    text: 'Convert transparent SOL into shielded notes. Your deposit amount is visible, but from then on, all movements are completely private.',
+    text: 'Convert transparent SOL into shielded notes. Every deposit into a pool is the same fixed amount, so what you moved is not distinctive — but your deposit itself stays visible.',
   },
   {
+    // Deliberately NOT claiming the "no on-chain record" property here. That
+    // belongs to the denominated pool's offline note handoff; this legacy
+    // module broadcasts a real transaction (shielded-transfer.tsx:152). The
+    // amount claim is safe: the proof's public amount is hardcoded '0' and the
+    // value rides in the output commitments (shielded-transfer.tsx:117-119).
     title: 'Transfer',
-    text: 'Send shielded SOL to any ZK address. The amount, sender, and recipient are all hidden. Only you and the recipient know the details.',
+    text: 'Send shielded SOL to a ZK address. The amount rides inside the note commitments instead of appearing as a cleartext transfer amount — but this is still an on-chain transaction.',
   },
   {
     title: 'Unshield',
-    text: 'Withdraw shielded SOL back to a transparent address. The withdrawal amount becomes visible, but the source remains hidden.',
+    text: 'Withdraw shielded SOL back to a transparent address. The withdrawal republishes the commitment your deposit published, so it can be matched back to that deposit.',
   },
 ];
 
@@ -453,9 +477,17 @@ export default function ShieldedWalletScreen() {
           </Animated.View>
         )}
 
+        {/*
+          Dropped 'No one can see amounts, senders, or recipients on-chain.'
+          The spend proof publishes the note commitment the deposit published
+          (services/denominatedPool/index.ts:3192), so a withdrawal is
+          matchable to its deposit — measured on devnet, anonymity set 1. The
+          title said ZK-SNARK while the body said STARK; the STARK is the one
+          that ships, so the title now matches.
+        */}
         <PrivacyInfoCard
-          title="ZK-SNARK Protection"
-          description="Your shielded transactions use STARK zero-knowledge proofs (quantum-resistant). No one can see amounts, senders, or recipients on-chain."
+          title="STARK Protection"
+          description="Your shielded transactions are proved with STARK zero-knowledge proofs (quantum-resistant, no trusted setup). Amounts are not published in the clear, but a withdrawal can still be matched to the deposit it came from."
         />
       </ScrollView>
 

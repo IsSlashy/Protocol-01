@@ -43,6 +43,7 @@ import { getKeypair } from '@/services/solana/wallet';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { Buffer } from 'buffer';
 import { withKeepAwake } from '@/utils/keepAwakeDuring';
+import { useT } from '@/i18n';
 import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
 
 type TokenTab = 'SOL' | 'USDC';
@@ -50,6 +51,7 @@ type TokenTab = 'SOL' | 'USDC';
 // ─── Main Screen ──────────────────────────────────────────────────
 export default function DenominatedShieldScreen() {
   const router = useRouter();
+  const t = useT();
   const [tokenTab, setTokenTab] = useState<TokenTab>('SOL');
   const [walletBalance, setWalletBalance] = useState<number>(0);
   const [loadingBalance, setLoadingBalance] = useState(true);
@@ -403,6 +405,29 @@ export default function DenominatedShieldScreen() {
           </Text>
         </View>
 
+        {/*
+          Who signs the deposit, per token. This is the one thing the deposit
+          copy could not say truthfully before 71b51cc1 and can now — but only
+          for SOL. `useEphemeralDepositor` is
+          `pool.token === 'SOL' && localKp !== null`
+          (stores/denominatedPoolStore.ts:1176), so a USDC deposit still goes
+          out under the wallet's own signature and the store warns about it at
+          :1235-1239. Keying the line off `tokenTab` keeps the two cases from
+          ever being collapsed into one reassuring sentence.
+        */}
+        <View style={st.hint}>
+          <Ionicons
+            name={tokenTab === 'SOL' ? 'key-outline' : 'eye-outline'}
+            size={14}
+            color={tokenTab === 'SOL' ? P01Colors.cyan : P01Colors.yellow}
+          />
+          <Text style={st.hintText}>
+            {tokenTab === 'SOL'
+              ? t('shieldUnshield.depositSignerSol')
+              : t('shieldUnshield.depositSignerUsdc')}
+          </Text>
+        </View>
+
         {error && !isLoading && (
           <View style={st.errorCard}>
             <Ionicons name="warning" size={16} color={Colors.error} />
@@ -485,8 +510,24 @@ export default function DenominatedShieldScreen() {
                 </TouchableOpacity>
               </View>
 
+              {/*
+                The confirm sheet is the last surface before the deposit is
+                signed, so it repeats who signs rather than only saying where
+                the note is kept. `selectedPool.token` is what actually routes
+                the depositor choice, so read it here rather than `tokenTab`.
+              */}
               <Text style={cs.finePrint}>
-                Your deposit is stored locally on this device.
+                {selectedPool.token === 'SOL'
+                  ? t('shieldUnshield.depositSignerSol')
+                  : t('shieldUnshield.depositSignerUsdc')}
+              </Text>
+              {/*
+                Kept from the previous fine print. This is a fund-safety
+                warning, not a privacy claim, and dropping it as a side effect
+                of a copy pass would be a regression in its own right.
+              */}
+              <Text style={cs.finePrint}>
+                {t('privacy.notesStoredLocally')}
               </Text>
             </Animated.View>
           </View>

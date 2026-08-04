@@ -328,7 +328,12 @@ export default function ConfidentialBalanceScreen() {
 
     p01Alert(
       'Private Sweep to Main Wallet',
-      `Privately send ${available.toFixed(4)} SOL to your main wallet via the shielded pool?\n\nThis breaks the on-chain link between wallets.\n\n${publicKey.slice(0, 8)}...${publicKey.slice(-6)}`,
+      // 'This breaks the on-chain link between wallets' deleted. The sweep is a
+      // shield followed by an unshield, and the unshield republishes the note
+      // commitment the shield published (services/denominatedPool/index.ts
+      // :3192), so the two ends stay matchable. Routing through the pool
+      // changes the shape of the hop, not its linkability.
+      `Send ${available.toFixed(4)} SOL to your main wallet through the shielded pool?\n\nThis routes the funds through a shield and an unshield rather than a direct transfer. It does not make the two wallets unlinkable.\n\n${publicKey.slice(0, 8)}...${publicKey.slice(-6)}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -353,7 +358,7 @@ export default function ConfidentialBalanceScreen() {
               setProgressMessage('Complete!');
               await new Promise(r => setTimeout(r, 500));
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              p01Alert('Success', `${available.toFixed(4)} SOL privately swept to your main wallet`);
+              p01Alert('Success', `${available.toFixed(4)} SOL swept to your main wallet through the pool`);
             } catch (err) {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
               p01Alert('Error', (err as Error).message);

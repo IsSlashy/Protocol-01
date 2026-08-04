@@ -527,8 +527,18 @@ export default function SubscribePrivateScreen() {
         <Animated.View entering={FadeInUp.delay(400)}>
           <View style={styles.privacyNote}>
             <Ionicons name="lock-closed" size={14} color={Colors.textTertiary} />
+            {/*
+              'No private data leaves your phone' was false here for the same
+              reason it was false on the privacy home screen: the proof is
+              uploaded, and subscribe_private_stark carries the deposit's note
+              commitment as `stark_commitment`
+              (services/subscriptionVault/index.ts:549 -> :768). The wallet also
+              signs this instruction (:552), so it is on chain by name.
+            */}
             <Text style={styles.privacyNoteText}>
-              STARK proofs generated on-device. No private data leaves your phone.
+              STARK proofs generated on-device — your note's secrets are never sent to a server.
+              Your wallet still signs this subscription, and the proof carries the same note
+              commitment your deposit published.
             </Text>
           </View>
         </Animated.View>

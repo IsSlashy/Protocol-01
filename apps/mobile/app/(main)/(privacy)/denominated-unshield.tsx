@@ -528,6 +528,24 @@ export default function DenominatedUnshieldScreen() {
               <Text style={st.addressPreviewText} numberOfLines={1}>{recipient}</Text>
             </View>
           ) : null}
+
+          {/*
+            The one-time recipient is a relay, not a destination, and the screen
+            has to say so where the address is chosen. The pool pays a stealth
+            address, then this app forwards it to whatever is above after a
+            3-7s delay, automatically and without asking
+            (stores/denominatedPoolStore.ts:1566-1570; measured at ~8s on
+            devnet, :1424-1426). The delay was deliberately NOT grown, because
+            the link an analyst uses is algebraic rather than temporal: this
+            withdrawal republishes the note commitment the deposit published
+            (services/denominatedPool/index.ts:3192 → :3277 → :2941).
+          */}
+          <View style={st.recipientNotice}>
+            <Ionicons name="information-circle-outline" size={14} color={Colors.textTertiary} />
+            <Text style={st.recipientNoticeText}>
+              {t('shieldUnshield.recipientRelayNotice')}
+            </Text>
+          </View>
         </Animated.View>
 
         {/* ── Confirm Button ── */}
@@ -702,6 +720,15 @@ const st = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 8, marginBottom: Spacing.sm,
   },
   usedHintText: { flex: 1, fontSize: 11, color: Colors.textTertiary, fontFamily: FontFamily.regular },
+  recipientNotice: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    padding: 12, marginTop: Spacing.sm,
+    backgroundColor: '#0f0f12', borderRadius: 12,
+  },
+  recipientNoticeText: {
+    flex: 1, fontSize: 11, lineHeight: 16,
+    color: Colors.textTertiary, fontFamily: FontFamily.regular,
+  },
   usedSectionLabel: {
     fontSize: 10, fontFamily: FontFamily.semibold, color: Colors.textTertiary,
     letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 4,

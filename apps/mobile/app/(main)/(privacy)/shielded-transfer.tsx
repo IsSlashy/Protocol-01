@@ -268,7 +268,16 @@ export default function ShieldedTransferScreen() {
           <Animated.View entering={FadeInDown.delay(400)}>
             <View style={styles.privacyInfo}>
               <Ionicons name="eye-off" size={18} color={P01Colors.cyan} />
-              <Text style={styles.privacyText}>This transfer is fully private. Amount, sender, and recipient are hidden on-chain.</Text>
+              {/*
+                Was 'This transfer is fully private. Amount, sender, and
+                recipient are hidden on-chain.' Three absolutes, none of them
+                established. What IS checkable here is the amount: the proof is
+                built with a public amount of '0' (:119) and the value rides in
+                the output commitments (:117), so no cleartext amount is
+                published. Sender and recipient privacy is not claimed, because
+                nothing in this module demonstrates it.
+              */}
+              <Text style={styles.privacyText}>The amount is carried inside the note commitments, not published in the clear. This is still an on-chain transaction.</Text>
             </View>
           </Animated.View>
 
