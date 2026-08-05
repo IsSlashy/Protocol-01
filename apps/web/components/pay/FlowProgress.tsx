@@ -50,12 +50,27 @@ export default function FlowProgress({
 
   if (!running) return null;
 
-  // Estimate from the pace actually observed in THIS run. A constant would be
-  // wrong the moment the RPC slows down, which is exactly when the user starts
-  // wondering whether it died.
+  // Elapsed time, always. An ESTIMATE only where something real is being
+  // counted.
+  //
+  // The first version extrapolated elapsed/percent across the whole run and was
+  // badly wrong, in the harmful direction: measured in production, a shield sat
+  // at 7% for three minutes and was told it had 36 minutes left, because the
+  // slow work (reading the tree, proving) is at the START while the upload,
+  // which carries 45% of the bar, is comparatively fast. Linear extrapolation
+  // from an early sample is structurally pessimistic here, and a 36-minute
+  // estimate makes people cancel a job that is going fine.
+  //
+  // The only phase that measures itself is the chunk upload, which reports i/N.
+  // So the estimate exists exactly there and nowhere else, and the rest of the
+  // time the user gets the one number that is true: how long it has been.
   const elapsed = startedAt.current ? (Date.now() - startedAt.current) / 1000 : 0;
-  const remaining =
-    percent > 4 && elapsed > 8 ? Math.round((elapsed / percent) * (100 - percent)) : null;
+  const remaining = (() => {
+    if (!state.detail || state.detail.done < 2) return null;
+    const perUnit = elapsed / state.detail.done;
+    const left = state.detail.total - state.detail.done;
+    return left > 0 ? Math.round(perUnit * left) : null;
+  })();
 
   return (
     <div className="card space-y-3 p-4">
@@ -71,6 +86,7 @@ export default function FlowProgress({
         </p>
         <p className="font-mono text-xs text-p01-text-muted">
           {Math.floor(percent)}%
+          {elapsed > 5 && ` · ${formatRemaining(Math.round(elapsed))} elapsed`}
           {remaining !== null && ` · ~${formatRemaining(remaining)} left`}
         </p>
       </div>
