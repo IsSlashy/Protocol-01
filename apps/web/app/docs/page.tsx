@@ -95,7 +95,7 @@ await submitStarkProof(program, proofBuffer, commitment, circuitId);
     i18nKey: "shieldedPool",
     icon: <Lock className="w-6 h-6" />,
     detailCount: 7,
-    codeExample: `// Shielded pool flow (v1.0.2 — STARK V3, quantum-safe)
+    codeExample: `// Shielded pool flow (v1.0.2, STARK V3, quantum-safe)
 // 1. User generates a STARK proof locally (no remote prover)
 const starkProof = await starkProver.generateProof(noteInputs);
 
@@ -165,7 +165,7 @@ const nullifier = Poseidon([commitment, spendingKeyHash]);
     i18nKey: "solanaIntegration",
     icon: <Cpu className="w-6 h-6" />,
     detailCount: 6,
-    codeExample: `// v1.0.2 — Every spend verifies through the custom on-chain
+    codeExample: `// v1.0.2: every spend verifies through the custom on-chain
 // FRI verifier (no Winterfell dep, Goldilocks + Blake3, 809,812 CU).
 let positions = fiat_shamir_positions(trace_root, commitment);
 for pos in positions {
@@ -173,7 +173,7 @@ for pos in positions {
     verify_poseidon_round(trace_row, round_constants)?;
 }
 
-// LEGACY (pre-April 2026, now retired from every spend path) —
+// LEGACY (pre-April 2026, now retired from every spend path).
 // BN254 Groth16 pairing via the sol_alt_bn128 syscall. Kept here
 // only for historical reference; the code still exists in the
 // repo history but no instruction dispatches to it in v1.0.0+.
@@ -186,7 +186,7 @@ for pos in positions {
     i18nKey: "privateRelay",
     icon: <Zap className="w-6 h-6" />,
     detailCount: 6,
-    codeExample: `// Trustless on-chain relay flow (v1.0.2 — STARK V3)
+    codeExample: `// Trustless on-chain relay flow (v1.0.2, STARK V3)
 //
 // WHICH CLIENTS ACTUALLY RELAY. Mobile does. The web app does not: /app
 // submits every transaction straight from the browser, including the
@@ -217,7 +217,7 @@ await submitStarkProof(program, proofBuffer, circuitId);
 await program.methods.unshieldDenominatedStark(...)
   .accounts({ pool, recipient: stealthAddress, nullifierPda })
   .rpc();
-// Legacy snarkjs.groth16 path fully retired — see Migration History`,
+// Legacy snarkjs.groth16 path fully retired. See Migration History`,
   },
   {
     id: "streams-privacy",
@@ -243,7 +243,7 @@ await p01.createSubscription({
     detailCount: 8,
     codeExample: `// Shield: the deposit is signed by an ephemeral, not by the wallet.
 // The wallet is still what funds that ephemeral, in the clear, on the
-// line above the deposit — so the wallet is one public hop away, not
+// line above the deposit, so the wallet is one public hop away, not
 // removed. (SOL only. USDC deposits still use the wallet directly:
 // the ephemeral has no funded token account.)
 const stealthKp = deriveStealthSigner(wallet, timestamp);
@@ -276,7 +276,7 @@ await program.methods.unshieldDenominatedStark(starkProof)
     i18nKey: "zkspl",
     icon: <Lock className="w-6 h-6" />,
     detailCount: 7,
-    codeExample: `// Confidential deposit — public tokens become hidden balance
+    codeExample: `// Confidential deposit: public tokens become hidden balance
 const oldCommitment = poseidon([0, salt, owner, mint]);
 const newCommitment = poseidon([amount, newSalt, owner, mint]);
 const { proof } = await prover.prove({
@@ -286,7 +286,7 @@ const { proof } = await prover.prove({
   old_salt: salt, new_salt: newSalt
 });
 
-// Confidential transfer — sender and recipient balances stay hidden
+// Confidential transfer: sender and recipient balances stay hidden
 // Amount commitment links the two operations cryptographically
 const amountCommitment = poseidon([transferAmount, amountSalt]);`,
   },
@@ -299,24 +299,24 @@ const amountCommitment = poseidon([transferAmount, amountSalt]);`,
 // denominated pool. There is no retailer-side init and no wallet-keyed
 // variant: the vault PDA is seeded on subscriberCommitment, so the
 // address does not name the payer. That commitment is a caller-supplied
-// label, NOT proof-bound on chain — the client is what keeps a wallet
+// label, NOT proof-bound on chain, the client is what keeps a wallet
 // pubkey out of it.
 await program.methods.subscribePrivateStark(
   nullifier,             // [u8;32] spends the funding note
   merkleRoot,            // [u8;32] pool root the note is proven against
   minEpoch,              // u64
-  subscriberCommitment,  // [u8;32] PDA seed — never the wallet
+  subscriberCommitment,  // [u8;32] PDA seed, never the wallet
   rate,                  // u64 per-period amount
   intervalSlots,         // u64 slots between periods
   vkHashSubscriber,      // [u8;32]
   starkCommitment,       // u64
-  licenseCommitment      // Option<[u8;32]>, or null — LAST arg
+  licenseCommitment      // Option<[u8;32]>, or null, LAST arg
 ).accounts({
   payer, retailer, vault, denominatedPool, merkleTree,
   nullifierRecord, c1ProofBuffer, c3ProofBuffer, systemProgram,
 }).rpc();
 
-// Anyone can push the claim — the program pays vault.retailer and
+// Anyone can push the claim, the program pays vault.retailer and
 // nobody else, so no signature from the merchant is required.
 await program.methods.claimPeriod()
   .accounts({ retailer, vault, systemProgram })
@@ -348,32 +348,32 @@ await bleTransport.sendFragmented(encrypted, characteristicUUID);
     // 8 -> 10: the arcium-sdk entry was replaced by stark-prover, and the two
     // packages the list never had (privacy-sdk, merchant-sdk) were added.
     detailCount: 10,
-    codeExample: `// === @protocol-01/specter-sdk — Core Privacy SDK ===
+    codeExample: `// === @protocol-01/specter-sdk: Core Privacy SDK ===
 import { P01Client, createWallet, sendPrivate } from '@protocol-01/specter-sdk';
 const client = new P01Client({ cluster: 'devnet' });
 await sendPrivate({ amount: 1.5, recipient: stealthMetaAddress });
 
-// === @protocol-01/zk-sdk — ZK Shielded Pool ===
+// === @protocol-01/zk-sdk: ZK Shielded Pool ===
 import { ShieldedClient } from '@protocol-01/zk-sdk';
 const zkClient = new ShieldedClient({ rpcUrl, programId });
 await zkClient.shield(1_000_000_000n, notes);
 
-// === @protocol-01/zkspl-sdk — Confidential Balances ===
+// === @protocol-01/zkspl-sdk: Confidential Balances ===
 import { ZkSplClient } from '@protocol-01/zkspl-sdk';
 await zkspl.deposit(amount, proof);   // Public → confidential
 await zkspl.send(amount, recipient);  // Confidential transfer
 
-// === @protocol-01/p01-js — Merchant Integration ===
+// === @protocol-01/p01-js: Merchant Integration ===
 import { Protocol01 } from '@protocol-01/p01-js';
 await p01.createSubscription({ amount: 9.99, interval: 'monthly' });
 
-// === @protocol-01/privacy-toolkit — Merkle + Poseidon ===
+// === @protocol-01/privacy-toolkit: Merkle + Poseidon ===
 import { IncrementalMerkleTree, poseidon2 } from '@protocol-01/privacy-toolkit';
 
-// === @protocol-01/auth-sdk — Auth Integration ===
+// === @protocol-01/auth-sdk: Auth Integration ===
 import { P01AuthClient } from '@protocol-01/auth-sdk';
 
-// === @protocol-01/rpc-config — RPC Infrastructure ===
+// === @protocol-01/rpc-config: RPC Infrastructure ===
 import { RpcConnectionManager } from '@protocol-01/rpc-config';
 const conn = RpcConnectionManager.getConnection(); // Auto-fallback chain`,
   },
@@ -480,20 +480,20 @@ await executeTool("privacy_shield", { amount: 0.1 });
     i18nKey: "quantumWallet",
     icon: <Key className="w-6 h-6" />,
     detailCount: 8,
-    codeExample: `// Quantum Wallet — STARK-authorized fund custody (coming Q3 2026)
+    codeExample: `// Quantum Wallet: STARK-authorized fund custody (coming Q3 2026)
 // Funds spent via Poseidon preimage proof, not Ed25519 signature.
 
-// 1. Init at first launch — silent, transparent migration
+// 1. Init at first launch: silent, transparent migration
 const seedSecret = hkdf(seedPhrase, "p01_quantum_v1");
 const commitment = poseidonGl(seedSecret, salt);  // Goldilocks
 const ownerId = poseidonGl(seedSecret, "id_v1");
 const pda = derivePda(["qw", ownerId], P01_QUANTUM_WALLET_ID);
 await initQuantumWallet({ commitment, recoveryPubkey: null });
 
-// 2. Receive — your address is the PDA. Senders use SystemProgram.transfer
+// 2. Receive: your address is the PDA. Senders use SystemProgram.transfer
 // like any other wallet. They don't know it's quantum-protected.
 
-// 3. Send — STARK proves "I know the preimage of commitment"
+// 3. Send: STARK proves "I know the preimage of commitment"
 const proof = await starkProver.generateProof({
   seedSecret, salt, recipient, amount, nonce, circuitId: 7,
 });
@@ -509,14 +509,14 @@ await withdraw({ amount, recipient, proofBuffer });
     i18nKey: "migrationHistory",
     icon: <Archive className="w-6 h-6" />,
     detailCount: 6,
-    codeExample: `// BEFORE — Groth16 / BN254 (retired April 2026)
+    codeExample: `// BEFORE: Groth16 / BN254 (retired April 2026)
 // const { proof } = await snarkjs.groth16.fullProve(
 //   inputs, "transfer.wasm", "transfer.zkey"
 // );
 // → BN254 pairings (Shor-vulnerable), 30 MB .ptau trusted setup,
 //   snarkjs + circomlib runtime, alt_bn128 syscalls
 
-// AFTER — Winterfell STARKs over Goldilocks (current)
+// AFTER: Winterfell STARKs over Goldilocks (current)
 const proof = await starkProver.generateProof(secret);
 // → Hash-based (Blake3 + Poseidon), no trusted setup,
 //   custom on-chain FRI verifier, 6 AIRs, ~9-15 KB proofs`,
