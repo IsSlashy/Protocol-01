@@ -107,4 +107,25 @@ describe('web i18n: the site does not promise cancellation it cannot deliver', (
       );
     }
   });
+
+  /**
+   * Arcium left Protocol 01 on 2026-07-17. The nodes stopped rendering that day,
+   * but 51 strings describing MPC compute, a Cerberus 1-of-N honest-node
+   * guarantee and a whole "With & Without MPC" comparison table stayed in all
+   * three dictionaries — invisible, and one edit away from rendering again.
+   *
+   * They are gone. This keeps them gone: any locale string naming Arcium fails
+   * here, in any language, whether or not a component renders it today.
+   *
+   * If Arcium is ever adopted again, delete this test in the commit that ships
+   * the integration — not before.
+   */
+  it('names no removed technology in any locale', () => {
+    for (const [name, d] of DICTS) {
+      const offenders = leafKeys(d)
+        .filter((k) => /arcium|cerberus/i.test(String(read(d, k))))
+        .map((k) => `${name}.${k}`);
+      expect(offenders, 'Arcium is not part of Protocol 01').toEqual([]);
+    }
+  });
 });
