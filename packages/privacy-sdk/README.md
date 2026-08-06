@@ -256,7 +256,7 @@ try {
 | 6xxx | Subscriptions | `SUBSCRIPTION_CREATE_FAILED`, `SUBSCRIPTION_NOT_FOUND` |
 | 7xxx | Vault | `VAULT_CREATE_FAILED`, `WOTS_KEY_EXHAUSTED` |
 | 8xxx | Relay | `RELAY_SUBMIT_FAILED`, `RELAY_NO_ACTIVE_RELAYERS` |
-| 9xxx | MPC | `MPC_VOTE_FAILED`, `MPC_NOT_AVAILABLE` |
+| 9xxx | Retired (private governance) | `MPC_NOT_AVAILABLE` — thrown by every `treasury` governance call; the feature was removed from Protocol 01 |
 | 10xxx | Registry | `REGISTRY_NOT_FOUND`, `REGISTRY_ALREADY_EXISTS` |
 | 11xxx | Exchange | `EXCHANGE_ORDER_NOT_FOUND`, `EXCHANGE_ESCROW_EXPIRED` |
 

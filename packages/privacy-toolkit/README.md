@@ -10,7 +10,7 @@
 
 TypeScript primitives for building privacy protocols on Solana. Merkle trees, Poseidon commitments, nullifiers, and proof format conversion.
 
-> **Status — Groth16 helpers are legacy.** The `alt_bn128` proof-formatting helpers in this package targeted the Circom + snarkjs pipeline that was retired from the shipping stack in March 2026. The Goldilocks-Poseidon primitives (Merkle, commitment, nullifier) are still the foundation for the current STARK path — see [`apps/mobile/services/zk/goldilocks-poseidon.ts`](../../apps/mobile/services/zk/goldilocks-poseidon.ts) for the mobile port.
+> **Status: Groth16 helpers are legacy.** The `alt_bn128` proof-formatting helpers in this package targeted the Circom + snarkjs pipeline that was retired from the shipping stack in March 2026. The Goldilocks-Poseidon primitives (Merkle, commitment, nullifier) are still the foundation for the current STARK path — see [`apps/mobile/services/zk/goldilocks-poseidon.ts`](../../apps/mobile/services/zk/goldilocks-poseidon.ts) for the mobile port.
 
 ## Why This Package
 
@@ -213,14 +213,15 @@ MIT
 
 ## Part of the Protocol 01 Ecosystem
 
-This library is extracted from [Protocol 01](https://github.com/IsSlashy/Protocol-01), the privacy layer for Solana. P01 uses denominated privacy pools with client-side Groth16 proving to provide complete unlinkability on Solana.
+This library is extracted from [Protocol 01](https://github.com/IsSlashy/Protocol-01), the privacy layer for Solana. P01 uses denominated privacy pools with client-side STARK proving. Groth16 over BN254 was retired in April 2026 in favour of STARKs over the Goldilocks field: hash-based, no elliptic curves, no trusted setup.
+
+The table below lists only packages that resolve on npm today.
 
 | Library | Purpose |
 |---------|---------|
-| **@protocol-01/privacy-sdk** | Full privacy SDK (shield, stealth, streams, vault, MPC) |
-| **@protocol-01/react-native-zk** | Client-side ZK proving on mobile |
-| **@protocol-01/solana-verifier** | On-chain Groth16 verification |
+| **@protocol-01/privacy-sdk** | Full privacy SDK: shield, stealth, streams, vault |
+| **@protocol-01/stark-prover** | WASM STARK prover and on-chain verifier submitter |
+| **@protocol-01/specter-sdk** | Stealth wallets, transfers, registry |
 | **@protocol-01/privacy-toolkit** | Merkle trees, commitments, proof formatting |
-| **@protocol-01/zk-pipeline** | End-to-end guide: circuit -> mobile -> on-chain |
 
 [Website](https://protocol-01.dev) · [Twitter](https://twitter.com/Protocol01_) · [Discord](https://discord.gg/EfqnVmb2dV)

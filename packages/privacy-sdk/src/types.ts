@@ -74,7 +74,11 @@ export interface ProgramIds {
   quantumVault: PublicKey;
   /** STARK proof verifier program (quantum-resistant proofs). */
   starkVerifier: PublicKey;
-  /** Arcium MPC program (multi-party computation). */
+  /**
+   * @deprecated No longer part of Protocol 01. Nothing in this SDK reads it.
+   * Still in the type so that 1.0.x config objects keep compiling; removed in
+   * the next major version.
+   */
   arcium: PublicKey;
   /** Transaction bundler program. */
   bundler: PublicKey;
@@ -553,9 +557,14 @@ export interface RelayJobStatus {
   txSignature?: string;
 }
 
-// ─── MPC (Arcium) ─────────────────────────────────────────────────────────────
+// ─── Retired: private governance ──────────────────────────────────────────────
+//
+// These described an external multi-party-computation network that left
+// Protocol 01. Nothing constructs or consumes them any more; the treasury
+// methods that took them throw MPC_NOT_AVAILABLE. Kept so 1.0.x type imports
+// still resolve, deleted in the next major.
 
-/** Parameters for casting an MPC-private vote. */
+/** @deprecated Retired with private governance. */
 export interface MPCVoteParams {
   /** Proposal to vote on. */
   proposalId: string;

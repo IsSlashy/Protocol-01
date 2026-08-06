@@ -76,7 +76,7 @@ export interface TreasurySpendResult {
   approved: boolean;
   /** Transaction result (only present if approved and executed) */
   tx?: TxResult;
-  /** Vote tally from the MPC network */
+  /** @deprecated Never populated — private governance was removed. */
   voteTally?: { yes: number; no: number };
 }
 
@@ -97,14 +97,19 @@ export interface TreasurySolvencyProof {
  * TreasuryModule provides private DAO treasury management.
  *
  * Treasury funds are held in shielded pools (via {@link ShieldModule}).
- * DAO members propose and vote on spending using private voting
- * (via {@link MPCModule}). Solvency can be proven to external parties
- * without revealing individual holdings (via {@link ComplianceModule}).
+ * Solvency can be proven to external parties without revealing individual
+ * holdings (via {@link ComplianceModule}).
+ *
+ * The private-governance half of this module — propose, vote, execute — is
+ * gone. It ran on an external multi-party-computation network that is no
+ * longer part of Protocol 01. Those three methods still exist and throw
+ * MPC_NOT_AVAILABLE so that 1.0.x callers get a named error rather than a
+ * missing method; they are deleted in the next major version.
  *
  * This is a **coordinator module** — it orchestrates ShieldModule,
- * MPCModule, ComplianceModule, and RelayModule internally and does not
- * have its own on-chain program. The treasury's shielded state is
- * managed through the existing `zk_shielded` program.
+ * ComplianceModule and RelayModule internally and does not have its own
+ * on-chain program. The treasury's shielded state is managed through the
+ * existing `zk_shielded` program.
  *
  * @example
  * ```ts
@@ -215,17 +220,18 @@ export class TreasuryModule {
   }
 
   /**
-   * Propose a treasury spend for DAO voting.
+   * @deprecated Removed from Protocol 01. Always throws.
    *
-   * Creates a binary (yes/no) MPC voting proposal via the Arcium
-   * network. DAO members can then cast encrypted votes using
-   * {@link voteOnSpend}. The proposal metadata is stored locally;
-   * the on-chain component is the MPC proposal account.
+   * This used to create an encrypted voting proposal on a third-party
+   * multi-party-computation network. That network is no longer part of the
+   * protocol, so no proposal can be created and this method exists only so
+   * that callers written against 1.0.x get a named error instead of a
+   * missing-method crash. It will be deleted in the next major version.
    *
-   * @param proposal - Spend proposal details including amount, recipient, and deadline.
-   * @returns Transaction result from proposal creation.
-   * @throws {PrivacyError} MPC_VOTE_FAILED if proposal creation fails.
-   * @throws {PrivacyError} INVALID_CONFIG if proposal parameters are invalid.
+   * @param proposal - Validated, then rejected.
+   * @throws {PrivacyError} MPC_NOT_AVAILABLE always.
+   * @throws {PrivacyError} INVALID_CONFIG if the proposal is malformed — the
+   *   validation still runs first, so a bad proposal reports that instead.
    */
   async proposeSpend(proposal: TreasurySpendProposal): Promise<TxResult> {
     this.validateProposal(proposal);
@@ -237,17 +243,14 @@ export class TreasuryModule {
   }
 
   /**
-   * Cast a private vote on a treasury spend proposal.
+   * @deprecated Removed from Protocol 01. Always throws.
    *
-   * The vote is encrypted with the Arcium MXE public key so that
-   * individual votes are never visible on-chain. Only the aggregated
-   * tally is revealed after finalization.
+   * Votes were encrypted to an external MPC network's public key. Nothing
+   * encrypts, submits or tallies them any more. Deleted in the next major.
    *
-   * @param proposalId - The proposal to vote on.
-   * @param approve - `true` for yes, `false` for no.
-   * @returns Transaction result from the vote submission.
-   * @throws {PrivacyError} MPC_VOTE_FAILED if the vote fails.
-   * @throws {PrivacyError} MPC_ALREADY_VOTED if this wallet already voted.
+   * @param proposalId - Named in the error, otherwise unused.
+   * @param approve - Named in the error, otherwise unused.
+   * @throws {PrivacyError} MPC_NOT_AVAILABLE always.
    */
   async voteOnSpend(proposalId: string, approve: boolean): Promise<TxResult> {
     throw new PrivacyError(
@@ -258,17 +261,13 @@ export class TreasuryModule {
   }
 
   /**
-   * Execute a treasury spend proposal after the voting deadline.
+   * @deprecated Removed from Protocol 01. Always throws.
    *
-   * Finalizes the MPC tally to determine the vote outcome. If approved
-   * (yes > no), the treasury unshields the specified amount and sends
-   * it to the proposal recipient. If rejected, returns the tally without
-   * moving funds.
+   * There is no tally to finalize and therefore no spend to execute. No funds
+   * move on this path, in either direction. Deleted in the next major.
    *
-   * @param proposalId - The proposal to execute.
-   * @returns Spend result with approval status, vote tally, and optional TX.
-   * @throws {PrivacyError} MPC_VOTE_FAILED if tally finalization fails.
-   * @throws {PrivacyError} INVALID_CONFIG if the proposal is not found locally.
+   * @param proposalId - Named in the error, otherwise unused.
+   * @throws {PrivacyError} MPC_NOT_AVAILABLE always.
    */
   async executeSpend(proposalId: string): Promise<TreasurySpendResult> {
     throw new PrivacyError(

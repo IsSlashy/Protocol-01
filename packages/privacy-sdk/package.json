@@ -1,7 +1,7 @@
 {
   "name": "@protocol-01/privacy-sdk",
-  "version": "1.0.3",
-  "description": "Unified privacy SDK for Solana — shield, stealth, confidential balances, streams, MPC in one import",
+  "version": "1.0.4",
+  "description": "Unified privacy SDK for Solana. Shield, stealth addresses, confidential balances, streams and subscriptions in one import.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
