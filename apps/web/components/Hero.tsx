@@ -16,7 +16,7 @@ const APK_URL =
  * Changes from original:
  * - Replaced JS setState animations with CSS keyframes
  * - SystemStatus now uses CSS glitch animation
- * - CorruptionNoise now uses CSS animation
+ * - CorruptionNoise deleted (see the note where it used to live)
  * - Removed framer-motion infinite animations
  * - GPU-accelerated transforms
  */
@@ -124,35 +124,17 @@ const SystemStatus = memo(function SystemStatus() {
   );
 });
 
-// Corruption noise effect - CSS animated
-const CorruptionNoise = memo(function CorruptionNoise() {
-  return (
-    <>
-      <style dangerouslySetInnerHTML={{ __html: `
-        @keyframes noise-flash {
-          0%, 70%, 100% { opacity: 0; }
-          72% { opacity: 0.18; }
-          74% { opacity: 0; }
-          85% { opacity: 0.15; }
-          87% { opacity: 0; }
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-          .noise-layer { animation: none !important; opacity: 0 !important; }
-        }
-      `}} />
-      <div
-        className="absolute inset-0 pointer-events-none z-20 noise-layer"
-        style={{
-          animation: "noise-flash 4s steps(1) infinite",
-          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
-          mixBlendMode: "overlay",
-          willChange: "opacity",
-        }}
-      />
-    </>
-  );
-});
+// CorruptionNoise removed 2026-08-06.
+//
+// It painted a grey fractal-noise layer over the whole hero and flashed it
+// twice per 4s cycle (`noise-flash`: 0.18 opacity at 72%, 0.15 at 85%), with
+// mix-blend-mode: overlay. Reported from the running site as a grey glitch
+// appearing twice every few seconds, which is exactly what it was.
+//
+// Deleted rather than slowed down: a full-viewport overlay that repaints on a
+// timer costs a composite on every flash, forever, on a landing page whose
+// first job is to load fast. The art direction already carries the glitch
+// language in the chromatic-aberration status line and the logo.
 
 function Hero() {
   const t = useT();
@@ -204,9 +186,6 @@ function Hero() {
           .hero-animate { animation: none !important; opacity: 1 !important; transform: none !important; }
         }
       `}} />
-
-      {/* Corruption noise overlay */}
-      <CorruptionNoise />
 
       {/* Miku background - semi-transparent, centered between 01 and phone */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[5] overflow-hidden">
