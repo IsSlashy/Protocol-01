@@ -89,7 +89,18 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       expect(screen.getByText('SDK Layer')).toBeInTheDocument();
       expect(screen.getByText('@protocol-01/specter-sdk')).toBeInTheDocument();
       expect(screen.getByText('@protocol-01/zk-sdk')).toBeInTheDocument();
-      expect(screen.getByText('STARK Prover (post-quantum)')).toBeInTheDocument();
+      expect(screen.getByText('@protocol-01/stark-prover')).toBeInTheDocument();
+      // merchant-sdk is the package a merchant actually installs, and the
+      // diagram omitted it entirely while labelling p01-js "Merchant SDK".
+      expect(screen.getByText('@protocol-01/merchant-sdk')).toBeInTheDocument();
+    });
+
+    // arcium-sdk is still published on npm, but Arcium left the protocol on
+    // 2026-07-17. The architecture diagram is a claim about what runs, so a
+    // package nothing calls must not appear in it.
+    it('does not show the retired Arcium SDK in the stack', () => {
+      expect(screen.queryByText('@protocol-01/arcium-sdk')).toBeNull();
+      expect(screen.queryByText('MPC Compute')).toBeNull();
     });
 
     it('renders the Protocol Layer with Stealth, Shielded and Payments', () => {
@@ -165,13 +176,20 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       ).toBeInTheDocument();
     });
 
-    it('mentions the custom on-chain FRI verifier and its CU cost', () => {
+    it('mentions the custom on-chain FRI verifier and its measured CU cost', () => {
       openTopic('Zero-Knowledge Proofs (STARK)');
-      expect(
-        screen.getByText(
-          'Custom on-chain FRI verifier (no Winterfell dep — fits 4KB stack), ~889K CU per verification',
-        ),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/809,812 CU against the 1\.4M budget/)).toBeInTheDocument();
+    });
+
+    // The page published "124-bit soundness with DEEP-ALI" in three places. The
+    // number came from queries x log2(blowup) + grinding, which assumes the FRI
+    // rate the config declares rather than the one the prover reaches, so it
+    // overstated the bound. DEEP-ALI itself is real (verify_deep_ali_circuit_0..6);
+    // only the bit-count is gone, and detail10 says so out loud.
+    it('publishes no bit-level soundness figure', () => {
+      openTopic('Zero-Knowledge Proofs (STARK)');
+      expect(screen.queryAllByText(/124-bit soundness/)).toHaveLength(0);
+      expect(screen.getByText(/No bit-level security number is published here/)).toBeInTheDocument();
     });
 
     it('notes that Groth16/BN254 was retired in April 2026', () => {
@@ -238,26 +256,34 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       ).toBeInTheDocument();
     });
 
-    it('states the on-chain verification cost in compute units', () => {
+    it('states the measured on-chain verification cost in compute units', () => {
       openTopic('Solana On-Chain Verification');
       expect(
         screen.getByText(
-          'Custom FRI verifier for STARK proofs — Goldilocks field (~889K CU per verification)',
+          'Custom FRI verifier for STARK proofs — Goldilocks field, 809,812 CU measured on devnet for an accepted proof',
         ),
       ).toBeInTheDocument();
     });
 
-    // LEFT FAILING ON PURPOSE — stale performance claim, ~4.5x better than reality.
-    //
-    // i18n/en.ts:1117 (docs.solanaIntegration.desc) still ends "...achieving verification
-    // in under 200K compute units", three lines above detail1 which says ~889K CU. The
-    // ~889K figure is corroborated at en.ts:452, en.ts:504, en.ts:1070, en.ts:1305 and in
-    // the inline code comments at app/docs/page.tsx:80/152/181, so 200K is the outlier and
-    // it is a published performance claim the protocol does not meet. Goes green when
-    // en.ts:1117 is corrected.
+    // Was left failing on purpose while en.ts advertised "verification in under
+    // 200K compute units" — 4.5x better than the protocol achieves. The English
+    // desc was corrected first; fr.ts and ja.ts carried the same claim until
+    // 2026-08-06 and now match.
     it('does not publish the stale "under 200K compute units" verification claim', () => {
       openTopic('Solana On-Chain Verification');
       expect(screen.queryAllByText(/under 200K compute units/)).toHaveLength(0);
+    });
+
+    // The old list named 13 programs, one of which ("trustless") does not exist
+    // in programs/, while three that do were missing. The count now matches the
+    // Cargo workspace members.
+    it('lists the fourteen Anchor programs that are in the workspace', () => {
+      openTopic('Solana On-Chain Verification');
+      const line = screen.getByText(/^14 Anchor programs:/);
+      expect(line).toBeInTheDocument();
+      expect(line.textContent).not.toMatch(/trustless/);
+      expect(line.textContent).toMatch(/p01_liquidity/);
+      expect(line.textContent).toMatch(/p01_mugen/);
     });
   });
 

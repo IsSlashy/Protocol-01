@@ -73,13 +73,16 @@ const combinedSecret = hkdf(x25519Secret, hybridSecret);`,
     id: "zk-proofs",
     i18nKey: "zkProofs",
     icon: <Shield className="w-6 h-6" />,
-    detailCount: 9,
+    // 10th detail added 2026-08-06: it states why no bit-level security figure
+    // appears here. Deleting the old "124-bit" claim without saying anything
+    // would read as an oversight rather than a measurement.
+    detailCount: 10,
     codeExample: `// STARK proof (quantum-resistant, hash-based, no trusted setup)
 const starkProof = await starkProver.generateProof(secret);
 
-// Upload proof buffer → on-chain FRI verifier → ~889K CU
+// Upload proof buffer → on-chain FRI verifier → 809,812 CU measured
 await submitStarkProof(program, proofBuffer, commitment, circuitId);
-// 6 AIRs over the Goldilocks field. DEEP-ALI quotient check at the OOD
+// 7 AIRs over the Goldilocks field. DEEP-ALI quotient check at the OOD
 // point is implemented (programs/p01_stark_verifier/src/verify.rs:670-673).
 // No soundness bit-count is published here. The one this line used to
 // carry came from "queries x log2(blowup)", arithmetic that was measured
@@ -163,7 +166,7 @@ const nullifier = Poseidon([commitment, spendingKeyHash]);
     icon: <Cpu className="w-6 h-6" />,
     detailCount: 6,
     codeExample: `// v1.0.2 — Every spend verifies through the custom on-chain
-// FRI verifier (no Winterfell dep, Goldilocks + Blake3, ~889K CU).
+// FRI verifier (no Winterfell dep, Goldilocks + Blake3, 809,812 CU).
 let positions = fiat_shamir_positions(trace_root, commitment);
 for pos in positions {
     verify_merkle_path(proof, pos, trace_root)?;
@@ -185,7 +188,7 @@ for pos in positions {
     detailCount: 6,
     codeExample: `// Trustless on-chain relay flow (v1.0.2 — STARK V3)
 //
-// WHICH CLIENTS ACTUALLY RELAY. Mobile does. The web app does not: /pay
+// WHICH CLIENTS ACTUALLY RELAY. Mobile does. The web app does not: /app
 // submits every transaction straight from the browser, including the
 // ~280 proof-buffer chunk transactions, each under the same ephemeral
 // key whose pubkey seeds the buffer PDAs. Relaying only the final
@@ -206,7 +209,7 @@ const starkProof = await starkProver.generateProof({
 
 // 2. Upload the proof to a buffer account (~120 KB, ~9–15 KB compact)
 //    then call the on-chain FRI verifier (no Winterfell dep,
-//    custom Goldilocks + Blake3 implementation, ~889K CU)
+//    custom Goldilocks + Blake3 implementation, 809,812 CU measured)
 await submitStarkProof(program, proofBuffer, circuitId);
 
 // 3. Instruction reads the verified buffer and releases funds
@@ -342,7 +345,9 @@ await bleTransport.sendFragmented(encrypted, characteristicUUID);
     id: "client-sdk",
     i18nKey: "clientSdk",
     icon: <Code className="w-6 h-6" />,
-    detailCount: 8,
+    // 8 -> 10: the arcium-sdk entry was replaced by stark-prover, and the two
+    // packages the list never had (privacy-sdk, merchant-sdk) were added.
+    detailCount: 10,
     codeExample: `// === @protocol-01/specter-sdk — Core Privacy SDK ===
 import { P01Client, createWallet, sendPrivate } from '@protocol-01/specter-sdk';
 const client = new P01Client({ cluster: 'devnet' });
@@ -457,7 +462,10 @@ const route = await startPrivateRoute({
     id: "ai-agent",
     i18nKey: "aiAgent",
     icon: <Cpu className="w-6 h-6" />,
-    detailCount: 14,
+    // The per-category counts used to sum to 49 against a headline of 56: the
+    // web, price, clipboard and datetime tools had no category. They do now,
+    // and the thirteen categories add up to the 56 in AGENT_TOOLS.
+    detailCount: 15,
     codeExample: `// User: "What's my balance and shield 0.1 SOL"
 // Agent calls tools:
 const balance = await executeTool("wallet_balance", {});
@@ -515,6 +523,14 @@ const proof = await starkProver.generateProof(secret);
   },
 ];
 
+/**
+ * Circuit ids the deployed verifier accepts, counted from the source of truth:
+ * `get_circuit_config` in programs/p01_stark_verifier/src/compact_proof.rs maps
+ * 0..=6 and returns None above that, and `boundary_assertions_reject_unknown_circuit`
+ * pins the rejection for 7, 8, 100 and 255. One AIR module each in stark/src/air/.
+ */
+const STARK_CIRCUIT_COUNT = 7;
+
 const docsArchLayers = [
   {
     nameKey: "docs.layerClient",
@@ -538,10 +554,17 @@ const docsArchLayers = [
   {
     nameKey: "docs.layerSdk",
     hex: "#ff77a8",
+    // The ten packages published under @protocol-01 that are part of the current
+    // stack. @protocol-01/arcium-sdk is also on npm but is NOT here: Arcium was
+    // removed from Protocol 01 on 2026-07-17, same reason the MPC node was
+    // dropped from the protocol layer below.
     nodes: [
+      { labelKey: "docs.nodePrivacySdk", subKey: "docs.nodePrivacySdkSub" },
       { labelKey: "docs.nodeSpecterSdk", subKey: "docs.nodeSpecterSub" },
       { labelKey: "docs.nodeZkSdk", subKey: "docs.nodeZkSub" },
+      { labelKey: "docs.nodeStarkProver", subKey: "docs.nodeStarkProverSub" },
       { labelKey: "docs.nodeZksplSdk", subKey: "docs.nodeZksplSub" },
+      { labelKey: "docs.nodeMerchantSdk", subKey: "docs.nodeMerchantSdkSub" },
       { labelKey: "docs.nodeP01Js", subKey: "docs.nodeP01JsSub" },
       { labelKey: "docs.nodePrivacyToolkit", subKey: "docs.nodePrivacyToolkitSub" },
       { labelKey: "docs.nodeAuthSdk", subKey: "docs.nodeAuthSub" },
@@ -830,10 +853,22 @@ function ArchitectureTopic({ t }: { t: (k: string) => string }) {
       </h1>
       <p className="text-[#888892] leading-relaxed max-w-2xl mb-6">{t('docs.heroSubtitle')}</p>
       <div className="flex flex-wrap items-center gap-5 text-sm mb-10">
-        <div className="flex items-center gap-2"><Shield className="w-4 h-4 text-[#39c5bb]" /><span className="text-[#888892]"><span className="text-white font-bold">10</span> {t('docs.statCircuits')}</span></div>
+        {/* Every number here is counted from the tree, not carried over from an
+            older revision:
+              7  — circuit ids the on-chain verifier accepts (0..6; 7+ returns
+                   UnsupportedCircuit), one AIR module each in stark/src/air/.
+                   Was "10 ZK Circuits", a mixed count of STARKs plus the three
+                   legacy Groth16 artifacts still sitting in the Android assets.
+              14 — Cargo workspace members under programs/ (p01_arcium excluded
+                   from the build, so 15 directories, 14 programs).
+              11 — @protocol-01 packages resolving on npm. The repo holds 16, of
+                   which pay-core is private and 4 are unpublished.
+              21 — topics rendered by this page (the `technologies` array).
+                   Was 14, i.e. the count before seven modules were added. */}
+        <div className="flex items-center gap-2"><Shield className="w-4 h-4 text-[#39c5bb]" /><span className="text-[#888892]"><span className="text-white font-bold">{STARK_CIRCUIT_COUNT}</span> {t('docs.statCircuits')}</span></div>
         <div className="flex items-center gap-2"><Cpu className="w-4 h-4 text-[#ff77a8]" /><span className="text-[#888892]"><span className="text-white font-bold">14</span> {t('docs.statPrograms')}</span></div>
-        <div className="flex items-center gap-2"><Code className="w-4 h-4 text-[#00ffe5]" /><span className="text-[#888892]"><span className="text-white font-bold">17</span> {t('docs.statSdks')}</span></div>
-        <div className="flex items-center gap-2"><Layers className="w-4 h-4 text-[#ffcc00]" /><span className="text-[#888892]"><span className="text-white font-bold">14</span> {t('docs.statModules')}</span></div>
+        <div className="flex items-center gap-2"><Code className="w-4 h-4 text-[#00ffe5]" /><span className="text-[#888892]"><span className="text-white font-bold">11</span> {t('docs.statSdks')}</span></div>
+        <div className="flex items-center gap-2"><Layers className="w-4 h-4 text-[#ffcc00]" /><span className="text-[#888892]"><span className="text-white font-bold">{technologies.length}</span> {t('docs.statModules')}</span></div>
       </div>
       <section id="architecture-diagram" className="scroll-mt-24">
         <h2 className="text-lg font-bold text-white mb-5 flex items-center gap-2">
