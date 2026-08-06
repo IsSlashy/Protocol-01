@@ -11,6 +11,7 @@ const fr: Translations = {
     back: 'Retour',
     explorer: 'Explorer',
     live: 'Live',
+    careers: 'Recrutement',
   },
 
   // \u2500\u2500 Explorer \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -385,6 +386,7 @@ const fr: Translations = {
     developers: 'D\u00e9veloppeurs',
     documentation: 'Documentation',
     community: 'Communaut\u00e9',
+    careers: 'Recrutement',
     copyright: 'Devnet uniquement \u2014 non audit\u00e9.',
     legal: 'L\u00e9gal',
     privacy: 'Confidentialit\u00e9',
@@ -1430,6 +1432,72 @@ const fr: Translations = {
     cta: 'Intéressé par Protocol 01 ? Parlons-en.',
     ctaTwitter: 'Me contacter sur X',
     ctaDownload: 'Essayer l\'App',
+  },
+
+  // ── Careers ─────────────────────────────────────────────
+  careers: {
+    badge: 'Recrutement',
+    openCount: '1 poste ouvert',
+    heroTitle: 'Un développeur a construit le protocole.\nIl manque quelqu\'un pour le vendre.',
+    heroDesc:
+      'Protocol 01 est une couche de confidentialité pour Solana : adresses furtives, notes shieldées, preuves STARK post-quantiques et un SDK de paiement marchand. Construit en solo depuis janvier 2026, en fonctionnement sur devnet. La technique a des années d\'avance sur la distribution, et c\'est exactement cet écart que le poste vient combler.',
+    context: {
+      badge: 'Où on en est',
+      title: 'La version honnête',
+      p1: 'Fondateur solo, pas de financement, pas d\'équipe. 12 programmes Solana, trois applications client et un SDK marchand, tous livrés et en fonctionnement sur devnet.',
+      p2: 'Tout est open source sous licence MIT. La surface commerciale, c\'est le SDK de paiement : des paiements on-chain récurrents et privés qu\'une entreprise peut installer aujourd\'hui.',
+      p3: 'Ce qui manque, ce n\'est pas du code. Ce sont les premiers marchands, les premiers partenaires d\'intégration et les premières vraies discussions avec des investisseurs.',
+    },
+    rolesTitle: 'Postes ouverts',
+    role: {
+      tag: 'Cofondateur',
+      title: 'Cofondateur — Business Development',
+      location: 'Remote · fuseaux européens',
+      commitment: 'Temps plein, ou temps partiel qui se comporte comme du plein',
+      comp: 'Equity',
+      start: 'Démarrage immédiat',
+      summary:
+        'Tu prends tout ce qui n\'est pas le code : marchands, partenaires, narratif, levée de fonds. Deuxième personne de la boîte, première côté commercial, avec ton nom sur le résultat.',
+      missionTitle: 'Ce que tu portes',
+      mission: {
+        m1: 'Signer les premiers marchands payants sur le SDK de paiement, du cold outreach à l\'intégration signée.',
+        m2: 'Construire le pipeline de partenaires dans l\'écosystème Solana : wallets, PSP, infrastructure, DAOs.',
+        m3: 'Transformer la cryptographie en un récit commercial qu\'un non-ingénieur peut répéter sans le casser.',
+        m4: 'Piloter le financement : grants d\'abord, investisseurs ensuite. Deck, pipeline, relances, closing.',
+        m5: 'Tenir la surface publique : X, Discord, conférences, communautés de développeurs.',
+        m6: 'Faire remonter le pricing et le go-to-market dans la roadmap, pour qu\'on construise ce que quelqu\'un paie.',
+      },
+      profileTitle: 'Ce qu\'on cherche',
+      profile: {
+        p1: 'Tu as déjà vendu quelque chose de difficile : logiciel B2B, infrastructure ou crypto. Des deals signés, pas un pipeline raconté.',
+        p2: 'Tu connais l\'écosystème Solana, ou tu peux le connaître en un mois et le prouver dès le premier échange.',
+        p3: 'Tu tiens une conversation technique sur la privacy sans faire semblant d\'être cryptographe.',
+        p4: 'Tu travailles sans être managé. Personne ici ne te donnera une liste de tâches.',
+        p5: 'L\'anglais est obligatoire. Le français est un plus, jamais une condition.',
+        p6: 'Tu es à l\'aise pour vendre un produit qui est sur devnet et non audité, et pour le dire clairement.',
+      },
+      notTitle: 'Ce que ce n\'est pas',
+      not: {
+        n1: 'Pas un poste salarié. Il n\'y a pas encore de financement, donc pas encore de salaire.',
+        n2: 'Pas un siège d\'advisor. C\'est du travail opérationnel hebdomadaire, avec des résultats mesurables.',
+        n3: 'Pas un poste pour quelqu\'un qui a besoin d\'un produit fini. Certaines parties bougent encore.',
+      },
+      offerTitle: 'Ce que tu obtiens',
+      offer: {
+        o1: 'Une equity significative de cofondateur, avec un vesting standard. Le chiffre se discute au premier échange sérieux, il ne se publie pas sur une page web.',
+        o2: 'Un produit qui existe déjà et qui tourne déjà, au lieu d\'un deck et d\'une promesse.',
+        o3: 'La pleine responsabilité du côté commercial, et une voix directe sur la roadmap.',
+        o4: 'Tout est open source sous MIT : ton travail est public et vérifiable.',
+      },
+      applyTitle: 'Comment postuler',
+      applyDesc:
+        'Dis-nous qui tu es, ce que tu as réellement signé, et ce que tu ferais dans les 30 premiers jours. Deux paragraphes honnêtes valent mieux qu\'un CV.',
+      applyDiscordLabel: 'Discord',
+      applyNote: 'Lu par le fondateur, sans filtre. Réponse sous une semaine, y compris quand c\'est non.',
+    },
+    noOtherTitle: 'Rien ici ne te correspond ?',
+    noOtherDesc:
+      'Les postes techniques sont volontairement fermés pour l\'instant, le protocole reste construit en solo. Si tu es cryptographe ou ingénieur Solana et que tu penses que c\'est une erreur, la même adresse fonctionne.',
   },
   extensionPage: {
     badge: 'Extension Chrome',

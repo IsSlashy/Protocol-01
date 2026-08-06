@@ -21,7 +21,15 @@ import { useT, LanguageSwitcher } from "@/i18n";
  * Keeps the art direction intact: cyan accent, uppercase monospace links, sharp
  * primary button.
  */
-const LINKS: { href: string; i18nKey?: string; label?: string; dim?: boolean; glow?: boolean }[] = [
+const LINKS: {
+  href: string;
+  i18nKey?: string;
+  label?: string;
+  dim?: boolean;
+  glow?: boolean;
+  /** Extra classes — used to drop a link below `lg`, where six items overflow. */
+  className?: string;
+}[] = [
   { href: "/pay", label: "Pay" },
   { href: "/docs", i18nKey: "nav.docs" },
   { href: "/roadmap", i18nKey: "nav.roadmap" },
@@ -30,6 +38,9 @@ const LINKS: { href: string; i18nKey?: string; label?: string; dim?: boolean; gl
   // /explorer is reached via the animated "Live" pulse in the right cluster,
   // so it intentionally has no separate nav link here.
   { href: "/sdk-demo", label: "SDK" },
+  // Hidden between md and lg: six links plus the logo and the right cluster no
+  // longer fit on a 768px viewport. The footer carries it at every width.
+  { href: "/careers", i18nKey: "nav.careers", className: "hidden lg:inline" },
   { href: "/founder", label: "Founder", glow: true },
 ];
 
@@ -86,7 +97,7 @@ function SiteHeader() {
                   href={l.href}
                   className={`text-xs font-mono uppercase tracking-wider transition-colors ${
                     active ? "text-p01-cyan" : base
-                  }`}
+                  } ${l.className ?? ""}`}
                 >
                   {l.i18nKey ? t(l.i18nKey) : l.label}
                 </a>

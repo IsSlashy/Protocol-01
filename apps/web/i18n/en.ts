@@ -9,6 +9,7 @@ const en = {
     back: 'Back',
     explorer: 'Explorer',
     live: 'Live',
+    careers: 'Careers',
   },
 
   // ── Explorer ───────────────────────────────────────────────
@@ -384,6 +385,7 @@ const en = {
     developers: 'Developers',
     documentation: 'Documentation',
     community: 'Community',
+    careers: 'Careers',
     copyright: 'Devnet only \u2014 not audited.',
     legal: 'Legal',
     privacy: 'Privacy',
@@ -1431,6 +1433,72 @@ const en = {
     cta: 'Interested in Protocol 01? Let\'s talk.',
     ctaTwitter: 'Reach Out on X',
     ctaDownload: 'Try the App',
+  },
+
+  // ── Careers ─────────────────────────────────────────────
+  careers: {
+    badge: 'Careers',
+    openCount: '1 open role',
+    heroTitle: 'One developer built the protocol.\nIt now needs someone to sell it.',
+    heroDesc:
+      'Protocol 01 is a privacy layer for Solana: stealth addresses, shielded notes, post-quantum STARK proofs and a merchant payment SDK. Built solo since January 2026, running on devnet. The engineering is years ahead of the distribution, and that gap is the job.',
+    context: {
+      badge: 'Where we stand',
+      title: 'The honest version',
+      p1: 'Solo founder, no funding, no team. 12 Solana programs, three client apps and a merchant SDK, all shipped and running on devnet.',
+      p2: 'Everything is open source under MIT. The commercial surface is the payment SDK: private, recurring on-chain payments a business can install today.',
+      p3: 'What is missing is not more code. It is the first merchants, the first integration partners, and the first serious conversations with investors.',
+    },
+    rolesTitle: 'Open roles',
+    role: {
+      tag: 'Co-founder',
+      title: 'Co-founder — Business Development',
+      location: 'Remote · Europe timezones',
+      commitment: 'Full-time, or part-time that behaves like it',
+      comp: 'Equity',
+      start: 'Starts now',
+      summary:
+        'You own everything that is not the code: merchants, partners, narrative, fundraising. Second person in the company, first commercial one, with your name on the outcome.',
+      missionTitle: 'What you would own',
+      mission: {
+        m1: 'Land the first paying merchants on the payment SDK, from cold outreach to signed integration.',
+        m2: 'Build the partner pipeline inside the Solana ecosystem: wallets, payment providers, infrastructure, DAOs.',
+        m3: 'Turn the cryptography into a commercial story a non-engineer can repeat without breaking it.',
+        m4: 'Run the funding track: grants first, investors next. Deck, pipeline, follow-up, close.',
+        m5: 'Own the public surface: X, Discord, conferences, developer communities.',
+        m6: 'Push pricing and go-to-market back into the roadmap, so what gets built is what someone pays for.',
+      },
+      profileTitle: 'What we look for',
+      profile: {
+        p1: 'You have sold something hard before, B2B software, infrastructure or crypto. Deals closed, not pipeline described.',
+        p2: 'You know the Solana ecosystem, or you can know it within a month and prove it in the first call.',
+        p3: 'You can hold a technical conversation about privacy without pretending to be a cryptographer.',
+        p4: 'You work unmanaged. Nobody here will hand you a task list.',
+        p5: 'English is required. French is a plus, never a condition.',
+        p6: 'You are comfortable selling a product that is on devnet and unaudited, and saying so out loud.',
+      },
+      notTitle: 'What this is not',
+      not: {
+        n1: 'Not a salaried position. There is no funding yet, so there is no salary yet.',
+        n2: 'Not an advisor seat. This is weekly operational work with measurable outcomes.',
+        n3: 'Not a role for someone who needs a finished product. Parts of it are still moving.',
+      },
+      offerTitle: 'What you get',
+      offer: {
+        o1: 'Meaningful co-founder equity with standard vesting. The number is settled in the first serious conversation, not published on a web page.',
+        o2: 'A product that already exists and already runs, instead of a pitch deck and a promise.',
+        o3: 'Full ownership of the commercial side, and a direct vote on the roadmap.',
+        o4: 'Everything open source under MIT, so your work is public and verifiable.',
+      },
+      applyTitle: 'How to apply',
+      applyDesc:
+        'Tell us who you are, what you have actually closed, and what you would do in the first 30 days. Two honest paragraphs beat a CV.',
+      applyDiscordLabel: 'Discord',
+      applyNote: 'Read by the founder, no filter in between. Answer within a week, including a no.',
+    },
+    noOtherTitle: 'Nothing here fits you?',
+    noOtherDesc:
+      'Engineering roles are deliberately closed for now, the protocol stays solo-built. If you are a cryptographer or a Solana engineer who thinks that is a mistake, the same address works.',
   },
   extensionPage: {
     badge: 'Chrome Extension',

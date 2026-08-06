@@ -69,6 +69,7 @@ const footerLinks: Record<string, FooterSection> = {
     links: [
       { name: "Discord", href: "https://discord.gg/EfqnVmb2dV", external: true },
       { name: "Twitter / X", href: "https://x.com/Protocol01_", external: true },
+      { name: "careers", href: "/careers" },
       // WAITLIST MODE: GitHub de-emphasized while access runs through the waitlist, restore at launch:
       // { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01-releases", external: true },
     ],
