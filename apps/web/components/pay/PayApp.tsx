@@ -293,7 +293,7 @@ export default function PayApp() {
           <div>
             <p className="font-display text-p01-text">Connect a wallet</p>
             <p className="mt-1 text-sm text-p01-text-muted">
-              Connect Phantom — or pair your Protocol 01 mobile wallet — to send and receive
+              Connect Phantom, or pair your Protocol 01 mobile wallet, to send and receive
               private, post-quantum payments.
             </p>
           </div>
@@ -321,7 +321,7 @@ export default function PayApp() {
           </div>
           <p className="text-sm text-p01-text-muted">
             Two quick signatures create your stealth spending, viewing and post-quantum
-            (ML-KEM-768) keys — the second only verifies your wallet signs deterministically.
+            (ML-KEM-768) keys, the second only verifies your wallet signs deterministically.
             No transaction is sent, no gas is paid. Your keys live only in this tab, never
             uploaded, never stored.
           </p>

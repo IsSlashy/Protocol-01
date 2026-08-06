@@ -62,7 +62,7 @@ const screens = [
     subtitle: "Privacy assistant on-device",
     color: "#00ffe5",
     description:
-      "Manage your private finances through natural conversation. The on-device LLM understands privacy operations natively — no data leaves your phone.",
+      "Manage your private finances through natural conversation. The on-device LLM understands privacy operations natively, no data leaves your phone.",
     highlights: [
       'Natural language: "Shield 100 USDC"',
       "On-device LLM (zero cloud dependency)",
@@ -196,7 +196,7 @@ export default function Showcase() {
           </h2>
           <div className="section-subtitle">
             <p>
-              Every feature designed for privacy — from stealth transfers to
+              Every feature designed for privacy, from stealth transfers to
               AI-powered operations.
             </p>
           </div>

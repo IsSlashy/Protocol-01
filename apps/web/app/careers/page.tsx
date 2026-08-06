@@ -39,7 +39,7 @@ const CONTEXT_KEYS = ["p1", "p2", "p3"] as const;
 const JOB_LD = {
   "@context": "https://schema.org",
   "@type": "JobPosting",
-  title: "Co-founder — Business Development",
+  title: "Co-founder, Business Development",
   description:
     "Co-founder role owning the entire commercial surface of Protocol 01, a privacy layer for Solana: first merchants on the payment SDK, ecosystem partnerships, narrative, and the fundraising track. Compensation is equity.",
   datePosted: "2026-08-06",
@@ -284,7 +284,7 @@ export default function CareersPage() {
               <div className="flex flex-wrap items-center gap-3 mt-6">
                 <a
                   href={`mailto:${APPLY_EMAIL}?subject=${encodeURIComponent(
-                    "Co-founder BD — application",
+                    "Co-founder BD application",
                   )}`}
                   className="btn-primary text-xs px-5 py-2.5 inline-flex items-center gap-2"
                 >

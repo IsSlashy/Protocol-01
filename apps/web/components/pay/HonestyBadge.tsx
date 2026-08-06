@@ -73,7 +73,7 @@ export default function HonestyBadge({ chain }: { chain: ChainId }) {
             <Eye className="h-3.5 w-3.5" /> Amounts public on this path.
           </span>{" "}
           STRK20 pool integration is pending. Until you claim, the sender technically retains
-          spend authority over the stealth account — claim promptly.
+          spend authority over the stealth account, claim promptly.
         </p>
       </div>
     );
@@ -88,7 +88,7 @@ export default function HonestyBadge({ chain }: { chain: ChainId }) {
           <Eye className="h-3.5 w-3.5" /> Sender and amount public on this path.
         </span>{" "}
         Your wallet signs the transfer, pays the fee and funds the one-time address, and this
-        page submits it straight from your browser — there is no relayer, so nothing here hides
+        page submits it straight from your browser, there is no relayer, so nothing here hides
         the sender. Handing over a note instead (other tab) broadcasts nothing at all, but the
         recipient&apos;s later withdrawal still republishes your deposit&apos;s commitment.
       </p>

@@ -442,7 +442,7 @@ export default function ReceivePanel({
 
           {pending.length > 0 && (
             <p className="mb-2 text-xs text-p01-text-dim">
-              Unshielding sends the funds to your connected wallet — that final hop is public
+              Unshielding sends the funds to your connected wallet, that final hop is public
               on-chain.
             </p>
           )}

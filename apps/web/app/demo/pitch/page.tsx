@@ -337,7 +337,7 @@ function Slide4Notes() {
         </h2>
         <p className="text-base text-p01-text-muted">
           Every shielded note has a canonical denomination, so the amount you move carries
-          no signal. Hiding <em>which</em> deposit a withdrawal spends is the next circuit —
+          no signal. Hiding <em>which</em> deposit a withdrawal spends is the next circuit,
           today the note commitment is still published.
         </p>
         <div className="flex flex-wrap gap-2">
@@ -534,7 +534,7 @@ function Slide8Mobile() {
   return (
     <div className="grid w-full max-w-6xl grid-cols-2 gap-16 items-center">
       <div className="flex flex-col gap-6">
-        <Eyebrow>MOBILE — ON-DEVICE STARK</Eyebrow>
+        <Eyebrow>MOBILE · ON-DEVICE STARK</Eyebrow>
         <h2 className="font-display text-5xl font-black leading-tight text-white">
           Proof generation,{" "}
           <span className="text-p01-cyan" style={{ textShadow: "0 0 24px rgba(0,255,229,0.45)" }}>

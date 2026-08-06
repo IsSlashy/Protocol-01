@@ -855,15 +855,15 @@ function ArchitectureTopic({ t }: { t: (k: string) => string }) {
       <div className="flex flex-wrap items-center gap-5 text-sm mb-10">
         {/* Every number here is counted from the tree, not carried over from an
             older revision:
-              7  — circuit ids the on-chain verifier accepts (0..6; 7+ returns
+              7  = circuit ids the on-chain verifier accepts (0..6; 7+ returns
                    UnsupportedCircuit), one AIR module each in stark/src/air/.
                    Was "10 ZK Circuits", a mixed count of STARKs plus the three
                    legacy Groth16 artifacts still sitting in the Android assets.
-              14 — Cargo workspace members under programs/ (p01_arcium excluded
+              14 = Cargo workspace members under programs/ (p01_arcium excluded
                    from the build, so 15 directories, 14 programs).
-              11 — @protocol-01 packages resolving on npm. The repo holds 16, of
+              11 = @protocol-01 packages resolving on npm. The repo holds 16, of
                    which pay-core is private and 4 are unpublished.
-              21 — topics rendered by this page (the `technologies` array).
+              21 = topics rendered by this page (the `technologies` array).
                    Was 14, i.e. the count before seven modules were added. */}
         <div className="flex items-center gap-2"><Shield className="w-4 h-4 text-[#39c5bb]" /><span className="text-[#888892]"><span className="text-white font-bold">{STARK_CIRCUIT_COUNT}</span> {t('docs.statCircuits')}</span></div>
         <div className="flex items-center gap-2"><Cpu className="w-4 h-4 text-[#ff77a8]" /><span className="text-[#888892]"><span className="text-white font-bold">14</span> {t('docs.statPrograms')}</span></div>

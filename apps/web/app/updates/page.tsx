@@ -24,7 +24,7 @@ const updates: WeekUpdate[] = [
     status: "published",
     video: "/videos/week1.mp4",
     highlights: [
-      "Built Mugen Exchange — P2P fiat-to-crypto with ZK compliance",
+      "Built Mugen Exchange. P2P fiat-to-crypto with ZK compliance",
       "Full Solana program: escrow, reputation, dispute resolution",
       "Wired into mobile, extension, and web app",
       "Listed as official Superteam Ireland project",
@@ -40,11 +40,11 @@ const updates: WeekUpdate[] = [
     video: "/videos/week2.mp4",
     highlights: [
       "Migrated all 6 ZK circuits from Groth16 to hash-based STARKs",
-      "Custom FRI verifier running natively on Solana — no trusted setup",
+      "Custom FRI verifier running natively on Solana, no trusted setup",
       "DEEP-ALI composition across every circuit, 124-bit soundness",
       "Merkle-Update AIR verifies on-chain at 1.32M compute units",
-      "p01_liquidity program live — instant unshield pool on devnet",
-      "Mobile WASM prover, extension, and SDK v2 all migrated — 138 tests green",
+      "p01_liquidity program live, instant unshield pool on devnet",
+      "Mobile WASM prover, extension, and SDK v2 all migrated. 138 tests green",
     ],
   },
   {
@@ -53,12 +53,12 @@ const updates: WeekUpdate[] = [
     date: "April 20 - 26, 2026",
     status: "published",
     highlights: [
-      "Colosseum Frontier hackathon submitted — accelerator track, ~7% / ~$250K target",
+      "Colosseum Frontier hackathon submitted, accelerator track, ~7% / ~$250K target",
       "Pitch deck + economic charter PDFs published on the marketing site",
-      "Service Registry live on devnet — 4 services attested (Netflix, Spotify, YouTube, Disney+)",
+      "Service Registry live on devnet. 4 services attested (Netflix, Spotify, YouTube, Disney+)",
       "useServiceRegistry hook + release APK demoed on Galaxy device",
-      "v0.9.9 shipped — denominated_pool_v2 seed bump, 13 fresh pools",
-      "Merkle proof rebuild from chain events — recovered notes work end-to-end",
+      "v0.9.9 shipped, denominated_pool_v2 seed bump, 13 fresh pools",
+      "Merkle proof rebuild from chain events, recovered notes work end-to-end",
       "abandonNote action + walletStore destructive init wipe fixed",
       "Web v0.9.9 marketing refresh + Hermes Buffer compat fix in specter-sdk",
     ],
@@ -69,12 +69,12 @@ const updates: WeekUpdate[] = [
     date: "April 27 - May 3, 2026",
     status: "published",
     highlights: [
-      "Five days in Dublin with Superteam Ireland — face-to-face with builders, founders, and investors",
+      "Five days in Dublin with Superteam Ireland, face-to-face with builders, founders, and investors",
       "Met Diarmuid (Superteam IE) and Alejandro Gutierrez (Lead Superteam IE / Blockchain Ireland)",
-      "Pete Townsend's talk on Finding PMF in Web3 @ Buildstation — re-shaped the roadmap",
-      "Merkle root divergence fixed via replayMerkleProofFromEvents — every shielded note recoverable",
+      "Pete Townsend's talk on Finding PMF in Web3 @ Buildstation, re-shaped the roadmap",
+      "Merkle root divergence fixed via replayMerkleProofFromEvents, every shielded note recoverable",
       "Unshield lifecycle: 5 cascading bugs closed, per-pool counter via findSafeShieldCounter",
-      "V3 STARK pools live on devnet — v1.0.0 tagged, foundation stable for enterprise SDKs",
+      "V3 STARK pools live on devnet, v1.0.0 tagged, foundation stable for enterprise SDKs",
       "Applied to CastleDAO Ireland (August 2026)",
     ],
   },
@@ -84,24 +84,24 @@ const updates: WeekUpdate[] = [
     date: "May 4 - May 10, 2026",
     status: "published",
     highlights: [
-      "V3 STARK transfer end-to-end live on devnet — sender → encoded → import → maturation → unshield, +0.995 SOL net",
+      "V3 STARK transfer end-to-end live on devnet, sender → encoded → import → maturation → unshield, +0.995 SOL net",
       "Sprint 2 Tx-Opacity shipped: p01_relayer wired into V3 (Phase A), event scrubbing on-chain (Phase B), uniform 145 KB STARK proofs (Phase C), fee_escrow PDAs (Phase E)",
       "Sprint 3 Multi-relayer: auto-rotation + liveness filter + chunked submit_job + lazy reputation decay anti-Sybil",
-      "V4 pool seed bump (denominated_pool_v4) — 13 fresh pools, escapes un-decodable legacy events forever",
-      "Subscribe_private V3 fixes — Rust V2 → V3 structs, mobile ix builder placeholders, stark_proof_buffer writable, 4 cascading bugs closed",
+      "V4 pool seed bump (denominated_pool_v4). 13 fresh pools, escapes un-decodable legacy events forever",
+      "Subscribe_private V3 fixes. Rust V2 → V3 structs, mobile ix builder placeholders, stark_proof_buffer writable, 4 cascading bugs closed",
       "Mobile UI 2-modes (Classique / Privé) + V3 routing in subscribe.tsx and (streams)/[id].tsx + explicit note picker + withKeepAwake",
       "Subscribe_private vault création validated live (PDA FG3DPX6SN…, end-to-end on-chain)",
-      "Quantum Wallet UX design doc shipped — cahier des charges for the post-judging 2-3 month execution",
+      "Quantum Wallet UX design doc shipped, cahier des charges for the post-judging 2-3 month execution",
     ],
   },
   {
     week: 6,
-    title: "Recognition — Dev3pack #2 & Demo Day Live",
+    title: "Recognition · Dev3pack #2 & Demo Day Live",
     date: "May 11 - May 17, 2026",
     status: "published",
     highlights: [
       "Ranked #2 worldwide on the Solana track at the Dev3pack Global Hackathon",
-      "First project to go live on X during the Demo Day window — Disney+ subscribe flow as the headline",
+      "First project to go live on X during the Demo Day window. Disney+ subscribe flow as the headline",
       "Marketing site and pitch materials refreshed off the back of both",
     ],
   },
@@ -111,21 +111,21 @@ const updates: WeekUpdate[] = [
     date: "May 18 - May 24, 2026",
     status: "published",
     highlights: [
-      "Android release build pipeline stabilized on Windows — two-step worklets-then-app, ~96 MB APK",
+      "Android release build pipeline stabilized on Windows, two-step worklets-then-app, ~96 MB APK",
       "Device smoke-test workflow via bundled release APK over adb",
       "Roadmap re-shaped after Pete Townsend's 'Finding PMF in Web3' talk",
     ],
   },
   {
     week: 8,
-    title: "Stabilization — ZK Unshield & Relayers",
+    title: "Stabilization · ZK Unshield & Relayers",
     date: "May 25 - May 31, 2026",
     status: "published",
     highlights: [
-      "C3 merkle_path verifier fixed on devnet — every shielded note now unshields, including non-trivial paths",
+      "C3 merkle_path verifier fixed on devnet, every shielded note now unshields, including non-trivial paths",
       "Fixed a Noble shim regression that had broken every transaction serialization",
       "Second relayer brought online on Fly (Frankfurt) with the dormant-node self-heal",
-      "Privy recovery seed persisted offline — killed the boot-time sign hang",
+      "Privy recovery seed persisted offline, killed the boot-time sign hang",
     ],
   },
   {
@@ -134,8 +134,8 @@ const updates: WeekUpdate[] = [
     date: "June 1 - June 7, 2026",
     status: "published",
     highlights: [
-      "Removed Privy — the classic local wallet is now the default signer, no remote-sign dependency",
-      "Extension reached mobile parity — denominated note transfer, relayer-routed private unshield, anonymous license keys, Standard/ZK modes, scan-import device pairing, phone-to-extension connect",
+      "Removed Privy, the classic local wallet is now the default signer, no remote-sign dependency",
+      "Extension reached mobile parity, denominated note transfer, relayer-routed private unshield, anonymous license keys, Standard/ZK modes, scan-import device pairing, phone-to-extension connect",
       "Relayer RPC bad-slot self-healing plus live health indicators in the app and on the site",
       "v1.0.2 released; Chrome extension v0.5.0 published as a downloadable build",
     ],
@@ -166,7 +166,7 @@ export default function UpdatesPage() {
               Weekly Updates
             </h1>
             <p className="text-p01-text-muted text-base max-w-2xl mx-auto">
-              Follow the development of Protocol 01 week by week. Every feature, every integration, every milestone — documented as we build.
+              Follow the development of Protocol 01 week by week. Every feature, every integration, every milestone, documented as we build.
             </p>
           </motion.section>
 
@@ -236,7 +236,7 @@ export default function UpdatesPage() {
                               <button
                                 onClick={() => setPlayingVideo(update.week)}
                                 className="w-full h-full flex items-center justify-center group cursor-pointer"
-                                aria-label={`Play video — Week ${update.week}: ${update.title}`}
+                                aria-label={`Play video, Week ${update.week}: ${update.title}`}
                               >
                                 <video
                                   src={update.video}
@@ -273,7 +273,7 @@ export default function UpdatesPage() {
                   {update.status === "coming-soon" && (
                     <div className="p-8 text-center">
                       <p className="text-p01-text-dim text-sm font-mono">
-                        Stay tuned — update dropping soon.
+                        Stay tuned, update dropping soon.
                       </p>
                     </div>
                   )}

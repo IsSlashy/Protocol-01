@@ -33,7 +33,7 @@ import PayApp from "@/components/pay/PayApp";
  * the republished commitment) unmentioned. Both are corrected here together.
  */
 export const metadata: Metadata = {
-  title: "Private Pay — Protocol 01",
+  title: "Private Pay · Protocol 01",
   description:
     "Post-quantum stealth payments. The payee is a one-time ML-KEM-768 hybrid stealth address, never a wallet. Your own wallet and the amount stay public.",
 };
@@ -83,7 +83,7 @@ export default function PayPage() {
         <div className="relative mx-auto mt-12 w-full max-w-md lg:max-w-5xl">
           <p className="mb-3 flex items-center justify-center gap-2 border border-p01-yellow/40 bg-p01-surface px-3 py-1.5 text-center font-mono text-[11px] uppercase tracking-widest text-p01-yellow">
             <span className="h-1 w-1 shrink-0 bg-p01-yellow" />
-            Devnet only — test tokens, not real funds.
+            Devnet only. Test tokens, not real funds.
           </p>
           <div
             aria-hidden

@@ -260,7 +260,7 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       openTopic('Solana On-Chain Verification');
       expect(
         screen.getByText(
-          'Custom FRI verifier for STARK proofs — Goldilocks field, 809,812 CU measured on devnet for an accepted proof',
+          'Custom FRI verifier for STARK proofs. Goldilocks field, 809,812 CU measured on devnet for an accepted proof',
         ),
       ).toBeInTheDocument();
     });
@@ -298,7 +298,7 @@ describe('DocsPage -- Privacy technologies documentation', () => {
     it('explains the relayer leaves no on-chain link to the original sender', () => {
       openTopic('On-Chain Relayer (Trustless)');
       expect(
-        screen.getByText('Sends to stealth address — no on-chain link to the original sender'),
+        screen.getByText('Sends to stealth address, no on-chain link to the original sender'),
       ).toBeInTheDocument();
     });
   });
@@ -315,7 +315,7 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       openTopic('Client SDK Architecture');
       expect(
         screen.getByText(
-          '@protocol-01/specter-sdk — Core privacy: stealth wallets, transfers, quantum vault, registry, indexer',
+          '@protocol-01/specter-sdk. Core privacy: stealth wallets, transfers, quantum vault, registry, indexer',
         ),
       ).toBeInTheDocument();
 
@@ -487,7 +487,7 @@ describe('DocsPage -- Privacy technologies documentation', () => {
   describe('Footer', () => {
     it('displays copyright notice', () => {
       expect(
-        screen.getByText(`© ${new Date().getFullYear()} PROTOCOL 01 · Devnet only — not audited.`),
+        screen.getByText(`© ${new Date().getFullYear()} PROTOCOL 01 · Devnet only, not audited.`),
       ).toBeInTheDocument();
     });
   });

@@ -193,7 +193,7 @@ export default function AuthDemoPage() {
           Login with Protocol 01
         </h2>
         <p className="text-base max-w-2xl mx-auto text-[#888892]">
-          Scan a QR code with the P01 mobile app to authenticate. No passwords, no email — just your wallet.
+          Scan a QR code with the P01 mobile app to authenticate. No passwords, no email, just your wallet.
         </p>
       </section>
 
@@ -342,7 +342,7 @@ export default function AuthDemoPage() {
             {session && session.status === 'pending' && (
               <div className="bg-[#151518] p-6 border border-[#2a2a30]">
                 <h3 className="text-[10px] font-mono text-[#555560] uppercase tracking-[0.3em] mb-3">
-                  Debug — Simulate Callback
+                  Debug: Simulate Callback
                 </h3>
                 <p className="text-xs text-[#555560] mb-4 font-mono">
                   To test without the mobile app, simulate a callback:

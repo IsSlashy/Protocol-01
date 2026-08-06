@@ -248,11 +248,11 @@ export default function ExplorerPage() {
           <span className="inline-flex items-center gap-2">
             <span className="w-2 h-2 rounded-full" style={{ background: relayerColor }} />
             {t("explorer.net.relayer")}:{" "}
-            <span style={{ color: relayerColor }}>{relayer ?? "—"}</span>
+            <span style={{ color: relayerColor }}>{relayer ?? "n/a"}</span>
           </span>
           <span className="text-p01-text-dim">
             {t("explorer.net.snapshot")}:{" "}
-            {m?.snapshotAt ? new Date(m.snapshotAt).toLocaleTimeString() : "—"}
+            {m?.snapshotAt ? new Date(m.snapshotAt).toLocaleTimeString() : "n/a"}
           </span>
           <a
             href={`${EXPLORER_BASE}/address/2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms${cluster}`}

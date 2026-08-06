@@ -51,24 +51,24 @@ export default function PrivacyPolicy() {
             </p>
             <ul className="list-disc pl-6 space-y-2 mt-4">
               <li>
-                <strong className="text-white">{t("privacyPolicy.s2.keys.k1.term")}</strong>{" "}
-                — {t("privacyPolicy.s2.keys.k1.desc")}
+                <strong className="text-white">{t("privacyPolicy.s2.keys.k1.term")}</strong>:{" "}
+                {t("privacyPolicy.s2.keys.k1.desc")}
               </li>
               <li>
-                <strong className="text-white">{t("privacyPolicy.s2.keys.k2.term")}</strong>{" "}
-                — {t("privacyPolicy.s2.keys.k2.desc")}
+                <strong className="text-white">{t("privacyPolicy.s2.keys.k2.term")}</strong>:{" "}
+                {t("privacyPolicy.s2.keys.k2.desc")}
               </li>
               <li>
-                <strong className="text-white">{t("privacyPolicy.s2.keys.k3.term")}</strong>{" "}
-                — {t("privacyPolicy.s2.keys.k3.desc")}
+                <strong className="text-white">{t("privacyPolicy.s2.keys.k3.term")}</strong>:{" "}
+                {t("privacyPolicy.s2.keys.k3.desc")}
               </li>
               <li>
-                <strong className="text-white">{t("privacyPolicy.s2.keys.k4.term")}</strong>{" "}
-                — {t("privacyPolicy.s2.keys.k4.desc")}
+                <strong className="text-white">{t("privacyPolicy.s2.keys.k4.term")}</strong>:{" "}
+                {t("privacyPolicy.s2.keys.k4.desc")}
               </li>
               <li>
-                <strong className="text-white">{t("privacyPolicy.s2.keys.k5.term")}</strong>{" "}
-                — {t("privacyPolicy.s2.keys.k5.desc")}
+                <strong className="text-white">{t("privacyPolicy.s2.keys.k5.term")}</strong>:{" "}
+                {t("privacyPolicy.s2.keys.k5.desc")}
               </li>
             </ul>
           </section>
@@ -109,20 +109,20 @@ export default function PrivacyPolicy() {
             <p>{t("privacyPolicy.s4.intro")}</p>
             <ul className="list-disc pl-6 space-y-2 mt-4">
               <li>
-                <strong className="text-white">{t("privacyPolicy.s4.keys.k1.term")}</strong>{" "}
-                — {t("privacyPolicy.s4.keys.k1.desc")}
+                <strong className="text-white">{t("privacyPolicy.s4.keys.k1.term")}</strong>:{" "}
+                {t("privacyPolicy.s4.keys.k1.desc")}
               </li>
               <li>
-                <strong className="text-white">{t("privacyPolicy.s4.keys.k2.term")}</strong>{" "}
-                — {t("privacyPolicy.s4.keys.k2.desc")}
+                <strong className="text-white">{t("privacyPolicy.s4.keys.k2.term")}</strong>:{" "}
+                {t("privacyPolicy.s4.keys.k2.desc")}
               </li>
               <li>
-                <strong className="text-white">{t("privacyPolicy.s4.keys.k3.term")}</strong>{" "}
-                — {t("privacyPolicy.s4.keys.k3.desc")}
+                <strong className="text-white">{t("privacyPolicy.s4.keys.k3.term")}</strong>:{" "}
+                {t("privacyPolicy.s4.keys.k3.desc")}
               </li>
               <li>
-                <strong className="text-white">{t("privacyPolicy.s4.keys.k4.term")}</strong>{" "}
-                — {t("privacyPolicy.s4.keys.k4.desc")}
+                <strong className="text-white">{t("privacyPolicy.s4.keys.k4.term")}</strong>:{" "}
+                {t("privacyPolicy.s4.keys.k4.desc")}
               </li>
             </ul>
           </section>
@@ -135,8 +135,8 @@ export default function PrivacyPolicy() {
             <p>{t("privacyPolicy.s5.intro")}</p>
             <ul className="list-disc pl-6 space-y-2 mt-4">
               <li>
-                <strong className="text-white">{t("privacyPolicy.s5.privyTerm")}</strong>{" "}
-                — {t("privacyPolicy.s5.privyDescBefore")}{" "}
+                <strong className="text-white">{t("privacyPolicy.s5.privyTerm")}</strong>:{" "}
+                {t("privacyPolicy.s5.privyDescBefore")}{" "}
                 <a
                   href="https://privy.io/privacy"
                   className="text-p01-cyan hover:underline"
@@ -148,12 +148,12 @@ export default function PrivacyPolicy() {
                 .
               </li>
               <li>
-                <strong className="text-white">{t("privacyPolicy.s5.heliusTerm")}</strong>{" "}
-                — {t("privacyPolicy.s5.heliusDesc")}
+                <strong className="text-white">{t("privacyPolicy.s5.heliusTerm")}</strong>:{" "}
+                {t("privacyPolicy.s5.heliusDesc")}
               </li>
               <li>
-                <strong className="text-white">{t("privacyPolicy.s5.jupiterTerm")}</strong>{" "}
-                — {t("privacyPolicy.s5.jupiterDesc")}
+                <strong className="text-white">{t("privacyPolicy.s5.jupiterTerm")}</strong>:{" "}
+                {t("privacyPolicy.s5.jupiterDesc")}
               </li>
             </ul>
             <p className="mt-4">{t("privacyPolicy.s5.outro")}</p>
@@ -179,16 +179,16 @@ export default function PrivacyPolicy() {
             <p>{t("privacyPolicy.s7.intro")}</p>
             <ul className="list-disc pl-6 space-y-2 mt-4">
               <li>
-                <strong className="text-white">{t("privacyPolicy.s7.keys.k1.term")}</strong>{" "}
-                — {t("privacyPolicy.s7.keys.k1.desc")}
+                <strong className="text-white">{t("privacyPolicy.s7.keys.k1.term")}</strong>:{" "}
+                {t("privacyPolicy.s7.keys.k1.desc")}
               </li>
               <li>
-                <strong className="text-white">{t("privacyPolicy.s7.keys.k2.term")}</strong>{" "}
-                — {t("privacyPolicy.s7.keys.k2.desc")}
+                <strong className="text-white">{t("privacyPolicy.s7.keys.k2.term")}</strong>:{" "}
+                {t("privacyPolicy.s7.keys.k2.desc")}
               </li>
               <li>
-                <strong className="text-white">{t("privacyPolicy.s7.keys.k3.term")}</strong>{" "}
-                — {t("privacyPolicy.s7.keys.k3.desc")}
+                <strong className="text-white">{t("privacyPolicy.s7.keys.k3.term")}</strong>:{" "}
+                {t("privacyPolicy.s7.keys.k3.desc")}
               </li>
             </ul>
           </section>

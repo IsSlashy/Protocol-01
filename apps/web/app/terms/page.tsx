@@ -6,7 +6,7 @@ import Footer from "@/components/Footer";
 export const metadata: Metadata = {
   title: "Terms of Service | PROTOCOL-01",
   description:
-    "Terms of Service for Protocol 01 — conditions governing use of our privacy-first Solana wallet and protocol.",
+    "Terms of Service for Protocol 01, conditions governing use of our privacy-first Solana wallet and protocol.",
 };
 
 export default function TermsOfService() {
@@ -157,10 +157,10 @@ export default function TermsOfService() {
               6.1 Protocol 01 Rights
             </h3>
             <p>
-              All intellectual property rights in the Services — including but
+              All intellectual property rights in the Services, including but
               not limited to the source code, smart contracts, zero-knowledge
               circuits, SDK, user interface designs, branding, trademarks, and
-              documentation — are owned by or licensed to the Protocol 01 team.
+              documentation, are owned by or licensed to the Protocol 01 team.
             </p>
             <h3 className="text-lg font-semibold text-white mt-6 mb-2">
               6.2 Current Open-Source License
@@ -179,8 +179,8 @@ export default function TermsOfService() {
             <p>
               We reserve the right to change the licensing terms of future
               releases. Code already released under the MIT License keeps the
-              rights that license grants — an MIT grant on distributed code is
-              not revocable — but no particular license is guaranteed for
+              rights that license grants (an MIT grant on distributed code is
+              not revocable), but no particular license is guaranteed for
               versions not yet published.
             </p>
             <h3 className="text-lg font-semibold text-white mt-6 mb-2">

@@ -9,7 +9,7 @@ import type { Metadata } from "next";
  * That is the intent: the URL is what gets handed out in person.
  */
 export const metadata: Metadata = {
-  title: "Slashy — Protocol 01",
+  title: "Slashy · Protocol 01",
   description: "Contact card.",
   robots: {
     index: false,

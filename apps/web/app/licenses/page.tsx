@@ -11,10 +11,10 @@ export const metadata: Metadata = {
 
 const P01_PACKAGES = [
   {
-    name: "Protocol 01 — Core Protocol & Applications",
+    name: "Protocol 01: Core Protocol & Applications",
     license: "MIT",
     description:
-      "The wallet application, browser extension, smart contracts, ZK circuits, and SDK packages are released under the MIT License. Use, copy, modify, and redistribute freely — a privacy protocol earns trust by being verifiable, and the @protocol-01 npm packages have declared MIT since their first release.",
+      "The wallet application, browser extension, smart contracts, ZK circuits, and SDK packages are released under the MIT License. Use, copy, modify, and redistribute freely. A privacy protocol earns trust by being verifiable, and the @protocol-01 npm packages have declared MIT since their first release.",
     url: "https://github.com/IsSlashy/Protocol-01-releases",
   },
 ];
@@ -139,7 +139,7 @@ export default function OpenSourceLicenses() {
                 </p>
                 <div className="mt-4 bg-p01-void rounded-lg p-4 text-xs font-mono text-p01-text-dim leading-relaxed">
                   <p>
-                    MIT License — Copyright (c) 2025-2026 Volta Team. Developed
+                    MIT License. Copyright (c) 2025-2026 Volta Team. Developed
                     by Slashy Fx.
                   </p>
                   <p className="mt-2">

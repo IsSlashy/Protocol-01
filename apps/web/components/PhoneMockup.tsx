@@ -143,7 +143,7 @@ const WalletView = () => {
               {t("mockup.privateBalance")}
             </p>
             {/* An amber "MPC" badge sat here until 2026-07-27, hardcoded rather
-                than driven by i18n — which is why the Arcium removal sweep over
+                than driven by i18n, which is why the Arcium removal sweep over
                 the translation catalogues never found it, and it kept rendering
                 on the homepage hero at first paint. Arcium is not part of
                 Protocol 01: privacy-sdk 1.0.2 dropped the mpc module. The badge

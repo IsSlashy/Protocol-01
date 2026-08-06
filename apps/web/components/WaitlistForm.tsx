@@ -47,7 +47,7 @@ export default function WaitlistForm({ source = "cta" }: { source?: WaitlistSour
 
   const [email, setEmail] = useState("");
   const [interest, setInterest] = useState<Interest | "">("");
-  const [website, setWebsite] = useState(""); // honeypot — stays empty for humans
+  const [website, setWebsite] = useState(""); // honeypot, stays empty for humans
   const [status, setStatus] = useState<Status>("idle");
   const [errorKey, setErrorKey] = useState<ErrorKey>("errorServer");
 
