@@ -16,7 +16,7 @@ import PayApp from "@/components/pay/PayApp";
  *   · The sender is NOT hidden on any leg. The same transfer has
  *     `fromPubkey: sender` and every tx in the batch carries
  *     `tx.feePayer = sender` (workerCore.ts:352, 363), and the browser submits
- *     them itself (PayApp.tsx:120-133) — there is no relayer on /pay.
+ *     them itself (PayApp.tsx:120-133) — there is no relayer on this page.
  *   · A pool withdrawal no longer pays the connected wallet: the payee is a
  *     per-note derived payout address (PoolPanel.tsx:286-295) and
  *     `executeUnshield` refuses `recipient.equals(ownerPubkey)` outright

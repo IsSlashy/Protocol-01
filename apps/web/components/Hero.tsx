@@ -309,10 +309,12 @@ function Hero() {
                 opacity: 0,
               }}
             >
-              {/* Primary CTA — straight into the live /pay demo so visitors
-                  taste the protocol before joining the waitlist. */}
+              {/* Primary CTA — straight into the live app so visitors taste the
+                  protocol before joining the waitlist. It used to read
+                  "Initialize Protocol", which names an action nobody arrives
+                  wanting to perform; "Launch App" names the destination. */}
               <a
-                href="/pay"
+                href="/app"
                 className="px-6 py-3 bg-[#39c5bb] text-[#0a0a0c] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#2a9d95] transition-colors"
               >
                 <svg
@@ -324,7 +326,7 @@ function Hero() {
                 >
                   <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                 </svg>
-                {t('hero.initProtocol')}
+                {t('hero.launchApp')}
               </a>
               {/* WAITLIST MODE: direct APK download disabled, restore at public launch.
               <a href={APK_URL} className="px-6 py-3 bg-transparent border border-[#39c5bb] text-[#39c5bb] font-bold uppercase tracking-wider flex items-center gap-2 hover:bg-[#39c5bb]/10 transition-colors">

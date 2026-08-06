@@ -12,6 +12,7 @@ const fr: Translations = {
     explorer: 'Explorer',
     live: 'Live',
     careers: 'Recrutement',
+    tryNow: 'Essayer',
   },
 
   // \u2500\u2500 Explorer \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -89,7 +90,7 @@ const fr: Translations = {
     desc2: 'Sans r\u00e9v\u00e9ler qui vous \u00eates, ce que vous avez achet\u00e9, ni combien.',
     desc3: 'Preuves post-quantiques, adresses furtives, pools blind\u00e9s. En ligne sur devnet.',
     desc4: 'Auto-conservation. Open source. Sans KYC.',
-    initProtocol: 'Initialiser le protocole',
+    launchApp: 'Lancer l’app',
     downloadApp: 'Télécharger l’app',
     documentation: 'Lire la doc',
     recurring: 'Abonnements priv\u00e9s',

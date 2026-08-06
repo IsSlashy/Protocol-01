@@ -10,6 +10,7 @@ const en = {
     explorer: 'Explorer',
     live: 'Live',
     careers: 'Careers',
+    tryNow: 'Try Now',
   },
 
   // ── Explorer ───────────────────────────────────────────────
@@ -87,7 +88,7 @@ const en = {
     desc2: 'Without revealing who you are, what you bought, or how much.',
     desc3: 'Post-quantum proofs, stealth addresses, shielded pools. Live on devnet.',
     desc4: 'Self-custody. Open source. No KYC.',
-    initProtocol: 'Initialize Protocol',
+    launchApp: 'Launch App',
     downloadApp: 'Download the app',
     documentation: 'Read the docs',
     recurring: 'Private subscriptions',

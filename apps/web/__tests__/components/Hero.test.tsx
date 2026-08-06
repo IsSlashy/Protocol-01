@@ -76,13 +76,13 @@ describe('Hero -- Privacy-first landing section', () => {
   });
 
   describe('Call-to-Action Buttons', () => {
-    it('renders the "Initialize Protocol" button as the primary CTA', () => {
-      expect(screen.getByText('Initialize Protocol')).toBeInTheDocument();
+    it('renders the "Launch App" button as the primary CTA', () => {
+      expect(screen.getByText('Launch App')).toBeInTheDocument();
     });
 
-    it('links "Initialize Protocol" to the live /pay demo', () => {
-      const cta = screen.getByText('Initialize Protocol');
-      expect(cta.closest('a')).toHaveAttribute('href', '/pay');
+    it('links "Launch App" to the live app at /app', () => {
+      const cta = screen.getByText('Launch App');
+      expect(cta.closest('a')).toHaveAttribute('href', '/app');
     });
 
     it('renders "Join the waitlist" as the secondary CTA, scrolling to #download', () => {

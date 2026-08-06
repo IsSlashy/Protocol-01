@@ -21,16 +21,10 @@ import { useT, LanguageSwitcher } from "@/i18n";
  * Keeps the art direction intact: cyan accent, uppercase monospace links, sharp
  * primary button.
  */
-const LINKS: {
-  href: string;
-  i18nKey?: string;
-  label?: string;
-  dim?: boolean;
-  glow?: boolean;
-  /** Extra classes — used to drop a link below `lg`, where six items overflow. */
-  className?: string;
-}[] = [
-  { href: "/pay", label: "Pay" },
+const LINKS: { href: string; i18nKey?: string; label?: string; dim?: boolean; glow?: boolean }[] = [
+  // The app itself is no longer a nav link: it is the right-hand CTA button,
+  // which is the one thing on this bar a visitor should be pulled towards.
+  // A second, quieter "Pay" link next to it only split the same click.
   { href: "/docs", i18nKey: "nav.docs" },
   { href: "/roadmap", i18nKey: "nav.roadmap" },
   // Updates page kept at /updates but removed from the nav (replaced by SDK).
@@ -38,9 +32,7 @@ const LINKS: {
   // /explorer is reached via the animated "Live" pulse in the right cluster,
   // so it intentionally has no separate nav link here.
   { href: "/sdk-demo", label: "SDK" },
-  // Hidden between md and lg: six links plus the logo and the right cluster no
-  // longer fit on a 768px viewport. The footer carries it at every width.
-  { href: "/careers", i18nKey: "nav.careers", className: "hidden lg:inline" },
+  { href: "/careers", i18nKey: "nav.careers" },
   { href: "/founder", label: "Founder", glow: true },
 ];
 
@@ -97,7 +89,7 @@ function SiteHeader() {
                   href={l.href}
                   className={`text-xs font-mono uppercase tracking-wider transition-colors ${
                     active ? "text-p01-cyan" : base
-                  } ${l.className ?? ""}`}
+                  }`}
                 >
                   {l.i18nKey ? t(l.i18nKey) : l.label}
                 </a>
@@ -120,8 +112,12 @@ function SiteHeader() {
               {t("nav.live")}
             </a>
             <LanguageSwitcher className="hidden sm:flex" />
-            <a href="/#download" className="btn-primary text-xs px-4 py-1.5">
-              {t("waitlist.navLabel")}
+            {/* The bar's one strong CTA now opens the app instead of the
+                waitlist form. The waitlist asks for an email before showing
+                anything; the app is the thing being asked about, and it is
+                live, so it is what the button offers. */}
+            <a href="/app" className="btn-primary text-xs px-4 py-1.5">
+              {t("nav.tryNow")}
             </a>
           </div>
         </div>

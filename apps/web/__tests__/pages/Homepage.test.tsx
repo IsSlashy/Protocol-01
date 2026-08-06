@@ -44,12 +44,12 @@ describe('Homepage -- Protocol 01 main landing page', () => {
       expect(featureNavLink).toBeDefined();
     });
 
-    it('has a "Waitlist" navigation link pointing to /#download', () => {
-      const navLinks = screen.getAllByText('Waitlist');
-      const waitlistNavLink = navLinks.find(
-        el => el.closest('a')?.getAttribute('href') === '/#download'
+    it('has a "Try Now" navigation link pointing to /app', () => {
+      const navLinks = screen.getAllByText('Try Now');
+      const appNavLink = navLinks.find(
+        el => el.closest('a')?.getAttribute('href') === '/app'
       );
-      expect(waitlistNavLink).toBeDefined();
+      expect(appNavLink).toBeDefined();
     });
 
     it('has an "SDK Demo" navigation link pointing to /sdk-demo', () => {
@@ -141,13 +141,19 @@ describe('Homepage -- Protocol 01 main landing page', () => {
     });
   });
 
-  describe('Waitlist Button in Navigation', () => {
-    it('has a prominent "Waitlist" CTA button in the nav', () => {
-      const waitlistButtons = screen.getAllByRole('link', { name: 'Waitlist' });
-      const ctaButton = waitlistButtons.find(
-        el => el.getAttribute('href') === '/#download' && el.className.includes('btn-primary')
+  describe('App Button in Navigation', () => {
+    it('has a prominent "Try Now" CTA button in the nav, opening the app', () => {
+      const appButtons = screen.getAllByRole('link', { name: 'Try Now' });
+      const ctaButton = appButtons.find(
+        el => el.getAttribute('href') === '/app' && el.className.includes('btn-primary')
       );
       expect(ctaButton).toBeDefined();
+    });
+
+    // The nav no longer carries a separate "Pay" link: the CTA button above is
+    // the only route into the app from this bar.
+    it('has no "Pay" nav link competing with it', () => {
+      expect(screen.queryByRole('link', { name: 'Pay' })).toBeNull();
     });
   });
 });
