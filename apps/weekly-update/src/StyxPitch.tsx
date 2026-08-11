@@ -1,7 +1,6 @@
 import React from 'react';
 import { AbsoluteFill, Series } from 'remotion';
-// Side-effect import: blocks the render until Newsreader is loaded. See the file.
-import './styx/fonts';
+import { StyxFonts } from './styx/fonts';
 import { Beat } from './scenes/styx-pitch/Beat';
 import { ALL_BEATS, TOTAL_FRAMES } from './scenes/styx-pitch/script';
 import { styx } from './styx/theme';
@@ -33,6 +32,8 @@ import { styx } from './styx/theme';
 export const StyxPitch: React.FC = () => {
   return (
     <AbsoluteFill style={{ background: styx.ink }}>
+      {/* Blocks the render until Newsreader is ready. See ./styx/fonts.tsx. */}
+      <StyxFonts />
       <Series>
         {ALL_BEATS.map((beat, i) => (
           <Series.Sequence key={beat.from} durationInFrames={beat.duration}>
