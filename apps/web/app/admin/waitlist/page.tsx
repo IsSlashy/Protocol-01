@@ -7,9 +7,24 @@
  * `x-admin-password`, so either WAITLIST_STATS_TOKEN or ADMIN_PASSWORD works.
  * Data: /api/waitlist/stats + /api/waitlist/export?format=json.
  * Internal tool: English only, no i18n, mirrors /admin conventions.
+ *
+ * Presentation is Styx (app/_styx/styx.css) with `chrome={false}`: this page
+ * supplies its own frame. It must not render the public header or footer — the
+ * footer is what links here, and StyxFooter pulls in i18n this English-only tool
+ * has no business loading.
+ *
+ * Careful when editing: below the login gate, `const t = stats?.totals`. That
+ * `t` is the totals object, NOT the i18n translate function.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   Lock,
   RefreshCw,
@@ -22,12 +37,15 @@ import {
   TrendingUp,
   AlertTriangle,
 } from "lucide-react";
+import StyxShell from "../../_styx/StyxShell";
+import Reveal from "../../_styx/Reveal";
 
-// Chart series colors validated for CVD + contrast on the dark surface
-// (dataviz check: brand cyan #39c5bb is too light for bars; #2aa89e is the
-// nearest passing step; #ff2d7a passes as-is).
-const CHART_CYAN = "#2aa89e";
-const CHART_PINK = "#ff2d7a";
+// Chart series: two hues only, both from the Styx palette. Paper carries the
+// larger series, the cyan seal carries the subset that sits inside it. Both are
+// legible and CVD-distinguishable on the #0d0d10 panel, and the legend repeats
+// the identity in words so it is never colour-alone.
+const CHART_SIGNUPS = "var(--styx-paper)";
+const CHART_CONFIRMED = "var(--styx-accent)";
 
 interface WaitlistRecordRow {
   email: string;
@@ -68,6 +86,8 @@ interface StatsPayload {
   };
 }
 
+// FROZEN LITERAL. Renaming this silently logs the founder out and orphans the
+// saved credential. The rebrand is visible copy only.
 const STORAGE_KEY = "p01-wl-admin-key";
 
 type InterestFilter = "all" | "mobile" | "extension" | "sdk" | "none";
@@ -96,7 +116,11 @@ function Flag({ cc }: { cc: string }) {
       title={cc}
       width={20}
       height={14}
-      className="inline-block border border-[#2a2a30] align-[-2px]"
+      style={{
+        display: "inline-block",
+        border: "1px solid var(--styx-rule)",
+        verticalAlign: "-2px",
+      }}
     />
   );
 }
@@ -112,31 +136,78 @@ function fmtDate(iso: string | null): string {
   });
 }
 
+// ── Shared inline geometry (spacing only, never colour or type) ───────────
+
+/** The action bar sits in a header row, so the buttons run tighter than a CTA. */
+const ACTION_BTN: CSSProperties = { padding: "0.6rem 1.15rem" };
+
+const MONO_CELL: CSSProperties = { fontFamily: "var(--styx-mono)" };
+
+/**
+ * Restores the serif voice on a REAL heading element.
+ *
+ * Measured 2026-08-11 in the browser: `.styx :is(h1, h2, h3, h4, h5, h6)` in
+ * styx.css resets font-family/font-weight/letter-spacing, and because `:is()`
+ * carries the specificity of its most specific argument, that selector scores
+ * (0,1,1) while `.styx-h2` and `.styx-h3` score (0,1,0). The reset therefore
+ * wins on any actual <h1>-<h6>, and `font-family: inherit` lands on Inter. The
+ * kit only looks right because it demos the type scale on <p> elements.
+ *
+ * styx.css is a shared file and off limits here, so these headings re-assert the
+ * very same tokens the classes already ask for. No new colour, no new font.
+ * Reported upward: styx.css should lower that reset to `:where(...)`, which
+ * scores (0,1,0) and would let every heading class win on its own.
+ */
+const SERIF_H2: CSSProperties = {
+  fontFamily: "var(--styx-serif)",
+  fontWeight: "var(--styx-serif-title)" as CSSProperties["fontWeight"],
+  letterSpacing: "-0.01em",
+};
+
+const SERIF_H3: CSSProperties = {
+  fontFamily: "var(--styx-serif)",
+  fontWeight: "var(--styx-serif-small)" as CSSProperties["fontWeight"],
+  letterSpacing: "-0.005em",
+};
+
+/** styx.css has no active/pressed chip variant. Composed from tokens only. */
+function chipStyle(active: boolean): CSSProperties {
+  return active
+    ? {
+        background: "transparent",
+        cursor: "pointer",
+        borderColor: "var(--styx-accent)",
+        color: "var(--styx-paper)",
+      }
+    : { background: "transparent", cursor: "pointer" };
+}
+
 // ── KPI tile ─────────────────────────────────────────────────────────────
 
 function Tile({
   icon: Icon,
   label,
   value,
-  accent = "#ffffff",
+  delay = 0,
 }: {
   icon: typeof Users;
   label: string;
   value: string | number;
-  accent?: string;
+  delay?: number;
 }) {
   return (
-    <div className="bg-[#0f0f12] border border-[#2a2a30] p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <Icon size={13} style={{ color: accent }} aria-hidden />
-        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-[#555560]">
-          {label}
-        </span>
-      </div>
-      <div className="text-2xl font-bold" style={{ color: accent }}>
+    <Reveal className="styx-card styx-reveal" delay={delay}>
+      <p
+        className="styx-card-label"
+        style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+      >
+        <Icon size={12} style={{ color: "var(--styx-faint)" }} aria-hidden />
+        {label}
+      </p>
+      <p className="styx-card-value" style={{ margin: 0, fontSize: "2rem" }}>
         {value}
-      </div>
-    </div>
+      </p>
+    </Reveal>
   );
 }
 
@@ -163,115 +234,206 @@ function DailyChart({ daily }: { daily: DailyPoint[] }) {
   const gridSteps = [0.25, 0.5, 0.75, 1];
 
   return (
-    <div className="bg-[#0f0f12] border border-[#2a2a30] p-4 relative" ref={wrapRef}>
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-[#555560]">
-          Signups per day · last 30 days
-        </span>
-        {/* legend: 2 series, color + text token (identity never color-alone) */}
-        <div className="flex items-center gap-4">
-          <span className="flex items-center gap-1.5 text-[11px] text-[#888892]">
-            <span className="w-2.5 h-2.5" style={{ background: CHART_CYAN }} aria-hidden />
+    <div className="styx-panel" style={{ position: "relative" }} ref={wrapRef}>
+      <div
+        className="styx-panel-head"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "0.75rem",
+        }}
+      >
+        <p className="styx-overline">Signups per day &middot; last 30 days</p>
+        {/* legend: 2 series, colour + text token (identity never colour-alone) */}
+        <div style={{ display: "flex", alignItems: "center", gap: "1.25rem" }}>
+          <span
+            className="styx-mono"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.45rem",
+              fontSize: "0.6875rem",
+            }}
+          >
+            <span
+              style={{ width: "9px", height: "9px", background: CHART_SIGNUPS }}
+              aria-hidden
+            />
             Signups
           </span>
-          <span className="flex items-center gap-1.5 text-[11px] text-[#888892]">
-            <span className="w-2.5 h-2.5" style={{ background: CHART_PINK }} aria-hidden />
+          <span
+            className="styx-mono"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.45rem",
+              fontSize: "0.6875rem",
+            }}
+          >
+            <span
+              style={{ width: "9px", height: "9px", background: CHART_CONFIRMED }}
+              aria-hidden
+            />
             Confirmed
           </span>
         </div>
       </div>
 
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        className="w-full h-auto block"
-        role="img"
-        aria-label="Daily waitlist signups and confirmations, last 30 days"
-        onMouseLeave={() => setHover(null)}
-      >
-        {/* recessive grid + y labels */}
-        {gridSteps.map((s) => (
-          <g key={s}>
-            <line
-              x1={PAD_L}
-              x2={W - PAD_R}
-              y1={y(maxY * s)}
-              y2={y(maxY * s)}
-              stroke="#1c1c22"
-              strokeWidth={1}
-            />
-            <text
-              x={PAD_L - 6}
-              y={y(maxY * s) + 3}
-              textAnchor="end"
-              fontSize={9}
-              fontFamily="monospace"
-              fill="#555560"
-            >
-              {Math.round(maxY * s)}
-            </text>
-          </g>
-        ))}
-        <line x1={PAD_L} x2={W - PAD_R} y1={PAD_T + innerH} y2={PAD_T + innerH} stroke="#2a2a30" strokeWidth={1} />
-
-        {daily.map((d, i) => {
-          const gx = PAD_L + i * slot;
-          const active = hover?.i === i;
-          return (
-            <g
-              key={d.date}
-              onMouseEnter={() => setHover({ i, px: ((gx + slot / 2) / W) * 100 })}
-            >
-              {/* hit target bigger than the marks */}
-              <rect x={gx} y={PAD_T} width={slot} height={innerH} fill={active ? "#ffffff08" : "transparent"} />
-              <rect
-                x={gx + (slot - (barW * 2 + 2)) / 2}
-                y={y(d.signups)}
-                width={barW}
-                height={Math.max(d.signups > 0 ? 1.5 : 0, PAD_T + innerH - y(d.signups))}
-                fill={CHART_CYAN}
+      <div className="styx-panel-body">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          style={{ width: "100%", height: "auto", display: "block" }}
+          role="img"
+          aria-label="Daily waitlist signups and confirmations, last 30 days"
+          onMouseLeave={() => setHover(null)}
+        >
+          {/* recessive grid + y labels */}
+          {gridSteps.map((s) => (
+            <g key={s}>
+              <line
+                x1={PAD_L}
+                x2={W - PAD_R}
+                y1={y(maxY * s)}
+                y2={y(maxY * s)}
+                strokeWidth={1}
+                style={{ stroke: "var(--styx-rule-soft)" }}
               />
-              <rect
-                x={gx + (slot - (barW * 2 + 2)) / 2 + barW + 2}
-                y={y(d.confirmed)}
-                width={barW}
-                height={Math.max(d.confirmed > 0 ? 1.5 : 0, PAD_T + innerH - y(d.confirmed))}
-                fill={CHART_PINK}
-              />
-              {/* sparse x labels: every 7th day + last */}
-              {(i % 7 === 0 || i === daily.length - 1) && (
-                <text
-                  x={gx + slot / 2}
-                  y={H - 8}
-                  textAnchor="middle"
-                  fontSize={9}
-                  fontFamily="monospace"
-                  fill="#555560"
-                >
-                  {d.date.slice(5)}
-                </text>
-              )}
+              <text
+                x={PAD_L - 6}
+                y={y(maxY * s) + 3}
+                textAnchor="end"
+                fontSize={9}
+                style={{ fill: "var(--styx-faint)", fontFamily: "var(--styx-mono)" }}
+              >
+                {Math.round(maxY * s)}
+              </text>
             </g>
-          );
-        })}
-      </svg>
+          ))}
+          <line
+            x1={PAD_L}
+            x2={W - PAD_R}
+            y1={PAD_T + innerH}
+            y2={PAD_T + innerH}
+            strokeWidth={1}
+            style={{ stroke: "var(--styx-rule)" }}
+          />
+
+          {daily.map((d, i) => {
+            const gx = PAD_L + i * slot;
+            const active = hover?.i === i;
+            return (
+              <g
+                key={d.date}
+                onMouseEnter={() => setHover({ i, px: ((gx + slot / 2) / W) * 100 })}
+              >
+                {/* hit target bigger than the marks */}
+                <rect
+                  x={gx}
+                  y={PAD_T}
+                  width={slot}
+                  height={innerH}
+                  style={{ fill: active ? "var(--styx-rule-soft)" : "transparent" }}
+                />
+                <rect
+                  x={gx + (slot - (barW * 2 + 2)) / 2}
+                  y={y(d.signups)}
+                  width={barW}
+                  height={Math.max(d.signups > 0 ? 1.5 : 0, PAD_T + innerH - y(d.signups))}
+                  style={{ fill: CHART_SIGNUPS }}
+                />
+                <rect
+                  x={gx + (slot - (barW * 2 + 2)) / 2 + barW + 2}
+                  y={y(d.confirmed)}
+                  width={barW}
+                  height={Math.max(d.confirmed > 0 ? 1.5 : 0, PAD_T + innerH - y(d.confirmed))}
+                  style={{ fill: CHART_CONFIRMED }}
+                />
+                {/* sparse x labels: every 7th day + last */}
+                {(i % 7 === 0 || i === daily.length - 1) && (
+                  <text
+                    x={gx + slot / 2}
+                    y={H - 8}
+                    textAnchor="middle"
+                    fontSize={9}
+                    style={{ fill: "var(--styx-faint)", fontFamily: "var(--styx-mono)" }}
+                  >
+                    {d.date.slice(5)}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
 
       {hover && daily[hover.i] && (
         <div
-          className="absolute pointer-events-none bg-[#151518] border border-[#2a2a30] px-3 py-2 text-[11px] font-mono z-10 whitespace-nowrap"
+          className="styx-panel styx-mono"
           style={{
+            position: "absolute",
             left: `clamp(4px, ${hover.px}%, calc(100% - 140px))`,
             bottom: "3.2rem",
+            zIndex: 10,
+            pointerEvents: "none",
+            whiteSpace: "nowrap",
+            padding: "0.5rem 0.8rem",
+            background: "var(--styx-panel-2)",
+            fontSize: "0.6875rem",
+            lineHeight: 1.6,
           }}
         >
-          <div className="text-[#888892] mb-1">{daily[hover.i].date}</div>
-          <div className="text-white">
-            <span style={{ color: CHART_CYAN }}>■</span> signups {daily[hover.i].signups}
+          <div style={{ color: "var(--styx-faint)", marginBottom: "0.15rem" }}>
+            {daily[hover.i].date}
           </div>
-          <div className="text-white">
-            <span style={{ color: CHART_PINK }}>■</span> confirmed {daily[hover.i].confirmed}
+          <div style={{ color: "var(--styx-paper)" }}>
+            <span style={{ color: CHART_SIGNUPS }}>■</span> signups{" "}
+            {daily[hover.i].signups}
+          </div>
+          <div style={{ color: "var(--styx-paper)" }}>
+            <span style={{ color: CHART_CONFIRMED }}>■</span> confirmed{" "}
+            {daily[hover.i].confirmed}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Band heading: the marginal numeral, sized for a dashboard ─────────────
+
+function BandHead({
+  numeral,
+  index,
+  title,
+}: {
+  numeral: string;
+  index: string;
+  title: string;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        gap: "1.25rem",
+        marginBottom: "2rem",
+      }}
+    >
+      <span
+        className="styx-numeral"
+        aria-hidden="true"
+        style={{ fontSize: "2.75rem", margin: 0, flex: "none" }}
+      >
+        {numeral}
+      </span>
+      <div>
+        <p className="styx-index">{index}</p>
+        <h2 className="styx-h3" style={{ ...SERIF_H3, margin: "0.4rem 0 0" }}>
+          {title}
+        </h2>
+      </div>
     </div>
   );
 }
@@ -306,7 +468,11 @@ export default function WaitlistAdminPage() {
         return;
       }
       if (!statsRes.ok || !recordsRes.ok) {
-        setError("Backend unavailable");
+        // Covers a real outage AND the API's 503 "not_configured", which is a
+        // missing server secret rather than an outage. One branch, honest words.
+        setError(
+          "No answer from the stats API: it may be unreachable, or the server may have no stats token or admin password set.",
+        );
         return;
       }
       const s = (await statsRes.json()) as StatsPayload;
@@ -385,51 +551,61 @@ export default function WaitlistAdminPage() {
     return rows;
   }, [records, interestFilter, statusFilter, search, sortAsc]);
 
-  const chip = (active: boolean) =>
-    `px-3 py-1.5 text-[11px] font-mono uppercase tracking-wider border transition-colors cursor-pointer ${
-      active
-        ? "border-[#39c5bb] text-[#39c5bb] bg-[#39c5bb]/10"
-        : "border-[#2a2a30] text-[#555560] hover:text-[#888892] hover:border-[#3a3a42]"
-    }`;
-
   // ── Login gate ──────────────────────────────────────────────────────────
   if (!connected) {
     return (
-      <main className="min-h-screen bg-[#0a0a0c] text-white flex items-center justify-center px-4">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (secret.trim()) fetchAll(secret.trim());
-          }}
-          className="w-full max-w-sm bg-[#0f0f12] border border-[#2a2a30] p-8"
-        >
-          <div className="flex items-center gap-2 mb-6">
-            <Lock size={16} className="text-[#39c5bb]" aria-hidden />
-            <h1 className="text-sm font-mono uppercase tracking-[0.2em] text-[#888892]">
-              Waitlist admin
-            </h1>
-          </div>
-          <label htmlFor="wl-admin-key" className="block text-[10px] font-mono uppercase tracking-[0.18em] text-[#555560] mb-2">
-            Stats token or admin password
-          </label>
-          <input
-            id="wl-admin-key"
-            type="password"
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            autoComplete="current-password"
-            className="w-full bg-[#0a0a0c] border border-[#2a2a30] focus:border-[#39c5bb] focus:outline-none text-white font-mono text-sm px-4 py-3 mb-3"
-          />
-          {error && <p className="text-xs font-mono text-[#ff2d7a] mb-3">{error}</p>}
-          <button
-            type="submit"
-            disabled={loading || !secret.trim()}
-            className="w-full px-6 py-3 bg-[#39c5bb] text-[#0a0a0c] font-bold uppercase tracking-wider text-sm hover:bg-[#2a9d95] transition-colors disabled:opacity-60"
+      <StyxShell chrome={false}>
+        <section className="styx-container-narrow styx-hero">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (secret.trim()) fetchAll(secret.trim());
+            }}
+            className="styx-panel styx-sweep"
+            style={{ maxWidth: "27rem", marginInline: "auto" }}
           >
-            {loading ? "Connecting" : "Connect"}
-          </button>
-        </form>
-      </main>
+            <div className="styx-panel-head">
+              <p className="styx-overline">Styx Protocol &middot; Admin</p>
+              <h1
+                className="styx-h3"
+                style={{
+                  ...SERIF_H3,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.55rem",
+                  margin: "0.55rem 0 0",
+                }}
+              >
+                <Lock size={16} style={{ color: "var(--styx-faint)" }} aria-hidden />
+                Waitlist admin
+              </h1>
+            </div>
+            <div className="styx-panel-body styx-stack">
+              <div className="styx-field">
+                <label className="styx-label" htmlFor="wl-admin-key">
+                  Stats token or admin password
+                </label>
+                <input
+                  id="wl-admin-key"
+                  type="password"
+                  value={secret}
+                  onChange={(e) => setSecret(e.target.value)}
+                  autoComplete="current-password"
+                  className="styx-input styx-input-mono"
+                />
+              </div>
+              {error && <p className="styx-form-error">{error}</p>}
+              <button
+                type="submit"
+                disabled={loading || !secret.trim()}
+                className="styx-btn"
+              >
+                {loading ? "Connecting" : "Connect"}
+              </button>
+            </div>
+          </form>
+        </section>
+      </StyxShell>
     );
   }
 
@@ -438,158 +614,287 @@ export default function WaitlistAdminPage() {
 
   // ── Dashboard ───────────────────────────────────────────────────────────
   return (
-    <main className="min-h-screen bg-[#0a0a0c] text-white px-4 sm:px-8 py-8">
-      <div className="max-w-6xl mx-auto">
-        {/* header */}
-        <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
+    <StyxShell chrome={false}>
+      {/* header */}
+      <section
+        className="styx-container"
+        style={{ paddingBlock: "clamp(2.5rem, 6vw, 4rem) clamp(1.75rem, 4vw, 2.5rem)" }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "1.5rem",
+          }}
+        >
           <div>
-            <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-[#39c5bb]">
-              PROTOCOL::01 // ADMIN
-            </p>
-            <h1 className="text-xl font-bold mt-1">Waitlist</h1>
+            <p className="styx-overline">Styx Protocol &middot; Admin</p>
+            <h1 className="styx-h2" style={{ ...SERIF_H2, margin: "0.5rem 0 0" }}>
+              <span className="styx-gleam">Waitlist</span>
+            </h1>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => fetchAll(secret)} className={chip(false)} title="Refresh">
-              <span className="inline-flex items-center gap-1.5">
-                <RefreshCw size={12} className={loading ? "animate-spin" : ""} aria-hidden /> Refresh
-              </span>
+          <div className="styx-btn-row">
+            <button
+              type="button"
+              onClick={() => fetchAll(secret)}
+              className="styx-btn-ghost"
+              style={ACTION_BTN}
+              title="Refresh"
+            >
+              <RefreshCw size={12} className={loading ? "animate-spin" : ""} aria-hidden />
+              Refresh
             </button>
-            <button onClick={downloadCsv} className={chip(false)} title="Download CSV">
-              <span className="inline-flex items-center gap-1.5">
-                <Download size={12} aria-hidden /> CSV
-              </span>
+            <button
+              type="button"
+              onClick={downloadCsv}
+              className="styx-btn"
+              style={ACTION_BTN}
+              title="Download CSV"
+            >
+              <Download size={12} aria-hidden />
+              CSV
             </button>
-            <button onClick={disconnect} className={chip(false)} title="Disconnect">
-              <span className="inline-flex items-center gap-1.5">
-                <LogOut size={12} aria-hidden /> Exit
-              </span>
+            <button
+              type="button"
+              onClick={disconnect}
+              className="styx-btn-ghost"
+              style={ACTION_BTN}
+              title="Disconnect"
+            >
+              <LogOut size={12} aria-hidden />
+              Exit
             </button>
           </div>
         </div>
+
+        <div className="styx-gleam-rule" aria-hidden="true" style={{ marginTop: "2rem" }} />
 
         {/* config warnings */}
         {stats && (!stats.config.kv || !stats.config.resend || (t && t.mailFailures > 0)) && (
-          <div className="flex items-center gap-2 border border-[#ffcc00]/40 bg-[#ffcc00]/5 px-4 py-3 mb-6 text-xs font-mono text-[#ffcc00]">
-            <AlertTriangle size={14} aria-hidden />
-            {!stats.config.kv && <span>KV not configured.</span>}
-            {!stats.config.resend && <span>Resend not configured.</span>}
-            {t && t.mailFailures > 0 && <span>{t.mailFailures} mail send failure(s).</span>}
+          <div className="styx-admission" style={{ marginTop: "2rem" }}>
+            <p className="styx-admission-title">
+              <AlertTriangle
+                size={12}
+                aria-hidden
+                style={{ verticalAlign: "-2px", marginRight: "0.45rem" }}
+              />
+              Configuration
+            </p>
+            <p
+              className="styx-admission-body"
+              style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem 1rem" }}
+            >
+              {!stats.config.kv && <span>KV not configured.</span>}
+              {!stats.config.resend && <span>Resend not configured.</span>}
+              {t && t.mailFailures > 0 && <span>{t.mailFailures} mail send failure(s).</span>}
+            </p>
           </div>
         )}
+      </section>
 
-        {/* KPI tiles */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-          <Tile icon={Users} label="Signups" value={t?.signups ?? 0} />
-          <Tile icon={MailCheck} label="Confirmed" value={t?.confirmed ?? 0} accent="#39c5bb" />
-          <Tile icon={Hourglass} label="Pending" value={t?.pending ?? 0} accent="#ffcc00" />
-          <Tile icon={Percent} label="Conversion" value={`${rate}%`} accent="#39c5bb" />
-          <Tile icon={TrendingUp} label="Last 7 days" value={stats?.last7d.signups ?? 0} />
-          <Tile icon={Users} label="Unsubscribed" value={t?.unsubscribed ?? 0} accent="#888892" />
+      {/* totals + chart */}
+      <section
+        className="styx-section"
+        style={{ paddingBlock: "clamp(2.5rem, 5vw, 3.5rem)" }}
+      >
+        <div className="styx-container">
+          <BandHead numeral="01" index="Totals" title="Signups and confirmations." />
+
+          <div className="styx-grid styx-grid-3">
+            <Tile icon={Users} label="Signups" value={t?.signups ?? 0} />
+            <Tile icon={MailCheck} label="Confirmed" value={t?.confirmed ?? 0} delay={60} />
+            <Tile icon={Hourglass} label="Pending" value={t?.pending ?? 0} delay={120} />
+            <Tile
+              icon={Percent}
+              label="Confirmation rate"
+              value={`${rate}%`}
+              delay={180}
+            />
+            <Tile
+              icon={TrendingUp}
+              label="Last 7 days"
+              value={stats?.last7d.signups ?? 0}
+              delay={240}
+            />
+            <Tile
+              icon={Users}
+              label="Unsubscribed"
+              value={t?.unsubscribed ?? 0}
+              delay={300}
+            />
+          </div>
+
+          {/* chart */}
+          {stats && (
+            <div style={{ marginTop: "2rem" }}>
+              <DailyChart daily={stats.daily} />
+            </div>
+          )}
         </div>
+      </section>
 
-        {/* chart */}
-        {stats && <DailyChart daily={stats.daily} />}
+      {/* entries */}
+      <section
+        className="styx-section styx-section-alt"
+        style={{ paddingBlock: "clamp(2.5rem, 5vw, 3.5rem)" }}
+      >
+        <div className="styx-container">
+          <BandHead numeral="02" index="Entries" title="Every row the export returns." />
 
-        {/* filters */}
-        <div className="flex items-center gap-2 flex-wrap mt-6 mb-3">
-          {(
-            [
-              ["all", `All ${interestCounts.all}`],
-              ["mobile", `Mobile ${interestCounts.mobile}`],
-              ["extension", `Extension ${interestCounts.extension}`],
-              ["sdk", `SDK ${interestCounts.sdk}`],
-              ["none", `No pick ${interestCounts.none}`],
-            ] as [InterestFilter, string][]
-          ).map(([k, label]) => (
-            <button key={k} className={chip(interestFilter === k)} onClick={() => setInterestFilter(k)}>
-              {label}
-            </button>
-          ))}
-          <span className="w-px h-5 bg-[#2a2a30] mx-1" aria-hidden />
-          {(
-            [
-              ["all", "Any status"],
-              ["pending", "Pending"],
-              ["confirmed", "Confirmed"],
-            ] as [StatusFilter, string][]
-          ).map(([k, label]) => (
-            <button key={k} className={chip(statusFilter === k)} onClick={() => setStatusFilter(k)}>
-              {label}
-            </button>
-          ))}
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search email or source"
-            aria-label="Search email or source"
-            className="ml-auto bg-[#0f0f12] border border-[#2a2a30] focus:border-[#39c5bb] focus:outline-none text-white font-mono text-xs px-3 py-2 w-56"
-          />
-        </div>
+          {/* filters */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "0.6rem",
+              marginBottom: "1.25rem",
+            }}
+          >
+            {(
+              [
+                ["all", `All ${interestCounts.all}`],
+                ["mobile", `Mobile ${interestCounts.mobile}`],
+                ["extension", `Extension ${interestCounts.extension}`],
+                ["sdk", `SDK ${interestCounts.sdk}`],
+                ["none", `No pick ${interestCounts.none}`],
+              ] as [InterestFilter, string][]
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                className="styx-chip"
+                aria-pressed={interestFilter === k}
+                style={chipStyle(interestFilter === k)}
+                onClick={() => setInterestFilter(k)}
+              >
+                {label}
+              </button>
+            ))}
+            <span
+              aria-hidden
+              style={{
+                width: "1px",
+                height: "1.25rem",
+                background: "var(--styx-rule)",
+                marginInline: "0.3rem",
+              }}
+            />
+            {(
+              [
+                ["all", "Any status"],
+                ["pending", "Pending"],
+                ["confirmed", "Confirmed"],
+              ] as [StatusFilter, string][]
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                className="styx-chip"
+                aria-pressed={statusFilter === k}
+                style={chipStyle(statusFilter === k)}
+                onClick={() => setStatusFilter(k)}
+              >
+                {label}
+              </button>
+            ))}
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search email, source or country"
+              aria-label="Search email, source or country"
+              className="styx-input styx-input-mono"
+              style={{
+                marginLeft: "auto",
+                width: "15rem",
+                padding: "0.5rem 0.8rem",
+              }}
+            />
+          </div>
 
-        {/* table */}
-        <div className="overflow-x-auto border border-[#2a2a30]">
-          <table className="w-full text-left text-sm min-w-[800px]">
-            <thead>
-              <tr className="bg-[#0f0f12] text-[10px] font-mono uppercase tracking-[0.18em] text-[#555560]">
-                <th className="px-4 py-3 font-normal">Email</th>
-                <th className="px-4 py-3 font-normal">Status</th>
-                <th className="px-4 py-3 font-normal">Interest</th>
-                <th className="px-4 py-3 font-normal">Locale</th>
-                <th className="px-4 py-3 font-normal">Country</th>
-                <th className="px-4 py-3 font-normal">Source</th>
-                <th
-                  className="px-4 py-3 font-normal cursor-pointer select-none hover:text-[#888892]"
-                  onClick={() => setSortAsc((v) => !v)}
-                  title="Toggle sort"
-                >
-                  Signed up {sortAsc ? "(oldest)" : "(newest)"}
-                </th>
-                <th className="px-4 py-3 font-normal">Confirmed at</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((r) => (
-                <tr key={r.email} className="border-t border-[#1c1c22] hover:bg-[#0f0f12]">
-                  <td className="px-4 py-3 font-mono text-xs text-white">{r.email}</td>
-                  <td className="px-4 py-3">
-                    {r.status === "confirmed" ? (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider text-[#39c5bb]">
-                        <span className="w-1.5 h-1.5 bg-[#39c5bb]" aria-hidden /> confirmed
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider text-[#ffcc00]">
-                        <span className="w-1.5 h-1.5 bg-[#ffcc00]" aria-hidden /> pending
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-[#b8b8c0]">
-                    {r.interest ? INTEREST_LABELS[r.interest] : <span className="text-[#555560]">–</span>}
-                  </td>
-                  <td className="px-4 py-3 text-xs font-mono text-[#888892] uppercase">{r.locale}</td>
-                  <td className="px-4 py-3 text-xs font-mono text-[#888892]">
-                    {r.country ? <Flag cc={r.country} /> : <span className="text-[#555560]">–</span>}
-                  </td>
-                  <td className="px-4 py-3 text-xs font-mono text-[#888892]">{r.source ?? ""}</td>
-                  <td className="px-4 py-3 text-xs font-mono text-[#888892]">{fmtDate(r.createdAt)}</td>
-                  <td className="px-4 py-3 text-xs font-mono text-[#888892]">{fmtDate(r.confirmedAt)}</td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
+          {/* table */}
+          <div className="styx-table-wrap">
+            <table className="styx-table" style={{ minWidth: "800px" }}>
+              <thead>
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-xs font-mono text-[#555560]">
-                    No entries match the current filters.
-                  </td>
+                  <th>Email</th>
+                  <th>Status</th>
+                  <th>Interest</th>
+                  <th>Locale</th>
+                  <th>Country</th>
+                  <th>Source</th>
+                  <th
+                    onClick={() => setSortAsc((v) => !v)}
+                    title="Toggle sort"
+                    aria-sort={sortAsc ? "ascending" : "descending"}
+                    style={{ cursor: "pointer", userSelect: "none" }}
+                  >
+                    Signed up {sortAsc ? "(oldest)" : "(newest)"}
+                  </th>
+                  <th>Confirmed at</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {filtered.map((r) => (
+                  <tr key={r.email}>
+                    <td style={{ ...MONO_CELL, color: "var(--styx-paper)" }}>{r.email}</td>
+                    <td>
+                      {r.status === "confirmed" ? (
+                        <span className="styx-chip">
+                          <span className="styx-dot" aria-hidden />
+                          confirmed
+                        </span>
+                      ) : (
+                        <span className="styx-chip">pending</span>
+                      )}
+                    </td>
+                    <td>
+                      {r.interest ? (
+                        INTEREST_LABELS[r.interest]
+                      ) : (
+                        <span style={{ color: "var(--styx-faint)" }}>–</span>
+                      )}
+                    </td>
+                    <td style={{ ...MONO_CELL, textTransform: "uppercase" }}>{r.locale}</td>
+                    <td style={MONO_CELL}>
+                      {r.country ? (
+                        <Flag cc={r.country} />
+                      ) : (
+                        <span style={{ color: "var(--styx-faint)" }}>–</span>
+                      )}
+                    </td>
+                    <td style={MONO_CELL}>{r.source ?? ""}</td>
+                    <td style={{ ...MONO_CELL, whiteSpace: "nowrap" }}>
+                      {fmtDate(r.createdAt)}
+                    </td>
+                    <td style={{ ...MONO_CELL, whiteSpace: "nowrap" }}>
+                      {fmtDate(r.confirmedAt)}
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={8}
+                      className="styx-note styx-center"
+                      style={{ paddingBlock: "2.75rem" }}
+                    >
+                      No entries match the current filters.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
 
-        <p className="text-[10px] font-mono text-[#3a3a42] mt-4">
-          {stats ? `Generated ${fmtDate(stats.generatedAt)} · ${filtered.length}/${records.length} rows shown` : ""}
-        </p>
-      </div>
-    </main>
+          <p className="styx-note" style={{ ...MONO_CELL, marginTop: "1.25rem" }}>
+            {stats ? `Generated ${fmtDate(stats.generatedAt)} · ${filtered.length}/${records.length} rows shown` : ""}
+          </p>
+        </div>
+      </section>
+    </StyxShell>
   );
 }

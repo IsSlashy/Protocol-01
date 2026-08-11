@@ -1,70 +1,51 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useT } from "@/i18n";
 import {
-  Shield,
-  Lock,
-  Zap,
-  Code,
-  Layers,
-  Eye,
-  EyeOff,
-  Key,
-  Hash,
-  GitBranch,
-  Cpu,
-  CheckCircle,
   Download,
   FileText,
-  Archive,
   Menu,
   Search,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import Sidebar, { type ResolvedGroup } from "@/components/docs/Sidebar";
-import TopicToc, { type TocItem } from "@/components/docs/TopicToc";
-import DocsSearch, { type SearchItem } from "@/components/docs/DocsSearch";
 import { NAV_GROUPS, TOPIC_ORDER, SPECIAL_TITLE_KEYS } from "@/components/docs/nav";
-import SiteHeader from "@/components/SiteHeader";
-import Footer from "@/components/Footer";
-
-// ============ P-01 Theme Constants ============
-const THEME = {
-  primaryColor: "#39c5bb",
-  primaryBright: "#00ffe5",
-  secondaryColor: "#ff77a8",
-  pinkHot: "#ff2d7a",
-  backgroundColor: "#0a0a0c",
-  surfaceColor: "#151518",
-  elevatedColor: "#1f1f24",
-  textColor: "#ffffff",
-  mutedColor: "#888892",
-  dimColor: "#555560",
-  borderColor: "#2a2a30",
-};
+import StyxShell from "../_styx/StyxShell";
+import Reveal from "../_styx/Reveal";
+import DocsRail, { type ResolvedGroup } from "./_components/DocsRail";
+import DocsToc, { type TocItem } from "./_components/DocsToc";
+import DocsPalette, { type SearchItem } from "./_components/DocsPalette";
 
 interface TechSection {
   id: string;
   i18nKey: string;
-  icon: React.ReactNode;
   detailCount: number;
   codeExample?: string;
+  /**
+   * i18n key for the badge in the code panel head. Defaults to
+   * `docs.footerDevnet`. It used to be the hardcoded English literal "devnet"
+   * on every sample, which (a) served French readers an untranslated word where
+   * a t() call belongs and (b) claimed a deployment for the one sample whose own
+   * body says "NOT SHIPPED. No program is deployed for this". A badge is a
+   * claim, so it comes from the entry now.
+   */
+  statusKey?: string;
 }
 
 const technologies: TechSection[] = [
   {
     id: "stealth-addresses",
     i18nKey: "stealthAddresses",
-    icon: <EyeOff className="w-6 h-6" />,
     detailCount: 8,
     codeExample: `// v1: Generate stealth address (X25519 ECDH)
 const ephemeral = Keypair.generate();
 const sharedSecret = x25519(ephemeral.secretKey, recipientPubkey);
 const stealthKey = deriveStealthKey(sharedSecret, recipientPubkey);
 
-// v2: Hybrid quantum-resistant (X25519 + ML-KEM-768)
+// v2: Hybrid key encapsulation (X25519 + ML-KEM-768, FIPS 203).
+// Break one half and the other still holds. This covers the address the
+// recipient stands behind; the transaction signature is still Ed25519.
 const { ciphertext, sharedSecret: hybridSecret } =
   mlKem768.encapsulate(recipientMlKemPubkey);
 const combinedSecret = hkdf(x25519Secret, hybridSecret);`,
@@ -72,15 +53,15 @@ const combinedSecret = hkdf(x25519Secret, hybridSecret);`,
   {
     id: "zk-proofs",
     i18nKey: "zkProofs",
-    icon: <Shield className="w-6 h-6" />,
     // 10th detail added 2026-08-06: it states why no bit-level security figure
     // appears here. Deleting the old "124-bit" claim without saying anything
     // would read as an oversight rather than a measurement.
     detailCount: 10,
-    codeExample: `// STARK proof (quantum-resistant, hash-based, no trusted setup)
+    codeExample: `// STARK proof: hash-based, no trusted setup. There is no elliptic curve
+// anywhere in the proof system, so Shor has nothing to attack in it.
 const starkProof = await starkProver.generateProof(secret);
 
-// Upload proof buffer → on-chain FRI verifier → 809,812 CU measured
+// Upload proof buffer -> on-chain FRI verifier -> 809,812 CU measured
 await submitStarkProof(program, proofBuffer, commitment, circuitId);
 // 7 AIRs over the Goldilocks field. DEEP-ALI quotient check at the OOD
 // point is implemented (programs/p01_stark_verifier/src/verify.rs:670-673).
@@ -93,9 +74,8 @@ await submitStarkProof(program, proofBuffer, commitment, circuitId);
   {
     id: "shielded-pool",
     i18nKey: "shieldedPool",
-    icon: <Lock className="w-6 h-6" />,
     detailCount: 7,
-    codeExample: `// Shielded pool flow (v1.0.2, STARK V3, quantum-safe)
+    codeExample: `// Shielded pool flow (v1.0.2, STARK V3)
 // 1. User generates a STARK proof locally (no remote prover)
 const starkProof = await starkProver.generateProof(noteInputs);
 
@@ -103,7 +83,7 @@ const starkProof = await starkProver.generateProof(noteInputs);
 //    doesn't have to front ~0.85 SOL of proof-buffer rent
 await liquidity.prefund({ ephemeralSigner, proofBuffer, amount });
 
-// 3. Buffer verifies on-chain → funds release to a one-time
+// 3. Buffer verifies on-chain -> funds release to a one-time
 //    recipient. The unshield transaction itself names an ephemeral
 //    signer and that one-time recipient, not the user's wallet.
 const tx = await unshieldDenominatedStark({ proofBuffer, stealthRecipient });
@@ -120,7 +100,6 @@ const tx = await unshieldDenominatedStark({ proofBuffer, stealthRecipient });
   {
     id: "poseidon-hash",
     i18nKey: "poseidonHash",
-    icon: <Hash className="w-6 h-6" />,
     detailCount: 5,
     codeExample: `// Poseidon commitment in circuit
 template Commitment() {
@@ -140,7 +119,6 @@ template Commitment() {
   {
     id: "merkle-tree",
     i18nKey: "merkleTree",
-    icon: <GitBranch className="w-6 h-6" />,
     detailCount: 5,
     codeExample: `// Merkle proof verification in circuit
 for (var i = 0; i < TREE_DEPTH; i++) {
@@ -153,7 +131,6 @@ root === computedRoot; // Must match on-chain root`,
   {
     id: "nullifiers",
     i18nKey: "nullifiers",
-    icon: <Key className="w-6 h-6" />,
     detailCount: 5,
     codeExample: `// Nullifier computation
 const spendingKeyHash = Poseidon([spendingKey]);
@@ -163,7 +140,6 @@ const nullifier = Poseidon([commitment, spendingKeyHash]);
   {
     id: "solana-integration",
     i18nKey: "solanaIntegration",
-    icon: <Cpu className="w-6 h-6" />,
     detailCount: 6,
     codeExample: `// v1.0.2: every spend verifies through the custom on-chain
 // FRI verifier (no Winterfell dep, Goldilocks + Blake3, 809,812 CU).
@@ -184,7 +160,6 @@ for pos in positions {
   {
     id: "private-relay",
     i18nKey: "privateRelay",
-    icon: <Zap className="w-6 h-6" />,
     detailCount: 6,
     codeExample: `// Trustless on-chain relay flow (v1.0.2, STARK V3)
 //
@@ -207,7 +182,7 @@ const starkProof = await starkProver.generateProof({
   secret, nullifierPreimage, merklePath, pathIndices,
 });
 
-// 2. Upload the proof to a buffer account (~120 KB, ~9–15 KB compact)
+// 2. Upload the proof to a buffer account (~120 KB, ~9-15 KB compact)
 //    then call the on-chain FRI verifier (no Winterfell dep,
 //    custom Goldilocks + Blake3 implementation, 809,812 CU measured)
 await submitStarkProof(program, proofBuffer, circuitId);
@@ -222,15 +197,14 @@ await program.methods.unshieldDenominatedStark(...)
   {
     id: "streams-privacy",
     i18nKey: "streamsPrivacy",
-    icon: <Layers className="w-6 h-6" />,
     detailCount: 6,
     codeExample: `// Subscription with privacy noise (not ZK)
 await p01.createSubscription({
   amount: 9.99,
   interval: 'monthly',
   privacyOptions: {
-    amountNoise: 10,    // ±10% random variation
-    timingNoise: 12,    // ±12 hours random delay
+    amountNoise: 10,    // 10% random variation either way
+    timingNoise: 12,    // 12 hours random delay either way
     useStealth: true    // Pay to ephemeral address
   }
 });
@@ -239,7 +213,6 @@ await p01.createSubscription({
   {
     id: "denominated-pools",
     i18nKey: "denominatedPools",
-    icon: <Layers className="w-6 h-6" />,
     detailCount: 8,
     codeExample: `// Shield: the deposit is signed by an ephemeral, not by the wallet.
 // The wallet is still what funds that ephemeral, in the clear, on the
@@ -274,7 +247,6 @@ await program.methods.unshieldDenominatedStark(starkProof)
   {
     id: "zkspl",
     i18nKey: "zkspl",
-    icon: <Lock className="w-6 h-6" />,
     detailCount: 7,
     codeExample: `// Confidential deposit: public tokens become hidden balance
 const oldCommitment = poseidon([0, salt, owner, mint]);
@@ -293,7 +265,6 @@ const amountCommitment = poseidon([transferAmount, amountSalt]);`,
   {
     id: "subscription-vaults",
     i18nKey: "subscriptionVaults",
-    icon: <Zap className="w-6 h-6" />,
     detailCount: 6,
     codeExample: `// The subscriber opens the vault, funded from a note already in the
 // denominated pool. There is no retailer-side init and no wallet-keyed
@@ -325,7 +296,6 @@ await program.methods.claimPeriod()
   {
     id: "p2p-sharing",
     i18nKey: "p2pSharing",
-    icon: <Eye className="w-6 h-6" />,
     detailCount: 6,
     codeExample: `// BLE: Sender (central) connects to receiver (peripheral)
 // 1. ECDH key exchange
@@ -338,13 +308,12 @@ const encrypted = nacl.box(noteJSON, nonce, sharedKey);
 await bleTransport.sendFragmented(encrypted, characteristicUUID);
 
 // NFC: Sender emulates tag via HCE
-// Receiver taps phone → APDU commands: SELECT → GET LENGTH → GET DATA
+// Receiver taps phone, then APDU: SELECT -> GET LENGTH -> GET DATA
 // Data encrypted with nacl.secretbox(noteJSON, nonce, pinDerivedKey)`,
   },
   {
     id: "client-sdk",
     i18nKey: "clientSdk",
-    icon: <Code className="w-6 h-6" />,
     // 8 -> 10: the arcium-sdk entry was replaced by stark-prover, and the two
     // packages the list never had (privacy-sdk, merchant-sdk) were added.
     detailCount: 10,
@@ -360,7 +329,7 @@ await zkClient.shield(1_000_000_000n, notes);
 
 // === @protocol-01/zkspl-sdk: Confidential Balances ===
 import { ZkSplClient } from '@protocol-01/zkspl-sdk';
-await zkspl.deposit(amount, proof);   // Public → confidential
+await zkspl.deposit(amount, proof);   // Public -> confidential
 await zkspl.send(amount, recipient);  // Confidential transfer
 
 // === @protocol-01/p01-js: Merchant Integration ===
@@ -380,16 +349,15 @@ const conn = RpcConnectionManager.getConnection(); // Auto-fallback chain`,
   {
     id: "auto-shield",
     i18nKey: "autoShield",
-    icon: <Shield className="w-6 h-6" />,
     detailCount: 7,
     codeExample: `// Auto-Shield flow (autonomous runner)
-// 1. User opens Receive → stealth address generated
+// 1. User opens Receive, a stealth address is generated
 const seed = hmac(sha256, viewingSecretKey, "p01_auto_receive_42");
 const keypair = Keypair.fromSeed(seed);
 // Display keypair.publicKey as QR code
 
 // 2. Sender sends SOL to the stealth address (any wallet)
-// 3. Runner detects funds → auto-shields
+// 3. Runner detects funds and auto-shields
 const balance = await connection.getBalance(stealthAddress);
 if (balance > MIN_THRESHOLD) {
   await shield(pool, progressCb, undefined, keypair);
@@ -403,12 +371,11 @@ if (balance > MIN_THRESHOLD) {
   {
     id: "stealth-meta-addresses",
     i18nKey: "stealthMetaAddresses",
-    icon: <Key className="w-6 h-6" />,
     detailCount: 7,
     codeExample: `// Receiver: share meta-address
 const keys = await getOrCreateStealthKeys();
 const metaAddress = createMetaAddress(keys);
-// → "st:012u2trSt1XytE271..."
+// yields "st:012u2trSt1XytE271..."
 
 // Sender: Private Send auto-derives stealth destination
 if (isMetaAddress(destination)) {
@@ -423,9 +390,8 @@ if (isMetaAddress(destination)) {
   {
     id: "note-splitting",
     i18nKey: "noteSplitting",
-    icon: <GitBranch className="w-6 h-6" />,
     detailCount: 7,
-    codeExample: `// Split 1 SOL into 10 × 0.1 SOL
+    codeExample: `// Split 1 SOL into 10 notes of 0.1 SOL
 const result = await splitNote(
   sourcePool,  // 1 SOL pool
   targetPool,  // 0.1 SOL pool
@@ -434,12 +400,11 @@ const result = await splitNote(
   outputSecrets,
   proofGenerator,
 );
-// → 10 new notes in 0.1 SOL pool`,
+// yields 10 new notes in the 0.1 SOL pool`,
   },
   {
     id: "privacy-router",
     i18nKey: "privacyRouter",
-    icon: <Zap className="w-6 h-6" />,
     detailCount: 8,
     codeExample: `// Start a Paranoid-level private send
 const route = await startPrivateRoute({
@@ -448,9 +413,9 @@ const route = await startPrivateRoute({
   privacyLevel: 5, // Paranoid
   spendingKeyHash,
 });
-// → 14 hops over ~2 days
-// → Shield → Unshield → Reshield → ... → Final delivery
-// → Each hop uses a different stealth address
+// 14 hops over ~2 days
+// Shield -> Unshield -> Reshield -> ... -> Final delivery
+// Each hop uses a different stealth address
 //
 // What the hops buy today is time and address churn, NOT an unlinkable
 // path: every unshield republishes the commitment of the deposit it
@@ -461,7 +426,6 @@ const route = await startPrivateRoute({
   {
     id: "ai-agent",
     i18nKey: "aiAgent",
-    icon: <Cpu className="w-6 h-6" />,
     // The per-category counts used to sum to 49 against a headline of 56: the
     // web, price, clipboard and datetime tools had no category. They do now,
     // and the thirteen categories add up to the 56 in AGENT_TOOLS.
@@ -469,18 +433,22 @@ const route = await startPrivateRoute({
     codeExample: `// User: "What's my balance and shield 0.1 SOL"
 // Agent calls tools:
 const balance = await executeTool("wallet_balance", {});
-// → { sol: "3.69", usd: "$520.13" }
+// yields { sol: "3.69", usd: "$520.13" }
 
 // Agent responds and calls shield tool:
 await executeTool("privacy_shield", { amount: 0.1 });
-// → Redirects to Privacy → Shield screen`,
+// Redirects to Privacy -> Shield screen`,
   },
   {
     id: "quantum-wallet",
     i18nKey: "quantumWallet",
-    icon: <Key className="w-6 h-6" />,
     detailCount: 8,
-    codeExample: `// Quantum Wallet: STARK-authorized fund custody (coming Q3 2026)
+    // Nothing is deployed for this one, on devnet or anywhere else, and the
+    // sample says so in its first two lines.
+    statusKey: "roadmap.planned",
+    codeExample: `// Quantum Wallet: STARK-authorized fund custody.
+// NOT SHIPPED. No program is deployed for this and no date is promised.
+// What follows is the design, so the shape can be reviewed early.
 // Funds spent via Poseidon preimage proof, not Ed25519 signature.
 
 // 1. Init at first launch: silent, transparent migration
@@ -500,26 +468,28 @@ const proof = await starkProver.generateProof({
 await uploadProofBuffer(proof);
 await withdraw({ amount, recipient, proofBuffer });
 
-// Threat: Shor breaks Ed25519 ≥ 2030. Attacker steals your gas keypair
-// → can pay fees in your name, CANNOT move your funds.
-// Custody = preimage knowledge (Grover-resistant), not signature.`,
+// The threat this answers: Shor breaks Ed25519 once a large enough
+// quantum computer exists. This page does not claim to know when.
+// Under that design an attacker who steals your gas keypair can pay
+// fees in your name and CANNOT move your funds, because custody is
+// knowledge of a hash preimage (which Grover only speeds up
+// quadratically) rather than a signature.`,
   },
   {
     id: "migration-history",
     i18nKey: "migrationHistory",
-    icon: <Archive className="w-6 h-6" />,
     detailCount: 6,
     codeExample: `// BEFORE: Groth16 / BN254 (retired April 2026)
 // const { proof } = await snarkjs.groth16.fullProve(
 //   inputs, "transfer.wasm", "transfer.zkey"
 // );
-// → BN254 pairings (Shor-vulnerable), 30 MB .ptau trusted setup,
-//   snarkjs + circomlib runtime, alt_bn128 syscalls
+// BN254 pairings (Shor-vulnerable), 30 MB .ptau trusted setup,
+// snarkjs + circomlib runtime, alt_bn128 syscalls
 
 // AFTER: Winterfell STARKs over Goldilocks (current)
 const proof = await starkProver.generateProof(secret);
-// → Hash-based (Blake3 + Poseidon), no trusted setup,
-//   custom on-chain FRI verifier, 6 AIRs, ~9-15 KB proofs`,
+// Hash-based (Blake3 + Poseidon), no trusted setup, custom on-chain
+// FRI verifier, 7 AIRs (one per accepted circuit id), 9-15 KB proofs`,
   },
 ];
 
@@ -531,10 +501,18 @@ const proof = await starkProver.generateProof(secret);
  */
 const STARK_CIRCUIT_COUNT = 7;
 
+/**
+ * The stack, layer by layer.
+ *
+ * The per-layer `hex` field is gone: it carried #39c5bb, #ff2d7a, #ff77a8,
+ * #00ffe5 and #ffcc00, drove the node borders, the node labels, the arrows and
+ * a set of alpha suffixes, and there is no Styx equivalent to remap it onto. A
+ * layer is now marked by its `styx-index` tick, which is the one place cyan is
+ * allowed to appear.
+ */
 const docsArchLayers = [
   {
     nameKey: "docs.layerClient",
-    hex: "#39c5bb",
     nodes: [
       { labelKey: "docs.nodeMobileApp", subKey: "docs.nodeMobileSub" },
       { labelKey: "docs.nodeExtension", subKey: "docs.nodeExtensionSub" },
@@ -544,7 +522,6 @@ const docsArchLayers = [
   },
   {
     nameKey: "docs.layerPrivacy",
-    hex: "#ff2d7a",
     nodes: [
       { labelKey: "docs.nodeAutoShield", subKey: "docs.nodeAutoShieldSub" },
       { labelKey: "docs.nodePrivacyRouter", subKey: "docs.nodePrivacyRouterSub" },
@@ -553,10 +530,9 @@ const docsArchLayers = [
   },
   {
     nameKey: "docs.layerSdk",
-    hex: "#ff77a8",
     // The ten packages published under @protocol-01 that are part of the current
     // stack. @protocol-01/arcium-sdk is also on npm but is NOT here: Arcium was
-    // removed from Protocol 01 on 2026-07-17, same reason the MPC node was
+    // removed from the protocol on 2026-07-17, same reason the MPC node was
     // dropped from the protocol layer below.
     nodes: [
       { labelKey: "docs.nodePrivacySdk", subKey: "docs.nodePrivacySdkSub" },
@@ -573,7 +549,6 @@ const docsArchLayers = [
   },
   {
     nameKey: "docs.layerProtocol",
-    hex: "#00ffe5",
     nodes: [
       { labelKey: "docs.nodeStealth", subKey: "docs.nodeStealthSub" },
       { labelKey: "docs.nodeShielded", subKey: "docs.nodeShieldedSub" },
@@ -583,12 +558,11 @@ const docsArchLayers = [
       { labelKey: "docs.nodePayments", subKey: "docs.nodePaymentsSub" },
       { labelKey: "docs.nodeVaults", subKey: "docs.nodeVaultsSub" },
       // "MPC / Arcium Cerberus" node removed 2026-07-27 — Arcium is not part of
-      // Protocol 01 any more. See the note on `guarantees` in SecurityTopic.
+      // this protocol any more. See the note on `guarantees` in SecurityTopic.
     ],
   },
   {
     nameKey: "docs.layerVerification",
-    hex: "#ff77a8",
     nodes: [
       { labelKey: "docs.nodeOnChainRelayer", subKey: "docs.nodeRelayerSub" },
       { labelKey: "docs.nodeStarkVerifier", subKey: "docs.nodeStarkSub" },
@@ -599,7 +573,6 @@ const docsArchLayers = [
   },
   {
     nameKey: "docs.layerSolana",
-    hex: "#ffcc00",
     nodes: [
       { labelKey: "docs.nodePrograms", subKey: "docs.nodeProgramsSub" },
       { labelKey: "docs.nodeSplTokens", subKey: "docs.nodeSplSub" },
@@ -608,189 +581,91 @@ const docsArchLayers = [
   },
 ];
 
-const ArchitectureDiagram = ({ t }: { t: (key: string) => string }) => (
-  <div className="relative border border-[#2a2a30] bg-[#0a0a0c] p-6 sm:p-10 overflow-hidden">
-    {/* Injected CSS for diagram animations */}
-    <style dangerouslySetInnerHTML={{ __html: `
-      @keyframes doc-dataflow {
-        0% { transform: translateY(-100%); opacity: 0; }
-        10% { opacity: 1; }
-        90% { opacity: 1; }
-        100% { transform: translateY(800%); opacity: 0; }
-      }
-      @keyframes doc-scan {
-        0% { transform: translateY(-100%); }
-        100% { transform: translateY(100%); }
-      }
-      @keyframes doc-glow-pulse {
-        0%, 100% { opacity: 0.03; }
-        50% { opacity: 0.07; }
-      }
-      @keyframes doc-particle-drift {
-        0%, 100% { transform: translateY(0) translateX(0); opacity: 0.08; }
-        25% { transform: translateY(-15px) translateX(5px); opacity: 0.15; }
-        50% { transform: translateY(-8px) translateX(-3px); opacity: 0.1; }
-        75% { transform: translateY(-20px) translateX(8px); opacity: 0.18; }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .doc-animated { animation: none !important; }
-      }
-    `}} />
+// Mirrors the old column counts so no layer reflows: 2 nodes stay paired, 4 sit
+// on one line, everything longer settles into three columns.
+function layerGridClass(count: number): string {
+  if (count <= 2) return "styx-grid-2";
+  if (count === 4) return "styx-grid-4";
+  return "styx-grid-3";
+}
 
-    {/* BG Layer 1 — Perspective grid */}
-    <div className="absolute inset-0 overflow-hidden">
-      <div className="absolute w-[200%] h-[120%] left-[-50%] top-[20%]" style={{
-        backgroundImage: `
-          linear-gradient(rgba(57, 197, 187, 0.04) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(57, 197, 187, 0.025) 1px, transparent 1px)
-        `,
-        backgroundSize: '60px 60px',
-        transform: 'perspective(600px) rotateX(55deg)',
-        transformOrigin: 'center top',
-        maskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 50%, transparent 90%)',
-        WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 20%, black 50%, transparent 90%)',
-      }} />
-    </div>
+/**
+ * The stack diagram.
+ *
+ * Rebuilt as a panel of labelled bands. Deleted with the old identity: the
+ * injected <style> block and its four keyframe sets, the perspective grid, the
+ * radial glow pulse, the vertical dataflow lines, the drifting particles, the
+ * scanline, the vignette, the noise texture, the coloured arrow connectors and
+ * the per-node onMouseEnter handlers that wrote a boxShadow halo onto
+ * currentTarget. Every layer and every node survives, in order.
+ *
+ * One key does not: `docs.archTitle`, which held the same string as
+ * `docs.archSectionTitle` and so printed the section heading twice. See the
+ * note on the panel head.
+ */
+function ArchitectureDiagram({ t }: { t: (key: string) => string }) {
+  return (
+    <div className="styx-panel">
+      {/* No overline above the panel title. `docs.archTitle` holds the SAME
+          string as `docs.archSectionTitle` in both locales ("System
+          Architecture" in en, "Architecture systeme" in fr), and this panel
+          sits directly under the h2 built from archSectionTitle, so the
+          overline printed that heading a second time two lines below itself.
+          The panel keeps its own name, `docs.archSubtitle` ("Protocol Stack"),
+          which is the only label here that says something the h2 does not. */}
+      <div className="styx-panel-head">
+        <p className="styx-h3" style={{ margin: 0 }}>
+          {t("docs.archSubtitle")}
+        </p>
+      </div>
 
-    {/* BG Layer 2 — Radial glow pulse */}
-    <div className="absolute inset-0 doc-animated" style={{
-      background: `
-        radial-gradient(ellipse 60% 40% at 30% 20%, rgba(57, 197, 187, 0.06) 0%, transparent 60%),
-        radial-gradient(ellipse 50% 35% at 70% 80%, rgba(255, 119, 168, 0.04) 0%, transparent 60%)
-      `,
-      animation: 'doc-glow-pulse 6s ease-in-out infinite',
-    }} />
-
-    {/* BG Layer 3 — Vertical data flow lines */}
-    <div className="absolute inset-0 overflow-hidden">
-      {[15, 35, 55, 75, 90].map((x, i) => (
-        <div key={i} className="absolute doc-animated" style={{
-          left: `${x}%`,
-          top: 0,
-          width: '1px',
-          height: '12%',
-          background: `linear-gradient(to bottom, transparent, ${i % 2 === 0 ? 'rgba(57,197,187,0.15)' : 'rgba(255,119,168,0.12)'}, transparent)`,
-          animation: `doc-dataflow ${5 + i * 0.7}s linear infinite`,
-          animationDelay: `${i * 1.2}s`,
-        }} />
-      ))}
-    </div>
-
-    {/* BG Layer 4 — Floating particles */}
-    <div className="absolute inset-0">
-      {[
-        { x: '10%', y: '15%', s: '+', c: '#39c5bb' },
-        { x: '85%', y: '25%', s: '◇', c: '#ff77a8' },
-        { x: '20%', y: '70%', s: '○', c: '#00ffe5' },
-        { x: '75%', y: '80%', s: '×', c: '#ffcc00' },
-        { x: '50%', y: '45%', s: '△', c: '#39c5bb' },
-        { x: '92%', y: '55%', s: '+', c: '#ff77a8' },
-      ].map((p, i) => (
-        <span key={i} className="absolute font-light select-none pointer-events-none doc-animated" style={{
-          left: p.x, top: p.y,
-          fontSize: 10 + (i % 3) * 2,
-          color: p.c,
-          animation: `doc-particle-drift ${7 + i}s ease-in-out infinite`,
-          animationDelay: `${i * 1.1}s`,
-        }}>{p.s}</span>
-      ))}
-    </div>
-
-    {/* BG Layer 5 — Scanline */}
-    <div className="absolute left-0 right-0 h-[1px] doc-animated" style={{
-      background: 'linear-gradient(90deg, transparent 10%, rgba(57,197,187,0.08) 50%, transparent 90%)',
-      animation: 'doc-scan 8s linear infinite',
-    }} />
-
-    {/* BG Layer 6 — Vignette */}
-    <div className="absolute inset-0 pointer-events-none" style={{
-      background: 'radial-gradient(ellipse 80% 70% at 50% 50%, transparent 20%, rgba(10,10,12,0.5) 80%, rgba(10,10,12,0.8) 100%)',
-    }} />
-
-    {/* BG Layer 7 — Noise texture */}
-    <div className="absolute inset-0 pointer-events-none opacity-[0.015] mix-blend-overlay" style={{
-      backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
-    }} />
-
-    <div className="relative z-10">
-      <h3 className="text-xs font-mono text-[#555560] uppercase tracking-[0.3em] text-center mb-2">
-        {t('docs.archTitle')}
-      </h3>
-      <h4 className="text-xl sm:text-2xl font-bold text-white text-center mb-10 uppercase tracking-wider">
-        {t('docs.archSubtitle')}
-      </h4>
-
-      <div className="flex flex-col items-center gap-0">
-        {docsArchLayers.map((layer, layerIndex) => (
-          <React.Fragment key={layer.nameKey}>
-            {/* Layer */}
-            <div className="w-full max-w-2xl">
-              {/* Layer label */}
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-1.5 h-1.5" style={{ backgroundColor: layer.hex }} />
-                <span className="text-[10px] sm:text-xs font-mono uppercase tracking-[0.2em]" style={{ color: layer.hex }}>
-                  {t(layer.nameKey)}
-                </span>
-                <div className="flex-1 h-px" style={{ backgroundColor: `${layer.hex}15` }} />
-              </div>
-
-              {/* Nodes grid */}
-              <div className={`grid gap-2 sm:gap-3 ${layer.nodes.length === 2 ? 'grid-cols-2' : layer.nodes.length === 4 ? 'grid-cols-2 sm:grid-cols-4' : layer.nodes.length >= 5 ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-3'}`}>
-                {layer.nodes.map((node) => (
-                  <div
-                    key={node.labelKey}
-                    className="bg-[#111114] border p-3 sm:p-4 text-center transition-all duration-300 hover:bg-[#151518]"
-                    style={{ borderColor: `${layer.hex}25` }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.borderColor = `${layer.hex}60`;
-                      (e.currentTarget as HTMLElement).style.boxShadow = `0 0 20px ${layer.hex}10, inset 0 1px 0 ${layer.hex}15`;
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.borderColor = `${layer.hex}25`;
-                      (e.currentTarget as HTMLElement).style.boxShadow = 'none';
+      <div className="styx-panel-body styx-stack-lg">
+        {docsArchLayers.map((layer) => (
+          <div key={layer.nameKey}>
+            <p className="styx-index">{t(layer.nameKey)}</p>
+            <div
+              className={`styx-grid ${layerGridClass(layer.nodes.length)}`}
+              style={{ marginTop: "0.9rem" }}
+            >
+              {layer.nodes.map((node) => (
+                <div
+                  key={node.labelKey}
+                  className="styx-card styx-sweep"
+                  style={{ padding: "0.9rem 1rem" }}
+                >
+                  <p
+                    className="styx-mono"
+                    style={{
+                      margin: 0,
+                      color: "var(--styx-paper)",
+                      overflowWrap: "anywhere",
                     }}
                   >
-                    <div className="text-xs sm:text-sm font-bold font-mono tracking-wide" style={{ color: layer.hex }}>
-                      {t(node.labelKey)}
-                    </div>
-                    <div className="text-[10px] sm:text-xs text-[#555560] mt-1 font-mono">
-                      {t(node.subKey)}
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    {t(node.labelKey)}
+                  </p>
+                  <p className="styx-card-note" style={{ marginTop: "0.25rem" }}>
+                    {t(node.subKey)}
+                  </p>
+                </div>
+              ))}
             </div>
-
-            {/* Connector arrow between layers */}
-            {layerIndex < docsArchLayers.length - 1 && (
-              <div className="flex flex-col items-center py-2">
-                <div className="w-px h-4" style={{ backgroundColor: `${layer.hex}40` }} />
-                <div className="w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] border-l-transparent border-r-transparent" style={{ borderTopColor: `${layer.hex}60` }} />
-              </div>
-            )}
-          </React.Fragment>
+          </div>
         ))}
       </div>
 
-      {/* Bottom status bar */}
-      <div className="flex items-center justify-center gap-3 mt-8 pt-6 border-t border-[#2a2a30]">
-        <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 bg-[#39c5bb] animate-pulse" />
-          <span className="text-[10px] sm:text-xs font-mono text-[#555560] uppercase tracking-wider">
-            {t('docs.archEncrypted')}
-          </span>
-        </div>
-        <span className="text-[#2a2a30]">|</span>
-        <div className="flex items-center gap-2">
-          <Zap className="w-3 h-3 text-[#39c5bb]" />
-          <span className="text-[10px] sm:text-xs font-mono text-[#555560] uppercase tracking-wider">
-            {t('docs.archFlow')}
-          </span>
-        </div>
+      <div
+        className="flex flex-wrap items-center gap-3 px-6 py-5"
+        style={{ borderTop: "1px solid var(--styx-rule-soft)" }}
+      >
+        <span className="styx-chip">
+          <span className="styx-dot" aria-hidden="true" />
+          {t("docs.archEncrypted")}
+        </span>
+        <span className="styx-chip">{t("docs.archFlow")}</span>
       </div>
     </div>
-  </div>
-);
+  );
+}
 
 // A single technology rendered as a full docs topic (always open).
 function TechTopic({ tech, t }: { tech: TechSection; t: (key: string) => string }) {
@@ -802,39 +677,72 @@ function TechTopic({ tech, t }: { tech: TechSection; t: (key: string) => string 
 
   return (
     <article>
-      <div className="flex items-center gap-4 mb-5">
-        <div className="w-12 h-12 bg-[#39c5bb]/10 border border-[#39c5bb]/30 rounded-xl flex items-center justify-center text-[#39c5bb] shrink-0">
-          {tech.icon}
-        </div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">{title}</h1>
-      </div>
+      <h1
+        className="styx-h1"
+        style={{
+          margin: 0,
+          fontSize: "clamp(2rem, 4.2vw, 3.1rem)",
+          maxWidth: "26ch",
+        }}
+      >
+        {title}
+      </h1>
+      <div
+        className="styx-gleam-rule"
+        aria-hidden="true"
+        style={{ margin: "1.75rem 0 2.25rem" }}
+      />
 
-      <section id={`${tech.id}-overview`} className="scroll-mt-24">
-        <p className="text-[#888892] leading-relaxed mb-8">{description}</p>
+      <section id={`${tech.id}-overview`}>
+        <p className="styx-lede">{description}</p>
       </section>
 
-      <section id={`${tech.id}-features`} className="scroll-mt-24 mb-8">
-        <h2 className="text-xs font-bold text-[#39c5bb] uppercase tracking-wider mb-3">
-          {t('docs.keyFeatures')}
-        </h2>
-        <ul className="space-y-2">
+      <section id={`${tech.id}-features`} style={{ marginTop: "3.25rem" }}>
+        <h2 className="styx-index">{t("docs.keyFeatures")}</h2>
+        <ul
+          className="m-0 flex list-none flex-col gap-2.5 p-0"
+          style={{ marginTop: "1.35rem" }}
+        >
           {details.map((detail, i) => (
-            <li key={i} className="flex items-start gap-2.5 text-sm text-[#888892]">
-              <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-              <span className="break-words">{detail}</span>
+            <li
+              key={i}
+              className="flex"
+              style={{
+                color: "var(--styx-muted)",
+                fontSize: "0.9375rem",
+                lineHeight: 1.65,
+              }}
+            >
+              <span className="styx-check" aria-hidden="true">
+                &#10003;
+              </span>
+              <span className="min-w-0" style={{ overflowWrap: "anywhere" }}>
+                {detail}
+              </span>
             </li>
           ))}
         </ul>
       </section>
 
       {tech.codeExample && (
-        <section id={`${tech.id}-code`} className="scroll-mt-24">
-          <h2 className="text-xs font-bold text-[#ff77a8] uppercase tracking-wider mb-2">
-            {t('docs.codeExample')}
-          </h2>
-          <pre className="bg-[#0a0a0c] border border-[#2a2a30] p-4 rounded-xl overflow-x-auto text-xs font-mono text-[#888892] whitespace-pre-wrap break-words">
-            {tech.codeExample}
-          </pre>
+        <section id={`${tech.id}-code`} style={{ marginTop: "3.25rem" }}>
+          <h2 className="styx-index">{t("docs.codeExample")}</h2>
+          <div style={{ marginTop: "1.35rem" }}>
+            {/* The <pre> inside `#<id>-code` is load-bearing: the docs test suite
+                reads every sample through `#<id>-code pre`. */}
+            <Reveal className="styx-code-panel styx-reveal">
+              <div className="styx-code-head">
+                <span>{tech.id}</span>
+                <span>{t(tech.statusKey ?? "docs.footerDevnet")}</span>
+              </div>
+              <pre
+                className="styx-code"
+                style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+              >
+                {tech.codeExample}
+              </pre>
+            </Reveal>
+          </div>
         </section>
       )}
     </article>
@@ -845,37 +753,79 @@ function TechTopic({ tech, t }: { tech: TechSection; t: (key: string) => string 
 function ArchitectureTopic({ t }: { t: (k: string) => string }) {
   return (
     <article>
-      <h1 className="text-2xl sm:text-3xl font-bold text-white mb-3 tracking-tight">
-        {t('docs.heroTitle1')}{' '}
-        <span className="bg-gradient-to-r from-[#39c5bb] to-[#00ffe5] bg-clip-text text-transparent">
-          {t('docs.heroTitle2')}
-        </span>
+      <h1
+        className="styx-h1"
+        style={{
+          margin: 0,
+          fontSize: "clamp(2.4rem, 5vw, 3.6rem)",
+          maxWidth: "22ch",
+        }}
+      >
+        {t("docs.heroTitle1")}{" "}
+        {/* The page's single gleam. One word, one motion signature. */}
+        <span className="styx-gleam">{t("docs.heroTitle2")}</span>
       </h1>
-      <p className="text-[#888892] leading-relaxed max-w-2xl mb-6">{t('docs.heroSubtitle')}</p>
-      <div className="flex flex-wrap items-center gap-5 text-sm mb-10">
-        {/* Every number here is counted from the tree, not carried over from an
-            older revision:
-              7  = circuit ids the on-chain verifier accepts (0..6; 7+ returns
-                   UnsupportedCircuit), one AIR module each in stark/src/air/.
-                   Was "10 ZK Circuits", a mixed count of STARKs plus the three
-                   legacy Groth16 artifacts still sitting in the Android assets.
-              14 = Cargo workspace members under programs/ (p01_arcium excluded
-                   from the build, so 15 directories, 14 programs).
-              11 = @protocol-01 packages resolving on npm. The repo holds 16, of
-                   which pay-core is private and 4 are unpublished.
-              21 = topics rendered by this page (the `technologies` array).
-                   Was 14, i.e. the count before seven modules were added. */}
-        <div className="flex items-center gap-2"><Shield className="w-4 h-4 text-[#39c5bb]" /><span className="text-[#888892]"><span className="text-white font-bold">{STARK_CIRCUIT_COUNT}</span> {t('docs.statCircuits')}</span></div>
-        <div className="flex items-center gap-2"><Cpu className="w-4 h-4 text-[#ff77a8]" /><span className="text-[#888892]"><span className="text-white font-bold">14</span> {t('docs.statPrograms')}</span></div>
-        <div className="flex items-center gap-2"><Code className="w-4 h-4 text-[#00ffe5]" /><span className="text-[#888892]"><span className="text-white font-bold">11</span> {t('docs.statSdks')}</span></div>
-        <div className="flex items-center gap-2"><Layers className="w-4 h-4 text-[#ffcc00]" /><span className="text-[#888892]"><span className="text-white font-bold">{technologies.length}</span> {t('docs.statModules')}</span></div>
+      <div className="styx-hero-rule" aria-hidden="true" />
+      <p className="styx-lede">{t("docs.heroSubtitle")}</p>
+
+      {/* The one amber note on the page, and the one thing a reader of these
+          pages must not miss. Several sections below are translated copy this
+          port cannot edit (i18n/* is not ours) and a few of them still read as
+          if the deposit-to-withdrawal link were hidden. It is not.
+
+          Built out of keys that already exist in en.ts and fr.ts, never out of
+          literals: the first draft of this box was hardcoded English, which
+          silently served French readers an English admission, i.e. it dropped
+          the honesty note for exactly the audience that cannot check the code.
+          Adding keys is not an option here (i18n/ is off limits to this pass),
+          so the box says what the catalogue can already say in both locales:
+          devnet only, unaudited, and the deposit-to-withdrawal link is open. */}
+      <div className="styx-admission" style={{ marginTop: "2.5rem" }}>
+        <p className="styx-admission-title">{t("docs.footerDevnet")}</p>
+        <p className="styx-admission-body">{t("docs.footerDisclaimer")}</p>
+        <p className="styx-admission-body" style={{ marginTop: "0.6rem" }}>
+          {t("docs.sections.denominatedPools.desc")}
+        </p>
       </div>
-      <section id="architecture-diagram" className="scroll-mt-24">
-        <h2 className="text-lg font-bold text-white mb-5 flex items-center gap-2">
-          <Layers className="w-5 h-5 text-[#39c5bb]" />
-          {t('docs.archSectionTitle')}
-        </h2>
-        <ArchitectureDiagram t={t} />
+
+      {/* Every number here is counted from the tree, not carried over from an
+          older revision:
+            7  = circuit ids the on-chain verifier accepts (0..6; 7+ returns
+                 UnsupportedCircuit), one AIR module each in stark/src/air/.
+                 Was "10 ZK Circuits", a mixed count of STARKs plus the three
+                 legacy Groth16 artifacts still sitting in the Android assets.
+            14 = Cargo workspace members under programs/ (p01_arcium excluded
+                 from the build, so 15 directories, 14 programs).
+            11 = @protocol-01 packages resolving on npm. The repo holds 16, of
+                 which pay-core is private and 4 are unpublished.
+            21 = topics rendered by this page (the `technologies` array).
+                 Was 14, i.e. the count before seven modules were added. */}
+      <div className="styx-grid styx-grid-4" style={{ marginTop: "2.5rem" }}>
+        <Reveal className="styx-card styx-reveal">
+          <p className="styx-card-label">{t("docs.statCircuits")}</p>
+          <p className="styx-card-value">{STARK_CIRCUIT_COUNT}</p>
+        </Reveal>
+        <Reveal className="styx-card styx-reveal" delay={80}>
+          <p className="styx-card-label">{t("docs.statPrograms")}</p>
+          <p className="styx-card-value">14</p>
+        </Reveal>
+        <Reveal className="styx-card styx-reveal" delay={160}>
+          <p className="styx-card-label">{t("docs.statSdks")}</p>
+          <p className="styx-card-value">11</p>
+        </Reveal>
+        <Reveal className="styx-card styx-reveal" delay={240}>
+          <p className="styx-card-label">{t("docs.statModules")}</p>
+          <p className="styx-card-value">{technologies.length}</p>
+        </Reveal>
+      </div>
+
+      <section id="architecture-diagram" style={{ marginTop: "3.5rem" }}>
+        <h2 className="styx-index">{t("docs.archSectionTitle")}</h2>
+        <div style={{ marginTop: "1.35rem" }}>
+          <Reveal className="styx-reveal">
+            <ArchitectureDiagram t={t} />
+          </Reveal>
+        </div>
       </section>
     </article>
   );
@@ -900,13 +850,15 @@ function SecurityTopic({ t }: { t: (k: string) => string }) {
   //
   // Same treatment as 'guaranteeMpc' below: the claim is deleted from what the
   // page renders rather than softened, because the honest replacement wording
-  // has to be added to i18n/en.ts + fr.ts + ja.ts (which this pass does not own)
-  // and shipping a vaguer version of a false claim is still shipping it.
+  // has to be added to i18n/en.ts + fr.ts (which this pass does not own) and
+  // shipping a vaguer version of a false claim is still shipping it. The site
+  // ships two locales since ja.ts was removed on 2026-08-11, so there is no
+  // third catalogue to keep in step.
   // Reinstate only alongside a measured anonymity set greater than 1.
   const threats = ['threatAmounts'];
   // 'guaranteeMpc' removed 2026-07-27: it published "MPC threshold: 1-of-N honest
   // node via Arcium Cerberus protocol" as a SECURITY GUARANTEE. Arcium was removed
-  // from Protocol 01 (privacy-sdk 1.0.2 dropped the mpc module), so nothing
+  // from the protocol (privacy-sdk 1.0.2 dropped the mpc module), so nothing
   // delivered that guarantee. Do not reinstate without a deployed MPC path.
   const guarantees = ['guaranteeSound', 'guaranteeComplete', 'guaranteeZk', 'guaranteeNoDouble'];
   const harden = [
@@ -916,47 +868,126 @@ function SecurityTopic({ t }: { t: (k: string) => string }) {
   ];
   return (
     <article>
-      <h1 className="text-2xl sm:text-3xl font-bold text-white mb-6 flex items-center gap-3 tracking-tight">
-        <Shield className="w-7 h-7 text-[#ff2d7a]" />
-        {t('docs.securityTitle')}
+      <h1
+        className="styx-h1"
+        style={{
+          margin: 0,
+          fontSize: "clamp(2rem, 4.2vw, 3.1rem)",
+          maxWidth: "26ch",
+        }}
+      >
+        {t("docs.securityTitle")}
       </h1>
-      <div id="security-model" className="scroll-mt-24 grid md:grid-cols-2 gap-6">
-        <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl">
-          <h2 className="text-lg font-bold text-white mb-4">{t('docs.threatModel')}</h2>
-          <ul className="space-y-2 text-sm text-[#888892]">
+      <div
+        className="styx-gleam-rule"
+        aria-hidden="true"
+        style={{ margin: "1.75rem 0 2.25rem" }}
+      />
+
+      {/* The four guarantees below are translated copy this port cannot edit,
+          and they are absolutes about a verifier nobody has audited. Amber
+          instead of a rewrite, since rewriting would mean editing i18n/*.
+
+          Same rule as the admission on the architecture topic: existing keys
+          only. A hardcoded English paragraph here would have left French readers
+          with four unqualified absolutes and no caveat at all. */}
+      <div className="styx-admission">
+        <p className="styx-admission-title">
+          {t("docs.footerBeta")} &middot; {t("docs.footerDevnet")}
+        </p>
+        <p className="styx-admission-body">{t("docs.footerDisclaimer")}</p>
+      </div>
+
+      <div
+        id="security-model"
+        className="styx-grid styx-grid-2"
+        style={{ marginTop: "2.5rem" }}
+      >
+        <div className="styx-card">
+          <h2 className="styx-index">{t("docs.threatModel")}</h2>
+          <ul
+            className="m-0 flex list-none flex-col gap-2.5 p-0"
+            style={{ marginTop: "1.35rem" }}
+          >
             {threats.map((k) => (
-              <li key={k} className="flex items-start gap-2">
-                <Eye className="w-4 h-4 text-[#ff2d7a] flex-shrink-0 mt-0.5" />
-                <span>{t(`docs.${k}`)}</span>
+              <li
+                key={k}
+                className="flex"
+                style={{
+                  color: "var(--styx-muted)",
+                  fontSize: "0.9375rem",
+                  lineHeight: 1.65,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    flex: "none",
+                    marginRight: "0.6rem",
+                    fontFamily: "var(--styx-mono)",
+                    color: "var(--styx-faint)",
+                  }}
+                >
+                  &middot;
+                </span>
+                <span className="min-w-0">{t(`docs.${k}`)}</span>
               </li>
             ))}
           </ul>
         </div>
-        <div className="bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl">
-          <h2 className="text-lg font-bold text-white mb-4">{t('docs.guarantees')}</h2>
-          <ul className="space-y-2 text-sm text-[#888892]">
+        <div className="styx-card">
+          <h2 className="styx-index">{t("docs.guarantees")}</h2>
+          <ul
+            className="m-0 flex list-none flex-col gap-2.5 p-0"
+            style={{ marginTop: "1.35rem" }}
+          >
             {guarantees.map((k) => (
-              <li key={k} className="flex items-start gap-2">
-                <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                <span>{t(`docs.${k}`)}</span>
+              <li
+                key={k}
+                className="flex"
+                style={{
+                  color: "var(--styx-muted)",
+                  fontSize: "0.9375rem",
+                  lineHeight: 1.65,
+                }}
+              >
+                <span className="styx-check" aria-hidden="true">
+                  &#10003;
+                </span>
+                <span className="min-w-0">{t(`docs.${k}`)}</span>
               </li>
             ))}
           </ul>
         </div>
       </div>
-      <div id="security-hardening" className="scroll-mt-24 mt-6 bg-white/[0.02] backdrop-blur-sm border border-white/[0.06] p-6 rounded-2xl">
-        <h2 className="text-lg font-bold text-white mb-4">{t('docs.securityHardening')}</h2>
-        <div className="grid md:grid-cols-3 gap-4 text-sm text-[#888892]">
-          {harden.map((col, ci) => (
-            <ul key={ci} className="space-y-2">
-              {col.map((k) => (
-                <li key={k} className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-[#39c5bb] flex-shrink-0 mt-0.5" />
-                  <span>{t(`docs.${k}`)}</span>
-                </li>
-              ))}
-            </ul>
-          ))}
+
+      <div id="security-hardening" className="styx-panel" style={{ marginTop: "2.5rem" }}>
+        <div className="styx-panel-head">
+          <h2 className="styx-index">{t("docs.securityHardening")}</h2>
+        </div>
+        <div className="styx-panel-body">
+          <div className="grid gap-6 md:grid-cols-3">
+            {harden.map((col, ci) => (
+              <ul key={ci} className="m-0 flex list-none flex-col gap-2.5 p-0">
+                {col.map((k) => (
+                  <li
+                    key={k}
+                    className="flex"
+                    style={{
+                      color: "var(--styx-muted)",
+                      fontSize: "0.875rem",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    <span className="styx-check" aria-hidden="true">
+                      &#10003;
+                    </span>
+                    <span className="min-w-0">{t(`docs.${k}`)}</span>
+                  </li>
+                ))}
+              </ul>
+            ))}
+          </div>
         </div>
       </div>
     </article>
@@ -1051,28 +1082,41 @@ function DocsBody({ t }: { t: (k: string) => string }) {
     return [];
   })();
 
+  // No pt-24 here: StyxShell reserves the fixed bar's 4rem on `.styx`
+  // (`.styx-has-chrome`), and `.styx [id]` carries scroll-margin-top so anchors
+  // do not land underneath it either.
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-8">
+    <div
+      className="styx-container"
+      style={{
+        paddingTop: "clamp(2.5rem, 5vw, 4rem)",
+        paddingBottom: "clamp(3rem, 6vw, 5rem)",
+      }}
+    >
       {/* Mobile controls */}
-      <div className="lg:hidden flex items-center justify-between mb-6">
+      <div className="mb-8 flex items-center justify-between lg:hidden">
         <button
+          type="button"
           onClick={() => setNavOpen(true)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#2a2a30] text-[#888892] text-sm hover:text-white transition-colors"
+          className="styx-btn-ghost"
+          style={{ padding: "0.55rem 0.95rem" }}
         >
-          <Menu className="w-4 h-4" />
+          <Menu size={14} aria-hidden="true" />
           {t('docs.menu')}
         </button>
         <button
+          type="button"
           onClick={() => setSearchOpen(true)}
-          className="flex items-center justify-center w-9 h-9 rounded-lg border border-[#2a2a30] text-[#888892] hover:text-white transition-colors"
+          className="styx-btn-ghost"
+          style={{ padding: "0.55rem" }}
           aria-label={t('docs.searchPlaceholder')}
         >
-          <Search className="w-4 h-4" />
+          <Search size={14} aria-hidden="true" />
         </button>
       </div>
 
-      <div className="flex gap-8">
-        <Sidebar
+      <div className="flex gap-8 xl:gap-10">
+        <DocsRail
           groups={groups}
           activeId={activeId}
           onSelect={go}
@@ -1083,46 +1127,107 @@ function DocsBody({ t }: { t: (k: string) => string }) {
           searchHint={t('docs.searchHint')}
         />
 
-        <main className="flex-1 min-w-0 pb-10">
+        <main className="min-w-0 flex-1 pb-10">
+          {/* The topic's place in TOPIC_ORDER, as the marginal numeral. Decorative
+              and aria-hidden: the rail, the pager and the h1 already say where
+              the reader is, and a bare number read aloud says nothing. */}
+          {idx >= 0 && (
+            <span className="styx-numeral" aria-hidden="true">
+              {String(idx + 1).padStart(2, '0')}
+            </span>
+          )}
           <TopicContent id={activeId} t={t} />
 
-          {/* Prev / Next pager */}
-          <div className="mt-12 pt-6 border-t border-[#2a2a30] flex items-center justify-between gap-4">
-            {prevId ? (
-              <button
-                onClick={() => go(prevId)}
-                className="group flex items-center gap-2 text-left px-4 py-3 rounded-xl border border-[#2a2a30] hover:border-[#39c5bb]/40 transition-colors"
-              >
-                <ChevronLeft className="w-4 h-4 text-[#555560] group-hover:text-[#39c5bb]" />
-                <span>
-                  <span className="block text-[10px] font-mono uppercase tracking-wider text-[#555560]">{t('docs.previous')}</span>
-                  <span className="text-sm text-white">{titleFor(prevId)}</span>
-                </span>
-              </button>
-            ) : (
-              <span />
-            )}
-            {nextId ? (
-              <button
-                onClick={() => go(nextId)}
-                className="group flex items-center gap-2 text-right px-4 py-3 rounded-xl border border-[#2a2a30] hover:border-[#39c5bb]/40 transition-colors ml-auto"
-              >
-                <span>
-                  <span className="block text-[10px] font-mono uppercase tracking-wider text-[#555560]">{t('docs.next')}</span>
-                  <span className="text-sm text-white">{titleFor(nextId)}</span>
-                </span>
-                <ChevronRight className="w-4 h-4 text-[#555560] group-hover:text-[#39c5bb]" />
-              </button>
-            ) : (
-              <span />
-            )}
+          {/* Prev / Next pager. Buttons, not links: navigation here is a state
+              change plus a history.replaceState hash rewrite. Their accessible
+              names stay "Previous <title>" / "Next <title>" so an exact-name
+              query for a topic title can only reach the rail. */}
+          <div style={{ marginTop: "4rem" }}>
+            <div className="styx-gleam-rule" aria-hidden="true" />
+            <div
+              className="flex items-start justify-between gap-4"
+              style={{ marginTop: "1.75rem" }}
+            >
+              {prevId ? (
+                <button
+                  type="button"
+                  onClick={() => go(prevId)}
+                  className="styx-btn-ghost styx-sweep"
+                  style={{ padding: "0.85rem 1.25rem", textAlign: "left" }}
+                >
+                  <ChevronLeft
+                    size={14}
+                    aria-hidden="true"
+                    style={{ flex: "none", color: "var(--styx-faint)" }}
+                  />
+                  <span style={{ display: "block" }}>
+                    <span
+                      className="styx-card-label"
+                      style={{ display: "block", margin: 0 }}
+                    >
+                      {t('docs.previous')}
+                    </span>
+                    <span
+                      style={{
+                        display: "block",
+                        fontFamily: "var(--styx-sans)",
+                        fontSize: "0.875rem",
+                        letterSpacing: "normal",
+                        textTransform: "none",
+                        color: "var(--styx-paper)",
+                      }}
+                    >
+                      {titleFor(prevId)}
+                    </span>
+                  </span>
+                </button>
+              ) : (
+                <span />
+              )}
+              {nextId ? (
+                <button
+                  type="button"
+                  onClick={() => go(nextId)}
+                  className="styx-btn-ghost styx-sweep ml-auto"
+                  style={{ padding: "0.85rem 1.25rem", textAlign: "right" }}
+                >
+                  <span style={{ display: "block" }}>
+                    <span
+                      className="styx-card-label"
+                      style={{ display: "block", margin: 0 }}
+                    >
+                      {t('docs.next')}
+                    </span>
+                    <span
+                      style={{
+                        display: "block",
+                        fontFamily: "var(--styx-sans)",
+                        fontSize: "0.875rem",
+                        letterSpacing: "normal",
+                        textTransform: "none",
+                        color: "var(--styx-paper)",
+                      }}
+                    >
+                      {titleFor(nextId)}
+                    </span>
+                  </span>
+                  <ChevronRight
+                    size={14}
+                    aria-hidden="true"
+                    style={{ flex: "none", color: "var(--styx-faint)" }}
+                  />
+                </button>
+              ) : (
+                <span />
+              )}
+            </div>
           </div>
         </main>
 
-        <TopicToc items={toc} title={t('docs.onThisPage')} />
+        <DocsToc items={toc} title={t('docs.onThisPage')} />
       </div>
 
-      <DocsSearch
+      <DocsPalette
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
         items={searchItems}
@@ -1137,36 +1242,42 @@ function DocsBody({ t }: { t: (k: string) => string }) {
 export default function DocsPage() {
   const t = useT();
   return (
-    <div className="min-h-screen bg-[#0a0a0c]" style={{ wordWrap: 'break-word', overflowWrap: 'break-word' }}>
-      <SiteHeader />
-
+    <StyxShell>
       <DocsBody t={t} />
 
-      {/* Design Document Download */}
-      <section className="py-8 px-4 sm:px-6 lg:px-8 border-t border-[#2a2a30]">
-        <div className="max-w-7xl mx-auto flex items-center justify-center">
+      {/* Design document download.
+          FROZEN: /protocol-01-design-document.pdf is the real asset at
+          apps/web/public/protocol-01-design-document.pdf. The filename carries
+          "protocol-01" and is not renamed by the rebrand; nor is the `download`
+          attribute dropped. */}
+      <section className="styx-section styx-section-alt">
+        <div className="styx-container styx-center">
           <a
             href="/protocol-01-design-document.pdf"
             download
-            className="group flex items-center gap-3 px-5 py-3 border rounded-2xl transition-all duration-300 bg-white/[0.02] backdrop-blur-sm border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]"
+            className="styx-btn-ghost styx-sweep"
           >
-            <FileText className="w-4 h-4 text-[#555560] group-hover:text-[#39c5bb] transition-colors" />
-            <div>
-              <span className="text-sm text-[#888892] group-hover:text-white transition-colors">
-                {t('docs.designDoc')}
-              </span>
-              <span className="text-xs text-[#555560] ml-2 font-mono">{t('docs.designDocMeta')}</span>
-            </div>
-            <Download className="w-3.5 h-3.5 text-[#555560] group-hover:text-[#39c5bb] transition-colors" />
+            <FileText size={14} aria-hidden="true" style={{ flex: "none" }} />
+            <span
+              style={{
+                fontFamily: "var(--styx-sans)",
+                fontSize: "0.9375rem",
+                letterSpacing: "normal",
+                textTransform: "none",
+              }}
+            >
+              {t('docs.designDoc')}
+            </span>
+            <span className="styx-card-label" style={{ margin: 0 }}>
+              {t('docs.designDocMeta')}
+            </span>
+            <Download size={13} aria-hidden="true" style={{ flex: "none" }} />
           </a>
+          <p className="styx-note" style={{ marginTop: "1.1rem" }}>
+            {t('docs.designDocRevision')}
+          </p>
         </div>
-        <p className="text-center text-[10px] text-[#555560] font-mono mt-3 tracking-wider">
-          {t('docs.designDocRevision')}
-        </p>
       </section>
-
-      {/* Footer */}
-      <Footer />
-    </div>
+    </StyxShell>
   );
 }

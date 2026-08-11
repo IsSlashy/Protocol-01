@@ -1,0 +1,63 @@
+/* ---------------------------------------------------------------------------
+   PARCOURS : geometrie seulement.
+
+   Toute la presentation vient de app/_styx/styx.css : couleurs, voix
+   typographiques, filets, boutons, tableaux, cartes. Ce module ne garde que ce
+   que le systeme partage ne sait pas exprimer et qu'une page ne doit pas
+   reinventer deux fois : la hauteur fixe de la scene 3D, les couches
+   absolues empilees dedans, et la boite de la video.
+
+   Regle de ce fichier : aucune couleur ni police en dur. Chaque valeur est soit
+   une longueur, soit un var(--styx-*) resolu depuis le scope .styx qui
+   enveloppe la page.
+--------------------------------------------------------------------------- */
+
+/* La scene a besoin d'une hauteur reelle : le canvas est en position absolue,
+   donc sans cette hauteur le conteneur mesure zero et three.js rend dans le
+   vide. */
+.viewerStage {
+  position: relative;
+  height: 460px;
+  background: var(--styx-ink);
+}
+
+@media (max-width: 700px) {
+  .viewerStage {
+    height: 320px;
+  }
+}
+
+.viewerCanvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* three.js ecrit une taille en pixels sur son propre canvas ; ces trois lignes
+   le forcent a suivre la boite plutot que l'inverse. touch-action coupe le
+   defilement de la page pendant une orbite au doigt. */
+.viewerCanvas canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  touch-action: none;
+}
+
+.viewerOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1.5rem;
+  text-align: center;
+  background: var(--styx-panel);
+}
+
+.demoVideo {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--styx-ink);
+}

@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
 
+/**
+ * A "use client" page cannot export metadata, which is why this layout exists.
+ * Its only job is the title and description; the default export must keep
+ * returning `children` untouched.
+ */
 export const metadata: Metadata = {
-  title: "Privacy Policy | PROTOCOL-01",
+  title: "Privacy Policy | Styx Protocol",
   description:
-    "Privacy Policy for Protocol 01, how we handle your data with zero-knowledge principles.",
+    "What Styx Protocol collects, what it does not, and which third parties are involved. Devnet software, not audited.",
 };
 
 export default function PrivacyLayout({

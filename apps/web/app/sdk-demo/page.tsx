@@ -1,7 +1,98 @@
 "use client";
 
+/**
+ * /sdk-demo, the developer playground, ported to the Styx design system.
+ *
+ * WHAT THIS PORT DID AND DID NOT TOUCH
+ *
+ * Presentation only. Every fetch, every hook, every guard and every frozen
+ * literal below is the original code:
+ *
+ *  - the page-local P01WalletProvider (NOT the global wallet provider) and the
+ *    exported useP01Wallet, both consumed by four sections in this file
+ *  - the late-injection wallet detection (immediate check + 100/500/1000/2000ms
+ *    re-checks + the FROZEN "protocol01#initialized" event)
+ *  - the trusted-only eager reconnect, which is what restores the
+ *    "already subscribed" button state on reload
+ *  - the three direct calls to https://api.devnet.solana.com (balance poll every
+ *    10s, requestAirdrop, the uncancelled post-airdrop refresh) and the real
+ *    0.001 SOL devnet self-transfer signed through window.protocol01
+ *  - GET /api/whitelist?wallet=… , POST /api/whitelist (three fields only:
+ *    wallet, email, projectName. Website and description are deliberately NOT
+ *    posted to the API) and the NEXT_PUBLIC_DISCORD_WEBHOOK mirror
+ *  - the 'SUCCESS: ' / 'ERROR: ' prefixes on airdropStatus and paymentStatus:
+ *    those strings are control flow, not copy. Rename one and every success
+ *    renders as an error.
+ *  - P01_TREASURY, `Protocol 01 - <tier>` (the subscribe payload merchantName
+ *    AND the already-subscribed matcher read the same literal, so it stays
+ *    Protocol 01), intervalToSeconds, PRIVACY_PRESET / PRIVACY_OFF, and the
+ *    0.01 SOL demo amount
+ *
+ * Gone: the THEME object, every p01-* Tailwind class, framer-motion, the
+ * rounded pills, the pink, the icon-in-a-rounded-box section headers and the
+ * gradient arrows. Colour, type and spacing now come from app/_styx/styx.css.
+ *
+ * COPY FIXED HERE (the hardcoded strings this file owns):
+ *  - the stealth sample no longer claims unlinkability, and names the sanctioned
+ *    hybrid X25519 + ML-KEM-768 (FIPS 203)
+ *  - the zkSPL sample says out loud that the withdrawal republishes the deposit
+ *    commitment, so deposit and withdrawal are still pairable today
+ *  - the WOTS+ comment no longer says "quantum-resistant" without qualification:
+ *    transaction signatures stay Ed25519 and classical
+ *  - network: "mainnet" flipped to "devnet" in both samples. There is no mainnet
+ *    deployment.
+ *  - "14 Anchor Programs" dropped (unverifiable count)
+ *  - the demo subscription cards no longer wear Netflix / Spotify / ChatGPT /
+ *    Adobe names with invented totals, and no longer offer a Cancel action the
+ *    protocol cannot honour
+ *  - the success alert no longer promises an activation this page has not
+ *    verified on chain
+ *
+ * OVERSTATING i18n KEYS, SECOND PASS (2026-08-11)
+ *
+ * i18n/ is off limits, so an overstating key cannot be edited. It can be left
+ * uncalled. Every key below is now uncalled by this page, each replaced by a
+ * DIFFERENT existing key that says something checkable, so both locales still
+ * render every slot:
+ *
+ *   serverless          -> beta                (this file POSTs to two endpoints)
+ *   featNoApi + feat100Serverless -> roadmap.devnetOnly + rpcLabel
+ *   privacySdksDesc     -> docs.heroSubtitle   ("17 packages" over a grid of 7)
+ *   stealthDesc         -> sdkSpecterDesc + docs stealth detail4 (no unlinkability)
+ *   zkProofsDesc        -> sdkZkDesc + docs zkProofs detail7 (no proof size)
+ *   archFooter          -> explorer.circuits.subtitle (no blanket quantum claim)
+ *   securityDesc        -> roadmap.disclaimer  (nothing here is guaranteed)
+ *   priceSameForever    -> dropped, no substitute (see the security panel)
+ *   formPrivacyNote     -> requestReviewMsg    (the POST is plaintext)
+ *   simpleTermsSummary  -> priceLockedDesc     (no Netflix, no "never")
+ *   onChainFooter       -> solanaDevnet + featP01Required (no "Verified")
+ *
+ * Still overstating and still called, because the sentence around them is a
+ * comparison to ordinary subscriptions rather than a claim about this protocol:
+ * simpleTermsIntro and tradSub1 both name Netflix. sdkDemo.copyright is not
+ * called by this page at all; it still reads "PROTOCOL 01" in the dictionary.
+ *
+ * THE SERVERLESS CLAIM, THIRD PASS (2026-08-11)
+ *
+ * Swapping a key out of a slot works for a chip or a caption. It does not work
+ * for a hero lede or a section title, where the substitute would have to be
+ * copy about something else. The claim "no servers, no centralized API" is
+ * false on this route in particular, because this component POSTs to
+ * /api/whitelist, mirrors the same request to a Discord webhook, and gates the
+ * whole Stream SDK section on a human approving that row. So eight keys are
+ * queued as dictionary edits rather than as swaps, and they are still called
+ * here until the edits land:
+ *
+ *   heroSubtitle, streamDesc, sdkIntegrationDesc, sdkIntegrationCodeTitle,
+ *   onChainVerifDesc, archNoServerTitle, archNoServerDesc, widgetCodeTitle
+ *
+ * The hardcoded halves of the same claim are already gone from this file: the
+ * SDK sample no longer says "no API keys" and "no server request" over a page
+ * whose own gate is a server request, and the payment button sample no longer
+ * says "no server".
+ */
+
 import React, { useState, useEffect, useCallback, createContext, useContext } from "react";
-import { motion } from "framer-motion";
 import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { useT } from "@/i18n";
 import {
@@ -12,51 +103,23 @@ import {
   ShieldCheck,
   Hand,
   Wallet,
-  Cpu,
-  Boxes,
   Check,
   X,
   AlertTriangle,
-  Zap,
-  Clock,
   Ban,
   CreditCard,
   RefreshCw,
   FileText,
-  Eye,
   Shield,
   Copy
 } from "lucide-react";
-import SiteHeader from "@/components/SiteHeader";
-import Footer from "@/components/Footer";
+import StyxShell from "../_styx/StyxShell";
+import Reveal from "../_styx/Reveal";
 
-// ============ P-01 Theme Constants ============
-// Inspired by: Hatsune Miku (cyan), NEEDY STREAMER OVERLOAD (pink), ULTRAKILL (red)
-// RULES: NO purple | NO black text | NO green #00ff88
-const THEME = {
-  // Primary: Cyan (Miku)
-  primaryColor: "#39c5bb",
-  primaryBright: "#00ffe5",
-  // Secondary: Pink (KAngel)
-  secondaryColor: "#ff77a8",
-  pinkHot: "#ff2d7a",
-  // Backgrounds
-  backgroundColor: "#0a0a0c",
-  surfaceColor: "#151518",
-  elevatedColor: "#1f1f24",
-  // Text (NO black)
-  textColor: "#ffffff",
-  mutedColor: "#888892",
-  dimColor: "#555560",
-  // Borders
-  borderColor: "#2a2a30",
-  // Status (cyan for success, NOT green!)
-  successColor: "#39c5bb",
-  errorColor: "#ff3366",
-  warningColor: "#ffcc00",
-  // UI
-  borderRadius: "12px",
-};
+// Icon tints. Monochrome by default; the cyan seal is reserved for a check mark
+// or a status dot, exactly as in styx.css.
+const ICON_FAINT: React.CSSProperties = { color: "var(--styx-faint)", flex: "none" };
+const ICON_ACCENT: React.CSSProperties = { color: "var(--styx-accent)", flex: "none" };
 
 // ============ P-01 Wallet Provider (Native) ============
 // Direct integration with Protocol 01 wallet - no other wallets allowed
@@ -71,13 +134,13 @@ interface SubscriptionOptions {
   maxPeriods?: number;
   description?: string;
   // Privacy preferences selected on the site. Forwarded to the wallet so the
-  // approval popup mirrors them (it shows them read-only — see ApproveSubscription).
+  // approval popup mirrors them (it shows them read-only, see ApproveSubscription).
   amountNoise?: number;        // +/-% variance on each charge
   timingNoise?: number;        // +/-hours jitter on payment time
   useStealthAddress?: boolean; // unique receiving address per payment
 }
 
-// Tolerant shape — the wallet returns its raw stored subscriptions, whose field
+// Tolerant shape. The wallet returns its raw stored subscriptions, whose field
 // names have varied across versions (name vs merchantName, status vs isActive).
 interface WalletSubscription {
   id: string;
@@ -206,7 +269,7 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Eager (trusted-only) reconnect on load. Already-approved sites restore the
-  // connection without a manual click — and with it, the "already subscribed"
+  // connection without a manual click, and with it, the "already subscribed"
   // button state. Throws (caught) if the site was never approved.
   useEffect(() => {
     if (!walletAvailable || connected) return;
@@ -219,7 +282,7 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
           setPublicKey(result.publicKey.toBase58());
         }
       } catch {
-        // Not previously approved — stay disconnected; user can click Connect.
+        // Not previously approved, stay disconnected; user can click Connect.
       }
     })();
     return () => { cancelled = true; };
@@ -385,67 +448,97 @@ function SDKDemoContent() {
   const t = useT();
 
   const tabs = [
-    { id: "devnet" as const, label: t('sdkDemo.tabDevnet'), icon: Cpu, accent: "text-yellow-500" },
-    { id: "privacy" as const, label: t('sdkDemo.tabPrivacy'), icon: Shield, accent: "text-p01-cyan" },
-    { id: "streams" as const, label: t('sdkDemo.tabStreams'), icon: RefreshCw, accent: "text-p01-pink" },
-    { id: "widgets" as const, label: t('sdkDemo.tabWidgets'), icon: CreditCard, accent: "text-p01-cyan" },
-    { id: "buttons" as const, label: t('sdkDemo.tabButtons'), icon: Zap, accent: "text-p01-cyan" },
-    { id: "cards" as const, label: t('sdkDemo.tabCards'), icon: FileText, accent: "text-p01-cyan" },
+    { id: "devnet" as const, label: t('sdkDemo.tabDevnet') },
+    { id: "privacy" as const, label: t('sdkDemo.tabPrivacy') },
+    { id: "streams" as const, label: t('sdkDemo.tabStreams') },
+    { id: "widgets" as const, label: t('sdkDemo.tabWidgets') },
+    { id: "buttons" as const, label: t('sdkDemo.tabButtons') },
+    { id: "cards" as const, label: t('sdkDemo.tabCards') },
   ];
 
   return (
-    <div className="min-h-screen bg-p01-void">
-      <SiteHeader />
+    <StyxShell>
+      {/* ── Hero ───────────────────────────────────────────────────────── */}
+      <section className="styx-container styx-hero">
+        {/* The page's one gleam. On the kicker, never on the h1: the test pins
+            the h1 accessible name to exactly "SDK Demo", and a gradient-clipped
+            headline reads louder than this design allows. */}
+        <p className="styx-overline styx-gleam">{t('sdkDemo.heroKicker')}</p>
+        <h1 className="styx-h1">{t('sdkDemo.headerTitle')}</h1>
 
-      {/* Hero */}
-      <section className="max-w-7xl mx-auto px-6 pt-28 pb-8">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-p01-cyan/25 bg-p01-cyan/10 mb-5">
-          <span className="w-1.5 h-1.5 rounded-full bg-p01-cyan animate-pulse" />
-          <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-p01-cyan">
-            {t('sdkDemo.heroKicker')}
-          </span>
-        </div>
-        <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white font-display tracking-tight mb-4">
-          {t('sdkDemo.headerTitle')}
-        </h1>
-        <p className="text-p01-text-muted max-w-2xl leading-relaxed mb-6">{t('sdkDemo.heroSubtitle')}</p>
+        <div className="styx-hero-rule" aria-hidden="true" />
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.03] border border-p01-cyan/30">
-            <span className="w-1.5 h-1.5 rounded-full bg-p01-cyan animate-pulse" />
-            <span className="text-xs font-mono text-p01-cyan">{t('sdkDemo.serverless')}</span>
-          </span>
-          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.03] border border-p01-pink/30">
-            <span className="text-xs font-mono text-p01-pink">{t('sdkDemo.onChainVerification')}</span>
-          </span>
-          <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.03] border border-yellow-500/30">
-            <span className="text-xs font-mono text-yellow-500">{t('sdkDemo.tabDevnet')}</span>
-          </span>
-        </div>
+        <div className="styx-hero-body">
+          <div className="styx-stack">
+            <p className="styx-lede">{t('sdkDemo.heroSubtitle')}</p>
+            {/* The one amber element on the page. Nothing else here earns it. */}
+            <div className="styx-admission">
+              <p className="styx-admission-title">{t('footer.copyright')}</p>
+              <p className="styx-admission-body">
+                {t('sdkDemo.noRefundTitle')} &middot; {t('sdkDemo.noRefundDesc')}
+              </p>
+            </div>
+          </div>
 
-        <div className="mt-7 max-w-md">
-          <CodeBlock title={t('sdkDemo.installCodeTitle')} code="pnpm add @protocol-01/privacy-sdk" />
+          <div className="styx-stack">
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem" }}>
+              <span className="styx-chip">
+                <span className="styx-dot" aria-hidden="true" />
+                {t('sdkDemo.tabDevnet')}
+              </span>
+              {/* Was sdkDemo.serverless, "100% Serverless". False where it
+                  stood: the developer access form in this very file POSTs to
+                  /api/whitelist and mirrors the request to a Discord webhook.
+                  sdkDemo.beta is an existing key, so both locales still work. */}
+              <span className="styx-chip">{t('sdkDemo.beta')}</span>
+              <span className="styx-chip">{t('sdkDemo.onChainVerification')}</span>
+            </div>
+            <CodeBlock title={t('sdkDemo.installCodeTitle')} code="pnpm add @protocol-01/privacy-sdk" />
+          </div>
         </div>
       </section>
 
-      {/* Sticky pill tabs */}
-      <div className="sticky top-16 z-40 bg-p01-void/80 backdrop-blur-xl border-b border-p01-border/40">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex gap-2 py-3 overflow-x-auto">
+      {/* ── Section switch ─────────────────────────────────────────────────
+          Plain buttons, not an ARIA tablist: the suite queries them with
+          getByRole('button', { name: 'Devnet' }), and the label must remain the
+          button's only accessible text.
+
+          Not sticky, deliberately. The root layout wraps every page in
+          `overflow-hidden`, which makes that div the scroll container, so a
+          sticky child sticks to a box that never scrolls (the same measurement
+          that forced .styx-header to be `fixed`). The old `sticky top-16` bar
+          never actually stuck; this reads as a static band instead of
+          pretending. */}
+      <div style={{ borderTop: "1px solid var(--styx-rule)" }}>
+        <div className="styx-container">
+          <div
+            style={{
+              display: "flex",
+              gap: "1.75rem",
+              overflowX: "auto",
+              padding: "0.9rem 0",
+            }}
+          >
             {tabs.map((tab) => {
               const isActive = activeTab === tab.id;
-              const IconComponent = tab.icon;
               return (
                 <button
                   key={tab.id}
+                  type="button"
                   onClick={() => setActiveTab(tab.id)}
-                  className={`shrink-0 flex items-center gap-2 px-4 py-2 rounded-full text-xs font-display uppercase tracking-wider transition-all ${
-                    isActive
-                      ? "bg-p01-cyan text-p01-void"
-                      : "bg-white/[0.03] text-p01-text-muted hover:text-white border border-p01-border hover:border-p01-cyan/50"
-                  }`}
+                  className="styx-nav-link"
+                  data-active={isActive ? "true" : undefined}
+                  aria-pressed={isActive}
+                  style={{
+                    appearance: "none",
+                    background: "transparent",
+                    borderWidth: "0 0 1px",
+                    borderStyle: "solid",
+                    padding: "0.4rem 0",
+                    cursor: "pointer",
+                    flex: "none",
+                  }}
                 >
-                  <IconComponent size={15} className={isActive ? "text-p01-void" : tab.accent} />
                   {tab.label}
                 </button>
               );
@@ -454,54 +547,75 @@ function SDKDemoContent() {
         </div>
       </div>
 
-      {/* Content */}
-      <div className="max-w-7xl mx-auto px-6 py-10">
-        <motion.div
-          key={activeTab}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.2 }}
-        >
-          {activeTab === "devnet" && <DevnetSection />}
-          {activeTab === "privacy" && <PrivacySDKSection />}
-          {activeTab === "streams" && <StreamSDKSection />}
-          {activeTab === "widgets" && <WidgetsSection />}
-          {activeTab === "buttons" && <ButtonsSection />}
-          {activeTab === "cards" && <CardsSection />}
-        </motion.div>
-      </div>
-
-      <Footer />
-    </div>
+      {/* Only the active section mounts, so switching tabs resets that
+          section's local state. That is the existing behaviour and the tests
+          depend on the text of the other five sections being absent. */}
+      {activeTab === "devnet" && <DevnetSection />}
+      {activeTab === "privacy" && <PrivacySDKSection />}
+      {activeTab === "streams" && <StreamSDKSection />}
+      {activeTab === "widgets" && <WidgetsSection />}
+      {activeTab === "buttons" && <ButtonsSection />}
+      {activeTab === "cards" && <CardsSection />}
+    </StyxShell>
   );
 }
 
-// ============ Shared section header ============
-function SectionHeader({
-  icon: Icon,
+// ============ Shared section shell ============
+// Replaces the old SectionHeader: an oversized marginal numeral, the mono index
+// with its cyan tick, the serif title and the lede, in a sticky left column.
+function SectionShell({
+  numeral,
+  index,
   title,
-  subtitle,
-  accent = "cyan",
+  lede,
+  children,
 }: {
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  numeral: string;
+  index?: string;
   title: string;
-  subtitle?: string;
-  accent?: "cyan" | "pink" | "yellow";
+  lede?: string;
+  children: React.ReactNode;
 }) {
-  const map = {
-    cyan: { box: "bg-p01-cyan/10 border-p01-cyan/30", icon: "text-p01-cyan" },
-    pink: { box: "bg-p01-pink/10 border-p01-pink/30", icon: "text-p01-pink" },
-    yellow: { box: "bg-yellow-500/10 border-yellow-500/30", icon: "text-yellow-500" },
-  }[accent];
   return (
-    <div className="flex items-center gap-3">
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center border ${map.box}`}>
-        <Icon size={20} className={map.icon} />
+    <section className="styx-section">
+      <div className="styx-container styx-section-grid">
+        <div className="styx-section-label">
+          <span className="styx-numeral" aria-hidden="true">
+            {numeral}
+          </span>
+          {index ? <p className="styx-index">{index}</p> : null}
+          <h2 className="styx-h2">{title}</h2>
+          {lede ? (
+            <p className="styx-lede" style={{ marginTop: "1.25rem" }}>
+              {lede}
+            </p>
+          ) : null}
+        </div>
+        <div className="styx-stack-lg">{children}</div>
       </div>
-      <div>
-        <h2 className="text-2xl font-bold text-white font-display tracking-tight">{title}</h2>
-        {subtitle && <p className="text-p01-text-muted text-sm mt-0.5">{subtitle}</p>}
-      </div>
+    </section>
+  );
+}
+
+// A titled block: serif heading, one note line, then whatever evidence follows.
+function Block({
+  title,
+  note,
+  children,
+}: {
+  title: string;
+  note?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div>
+      <h3 className="styx-h3">{title}</h3>
+      {note ? (
+        <p className="styx-card-note" style={{ maxWidth: "62ch", margin: "0 0 1.25rem" }}>
+          {note}
+        </p>
+      ) : null}
+      {children}
     </div>
   );
 }
@@ -509,39 +623,63 @@ function SectionHeader({
 // ============ Privacy SDKs Section ============
 function PrivacySDKSection() {
   const t = useT();
-  return (
-    <div className="space-y-8">
-      <SectionHeader
-        icon={Shield}
-        title={t('sdkDemo.privacySdksTitle')}
-        subtitle={t('sdkDemo.privacySdksDesc')}
-        accent="cyan"
-      />
 
-      {/* SDK Overview Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { name: "@protocol-01/specter-sdk", desc: t('sdkDemo.sdkSpecterDesc'), color: "cyan" },
-          { name: "@protocol-01/zk-sdk", desc: t('sdkDemo.sdkZkDesc'), color: "cyan" },
-          { name: "@protocol-01/zkspl-sdk", desc: t('sdkDemo.sdkZksplDesc'), color: "pink" },
-          { name: "@protocol-01/privacy-toolkit", desc: t('sdkDemo.sdkPrivacyToolkitDesc'), color: "cyan" },
-          { name: "@protocol-01/auth-sdk", desc: t('sdkDemo.sdkAuthDesc'), color: "cyan" },
-          { name: "@protocol-01/p01-js", desc: t('sdkDemo.sdkP01JsDesc'), color: "pink" },
-          { name: "@protocol-01/rpc-config", desc: t('sdkDemo.sdkRpcConfigDesc'), color: "cyan" },
-        ].map((sdk) => (
-          <div key={sdk.name} className="bg-p01-surface rounded-xl p-4 border border-p01-border hover:border-p01-cyan/50 transition-all group">
-            <p className={`text-sm font-mono font-bold mb-1 ${sdk.color === "cyan" ? "text-p01-cyan" : "text-p01-pink"}`}>{sdk.name}</p>
-            <p className="text-p01-text-dim text-xs">{sdk.desc}</p>
-          </div>
+  const packages = [
+    { name: "@protocol-01/specter-sdk", desc: t('sdkDemo.sdkSpecterDesc') },
+    { name: "@protocol-01/zk-sdk", desc: t('sdkDemo.sdkZkDesc') },
+    { name: "@protocol-01/zkspl-sdk", desc: t('sdkDemo.sdkZksplDesc') },
+    { name: "@protocol-01/privacy-toolkit", desc: t('sdkDemo.sdkPrivacyToolkitDesc') },
+    { name: "@protocol-01/auth-sdk", desc: t('sdkDemo.sdkAuthDesc') },
+    { name: "@protocol-01/p01-js", desc: t('sdkDemo.sdkP01JsDesc') },
+    { name: "@protocol-01/rpc-config", desc: t('sdkDemo.sdkRpcConfigDesc') },
+  ];
+
+  // Sub-labels are the checkable kind. The old "14 Anchor Programs" was a count
+  // no reader could verify, so it is gone.
+  const stack = [
+    { label: t('sdkDemo.archClientSdks'), sub: "specter · zk · zkspl" },
+    { label: t('sdkDemo.archProofLayer'), sub: "STARK · Poseidon · Merkle" },
+    { label: t('sdkDemo.archOnChain'), sub: "Solana devnet" },
+  ];
+
+  return (
+    <SectionShell
+      numeral="02"
+      index={t('sdkDemo.tabPrivacy')}
+      title={t('sdkDemo.privacySdksTitle')}
+      /* Was sdkDemo.privacySdksDesc, "17 TypeScript packages ...", printed
+         directly above a grid of seven. docs.heroSubtitle is an existing key
+         that says what the stack is without counting anything. */
+      lede={t('docs.heroSubtitle')}
+    >
+      <div className="styx-grid styx-grid-4">
+        {packages.map((sdk, i) => (
+          <Reveal className="styx-card styx-reveal" delay={i * 60} key={sdk.name}>
+            <p
+              className="styx-card-value"
+              style={{
+                fontFamily: "var(--styx-mono)",
+                fontSize: "0.8125rem",
+                lineHeight: 1.5,
+                wordBreak: "break-word",
+              }}
+            >
+              {sdk.name}
+            </p>
+            <p className="styx-card-note">{sdk.desc}</p>
+          </Reveal>
         ))}
       </div>
 
-      {/* Stealth Addresses */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.stealthTitle')}</h3>
-        <p className="text-p01-text-muted text-sm mb-4">
-          {t('sdkDemo.stealthDesc')}
-        </p>
+      {/* The note was sdkDemo.stealthDesc: "Generate unlinkable one-time
+          addresses ... Receive funds without revealing your identity". The
+          repo's own measurements contradict both halves, so the two existing
+          keys below carry the mechanism instead: the hybrid key exchange and
+          who can detect a payment. */}
+      <Block
+        title={t('sdkDemo.stealthTitle')}
+        note={`${t('sdkDemo.sdkSpecterDesc')} · ${t('docs.sections.stealthAddresses.detail4')}`}
+      >
         <CodeBlock
           title={t('sdkDemo.stealthCodeTitle')}
           code={`import { generateStealthAddress, scanForPayments } from '@protocol-01/specter-sdk';
@@ -550,10 +688,11 @@ function PrivacySDKSection() {
 const { stealthAddress, ephemeralPubKey } = generateStealthAddress({
   spendingPubKey: recipientMeta.spendingPubKey,
   viewingPubKey: recipientMeta.viewingPubKey,
-  useQuantumSafe: true,  // ML-KEM-768 hybrid mode
+  useQuantumSafe: true,  // hybrid X25519 + ML-KEM-768, FIPS 203
 });
 
-// Send funds to the stealth address — unlinkable to recipient
+// Pay the one-time address. The transfer itself is an ordinary Solana
+// transaction, signed with Ed25519.
 await transfer(connection, payer, stealthAddress, amount);
 
 // Recipient scans chain for payments addressed to them
@@ -562,14 +701,15 @@ const payments = await scanForPayments({
   fromSlot: lastScannedSlot,
 });`}
         />
-      </div>
+      </Block>
 
-      {/* ZK Proofs */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.zkProofsTitle')}</h3>
-        <p className="text-p01-text-muted text-sm mb-4">
-          {t('sdkDemo.zkProofsDesc')}
-        </p>
+      {/* The note was sdkDemo.zkProofsDesc, which quoted "~9-15KB per proof".
+          No benchmark on this page backs a size, so it is gone; these two
+          existing keys state what the proof system is instead. */}
+      <Block
+        title={t('sdkDemo.zkProofsTitle')}
+        note={`${t('sdkDemo.sdkZkDesc')} · ${t('docs.sections.zkProofs.detail7')}`}
+      >
         <CodeBlock
           title={t('sdkDemo.zkProofsCodeTitle')}
           code={`import { proveTransfer, verifyProof } from '@protocol-01/zk-sdk';
@@ -589,14 +729,9 @@ const tx = await submitShieldedTransfer(connection, wallet, {
   nullifier: publicSignals.nullifier,
 });`}
         />
-      </div>
+      </Block>
 
-      {/* Confidential SPL */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.confSplTitle')}</h3>
-        <p className="text-p01-text-muted text-sm mb-4">
-          {t('sdkDemo.confSplDesc')}
-        </p>
+      <Block title={t('sdkDemo.confSplTitle')} note={t('sdkDemo.confSplDesc')}>
         <CodeBlock
           title={t('sdkDemo.confSplCodeTitle')}
           code={`import { shieldTokens, unshieldTokens } from '@protocol-01/zkspl-sdk';
@@ -609,7 +744,10 @@ const shieldResult = await shieldTokens({
   pool: 'pool_100',    // 100 USDC denomination
 });
 
-// Later: unshield with ZK proof (no link to deposit)
+// Later: unshield behind a STARK proof.
+// Measured, and true today: the withdrawal republishes the deposit
+// commitment, so a reader can still pair a deposit with its withdrawal.
+// Do not read this as unlinkable.
 const unshieldResult = await unshieldTokens({
   connection, wallet,
   note: shieldResult.note,
@@ -617,14 +755,9 @@ const unshieldResult = await unshieldTokens({
   proof: await generateUnshieldProof(shieldResult.note),
 });`}
         />
-      </div>
+      </Block>
 
-      {/* Privacy Toolkit */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-2 font-display">{t('sdkDemo.privacyToolkitTitle')}</h3>
-        <p className="text-p01-text-muted text-sm mb-4">
-          {t('sdkDemo.privacyToolkitDesc')}
-        </p>
+      <Block title={t('sdkDemo.privacyToolkitTitle')} note={t('sdkDemo.privacyToolkitDesc')}>
         <CodeBlock
           title={t('sdkDemo.privacyToolkitCodeTitle')}
           code={`import { poseidonHash, MerkleTree, WOTSKeypair } from '@protocol-01/privacy-toolkit';
@@ -637,47 +770,38 @@ const tree = new MerkleTree(20); // depth 20
 tree.insert(commitment);
 const proof = tree.getProof(0); // path for leaf 0
 
-// WOTS+ one-time signature (quantum-resistant)
+// WOTS+ one-time signature, hash-based.
+// Transaction signatures on Solana stay Ed25519, and stay classical.
 const wots = WOTSKeypair.generate(secret, chainIndex);
 const signature = wots.sign(messageHash);
 const valid = WOTSKeypair.verify(wots.publicKey, messageHash, signature);`}
         />
-      </div>
+      </Block>
 
-      {/* Architecture callout */}
-      <div className="bg-p01-elevated/50 rounded-2xl p-6 border border-p01-border/50">
-        <h4 className="text-white font-semibold mb-4 font-display text-center">{t('sdkDemo.archTitle')}</h4>
-        <div className="flex items-center justify-center gap-4 text-center py-4 flex-wrap">
-          {[
-            { label: t('sdkDemo.archClientSdks'), sub: "specter · zk · zkspl", icon: Wallet },
-            { label: t('sdkDemo.archProofLayer'), sub: "STARK · ZK", icon: Shield },
-            { label: t('sdkDemo.archOnChain'), sub: "14 Anchor Programs", icon: Boxes },
-          ].map((item, i) => (
-            <React.Fragment key={item.label}>
-              {i > 0 && (
-                <div className="flex items-center gap-1">
-                  <div className="w-6 h-[2px] bg-gradient-to-r from-p01-cyan to-p01-cyan/50" />
-                  <div className="w-2 h-2 bg-p01-cyan rotate-45" />
-                </div>
-              )}
-              <div className="flex flex-col items-center gap-2">
-                <div className="w-14 h-14 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
-                  <item.icon size={24} className="text-p01-cyan" />
-                </div>
-                <span className="text-white text-xs font-display uppercase tracking-wider">{item.label}</span>
-                <span className="text-p01-text-dim text-[10px] font-mono">{item.sub}</span>
-              </div>
-            </React.Fragment>
+      <div>
+        <p className="styx-card-label">{t('sdkDemo.archTitle')}</p>
+        <div className="styx-grid styx-grid-3">
+          {stack.map((item, i) => (
+            <div className="styx-card" key={item.label}>
+              <p className="styx-card-label">0{i + 1}</p>
+              <p className="styx-card-value">{item.label}</p>
+              <p className="styx-card-note" style={{ fontFamily: "var(--styx-mono)", fontSize: "0.75rem" }}>
+                {item.sub}
+              </p>
+            </div>
           ))}
         </div>
-        <p className="text-p01-text-dim text-xs text-center mt-4 font-mono">
-          {t('sdkDemo.archFooter')}
+        {/* Was sdkDemo.archFooter, which ended on "Quantum-resistant by
+            default". Transaction signatures are Ed25519 and stay classical, so
+            that sentence covered ground the protocol does not hold.
+            explorer.circuits.subtitle is the measured description of the same
+            proof layer. */}
+        <p className="styx-note" style={{ marginTop: "1rem", fontFamily: "var(--styx-mono)" }}>
+          {t('explorer.circuits.subtitle')}
         </p>
       </div>
 
-      {/* Install */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4 font-display">{t('sdkDemo.installTitle')}</h3>
+      <Block title={t('sdkDemo.installTitle')}>
         <CodeBlock
           title={t('sdkDemo.installCodeTitle')}
           code={`# Core SDK
@@ -689,15 +813,15 @@ pnpm add @protocol-01/specter-sdk @protocol-01/zk-sdk @protocol-01/zkspl-sdk @pr
 # Optional: Auth
 pnpm add @protocol-01/auth-sdk`}
         />
-      </div>
-    </div>
+      </Block>
+    </SectionShell>
   );
 }
 
 // ============ Devnet Section ============
 function DevnetSection() {
   const t = useT();
-  const { publicKey, connected, walletAvailable, connect } = useP01Wallet();
+  const { publicKey, connected, walletAvailable } = useP01Wallet();
   const [balance, setBalance] = useState<number | null>(null);
   const [airdropLoading, setAirdropLoading] = useState(false);
   const [airdropStatus, setAirdropStatus] = useState<string | null>(null);
@@ -796,7 +920,7 @@ function DevnetSection() {
     try {
       // Build and send a REAL 0.001 SOL self-transfer on devnet, signed and
       // broadcast through the Protocol 01 extension (window.protocol01
-      // .signAndSendTransaction) — a genuine on-chain interaction, not a mock.
+      // .signAndSendTransaction), a genuine on-chain interaction, not a mock.
       const connection = new Connection("https://api.devnet.solana.com", "confirmed");
       const owner = new PublicKey(publicKey);
       const { blockhash } = await connection.getLatestBlockhash("confirmed");
@@ -820,187 +944,176 @@ function DevnetSection() {
   };
 
   return (
-    <div className="space-y-8">
-      <SectionHeader
-        icon={Cpu}
-        title={t('sdkDemo.devnetTitle')}
-        subtitle={t('sdkDemo.devnetDesc')}
-        accent="yellow"
-      />
-
-      {/* Wallet Connection Card */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4 font-display">{t('sdkDemo.connectWalletTitle')}</h3>
-
-        {!walletAvailable ? (
-          <div className="text-center py-8">
-            <div className="w-16 h-16 bg-p01-surface border border-p01-border mx-auto mb-4 flex items-center justify-center">
-              <Zap size={28} className="text-p01-text-dim" />
-            </div>
-            <p className="text-p01-text-muted mb-2">{t('sdkDemo.walletNotDetected')}</p>
-            <p className="text-p01-text-dim text-sm">{t('sdkDemo.walletNotDetectedHint')}</p>
-          </div>
-        ) : !connected ? (
-          <div className="text-center py-8">
-            <div className="w-16 h-16 bg-p01-cyan/10 border border-p01-cyan/30 mx-auto mb-4 flex items-center justify-center">
-              <Wallet size={28} className="text-p01-cyan" />
-            </div>
-            <p className="text-p01-text-muted mb-4">{t('sdkDemo.connectToStart')}</p>
-            <P01WalletButton variant="primary" size="lg" />
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between p-4 bg-p01-elevated rounded-xl border border-p01-border">
-              <div>
-                <p className="text-p01-text-dim text-xs mb-1">{t('sdkDemo.connectedAddress')}</p>
-                <p className="text-white font-mono text-sm">{publicKey}</p>
+    <SectionShell
+      numeral="01"
+      index={t('sdkDemo.tabDevnet')}
+      title={t('sdkDemo.devnetTitle')}
+      lede={t('sdkDemo.devnetDesc')}
+    >
+      {/* 1. Connect wallet. The three step titles carry their own numbers in
+          the dictionary, so no numeral is repeated beside them. */}
+      <div className="styx-panel">
+        <div className="styx-panel-head">
+          <h3 className="styx-h3" style={{ margin: 0 }}>{t('sdkDemo.connectWalletTitle')}</h3>
+        </div>
+        <div className="styx-panel-body">
+          {!walletAvailable ? (
+            <>
+              <p className="styx-card-note">{t('sdkDemo.walletNotDetected')}</p>
+              <p className="styx-note" style={{ marginTop: "0.4rem" }}>
+                {t('sdkDemo.walletNotDetectedHint')}
+              </p>
+            </>
+          ) : !connected ? (
+            <>
+              <p className="styx-card-note" style={{ marginBottom: "1.25rem" }}>
+                {t('sdkDemo.connectToStart')}
+              </p>
+              <P01WalletButton variant="primary" size="lg" />
+            </>
+          ) : (
+            <>
+              <div className="styx-row">
+                <span className="styx-row-key">{t('sdkDemo.connectedAddress')}</span>
+                <span className="styx-row-leader" />
+                <span className="styx-row-value">{publicKey}</span>
               </div>
-              <div className="text-right">
-                <p className="text-p01-text-dim text-xs mb-1">{t('sdkDemo.devnetBalance')}</p>
-                <p className="text-p01-cyan font-bold text-xl">
+              <div className="styx-row">
+                <span className="styx-row-key">{t('sdkDemo.devnetBalance')}</span>
+                <span className="styx-row-leader" />
+                <span className="styx-row-value">
                   {balance !== null ? `${balance.toFixed(4)} SOL` : '...'}
-                </p>
+                </span>
               </div>
-            </div>
-            <div className="flex items-center gap-2 p-3 bg-p01-cyan/10 rounded-lg border border-p01-cyan/30">
-              <CheckIcon color={THEME.primaryColor} />
-              <span className="text-p01-cyan text-sm font-medium">{t('sdkDemo.walletConnectedDevnet')}</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Airdrop Card */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4">{t('sdkDemo.getDevnetSolTitle')}</h3>
-
-        {!connected ? (
-          <p className="text-p01-text-dim text-center py-4">{t('sdkDemo.connectWalletFirst')}</p>
-        ) : (
-          <div className="space-y-4">
-            <p className="text-p01-text-muted text-sm">
-              {t('sdkDemo.devnetFaucetDesc')}
-            </p>
-
-            <button
-              onClick={requestAirdrop}
-              disabled={airdropLoading}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                width: '100%',
-                padding: '14px 24px',
-                backgroundColor: airdropLoading ? THEME.borderColor : THEME.primaryColor,
-                color: airdropLoading ? THEME.mutedColor : THEME.backgroundColor,
-                border: 'none',
-                borderRadius: '12px',
-                fontSize: '16px',
-                fontWeight: 600,
-                cursor: airdropLoading ? 'wait' : 'pointer',
-                transition: 'all 0.2s ease',
-              }}
-            >
-              {airdropLoading ? (
-                <>
-                  <LoadingSpinner color={THEME.mutedColor} />
-                  {t('sdkDemo.requestingAirdrop')}
-                </>
-              ) : (
-                <>
-                  <RefreshCw size={18} />
-                  {t('sdkDemo.requestAirdrop')}
-                </>
-              )}
-            </button>
-
-            {airdropStatus && (
-              <div className={`flex items-center gap-2 p-3 text-sm font-mono ${
-                airdropStatus.startsWith('SUCCESS')
-                  ? 'bg-p01-cyan/10 border border-p01-cyan/30 text-p01-cyan'
-                  : 'bg-red-500/10 border border-red-500/30 text-red-400'
-              }`}>
-                {airdropStatus.startsWith('SUCCESS') ? <Check size={16} /> : <X size={16} />}
-                {airdropStatus}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Real devnet payment via the extension */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4">{t('sdkDemo.testSigningTitle')}</h3>
-
-        {!connected ? (
-          <p className="text-p01-text-dim text-center py-4">{t('sdkDemo.connectWalletFirst')}</p>
-        ) : (
-          <div className="space-y-4">
-            <p className="text-p01-text-muted text-sm">
-              {t('sdkDemo.testSigningDesc')}
-            </p>
-
-            <button
-              onClick={sendTestPayment}
-              disabled={paymentLoading}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                width: '100%',
-                padding: '14px 24px',
-                backgroundColor: paymentLoading ? THEME.borderColor : THEME.secondaryColor,
-                color: paymentLoading ? THEME.mutedColor : THEME.backgroundColor,
-                border: 'none',
-                borderRadius: '12px',
-                fontSize: '16px',
-                fontWeight: 600,
-                cursor: paymentLoading ? 'wait' : 'pointer',
-                transition: 'all 0.2s ease',
-              }}
-            >
-              {paymentLoading ? (
-                <>
-                  <LoadingSpinner color={THEME.mutedColor} />
-                  {t('sdkDemo.waitingApproval')}
-                </>
-              ) : (
-                <>
-                  <FileText size={18} />
-                  {t('sdkDemo.signTestMessage')}
-                </>
-              )}
-            </button>
-
-            {paymentStatus && (
-              <div className={`flex items-center gap-2 p-3 text-sm font-mono ${
-                paymentStatus.startsWith('SUCCESS')
-                  ? 'bg-p01-cyan/10 border border-p01-cyan/30 text-p01-cyan'
-                  : 'bg-red-500/10 border border-red-500/30 text-red-400'
-              }`}>
-                {paymentStatus.startsWith('SUCCESS') ? <Check size={16} /> : <X size={16} />}
-                {paymentStatus}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Network Info */}
-      <div className="bg-p01-elevated/50 rounded-xl p-4 border border-p01-border/50">
-        <div className="flex items-center gap-3">
-          <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
-          <span className="text-p01-text-dim text-sm">
-            {t('sdkDemo.networkLabel')} <span className="text-yellow-500 font-medium">{t('sdkDemo.solanaDevnet')}</span>
-          </span>
-          <span className="text-p01-text-dim text-sm ml-auto">
-            {t('sdkDemo.rpcLabel')}
-          </span>
+              <p
+                className="styx-form-ok"
+                style={{ marginTop: "1rem", display: "flex", alignItems: "center", gap: "0.45rem" }}
+              >
+                <Check size={13} style={ICON_ACCENT} aria-hidden />
+                {t('sdkDemo.walletConnectedDevnet')}
+              </p>
+            </>
+          )}
         </div>
       </div>
-    </div>
+
+      {/* 2. Faucet */}
+      <div className="styx-panel">
+        <div className="styx-panel-head">
+          <h3 className="styx-h3" style={{ margin: 0 }}>{t('sdkDemo.getDevnetSolTitle')}</h3>
+        </div>
+        <div className="styx-panel-body">
+          {!connected ? (
+            <p className="styx-note">{t('sdkDemo.connectWalletFirst')}</p>
+          ) : (
+            <div className="styx-stack">
+              <p className="styx-card-note">{t('sdkDemo.devnetFaucetDesc')}</p>
+
+              <button
+                type="button"
+                onClick={requestAirdrop}
+                disabled={airdropLoading}
+                className="styx-btn"
+                style={{ width: "100%" }}
+              >
+                {airdropLoading ? (
+                  <>
+                    <LoadingSpinner />
+                    {t('sdkDemo.requestingAirdrop')}
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={14} aria-hidden />
+                    {t('sdkDemo.requestAirdrop')}
+                  </>
+                )}
+              </button>
+
+              {airdropStatus && (
+                <p
+                  className={airdropStatus.startsWith('SUCCESS') ? 'styx-form-ok' : 'styx-form-error'}
+                  style={{ display: "flex", alignItems: "flex-start", gap: "0.45rem", wordBreak: "break-word" }}
+                >
+                  {airdropStatus.startsWith('SUCCESS')
+                    ? <Check size={13} style={{ flex: "none", marginTop: "0.2rem" }} aria-hidden />
+                    : <X size={13} style={{ flex: "none", marginTop: "0.2rem" }} aria-hidden />}
+                  {airdropStatus}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 3. A real devnet transfer through the extension */}
+      <div className="styx-panel">
+        <div className="styx-panel-head">
+          <h3 className="styx-h3" style={{ margin: 0 }}>{t('sdkDemo.testSigningTitle')}</h3>
+        </div>
+        <div className="styx-panel-body">
+          {!connected ? (
+            <p className="styx-note">{t('sdkDemo.connectWalletFirst')}</p>
+          ) : (
+            <div className="styx-stack">
+              <p className="styx-card-note">{t('sdkDemo.testSigningDesc')}</p>
+
+              <button
+                type="button"
+                onClick={sendTestPayment}
+                disabled={paymentLoading}
+                className="styx-btn"
+                style={{ width: "100%" }}
+              >
+                {paymentLoading ? (
+                  <>
+                    <LoadingSpinner />
+                    {t('sdkDemo.waitingApproval')}
+                  </>
+                ) : (
+                  <>
+                    <FileText size={14} aria-hidden />
+                    {t('sdkDemo.signTestMessage')}
+                  </>
+                )}
+              </button>
+
+              {paymentStatus && (
+                <p
+                  className={paymentStatus.startsWith('SUCCESS') ? 'styx-form-ok' : 'styx-form-error'}
+                  style={{ display: "flex", alignItems: "flex-start", gap: "0.45rem", wordBreak: "break-word" }}
+                >
+                  {paymentStatus.startsWith('SUCCESS')
+                    ? <Check size={13} style={{ flex: "none", marginTop: "0.2rem" }} aria-hidden />
+                    : <X size={13} style={{ flex: "none", marginTop: "0.2rem" }} aria-hidden />}
+                  {paymentStatus}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Where this actually runs */}
+      <div className="styx-panel">
+        <div className="styx-panel-body">
+          <div className="styx-row">
+            <span className="styx-row-key">{t('sdkDemo.networkLabel')}</span>
+            <span className="styx-row-leader" />
+            <span className="styx-row-value">
+              <span
+                className="styx-dot"
+                style={{ display: "inline-block", marginRight: "0.5rem" }}
+                aria-hidden="true"
+              />
+              {t('sdkDemo.solanaDevnet')}
+            </span>
+          </div>
+          <p className="styx-note" style={{ fontFamily: "var(--styx-mono)", marginTop: "0.35rem" }}>
+            {t('sdkDemo.rpcLabel')}
+          </p>
+        </div>
+      </div>
+    </SectionShell>
   );
 }
 
@@ -1104,307 +1217,360 @@ function StreamSDKSection() {
     }
   };
 
-  return (
-    <div className="space-y-8">
-      <SectionHeader
-        icon={RefreshCw}
-        title={t('sdkDemo.streamTitle')}
-        subtitle={t('sdkDemo.streamDesc')}
-        accent="pink"
-      />
+  const features = [
+    // The first card used to read "100% Serverless / No centralized API". This
+    // component POSTs to /api/whitelist and to a Discord webhook a few lines
+    // above, so the card contradicted its own file. It now states where the SDK
+    // runs, which is checkable.
+    { icon: Link2, title: t('roadmap.devnetOnly'), desc: t('sdkDemo.rpcLabel') },
+    { icon: FileCode, title: t('sdkDemo.featSmartContract'), desc: t('sdkDemo.featOnChainVerif') },
+    { icon: Ticket, title: t('sdkDemo.featWhitelist'), desc: t('sdkDemo.featVerifiedDevs') },
+    { icon: Lock, title: t('sdkDemo.featClosedCircuit'), desc: t('sdkDemo.featP01Required') },
+    { icon: ShieldCheck, title: t('sdkDemo.featImmutablePricing'), desc: t('sdkDemo.featPricesLocked') },
+    { icon: Hand, title: t('sdkDemo.featCancelAnytime'), desc: t('sdkDemo.featUserControls') },
+  ];
 
-      {/* Simple Explanation for Beginners */}
-      <div className="bg-p01-elevated/50 rounded-2xl p-6 border border-p01-border/50">
-        <h3 className="text-lg font-semibold text-white mb-4 font-display flex items-center gap-2">
-          <Eye size={18} className="text-p01-cyan" />
-          {t('sdkDemo.simpleTermsTitle')}
-        </h3>
-        <div className="space-y-4 text-p01-text-muted">
-          <p>
-            <span className="text-white font-semibold">{t('sdkDemo.simpleTermsIntro')}</span>{t('sdkDemo.simpleTermsIntroSuffix')}
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-4 bg-p01-void/50 border border-p01-border">
-              <p className="text-p01-pink font-semibold mb-2">&#x274C; {t('sdkDemo.traditionalSubs')}</p>
-              <ul className="text-sm space-y-1">
-                <li>&#x2022; {t('sdkDemo.tradSub1')}</li>
-                <li>&#x2022; {t('sdkDemo.tradSub2')}</li>
-                <li>&#x2022; {t('sdkDemo.tradSub3')}</li>
+  // The three hops a charge takes. Named for the path, not for what is absent
+  // from it: this same component also talks to /api/whitelist and to a Discord
+  // webhook, so "no server" was never this file's to say.
+  const paymentPath = [
+    t('sdkDemo.archYourDapp'),
+    t('sdkDemo.archSmartContract'),
+    t('sdkDemo.archSolana'),
+  ];
+
+  return (
+    <SectionShell
+      numeral="03"
+      index={t('sdkDemo.tabStreams')}
+      title={t('sdkDemo.streamTitle')}
+      lede={t('sdkDemo.streamDesc')}
+    >
+      {/* In simple terms */}
+      <div className="styx-panel">
+        <div className="styx-panel-head">
+          <h3 className="styx-h3" style={{ margin: 0 }}>{t('sdkDemo.simpleTermsTitle')}</h3>
+        </div>
+        <div className="styx-panel-body">
+          <div className="styx-prose" style={{ marginBottom: "1.5rem" }}>
+            <p>
+              <strong>{t('sdkDemo.simpleTermsIntro')}</strong>{t('sdkDemo.simpleTermsIntroSuffix')}
+            </p>
+          </div>
+          <div className="styx-grid styx-grid-2">
+            <div className="styx-card">
+              <p className="styx-card-label">{t('sdkDemo.traditionalSubs')}</p>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {[t('sdkDemo.tradSub1'), t('sdkDemo.tradSub2'), t('sdkDemo.tradSub3')].map((line) => (
+                  <li key={line} className="styx-card-note" style={{ marginBottom: "0.45rem" }}>
+                    <X size={12} style={{ ...ICON_FAINT, display: "inline-block", verticalAlign: "-1px", marginRight: "0.5rem" }} aria-hidden />
+                    {line}
+                  </li>
+                ))}
               </ul>
             </div>
-            <div className="p-4 bg-p01-void/50 border border-p01-cyan/30">
-              <p className="text-p01-cyan font-semibold mb-2">&#x2705; {t('sdkDemo.withProtocol01')}</p>
-              <ul className="text-sm space-y-1">
-                <li>&#x2022; {t('sdkDemo.p01Sub1')}</li>
-                <li>&#x2022; {t('sdkDemo.p01Sub2')}</li>
-                <li>&#x2022; {t('sdkDemo.p01Sub3')}</li>
+            <div className="styx-card">
+              <p className="styx-card-label">{t('sdkDemo.withProtocol01')}</p>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {[t('sdkDemo.p01Sub1'), t('sdkDemo.p01Sub2'), t('sdkDemo.p01Sub3')].map((line) => (
+                  <li key={line} className="styx-card-note" style={{ marginBottom: "0.45rem" }}>
+                    <Check size={12} style={{ ...ICON_ACCENT, display: "inline-block", verticalAlign: "-1px", marginRight: "0.5rem" }} aria-hidden />
+                    {line}
+                  </li>
+                ))}
               </ul>
             </div>
           </div>
-          <p className="text-sm text-p01-text-dim">
-            <span className="text-p01-cyan">{t('sdkDemo.simpleTermsSummaryPrefix')}</span>{t('sdkDemo.simpleTermsSummary')}
+          {/* Was sdkDemo.simpleTermsSummary: "It's like Netflix signing a
+              contract with you, they can never change the terms once you've
+              agreed." A Netflix name-drop plus an absolute promise. The summary
+              is now sdkDemo.priceLockedDesc, which states the locked price and
+              says out loud that a subscription cannot be cancelled and the
+              protocol cannot refund. */}
+          <p className="styx-note" style={{ marginTop: "1.25rem" }}>
+            <span style={{ color: "var(--styx-accent)" }}>{t('sdkDemo.simpleTermsSummaryPrefix')}</span>
+            {' '}
+            {t('sdkDemo.priceLockedDesc')}
           </p>
         </div>
       </div>
 
-      {/* Key Features */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {[
-          { icon: Link2, title: t('sdkDemo.feat100Serverless'), desc: t('sdkDemo.featNoApi'), color: "cyan" },
-          { icon: FileCode, title: t('sdkDemo.featSmartContract'), desc: t('sdkDemo.featOnChainVerif'), color: "cyan" },
-          { icon: Ticket, title: t('sdkDemo.featWhitelist'), desc: t('sdkDemo.featVerifiedDevs'), color: "pink" },
-          { icon: Lock, title: t('sdkDemo.featClosedCircuit'), desc: t('sdkDemo.featP01Required'), color: "pink" },
-          { icon: ShieldCheck, title: t('sdkDemo.featImmutablePricing'), desc: t('sdkDemo.featPricesLocked'), color: "cyan" },
-          { icon: Hand, title: t('sdkDemo.featCancelAnytime'), desc: t('sdkDemo.featUserControls'), color: "cyan" },
-        ].map((feature) => {
+      {/* What the SDK is made of */}
+      <div className="styx-grid styx-grid-3">
+        {features.map((feature, i) => {
           const IconComponent = feature.icon;
-          const colorClass = feature.color === "cyan" ? "text-p01-cyan" : "text-p01-pink";
-          const bgClass = feature.color === "cyan" ? "bg-p01-cyan/10 border-p01-cyan/30" : "bg-p01-pink/10 border-p01-pink/30";
           return (
-            <div key={feature.title} className="bg-p01-surface rounded-xl p-4 border border-p01-border group hover:border-p01-cyan/50 transition-all">
-              <div className={`w-10 h-10 ${bgClass} border flex items-center justify-center mb-3`}>
-                <IconComponent size={20} className={colorClass} />
-              </div>
-              <h4 className="text-white font-semibold mb-1 font-display">{feature.title}</h4>
-              <p className="text-p01-text-dim text-sm font-mono">{feature.desc}</p>
-            </div>
+            <Reveal className="styx-card styx-reveal" delay={i * 60} key={feature.title}>
+              <IconComponent size={16} style={ICON_FAINT} aria-hidden />
+              <p className="styx-card-value" style={{ fontSize: "1.15rem", margin: "0.9rem 0 0.4rem" }}>
+                {feature.title}
+              </p>
+              <p className="styx-card-note" style={{ fontFamily: "var(--styx-mono)", fontSize: "0.75rem" }}>
+                {feature.desc}
+              </p>
+            </Reveal>
           );
         })}
       </div>
 
-      {/* Security Alert - Immutable Pricing */}
-      <div className="bg-p01-cyan/5 p-6 border border-p01-cyan/30">
-        <div className="flex items-start gap-4">
-          <div className="w-12 h-12 bg-p01-cyan/20 border border-p01-cyan/40 flex items-center justify-center flex-shrink-0">
-            <ShieldCheck size={24} className="text-p01-cyan" />
+      {/* Customer protection. The one-way rule that used to sit here is now the
+          amber admission under the hero, where it cannot be scrolled past. */}
+      <div className="styx-panel">
+        <div className="styx-panel-head">
+          <h3 className="styx-h3" style={{ margin: 0 }}>{t('sdkDemo.customerProtectionTitle')}</h3>
+        </div>
+        <div className="styx-panel-body">
+          <div className="styx-prose" style={{ marginBottom: "1.5rem" }}>
+            <p>
+              <strong>{t('sdkDemo.customerProtectionIntro')}</strong>
+              {t('sdkDemo.customerProtectionDesc1')}
+              <strong>{t('sdkDemo.customerProtectionLocked')}</strong>
+              {t('sdkDemo.customerProtectionDesc1Suffix')}
+            </p>
+            <p>
+              {t('sdkDemo.customerProtectionDesc2')}
+              <strong>{t('sdkDemo.customerProtectionCannotTouch')}</strong>
+              {t('sdkDemo.customerProtectionDesc2Suffix')}
+            </p>
           </div>
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-p01-cyan mb-2 font-display">{t('sdkDemo.customerProtectionTitle')}</h3>
-            <p className="text-p01-text-muted text-sm mb-2">
-              <span className="text-white font-semibold">{t('sdkDemo.customerProtectionIntro')}</span>{t('sdkDemo.customerProtectionDesc1')}<span className="text-p01-cyan font-semibold">{t('sdkDemo.customerProtectionLocked')}</span>{t('sdkDemo.customerProtectionDesc1Suffix')}
-            </p>
-            <p className="text-p01-text-muted text-sm mb-4">
-              {t('sdkDemo.customerProtectionDesc2')}<span className="text-p01-pink font-semibold">{t('sdkDemo.customerProtectionCannotTouch')}</span>{t('sdkDemo.customerProtectionDesc2Suffix')}
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="bg-p01-void/50 p-3 border border-p01-cyan/20">
-                <div className="flex items-center gap-2 mb-1">
-                  <Check size={14} className="text-p01-cyan" />
-                  <p className="text-p01-cyan text-xs font-mono">{t('sdkDemo.youCan')}</p>
-                </div>
-                <p className="text-p01-text-muted text-sm">{t('sdkDemo.youCanDesc')}</p>
-              </div>
-              <div className="bg-p01-void/50 p-3 border border-p01-cyan/20">
-                <div className="flex items-center gap-2 mb-1">
-                  <Check size={14} className="text-p01-cyan" />
-                  <p className="text-p01-cyan text-xs font-mono">{t('sdkDemo.devCan')}</p>
-                </div>
-                <p className="text-p01-text-muted text-sm">{t('sdkDemo.devCanDesc')}</p>
-              </div>
-              <div className="bg-p01-void/50 p-3 border border-p01-pink/30">
-                <div className="flex items-center gap-2 mb-1">
-                  <X size={14} className="text-p01-pink" />
-                  <p className="text-p01-pink text-xs font-mono">{t('sdkDemo.impossible')}</p>
-                </div>
-                <p className="text-p01-text-muted text-sm">{t('sdkDemo.impossibleDesc')}</p>
-              </div>
-              {/*
-                The one-way rule. A subscription is a prepaid envelope: the
-                protocol has no cancellation instruction and cannot refund. Say
-                so next to what the subscriber CAN do, not in a footnote.
-              */}
-              <div className="bg-p01-void/50 p-3 border border-p01-pink/30 md:col-span-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <X size={14} className="text-p01-pink" />
-                  <p className="text-p01-pink text-xs font-mono">{t('sdkDemo.noRefundTitle')}</p>
-                </div>
-                <p className="text-p01-text-muted text-sm">{t('sdkDemo.noRefundDesc')}</p>
-              </div>
+          <div className="styx-grid styx-grid-3">
+            <div className="styx-card">
+              <p className="styx-card-label">
+                <Check size={12} style={{ ...ICON_ACCENT, display: "inline-block", verticalAlign: "-1px", marginRight: "0.4rem" }} aria-hidden />
+                {t('sdkDemo.youCan')}
+              </p>
+              <p className="styx-card-note">{t('sdkDemo.youCanDesc')}</p>
+            </div>
+            <div className="styx-card">
+              <p className="styx-card-label">
+                <Check size={12} style={{ ...ICON_ACCENT, display: "inline-block", verticalAlign: "-1px", marginRight: "0.4rem" }} aria-hidden />
+                {t('sdkDemo.devCan')}
+              </p>
+              <p className="styx-card-note">{t('sdkDemo.devCanDesc')}</p>
+            </div>
+            <div className="styx-card">
+              <p className="styx-card-label">
+                <X size={12} style={{ ...ICON_FAINT, display: "inline-block", verticalAlign: "-1px", marginRight: "0.4rem" }} aria-hidden />
+                {t('sdkDemo.impossible')}
+              </p>
+              <p className="styx-card-note">{t('sdkDemo.impossibleDesc')}</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Developer Access Card */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4 font-display">{t('sdkDemo.devAccessTitle')}</h3>
-        <p className="text-p01-text-muted text-sm mb-4">
-          {t('sdkDemo.devAccessDesc')}
-        </p>
+      {/* Developer access */}
+      <div className="styx-panel">
+        <div className="styx-panel-head">
+          <h3 className="styx-h3" style={{ margin: 0 }}>{t('sdkDemo.devAccessTitle')}</h3>
+          <p className="styx-card-note" style={{ marginTop: "0.5rem" }}>{t('sdkDemo.devAccessDesc')}</p>
+        </div>
+        <div className="styx-panel-body">
+          {!walletAvailable ? (
+            <p className="styx-note" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <Wallet size={14} style={ICON_FAINT} aria-hidden />
+              {t('sdkDemo.installWalletToCheck')}
+            </p>
+          ) : !connected ? (
+            <>
+              <p className="styx-card-note" style={{ marginBottom: "1.25rem" }}>
+                {t('sdkDemo.connectToVerify')}
+              </p>
+              <P01WalletButton variant="primary" size="lg" />
+            </>
+          ) : hasDevAccess === null ? (
+            <p className="styx-note" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <LoadingSpinner />
+              {t('sdkDemo.checkingWhitelist')}
+            </p>
+          ) : hasDevAccess ? (
+            <div className="styx-stack">
+              <span className="styx-chip">
+                <span className="styx-dot" aria-hidden="true" />
+                {t('sdkDemo.devAccessVerified')}
+              </span>
+              <p className="styx-note" style={{ fontFamily: "var(--styx-mono)" }}>
+                {t('sdkDemo.devAccessFullAccess')}
+              </p>
+            </div>
+          ) : (
+            <div className="styx-stack">
+              <span className="styx-chip">
+                <Ban size={11} style={ICON_FAINT} aria-hidden />
+                {t('sdkDemo.accessNotGranted')}
+              </span>
+              <p className="styx-note" style={{ fontFamily: "var(--styx-mono)" }}>
+                {t('sdkDemo.walletNotWhitelisted')}
+              </p>
 
-        {!walletAvailable ? (
-          <div className="text-center py-6">
-            <div className="w-16 h-16 bg-p01-surface border border-p01-border mx-auto mb-4 flex items-center justify-center">
-              <Zap size={28} className="text-p01-text-dim" />
-            </div>
-            <p className="text-p01-text-muted mb-4">{t('sdkDemo.installWalletToCheck')}</p>
-          </div>
-        ) : !connected ? (
-          <div className="text-center py-6">
-            <div className="w-16 h-16 bg-p01-cyan/10 border border-p01-cyan/30 mx-auto mb-4 flex items-center justify-center">
-              <Wallet size={28} className="text-p01-cyan" />
-            </div>
-            <p className="text-p01-text-muted mb-4">{t('sdkDemo.connectToVerify')}</p>
-            <P01WalletButton variant="primary" size="lg" />
-          </div>
-        ) : hasDevAccess === null ? (
-          <div className="flex items-center justify-center py-6 gap-3">
-            <LoadingSpinner color={THEME.primaryColor} />
-            <span className="text-p01-text-muted">{t('sdkDemo.checkingWhitelist')}</span>
-          </div>
-        ) : hasDevAccess ? (
-          <div className="space-y-4">
-            <div className="flex items-center gap-3 p-4 bg-p01-cyan/10 border border-p01-cyan/30">
-              <div className="w-12 h-12 bg-p01-cyan/20 border border-p01-cyan/40 flex items-center justify-center">
-                <Ticket size={24} className="text-p01-cyan" />
-              </div>
-              <div className="flex-1">
-                <p className="text-p01-cyan font-semibold font-display">{t('sdkDemo.devAccessVerified')}</p>
-                <p className="text-p01-text-dim text-sm font-mono">{t('sdkDemo.devAccessFullAccess')}</p>
-              </div>
-              <div className="w-8 h-8 bg-p01-cyan/20 border border-p01-cyan/40 flex items-center justify-center">
-                <Check size={16} className="text-p01-cyan" />
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="flex items-center gap-3 p-4 bg-p01-pink/10 border border-p01-pink/30">
-              <div className="w-12 h-12 bg-p01-pink/20 border border-p01-pink/40 flex items-center justify-center">
-                <Ban size={24} className="text-p01-pink" />
-              </div>
-              <div className="flex-1">
-                <p className="text-p01-pink font-semibold font-display">{t('sdkDemo.accessNotGranted')}</p>
-                <p className="text-p01-text-dim text-sm font-mono">{t('sdkDemo.walletNotWhitelisted')}</p>
-              </div>
-            </div>
-            {formSubmitted ? (
-              <div className="p-4 bg-p01-cyan/10 border border-p01-cyan/30">
-                <div className="flex items-center gap-2 mb-2">
-                  <Check size={16} className="text-p01-cyan" />
-                  <span className="text-p01-cyan font-semibold">{t('sdkDemo.requestSubmitted')}</span>
-                </div>
-                <p className="text-p01-text-muted text-sm">
-                  {t('sdkDemo.requestReviewMsg')}
-                  {' '}<a href="https://discord.gg/EfqnVmb2dV" target="_blank" rel="noopener noreferrer" className="text-p01-cyan hover:underline">{t('sdkDemo.fasterResponse')}</a>
-                </p>
-              </div>
-            ) : showRequestForm ? (
-              <form onSubmit={handleSubmitRequest} className="space-y-4">
+              {formSubmitted ? (
                 <div>
-                  <label className="block text-p01-text-muted text-sm mb-1">{t('sdkDemo.formEmail')}</label>
-                  <input
-                    type="email"
-                    required
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    placeholder={t('sdkDemo.formEmailPlaceholder')}
-                    className="w-full px-4 py-2 bg-p01-void border border-p01-border text-white placeholder-p01-text-dim focus:border-p01-cyan focus:outline-none"
-                  />
+                  <p className="styx-form-ok" style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
+                    <Check size={13} style={ICON_ACCENT} aria-hidden />
+                    {t('sdkDemo.requestSubmitted')}
+                  </p>
+                  <p className="styx-card-note" style={{ marginTop: "0.5rem" }}>
+                    {t('sdkDemo.requestReviewMsg')}
+                    {' '}
+                    <a
+                      className="styx-link"
+                      href="https://discord.gg/EfqnVmb2dV"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {t('sdkDemo.fasterResponse')}
+                    </a>
+                  </p>
                 </div>
+              ) : showRequestForm ? (
+                <form onSubmit={handleSubmitRequest} className="styx-stack">
+                  <div className="styx-field">
+                    <label className="styx-label" htmlFor="sdk-access-email">
+                      {t('sdkDemo.formEmail')}
+                    </label>
+                    <input
+                      id="sdk-access-email"
+                      className="styx-input"
+                      type="email"
+                      required
+                      value={formData.email}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      placeholder={t('sdkDemo.formEmailPlaceholder')}
+                    />
+                  </div>
+                  <div className="styx-field">
+                    <label className="styx-label" htmlFor="sdk-access-project">
+                      {t('sdkDemo.formProjectName')}
+                    </label>
+                    <input
+                      id="sdk-access-project"
+                      className="styx-input"
+                      type="text"
+                      required
+                      value={formData.projectName}
+                      onChange={(e) => setFormData({ ...formData, projectName: e.target.value })}
+                      placeholder={t('sdkDemo.formProjectPlaceholder')}
+                    />
+                  </div>
+                  <div className="styx-field">
+                    <label className="styx-label" htmlFor="sdk-access-website">
+                      {t('sdkDemo.formWebsite')}
+                    </label>
+                    <input
+                      id="sdk-access-website"
+                      className="styx-input"
+                      type="url"
+                      value={formData.website}
+                      onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+                      placeholder={t('sdkDemo.formWebsitePlaceholder')}
+                    />
+                  </div>
+                  <div className="styx-field">
+                    <label className="styx-label" htmlFor="sdk-access-desc">
+                      {t('sdkDemo.formProjectDesc')}
+                    </label>
+                    <textarea
+                      id="sdk-access-desc"
+                      className="styx-textarea"
+                      value={formData.projectDescription}
+                      onChange={(e) => setFormData({ ...formData, projectDescription: e.target.value })}
+                      placeholder={t('sdkDemo.formDescPlaceholder')}
+                      rows={3}
+                      style={{ resize: "vertical" }}
+                    />
+                  </div>
+                  <div className="styx-btn-row">
+                    <button
+                      type="button"
+                      onClick={() => setShowRequestForm(false)}
+                      className="styx-btn-ghost"
+                    >
+                      {t('sdkDemo.cancelBtn')}
+                    </button>
+                    <button type="submit" disabled={formLoading} className="styx-btn">
+                      {formLoading ? t('sdkDemo.submitting') : t('sdkDemo.submitRequest')}
+                    </button>
+                  </div>
+                  {/* Was sdkDemo.formPrivacyNote, "Your data is encrypted and
+                      stored securely". handleSubmitRequest above POSTs the
+                      email and project name as plaintext JSON to
+                      /api/whitelist, and mirrors website and description to a
+                      Discord webhook, so the page cannot say that. This says
+                      what actually happens to the request. */}
+                  <p className="styx-note">{t('sdkDemo.requestReviewMsg')}</p>
+                </form>
+              ) : (
                 <div>
-                  <label className="block text-p01-text-muted text-sm mb-1">{t('sdkDemo.formProjectName')}</label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.projectName}
-                    onChange={(e) => setFormData({ ...formData, projectName: e.target.value })}
-                    placeholder={t('sdkDemo.formProjectPlaceholder')}
-                    className="w-full px-4 py-2 bg-p01-void border border-p01-border text-white placeholder-p01-text-dim focus:border-p01-cyan focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-p01-text-muted text-sm mb-1">{t('sdkDemo.formWebsite')}</label>
-                  <input
-                    type="url"
-                    value={formData.website}
-                    onChange={(e) => setFormData({ ...formData, website: e.target.value })}
-                    placeholder={t('sdkDemo.formWebsitePlaceholder')}
-                    className="w-full px-4 py-2 bg-p01-void border border-p01-border text-white placeholder-p01-text-dim focus:border-p01-cyan focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-p01-text-muted text-sm mb-1">{t('sdkDemo.formProjectDesc')}</label>
-                  <textarea
-                    value={formData.projectDescription}
-                    onChange={(e) => setFormData({ ...formData, projectDescription: e.target.value })}
-                    placeholder={t('sdkDemo.formDescPlaceholder')}
-                    rows={3}
-                    className="w-full px-4 py-2 bg-p01-void border border-p01-border text-white placeholder-p01-text-dim focus:border-p01-cyan focus:outline-none resize-none"
-                  />
-                </div>
-                <div className="flex gap-3">
                   <button
                     type="button"
-                    onClick={() => setShowRequestForm(false)}
-                    className="flex-1 py-2 bg-p01-surface border border-p01-border text-p01-text-muted hover:text-white transition-colors"
+                    onClick={() => setShowRequestForm(true)}
+                    className="styx-btn"
                   >
-                    {t('sdkDemo.cancelBtn')}
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={formLoading}
-                    className="flex-1 py-2 bg-p01-cyan text-p01-void font-semibold hover:bg-p01-cyan/90 transition-colors disabled:opacity-50"
-                  >
-                    {formLoading ? t('sdkDemo.submitting') : t('sdkDemo.submitRequest')}
+                    {t('sdkDemo.requestDevAccess')}
                   </button>
                 </div>
-                <p className="text-p01-text-dim text-xs text-center">
-                  {t('sdkDemo.formPrivacyNote')}
-                </p>
-              </form>
-            ) : (
-              <button
-                onClick={() => setShowRequestForm(true)}
-                className="w-full py-3 bg-p01-pink text-white font-semibold hover:bg-p01-pink/90 transition-colors font-display uppercase tracking-wider text-sm"
-              >
-                {t('sdkDemo.requestDevAccess')}
-              </button>
-            )}
-            <p className="text-p01-text-dim text-xs text-center mt-3">
-              {t('sdkDemo.walletLabel')} <span className="font-mono text-p01-text-muted">{publicKey}</span>
-            </p>
-          </div>
-        )}
+              )}
+
+              <div className="styx-row">
+                <span className="styx-row-key">{t('sdkDemo.walletLabel')}</span>
+                <span className="styx-row-leader" />
+                <span className="styx-row-value">{publicKey}</span>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* SDK Integration */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4">{t('sdkDemo.sdkIntegrationTitle')}</h3>
-        <p className="text-p01-text-muted text-sm mb-6">
-          {t('sdkDemo.sdkIntegrationDesc')}
-        </p>
-
+      {/* 2. SDK integration */}
+      <Block title={t('sdkDemo.sdkIntegrationTitle')} note={t('sdkDemo.sdkIntegrationDesc')}>
         <CodeBlock
           title={t('sdkDemo.sdkIntegrationCodeTitle')}
           code={`import { P01SDK, STREAM_PROGRAM_ID } from '@protocol-01/p01-js';
 
-// Connect with your P01 wallet - no API keys!
+// Connect with your P01 wallet. The wallet is the identity, so there
+// is no API key to provision.
 const p01 = new P01SDK({
   wallet: connectedWallet,  // Your Protocol 01 wallet
-  network: "mainnet"        // or "devnet" for testing
+  network: "devnet"         // devnet is the only deployment there is
 });
 
-// Smart contract verifies you hold the Developer NFT
-// No server request - pure on-chain verification
+// This asks the program whether the wallet holds the Developer NFT.
+// The access panel above is a DIFFERENT gate: it calls /api/whitelist,
+// a server this site runs, and a human approves the request.
 const isAuthorized = await p01.verifyDeveloperAccess();
 
 if (!isAuthorized) {
   throw new Error("Developer NFT required");
 }`}
         />
-      </div>
+      </Block>
 
-      {/* Create Stream */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4">{t('sdkDemo.createStreamTitle')}</h3>
-        <p className="text-p01-text-muted text-sm mb-2">
-          {t('sdkDemo.createStreamDesc')}<span className="text-p01-pink font-semibold">{t('sdkDemo.createStreamWarning')}</span>{t('sdkDemo.createStreamWarningSuffix')}
+      {/* 3. Create stream */}
+      <Block
+        title={t('sdkDemo.createStreamTitle')}
+        note={
+          <>
+            {t('sdkDemo.createStreamDesc')}
+            <strong>{t('sdkDemo.createStreamWarning')}</strong>
+            {t('sdkDemo.createStreamWarningSuffix')}
+          </>
+        }
+      >
+        <p
+          className="styx-note"
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: "0.6rem",
+            fontFamily: "var(--styx-mono)",
+            border: "1px solid var(--styx-rule)",
+            padding: "0.75rem 1rem",
+            marginBottom: "1.25rem",
+          }}
+        >
+          <AlertTriangle size={14} style={{ ...ICON_FAINT, marginTop: "0.15rem" }} aria-hidden />
+          {t('sdkDemo.closedCircuitWarning')}
         </p>
-        <div className="flex items-center gap-3 p-3 bg-p01-pink/10 border border-p01-pink/30 mb-6">
-          <AlertTriangle size={18} className="text-p01-pink flex-shrink-0" />
-          <span className="text-p01-pink text-sm font-mono">{t('sdkDemo.closedCircuitWarning')}</span>
-        </div>
 
         <CodeBlock
           title={t('sdkDemo.createStreamCodeTitle')}
@@ -1412,7 +1578,7 @@ if (!isAuthorized) {
 // Both parties must have P01 wallet!
 const stream = await p01.streams.create({
   recipient: "p01:7xK9f...8c2e", // Must have P01 wallet
-  amount: "9.99",                 // ⚠️ IMMUTABLE once subscribed!
+  amount: "9.99",                 // immutable once subscribed
   token: "USDC",
   interval: "monthly",
   programId: STREAM_PROGRAM_ID
@@ -1424,29 +1590,24 @@ const stream = await p01.streams.create({
 // 3. LOCKS the price in the subscription record
 // 4. Handles automatic payments at LOCKED price
 
-// ⛔ IMPOSSIBLE for developer to do:
+// Impossible for the developer to do:
 // stream.updatePrice("19.99") // ERROR: Price is immutable
 
-// ⛔ IMPOSSIBLE for ANYONE, including the subscriber:
+// Impossible for ANYONE, including the subscriber:
 // stream.cancel() // ERROR: there is no cancellation instruction.
 // A subscription is a one-way prepaid envelope. The protocol cannot
 // return money to the subscriber. A merchant may refund off-band
 // from its own wallet, but that is the merchant's own transfer.
 
-// ✅ Only the SUBSCRIBER can pause and resume:
+// Only the SUBSCRIBER can pause and resume:
 // Called from subscriber's wallet only
 await p01.streams.pause({ streamId: stream.id });
 await p01.streams.resume({ streamId: stream.id });`}
         />
-      </div>
+      </Block>
 
-      {/* Verify & Manage */}
-      <div className="bg-p01-surface rounded-2xl p-6 border border-p01-border">
-        <h3 className="text-lg font-semibold text-white mb-4">{t('sdkDemo.onChainVerifTitle')}</h3>
-        <p className="text-p01-text-muted text-sm mb-6">
-          {t('sdkDemo.onChainVerifDesc')}
-        </p>
-
+      {/* 4. On-chain verification */}
+      <Block title={t('sdkDemo.onChainVerifTitle')} note={t('sdkDemo.onChainVerifDesc')}>
         <CodeBlock
           title={t('sdkDemo.onChainVerifCodeTitle')}
           code={`// Query streams directly from blockchain
@@ -1464,7 +1625,7 @@ const activeStreams = await p01.streams.query({
 // Verify subscription with locked price
 const subscription = await p01.streams.get(streamId);
 
-// ✅ ONLY the subscriber can pause and resume (from their wallet)
+// ONLY the subscriber can pause and resume (from their wallet)
 // Developer CANNOT pause, resume or modify!
 // There is NO cancel: the protocol cannot refund a subscriber.
 await p01.streams.pause({
@@ -1472,112 +1633,84 @@ await p01.streams.pause({
   // Requires subscriber's wallet signature
 });`}
         />
-      </div>
+      </Block>
 
-      {/* Architecture Diagram */}
-      <div className="bg-p01-elevated/50 rounded-2xl p-6 border border-p01-border/50">
-        <h4 className="text-white font-semibold mb-6 font-display text-center">{t('sdkDemo.archNoServerTitle')}</h4>
-        <div className="flex items-center justify-center gap-6 text-center py-4">
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-16 h-16 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center relative">
-              <Wallet size={28} className="text-p01-cyan" />
-              <div className="absolute -top-1 -right-1 w-3 h-3 bg-p01-cyan animate-pulse" />
+      {/* The three hops of the payment path. Title and caption are both queued
+          as dictionary edits: archNoServerTitle still says "No Server
+          Required" and archNoServerDesc still says "no centralized
+          infrastructure", and the claim has to leave the title as well as the
+          body or the heading keeps what the caption gave up. */}
+      <div>
+        <p className="styx-card-label">{t('sdkDemo.archNoServerTitle')}</p>
+        <div className="styx-grid styx-grid-3">
+          {paymentPath.map((label, i) => (
+            <div className="styx-card" key={label}>
+              <p className="styx-card-label">0{i + 1}</p>
+              <p className="styx-card-value">{label}</p>
             </div>
-            <span className="text-p01-text-muted text-xs font-mono uppercase tracking-wider">{t('sdkDemo.archYourDapp')}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-[2px] bg-gradient-to-r from-p01-cyan to-p01-cyan/50" />
-            <div className="w-2 h-2 bg-p01-cyan rotate-45" />
-          </div>
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-16 h-16 bg-p01-pink/10 border border-p01-pink/30 flex items-center justify-center">
-              <FileCode size={28} className="text-p01-pink" />
-            </div>
-            <span className="text-p01-text-muted text-xs font-mono uppercase tracking-wider">{t('sdkDemo.archSmartContract')}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-[2px] bg-gradient-to-r from-p01-pink/50 to-p01-cyan" />
-            <div className="w-2 h-2 bg-p01-cyan rotate-45" />
-          </div>
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-16 h-16 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
-              <Boxes size={28} className="text-p01-cyan" />
-            </div>
-            <span className="text-p01-text-muted text-xs font-mono uppercase tracking-wider">{t('sdkDemo.archSolana')}</span>
-          </div>
+          ))}
         </div>
-        <p className="text-p01-text-dim text-xs text-center mt-6 font-mono">
+        <p className="styx-note" style={{ marginTop: "1rem", fontFamily: "var(--styx-mono)" }}>
           {t('sdkDemo.archNoServerDesc')}
         </p>
       </div>
 
-      {/* Security Guarantee */}
-      <div className="bg-gradient-to-r from-p01-cyan/5 to-p01-pink/5 p-6 border border-p01-border">
-        <div className="flex items-center justify-center gap-3 mb-4">
-          <div className="w-10 h-10 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
-            <Lock size={20} className="text-p01-cyan" />
-          </div>
-          <h4 className="text-white font-semibold font-display">{t('sdkDemo.securityTitle')}</h4>
+      {/* What the program does and does not let a developer do */}
+      <div className="styx-panel">
+        <div className="styx-panel-head">
+          <h3 className="styx-h3" style={{ margin: 0 }}>{t('sdkDemo.securityTitle')}</h3>
+          {/* Was sdkDemo.securityDesc: "Nobody, not us, not the developers, can
+              bypass it. Here's what's guaranteed". Nothing here is audited, so
+              nothing here is guaranteed. roadmap.disclaimer is the standing
+              admission the rest of the site uses. */}
+          <p className="styx-card-note" style={{ marginTop: "0.5rem" }}>{t('roadmap.disclaimer')}</p>
         </div>
-        <p className="text-p01-text-muted text-sm text-center mb-6 max-w-2xl mx-auto">
-          {t('sdkDemo.securityDesc')}
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-6 h-6 bg-p01-cyan/20 border border-p01-cyan/30 flex items-center justify-center">
-                <Check size={12} className="text-p01-cyan" />
-              </div>
-              <h5 className="text-p01-cyan font-semibold text-sm font-display uppercase tracking-wider">{t('sdkDemo.whatYouCanDo')}</h5>
+        <div className="styx-panel-body">
+          <div className="styx-grid styx-grid-2">
+            <div className="styx-card">
+              <p className="styx-card-label">{t('sdkDemo.whatYouCanDo')}</p>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {[
+                  // The price line that used to open this list is gone, twice
+                  // over. It was sdkDemo.priceSameForever, "Your price stays
+                  // the same, forever", which the program cannot promise past
+                  // the end of the subscription. The replacement borrowed for
+                  // it, sdkDemo.p01Sub1, is already printed a few hundred
+                  // pixels up in the "With Protocol 01" card of this same
+                  // section, so keeping it here printed one sentence twice on
+                  // one screen. The price lock still has its say opposite,
+                  // under "developers CANNOT raise your price".
+                  t('sdkDemo.cancelOneClick'),
+                  t('sdkDemo.noModifyWithoutPermission'),
+                  t('sdkDemo.viewPaymentHistory'),
+                ].map((line) => (
+                  <li key={line} className="styx-card-note" style={{ marginBottom: "0.5rem" }}>
+                    <span className="styx-check" aria-hidden="true">&#10003;</span>
+                    {line}
+                  </li>
+                ))}
+              </ul>
             </div>
-            <ul className="space-y-2 text-sm">
-              <li className="flex items-center gap-3 text-p01-text-muted">
-                <Check size={14} className="text-p01-cyan flex-shrink-0" />
-                <span>{t('sdkDemo.priceSameForever')}</span>
-              </li>
-              <li className="flex items-center gap-3 text-p01-text-muted">
-                <Check size={14} className="text-p01-cyan flex-shrink-0" />
-                <span>{t('sdkDemo.cancelOneClick')}</span>
-              </li>
-              <li className="flex items-center gap-3 text-p01-text-muted">
-                <Check size={14} className="text-p01-cyan flex-shrink-0" />
-                <span>{t('sdkDemo.noModifyWithoutPermission')}</span>
-              </li>
-              <li className="flex items-center gap-3 text-p01-text-muted">
-                <Check size={14} className="text-p01-cyan flex-shrink-0" />
-                <span>{t('sdkDemo.viewPaymentHistory')}</span>
-              </li>
-            </ul>
-          </div>
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-6 h-6 bg-p01-pink/20 border border-p01-pink/30 flex items-center justify-center">
-                <X size={12} className="text-p01-pink" />
-              </div>
-              <h5 className="text-p01-pink font-semibold text-sm font-display uppercase tracking-wider">{t('sdkDemo.whatDevsCannotDo')}</h5>
+            <div className="styx-card">
+              <p className="styx-card-label">{t('sdkDemo.whatDevsCannotDo')}</p>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {[
+                  t('sdkDemo.raisePrice'),
+                  t('sdkDemo.cancelWithoutYou'),
+                  t('sdkDemo.changeBilling'),
+                  t('sdkDemo.chargeMore'),
+                ].map((line) => (
+                  <li key={line} className="styx-card-note" style={{ marginBottom: "0.5rem" }}>
+                    <X size={12} style={{ ...ICON_FAINT, display: "inline-block", verticalAlign: "-1px", marginRight: "0.5rem" }} aria-hidden />
+                    {line}
+                  </li>
+                ))}
+              </ul>
             </div>
-            <ul className="space-y-2 text-sm">
-              <li className="flex items-center gap-3 text-p01-text-muted">
-                <X size={14} className="text-p01-pink flex-shrink-0" />
-                <span>{t('sdkDemo.raisePrice')}</span>
-              </li>
-              <li className="flex items-center gap-3 text-p01-text-muted">
-                <X size={14} className="text-p01-pink flex-shrink-0" />
-                <span>{t('sdkDemo.cancelWithoutYou')}</span>
-              </li>
-              <li className="flex items-center gap-3 text-p01-text-muted">
-                <X size={14} className="text-p01-pink flex-shrink-0" />
-                <span>{t('sdkDemo.changeBilling')}</span>
-              </li>
-              <li className="flex items-center gap-3 text-p01-text-muted">
-                <X size={14} className="text-p01-pink flex-shrink-0" />
-                <span>{t('sdkDemo.chargeMore')}</span>
-              </li>
-            </ul>
           </div>
         </div>
       </div>
-    </div>
+    </SectionShell>
   );
 }
 
@@ -1585,31 +1718,25 @@ await p01.streams.pause({
 function WidgetsSection() {
   const t = useT();
   return (
-    <div className="space-y-12">
-      <SectionHeader
-        icon={CreditCard}
-        title={t('sdkDemo.widgetsTitle')}
-        subtitle={`${t('sdkDemo.widgetsDesc')}${t('sdkDemo.widgetsDescHighlight')}`}
-        accent="cyan"
-      />
-
-      {/* Customer Protection Banner */}
-      <div className="flex items-center gap-4 p-4 bg-p01-cyan/10 border border-p01-cyan/30">
-        <div className="w-10 h-10 bg-p01-cyan/20 border border-p01-cyan/40 flex items-center justify-center flex-shrink-0">
-          <ShieldCheck size={20} className="text-p01-cyan" />
-        </div>
-        <div>
-          <p className="text-p01-cyan font-semibold text-sm font-display">{t('sdkDemo.priceLocked')}</p>
-          <p className="text-p01-text-dim text-xs font-mono">{t('sdkDemo.priceLockedDesc')}</p>
+    <SectionShell
+      numeral="04"
+      index={t('sdkDemo.tabWidgets')}
+      title={t('sdkDemo.widgetsTitle')}
+      lede={`${t('sdkDemo.widgetsDesc')}${t('sdkDemo.widgetsDescHighlight')}`}
+    >
+      <div className="styx-panel">
+        <div className="styx-panel-body">
+          <p className="styx-card-label" style={{ margin: 0 }}>{t('sdkDemo.priceLocked')}</p>
+          <p className="styx-card-note" style={{ marginTop: "0.5rem" }}>{t('sdkDemo.priceLockedDesc')}</p>
         </div>
       </div>
 
-      {/* Demo Widget */}
-      <div className="bg-p01-surface rounded-2xl p-8 border border-p01-border">
-        <DemoSubscriptionWidget />
+      <div className="styx-panel">
+        <div className="styx-panel-body">
+          <DemoSubscriptionWidget />
+        </div>
       </div>
 
-      {/* Code Example */}
       <CodeBlock
         title={t('sdkDemo.widgetCodeTitle')}
         code={`import { P01Provider, SubscriptionWidget } from '@protocol-01/p01-js/react';
@@ -1617,7 +1744,7 @@ function WidgetsSection() {
 function PricingPage() {
   return (
     // No merchantId! Wallet connection handles identity
-    <P01Provider network="mainnet">
+    <P01Provider network="devnet">
       <SubscriptionWidget
         title="Choose Your Plan"
         programId={STREAM_PROGRAM_ID} // On-chain program
@@ -1645,7 +1772,7 @@ function PricingPage() {
   );
 }`}
       />
-    </div>
+    </SectionShell>
   );
 }
 
@@ -1653,32 +1780,31 @@ function PricingPage() {
 function ButtonsSection() {
   const t = useT();
   return (
-    <div className="space-y-12">
-      <SectionHeader icon={Zap} title={t('sdkDemo.tabButtons')} accent="cyan" />
-      {/* Wallet Button */}
-      <div>
-        <h2 className="text-2xl font-bold text-white mb-2">{t('sdkDemo.walletButtonTitle')}</h2>
-        <p className="text-p01-text-muted mb-6">{t('sdkDemo.walletButtonDesc')}</p>
+    <SectionShell numeral="05" title={t('sdkDemo.tabButtons')}>
+      {/* Wallet button */}
+      <Block title={t('sdkDemo.walletButtonTitle')} note={t('sdkDemo.walletButtonDesc')}>
+        <div className="styx-stack">
+          <div className="styx-panel">
+            <div className="styx-panel-body">
+              <p className="styx-card-label">{t('sdkDemo.clickToConnect')}</p>
+              <div className="styx-btn-row" style={{ alignItems: "center", marginBottom: "2rem" }}>
+                <P01WalletButton variant="primary" size="lg" />
+                <P01WalletButton variant="secondary" size="md" />
+                <P01WalletButton variant="outline" size="sm" />
+              </div>
 
-        <div className="bg-p01-surface rounded-2xl p-8 border border-p01-border">
-          <p className="text-p01-text-dim text-sm mb-4">{t('sdkDemo.clickToConnect')}</p>
-          <div className="flex flex-wrap gap-4 items-center mb-8">
-            <P01WalletButton variant="primary" size="lg" />
-            <P01WalletButton variant="secondary" size="md" />
-            <P01WalletButton variant="outline" size="sm" />
+              {/* Static preview of the connected state */}
+              <p className="styx-card-label">{t('sdkDemo.connectedPreview')}</p>
+              <div className="styx-btn-row" style={{ alignItems: "center" }}>
+                <DemoWalletButton connected address="7xK9f...8c2e" isP01Wallet />
+                <DemoWalletButton connected address="3mN2p...4f1a" />
+              </div>
+            </div>
           </div>
 
-          {/* Demo Connected State (static preview) */}
-          <p className="text-p01-text-dim text-sm mb-4">{t('sdkDemo.connectedPreview')}</p>
-          <div className="flex flex-wrap gap-4 items-center">
-            <DemoWalletButton connected address="7xK9f...8c2e" isP01Wallet />
-            <DemoWalletButton connected address="3mN2p...4f1a" />
-          </div>
-        </div>
-
-        <CodeBlock
-          title={t('sdkDemo.walletButtonCodeTitle')}
-          code={`import { WalletButton } from '@protocol-01/p01-js/react';
+          <CodeBlock
+            title={t('sdkDemo.walletButtonCodeTitle')}
+            code={`import { WalletButton } from '@protocol-01/p01-js/react';
 
 // P01 wallet only - closed ecosystem
 <WalletButton
@@ -1687,27 +1813,28 @@ function ButtonsSection() {
   onConnect={(pubkey) => console.log('Connected:', pubkey)}
   onDisconnect={() => console.log('Disconnected')}
 />`}
-        />
-      </div>
-
-      {/* Payment Button */}
-      <div>
-        <h2 className="text-2xl font-bold text-white mb-2">{t('sdkDemo.paymentButtonTitle')}</h2>
-        <p className="text-p01-text-muted mb-6">{t('sdkDemo.paymentButtonDesc')}</p>
-
-        <div className="bg-p01-surface rounded-2xl p-8 border border-p01-border">
-          <div className="flex flex-wrap gap-4 items-center">
-            <DemoPaymentButton amount={9.99} token="USDC" variant="primary" size="lg" />
-            <DemoPaymentButton amount={25} token="SOL" variant="secondary" size="md" />
-            <DemoPaymentButton amount={100} token="USDC" variant="outline" size="sm" />
-          </div>
+          />
         </div>
+      </Block>
 
-        <CodeBlock
-          title={t('sdkDemo.paymentButtonCodeTitle')}
-          code={`import { PaymentButton } from '@protocol-01/p01-js/react';
+      {/* Payment button */}
+      <Block title={t('sdkDemo.paymentButtonTitle')} note={t('sdkDemo.paymentButtonDesc')}>
+        <div className="styx-stack">
+          <div className="styx-panel">
+            <div className="styx-panel-body">
+              <div className="styx-btn-row" style={{ alignItems: "center" }}>
+                <DemoPaymentButton amount={9.99} token="USDC" variant="primary" size="lg" />
+                <DemoPaymentButton amount={25} token="SOL" variant="secondary" size="md" />
+                <DemoPaymentButton amount={100} token="USDC" variant="outline" size="sm" />
+              </div>
+            </div>
+          </div>
 
-// Direct on-chain payment - no server
+          <CodeBlock
+            title={t('sdkDemo.paymentButtonCodeTitle')}
+            code={`import { PaymentButton } from '@protocol-01/p01-js/react';
+
+// The transfer is submitted straight to the program on devnet
 <PaymentButton
   amount={9.99}
   token="USDC"
@@ -1716,24 +1843,25 @@ function ButtonsSection() {
   onSuccess={(result) => console.log('TX:', result.signature)}
   onError={(err) => console.error(err)}
 />`}
-        />
-      </div>
-
-      {/* Subscription Button */}
-      <div>
-        <h2 className="text-2xl font-bold text-white mb-2">{t('sdkDemo.subscriptionButtonTitle')}</h2>
-        <p className="text-p01-text-muted mb-6">{t('sdkDemo.subscriptionButtonDesc')}</p>
-
-        <div className="bg-p01-surface rounded-2xl p-8 border border-p01-border">
-          <div className="flex flex-wrap gap-4 items-center">
-            <DemoSubscriptionButton amount={15.99} interval="monthly" variant="primary" />
-            <DemoSubscriptionButton amount={149.99} interval="yearly" variant="secondary" />
-          </div>
+          />
         </div>
+      </Block>
 
-        <CodeBlock
-          title={t('sdkDemo.subscriptionButtonCodeTitle')}
-          code={`import { SubscriptionButton, STREAM_PROGRAM_ID } from '@protocol-01/p01-js/react';
+      {/* Subscription button */}
+      <Block title={t('sdkDemo.subscriptionButtonTitle')} note={t('sdkDemo.subscriptionButtonDesc')}>
+        <div className="styx-stack">
+          <div className="styx-panel">
+            <div className="styx-panel-body">
+              <div className="styx-btn-row" style={{ alignItems: "center" }}>
+                <DemoSubscriptionButton amount={15.99} interval="monthly" variant="primary" />
+                <DemoSubscriptionButton amount={149.99} interval="yearly" variant="secondary" />
+              </div>
+            </div>
+          </div>
+
+          <CodeBlock
+            title={t('sdkDemo.subscriptionButtonCodeTitle')}
+            code={`import { SubscriptionButton, STREAM_PROGRAM_ID } from '@protocol-01/p01-js/react';
 
 // On-chain subscription via smart contract
 <SubscriptionButton
@@ -1745,9 +1873,10 @@ function ButtonsSection() {
   useStealthAddress={true}
   onSuccess={(result) => console.log('Stream:', result.streamId)}
 />`}
-        />
-      </div>
-    </div>
+          />
+        </div>
+      </Block>
+    </SectionShell>
   );
 }
 
@@ -1755,67 +1884,58 @@ function ButtonsSection() {
 function CardsSection() {
   const t = useT();
   return (
-    <div className="space-y-12">
-      <div>
-        <div className="mb-6">
-          <SectionHeader
-            icon={FileText}
-            title={t('sdkDemo.subscriptionCardTitle')}
-            subtitle={t('sdkDemo.subscriptionCardDesc')}
-            accent="cyan"
-          />
-        </div>
+    <SectionShell
+      numeral="06"
+      index={t('sdkDemo.tabCards')}
+      title={t('sdkDemo.subscriptionCardTitle')}
+      lede={t('sdkDemo.subscriptionCardDesc')}
+    >
+      {/* Sample data, and it says so. The old cards wore Netflix, Spotify,
+          ChatGPT and Adobe names with invented totals, which read as real
+          customer records and implied partnerships that do not exist. */}
+      <div
+        style={{
+          display: "grid",
+          gap: "1.5rem",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 21rem), 1fr))",
+        }}
+      >
+        <DemoSubscriptionCard
+          merchantName="Sample merchant 01"
+          description="Standard plan"
+          amount={15.99}
+          interval="monthly"
+          status="active"
+          nextPayment="in 12 days"
+          totalPaid={47.97}
+          periodsPaid={3}
+          privacyEnabled
+        />
+        <DemoSubscriptionCard
+          merchantName="Sample merchant 02"
+          description="Family plan"
+          amount={16.99}
+          interval="monthly"
+          status="paused"
+          nextPayment="Paused"
+          totalPaid={33.98}
+          periodsPaid={2}
+        />
+        <DemoSubscriptionCard
+          merchantName="Sample merchant 03"
+          description="Annual plan"
+          amount={149.99}
+          interval="yearly"
+          status="active"
+          nextPayment="in 5 days"
+          totalPaid={149.99}
+          periodsPaid={1}
+        />
+      </div>
 
-        <div className="bg-p01-surface rounded-2xl p-8 border border-p01-border">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <DemoSubscriptionCard
-              merchantName="Netflix"
-              description="Premium Plan"
-              amount={15.99}
-              interval="monthly"
-              status="active"
-              nextPayment="in 12 days"
-              totalPaid={47.97}
-              periodsPaid={3}
-              privacyEnabled
-            />
-            <DemoSubscriptionCard
-              merchantName="Spotify"
-              description="Family Plan"
-              amount={16.99}
-              interval="monthly"
-              status="paused"
-              nextPayment="Paused"
-              totalPaid={33.98}
-              periodsPaid={2}
-            />
-            <DemoSubscriptionCard
-              merchantName="ChatGPT Plus"
-              description="AI Assistant"
-              amount={20}
-              interval="monthly"
-              status="active"
-              nextPayment="in 5 days"
-              totalPaid={60}
-              periodsPaid={3}
-            />
-            <DemoSubscriptionCard
-              merchantName="Adobe CC"
-              description="All Apps"
-              amount={54.99}
-              interval="monthly"
-              /* LEGACY status: no new subscription can reach it. */
-              status="cancelled"
-              nextPayment="—"
-              totalPaid={164.97}
-              periodsPaid={3}
-            />
-          </div>
-        </div>
-
-        <CodeBlock
-          title={t('sdkDemo.subscriptionCardCodeTitle')}
-          code={`import { SubscriptionCard, useStreams } from '@protocol-01/p01-js/react';
+      <CodeBlock
+        title={t('sdkDemo.subscriptionCardCodeTitle')}
+        code={`import { SubscriptionCard, useStreams } from '@protocol-01/p01-js/react';
 
 // Fetch streams directly from blockchain
 const { streams } = useStreams({ wallet: publicKey });
@@ -1828,9 +1948,8 @@ const { streams } = useStreams({ wallet: publicKey });
   showPauseResume={true}
   onPauseResume={(id, state) => console.log(id, state)}
 />`}
-        />
-      </div>
-    </div>
+      />
+    </SectionShell>
   );
 }
 
@@ -1869,156 +1988,112 @@ function DemoSubscriptionWidget() {
   ];
 
   return (
-    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif" }}>
-      {/* Header */}
-      <div style={{ textAlign: "center", marginBottom: "32px" }}>
-        <h2 style={{ color: THEME.textColor, fontSize: "28px", fontWeight: 700, margin: "0 0 8px 0" }}>
-          {t('sdkDemo.choosePlan')}
-        </h2>
-        <p style={{ color: THEME.mutedColor, fontSize: "16px", margin: 0 }}>
-          {t('sdkDemo.freeTrial')}
-        </p>
-      </div>
+    <div>
+      <h3 className="styx-h3" style={{ marginBottom: "0.35rem" }}>{t('sdkDemo.choosePlan')}</h3>
+      <p className="styx-card-note">{t('sdkDemo.freeTrial')}</p>
 
-      {/* Privacy Toggle */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "12px", marginBottom: "24px" }}>
+      {/* Privacy toggle. Not decoration: it selects PRIVACY_PRESET or
+          PRIVACY_OFF in the real subscribe() call below. */}
+      <div style={{ margin: "1.5rem 0" }}>
         <button
+          type="button"
           onClick={() => setEnablePrivacy(!enablePrivacy)}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            padding: "10px 16px",
-            backgroundColor: enablePrivacy ? `${THEME.primaryColor}15` : THEME.surfaceColor,
-            border: `1px solid ${enablePrivacy ? THEME.primaryColor : THEME.borderColor}`,
-            borderRadius: "10px",
-            cursor: "pointer",
-            transition: "all 0.2s ease",
-          }}
+          className="styx-btn-ghost"
+          aria-pressed={enablePrivacy}
+          style={{ borderColor: enablePrivacy ? "var(--styx-accent)" : "var(--styx-rule)" }}
         >
-          {/* Toggle Switch */}
-          <div style={{
-            width: "36px",
-            height: "20px",
-            backgroundColor: enablePrivacy ? THEME.primaryColor : THEME.borderColor,
-            borderRadius: "10px",
-            position: "relative",
-            transition: "all 0.2s ease",
-          }}>
-            <div style={{
-              width: "16px",
-              height: "16px",
-              backgroundColor: THEME.textColor,
-              borderRadius: "50%",
-              position: "absolute",
-              top: "2px",
-              left: enablePrivacy ? "18px" : "2px",
-              transition: "all 0.2s ease",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
-            }} />
-          </div>
-          <ShieldIcon color={enablePrivacy ? THEME.primaryColor : THEME.mutedColor} />
-          <span style={{
-            color: enablePrivacy ? THEME.textColor : THEME.mutedColor,
-            fontSize: "14px",
-            fontWeight: 500,
-          }}>
-            {t('sdkDemo.enablePrivacy')}
-          </span>
+          <span
+            className="styx-dot"
+            style={{ background: enablePrivacy ? "var(--styx-accent)" : "var(--styx-rule)" }}
+            aria-hidden="true"
+          />
+          <Shield size={13} style={enablePrivacy ? ICON_ACCENT : ICON_FAINT} aria-hidden />
+          {t('sdkDemo.enablePrivacy')}
         </button>
       </div>
 
-      {/* Tiers Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="styx-grid styx-grid-3">
         {tiers.map((tier) => (
           <div
             key={tier.id}
             onClick={() => setSelectedTier(tier.id)}
+            className="styx-card styx-sweep"
             style={{
-              backgroundColor: THEME.surfaceColor,
-              borderRadius: THEME.borderRadius,
-              border: tier.popular ? `2px solid ${THEME.primaryColor}` : `1px solid ${THEME.borderColor}`,
-              padding: "24px",
-              position: "relative",
               cursor: "pointer",
-              transition: "all 0.2s ease",
-              transform: selectedTier === tier.id ? "scale(1.02)" : "scale(1)",
+              background: selectedTier === tier.id ? "var(--styx-panel-2)" : undefined,
             }}
           >
-            {/* Popular Badge */}
-            {tier.popular && (
-              <div
-                style={{
-                  position: "absolute",
-                  top: "-12px",
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  backgroundColor: THEME.primaryColor,
-                  color: THEME.backgroundColor,
-                  padding: "4px 16px",
-                  borderRadius: "12px",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                }}
-              >
-                {t('sdkDemo.mostPopular')}
-              </div>
-            )}
-
-            {/* Name */}
-            <h3 style={{ color: THEME.textColor, fontSize: "20px", fontWeight: 600, margin: "0 0 8px 0", textAlign: "center" }}>
-              {tier.name}
-            </h3>
-
-            {/* Price */}
-            <div style={{ textAlign: "center", marginBottom: "16px" }}>
-              <span style={{ color: THEME.textColor, fontSize: "40px", fontWeight: 700 }}>{tier.price}</span>
-              <span style={{ color: THEME.mutedColor, fontSize: "16px", marginLeft: "4px" }}>USDC/{tier.interval}</span>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "0.75rem",
+                minHeight: "1.9rem",
+              }}
+            >
+              <p className="styx-card-label" style={{ margin: 0 }}>{tier.name}</p>
+              {tier.popular && <span className="styx-chip">{t('sdkDemo.mostPopular')}</span>}
             </div>
 
-            {/* Trial */}
+            <p
+              style={{
+                fontFamily: "var(--styx-serif)",
+                fontWeight: 300,
+                fontSize: "2.6rem",
+                lineHeight: 1,
+                letterSpacing: "-0.02em",
+                margin: "0.9rem 0 0.3rem",
+              }}
+            >
+              {tier.price}
+            </p>
+            <p className="styx-note" style={{ fontFamily: "var(--styx-mono)" }}>
+              USDC/{tier.interval}
+            </p>
+
             {tier.trialDays && (
-              <div style={{ textAlign: "center", marginBottom: "16px", color: THEME.primaryColor, fontSize: "13px", fontWeight: 500 }}>
+              <p className="styx-form-ok" style={{ marginTop: "0.75rem" }}>
                 {tier.trialDays} {t('sdkDemo.dayFreeTrial')}
-              </div>
+              </p>
             )}
 
-            {/* Features */}
-            <ul style={{ listStyle: "none", padding: 0, margin: "0 0 20px 0" }}>
+            <ul style={{ listStyle: "none", padding: 0, margin: "1.25rem 0 1.5rem" }}>
               {tier.features.map((feature, index) => (
-                <li
-                  key={index}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    color: THEME.textColor,
-                    fontSize: "14px",
-                    marginBottom: "8px",
-                  }}
-                >
-                  <CheckIcon color={THEME.successColor} />
+                <li key={index} className="styx-card-note" style={{ marginBottom: "0.45rem" }}>
+                  <span className="styx-check" aria-hidden="true">&#10003;</span>
                   {feature}
                 </li>
               ))}
             </ul>
 
-            {/* Button */}
             <TierWalletButton popular={tier.popular} tierName={tier.name} price={tier.price} interval={tier.interval} privacyEnabled={enablePrivacy} />
           </div>
         ))}
       </div>
 
-      {/* Footer */}
-      <div style={{ textAlign: "center", marginTop: "24px", color: THEME.mutedColor, fontSize: "12px" }}>
-        <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
-          <LockIcon color={THEME.primaryColor} />
-          {t('sdkDemo.onChainFooter')}
-        </span>
-      </div>
+      <p
+        className="styx-note"
+        style={{ marginTop: "1.5rem", fontFamily: "var(--styx-mono)", display: "flex", alignItems: "center", gap: "0.45rem" }}
+      >
+        <Lock size={12} style={ICON_FAINT} aria-hidden />
+        {/* Was sdkDemo.onChainFooter: "100% On-chain · Smart Contract Verified ·
+            P01 Wallet Required". "Verified" reads as audited, and this widget's
+            own page POSTs to two endpoints, so "100% On-chain" was wrong too.
+            The two keys left are the two facts. */}
+        {t('sdkDemo.solanaDevnet')} &middot; {t('sdkDemo.featP01Required')}
+      </p>
     </div>
   );
 }
+
+// Size differences are the only thing left of the old sizeStyles map: colour,
+// radius and weight all come from styx-btn / styx-btn-ghost now.
+const BTN_SIZE: Record<"sm" | "md" | "lg", React.CSSProperties> = {
+  sm: { padding: "0.6rem 1.1rem", fontSize: "0.6875rem" },
+  md: { padding: "0.85rem 1.7rem", fontSize: "0.75rem" },
+  lg: { padding: "1.05rem 2.1rem", fontSize: "0.8125rem" },
+};
 
 // Demo Wallet Button
 function DemoWalletButton({
@@ -2035,42 +2110,18 @@ function DemoWalletButton({
   isP01Wallet?: boolean;
 }) {
   const t = useT();
-  const sizeStyles = {
-    sm: { padding: "8px 16px", fontSize: "14px", borderRadius: "8px" },
-    md: { padding: "12px 24px", fontSize: "16px", borderRadius: "12px" },
-    lg: { padding: "16px 32px", fontSize: "18px", borderRadius: "16px" },
-  };
-
-  const variantStyles = connected
-    ? { backgroundColor: THEME.surfaceColor, color: THEME.textColor, border: `1px solid ${THEME.borderColor}` }
-    : variant === "primary"
-    ? { backgroundColor: THEME.primaryColor, color: THEME.backgroundColor, border: "none" }
-    : variant === "secondary"
-    ? { backgroundColor: THEME.surfaceColor, color: THEME.textColor, border: `1px solid ${THEME.borderColor}` }
-    : { backgroundColor: "transparent", color: THEME.primaryColor, border: `2px solid ${THEME.primaryColor}` };
+  const className = !connected && variant === "primary" ? "styx-btn" : "styx-btn-ghost";
 
   return (
-    <button
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "8px",
-        fontWeight: 600,
-        cursor: "pointer",
-        transition: "all 0.2s ease",
-        ...sizeStyles[size],
-        ...variantStyles,
-      }}
-    >
+    <button type="button" className={className} style={BTN_SIZE[size]}>
       {connected ? (
         <>
-          {isP01Wallet && <P01Icon />}
-          {address}
+          {isP01Wallet && <Wallet size={13} aria-hidden />}
+          <span style={{ fontFamily: "var(--styx-mono)", textTransform: "none" }}>{address}</span>
         </>
       ) : (
         <>
-          <WalletIcon />
+          <Wallet size={13} aria-hidden />
           {t('sdkDemo.connectWallet')}
         </>
       )}
@@ -2089,19 +2140,7 @@ function P01WalletButton({
   const t = useT();
   const { publicKey, connected, connecting, walletAvailable, connect, disconnect } = useP01Wallet();
 
-  const sizeStyles = {
-    sm: { padding: "8px 16px", fontSize: "14px", borderRadius: "8px" },
-    md: { padding: "12px 24px", fontSize: "16px", borderRadius: "12px" },
-    lg: { padding: "16px 32px", fontSize: "18px", borderRadius: "16px" },
-  };
-
-  const variantStyles = connected
-    ? { backgroundColor: THEME.surfaceColor, color: THEME.textColor, border: `1px solid ${THEME.borderColor}` }
-    : variant === "primary"
-    ? { backgroundColor: THEME.primaryColor, color: THEME.backgroundColor, border: "none" }
-    : variant === "secondary"
-    ? { backgroundColor: THEME.surfaceColor, color: THEME.textColor, border: `1px solid ${THEME.borderColor}` }
-    : { backgroundColor: "transparent", color: THEME.primaryColor, border: `2px solid ${THEME.primaryColor}` };
+  const className = variant === "primary" && !connected ? "styx-btn" : "styx-btn-ghost";
 
   const handleClick = async () => {
     if (!walletAvailable) {
@@ -2127,39 +2166,32 @@ function P01WalletButton({
 
   return (
     <button
+      type="button"
       onClick={handleClick}
       disabled={connecting}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "8px",
-        fontWeight: 600,
-        cursor: connecting ? "wait" : "pointer",
-        opacity: connecting ? 0.7 : 1,
-        transition: "all 0.2s ease",
-        ...sizeStyles[size],
-        ...variantStyles,
-      }}
+      className={className}
+      style={BTN_SIZE[size]}
     >
       {!walletAvailable ? (
         <>
-          <WalletIcon />
+          <Wallet size={13} aria-hidden />
           {t('sdkDemo.installWallet')}
         </>
       ) : connecting ? (
         <>
-          <LoadingSpinner color={variant === "primary" ? THEME.backgroundColor : THEME.primaryColor} />
+          <LoadingSpinner />
           {t('sdkDemo.connecting')}
         </>
       ) : connected && publicKey ? (
         <>
-          <P01Icon />
-          {truncateAddress(publicKey)}
+          <Wallet size={13} aria-hidden />
+          <span style={{ fontFamily: "var(--styx-mono)", textTransform: "none" }}>
+            {truncateAddress(publicKey)}
+          </span>
         </>
       ) : (
         <>
-          <P01Icon />
+          <Wallet size={13} aria-hidden />
           {t('sdkDemo.connectP01')}
         </>
       )}
@@ -2167,12 +2199,20 @@ function P01WalletButton({
   );
 }
 
-// Loading Spinner for buttons
-function LoadingSpinner({ color }: { color: string }) {
+// Loading Spinner for buttons. Takes the current text colour, so it works on
+// styx-btn (dark ink on paper) and styx-btn-ghost (paper on ink) alike.
+function LoadingSpinner() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ animation: "spin 1s linear infinite" }}>
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      style={{ animation: "spin 1s linear infinite", flex: "none" }}
+    >
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
-      <circle cx="12" cy="12" r="10" stroke={color} strokeWidth="3" strokeLinecap="round" strokeDasharray="32" strokeDashoffset="12" />
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="32" strokeDashoffset="12" />
     </svg>
   );
 }
@@ -2209,8 +2249,12 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
 
   // Restore the "already subscribed" state on load / reconnect. Subscriptions
   // live in the wallet (chrome.storage), so a page reload loses our local
-  // `subscribed` flag — re-derive it from the wallet instead of letting the
-  // button reset to green/clickable and allow a duplicate subscription.
+  // `subscribed` flag, re-derive it from the wallet instead of letting the
+  // button reset to clickable and allow a duplicate subscription.
+  //
+  // FROZEN: this label is the same literal as the merchantName sent to
+  // subscribe() below. The two must match or the matcher stops recognising a
+  // live subscription, so it stays "Protocol 01 - <tier>" through the rebrand.
   const tierLabel = `Protocol 01 - ${tierName}`;
   useEffect(() => {
     if (!connected || !walletAvailable) {
@@ -2282,8 +2326,10 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
         setSubscriptionId(result.subscriptionId);
         setSubscribed(true);
 
-        // Show success notification
-        alert(`✅ Subscription Created!\n\nPlan: ${tierName}\nAmount: 0.01 SOL per ${interval} (Demo)\nSubscription ID: ${result.subscriptionId.slice(0, 8)}...\n\nYour subscription is now active!\nCheck your wallet's Stream Secure section to manage it.`);
+        // Report what actually happened: the wallet stored a subscription. This
+        // page has not read the chain, so it does not claim the subscription is
+        // active, and it repeats the one-way rule while the reader is here.
+        alert(`Subscription recorded in your wallet.\n\nPlan: ${tierName}\nAmount: 0.01 SOL per ${interval} (demo)\nSubscription ID: ${result.subscriptionId.slice(0, 8)}...\n\nOpen the Stream Secure section of your wallet to see it. This is devnet, and the deposit is one-way: there is no cancellation and the protocol cannot refund it.`);
       }
     } catch (error) {
       console.error("Subscription failed:", error);
@@ -2308,60 +2354,45 @@ function TierWalletButton({ popular = false, tierName = "Basic", price = 9.99, i
   };
 
   const isLoading = connecting || isSubscribing;
-  const buttonBg = subscribed ? "#22c55e" : (popular ? THEME.primaryColor : "transparent");
-  const buttonColor = subscribed ? "#ffffff" : (popular ? THEME.backgroundColor : THEME.primaryColor);
-  const buttonBorder = subscribed ? "none" : (popular ? "none" : `2px solid ${THEME.primaryColor}`);
 
   return (
     <button
+      type="button"
       onClick={handleClick}
       disabled={isLoading || subscribed}
-      style={{
-        width: "100%",
-        padding: "14px 24px",
-        backgroundColor: buttonBg,
-        color: buttonColor,
-        border: buttonBorder,
-        borderRadius: "10px",
-        fontSize: "16px",
-        fontWeight: 600,
-        cursor: isLoading || subscribed ? "default" : "pointer",
-        opacity: isLoading ? 0.7 : 1,
-        transition: "all 0.2s ease",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "8px",
-      }}
+      className={popular || subscribed ? "styx-btn" : "styx-btn-ghost"}
+      style={{ width: "100%" }}
     >
       {!walletAvailable ? (
         <>
-          <WalletIcon />
+          <Wallet size={13} aria-hidden />
           {t('sdkDemo.installWallet')}
         </>
       ) : connecting ? (
         <>
-          <LoadingSpinner color={buttonColor} />
+          <LoadingSpinner />
           {t('sdkDemo.connecting')}
         </>
       ) : isSubscribing ? (
         <>
-          <LoadingSpinner color={buttonColor} />
+          <LoadingSpinner />
           {t('sdkDemo.confirmInWallet')}
         </>
       ) : subscribed ? (
         <>
-          <CheckIcon color="#ffffff" />
-          {t('sdkDemo.subscribed')} &#x2713;
+          <Check size={13} aria-hidden />
+          {t('sdkDemo.subscribed')}
         </>
       ) : connected && publicKey ? (
         <>
-          <CheckIcon color={buttonColor} />
-          {t('sdkDemo.subscribeWith')} {truncateAddress(publicKey)}
+          {t('sdkDemo.subscribeWith')}
+          <span style={{ fontFamily: "var(--styx-mono)", textTransform: "none" }}>
+            {truncateAddress(publicKey)}
+          </span>
         </>
       ) : (
         <>
-          <P01Icon />
+          <Wallet size={13} aria-hidden />
           {t('sdkDemo.connectP01')}
         </>
       )}
@@ -2382,33 +2413,11 @@ function DemoPaymentButton({
   size?: "sm" | "md" | "lg";
 }) {
   const t = useT();
-  const sizeStyles = {
-    sm: { padding: "8px 16px", fontSize: "14px", borderRadius: "8px" },
-    md: { padding: "12px 24px", fontSize: "16px", borderRadius: "12px" },
-    lg: { padding: "16px 32px", fontSize: "18px", borderRadius: "16px" },
-  };
-
-  const variantStyles =
-    variant === "primary"
-      ? { backgroundColor: THEME.primaryColor, color: THEME.backgroundColor, border: "none" }
-      : variant === "secondary"
-      ? { backgroundColor: THEME.surfaceColor, color: THEME.textColor, border: `1px solid ${THEME.borderColor}` }
-      : { backgroundColor: "transparent", color: THEME.primaryColor, border: `2px solid ${THEME.primaryColor}` };
+  const className = variant === "primary" ? "styx-btn" : "styx-btn-ghost";
 
   return (
-    <button
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "8px",
-        fontWeight: 600,
-        cursor: "pointer",
-        ...sizeStyles[size],
-        ...variantStyles,
-      }}
-    >
-      <PaymentIcon />
+    <button type="button" className={className} style={BTN_SIZE[size]}>
+      <CreditCard size={13} aria-hidden />
       {t('sdkDemo.payAmount')} {amount} {token}
     </button>
   );
@@ -2425,33 +2434,22 @@ function DemoSubscriptionButton({
   variant?: "primary" | "secondary";
 }) {
   const t = useT();
-  const variantStyles =
-    variant === "primary"
-      ? { backgroundColor: THEME.primaryColor, color: THEME.backgroundColor, border: "none" }
-      : { backgroundColor: THEME.surfaceColor, color: THEME.textColor, border: `1px solid ${THEME.borderColor}` };
+  const className = variant === "primary" ? "styx-btn" : "styx-btn-ghost";
 
   return (
-    <button
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "8px",
-        padding: "12px 24px",
-        borderRadius: "12px",
-        fontSize: "16px",
-        fontWeight: 600,
-        cursor: "pointer",
-        ...variantStyles,
-      }}
-    >
-      <SubscriptionIcon color={variant === "primary" ? THEME.backgroundColor : THEME.primaryColor} />
+    <button type="button" className={className} style={BTN_SIZE.md}>
+      <RefreshCw size={13} aria-hidden />
       {t('sdkDemo.subscribeAmount')} {amount} USDC/{interval}
     </button>
   );
 }
 
 // Demo Subscription Card
+//
+// No Cancel action. The founder ruling is no cancel and no refund, and
+// cancel_normal cannot succeed on a live vault, so a Cancel button here would
+// advertise a capability the protocol does not have. Pause and resume live in
+// the wallet, not on a merchant page.
 function DemoSubscriptionCard({
   merchantName,
   description,
@@ -2467,145 +2465,71 @@ function DemoSubscriptionCard({
   description: string;
   amount: number;
   interval: string;
-  status: "active" | "paused" | "cancelled";
+  status: "active" | "paused";
   nextPayment: string;
   totalPaid: number;
   periodsPaid: number;
   privacyEnabled?: boolean;
 }) {
   const t = useT();
-  const statusColor =
-    status === "active" ? THEME.successColor : status === "paused" ? "#f59e0b" : THEME.errorColor;
 
   return (
-    <div
-      style={{
-        backgroundColor: THEME.surfaceColor,
-        borderRadius: THEME.borderRadius,
-        border: `1px solid ${THEME.borderColor}`,
-        padding: "20px",
-      }}
-    >
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div
-            style={{
-              width: "40px",
-              height: "40px",
-              borderRadius: "10px",
-              backgroundColor: THEME.primaryColor + "20",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <SubscriptionIcon color={THEME.primaryColor} />
-          </div>
-          <div>
-            <h4 style={{ color: THEME.textColor, fontSize: "16px", fontWeight: 600, margin: 0 }}>{merchantName}</h4>
-            <p style={{ color: THEME.mutedColor, fontSize: "13px", margin: "2px 0 0 0" }}>{description}</p>
-          </div>
-        </div>
-        <div
-          style={{
-            padding: "4px 10px",
-            borderRadius: "6px",
-            backgroundColor: statusColor + "20",
-            color: statusColor,
-            fontSize: "12px",
-            fontWeight: 600,
-            textTransform: "capitalize",
-          }}
-        >
-          {status}
-        </div>
-      </div>
-
-      {/* Details Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-        <div>
-          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "0 0 4px 0" }}>{t('sdkDemo.amountLabel')}</p>
-          <p style={{ color: THEME.textColor, fontSize: "16px", fontWeight: 600, margin: 0 }}>{amount} USDC</p>
-          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "2px 0 0 0" }}>{t('sdkDemo.perInterval')} {interval}</p>
-        </div>
-        <div>
-          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "0 0 4px 0" }}>{t('sdkDemo.nextPaymentLabel')}</p>
-          <p style={{ color: THEME.textColor, fontSize: "16px", fontWeight: 600, margin: 0 }}>{nextPayment}</p>
-        </div>
-        <div>
-          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "0 0 4px 0" }}>{t('sdkDemo.totalPaidLabel')}</p>
-          <p style={{ color: THEME.textColor, fontSize: "16px", fontWeight: 600, margin: 0 }}>{totalPaid} USDC</p>
-          <p style={{ color: THEME.mutedColor, fontSize: "12px", margin: "2px 0 0 0" }}>{periodsPaid} {t('sdkDemo.paymentsLabel')}</p>
-        </div>
-      </div>
-
-      {/* Privacy Badge */}
-      {privacyEnabled && (
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "6px",
-            padding: "6px 12px",
-            backgroundColor: THEME.primaryColor + "10",
-            borderRadius: "6px",
-            marginBottom: "16px",
-          }}
-        >
-          <ShieldIcon color={THEME.primaryColor} />
-          <span style={{ color: THEME.primaryColor, fontSize: "12px", fontWeight: 500 }}>{t('sdkDemo.privacyEnabled')}</span>
-        </div>
-      )}
-
-      {/* Actions */}
+    <div className="styx-panel">
       <div
-        style={{
-          display: "flex",
-          gap: "12px",
-          borderTop: `1px solid ${THEME.borderColor}`,
-          paddingTop: "16px",
-          marginTop: "8px",
-        }}
+        className="styx-panel-head"
+        style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "1rem" }}
       >
-        <button
-          style={{
-            flex: 1,
-            padding: "10px 16px",
-            backgroundColor: "transparent",
-            color: THEME.textColor,
-            border: `1px solid ${THEME.borderColor}`,
-            borderRadius: "8px",
-            fontSize: "14px",
-            fontWeight: 500,
-            cursor: "pointer",
-          }}
-        >
-          {t('sdkDemo.viewDetails')}
-        </button>
-        {status === "active" && (
-          <button
-            style={{
-              flex: 1,
-              padding: "10px 16px",
-              backgroundColor: "transparent",
-              color: THEME.errorColor,
-              border: `1px solid ${THEME.errorColor}40`,
-              borderRadius: "8px",
-              fontSize: "14px",
-              fontWeight: 500,
-              cursor: "pointer",
-            }}
-          >
-            {t('sdkDemo.cancelBtn')}
-          </button>
+        <div>
+          <p className="styx-card-value" style={{ fontSize: "1.2rem", margin: 0 }}>{merchantName}</p>
+          <p className="styx-card-note" style={{ marginTop: "0.2rem" }}>{description}</p>
+        </div>
+        <span className="styx-chip">
+          {status === "active" && <span className="styx-dot" aria-hidden="true" />}
+          {status}
+        </span>
+      </div>
+
+      <div className="styx-panel-body">
+        <div className="styx-row">
+          <span className="styx-row-key">{t('sdkDemo.amountLabel')}</span>
+          <span className="styx-row-leader" />
+          <span className="styx-row-value">
+            {amount} USDC {t('sdkDemo.perInterval')} {interval}
+          </span>
+        </div>
+        <div className="styx-row">
+          <span className="styx-row-key">{t('sdkDemo.nextPaymentLabel')}</span>
+          <span className="styx-row-leader" />
+          <span className="styx-row-value">{nextPayment}</span>
+        </div>
+        <div className="styx-row">
+          <span className="styx-row-key">{t('sdkDemo.totalPaidLabel')}</span>
+          <span className="styx-row-leader" />
+          <span className="styx-row-value">
+            {totalPaid} USDC / {periodsPaid} {t('sdkDemo.paymentsLabel')}
+          </span>
+        </div>
+
+        {privacyEnabled && (
+          <p style={{ margin: "1rem 0 0" }}>
+            <span className="styx-chip">
+              <span className="styx-dot" aria-hidden="true" />
+              {t('sdkDemo.privacyEnabled')}
+            </span>
+          </p>
         )}
+
+        <div className="styx-btn-row" style={{ marginTop: "1.25rem" }}>
+          <button type="button" className="styx-btn-ghost" style={{ padding: "0.7rem 1.3rem" }}>
+            {t('sdkDemo.viewDetails')}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-// ============ Code Block Component ============
+// ============ Code Block ============
 function CodeBlock({ title, code }: { title: string; code: string }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
@@ -2617,83 +2541,32 @@ function CodeBlock({ title, code }: { title: string; code: string }) {
   };
 
   return (
-    <div className="mt-6 rounded-xl overflow-hidden border border-p01-border bg-p01-elevated">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-p01-border/60 bg-white/[0.02]">
-        <span className="text-p01-text-dim text-xs font-mono tracking-wide">{title}</span>
+    <div className="styx-code-panel">
+      <div className="styx-code-head">
+        <span>{title}</span>
         <button
+          type="button"
           onClick={copyCode}
-          className="flex items-center gap-1.5 text-p01-text-dim hover:text-p01-cyan text-xs font-mono transition-colors"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.4rem",
+            background: "transparent",
+            border: "none",
+            padding: 0,
+            font: "inherit",
+            letterSpacing: "inherit",
+            color: copied ? "var(--styx-accent)" : "inherit",
+            cursor: "pointer",
+          }}
         >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? <Check size={12} aria-hidden /> : <Copy size={12} aria-hidden />}
           {copied ? t('sdkDemo.copied') : t('sdkDemo.copy')}
         </button>
       </div>
-      <pre className="p-4 overflow-x-auto">
-        <code className="text-sm text-p01-text-muted font-mono whitespace-pre">{code}</code>
+      <pre className="styx-code">
+        <code>{code}</code>
       </pre>
     </div>
-  );
-}
-
-// ============ Icons ============
-function CheckIcon({ color }: { color: string }) {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
-      <path d="M5 12l5 5L20 7" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function ShieldIcon({ color }: { color: string }) {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function LockIcon({ color }: { color: string }) {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
-      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-      <path d="M7 11V7a5 5 0 0110 0v4" />
-    </svg>
-  );
-}
-
-function WalletIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M3 9a2 2 0 012-2h14a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M3 9V7a2 2 0 012-2h12a2 2 0 012 2v2" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="16" cy="14" r="2" fill="currentColor" />
-    </svg>
-  );
-}
-
-function P01Icon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <rect x="4" y="4" width="6" height="6" rx="1" />
-      <rect x="14" y="4" width="6" height="6" rx="1" />
-      <rect x="4" y="14" width="6" height="6" rx="1" />
-      <rect x="14" y="14" width="6" height="6" rx="1" />
-    </svg>
-  );
-}
-
-function PaymentIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 5v14m-7-7h14" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function SubscriptionIcon({ color }: { color: string }) {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2">
-      <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
   );
 }

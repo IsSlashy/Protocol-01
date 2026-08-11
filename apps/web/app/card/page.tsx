@@ -1,25 +1,40 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
 import QRCode from "react-qr-code";
+import StyxShell from "../_styx/StyxShell";
+import Reveal from "../_styx/Reveal";
 
+/**
+ * /card, the handed-out contact card, in the Styx voice.
+ *
+ * Shape note: this is a one-screen vertical card, not a chapters page, so it
+ * does not use styx-section / styx-section-grid / styx-numeral. It runs under
+ * `chrome={false}` because it supplies its own frame (its own top label row and
+ * its own bottom URL line), it is noindexed by layout.tsx, and nothing on the
+ * site links to it. A 6-link nav and a 4-column footer would be wrong here.
+ *
+ * Everything load-bearing is preserved verbatim: the session-storage key, the
+ * 600 ms auto-download, both download hrefs, the four outbound links, the QR
+ * payload and the QR's own colours.
+ */
+
+/* The payload the reader's phone saves. Field values are load-bearing: the URL
+   lines in particular are the live domain, not brand copy, so they stay. */
 const VCARD = `BEGIN:VCARD
 VERSION:3.0
 N:Chatbi;Ramy;;;
 FN:Ramy Chatbi (Slashy)
 NICKNAME:Slashy
-ORG:Protocol 01
+ORG:Styx Protocol
 TITLE:Founder / Solo Dev
-ROLE:Privacy Infrastructure for Solana
+ROLE:Private payments on Solana
 EMAIL;TYPE=INTERNET,PREF:amirramy.chatbi@gmail.com
 URL;TYPE=WORK:https://protocol-01.dev
 URL;TYPE=GitHub:https://github.com/IsSlashy
 URL;TYPE=Twitter:https://x.com/Slashy_fx
-NOTE:Privacy & ZK infrastructure for Solana.
+NOTE:Private payments on Solana. Devnet. Not audited.
 END:VCARD`;
-
-const fadeUp = { hidden: { opacity: 0, y: 20 }, visible: { opacity: 1, y: 0 } };
 
 const links = [
   {
@@ -89,135 +104,160 @@ export default function CardPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-p01-void flex items-center justify-center px-4 py-8 relative overflow-hidden">
-      {/* Ambient gradient */}
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full bg-p01-cyan/10 blur-[120px]" />
-        <div className="absolute bottom-0 right-0 w-[400px] h-[400px] rounded-full bg-p01-cyan/5 blur-[100px]" />
-      </div>
+    <StyxShell chrome={false}>
+      {/* The root layout already provides the <main> landmark. */}
+      <div className="flex min-h-screen items-center justify-center px-4 py-10">
+        <div className="w-full max-w-md">
+          {/* ── Top label row ──────────────────────────────────────────── */}
+          <Reveal className="styx-reveal">
+            <div className="flex items-center justify-between mb-4">
+              {/* The mark is the design system's own type lockup, the same one
+                  StyxHeader renders. It is deliberately not /icon.png: that
+                  bitmap is the Protocol 01 app icon, and its glow, gradient and
+                  rounded corners are baked into the pixels, so no class here can
+                  undo them. Not a link, because this page is handed out on its
+                  own and has no site chrome to navigate back into. */}
+              <span className="styx-wordmark">
+                <span className="styx-wordmark-name">Styx</span>
+                <span className="styx-wordmark-suffix">Protocol</span>
+              </span>
+              <span className="styx-overline">vCard</span>
+            </div>
+          </Reveal>
 
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={{ visible: { transition: { staggerChildren: 0.08 } } }}
-        className="relative w-full max-w-md"
-      >
-        {/* Top label */}
-        <motion.div variants={fadeUp} className="flex items-center justify-between mb-4 px-1">
-          <div className="flex items-center gap-2">
-            <img src="/icon.png" alt="Protocol 01" className="w-5 h-5 rounded" />
-            <span className="text-[10px] font-mono text-p01-text-muted tracking-[0.3em] uppercase">
-              Protocol 01
-            </span>
-          </div>
-          <span className="text-[10px] font-mono text-p01-cyan tracking-[0.3em] uppercase">
-            vCard
-          </span>
-        </motion.div>
+          {/* ── The card ───────────────────────────────────────────────── */}
+          <Reveal className="styx-panel styx-sweep styx-reveal" delay={80}>
+            {/* Identity. The hairline under it comes free with styx-panel-head. */}
+            <div className="styx-panel-head">
+              <div className="flex items-center gap-4">
+                <span
+                  className="w-20 h-20 shrink-0 overflow-hidden block"
+                  style={{ border: "1px solid var(--styx-rule)" }}
+                >
+                  <img
+                    src="/images/founder-slashy.png"
+                    alt="Slashy"
+                    className="w-full h-full object-cover"
+                  />
+                </span>
+                <div className="min-w-0">
+                  {/* The page's one gleam. With chrome off there is no
+                      competing header gleam to fight it. */}
+                  <h1 className="styx-h2 styx-gleam-strong" style={{ margin: 0 }}>
+                    Slashy
+                  </h1>
+                  <p
+                    className="styx-card-label"
+                    style={{ margin: "0.45rem 0 0" }}
+                  >
+                    Founder &middot; Solo dev
+                  </p>
+                  <p className="styx-note" style={{ marginTop: "0.35rem" }}>
+                    Private payments on Solana.
+                  </p>
+                </div>
+              </div>
+              <span className="styx-chip" style={{ marginTop: "1rem" }}>
+                <span className="styx-dot" aria-hidden="true" />
+                Devnet &middot; not audited
+              </span>
+            </div>
 
-        {/* Main card */}
-        <motion.div
-          variants={fadeUp}
-          className="bg-p01-surface border border-p01-border rounded-2xl p-6 sm:p-8 shadow-[0_0_60px_rgba(57,197,187,0.08)] backdrop-blur-sm"
-        >
-          {/* Identity */}
-          <div className="flex items-center gap-4 mb-6">
-            <div className="relative shrink-0">
-              <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-p01-cyan/40 shadow-[0_0_24px_rgba(57,197,187,0.25)]">
-                <img
-                  src="/images/founder-slashy.png"
-                  alt="Slashy"
-                  className="w-full h-full object-cover"
+            {/* ── QR ───────────────────────────────────────────────────── */}
+            <div className="styx-panel-body">
+              {/* The white plate, its padding and the QRCode's own bgColor /
+                  fgColor are FUNCTIONAL, not decoration: a scanner needs the
+                  light ground and the quiet zone around the modules. Do not
+                  swap #ffffff for a Styx token and do not remove the padding.
+                  size and level are tuned to this payload's length. */}
+              <div className="p-4" style={{ backgroundColor: "#ffffff" }}>
+                <QRCode
+                  value={VCARD}
+                  size={256}
+                  level="M"
+                  className="w-full h-auto"
+                  bgColor="#ffffff"
+                  fgColor="#0a0e12"
                 />
               </div>
-              <div className="absolute -bottom-1.5 -right-1.5 bg-p01-cyan text-p01-void text-[9px] font-mono font-bold px-1.5 py-0.5 rounded">
-                SOLO
+              <p
+                className="styx-card-label styx-center"
+                style={{ margin: "1rem 0 0" }}
+              >
+                Scan to save contact
+              </p>
+            </div>
+
+            {/* ── Links and actions ────────────────────────────────────── */}
+            <div
+              className="styx-panel-body"
+              style={{ borderTop: "1px solid var(--styx-rule-soft)" }}
+            >
+              <div>
+                {links.map((l) => (
+                  <a
+                    key={l.label}
+                    href={l.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="styx-row"
+                  >
+                    <span className="shrink-0" aria-hidden="true">
+                      {l.icon}
+                    </span>
+                    <span
+                      className="styx-row-key"
+                      style={{ minWidth: "11ch" }}
+                    >
+                      {l.label}
+                    </span>
+                    <span className="styx-row-leader" />
+                    <span
+                      className="styx-row-value styx-link"
+                      style={{ minWidth: 0 }}
+                    >
+                      {l.handle}
+                    </span>
+                  </a>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mt-6">
+                <a
+                  href="/slashy.vcf"
+                  download="slashy-protocol01.vcf"
+                  className="styx-btn"
+                  style={{ padding: "0.8rem 1rem" }}
+                >
+                  Save contact
+                </a>
+                {/* The effect only knows it fired a synthetic click, not that
+                    the browser accepted it, so the second state says "again"
+                    rather than claiming the file arrived. */}
+                <a
+                  href="/slashy-card.pdf"
+                  download="slashy-protocol01.pdf"
+                  className="styx-btn-ghost"
+                  style={{ padding: "0.8rem 1rem" }}
+                >
+                  {downloaded ? "Download again" : "Download PDF"}
+                </a>
               </div>
             </div>
-            <div className="min-w-0">
-              <h1 className="text-2xl font-bold text-white font-display tracking-tight leading-tight">
-                Slashy
-              </h1>
-              <p className="text-p01-cyan font-mono text-[11px] tracking-wider mt-0.5">
-                FOUNDER / SOLO DEV
-              </p>
-              <p className="text-p01-text-dim text-xs mt-1 leading-snug">
-                Privacy &amp; ZK infra for Solana
-              </p>
-            </div>
-          </div>
+          </Reveal>
 
-          {/* QR */}
-          <div className="relative bg-white rounded-xl p-4 mb-5">
-            <QRCode
-              value={VCARD}
-              size={256}
-              level="M"
-              className="w-full h-auto"
-              bgColor="#ffffff"
-              fgColor="#0a0e12"
-            />
-            {/* Corner accents */}
-            <div className="absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 border-p01-cyan" />
-            <div className="absolute top-2 right-2 w-3 h-3 border-t-2 border-r-2 border-p01-cyan" />
-            <div className="absolute bottom-2 left-2 w-3 h-3 border-b-2 border-l-2 border-p01-cyan" />
-            <div className="absolute bottom-2 right-2 w-3 h-3 border-b-2 border-r-2 border-p01-cyan" />
-          </div>
-
-          <p className="text-center text-[11px] font-mono text-p01-text-dim tracking-wider uppercase mb-5">
-            Scan to save contact
-          </p>
-
-          {/* Links */}
-          <div className="space-y-2 mb-5">
-            {links.map((l) => (
-              <a
-                key={l.label}
-                href={l.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-3 px-3 py-2.5 bg-white/[0.02] border border-p01-border rounded-lg hover:border-p01-cyan/40 hover:bg-white/[0.04] transition-all group"
-              >
-                <span className="text-p01-text-muted group-hover:text-p01-cyan transition-colors">
-                  {l.icon}
-                </span>
-                <span className="text-[11px] font-mono text-p01-text-muted uppercase tracking-wider w-16 shrink-0">
-                  {l.label}
-                </span>
-                <span className="text-xs text-white font-mono truncate ml-auto">
-                  {l.handle}
-                </span>
-              </a>
-            ))}
-          </div>
-
-          {/* Action buttons */}
-          <div className="grid grid-cols-2 gap-2">
-            <a
-              href="/slashy.vcf"
-              download="slashy-protocol01.vcf"
-              className="btn-primary text-center text-xs py-3 block"
+          {/* ── Footer line ────────────────────────────────────────────── */}
+          <Reveal className="styx-reveal" delay={160}>
+            {/* protocol-01.dev is the domain that actually resolves. */}
+            <p
+              className="styx-mono styx-center"
+              style={{ margin: "1rem 0 0", letterSpacing: "0.14em" }}
             >
-              Save Contact
-            </a>
-            <a
-              href="/slashy-card.pdf"
-              download="slashy-protocol01.pdf"
-              className="text-center text-xs py-3 block border border-p01-cyan/40 text-p01-cyan rounded-lg hover:bg-p01-cyan/10 transition-colors font-mono uppercase tracking-wider"
-            >
-              {downloaded ? "PDF \u2713" : "Download PDF"}
-            </a>
-          </div>
-        </motion.div>
-
-        {/* Footer line */}
-        <motion.p
-          variants={fadeUp}
-          className="text-center text-[10px] font-mono text-p01-text-dim tracking-[0.25em] uppercase mt-4"
-        >
-          protocol-01.dev/card
-        </motion.p>
-      </motion.div>
-    </main>
+              protocol-01.dev/card
+            </p>
+          </Reveal>
+        </div>
+      </div>
+    </StyxShell>
   );
 }

@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Weekly Updates · Protocol 01",
+  title: "Weekly updates · Styx Protocol",
   description:
-    "Protocol 01 development, week by week. Features, integrations, and milestones shipped on Solana devnet, documented in public.",
+    "The Styx Protocol development log, one entry per week from April 6 to June 7, 2026. What shipped, what broke, and which claims were later corrected. Solana devnet only, and not audited.",
   openGraph: {
-    title: "Weekly Updates · Protocol 01",
+    title: "Weekly updates · Styx Protocol",
     description:
-      "Follow Protocol 01 development week by week, built in public on Solana.",
+      "Nine weeks of Styx Protocol development, logged in public. Devnet only, not audited.",
     type: "website",
   },
 };

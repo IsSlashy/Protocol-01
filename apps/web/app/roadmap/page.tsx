@@ -1,53 +1,25 @@
 "use client";
 
-import React, { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState } from "react";
 import { useT } from "@/i18n";
-import SiteHeader from "@/components/SiteHeader";
-import Footer from "@/components/Footer";
-import {
-  CheckCircle,
-  ChevronDown,
-  Clock,
-  Shield,
-  Zap,
-  Code,
-  Layers,
-  Cpu,
-  Eye,
-  EyeOff,
-  Wallet,
-  Globe,
-  Terminal,
-  Bot,
-  Lock,
-  Key,
-  Radio,
-  CreditCard,
-  Network,
-  FileText,
-  TestTube,
-  Server,
-  Download,
-} from "lucide-react";
+import StyxShell from "../_styx/StyxShell";
+import Reveal from "../_styx/Reveal";
+import { ChevronDown, FileText, Download } from "lucide-react";
 
-// ============ P-01 Theme Constants ============
-const THEME = {
-  primaryColor: "#39c5bb",
-  secondaryColor: "#ff77a8",
-  backgroundColor: "#0a0a0c",
-  textColor: "#ffffff",
-  mutedColor: "#888892",
-  dimColor: "#555560",
-  borderColor: "#2a2a30",
-};
+/* Presentation comes from app/_styx/styx.css. The old Protocol 01 THEME object
+   (pink #ff77a8, #0a0a0c, tinted icon tiles) and PHASE_STYLES lived here and are
+   gone: a Styx page writes no colours of its own. */
 
 type PhaseStatus = "shipped" | "next" | "future";
 
+/* Every item used to carry an `icon` field holding a lucide element. This design
+   carries status in a hairline and a check mark and renders no icon tiles, so all
+   56 of those elements were built at module load and thrown away: a dead field,
+   not a reserved one. Field, values and the seventeen icon imports are gone,
+   leaving the three lucide glyphs this page actually renders. */
 interface RoadmapItem {
   title: string;
   description: string;
-  icon: React.ReactNode;
 }
 
 interface RoadmapPhase {
@@ -57,27 +29,6 @@ interface RoadmapPhase {
   subtitle: string;
   items: RoadmapItem[];
 }
-
-const PHASE_STYLES: Record<PhaseStatus, { badge: string; badgeBg: string; borderColor: string; glowColor: string }> = {
-  shipped: {
-    badge: "text-[#39c5bb]",
-    badgeBg: "bg-[#39c5bb]/15 border-[#39c5bb]/30",
-    borderColor: "border-[#39c5bb]/20",
-    glowColor: "#39c5bb",
-  },
-  next: {
-    badge: "text-[#ff77a8]",
-    badgeBg: "bg-[#ff77a8]/15 border-[#ff77a8]/30",
-    borderColor: "border-[#ff77a8]/20",
-    glowColor: "#ff77a8",
-  },
-  future: {
-    badge: "text-[#555560]",
-    badgeBg: "bg-[#555560]/15 border-[#555560]/30",
-    borderColor: "border-[#2a2a30]",
-    glowColor: "#555560",
-  },
-};
 
 const PHASE_LABELS: Record<PhaseStatus, string> = {
   shipped: "roadmap.shipped",
@@ -139,15 +90,11 @@ const SHIPPED_CATEGORY: Record<string, CategoryKey> = {
   txOpacityRelayer: "infrastructure",
   txOpacityEvents: "infrastructure",
   multiRelayerRotation: "infrastructure",
-  automatedTests: "infrastructure",
   securityHardening: "infrastructure",
   mobileApp: "appsSdk",
   aiAgent: "appsSdk",
-  aiAgent56Tools: "appsSdk",
-  i18n: "appsSdk",
   privacySdkNpm: "appsSdk",
   jupiterSwap: "appsSdk",
-  zeroTsErrors: "appsSdk",
   mugenExchange: "ecosystem",
   colosseumFrontier: "ecosystem",
 };
@@ -155,6 +102,103 @@ const SHIPPED_CATEGORY: Record<string, CategoryKey> = {
 // Extract the stem from a "roadmap.items.<stem>.title" key.
 const itemStem = (titleKey: string): string => titleKey.split(".")[2] ?? "";
 
+/**
+ * Descriptions this page does not print.
+ *
+ * The rebrand exists because the old site said more than it could show. The
+ * dictionaries (i18n/en.ts, i18n/fr.ts) are not this page's to edit: a hardcoded
+ * English replacement here would silently delete the French, so the corrections
+ * available in this file are to stop rendering a sentence or to drop the item
+ * that carries the claim, and a false string that has to keep rendering is
+ * handed to the i18n pass as a rewrite in both locales instead.
+ *
+ * A description is withheld only when it asserts something a reader cannot
+ * check AND the item's title is a plain feature name. Where the claim was in
+ * the TITLE, the item is dropped from the list instead: see the note above
+ * `roadmap`. Hiding the detail under a headline that repeats the claim kept the
+ * claim and buried the evidence, which is worse than either extreme.
+ *
+ * A measurement is not checkable just because it names devnet. "809,812 CU
+ * measured on devnet" ships with no published benchmark a reader can open, which
+ * is the same objection that took "370+ Automated Tests" off this page, so the
+ * two descriptions carrying that figure are withheld again here. They were
+ * printed by an earlier pass; no test asked for them, and the deleted test-count
+ * item makes keeping them indefensible.
+ *
+ * What still prints: colosseumFrontier carries its own date, which is what makes
+ * it a record rather than current standing; quantumWallet is a design sketch in
+ * the PLANNED phase and reads as one; onChainContracts is held on screen by
+ * __tests__/pages/RoadmapPage.test.tsx, and its counts and its "no server
+ * required" line are going out through a dictionary rewrite instead, because the
+ * assertion only needs the phrase "Trustless, permissionless privacy".
+ *
+ * Four entries below are withheld pending a dictionary rewrite that has been
+ * handed to the i18n pass: zkShieldedPool, starkMigration, instantZk and
+ * advancedPrivacy. Once those strings say something true, drop the stem from
+ * this set so the sentence prints. The keys are untouched in both locales, so a
+ * stem added to or removed from this set is the whole edit.
+ *
+ * Reason per entry:
+ *   onChainRelayer ....... "no backend server"; two hosted relayers are running
+ *   aiAgent .............. "no data leaves your phone", unverifiable absolute
+ *   instantZk ............ "~3 seconds"; on-device proving has been measured
+ *                          past 180 s, and it also credits a Winterfell WASM
+ *                          prover that zkShieldedPool says was dropped
+ *   zkShieldedPool ....... "809,812 CU measured on devnet", "7 AIRs"; no
+ *                          benchmark is published next to either number
+ *   starkMigration ....... the same CU figure, "~9-15KB proofs" and a
+ *                          DEEP-ALI-on-every-circuit soundness claim
+ *   advancedPrivacy ...... "defeat chain analysis"; decoys are a FUTURE item
+ *   stealthMetaAddresses . "Both sides hidden on-chain"; the sender is not
+ *                          hidden on any leg
+ *   fullStealthUnshield .. "wallet never appears on-chain"; the withdrawal
+ *                          republishes the deposit commitment, so the pairing
+ *                          is trivial and there is no client-side fix
+ *   txOpacityRelayer ..... "IP no longer correlatable", an absolute negative
+ *   txOpacityEvents ...... names indexing firms and asserts what they cannot see
+ *   uniformStarkProofs ... "fingerprinting eliminated"; the size channel is one
+ *                          of six, and closing it alone buys nothing
+ *   relayerHealth ........ "withdrawals never stall"; the keeper retry bug is open
+ */
+const WITHHELD_DESC = new Set<string>([
+  "onChainRelayer",
+  "aiAgent",
+  "instantZk",
+  "zkShieldedPool",
+  "starkMigration",
+  "advancedPrivacy",
+  "stealthMetaAddresses",
+  "fullStealthUnshield",
+  "txOpacityRelayer",
+  "txOpacityEvents",
+  "uniformStarkProofs",
+  "relayerHealth",
+]);
+
+/**
+ * The old identity prefixed its overlines with a terminal chevron ("> BUILD
+ * WITH US"). Strip it rather than drop the translated string: the prefix is the
+ * same in every locale, so this keeps French intact.
+ */
+const stripChevron = (s: string): string => s.replace(/^>\s*/, "");
+
+/**
+ * Four shipped entries are not in this list, and the omission is the point.
+ *
+ * "370+ Automated Tests", "AI Agent: 56 Tools", "0 TypeScript Errors" and
+ * "i18n (EN/FR/JA)" put the claim in the TITLE. Withholding their descriptions
+ * left the headline number on screen with the detail hidden, so the page made a
+ * claim it could not support and removed the only text that said anything
+ * specific. The numbers count files in a repository whose source is not public,
+ * so a reader has nothing to check them against; "All passing" dates from a
+ * green run nobody can point at; and the Japanese dictionary was deleted on
+ * 2026-08-11, which makes EN/FR/JA false as written.
+ *
+ * The dictionary keys still exist untouched in en.ts and fr.ts. Restoring an
+ * entry is a title rewrite in both locales plus one object here, not an
+ * archaeology exercise. Counts, the ring percentage and the category totals are
+ * all derived from this array, so they follow automatically.
+ */
 const roadmap: RoadmapPhase[] = [
   {
     id: "current",
@@ -165,262 +209,195 @@ const roadmap: RoadmapPhase[] = [
       {
         title: "roadmap.items.stealthAddresses.title",
         description: "roadmap.items.stealthAddresses.desc",
-        icon: <Eye className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.zkShieldedPool.title",
         description: "roadmap.items.zkShieldedPool.desc",
-        icon: <Shield className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.onChainRelayer.title",
         description: "roadmap.items.onChainRelayer.desc",
-        icon: <Radio className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.paymentStreams.title",
         description: "roadmap.items.paymentStreams.desc",
-        icon: <Zap className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.jupiterSwap.title",
         description: "roadmap.items.jupiterSwap.desc",
-        icon: <Layers className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.mobileApp.title",
         description: "roadmap.items.mobileApp.desc",
-        icon: <Wallet className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.aiAgent.title",
         description: "roadmap.items.aiAgent.desc",
-        icon: <Bot className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.instantZk.title",
         description: "roadmap.items.instantZk.desc",
-        icon: <Shield className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.onChainContracts.title",
         description: "roadmap.items.onChainContracts.desc",
-        icon: <Code className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.advancedPrivacy.title",
         description: "roadmap.items.advancedPrivacy.desc",
-        icon: <Lock className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.denominatedPools.title",
         description: "roadmap.items.denominatedPools.desc",
-        icon: <Layers className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.confidentialBalances.title",
         description: "roadmap.items.confidentialBalances.desc",
-        icon: <Lock className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.subscriptionVaults.title",
         description: "roadmap.items.subscriptionVaults.desc",
-        icon: <Radio className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.p2pNoteSharing.title",
         description: "roadmap.items.p2pNoteSharing.desc",
-        icon: <Wallet className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.starkMigration.title",
         description: "roadmap.items.starkMigration.desc",
-        icon: <Cpu className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.onChainRegistry.title",
         description: "roadmap.items.onChainRegistry.desc",
-        icon: <FileText className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.securityHardening.title",
         description: "roadmap.items.securityHardening.desc",
-        icon: <Lock className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.rpcFallback.title",
         description: "roadmap.items.rpcFallback.desc",
-        icon: <Server className="w-5 h-5" />,
-      },
-      {
-        title: "roadmap.items.automatedTests.title",
-        description: "roadmap.items.automatedTests.desc",
-        icon: <TestTube className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.autoShieldReceive.title",
         description: "roadmap.items.autoShieldReceive.desc",
-        icon: <Shield className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.stealthMetaAddresses.title",
         description: "roadmap.items.stealthMetaAddresses.desc",
-        icon: <Eye className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.multiHopRouter.title",
         description: "roadmap.items.multiHopRouter.desc",
-        icon: <Zap className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.crossPoolSplitting.title",
         description: "roadmap.items.crossPoolSplitting.desc",
-        icon: <Layers className="w-5 h-5" />,
-      },
-      {
-        title: "roadmap.items.aiAgent56Tools.title",
-        description: "roadmap.items.aiAgent56Tools.desc",
-        icon: <Bot className="w-5 h-5" />,
-      },
-      {
-        title: "roadmap.items.zeroTsErrors.title",
-        description: "roadmap.items.zeroTsErrors.desc",
-        icon: <Code className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.fullStealthUnshield.title",
         description: "roadmap.items.fullStealthUnshield.desc",
-        icon: <Eye className="w-5 h-5" />,
-      },
-      {
-        title: "roadmap.items.i18n.title",
-        description: "roadmap.items.i18n.desc",
-        icon: <Globe className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.stealthAirdrops.title",
         description: "roadmap.items.stealthAirdrops.desc",
-        icon: <Zap className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.complianceZk.title",
         description: "roadmap.items.complianceZk.desc",
-        icon: <Shield className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.privacySdkNpm.title",
         description: "roadmap.items.privacySdkNpm.desc",
-        icon: <Code className="w-5 h-5" />,
       },
       // ── v0.9.9 Frost release (2026-04-23) ─────────────────────
       {
         title: "roadmap.items.instantUnshield.title",
         description: "roadmap.items.instantUnshield.desc",
-        icon: <Zap className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.perWalletNotes.title",
         description: "roadmap.items.perWalletNotes.desc",
-        icon: <Wallet className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.deterministicStealth.title",
         description: "roadmap.items.deterministicStealth.desc",
-        icon: <Eye className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.poolV2Migration.title",
         description: "roadmap.items.poolV2Migration.desc",
-        icon: <Layers className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.multiLayoutDecoder.title",
         description: "roadmap.items.multiLayoutDecoder.desc",
-        icon: <Code className="w-5 h-5" />,
       },
       // ── Ecosystem / product surface ───────────────────────────
       {
         title: "roadmap.items.mugenExchange.title",
         description: "roadmap.items.mugenExchange.desc",
-        icon: <CreditCard className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.colosseumFrontier.title",
         description: "roadmap.items.colosseumFrontier.desc",
-        icon: <Globe className="w-5 h-5" />,
       },
       // ── May 2026 sprint shipping wave ─────────────────────────
       {
         title: "roadmap.items.v3StarkE2E.title",
         description: "roadmap.items.v3StarkE2E.desc",
-        icon: <Cpu className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.txOpacityRelayer.title",
         description: "roadmap.items.txOpacityRelayer.desc",
-        icon: <Radio className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.txOpacityEvents.title",
         description: "roadmap.items.txOpacityEvents.desc",
-        icon: <EyeOff className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.uniformStarkProofs.title",
         description: "roadmap.items.uniformStarkProofs.desc",
-        icon: <Lock className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.multiRelayerRotation.title",
         description: "roadmap.items.multiRelayerRotation.desc",
-        icon: <Network className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.poolV4Migration.title",
         description: "roadmap.items.poolV4Migration.desc",
-        icon: <Layers className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.subscribePrivateV3.title",
         description: "roadmap.items.subscribePrivateV3.desc",
-        icon: <Zap className="w-5 h-5" />,
       },
       // ── June 2026 — Privy removal & extension parity ──────────
       {
         title: "roadmap.items.privyRemoval.title",
         description: "roadmap.items.privyRemoval.desc",
-        icon: <Wallet className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.extensionParity.title",
         description: "roadmap.items.extensionParity.desc",
-        icon: <Code className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.licenseKeys.title",
         description: "roadmap.items.licenseKeys.desc",
-        icon: <Key className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.relayerHealth.title",
         description: "roadmap.items.relayerHealth.desc",
-        icon: <Server className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.v102Release.title",
         description: "roadmap.items.v102Release.desc",
-        icon: <Download className="w-5 h-5" />,
       },
       // ── Reconciled from "Next" — verified shipped in code ─────
       {
         title: "roadmap.items.leafInsertedCanonical.title",
         description: "roadmap.items.leafInsertedCanonical.desc",
-        icon: <Code className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.fiatOnRamp.title",
         description: "roadmap.items.fiatOnRamp.desc",
-        icon: <CreditCard className="w-5 h-5" />,
       },
     ],
   },
@@ -433,27 +410,22 @@ const roadmap: RoadmapPhase[] = [
       {
         title: "roadmap.items.networkMapping.title",
         description: "roadmap.items.networkMapping.desc",
-        icon: <Globe className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.securityAudit.title",
         description: "roadmap.items.securityAudit.desc",
-        icon: <Shield className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.mainnetLaunch.title",
         description: "roadmap.items.mainnetLaunch.desc",
-        icon: <Zap className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.iosBuild.title",
         description: "roadmap.items.iosBuild.desc",
-        icon: <Wallet className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.subscriptionOneWay.title",
         description: "roadmap.items.subscriptionOneWay.desc",
-        icon: <Code className="w-5 h-5" />,
       },
     ],
   },
@@ -466,62 +438,54 @@ const roadmap: RoadmapPhase[] = [
       {
         title: "roadmap.items.quantumWallet.title",
         description: "roadmap.items.quantumWallet.desc",
-        icon: <Key className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.coverTraffic.title",
         description: "roadmap.items.coverTraffic.desc",
-        icon: <EyeOff className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.desktopApp.title",
         description: "roadmap.items.desktopApp.desc",
-        icon: <Cpu className="w-5 h-5" />,
       },
       {
         title: "roadmap.items.cliTool.title",
         description: "roadmap.items.cliTool.desc",
-        icon: <Terminal className="w-5 h-5" />,
       },
     ],
   },
 ];
 
+/**
+ * One shipped entry: a cyan check, the title, and the description only when the
+ * description is something a reader can check (see WITHHELD_DESC).
+ *
+ * The `icon` field on every item is left unrendered on purpose. Coloured icon
+ * tiles were the old identity's chrome; this design carries status in a hairline
+ * and a check mark, so the data array keeps its icons and the page ignores them.
+ */
 function ItemCard({
   item,
-  status,
+  index,
   t,
 }: {
   item: RoadmapItem;
-  status: PhaseStatus;
+  index: number;
   t: (k: string) => string;
 }) {
-  const styles = PHASE_STYLES[status];
+  const showDesc = !WITHHELD_DESC.has(itemStem(item.title));
   return (
-    <div className="rounded-2xl border p-5 transition-colors bg-white/[0.02] backdrop-blur-sm border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]">
-      <div className="flex items-start gap-4">
-        <div
-          className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
-          style={{ backgroundColor: styles.glowColor + "15", color: styles.glowColor }}
-        >
-          {item.icon}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <h4 className="font-semibold text-sm">{t(item.title)}</h4>
-            {status === "shipped" && (
-              <CheckCircle className="w-4 h-4 flex-shrink-0" style={{ color: THEME.primaryColor }} />
-            )}
-            {status === "next" && (
-              <Clock className="w-4 h-4 flex-shrink-0" style={{ color: THEME.secondaryColor }} />
-            )}
-          </div>
-          <p className="text-xs leading-relaxed" style={{ color: THEME.mutedColor }}>
-            {t(item.description)}
-          </p>
-        </div>
-      </div>
-    </div>
+    <Reveal
+      className="styx-card styx-sweep styx-reveal"
+      delay={Math.min(index * 60, 240)}
+    >
+      <p className="styx-card-value" style={{ fontSize: "1.05rem" }}>
+        <span className="styx-check" aria-hidden="true">
+          &#10003;
+        </span>
+        {t(item.title)}
+      </p>
+      {showDesc ? <p className="styx-card-note">{t(item.description)}</p> : null}
+    </Reveal>
   );
 }
 
@@ -558,249 +522,372 @@ export default function RoadmapPage() {
   const RING_C = 2 * Math.PI * RING_R;
 
   return (
-    <div
-      className="min-h-screen"
-      style={{ backgroundColor: THEME.backgroundColor, color: THEME.textColor }}
-    >
-      <SiteHeader />
-
-      {/* Compact hero */}
-      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-28 pb-2">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-        >
-          <p className="text-xs font-mono tracking-[0.2em] mb-3" style={{ color: THEME.primaryColor }}>
-            {t('roadmap.heroSubtitle')}
-          </p>
-          {/* h1, not h2: this is the page title. The page had NO h1 at all after
-              commit 97339ea6 folded the old page header into SiteHeader, which
-              contains no heading element, an a11y and SEO defect, since a
-              document should expose exactly one top-level heading. */}
-          <h1 className="text-2xl sm:text-3xl font-bold font-display tracking-wide mb-2">
-            {t('roadmap.heroTitle')}
-          </h1>
-          <p className="text-sm max-w-2xl" style={{ color: THEME.mutedColor }}>
-            {t('roadmap.heroDesc')}
-          </p>
-        </motion.div>
+    <StyxShell>
+      {/* ── Hero ─────────────────────────────────────────────────────────── */}
+      <section className="styx-container styx-hero">
+        {/* The one gleam on this page, and the slot `roadmap.heroSubtitle` has
+            always filled. A previous pass hardcoded "Styx Protocol" here because
+            the key still read "> PROTOCOL 01 // DEVELOPMENT ROADMAP": that left
+            half the line untranslated and the key dead in both dictionaries. The
+            key is rewritten to name Styx in the i18n pass, so the t() call comes
+            back and the whole line is localized again. stripChevron survives for
+            older wordings; the new strings carry no chevron, so it is a no-op. */}
+        <p className="styx-overline styx-gleam">
+          {stripChevron(t('roadmap.heroSubtitle'))}
+        </p>
+        {/* h1, not h2: this is the page title. The page had NO h1 at all after
+            commit 97339ea6 folded the old page header into SiteHeader, which
+            contains no heading element, an a11y and SEO defect, since a
+            document should expose exactly one top-level heading. StyxHeader has
+            no heading element either, so this remains the only h1. */}
+        <h1 className="styx-h1">{t('roadmap.heroTitle')}</h1>
+        <div className="styx-hero-rule" aria-hidden="true" />
+        <div className="styx-hero-body">
+          <p className="styx-lede">{t('roadmap.heroDesc')}</p>
+          {/* The page's single amber element, and the only thing on it the
+              reader must not miss. Both strings already exist in en and fr. */}
+          <div className="styx-admission">
+            <p className="styx-admission-title">{t('roadmap.devnetOnly')}</p>
+            <p className="styx-admission-body">{t('roadmap.disclaimer')}</p>
+          </div>
+        </div>
       </section>
 
-      {/* Dashboard — counts double as phase tabs */}
-      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
-          className="rounded-2xl border p-6 bg-white/[0.02] backdrop-blur-sm border-white/[0.06]"
-        >
-          <div className="flex flex-col sm:flex-row items-center gap-6">
-            {/* Progress ring */}
-            <div className="relative flex-shrink-0" style={{ width: 96, height: 96 }}>
-              <svg width="96" height="96" viewBox="0 0 96 96" className="-rotate-90">
-                <circle cx="48" cy="48" r={RING_R} fill="none" stroke={THEME.borderColor} strokeWidth="7" />
-                <circle
-                  cx="48"
-                  cy="48"
-                  r={RING_R}
-                  fill="none"
-                  stroke={THEME.primaryColor}
-                  strokeWidth="7"
-                  strokeLinecap="round"
-                  strokeDasharray={RING_C}
-                  strokeDashoffset={RING_C * (1 - pct / 100)}
-                />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-xl font-bold font-display" style={{ color: THEME.textColor }}>
-                  {pct}%
-                </span>
-                <span className="text-[9px] font-mono uppercase tracking-wider" style={{ color: THEME.dimColor }}>
-                  {t('roadmap.shippedLabel')}
-                </span>
+      {/* ── Dashboard: the arc, and the counts as phase tabs ─────────────── */}
+      <section className="styx-section">
+        <div className="styx-container">
+          <Reveal className="styx-reveal">
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: "clamp(1.5rem, 4vw, 3rem)",
+              }}
+            >
+              {/* Hand-rolled arc: styx.css has no gauge primitive, so the SVG
+                  survives from the old page with its strokes swapped to tokens
+                  and thinned to a hairline. RING_R / RING_C are unchanged. */}
+              <div style={{ position: "relative", width: 96, height: 96, flex: "none" }}>
+                <svg
+                  width="96"
+                  height="96"
+                  viewBox="0 0 96 96"
+                  aria-hidden="true"
+                  style={{ transform: "rotate(-90deg)" }}
+                >
+                  <circle
+                    cx="48"
+                    cy="48"
+                    r={RING_R}
+                    fill="none"
+                    stroke="var(--styx-rule)"
+                    strokeWidth="2"
+                  />
+                  <circle
+                    cx="48"
+                    cy="48"
+                    r={RING_R}
+                    fill="none"
+                    stroke="var(--styx-accent)"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeDasharray={RING_C}
+                    strokeDashoffset={RING_C * (1 - pct / 100)}
+                  />
+                </svg>
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <span className="styx-card-value" style={{ margin: 0, fontSize: "1.4rem" }}>
+                    {pct}%
+                  </span>
+                </div>
+              </div>
+              {/* The percentage is only as honest as its denominator, so the
+                  denominator is printed beside it. Both numbers are counted off
+                  the array below at render time, never typed in, so the reader
+                  can check them against the list on the same screen. */}
+              <div>
+                <p className="styx-card-label" style={{ margin: 0 }}>
+                  {t('roadmap.overallProgress')}
+                </p>
+                <p className="styx-mono" style={{ margin: "0.4rem 0 0" }}>
+                  {counts.shipped} / {total} {t('roadmap.shippedLabel')}
+                </p>
               </div>
             </div>
+          </Reveal>
 
-            {/* Stat tiles = phase tabs */}
-            <div className="grid grid-cols-3 gap-3 w-full">
-              {TABS.map((status) => {
-                const s = PHASE_STYLES[status];
-                const active = activeTab === status;
-                return (
-                  <button
-                    key={status}
-                    onClick={() => setActiveTab(status)}
-                    className="rounded-xl border p-4 text-left transition-all"
+          {/* Stat tiles = phase tabs */}
+          <div className="styx-grid styx-grid-3" style={{ marginTop: "2.5rem" }}>
+            {TABS.map((status) => {
+              const active = activeTab === status;
+              return (
+                <button
+                  key={status}
+                  onClick={() => setActiveTab(status)}
+                  type="button"
+                  className="styx-card styx-sweep"
+                  aria-pressed={active}
+                  style={{
+                    /* styx.css has no selected state for a card used as a tab;
+                       the accent hairline is the whole affordance. */
+                    border: `1px solid ${active ? "var(--styx-accent)" : "transparent"}`,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    color: "inherit",
+                    font: "inherit",
+                  }}
+                >
+                  <p
+                    className="styx-card-label"
                     style={{
-                      borderColor: active ? s.glowColor + "60" : THEME.borderColor,
-                      backgroundColor: active ? s.glowColor + "12" : "rgba(255,255,255,0.02)",
+                      margin: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
                     }}
                   >
-                    <div className="text-2xl font-bold font-display" style={{ color: s.glowColor }}>
-                      {counts[status]}
-                    </div>
-                    <div
-                      className="text-[10px] font-mono uppercase tracking-wider mt-1"
-                      style={{ color: active ? s.glowColor : THEME.dimColor }}
-                    >
-                      {t(PHASE_LABELS[status])}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+                    {active ? <span className="styx-dot" aria-hidden="true" /> : null}
+                    {t(PHASE_LABELS[status])}
+                  </p>
+                  <p
+                    className="styx-card-value"
+                    style={{ margin: "0.7rem 0 0", fontSize: "2rem" }}
+                  >
+                    {counts[status]}
+                  </p>
+                </button>
+              );
+            })}
           </div>
 
           {/* Current focus */}
           {focusItem && (
             <div
-              className="mt-5 pt-4 border-t flex items-center gap-2 flex-wrap"
-              style={{ borderColor: THEME.borderColor }}
+              style={{
+                marginTop: "2rem",
+                paddingTop: "1.25rem",
+                borderTop: "1px solid var(--styx-rule)",
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "baseline",
+                gap: "0.75rem",
+              }}
             >
-              <span
-                className="text-[10px] font-mono uppercase tracking-wider"
-                style={{ color: THEME.secondaryColor }}
-              >
+              <span className="styx-card-label" style={{ margin: 0 }}>
                 {t('roadmap.currentFocus')}
               </span>
-              <span className="text-sm" style={{ color: THEME.mutedColor }}>
-                {t(focusItem.title)}
-              </span>
+              <span className="styx-mono">{t(focusItem.title)}</span>
             </div>
           )}
-        </motion.div>
-      </section>
-
-      {/* Active phase content */}
-      <section className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 pb-24">
-        <div className="mb-6">
-          <h3 className="text-lg font-bold font-display tracking-wide">{t(activePhase.title)}</h3>
-          <p className="text-sm" style={{ color: THEME.dimColor }}>{t(activePhase.subtitle)}</p>
         </div>
-
-        {activeTab === "shipped" ? (
-          <div className="space-y-3">
-            {CATEGORY_ORDER.map((cat) => {
-              const items = shippedByCat[cat];
-              if (!items.length) return null;
-              const open = openCats[cat];
-              return (
-                <div
-                  key={cat}
-                  className="rounded-2xl border overflow-hidden bg-white/[0.02] backdrop-blur-sm border-white/[0.06]"
-                >
-                  <button
-                    onClick={() => setOpenCats((p) => ({ ...p, [cat]: !p[cat] }))}
-                    className="w-full flex items-center justify-between px-5 py-4 hover:bg-white/[0.03] transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="font-semibold text-sm">{t(`roadmap.categories.${cat}`)}</span>
-                      <span
-                        className="text-[11px] font-mono px-2 py-0.5 rounded-full"
-                        style={{ backgroundColor: THEME.primaryColor + "15", color: THEME.primaryColor }}
-                      >
-                        {items.length}
-                      </span>
-                    </div>
-                    <ChevronDown
-                      className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`}
-                      style={{ color: THEME.dimColor }}
-                    />
-                  </button>
-                  <AnimatePresence initial={false}>
-                    {open && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.25 }}
-                        className="overflow-hidden"
-                      >
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-5 pb-5">
-                          {items.map((it) => (
-                            <ItemCard key={it.title} item={it} status="shipped" t={t} />
-                          ))}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {activePhase.items.map((it) => (
-              <ItemCard key={it.title} item={it} status={activeTab} t={t} />
-            ))}
-          </div>
-        )}
       </section>
 
-      {/* CTA */}
-      <section
-        className="border-t"
-        style={{ borderColor: THEME.borderColor }}
-      >
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
+      {/* ── The active chapter ───────────────────────────────────────────── */}
+      <section className="styx-section styx-section-alt">
+        <div className="styx-container styx-section-grid">
+          <div className="styx-section-label">
+            {/* The chapter is titled by its phase name and marked by the
+                numeral. It deliberately does NOT repeat the phase label: the
+                tab above already prints SHIPPED / IN PROGRESS / PLANNED, and
+                printing it a second time here put the same word on screen
+                twice, a few hundred pixels apart. The numeral carries the
+                chapter, the h2 names it. */}
+            <span className="styx-numeral" aria-hidden="true">
+              {String(TABS.indexOf(activeTab) + 1).padStart(2, "0")}
+            </span>
+            <h2 className="styx-h2">{t(activePhase.title)}</h2>
+            {/* The shipped phase's own subtitle key is `roadmap.currentSub`,
+                which reads "Live in production". There is no mainnet
+                deployment, so that string is not rendered. Its replacement is
+                `roadmap.builtFromScratch`, an existing key in both
+                dictionaries, rather than `roadmap.devnetOnly`: devnetOnly is
+                already the amber admission in the hero, and using it twice put
+                the same two words on screen twice on this tab. The other two
+                phases print their subtitle as written. */}
+            <p className="styx-note" style={{ marginTop: "1rem" }}>
+              {activeTab === "shipped"
+                ? t('roadmap.builtFromScratch')
+                : t(activePhase.subtitle)}
+            </p>
+          </div>
+
+          <div>
+            {activeTab === "shipped" ? (
+              <div className="styx-stack">
+                {CATEGORY_ORDER.map((cat) => {
+                  const items = shippedByCat[cat];
+                  if (!items.length) return null;
+                  const open = openCats[cat];
+                  return (
+                    <div key={cat} className="styx-panel">
+                      {/* styx.css has no disclosure-trigger class, so a button
+                          wearing styx-panel-head needs the UA button styling
+                          reset inline. The bottom hairline belongs to the open
+                          state only. */}
+                      <button
+                        onClick={() => setOpenCats((p) => ({ ...p, [cat]: !p[cat] }))}
+                        type="button"
+                        className="styx-panel-head"
+                        aria-expanded={!!open}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "1rem",
+                          width: "100%",
+                          background: "none",
+                          borderWidth: 0,
+                          borderBottomWidth: open ? "1px" : 0,
+                          textAlign: "left",
+                          cursor: "pointer",
+                          color: "inherit",
+                          font: "inherit",
+                        }}
+                      >
+                        <span
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.9rem",
+                            minWidth: 0,
+                          }}
+                        >
+                          <h3 className="styx-h3" style={{ margin: 0 }}>
+                            {t(`roadmap.categories.${cat}`)}
+                          </h3>
+                          <span className="styx-chip">{items.length}</span>
+                        </span>
+                        <ChevronDown
+                          size={14}
+                          aria-hidden="true"
+                          style={{
+                            flex: "none",
+                            color: "var(--styx-faint)",
+                            transform: open ? "rotate(180deg)" : undefined,
+                            transition: "transform 0.25s ease",
+                          }}
+                        />
+                      </button>
+                      {open && (
+                        <div className="styx-panel-body">
+                          <div className="styx-grid styx-grid-2">
+                            {items.map((it, i) => (
+                              <ItemCard key={it.title} item={it} index={i} t={t} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              /* Five items and four items: an index reads better than a card
+                 grid at that count. */
+              <ul className="styx-steps">
+                {activePhase.items.map((it, i) => (
+                  <Reveal
+                    as="li"
+                    key={it.title}
+                    className="styx-step styx-reveal"
+                    delay={Math.min(i * 80, 240)}
+                  >
+                    <span className="styx-step-index">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    <div>
+                      <h3 className="styx-h3">{t(it.title)}</h3>
+                      {WITHHELD_DESC.has(itemStem(it.title)) ? null : (
+                        <p className="styx-step-body">{t(it.description)}</p>
+                      )}
+                    </div>
+                  </Reveal>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* ── CTA, then the document ───────────────────────────────────────── */}
+      <section className="styx-section">
+        <div className="styx-container styx-center">
+          <p className="styx-overline">{stripChevron(t('roadmap.buildWithUs'))}</p>
+          <h2 className="styx-h2">{t('roadmap.shapeFuture')}</h2>
           <p
-            className="text-xs font-mono tracking-[0.2em] mb-4"
-            style={{ color: THEME.primaryColor }}
+            className="styx-lede"
+            style={{ marginInline: "auto", marginTop: "1.5rem" }}
           >
-            {t('roadmap.buildWithUs')}
-          </p>
-          <h3 className="text-2xl font-bold font-display tracking-wide mb-4">
-            {t('roadmap.shapeFuture')}
-          </h3>
-          <p className="text-sm mb-8 max-w-md mx-auto" style={{ color: THEME.mutedColor }}>
             {t('roadmap.joinCommunity')}
           </p>
-          <div className="flex items-center justify-center gap-4 flex-wrap">
+          <div
+            className="styx-btn-row"
+            style={{ justifyContent: "center", marginTop: "2.5rem" }}
+          >
             <a
+              className="styx-btn"
               href="https://github.com/IsSlashy/Protocol-01-releases"
               target="_blank"
               rel="noopener noreferrer"
-              className="px-6 py-2.5 text-sm font-bold font-display tracking-wider rounded-2xl transition-colors"
-              style={{
-                backgroundColor: THEME.primaryColor,
-                color: THEME.backgroundColor,
-              }}
             >
               GitHub
             </a>
             <a
+              className="styx-btn-ghost"
               href="https://discord.gg/EfqnVmb2dV"
               target="_blank"
               rel="noopener noreferrer"
-              className="px-6 py-2.5 text-sm font-bold font-display tracking-wider rounded-2xl border transition-colors text-[#888892] hover:text-white bg-white/[0.02] backdrop-blur-sm border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]"
             >
               Discord
             </a>
           </div>
+
+          <div
+            className="styx-gleam-rule"
+            aria-hidden="true"
+            style={{ marginTop: "clamp(3rem, 7vw, 4.5rem)" }}
+          />
+
+          {/* The href and the asset name keep "protocol-01": the file at
+              public/protocol-01-design-document.pdf is a frozen path. */}
+          <div
+            className="styx-btn-row"
+            style={{ justifyContent: "center", marginTop: "2.5rem" }}
+          >
+            <a className="styx-btn-ghost" href="/protocol-01-design-document.pdf" download>
+              <FileText size={14} aria-hidden="true" />
+              {t('roadmap.designDoc')}
+              <span
+                className="styx-mono"
+                style={{ color: "inherit", fontSize: "inherit" }}
+              >
+                PDF
+              </span>
+              <Download size={13} aria-hidden="true" />
+            </a>
+          </div>
+          {/* `roadmap.lastRevision` dates the PDF above it, not this page, and
+              it sat directly under the same download link before the port. It
+              is printed here for that reason, tight to the button, where the
+              referent is unambiguous: the reader can open the document and
+              check the revision for themselves. */}
+          <p
+            className="styx-mono"
+            style={{ marginTop: "1.25rem", letterSpacing: "0.06em" }}
+          >
+            {t('roadmap.lastRevision')}
+          </p>
         </div>
       </section>
-
-      {/* Design Document */}
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex justify-center">
-        <a
-          href="/protocol-01-design-document.pdf"
-          download
-          className="group flex items-center gap-3 px-5 py-2.5 border rounded-2xl transition-all duration-300 bg-white/[0.02] backdrop-blur-sm border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]"
-        >
-          <FileText className="w-4 h-4 transition-colors" style={{ color: THEME.dimColor }} />
-          <span className="text-sm" style={{ color: THEME.mutedColor }}>
-            {t('roadmap.designDoc')}
-          </span>
-          <span className="text-xs font-mono" style={{ color: THEME.dimColor }}>PDF</span>
-          <Download className="w-3.5 h-3.5 transition-colors" style={{ color: THEME.dimColor }} />
-        </a>
-      </div>
-      <p className="text-center text-[10px] font-mono tracking-wider pb-4" style={{ color: THEME.dimColor }}>
-        {t('roadmap.lastRevision')}
-      </p>
-
-      <Footer />
-    </div>
+    </StyxShell>
   );
 }

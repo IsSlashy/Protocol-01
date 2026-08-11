@@ -40,6 +40,7 @@
     "resend": "^6.12.4",
     "starknet": "^10.0.2",
     "tailwind-merge": "^2.6.1",
+    "three": "^0.185.1",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
@@ -51,6 +52,7 @@
     "@types/node": "^22.19.19",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.185.4",
     "@vitejs/plugin-react": "^4.7.0",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.6",

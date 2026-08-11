@@ -3,13 +3,12 @@ VERSION:3.0
 N:Chatbi;Ramy;;;
 FN:Ramy Chatbi (Slashy)
 NICKNAME:Slashy
-ORG:Protocol 01
+ORG:Styx Protocol
 TITLE:Founder / Solo Dev
-ROLE:Privacy Infrastructure for Solana
+ROLE:Private payments on Solana
 EMAIL;TYPE=INTERNET,PREF:amirramy.chatbi@gmail.com
 URL;TYPE=WORK:https://protocol-01.dev
 URL;TYPE=GitHub:https://github.com/IsSlashy
 URL;TYPE=Twitter:https://x.com/Slashy_fx
-URL;TYPE=Project:https://x.com/Protocol01_
-NOTE:Privacy & ZK infrastructure for Solana — ZK-SNARKs, STARKs, stealth addresses, post-quantum vaults.
+NOTE:Private payments on Solana. Devnet. Not audited.
 END:VCARD

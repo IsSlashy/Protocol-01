@@ -1,12 +1,69 @@
 "use client";
 
 import React from "react";
-import { motion } from "framer-motion";
 import Link from "next/link";
-import { ArrowLeft, Play, Clock, CheckCircle } from "lucide-react";
-import Footer from "@/components/Footer";
-import SiteHeader from "@/components/SiteHeader";
+import { Clock, Play } from "lucide-react";
+import StyxShell from "../_styx/StyxShell";
+import Reveal from "../_styx/Reveal";
 
+/**
+ * /updates: the development log, ported to the Styx vocabulary.
+ *
+ * What is load-bearing here and must not drift:
+ *
+ *  - `"use client"` and `React.useState<number | null>` are the page's only
+ *    state: which week's video is playing. One at a time, keyed by week.
+ *  - The paused card holds TWO <video> elements: the muted still preview inside
+ *    the button, and nothing else; the playing branch swaps in a `controls
+ *    autoPlay` video. `autoPlay` is what makes the click start playback and
+ *    `controls` is the only way to pause, so neither may be dropped. The preview
+ *    deliberately carries no poster, preload or playsInline: adding them would
+ *    change network and iOS behaviour.
+ *  - The `update.video ?` layout branch keeps weeks 3 to 9 from rendering an
+ *    empty media column.
+ *  - The `status` union and both of its branches survive. Nothing in the array
+ *    uses "coming-soon" today, but the branch is the data contract, so deleting
+ *    it would be a data-shape change rather than a restyle.
+ *  - The play button's `aria-label` is its only accessible name (its children
+ *    are a video and an icon), and the x.com href and /roadmap <Link> are kept
+ *    exactly as they were.
+ *
+ * Dropped: framer-motion (mount animations, replaced by Reveal, which triggers
+ * on intersection instead), the unused ArrowLeft import, SiteHeader/Footer (the
+ * shell supplies chrome), and `.btn-primary` from globals.css, which is Orbitron
+ * plus a cyan box-shadow.
+ *
+ * Copy discipline. This page overstated in nine different ways and the entries
+ * below are rewritten, not restyled: the 124-bit soundness figure is withdrawn
+ * (the FRI rate was later measured at one half, and the verifier had no DEEP
+ * binding at the time), the compute-unit and net-SOL numbers are gone because no
+ * transaction is linked beside them, the streaming brand names are replaced by
+ * neutral wording, "anonymous" and "forever" and "instant" are gone, and the
+ * transaction-opacity entry now says in the same breath that a deposit and its
+ * withdrawal are still linkable, because the withdrawal republishes the deposit
+ * commitment. The nine-week gap between the last entry and today is the single
+ * amber admission under the hero.
+ *
+ * Frozen literals in the copy: p01_liquidity, p01_relayer, denominated_pool_v2,
+ * denominated_pool_v4, subscribe_private, specter-sdk. Never rebranded.
+ *
+ * No t() calls: this route has never been translated, in this version or in any
+ * version before it, so there is no key to restore. The localised chrome comes
+ * from StyxHeader and StyxFooter, which call useT() themselves and cover both
+ * shipped locales, English and French.
+ *
+ * Known defect that is NOT this page's to fix: every styx-h1 and styx-h2 here
+ * renders in the sans face at weight 400 with normal tracking instead of the
+ * serif display voice. app/_styx/styx.css line 69 as of 2026-08-11 reads
+ * `.styx :is(h1, h2, h3, h4, h5, h6) { font-family: inherit; font-weight:
+ * inherit; letter-spacing: normal }`. :is() carries the specificity of its most
+ * specific argument, so that rule sits at (0,1,1) and outranks .styx-h1 and
+ * .styx-h2 at (0,1,0) on those three properties whatever the source order;
+ * only the clamp font-size from the class survives. The fix is one word,
+ * `:is(` to `:where(`, and it belongs in the shared file because every styx
+ * route is affected identically. Do not patch it locally here, that would fork
+ * the design system for one page.
+ */
 interface WeekUpdate {
   week: number;
   title: string;
@@ -24,12 +81,12 @@ const updates: WeekUpdate[] = [
     status: "published",
     video: "/videos/week1.mp4",
     highlights: [
-      "Built Mugen Exchange. P2P fiat-to-crypto with ZK compliance",
-      "Full Solana program: escrow, reputation, dispute resolution",
-      "Wired into mobile, extension, and web app",
-      "Listed as official Superteam Ireland project",
-      "Entered Colosseum Frontier hackathon",
-      "Heading to Dogpatch Dublin for IRL building",
+      "Built Mugen Exchange, a separate side project and not part of Styx: peer-to-peer fiat to crypto matching with an on-chain escrow",
+      "That project's Solana program covers escrow, reputation and dispute resolution",
+      "Wired into the mobile app, the extension and the web app",
+      "Listed as a Superteam Ireland project",
+      "Entered the Colosseum Frontier hackathon, an entry and not an outcome. The event has since closed",
+      "Booked five days at Dogpatch Labs in Dublin to build in person",
     ],
   },
   {
@@ -39,12 +96,12 @@ const updates: WeekUpdate[] = [
     status: "published",
     video: "/videos/week2.mp4",
     highlights: [
-      "Migrated all 6 ZK circuits from Groth16 to hash-based STARKs",
-      "Custom FRI verifier running natively on Solana, no trusted setup",
-      "DEEP-ALI composition across every circuit, 124-bit soundness",
-      "Merkle-Update AIR verifies on-chain at 1.32M compute units",
-      "p01_liquidity program live, instant unshield pool on devnet",
-      "Mobile WASM prover, extension, and SDK v2 all migrated. 138 tests green",
+      "Moved the six circuits off Groth16 onto hash-based STARKs: Poseidon and Merkle trees, with no elliptic curves anywhere in the proof",
+      "A FRI verifier running as a Solana program, with no trusted setup",
+      "DEEP-ALI composition wired across the circuits. The soundness figure published here at the time was wrong: the FRI rate was later measured at one half rather than one sixteenth, and the verifier had no DEEP binding yet. The number is withdrawn, not restated",
+      "Merkle-Update AIR verifying on-chain inside Solana's compute limit. The compute-unit figure once quoted here is stale and is not repeated",
+      "p01_liquidity deployed on devnet as the unshield liquidity pool",
+      "The WASM prover, the extension and SDK v2 all ported to the new circuits. No test count is quoted here; run the suite in the repository. Proving on a handset was measured much later at over three minutes, so on-device proving is unfinished rather than shipped",
     ],
   },
   {
@@ -53,14 +110,14 @@ const updates: WeekUpdate[] = [
     date: "April 20 - 26, 2026",
     status: "published",
     highlights: [
-      "Colosseum Frontier hackathon submitted, accelerator track, ~7% / ~$250K target",
-      "Pitch deck + economic charter PDFs published on the marketing site",
-      "Service Registry live on devnet. 4 services attested (Netflix, Spotify, YouTube, Disney+)",
-      "useServiceRegistry hook + release APK demoed on Galaxy device",
-      "v0.9.9 shipped, denominated_pool_v2 seed bump, 13 fresh pools",
-      "Merkle proof rebuild from chain events, recovered notes work end-to-end",
-      "abandonNote action + walletStore destructive init wipe fixed",
-      "Web v0.9.9 marketing refresh + Hermes Buffer compat fix in specter-sdk",
+      "Submitted to the Colosseum Frontier hackathon, accelerator track. A submission, not a result, and the event has since closed",
+      "Pitch deck and economic charter published as PDFs on the marketing site",
+      "Service registry deployed on devnet with four demo service entries. Those entries were placeholders; no streaming provider is or was involved",
+      "useServiceRegistry hook wired in, release APK demoed on an Android handset",
+      "v0.9.9 tagged internally, denominated_pool_v2 seed bump, 13 fresh pools",
+      "Merkle proof rebuild from chain events. Note recovery ran end to end on the cases tested",
+      "abandonNote action added, and the destructive walletStore init wipe fixed",
+      "Marketing refresh on the web app, plus a Hermes Buffer compatibility fix in specter-sdk",
     ],
   },
   {
@@ -69,39 +126,39 @@ const updates: WeekUpdate[] = [
     date: "April 27 - May 3, 2026",
     status: "published",
     highlights: [
-      "Five days in Dublin with Superteam Ireland, face-to-face with builders, founders, and investors",
+      "Five days in Dublin with Superteam Ireland, face to face with builders, founders and investors",
       "Met Diarmuid (Superteam IE) and Alejandro Gutierrez (Lead Superteam IE / Blockchain Ireland)",
-      "Pete Townsend's talk on Finding PMF in Web3 @ Buildstation, re-shaped the roadmap",
-      "Merkle root divergence fixed via replayMerkleProofFromEvents, every shielded note recoverable",
+      "Pete Townsend's talk on finding product-market fit in Web3 at Buildstation re-shaped the roadmap",
+      "Merkle root divergence fixed via replayMerkleProofFromEvents. The notes that had gone unrecoverable came back in the cases tested",
       "Unshield lifecycle: 5 cascading bugs closed, per-pool counter via findSafeShieldCounter",
-      "V3 STARK pools live on devnet, v1.0.0 tagged, foundation stable for enterprise SDKs",
+      "V3 STARK pools deployed on devnet, v1.0.0 tagged internally",
       "Applied to CastleDAO Ireland (August 2026)",
     ],
   },
   {
     week: 5,
-    title: "V3 End-to-End, Tx-Opacity & Multi-Relayer",
+    title: "V3 End-to-End, Opacity Sprint & Multi-Relayer",
     date: "May 4 - May 10, 2026",
     status: "published",
     highlights: [
-      "V3 STARK transfer end-to-end live on devnet, sender → encoded → import → maturation → unshield, +0.995 SOL net",
-      "Sprint 2 Tx-Opacity shipped: p01_relayer wired into V3 (Phase A), event scrubbing on-chain (Phase B), uniform 145 KB STARK proofs (Phase C), fee_escrow PDAs (Phase E)",
-      "Sprint 3 Multi-relayer: auto-rotation + liveness filter + chunked submit_job + lazy reputation decay anti-Sybil",
-      "V4 pool seed bump (denominated_pool_v4). 13 fresh pools, escapes un-decodable legacy events forever",
-      "Subscribe_private V3 fixes. Rust V2 → V3 structs, mobile ix builder placeholders, stark_proof_buffer writable, 4 cascading bugs closed",
-      "Mobile UI 2-modes (Classique / Privé) + V3 routing in subscribe.tsx and (streams)/[id].tsx + explicit note picker + withKeepAwake",
-      "Subscribe_private vault création validated live (PDA FG3DPX6SN…, end-to-end on-chain)",
-      "Quantum Wallet UX design doc shipped, cahier des charges for the post-judging 2-3 month execution",
+      "V3 STARK transfer ran end to end on devnet: send, encode, import, mature, unshield. The net SOL figure once quoted here had no signature published beside it, so it is gone",
+      "The transaction-opacity sprint landed its parts: p01_relayer wired into V3 (Phase A), event scrubbing on chain (Phase B), a uniform proof size (Phase C), fee_escrow PDAs (Phase E). None of that makes a deposit and its withdrawal unlinkable. The withdrawal republishes the deposit commitment, so that link is still open today",
+      "Multi-relayer sprint: auto-rotation, a liveness filter, chunked submit_job, and lazy reputation decay against Sybils",
+      "V4 pool seed bump (denominated_pool_v4), 13 fresh pools, leaving the un-decodable legacy events behind",
+      "subscribe_private V3 fixes: Rust structs moved from V2 to V3, mobile instruction-builder placeholders, stark_proof_buffer made writable, 4 cascading bugs closed",
+      "Mobile UI gained two modes (Classique and Privé) with V3 routing in subscribe.tsx and (streams)/[id].tsx, an explicit note picker, and withKeepAwake",
+      "subscribe_private vault creation validated on chain. The PDA is shown truncated here (FG3DPX6SN…), so it is not something a reader can resolve from this page",
+      "Quantum Wallet UX design document written as the specification for the months after judging",
     ],
   },
   {
     week: 6,
-    title: "Recognition · Dev3pack #2 & Demo Day Live",
+    title: "Dev3pack Placing & Demo Day",
     date: "May 11 - May 17, 2026",
     status: "published",
     highlights: [
-      "Ranked #2 worldwide on the Solana track at the Dev3pack Global Hackathon",
-      "First project to go live on X during the Demo Day window. Disney+ subscribe flow as the headline",
+      "Ranked second on the Solana track at the Dev3pack Global Hackathon. That is the organizers' record, and nothing on this page proves it for you",
+      "Went live on X during the Demo Day window, with a streaming-subscription demo flow as the headline. The service in that demo was ours",
       "Marketing site and pitch materials refreshed off the back of both",
     ],
   },
@@ -111,9 +168,9 @@ const updates: WeekUpdate[] = [
     date: "May 18 - May 24, 2026",
     status: "published",
     highlights: [
-      "Android release build pipeline stabilized on Windows, two-step worklets-then-app, ~96 MB APK",
-      "Device smoke-test workflow via bundled release APK over adb",
-      "Roadmap re-shaped after Pete Townsend's 'Finding PMF in Web3' talk",
+      "Android release build pipeline stabilized on Windows: worklets first, then the app. That build produced an internal release APK of roughly 96 MB",
+      "Device smoke-test workflow via the bundled release APK over adb",
+      "Roadmap re-shaped after Pete Townsend's talk on finding product-market fit in Web3",
     ],
   },
   {
@@ -122,10 +179,10 @@ const updates: WeekUpdate[] = [
     date: "May 25 - May 31, 2026",
     status: "published",
     highlights: [
-      "C3 merkle_path verifier fixed on devnet, every shielded note now unshields, including non-trivial paths",
-      "Fixed a Noble shim regression that had broken every transaction serialization",
+      "C3 merkle_path verifier fixed on devnet. The non-trivial paths that had been failing unshielded in the cases tested",
+      "Fixed a Noble shim regression that had broken transaction serialization",
       "Second relayer brought online on Fly (Frankfurt) with the dormant-node self-heal",
-      "Privy recovery seed persisted offline, killed the boot-time sign hang",
+      "Privy recovery seed persisted offline, which killed the boot-time signing hang",
     ],
   },
   {
@@ -134,185 +191,235 @@ const updates: WeekUpdate[] = [
     date: "June 1 - June 7, 2026",
     status: "published",
     highlights: [
-      "Removed Privy, the classic local wallet is now the default signer, no remote-sign dependency",
-      "Extension reached mobile parity, denominated note transfer, relayer-routed private unshield, anonymous license keys, Standard/ZK modes, scan-import device pairing, phone-to-extension connect",
-      "Relayer RPC bad-slot self-healing plus live health indicators in the app and on the site",
-      "v1.0.2 released; Chrome extension v0.5.0 published as a downloadable build",
+      "Removed Privy. The local wallet became the default signer, with no remote-signing dependency",
+      "Extension caught up with mobile: denominated note transfer, relayer-routed private unshield, license keys that carry no account, Standard and ZK modes, scan-import device pairing, and phone-to-extension connect",
+      "Shipped relayer RPC bad-slot self-healing and the live health indicator. The relayer has regressed since, and a keeper retry bug is open",
+      "v1.0.2 and Chrome extension v0.5.0 tagged. Both are internal tags; this page does not link a download",
     ],
   },
 ];
+
+/** Zero-padded week number, for the oversized marginal numeral. */
+function weekNumeral(week: number) {
+  return String(week).padStart(2, "0");
+}
 
 export default function UpdatesPage() {
   const [playingVideo, setPlayingVideo] = React.useState<number | null>(null);
 
   return (
-    <>
-      <SiteHeader />
-
-      <main className="min-h-screen pt-20 pb-16 px-4 bg-p01-void">
-        <div className="max-w-5xl mx-auto">
-
-          {/* Hero */}
-          <motion.section
-            className="text-center mb-16 pt-8"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
-            <span className="text-[10px] font-mono text-p01-cyan tracking-[0.3em] uppercase">
-              Building in public
-            </span>
-            <h1 className="text-4xl sm:text-5xl font-bold text-white mt-3 mb-4 font-display tracking-tight">
-              Weekly Updates
-            </h1>
-            <p className="text-p01-text-muted text-base max-w-2xl mx-auto">
-              Follow the development of Protocol 01 week by week. Every feature, every integration, every milestone, documented as we build.
+    <StyxShell>
+      {/* ── Hero ───────────────────────────────────────────────────────── */}
+      <section className="styx-container styx-hero">
+        <p className="styx-overline">
+          Styx Protocol &middot; Formerly Protocol 01 &middot; Building in public
+        </p>
+        {/* The page's whole text-gleam budget, spent on one word. */}
+        <h1 className="styx-h1">
+          Nine weeks, <em className="styx-em styx-gleam-strong">logged</em>.
+        </h1>
+        <div className="styx-hero-rule" aria-hidden="true" />
+        <div className="styx-hero-body">
+          <p className="styx-lede">
+            A record of what was built, what broke, and which claims did not
+            survive being measured. Where an entry once carried a number this
+            page could not stand behind, the number is gone and the correction is
+            in the entry.{" "}
+            <strong>
+              Styx runs on Solana devnet. It has not been audited, and there is
+              no mainnet deployment.
+            </strong>
+          </p>
+          <div>
+            <p className="styx-overline">Range</p>
+            <p className="styx-mono" style={{ marginTop: "0.6rem" }}>
+              Weeks 01 to 09 &middot; April 6 to June 7, 2026
             </p>
-          </motion.section>
+            <div className="styx-btn-row" style={{ marginTop: "1.5rem" }}>
+              <a className="styx-btn-ghost" href="#week-9">
+                Latest entry
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
 
-          {/* Updates Timeline */}
-          <div className="space-y-8">
-            {updates.map((update, i) => (
-              <motion.div
-                key={update.week}
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: i * 0.1 }}
-              >
-                <div
-                  className={`rounded-2xl border overflow-hidden transition-all ${
-                    update.status === "published"
-                      ? "border-p01-cyan/20 bg-p01-surface"
-                      : "border-p01-border bg-p01-surface/50"
-                  }`}
-                >
-                  {/* Header */}
-                  <div className="flex items-center justify-between px-6 py-4 border-b border-p01-border">
-                    <div className="flex items-center gap-4">
-                      <div
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center font-display font-bold text-sm ${
-                          update.status === "published"
-                            ? "bg-p01-cyan/15 text-p01-cyan"
-                            : "bg-p01-text-dim/10 text-p01-text-dim"
-                        }`}
-                      >
-                        W{update.week}
-                      </div>
-                      <div>
-                        <h3 className="text-white font-semibold text-lg">{update.title}</h3>
-                        <p className="text-p01-text-dim text-xs font-mono">{update.date}</p>
-                      </div>
-                    </div>
-                    <div>
-                      {update.status === "published" ? (
-                        <span className="flex items-center gap-1.5 text-[11px] font-mono text-p01-cyan bg-p01-cyan/10 border border-p01-cyan/20 px-3 py-1 rounded-lg">
-                          <CheckCircle className="w-3 h-3" />
-                          Published
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1.5 text-[11px] font-mono text-p01-text-dim bg-p01-text-dim/10 border border-p01-border px-3 py-1 rounded-lg">
-                          <Clock className="w-3 h-3" />
-                          Coming Soon
-                        </span>
-                      )}
-                    </div>
-                  </div>
+      {/* ── The one admission ──────────────────────────────────────────── */}
+      <section className="styx-container" aria-label="Current state of this log">
+        <div className="styx-admission">
+          <p className="styx-admission-title">The log stops at week 9</p>
+          <p className="styx-admission-body">
+            The last entry covers June 1 to 7, 2026, and nothing has been added
+            since. Read this as a record of nine weeks in spring 2026, not as the
+            current state of the software, and not as a promise of a weekly
+            cadence. The standing facts have not changed: devnet only, no audit,
+            no mainnet deployment.
+          </p>
+        </div>
+      </section>
 
-                  {/* Content */}
-                  {update.status === "published" && (
-                    <div className="p-6">
-                      <div className={update.video ? "grid md:grid-cols-2 gap-6" : "grid grid-cols-1 gap-6"}>
-                        {/* Video */}
-                        {update.video && (
-                          <div className="relative rounded-xl overflow-hidden bg-p01-void border border-p01-border aspect-video">
-                            {playingVideo === update.week ? (
-                              <video
-                                src={update.video}
-                                controls
-                                autoPlay
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <button
-                                onClick={() => setPlayingVideo(update.week)}
-                                className="w-full h-full flex items-center justify-center group cursor-pointer"
-                                aria-label={`Play video, Week ${update.week}: ${update.title}`}
-                              >
-                                <video
-                                  src={update.video}
-                                  muted
-                                  className="absolute inset-0 w-full h-full object-cover opacity-40"
-                                />
-                                <div className="relative z-10 w-16 h-16 rounded-full bg-p01-cyan/20 border-2 border-p01-cyan/50 flex items-center justify-center group-hover:bg-p01-cyan/30 group-hover:border-p01-cyan transition-all group-hover:scale-110">
-                                  <Play className="w-6 h-6 text-p01-cyan ml-1" />
-                                </div>
-                              </button>
-                            )}
-                          </div>
-                        )}
+      {/* ── The log ────────────────────────────────────────────────────── */}
+      {updates.map((update) => {
+        const numeral = weekNumeral(update.week);
 
-                        {/* Highlights */}
-                        <div>
-                          <h4 className="text-xs font-mono text-p01-cyan tracking-[0.2em] uppercase mb-4">
-                            Highlights
-                          </h4>
-                          <ul className="space-y-3">
-                            {update.highlights.map((h, j) => (
-                              <li key={j} className="flex items-start gap-3 text-sm text-p01-text-muted">
-                                <span className="w-1.5 h-1.5 rounded-full bg-p01-cyan mt-1.5 flex-shrink-0" />
-                                {h}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Coming soon placeholder */}
-                  {update.status === "coming-soon" && (
-                    <div className="p-8 text-center">
-                      <p className="text-p01-text-dim text-sm font-mono">
-                        Stay tuned, update dropping soon.
-                      </p>
-                    </div>
+        return (
+          <section
+            key={update.week}
+            id={`week-${update.week}`}
+            className={`styx-section${
+              update.week % 2 === 0 ? " styx-section-alt" : ""
+            }`}
+          >
+            <div className="styx-container styx-section-grid">
+              <div className="styx-section-label">
+                <span className="styx-numeral" aria-hidden="true">
+                  {numeral}
+                </span>
+                {/* The week number is repeated here in text: the numeral above
+                    is decorative and hidden from assistive tech. */}
+                <p className="styx-index">
+                  Week {numeral} &middot; {update.date}
+                </p>
+                <h2 className="styx-h2">{update.title}</h2>
+                <div style={{ marginTop: "1.25rem" }}>
+                  {update.status === "published" ? (
+                    <span className="styx-chip">
+                      <span className="styx-dot" aria-hidden="true" />
+                      Shipped
+                    </span>
+                  ) : (
+                    <span className="styx-chip">
+                      <Clock size={11} aria-hidden="true" />
+                      Not written yet
+                    </span>
                   )}
                 </div>
-              </motion.div>
-            ))}
-          </div>
+              </div>
 
-          {/* Bottom CTA */}
-          <motion.div
-            className="text-center mt-16"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.5 }}
-          >
-            <p className="text-p01-text-dim text-xs font-mono mb-4">
-              Follow development progress
-            </p>
-            <div className="flex items-center justify-center gap-3">
-              <a
-                href="https://x.com/Slashy_fx"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-primary text-xs px-6 py-2.5"
-              >
-                Follow on X
-              </a>
-              <Link
-                href="/roadmap"
-                className="px-6 py-2.5 border border-p01-border rounded-lg text-xs text-p01-text-muted hover:text-white hover:border-p01-cyan/40 transition-all"
-              >
-                View Roadmap
-              </Link>
+              <div>
+                {update.status === "published" && (
+                  <div
+                    className={
+                      update.video
+                        ? "grid gap-8 md:grid-cols-2 md:items-start"
+                        : "grid grid-cols-1 gap-8"
+                    }
+                  >
+                    {/* Video. styx.css has no media frame and no play
+                        affordance, so this is composed from styx-panel plus
+                        Tailwind's aspect-video, which carries no colour. */}
+                    {update.video && (
+                      <Reveal className="styx-panel styx-sweep styx-reveal">
+                        <div className="relative aspect-video">
+                          {playingVideo === update.week ? (
+                            <video
+                              src={update.video}
+                              controls
+                              autoPlay
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <button
+                              onClick={() => setPlayingVideo(update.week)}
+                              className="w-full h-full flex items-center justify-center cursor-pointer"
+                              aria-label={`Play video, Week ${update.week}: ${update.title}`}
+                            >
+                              <video
+                                src={update.video}
+                                muted
+                                className="absolute inset-0 w-full h-full object-cover opacity-40"
+                              />
+                              <span
+                                className="styx-btn-ghost relative z-10"
+                                style={{ background: "var(--styx-ink)" }}
+                              >
+                                <Play size={13} aria-hidden="true" />
+                                Play
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      </Reveal>
+                    )}
+
+                    {/* Highlights */}
+                    <div>
+                      <p className="styx-overline">Highlights</p>
+                      <Reveal className="styx-reveal" delay={80}>
+                        <ul
+                          className="styx-prose"
+                          style={{
+                            display: "grid",
+                            gap: "0.9rem",
+                            marginTop: "1.1rem",
+                          }}
+                        >
+                          {update.highlights.map((h, j) => (
+                            <li key={j}>
+                              <p>
+                                <span className="styx-check" aria-hidden="true">
+                                  &#10003;
+                                </span>
+                                {h}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                      </Reveal>
+                    </div>
+                  </div>
+                )}
+
+                {update.status === "coming-soon" && (
+                  <p className="styx-mono">This entry is not written yet.</p>
+                )}
+              </div>
             </div>
-          </motion.div>
-        </div>
-      </main>
+          </section>
+        );
+      })}
 
-      <Footer />
-    </>
+      {/* End of the record. The hairline gleam is free; the text gleam was
+          spent on the hero word. */}
+      <div className="styx-container">
+        <div
+          className="styx-gleam-rule"
+          aria-hidden="true"
+          style={{ marginBlock: "clamp(3rem, 7vw, 5rem)" }}
+        />
+      </div>
+
+      {/* ── Follow along ───────────────────────────────────────────────── */}
+      <section className="styx-section styx-section-alt">
+        <div className="styx-container">
+          <p className="styx-overline">Follow along</p>
+          <h2 className="styx-h2">The next entry gets written the same way.</h2>
+          <p className="styx-lede" style={{ marginTop: "1.5rem" }}>
+            Where a number could not be checked, it was removed or marked as
+            internal, and where the old version guessed, the entry now says so.
+            Several entries above still rest on records only the founder or the
+            event organizers hold, and they are labelled that way.
+          </p>
+          <div className="styx-btn-row" style={{ marginTop: "2rem" }}>
+            <a
+              className="styx-btn"
+              href="https://x.com/Slashy_fx"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Follow on X
+            </a>
+            <Link className="styx-btn-ghost" href="/roadmap">
+              View roadmap
+            </Link>
+          </div>
+          <p className="styx-note" style={{ marginTop: "1.5rem" }}>
+            That X account is the founder&apos;s personal one, which is where
+            these updates were posted. The project account is linked in the
+            footer.
+          </p>
+        </div>
+      </section>
+    </StyxShell>
   );
 }

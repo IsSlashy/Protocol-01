@@ -3,8 +3,10 @@
 // Pure data — no JSX/component imports — so it can be shared by the sidebar,
 // the Ctrl+K search, and the prev/next pager without circular deps. Each id is
 // a topic anchor: it resolves either to a `technologies` entry (rendered as a
-// TechTopic) or to a special topic (architecture / security / mpc-comparison)
-// in app/docs/page.tsx.
+// TechTopic) or to a special topic (architecture / security) in
+// app/docs/page.tsx. There is no "mpc-comparison" topic: Arcium left the
+// protocol on 2026-07-17, and the topic, its node and its SDK entry went with
+// it. SPECIAL_TITLE_KEYS below is the whole list.
 
 export type NavGroupDef = { labelKey: string; ids: string[] };
 

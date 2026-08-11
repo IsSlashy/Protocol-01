@@ -1,0 +1,41 @@
+/* ===========================================================================
+   /admin, page-local stylesheet.
+
+   One job: stop Chrome repainting an autofilled field in its own colours.
+
+   Measured on this page: `input[type=password]` matches `:-webkit-autofill`,
+   computed background rgb(232, 240, 254) and computed colour rgb(0, 0, 0), so
+   `.styx-input`'s panel background and paper ink both lost and an off-white
+   slab sat in the middle of a near-black hero. Nothing in the loaded
+   stylesheets addressed it.
+
+   `background` cannot win that fight, the UA declaration outranks author CSS.
+   A large inset shadow paints the panel colour over the box instead, and
+   -webkit-text-fill-color carries the ink, which the UA rule does not set. The
+   very long background-color transition keeps Chrome from flashing the blue
+   back when it re-fills. The Firefox spelling needs its own rule: an unknown
+   pseudo-class invalidates the whole selector list it appears in.
+
+   Page-local because app/_styx/styx.css is shared and off limits from here.
+   It belongs there eventually, next to .styx-input.
+   =========================================================================== */
+
+.styx input:-webkit-autofill,
+.styx input:-webkit-autofill:hover,
+.styx input:-webkit-autofill:focus,
+.styx input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 100px var(--styx-panel-2) inset;
+  box-shadow: 0 0 0 100px var(--styx-panel-2) inset;
+  -webkit-text-fill-color: var(--styx-paper);
+  caret-color: var(--styx-paper);
+  transition: background-color 100000s ease-in-out 0s;
+}
+
+.styx input:autofill,
+.styx input:autofill:hover,
+.styx input:autofill:focus {
+  box-shadow: 0 0 0 100px var(--styx-panel-2) inset;
+  -webkit-text-fill-color: var(--styx-paper);
+  caret-color: var(--styx-paper);
+  filter: none;
+}
