@@ -37,46 +37,49 @@ const notoSansJP = Noto_Sans_JP({
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://protocol-01.dev"),
-  title: "PROTOCOL-01",
+  /**
+   * This block is what a stranger meets before any page renders: the tab title,
+   * the favicon, and the card every shared link unfurls. It described a
+   * different product until 2026-08-11.
+   *
+   * What changed and why:
+   *  - "PROTOCOL-01" was the default title, so every page that does not override
+   *    it announced the old name.
+   *  - The description promised "anonymous interactions". The protocol does not
+   *    deliver that: the sender is not hidden on any leg and a deposit can be
+   *    paired with its withdrawal today. It shipped in the head of every page.
+   *  - The favicon, the Apple icon and the OpenGraph image were all
+   *    /01-miku.png, so a link pasted anywhere unfurled as fan-art from another
+   *    franchise. `icons` and `images` are deliberately absent now: app/icon.tsx
+   *    and app/opengraph-image.tsx generate both, in the Styx palette.
+   */
+  title: "Styx Protocol",
   description:
-    "The ultimate privacy-first protocol for secure transactions and anonymous interactions. Powered by zero-knowledge proofs.",
+    "Private payments on Solana: a shielded pool with hash-based STARK proofs and hybrid post-quantum stealth addresses. Running on devnet. Not audited.",
   keywords: [
     "privacy",
-    "blockchain",
+    "solana",
     "zero-knowledge",
-    "anonymous",
-    "secure",
-    "wallet",
-    "stealth",
-    "protocol 01",
-    "p01",
+    "STARK",
+    "post-quantum",
+    "ML-KEM",
+    "stealth addresses",
+    "shielded pool",
+    "styx protocol",
   ],
-  authors: [{ name: "Protocol 01" }],
-  icons: {
-    icon: "/01-miku.png",
-    apple: "/01-miku.png",
-  },
+  authors: [{ name: "Styx Protocol" }],
   openGraph: {
-    title: "PROTOCOL-01",
+    title: "Styx Protocol",
     description:
-      "The ultimate privacy-first protocol for secure transactions and anonymous interactions.",
+      "Private payments on Solana. Built to be checked, not believed. Running on devnet, not audited.",
     type: "website",
     locale: "en_US",
-    images: [
-      {
-        url: "/01-miku.png",
-        width: 512,
-        height: 512,
-        alt: "Protocol-01",
-      },
-    ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "PROTOCOL-01",
+    title: "Styx Protocol",
     description:
-      "The ultimate privacy-first protocol for secure transactions and anonymous interactions.",
-    images: ["/01-miku.png"],
+      "Private payments on Solana. Built to be checked, not believed. Running on devnet, not audited.",
   },
 };
 
