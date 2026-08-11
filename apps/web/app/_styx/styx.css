@@ -65,8 +65,19 @@
 }
 
 /* The root stylesheet sets `h1..h6 { font-family: var(--font-display) }`, which
-   is Orbitron. Styx opts every heading out; the serif is applied per class. */
-.styx :is(h1, h2, h3, h4, h5, h6) {
+   is Orbitron. Styx opts every heading out; the serif is applied per class.
+ *
+ * `:where()` and NOT `:is()`, and this is load-bearing. `:is()` takes the
+ * specificity of its most specific argument, so `.styx :is(h1…)` scored (0,1,1)
+ * and beat `.styx-h1` at (0,1,0): on a real heading ELEMENT this reset won the
+ * font-family and every ported page rendered its headings in Inter at weight 400
+ * instead of Newsreader. Measured on /careers, 2026-08-11.
+ *
+ * `:where()` contributes zero, so this rule is (0,1,0). That still beats the
+ * root stylesheet's bare `h1` at (0,0,1), which is all it has to do, and it now
+ * loses to any `.styx-*` type class declared later in this file. Keep this block
+ * ABOVE the type classes: at equal specificity, source order decides. */
+.styx :where(h1, h2, h3, h4, h5, h6) {
   font-family: inherit;
   font-weight: inherit;
   letter-spacing: normal;
