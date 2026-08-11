@@ -245,7 +245,7 @@ export default function UpdatesPage() {
       </section>
 
       {/* ── The one admission ──────────────────────────────────────────── */}
-      <section className="styx-container" aria-label="Current state of this log">
+      <section className="styx-container styx-strip" aria-label="Current state of this log">
         <div className="styx-admission">
           <p className="styx-admission-title">The log stops at week 9</p>
           <p className="styx-admission-body">

@@ -130,6 +130,22 @@
   background: var(--styx-panel);
 }
 
+/* A strip: a band of cards sitting between two sections.
+ *
+ * It needs its own vertical rhythm but NOT the section's border-top, because a
+ * strip usually follows a hero whose rule has already done the separating.
+ *
+ * This class exists because `styx-container` alone was being used for the job,
+ * and a container carries width and horizontal padding only. The result, seen on
+ * /app and /updates: the card grid's own border landed exactly on the boundary
+ * between two differently coloured grounds, so the cards read as glued to the
+ * separation line, with no air above or below. Reported 2026-08-11.
+ *
+ * Reach for this rather than a bare container with an inline paddingBottom. */
+.styx-strip {
+  padding-block: clamp(3rem, 7vw, 5rem);
+}
+
 .styx-section-grid {
   display: grid;
   gap: 2.5rem;

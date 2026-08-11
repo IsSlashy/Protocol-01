@@ -226,7 +226,7 @@ export default function PayPage() {
       </section>
 
       {/* ── Facts strip ────────────────────────────────────────────────── */}
-      <section className="styx-container" aria-label="What this app runs on">
+      <section className="styx-container styx-strip" aria-label="What this app runs on">
         <div className="styx-grid styx-grid-4">
           <div className="styx-card styx-sweep">
             <p className="styx-card-label">Proof system</p>

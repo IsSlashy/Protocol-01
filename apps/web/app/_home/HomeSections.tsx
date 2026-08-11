@@ -361,8 +361,7 @@ export default function HomeSections() {
 
       {/* ── Facts ─────────────────────────────────────────────────────── */}
       <section
-        className="styx-container"
-        style={{ paddingBottom: "clamp(3rem, 7vw, 4.5rem)" }}
+        className="styx-container styx-strip"
       >
         <div className="styx-grid styx-grid-4">
           {FACTS.map((fact, i) => (
