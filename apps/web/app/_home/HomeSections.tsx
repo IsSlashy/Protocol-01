@@ -5,6 +5,7 @@ import { useT } from "@/i18n";
 import Reveal from "../_styx/Reveal";
 import SerifHeading from "./SerifHeading";
 import WaitlistPanel from "./WaitlistPanel";
+import RiverCanvas from "../_styx/RiverCanvas";
 
 /**
  * The home page, in the Styx vocabulary.
@@ -278,7 +279,12 @@ export default function HomeSections() {
   return (
     <>
       {/* ── Hero ──────────────────────────────────────────────────────── */}
-      <section className="styx-container styx-hero">
+      {/* The stage exists only to give the river a positioned, full-bleed box
+          behind the hero. The canvas is aria-hidden and sits at z-index -1, so
+          it changes nothing for a screen reader or for pointer targets. */}
+      <div className="styx-hero-stage">
+        <RiverCanvas className="styx-river" />
+        <section className="styx-container styx-hero">
         {/* Brand word only. It was "Styx Protocol · Formerly Protocol 01 ·
             Private payments on Solana", three English clauses above the fold
             with no dictionary entry, one of them the retired brand. What Styx
@@ -345,12 +351,13 @@ export default function HomeSections() {
           </div>
         </div>
 
-        <div
-          className="styx-gleam-rule"
-          aria-hidden="true"
-          style={{ marginTop: "clamp(2.5rem, 6vw, 4rem)" }}
-        />
-      </section>
+          <div
+            className="styx-gleam-rule"
+            aria-hidden="true"
+            style={{ marginTop: "clamp(2.5rem, 6vw, 4rem)" }}
+          />
+        </section>
+      </div>
 
       {/* ── Facts ─────────────────────────────────────────────────────── */}
       <section

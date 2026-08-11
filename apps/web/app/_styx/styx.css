@@ -1048,6 +1048,28 @@
   padding-block: clamp(5rem, 12vw, 9.5rem) clamp(3.5rem, 8vw, 6rem);
 }
 
+/* The stage the river is drawn on. Full bleed behind the hero, so the current is
+   not cut off by the container's padding, and clipped so it cannot spill into
+   the section below. */
+.styx-hero-stage {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.styx-river {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  pointer-events: none;
+  /* Fades out at the bottom edge so the current dissolves rather than ending on
+     a hard line where the hero meets the next band. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
+}
+
 .styx-hero-rule {
   position: relative;
   height: 1px;
