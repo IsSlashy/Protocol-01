@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import StyxShell from "../_styx/StyxShell";
 import Reveal from "../_styx/Reveal";
+import { notFound } from "next/navigation";
 
 export const metadata: Metadata = {
   title: "Styx kit — the shared design system",
@@ -16,6 +17,14 @@ export const metadata: Metadata = {
  * pages inherit it. It is a working document, not a public page.
  */
 export default function StyxKitPage() {
+  /* Internal design-exploration route. These six pages exist to compare
+     directions and to document the shared vocabulary; they are not part of the
+     public site, so production answers 404 exactly as /void used to. Delete the
+     guard, or the route, when a direction is settled. */
+  if (process.env.NODE_ENV === 'production') {
+    notFound();
+  }
+
   return (
     <StyxShell>
       <section className="styx-container styx-hero">

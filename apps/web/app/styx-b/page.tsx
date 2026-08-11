@@ -3,6 +3,7 @@ import { Newsreader } from "next/font/google";
 import RiverCanvas from "./_components/RiverCanvas";
 import Reveal from "./_components/Reveal";
 import styles from "./styx-b.module.css";
+import { notFound } from "next/navigation";
 
 // Editorial serif for display lines only; UI stays on Inter (already loaded
 // by the root layout), code on JetBrains Mono.
@@ -26,6 +27,14 @@ function cx(...classes: (string | false | undefined)[]) {
 }
 
 export default function StyxRiverPage() {
+  /* Internal design-exploration route. These six pages exist to compare
+     directions and to document the shared vocabulary; they are not part of the
+     public site, so production answers 404 exactly as /void used to. Delete the
+     guard, or the route, when a direction is settled. */
+  if (process.env.NODE_ENV === 'production') {
+    notFound();
+  }
+
   return (
     <div className={cx(styles.root, serif.variable)}>
       {/* ============================== header ============================== */}

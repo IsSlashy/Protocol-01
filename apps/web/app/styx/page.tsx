@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 
 /**
  * Hub de comparaison des directions artistiques Styx Protocol.
@@ -33,6 +34,14 @@ const DIRECTIONS = [
 ] as const;
 
 export default function StyxCompare() {
+  /* Internal design-exploration route. These six pages exist to compare
+     directions and to document the shared vocabulary; they are not part of the
+     public site, so production answers 404 exactly as /void used to. Delete the
+     guard, or the route, when a direction is settled. */
+  if (process.env.NODE_ENV === 'production') {
+    notFound();
+  }
+
   return (
     <main className="min-h-screen bg-[#08080a] text-white px-6 py-16 sm:px-10">
       <div className="mx-auto max-w-3xl">

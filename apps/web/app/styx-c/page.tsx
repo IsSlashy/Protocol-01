@@ -14,6 +14,7 @@ import Link from 'next/link';
 import styles from './styx-c.module.css';
 import { CryptoTable, Ext, ProgramTable, SectionHead } from './_components/blocks';
 import { LIMITS, PROGRAMS, REPO, explorerUrl, sourceUrl } from './_components/data';
+import { notFound } from "next/navigation";
 
 export const metadata: Metadata = {
   title: 'Styx Protocol: private payments on Solana, built to be checked',
@@ -91,6 +92,14 @@ const SDK_POINTS = [
 ] as const;
 
 export default function StyxTerminalNoir() {
+  /* Internal design-exploration route. These six pages exist to compare
+     directions and to document the shared vocabulary; they are not part of the
+     public site, so production answers 404 exactly as /void used to. Delete the
+     guard, or the route, when a direction is settled. */
+  if (process.env.NODE_ENV === 'production') {
+    notFound();
+  }
+
   return (
     <div className={styles.root}>
       <a href="#main" className={styles.skip}>

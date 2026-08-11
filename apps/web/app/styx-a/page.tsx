@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Newsreader } from "next/font/google";
 import Reveal from "./_components/Reveal";
 import s from "./styx-a.module.css";
+import { notFound } from "next/navigation";
 
 /* One serif voice for statements. Body stays on Inter, evidence on JetBrains
    Mono, both already loaded by the root layout.
@@ -28,6 +29,14 @@ const REPO_URL = "https://github.com/IsSlashy/Protocol-01";
 const EXPLORER_URL = `https://explorer.solana.com/address/${POOL_PROGRAM_ID}?cluster=devnet`;
 
 export default function StyxVaultLanding() {
+  /* Internal design-exploration route. These six pages exist to compare
+     directions and to document the shared vocabulary; they are not part of the
+     public site, so production answers 404 exactly as /void used to. Delete the
+     guard, or the route, when a direction is settled. */
+  if (process.env.NODE_ENV === 'production') {
+    notFound();
+  }
+
   return (
     <div className={`${s.page} ${serif.variable}`}>
       <a href="#content" className={s.skipLink}>
