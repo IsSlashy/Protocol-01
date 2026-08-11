@@ -143,6 +143,22 @@ for (let i = 0; i < chunks.length; i++) {
          blacks, and one that does the reverse crushes them. yuv420p is what
          every target expects. */
       '--pixel-format=yuv420p',
+
+      /* And --color-space, which is the flag that actually fixes it.
+         --pixel-format=yuv420p alone was NOT enough: the render still came out
+         yuvj420p with color_range=pc, because PNG intermediates are full-range
+         RGB and nothing was asking for the conversion to limited range. Measured
+         on the 7200 frame film. bt709 makes ffmpeg convert and tag properly, so
+         the file reads as yuv420p / tv / bt709 and a player cannot decide to
+         lift or crush the blacks of a film built on #070709. */
+      '--color-space=bt709',
+
+      /* Muted on purpose. The concat below goes through a raw h264 elementary
+         stream to fix the clock, and that path discards audio, so a film whose
+         chunks each carried music would come out silent. Worse, concatenating 15
+         AAC fragments risks the same drift the video had. The bed is laid once,
+         over the finished picture, at the mux step. */
+      '--muted',
     ],
     { cwd: appRoot, stdio: 'inherit', shell: true },
   );
@@ -200,14 +216,50 @@ if (toRaw.status !== 0) {
   process.exit(toRaw.status ?? 1);
 }
 
-const concat = spawnSync(
-  'ffmpeg',
-  [
-    '-y', '-fflags', '+genpts', '-r', String(fps), '-i', rawPath,
-    '-c', 'copy', '-movflags', '+faststart', outputPath,
-  ],
-  { stdio: 'inherit', shell: true },
-);
+/**
+ * Remux, and lay the music bed in the same pass.
+ *
+ * The chunks are rendered muted (see --muted above), so the audio is added once
+ * here, over the whole finished picture. One continuous track, no seam every 500
+ * frames, and no chance of the audio drifting the way the video clock did.
+ *
+ * The fade duplicates what the composition's <Audio volume={...}> does, because
+ * the composition has to stay correct for the preview and for a single-file
+ * render. If one changes, change the other: 4 seconds up, hold at the gain, 4
+ * seconds down.
+ */
+const audioFile = flags.audio ? String(flags.audio) : null;
+const audioGain = Number(flags['audio-gain'] ?? 0.8);
+const fadeSeconds = Number(flags.fade ?? 4);
+const videoSeconds = totalFrames / fps;
+
+const remuxArgs = ['-y', '-fflags', '+genpts', '-r', String(fps), '-i', rawPath];
+if (audioFile) {
+  const audioPath = join(appRoot, 'public', audioFile);
+  if (!existsSync(audioPath)) {
+    console.error(`audio file not found: ${audioPath}`);
+    process.exit(1);
+  }
+  const fadeOutStart = Math.max(0, videoSeconds - fadeSeconds).toFixed(3);
+  remuxArgs.push(
+    '-i', audioPath,
+    '-filter:a',
+    `volume=${audioGain},afade=t=in:st=0:d=${fadeSeconds},afade=t=out:st=${fadeOutStart}:d=${fadeSeconds}`,
+    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
+    /* An explicit duration, NOT -shortest.
+       -shortest produced `audio:0KiB`, a declared aac stream with nothing in it.
+       The video is a raw h264 stream muxed with -c:v copy, so it reaches EOF in
+       no wall-clock time at all, and -shortest finalised the file before the
+       audio filter graph had emitted its first frame. -t is deterministic: both
+       streams are cut at the length of the picture. */
+    '-t', videoSeconds.toFixed(3),
+  );
+} else {
+  remuxArgs.push('-c', 'copy');
+}
+remuxArgs.push('-movflags', '+faststart', outputPath);
+
+const concat = spawnSync('ffmpeg', remuxArgs, { stdio: 'inherit', shell: true });
 if (concat.status !== 0) {
   console.error('ffmpeg remux failed');
   process.exit(concat.status ?? 1);
@@ -218,17 +270,63 @@ if (concat.status !== 0) {
 const probe = spawnSync(
   'ffprobe',
   ['-v', 'error', '-select_streams', 'v:0',
-   '-show_entries', 'stream=nb_frames', '-show_entries', 'format=duration',
+   '-show_entries', 'stream=nb_frames,pix_fmt,color_range',
+   '-show_entries', 'format=duration',
    '-of', 'default=noprint_wrappers=1:nokey=1', outputPath],
   { encoding: 'utf8', shell: true },
 );
-const [frames, seconds] = String(probe.stdout || '').trim().split(/\s+/).map(Number);
+const probed = String(probe.stdout || '').trim().split(/\s+/);
+const frames = Number(probed.find((v) => /^\d+$/.test(v)));
+const seconds = Number(probed.find((v) => /^\d+\.\d+$/.test(v)));
+const pixFmt = probed.find((v) => /^yuvj?4/.test(v));
+const range = probed.find((v) => v === 'tv' || v === 'pc' || v === 'unknown');
+
 if (Number.isFinite(frames) && Number.isFinite(seconds)) {
   const expected = frames / fps;
   const drift = Math.abs(seconds - expected);
   console.log(`  clock check: ${frames} frames, ${seconds.toFixed(3)}s, expected ${expected.toFixed(3)}s`);
+  /* 0.5s is generous for a real defect and tight enough to catch the one that
+     shipped: the broken concat claimed 707s for 120s of pictures. The honest
+     residual is about 5 frames, a constant, because the container does not count
+     the last frame's own duration. */
   if (drift > 0.5) {
     console.error(`  ✗ duration is off by ${drift.toFixed(2)}s. Not reporting success.`);
+    process.exit(1);
+  }
+}
+
+/* Range check, for the same reason: a full-range file is correctly tagged and
+   still renders wrong in any player that ignores the tag, and this film is built
+   on near-black where that is the difference between a ground and a grey. */
+console.log(`  colour check: ${pixFmt ?? '?'} / range ${range ?? '?'}`);
+if (pixFmt === 'yuvj420p' || range === 'pc') {
+  console.error('  ✗ full-range output. --color-space=bt709 is missing or was ignored.');
+  process.exit(1);
+}
+
+/* And if music was asked for, prove it is in the file. `-shortest` once produced
+   a declared aac stream carrying zero bytes, which every probe reports as an
+   audio track and every player plays as silence. Costed three test cycles. */
+if (audioFile) {
+  const aprobe = spawnSync(
+    'ffprobe',
+    ['-v', 'error', '-select_streams', 'a:0',
+     '-show_entries', 'stream=codec_name,channels',
+     '-of', 'default=noprint_wrappers=1:nokey=1', outputPath],
+    { encoding: 'utf8', shell: true },
+  );
+  const audioOk = /\S/.test(String(aprobe.stdout || ''));
+  const size = spawnSync(
+    'ffprobe',
+    ['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'packet=size',
+     '-read_intervals', '%+2', '-of', 'csv=p=0', outputPath],
+    { encoding: 'utf8', shell: true },
+  );
+  const bytes = String(size.stdout || '').split(/\s+/).filter(Boolean)
+    .reduce((n, v) => n + (Number(v) || 0), 0);
+  console.log(`  audio check: ${audioOk ? 'stream present' : 'NO STREAM'}, ${bytes} bytes in the first 2s`);
+  if (!audioOk || bytes < 1000) {
+    console.error('  ✗ music was requested and the track is empty or missing.');
     process.exit(1);
   }
 }

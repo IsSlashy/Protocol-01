@@ -6,7 +6,7 @@
     "dev": "remotion studio",
     "build": "echo 'weekly-update: build is a no-op; use pnpm render to produce the video' && exit 0",
     "render:chunked": "node scripts/render-chunked.mjs",
-    "render:styx": "node scripts/render-chunked.mjs StyxPitch out/styx-pitch.mp4 --total=7200"
+    "render:styx": "node scripts/render-chunked.mjs StyxPitch out/styx-pitch.mp4 --total=7200 --audio=styx-bed.wav"
   },
   "dependencies": {
     "@remotion/cli": "4.0.508",

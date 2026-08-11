@@ -1,5 +1,12 @@
 import React from 'react';
-import { AbsoluteFill, Series } from 'remotion';
+import {
+  AbsoluteFill,
+  Audio,
+  Series,
+  interpolate,
+  staticFile,
+  useCurrentFrame,
+} from 'remotion';
 import { StyxFonts } from './styx/fonts';
 import { Beat } from './scenes/styx-pitch/Beat';
 import { ALL_BEATS, TOTAL_FRAMES } from './scenes/styx-pitch/script';
@@ -30,10 +37,37 @@ import { styx } from './styx/theme';
  * fresh process.
  */
 export const StyxPitch: React.FC = () => {
+  const frame = useCurrentFrame();
+
+  /**
+   * The bed, on the house curve: four seconds up, hold at 0.8, four seconds down.
+   * Same shape every film in this project has used.
+   */
+  const musicVolume = interpolate(
+    frame,
+    [0, 240, TOTAL_FRAMES - 240, TOTAL_FRAMES],
+    [0, 0.8, 0.8, 0],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' },
+  );
+
   return (
     <AbsoluteFill style={{ background: styx.ink }}>
       {/* Blocks the render until Newsreader is ready. See ./styx/fonts.tsx. */}
       <StyxFonts />
+
+      {/*
+        The usual Blade Runner ambient bed, rebuilt to cover 120 seconds in one
+        piece instead of looping a 58 second cut. The old films looped that cut,
+        which replayed its fade-in every 58 seconds; public/styx-bed.wav is three
+        crossfaded copies trimmed to 124s, so the fade-in happens once and the
+        film's own fade handles the rest. WAV and stripped of metadata, which is
+        what this setup needs to play it at all.
+
+        The level swings between about -16 and -27 dB across the piece. That is
+        the music breathing, not an artefact: the source does the same thing, and
+        it was worth measuring before trying to flatten it.
+      */}
+      <Audio src={staticFile('styx-bed.wav')} volume={musicVolume} />
       <Series>
         {ALL_BEATS.map((beat, i) => (
           <Series.Sequence key={beat.from} durationInFrames={beat.duration}>
