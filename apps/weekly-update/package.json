@@ -17,10 +17,10 @@
     "render:styx": "node scripts/render-chunked.mjs StyxPitch out/styx-pitch.mp4 --total=7200"
   },
   "dependencies": {
-    "@remotion/cli": "4.0.294",
+    "@remotion/cli": "4.0.508",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "remotion": "4.0.294"
+    "remotion": "4.0.508"
   },
   "devDependencies": {
     "@types/react": "^19.2.15",

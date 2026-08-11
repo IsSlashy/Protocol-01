@@ -110,6 +110,28 @@ for (let i = 0; i < chunks.length; i++) {
       `--frames=${start}-${end}`,
       `--gl=${gl}`,
       '--concurrency=1',
+
+      /* Quality. The script used to pass none of this and take Remotion's
+         defaults, which are wrong for a film that is almost entirely near-black
+         with one-pixel hairlines and text at low alpha.
+
+         --image-format=png: intermediate frames are JPEG at quality 80 by
+         default. On flat dark grounds that produces visible ringing around type
+         and blocking in the gradients, and it is thrown away before the encoder
+         ever sees it. These frames compress well as PNG because the picture is
+         mostly one colour, so the cost is small.
+
+         --crf=16: h264 default is 18. Two steps lower costs some file size and
+         buys back the faint hairlines, which are exactly what an aggressive
+         encoder decides to spend nothing on.
+
+         Deliberately NOT changed: 8-bit yuv420p, because a 10-bit file would
+         resist banding better and then fail to play in half the places this film
+         gets opened. And --concurrency stays at 1: short-lived processes are the
+         reason this script exists at all, since a long single-pass 4K render
+         bluescreens this machine. */
+      '--image-format=png',
+      '--crf=16',
     ],
     { cwd: appRoot, stdio: 'inherit', shell: true },
   );
