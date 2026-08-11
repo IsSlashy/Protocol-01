@@ -39,12 +39,19 @@ docs/pitch-entrepreneur-go-2026.md
 *.mp4
 !apps/web/public/**/*.mp4
 
-# ULTRAKILL gameplay capture and its poster, used only by the local /parcours
-# preview. These are New Blood Interactive assets and this repository is public,
-# so they must never be committed. The negation just above re-includes every mp4
-# under apps/web/public, which is why this rule has to come after it.
-# Consequence, on purpose: /parcours renders without the clip in production.
-apps/web/public/videos/ultrakill-*
+# NOTE on the ULTRAKILL material under apps/web/public, because the two kinds are
+# not the same thing and were briefly treated as one.
+#
+# The gameplay capture (videos/ultrakill-powerup.mp4 and its poster) IS committed.
+# It is a 33 second recording of a power-up the author wrote, running in the game:
+# footage of his own mod, which is what every mod showcase publishes, and New Blood
+# Interactive is explicitly mod-friendly. It is served in production on /parcours.
+#
+# The MESHES are not, and that is a different question. public/models/ultrakill/
+# holds .glb files extracted from the shipped game, so publishing them would be
+# redistributing New Blood's assets rather than showing the author's work. They
+# are ignored by public/models/ultrakill/.gitignore and stay local; the page
+# explains their absence to the reader instead of hiding it.
 
 # Android build artifacts (build/ redirected to build2/ after NTFS corruption)
 apps/mobile/android/app/build2/
