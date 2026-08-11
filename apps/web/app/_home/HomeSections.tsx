@@ -385,20 +385,23 @@ export default function HomeSections() {
         <div className="styx-container-narrow">
           <p className="styx-index">{t("demo.badge")}</p>
           <SerifHeading level={2}>{t("demo.title")}</SerifHeading>
-          {/* The element is infrastructure: src, controls, playsInline,
-              preload and poster are unchanged. Only the frame around it is.
-              The recording predates the rename, so the interface in it still
-              carries the Protocol 01 identity. That caveat was a sentence of
-              English with no key behind it; a French visitor was reading it in
-              the wrong language, and it says nothing a viewer cannot see. */}
+          {/* The Styx presentation film, 4K rendered and served here as a 1080p
+              cut: two minutes covering the usage, then the system, then the
+              result. It replaces /demo.mp4, a screen recording that predated the
+              rename and still showed the Protocol 01 interface, and /icon.png as
+              its poster, which was the old app icon. The poster is now a frame of
+              the film itself.
+
+              Every figure the film states was measured on devnet; the script
+              lives in apps/weekly-update/src/scenes/styx-pitch/script.ts. */}
           <div style={{ marginTop: "2rem" }}>
             <Reveal className="styx-panel styx-reveal">
               <video
-                src="/demo.mp4"
+                src="/videos/styx-presentation.mp4"
                 controls
                 playsInline
                 preload="metadata"
-                poster="/icon.png"
+                poster="/videos/styx-presentation.jpg"
                 style={{
                   display: "block",
                   width: "100%",
