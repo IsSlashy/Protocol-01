@@ -14,14 +14,16 @@ describe('SDKDemoPage -- Developer SDK playground and widget showcase', () => {
   });
 
   describe('Page Header', () => {
-    // The page-local header was replaced by the shared <SiteHeader />, whose
-    // wordmark is "PROTOCOL 01" (next to the /icon.png logo), not "P-01".
-    // Scoped to the banner because the footer repeats the wordmark twice.
-    it('displays the "PROTOCOL 01" brand link to homepage', () => {
+    // The shared header is now <StyxHeader />, whose wordmark is "Styx" plus a
+    // "Protocol" suffix in two nodes, labelled "Styx Protocol, home". The old
+    // single "PROTOCOL 01" text node no longer exists anywhere in the tree.
+    // Still scoped to the banner, because the footer repeats the wordmark.
+    it('displays the Styx Protocol brand link to homepage', () => {
       const header = screen.getByRole('banner');
-      const brand = within(header).getByText('PROTOCOL 01');
-      expect(brand).toBeInTheDocument();
-      expect(brand.closest('a')).toHaveAttribute('href', '/');
+      const brand = within(header).getByRole('link', { name: 'Styx Protocol, home' });
+      expect(brand).toHaveAttribute('href', '/');
+      expect(within(brand).getByText('Styx')).toBeInTheDocument();
+      expect(within(brand).getByText('Protocol')).toBeInTheDocument();
     });
 
     // "SDK Demo" is also a footer link (footer.sdkDemo), so this pins the <h1>.
@@ -33,8 +35,13 @@ describe('SDKDemoPage -- Developer SDK playground and widget showcase', () => {
       expect(screen.getByText('Developer Preview')).toBeInTheDocument();
     });
 
-    it('displays "100% Serverless" badge', () => {
-      expect(screen.getByText('100% Serverless')).toBeInTheDocument();
+    // Was the "100% Serverless" badge (sdkDemo.serverless). Deleted from the
+    // page on 2026-08-11, not restyled: the developer access form in the same
+    // file POSTs to /api/whitelist and mirrors the request to a Discord
+    // webhook, so the badge contradicted its own page. The hero now wears
+    // sdkDemo.beta, and this pins that chip so a silent drop still fails.
+    it('displays the "Beta" badge', () => {
+      expect(screen.getByText('Beta')).toBeInTheDocument();
     });
 
     it('displays "On-chain verification" badge', () => {

@@ -27,10 +27,10 @@ describe('Hero -- Privacy-first landing section', () => {
       expect(screen.getByText('Protocol Active')).toBeInTheDocument();
     });
 
-    it('presents the "NOTHING THEY CAN TRACE." headline as the core value proposition', () => {
+    it('presents the "AMOUNTS THEY CANNOT READ." headline as the core value proposition', () => {
       // Rendered three times on purpose: cyan ghost, pink ghost, and the main
       // white layer that together produce the chromatic-aberration glitch.
-      const headlines = screen.getAllByText('NOTHING THEY CAN TRACE.');
+      const headlines = screen.getAllByText('AMOUNTS THEY CANNOT READ.');
       expect(headlines).toHaveLength(3);
     });
 

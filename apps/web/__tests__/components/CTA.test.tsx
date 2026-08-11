@@ -29,7 +29,9 @@ describe('CTA -- Waitlist conversion funnel', () => {
     });
 
     it('uses the waitlist subtitles about opening in waves', () => {
-      expect(screen.getByText(/Protocol 01 opens in waves/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Styx Protocol runs on Solana devnet and has not been audited/),
+      ).toBeInTheDocument();
     });
   });
 

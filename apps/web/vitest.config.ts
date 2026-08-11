@@ -19,6 +19,50 @@ export default defineConfig({
     include: ['__tests__/**/*.test.ts', '__tests__/**/*.test.tsx'],
     setupFiles: ['__tests__/setup.tsx'],
     css: false,
+    // ---------------------------------------------------------------------
+    // Why the fan-out is capped, measured 2026-08-11.
+    //
+    // Two separate things wedged `npx vitest run` on 2026-08-11, both printing
+    // the same useless "RUN v3.2.4" and then silence forever.
+    //
+    // The one that stopped collection was the next/font/google mock, and it is
+    // fixed in `__tests__/setup.tsx`: read the `NOT_A_FONT` note there. Short
+    // version, a Proxy that answers every key with a font factory also answers
+    // `then`, vitest awaits the mock namespace, and awaiting a thenable whose
+    // `then` never calls resolve hangs the import with no timeout to catch it.
+    // Reproduced here in a one file probe: a static import of app/_styx/fonts
+    // under the unguarded Proxy prints the RUN banner and nothing else, killed
+    // at 70 s. Nothing in this config file caused it or could have fixed it.
+    //
+    // The second one survives that fix and is what the settings below are for.
+    // The main process can block writing its report to a stdout pipe the caller
+    // has stopped draining, while the workers have already finished the whole
+    // suite. Measured: workers 41.6 s of CPU with the tests done, main process
+    // 2.3 s and stuck. Same tree, same config, stdout to a file finishes in
+    // 8.7 s and emits 42356 bytes; stdout to an abandoned pipe never returns.
+    // Two knobs follow from that.
+    //
+    // 1. Output volume. 42 KB of report overruns a typical capture buffer, so
+    //    the tail of a red run can wedge the writer. Most of those bytes were
+    //    Testing Library printing the whole rendered DOM on each failed query,
+    //    so `__tests__/setup.tsx` caps DEBUG_PRINT_LIMIT. No assertion changes.
+    //
+    // 2. Blast radius. Tinypool spawns minForks eagerly, so on this 32 core box
+    //    every run, even a one file run, started 31 worker processes, and every
+    //    wedged run stranded all 31. 720 leaked node.exe from 23 earlier
+    //    attempts were still resident when this was diagnosed, holding 3.7 GB.
+    //    maxForks 8 costs nothing at this suite size and minForks 1 stops the
+    //    eager spawn, so a future wedge strands a handful, not a poolful.
+    //
+    // Do not read this cap as "the tests are too slow". The suite is fast:
+    // 28 files, 515 tests, about 9 s wall clock.
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        maxForks: 8,
+        minForks: 1,
+      },
+    },
     // The component and page rendering suites were excluded here from ~April
     // until 2026-07-27. Every render produced `<body><div /></body>` with no
     // error, and the exclusion comment blamed "some transitive dep" pulling a

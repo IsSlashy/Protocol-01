@@ -66,12 +66,12 @@ describe('Problem -- Why privacy matters on blockchain', () => {
   });
 
   describe('Before/After Comparison', () => {
-    it('shows the "WITHOUT PROTOCOL 01" exposed state', () => {
-      expect(screen.getByText('WITHOUT PROTOCOL 01')).toBeInTheDocument();
+    it('shows the "Standard chain" exposed state', () => {
+      expect(screen.getByText('Standard chain')).toBeInTheDocument();
     });
 
-    it('shows the "WITH PROTOCOL 01" protected state', () => {
-      expect(screen.getByText('WITH PROTOCOL 01')).toBeInTheDocument();
+    it('shows the "Shielded pool" protected state', () => {
+      expect(screen.getByText('Shielded pool')).toBeInTheDocument();
     });
 
     it('demonstrates exposed transaction data in "without" scenario', () => {
@@ -83,8 +83,10 @@ describe('Problem -- Why privacy matters on blockchain', () => {
       expect(screen.getByText(/Identity Exposed/)).toBeInTheDocument();
     });
 
-    it('shows "Fully Anonymous - Zero knowledge" for protected transactions', () => {
-      expect(screen.getByText(/Fully Anonymous - Zero knowledge/)).toBeInTheDocument();
+    it('states what an observer actually sees, without claiming anonymity', () => {
+      expect(
+        screen.getByText(/Fixed denominations - an observer sees one note, not your balance/),
+      ).toBeInTheDocument();
     });
   });
 

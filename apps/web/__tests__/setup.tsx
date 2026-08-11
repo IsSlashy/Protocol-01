@@ -1,6 +1,24 @@
 import '@testing-library/jest-dom/vitest';
 import { vi } from 'vitest';
 
+// ---------- Report size: cap the DOM dump on a failed query ----------
+//
+// Testing Library prints the whole rendered container when getByText and
+// friends fail, up to 7000 characters per failure by default. With the Styx
+// pages in the suite, three failing queries alone pushed a full red run to
+// 42356 bytes of stdout on 2026-08-11. That is over the truncation cap of a
+// normal capture buffer, and when the caller stops draining the pipe the main
+// vitest process blocks forever on the write: the run prints "RUN v3.2.4",
+// then nothing, and looks like a collection hang while the workers have in
+// fact already finished. See the long note in vitest.config.ts for the
+// measurement.
+//
+// prettyDOM reads this env var at print time, per worker process, so setting
+// it here is enough. 2000 characters still shows the container and the first
+// levels of markup, which is what you actually read when a query misses.
+// Raise it temporarily if you need the full tree, do not raise it in a commit.
+process.env.DEBUG_PRINT_LIMIT ??= '2000';
+
 // ---------- Mock: @/i18n ----------
 // Components call `useT()`, which reads the translation function off
 // I18nContext. Tests render components without <I18nProvider>, so the context
@@ -59,11 +77,56 @@ vi.mock('next/navigation', () => ({
 }));
 
 // ---------- Mock: next/font/google ----------
-vi.mock('next/font/google', () => ({
-  Space_Grotesk: () => ({ variable: '--font-space-grotesk', style: {} }),
-  JetBrains_Mono: () => ({ variable: '--font-jetbrains-mono', style: {} }),
-  Inter: () => ({ variable: '--font-inter', style: {} }),
-}));
+//
+// Every font the module can export, without naming any of them.
+//
+// A hand-listed mock (Space_Grotesk, JetBrains_Mono, Inter) broke the entire
+// suite at COLLECTION time on 2026-08-11, the moment the Styx design system
+// adopted Newsreader: `app/_styx/fonts.ts` imports it, every ported page imports
+// StyxShell, and vitest died with `No "Newsreader" export is defined on the
+// "next/font/google" mock` before running a single assertion. A list of names is
+// a trap that springs on whoever next changes a typeface, so this returns a
+// factory for any requested export instead.
+//
+// It honours the `variable` option the way the real API does, so a page reading
+// `myFont.variable` still gets the CSS custom property it asked for.
+vi.mock('next/font/google', () => {
+  const kebab = (name: string) =>
+    name.replace(/_/g, '-').replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+
+  const makeFont =
+    (name: string) =>
+    (opts: { variable?: string } = {}) => ({
+      variable: opts.variable ?? `--font-${kebab(name)}`,
+      className: `mock-font-${kebab(name)}`,
+      style: { fontFamily: name.replace(/_/g, ' ') },
+    });
+
+  // `then` MUST stay undefined. Vitest awaits the factory result
+  // (`const exports = await mock.resolve()`), so if the namespace answers 'then'
+  // with a function, the await treats the whole module as a thenable and calls
+  // that function with (resolve, reject). A font factory ignores both and
+  // returns an object, so resolve() is never called and the import never
+  // settles: measured as an 8s+ hang on `await import('next/font/google')`,
+  // which killed the suite at COLLECTION time for every page that reaches
+  // app/_styx/fonts.ts. Reproduces outside vitest too:
+  // `await new Proxy({}, { get: () => () => ({}) })` never settles.
+  const NOT_A_FONT = new Set(['then', 'catch', 'finally']);
+
+  return new Proxy(
+    {},
+    {
+      get: (_target, prop) => {
+        if (prop === '__esModule') return true;
+        if (typeof prop !== 'string') return undefined;
+        if (NOT_A_FONT.has(prop)) return undefined;
+        return makeFont(prop);
+      },
+      // Same reason: an `in` check for 'then' must not claim the trap exists.
+      has: (_target, prop) => !(typeof prop === 'string' && NOT_A_FONT.has(prop)),
+    },
+  );
+});
 
 // ---------- Mock: framer-motion ----------
 vi.mock('framer-motion', () => {

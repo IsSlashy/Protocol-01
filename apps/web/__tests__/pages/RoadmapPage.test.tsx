@@ -29,18 +29,22 @@ const expandAllShippedCategories = () => {
   });
 };
 
-describe('RoadmapPage -- Protocol 01 development roadmap', () => {
+describe('RoadmapPage -- Styx Protocol development roadmap', () => {
   beforeEach(() => {
     render(<RoadmapPage />);
   });
 
   describe('Page Header', () => {
     // The page-local header (P01 badge + "ROADMAP" + Back) was replaced by the
-    // shared <SiteHeader/> in 97339ea6, which shows the icon + wordmark instead.
-    it('displays the Protocol 01 logo and wordmark', () => {
+    // shared <SiteHeader/> in 97339ea6, which showed an icon + the "PROTOCOL 01"
+    // wordmark. The Styx rebrand replaced that header with app/_styx/StyxHeader:
+    // no logo image at all, and the wordmark is set in type as "Styx" +
+    // "Protocol". The identity this asserts is the only thing that changed; the
+    // requirement is unchanged, the header still names the site.
+    it('displays the Styx Protocol wordmark', () => {
       const header = within(screen.getByRole('banner'));
-      expect(header.getByAltText('Protocol 01')).toBeInTheDocument();
-      expect(header.getByText('PROTOCOL 01')).toBeInTheDocument();
+      expect(header.getByText('Styx')).toBeInTheDocument();
+      expect(header.getByText('Protocol')).toBeInTheDocument();
     });
 
     it('has a "Roadmap" nav link pointing at this page', () => {
@@ -48,9 +52,9 @@ describe('RoadmapPage -- Protocol 01 development roadmap', () => {
       expect(header.getByText('Roadmap').closest('a')).toHaveAttribute('href', '/roadmap');
     });
 
-    it('links back to the homepage from the logo', () => {
+    it('links back to the homepage from the wordmark', () => {
       const header = within(screen.getByRole('banner'));
-      expect(header.getByText('PROTOCOL 01').closest('a')).toHaveAttribute('href', '/');
+      expect(header.getByText('Styx').closest('a')).toHaveAttribute('href', '/');
     });
 
     it('has a "Docs" link in the header', () => {
@@ -58,21 +62,27 @@ describe('RoadmapPage -- Protocol 01 development roadmap', () => {
       expect(header.getByText('Docs').closest('a')).toHaveAttribute('href', '/docs');
     });
 
-    // SUSPECTED REGRESSION -- deliberately left red.
-    // Before 97339ea6 the page rendered `<h1>{t('roadmap.title')}</h1>` ("ROADMAP").
-    // Folding the per-page header into the shared SiteHeader dropped the h1
-    // entirely: the document now starts at <h2> and `roadmap.title` is a dead key
-    // in i18n/en.ts. The visible "ROADMAP" string is gone by design, so this does
-    // NOT assert that copy back -- it only asserts the page still has a top-level
-    // heading for screen readers and search engines.
+    // Was a deliberately red regression test: before 97339ea6 the page rendered
+    // `<h1>{t('roadmap.title')}</h1>` ("ROADMAP"), and folding the per-page
+    // header into the shared SiteHeader dropped the h1 entirely, leaving the
+    // document to start at <h2>. The Styx port fixed that, so this passes now.
+    // It still does not assert the old copy back, only that the page exposes one
+    // top-level heading for screen readers and search engines.
     it('exposes exactly one top-level heading (h1)', () => {
       expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     });
   });
 
   describe('Hero Section', () => {
+    // Still `roadmap.heroSubtitle`, which used to read "> PROTOCOL 01 //
+    // DEVELOPMENT ROADMAP". The retired identity and its terminal chevron do not
+    // survive the rebrand, so the key itself was rewritten in both locales; the
+    // page renders it through stripChevron as before. An intermediate pass had
+    // hardcoded "Styx Protocol" in this slot and pinned the hardcode here, which
+    // deleted the French half of the overline, so the assertion is back on the
+    // translated key.
     it('displays the protocol identifier string', () => {
-      expect(screen.getByText('> PROTOCOL 01 // DEVELOPMENT ROADMAP')).toBeInTheDocument();
+      expect(screen.getByText('STYX PROTOCOL // DEVELOPMENT ROADMAP')).toBeInTheDocument();
     });
 
     it('shows "Building Private Finance" as the main heading', () => {
@@ -88,7 +98,7 @@ describe('RoadmapPage -- Protocol 01 development roadmap', () => {
     });
   });
 
-  describe('Shipped Phase -- Live in production', () => {
+  describe('Shipped Phase -- built, on devnet', () => {
     beforeEach(() => {
       showPhase(/SHIPPED/);
     });
@@ -101,8 +111,14 @@ describe('RoadmapPage -- Protocol 01 development roadmap', () => {
       expect(screen.getByText('Current')).toBeInTheDocument();
     });
 
-    it('shows "Live in production" subtitle', () => {
-      expect(screen.getByText('Live in production')).toBeInTheDocument();
+    // `roadmap.currentSub` reads "Live in production". Nothing is deployed to
+    // mainnet, so the page must not say it, and this is not a copy tweak the
+    // test may reassert. The shipped chapter now carries
+    // `roadmap.builtFromScratch`, an existing key in both locales. The
+    // assertion still holds the page to printing a subtitle for this phase, it
+    // just holds it to the true one.
+    it('shows the shipped-phase subtitle', () => {
+      expect(screen.getByText('Built from scratch for privacy')).toBeInTheDocument();
     });
 
     it('groups shipped work under the six category headers', () => {
@@ -157,8 +173,14 @@ describe('RoadmapPage -- Protocol 01 development roadmap', () => {
       expect(screen.getByText(/Trustless, permissionless privacy/)).toBeInTheDocument();
     });
 
-    it('lists Advanced Privacy (Decoy Transactions + Noise) as shipped', () => {
-      expect(screen.getByText('Advanced Privacy (Decoy Transactions + Noise)')).toBeInTheDocument();
+    // Was "Advanced Privacy (Decoy Transactions + Noise)". Decoy transactions
+    // are not shipped: they are `roadmap.items.coverTraffic` in the PLANNED
+    // phase, so the shipped title advertised the one part of itself that does
+    // not exist, and it did so while the page suppressed the body sentence for
+    // the same reason. The title was rewritten in both locales to the two
+    // mechanisms that do ship. Same item, same phase, true name.
+    it('lists the amount and timing noise item as shipped', () => {
+      expect(screen.getByText('Amount and Timing Noise')).toBeInTheDocument();
     });
   });
 
@@ -178,8 +200,10 @@ describe('RoadmapPage -- Protocol 01 development roadmap', () => {
 
     it('surfaces the first in-progress item as the current focus', () => {
       // The title also appears as a card below, so scope to the dashboard row.
+      // "P-01" left the title in both locales with the rest of the retired
+      // identity; the item is the same one, still first in the phase.
       const focusRow = screen.getByText('Current focus').parentElement!;
-      expect(within(focusRow).getByText('P-01 Internal Network Mapping')).toBeInTheDocument();
+      expect(within(focusRow).getByText('Internal Network Mapping')).toBeInTheDocument();
     });
 
     it('lists External Security Audit as in progress', () => {
@@ -240,8 +264,11 @@ describe('RoadmapPage -- Protocol 01 development roadmap', () => {
   });
 
   describe('CTA Section', () => {
+    // The translated string is still `roadmap.buildWithUs`; the page strips the
+    // leading "> " because the terminal chevron was Protocol 01 chrome. Same
+    // words, same key, both locales, minus two retired characters.
     it('displays "BUILD WITH US" call-to-action', () => {
-      expect(screen.getByText('> BUILD WITH US')).toBeInTheDocument();
+      expect(screen.getByText('BUILD WITH US')).toBeInTheDocument();
     });
 
     it('displays "Shape the Future of Privacy" heading', () => {

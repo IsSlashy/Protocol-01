@@ -27,11 +27,19 @@ describe('DocsPage -- Privacy technologies documentation', () => {
     render(<DocsPage />);
   });
 
+  /**
+   * The chrome is the Styx one now: app/_styx/StyxHeader.tsx and StyxFooter.tsx,
+   * mounted by StyxShell. The wordmark is set in type ("Styx" + "Protocol"), so
+   * the raster logo and its alt text ("Protocol 01", /icon.png) are gone rather
+   * than moved, and the banner's home link is named "Styx Protocol, home".
+   * These three assertions were pinned to the retired identity; they now pin the
+   * new one, at the same strength.
+   */
   describe('Site header', () => {
-    it('renders the shared site header with the Protocol 01 wordmark', () => {
+    it('renders the shared site header with the Styx Protocol wordmark', () => {
       const header = screen.getByRole('banner');
-      expect(within(header).getByText('PROTOCOL 01')).toBeInTheDocument();
-      expect(within(header).getByAltText('Protocol 01')).toHaveAttribute('src', '/icon.png');
+      expect(within(header).getByText('Styx')).toBeInTheDocument();
+      expect(within(header).getByText('Protocol')).toBeInTheDocument();
     });
 
     it('exposes "Docs" in the header nav, pointing at /docs', () => {
@@ -41,7 +49,7 @@ describe('DocsPage -- Privacy technologies documentation', () => {
 
     it('has a home link on the logo pointing to /', () => {
       const header = screen.getByRole('banner');
-      const logoLink = within(header).getByRole('link', { name: /Protocol 01/i });
+      const logoLink = within(header).getByRole('link', { name: /Styx Protocol/i });
       expect(logoLink).toHaveAttribute('href', '/');
     });
   });
@@ -225,6 +233,22 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       expect(screen.queryAllByText(/depth 20/i)).toHaveLength(0);
     });
 
+    /**
+     * i18n/en.ts:1083 published "On-chain, only the relayer-to-stealth-address
+     * link is visible, the original sender is completely hidden", detail1 added
+     * "(sender never revealed)" and detail4 "On-chain visibility: Relayer to
+     * Stealth Address only". All three are refuted by detail2 of the same card,
+     * two lines up: the user funds the relayer, in the clear, before any of this
+     * happens. The sender is not hidden on any leg.
+     */
+    it('does not claim the relayer hides the original sender', () => {
+      openTopic('Shielded Pool & Relayer');
+      expect(screen.queryAllByText(/original sender is completely hidden/i)).toHaveLength(0);
+      expect(screen.queryAllByText(/sender never revealed/i)).toHaveLength(0);
+      expect(screen.queryAllByText(/Stealth Address only/i)).toHaveLength(0);
+      expect(screen.getByText(/The sender is not hidden/)).toBeInTheDocument();
+    });
+
     it('states the per-pool note capacity', () => {
       openTopic('Merkle Tree Proofs');
       expect(
@@ -295,11 +319,35 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       ).toBeInTheDocument();
     });
 
-    it('explains the relayer leaves no on-chain link to the original sender', () => {
+    /**
+     * WAS: an exact assertion on i18n/en.ts:1136, "Sends to stealth address, no
+     * on-chain link to the original sender", pinned as expected truth. That made
+     * the suite REQUIRE a claim this same page refutes thirty lines away, in the
+     * private-relay code sample: the inner transaction is signed with the user's
+     * key BEFORE it is encrypted to the relayer, so that key is in the
+     * transaction that lands on chain, and what the relayer hides is the IP
+     * address and the outer fee payer.
+     *
+     * Measured in the program, not inferred: programs/p01_relayer/src contains no
+     * proof handling at all (`grep -rl proof` returns nothing), and submit_job.rs
+     * declares the user as `submitter: Signer<'info>` while complete_job.rs and
+     * expire_job.rs both name that same submitter again, so the payer's key is on
+     * chain in the relay bookkeeping too. Hence the second negative here: the
+     * relayer program does not verify proofs and does not eliminate the third
+     * party, it escrows a fee for a node that decrypts the transaction and can
+     * decline to submit it.
+     *
+     * The negatives are the point. They fail while the retired claim is still
+     * rendered, which is the exact opposite of what this slot used to do.
+     */
+    it('does not claim the relayer removes the on-chain link to the sender', () => {
       openTopic('On-Chain Relayer (Trustless)');
       expect(
-        screen.getByText('Sends to stealth address, no on-chain link to the original sender'),
-      ).toBeInTheDocument();
+        screen.queryAllByText(/no on-chain link to the original sender/i),
+      ).toHaveLength(0);
+      expect(screen.queryAllByText(/eliminating trust in any third party/i)).toHaveLength(0);
+      expect(screen.queryAllByText(/verifies ZK proofs and executes/i)).toHaveLength(0);
+      expect(screen.getByText(/The sender is not hidden/)).toBeInTheDocument();
     });
   });
 
@@ -361,9 +409,20 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       expect(screen.queryAllByText(/Balance tracking is impossible/i)).toHaveLength(0);
     });
 
-    it('guarantees soundness: invalid proofs cannot be generated', () => {
+    /**
+     * WAS: an exact assertion on "Sound: Invalid proofs cannot be generated".
+     * The same page, on the STARK topic, refuses to publish any soundness figure
+     * at all (docs.sections.zkProofs.detail10: the 124-bit claim came from
+     * queries x log2(blowup), the real FRI rate was measured lower, and no
+     * measured figure has replaced it). A page that will not state a soundness
+     * error cannot also guarantee the error is zero, and this card sits under an
+     * amber note saying the verifier is unaudited. So the absolute goes and the
+     * qualified statement is asserted in its place.
+     */
+    it('states soundness without claiming invalid proofs are impossible', () => {
       openTopic('Security Model');
-      expect(screen.getByText('Sound: Invalid proofs cannot be generated')).toBeInTheDocument();
+      expect(screen.queryAllByText(/Invalid proofs cannot be generated/i)).toHaveLength(0);
+      expect(screen.getByText(/not as an absolute/i)).toBeInTheDocument();
     });
 
     it('guarantees completeness: valid spends always produce valid proofs', () => {
@@ -484,10 +543,22 @@ describe('DocsPage -- Privacy technologies documentation', () => {
     });
   });
 
+  /**
+   * StyxFooter splits what the old footer said in one line: the copyright names
+   * Styx Protocol, and the devnet/unaudited admission is its own span, in
+   * stronger words than before ("Use funds you can afford to lose"). Both halves
+   * are asserted, so the rename cannot quietly take the disclaimer with it.
+   */
   describe('Footer', () => {
     it('displays copyright notice', () => {
       expect(
-        screen.getByText(`© ${new Date().getFullYear()} PROTOCOL 01 · Devnet only, not audited.`),
+        screen.getByText(`© ${new Date().getFullYear()} Styx Protocol`),
+      ).toBeInTheDocument();
+    });
+
+    it('still admits, in the footer, that this is unaudited devnet software', () => {
+      expect(
+        screen.getByText('Devnet software. Not audited. Use funds you can afford to lose.'),
       ).toBeInTheDocument();
     });
   });
