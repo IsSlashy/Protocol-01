@@ -79,7 +79,6 @@ const updates: WeekUpdate[] = [
     title: "Mugen Exchange & Superteam Ireland",
     date: "April 6 - 12, 2026",
     status: "published",
-    video: "/videos/week1.mp4",
     highlights: [
       "Built Mugen Exchange, a separate side project and not part of Styx: peer-to-peer fiat to crypto matching with an on-chain escrow",
       "That project's Solana program covers escrow, reputation and dispute resolution",
@@ -94,7 +93,6 @@ const updates: WeekUpdate[] = [
     title: "Post-Quantum STARK Migration",
     date: "April 13 - 19, 2026",
     status: "published",
-    video: "/videos/week2.mp4",
     highlights: [
       "Moved the six circuits off Groth16 onto hash-based STARKs: Poseidon and Merkle trees, with no elliptic curves anywhere in the proof",
       "A FRI verifier running as a Solana program, with no trusted setup",

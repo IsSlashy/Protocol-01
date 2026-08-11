@@ -5,14 +5,6 @@
   "scripts": {
     "dev": "remotion studio",
     "build": "echo 'weekly-update: build is a no-op; use pnpm render to produce the video' && exit 0",
-    "render": "remotion render WeeklyUpdate out/week1.mp4",
-    "render:frost": "node scripts/render-chunked.mjs FrostIntro out/frost-intro.mp4 --total=1500",
-    "render:pitch": "node scripts/render-chunked.mjs PitchVideo out/pitch.mp4 --total=7200",
-    "render:weekly": "node scripts/render-chunked.mjs WeeklyUpdate out/weekly.mp4 --total=3240",
-    "render:week3": "node scripts/render-chunked.mjs Week3 out/week3.mp4 --total=3000",
-    "render:week4": "node scripts/render-chunked.mjs Week4 out/week4.mp4 --total=3600",
-    "render:extension": "node scripts/render-chunked.mjs ExtensionLaunch out/extension-launch.mp4 --total=2100",
-    "render:release": "node scripts/render-chunked.mjs ReleaseUpdate out/release-update.mp4 --total=3060",
     "render:chunked": "node scripts/render-chunked.mjs",
     "render:styx": "node scripts/render-chunked.mjs StyxPitch out/styx-pitch.mp4 --total=7200"
   },

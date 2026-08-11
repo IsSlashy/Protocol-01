@@ -42,6 +42,10 @@ if (!compositionId || !output) {
 
 const chunkSize = Number(flags.chunk ?? 500);
 const gl = String(flags.gl ?? 'angle');
+/* Every composition in this project is 60fps. It is needed at the remux step to
+   write one explicit constant-rate clock; pass --fps if that ever stops being
+   true, because a wrong value here silently retimes the whole film. */
+const fps = Number(flags.fps ?? 60);
 const outputPath = resolve(appRoot, output);
 const partsDir = resolve(appRoot, 'out/parts', basename(output, extname(output)));
 mkdirSync(partsDir, { recursive: true });
@@ -132,6 +136,13 @@ for (let i = 0; i < chunks.length; i++) {
          bluescreens this machine. */
       '--image-format=png',
       '--crf=16',
+
+      /* Pin the pixel format. With PNG intermediates the encoder was picking
+         yuvj420p, which signals FULL range. On a film built on #070709 that is
+         not cosmetic: a player that reads full-range levels as limited lifts the
+         blacks, and one that does the reverse crushes them. yuv420p is what
+         every target expects. */
+      '--pixel-format=yuv420p',
     ],
     { cwd: appRoot, stdio: 'inherit', shell: true },
   );
@@ -153,16 +164,73 @@ writeFileSync(
   partPaths.map((p) => `file '${p.replace(/\\/g, '/')}'`).join('\n') + '\n',
 );
 
-console.log('\n→ ffmpeg concat');
+/**
+ * Concatenate in TWO steps, through a raw h264 elementary stream.
+ *
+ * The one-step `-f concat -c copy` straight to mp4 produced a file with the right
+ * frame count and the wrong clock. Measured on the 7200 frame film: 7200 frames
+ * at 60fps is 120 seconds, and the container claimed 707.1. Each part carries its
+ * own edit list and timebase, and copying them into one mp4 accumulates the
+ * error, so a player scrubs an 11 minute timeline over two minutes of pictures.
+ * At two parts the same bug is almost invisible (2.09s instead of 2.00s), which
+ * is exactly why it survived until a 15 part render.
+ *
+ * Going through Annex B throws away every per-part timestamp, and remuxing the
+ * bare stream with an explicit `-r 60` writes one clean constant-rate clock. Both
+ * steps are `-c copy`, so this is still lossless: no frame is re-encoded.
+ *
+ * +faststart moves the index to the head so the film starts playing before it has
+ * finished downloading, which matters for a 4K file opened from a link.
+ */
+console.log('\n→ ffmpeg concat (raw h264, then remux at an explicit 60fps)');
 mkdirSync(dirname(outputPath), { recursive: true });
+
+const rawPath = join(partsDir, 'concat.h264');
+const toRaw = spawnSync(
+  'ffmpeg',
+  [
+    '-y', '-f', 'concat', '-safe', '0', '-i', concatFile,
+    '-c', 'copy', '-bsf:v', 'h264_mp4toannexb',
+    '-f', 'h264', rawPath,
+  ],
+  { stdio: 'inherit', shell: true },
+);
+if (toRaw.status !== 0) {
+  console.error('ffmpeg concat to raw h264 failed');
+  process.exit(toRaw.status ?? 1);
+}
+
 const concat = spawnSync(
   'ffmpeg',
-  ['-y', '-f', 'concat', '-safe', '0', '-i', concatFile, '-c', 'copy', outputPath],
+  [
+    '-y', '-fflags', '+genpts', '-r', String(fps), '-i', rawPath,
+    '-c', 'copy', '-movflags', '+faststart', outputPath,
+  ],
   { stdio: 'inherit', shell: true },
 );
 if (concat.status !== 0) {
-  console.error('ffmpeg concat failed');
+  console.error('ffmpeg remux failed');
   process.exit(concat.status ?? 1);
+}
+
+/* Refuse to report success on a file whose clock disagrees with its frames. That
+   is the defect this rewrite exists for, and it was invisible for one render. */
+const probe = spawnSync(
+  'ffprobe',
+  ['-v', 'error', '-select_streams', 'v:0',
+   '-show_entries', 'stream=nb_frames', '-show_entries', 'format=duration',
+   '-of', 'default=noprint_wrappers=1:nokey=1', outputPath],
+  { encoding: 'utf8', shell: true },
+);
+const [frames, seconds] = String(probe.stdout || '').trim().split(/\s+/).map(Number);
+if (Number.isFinite(frames) && Number.isFinite(seconds)) {
+  const expected = frames / fps;
+  const drift = Math.abs(seconds - expected);
+  console.log(`  clock check: ${frames} frames, ${seconds.toFixed(3)}s, expected ${expected.toFixed(3)}s`);
+  if (drift > 0.5) {
+    console.error(`  ✗ duration is off by ${drift.toFixed(2)}s. Not reporting success.`);
+    process.exit(1);
+  }
 }
 
 console.log(`\n✓ Done → ${outputPath}`);
