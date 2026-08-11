@@ -7,10 +7,21 @@ import { PitchVideo } from './PitchVideo';
 import { FrostIntro } from './FrostIntro';
 import { ExtensionLaunch } from './ExtensionLaunch';
 import { ReleaseUpdate } from './ReleaseUpdate';
+import { StyxPitch, STYX_PITCH_FRAMES } from './StyxPitch';
 
 export const RemotionRoot: React.FC = () => {
   return (
     <>
+      {/* The Styx cut. Registered first because it is the current film; the
+          compositions below it are archives of what was already published. */}
+      <Composition
+        id="StyxPitch"
+        component={StyxPitch}
+        durationInFrames={STYX_PITCH_FRAMES}
+        fps={60}
+        width={3840}
+        height={2160}
+      />
       <Composition
         id="ReleaseUpdate"
         component={ReleaseUpdate}

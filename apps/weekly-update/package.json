@@ -13,7 +13,8 @@
     "render:week4": "node scripts/render-chunked.mjs Week4 out/week4.mp4 --total=3600",
     "render:extension": "node scripts/render-chunked.mjs ExtensionLaunch out/extension-launch.mp4 --total=2100",
     "render:release": "node scripts/render-chunked.mjs ReleaseUpdate out/release-update.mp4 --total=3060",
-    "render:chunked": "node scripts/render-chunked.mjs"
+    "render:chunked": "node scripts/render-chunked.mjs",
+    "render:styx": "node scripts/render-chunked.mjs StyxPitch out/styx-pitch.mp4 --total=7200"
   },
   "dependencies": {
     "@remotion/cli": "4.0.294",
