@@ -5,7 +5,7 @@
  * border-radius anywhere), #39c5bb cyan / #ff2d7a pink accents, monospace
  * terminal details. Everything is inline-styled and table-based where it
  * matters (the CTA button) so Outlook and Gmail render it faithfully. Copy is
- * localized (en/fr/ja) from the record's locale and follows the project voice:
+ * localized (en/fr) from the record's locale and follows the project voice:
  * no em-dashes, no arrows, no shouting. Every email carries a one-click
  * unsubscribe link (the same token, which stays valid after confirmation) and
  * a plain-text part with raw URLs as a fallback.
@@ -70,18 +70,19 @@ const COPY: Record<Locale, Copy> = {
     ignore: 'Si ce n’était pas vous, vous pouvez ignorer cet e-mail sans risque.',
     unsubscribe: 'Se désinscrire',
   },
-  ja: {
-    subject: 'Protocol 01 ウェイトリストの確認',
-    preheader: 'ワンクリックでウェイトリストの登録が完了します。',
-    heading: '登録まであと少しです',
-    body: 'Protocol 01 のウェイトリストにご参加いただきありがとうございます。メールアドレスを確認して登録を完了してください。早期アクセスが開始され次第、お知らせします。',
-    button: '登録を確定する',
-    linkHelp: 'ボタンが機能しない場合は、このリンクをブラウザに貼り付けてください。',
-    disclaimer: 'protocol-01.dev で登録されました。',
-    ignore: 'お心当たりがない場合は、このメールを無視していただいて問題ありません。',
-    unsubscribe: '配信を停止する',
-  },
 };
+
+/**
+ * Locale-to-copy lookup that cannot return undefined.
+ *
+ * Japanese was dropped on 2026-08-11, but records created before then can still
+ * carry locale 'ja' in KV. Indexing COPY directly with such a value would hand
+ * `sendWaitlistEmail` an undefined copy object and throw while sending a real
+ * email, so every lookup goes through here and falls back to English.
+ */
+function copyFor(locale: string): Copy {
+  return (COPY as Record<string, Copy | undefined>)[locale] ?? COPY.en;
+}
 
 const MONO = "'Courier New', Courier, monospace";
 const SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
@@ -245,13 +246,21 @@ const REMINDER_COPY: Record<Locale, Pick<Copy, 'subject' | 'preheader' | 'headin
     heading: 'Toujours là ?',
     body: 'Vous avez demandé une place sur la liste d’attente Protocol 01 mais votre e-mail n’a jamais été confirmé. Un clic et elle est réservée. C’est le seul rappel que nous enverrons.',
   },
-  ja: {
-    subject: 'Protocol 01 ウェイトリストの確認がまだ完了していません',
-    preheader: 'ワンクリックで登録が完了します。リマインダーは今回限りです。',
-    heading: 'まだ間に合います',
-    body: 'Protocol 01 のウェイトリストにご登録いただきましたが、メールアドレスの確認がまだ完了していません。ワンクリックで登録が確定します。このリマインダーは今回限りです。',
-  },
 };
+
+/** Same fallback reasoning as copyFor, for the reminder overrides. */
+function reminderCopyFor(
+  locale: string,
+): Pick<Copy, 'subject' | 'preheader' | 'heading' | 'body'> {
+  return (
+    (
+      REMINDER_COPY as Record<
+        string,
+        Pick<Copy, 'subject' | 'preheader' | 'heading' | 'body'> | undefined
+      >
+    )[locale] ?? REMINDER_COPY.en
+  );
+}
 
 async function sendWaitlistEmail(
   copy: Copy,
@@ -292,7 +301,7 @@ export function sendConfirmationEmail(params: {
   token: string;
   locale: Locale;
 }): Promise<boolean> {
-  return sendWaitlistEmail(COPY[params.locale], params);
+  return sendWaitlistEmail(copyFor(params.locale), params);
 }
 
 /**
@@ -334,6 +343,9 @@ export function sendReminderEmail(params: {
   token: string;
   locale: Locale;
 }): Promise<boolean> {
-  const copy: Copy = { ...COPY[params.locale], ...REMINDER_COPY[params.locale] };
+  const copy: Copy = {
+    ...copyFor(params.locale),
+    ...reminderCopyFor(params.locale),
+  };
   return sendWaitlistEmail(copy, params);
 }

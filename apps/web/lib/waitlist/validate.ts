@@ -11,7 +11,17 @@ import { createHash } from 'node:crypto';
 export const INTERESTS = ['mobile', 'extension', 'sdk'] as const;
 export type Interest = (typeof INTERESTS)[number];
 
-export const LOCALES = ['en', 'fr', 'ja'] as const;
+/**
+ * The languages the site ships. Japanese was dropped on 2026-08-11.
+ *
+ * Records signed up before that date can still carry locale 'ja' in KV. Nothing
+ * breaks: `sanitizeLocale` maps any unknown value to English, and the email
+ * copy lookup falls back to English too (see lib/waitlist/email.ts). What does
+ * change is the stats breakdown, which now counts en and fr only — the old
+ * `wl:loc:ja` counter is left untouched in KV rather than deleted, so it is
+ * still there if the language ever comes back.
+ */
+export const LOCALES = ['en', 'fr'] as const;
 export type Locale = (typeof LOCALES)[number];
 
 /** RFC-lite email shape: one @, a dot in the domain, no whitespace. */

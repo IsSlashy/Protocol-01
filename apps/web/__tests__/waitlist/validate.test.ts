@@ -104,13 +104,23 @@ describe('sanitizeLocale() -- locale coercion', () => {
   it('passes through each supported locale', () => {
     expect(sanitizeLocale('en')).toBe('en');
     expect(sanitizeLocale('fr')).toBe('fr');
-    expect(sanitizeLocale('ja')).toBe('ja');
   });
 
   it('defaults unknown or missing locales to en', () => {
     expect(sanitizeLocale('de')).toBe('en');
     expect(sanitizeLocale(undefined)).toBe('en');
     expect(sanitizeLocale(999)).toBe('en');
+  });
+
+  /**
+   * Japanese was dropped on 2026-08-11. Records signed up before then can still
+   * carry locale 'ja' in KV, so the coercion has to land them somewhere valid
+   * rather than leaking an unsupported value into the email copy lookup. This is
+   * the legacy path, and it is the reason lib/waitlist/email.ts routes every
+   * lookup through copyFor().
+   */
+  it('folds the retired ja locale into en rather than passing it through', () => {
+    expect(sanitizeLocale('ja')).toBe('en');
   });
 });
 

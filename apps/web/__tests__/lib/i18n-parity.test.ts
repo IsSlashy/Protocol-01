@@ -1,19 +1,23 @@
 /**
  * Locale key parity for the marketing site.
  *
- * `ja` is live in the language switcher, not a nice-to-have. A sweep on this
- * repo edited `en` and `fr`, declared the job done in its commit message, and
- * left stale strings rendering in Japanese. Nothing caught it, because nothing
- * was watching.
+ * `fr` is live for visitors in France, Canada and Switzerland, not a
+ * nice-to-have. A sweep on this repo once edited `en` only, declared the job
+ * done in its commit message, and left stale strings rendering in the other
+ * language. Nothing caught it, because nothing was watching.
  *
  * This is what watches. It fails the moment a key exists in one dictionary and
- * not in the other two, in either direction, so a half-finished translation
- * pass cannot be merged as green.
+ * not in the other, in either direction, so a half-finished translation pass
+ * cannot be merged as green.
+ *
+ * Japanese was removed on 2026-08-11 along with the language switcher; the site
+ * now picks a language from the visitor's country. The `ja` dictionary is
+ * preserved in the identity archive, so if it ever returns, add it back to
+ * DICTS below and the parity guard covers it again for free.
  */
 import { describe, it, expect } from 'vitest';
 import en from '@/i18n/en';
 import fr from '@/i18n/fr';
-import ja from '@/i18n/ja';
 
 type Dict = Record<string, unknown>;
 
@@ -38,10 +42,9 @@ function read(d: Dict, dotted: string): unknown {
 const DICTS: ReadonlyArray<readonly [string, Dict]> = [
   ['en', en as unknown as Dict],
   ['fr', fr as unknown as Dict],
-  ['ja', ja as unknown as Dict],
 ];
 
-describe('web i18n: en, fr and ja carry identical key sets', () => {
+describe('web i18n: en and fr carry identical key sets', () => {
   const keys = new Map(DICTS.map(([name, d]) => [name, new Set(leafKeys(d))]));
 
   it('every dictionary is non-trivial (guards against an empty import)', () => {
@@ -79,7 +82,8 @@ describe('web i18n: the site does not promise cancellation it cannot deliver', (
       for (const k of RECANTED) {
         const v = read(d, k);
         expect(typeof v, `${name}.${k} is missing`).toBe('string');
-        // en/fr use the Latin words; ja uses キャンセル.
+        // The Japanese alternative stays in the pattern: it costs nothing and
+        // keeps the guard correct if that dictionary is ever restored.
         expect(
           /cancel|annul|キャンセル/i.test(v as string) &&
             !/cannot be cancelled|ne peuvent pas .{0,20}annul|キャンセルでき/i.test(
@@ -91,18 +95,15 @@ describe('web i18n: the site does not promise cancellation it cannot deliver', (
     }
   });
 
-  it('the one-way rule is stated, and translated, in all three locales', () => {
+  it('the one-way rule is stated, and translated, in both locales', () => {
     for (const [name, d] of DICTS) {
       for (const k of ['sdkDemo.noRefundTitle', 'sdkDemo.noRefundDesc']) {
         expect(typeof read(d, k), `${name}.${k} is missing`).toBe('string');
       }
     }
-    // …and fr/ja are not silently rendering the English string.
+    // …and fr is not silently rendering the English string.
     for (const k of ['sdkDemo.noRefundTitle', 'sdkDemo.noRefundDesc']) {
       expect(read(fr as unknown as Dict, k), `fr.${k} is untranslated`).not.toBe(
-        read(en as unknown as Dict, k),
-      );
-      expect(read(ja as unknown as Dict, k), `ja.${k} is untranslated`).not.toBe(
         read(en as unknown as Dict, k),
       );
     }
@@ -111,8 +112,8 @@ describe('web i18n: the site does not promise cancellation it cannot deliver', (
   /**
    * Arcium left Protocol 01 on 2026-07-17. The nodes stopped rendering that day,
    * but 51 strings describing MPC compute, a Cerberus 1-of-N honest-node
-   * guarantee and a whole "With & Without MPC" comparison table stayed in all
-   * three dictionaries — invisible, and one edit away from rendering again.
+   * guarantee and a whole "With & Without MPC" comparison table stayed in every
+   * dictionary, invisible, and one edit away from rendering again.
    *
    * They are gone. This keeps them gone: any locale string naming Arcium fails
    * here, in any language, whether or not a component renders it today.
