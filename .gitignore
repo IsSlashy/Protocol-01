@@ -39,6 +39,13 @@ docs/pitch-entrepreneur-go-2026.md
 *.mp4
 !apps/web/public/**/*.mp4
 
+# ULTRAKILL gameplay capture and its poster, used only by the local /parcours
+# preview. These are New Blood Interactive assets and this repository is public,
+# so they must never be committed. The negation just above re-includes every mp4
+# under apps/web/public, which is why this rule has to come after it.
+# Consequence, on purpose: /parcours renders without the clip in production.
+apps/web/public/videos/ultrakill-*
+
 # Android build artifacts (build/ redirected to build2/ after NTFS corruption)
 apps/mobile/android/app/build2/
 apps/mobile/android/app/build/
