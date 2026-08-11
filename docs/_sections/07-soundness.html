@@ -1,0 +1,85 @@
+<div class="page" data-running="Styx Protocol &middot; Soundness" data-folio="07">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">Soundness, measured</div>
+  <h2>The honest figure is in the forties of bits.</h2>
+
+  <p class="lede">
+    Soundness was derived per circuit from the deployed configuration, not quoted
+    from a formula.
+  </p>
+
+  <table>
+    <tr>
+      <th>Column</th><th>Bits</th><th>What binds it</th>
+    </tr>
+    <tr>
+      <td>Classical, ethSTARK list&#8209;decoding conjecture</td>
+      <td class="n">47 to 52</td>
+      <td>Fiat&#8209;Shamir field floor, 47.75 to 52.53</td>
+    </tr>
+    <tr>
+      <td>Classical, unconditional</td>
+      <td class="n">42 to 46</td>
+      <td>Query term, 42.1 to 46.6</td>
+    </tr>
+    <tr>
+      <td>Quantum, under Grover</td>
+      <td class="n">21 to 26</td>
+      <td>Half the classical figure, forgery being a search</td>
+    </tr>
+  </table>
+
+  <p class="note mono" style="margin:2.5mm 0 0; max-width:none;">
+    per circuit, conjectured [52,50,50,47,48,47,47], unconditional [46,46,46,42,46,42,42]
+  </p>
+
+  <div class="cols" style="margin-top:6mm;">
+    <div>
+      <h4>Why more queries buy nothing</h4>
+      <p>
+        Every Fiat&#8209;Shamir challenge is a single Goldilocks element, so none
+        carries more than 64 bits. The floor is 64 minus log2(8n + w + k + 1 + folds
+        &times; lde), landing at 47.75 to 52.53. The conjectured query term is 110 to
+        130 bits and is cut down to it. Grinding cannot lift the floor either: the
+        nonce is absorbed last.
+      </p>
+    </div>
+    <div>
+      <h4>What the unconditional column rests on</h4>
+      <p>
+        There the query term is the smaller quantity, so it binds and the 22 bits of
+        grinding are load bearing. The rate is enforced, not assumed from the blowup
+        of 16: any terminal polynomial above 1 of 16 coefficients is rejected, giving
+        rho = 1/16, that is 4.000 bits per query across 22 or 27 queries.
+      </p>
+    </div>
+  </div>
+
+  <div class="admission" style="margin-top:6mm;">
+    <h4>This is not a production security level</h4>
+    <p style="margin-bottom:0;">
+      At 10 GH/s of SHA&#8209;256, 2^42 is about 7.3 GPU&#8209;minutes and 2^52.5
+      about 7.5 GPU&#8209;days. The verifier's own test file,
+      tests/b1_deep_binding.rs, states that nothing here is publishable as a
+      security level. Nor does anything inside a proof bind which circuit produced
+      it: the program stores no verification key hash, so circuit separation rests
+      on one byte in the proof buffer account. Comments at compact_proof.rs lines 41
+      to 45 still compute soundness as queries times log2(blowup) and reach 104 to
+      124 bits, which the project no longer stands behind. Reproduction is uneven:
+      both arrays are derived in code in that test file, which sits on branch
+      b7-drop-aligned-checks and not on master, so cloning that branch and running
+      it recomputes them. The quotient&#8209;degree measurement that refutes the 104
+      to 124 has no harness committed anywhere, and has to be asked for.
+    </p>
+  </div>
+
+  <h4>What raising it takes</h4>
+  <p>
+    Engineering, not research. The unconditional column moves with the query count.
+    The conjectured one is floor bound by the 64&#8209;bit challenge, so a wider
+    challenge is a design direction, not a result. Both cost compute: the accepted
+    on&#8209;chain verification used 809,662 units of the 1,399,850 a Solana
+    instruction allows, and that ceiling is fixed.
+  </p>
+</div>

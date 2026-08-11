@@ -1,0 +1,88 @@
+<div class="page" data-running="Styx Protocol &middot; Limits" data-folio="17">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">What this does not do yet</div>
+  <h2>A deposit can still be matched to its withdrawal.</h2>
+
+  <p class="lede">
+    The withdrawal has to republish a value the deposit already emitted. That join
+    is deterministic, so the effective anonymity set is one and no amount of pool
+    growth dilutes it.
+  </p>
+
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div>
+      <h4>The mechanism, measured</h4>
+      <p>
+        UnshieldDenominatedStarkV3 takes stark_commitment as a public argument,
+        because the program rebuilds sha256(nullifier &#124;&#124; stark_commitment)
+        to match the verified proof buffer. On the devnet pair we ran on 4 August,
+        that u64 sits at bytes 80 to 88 of the withdrawal and bytes 8 to 16 of the
+        deposit, twenty minutes apart.
+      </p>
+    </div>
+    <div>
+      <h4>Why it is still open</h4>
+      <p>
+        No client-side change closes it: the value must be public or the proof
+        cannot verify. The fix is a merged spend circuit that proves Merkle
+        membership without naming the leaf. It is specified in
+        docs/C7_SPEND_CIRCUIT_PLAN.md and costed there at 79 to 96 hours of serial
+        work. It is not built. Until it is, private in this document means
+        confidential amounts and shielded balances, and nothing more.
+      </p>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <table>
+    <tbody>
+      <tr>
+        <td>No external review</td>
+        <td>Zero audits. A review able to cover a hand-written verifier was priced
+        internally at 153,000 to 263,000 EUR.</td>
+      </tr>
+      <tr>
+        <td>Devnet only</td>
+        <td>Nothing executable on mainnet. The seven ids under Anchor.toml
+        [programs.mainnet] resolve to no program at all.</td>
+      </tr>
+      <tr>
+        <td>No outside party</td>
+        <td>Six registry services, one owner key, and that same key is the
+        authority that stamps the verified flag on them. Subscriber count is zero
+        on all six.</td>
+      </tr>
+      <tr>
+        <td>Anonymity set</td>
+        <td>Busiest pool: 34 leaves, 8 unspent notes. Eleven of the thirteen
+        denominations the client offers hold none.</td>
+      </tr>
+      <tr>
+        <td>Merchant privacy</td>
+        <td>Retailer address in the clear at byte offset 42. One unauthenticated
+        RPC call returns all 18 vaults across 9 retailers.</td>
+      </tr>
+      <tr>
+        <td>Transient float</td>
+        <td>About 1.77 SOL of buffer rent for a web withdrawal and 2.02 SOL on
+        mobile, where padding fixes both buffers at 1.0107 SOL. Refunded on close, though 44
+        buffers are still stranded on the verifier. One per operation, never
+        shared.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="admission" style="margin-top:5mm;">
+    <h4>Including the permissionless claim</h4>
+    <p style="margin:0;">
+      Anyone can collect a merchant's revenue without the merchant's key, and that
+      has run on devnet. The caller was not the merchant, but it was the founder's
+      own wallet: one signer across that claim, the program upgrade and all six
+      merchant registrations. No independent party has run any part of this.
+    </p>
+  </div>
+</div>

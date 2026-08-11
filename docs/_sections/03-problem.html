@@ -1,0 +1,88 @@
+<div class="page" data-running="Styx Protocol &middot; The problem" data-folio="03">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">The problem</div>
+  <h2>A public ledger publishes your customer register for you.</h2>
+
+  <p class="lede">
+    Solana settles in the clear: every transaction carries its fee payer, its
+    signers, its account list and its program id as plaintext. A payment rail
+    built on that inherits a public register.
+  </p>
+
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div>
+      <h4>It needs no attacker, only a reader</h4>
+      <p>
+        Nothing has to be broken, and nothing here is a defect: this is the runtime
+        working as designed. On 11 August 2026, one unauthenticated
+        <span class="mono">getProgramAccounts</span> call against the Solana
+        Foundation's own Subscriptions and Allowances program, shipped in June 2026,
+        returned 10,782 accounts, which group into five shapes of 7,237, 2,896, 342,
+        303 and 4.
+      </p>
+      <p>
+        That program is open source and was reviewed by Cantina and Spearbit. It is
+        good infrastructure. It is also a list, and reading all of it costs one
+        request.
+      </p>
+    </div>
+    <div>
+      <h4>This document does not exempt Styx</h4>
+      <p>
+        The subscription vaults Styx has deployed on devnet keep the merchant
+        address in the clear at a fixed byte offset, 42, of a public account. One
+        call filtered on nothing but the account discriminator returned all 18
+        vaults across 9 retailers, with each vault's deposited total and claimed
+        period count decoding beside it.
+      </p>
+      <p>
+        No key, no SDK, no permission. The project's own merchant SDK README says
+        so at lines 378 to 386, and declines to call that path a privacy control.
+      </p>
+    </div>
+  </div>
+
+  <table style="margin-top:5mm;">
+    <thead>
+      <tr>
+        <th style="width:40mm;">Who feels it first</th>
+        <th>What the ledger publishes about them</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Recurring revenue</td><td>Which addresses pay, at what price, on what schedule, and the month they stop</td></tr>
+      <tr><td>Payroll</td><td>Every salary, and every change to one, at the moment it is paid</td></tr>
+      <tr><td>Treasury</td><td>Balances, counterparties, and the size of a move while it is still in progress</td></tr>
+      <tr><td>Business to business</td><td>Which suppliers a firm depends on, and what it pays each of them</td></tr>
+    </tbody>
+  </table>
+
+  <h3 style="margin-top:4mm;">The current answer is to delete the billing</h3>
+  <p>
+    Two companies that sell privacy as their product removed recurring payment
+    rather than solve it. Mullvad published a post titled "We are removing the
+    option to create new subscriptions". NymVPN shipped a pay as you go option
+    with no account and no subscription. Both answers are a retreat.
+  </p>
+
+  <p>
+    This page is the diagnosis, not the claim. Styx does not close all of it:
+    measured today, a deposit into the shielded pool can still be matched to its
+    withdrawal, and the sender is not hidden on the send path. Page 17 states that
+    limit with the measurement behind it.
+  </p>
+
+  <p class="note" style="margin-top:4mm;">
+    Both counts were measured on 11 August 2026, one
+    <span class="mono">getProgramAccounts</span> call each: 10,782 on
+    <span class="mono">De1egAFMkMWZSN5rYXRj9CAdheBamobVNubTsi9avR44</span> at
+    <span class="mono">api.mainnet-beta.solana.com</span>, grouped by account
+    size and leading byte; 18 vaults on
+    <span class="mono">GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c</span> at
+    <span class="mono">api.devnet.solana.com</span>, filtered on discriminator
+    <span class="mono">605af7ca9d1056be</span>.
+  </p>
+</div>

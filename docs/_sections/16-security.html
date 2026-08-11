@@ -1,0 +1,99 @@
+<div class="page page--band" data-running="Styx Protocol &middot; Security and threat model" data-folio="16">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">Security and threat model</div>
+  <h2>A threat model is worth reading for what it concedes.</h2>
+
+  <p class="lede">
+    Styx defends what a note contains, and derives a fresh address per stealth
+    payment. It does not defend the link between a deposit and its withdrawal.
+  </p>
+
+  <h4>Who sees what today</h4>
+  <table>
+    <tr>
+      <th>Party</th>
+      <th>What it learns</th>
+    </tr>
+    <tr>
+      <td>Chain observer</td>
+      <td>The deposit, the withdrawal, and the pairing between them. The unshield
+      instruction has to republish the deposit's commitment, so no client fix
+      hides it.</td>
+    </tr>
+    <tr>
+      <td>Anyone, on a send</td>
+      <td>Sender identity is not hidden on the send path at all. That path carries
+      no relayer on the web client, so the payer is the fee payer and the signer,
+      and the amount is public with it.</td>
+    </tr>
+    <tr>
+      <td>RPC provider</td>
+      <td>The client address, the signer, and every proof chunk: 145 uploads per
+      proof on the mobile path.</td>
+    </tr>
+    <tr>
+      <td>Relayer</td>
+      <td>Whatever it is handed, which it writes to chain: 111 chunk accounts of
+      1,037 bytes sit on devnet.</td>
+    </tr>
+    <tr>
+      <td>Recipient</td>
+      <td>The note handed over. Its secrets derive from no wallet seed, so the
+      local store is the only copy.</td>
+    </tr>
+  </table>
+
+  <div class="cols" style="margin-top:5mm;">
+    <div>
+      <h4>If a key leaks</h4>
+      <p>
+        A stealth viewing key spends. The derivation returns a full Ed25519
+        keypair from the viewing secret, so a watch&#8209;only key does not exist
+        yet.
+      </p>
+      <p>
+        All 18 deployed programs are upgradeable by one key, with no multisig and
+        no timelock: the largest operational risk here.
+      </p>
+      <p>
+        The Winternitz vault key is one&#8209;time. Signing twice under one public
+        key is what breaks it.
+      </p>
+      <p>
+        Nothing above was found by a reviewer outside the project, because there
+        has not been one.
+      </p>
+    </div>
+    <div>
+      <h4>The post&#8209;quantum position</h4>
+      <p>
+        Transaction authorisation stays Ed25519, because Solana verifies nothing
+        else. A protocol claiming a fully post&#8209;quantum Solana transaction
+        today is overstating.
+      </p>
+      <p>
+        Post&#8209;quantum where it can be: no curve and no pairing in the proof,
+        only Poseidon over Goldilocks and SHA&#8209;256, and a stealth agreement
+        that mixes X25519 with ML&#8209;KEM&#8209;768.
+      </p>
+      <p>
+        Under Grover a forgery is a search, so the measured 42 to 46 bit
+        unconditional margin roughly halves, to about 21 to 26 bits. That is not a
+        publishable security level.
+      </p>
+    </div>
+  </div>
+
+  <div class="admission" style="margin-top:5mm;">
+    <h4>No ceremony, so nothing to trust and nothing to claim</h4>
+    <p style="margin:0;">
+      There is no trusted setup. The verifier contains no alt_bn128, bn254,
+      pairing or Groth16, and no .ptau or .zkey is tracked. No Powers of Tau
+      ceremony took place. Two published artefacts still imply one:
+      @protocol-01/privacy-sdk 1.0.4 lists snarkjs as a dependency, and the
+      @protocol-01/zkspl-sdk README describes ceremony output. Both are text to
+      correct, not running code.
+    </p>
+  </div>
+</div>

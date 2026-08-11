@@ -1,0 +1,89 @@
+<div class="page" data-running="Styx Protocol &middot; The relayer" data-folio="11">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">The relayer</div>
+  <h2>It moves the fee payer. It does not move the correspondence.</h2>
+
+  <p class="lede">
+    A relayer pays the fee and signs the submission, so the user's own key is
+    absent from the fee payer and signer fields. That buys one property precisely,
+    and naming what it is not is the more useful half of this page.
+  </p>
+
+  <div class="cols">
+    <div>
+      <h4>What is deployed</h4>
+      <p>
+        The program is live and executable on Solana devnet, declared at
+        <span class="mono">programs/p01_relayer/src/lib.rs:33</span>. It takes a job
+        whole or in chunks when the payload will not fit one transaction, and nodes
+        register, stake and post a heartbeat.
+      </p>
+      <p>
+        Job submission has run on chain. The two devnet links the project published
+        as Stealth and as ZK Pool are one and the same
+        <span class="mono">SubmitJob</span> transaction, dated 29 May 2026.
+      </p>
+    </div>
+    <div>
+      <h4>What it cannot change</h4>
+      <p>
+        A withdrawal republishes the commitment its deposit inserted. That pairing
+        sits in the instruction data, not in the signature, so it survives any
+        change of fee payer. Page 17 carries the consequence in full.
+      </p>
+      <p>
+        Nor does it remove the observer. Proof chunks reach the chain as a loop from
+        one ephemeral signer, up to 145 transactions per proof on the mobile path,
+        through one RPC provider that sees the address and the network origin.
+      </p>
+    </div>
+  </div>
+
+  <div class="rule" style="margin:3.5mm 0;"></div>
+
+  <h4>Measured on devnet, 11 August 2026</h4>
+  <div class="row">
+    <span class="row-key">program</span><span class="row-lead"></span>
+    <span class="row-val">2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW</span>
+  </div>
+  <div class="row">
+    <span class="row-key">heartbeat</span><span class="row-lead"></span>
+    <span class="row-val">4,430 CU, one every 30 seconds, 120 per hour</span>
+  </div>
+  <div class="row">
+    <span class="row-key">continuity</span><span class="row-lead"></span>
+    <span class="row-val">2,000+ consecutive, 0 failed, 16 h to 12:42 UTC</span>
+  </div>
+  <div class="row">
+    <span class="row-key">state</span><span class="row-lead"></span>
+    <span class="row-val">116: 2 nodes, 111 chunks, 1 config, 1 refund job, 1 unidentified</span>
+  </div>
+
+  <p class="note" style="margin-top:3mm;">
+    The trust is availability and observation. The relayer learns the payload and the
+    origin of every request it carries, it can decline or delay one, and the two
+    registered nodes have no demonstrated operator outside the project. The web pay
+    interface therefore states in its own copy that its path has no relayer, and a
+    test fails if that wording ever softens.
+  </p>
+
+  <div class="rule" style="margin:3.5mm 0;"></div>
+
+  <div class="admission">
+    <h4>The heartbeat is liveness, and two defects are open</h4>
+    <p>
+      120 transactions an hour at a flat interval is a cron proving a process is
+      alive. It is not usage, throughput or demand.
+    </p>
+    <p style="margin:0;">
+      Every <span class="mono">RelayChunk</span> account the program creates is
+      permanently unclosable at 1,037 bytes and 0.0081084 SOL of rent each, and the
+      source names its own missing fix at
+      <span class="mono">expire_pending_job.rs:17</span>. The running build also
+      dates from 14 July 2026 while its correction went to a repository not wired to
+      this deployment, so a statement about relayer behaviour describes source rather
+      than the live service.
+    </p>
+  </div>
+</div>

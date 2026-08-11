@@ -1,0 +1,73 @@
+<div class="page" data-running="Styx Protocol &middot; The shielded pool" data-folio="05">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">The shielded pool</div>
+  <h2>A note is a leaf. Spending it burns a nullifier.</h2>
+
+  <p class="lede">
+    A deposit buys a note of a fixed size. Its commitment is appended to a
+    Merkle tree as a leaf, and the value leaves the pool only when a proof shows
+    that leaf exists and the program writes a nullifier record that can never be
+    written twice.
+  </p>
+
+  <div class="cols">
+    <div>
+      <h4>How a deposit becomes a leaf</h4>
+      <p>
+        Pools are denominated, and the shipped client configures thirteen: six
+        SOL sizes at 0.1, 1, 10, 100, 500 and 1000, and seven USDC. A deposit of
+        the pool's exact denomination inserts one 32&#8209;byte commitment at the
+        next free leaf index and raises the note count by one.
+      </p>
+      <p>
+        The 1 SOL pool runs at tree depth 15 and keeps a ring of its last 100
+        roots, so a note proved against a recent root still spends. Page 06
+        carries the tree hash and the constants it was compiled with.
+      </p>
+    </div>
+    <div>
+      <h4>Why a nullifier, not a deletion</h4>
+      <p>
+        A withdrawal never removes the leaf. It publishes a nullifier and the
+        program creates a 41&#8209;byte record at a program address derived from
+        the pool and that nullifier. A second spend of the same note would have
+        to create the same account twice, which the runtime refuses.
+      </p>
+      <p>
+        That guarantee has a measured, permanent price. No instruction in the
+        deployed program closes a nullifier record, so every spend strands
+        1,176,240 lamports of rent: 0.1894 devnet SOL across the 161 records
+        that exist today.
+      </p>
+    </div>
+  </div>
+
+  <h4>Measured on devnet, 11 August 2026</h4>
+  <table>
+    <tr><th>State</th><th style="text-align:right;">Count</th></tr>
+    <tr><td>Commitments inserted across 72 denominated pool accounts, of which unspent</td><td class="n">325 / 164</td></tr>
+    <tr><td>Nullifier records on chain, against the 325 minus 164 predicted</td><td class="n">161</td></tr>
+    <tr><td>Pool sizes the shipped client configures, of which ever funded</td><td class="n">13 / 2</td></tr>
+    <tr><td>The two funded pools, at 0.1 and 1 SOL: leaves, unspent notes</td><td class="n">34 / 8, 25 / 6</td></tr>
+  </table>
+  <p class="note" style="margin-top:2mm;">
+    Read that as a consistency check, not a proof. The 72 are pool accounts on
+    chain across two generations; the thirteen are the sizes the client offers. A
+    further 26 commitments sit in eighteen legacy pool accounts outside the 325,
+    and the same record type is also written by an escrow instruction. The 1 SOL
+    pool reconciles on its own history: 25 deposits, 6 withdrawals and 13
+    subscriptions leave 6 live notes.
+  </p>
+
+  <div class="rule"></div>
+
+  <p>
+    Fixed denominations exist so that the amount is not a distinguishing
+    feature. Every leaf in a pool carries the same value, so a withdrawal
+    discloses which pool it came from and nothing narrower, and there is no
+    change output to correlate. What it does not hide is which deposit that
+    withdrawal belongs to: two public fields still match across the pair, and
+    page 17 shows the arithmetic on our own devnet transactions.
+  </p>
+</div>

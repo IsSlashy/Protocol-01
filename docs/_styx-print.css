@@ -1,0 +1,350 @@
+/* ===========================================================================
+   STYX PROTOCOL, print stylesheet.
+   Shared by the design document, and by any other paper artefact that follows.
+
+   INK ON PAPER, NOT PAPER ON INK, AND THAT IS A DECISION.
+
+   The site is warm off-white on near-black. This document inverts it: near-black
+   ink on a warm paper ground. Direction A was briefed as institutional and
+   editorial, "like an annual report", and an annual report is printed. An
+   eighteen page near-black PDF is punishing to print, heavy on a phone screen,
+   and reads as a website that was exported rather than as a document.
+
+   Nothing else about the identity moves. Newsreader still carries every
+   statement, JetBrains Mono still carries every piece of evidence, the rules are
+   still hairlines, and cyan is still a seal used on section ticks and verified
+   marks rather than a colour spent on surfaces.
+
+   Deliberately absent, because the previous edition had all of it: Orbitron, the
+   cyan-to-pink gradient bar, the pink, the glow, and the "01" cover mark.
+   =========================================================================== */
+
+@page {
+  size: A4;
+  margin: 0;
+}
+
+:root {
+  /* Paper and ink. The paper is warm rather than white so a full page of it does
+     not glare, and the ink is not pure black so it does not vibrate against it. */
+  --paper: #f4f1e9;
+  --paper-band: #ebe7dd;
+  --ink: #14140f;
+  --ink-muted: rgba(20, 20, 15, 0.66);
+  --ink-faint: rgba(20, 20, 15, 0.44);
+  --rule: rgba(20, 20, 15, 0.16);
+  --rule-soft: rgba(20, 20, 15, 0.08);
+
+  /* A seal, not a colour. Darkened from the screen cyan, which is too light to
+     read as ink on paper. */
+  --seal: #1f8c85;
+  /* The one place amber is allowed: an admission the reader must not miss. */
+  --warn: #8a5a12;
+  --warn-bg: rgba(138, 90, 18, 0.07);
+
+  --serif: 'Newsreader', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 9.4pt;
+  line-height: 1.56;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ---- The page ---------------------------------------------------------- */
+
+.page {
+  position: relative;
+  width: 210mm;
+  height: 297mm;
+  padding: 26mm 22mm 20mm;
+  background: var(--paper);
+  page-break-after: always;
+  overflow: hidden;
+}
+
+.page--band { background: var(--paper-band); }
+.page:last-child { page-break-after: avoid; }
+
+/* Running head and folio, so eighteen loose pages can be put back in order. */
+.page::before {
+  content: attr(data-running);
+  position: absolute;
+  top: 12mm;
+  left: 22mm;
+  right: 22mm;
+  font-family: var(--mono);
+  font-size: 6.6pt;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.page::after {
+  content: attr(data-folio);
+  position: absolute;
+  bottom: 11mm;
+  right: 22mm;
+  font-family: var(--mono);
+  font-size: 6.6pt;
+  letter-spacing: 0.14em;
+  color: var(--ink-faint);
+}
+
+/* A hairline under the running head, the document's one repeated ornament. */
+.page > .headrule {
+  position: absolute;
+  top: 17mm;
+  left: 22mm;
+  right: 22mm;
+  height: 0.5pt;
+  background: var(--rule);
+}
+
+.page > .headrule::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -0.5pt;
+  width: 12mm;
+  height: 1.5pt;
+  background: var(--seal);
+}
+
+/* ---- Type ------------------------------------------------------------- */
+
+h1, h2, h3, h4 { font-family: var(--serif); font-weight: 400; margin: 0; }
+
+/* The section opener. */
+h2 {
+  font-size: 21pt;
+  font-weight: 300;
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+  margin: 0 0 5mm;
+  max-width: 26ch;
+}
+
+h3 {
+  font-size: 11.5pt;
+  font-weight: 500;
+  line-height: 1.25;
+  margin: 6mm 0 2mm;
+}
+
+h4 {
+  font-family: var(--mono);
+  font-size: 7pt;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 5mm 0 1.5mm;
+}
+
+p { margin: 0 0 3mm; max-width: 78ch; }
+p:last-child { margin-bottom: 0; }
+strong { font-weight: 600; }
+em { font-style: italic; }
+
+.lede {
+  font-family: var(--serif);
+  font-size: 12pt;
+  line-height: 1.5;
+  color: var(--ink-muted);
+  max-width: 60ch;
+  margin-bottom: 6mm;
+}
+
+.muted { color: var(--ink-muted); }
+.faint { color: var(--ink-faint); }
+
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 3mm;
+  font-family: var(--mono);
+  font-size: 7pt;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 3mm;
+}
+
+.eyebrow::before {
+  content: '';
+  width: 8mm;
+  height: 1pt;
+  background: var(--seal);
+  flex: none;
+}
+
+/* The oversized marginal numeral, as on the site. */
+.numeral {
+  font-family: var(--serif);
+  font-weight: 300;
+  font-size: 34pt;
+  line-height: 0.82;
+  letter-spacing: -0.03em;
+  color: var(--rule);
+}
+
+.mono { font-family: var(--mono); font-size: 7.6pt; letter-spacing: 0.01em; }
+.note { font-size: 8pt; line-height: 1.5; color: var(--ink-faint); }
+
+/* ---- Structures -------------------------------------------------------- */
+
+.cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7mm;
+}
+
+.cols--3 { grid-template-columns: repeat(3, 1fr); }
+.cols--label { grid-template-columns: 34mm 1fr; gap: 6mm; }
+
+.stack { display: flex; flex-direction: column; gap: 4mm; }
+
+.card {
+  border: 0.5pt solid var(--rule);
+  padding: 4mm 4.5mm;
+  background: transparent;
+}
+
+.card > h4 { margin-top: 0; }
+
+.card-value {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 12pt;
+  line-height: 1.15;
+  margin: 0 0 1.5mm;
+}
+
+/* A keyed row with leader dots, as in a printed report. */
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 2.5mm;
+  font-family: var(--mono);
+  font-size: 7.6pt;
+  line-height: 1.9;
+  color: var(--ink-muted);
+}
+
+.row-key { color: var(--ink-faint); flex: none; min-width: 22mm; }
+.row-lead { flex: 1; border-bottom: 0.5pt dotted var(--rule); transform: translateY(-0.9mm); }
+.row-val { text-align: right; color: var(--ink); }
+
+table { width: 100%; border-collapse: collapse; font-size: 7.8pt; }
+
+th {
+  text-align: left;
+  padding: 2mm 2.5mm;
+  border-bottom: 0.5pt solid var(--rule);
+  font-family: var(--mono);
+  font-size: 6.8pt;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+td {
+  padding: 2mm 2.5mm;
+  border-bottom: 0.5pt solid var(--rule-soft);
+  color: var(--ink-muted);
+  vertical-align: top;
+}
+
+tr:last-child td { border-bottom: none; }
+td.m { font-family: var(--mono); font-size: 6.9pt; color: var(--ink); word-break: break-all; }
+td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; color: var(--ink); }
+
+.ok { color: var(--seal); }
+.no { color: var(--warn); }
+
+ul, ol { margin: 0 0 3mm; padding-left: 5mm; }
+li { margin-bottom: 1.4mm; }
+li::marker { color: var(--ink-faint); }
+
+/* An admission. The only amber on the page, and never decorative. */
+.admission {
+  border: 0.5pt solid rgba(138, 90, 18, 0.5);
+  background: var(--warn-bg);
+  padding: 4mm 4.5mm;
+}
+
+.admission > h4 { color: var(--warn); margin-top: 0; }
+
+pre {
+  margin: 0 0 3mm;
+  padding: 3.5mm 4mm;
+  border: 0.5pt solid var(--rule);
+  font-family: var(--mono);
+  font-size: 7pt;
+  line-height: 1.6;
+  color: var(--ink-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rule { height: 0.5pt; background: var(--rule); margin: 5mm 0; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2mm;
+  padding: 1.2mm 3mm;
+  border: 0.5pt solid var(--rule);
+  border-radius: 99mm;
+  font-family: var(--mono);
+  font-size: 6.6pt;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.chips { display: flex; flex-wrap: wrap; gap: 2mm; }
+.dot { width: 1.5mm; height: 1.5mm; border-radius: 99mm; background: var(--seal); }
+
+/* ---- Cover ------------------------------------------------------------- */
+
+.cover {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 34mm 22mm 24mm;
+}
+
+.cover::before, .cover::after { content: none; }
+
+.wordmark { display: flex; align-items: baseline; gap: 4mm; }
+.wordmark-name { font-family: var(--serif); font-size: 22pt; letter-spacing: 0.01em; }
+.wordmark-suffix {
+  font-family: var(--mono);
+  font-size: 7.5pt;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.cover-title {
+  font-family: var(--serif);
+  font-weight: 300;
+  font-size: 33pt;
+  line-height: 1.06;
+  letter-spacing: -0.02em;
+  max-width: 22ch;
+}

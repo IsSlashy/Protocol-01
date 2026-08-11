@@ -1,0 +1,76 @@
+<div class="page" data-running="Styx Protocol &middot; Packages" data-folio="13">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">Packages</div>
+  <h2>Twelve packages install from npm. Seven days is not a track record.</h2>
+
+  <p class="lede">
+    The client surface is published under the @protocol-01 scope on the public
+    registry. Nothing is published under any Styx name.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Package, under @protocol-01/</th>
+        <th>Latest</th>
+        <th>Exports</th>
+        <th>What it is</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="m">privacy-sdk</td><td class="n">1.0.4</td><td class="n">66</td><td>Shielded pool client, 14 subpath entries</td></tr>
+      <tr><td class="m">privacy-toolkit</td><td class="n">1.0.4</td><td class="n">22</td><td>Commitment and nullifier primitives</td></tr>
+      <tr><td class="m">specter-sdk</td><td class="n">0.4.3</td><td class="n">210</td><td>Stealth addresses, hybrid post-quantum</td></tr>
+      <tr><td class="m">stark-prover</td><td class="n">0.1.3</td><td class="n">18</td><td>The WebAssembly proving blob</td></tr>
+      <tr><td class="m">merchant-sdk</td><td class="n">0.1.3</td><td class="n">80</td><td>Subscription vaults and merchant claim</td></tr>
+      <tr><td class="m">p01-js</td><td class="n">0.3.2</td><td class="n">143</td><td>Umbrella client over the packages above</td></tr>
+      <tr><td class="m">zk-sdk</td><td class="n">1.0.2</td><td class="n">32</td><td>Proof inputs and verification helpers</td></tr>
+      <tr><td class="m">zkspl-sdk</td><td class="n">0.1.3</td><td class="n">30</td><td>Confidential SPL layer client</td></tr>
+    </tbody>
+  </table>
+
+  <p class="note" style="margin-top:2.5mm;">
+    Four more names carry the scope: an authentication helper, an RPC helper, one
+    left over from an integration removed in July 2026 and not yet deprecated,
+    and streams 0.1.0, an orphan with no directory in the repository. Four
+    packages that are in the repository are unpublished.
+  </p>
+
+  <div class="cols">
+    <div>
+      <h4>Installed and type checked</h4>
+      <p>
+        All eleven repository-backed packages installed into an empty project on
+        11 August 2026: 203 transitive packages, zero errors, every one loading
+        under both require and import, all shipping type declarations.
+      </p>
+    </div>
+    <div>
+      <h4>Licence</h4>
+      <p>
+        The root ships MIT and ten of eleven declare MIT in the package.json npm
+        serves. Three defects remain: two ship no LICENSE file, one declares no
+        field, and GitHub reports the repository licence as Other.
+      </p>
+    </div>
+  </div>
+
+  <p style="margin-top:4.5mm;">
+    The prover blob inside stark-prover 0.1.3 is 229,640 bytes with sha256
+    51a947e3, and the same size and hash come from the working tree and from
+    packages/stark-prover/wasm/p01_stark_bg.wasm on GitHub master. specter-sdk
+    0.4.3 ships the identical blob.
+  </p>
+
+  <div class="admission" style="margin-top:4mm;">
+    <h4>The download counter is not adoption</h4>
+    <p style="margin:0;">
+      Nine were published inside a 132 second window on 4 August 2026, two on 6
+      August, two on 11 August, so publish age runs from zero to seven days. The
+      registry reports 5,012 downloads across the eleven for the thirty days to
+      10 August, but npm counts mirror fetches and scanner traffic as installs,
+      so the figure is noise rather than traction.
+    </p>
+  </div>
+</div>

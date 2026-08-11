@@ -1,0 +1,82 @@
+<div class="page page--band" data-running="Styx Protocol &middot; The on-chain verifier" data-folio="08">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">The on-chain verifier</div>
+  <h2>Accepting a proof has one cost. Refusing has two.</h2>
+
+  <p>
+    Verification is a Solana program, not a service. The verifier runs on devnet
+    as 840,168 bytes of BPF, deployed 4 August 2026, and it does the work itself:
+    the SHA&#8209;256 transcript, the DEEP composition, and every FRI fold. Solana has
+    no proof precompile, so there is nothing to delegate to and no off&#8209;chain
+    step to trust.
+  </p>
+  <p>
+    A circuit 1 proof is 68,881 bytes, more than one transaction can carry, so it
+    is uploaded to a buffer account in chunks: one subscription run spent 148 of
+    its 172 transactions on chunk writes.
+  </p>
+  <p>
+    On 4 August 2026 at 19:03 UTC the deployed verifier accepted a circuit 1 proof
+    on devnet for 809,662 compute units of the 1,399,850 the instruction
+    requested. That budget is fixed by the runtime: 1,399,850 is Solana's hard
+    ceiling of 1.4 million units per instruction, less the 150 units the
+    ComputeBudget instruction itself costs. The headroom is 1.73 times and no
+    configuration raises it, so a check that grew by three quarters would stop
+    fitting. The subscription path splits the work instead: one run spent
+    1,913,751 units on two proofs.
+  </p>
+
+  <h4>Three verdicts</h4>
+  <table>
+    <tr>
+      <th>Input</th><th>Verdict</th><th style="text-align:right;">Compute</th><th>Where it dies</th>
+    </tr>
+    <tr>
+      <td>Honest proof, circuit 1</td>
+      <td class="ok">Accepted</td>
+      <td class="n">809,812</td>
+      <td>All eight steps pass</td>
+    </tr>
+    <tr>
+      <td>Proof with one byte flipped</td>
+      <td class="no">Rejected, InvalidProof 6003</td>
+      <td class="n">542,150</td>
+      <td>After step 3, in the DEEP and FRI arithmetic</td>
+    </tr>
+    <tr>
+      <td>Public input tampered with</td>
+      <td class="no">Rejected</td>
+      <td class="n">19,777</td>
+      <td>Before that arithmetic begins</td>
+    </tr>
+  </table>
+  <p class="note" style="margin-top:2mm;">
+    Whole&#8209;transaction figures; 809,662 of the honest 809,812 ran inside the program.
+    Program <span class="mono">DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs</span>, honest run
+    <span class="mono">2sLVyzPWseoVuCwPoDaZWUPRB8u8NXmmCGTVnBvZnEiJXHkPT1vAzMKMwhhHbPaXPDYSdTw39drzVCgUN49jZiBR</span>
+  </p>
+
+  <p style="margin-top:3mm;">
+    The informative result is not that both bad inputs failed. It is that they
+    failed by different mechanisms, at costs 27 times apart. One flipped byte
+    leaves a proof that is still well formed, so it survives the cheap checks and
+    dies later inside the arithmetic that binds the openings to the commitment. A
+    tampered public input dies before that arithmetic begins, at 2.4 percent of an
+    honest run. One generic failure at one cost would have been equally consistent
+    with a verifier that refuses everything, which is the case an accepted proof
+    alone cannot rule out.
+  </p>
+
+  <div class="admission" style="margin-top:4mm;">
+    <h4>What this table does not carry</h4>
+    <p style="margin:0;">
+      Only the acceptance has a transaction signature. The two rejections are our
+      own simulations against the deployed program, reproducible by rebuilding the
+      harness rather than by lookup. All three ran through the verify_uniform
+      entrypoint, which our own notes flag as a soundness liability because it
+      identifies the circuit by probing instead of requiring the caller to name
+      it, and which the subscription flow does not use.
+    </p>
+  </div>
+</div>

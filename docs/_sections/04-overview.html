@@ -1,0 +1,92 @@
+<div class="page page--band" data-running="Styx Protocol &middot; System overview" data-folio="04">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">System overview</div>
+  <h2>Four moves, and the chain records each one.</h2>
+
+  <p class="lede">
+    Money enters a fixed&#8209;denomination pool, is spent as a note rather than from
+    an address, leaves to a fresh recipient, or is collected for a merchant. Every
+    mechanism described later sits under one of those four moves, in that order.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Move</th>
+        <th>Instruction</th>
+        <th>What the chain records</th>
+        <th>CU</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Shield</td>
+        <td class="m">ShieldDenominatedV3</td>
+        <td>The payer, the pool and therefore the amount, a 0.3% fee taken on top, and one note commitment at a numbered leaf.</td>
+        <td class="n">24,356</td>
+      </tr>
+      <tr>
+        <td>Pay</td>
+        <td class="m">SubscribePrivateStark</td>
+        <td>A fresh vault holding the full pool denomination, and the merchant it may pay. No protocol fee on this leg.</td>
+        <td class="n">30,762</td>
+      </tr>
+      <tr>
+        <td>Unshield</td>
+        <td class="m">UnshieldDenominatedStarkV3</td>
+        <td>A nullifier, and 0.995 SOL credited to a recipient with no prior history after the 0.5% fee.</td>
+        <td class="n">23,415</td>
+      </tr>
+      <tr>
+        <td>Claim</td>
+        <td class="m">ClaimPeriod</td>
+        <td>Anyone may call it. 1,002,721,360 lamports went to the merchant named in the vault; the caller gained nothing.</td>
+        <td class="n">5,871</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="note" style="margin-top:2.5mm;">
+    Devnet, 4 to 6 August 2026, one transaction each. Those are settling
+    instructions only. The STARK proof is verified in earlier transactions: one
+    subscription run spent 1,913,751 compute units on two proofs across a burst of
+    172 transactions, 148 of them proof chunk uploads, and posted about 1.026 SOL
+    of buffer rent that came back on close.
+  </p>
+
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div>
+      <h4>What the chain learns</h4>
+      <p>
+        The amount, always. Pools are denominated at 0.1, 1, 10, 100, 500 and 1000
+        SOL, so joining one publishes the size. It learns the depositor, the exit
+        address, and the size of the crowd a spend hides in: the busiest pool holds
+        8 unspent notes over 34 leaves.
+      </p>
+    </div>
+    <div>
+      <h4>What it does not</h4>
+      <p>
+        Which merchant a subscriber pays is not written next to the subscriber, and
+        the encrypted note handoff between two wallets produces no transaction at
+        all. That path is the strongest one here and the least proven: it passes 24
+        tests up to the prover input and has never run against devnet.
+      </p>
+    </div>
+  </div>
+
+  <div class="admission" style="margin-top:5mm;">
+    <h4>The one pairing this design does not yet break</h4>
+    <p style="margin:0;">
+      A withdrawal republishes the commitment its deposit published. The unshield
+      instruction carries <span class="mono">13889827819971897881</span> at offset
+      80; the shield twenty minutes earlier carries the same value at offset 8, and
+      a second field matches at offset 40 in both. Two public fields therefore pair
+      that deposit with that withdrawal. Page 17 gives the mechanism and what
+      closing it costs.
+    </p>
+  </div>
+</div>

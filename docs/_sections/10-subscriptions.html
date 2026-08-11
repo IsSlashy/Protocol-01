@@ -1,0 +1,72 @@
+<div class="page page--band" data-running="Styx Protocol &middot; Subscriptions" data-folio="10">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">Subscriptions and the merchant leg</div>
+  <h2>The subscriber funds the term up front. Anyone can pay the merchant.</h2>
+
+  <p class="lede">
+    A plan is one account per subscription, owned by the shielded pool program.
+    Signup escrows the pool's whole denomination into it, and collection is a
+    separate instruction that anyone may send.
+  </p>
+
+  <div class="cols">
+    <div>
+      <h4>Collection needs no merchant key</h4>
+      <p>
+        ClaimPeriod pays a merchant and needs one signature, which does not have
+        to be the merchant's. On devnet the payout address sits at account index
+        1, outside the signer range, and the vault paid it 1,002,721,360
+        lamports: the 1,000,000,000 escrow plus the 2,721,360 rent floor of a
+        263&#8209;byte vault, and the account was then deleted.
+      </p>
+      <p>
+        That address is written into the vault at signup, not supplied by the
+        caller, so a lost merchant key cannot strand revenue and no caller can
+        redirect the payment.
+      </p>
+    </div>
+    <div>
+      <h4>Entitlement is one account read</h4>
+      <p>
+        A merchant gates access by reading one account, with no webhook to receive.
+        Their own book is not hidden: see page 17. The check ships as
+        hasActiveVaultAccessForVault in packages/merchant&#8209;sdk/src/vaults.ts,
+        seven ordered checks covered by 62 passing tests.
+      </p>
+      <p>
+        It deliberately does not trust the vault's own is_active flag. Of the 18
+        vaults live on devnet on 1 August 2026, 14 had run past the periods they
+        were funded for, and all 18 still reported is_active true.
+      </p>
+    </div>
+  </div>
+
+  <div class="rule" style="margin:2mm 0;"></div>
+
+  <h4>Measured on devnet, 11 August 2026</h4>
+  <table>
+    <tr><th>State</th><th style="text-align:right;">Value</th></tr>
+    <tr><td>Subscription vaults the pool program owns, in three sizes from 263 to 361 bytes</td><td class="n">18</td></tr>
+    <tr><td>Signups on the current build, at 1,000,000,000 lamports each</td><td class="n">4</td></tr>
+    <tr><td>Merchant services in the on&#8209;chain registry, every one registered by us</td><td class="n">6</td></tr>
+    <tr><td>Compute units to create a vault, and to collect and close one</td><td class="n">28,918 to 34,824 / 5,871</td></tr>
+  </table>
+  <p class="note" style="margin-top:2mm;">
+    The collection above was signed by a key that was not the merchant's, but it
+    was still ours, so no outside party has yet exercised the path. Two paused
+    vaults also cannot be collected until their owner produces a resume proof.
+  </p>
+
+  <div class="admission" style="margin-top:4mm;">
+    <h4>A subscription is a prepaid one&#8209;way envelope</h4>
+    <p style="margin:0;">
+      Signup escrows the pool's whole denomination, so what is locked is the
+      denomination and not the price entered: 0.1 SOL at the smallest pool. In
+      the bytes dumped from the chain, cancel_normal and cancel_private_stark
+      return zero occurrences, while ClaimPeriod and PauseNormal each return one.
+      A subscriber can pause. No instruction in the deployed program can return a
+      lamport to the subscriber.
+    </p>
+  </div>
+</div>

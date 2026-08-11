@@ -1,0 +1,113 @@
+<div class="page page--band" data-running="Styx Protocol &middot; Programs on devnet" data-folio="12">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">Programs on devnet</div>
+  <h2>Eight programs are live at the address they declare.</h2>
+
+  <p class="lede">
+    Fifteen program directories sit in the repository. Eight of them resolve to an
+    executable devnet account at the exact address their own declare_id! names,
+    each with a live programData record, read on 11 August 2026.
+  </p>
+
+  <table>
+    <colgroup>
+      <col style="width:32mm">
+      <col style="width:71mm">
+      <col style="width:43mm">
+      <col style="width:20mm">
+    </colgroup>
+    <thead>
+      <tr><th>Program</th><th>Program id</th><th>Role</th><th>Success</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="m">zk_shielded</td>
+        <td class="m">GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c</td>
+        <td>Shielded pool and notes</td>
+        <td class="n">2026-08-06</td>
+      </tr>
+      <tr>
+        <td class="m">p01_stark_verifier</td>
+        <td class="m">DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs</td>
+        <td>Verifies STARK proofs</td>
+        <td class="n">2026-08-06</td>
+      </tr>
+      <tr>
+        <td class="m">p01_relayer</td>
+        <td class="m">2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW</td>
+        <td>Relay jobs and heartbeat</td>
+        <td class="n">2026-08-11</td>
+      </tr>
+      <tr>
+        <td class="m">specter</td>
+        <td class="m">FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL</td>
+        <td>Stealth payment accounts</td>
+        <td class="n">2026-07-24</td>
+      </tr>
+      <tr>
+        <td class="m">p01_registry</td>
+        <td class="m">QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB</td>
+        <td>Stealth keys and merchants</td>
+        <td class="n">2026-08-04</td>
+      </tr>
+      <tr>
+        <td class="m">p01_quantum_vault</td>
+        <td class="m">9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv</td>
+        <td>Winternitz withdrawals</td>
+        <td class="n">2026-04-16</td>
+      </tr>
+      <tr>
+        <td class="m">p01_quantum_wallet</td>
+        <td class="m">D7RBAFcMq2gGddwFvabZKuJB1eWZFvESVrcJ3i15FFtz</td>
+        <td>STARK-gated custody PDA</td>
+        <td class="n faint">not read</td>
+      </tr>
+      <tr>
+        <td class="m">p01-fee-splitter</td>
+        <td class="m">UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM</td>
+        <td>Fee split on a transfer</td>
+        <td class="n faint">not read</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="note">
+    Success is a successful invocation read from the chain on that date, and for
+    the first five it is the newest one. The vault figure is its 2026-04-16
+    Winternitz withdrawal; the last two were not measured. Anchor.toml disagrees
+    with four of its thirteen devnet entries and the README table with three of
+    its eleven rows, so declare_id! is the only address this document treats as
+    authoritative.
+  </p>
+
+  <h4>Declared, and not deployed</h4>
+
+  <div class="row"><span class="row-key">p01_zkspl</span><span class="row-lead"></span><span class="row-val">AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT</span></div>
+  <div class="row"><span class="row-key">subscription</span><span class="row-lead"></span><span class="row-val">3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW</span></div>
+  <div class="row"><span class="row-key">stream</span><span class="row-lead"></span><span class="row-val">C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx</span></div>
+  <div class="row"><span class="row-key">whitelist</span><span class="row-lead"></span><span class="row-val">5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33</span></div>
+
+  <p style="margin-top:3mm;">
+    Those four addresses return null on devnet: nothing is deployed where the
+    source says it is. The recurring payment path that does run lives inside
+    zk_shielded, and streaming exists only as an account type inside specter, of
+    which zero instances exist on chain. Three further directories are outside
+    this count: a separate project, a removed capability, and one that calls
+    itself undeployed.
+</p>
+
+  <div class="admission">
+    <h4>One key can replace all of it</h4>
+    <p style="margin:0;">
+      Every program deployed on devnet, eighteen counting superseded builds, is
+      upgradeable by one key,
+      <span class="mono">7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU</span>. No
+      multisig, no timelock, none immutable: whoever holds that key can replace
+      the bytecode behind any address above. Nor is the verifier's bytecode
+      proven to come from this repository's source: its deploy commit is not on
+      master. The 878,208 zk_shielded bytes on chain do match a local build from
+      a commit on master, byte for byte.
+    </p>
+  </div>
+</div>

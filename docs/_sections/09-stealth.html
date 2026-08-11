@@ -1,0 +1,77 @@
+<div class="page" data-running="Styx Protocol &middot; Stealth addresses" data-folio="09">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">Stealth addresses</div>
+  <h2>An attacker has to break both key exchanges, not one.</h2>
+
+  <p class="lede">
+    Each payment lands at a fresh one&#8209;time address. The shared secret behind
+    it comes from two key exchanges at once: X25519 Diffie&#8209;Hellman, and
+    ML&#8209;KEM&#8209;768, the lattice mechanism standardised as FIPS 203.
+  </p>
+
+  <p>
+    The two 32&#8209;byte secrets are concatenated and passed to HKDF&#8209;SHA256
+    as key material with an empty salt, and the 32&#8209;byte output is the stealth
+    seed. It stays unpredictable unless an adversary recovers both inputs, so a
+    quantum break of the curve still leaves the lattice problem, and a lattice
+    break still leaves the curve. The code is
+    <span class="mono">deriveHybridSharedSecret</span> in
+    <span class="mono">packages/specter-sdk/src/utils/crypto.ts</span>.
+  </p>
+
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div>
+      <h4>Sizes, in bytes</h4>
+      <table>
+        <tr><td>ML-KEM-768 public key</td><td class="n">1,184</td></tr>
+        <tr><td>ML-KEM-768 secret key</td><td class="n">2,400</td></tr>
+        <tr><td>ML-KEM-768 ciphertext</td><td class="n">1,088</td></tr>
+        <tr><td>HKDF info field</td><td class="n">53</td></tr>
+        <tr><td>v2 meta-address</td><td class="n">1,249</td></tr>
+        <tr><td>v2 announcement</td><td class="n">1,153</td></tr>
+      </table>
+    </div>
+    <div>
+      <h4>Binding the announcement</h4>
+      <p>
+        The info field is not a bare constant. It is the 21&#8209;byte label
+        <span class="mono">p01-hybrid-stealth-v2</span> then SHA&#8209;256 of the
+        ephemeral public key concatenated with the KEM ciphertext.
+      </p>
+      <p style="margin-bottom:0;">
+        Without it, two announcements in flight share an info field and an attacker
+        can lift the ciphertext from one into the other. With it, a substitution
+        changes the transcript hash, so the derived secret changes and the swap
+        opens nothing.
+      </p>
+    </div>
+  </div>
+
+  <h4>Enforced at the send and parse boundaries</h4>
+  <p>
+    A recipient meta&#8209;address carrying no KEM public key throws rather than
+    degrading, and a 65&#8209;byte classic announcement is refused unless the caller
+    asks for the legacy path by name. On devnet the stealth program owns 20 accounts
+    of 1,220 bytes, all with a populated X25519 ephemeral key and 19 with a full
+    1,088&#8209;byte ciphertext. The twentieth is all zero, an abandoned chunked
+    upload. HKDF is checked against RFC 5869 vectors, and 99 of 99 tests pass across
+    the stealth, quantum and crypto suites. The same construction is wired
+    independently into the mobile app and the browser extension.
+  </p>
+
+  <div class="admission">
+    <h4>What this does not cover</h4>
+    <ul style="margin-bottom:0;">
+      <li>The recipient path keeps an ungated fallback. With no KEM secret key and
+      ciphertext, derivation silently uses the X25519 secret alone.</li>
+      <li>The ML-KEM-768 implementation is a third&#8209;party library. Its
+      parameters match FIPS 203, measured, but nothing here is FIPS validated or
+      tested against the NIST vectors.</li>
+      <li>All 20 accounts have <span class="mono">claimed</span> set to 0. The send
+      leg runs on chain. The claim leg has never executed on devnet.</li>
+    </ul>
+  </div>
+</div>

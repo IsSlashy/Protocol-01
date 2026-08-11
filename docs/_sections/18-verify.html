@@ -1,0 +1,71 @@
+<div class="page page--band" data-running="Styx Protocol &middot; How to check this" data-folio="18">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">How to check this</div>
+  <h2>Every figure here has a command behind it.</h2>
+
+  <p class="lede">
+    Each row names a claim made earlier and the exact target that settles it.
+    Every RPC call goes to https://api.devnet.solana.com except the one row that
+    names mainnet&#8209;beta, and all of it was read on 11 August 2026.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:54mm;">Claim</th>
+        <th>Repeat the measurement</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Eight programs run on devnet at the address their own source declares</td>
+        <td><span class="mono">grep -rn 'declare_id!' programs/</span> gives fifteen addresses. Submit them in one <span class="mono">getMultipleAccounts</span> call and count the non-null programData.</td>
+      </tr>
+      <tr>
+        <td>A STARK proof verified in one instruction, 809,662 CU of 1,399,850</td>
+        <td><span class="mono">getTransaction</span> on signature A. Read the eight step logs and the consumed-units line.</td>
+      </tr>
+      <tr>
+        <td>A deposit and its withdrawal share a public field, so pairing is trivial</td>
+        <td>Decode the instruction data of B and C. Bytes 8 to 16 of the shield equal bytes 80 to 88 of the unshield: <span class="mono">13889827819971897881</span>.</td>
+      </tr>
+      <tr>
+        <td>The busiest pool holds 8 unspent notes over 34 leaves</td>
+        <td>Read <span class="mono">HfSsGRgVFJ</span>&#8230; the 0.1 SOL pool, with <span class="mono">getAccountInfo</span>: next_leaf_index and note_count, per <span class="mono">pool_v3.rs</span>. The 1 SOL pool <span class="mono">6NUS4E5PhQ</span>&#8230; holds 6 over 25.</td>
+      </tr>
+      <tr>
+        <td>The prover on npm emits the bytes the deployed verifier accepts</td>
+        <td><span class="mono">npm pack @protocol-01/stark-prover</span>, then hash <span class="mono">package/wasm/p01_stark_bg.wasm</span>: 229,640 bytes, sha256 <span class="mono">51a947e3</span>.</td>
+      </tr>
+      <tr>
+        <td>Soundness is 42 to 46 bits unconditional, not the 104 to 124 the source claims</td>
+        <td>Read the block above <span class="mono">B2_CONJECTURED_FORGERY_BITS</span> in <span class="mono">b1_deep_binding.rs</span>, branch <span class="mono">b7-drop-aligned-checks</span>.</td>
+      </tr>
+      <tr>
+        <td>The live homepage still publishes claims this document contradicts</td>
+        <td><span class="mono">curl -s https://protocol-01.dev | grep -i 'nothing they can trace'</span> returns three hits.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h4>The three signatures, in full</h4>
+  <pre>A  proof accepted by the verifier, 2026-08-04
+   2sLVyzPWseoVuCwPoDaZWUPRB8u8NXmmCGTVnBvZnEiJXHkPT1vAzMKMwhhHbPaXPDYSdTw39drzVCgUN49jZiBR
+B  1 SOL shielded into the pool, 2026-08-04
+   qmsMCWai56avCgHki9KtXXp2egNbWqSiqmpSxdrGuVzV1h22ioME3WSsnRci5eWzRzyrrVtJPqqNAGuBAsNQovf
+C  0.995 SOL withdrawn to a fresh address, 2026-08-04
+   5QptxwyyrR2Qfe9DxDY4LXiLvVaouKFrkyVYWh4iNztpBbPqYn4pCgtJ1pkLA88VMq4Ub5LJcEqwzBxTnRWgBJ18</pre>
+
+  <div class="admission">
+    <h4>Three things a reader cannot repeat</h4>
+    <p style="margin:0;">
+      The deployed verifier's bytes match a hash recorded in this repository, but
+      the commit behind them was never pushed, so that custody chain ends with
+      us. The forged-proof and tampered-input rejections are simulations with no
+      signature to look up. And no on-device proving time can be repeated: the
+      180 second figure quoted for it is a client timeout constant, and the
+      instrumentation for a real one exists only as a proposal.
+    </p>
+  </div>
+</div>

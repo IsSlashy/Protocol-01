@@ -1,0 +1,76 @@
+<div class="page page--band" data-running="Styx Protocol &middot; Clients" data-folio="14">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">Clients</div>
+  <h2>The installed Android build cannot withdraw.</h2>
+
+  <p class="lede">
+    Three clients exist: a web app in production, a browser extension, and an
+    Android build. The web app and the extension call the 229,640 byte WASM prover,
+    whose SHA&#8209;256 the deployed verifier's record names as the proof source it
+    accepts. The Android build does not, and the admission below says why.
+  </p>
+
+  <table>
+    <thead>
+      <tr><th>Client</th><th>What it carries</th><th>Tests</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Web, protocol&#8209;01.dev</td>
+        <td>Shield, withdraw, subscribe. Eight production routes answered on 11 August 2026 and the footer reads devnet only, not audited. Proof buffers are sized to the real proof rather than padded.</td>
+        <td class="n">527</td>
+      </tr>
+      <tr>
+        <td>Browser extension</td>
+        <td>Stealth sends, encrypted notes, relayer transport, merchant entitlement. ML&#8209;KEM&#8209;768 is imported in three of its own files. The packaged zip in the repository is 0.1.1 from March 2026 and is in no store.</td>
+        <td class="n">170</td>
+      </tr>
+      <tr>
+        <td>Android 1.0.3</td>
+        <td>Full pool client. Every proof is padded to 145,000 bytes, so one upload is 145 chunk transactions and 1.0107 SOL of buffer rent, returned when the buffer closes.</td>
+        <td class="n">400</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="note" style="margin-top:2mm;">1,407 tests passed across the three clients, the merchant SDK and the Rust suites, each suite run on 11 August 2026. That is a dated tally, not a claim about the tree as it stands today.</p>
+
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div>
+      <h4>Desktop, WASM under Node v24.14.0, one machine</h4>
+      <div class="row"><span class="row-key">circuit 1</span><span class="row-lead"></span><span class="row-val">153 ms</span></div>
+      <div class="row"><span class="row-key">circuit 3</span><span class="row-lead"></span><span class="row-val">729 ms</span></div>
+      <div class="row"><span class="row-key">all seven</span><span class="row-lead"></span><span class="row-val">7.6 s</span></div>
+      <p style="margin-top:2mm;">
+        A withdrawal needs circuits 1 and 3, so roughly nine tenths of a second of
+        proving. Two passes agreed to within a few percent, but no benchmark harness is
+        committed, so this is one run on one machine and not a published benchmark.
+      </p>
+    </div>
+    <div>
+      <h4>On device, never measured</h4>
+      <p>
+        Pure proving time on a phone has never been measured. The repeated figure of
+        more than 180 seconds is a client timeout in the mobile prover provider, raised
+        from 60 seconds after circuits 1 and 3 timed out on a test handset, so it bounds
+        the whole flow and not the prover. The instrumentation that would log a real
+        prover figure exists only as a proposal.
+      </p>
+    </div>
+  </div>
+
+  <div class="admission" style="margin-top:5mm;">
+    <h4>Why the installed build fails</h4>
+    <p style="margin:0;">
+      It carries a 213,254 byte prover blob from before the coset change, and the
+      verifier redeployed on 4 August 2026 requires the 229,640 byte blob: the device
+      logged a deserialization error, code 6004, at 3,018 compute units. That reading
+      was taken the day before the current verifier went up, so it is consistent rather
+      than conclusive. There is no over the air update path, so the fix is a rebuild and
+      a manual reinstall, and 1.0.3 exists only as an installed app on one phone, with
+      no current APK to download.
+    </p>
+  </div>
+</div>

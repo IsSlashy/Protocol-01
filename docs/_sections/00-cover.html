@@ -1,0 +1,101 @@
+<div class="page cover">
+  <div>
+    <div class="wordmark">
+      <span class="wordmark-name">Styx</span>
+      <span class="wordmark-suffix">Protocol</span>
+    </div>
+    <p class="note" style="margin-top:2mm;">Formerly Protocol 01</p>
+  </div>
+
+  <div>
+    <div class="eyebrow">Design and architecture</div>
+    <div class="cover-title">Private payments on Solana. Built to be checked, not believed.</div>
+    <div class="rule" style="margin:8mm 0 6mm;"></div>
+    <p class="lede" style="margin-bottom:0;">
+      A shielded payment pool with hash&#8209;based STARK proofs and hybrid
+      post&#8209;quantum stealth addresses. This document describes what is built,
+      how it works, and what it does not do yet.
+    </p>
+  </div>
+
+  <div>
+    <div class="chips" style="margin-bottom:6mm;">
+      <span class="chip"><span class="dot"></span>Live on Solana devnet</span>
+      <span class="chip">Not audited</span>
+      <span class="chip">No mainnet deployment</span>
+      <span class="chip">Open source</span>
+    </div>
+    <div class="row">
+      <span class="row-key">revision</span><span class="row-lead"></span>
+      <span class="row-val">August 2026</span>
+    </div>
+    <div class="row">
+      <span class="row-key">supersedes</span><span class="row-lead"></span>
+      <span class="row-val">June 2026 edition, issued as Protocol 01</span>
+    </div>
+    <div class="row">
+      <span class="row-key">source</span><span class="row-lead"></span>
+      <span class="row-val">github.com/IsSlashy/Protocol-01</span>
+    </div>
+  </div>
+</div>
+
+<div class="page page--band" data-running="Styx Protocol &middot; Design and architecture" data-folio="02">
+  <div class="headrule"></div>
+
+  <div class="eyebrow">How to read this</div>
+  <h2>Every claim here is one a stranger can check.</h2>
+
+  <p class="lede">
+    This edition exists because the previous one overstated. An adversarial audit
+    of the project's own material found 46 claims that were false and 83 that were
+    overstated, several of them checkable in minutes by anyone with a block
+    explorer. So this document was rebuilt against measurement.
+  </p>
+
+  <div class="rule"></div>
+
+  <div class="cols">
+    <div>
+      <h4>What that means in practice</h4>
+      <p>
+        Every figure printed here was verified against the repository, the npm
+        registry or Solana devnet on 11 August 2026, and then handed to a second
+        reader whose job was to disprove it. Anything that did not survive that
+        pass was removed rather than softened.
+      </p>
+      <p>
+        Where a number could not be sourced, the sentence went instead of the
+        number. Page 18 lists the command or the address behind the load&#8209;bearing figures so
+        a reader can repeat the measurement rather than trust the document.
+      </p>
+    </div>
+    <div>
+      <h4>What is deliberately not here</h4>
+      <p>
+        No user counts, no transaction volume, no value locked, and no performance
+        figure without its benchmark beside it. A devnet has none of the first
+        three worth quoting.
+      </p>
+      <p>
+        The words untraceable, anonymous and unlinkable do not appear as claims
+        about this protocol. The reason is on page 17: a deposit can still be
+        matched to its withdrawal today, and the document says so before it says
+        anything flattering.
+      </p>
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <div class="admission">
+    <h4>Read this before the architecture</h4>
+    <p style="margin:0;">
+      Styx runs on Solana devnet and has not been audited. There is no mainnet
+      deployment. Test tokens are not funds. Everything described in the pages
+      that follow exists and runs; none of it has been reviewed by anyone outside
+      the project, and one privacy property described on page 17 is not closed
+      yet.
+    </p>
+  </div>
+</div>
