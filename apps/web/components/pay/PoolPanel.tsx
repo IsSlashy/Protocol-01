@@ -1012,8 +1012,18 @@ export default function PoolPanel({
             aria-expanded={disclosureOpen}
             className="flex w-full items-center justify-between gap-2 text-left"
           >
+            {/* This one line is the only part of the disclosure that is always
+                on screen, so it is the sentence most people will ever read —
+                and it said "Amounts are hidden", which the paragraph it
+                summarises contradicts three lines down ("the amount is
+                quantised to a denomination"). The amount is not hidden: each
+                pool PDA is seeded on `denomination.to_le_bytes()`, so the
+                transaction names which pool and therefore the size. What the
+                pool buys is that the size is one of six fixed values instead of
+                an exact figure that identifies you by itself. Say that. */}
             <span className="font-medium">
-              Devnet. Amounts are hidden. Matching a withdrawal to its deposit is not.
+              Devnet. Your amount is one of a few fixed sizes, not hidden. Matching a withdrawal
+              to its deposit is not hidden either.
             </span>
             <ChevronDown
               className={

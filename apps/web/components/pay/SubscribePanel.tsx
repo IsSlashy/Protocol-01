@@ -587,11 +587,33 @@ export default function SubscribePanel({
                           >
                             {s.name}
                           </p>
+                          {/* 🚨 THIS BADGE IS SELF-ISSUED AND MUST SAY SO.
+                              Measured on devnet 2026-08-13: the registry holds
+                              six listings and all six carry the SAME owner —
+                              ours. The attestation is minted by the same key
+                              that registers the listing, so a bare checkmark
+                              reads as third-party vetting that nobody
+                              performed. The tooltip carries the truth so the
+                              badge cannot be quoted as more than it is; when a
+                              listing is registered by someone we did not
+                              control, this comment and that wording are what
+                              need revisiting. */}
                           {s.verified ? (
-                            <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-p01-cyan" />
+                            <span
+                              title="Listed by Styx Protocol. This badge is issued by the same key that registered the listing — it is not an independent audit or a vetting of the merchant."
+                              className="inline-flex shrink-0 items-center gap-1 text-p01-cyan"
+                            >
+                              <BadgeCheck className="h-3.5 w-3.5 shrink-0" />
+                              <span className="text-[10px] uppercase tracking-wider">
+                                Self-listed
+                              </span>
+                            </span>
                           ) : (
-                            <span className="shrink-0 rounded border border-p01-yellow/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-p01-yellow">
-                              Unverified
+                            <span
+                              title="Registered by a third party, with no attestation from Styx Protocol."
+                              className="shrink-0 rounded border border-p01-yellow/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-p01-yellow"
+                            >
+                              Third-party
                             </span>
                           )}
                         </div>

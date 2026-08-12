@@ -52,6 +52,16 @@ export const metadata: Metadata = {
    *    /01-miku.png, so a link pasted anywhere unfurled as fan-art from another
    *    franchise. `icons` and `images` are deliberately absent now: app/icon.tsx
    *    and app/opengraph-image.tsx generate both, in the Styx palette.
+   *
+   * 🚨 "zero-knowledge" was removed from `keywords` on 2026-08-13, and must not
+   * come back while `stark/tests/zk_feasibility.rs` passes. That test recovers a
+   * private witness from published proof bytes by interpolation, in under half a
+   * second — the prover applies no trace blinding, so the proofs are succinct
+   * and verified on chain but they are NOT zero-knowledge. The word was sitting
+   * in the head of every page, which is the one place a claim reaches someone
+   * who never opened the app. "STARK" below is the accurate term and stays.
+   * When a blinded prover ships, that test starts failing; put the word back
+   * then, not before.
    */
   title: "Styx Protocol",
   description:
@@ -59,7 +69,6 @@ export const metadata: Metadata = {
   keywords: [
     "privacy",
     "solana",
-    "zero-knowledge",
     "STARK",
     "post-quantum",
     "ML-KEM",
