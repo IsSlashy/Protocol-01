@@ -1,0 +1,23 @@
+{
+  "synthetic": true,
+  "note": "SYNTHETIC fixture — hand-built by generate.mjs, never touched any chain. It describes a hypothetical v4 spend whose instruction carries no commitment, so the self-test can prove the tool is CAPABLE of reporting a clean result. It is NOT evidence that any v4 exists, shipped, or is private.",
+  "spend": "2dJC8huEF77dCmdWWSKxcdgdvzfpo5WZuF7pxSvL2NzHyLqNNrTWGjrebocUgvNcEigbVCzWqeFHPumirAnMxikQ",
+  "kind": "unshield_denominated_stark_v4",
+  "flags": {
+    "maxChunkTx": 200,
+    "depositLimit": 400
+  },
+  "pools": {
+    "D2ZcUbtpG5sKq7XLeB4YnpNnTGSptKCxTddoNeydzJQq": {
+      "label": "SYNTHETIC 1 SOL (v4 fixture)",
+      "tree": "EBBduiozK9vBCemy4FcAjhVkby2FLPstxZxxN7jpgxtr"
+    }
+  },
+  "expect": {
+    "P1": "PASS",
+    "P2": "PASS",
+    "P3": "PASS",
+    "P3b": "FAIL",
+    "P4": "PASS"
+  }
+}

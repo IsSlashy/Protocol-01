@@ -1,0 +1,1035 @@
+#!/usr/bin/env node
+/**
+ * p01-verify — an independent, reproducible check of the pool's unlinkability
+ * claim, runnable by anyone with a public RPC and no keys, no SOL, no account.
+ *
+ * WHY THIS EXISTS, AND THE MISTAKE IT REFUSES TO MAKE
+ * ───────────────────────────────────────────────────
+ * The repo's existing leak test scans the withdrawal INSTRUCTION for values
+ * derived from the deposit (`denominatedPool.test.ts:678-694`, and the C7 plan
+ * proposes the same shape for v4). That test is good and it is not enough: a
+ * STARK proof is uploaded as ordinary instruction data by ~74-145
+ * `write_proof_chunk` transactions, archived forever, and all of them are
+ * reachable from the withdrawal itself through the proof-buffer PDA. A checker
+ * that reads only the 104-byte spend instruction would report GREEN on a system
+ * whose proof bytes hand over the note. So this tool follows the proof too.
+ *
+ * WHAT IT CHECKS
+ *   P1  the spend instruction does not carry the deposit's commitment
+ *   P2  no 8-byte window anywhere in the spend instruction matches it either
+ *   P3  the uploaded proof bytes do not carry it
+ *   P4  the wallet that funded the deposit is not a party to the spend
+ *   P5  context: the pool's real anonymity set and the deposit->spend gap
+ *
+ * NEGATIVE CONTROL — READ BEFORE TRUSTING A GREEN RUN
+ * Every leak probe must FAIL on a v3 spend. v3 publishes the commitment by
+ * design, so a v3 run that comes back clean means the tool is broken, not that
+ * the pool is private. `--self-test` asserts exactly that and is the only
+ * honest way to believe a future green.
+ *
+ * FIXTURE REPLAY — HOW THE CONTROLS SURVIVE CI
+ * ────────────────────────────────────────────
+ * CI cannot depend on devnet: the public endpoint throttles, prunes history,
+ * and drifts, and a control that sometimes cannot run is a control nobody
+ * reruns. So:
+ *
+ *   --record <dir>  runs live and freezes every RPC response the probes
+ *                   actually read into <dir>/rpc.json (trimmed to the fields
+ *                   this tool reads), plus <dir>/manifest.json pinning the
+ *                   flags used and the measured outcome of every probe.
+ *   --replay <dir>  answers every RPC call from that file and never touches
+ *                   the network. A call the fixture cannot answer is a HARD
+ *                   ERROR, never a skip — an unread channel reported clean is
+ *                   the precise failure mode this tool exists to refuse.
+ *
+ * `--self-test --replay <dir>` asserts the outcome of EVERY probe matches the
+ * manifest pin, in both directions. Three committed fixtures: a control pair,
+ * plus one regression pin:
+ *
+ *   fixtures/v3-subscribe  RECORDED from devnet. v3 leaks by design, so
+ *                          P1/P2/P4 are pinned FAIL. If the tool stops seeing
+ *                          the leak, CI goes red. (negative control)
+ *   fixtures/v4-synthetic  HAND-BUILT, no chain involved — see its README.
+ *                          A spend whose instruction carries no commitment;
+ *                          P1/P2/P4 are pinned PASS. If the tool becomes
+ *                          unable to report a clean result, CI goes red too —
+ *                          without this half, a checker that hard-fails
+ *                          everything would sail through the negative control
+ *                          and a future green would be unfalsifiable.
+ *                          (positive control)
+ *   fixtures/v4-synthetic-errored
+ *                          HAND-BUILT: the same clean spend, but the payer
+ *                          history carries two errored signatures. Pins the
+ *                          completeness arithmetic in scanProofChunks — P3
+ *                          stays PASS when errored entries are skipped. Both
+ *                          controls have zero errored entries, so only this
+ *                          one catches that regression. (regression pin)
+ *
+ * USAGE
+ *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v3-subscribe
+ *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-synthetic
+ *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-synthetic-errored
+ *   node verify/p01-verify.mjs --self-test [--rpc URL]
+ *   node verify/p01-verify.mjs --spend <signature> [--rpc URL] [--record DIR]
+ *   node verify/p01-verify.mjs --pool <poolPDA> [--limit N] [--rpc URL]
+ *   node verify/p01-verify.mjs ... --pools <extra-pools.json>
+ *
+ * Exit code 0 = every probe passed (under --self-test: every control held).
+ * 1 = a linkage survived (under --self-test: a control broke). 2 = the tool
+ * itself failed — config error, unknown pool, replay miss, network dead.
+ */
+
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const DEFAULT_RPC = 'https://api.devnet.solana.com';
+const ZK_SHIELDED = 'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c';
+const STARK_VERIFIER = 'DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs';
+const DEFAULT_POOL = '6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS';
+
+/**
+ * Live V3 SOL pools, `apps/web/lib/privacy/pool/denominatedPool.ts:182-225`.
+ *
+ * Every entry MUST carry its tree PDA: P4 walks the TREE's transaction history
+ * for the `LeafInserted` matching the published commitment, so a pool without
+ * its tree cannot support P4 at all. That is why a spend touching a pool this
+ * table does not know is a HARD ERROR in verifySpend, not a skip — a run that
+ * silently omitted P4 would print green probes and look complete.
+ *
+ * To extend (a v4 pool lands here): add one line, or pass --pools <json> with
+ * the same shape, or let a replay fixture's manifest.json `pools` field
+ * register it. All three paths go through registerPools, which rejects a
+ * half-entry loudly instead of storing something P4 cannot use.
+ */
+const POOLS = {
+  HfSsGRgVFJGBiiEtRXrHocNPw5dyTQ78hEZH8GWpXaAG: { label: '0.1 SOL', tree: '43MRQ91VrrxkD2PqV4QXNJG3BUmu8JmbDUTtWt2dYBAU' },
+  '6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS': { label: '1 SOL', tree: 'GGJQwEigkoSk3pzg6eiLtt1cu2kYfCtV5JewNJsMkNdi' },
+};
+
+function registerPools(extra, source) {
+  for (const [addr, cfg] of Object.entries(extra ?? {})) {
+    if (!cfg || typeof cfg.label !== 'string' || typeof cfg.tree !== 'string') {
+      throw new Error(
+        `pool table from ${source} is malformed at ${addr}: need { label, tree }. ` +
+          'A pool registered without its tree PDA would silently lose P4.',
+      );
+    }
+    POOLS[addr] = { label: cfg.label, tree: cfg.tree };
+  }
+}
+
+/**
+ * Where each spend instruction publishes the note commitment, as a u64 LE.
+ *
+ * These offsets are the leak. They are pinned here rather than derived so that
+ * a future v4 which removes the field makes this table's entry unreachable
+ * instead of silently matching nothing.
+ */
+const SPEND_KINDS = [
+  { name: 'unshield_denominated_stark_v3', commitmentOffset: 80, totalLen: 120 },
+  { name: 'subscribe_private_stark', commitmentOffset: 160, totalLen: null },
+  { name: 'transfer_denominated_stark_v3', commitmentOffset: 72, totalLen: null },
+  { name: 'split_note_stark', commitmentOffset: null, totalLen: null },
+  // v4 lands here. It must appear with commitmentOffset: null, and P1 then
+  // passes only because there is nothing to read — which is the point.
+  { name: 'unshield_denominated_stark_v4', commitmentOffset: null, totalLen: null },
+];
+
+// ---------------------------------------------------------------------------
+// Minimal deps: base58, sha256, an RPC client. No node_modules on purpose —
+// a verification tool nobody can run because it needs an install is not one.
+// ---------------------------------------------------------------------------
+
+const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function b58decode(str) {
+  const bytes = [0];
+  for (const ch of str) {
+    const v = B58.indexOf(ch);
+    if (v < 0) throw new Error(`invalid base58 char ${ch}`);
+    let carry = v;
+    for (let i = 0; i < bytes.length; i++) {
+      carry += bytes[i] * 58;
+      bytes[i] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  for (let k = 0; k < str.length && str[k] === '1'; k++) bytes.push(0);
+  return Buffer.from(bytes.reverse());
+}
+
+function sha256(bytes) {
+  return createHash('sha256').update(bytes).digest();
+}
+
+/** Anchor instruction discriminator: sha256("global:<name>")[..8]. */
+function discriminator(name) {
+  return sha256(Buffer.from(`global:${name}`, 'utf8')).subarray(0, 8);
+}
+
+/** Anchor EVENT discriminator: sha256("event:<StructName>")[..8]. */
+function eventDiscriminator(name) {
+  return sha256(Buffer.from(`event:${name}`, 'utf8')).subarray(0, 8);
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Throttled JSON-RPC. The public devnet endpoint rate-limits hard, and it
+ * signals it two different ways: HTTP 429, and a JSON-RPC error with code
+ * -32429 or a "Too many requests" message. Both are retried; anything else is a
+ * real error and is raised, because a verification tool that swallows a failed
+ * read and calls it a clean result is worse than none.
+ */
+function makeRpc(url, { minIntervalMs = 120 } = {}) {
+  let id = 0;
+  let last = 0;
+  let calls = 0;
+  const rpc = async function rpc(method, params) {
+    for (let attempt = 0; attempt < 7; attempt++) {
+      const wait = last + minIntervalMs - Date.now();
+      if (wait > 0) await sleep(wait);
+      last = Date.now();
+      calls += 1;
+
+      let res;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }),
+        });
+      } catch (e) {
+        await sleep(500 * 2 ** attempt);
+        continue;
+      }
+      if (res.status === 429) {
+        await sleep(700 * 2 ** attempt);
+        continue;
+      }
+      const text = await res.text();
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        await sleep(700 * 2 ** attempt);
+        continue;
+      }
+      if (json.error) {
+        const msg = String(json.error.message ?? '');
+        if (json.error.code === -32429 || /too many requests|rate/i.test(msg)) {
+          await sleep(700 * 2 ** attempt);
+          continue;
+        }
+        throw new Error(`${method}: ${JSON.stringify(json.error)}`);
+      }
+      return json.result;
+    }
+    throw new Error(
+      `${method}: still rate limited after 7 attempts. Public devnet is throttling; ` +
+        'pass --rpc with your own endpoint for a complete read.',
+    );
+  };
+  rpc.calls = () => calls;
+  return rpc;
+}
+
+// ---------------------------------------------------------------------------
+// Fixture record / replay
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical JSON: object keys sorted, recursively. Replay lookups key on
+ * (method, params), and property insertion order must not matter — a
+ * hand-written fixture that lists `{commitment, encoding}` alphabetically has
+ * to match code that builds `{encoding, commitment}`.
+ */
+function canon(v) {
+  if (Array.isArray(v)) return `[${v.map(canon).join(',')}]`;
+  if (v !== null && typeof v === 'object') {
+    const body = Object.keys(v)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canon(v[k])}`)
+      .join(',');
+    return `{${body}}`;
+  }
+  return JSON.stringify(v);
+}
+
+const callKey = (method, params) => canon([method, params]);
+
+/**
+ * Trim an RPC response to the fields this tool reads, per method. Applied at
+ * RECORD time, and — deliberately — the trimmed value is also what the live
+ * caller receives during recording. That way a record run that completes has
+ * already proven the trim keeps everything the probes need; a field dropped
+ * here by mistake breaks the recording run itself, not a replay months later.
+ *
+ * For log messages only `Program data: ` lines survive: decodeLeafInserted
+ * reads nothing else, and the CU/log noise of ~150 chunk transactions is the
+ * bulk of what would otherwise bloat a committed fixture.
+ */
+function trimForFixture(method, result) {
+  if (result == null) return result;
+  if (method === 'getTransaction') {
+    const msg = result.transaction.message;
+    return {
+      slot: result.slot,
+      meta: result.meta
+        ? {
+            err: result.meta.err ?? null,
+            loadedAddresses: result.meta.loadedAddresses ?? null,
+            logMessages: (result.meta.logMessages ?? []).filter((l) => l.startsWith('Program data: ')),
+          }
+        : null,
+      transaction: {
+        message: {
+          header: msg.header ?? null,
+          accountKeys: msg.accountKeys,
+          instructions: msg.instructions.map((ix) => ({
+            programIdIndex: ix.programIdIndex,
+            accounts: ix.accounts,
+            data: ix.data,
+          })),
+        },
+      },
+    };
+  }
+  if (method === 'getSignaturesForAddress') {
+    return (result ?? []).map((s) => ({ signature: s.signature, err: s.err ?? null }));
+  }
+  if (method === 'getAccountInfo') {
+    return { value: result.value ? { data: result.value.data } : null };
+  }
+  return result;
+}
+
+/** Record wrapper: pass calls through to the live rpc, keep the trimmed pairs. */
+function wrapRecorder(rpc, store) {
+  const wrapped = async (method, params) => {
+    const trimmed = trimForFixture(method, await rpc(method, params));
+    const key = callKey(method, params);
+    if (!store.seen.has(key)) {
+      store.seen.add(key);
+      store.calls.push({ method, params, result: trimmed });
+    }
+    return structuredClone(trimmed);
+  };
+  wrapped.calls = rpc.calls;
+  return wrapped;
+}
+
+/**
+ * Replay rpc: every answer comes from <dir>/rpc.json, nothing from the
+ * network. A miss is a hard stop with the exact request printed — the two
+ * causes are a probe that changed what it reads (re-record the fixture) and a
+ * flag mismatch (replay re-applies the manifest's recorded flags precisely to
+ * prevent this, so check the manifest first).
+ */
+function makeReplayRpc(dir) {
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync(join(dir, 'rpc.json'), 'utf8'));
+  } catch (e) {
+    throw new Error(`cannot load fixture ${dir}/rpc.json (${e.message}). Create one with --record <dir>.`);
+  }
+  const map = new Map();
+  for (const c of raw.calls) map.set(callKey(c.method, c.params), c.result);
+  let calls = 0;
+  const rpc = async (method, params) => {
+    calls += 1;
+    const key = callKey(method, params);
+    if (!map.has(key)) {
+      const near = raw.calls
+        .filter((c) => c.method === method)
+        .slice(0, 4)
+        .map((c) => `      ${JSON.stringify(c.params)}`)
+        .join('\n');
+      throw new Error(
+        `replay miss — the fixture holds no response for:\n` +
+          `    ${method} ${JSON.stringify(params)}\n` +
+          `  A miss is a hard stop: answering it with silence would let an unread channel\n` +
+          `  pass as clean. Either the probes changed what they read (re-record with\n` +
+          `  --record) or the request shape drifted from what was recorded.\n` +
+          (near
+            ? `  Nearest ${method} entries in the fixture:\n${near}`
+            : `  The fixture has no ${method} entries at all.`),
+      );
+    }
+    return structuredClone(map.get(key));
+  };
+  rpc.calls = () => calls;
+  return rpc;
+}
+
+/**
+ * Freeze a completed live run: the trimmed RPC pairs, the flags that shaped
+ * their request parameters, and — as the `expect` map — the measured outcome
+ * of every probe. Committing that map is what turns the fixture into a
+ * control: `--self-test --replay` re-runs the probes on the frozen bytes and
+ * refuses any deviation, in either direction. Review the pins against the run
+ * you just watched before committing them.
+ */
+function writeFixture(dir, store, report, opts) {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'rpc.json'), JSON.stringify({ calls: store.calls }, null, 1));
+  const manifest = {
+    note:
+      `Recorded live from devnet on ${new Date().toISOString().slice(0, 10)}. ` +
+      'Review `expect` against the run that produced it before committing.',
+    spend: report.signature,
+    kind: report.kind,
+    flags: { maxChunkTx: opts.maxChunkTx, depositLimit: opts.depositLimit },
+    expect: Object.fromEntries(report.results.map((r) => [r.id, r.passed ? 'PASS' : 'FAIL'])),
+  };
+  writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  console.log(`\n  fixture written: ${dir} (${store.calls.length} RPC responses, ${report.results.length} probe pins)`);
+}
+
+// ---------------------------------------------------------------------------
+// Chain reads
+// ---------------------------------------------------------------------------
+
+/** `DenominatedPoolV3.note_count` — the anonymity set. `pool_v3.rs:53-98`. */
+async function readPoolState(rpc, poolPDA) {
+  const info = await rpc('getAccountInfo', [poolPDA, { encoding: 'base64' }]);
+  if (!info?.value) throw new Error(`pool account not found: ${poolPDA}`);
+  const d = Buffer.from(info.value.data[0], 'base64');
+  return {
+    denomination: Number(d.readBigUInt64LE(72)) / 1e9,
+    treeDepth: d[120],
+    nextLeafIndex: Number(d.readBigUInt64LE(121)),
+    unspentNotes: Number(d.readBigUInt64LE(169)),
+  };
+}
+
+/**
+ * Decode `LeafInserted` from an Anchor `Program data:` log line.
+ * Struct: 8-byte event discriminator, pool[32], leaf_index u64, leaf[32],
+ * new_root[32], old_root[32] (`merkle_tree_v3.rs:211-217`) — 144 bytes.
+ *
+ * The discriminator check is what makes this a decoder rather than a guess:
+ * without it, ANY event of sufficient length emitted by any program in the
+ * transaction was read as a leaf at offset 48, so a different event could
+ * satisfy — or, worse, mask — P4. `>=` on the length, not `===`, so a field
+ * appended after old_root does not orphan the decoder; the discriminator
+ * still pins the event's identity and the offsets below stay valid because
+ * Anchor only ever appends.
+ */
+const LEAF_INSERTED_DISC = eventDiscriminator('LeafInserted');
+const LEAF_INSERTED_LEN = 8 + 32 + 8 + 32 + 32 + 32;
+
+function decodeLeafInserted(logs) {
+  const out = [];
+  for (const line of logs ?? []) {
+    if (!line.startsWith('Program data: ')) continue;
+    let d;
+    try {
+      d = Buffer.from(line.slice('Program data: '.length), 'base64');
+    } catch {
+      continue;
+    }
+    if (d.length < LEAF_INSERTED_LEN) continue;
+    if (!d.subarray(0, 8).equals(LEAF_INSERTED_DISC)) continue;
+    out.push({
+      pool: d.subarray(8, 40),
+      leafIndex: Number(d.readBigUInt64LE(40)),
+      // A V3 commitment is a Goldilocks u64 zero-padded to 32 bytes, so the
+      // value that matters is the low limb.
+      leaf: d.readBigUInt64LE(48),
+      raw: d,
+    });
+  }
+  return out;
+}
+
+async function getTx(rpc, signature) {
+  return rpc('getTransaction', [
+    signature,
+    { maxSupportedTransactionVersion: 0, encoding: 'json', commitment: 'confirmed' },
+  ]);
+}
+
+function accountKeysOf(tx) {
+  const msg = tx.transaction.message;
+  const loaded = tx.meta?.loadedAddresses;
+  return [
+    ...msg.accountKeys,
+    ...(loaded?.writable ?? []),
+    ...(loaded?.readonly ?? []),
+  ];
+}
+
+/** Classify a zk_shielded instruction by its Anchor discriminator. */
+let spendTable = null;
+function classifySpend(tx) {
+  spendTable ??= SPEND_KINDS.map((k) => ({ ...k, disc: discriminator(k.name) }));
+  const keys = accountKeysOf(tx);
+  for (const ix of tx.transaction.message.instructions) {
+    if (keys[ix.programIdIndex] !== ZK_SHIELDED) continue;
+    const data = b58decode(ix.data);
+    for (const kind of spendTable) {
+      if (data.length >= 8 && data.subarray(0, 8).equals(kind.disc)) {
+        return { kind, data, accounts: ix.accounts.map((i) => keys[i]) };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Reassemble the proof bytes a spend's proof buffers were filled with.
+ *
+ * This is the step a scan of the spend instruction alone misses. The buffer PDA
+ * is an account key of the spend, its whole write history is public, and
+ * `write_proof_chunk(offset: u32, data: Vec<u8>)` puts the proof in the clear.
+ */
+async function scanProofChunks(rpc, payer, target, { maxTx = 200, onProgress } = {}) {
+  const writeDisc = discriminator('write_proof_chunk');
+
+  // The payer of the spend IS the proof-buffer authority: the pool requires
+  // `c1_authority == payer` (`unshield_denominated_stark_v3.rs:222`, `:263`),
+  // and the verifier makes the authority a required Signer on every write
+  // (`p01_stark_verifier/src/lib.rs:507-512`). So one address holds the whole
+  // upload, and walking it is precisely the analyst's path.
+  // Ask for ONE MORE than we intend to scan. Without that, a page that comes
+  // back exactly `maxTx` long is indistinguishable from "that is all there is",
+  // and the completeness check below would call a capped scan complete — the
+  // precise shape of hollow guard this tool exists to avoid.
+  const requested = Math.min(1000, maxTx + 1);
+  const sigs = await rpc('getSignaturesForAddress', [payer, { limit: requested }]);
+  if (!sigs?.length) {
+    return { scanned: 0, available: 0, chunkCount: 0, bytesSeen: 0, hit: null, complete: false };
+  }
+  const moreMayExist = sigs.length >= requested;
+
+  let scanned = 0;
+  let chunkCount = 0;
+  let bytesSeen = 0;
+  // Errored signatures are SKIPPED, not scanned — but they still occupy a slot
+  // in `sigs`, so the completeness test below must account for them or a single
+  // failed transaction anywhere in the payer's history makes `complete` false
+  // forever. That printed "raise --max-chunk-tx", which could never help: the
+  // shortfall is not a cap. The payer is a long-lived wallet and chunks are
+  // sent with skipPreflight, so one errored entry is ordinary. Fails closed
+  // (a false INCONCLUSIVE, never a false PASS), but the advice was inert.
+  // Pinned by fixtures/v4-synthetic-errored, the only fixture whose payer
+  // history carries errored entries.
+  let errored = 0;
+
+  for (const s of sigs) {
+    if (scanned >= maxTx) break;
+    if (s.err) {
+      errored += 1;
+      continue;
+    }
+    const tx = await getTx(rpc, s.signature);
+    scanned += 1;
+    onProgress?.(scanned, sigs.length);
+    if (!tx) continue;
+    const keys = accountKeysOf(tx);
+    for (const ix of tx.transaction.message.instructions) {
+      if (keys[ix.programIdIndex] !== STARK_VERIFIER) continue;
+      const data = b58decode(ix.data);
+      if (data.length < 16 || !data.subarray(0, 8).equals(writeDisc)) continue;
+      const offset = data.readUInt32LE(8);
+      const len = data.readUInt32LE(12);
+      const bytes = data.subarray(16, 16 + len);
+      chunkCount += 1;
+      bytesSeen += bytes.length;
+
+      // Early exit on the first hit. The leak this looks for is a trace column
+      // constrained constant, so the value repeats throughout the proof and one
+      // occurrence settles it — there is no need to reassemble ~130 KB to prove
+      // a value is present.
+      if (target !== null) {
+        for (let i = 0; i + 8 <= bytes.length; i++) {
+          if (bytes.readBigUInt64LE(i) === target) {
+            return {
+              scanned,
+              available: sigs.length,
+              chunkCount,
+              bytesSeen,
+              hit: { signature: s.signature, proofOffset: offset + i },
+              complete: true,
+            };
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    scanned,
+    available: sigs.length,
+    chunkCount,
+    bytesSeen,
+    hit: null,
+    // Complete only when every entry in the payer's history was accounted for —
+    // scanned or skipped as errored — AND the RPC did not signal more pages.
+    complete: scanned + errored >= sigs.length && !moreMayExist,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The probes
+// ---------------------------------------------------------------------------
+
+/**
+ * `id` is the stable handle the self-test pins against a fixture manifest, so
+ * it must never be renamed casually: an id change orphans every committed
+ * `expect` map at once (and the self-test will say so loudly).
+ */
+function probe(id, name, passed, detail) {
+  return { id, name, passed, detail };
+}
+
+async function verifySpend(rpc, signature, opts = {}) {
+  const chunkLimit = opts.maxChunkTx ?? 200;
+  const tx = await getTx(rpc, signature);
+  if (!tx) throw new Error(`transaction not found (RPC may have pruned it): ${signature}`);
+
+  const spend = classifySpend(tx);
+  if (!spend) throw new Error('no recognised zk_shielded spend instruction in that transaction');
+
+  const results = [];
+  const keys = accountKeysOf(tx);
+
+  // An unknown pool is a config gap, not a verdict. Refusing here (exit 2)
+  // rather than continuing without P4 is deliberate: the run would otherwise
+  // print P1-P3 and look complete while the deposit walk was silently skipped.
+  const poolPDA = spend.accounts.find((a) => POOLS[a]) ?? null;
+  if (!poolPDA) {
+    const known = Object.entries(POOLS)
+      .map(([k, v]) => `${v.label} = ${k}`)
+      .join(', ');
+    throw new Error(
+      `none of this spend's ${spend.accounts.length} instruction accounts is a known pool. ` +
+        `Known pools: ${known}. If a new pool shipped, add it to POOLS in this file or pass ` +
+        `--pools <json> ({ "<poolPDA>": { "label": "...", "tree": "<treePDA>" } }) — ` +
+        `continuing without it would silently skip P4.`,
+    );
+  }
+
+  // ── P1: does the spend instruction carry the commitment by name? ──────────
+  let published = null;
+  if (spend.kind.commitmentOffset !== null && spend.data.length >= spend.kind.commitmentOffset + 8) {
+    published = spend.data.readBigUInt64LE(spend.kind.commitmentOffset);
+  }
+  results.push(
+    probe(
+      'P1',
+      'spend instruction does not publish the note commitment',
+      published === null,
+      published === null
+        ? `${spend.kind.name} carries no commitment argument`
+        : `${spend.kind.name} publishes ${published} at instruction byte offset ${spend.kind.commitmentOffset}`,
+    ),
+  );
+
+  // Everything downstream needs a commitment to hunt for. Without one there is
+  // nothing to correlate, and the remaining probes say so rather than passing
+  // vacuously.
+  const target = published;
+
+  // ── P2: does it appear anywhere else in the instruction data? ─────────────
+  if (target !== null) {
+    const hits = [];
+    for (let i = 0; i + 8 <= spend.data.length; i++) {
+      if (spend.data.readBigUInt64LE(i) === target) hits.push(i);
+    }
+    results.push(
+      probe(
+        'P2',
+        'no 8-byte window of the spend instruction matches the commitment',
+        hits.length === 0,
+        hits.length === 0
+          ? 'clean'
+          : `found at byte offset(s) ${hits.join(', ')} of ${spend.data.length}`,
+      ),
+    );
+  } else {
+    results.push(probe('P2', 'no 8-byte window of the spend instruction matches the commitment', true, 'no commitment to look for'));
+  }
+
+  // ── P3: the proof bytes ───────────────────────────────────────────────────
+  // The probe a spend-instruction scan cannot do, and the reason this file
+  // exists. See the header.
+  //
+  // keys[0] is the fee payer only because the message header says so: the
+  // first `numRequiredSignatures` account keys are the signers, and the fee
+  // payer is defined as the first of them. An RPC response without that header
+  // gives no way to identify who uploaded the proof — and a guessed payer
+  // would scan the wrong wallet's history and call its silence a clean result.
+  // So: no header, no scan, said out loud.
+  const numSigners = tx.transaction.message.header?.numRequiredSignatures;
+  const payer = Number.isInteger(numSigners) && numSigners >= 1 ? keys[0] : null;
+
+  let proof = null;
+  if (payer === null) {
+    results.push(
+      probe(
+        'P3',
+        'uploaded proof bytes do not carry the commitment',
+        false,
+        'INCONCLUSIVE: the message header is absent or declares no signers, so the fee ' +
+          'payer — the proof-buffer authority — cannot be determined and nothing was scanned.',
+      ),
+    );
+  } else {
+    proof = await scanProofChunks(rpc, payer, target, { maxTx: chunkLimit });
+    const coverage = `payer ${payer.slice(0, 8)}…, ${proof.scanned}/${proof.available} tx scanned, ${proof.chunkCount} proof chunks, ${proof.bytesSeen} bytes`;
+
+    if (proof.hit) {
+      results.push(
+        probe(
+          'P3',
+          'uploaded proof bytes do not carry the commitment',
+          false,
+          `commitment present in the PROOF at byte ${proof.hit.proofOffset}, uploaded by ${proof.hit.signature} (${coverage})`,
+        ),
+      );
+    } else if (proof.chunkCount === 0) {
+      results.push(
+        probe(
+          'P3',
+          'uploaded proof bytes do not carry the commitment',
+          false,
+          `INCONCLUSIVE, reported as a failure on purpose: no write_proof_chunk transactions were ` +
+            `reachable (${coverage}). An unread channel is not a clean one. Re-run with --rpc ` +
+            `pointing at an archival endpoint before believing this one.`,
+        ),
+      );
+    } else if (!proof.complete) {
+      results.push(
+        probe(
+          'P3',
+          'uploaded proof bytes do not carry the commitment',
+          false,
+          `INCONCLUSIVE: scan was capped before exhausting the payer's history (${coverage}). ` +
+            `Raise --max-chunk-tx or use an archival RPC.`,
+        ),
+      );
+    } else {
+      results.push(
+        probe(
+          'P3',
+          'uploaded proof bytes do not carry the commitment',
+          true,
+          target === null
+            ? `no commitment known to search for; ${coverage}`
+            : `commitment absent from every chunk (${coverage})`,
+        ),
+      );
+    }
+  }
+
+  // ── P3b: the limit of P3, stated as a probe so it cannot be forgotten ─────
+  //
+  // MEASURED 2026-08-12 and it matters: a full scan of a real C1+C3 upload
+  // (172 transactions, 148 chunks, 147,038 bytes) found the commitment ABSENT.
+  // P3 therefore passes on today's proofs — and that is NOT evidence the proof
+  // hides the witness.
+  //
+  // `stark/src/compact.rs:3460-3484` interpolates the trace and evaluates it on
+  // the LDE domain with no coset offset, no blinding polynomial and no random
+  // rows, then publishes the openings at 22 query positions plus the OOD
+  // evaluations of every column. Two agents independently recovered a circuit's
+  // secret from that by Lagrange interpolation, each with a positive control
+  // (see the B7 record). Recovery is polynomial, not a byte copy, so a byte scan
+  // is structurally blind to it.
+  //
+  // Reported INCONCLUSIVE forever, never PASS, until trace blinding ships and
+  // this tool grows a real interpolation attempt with its own positive control.
+  // Both committed fixtures pin this probe FAIL, so a well-meaning "fix" that
+  // makes it pass turns CI red before it turns a claim dishonest.
+  results.push(
+    probe(
+      'P3b',
+      'the proof does not reveal the witness by interpolation',
+      false,
+      'INCONCLUSIVE BY CONSTRUCTION: this tool only detects a value present verbatim. ' +
+        'The prover applies no trace blinding, so the published openings determine the trace ' +
+        'polynomial and the witness is recoverable by interpolation. A PASS on P3 says the ' +
+        'commitment was not copied into the proof; it says nothing about whether the proof hides it.',
+    ),
+  );
+
+  // ── P4: find the deposit, and the wallet behind it ────────────────────────
+  let deposit = null;
+  if (target !== null) {
+    deposit = await findDeposit(rpc, POOLS[poolPDA].tree, target, opts.depositLimit ?? 400);
+  }
+  results.push(
+    probe(
+      'P4',
+      'the spend cannot be traced to its deposit from public data',
+      deposit === null,
+      deposit === null
+        ? target === null
+          ? 'no commitment published, so there is nothing to match against a deposit'
+          : 'no matching LeafInserted found within the searched window (may be RPC pruning, not privacy)'
+        : `deposit ${deposit.signature} inserted the same commitment at leaf ${deposit.leafIndex}`,
+    ),
+  );
+
+  // ── P5: context, never a pass/fail ────────────────────────────────────────
+  const state = await readPoolState(rpc, poolPDA);
+  const context = {
+    pool: POOLS[poolPDA].label,
+    unspentNotes: state.unspentNotes,
+    leavesEverInserted: state.nextLeafIndex,
+    gapSlots: deposit ? tx.slot - deposit.slot : null,
+  };
+
+  return { signature, kind: spend.kind.name, slot: tx.slot, results, context, deposit, target };
+}
+
+/** Walk the tree account's history for the LeafInserted that carries `leaf`. */
+async function findDeposit(rpc, treePDA, leaf, limit) {
+  let before = undefined;
+  let scanned = 0;
+  while (scanned < limit) {
+    const page = await rpc('getSignaturesForAddress', [
+      treePDA,
+      { limit: Math.min(100, limit - scanned), ...(before ? { before } : {}) },
+    ]);
+    if (!page?.length) return null;
+    for (const s of page) {
+      scanned += 1;
+      if (s.err) continue;
+      const tx = await getTx(rpc, s.signature);
+      if (!tx) continue;
+      for (const ev of decodeLeafInserted(tx.meta?.logMessages)) {
+        if (ev.leaf === leaf) {
+          return { signature: s.signature, slot: tx.slot, leafIndex: ev.leafIndex };
+        }
+      }
+    }
+    before = page[page.length - 1].signature;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Self-tests — the controls
+// ---------------------------------------------------------------------------
+
+/**
+ * Replay self-test: every probe outcome must equal the manifest's pin, both
+ * directions, and the mapping must be total — a probe with no pin fails, and a
+ * pin with no probe fails. That last rule is deliberate friction: adding a P6
+ * forces whoever adds it to state, in the committed fixture, what P6 must do
+ * on a known-leaky spend and on a known-clean one. A control nobody had to
+ * think about is not a control.
+ */
+function selfTestAgainstManifest(report, manifest, dir) {
+  console.log(`\n  ── SELF-TEST vs ${dir} ──────────────────────────────────`);
+  if (manifest.synthetic) {
+    console.log('   NOTE  this fixture is SYNTHETIC — hand-built bytes, no chain involved.');
+    console.log('         It proves the tool CAN report a clean spend, nothing about any real v4.');
+  }
+  const expect = manifest.expect ?? {};
+  const seen = new Set();
+  let deviations = 0;
+  for (const r of report.results) {
+    seen.add(r.id);
+    const want = expect[r.id];
+    const got = r.passed ? 'PASS' : 'FAIL';
+    if (want === undefined) {
+      deviations += 1;
+      console.log(`   FAIL  ${r.id} has no pin in the manifest — a new probe must declare its control outcome`);
+    } else if (want !== got) {
+      deviations += 1;
+      console.log(`   FAIL  ${r.id} pinned ${want}, measured ${got} — the tool's behaviour on frozen data changed`);
+    } else {
+      console.log(`   OK    ${r.id} = ${got}, as pinned`);
+    }
+  }
+  for (const id of Object.keys(expect)) {
+    if (!seen.has(id)) {
+      deviations += 1;
+      console.log(`   FAIL  ${id} is pinned in the manifest but the tool no longer reports it`);
+    }
+  }
+  console.log(
+    deviations === 0
+      ? '   PASS  every probe behaved exactly as pinned. The control holds.'
+      : `   ${deviations} deviation(s). Do NOT quote any result from this tool until resolved.`,
+  );
+  return deviations === 0 ? 0 : 1;
+}
+
+/**
+ * Live self-test: the negative control against whatever devnet still serves.
+ *
+ * Pinned to P1/P2/P4 BY ID, not "any probe failed". The original form asserted
+ * `results.some(r => !r.passed)` — which P3b satisfies unconditionally on every
+ * spend ever examined, so the control was vacuous: a tool whose leak probes had
+ * all rotted to PASS would still have printed "the probes are live". Fixed
+ * 2026-08-12. P1, P2 and P4 are exactly the probes a v3 spend leaks through by
+ * design, so each one must fail on its own.
+ */
+function selfTestLive(reports) {
+  const v3 = reports.filter((r) => r.kind.endsWith('_v3') || r.kind === 'subscribe_private_stark');
+  console.log('\n  ── NEGATIVE CONTROL ──────────────────────────────────────');
+  if (!v3.length) {
+    console.log('   INCONCLUSIVE: no v3-era spend examined, so the tool proved nothing.');
+    return 1;
+  }
+  const MUST_FAIL = ['P1', 'P2', 'P4'];
+  let broken = 0;
+  for (const r of v3) {
+    const clean = MUST_FAIL.filter((id) => r.results.some((x) => x.id === id && x.passed));
+    if (clean.length) {
+      broken += 1;
+      console.log(`   FAIL  ${r.signature.slice(0, 12)}… came back clean on ${clean.join(', ')}`);
+    }
+  }
+  console.log(
+    broken === 0
+      ? `   PASS  all ${v3.length} v3-era spend(s) were detected as linkable on P1, P2 and P4,\n` +
+          '         as they must be. The probes are live. A future GREEN on a v4 spend is\n' +
+          '         therefore meaningful.'
+      : '   FAIL  a v3-era spend came back clean. v3 publishes the commitment by design,\n' +
+          '         so this tool is broken. Do NOT quote any green result from it.',
+  );
+  return broken === 0 ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// Entry
+// ---------------------------------------------------------------------------
+
+function arg(flag, fallback) {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+}
+
+/** Newest spends on a pool, found through the NullifierRecord each one creates. */
+async function findSpends(rpc, poolPDA, limit) {
+  const accounts = await rpc('getProgramAccounts', [
+    ZK_SHIELDED,
+    {
+      encoding: 'base64',
+      dataSlice: { offset: 0, length: 0 },
+      filters: [{ dataSize: 41 }, { memcmp: { offset: 8, bytes: poolPDA } }],
+    },
+  ]);
+  const found = [];
+  for (const a of accounts.slice(0, limit)) {
+    const sigs = await rpc('getSignaturesForAddress', [a.pubkey, { limit: 1 }]);
+    if (sigs?.length) found.push(sigs[0].signature);
+  }
+  return found;
+}
+
+function render(report) {
+  const failed = report.results.filter((r) => !r.passed);
+  console.log(`\n  spend ${report.signature}`);
+  console.log(`  instruction ${report.kind}  ·  slot ${report.slot}`);
+  for (const r of report.results) {
+    console.log(`   ${r.passed ? 'PASS' : 'FAIL'}  ${r.id.padEnd(3)} ${r.name}`);
+    console.log(`         ${r.detail}`);
+  }
+  if (report.context) {
+    console.log(
+      `   INFO  pool ${report.context.pool}: ${report.context.unspentNotes} unspent of ` +
+        `${report.context.leavesEverInserted} ever deposited` +
+        (report.context.gapSlots !== null ? `; deposit->spend gap ${report.context.gapSlots} slots` : ''),
+    );
+  }
+  return failed.length;
+}
+
+async function main() {
+  const selfTest = process.argv.includes('--self-test');
+  const recordDir = arg('--record', null);
+  const replayDir = arg('--replay', null);
+  if (recordDir && replayDir) throw new Error('--record and --replay are mutually exclusive');
+  if (recordDir && !arg('--spend', null)) {
+    throw new Error('--record needs --spend: a fixture freezes exactly one spend');
+  }
+
+  const poolsFile = arg('--pools', null);
+  if (poolsFile) registerPools(JSON.parse(readFileSync(poolsFile, 'utf8')), poolsFile);
+
+  const opts = {
+    maxChunkTx: Number(arg('--max-chunk-tx', '200')),
+    depositLimit: Number(arg('--deposit-limit', '400')),
+  };
+
+  let rpc;
+  let manifest = null;
+  let store = null;
+  let signatures = [];
+
+  if (replayDir) {
+    manifest = JSON.parse(readFileSync(join(replayDir, 'manifest.json'), 'utf8'));
+    if (manifest.pools) registerPools(manifest.pools, `${replayDir}/manifest.json`);
+    // The manifest's flags override the command line: they shaped the request
+    // parameters at record time (e.g. getSignaturesForAddress limit), so any
+    // other value can only produce replay misses.
+    if (manifest.flags?.maxChunkTx) opts.maxChunkTx = manifest.flags.maxChunkTx;
+    if (manifest.flags?.depositLimit) opts.depositLimit = manifest.flags.depositLimit;
+    rpc = makeReplayRpc(replayDir);
+    const sig = arg('--spend', manifest.spend);
+    if (!sig) throw new Error(`${replayDir}/manifest.json names no spend`);
+    signatures = [sig];
+  } else {
+    rpc = makeRpc(arg('--rpc', DEFAULT_RPC));
+    if (recordDir) {
+      store = { seen: new Set(), calls: [] };
+      rpc = wrapRecorder(rpc, store);
+    }
+    const spendSig = arg('--spend', null);
+    if (spendSig) {
+      signatures = [spendSig];
+    } else {
+      const pool = arg('--pool', DEFAULT_POOL);
+      if (!POOLS[pool]) {
+        const known = Object.entries(POOLS)
+          .map(([k, v]) => `${v.label} = ${k}`)
+          .join(', ');
+        throw new Error(`unknown pool ${pool}. Known pools: ${known}. Add it to POOLS or pass --pools <json>.`);
+      }
+      console.log(`Searching pool ${pool} for spends...`);
+      signatures = await findSpends(rpc, pool, Number(arg('--limit', '3')));
+    }
+  }
+
+  let totalFailures = 0;
+  const reports = [];
+  for (const sig of signatures) {
+    const report = await verifySpend(rpc, sig, opts);
+    reports.push(report);
+    totalFailures += render(report);
+  }
+
+  if (recordDir) writeFixture(recordDir, store, reports[0], opts);
+
+  if (selfTest) {
+    process.exit(
+      manifest?.expect
+        ? selfTestAgainstManifest(reports[0], manifest, replayDir)
+        : selfTestLive(reports),
+    );
+  }
+
+  console.log(
+    totalFailures === 0
+      ? '\n  All probes passed.\n'
+      : `\n  ${totalFailures} probe(s) found a surviving linkage.\n`,
+  );
+  process.exit(totalFailures === 0 ? 0 : 1);
+}
+
+main().catch((e) => {
+  console.error('error:', e.message);
+  process.exit(2);
+});

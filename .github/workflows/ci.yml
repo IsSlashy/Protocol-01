@@ -70,6 +70,25 @@ jobs:
       - name: Test
         run: pnpm turbo run test --continue
 
+      # `turbo run test` calls each package's own `test` script. For apps/web
+      # that is `vitest run` against vitest.config.ts, whose `include` covers
+      # `__tests__/**` ONLY. Two of the three web suites therefore never ran in
+      # CI, and one of them holds the only mechanised privacy check in the repo:
+      # denominatedPool.test.ts scans every 8-byte window of the unshield
+      # instruction for the note blinding, with a positive control so it cannot
+      # pass vacuously. A suite that guards a privacy property and never runs is
+      # worse than no suite, because its green is quoted as evidence.
+      #
+      # Run them explicitly rather than widening vitest.config.ts's `include`:
+      # the pool suite needs the REAL @solana/web3.js in a node environment,
+      # while the default jsdom setup mocks it for component rendering. Merging
+      # them would break both.
+      - name: Test — apps/web pool suite (node env, real web3.js)
+        run: pnpm --filter @protocol-01/web test:pool
+
+      - name: Test — apps/web rendering suite
+        run: pnpm --filter @protocol-01/web test:ui
+
   rust-programs-build:
     name: Rust — Programs cargo check
     runs-on: ubuntu-latest
@@ -132,12 +151,38 @@ jobs:
       # runs the prover under three deliberately different pair layouts and
       # asserts the verifier rejects each with MerkleProofFailed. If it is not
       # executed, a silent prover/verifier disagreement is possible.
+      # A pin can only guard code that is present. `periodic_stride` imports
+      # `p01_stark_verifier::periodic_ext_consts` and `b4_pair_leaf` drives
+      # `p01_stark::compact::PairIndexing`; on a branch that does not carry the
+      # A3/A4/B4 rewrites, neither module exists, so naming the test target
+      # unconditionally made the job die with `no test target named
+      # periodic_stride` — a red build that says nothing about the code under
+      # test. This step therefore runs each pin IF its target exists, and
+      # prints the ones it skipped so an absence is visible in the log rather
+      # than silent. The moment a pin lands, it starts being enforced here with
+      # no further edit to this file.
+      #
+      # `--lib` and `fri_end_to_end` are NOT guarded: they exist on every
+      # branch, and a missing one is a genuine regression that must stay red.
       - name: cargo test (verifier — the periodic-column, field and pair-leaf pins)
         run: |
+          set -euo pipefail
+
           cargo test -p p01_stark_verifier --lib
-          cargo test -p p01_stark_verifier --release --test periodic_stride
           cargo test -p p01_stark_verifier --release --test fri_end_to_end
-          cargo test -p p01_stark_verifier --release --test b4_pair_leaf
+
+          targets="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "p01_stark_verifier") | .targets[] | select(.kind[] == "test") | .name')"
+
+          for pin in periodic_stride b4_pair_leaf; do
+            if printf '%s\n' "$targets" | grep -qx "$pin"; then
+              echo "::group::pin $pin"
+              cargo test -p p01_stark_verifier --release --test "$pin"
+              echo "::endgroup::"
+            else
+              echo "::warning title=Pin absent::le test '$pin' n'existe pas sur cette branche, la garde correspondante n'est pas exercee"
+            fi
+          done
 
       # The subscription state machine — `claimable_periods` and the funding
       # clamp — decides how much money a merchant is owed, and until this step
@@ -184,3 +229,69 @@ jobs:
           cargo clippy -p zk_shielded -- -D warnings
           cargo clippy -p p01_stark_verifier -- -D warnings
           cargo clippy -p p01_relayer -- -D warnings
+
+  verify-unlinkability-controls:
+    name: Verify — unlinkability probe controls (offline replay)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # verify/p01-verify.mjs is the only mechanised check that a pool spend
+      # cannot be walked back to its deposit from PUBLIC chain data (the vitest
+      # pool suite above checks the instruction bytes in memory; this one reads
+      # what an outside analyst actually reads, proof upload included). Its
+      # credibility rests on a control pair plus a regression pin, and a
+      # control that is not executed on every push rots into a rubber stamp:
+      #
+      #   negative — fixtures/v3-subscribe is a RECORDED devnet
+      #   subscribe_private_stark spend. v3 publishes the commitment by design,
+      #   so P1/P2/P4 must FAIL on it, exactly as pinned in its manifest. If
+      #   the tool ever reports that spend clean, the tool is broken and every
+      #   green it has ever produced is void.
+      #
+      #   positive — fixtures/v4-synthetic is HAND-BUILT (see its README; it
+      #   is not a real transaction) and describes a spend whose instruction
+      #   carries no commitment. P1/P2/P4 must PASS on it. Without this half a
+      #   tool that hard-failed everything would sail through the negative
+      #   control, and a future green on a real v4 would be unfalsifiable.
+      #
+      #   regression pin — fixtures/v4-synthetic-errored is HAND-BUILT too:
+      #   the same clean spend, but the payer history carries two ERRORED
+      #   signatures. Errored entries are skipped, not scanned, and the P3
+      #   completeness test must count them (`scanned + errored`,
+      #   p01-verify.mjs scanProofChunks). The pre-fix arithmetic compared
+      #   `scanned` alone, so one failed transaction anywhere in a payer's
+      #   history forced P3 INCONCLUSIVE forever, with advice
+      #   (--max-chunk-tx) that could never help. P3 is pinned PASS here;
+      #   both control fixtures have zero errored entries, so this step is
+      #   the only one that goes red if that bug returns.
+      #
+      # All three fixtures also pin P3b = FAIL: the interpolation
+      # witness-recovery channel stays INCONCLUSIVE until trace blinding
+      # ships, and this is where a well-meaning "fix" that makes it pass goes
+      # red first.
+      #
+      # Replay mode answers every RPC read from the committed fixture — no
+      # network, no devnet flake, no rate limit, deterministic, ~1 s. That is
+      # why these are hard gates and not advisory: there is no flakiness left
+      # to be advisory about.
+      - name: Negative control — recorded v3 spend must stay detected as linkable
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v3-subscribe
+
+      - name: Positive control — synthetic v4 spend must stay reported clean
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-synthetic
+
+      # Measured red against the pre-fix arithmetic (`scanned` compared alone,
+      # without `+ errored`): P3 pinned PASS, measured FAIL, exit 1. The two
+      # fixtures above carry zero errored entries and stay green under that
+      # regression; this step is the only one that catches it.
+      - name: Regression pin — errored payer history must not break P3 completeness
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-synthetic-errored

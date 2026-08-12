@@ -1,0 +1,16 @@
+{
+  "note": "Recorded live from devnet on 2026-08-12. Review `expect` against the run that produced it before committing.",
+  "spend": "4v6RLndUyQFZNNKcdzdSi5JckEeR6vh4DHNhc3du77CuLUZnBMh2A7pcUcDiMSFbvkv8h6VFtzmfKq48qKFHx2A3",
+  "kind": "subscribe_private_stark",
+  "flags": {
+    "maxChunkTx": 400,
+    "depositLimit": 400
+  },
+  "expect": {
+    "P1": "FAIL",
+    "P2": "FAIL",
+    "P3": "PASS",
+    "P3b": "FAIL",
+    "P4": "FAIL"
+  }
+}
