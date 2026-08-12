@@ -36,7 +36,8 @@ import {
   createCommitmentV3,
   deriveNoteMaterial,
   fetchPoolCommitments,
-  isNullifierSpent,
+  fetchSpentNullifierSet,
+  isNullifierSpentInSet,
   pubkeyToField,
   slotToEpoch,
   type PoolConfig,
@@ -62,6 +63,11 @@ export interface RecoverNotesOptions {
   epochWindow?: number;
   /** Reuse a commitment map from a previous scan of the same pool. */
   commitments?: Map<string, { commitment: bigint; leafIndex: number }>;
+  /** Reuse a spent-nullifier set from a previous read of the same pool. Same
+   *  contract as `commitments`, for the same reason: a caller iterating seed
+   *  derivations MUST hoist this, or a passphrase wallet re-issues the
+   *  identical pool-wide getProgramAccounts once per derivation. */
+  spentSet?: ReadonlySet<string>;
   onProgress?: (step: string) => void;
 }
 
@@ -88,6 +94,24 @@ export async function recoverNotes(
   const currentEpoch = slotToEpoch(slot);
   const lowestEpoch = currentEpoch > BigInt(epochWindow) ? currentEpoch - BigInt(epochWindow) : 0n;
   const tokenMintField = pubkeyToField(poolConfig.tokenMint);
+
+  // ONE pool-wide question, asked before the loop, instead of one question per
+  // note inside it. The old shape handed the RPC a list of not-yet-existing
+  // nullifier PDAs on every scan; see `fetchSpentNullifierSet` for why that was a
+  // full deanonymisation channel. This asks something every user of the pool
+  // asks identically, and resolves membership locally below.
+  //
+  // Deliberately NOT wrapped in try/catch, unlike handlePoolResolveSpent's
+  // per-pool catch. That handler's response can say "unresolved"; here
+  // `RecoveredNote.spent` is a plain boolean with no unknown state, so a
+  // swallowed failure could only default it — `false` offers money that is
+  // gone, `true` hides money that is not. A loud failure is the honest option
+  // until the type can carry uncertainty.
+  let spentSet = opts.spentSet;
+  if (!spentSet) {
+    opts.onProgress?.('Reading spent markers...');
+    spentSet = await fetchSpentNullifierSet(connection, poolConfig.poolPDA);
+  }
 
   opts.onProgress?.('Matching notes...');
   const found: RecoveredNote[] = [];
@@ -130,7 +154,12 @@ export async function recoverNotes(
     }
     if (!hit) continue;
 
-    const spent = await isNullifierSpent(connection, poolConfig.poolPDA, nullifierPreimage, secret);
+    const spent = isNullifierSpentInSet(
+      spentSet,
+      poolConfig.poolPDA,
+      nullifierPreimage,
+      secret,
+    );
 
     found.push({
       counter,

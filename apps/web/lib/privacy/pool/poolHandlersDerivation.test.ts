@@ -181,7 +181,18 @@ vi.mock('./unshieldEphemeral', () => ({
 
 vi.mock('./denominatedPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./denominatedPool')>();
-  return { ...actual, fetchPoolCommitments: async () => new Map() };
+  return {
+    ...actual,
+    fetchPoolCommitments: async () => new Map(),
+    // Hoisted to the handler since A5 (one pool-wide read shared across the
+    // derivation loop), so the handler calls it directly and the stub must
+    // exist here or the test spends 5s timing out against a dead localhost.
+    fetchSpentNullifierSet: async () => new Set<string>(),
+    // The scan reports the pool's UNSPENT count — the anonymity set — alongside
+    // the tree's leaf count. Derivation behaviour is what this file tests, so
+    // the number is a fixture; `denominatedPool.test.ts` pins the real read.
+    readPoolUnspentCount: async () => 7,
+  };
 });
 
 // Imported after the mocks so the handler binds to the stubs.

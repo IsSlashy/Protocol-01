@@ -816,7 +816,10 @@ describe('legacy note positive control', () => {
 
     const fakeConnection = {
       getSlot: async () => slot,
-      getAccountInfo: async () => null, // no NullifierRecord => unspent
+      // No NullifierRecord for this pool => every note in it is unspent.
+      // `recoverNotes` reads spent-ness POOL-WIDE rather than per note, so this
+      // is the one call it makes; see `fetchSpentNullifierSet`.
+      getProgramAccounts: async () => [],
     } as unknown as Connection;
 
     const notes = await recoverNotes(fakeConnection, pool, seed, { commitments });
@@ -840,7 +843,7 @@ describe('legacy note positive control', () => {
     ]);
     const fakeConnection = {
       getSlot: async () => 7200 * 1005,
-      getAccountInfo: async () => null,
+      getProgramAccounts: async () => [],
     } as unknown as Connection;
 
     const notes = await recoverNotes(fakeConnection, pool, seed, { commitments });

@@ -51,6 +51,7 @@ import { SUBSCRIBE_PHASES } from '@/lib/pay/flowProgress';
 import { HANDOFFS_CHANGED_EVENT, handoffKeys } from '@/lib/pay/handoffs';
 import { recordSubscription } from '@/lib/pay/subscriptions';
 import FlowProgress from './FlowProgress';
+import StaleWorkerNotice from './StaleWorkerNotice';
 import SuccessBurst from './SuccessBurst';
 import { truncate } from './util';
 
@@ -289,9 +290,15 @@ export default function SubscribePanel({
       // earlier session or on another device drops out within seconds. It only
       // ever confirms spent, never un-spends, so a failed read leaves the note
       // exactly where it was. Fire and forget: the filter below does the rest.
+      // MERGED, not assigned: the read is async now (encrypted store, worker
+      // opens it), and a plain set could race the subscribe handler's write.
       void shieldClient
         .resolveSpentNotes(meta, owner.toBase58())
-        .then(() => setSpentHere(shieldClient.knownSpentNoteKeys(owner.toBase58())))
+        .then(() => shieldClient.knownSpentNoteKeys(meta, owner.toBase58()))
+        .then((res) => {
+          setSpentHere((prev) => new Set([...prev, ...res.keys]));
+          setStaleWorker((prev) => prev || res.staleWorker);
+        })
         .catch(() => {});
       const res = await shieldClient.scanPool(meta, 'SOL', setScanStep);
       // MERGE, not replace: a RECEIVED note's secrets came from the sender's
@@ -339,13 +346,45 @@ export default function SubscribePanel({
    *  would escrow a coin the recipient can still take first, and a subscription
    *  can never be cancelled or refunded once opened. */
   const [handedOver, setHandedOver] = useState<ReadonlySet<string>>(new Set());
+  // A version-skewed worker left `spentHere` or `handedOver` SHORT (see
+  // StaleWorkerNotice): the picker may then offer a note already spent or
+  // already promised away — and a subscription can never be cancelled, so
+  // locking such a note in is the costliest place to be wrong. Latched with
+  // `|| next` since several async reads feed it; reset on a wallet switch.
+  const [staleWorker, setStaleWorker] = useState(false);
   useEffect(() => {
-    setSpentHere(shieldClient.knownSpentNoteKeys(owner.toBase58()));
-    setHandedOver(handoffKeys(owner.toBase58()));
-    const catchUp = () => setHandedOver(handoffKeys(owner.toBase58()));
-    window.addEventListener(HANDOFFS_CHANGED_EVENT, catchUp);
-    return () => window.removeEventListener(HANDOFFS_CHANGED_EVENT, catchUp);
-  }, [owner]);
+    // Async read (encrypted store), with a stale guard so a slow answer never
+    // paints one wallet's spends onto another after a switch.
+    setSpentHere(new Set());
+    setStaleWorker(false);
+    let stale = false;
+    void shieldClient
+      .knownSpentNoteKeys(meta, owner.toBase58())
+      .then((res) => {
+        if (!stale) {
+          setSpentHere(res.keys);
+          setStaleWorker((prev) => prev || res.staleWorker);
+        }
+      })
+      .catch(() => {});
+    setHandedOver(new Set());
+    const readHandoffs = () => {
+      void handoffKeys(meta, owner.toBase58())
+        .then((res) => {
+          if (!stale) {
+            setHandedOver(res.keys);
+            setStaleWorker((prev) => prev || res.staleWorker);
+          }
+        })
+        .catch(() => {});
+    };
+    readHandoffs();
+    window.addEventListener(HANDOFFS_CHANGED_EVENT, readHandoffs);
+    return () => {
+      stale = true;
+      window.removeEventListener(HANDOFFS_CHANGED_EVENT, readHandoffs);
+    };
+  }, [meta, owner]);
   const unspent = useMemo(
     () =>
       notes.filter(
@@ -408,7 +447,7 @@ export default function SubscribePanel({
         owner,
         // Lets the worker skip the Merkle-history rebuild for a shielded note,
         // and is the ONLY way it can find a received one.
-        encryptedNotes: shieldClient.loadEncryptedNotes(owner.toBase58()),
+        encryptedNotes: await shieldClient.loadEncryptedNotes(meta, owner.toBase58()),
         connection,
         signOne,
         onProgress: setStep,
@@ -419,14 +458,14 @@ export default function SubscribePanel({
       // withdrawal does, or every list keeps offering it until the pool scan
       // catches up, which takes minutes: another ~1 SOL of buffer rent and
       // ~150 uploads to reach a nullifier collision.
-      shieldClient.recordSpentNote(owner.toBase58(), noteKey(note));
+      await shieldClient.recordSpentNote(meta, owner.toBase58(), noteKey(note));
       setSpentHere((prev) => new Set(prev).add(noteKey(note)));
       // Remember the vault locally so the Subscriptions view can list it
       // without an on-chain sweep, the same convenience `recordPayout` gives
       // withdrawals. Public fields only: the license key is re-derivable from
       // the note secret, is never stored, and `recordSubscription` would drop
       // it anyway.
-      recordSubscription(owner.toBase58(), {
+      await recordSubscription(meta, owner.toBase58(), {
         vaultPDA: typeof out.vaultPDA === 'string' ? out.vaultPDA : out.vaultPDA.toBase58(),
         retailer: service.retailer.toBase58(),
         serviceTag: licenseServiceTag(service.slug, service.retailer.toBase58()),
@@ -609,6 +648,15 @@ export default function SubscribePanel({
 
           {scanStep && <p className="mt-2 text-xs text-p01-text-dim">{scanStep}</p>}
           {scanError && <p className="mt-2 text-sm text-p01-red">{scanError}</p>}
+
+          {/* Skew blunts the spent/handed-over FILTERS, so a note below may
+              already be gone or promised away — the worst place to find out is
+              after locking it into an uncancellable vault. Say it here. */}
+          {staleWorker && (
+            <div className="mt-2">
+              <StaleWorkerNotice />
+            </div>
+          )}
 
           {usdcUnsupported && (
             <p className="mt-2 text-xs text-p01-yellow">

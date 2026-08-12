@@ -45,7 +45,28 @@ import {
   type ShieldReceipt,
 } from './denominatedPool';
 
-/** `min_epoch` is ignored by this handler, and publishing anything else leaks. */
+/**
+ * Always 0, and this is load-bearing twice over. Do not turn it into a parameter.
+ *
+ * 🚨 The handler does NOT ignore it, unlike the unshield handler. Measured
+ * 2026-08-12: `subscribe_private_stark.rs` computes
+ * `effective_min_epoch = min_epoch + pool.get_dynamic_delay()` and then
+ * `require!(current_epoch >= effective_min_epoch, EpochDelayNotMet)`. An earlier
+ * version of this comment claimed the value was ignored; it was false, and it was
+ * harmless only because this constant pins 0 and the dynamic delay is at most 2.
+ * `transfer_denominated_stark_v3.rs` enforces it the same way.
+ *
+ * Two consequences follow, and both matter:
+ *
+ * 1. Publishing anything else leaks. Since the commitment blinding shipped, the
+ *    note's `deposit_epoch` slot carries a 63-bit PRF secret, not an epoch, so
+ *    passing `receipt.depositEpoch` here would publish the blinding in the clear
+ *    and undo the whole of phase 1.
+ * 2. A blinded note could never satisfy the check anyway: with a blinding near
+ *    2^63, `current_epoch >= blinding + delay` is unreachable, so the note would
+ *    become permanently un-subscribable with `EpochDelayNotMet`. Withdrawal is
+ *    the only exit a blinded note has today.
+ */
 export const SUBSCRIBE_MIN_EPOCH = 0n;
 
 /** Anchor discriminator: sha256("global:<name>")[..8]. */

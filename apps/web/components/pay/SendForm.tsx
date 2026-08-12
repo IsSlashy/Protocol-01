@@ -91,6 +91,7 @@ import { handoffKeys, recordHandoff } from "@/lib/pay/handoffs";
 import FeeRow from "./FeeRow";
 import FlowProgress from "./FlowProgress";
 import HonestyBadge from "./HonestyBadge";
+import StaleWorkerNotice from "./StaleWorkerNotice";
 import SuccessBurst from "./SuccessBurst";
 import { formatAmount, truncate } from "./util";
 
@@ -274,8 +275,14 @@ export default function SendForm({
       // exactly where it was. Fire and forget: the filter below does the rest.
       if (owner) {
         const ownerKey = owner.toBase58();
+        // MERGED, not assigned: the read is async now (encrypted store, worker
+        // opens it), and a plain set could race the seal handler's write.
         void resolveSpentNotes(meta, ownerKey)
-          .then(() => setSpentHere(knownSpentNoteKeys(ownerKey)))
+          .then(() => knownSpentNoteKeys(meta, ownerKey))
+          .then((res) => {
+            setSpentHere((prev) => new Set([...prev, ...res.keys]));
+            setStaleWorker((prev) => prev || res.staleWorker);
+          })
           .catch(() => {});
       }
       const res = await scanPool(meta, "SOL", setScanStep);
@@ -304,10 +311,42 @@ export default function SendForm({
   /** Notes already handed to someone and not yet claimed. Not spendable-safe to
    *  hand over a second time: that would promise one coin to two people. */
   const [handedOver, setHandedOver] = useState<ReadonlySet<string>>(new Set());
+  // A version-skewed worker left `spentHere` or `handedOver` SHORT (see
+  // StaleWorkerNotice): this picker may then re-offer a note already spent or
+  // already promised to someone. Latched with `|| next` since two async reads
+  // feed it; reset on a wallet switch with the sets it describes.
+  const [staleWorker, setStaleWorker] = useState(false);
   useEffect(() => {
-    setSpentHere(owner ? knownSpentNoteKeys(owner.toBase58()) : new Set<string>());
-    setHandedOver(owner ? handoffKeys(owner.toBase58()) : new Set<string>());
-  }, [owner]);
+    // Async read (encrypted store), with a stale guard so a slow answer never
+    // paints one wallet's spends onto another after a switch.
+    setSpentHere(new Set());
+    setStaleWorker(false);
+    let stale = false;
+    if (owner) {
+      void knownSpentNoteKeys(meta ?? null, owner.toBase58())
+        .then((res) => {
+          if (!stale) {
+            setSpentHere(res.keys);
+            setStaleWorker((prev) => prev || res.staleWorker);
+          }
+        })
+        .catch(() => {});
+    }
+    setHandedOver(new Set());
+    if (owner) {
+      void handoffKeys(meta ?? null, owner.toBase58())
+        .then((res) => {
+          if (!stale) {
+            setHandedOver(res.keys);
+            setStaleWorker((prev) => prev || res.staleWorker);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      stale = true;
+    };
+  }, [meta, owner]);
   // A note already handed to someone is withheld from this picker: handing the
   // same coin to a second person promises both of them money only one can take.
   // It stays withdrawable in the Pool tab, which is how a sender takes it back.
@@ -395,7 +434,7 @@ export default function SendForm({
           denomination: chosen.denomination,
           leafIndex: chosen.leafIndex,
           recipientAddress: noteAddress,
-          encryptedNotes: loadEncryptedNotes(owner.toBase58()),
+          encryptedNotes: await loadEncryptedNotes(meta, owner.toBase58()),
           onProgress: setSealStep,
         }),
       );
@@ -403,7 +442,7 @@ export default function SendForm({
       // changed is that somebody else can now spend it at any moment, and this
       // record is what lets the UI say so, and keep the note out of the pickers
       // that would hand it over twice or lock it into a subscription.
-      recordHandoff(owner.toBase58(), {
+      await recordHandoff(meta, owner.toBase58(), {
         pool: chosen.pool,
         leafIndex: chosen.leafIndex,
         sealedAt: Date.now(),
@@ -621,6 +660,16 @@ export default function SendForm({
 
                 {scanStep && <p className="mb-2 text-xs text-p01-text-dim">{scanStep}</p>}
                 {scanError && <p className="mb-2 text-sm text-p01-red">{scanError}</p>}
+
+                {/* Skew here does not empty this list (notes come from the
+                    scan) — it blunts the spent/handed-over FILTERS above, so
+                    a note listed below may already be gone or promised away.
+                    The picker must say so before offering anything. */}
+                {staleWorker && (
+                  <div className="mb-2">
+                    <StaleWorkerNotice />
+                  </div>
+                )}
 
                 {!scanning && unspent.length === 0 && !scanError && (
                   <p className="text-xs text-p01-text-muted">
