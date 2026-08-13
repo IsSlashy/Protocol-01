@@ -123,9 +123,45 @@ export type SealedRecordsAnswer = Pick<PoolOpenRecordsResponse, 'kind'> &
  * wire type above is applied in exactly one place. The cast is the honest
  * direction: the shared response type states the CURRENT worker's guarantee
  * (all arrays present), and this widens it to what an old worker may send.
+ *
+ * A ZERO-blob call is a deliberate PROBE, not a waste: the current worker
+ * answers every array as `[]`, an older one omits the kinds it predates, and
+ * a restarted one refuses outright (`isSessionLostError`). The loaders use
+ * exactly that to decide whether a v1→v2 migration may run — sealing rows the
+ * answering worker could not read back would make them vanish from view until
+ * the cure lands, so migration waits for this proof.
  */
 export function openSealedRecords(meta: string, blobs: string[]): Promise<SealedRecordsAnswer> {
   return poolRequest({ kind: 'poolOpenRecords', meta, blobs });
+}
+
+/**
+ * True when `err` is the worker's refusal to serve a meta it holds no seeds
+ * for — the `requireSeeds` throw in `worker/poolHandlers.ts` ("No pool keys
+ * for this identity. Reconnect and sign to derive."). The message crosses the
+ * postMessage boundary as a bare string and `workerClient` re-wraps it in a
+ * plain Error, so a prefix match on the stable head of the sentence is all
+ * the typing that can exist here. The restarted-worker test in
+ * `pool/storeEncryption.test.ts` drives the REAL handler, so rewording the
+ * worker's throw fails a test instead of silently blinding this check.
+ *
+ * WHAT IT MEANS DEPENDS ON WHERE IT ARRIVES — the callers classify by
+ * position, never by message alone:
+ *
+ *   - from `storeSession` itself: the worker never held seeds for this meta
+ *     in this page's life ("not signed yet"). The v1 union is the complete
+ *     view and no banner is owed.
+ *   - from `openSealedRecords` AFTER a `storeSession` success (live or served
+ *     from the cache a previous success left): seeds existed and are now
+ *     gone — the worker RESTARTED under the open tab (workerClient reboots a
+ *     crashed worker with every secret wiped). The sealed records exist but
+ *     cannot be decrypted until the user signs again; a reload alone changes
+ *     nothing. Loaders surface this as `lostSession`, the re-sign sibling of
+ *     `staleWorker` — the two must never be collapsed, because each banner's
+ *     instruction is a lie for the other's cause.
+ */
+export function isSessionLostError(err: unknown): boolean {
+  return err instanceof Error && err.message.startsWith('No pool keys');
 }
 
 /**

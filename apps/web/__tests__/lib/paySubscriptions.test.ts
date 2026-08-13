@@ -494,9 +494,14 @@ describe('subscription records', () => {
       'b',
       'a',
     ]);
-    // A genuinely empty identity: an ordinary empty read, and no stale-worker
-    // flag — the worker was never even asked (no blobs to open).
-    expect(await loadSubscriptions('meta-w2', 'w2')).toEqual({ records: [], staleWorker: false });
+    // A genuinely empty identity: an ordinary empty read, and neither banner
+    // flag — the worker was never even asked (no blobs to open, no v1 rows
+    // to probe a migration for).
+    expect(await loadSubscriptions('meta-w2', 'w2')).toEqual({
+      records: [],
+      staleWorker: false,
+      lostSession: false,
+    });
 
     // The store never saw the cleartext: v1 untouched, v2 sealed blobs only.
     expect(localStorage.getItem('p01_pay_subscriptions_v1')).toBeNull();

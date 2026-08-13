@@ -86,12 +86,32 @@ const seen = {
 // ---------------------------------------------------------------------------
 
 vi.mock('./poolNotes', () => ({
-  scanPoolForSeed: async (_c: unknown, _p: unknown, seed: Uint8Array) => {
-    seen.scan.push(bytesToHex(seed));
+  // The scan is two-phase since the progressive-scan change: a blinded-only
+  // pass per (pool, candidate) that feeds the interim paint, then the full
+  // pass with the legacy epoch search. The `:blinded` / `:full` tag keeps the
+  // derivation-order assertions exact across both phases.
+  scanPoolForSeed: async (
+    _c: unknown,
+    _p: unknown,
+    seed: Uint8Array,
+    opts?: { blindedOnly?: boolean },
+  ) => {
+    seen.scan.push(`${bytesToHex(seed)}:${opts?.blindedOnly ? 'blinded' : 'full'}`);
     return { notes: notesForSeed(seed) };
   },
-  recoverNotes: async (_c: unknown, _p: unknown, seed: Uint8Array) => {
-    seen.recoverNotes.push(bytesToHex(seed));
+  // `locateOwnedNote` narrows its probe since the withdraw-path fix: a blinded
+  // pass across all derivations first, then the legacy-searching full pass,
+  // both restricted to the one requested leaf. The tag records all three
+  // dimensions so the assertions pin the wiring, not just the seed order.
+  recoverNotes: async (
+    _c: unknown,
+    _p: unknown,
+    seed: Uint8Array,
+    opts?: { blindedOnly?: boolean; onlyLeaf?: number },
+  ) => {
+    seen.recoverNotes.push(
+      `${bytesToHex(seed)}:${opts?.blindedOnly ? 'blinded' : 'full'}@${opts?.onlyLeaf ?? '*'}`,
+    );
     return notesForSeed(seed);
   },
 }));
@@ -225,7 +245,9 @@ describe('a wallet with no passphrase behaves exactly as before', () => {
       token: 'SOL',
       denomination: DENOM,
     });
-    expect(seen.scan).toEqual([LEGACY_HEX]);
+    // One blinded pass, one full pass, both under the only seed there is —
+    // and the note is counted once, not once per pass.
+    expect(seen.scan).toEqual([`${LEGACY_HEX}:blinded`, `${LEGACY_HEX}:full`]);
     expect(res.notes.map((n) => n.leafIndex)).toEqual([LEGACY_LEAF]);
     expect(res.notes[0].derivation).toBe(1);
     expect(res.shieldedBalance).toBe(DENOM);
@@ -253,9 +275,14 @@ describe('a wallet that adopts a passphrase keeps its old notes', () => {
       token: 'SOL',
       denomination: DENOM,
     });
-    // Active first, legacy second — a scan that stops after the first would
-    // hide the pre-passphrase note and understate the balance.
-    expect(seen.scan).toEqual([SALTED_HEX, LEGACY_HEX]);
+    // Active first, legacy second, in BOTH phases — a scan that stops after
+    // the first would hide the pre-passphrase note and understate the balance.
+    expect(seen.scan).toEqual([
+      `${SALTED_HEX}:blinded`,
+      `${LEGACY_HEX}:blinded`,
+      `${SALTED_HEX}:full`,
+      `${LEGACY_HEX}:full`,
+    ]);
     expect(res.notes.map((n) => n.leafIndex).sort((a, b) => a - b)).toEqual([
       LEGACY_LEAF,
       SALTED_LEAF,
@@ -287,6 +314,13 @@ describe('a wallet that adopts a passphrase keeps its old notes', () => {
     // The seed that reached the prover is what decides whether the C1/C3 proofs
     // are for the commitment actually on the tree.
     expect(seen.prepareUnshield).toEqual([LEGACY_HEX]);
+    // The probe was narrowed to the requested leaf and the blinded pass ran
+    // across BOTH derivations before any legacy epoch search — the withdraw-
+    // path fix. A hit in the blinded pass means no epoch search ever ran.
+    expect(seen.recoverNotes).toEqual([
+      `${SALTED_HEX}:blinded@${LEGACY_LEAF}`,
+      `${LEGACY_HEX}:blinded@${LEGACY_LEAF}`,
+    ]);
   });
 
   it('withdraws a post-passphrase note with the SALTED seed', async () => {
@@ -358,8 +392,14 @@ describe('a wallet that adopts a passphrase keeps its old notes', () => {
         leafIndex: 999,
       }),
     ).rejects.toThrow(/No note of yours found/);
-    // Both derivations were tried before giving up.
-    expect(seen.recoverNotes).toEqual([SALTED_HEX, LEGACY_HEX]);
+    // Both derivations were tried in both passes before giving up — the
+    // narrowed probe must not narrow WHO is searched, only WHERE.
+    expect(seen.recoverNotes).toEqual([
+      `${SALTED_HEX}:blinded@999`,
+      `${LEGACY_HEX}:blinded@999`,
+      `${SALTED_HEX}:full@999`,
+      `${LEGACY_HEX}:full@999`,
+    ]);
   });
 });
 
@@ -387,7 +427,12 @@ describe('arming a passphrase', () => {
       token: 'SOL',
       denomination: DENOM,
     });
-    expect(seen.scan).toEqual([SALTED_HEX, LEGACY_HEX]);
+    expect(seen.scan).toEqual([
+      `${SALTED_HEX}:blinded`,
+      `${LEGACY_HEX}:blinded`,
+      `${SALTED_HEX}:full`,
+      `${LEGACY_HEX}:full`,
+    ]);
   });
 
   it('is consumed, not sticky — a second derive without arming is legacy again', async () => {
@@ -400,7 +445,7 @@ describe('arming a passphrase', () => {
       token: 'SOL',
       denomination: DENOM,
     });
-    expect(seen.scan).toEqual([LEGACY_HEX]);
+    expect(seen.scan).toEqual([`${LEGACY_HEX}:blinded`, `${LEGACY_HEX}:full`]);
   });
 
   it('disarms back to the legacy derivation', async () => {
@@ -414,7 +459,7 @@ describe('arming a passphrase', () => {
       token: 'SOL',
       denomination: DENOM,
     });
-    expect(seen.scan).toEqual([LEGACY_HEX]);
+    expect(seen.scan).toEqual([`${LEGACY_HEX}:blinded`, `${LEGACY_HEX}:full`]);
   });
 
   it('rejects a too-short passphrase WITHOUT dropping the live session', async () => {

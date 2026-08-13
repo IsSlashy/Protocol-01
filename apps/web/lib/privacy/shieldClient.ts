@@ -28,6 +28,7 @@ import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { poolRequest } from './workerClient';
 import { loadSubscriptions } from '../pay/subscriptions';
 import {
+  isSessionLostError,
   openSealedRecords,
   readMap,
   sealRecord,
@@ -35,7 +36,7 @@ import {
   writeMap,
   type StoreSession,
 } from './sealedStore';
-import type { PoolNoteView } from './worker/poolHandlers';
+import type { PoolNoteView, PoolScanResponse } from './worker/poolHandlers';
 
 /** Sign one transaction with the connected wallet. */
 export type SignOne = (tx: Transaction) => Promise<Transaction>;
@@ -314,13 +315,24 @@ export function recoverStuckFunds(
   );
 }
 
-/** Read the shielded balance + note list for this identity. */
+/**
+ * Read the shielded balance + note list for this identity.
+ *
+ * The scan is two-phase (see `handlePoolScan`): the blinded single-hash pass
+ * finds current-scheme notes in milliseconds of CPU, the legacy epoch search
+ * takes ~41 s of hashing per derivation. `onPartial` delivers the fast pass's
+ * cumulative results as they exist, each payload marked `complete: false` —
+ * paint them, but SAY the check for older notes is still running: a partial
+ * list presented as complete makes a legacy note read as lost money. The
+ * returned promise resolves with the terminal, complete response.
+ */
 export function scanPool(
   meta: string,
   token: PoolToken,
   onProgress?: (step: string) => void,
+  onPartial?: (partial: PoolScanResponse) => void,
 ) {
-  return poolRequest({ kind: 'poolScan', meta, token }, onProgress);
+  return poolRequest({ kind: 'poolScan', meta, token }, onProgress, onPartial);
 }
 
 /**
@@ -662,53 +674,101 @@ interface LinkageView {
    *  serve the shortfall as truth — an absent spent key re-offers a spent note
    *  (~1 SOL of buffer rent to fail), an absent payout row hides funds. */
   staleWorker: boolean;
+  /** True when the worker LOST this identity's seeds mid-session — it crashed
+   *  under the open tab and workerClient rebooted it with every secret wiped.
+   *  Same shortfall as `staleWorker` (the two fields above are missing
+   *  everything sealed), DIFFERENT cure: only a fresh wallet signature
+   *  re-derives the seeds; a reload alone changes nothing. Callers must never
+   *  show the reload line for this, or the user tries it, it fails, and they
+   *  conclude the money is gone. Structural like the skew flag: it can only
+   *  be raised after sealed blobs were FOUND and the open round trip refused
+   *  them, so a genuinely empty store cannot fire it. */
+  lostSession: boolean;
 }
 
 /**
  * Open both linkage stores in ONE worker round trip (`poolOpenRecords` sorts
- * the mixed blobs back into payouts and spent keys). Runs the migrations
- * first, then unions whatever is still sitting in v1 — either because there is
- * no session to migrate under, or because a quota failure aborted one.
+ * the mixed blobs back into payouts and spent keys), then union whatever is
+ * still sitting in v1 — either because there is no session to migrate under,
+ * or because a quota failure aborted a migration.
+ *
+ * The v1→v2 migration runs AFTER a successful open, never before: sealing the
+ * v1 rows moments before discovering the worker cannot read them back (skewed
+ * or restarted) would make records the user could see seconds ago vanish
+ * behind a banner. The zero-blob round trip is the deliberate probe for that
+ * case — see `openSealedRecords`.
  */
 async function openLinkage(meta: string, walletPubkey: string): Promise<LinkageView> {
   let payouts: PayoutRecord[] = [];
   let spentKeys: string[] = [];
   let staleWorker = false;
+  let lostSession = false;
+  // Snapshot the v1 leftovers FIRST: the union at the bottom is built from
+  // this copy, so the rows a migration seals in this very call keep serving
+  // on this call's answer. Nothing is counted twice — the by-note map and the
+  // Set below deduplicate on the plaintext key either way.
+  const leftPayouts = readMap<PayoutRecord>(PAYOUT_STORE_KEY_V1)[walletPubkey] ?? [];
+  const leftSpent = readMap<string>(SPENT_STORE_KEY_V1)[walletPubkey] ?? [];
+  // `storeSession` runs on its own first because its rejection means the
+  // worker holds no seeds AND this page never saw it hold any ("not signed
+  // yet"): nothing has migrated under a session that never existed, the v1
+  // snapshot above is the complete view, and a banner over a complete list
+  // would be the false alarm in the other direction. The SAME no-keys
+  // rejection after a session existed is a different fact, classified below.
+  let session: StoreSession | null = null;
   try {
-    const session = await storeSession(meta);
+    session = await storeSession(meta);
+  } catch {
+    // No worker session ever derived: the v1 snapshot still serves, so
+    // nothing recorded before the L5 change disappears.
+  }
+  if (session) {
+    // Note blobs are ciphertext in v1 and v2 alike — this migration only
+    // moves the index, cannot change readability, and so runs regardless of
+    // what the worker turns out to be able to open.
     migrateNoteStore(walletPubkey, session.label);
-    migrateLinkageStores(session, walletPubkey);
     const blobs = [
       ...(readMap<string>(PAYOUT_STORE_KEY)[session.label] ?? []),
       ...(readMap<string>(SPENT_STORE_KEY)[session.label] ?? []),
     ];
-    if (blobs.length > 0) {
-      const res = await openSealedRecords(meta, blobs);
-      // A version-skewed worker (old worker, new page, tab open across a
-      // deploy) answers without one array or both — it predates the record
-      // kind, NOT "there are no records". Degrade to the v1 union below
-      // rather than throwing, but carry the skew out as `staleWorker`: after
-      // migration the v1 buckets are empty, and silence here painted the
-      // payout list empty and re-offered spent notes. The genuinely empty
-      // store never reaches this branch (`blobs.length > 0`), so the flag
-      // cannot fire for it. See sealedStore.SealedRecordsAnswer.
-      staleWorker = res.payouts === undefined || res.spentKeys === undefined;
-      payouts = res.payouts ?? [];
-      spentKeys = res.spentKeys ?? [];
+    if (blobs.length > 0 || leftPayouts.length > 0 || leftSpent.length > 0) {
+      try {
+        const res = await openSealedRecords(meta, blobs);
+        // A version-skewed worker (old worker, new page, tab open across a
+        // deploy) answers without one array or both — it predates the record
+        // kind, NOT "there are no records". Degrade to the v1 union below
+        // rather than throwing, but carry the skew out as `staleWorker`: after
+        // migration the v1 buckets are empty, and silence here painted the
+        // payout list empty and re-offered spent notes. The flag is gated on
+        // `blobs.length > 0` because only sealed records can be hidden by
+        // skew: a zero-blob answer was a migration probe, and flagging it
+        // would banner a list the v1 snapshot serves in full. The genuinely
+        // empty store (no blobs, no v1 rows) never reaches this branch at
+        // all. See sealedStore.SealedRecordsAnswer.
+        const answered = res.payouts !== undefined && res.spentKeys !== undefined;
+        staleWorker = !answered && blobs.length > 0;
+        payouts = res.payouts ?? [];
+        spentKeys = res.spentKeys ?? [];
+        // Only a worker that just proved it reads both kinds may take the v1
+        // rows away from the cleartext store: their sealed copies are
+        // readable the moment they land.
+        if (answered) migrateLinkageStores(session, walletPubkey);
+      } catch (err) {
+        // `storeSession` succeeded above — live, or from the cache a previous
+        // success left — so seeds existed for this meta, and a no-keys
+        // refusal now means the worker lost them under the open tab: it was
+        // rebooted with every secret wiped. Same empty-looking shortfall as
+        // skew, DIFFERENT cure (a fresh signature, not a reload), so it gets
+        // its own flag. The position of this catch is the classification —
+        // the never-derived shape rejects at `storeSession` above and stays
+        // flagless — and the same `blobs.length > 0` gate as the skew flag
+        // keeps a probe rejection from bannering a complete v1 view.
+        if (isSessionLostError(err) && blobs.length > 0) lostSession = true;
+        // Anything else (timeout, crash mid-call): degrade exactly as
+        // before — the v1 snapshot below still serves, flagless.
+      }
     }
-  } catch {
-    // No worker session (not derived yet, or restarting): the v1 leftovers
-    // below still serve, so nothing recorded before this change disappears.
-    // NOT marked stale: in the common shape of this catch (no session ever
-    // derived) nothing has migrated and the v1 union below is the complete
-    // view — a banner over a complete list would be the false alarm in the
-    // other direction. A worker RESTART mid-session also lands here and does
-    // paint short until the user re-signs; that is a different, transient
-    // condition a reload would not fix, so the reload banner must not claim it.
   }
-  // Read v1 AFTER the migration above, so a migrated row is not counted twice.
-  const leftPayouts = readMap<PayoutRecord>(PAYOUT_STORE_KEY_V1)[walletPubkey] ?? [];
-  const leftSpent = readMap<string>(SPENT_STORE_KEY_V1)[walletPubkey] ?? [];
   const byNote = new Map<string, PayoutRecord>();
   for (const rec of [...payouts, ...leftPayouts]) {
     const k = `${rec.pool}:${rec.leafIndex}`;
@@ -718,6 +778,7 @@ async function openLinkage(meta: string, walletPubkey: string): Promise<LinkageV
     payouts: [...byNote.values()],
     spentKeys: new Set([...spentKeys, ...leftSpent]),
     staleWorker,
+    lostSession,
   };
 }
 
@@ -759,9 +820,10 @@ async function recordSpentNotes(
   try {
     // The read migrates, and its Set is the dedup: sealed blobs are randomized
     // ciphertext, so equality of records can only be checked on the plaintext.
-    // A skew-blinded read (`staleWorker`) only weakens the dedup — this path
-    // APPENDS and never rewrites, so the worst outcome is a duplicate blob the
-    // read-side Set absorbs. No guard needed, unlike the rewriting stores.
+    // A blinded read (`staleWorker` or `lostSession`) only weakens the dedup —
+    // this path APPENDS and never rewrites, so the worst outcome is a
+    // duplicate blob the read-side Set absorbs. No guard needed, unlike the
+    // rewriting stores.
     const existing = (await openLinkage(meta, walletPubkey)).spentKeys;
     const fresh = noteKeys.filter((k) => !existing.has(k));
     if (fresh.length === 0) return;
@@ -802,16 +864,23 @@ async function recordSpentNotes(
  * sealed spends (from either source), so a picker filtering on it may re-offer
  * a note that is already gone — the caller must surface the flag alongside
  * whatever protection the readable sources still gave.
+ *
+ * `lostSession: true` is the same shortfall with a different cure: the worker
+ * restarted mid-session and lost the seeds, so the sealed spends are
+ * unreadable until the user SIGNS again — a reload alone changes nothing.
+ * The caller must say the right cure for the flag it renders.
  */
 export async function knownSpentNoteKeys(
   meta: string | null,
   walletPubkey: string,
-): Promise<{ keys: Set<string>; staleWorker: boolean }> {
+): Promise<{ keys: Set<string>; staleWorker: boolean; lostSession: boolean }> {
   const keys = new Set<string>();
   let staleWorker = false;
+  let lostSession = false;
   if (meta) {
     const view = await openLinkage(meta, walletPubkey);
     staleWorker = view.staleWorker;
+    lostSession = view.lostSession;
     for (const k of view.spentKeys) keys.add(k);
     for (const p of view.payouts) keys.add(`${p.pool}:${p.leafIndex}`);
   } else {
@@ -824,15 +893,17 @@ export async function knownSpentNoteKeys(
   // and its loader internally unions the v1 cleartext leftovers until they are
   // provably empty — a subscribed note that stopped being known here would
   // walk back into a picker and fail only after a proof and ~1 SOL of rent.
-  // Skew from either store leaves this set short, so the flags OR together.
+  // Skew or a lost session in either store leaves this set short, so each
+  // flag ORs across the stores it blinds.
   const subs = await loadSubscriptions(meta, walletPubkey);
   staleWorker = staleWorker || subs.staleWorker;
+  lostSession = lostSession || subs.lostSession;
   for (const s of subs.records) {
     if (s.pool !== undefined && s.leafIndex !== undefined) {
       keys.add(`${s.pool}:${s.leafIndex}`);
     }
   }
-  return { keys, staleWorker };
+  return { keys, staleWorker, lostSession };
 }
 
 // ---------------------------------------------------------------------------
@@ -990,9 +1061,10 @@ export async function recordPayout(
     // The read migrates, and its records are the dedup: sealed blobs are
     // randomized ciphertext, so (pool, leafIndex) can only be compared on the
     // plaintext the worker hands back.
-    // A skew-blinded read (`staleWorker`) only weakens the dedup — this path
-    // APPENDS and never rewrites, so the worst outcome is a duplicate blob
-    // the read-side (pool, leafIndex) map absorbs. No guard needed.
+    // A blinded read (`staleWorker` or `lostSession`) only weakens the dedup —
+    // this path APPENDS and never rewrites, so the worst outcome is a
+    // duplicate blob the read-side (pool, leafIndex) map absorbs. No guard
+    // needed.
     const existing = (await openLinkage(meta, walletPubkey)).payouts;
     if (existing.some((r) => r.pool === rec.pool && r.leafIndex === rec.leafIndex)) return;
     const session = await storeSession(meta);
@@ -1020,13 +1092,16 @@ export async function recordPayout(
 /** `staleWorker: true` = a skewed worker could not open the sealed records, so
  *  `records` is missing every sealed payout — money the user cannot otherwise
  *  see. The caller must say so (a reload heals it), never render the shortfall
- *  as an empty history. */
+ *  as an empty history.
+ *  `lostSession: true` = the worker restarted and lost the seeds mid-session:
+ *  the same records are missing, but only signing again heals it — the caller
+ *  must never show the reload line for this one. */
 export async function loadPayouts(
   meta: string,
   walletPubkey: string,
-): Promise<{ records: PayoutRecord[]; staleWorker: boolean }> {
+): Promise<{ records: PayoutRecord[]; staleWorker: boolean; lostSession: boolean }> {
   const view = await openLinkage(meta, walletPubkey);
-  return { records: view.payouts, staleWorker: view.staleWorker };
+  return { records: view.payouts, staleWorker: view.staleWorker, lostSession: view.lostSession };
 }
 
 /** Exactly the sweep transaction's own fee, so the payout account lands on zero.

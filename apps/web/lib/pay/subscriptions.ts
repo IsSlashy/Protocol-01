@@ -51,6 +51,7 @@ import {
 
 import { poolRequest } from '../privacy/workerClient';
 import {
+  isSessionLostError,
   openSealedRecords,
   readMap,
   sealRecord,
@@ -490,24 +491,60 @@ function announceSubscriptionsChanged(): void {
  * records: `records` is missing every sealed one, and the caller must say so
  * (one reload heals it) instead of painting the shortfall as an empty list. A
  * missing session is NOT skew — nothing migrated, v1 serves in full.
+ *
+ * `lostSession: true` is the third state, same shortfall as skew with a
+ * DIFFERENT cure: the worker restarted under the open tab and lost the seeds
+ * mid-session, so the sealed records are unreadable until the user SIGNS
+ * again — a reload alone changes nothing. Classified by position, exactly as
+ * `shieldClient.openLinkage` documents: a no-keys rejection from
+ * `storeSession` itself is "not signed yet" (v1 complete, no flag); the same
+ * rejection from the open, after `storeSession` succeeded, is the restart.
+ * Both flags are gated on sealed blobs actually existing, so a genuinely
+ * empty store can never raise either.
  */
 export async function loadSubscriptions(
   meta: string | null,
   walletPubkey: string,
-): Promise<{ records: StoredSubscription[]; staleWorker: boolean }> {
+): Promise<{ records: StoredSubscription[]; staleWorker: boolean; lostSession: boolean }> {
   let sealed: StoredSubscription[] = [];
   let staleWorker = false;
+  let lostSession = false;
+  // Snapshot v1 BEFORE any migration: the union below is built from this
+  // copy, so rows sealed by this very call keep serving on this call's
+  // answer, whatever the worker turns out to be able to read. The by-vault
+  // map deduplicates, so nothing is counted twice.
+  const left = readMap<StoredSubscription>(SUB_STORE_KEY_V1)[walletPubkey] ?? [];
   if (meta) {
+    let session: StoreSession | null = null;
     try {
-      const session = await storeSession(meta);
-      migrateSubscriptionStore(session, walletPubkey);
-      ({ records: sealed, staleWorker } = await openSubscriptions(meta, session));
+      session = await storeSession(meta);
     } catch {
-      // No worker session: the v1 leftovers below still serve.
+      // No worker session ever derived: the v1 snapshot serves in full.
+    }
+    if (session) {
+      const blobs = readMap<string>(SUB_STORE_KEY)[session.label] ?? [];
+      if (blobs.length > 0 || left.length > 0) {
+        try {
+          // A zero-blob call here is the migration probe (see
+          // `openSealedRecords`): it proves the worker can read the kind
+          // before the v1 rows are taken away from the cleartext store.
+          const res = await openSealedRecords(meta, blobs);
+          const answered = res.subscriptions !== undefined;
+          // User-facing skew only when sealed records were actually being
+          // read — a skewed answer to the probe hides nothing (the snapshot
+          // serves the whole list) and only vetoes the migration.
+          staleWorker = !answered && blobs.length > 0;
+          sealed = (res.subscriptions ?? []).map((r) => cleanRecord(r));
+          if (answered) migrateSubscriptionStore(session, walletPubkey);
+        } catch (err) {
+          // Restart, not skew: seeds existed (storeSession succeeded) and are
+          // gone now. Same gate as the skew flag, same reason.
+          if (isSessionLostError(err) && blobs.length > 0) lostSession = true;
+          // Anything else degrades exactly as before: v1 serves, flagless.
+        }
+      }
     }
   }
-  // Read v1 AFTER the migration above, so a migrated row is not counted twice.
-  const left = readMap<StoredSubscription>(SUB_STORE_KEY_V1)[walletPubkey] ?? [];
   const byVault = new Map<string, StoredSubscription>();
   // Sealed records: LAST write wins. Append order is chronological, and the
   // stale-append path in `recordSubscription` relies on the newest append
@@ -517,7 +554,11 @@ export async function loadSubscriptions(
   for (const rec of left) {
     if (!byVault.has(rec.vaultPDA)) byVault.set(rec.vaultPDA, rec);
   }
-  return { records: [...byVault.values()].sort((a, b) => b.openedAt - a.openedAt), staleWorker };
+  return {
+    records: [...byVault.values()].sort((a, b) => b.openedAt - a.openedAt),
+    staleWorker,
+    lostSession,
+  };
 }
 
 /**

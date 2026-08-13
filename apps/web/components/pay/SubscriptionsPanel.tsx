@@ -220,6 +220,11 @@ export default function SubscriptionsPanel({
   // the panel must say "reload", NOT paint the ordinary "nothing tracked yet"
   // empty state — to a user that reads as their subscriptions being gone.
   const [staleWorker, setStaleWorker] = useState(false);
+  // Same missing rows, different cure: the worker RESTARTED and lost the
+  // seeds mid-session, healed by signing again — the reload line would send
+  // the user to a step that does not fix it. Assigned per refresh, like
+  // `staleWorker`.
+  const [lostSession, setLostSession] = useState(false);
 
   // Vendor roster, best effort and cached: it only decorates the list with
   // merchant names and lets an imported vault pick up its service tag. A
@@ -244,9 +249,14 @@ export default function SubscriptionsPanel({
     // Async since L5b: the records are sealed and the worker opens them. With
     // no session yet the loader serves the v1 cleartext view, so the list
     // still paints.
-    const { records: recs, staleWorker: stale } = await loadSubscriptions(meta, walletKey);
+    const {
+      records: recs,
+      staleWorker: stale,
+      lostSession: lost,
+    } = await loadSubscriptions(meta, walletKey);
     setRecords(recs);
     setStaleWorker(stale);
+    setLostSession(lost);
     setLive((prev) => {
       const next: Record<string, VaultLive> = {};
       for (const r of recs) next[r.vaultPDA] = prev[r.vaultPDA] ?? { kind: "loading" };
@@ -722,19 +732,20 @@ export default function SubscriptionsPanel({
             </button>
           </div>
 
-          {/* The skew notice REPLACES the empty line, and outranks it: after
-              migration a skewed worker reads the store as empty, and "No
-              subscriptions tracked yet" over records that exist is the exact
-              false alarm task #12 exists to prevent. A genuinely empty store
-              never sets `staleWorker` (the loader asks the worker nothing),
-              so the ordinary empty state below is untouched. */}
-          {staleWorker && (
+          {/* The notice REPLACES the empty line, and outranks it: after
+              migration a skewed OR restarted worker reads the store as empty,
+              and "No subscriptions tracked yet" over records that exist is
+              the exact false alarm tasks #12 and #16 exist to prevent — each
+              cause gets its own cure line. A genuinely empty store never sets
+              either flag (the loader asks the worker nothing), so the
+              ordinary empty state below is untouched. */}
+          {(staleWorker || lostSession) && (
             <div className="mt-3">
-              <StaleWorkerNotice />
+              <StaleWorkerNotice lostSession={lostSession && !staleWorker} />
             </div>
           )}
 
-          {records.length === 0 && !staleWorker && (
+          {records.length === 0 && !staleWorker && !lostSession && (
             <p className="mt-3 text-xs text-p01-text-muted">
               No subscriptions tracked in this browser yet. Subscribe from the Subscribe tab, or
               track an existing vault by its address below. Subscriptions made here before this

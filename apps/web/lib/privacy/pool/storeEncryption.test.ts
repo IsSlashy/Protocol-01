@@ -39,6 +39,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { derivePoolSeedLegacy } from './seedDerivation';
 import { findPoolV3 } from './denominatedPool';
 import { createNoteEncryptionAddress, encryptNote } from './noteCrypto';
+import { storeSession } from '../sealedStore';
 
 // ---------------------------------------------------------------------------
 // Harness: real handlers behind the poolRequest seam, with a wire log
@@ -211,6 +212,11 @@ describe('v1 → v2 migration', () => {
     // is complete, and a "reload this tab" banner over it would be the false
     // alarm in the other direction.
     expect(view.staleWorker).toBe(false);
+    // ...and not a RESTARTED one either: `storeSession` itself refused, so
+    // this page never saw the worker hold these seeds — the "not signed yet"
+    // shape, where no banner is owed at all. The restart classification is
+    // positional (task #16 describe below), never a message match here.
+    expect(view.lostSession).toBe(false);
     expect((await shieldClient.knownSpentNoteKeys(noSeeds, WALLET)).keys.has('poolA:1')).toBe(true);
 
     // Migration must NOT have run: there is no label to file under and no
@@ -562,11 +568,17 @@ describe('version-skewed worker (task #12)', () => {
     expect(await subscriptions.loadSubscriptions(META, WALLET)).toEqual({
       records: [],
       staleWorker: false,
+      lostSession: false,
     });
-    expect(await handoffs.loadHandoffs(META, WALLET)).toEqual({ records: [], staleWorker: false });
+    expect(await handoffs.loadHandoffs(META, WALLET)).toEqual({
+      records: [],
+      staleWorker: false,
+      lostSession: false,
+    });
     expect(await shieldClient.loadPayouts(META, WALLET)).toEqual({
       records: [],
       staleWorker: false,
+      lostSession: false,
     });
     expect(wire.log.join('\n')).not.toContain('poolOpenRecords');
 
@@ -585,11 +597,18 @@ describe('version-skewed worker (task #12)', () => {
     // so instead of serving the emptiness as truth.
     skew.strip = ['subscriptions', 'handoffs', 'payouts', 'spentKeys'];
     const subs = await subscriptions.loadSubscriptions(META, WALLET);
-    expect(subs).toEqual({ records: [], staleWorker: true });
-    expect(await handoffs.loadHandoffs(META, WALLET)).toEqual({ records: [], staleWorker: true });
+    // Skew and a lost session must never be confused: each banner's
+    // instruction is a lie for the other's cause.
+    expect(subs).toEqual({ records: [], staleWorker: true, lostSession: false });
+    expect(await handoffs.loadHandoffs(META, WALLET)).toEqual({
+      records: [],
+      staleWorker: true,
+      lostSession: false,
+    });
     expect((await shieldClient.loadPayouts(META, WALLET)).staleWorker).toBe(true);
     const spent = await shieldClient.knownSpentNoteKeys(META, WALLET);
     expect(spent.staleWorker).toBe(true);
+    expect(spent.lostSession).toBe(false);
 
     // HEALED (the reload): the same blobs, a current worker, everything back.
     // This is what makes the notice's "your records are intact" sentence true.
@@ -613,6 +632,7 @@ describe('version-skewed worker (task #12)', () => {
     expect(await shieldClient.loadPayouts(META, WALLET)).toEqual({
       records: [REC],
       staleWorker: false,
+      lostSession: false,
     });
     // knownSpentNoteKeys unions both stores, so the subscription skew flags it
     // while the payout-derived key still contributes.
@@ -665,6 +685,172 @@ describe('version-skewed worker (task #12)', () => {
     skew.strip = [];
     const { records } = await handoffs.loadHandoffs(META, WALLET);
     expect(records.map((r) => r.leafIndex).sort()).toEqual([57, 58]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. Restarted worker (task #16) — the SECOND way the lists can paint empty,
+//    with a DIFFERENT cure. The worker crashes and workerClient reboots it
+//    with every seed wiped, while the main thread keeps its resolved
+//    `storeSession` (label and address are stable pure values). Reads then
+//    reach `poolOpenRecords`, which refuses with the real `requireSeeds`
+//    throw. Collapsing that into an empty view is the original bug; collapsing
+//    it into the RELOAD banner is the subtler one — the user reloads, nothing
+//    changes until they sign, and they conclude the money is gone. Only a
+//    fresh signature (deriveMeta → setPoolSeed) heals it, and these tests
+//    drive the REAL handler so a reworded worker throw fails here instead of
+//    silently blinding `isSessionLostError`.
+// ---------------------------------------------------------------------------
+
+describe('restarted worker (task #16)', () => {
+  const HREC = { pool: POOL_58, leafIndex: 57, sealedAt: 1_723_400_000_000 };
+  const SUB = {
+    vaultPDA: '7WaBm7Kq5WDYa5ykFgaUes1ZCXHXqkyfquJEkmBxzyqw',
+    retailer: 'q8R2oNtnCH1Y3Pgjm8okR1Vz6wuxwMwPyoCxm5emLdr',
+    serviceTag: 'bitwarden-test',
+    token: 'SOL',
+    denomination: 1,
+    rate: '50000000',
+    intervalSlots: '1500',
+    openedAt: 1_000,
+  };
+
+  it('distinguishes the three states: restarted says re-sign, never reload; empty stays ordinary; re-signing heals', async () => {
+    // Populated under a live session. This also caches the storeSession the
+    // detection depends on, exactly as a real page-life would have.
+    await subscriptions.recordSubscription(META, WALLET, SUB);
+    await handoffs.recordHandoff(META, WALLET, HREC);
+    await shieldClient.recordPayout(META, WALLET, REC);
+    await shieldClient.recordSpentNote(META, WALLET, `${POOL_58}:57`);
+
+    // THE RESTART: a rebooted worker is exactly this module state — seeds
+    // gone, everything else identical. Nothing is stubbed, so the readers
+    // classify the real rejection string.
+    clearPoolState();
+
+    // Every loader says LOST SESSION, never skew: the records really are
+    // unreadable from this tab until a signature, and saying "reload" here
+    // would be the wrong instruction.
+    expect(await subscriptions.loadSubscriptions(META, WALLET)).toEqual({
+      records: [],
+      staleWorker: false,
+      lostSession: true,
+    });
+    expect(await handoffs.loadHandoffs(META, WALLET)).toEqual({
+      records: [],
+      staleWorker: false,
+      lostSession: true,
+    });
+    expect(await shieldClient.loadPayouts(META, WALLET)).toEqual({
+      records: [],
+      staleWorker: false,
+      lostSession: true,
+    });
+    const spent = await shieldClient.knownSpentNoteKeys(META, WALLET);
+    expect(spent.lostSession).toBe(true);
+    expect(spent.staleWorker).toBe(false);
+
+    // HEALED BY RE-SIGNING: deriveMeta → setPoolSeed is all a new signature
+    // does, and no reload happened in between. Everything is back — the
+    // notice's "your records are safe on this device" sentence, verified.
+    setPoolSeed(META, SIGNATURE);
+    expect(
+      (await subscriptions.loadSubscriptions(META, WALLET)).records.map((r) => r.vaultPDA),
+    ).toEqual([SUB.vaultPDA]);
+    expect(await handoffs.loadHandoffs(META, WALLET)).toEqual({
+      records: [HREC],
+      staleWorker: false,
+      lostSession: false,
+    });
+    expect(await shieldClient.loadPayouts(META, WALLET)).toEqual({
+      records: [REC],
+      staleWorker: false,
+      lostSession: false,
+    });
+    expect((await shieldClient.knownSpentNoteKeys(META, WALLET)).keys.has(`${POOL_58}:57`)).toBe(
+      true,
+    );
+  });
+
+  it('a genuinely empty store under a restarted worker stays ordinary — no round trip, no flag', async () => {
+    // The session existed (cached on the main thread), but NOTHING was ever
+    // stored. The loaders must short-circuit before the worker is asked, so
+    // the empty wallet cannot be told to re-sign over an empty list.
+    await storeSession(META);
+    clearPoolState();
+    wire.log.length = 0;
+
+    expect(await subscriptions.loadSubscriptions(META, WALLET)).toEqual({
+      records: [],
+      staleWorker: false,
+      lostSession: false,
+    });
+    expect(await handoffs.loadHandoffs(META, WALLET)).toEqual({
+      records: [],
+      staleWorker: false,
+      lostSession: false,
+    });
+    expect(await shieldClient.loadPayouts(META, WALLET)).toEqual({
+      records: [],
+      staleWorker: false,
+      lostSession: false,
+    });
+    const spent = await shieldClient.knownSpentNoteKeys(META, WALLET);
+    expect(spent.staleWorker).toBe(false);
+    expect(spent.lostSession).toBe(false);
+    // Positive control: no read even reached the worker's record opener.
+    expect(wire.log.join('\n')).not.toContain('poolOpenRecords');
+  });
+
+  it('an unmigrated v1 store never disappears behind the restart — migration waits for a readable worker', async () => {
+    // A pre-L5 user's rows, still cleartext, and a session that was live once.
+    ls.setItem('p01_pay_pool_payouts_v1', JSON.stringify({ [WALLET]: [REC] }));
+    ls.setItem('p01_pay_subscriptions_v1', JSON.stringify({ [WALLET]: [SUB] }));
+    await storeSession(META);
+    clearPoolState();
+
+    // The reads keep serving the v1 rows IN FULL, unflagged: nothing sealed
+    // exists for this identity, so nothing is hidden and no banner is owed.
+    // Crucially the migration did NOT run — sealing these rows moments before
+    // discovering the worker cannot read them back would have made records
+    // the user could see seconds ago vanish.
+    const pay = await shieldClient.loadPayouts(META, WALLET);
+    expect(pay).toEqual({ records: [REC], staleWorker: false, lostSession: false });
+    expect(ls.getItem('p01_pay_pool_payouts_v1')).not.toBeNull();
+    const subs = await subscriptions.loadSubscriptions(META, WALLET);
+    expect(subs.records).toEqual([SUB]);
+    expect(subs.lostSession).toBe(false);
+    expect(ls.getItem('p01_pay_subscriptions_v1')).not.toBeNull();
+
+    // Once the user signs again, the next read migrates and keeps serving.
+    setPoolSeed(META, SIGNATURE);
+    expect((await shieldClient.loadPayouts(META, WALLET)).records).toEqual([REC]);
+    expect(ls.getItem('p01_pay_pool_payouts_v1')).toBeNull();
+    expect((await shieldClient.loadPayouts(META, WALLET)).records).toEqual([REC]);
+    expect(
+      (await subscriptions.loadSubscriptions(META, WALLET)).records.map((r) => r.vaultPDA),
+    ).toEqual([SUB.vaultPDA]);
+    expect(ls.getItem('p01_pay_subscriptions_v1')).toBeNull();
+  });
+
+  it('writers under a restarted worker never destroy sealed records', async () => {
+    await subscriptions.recordSubscription(META, WALLET, SUB);
+    await handoffs.recordHandoff(META, WALLET, HREC);
+    clearPoolState();
+
+    // A record lands in the v1 fallback (a worse index beats a lost record);
+    // a forget refuses the rewrite it cannot do honestly. Neither may touch
+    // the sealed blobs it cannot read.
+    await subscriptions.recordSubscription(META, WALLET, { ...SUB, vaultPDA: 'vault-b' });
+    await subscriptions.forgetSubscription(META, WALLET, SUB.vaultPDA);
+    await handoffs.forgetHandoff(META, WALLET, HREC.pool, HREC.leafIndex);
+
+    setPoolSeed(META, SIGNATURE);
+    const { records } = await subscriptions.loadSubscriptions(META, WALLET);
+    // vault-a survived the blind forget (one click away in a healed tab beats
+    // records destroyed), and vault-b arrived through the fallback.
+    expect(records.map((r) => r.vaultPDA).sort()).toEqual(['7WaBm7Kq5WDYa5ykFgaUes1ZCXHXqkyfquJEkmBxzyqw', 'vault-b']);
+    expect((await handoffs.loadHandoffs(META, WALLET)).records).toEqual([HREC]);
   });
 });
 

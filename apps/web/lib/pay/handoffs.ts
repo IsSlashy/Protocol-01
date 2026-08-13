@@ -42,6 +42,7 @@
  */
 
 import {
+  isSessionLostError,
   openSealedRecords,
   readMap,
   sealRecord,
@@ -289,41 +290,83 @@ export async function forgetHandoff(
  * (a reload heals it) rather than render the shortfall as the truth. A worker
  * that is merely absent (no session) is NOT skew: nothing migrated, v1 serves
  * in full, the flag stays false.
+ *
+ * `lostSession: true` is the third state: the worker restarted under the open
+ * tab and lost the seeds mid-session, so the sealed records are unreadable
+ * until the user SIGNS again — a reload alone changes nothing, and the caller
+ * must not claim it would. Classified by position, as documented on
+ * `shieldClient.openLinkage`; gated on sealed blobs existing, so a genuinely
+ * empty store can never raise it.
  */
 export async function loadHandoffs(
   meta: string | null,
   walletPubkey: string,
-): Promise<{ records: HandoffRecord[]; staleWorker: boolean }> {
+): Promise<{ records: HandoffRecord[]; staleWorker: boolean; lostSession: boolean }> {
   let sealed: HandoffRecord[] = [];
   let staleWorker = false;
+  let lostSession = false;
+  // Snapshot v1 BEFORE any migration: the union below is built from this
+  // copy, so rows sealed by this very call keep serving on this call's
+  // answer, whatever the worker turns out to be able to read. The by-key map
+  // deduplicates, so nothing is counted twice.
+  const left = readMap<HandoffRecord>(HANDOFF_STORE_KEY_V1)[walletPubkey] ?? [];
   if (meta) {
+    let session: StoreSession | null = null;
     try {
-      const session = await storeSession(meta);
-      migrateHandoffStore(session, walletPubkey);
-      ({ records: sealed, staleWorker } = await openHandoffs(meta, session));
+      session = await storeSession(meta);
     } catch {
-      // No worker session: the v1 leftovers below still serve.
+      // No worker session ever derived: the v1 snapshot serves in full.
+    }
+    if (session) {
+      const blobs = readMap<string>(HANDOFF_STORE_KEY)[session.label] ?? [];
+      if (blobs.length > 0 || left.length > 0) {
+        try {
+          // A zero-blob call here is the migration probe (see
+          // `openSealedRecords`): it proves the worker can read the kind
+          // before the v1 rows are taken away from the cleartext store.
+          const res = await openSealedRecords(meta, blobs);
+          const answered = res.handoffs !== undefined;
+          // User-facing skew only when sealed records were actually being
+          // read — a skewed answer to the probe hides nothing (the snapshot
+          // serves the whole list) and only vetoes the migration.
+          staleWorker = !answered && blobs.length > 0;
+          sealed = res.handoffs ?? [];
+          if (answered) migrateHandoffStore(session, walletPubkey);
+        } catch (err) {
+          // Restart, not skew: seeds existed (storeSession succeeded) and are
+          // gone now. Same gate as the skew flag, same reason.
+          if (isSessionLostError(err) && blobs.length > 0) lostSession = true;
+          // Anything else degrades exactly as before: v1 serves, flagless.
+        }
+      }
     }
   }
-  // Read v1 AFTER the migration above, so a migrated row is not counted twice.
-  const left = readMap<HandoffRecord>(HANDOFF_STORE_KEY_V1)[walletPubkey] ?? [];
   const byKey = new Map<string, HandoffRecord>();
   for (const rec of [...sealed, ...left]) {
     const key = handoffKey(rec.pool, rec.leafIndex);
     const prev = byKey.get(key);
     if (!prev || rec.sealedAt >= prev.sealedAt) byKey.set(key, rec);
   }
-  return { records: [...byKey.values()].sort((a, b) => b.sealedAt - a.sealedAt), staleWorker };
+  return {
+    records: [...byKey.values()].sort((a, b) => b.sealedAt - a.sealedAt),
+    staleWorker,
+    lostSession,
+  };
 }
 
 /** `pool:leafIndex` of every note this browser is waiting to see claimed.
- *  `staleWorker` passes through from `loadHandoffs` — a stale set is missing
- *  keys, and a picker filtering on it may re-offer a note already promised
- *  away, so the caller must surface the flag, not just take the keys. */
+ *  `staleWorker` and `lostSession` pass through from `loadHandoffs` — either
+ *  way the set is missing keys, and a picker filtering on it may re-offer a
+ *  note already promised away, so the caller must surface the flag it got,
+ *  not just take the keys. */
 export async function handoffKeys(
   meta: string | null,
   walletPubkey: string,
-): Promise<{ keys: Set<string>; staleWorker: boolean }> {
-  const { records, staleWorker } = await loadHandoffs(meta, walletPubkey);
-  return { keys: new Set(records.map((r) => handoffKey(r.pool, r.leafIndex))), staleWorker };
+): Promise<{ keys: Set<string>; staleWorker: boolean; lostSession: boolean }> {
+  const { records, staleWorker, lostSession } = await loadHandoffs(meta, walletPubkey);
+  return {
+    keys: new Set(records.map((r) => handoffKey(r.pool, r.leafIndex))),
+    staleWorker,
+    lostSession,
+  };
 }

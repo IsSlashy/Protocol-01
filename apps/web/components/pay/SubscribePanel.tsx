@@ -255,11 +255,19 @@ export default function SubscribePanel({
   const [scanning, setScanning] = useState(false);
   const [scanStep, setScanStep] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  /** True from the first partial scan result until the scan settles: the list
+   *  came from the fast blinded pass while the legacy epoch search — the only
+   *  pass that can find pre-2026-07-25 notes — is still running. The picker
+   *  must say so rather than present the list as complete. */
+  const [checkingOlderNotes, setCheckingOlderNotes] = useState(false);
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
 
   const rescan = useCallback(async () => {
     setScanning(true);
     setScanError(null);
+    // Whether the scan's fast pass painted anything before a failure — decides
+    // what the error message below must admit about the list on screen.
+    let paintedFromPartialScan = false;
     try {
       // "SOL" is not a shortcut: `scanPool` in shieldClient.ts:191-197 is typed
       // to that one literal, so the SOL pools are the only notes this path can
@@ -298,18 +306,36 @@ export default function SubscribePanel({
         .then((res) => {
           setSpentHere((prev) => new Set([...prev, ...res.keys]));
           setStaleWorker((prev) => prev || res.staleWorker);
+          setLostSession((prev) => prev || res.lostSession);
         })
         .catch(() => {});
-      const res = await shieldClient.scanPool(meta, 'SOL', setScanStep);
+      // SECOND PAINT, chain-read: the scan streams the blinded pass's results
+      // while the legacy epoch search (~41 s of CPU per derivation) still
+      // runs — same pattern as PoolPanel. `checkingOlderNotes` keeps the
+      // early paint honest.
+      const res = await shieldClient.scanPool(meta, 'SOL', setScanStep, (partial) => {
+        paintedFromPartialScan = true;
+        setCheckingOlderNotes(true);
+        setNotes(shieldClient.mergeScanWithLocal(partial.notes, localNotes));
+      });
       // MERGE, not replace: a RECEIVED note's secrets came from the sender's
       // seed, so the seed-deriving chain scan can never return it; replacing
       // wholesale dropped it from this picker the moment the slow scan landed.
       setNotes(shieldClient.mergeScanWithLocal(res.notes, localNotes));
     } catch (e) {
-      setScanError((e as Error).message || 'Pool scan failed.');
+      const msg = (e as Error).message || 'Pool scan failed.';
+      // A partial paint followed by a failure leaves a real but possibly
+      // incomplete list on screen — the error must say so, not less.
+      setScanError(
+        paintedFromPartialScan
+          ? msg +
+              ' The notes shown are from an unfinished scan and older notes may be missing — rescan to finish the check.'
+          : msg,
+      );
     } finally {
       setScanning(false);
       setScanStep(null);
+      setCheckingOlderNotes(false);
     }
   }, [meta]);
 
@@ -352,11 +378,16 @@ export default function SubscribePanel({
   // locking such a note in is the costliest place to be wrong. Latched with
   // `|| next` since several async reads feed it; reset on a wallet switch.
   const [staleWorker, setStaleWorker] = useState(false);
+  // Same symptom, different cure: the worker RESTARTED and lost the seeds
+  // mid-session — healed by signing again, not by a reload, so the reload
+  // line must never claim it. Latched and reset exactly like `staleWorker`.
+  const [lostSession, setLostSession] = useState(false);
   useEffect(() => {
     // Async read (encrypted store), with a stale guard so a slow answer never
     // paints one wallet's spends onto another after a switch.
     setSpentHere(new Set());
     setStaleWorker(false);
+    setLostSession(false);
     let stale = false;
     void shieldClient
       .knownSpentNoteKeys(meta, owner.toBase58())
@@ -364,6 +395,7 @@ export default function SubscribePanel({
         if (!stale) {
           setSpentHere(res.keys);
           setStaleWorker((prev) => prev || res.staleWorker);
+          setLostSession((prev) => prev || res.lostSession);
         }
       })
       .catch(() => {});
@@ -374,6 +406,7 @@ export default function SubscribePanel({
           if (!stale) {
             setHandedOver(res.keys);
             setStaleWorker((prev) => prev || res.staleWorker);
+            setLostSession((prev) => prev || res.lostSession);
           }
         })
         .catch(() => {});
@@ -668,15 +701,22 @@ export default function SubscribePanel({
             </button>
           </div>
 
+          {checkingOlderNotes && (
+            <p className="mt-2 text-xs text-p01-text-dim">
+              Still checking for older notes — anything found will be added here.
+            </p>
+          )}
           {scanStep && <p className="mt-2 text-xs text-p01-text-dim">{scanStep}</p>}
           {scanError && <p className="mt-2 text-sm text-p01-red">{scanError}</p>}
 
-          {/* Skew blunts the spent/handed-over FILTERS, so a note below may
-              already be gone or promised away — the worst place to find out is
-              after locking it into an uncancellable vault. Say it here. */}
-          {staleWorker && (
+          {/* Skew or a lost session blunts the spent/handed-over FILTERS, so
+              a note below may already be gone or promised away — the worst
+              place to find out is after locking it into an uncancellable
+              vault. Say the right cure here; skew wins when both latched
+              (the reload forces the signing gate anyway). */}
+          {(staleWorker || lostSession) && (
             <div className="mt-2">
-              <StaleWorkerNotice />
+              <StaleWorkerNotice lostSession={lostSession && !staleWorker} />
             </div>
           )}
 

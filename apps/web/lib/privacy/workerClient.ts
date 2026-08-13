@@ -28,6 +28,10 @@ interface Pending {
   /** Re-armed on every progress message so a long job never trips the timeout. */
   rearm?: () => void;
   onProgress?: (step: string) => void;
+  /** Partial results of a long pool job (today: `poolScan`'s blinded pass).
+   *  Each payload marks itself `complete: false`; the promise still resolves
+   *  with the terminal, complete response. */
+  onInterim?: (partial: never) => void;
 }
 
 /** Claims submit + confirm a transaction from inside the worker — allow for slow devnet. */
@@ -76,6 +80,13 @@ function ensureWorker(): Worker {
       p.rearm?.();
       return;
     }
+    if ('interim' in out) {
+      // A partial result is activity, so it re-arms the silence watchdog
+      // exactly like a progress step. Never terminal: the entry stays pending.
+      (p.onInterim as ((partial: unknown) => void) | undefined)?.(out.interim);
+      p.rearm?.();
+      return;
+    }
     pending.delete(out.id);
     clearTimeout(p.timer);
     if (out.ok) (p.resolve as (res: unknown) => void)(out.res);
@@ -95,7 +106,11 @@ function ensureWorker(): Worker {
 
 function post<T>(
   msg: DistributiveOmit<StealthWorkerIn, 'id'>,
-  opts: { timeoutMs?: number; onProgress?: (step: string) => void } = {},
+  opts: {
+    timeoutMs?: number;
+    onProgress?: (step: string) => void;
+    onInterim?: (partial: never) => void;
+  } = {},
 ): Promise<T> {
   const w = ensureWorker();
   const id = nextId++;
@@ -110,6 +125,7 @@ function post<T>(
       reject,
       timer: setTimeout(fire, timeoutMs),
       onProgress: opts.onProgress,
+      onInterim: opts.onInterim,
     };
     entry.rearm = () => {
       clearTimeout(entry.timer);
@@ -123,14 +139,24 @@ function post<T>(
 /**
  * Run a denominated-pool job in the worker. Long by nature (proof upload), so
  * it streams progress and uses a silence watchdog rather than a hard deadline.
+ *
+ * `onInterim` receives partial RESULTS where the job can honestly produce them
+ * — today only `poolScan`, whose blinded pass paints tens of seconds before
+ * the legacy epoch search finishes. Each payload marks itself incomplete; the
+ * returned promise still resolves with the terminal, complete response.
  */
 export function poolRequest<R extends PoolRequest>(
   req: R,
   onProgress?: (step: string) => void,
+  onInterim?: (partial: PoolResponseFor<R>) => void,
 ): Promise<PoolResponseFor<R>> {
   return post<PoolResponseFor<R>>(
     { type: 'pool', req },
-    { timeoutMs: POOL_SILENCE_TIMEOUT_MS, onProgress },
+    {
+      timeoutMs: POOL_SILENCE_TIMEOUT_MS,
+      onProgress,
+      onInterim: onInterim as ((partial: never) => void) | undefined,
+    },
   );
 }
 

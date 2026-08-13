@@ -150,6 +150,12 @@ export default function PoolPanel({
   const [scanning, setScanning] = useState(false);
   const [scanStep, setScanStep] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  /** True from the first partial scan result until the scan settles: the list
+   *  on screen came from the fast blinded pass while the legacy epoch search —
+   *  the only pass that can find pre-2026-07-25 notes — is still running. The
+   *  UI must say so; a partial list presented as complete reads as lost money
+   *  to anyone holding an older note. */
+  const [checkingOlderNotes, setCheckingOlderNotes] = useState(false);
 
   const [shielding, setShielding] = useState(false);
   const [step, setStep] = useState<string | null>(null);
@@ -212,6 +218,11 @@ export default function PoolPanel({
   // read of one store must not clear what another detected; reset only on a
   // wallet switch, alongside the sets it describes. A reload heals it anyway.
   const [staleWorker, setStaleWorker] = useState(false);
+  // Same symptom, different cure: the worker RESTARTED under this tab and
+  // lost the seeds mid-session, so nothing sealed opens until the user signs
+  // again — a reload alone changes nothing, so the reload line must never
+  // claim this state. Latched and reset exactly like `staleWorker`.
+  const [lostSession, setLostSession] = useState(false);
 
   const ownerKey = owner.toBase58();
   useEffect(() => {
@@ -223,12 +234,14 @@ export default function PoolPanel({
     // guard keeps a slow answer from painting one wallet's spends onto another.
     setSpentLocally(new Set());
     setStaleWorker(false);
+    setLostSession(false);
     let stale = false;
     void knownSpentNoteKeys(meta, ownerKey)
       .then((res) => {
         if (!stale) {
           setSpentLocally(res.keys);
           setStaleWorker((prev) => prev || res.staleWorker);
+          setLostSession((prev) => prev || res.lostSession);
         }
       })
       .catch(() => {});
@@ -238,6 +251,7 @@ export default function PoolPanel({
         if (!stale) {
           setHandedOver(res.keys);
           setStaleWorker((prev) => prev || res.staleWorker);
+          setLostSession((prev) => prev || res.lostSession);
         }
       })
       .catch(() => {});
@@ -256,6 +270,7 @@ export default function PoolPanel({
           if (!stale) {
             setHandedOver(res.keys);
             setStaleWorker((prev) => prev || res.staleWorker);
+            setLostSession((prev) => prev || res.lostSession);
           }
         })
         .catch(() => {});
@@ -292,6 +307,9 @@ export default function PoolPanel({
   const rescan = useCallback(async () => {
     setScanning(true);
     setScanError(null);
+    // Whether the scan's fast pass painted anything before a failure — decides
+    // what the error message below must admit about the list on screen.
+    let paintedFromPartialScan = false;
     try {
       // FIRST PAINT, no network. Notes shielded from this browser are already in
       // local storage, encrypted under the pool seed, and carry pool, leaf index,
@@ -330,6 +348,7 @@ export default function PoolPanel({
         .then((res) => {
           setSpentLocally((prev) => new Set([...prev, ...res.keys]));
           setStaleWorker((prev) => prev || res.staleWorker);
+          setLostSession((prev) => prev || res.lostSession);
         })
         .catch(() => {});
       // The encrypted-backup count for the balance card. Async for the same
@@ -337,7 +356,18 @@ export default function PoolPanel({
       void loadEncryptedNotes(meta, owner.toBase58())
         .then((blobs) => setStoredNotes(blobs.length))
         .catch(() => {});
-      const res = await scanPool(meta, "SOL", setScanStep);
+      // SECOND PAINT, chain-read: the scan streams the blinded pass's results
+      // as each pool is walked — real spent readings, milliseconds of hashing —
+      // while the legacy epoch search (~41 s of pure CPU per derivation, the
+      // only pass that can find a pre-blinding note) still runs. Painting them
+      // here is what turns the measured 41-82 s wait into seconds; the line
+      // gated by `checkingOlderNotes` is what keeps the early paint honest.
+      const res = await scanPool(meta, "SOL", setScanStep, (partial) => {
+        paintedFromPartialScan = true;
+        setCheckingOlderNotes(true);
+        setNotes(mergeScanWithLocal(partial.notes, localNotes));
+        setPoolSizes(partial.poolSizes);
+      });
       // MERGE, not replace: the chain scan re-derives from the pool seed, so a
       // RECEIVED note (secrets from the sender's seed) is invisible to it, and
       // replacing wholesale made received money vanish exactly when the slow
@@ -346,10 +376,19 @@ export default function PoolPanel({
       setNotesProvisional(false);
       setPoolSizes(res.poolSizes);
     } catch (e) {
-      setScanError((e as Error).message || "Pool scan failed.");
+      const msg = (e as Error).message || "Pool scan failed.";
+      // If the fast pass painted and the scan then died, the list on screen is
+      // real but may be missing older notes — say exactly that, not less.
+      setScanError(
+        paintedFromPartialScan
+          ? msg +
+              " The notes shown are from an unfinished scan and older notes may be missing — rescan to finish the check."
+          : msg,
+      );
     } finally {
       setScanning(false);
       setScanStep(null);
+      setCheckingOlderNotes(false);
     }
     // `ownerKey` alongside `meta`, matching every sibling effect in this file.
     // The callback closes over `owner`, and today the two always change together
@@ -404,11 +443,12 @@ export default function PoolPanel({
     async (root: Uint8Array) => {
       const byAddress = new Map<string, PayoutRecord>();
       const stored = await loadPayouts(meta, ownerKey);
-      // A skewed worker hides the sealed records; the re-derivation from
-      // scanned notes below still finds every address a live note names, so
-      // the list stays as complete as this tab can make it — and the notice
-      // says why it may still be short.
+      // A skewed or restarted worker hides the sealed records; the
+      // re-derivation from scanned notes below still finds every address a
+      // live note names, so the list stays as complete as this tab can make
+      // it — and the notice says why it may still be short.
       setStaleWorker((prev) => prev || stored.staleWorker);
+      setLostSession((prev) => prev || stored.lostSession);
       for (const rec of stored.records) byAddress.set(rec.address, rec);
       for (const n of notes) {
         const address = derivePoolPayoutKeypair(root, n.pool, n.leafIndex).publicKey.toBase58();
@@ -912,10 +952,16 @@ export default function PoolPanel({
       {/* ── Context column: what you hold and what it reveals ─────────────── */}
       <div className="min-w-0 space-y-5">
         {/* Above everything drawn from the sealed stores (notes list, spent
-            filter, handoff badges, payout history): when a skewed worker left
-            them short, the column must say so before it shows any of them.
+            filter, handoff badges, payout history): when a skewed or restarted
+            worker left them short, the column must say the right cure before
+            it shows any of them — reload for skew, sign-again for a lost
+            session. Skew wins when both latched: the reload lands the user on
+            the signing gate anyway (the identity never persists), so its
+            instruction heals both, while the reverse is not true.
             Never gates a button — standing rule, docs/PAY_UX_REWORK_PLAN.md. */}
-        {staleWorker && <StaleWorkerNotice />}
+        {(staleWorker || lostSession) && (
+          <StaleWorkerNotice lostSession={lostSession && !staleWorker} />
+        )}
 
         {/* Balance. The one place that says what you hold. */}
         <div className="card p-4">
@@ -944,6 +990,11 @@ export default function PoolPanel({
             <p className="mt-1 text-xs text-p01-text-dim">
               Shown from this device&apos;s records while the chain check runs. A note withdrawn
               elsewhere may still appear until the check finishes; it settles on its own.
+            </p>
+          )}
+          {checkingOlderNotes && (
+            <p className="mt-1 text-xs text-p01-text-dim">
+              Still checking for older notes — anything found will be added here.
             </p>
           )}
           {scanStep && <p className="mt-2 text-xs text-p01-text-dim">{scanStep}</p>}

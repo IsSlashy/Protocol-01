@@ -58,7 +58,7 @@ vi.mock("@/lib/privacy/shieldClient", () => ({
 // its `poolOpenRecords` predates the subscription record kind, so the
 // response carries no `subscriptions` array — the exact wire shape task #12
 // is about. The seed derivation matches the pattern of paySubscriptions.test.ts.
-const worker = vi.hoisted(() => ({ mode: "dead" as "dead" | "skew" }));
+const worker = vi.hoisted(() => ({ mode: "dead" as "dead" | "skew" | "restarted" }));
 
 vi.mock("@/lib/privacy/workerClient", async () => {
   const { sha256 } = await import("@noble/hashes/sha2.js");
@@ -68,6 +68,13 @@ vi.mock("@/lib/privacy/workerClient", async () => {
     poolRequest: vi.fn(async (req: { kind: string; meta: string; blobs?: string[] }) => {
       if (worker.mode === "dead") {
         throw new Error("The private-payment worker is unavailable in this test.");
+      }
+      if (worker.mode === "restarted") {
+        // The REAL `requireSeeds` refusal (worker/poolHandlers.ts): a worker
+        // rebooted after a crash holds no seeds for ANY meta. The page still
+        // reaches the open call because its cached storeSession survives —
+        // the exact task #16 shape.
+        throw new Error("No pool keys for this identity. Reconnect and sign to derive.");
       }
       const seed = sha256(utf8ToBytes(`test-seed:${req.meta}`));
       if (req.kind === "poolStoreLabel") {
@@ -514,6 +521,75 @@ describe("stale worker — version skew, task #12", () => {
     });
     render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
     expect(await screen.findByText("Bitwarden Test")).toBeInTheDocument();
+    expect(screen.queryByText(/reload this tab/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("restarted worker — lost session, task #16", () => {
+  // The SECOND cause of the same empty symptom, with a DIFFERENT cure. The
+  // worker crashed under the open tab and was rebooted with every seed wiped;
+  // the main thread's cached storeSession still carries the page to the open
+  // call, which the rebooted worker refuses. Re-SIGNING heals it; a reload
+  // alone does not — so showing the reload line here would send the user to
+  // a step that does not fix it, which is worse than no banner.
+
+  it("sealed records under a restarted worker: says 'sign again', never 'reload', never the empty state", async () => {
+    // Seed ONE sealed record while the worker session is live ("skew" mode
+    // answers the session handlers, and the first record needs no openRecords
+    // round trip, so it seals fine). This also caches the main-thread
+    // storeSession — the exact state a real tab is in at the crash.
+    worker.mode = "skew";
+    await recordSubscription("meta-restart", "wallet1", {
+      vaultPDA: VAULT_ADDR,
+      retailer: "q8R2oNtnCH1Y3Pgjm8okR1Vz6wuxwMwPyoCxm5emLdr",
+      serviceTag: "bitwarden-test",
+      token: "SOL",
+      denomination: 1,
+      rate: "50000000",
+      intervalSlots: "1500",
+      openedAt: Date.now(),
+    });
+    expect(localStorage.getItem("p01_pay_subscriptions_v1")).toBeNull();
+    expect(localStorage.getItem("p01_pay_subscriptions_v2")).not.toBeNull();
+
+    worker.mode = "restarted";
+    render(
+      <SubscriptionsPanel
+        meta="meta-restart"
+        owner={OWNER}
+        connection={fakeConnection({ slot: 1 })}
+      />,
+    );
+
+    expect(await screen.findByText(/sign to derive your keys again/i)).toBeInTheDocument();
+    // The wrong instruction for this cause — the user would try it, nothing
+    // would change, and the records would read as gone:
+    expect(screen.queryByText(/reload this tab/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/older version of the app/i)).not.toBeInTheDocument();
+    // And the false alarm both banners exist to prevent:
+    expect(
+      screen.queryByText(/No subscriptions tracked in this browser yet/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("genuinely empty under a restarted worker: ordinary empty state, no banner", async () => {
+    // A session existed (cached), but nothing was ever stored: the loader
+    // must short-circuit before the worker is asked, so an empty wallet is
+    // never told to re-sign over an empty list.
+    worker.mode = "skew";
+    await loadSubscriptions("meta-restart-empty", "wallet1");
+    worker.mode = "restarted";
+    render(
+      <SubscriptionsPanel
+        meta="meta-restart-empty"
+        owner={OWNER}
+        connection={fakeConnection({ slot: 1 })}
+      />,
+    );
+    expect(
+      await screen.findByText(/No subscriptions tracked in this browser yet/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/sign to derive your keys again/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/reload this tab/i)).not.toBeInTheDocument();
   });
 });

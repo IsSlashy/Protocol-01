@@ -37,7 +37,16 @@ export type StealthWorkerOut =
   | { id: number; ok: true; res: WorkerResponse | PoolResponse | null }
   | { id: number; ok: false; error: string }
   /** Intermediate step of a long pool job; never terminal. */
-  | { id: number; progress: string };
+  | { id: number; progress: string }
+  /**
+   * Partial RESULT of a long pool job; never terminal either. Today only
+   * `poolScan` emits these: the blinded pass's notes, so the page can paint
+   * tens of seconds before the legacy epoch search finishes. The payload marks
+   * itself `complete: false`. Version skew is one-directional by construction —
+   * the worker bundle's URL is pinned by the page bundle, so a page that
+   * predates this variant also runs a worker that never sends it.
+   */
+  | { id: number; interim: PoolResponse };
 
 function post(msg: StealthWorkerOut): void {
   (self as unknown as Worker).postMessage(msg);
@@ -54,7 +63,11 @@ self.onmessage = async (e: MessageEvent<StealthWorkerIn>) => {
     }
 
     if (msg.type === 'pool') {
-      const res = await handlePoolRequest(msg.req, (step) => post({ id: msg.id, progress: step }));
+      const res = await handlePoolRequest(
+        msg.req,
+        (step) => post({ id: msg.id, progress: step }),
+        (partial) => post({ id: msg.id, interim: partial }),
+      );
       post({ id: msg.id, ok: true, res });
       return;
     }

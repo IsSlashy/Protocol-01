@@ -711,6 +711,18 @@ export interface PoolScanResponse {
   /** Unspent total, in whole tokens. */
   shieldedBalance: number;
   poolSizes: PoolSizeView[];
+  /**
+   * Whether every pass has run. The scan is two-phase: the blinded single-hash
+   * pass identifies current-scheme notes in milliseconds and is emitted as an
+   * INTERIM response (`complete: false`) so the page can paint immediately; the
+   * legacy epoch search — ~41 s of pure hashing per derivation on the measured
+   * pools, the only way a pre-blinding note can be found — then runs and the
+   * terminal response carries `complete: true`. A consumer of an incomplete
+   * response must say the list is still being checked for older notes, and must
+   * never present it as the full picture: on this product a hidden note reads
+   * as lost money.
+   */
+  complete: boolean;
 }
 
 export interface PoolUnshieldPrepareResponse {
@@ -998,9 +1010,32 @@ function handlePoolScanLocal(req: PoolScanLocalRequest): PoolScanLocalResponse {
   return { kind: 'poolScanLocal', notes, skipped };
 }
 
+/**
+ * Two-phase scan, so the page paints in the time the FAST pass takes.
+ *
+ * Phase 1 walks every pool once (history + spent markers, the RPC cost that
+ * exists either way) and matches notes with the blinded single hash — one
+ * `createCommitmentV3` per leaf per derivation, milliseconds of CPU. Each
+ * pool's cumulative result is pushed through `onInterim` with
+ * `complete: false` the moment it exists.
+ *
+ * Phase 2 is the legacy epoch search: MEASURED 2026-08-12 at 0.1158 ms per
+ * hash, a 6000-epoch window for every leaf the blinded pass did not claim —
+ * 41 s per derivation on the 59-leaf pools, 82 s with a passphrase. That used
+ * to run before anything was shown; now it runs after the paint, reusing the
+ * phase-1 fetches so it costs zero additional RPC, and only its terminal
+ * response says `complete: true`.
+ *
+ * ⛔ Phase 2 is not optional and not skippable per leaf. Whether a foreign-
+ * looking leaf is actually a pre-blinding note of ours is EXACTLY what the
+ * epoch search decides; there is a known unspent legacy note at leaf 30 of
+ * the 0.1 SOL pool, and an "optimisation" that can hide a note is worse than
+ * the delay it removes.
+ */
 async function handlePoolScan(
   req: PoolScanRequest,
   onProgress?: (step: string) => void,
+  onInterim?: (partial: PoolScanResponse) => void,
 ): Promise<PoolScanResponse> {
   const conn = requireConnection();
   const candidates = seedsInSearchOrder(requireSeeds(req.meta));
@@ -1012,6 +1047,27 @@ async function handlePoolScan(
   const poolSizes: PoolSizeView[] = [];
   let shieldedBalance = 0;
 
+  /** Everything phase 2 needs, saved from phase 1 so nothing is refetched. */
+  const scanned: {
+    pool: PoolConfig;
+    commitments: Map<string, OnChainCommitment>;
+    spentSet: ReadonlySet<string>;
+    seenLeaves: Set<number>;
+  }[] = [];
+
+  const emitInterim = () =>
+    // Snapshots, not references: the arrays keep growing after the message is
+    // posted, and an interim that mutates under its consumer is a lie in slow
+    // motion.
+    onInterim?.({
+      kind: 'poolScan',
+      notes: [...notes],
+      shieldedBalance,
+      poolSizes: [...poolSizes],
+      complete: false,
+    });
+
+  // ── Phase 1: RPC reads + blinded single-hash matching, per pool ──────────
   for (const pool of pools) {
     onProgress?.(`Scanning the ${pool.denomination} ${pool.token} pool...`);
     const commitments = await fetchPoolCommitments(conn, pool.poolPDA);
@@ -1043,6 +1099,7 @@ async function handlePoolScan(
       const { notes: found } = await scanPoolForSeed(conn, pool, candidate.seed, {
         commitments,
         spentSet,
+        blindedOnly: true,
         onProgress,
       });
       for (const n of found) {
@@ -1055,9 +1112,33 @@ async function handlePoolScan(
         if (!n.spent) shieldedBalance += pool.denomination;
       }
     }
+    scanned.push({ pool, commitments, spentSet, seenLeaves });
+    emitInterim();
   }
 
-  return { kind: 'poolScan', notes, shieldedBalance, poolSizes };
+  // ── Phase 2: the legacy epoch search, per pool, reusing phase-1 reads ────
+  // The full pass re-runs the blinded hash per leaf too (one hash, free); the
+  // `seenLeaves` dedupe keeps phase-1 notes from being counted twice, so what
+  // this loop APPENDS is exactly the legacy notes.
+  for (const { pool, commitments, spentSet, seenLeaves } of scanned) {
+    onProgress?.(`Checking the ${pool.denomination} ${pool.token} pool for older notes...`);
+    for (const candidate of candidates) {
+      const { notes: found } = await scanPoolForSeed(conn, pool, candidate.seed, {
+        commitments,
+        spentSet,
+        onProgress,
+      });
+      for (const n of found) {
+        if (seenLeaves.has(n.receipt.leafIndex)) continue;
+        seenLeaves.add(n.receipt.leafIndex);
+        notes.push(toNoteView(n, candidate.derivation));
+        if (!n.spent) shieldedBalance += pool.denomination;
+      }
+    }
+    emitInterim();
+  }
+
+  return { kind: 'poolScan', notes, shieldedBalance, poolSizes, complete: true };
 }
 
 function toNoteView(n: RecoveredNote, derivation: DerivationVersion): PoolNoteView {
@@ -1238,18 +1319,37 @@ async function locateOwnedNote(
   // Pool-wide and derivation-independent, like `commitments` above, so it is
   // fetched once and shared across the candidate loop for the same reason.
   const spentSet = await fetchSpentNullifierSet(conn, pool.poolPDA);
+
+  // ONE leaf, two passes — the caller already picked the note by leaf index,
+  // so probing any other leaf is waste, and the waste was the demo-stalling
+  // kind: without `onlyLeaf` each derivation ran the 6000-epoch legacy search
+  // on every foreign leaf in the pool, MEASURED at ~41 s per derivation on the
+  // 59-leaf pools (2026-08-13) — spent between the click on Withdraw and
+  // anything happening. Probing one leaf makes that one blinded hash per
+  // derivation for a current-scheme note, and at most one 6000-epoch window
+  // (~0.7 s) per derivation for a legacy one.
+  //
+  // The blinded pass runs across ALL derivations before any legacy search
+  // starts, for the same reason handlePoolScan phases its work: a v1 note's
+  // blinded hash hits on the legacy seed immediately, and running the active
+  // seed's epoch search first would put ~0.7 s of dead hashing in front of it.
   let owner: { candidate: SeedCandidate; note: RecoveredNote } | null = null;
-  for (const candidate of candidates) {
-    const notes = await recoverNotes(conn, pool, candidate.seed, {
-      commitments,
-      spentSet,
-      onProgress,
-    });
-    const hit = notes.find((n) => n.receipt.leafIndex === req.leafIndex);
-    if (hit) {
-      owner = { candidate, note: hit };
-      break;
+  for (const blindedOnly of [true, false] as const) {
+    for (const candidate of candidates) {
+      const notes = await recoverNotes(conn, pool, candidate.seed, {
+        commitments,
+        spentSet,
+        onlyLeaf: req.leafIndex,
+        blindedOnly,
+        onProgress,
+      });
+      const hit = notes.find((n) => n.receipt.leafIndex === req.leafIndex);
+      if (hit) {
+        owner = { candidate, note: hit };
+        break;
+      }
     }
+    if (owner) break;
   }
 
   // FALLBACK: a RECEIVED note. Its secrets came from the SENDER's seed, so the
@@ -2249,13 +2349,20 @@ function handlePoolOpenRecords(req: PoolOpenRecordsRequest): PoolOpenRecordsResp
 export async function handlePoolRequest<R extends PoolRequest>(
   req: R,
   onProgress?: (step: string) => void,
+  /**
+   * Streamed partial results for jobs that can honestly produce them — today
+   * only `poolScan`, whose blinded pass finishes ~4 orders of magnitude before
+   * the legacy epoch search does. Every payload says `complete: false` itself;
+   * the terminal return value is the only complete answer.
+   */
+  onInterim?: (partial: PoolResponse) => void,
 ): Promise<PoolResponseFor<R>> {
   let res: PoolResponse;
   switch (req.kind) {
     case 'poolScanLocal':
       return handlePoolScanLocal(req as PoolScanLocalRequest) as never;
     case 'poolScan':
-      res = await handlePoolScan(req, onProgress);
+      res = await handlePoolScan(req, onProgress, onInterim);
       break;
     case 'poolShieldPrepare':
       res = await handlePoolShieldPrepare(req, onProgress);

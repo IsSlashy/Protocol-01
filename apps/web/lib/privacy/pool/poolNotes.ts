@@ -68,6 +68,33 @@ export interface RecoverNotesOptions {
    *  derivations MUST hoist this, or a passphrase wallet re-issues the
    *  identical pool-wide getProgramAccounts once per derivation. */
   spentSet?: ReadonlySet<string>;
+  /**
+   * Run only the blinded single-hash pass and SKIP the legacy epoch search.
+   *
+   * One hash per candidate leaf instead of up to `epochWindow` (6000) hashes
+   * per leaf the wallet does not own — milliseconds instead of ~41 s per
+   * derivation on the measured 59-leaf pools (0.1158 ms per hash, 2026-08-12).
+   * The price is stated in the name: the result is INCOMPLETE by construction.
+   * A legacy note (real epoch where the blinding now goes) can only be found
+   * by the search this flag skips, and there is a known unspent one at leaf 30
+   * of the 0.1 SOL pool. A caller may use this ONLY to paint early results and
+   * MUST follow with a full pass before claiming the list is complete.
+   */
+  blindedOnly?: boolean;
+  /**
+   * Probe exactly ONE leaf index instead of every leaf the pool contains.
+   *
+   * For a caller that already knows which note it wants — the withdraw,
+   * subscribe and hand-over paths all select by leaf index — scanning the
+   * other leaves is pure waste, and the waste is the 6000-epoch legacy search
+   * per foreign leaf: the measured ~41 s per derivation, spent before a spend
+   * could even start. The counter IS the leaf index (shieldEphemeral.ts), so
+   * restricting the probe loses nothing the full scan could have found at
+   * this leaf: the same blinded hash and, unless `blindedOnly` says otherwise,
+   * the same legacy fallback still run for it. A leaf this RPC does not serve
+   * yields no candidates, exactly as it yields no match in the full scan.
+   */
+  onlyLeaf?: number;
   onProgress?: (step: string) => void;
 }
 
@@ -90,9 +117,16 @@ export async function recoverNotes(
   const commitments =
     opts.commitments ?? (await fetchPoolCommitments(connection, poolConfig.poolPDA));
 
-  const slot = await connection.getSlot('confirmed');
-  const currentEpoch = slotToEpoch(slot);
-  const lowestEpoch = currentEpoch > BigInt(epochWindow) ? currentEpoch - BigInt(epochWindow) : 0n;
+  // The current slot only bounds the legacy epoch search, so a blinded-only
+  // pass skips the RPC round trip along with the search itself — the fast pass
+  // must stay free of per-call chain reads beyond what the caller hoisted.
+  let currentEpoch = 0n;
+  let lowestEpoch = 0n;
+  if (!opts.blindedOnly) {
+    const slot = await connection.getSlot('confirmed');
+    currentEpoch = slotToEpoch(slot);
+    lowestEpoch = currentEpoch > BigInt(epochWindow) ? currentEpoch - BigInt(epochWindow) : 0n;
+  }
   const tokenMintField = pubkeyToField(poolConfig.tokenMint);
 
   // ONE pool-wide question, asked before the loop, instead of one question per
@@ -119,10 +153,16 @@ export async function recoverNotes(
   // The counter IS the leaf index (see shieldEphemeral.ts), so probe exactly the
   // leaf indices the pool actually contains rather than a blind 0..N range —
   // that both covers pools of any size and skips indices
-  // that cannot match anything.
-  const candidates = [...commitments.values()]
+  // that cannot match anything. `onlyLeaf` narrows the probe to the one leaf a
+  // spending caller already selected; the INTERSECTION with the served leaves,
+  // not the raw request, so an unserved leaf stays a miss exactly as it is in
+  // the full scan.
+  let candidates = [...commitments.values()]
     .map((c) => c.leafIndex)
     .sort((a, b) => a - b);
+  if (opts.onlyLeaf !== undefined) {
+    candidates = candidates.filter((leaf) => leaf === opts.onlyLeaf);
+  }
 
   for (const counter of candidates) {
     const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolConfig.poolPDA, counter);
@@ -142,7 +182,9 @@ export async function recoverNotes(
     // there, so they still need the search. DO NOT REMOVE THIS FALLBACK: there
     // is an unspent legacy note at leaf 30 of the 0.1 SOL pool, and without the
     // search it becomes invisible to scan and unwithdrawable through the UI.
-    if (!hit) {
+    // `blindedOnly` defers it — the caller runs a full pass afterwards — it
+    // never replaces it.
+    if (!hit && !opts.blindedOnly) {
       for (let epoch = currentEpoch; epoch >= lowestEpoch; epoch--) {
         const commitment = createCommitmentV3(nullifierPreimage, secret, epoch, tokenMintField);
         const onChain = commitments.get(commitment.toString());
