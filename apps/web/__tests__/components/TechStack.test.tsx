@@ -17,8 +17,14 @@ describe('TechStack -- Cryptography and infrastructure showcase', () => {
       expect(screen.getByText(/cutting-edge cryptography/)).toBeInTheDocument();
     });
 
-    it('mentions zero-knowledge proofs and privacy-preserving protocols', () => {
-      expect(screen.getByText(/zero-knowledge proofs/)).toBeInTheDocument();
+    // Was: pinned "zero-knowledge proofs". The prover applies no trace
+    // blinding and stark/tests/zk_feasibility.rs recovers a private witness
+    // from published proof bytes, so the component was corrected and this
+    // assertion moves with it rather than being deleted. The second half is
+    // the part that matters: the old wording must not come back.
+    it('names the proof system as hash-based STARKs, not zero-knowledge', () => {
+      expect(screen.getByText(/hash-based STARK proofs/)).toBeInTheDocument();
+      expect(screen.queryByText(/zero-knowledge proofs/)).not.toBeInTheDocument();
     });
   });
 
