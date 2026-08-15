@@ -167,16 +167,20 @@ describe('DocsPage -- Privacy technologies documentation', () => {
     });
   });
 
-  describe('Core Technologies - Zero-Knowledge Proofs', () => {
-    it('documents Zero-Knowledge Proofs (STARK)', () => {
-      openTopic('Zero-Knowledge Proofs (STARK)');
+  // The topic was titled "Zero-Knowledge Proofs (STARK)". The prover is not
+  // zero-knowledge: stark/tests/zk_feasibility.rs recovers a private witness
+  // from published proof bytes by Lagrange interpolation, so the title now
+  // names the proof system instead of the property it does not hold.
+  describe('Core Technologies - STARK Proofs', () => {
+    it('documents STARK Proofs (Goldilocks) without titling them zero-knowledge', () => {
+      openTopic('STARK Proofs (Goldilocks)');
       expect(
-        screen.getByRole('heading', { level: 1, name: 'Zero-Knowledge Proofs (STARK)' }),
+        screen.getByRole('heading', { level: 1, name: 'STARK Proofs (Goldilocks)' }),
       ).toBeInTheDocument();
     });
 
     it('describes the post-quantum STARK proof system over Goldilocks', () => {
-      openTopic('Zero-Knowledge Proofs (STARK)');
+      openTopic('STARK Proofs (Goldilocks)');
       expect(
         screen.getByText(
           /^Post-quantum STARK proof system over the Goldilocks field, powered by Winterfell\./,
@@ -184,8 +188,15 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       ).toBeInTheDocument();
     });
 
+    it('states in the description that the proofs are not zero-knowledge today', () => {
+      openTopic('STARK Proofs (Goldilocks)');
+      expect(
+        screen.getByText(/not zero-knowledge today: trace values can be recovered/),
+      ).toBeInTheDocument();
+    });
+
     it('mentions the custom on-chain FRI verifier and its measured CU cost', () => {
-      openTopic('Zero-Knowledge Proofs (STARK)');
+      openTopic('STARK Proofs (Goldilocks)');
       expect(screen.getByText(/809,812 CU against the 1\.4M budget/)).toBeInTheDocument();
     });
 
@@ -195,13 +206,13 @@ describe('DocsPage -- Privacy technologies documentation', () => {
     // overstated the bound. DEEP-ALI itself is real (verify_deep_ali_circuit_0..6);
     // only the bit-count is gone, and detail10 says so out loud.
     it('publishes no bit-level soundness figure', () => {
-      openTopic('Zero-Knowledge Proofs (STARK)');
+      openTopic('STARK Proofs (Goldilocks)');
       expect(screen.queryAllByText(/124-bit soundness/)).toHaveLength(0);
       expect(screen.getByText(/No bit-level security number is published here/)).toBeInTheDocument();
     });
 
     it('notes that Groth16/BN254 was retired in April 2026', () => {
-      openTopic('Zero-Knowledge Proofs (STARK)');
+      openTopic('STARK Proofs (Goldilocks)');
       expect(screen.getByText(/Groth16\/BN254 was retired in April 2026/)).toBeInTheDocument();
     });
   });
@@ -432,10 +443,19 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       ).toBeInTheDocument();
     });
 
-    it('guarantees zero-knowledge: proofs reveal nothing beyond validity', () => {
+    /**
+     * WAS: an exact assertion on "Zero-knowledge: Proofs reveal nothing beyond
+     * validity". That claim is refuted by the repo's own test suite:
+     * stark/tests/zk_feasibility.rs recovers a private witness from the
+     * published proof bytes by Lagrange interpolation in under a second. The
+     * guarantee line now states the limitation and names the measurement, and
+     * flips back only when that recovery stops working.
+     */
+    it('states the proofs are not zero-knowledge, naming the witness recovery', () => {
       openTopic('Security Model');
+      expect(screen.queryAllByText(/Proofs reveal nothing beyond validity/i)).toHaveLength(0);
       expect(
-        screen.getByText('Zero-knowledge: Proofs reveal nothing beyond validity'),
+        screen.getByText(/Not zero-knowledge today: a private witness has been recovered/),
       ).toBeInTheDocument();
     });
 
@@ -501,7 +521,7 @@ describe('DocsPage -- Privacy technologies documentation', () => {
     });
 
     it('publishes no STARK soundness bit-count', () => {
-      const code = codeOf('Zero-Knowledge Proofs (STARK)', 'zk-proofs');
+      const code = codeOf('STARK Proofs (Goldilocks)', 'zk-proofs');
       expect(code).not.toMatch(/124-bit/);
       expect(code).toMatch(/DEEP-ALI/);
     });

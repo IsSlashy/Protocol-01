@@ -27,10 +27,12 @@ describe('Hero -- Privacy-first landing section', () => {
       expect(screen.getByText('Protocol Active')).toBeInTheDocument();
     });
 
-    it('presents the "AMOUNTS THEY CANNOT READ." headline as the core value proposition', () => {
+    it('presents the "A RECIPIENT THEY CANNOT NAME." headline as the core value proposition', () => {
       // Rendered three times on purpose: cyan ghost, pink ghost, and the main
       // white layer that together produce the chromatic-aberration glitch.
-      const headlines = screen.getAllByText('AMOUNTS THEY CANNOT READ.');
+      // The headline claims the receive leg only: amounts are public by
+      // denomination and the sender signs, so neither can headline the page.
+      const headlines = screen.getAllByText('A RECIPIENT THEY CANNOT NAME.');
       expect(headlines).toHaveLength(3);
     });
 
@@ -46,16 +48,16 @@ describe('Hero -- Privacy-first landing section', () => {
   });
 
   describe('Description copy', () => {
-    it('states what the protocol lets you do on Solana', () => {
+    it('states what the protocol lets you do on Solana, without promising a swap the web app does not have', () => {
       expect(
-        screen.getByText('Pay merchants, subscribe, send and swap on Solana.')
+        screen.getByText('Pay merchants, subscribe and send on Solana.')
       ).toBeInTheDocument();
     });
 
-    it('scopes the privacy claim to the three things kept hidden', () => {
+    it('scopes the privacy claim to the receive leg: fresh address, no memo', () => {
       expect(
         screen.getByText(
-          'Without revealing who you are, what you bought, or how much.'
+          'Each payment lands on a fresh one-time address and carries no memo.'
         )
       ).toBeInTheDocument();
     });
@@ -117,9 +119,11 @@ describe('Hero -- Privacy-first landing section', () => {
       ).toBeInTheDocument();
     });
 
-    it('pairs "0" with "Traces left on-chain"', () => {
+    it('pairs "0" with "KYC checks required"', () => {
+      // Was "Traces left on-chain": the withdrawal republishes its deposit
+      // commitment, so zero traces is refutable. Zero KYC checks is not.
       expect(
-        within(statCell('Traces left on-chain')).getByText('0')
+        within(statCell('KYC checks required')).getByText('0')
       ).toBeInTheDocument();
     });
   });
