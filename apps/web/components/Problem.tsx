@@ -28,6 +28,22 @@ function CountUp({
   useEffect(() => {
     if (!trigger || hasStarted.current) return;
     hasStarted.current = true;
+
+    // Reduced motion lands the figure at once. Every other animation on the
+    // site already honours this (app/_styx/RiverCanvas.tsx, styx-b/Reveal.tsx,
+    // parcours/ModelViewer.tsx); this counter was the one that did not, so a
+    // visitor who asked the OS for no motion still got two seconds of it.
+    //
+    // It also removes the only wall-clock dependency in the rendering suite.
+    // The animation runs on requestAnimationFrame over a 2s budget, and under
+    // a loaded fork pool the frames starve: the two statistic assertions took
+    // 3.7s on a 32-core box and blew past their 4s waitFor on a CI runner.
+    // Raising the waitFor would have moved the cliff, not removed it.
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      setValue(end);
+      return;
+    }
+
     const start = performance.now();
     const tick = (now: number) => {
       const progress = Math.min((now - start) / duration, 1);

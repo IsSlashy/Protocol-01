@@ -1,9 +1,36 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
 import Problem from '@/components/Problem';
+
+/**
+ * The two <CountUp> statistics animate up from 0 over a 2s requestAnimationFrame
+ * budget, so asserting the landed figure used to mean waiting on the wall clock.
+ * That is not a property of the component and it cannot be made reliable: the
+ * two assertions measured 3.7s on a 32-core box against their own 4s waitFor,
+ * and failed outright on a CI runner. Raising the waitFor moves the cliff.
+ *
+ * CountUp now honours prefers-reduced-motion, like every other animation on the
+ * site already did, so this file asks for reduced motion and reads the figure
+ * synchronously. The pair at the bottom is the control: it proves the counter
+ * still animates when motion is allowed, so this file cannot go green by having
+ * quietly frozen the animation for every visitor.
+ */
+function setReducedMotion(reduced: boolean) {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: reduced && query === '(prefers-reduced-motion: reduce)',
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })) as unknown as typeof window.matchMedia;
+}
 
 describe('Problem -- Why privacy matters on blockchain', () => {
   beforeEach(() => {
+    setReducedMotion(true);
     render(<Problem />);
   });
 
@@ -41,14 +68,12 @@ describe('Problem -- Why privacy matters on blockchain', () => {
       expect(screen.getByText('can see your entire financial history')).toBeInTheDocument();
     });
 
-    it('displays "73%" statistic -- users deanonymized by analytics', async () => {
+    it('displays "73%" statistic -- users deanonymized by analytics', () => {
       expect(screen.getByText('of users have been deanonymized')).toBeInTheDocument();
-      // The figure is rendered by <CountUp> (commit 2164f1a5): it animates from 0
-      // to its final value over 2s via requestAnimationFrame, so the exact number
-      // only appears once the animation lands.
-      await waitFor(() => expect(screen.getByText('73%')).toBeInTheDocument(), {
-        timeout: 4000,
-      });
+      // Rendered by <CountUp> (commit 2164f1a5). Under the reduced motion this
+      // file asks for, the figure lands on first paint, so there is nothing to
+      // wait for.
+      expect(screen.getByText('73%')).toBeInTheDocument();
     });
 
     it('displays "24/7" statistic -- constant government surveillance', () => {
@@ -56,12 +81,10 @@ describe('Problem -- Why privacy matters on blockchain', () => {
       expect(screen.getByText('surveillance by governments & corporations')).toBeInTheDocument();
     });
 
-    it('displays "$4.3B" statistic -- money stolen through wallet tracking', async () => {
+    it('displays "$4.3B" statistic -- money stolen through wallet tracking', () => {
       expect(screen.getByText('stolen through wallet tracking')).toBeInTheDocument();
-      // Same <CountUp> animation as the 73% stat: $0.0B -> $4.3B over 2s.
-      await waitFor(() => expect(screen.getByText('$4.3B')).toBeInTheDocument(), {
-        timeout: 4000,
-      });
+      // Same <CountUp> as the 73% stat: $0.0B -> $4.3B, landed at once here.
+      expect(screen.getByText('$4.3B')).toBeInTheDocument();
     });
   });
 
@@ -112,5 +135,24 @@ describe('Problem -- Why privacy matters on blockchain', () => {
     it('warns about targeted attacks via public wallet data', () => {
       expect(screen.getByText('Bad actors use public data to target high-value wallets')).toBeInTheDocument();
     });
+  });
+});
+
+describe('CountUp and prefers-reduced-motion', () => {
+  it('lands the figure on first paint when the visitor asked for no motion', () => {
+    setReducedMotion(true);
+    render(<Problem />);
+    expect(screen.getByText('73%')).toBeInTheDocument();
+    expect(screen.getByText('$4.3B')).toBeInTheDocument();
+  });
+
+  // The control on the control. If CountUp ever stops animating for everyone,
+  // the assertion above would still pass and would prove nothing. This one
+  // fails in that case: with motion allowed, the first paint is still 0.
+  it('has not landed on first paint when motion is allowed', () => {
+    setReducedMotion(false);
+    render(<Problem />);
+    expect(screen.queryByText('73%')).not.toBeInTheDocument();
+    expect(screen.queryByText('$4.3B')).not.toBeInTheDocument();
   });
 });
