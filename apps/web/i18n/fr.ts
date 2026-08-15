@@ -364,6 +364,12 @@ const fr: Translations = {
     extensionNoticeTitle: 'Les t\u00e9l\u00e9chargements b\u00eata sont en pause',
     extensionNoticeBody: 'Nous int\u00e9grons les testeurs via la liste d\u2019attente. Rejoignez-la et vous recevez l\u2019extension \u00e0 la prochaine vague.',
     extensionNoticeCta: 'Rejoindre la liste d\u2019attente',
+    // La pause a \u00e9t\u00e9 publi\u00e9e comme un choix de d\u00e9ploiement. La raison mesur\u00e9e
+    // est que la version ne peut pas transiger, et quelqu'un qui a install\u00e9 la
+    // 0.5.0 avant la pause n'a aucun moyen de l'apprendre par nous.
+    extensionIncompatTitle: 'Si vous avez d\u00e9j\u00e0 install\u00e9 la v0.5.0, ne d\u00e9pensez pas avec',
+    extensionIncompatBody: 'Cette version embarque un prouveur que le v\u00e9rifieur on-chain a cess\u00e9 d\u2019accepter le 4 ao\u00fbt 2026 : une action blind\u00e9e sign\u00e9e par elle est rejet\u00e9e par la cha\u00eene. Blindez, envoyez et retirez depuis l\u2019application web \u00e0 la place. Nous n\u2019avons pas audit\u00e9 ce que cette version fait des notes d\u00e9j\u00e0 stock\u00e9es dedans, donc ne la d\u00e9sinstallez pas sur notre parole tant que ce n\u2019est pas fait.',
+    extensionIncompatCta: 'Ouvrir l\u2019application web',
     confirmedTitle: 'Place confirm\u00e9e',
     confirmedBody: 'Vous \u00eates sur la liste d\u2019attente Protocol 01. Nous vous pr\u00e9viendrons par email d\u00e8s que votre acc\u00e8s sera ouvert.',
     invalidTitle: 'Lien expir\u00e9 ou invalide',

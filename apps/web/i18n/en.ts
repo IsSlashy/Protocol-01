@@ -363,6 +363,12 @@ const en = {
     extensionNoticeTitle: 'Beta downloads are paused',
     extensionNoticeBody: 'We are onboarding testers through the waitlist. Join it and you get the extension with the next wave.',
     extensionNoticeCta: 'Join the waitlist',
+    // The pause was published as a rollout choice. The measured reason is that
+    // the build cannot transact, and someone who installed 0.5.0 before the
+    // pause has no way to learn that from us. These two keys say it.
+    extensionIncompatTitle: 'If you already installed v0.5.0, do not spend with it',
+    extensionIncompatBody: 'That build carries a prover the on-chain verifier stopped accepting on 4 August 2026, so a shielded action signed by it is rejected by the chain. Shield, send and withdraw from the web app instead. We have not audited what this build does to notes already stored in it, so do not uninstall it on our word until we have.',
+    extensionIncompatCta: 'Open the web app',
     confirmedTitle: 'Spot confirmed',
     confirmedBody: 'You are on the Protocol 01 waitlist. We will email you when your access opens.',
     invalidTitle: 'Link expired or invalid',
