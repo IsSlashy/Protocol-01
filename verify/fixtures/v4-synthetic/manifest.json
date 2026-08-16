@@ -21,5 +21,8 @@
     "P4": "PASS",
     "P6": "PASS",
     "P7": "FAIL"
+  },
+  "measure": {
+    "P6": 0
   }
 }

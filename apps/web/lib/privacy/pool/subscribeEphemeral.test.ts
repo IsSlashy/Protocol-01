@@ -45,6 +45,7 @@ vi.mock('./unshieldEphemeral', () => ({
 
 import { prepareUnshieldJob } from './unshieldEphemeral';
 import { SUBSCRIPTION_VAULT_LEN, prepareSubscribeJob } from './subscribeEphemeral';
+import { PREFUND_STEP_LAMPORTS, PREFUND_MAX_EXTRA_STEPS } from './prefundAmount';
 
 // ---------------------------------------------------------------------------
 // Fixtures — every field a distinct fill byte, so a shifted write is visible.
@@ -252,6 +253,7 @@ describe('prepareSubscribeJob pricing', () => {
       receipt,
       ephemeral,
       requiredLamports: BASE_LAMPORTS,
+      rawRequiredLamports: BASE_LAMPORTS,
       prepared: {} as never,
     });
   });
@@ -291,8 +293,33 @@ describe('prepareSubscribeJob pricing', () => {
     // rent has to be in the ONE transfer the user signs. Dropping it fails the
     // subscribe AFTER both proofs are uploaded.
     expect(rentFor).toEqual([SUBSCRIPTION_VAULT_LEN]);
-    expect(ctx.requiredLamports).toBe(BASE_LAMPORTS + VAULT_RENT);
-    expect(ctx.requiredLamports).toBeGreaterThan(BASE_LAMPORTS);
+
+    // The FLOOR is exact and is what the assertion above is really about. The
+    // transferred figure is jittered on purpose (`prefundAmount.ts`), so
+    // asserting equality on it would pin the very constant that made one
+    // `memcmp` enumerate every subscription — and would fail four times in five.
+    expect(ctx.rawRequiredLamports).toBe(BASE_LAMPORTS + VAULT_RENT);
+    expect(ctx.requiredLamports).toBeGreaterThanOrEqual(ctx.rawRequiredLamports);
+  });
+
+  it('jitters the transferred figure without ever going under the floor', async () => {
+    // The failure mode is silent and expensive: an under-funded ephemeral does
+    // not fail cheaply, it fails after ~150 chunk uploads with the float
+    // stranded. So the floor is checked on every draw, not on one.
+    const seen = new Set<number>();
+    for (let i = 0; i < 40; i++) {
+      const ctx = await prepareSubscribeJob(receipt, poolConfig, conn, new Uint8Array(32));
+      expect(ctx.requiredLamports).toBeGreaterThanOrEqual(BASE_LAMPORTS + VAULT_RENT);
+      expect(ctx.requiredLamports % PREFUND_STEP_LAMPORTS).toBe(0);
+      expect(ctx.requiredLamports).toBeLessThanOrEqual(
+        Math.ceil((BASE_LAMPORTS + VAULT_RENT) / PREFUND_STEP_LAMPORTS) * PREFUND_STEP_LAMPORTS +
+          PREFUND_MAX_EXTRA_STEPS * PREFUND_STEP_LAMPORTS,
+      );
+      seen.add(ctx.requiredLamports);
+    }
+    // The point of the exercise. If this ever collapses to one value the jitter
+    // is dead and the constant is back, whatever the code says it does.
+    expect(seen.size).toBeGreaterThan(1);
   });
 
   it('re-keys the job id so a subscribe can never be run by the withdrawal executor', async () => {

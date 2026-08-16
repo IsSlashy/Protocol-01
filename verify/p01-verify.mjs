@@ -396,6 +396,13 @@ function writeFixture(dir, store, report, opts) {
     kind: report.kind,
     flags: { maxChunkTx: opts.maxChunkTx, depositLimit: opts.depositLimit },
     expect: Object.fromEntries(report.results.map((r) => [r.id, r.passed ? 'PASS' : 'FAIL'])),
+    // PASS/FAIL alone is too coarse for a probe that counts. A sixth instruction
+    // publishing the commitment leaves P7 at FAIL, so the pin holds and nobody
+    // learns anything got worse. `measure` pins the NUMBER, so a leak that grows
+    // inside an already-failing probe still turns the control red.
+    measure: Object.fromEntries(
+      report.results.filter((r) => r.measure !== null && r.measure !== undefined).map((r) => [r.id, r.measure]),
+    ),
   };
   writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2));
   console.log(`\n  fixture written: ${dir} (${store.calls.length} RPC responses, ${report.results.length} probe pins)`);
@@ -762,8 +769,8 @@ async function scanInstructionArguments(rpc, payer, target, { maxTx = 400 } = {}
  * it must never be renamed casually: an id change orphans every committed
  * `expect` map at once (and the self-test will say so loudly).
  */
-function probe(id, name, passed, detail) {
-  return { id, name, passed, detail };
+function probe(id, name, passed, detail, measure = null) {
+  return { id, name, passed, detail, measure };
 }
 
 async function verifySpend(rpc, signature, opts = {}) {
@@ -983,6 +990,7 @@ async function verifySpend(rpc, signature, opts = {}) {
             : `no System transfer at either end of this payer's ${funder.historyLength}-transaction life names a ` +
               `counterparty (${funder.calls} RPC calls). One-hop financial edge closed; a funder one hop further ` +
               `out, or a relayer that logged the request, is NOT covered by this probe.`,
+          funder.truncated ? null : 0,
         ),
       );
     } else {
@@ -1000,6 +1008,7 @@ async function verifySpend(rpc, signature, opts = {}) {
           false,
           `the payer is bracketed by ${funder.edges.length} System transfer(s) naming a wallet, found in ` +
             `${funder.calls} RPC calls over a ${funder.historyLength}-transaction life: ${worst}`,
+          funder.edges.length,
         ),
       );
     }
@@ -1032,7 +1041,7 @@ async function verifySpend(rpc, signature, opts = {}) {
       );
     } else if (args.sites.length === 0) {
       results.push(
-        probe('P7', 'no instruction argument outside the proof payload carries the commitment', true, `clean across ${cover}`),
+        probe('P7', 'no instruction argument outside the proof payload carries the commitment', true, `clean across ${cover}`, 0),
       );
     } else {
       const byProgram = new Map();
@@ -1046,6 +1055,7 @@ async function verifySpend(rpc, signature, opts = {}) {
           `${args.sites.length} instruction(s) publish the commitment in the clear (${breakdown}; ${cover}). ` +
             `This is a FLOOR: publications on the deposit side belong to a different payer and are outside ` +
             `this walk, as is any occurrence in an event log rather than an instruction.`,
+          args.sites.length,
         ),
       );
     }
@@ -1128,6 +1138,33 @@ function selfTestAgainstManifest(report, manifest, dir) {
     if (!seen.has(id)) {
       deviations += 1;
       console.log(`   FAIL  ${id} is pinned in the manifest but the tool no longer reports it`);
+    }
+  }
+
+  // The counts, checked separately. A probe that counts can get worse without
+  // changing verdict — a sixth publication leaves P7 at FAIL — so the pin above
+  // would hold while the leak grew. Pinning the number is what makes "it got
+  // worse" visible. A measure that appears where none was pinned is a deviation
+  // too: it means a new number is being reported that nobody has reviewed.
+  const wantMeasure = manifest.measure ?? {};
+  for (const r of report.results) {
+    const got = r.measure;
+    const want = wantMeasure[r.id];
+    if (got === null || got === undefined) {
+      if (want !== undefined) {
+        deviations += 1;
+        console.log(`   FAIL  ${r.id} pinned a measure of ${want} but reported none — the probe went inconclusive`);
+      }
+      continue;
+    }
+    if (want === undefined) {
+      deviations += 1;
+      console.log(`   FAIL  ${r.id} reports a measure of ${got} with no pin — re-record and review it`);
+    } else if (want !== got) {
+      deviations += 1;
+      console.log(`   FAIL  ${r.id} pinned a measure of ${want}, measured ${got}`);
+    } else {
+      console.log(`   OK    ${r.id} measure = ${got}, as pinned`);
     }
   }
   console.log(

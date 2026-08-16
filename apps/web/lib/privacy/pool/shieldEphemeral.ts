@@ -65,6 +65,7 @@ import { deriveNoteBlinding } from './noteBlinding';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { jitterPrefund } from './prefundAmount';
 
 // ---------------------------------------------------------------------------
 // Ephemeral derivation
@@ -248,12 +249,23 @@ export async function prepareShield(
   const protocolFee = Number(
     (poolConfig.denominationAtomic * SHIELD_FEE_BPS) / BPS_DENOMINATOR,
   );
-  const requiredLamports =
+  // Jittered, for the same reason as the withdrawal and subscribe legs: the bare
+  // sum is a pure function of the pool and the proof size, so it repeats exactly
+  // across every deposit into the same pool and one `memcmp` enumerates them.
+  // Worse here than elsewhere, because the sum embeds the denomination and the
+  // 0.3% protocol fee — the measured devnet deposit gave back
+  // 1_573_486_080 − 570_010_780 = 1_003_475_300, which is 1 SOL plus 0.3% plus
+  // fees, so the arithmetic disclosed the denomination on its own.
+  //
+  // The pool PDA is in the transaction regardless, so this does not hide which
+  // denomination was bought. It removes the constant, nothing more.
+  const requiredLamports = jitterPrefund(
     Number(poolConfig.denominationAtomic) +
-    protocolFee +
-    bufferRent +
-    E_TX_FEE_BUDGET +
-    SHIELD_RENT_MARGIN;
+      protocolFee +
+      bufferRent +
+      E_TX_FEE_BUDGET +
+      SHIELD_RENT_MARGIN,
+  );
 
   // Deterministic in (seed, pool, counter) — see deriveShieldEphemeral. The
   // job id is just a stable label for the breadcrumb, derived from the same

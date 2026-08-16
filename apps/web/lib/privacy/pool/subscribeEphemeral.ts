@@ -50,6 +50,7 @@ import {
 import type { StoredMerklePath } from './unshieldFromPath';
 import { prepareUnshieldJob, type PreparedUnshield } from './unshieldEphemeral';
 import { subscribePrivateStark } from './subscribePrivateStark';
+import { jitterPrefund } from './prefundAmount';
 import type {
   PoolConfig,
   PrepareUnshieldResult,
@@ -85,7 +86,10 @@ export interface PreparedSubscribe {
   poolConfig: PoolConfig;
   receipt: ShieldReceipt;
   ephemeral: Keypair;
+  /** What to transfer — jittered, so it is not a searchable constant. */
   requiredLamports: number;
+  /** The exact floor before jitter. ⛔ Never transfer this; see `prefundAmount.ts`. */
+  rawRequiredLamports: number;
   prepared: PrepareUnshieldResult;
 }
 
@@ -119,10 +123,19 @@ export async function prepareSubscribeJob(
   onProgress?.('Pricing the subscription vault...');
   const vaultRent = await connection.getMinimumBalanceForRentExemption(SUBSCRIPTION_VAULT_LEN);
 
+  // Jitter the COMPLETE sum, from the raw floor — not `base.requiredLamports`,
+  // which is already jittered. Adding the vault's rent to a jittered figure
+  // would spend a second round of float and, worse, land on a number that is
+  // neither round nor searchable-resistant: the whole point of rounding up to a
+  // whole hundredth of a SOL is that 1.05 is an amount a human sends and
+  // 1_038_231_712 is not.
+  const rawRequiredLamports = base.rawRequiredLamports + vaultRent;
+
   return {
     ...base,
     jobId: `subscribe:${poolConfig.poolPDA.toBase58()}:${receipt.leafIndex}`,
-    requiredLamports: base.requiredLamports + vaultRent,
+    rawRequiredLamports,
+    requiredLamports: jitterPrefund(rawRequiredLamports),
   };
 }
 

@@ -64,6 +64,7 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { prepareUnshieldFromPath, type StoredMerklePath } from './unshieldFromPath';
+import { jitterPrefund } from './prefundAmount';
 import {
   isNullifierSpent,
   prepareUnshield,
@@ -110,7 +111,18 @@ export interface PreparedUnshield {
   poolConfig: PoolConfig;
   receipt: ShieldReceipt;
   ephemeral: Keypair;
+  /** What to actually transfer — jittered, so it is not a searchable constant. */
   requiredLamports: number;
+  /**
+   * The exact floor, before jitter. Exists so a caller that has MORE to add —
+   * subscribe adds the vault's rent — can jitter the complete sum once instead
+   * of adding a constant to an already-jittered figure. Doing the latter would
+   * both waste float and undo the rounding that makes the amount look ordinary.
+   *
+   * ⛔ Never transfer this. It is the value that was identical on 4 of 4
+   * measured devnet runs.
+   */
+  rawRequiredLamports: number;
   prepared: PrepareUnshieldResult;
 }
 
@@ -164,7 +176,14 @@ export async function prepareUnshieldJob(
   ]);
   // C1 and C3 buffers are held open at the same time — the handler reads both
   // in one transaction — so the peak float is their sum.
-  const requiredLamports = r1 + r3 + NULLIFIER_RENT + E_TX_FEE_BUDGET;
+  //
+  // Jittered before it leaves this function so no caller can accidentally use
+  // the bare figure: the exact sum is a pure function of the circuit geometry
+  // and was identical on 4 of 4 measured devnet runs, which makes one `memcmp`
+  // over transfer amounts an enumeration of every operation this protocol has
+  // ever done. The surplus comes back on the sweep; see `prefundAmount.ts`.
+  const rawRequiredLamports = r1 + r3 + NULLIFIER_RENT + E_TX_FEE_BUDGET;
+  const requiredLamports = jitterPrefund(rawRequiredLamports);
 
   const ephemeral = deriveUnshieldEphemeral(walletSeed, poolConfig.poolPDA, receipt.leafIndex);
 
@@ -174,6 +193,7 @@ export async function prepareUnshieldJob(
     receipt,
     ephemeral,
     requiredLamports,
+    rawRequiredLamports,
     prepared,
   };
 }

@@ -161,6 +161,7 @@ function preparedFor(ephemeral: Keypair): PreparedUnshield {
     receipt: {} as PreparedUnshield['receipt'],
     ephemeral,
     requiredLamports: 1_000_000,
+    rawRequiredLamports: 1_000_000,
     prepared: {} as PreparedUnshield['prepared'],
   };
 }
