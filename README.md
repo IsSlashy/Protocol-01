@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/assets/banner.png" alt="Protocol 01" width="100%" />
+  <img src="docs/assets/banner.png" alt="Styx Protocol" width="100%" />
 </p>
 
-<h1 align="center">Protocol 01</h1>
+<h1 align="center">Styx Protocol</h1>
 
 <p align="center">
   <strong>The privacy layer for Solana.</strong><br/>
@@ -47,7 +47,8 @@
 1. Download the APK on your Android device (Android 10 / API 29+)
 2. Open the file → Allow "Install from unknown sources" if prompted
 3. Tap "Install"
-4. Open Protocol 01
+4. Open **Protocol 01** — the shipped build predates the rename, so that is the
+   name the launcher shows, not Styx
 
 #### First Launch:
 1. Tap **"Create Wallet"** — a 12-word seed is generated locally (never leaves the device)
@@ -69,7 +70,8 @@ Manual install (developer mode):
 3. Open Chrome → `chrome://extensions/`
 4. Enable **"Developer mode"** (top right toggle)
 5. Click **"Load unpacked"** → select the extracted `dist` folder
-6. The Protocol 01 icon appears in the toolbar
+6. The **Protocol 01** icon appears in the toolbar — the archive's manifest still
+   reads that name, so Chrome prints it rather than Styx
 
 ---
 
@@ -143,9 +145,9 @@ in this README is measured against that deployment on the real devnet cluster.
 
 ---
 
-## What is Protocol 01?
+## What is Styx Protocol?
 
-Protocol 01 is a **post-quantum-oriented privacy layer for Solana**, shipped as composable SDKs and a set of on-chain programs.
+Styx Protocol is a **post-quantum-oriented privacy layer for Solana**, shipped as composable SDKs and a set of on-chain programs.
 
 The stack combines **STARKs** (hash-based, no trusted setup), **hybrid stealth addresses** (X25519 + ML-KEM-768, the NIST-standardized post-quantum KEM), **Winternitz one-time signatures**, and a **custom on-chain FRI verifier**. The cryptography is chosen so that no scheme in the stack falls to Shor: no pairing-based proofs, no trusted setup, hash commitments throughout. One measured caveat outranks that design goal today: the STARK prover is **not zero-knowledge** — a private witness has been recovered from published proof bytes by Lagrange interpolation (`stark/tests/zk_feasibility.rs`), so proof bytes must be treated as revealing note secrets until the additive masking lands. No quantum computer is needed for that recovery; a laptop does it.
 
@@ -404,7 +406,7 @@ Marketing site, SDK docs, weekly update videos (Remotion).
 
 ### Mugen (reference consumer app)
 
-A Gojo-themed fiat-to-crypto P2P exchange built on Protocol 01 — used internally to prove the SDK in production.
+A Gojo-themed fiat-to-crypto P2P exchange built on Styx Protocol — used internally to prove the SDK in production.
 
 ---
 
