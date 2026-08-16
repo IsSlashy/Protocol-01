@@ -127,8 +127,24 @@ export async function prepareSubscribeJob(
 }
 
 export interface SubscribeExecuteParams {
-  /** Wallet that pre-funded the ephemeral; receives the swept residual. */
+  /** The user's wallet. Identity only — it is NOT necessarily what funded the
+   *  ephemeral, and since `sweepTo` exists it is not necessarily what gets the
+   *  residue back either. */
   ownerPubkey: PublicKey;
+  /**
+   * Where the residual rent goes when the job ends. Defaults to `ownerPubkey`,
+   * which is what a wallet-funded job wants.
+   *
+   * ⚠️ It must point at WHOEVER PAID. A sweep to the user's wallet after a
+   * third party pre-funded does two wrong things at once: it hands them
+   * ~1.03 SOL that is not theirs, and it re-creates on chain exactly the edge
+   * the third-party funding existed to remove — probe P6 reads the newest
+   * transaction of the ephemeral's life, and that transaction is this sweep.
+   * Funding through the relayer while sweeping home is strictly worse than not
+   * using the relayer at all, because it costs someone else's SOL to achieve
+   * nothing.
+   */
+  sweepTo?: PublicKey;
   /** Merchant who will be able to claim each period. */
   retailer: PublicKey;
   /** Per-period amount, in the pool token's smallest unit. */
@@ -233,11 +249,17 @@ export async function executeSubscribe(
       const eBal = await connection.getBalance(ephemeral.publicKey, 'confirmed');
       const sweepable = eBal - SWEEP_FEE;
       if (sweepable > 0) {
-        onProgress?.('Returning recovered rent to your wallet...');
+        const sweepTo = params.sweepTo ?? params.ownerPubkey;
+        const home = sweepTo.equals(params.ownerPubkey);
+        onProgress?.(
+          home
+            ? 'Returning recovered rent to your wallet...'
+            : 'Returning recovered rent to the funder...',
+        );
         const sweepTx = new Transaction().add(
           SystemProgram.transfer({
             fromPubkey: ephemeral.publicKey,
-            toPubkey: params.ownerPubkey,
+            toPubkey: sweepTo,
             lamports: sweepable,
           }),
         );

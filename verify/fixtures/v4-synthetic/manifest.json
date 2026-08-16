@@ -18,6 +18,8 @@
     "P2": "PASS",
     "P3": "PASS",
     "P3b": "FAIL",
-    "P4": "PASS"
+    "P4": "PASS",
+    "P6": "PASS",
+    "P7": "FAIL"
   }
 }
