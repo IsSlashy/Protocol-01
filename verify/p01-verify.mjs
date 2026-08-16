@@ -1144,7 +1144,7 @@ async function verifySpend(rpc, signature, opts = {}) {
   // ── P4: find the deposit, and the wallet behind it ────────────────────────
   let deposit = null;
   if (target !== null) {
-    deposit = await findDeposit(rpc, POOLS[poolPDA].tree, target, opts.depositLimit ?? 400);
+    deposit = await traceDepositChain(rpc, POOLS[poolPDA].tree, target, opts.depositLimit ?? 400);
   }
   results.push(
     probe(
@@ -1155,7 +1155,20 @@ async function verifySpend(rpc, signature, opts = {}) {
         ? target === null
           ? 'no commitment published, so there is nothing to match against a deposit'
           : 'no matching LeafInserted found within the searched window (may be RPC pruning, not privacy)'
-        : `deposit ${deposit.signature} inserted the same commitment at leaf ${deposit.leafIndex}`,
+        : deposit.hops.length === 1
+          ? `deposit ${deposit.signature} inserted the same commitment at leaf ${deposit.leafIndex}` +
+            (deposit.origin ? '' : ` — and this is NOT the origin: ${deposit.why}`)
+          : `${deposit.hops.length} hops back to ${deposit.origin ? 'the origin' : 'the furthest point reachable'}: ` +
+            deposit.hops
+              .map((h) => `${h.source?.name ?? 'unrecognised'} ${h.signature.slice(0, 12)}… (leaf ${h.leafIndex})`)
+              .join(' ← ') +
+            (deposit.origin
+              ? '. A transfer mints a fresh commitment but publishes the OLD one in the clear at byte 80, so it adds a ' +
+                'public hop rather than breaking the chain.'
+              : `. NOT the origin: ${deposit.why}`),
+      // The number of hops is pinned so that a note gaining a transfer between
+      // two runs cannot pass unnoticed inside an already-failing probe.
+      deposit === null ? null : deposit.hops.length,
     ),
   );
 
@@ -1308,6 +1321,30 @@ async function verifySpend(rpc, signature, opts = {}) {
   // everybody, this probe FAILS — because one party did finance both ends, and
   // that is a common party whatever its intent. Do not "fix" that by relaxing
   // the rule; it is the probe working.
+  //
+  // 🚨 A GREEN P8 DOES NOT MEAN THE NOTE WAS RECEIVED. MEASURED 2026-08-16.
+  // One wallet W deposits its own note (the shield is always paid by the wallet
+  // — `funderConfigured()` is consulted in `subscribeFromPool` and NOWHERE else,
+  // apps/web/lib/privacy/shieldClient.ts:286) and then subscribes with the
+  // third-party funder paying. Then depositSide = {W}, spendSide = {funder}, the
+  // sets are disjoint, and P8 passes while the buyer IS the depositor. The
+  // disjointness this probe measures is manufactured by an asymmetry in the
+  // client, not by a privacy property.
+  //
+  // The sentence stays true — no single wallet funded both ends — and it is too
+  // narrow to carry the weight a reader will put on it, so the PASS text says so
+  // in its own words. What actually separates "received" from "deposited" is who
+  // holds the note secret, and that is not a chain fact. No probe here can see
+  // it, and inventing one that appeared to would be worse than the gap.
+  //
+  // ONE STRUCTURAL GUARD, AND IT IS WORTH KNOWING
+  // ─────────────────────────────────────────────
+  // P8 can never PASS unless P1, P2 and P4 are already FAIL in the same report:
+  // a PASS needs `deposit !== null`, which needs `target !== null`, which is
+  // exactly the condition under which P1 reports the published commitment. So a
+  // green P8 only ever exists inside a report where the note is already traced
+  // to its deposit, and the run still exits 1. The danger is quoting this line
+  // on its own, not the tool.
   {
     const pre = overlapPrecheck({ deposit, target, payer, spendTrace });
     let verdict;
@@ -1344,6 +1381,12 @@ async function verifySpend(rpc, signature, opts = {}) {
               `spend payer's are {${[...out.spendSide].join(', ')}}; the two sets are disjoint, and ` +
               `neither payer appears in the other's set (deposit: ${readAs(depositTrace)}, spend: ` +
               `${readAs(spendTrace)}, ${cost} RPC calls on top of P4's deposit search). ` +
+              '⛔ THIS DOES NOT MEAN THE NOTE WAS RECEIVED RATHER THAN DEPOSITED BY THE SPENDER. ' +
+              'A single wallet that deposits its own note and then pays for the spend through a ' +
+              'third-party funder produces exactly this result — MEASURED, and the deposit ' +
+              "counterparty printed above is that wallet. Nothing on chain distinguishes the two " +
+              'worlds, because what separates them is who holds the note secret, and that is not ' +
+              'a chain fact. Read P4 for where this note actually came from. ' +
               'COUNTERPARTIES, not funders: this counts who the payer transacted with in either ' +
               'direction, so a sweep destination is in the set too. And it closes ONE hop only — a ' +
               'shared parent further out, two addresses held by one person, an off-chain hand-over ' +
@@ -1371,6 +1414,57 @@ async function verifySpend(rpc, signature, opts = {}) {
 }
 
 /**
+ * Which zk_shielded instructions insert a leaf, and whether the one they insert
+ * REPLACES an earlier note whose commitment they publish in the clear.
+ *
+ * 🚨 THIS TABLE IS WHY P4 CANNOT STOP AT THE FIRST MATCH.
+ * `transfer_denominated_stark_v3` consumes a note and mints a fresh one whose
+ * commitment comes from a CSPRNG — no algebraic link to the old one. It would
+ * therefore look like the chain ends there. It does not: the instruction
+ * publishes the OLD commitment in the clear as its `stark_commitment` argument
+ * at byte 80, and twice more in the verifier's `public_inputs` for C1 and C3.
+ * MEASURED 2026-08-16 on both real v3 transfers on devnet: spend commitment →
+ * transfer's LeafInserted → byte 80 → the original deposit's LeafInserted →
+ * the shield and its payer. Two hops, two out of two.
+ *
+ * So a probe that stopped at the first insertion would name the TRANSFER as
+ * "the deposit" and print a result that reads like privacy. Adding a hop to a
+ * public chain is not the same as breaking it, and the difference is exactly
+ * what this table exists to keep visible.
+ */
+const LEAF_SOURCES = [
+  { name: 'shield_denominated_v3', predecessorOffset: null },
+  { name: 'transfer_denominated_stark_v3', predecessorOffset: 80 },
+];
+
+let leafSourceTable = null;
+
+/**
+ * Classify the instruction that inserted a leaf, from the transaction that
+ * emitted the event. Returns null when no known instruction matches — reported
+ * as an unknown hop rather than assumed to be an origin, because assuming would
+ * turn "we do not recognise this" into "the chain ends here".
+ */
+function classifyLeafSource(tx) {
+  leafSourceTable ??= LEAF_SOURCES.map((k) => ({ ...k, disc: discriminator(k.name) }));
+  const keys = accountKeysOf(tx);
+  for (const ix of tx.transaction.message.instructions) {
+    if (keys[ix.programIdIndex] !== ZK_SHIELDED) continue;
+    const data = b58decode(ix.data);
+    for (const kind of leafSourceTable) {
+      if (data.length >= 8 && data.subarray(0, 8).equals(kind.disc)) {
+        const predecessor =
+          kind.predecessorOffset !== null && data.length >= kind.predecessorOffset + 8
+            ? data.readBigUInt64LE(kind.predecessorOffset)
+            : null;
+        return { name: kind.name, predecessor };
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Walk the tree account's history for the LeafInserted that carries `leaf`.
  *
  * `payer` is returned because P8 needs it and this walk already holds the
@@ -1379,7 +1473,7 @@ async function verifySpend(rpc, signature, opts = {}) {
  * null when the transaction carried no message header, which is the same
  * condition that makes the spend's own payer null.
  */
-async function findDeposit(rpc, treePDA, leaf, limit) {
+async function findLeafInsertion(rpc, treePDA, leaf, limit) {
   let before = undefined;
   let scanned = 0;
   while (scanned < limit) {
@@ -1408,6 +1502,7 @@ async function findDeposit(rpc, treePDA, leaf, limit) {
             leafIndex: ev.leafIndex,
             payer:
               Number.isInteger(depositSigners) && depositSigners >= 1 ? depositKeys[0] : null,
+            source: classifyLeafSource(tx),
           };
         }
       }
@@ -1415,6 +1510,43 @@ async function findDeposit(rpc, treePDA, leaf, limit) {
     before = page[page.length - 1].signature;
   }
   return null;
+}
+
+/** A note cannot be re-transferred more times than this without saying so. */
+const MAX_DEPOSIT_HOPS = 8;
+
+/**
+ * Follow the commitment back to the note's ORIGIN, through however many
+ * transfers stand in between.
+ *
+ * Each hop costs nothing extra against the tree's history — the walk that finds
+ * an insertion already fetched the transaction that classifies it. What it buys
+ * is the difference between "this note was transferred once" and "this note was
+ * deposited here", which the first version of this probe could not tell apart
+ * and reported as the latter.
+ *
+ * Returns the ORIGIN as `deposit` (so P8 walks the real depositor, not an
+ * intermediate ephemeral) plus the `hops` that led to it. `origin` is false when
+ * the walk ran out of hops or met an insertion it could not classify — in which
+ * case what is reported is the furthest point reached, and it is labelled as
+ * such rather than presented as the beginning.
+ */
+async function traceDepositChain(rpc, treePDA, leaf, limit) {
+  const hops = [];
+  let target = leaf;
+  for (let i = 0; i < MAX_DEPOSIT_HOPS; i++) {
+    const found = await findLeafInsertion(rpc, treePDA, target, limit);
+    if (!found) return hops.length ? { ...hops[hops.length - 1], hops, origin: false, why: 'a hop in the chain was not found within the searched window' } : null;
+    hops.push(found);
+    const predecessor = found.source?.predecessor ?? null;
+    if (found.source === null) {
+      return { ...found, hops, origin: false, why: `the instruction that inserted leaf ${found.leafIndex} is not one this tool recognises` };
+    }
+    if (predecessor === null) return { ...found, hops, origin: true, why: null };
+    target = predecessor;
+  }
+  const last = hops[hops.length - 1];
+  return { ...last, hops, origin: false, why: `the chain is longer than ${MAX_DEPOSIT_HOPS} hops` };
 }
 
 // ---------------------------------------------------------------------------
@@ -1722,6 +1854,71 @@ function selfTestChannelDecoders() {
     check('P6 finds an edge buried mid-history', deep.edges.length, 1);
     check('P6 read the whole history to say so', deep.scanned, midSigs.length);
     check('P6 marks that walk as deep', deep.deep, true);
+
+    // ── P4: the transfer hop, which no fixture contains ─────────────────────
+    //
+    // Both committed fixtures are one-hop: a subscribe over a note that was
+    // shielded directly. So the case P4 was WRONG about — a note that passed
+    // through `transfer_denominated_stark_v3` — cannot be exercised by any
+    // recorded data, and its control has to be built here.
+    //
+    // Case 3 is the one that matters. Before 2026-08-16 the walk stopped at the
+    // first matching LeafInserted, so on a transferred note it named the
+    // TRANSFER as "the deposit" and printed a result that reads like privacy.
+    const leafEvent = (leafIndex, leafValue) => {
+      const b = Buffer.alloc(8 + 32 + 8 + 32 + 32 + 32);
+      LEAF_INSERTED_DISC.copy(b, 0);
+      b.writeBigUInt64LE(BigInt(leafIndex), 40);
+      b.writeBigUInt64LE(leafValue, 48);
+      return `Program data: ${b.toString('base64')}`;
+    };
+    const ixData = (name, predecessor) => {
+      const d = Buffer.alloc(predecessor === null ? 8 : 88);
+      discriminator(name).copy(d, 0);
+      if (predecessor !== null) d.writeBigUInt64LE(predecessor, 80);
+      return b58encode(d);
+    };
+    const leafTx = (name, leafIndex, leafValue, predecessor, payer) => ({
+      slot: 1,
+      transaction: {
+        message: {
+          header: { numRequiredSignatures: 1 },
+          accountKeys: [payer, ZK_SHIELDED],
+          instructions: [{ programIdIndex: 1, accounts: [0], data: ixData(name, predecessor) }],
+        },
+      },
+      meta: { logMessages: [leafEvent(leafIndex, leafValue)] },
+    });
+
+    const SHIELD_PAYER = 'SHIELDSHIELDSHIELDSHIELDSHIELDSHIELDSHIELD';
+    const HOP_PAYER = 'HOPHOPHOPHOPHOPHOPHOPHOPHOPHOPHOPHOPHOPHOP';
+    const SPENT = 0xAAAAAAAAAAAAAAAAn; // what the spend published
+    const ORIGIN = 0xBBBBBBBBBBBBBBBBn; // what the deposit published
+
+    const chain = {
+      TRANSFER: leafTx('transfer_denominated_stark_v3', 21, SPENT, ORIGIN, HOP_PAYER),
+      SHIELD: leafTx('shield_denominated_v3', 19, ORIGIN, null, SHIELD_PAYER),
+    };
+    const treeRpc = async (method, params) => {
+      if (method === 'getSignaturesForAddress') return [{ signature: 'TRANSFER' }, { signature: 'SHIELD' }];
+      if (method === 'getTransaction') return chain[params[0]] ?? null;
+      return null;
+    };
+
+    check('P4 reads a shield as an origin', classifyLeafSource(chain.SHIELD)?.predecessor, null);
+    check('P4 reads a transfer predecessor at byte 80', classifyLeafSource(chain.TRANSFER)?.predecessor, ORIGIN);
+
+    const traced = await traceDepositChain(treeRpc, 'TREE', SPENT, 400);
+    check('P4 follows the transfer to the real deposit', traced?.hops?.length, 2);
+    check('P4 lands on the shield, not the hop', traced?.payer, SHIELD_PAYER);
+    check('P4 says it reached the origin', traced?.origin, true);
+
+    // And it must NOT claim an origin it cannot recognise.
+    const opaque = { OPAQUE: leafTx('split_note_stark', 21, SPENT, null, HOP_PAYER) };
+    const blindRpc = async (m, p) =>
+      m === 'getSignaturesForAddress' ? [{ signature: 'OPAQUE' }] : m === 'getTransaction' ? opaque[p[0]] ?? null : null;
+    const unknown = await traceDepositChain(blindRpc, 'TREE', SPENT, 400);
+    check('P4 refuses to call an unrecognised insertion an origin', unknown?.origin, false);
 
     // ── P8's rule: every branch, asserted by its REASON ──────────────────────
     //

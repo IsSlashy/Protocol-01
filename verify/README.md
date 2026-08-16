@@ -69,7 +69,7 @@ trace blinding ships, and the pin means a premature "fix" turns CI red first.
 | **P2** | every 8-byte window of the spend instruction |
 | **P3** | every `write_proof_chunk` byte the spend's payer uploaded |
 | **P3b** | the limit of P3, always inconclusive — see below |
-| **P4** | the deposit, found by matching `LeafInserted` against the published commitment |
+| **P4** | the note's origin, followed back through any transfers that stand in between |
 | **P5** | context: the pool's real anonymity set and the deposit→spend gap |
 | **P6** | the fee payer's two funding edges — where its lamports came from, where they went |
 | **P7** | the commitment in instruction *arguments* outside the proof payload |
@@ -121,6 +121,20 @@ the verifier. That number is a **floor** — publications on the deposit side be
 to a different payer and are outside this walk, as is any occurrence in an event
 log rather than an instruction.
 
+**P4 follows the chain; it does not stop at the first link.** A transfer
+(`transfer_denominated_stark_v3`) consumes a note and mints a fresh one whose
+commitment comes from a CSPRNG, so there is no *algebraic* link between the two —
+which is exactly why a probe that stopped at the first matching `LeafInserted`
+would name the transfer as "the deposit" and print something that reads like
+privacy. It is not: the transfer publishes the **old commitment in the clear** at
+byte 80 of its own instruction, and twice more in the verifier's `public_inputs`
+for C1 and C3. MEASURED 2026-08-16 on both real v3 transfers on devnet — spend
+commitment → transfer's `LeafInserted` → byte 80 → the original deposit → the
+shield and its payer, two for two. A transfer adds a public hop; it does not
+break the chain. P4 now walks it, pins the hop count as its measure, and refuses
+to call an insertion it cannot classify an origin. No fixture contains a
+transfer, so that walk's control is built offline.
+
 **P8 measures the sentence this file used to attribute to P4.** The header of
 `p01-verify.mjs` described P4 as *"the wallet that funded the deposit is not a
 party to the spend"* until 2026-08-16. P4 never checked that: `findDeposit`
@@ -142,6 +156,24 @@ off-chain hand-over of the note all survive it untouched.
 covers both the shield and the subscribe legs for everyone, this probe fails —
 because one party did finance both ends, whatever its intent. That is the probe
 working, not a bug to relax.
+
+**⛔ A green P8 does not mean the note was received rather than deposited.**
+MEASURED 2026-08-16, and this is the limit worth stating loudest. One wallet `W`
+deposits its own note — the shield is *always* paid by the wallet, because
+`funderConfigured()` is consulted in `subscribeFromPool` and nowhere else — then
+subscribes with a third-party funder paying. `depositSide = {W}`,
+`spendSide = {funder}`, disjoint, **P8 passes while the buyer is the depositor**.
+The disjointness is manufactured by an asymmetry in the client, not by a privacy
+property. What actually separates "received" from "deposited" is who holds the
+note secret, and that is not a chain fact — no probe here can see it, and
+inventing one that appeared to would be worse than the gap.
+
+One structural guard bounds the damage: **P8 can never pass unless P1, P2 and P4
+are already failing in the same report.** A pass needs a deposit, a deposit needs
+a published commitment, and a published commitment is exactly what P1 reports. So
+a green P8 only ever exists inside a report where the note is already traced to
+its deposit, and the run still exits `1`. The danger is quoting the P8 line on its
+own, not the tool.
 
 **P8 cannot get its green from any fixture, so it gets it offline.** The
 synthetic fixtures publish no commitment, so P4 finds no deposit and P8 is
