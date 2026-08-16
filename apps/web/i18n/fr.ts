@@ -1321,7 +1321,7 @@ const fr: Translations = {
     securityTitle: 'Mod\u00e8le de s\u00e9curit\u00e9',
     threatModel: 'Mod\u00e8le de menace',
     threatObservers: 'Un observateur peut aujourd\u2019hui apparier un d\u00e9p\u00f4t et son retrait, parce que le retrait republie l\u2019engagement du d\u00e9p\u00f4t. Ce que les adresses seules ne donnent pas : relier deux paiements furtifs \u00e0 un m\u00eame destinataire',
-    threatAmounts: 'Les montants ne sont pas cach\u00e9s : les pools sont \u00e0 d\u00e9nomination fixe et le pool o\u00f9 vit une note en dit la valeur. Une note cache son propri\u00e9taire et son masque, jamais son montant',
+    threatAmounts: 'Les montants sont publics par conception, pas par oubli : un pool ne porte qu\u2019une d\u00e9nomination, donc toutes ses notes ont exactement la m\u00eame taille et le montant ne d\u00e9signe personne. Ce qu\u2019il r\u00e9v\u00e8le, c\u2019est quel pool vous avez utilis\u00e9, et la couverture que cela donne d\u00e9pend du nombre de notes non d\u00e9pens\u00e9es qui le partagent. Aujourd\u2019hui elle est nulle, parce que le retrait republie l\u2019engagement du d\u00e9p\u00f4t et nomme donc son propre d\u00e9p\u00f4t',
     threatPatterns: 'Les sch\u00e9mas de d\u00e9pense sont analysables aujourd\u2019hui, parce que chaque retrait peut \u00eatre rapproch\u00e9 de son d\u00e9p\u00f4t. La remise de note chiffr\u00e9e hors cha\u00eene est l\u2019exception : elle n\u2019a aucune transaction \u00e0 analyser',
     threatBalance: 'Le suivi des soldes n\u2019est pas emp\u00each\u00e9 : qui suit un portefeuille peut compter ses notes par appariement d\u00e9p\u00f4t-retrait. Le solde prot\u00e9g\u00e9 est un ensemble de notes, pas un nombre stock\u00e9 dans un seul compte',
     guarantees: 'Garanties',
