@@ -92,6 +92,15 @@ export interface SubscribeFromPoolResult {
   /** Typed loosely on purpose: the brief named the field, not its type. */
   vaultPDA: PublicKey | string;
   licenseKey: string;
+  /**
+   * Who paid for the job, and therefore whether this wallet is on chain.
+   *
+   * Optional so an older caller still typechecks, and the panel treats a missing
+   * value as `'wallet'` — the pessimistic reading. Assuming the private outcome
+   * from an absent field is how a page ends up telling someone their wallet is
+   * off chain when it is not.
+   */
+  fundedBy?: 'wallet' | 'funder';
 }
 
 interface SubscribeModule {
@@ -898,6 +907,34 @@ export default function SubscribePanel({
                   one else.
                 </span>
               </p>
+              {/* The third fact, and the one nothing else on this screen tells
+                them: whether their wallet is in the transaction history. It is
+                a measured property, not a promise — probe P6 in `verify/`
+                reads exactly the two transfers described here, and reaches the
+                wallet in three RPC calls when they exist. Saying nothing would
+                let the page imply the good case. */}
+              {result.fundedBy === 'funder' ? (
+                <p className="flex items-start gap-2 text-xs text-p01-text-muted">
+                  <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
+                  <span>
+                    <strong className="text-p01-text">Your wallet did not sign this.</strong> The
+                    funder paid the rent and fees, so your address is in none of these transactions
+                    and the leftover went back to it, not to you. The funder still saw the request,
+                    its timing and where it came from — this moves the link off the chain, it does
+                    not remove it.
+                  </span>
+                </p>
+              ) : (
+                <p className="flex items-start gap-2 text-xs text-p01-text-muted">
+                  <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
+                  <span>
+                    <strong className="text-p01-text">Your wallet paid for this, in public.</strong>{' '}
+                    It signed a transfer to the signing key before, and got the leftover back after.
+                    Both are ordinary transfers naming your address, so anyone reading this
+                    subscription reaches your wallet in three steps.
+                  </span>
+                </p>
+              )}
             </div>
 
             {/* Protocol detail, second plane. */}
