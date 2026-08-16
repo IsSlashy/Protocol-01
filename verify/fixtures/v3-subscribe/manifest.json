@@ -1,5 +1,5 @@
 {
-  "note": "Recorded live from devnet on 2026-08-12. Review `expect` against the run that produced it before committing.",
+  "note": "Recorded live from devnet 2026-08-12, re-recorded 2026-08-16 twice: once when P8 was added (it walks the DEPOSIT payer HDudHd6Y, a history no earlier fixture held) and again when P6/P8 began reading inner instructions and the full history. Every probe reproduced its 2026-08-12 verdict and count, so both re-records changed what is read, not what is true. Review `expect` against the run that produced it before committing.",
   "spend": "4v6RLndUyQFZNNKcdzdSi5JckEeR6vh4DHNhc3du77CuLUZnBMh2A7pcUcDiMSFbvkv8h6VFtzmfKq48qKFHx2A3",
   "kind": "subscribe_private_stark",
   "flags": {
@@ -13,10 +13,12 @@
     "P3b": "FAIL",
     "P4": "FAIL",
     "P6": "FAIL",
-    "P7": "FAIL"
+    "P7": "FAIL",
+    "P8": "FAIL"
   },
   "measure": {
     "P6": 2,
-    "P7": 5
+    "P7": 5,
+    "P8": 1
   }
 }

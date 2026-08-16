@@ -20,7 +20,8 @@
     "P3b": "FAIL",
     "P4": "PASS",
     "P6": "PASS",
-    "P7": "FAIL"
+    "P7": "FAIL",
+    "P8": "FAIL"
   },
   "measure": {
     "P6": 0

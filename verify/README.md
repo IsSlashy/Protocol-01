@@ -33,9 +33,13 @@ plus a regression pin:
 
 | fixture | provenance | pins |
 |---|---|---|
-| `fixtures/v3-subscribe` | **recorded** from a real devnet `subscribe_private_stark` spend | P1/P2/P4/P6/P7 FAIL (the leak stays detected) |
+| `fixtures/v3-subscribe` | **recorded** from a real devnet `subscribe_private_stark` spend | P1/P2/P4/P6/P7/P8 FAIL (the leak stays detected) |
 | `fixtures/v4-synthetic` | **hand-built**, never touched a chain — see its README | P1/P2/P4 PASS, **P6 PASS** (clean stays reportable) |
 | `fixtures/v4-synthetic-errored` | **hand-built** — v4-synthetic with two errored payer signatures | P3 PASS (errored history must not break completeness) |
+
+Both synthetic fixtures pin **P8 FAIL**, and it is an INCONCLUSIVE rather than a
+detection: they publish no commitment, so P4 finds no deposit and there is no
+deposit side to compare. P8's green is exercised offline instead — see below.
 
 ⚠️ `v4-synthetic` is also the standing demonstration that **a v4 spend is not a
 private one**. It is what the world looks like after the commitment leaves the
@@ -69,6 +73,7 @@ trace blinding ships, and the pin means a premature "fix" turns CI red first.
 | **P5** | context: the pool's real anonymity set and the deposit→spend gap |
 | **P6** | the fee payer's two funding edges — where its lamports came from, where they went |
 | **P7** | the commitment in instruction *arguments* outside the proof payload |
+| **P8** | the same walk on the *deposit's* payer, and whether one wallet stands behind both ends |
 
 **P6 is the cheapest attack in this file, and it is not cryptographic.** P1–P4
 chase a commitment; an analyst would not. The spend is signed by an ephemeral
@@ -76,11 +81,33 @@ key, which is good — but an ephemeral key cannot pay a fee from nothing, so a
 public `SystemProgram::transfer` funded it, and the client sweeps the residue
 back when the job ends. The ephemeral is bracketed by two ordinary transfers and
 both name the wallet. Measured on `fixtures/v3-subscribe`: **3 RPC calls**, one
-more than a block explorer already makes. P6 fetches only the two ends of the
-payer's life on purpose, and prints its own call count, so the cost of the attack
-is part of the result. A PASS means the *one-hop* edge is closed — never that the
-payer is anonymous: a funder one hop further out, or a relayer that logged the
-request, is outside this probe.
+more than a block explorer already makes. P6 prints its own call count, so the
+cost of the attack is part of the result.
+
+**Finding the leak is cheap; proving its absence is not, and since 2026-08-16 P6
+pays for both.** It reads the two ends of the payer's life first — that is the
+attack, and when they name someone the probe stops there and reports three calls.
+When they come back clean it reads **every** transaction in the history before
+passing, and it reads inner instructions as well as top-level ones.
+
+Neither widening changes the committed fixture's verdict, and the honest version
+of why they were made is narrower than "it was broken":
+
+- **the two ends were right by coincidence, not by construction.** MEASURED on
+  the deposit payer `HDudHd6Y…`: 96 transactions, pre-fund at index 95, sweep at
+  index 0, both top-level, both naming `BRop3akx…`. That is the shape today's
+  client happens to produce. A funder that tops up mid-life breaks it, and two
+  samples out of ninety-six would then have read as absence.
+- **a CPI transfer was invisible.** MEASURED on the deposit `2PVnaQXD…`: three
+  top-level instructions, none of them a System transfer, and both lamport
+  movements inside `meta.innerInstructions`. Those two go to the pool and the fee
+  escrow rather than to a wallet, so no verdict moved — but nothing stops a
+  funder paying an ephemeral the same way, and fixtures did not even retain the
+  field, so no recorded fixture could have shown it.
+
+A PASS still means the *one-hop* edge is closed, never that the payer is
+anonymous: a funder one hop further out, or a relayer that logged the request, is
+outside this probe.
 
 **P7 exists so that closing P1 cannot be mistaken for a win.** The verifier takes
 `public_inputs: Vec<u64>` as an *instruction argument*, and C1's public inputs are
@@ -93,6 +120,38 @@ turn green while the leak survives in the verify instructions. Measured on
 the verifier. That number is a **floor** — publications on the deposit side belong
 to a different payer and are outside this walk, as is any occurrence in an event
 log rather than an instruction.
+
+**P8 measures the sentence this file used to attribute to P4.** The header of
+`p01-verify.mjs` described P4 as *"the wallet that funded the deposit is not a
+party to the spend"* until 2026-08-16. P4 never checked that: `findDeposit`
+returned a signature and a leaf index and never looked at who paid, so the
+deposit half of the claim was documented and unmeasured for the whole life of the
+file. P8 is the symmetric twin of P6 — the same three-call walk pointed at the
+deposit's fee payer — plus the intersection of the two counterparty sets.
+
+**A PASS requires both sides to resolve something.** Two sides that resolve
+nothing also intersect in nothing, and calling that clean would convert *"we
+could not see"* into *"there is nothing there"*. So P8 passes only when both
+walks return a non-empty funder set **and** those sets are disjoint; anything
+else is INCONCLUSIVE, and INCONCLUSIVE is FAIL. A PASS says the deposit and the
+spend do not share a one-hop financial parent — not that they are unrelated. A
+parent one hop further out, two withdrawals from the same exchange, or an
+off-chain hand-over of the note all survive it untouched.
+
+**And P8 will go red on a shared treasury, correctly.** The moment one funder
+covers both the shield and the subscribe legs for everyone, this probe fails —
+because one party did finance both ends, whatever its intent. That is the probe
+working, not a bug to relax.
+
+**P8 cannot get its green from any fixture, so it gets it offline.** The
+synthetic fixtures publish no commitment, so P4 finds no deposit and P8 is
+INCONCLUSIVE there; the recorded one is a v3 spend where the buyer funded both
+ends. Its rule is therefore split into two pure functions and driven through every
+branch in `selfTestChannelDecoders()`, each case asserting the REASON the rule
+gives rather than merely that it refused. Four of those cases are greens no
+fixture can produce: disjoint counterparties (the shape an E3 spend makes), one
+treasury behind both ends, and the two directions of a direct payer-to-payer
+edge.
 
 **P7's green state lives in an offline control, not in a fixture.** The synthetic
 fixtures publish no commitment, so P7 has nothing to count and reports
@@ -144,7 +203,7 @@ Re-record when the probes change what they read (a replay miss tells you,
 loudly, with the exact request). Review the auto-pinned `expect` map against
 the run that produced it before committing.
 
-## Measured on devnet, 2026-08-12
+## Measured on devnet, 2026-08-12 (P8 added 2026-08-16)
 
 Against `subscribe_private_stark` `4v6RLndU…` in the 1 SOL pool — this is the
 run frozen in `fixtures/v3-subscribe`:
@@ -157,10 +216,15 @@ FAIL  P3b  inconclusive by construction
 FAIL  P4   deposit 2PVnaQXD… inserted the same commitment at leaf 23
 FAIL  P6   bracketed by 2 System transfers naming BRop3akx… — in 3 RPC calls
 FAIL  P7   5 instructions publish it in the clear (zk_shielded ×1, verifier ×4)
+FAIL  P8   1 wallet funds BOTH ends: BRop3akx… — in 6 RPC calls
 INFO       pool 1 SOL: 6 unspent of 25 ever deposited; gap 355,268 slots
 ```
 
-Three things worth stating plainly, because all three cut against expectations:
+The 2026-08-16 re-record was needed because P8 reads a history no earlier
+fixture held — the deposit payer's. Every other probe reproduced its 2026-08-12
+numbers byte for byte, so the re-record changed what is read, not what is true.
+
+Four things worth stating plainly, because all four cut against expectations:
 
 1. **P3 passes today.** The commitment is not copied into the C1+C3 proof bytes.
    That refines a design concern rather than confirming it — the present-day
@@ -177,6 +241,13 @@ Three things worth stating plainly, because all three cut against expectations:
    `memcmp` alone can enumerate. No proof is read, no commitment is matched, no
    interpolation is attempted. Any privacy work that does not close this channel
    first is optimising the second-cheapest attack.
+4. **P8 costs six RPC calls and names the buyer as their own depositor.** The
+   deposit's ephemeral and the spend's ephemeral are different keys, and both are
+   funded by `BRop3akx…`. So the two legs are not merely correlatable through the
+   commitment — they are financed by one wallet, which an analyst reaches without
+   reading a single proof byte. This is the probe that would turn green on a note
+   that was *received* rather than deposited, and it is the only probe in this
+   file that can.
 
 ## Notes
 

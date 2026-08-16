@@ -172,7 +172,21 @@ const manifest = {
   // chunks were found, fully scanned, no target to hunt. P3b stays FAIL — it
   // is inconclusive by construction until trace blinding ships, and pinning it
   // here means a well-meaning "fix" that makes it pass turns CI red first.
-  expect: { P1: 'PASS', P2: 'PASS', P3: 'PASS', P3b: 'FAIL', P4: 'PASS' },
+  //
+  // P6/P7/P8 were added to the tool and NOT to this list, so `node generate.mjs`
+  // rewrote a manifest missing three pins and the self-test's total-mapping rule
+  // turned CI red — the README says the regenerated file must diff clean, and it
+  // did not. Fixed 2026-08-16. Whoever adds a probe must add its pin here too.
+  //   P6 PASS  this payer carries no System transfer at either end.
+  //   P7 FAIL  INCONCLUSIVE: no commitment is published, so there is nothing to
+  //            count. Not the same as clean, and pinned FAIL to keep it visible.
+  //   P8 FAIL  INCONCLUSIVE: P4 finds no deposit here, so there is no deposit
+  //            side to compare. A synthetic fixture cannot exercise P8's green;
+  //            that control lives offline in selfTestChannelDecoders.
+  expect: { P1: 'PASS', P2: 'PASS', P3: 'PASS', P3b: 'FAIL', P4: 'PASS', P6: 'PASS', P7: 'FAIL', P8: 'FAIL' },
+  // P6 reports a count even when it passes (zero edges), so it must be pinned or
+  // the "a measure with no pin" rule fires.
+  measure: { P6: 0 },
 };
 
 writeFileSync(join(here, 'rpc.json'), JSON.stringify({ calls }, null, 1));

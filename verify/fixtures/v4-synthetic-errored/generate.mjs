@@ -207,7 +207,12 @@ const manifest = {
   // (FAIL), a deviation from this map. The rest matches fixtures/v4-synthetic:
   // no commitment published, so P1/P2/P4 PASS; P3b stays FAIL by construction
   // until trace blinding ships.
-  expect: { P1: 'PASS', P2: 'PASS', P3: 'PASS', P3b: 'FAIL', P4: 'PASS' },
+  // Same pin set as the sibling fixture, and for the same reasons — see
+  // ../v4-synthetic/generate.mjs. P6/P7/P8 were missing here too, so
+  // regenerating this file turned CI red against its own README. Fixed
+  // 2026-08-16.
+  expect: { P1: 'PASS', P2: 'PASS', P3: 'PASS', P3b: 'FAIL', P4: 'PASS', P6: 'PASS', P7: 'FAIL', P8: 'FAIL' },
+  measure: { P6: 0 },
 };
 
 writeFileSync(join(here, 'rpc.json'), JSON.stringify({ calls }, null, 1));
