@@ -62,7 +62,7 @@ export const SHIELD_PHASES: FlowPhase[] = [
   { id: 'derive', label: 'Creating your note', weight: 0.05, match: /deriving note|building v3 shield/i },
   { id: 'prove', label: 'Proving the deposit', weight: 0.25, match: /generating c6|stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz/i },
-  { id: 'upload', label: 'Uploading the proof', weight: 0.45, match: /uploading|confirming chunk/i },
+  { id: 'upload', label: 'Uploading the proof', weight: 0.45, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
   { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|closing/i },
 ];
 
@@ -71,7 +71,7 @@ export const WITHDRAW_PHASES: FlowPhase[] = [
   { id: 'path', label: 'Rebuilding its history', weight: 0.08, match: /merkle|pre-flight root|stored merkle root|checking the note/i },
   { id: 'prove', label: 'Proving you own it', weight: 0.3, match: /generating c1|generating c3|stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz|pricing/i },
-  { id: 'upload', label: 'Uploading the proof', weight: 0.35, match: /uploading|confirming chunk/i },
+  { id: 'upload', label: 'Uploading the proof', weight: 0.35, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
   { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|building v3 unshield|closing/i },
 ];
 
@@ -80,7 +80,7 @@ export const SUBSCRIBE_PHASES: FlowPhase[] = [
   { id: 'path', label: 'Rebuilding its history', weight: 0.07, match: /merkle|pre-flight root|checking the note|subscriber commitment/i },
   { id: 'prove', label: 'Proving you own it', weight: 0.28, match: /generating c1|generating c3|stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz|pricing/i },
-  { id: 'upload', label: 'Uploading the proofs', weight: 0.4, match: /uploading|confirming chunk/i },
+  { id: 'upload', label: 'Uploading the proofs', weight: 0.4, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
   { id: 'open', label: 'Opening your subscription', weight: 0.1, match: /verif|opening the subscription|closing/i },
 ];
 
