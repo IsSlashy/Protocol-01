@@ -127,9 +127,19 @@ function registerPools(extra, source) {
  * instead of silently matching nothing.
  */
 const SPEND_KINDS = [
+  // The arithmetic, written out, because the transfer entry was wrong by one
+  // field and nothing here would have said so. Both v3 spends share a prefix:
+  //   disc 8 | nullifier 32 | merkle_root 32 | min_epoch u64 | stark_commitment u64
+  //   0..8       8..40           40..72          72..80            80..88
+  // so the commitment sits at 80 in BOTH, and 72 is min_epoch. Transfer read 72,
+  // which on a real transfer yields min_epoch (0 on every note the client
+  // writes), matches no deposit, and reports the spend CLEAN. A false clean, in
+  // the tool whose whole purpose is to refuse them.
+  // Source: programs/zk_shielded/src/lib.rs:347-356 (arg order) and
+  // apps/web/lib/privacy/pool/denominatedPool.ts:2008-2013 (the encoder).
   { name: 'unshield_denominated_stark_v3', commitmentOffset: 80, totalLen: 120 },
   { name: 'subscribe_private_stark', commitmentOffset: 160, totalLen: null },
-  { name: 'transfer_denominated_stark_v3', commitmentOffset: 72, totalLen: null },
+  { name: 'transfer_denominated_stark_v3', commitmentOffset: 80, totalLen: null },
   { name: 'split_note_stark', commitmentOffset: null, totalLen: null },
   // v4 lands here. It must appear with commitmentOffset: null, and P1 then
   // passes only because there is nothing to read — which is the point.
@@ -902,6 +912,81 @@ function selfTestLive(reports) {
   return broken === 0 ? 0 : 1;
 }
 
+/**
+ * Offline control on the SPEND_KINDS offsets themselves.
+ *
+ * The transfer entry read byte 72 for months. 72 is min_epoch, which the client
+ * writes as 0 on every note, so P1 would have found no commitment on a real
+ * transfer and reported the spend CLEAN. A false clean, in the one tool whose
+ * job is to refuse them, and no fixture covered it because every recorded
+ * fixture is an unshield or a subscribe.
+ *
+ * Restating the right number here would only move the copy. So the layout is
+ * declared as the FIELD LIST the program signature actually has, the offset is
+ * derived from it, and the table is asserted against the derivation. Reordering
+ * an argument on chain and not here now fails, instead of going quiet.
+ */
+const SPEND_LAYOUTS = {
+  // programs/zk_shielded/src/lib.rs — both v3 spends share this prefix.
+  unshield_denominated_stark_v3: [
+    ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['min_epoch', 8], ['stark_commitment', 8],
+  ],
+  transfer_denominated_stark_v3: [
+    ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['min_epoch', 8], ['stark_commitment', 8],
+  ],
+  // subscribe_private_stark is NOT covered: its argument list has not been read
+  // field by field here, and inventing a layout to make a test green would be
+  // worse than the gap. Left explicit so the gap is visible rather than assumed
+  // away.
+};
+
+function selfTestOffsets() {
+  console.log('\n  ── OFFSET CONTROL (offline) ──────────────────────────────');
+  const COMMITMENT = 0xC0FFEE0000000001n;
+  const MIN_EPOCH = 0x00000000DEADBEEFn;
+  let broken = 0;
+  let checked = 0;
+
+  for (const kind of SPEND_KINDS) {
+    const layout = SPEND_LAYOUTS[kind.name];
+    if (!layout) continue;
+    checked += 1;
+
+    let derived = 0;
+    const total = layout.reduce((n, [, w]) => n + w, 0);
+    const buf = Buffer.alloc(total);
+    let at = 0;
+    for (const [field, width] of layout) {
+      if (field === 'stark_commitment') { derived = at; buf.writeBigUInt64LE(COMMITMENT, at); }
+      else if (field === 'min_epoch') buf.writeBigUInt64LE(MIN_EPOCH, at);
+      at += width;
+    }
+
+    const read = buf.readBigUInt64LE(kind.commitmentOffset);
+    const ok = kind.commitmentOffset === derived && read === COMMITMENT;
+    if (!ok) {
+      broken += 1;
+      console.log(
+        `   FAIL  ${kind.name}: table says ${kind.commitmentOffset}, the signature says ${derived}` +
+          (read === MIN_EPOCH ? ' — it is reading min_epoch' : ''),
+      );
+    } else {
+      console.log(`   ok    ${kind.name}: commitment at ${derived}, read back intact`);
+    }
+  }
+
+  if (checked === 0) {
+    console.log('   FAIL  no kind was checked, so this control asserted nothing.');
+    return 1;
+  }
+  console.log(
+    broken === 0
+      ? `   PASS  ${checked} spend layout(s) agree with the program signature.`
+      : '   FAIL  an offset disagrees with the signature. Any GREEN from P1 is worthless.',
+  );
+  return broken === 0 ? 0 : 1;
+}
+
 // ---------------------------------------------------------------------------
 // Entry
 // ---------------------------------------------------------------------------
@@ -1014,11 +1099,13 @@ async function main() {
   if (recordDir) writeFixture(recordDir, store, reports[0], opts);
 
   if (selfTest) {
-    process.exit(
-      manifest?.expect
-        ? selfTestAgainstManifest(reports[0], manifest, replayDir)
-        : selfTestLive(reports),
-    );
+    // The offset control runs on every --self-test, replay or live: it needs no
+    // chain and no fixture, and it guards the one thing every fixture missed.
+    const offsets = selfTestOffsets();
+    const probes = manifest?.expect
+      ? selfTestAgainstManifest(reports[0], manifest, replayDir)
+      : selfTestLive(reports);
+    process.exit(offsets === 0 && probes === 0 ? 0 : 1);
   }
 
   console.log(
