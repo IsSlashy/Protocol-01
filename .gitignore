@@ -294,3 +294,11 @@ docs/MOBILE_SUBSCRIPTION_AUDIT.md
 docs/STARK_CU_REFINEMENT_PLAN.md
 docs/*_AUDIT.md
 docs/*_SECURITY_*.md
+
+# Sortie de compilation de la sonde C7 (programs/p01_stark_verifier/tests/c7_probe).
+# Un .so reconstructible et une paire de cles de programme — cette derniere ne
+# doit surtout pas etre commitee sur un depot public. Ajoute 2026-08-17, apres
+# que ce repertoire soit reste la seule ligne de `git status` pendant des jours.
+programs/p01_stark_verifier/tests/c7_probe/out/
+programs/p01_stark_verifier/tests/c7_probe/target/
+programs/p01_stark_verifier/tests/c7_probe/Cargo.lock
