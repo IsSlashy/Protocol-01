@@ -167,6 +167,9 @@ vi.mock('./denominatedPool', async (importOriginal) => {
       }
       return map;
     },
+    // Hoisted to `locateOwnedNote` since A5 (one pool-wide read shared across
+    // the derivation loop), so it needs a stub here like the commitments do.
+    fetchSpentNullifierSet: async () => new Set<string>(),
   };
 });
 

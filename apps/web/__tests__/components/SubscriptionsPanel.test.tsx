@@ -1,4 +1,4 @@
-/**
+﻿/**
  * SubscriptionsPanel: the read side of subscriptions on /pay.
  *
  * What matters here, in order:
@@ -44,9 +44,58 @@ vi.mock("@/lib/privacy/serviceRegistry", () => ({
 }));
 
 // The reveal path posts to the Worker; here it answers with a canned key.
+// `loadEncryptedNotes` feeds the recovery scan; an empty store is fine here.
 vi.mock("@/lib/privacy/shieldClient", () => ({
   deriveSubscriptionLicenseKey: vi.fn(),
+  loadEncryptedNotes: vi.fn(async () => []),
 }));
+
+// No Worker exists in jsdom. In the default "dead" mode every worker round
+// trip rejects with a stable message, so the store functions fall back to
+// their v1 paths exactly as before and the recovery test below can assert the
+// surfaced error. "skew" mode instead plays a LIVE worker that is OLDER than
+// this page (tab open across a deploy): it answers the session handlers but
+// its `poolOpenRecords` predates the subscription record kind, so the
+// response carries no `subscriptions` array — the exact wire shape task #12
+// is about. The seed derivation matches the pattern of paySubscriptions.test.ts.
+const worker = vi.hoisted(() => ({ mode: "dead" as "dead" | "skew" | "restarted" }));
+
+vi.mock("@/lib/privacy/workerClient", async () => {
+  const { sha256 } = await import("@noble/hashes/sha2.js");
+  const { bytesToHex, utf8ToBytes } = await import("@noble/hashes/utils.js");
+  const { createNoteEncryptionAddress } = await import("@/lib/privacy/pool/noteCrypto");
+  return {
+    poolRequest: vi.fn(async (req: { kind: string; meta: string; blobs?: string[] }) => {
+      if (worker.mode === "dead") {
+        throw new Error("The private-payment worker is unavailable in this test.");
+      }
+      if (worker.mode === "restarted") {
+        // The REAL `requireSeeds` refusal (worker/poolHandlers.ts): a worker
+        // rebooted after a crash holds no seeds for ANY meta. The page still
+        // reaches the open call because its cached storeSession survives —
+        // the exact task #16 shape.
+        throw new Error("No pool keys for this identity. Reconnect and sign to derive.");
+      }
+      const seed = sha256(utf8ToBytes(`test-seed:${req.meta}`));
+      if (req.kind === "poolStoreLabel") {
+        return {
+          kind: "poolStoreLabel",
+          label: bytesToHex(sha256(seed)).slice(0, 32),
+          legacyAddress: createNoteEncryptionAddress(seed),
+        };
+      }
+      if (req.kind === "poolNoteAddress") {
+        return { kind: "poolNoteAddress", address: createNoteEncryptionAddress(seed) };
+      }
+      if (req.kind === "poolOpenRecords") {
+        // The old worker's whitelist does not know `subscription` records, so
+        // the blobs land in `skipped` and the field never existed.
+        return { kind: "poolOpenRecords", payouts: [], spentKeys: [], skipped: (req.blobs ?? []).length };
+      }
+      throw new Error(`unexpected pool request: ${req.kind}`);
+    }),
+  };
+});
 
 import { deriveSubscriptionLicenseKey } from "@/lib/privacy/shieldClient";
 const mockDeriveKey = vi.mocked(deriveSubscriptionLicenseKey);
@@ -103,8 +152,12 @@ function fakeConnection(opts: {
   } as unknown as Connection;
 }
 
-function seedRecord(over: Partial<Parameters<typeof recordSubscription>[1]> = {}) {
-  recordSubscription("wallet1", {
+/** Seeds a record through the real store. There is no Worker in jsdom, so the
+ *  sealed write lands in the v1 fallback, which is exactly the interop the
+ *  panel must keep serving (records made before L5b, or with no session). The
+ *  sealed path itself is pinned in lib/privacy/pool/storeEncryption.test.ts. */
+async function seedRecord(over: Partial<Parameters<typeof recordSubscription>[2]> = {}) {
+  await recordSubscription("meta-test", "wallet1", {
     vaultPDA: VAULT_ADDR,
     retailer: "q8R2oNtnCH1Y3Pgjm8okR1Vz6wuxwMwPyoCxm5emLdr",
     serviceTag: "bitwarden-test",
@@ -122,6 +175,7 @@ function seedRecord(over: Partial<Parameters<typeof recordSubscription>[1]> = {}
 beforeEach(() => {
   localStorage.clear();
   mockDeriveKey.mockReset();
+  worker.mode = "dead";
 });
 
 // ---------------------------------------------------------------------------
@@ -138,7 +192,7 @@ describe("empty state", () => {
 
 describe("list standing", () => {
   it("reads the vault and says periods left in plain words", async () => {
-    seedRecord();
+    await seedRecord();
     // One interval past start: 19 of 20 periods left, 28,500 slots of
     // entitlement, nominally 11,400 s, "about 3 hours".
     const conn = fakeConnection({
@@ -154,7 +208,7 @@ describe("list standing", () => {
   });
 
   it("a missing account renders CLOSED with the merchant-gets-everything truth", async () => {
-    seedRecord();
+    await seedRecord();
     const conn = fakeConnection({ slot: START_SLOT + 1_500, accounts: {} });
     render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
     expect(
@@ -164,7 +218,7 @@ describe("list standing", () => {
   });
 
   it("an unfetchable clock says Checking, never Active", async () => {
-    seedRecord();
+    await seedRecord();
     const conn = fakeConnection({
       slot: null,
       accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
@@ -177,7 +231,7 @@ describe("list standing", () => {
 
 describe("detail page", () => {
   async function openDetail() {
-    seedRecord();
+    await seedRecord();
     const conn = fakeConnection({
       slot: START_SLOT + 1_500,
       accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
@@ -227,7 +281,7 @@ describe("track a vault", () => {
     await userEvent.type(screen.getByPlaceholderText("Vault address"), "not-an-address");
     await userEvent.click(screen.getByRole("button", { name: /Track/ }));
     expect(await screen.findByText("That is not a Solana address.")).toBeInTheDocument();
-    expect(loadSubscriptions("wallet1")).toHaveLength(0);
+    expect((await loadSubscriptions(null, "wallet1")).records).toHaveLength(0);
   });
 
   it("refuses an account the program does not own", async () => {
@@ -242,7 +296,7 @@ describe("track a vault", () => {
     expect(
       await screen.findByText(/not owned by the subscription program/i),
     ).toBeInTheDocument();
-    expect(loadSubscriptions("wallet1")).toHaveLength(0);
+    expect((await loadSubscriptions(null, "wallet1")).records).toHaveLength(0);
   });
 
   it("records a real vault from its address alone, from chain data", async () => {
@@ -254,8 +308,10 @@ describe("track a vault", () => {
     await userEvent.type(screen.getByPlaceholderText("Vault address"), VAULT_ADDR);
     await userEvent.click(screen.getByRole("button", { name: /Track/ }));
 
-    await waitFor(() => expect(loadSubscriptions("wallet1")).toHaveLength(1));
-    const rec = loadSubscriptions("wallet1")[0]!;
+    await waitFor(async () =>
+      expect((await loadSubscriptions(null, "wallet1")).records).toHaveLength(1),
+    );
+    const rec = (await loadSubscriptions(null, "wallet1")).records[0]!;
     expect(rec.vaultPDA).toBe(VAULT_ADDR);
     expect(rec.retailer).toBe("q8R2oNtnCH1Y3Pgjm8okR1Vz6wuxwMwPyoCxm5emLdr");
     // No registry entry in this test, so the tag falls back to the retailer.
@@ -271,7 +327,7 @@ describe("license key reveal", () => {
   async function openDetailWithNote() {
     // The record knows which note paid (pool + leafIndex), as the subscribe
     // flow writes it, so the key is re-derivable in this browser.
-    seedRecord({ pool: "PoolPda11111111111111111111111111111111111", leafIndex: 19 });
+    await seedRecord({ pool: "PoolPda11111111111111111111111111111111111", leafIndex: 19 });
     const conn = fakeConnection({
       slot: START_SLOT + 1_500,
       accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
@@ -319,7 +375,7 @@ describe("license key reveal", () => {
   });
 
   it("a vault tracked by address alone says the key lives elsewhere, no Reveal", async () => {
-    seedRecord(); // no pool, no leafIndex: exactly what track-by-address writes
+    await seedRecord(); // no pool, no leafIndex: exactly what track-by-address writes
     const conn = fakeConnection({
       slot: START_SLOT + 1_500,
       accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
@@ -337,7 +393,7 @@ describe("license key reveal", () => {
 
 describe("master-detail", () => {
   it("keeps the list mounted beside the open detail (columns from lg)", async () => {
-    seedRecord();
+    await seedRecord();
     const conn = fakeConnection({
       slot: START_SLOT + 1_500,
       accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
@@ -355,7 +411,7 @@ describe("master-detail", () => {
   });
 
   it("shows a placeholder in the detail pane until something is selected", async () => {
-    seedRecord();
+    await seedRecord();
     const conn = fakeConnection({
       slot: START_SLOT + 1_500,
       accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
@@ -364,5 +420,176 @@ describe("master-detail", () => {
     expect(
       await screen.findByText(/Select a subscription to see its standing/i),
     ).toBeInTheDocument();
+  });
+});
+
+describe("recover from the chain (#11)", () => {
+  // The scan itself (enumeration shape, matching, the leak-regression
+  // contract) is pinned in lib/privacy/pool/subscriptionRecovery.test.ts; the
+  // record-merging half in __tests__/lib/paySubscriptionsRecovery.test.ts.
+  // Here: the panel offers it, states the privacy shape honestly, and surfaces
+  // a failure as an error rather than as "you own nothing".
+  it("offers the recovery and says what does and does not leave the device", async () => {
+    render(
+      <SubscriptionsPanel meta="meta-test" owner={OWNER} connection={fakeConnection({ slot: 1 })} />,
+    );
+    expect(await screen.findByText("Recover from the chain")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Recover subscriptions/i })).toBeInTheDocument();
+    expect(screen.getByText(/one pool-wide question/i)).toBeInTheDocument();
+    expect(screen.getByText(/nothing derived from your notes leaves this device/i)).toBeInTheDocument();
+  });
+
+  it("a dead worker surfaces as an error, never as an empty recovery", async () => {
+    render(
+      <SubscriptionsPanel meta="meta-test" owner={OWNER} connection={fakeConnection({ slot: 1 })} />,
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Recover subscriptions/i }),
+    );
+    expect(
+      await screen.findByText(/The private-payment worker is unavailable in this test\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/No open subscription vault/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("stale worker — version skew, task #12", () => {
+  // The three states the panel must keep apart. Same records, three worlds:
+  //   populated + readable → the list;
+  //   genuinely empty      → the ordinary empty state, no banner;
+  //   sealed + SKEWED      → the reload line, and NEVER the empty state —
+  // painting "No subscriptions tracked yet" over records that exist is
+  // indistinguishable, to the user, from their subscriptions being gone.
+
+  it("genuinely empty under an old worker: ordinary empty state, no banner", async () => {
+    worker.mode = "skew";
+    render(
+      <SubscriptionsPanel
+        meta="meta-skew-empty"
+        owner={OWNER}
+        connection={fakeConnection({ slot: 1 })}
+      />,
+    );
+    // Nothing is sealed anywhere, so the loader never even asks the worker:
+    // an old worker over an empty store is indistinguishable from a current
+    // one, and must render exactly the same.
+    expect(
+      await screen.findByText(/No subscriptions tracked in this browser yet/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/older version of the app/i)).not.toBeInTheDocument();
+  });
+
+  it("sealed records under an old worker: says 'reload this tab', not the empty state", async () => {
+    worker.mode = "skew";
+    // Seed ONE record through the real store against the old worker. The
+    // first record finds an empty bucket, needs no openRecords round trip,
+    // and seals fine — exactly the store a real user has when the page
+    // updates under their open tab.
+    await recordSubscription("meta-skew", "wallet1", {
+      vaultPDA: VAULT_ADDR,
+      retailer: "q8R2oNtnCH1Y3Pgjm8okR1Vz6wuxwMwPyoCxm5emLdr",
+      serviceTag: "bitwarden-test",
+      token: "SOL",
+      denomination: 1,
+      rate: "50000000",
+      intervalSlots: "1500",
+      openedAt: Date.now(),
+    });
+    // Really sealed (v2), not the v1 fallback — otherwise this test would
+    // pass through the cleartext union and prove nothing about skew.
+    expect(localStorage.getItem("p01_pay_subscriptions_v1")).toBeNull();
+    expect(localStorage.getItem("p01_pay_subscriptions_v2")).not.toBeNull();
+
+    render(
+      <SubscriptionsPanel meta="meta-skew" owner={OWNER} connection={fakeConnection({ slot: 1 })} />,
+    );
+    expect(await screen.findByText(/reload this tab/i)).toBeInTheDocument();
+    // The false alarm this exists to prevent:
+    expect(
+      screen.queryByText(/No subscriptions tracked in this browser yet/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("a DEAD worker is not skew: the v1 view serves in full and no banner shows", async () => {
+    // worker.mode stays "dead" (beforeEach): the sealed write falls back to
+    // v1 and the list paints completely — a banner over a complete list would
+    // be the false alarm in the other direction.
+    await seedRecord();
+    const conn = fakeConnection({
+      slot: START_SLOT + 1_500,
+      accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
+    });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    expect(await screen.findByText("Bitwarden Test")).toBeInTheDocument();
+    expect(screen.queryByText(/reload this tab/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("restarted worker — lost session, task #16", () => {
+  // The SECOND cause of the same empty symptom, with a DIFFERENT cure. The
+  // worker crashed under the open tab and was rebooted with every seed wiped;
+  // the main thread's cached storeSession still carries the page to the open
+  // call, which the rebooted worker refuses. Re-SIGNING heals it; a reload
+  // alone does not — so showing the reload line here would send the user to
+  // a step that does not fix it, which is worse than no banner.
+
+  it("sealed records under a restarted worker: says 'sign again', never 'reload', never the empty state", async () => {
+    // Seed ONE sealed record while the worker session is live ("skew" mode
+    // answers the session handlers, and the first record needs no openRecords
+    // round trip, so it seals fine). This also caches the main-thread
+    // storeSession — the exact state a real tab is in at the crash.
+    worker.mode = "skew";
+    await recordSubscription("meta-restart", "wallet1", {
+      vaultPDA: VAULT_ADDR,
+      retailer: "q8R2oNtnCH1Y3Pgjm8okR1Vz6wuxwMwPyoCxm5emLdr",
+      serviceTag: "bitwarden-test",
+      token: "SOL",
+      denomination: 1,
+      rate: "50000000",
+      intervalSlots: "1500",
+      openedAt: Date.now(),
+    });
+    expect(localStorage.getItem("p01_pay_subscriptions_v1")).toBeNull();
+    expect(localStorage.getItem("p01_pay_subscriptions_v2")).not.toBeNull();
+
+    worker.mode = "restarted";
+    render(
+      <SubscriptionsPanel
+        meta="meta-restart"
+        owner={OWNER}
+        connection={fakeConnection({ slot: 1 })}
+      />,
+    );
+
+    expect(await screen.findByText(/sign to derive your keys again/i)).toBeInTheDocument();
+    // The wrong instruction for this cause — the user would try it, nothing
+    // would change, and the records would read as gone:
+    expect(screen.queryByText(/reload this tab/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/older version of the app/i)).not.toBeInTheDocument();
+    // And the false alarm both banners exist to prevent:
+    expect(
+      screen.queryByText(/No subscriptions tracked in this browser yet/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("genuinely empty under a restarted worker: ordinary empty state, no banner", async () => {
+    // A session existed (cached), but nothing was ever stored: the loader
+    // must short-circuit before the worker is asked, so an empty wallet is
+    // never told to re-sign over an empty list.
+    worker.mode = "skew";
+    await loadSubscriptions("meta-restart-empty", "wallet1");
+    worker.mode = "restarted";
+    render(
+      <SubscriptionsPanel
+        meta="meta-restart-empty"
+        owner={OWNER}
+        connection={fakeConnection({ slot: 1 })}
+      />,
+    );
+    expect(
+      await screen.findByText(/No subscriptions tracked in this browser yet/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/sign to derive your keys again/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/reload this tab/i)).not.toBeInTheDocument();
   });
 });

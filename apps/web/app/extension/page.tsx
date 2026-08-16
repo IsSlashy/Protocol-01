@@ -193,11 +193,32 @@ export default function ExtensionPage() {
             <div className="styx-prose" style={{ marginTop: "1.35rem" }}>
               <p>{t("hero.desc3")}</p>
             </div>
+            {/* The download link above this page has been commented out since
+                the waitlist pause, so nobody NEW can install 0.5.0 from here.
+                The exposure is the other direction: the archive is still served
+                at its literal URL, and whoever installed the build before the
+                pause has had a client the chain rejects since 2026-08-04 with
+                no way to learn it from us. The founder's call is to keep the
+                page and the archive and to warn instead, so the warning is the
+                first thing under the lede, in the same amber the /app page uses
+                for its own admission, and it carries the web app as the way out
+                rather than leaving the reader with only bad news. */}
+            <div className="styx-admission" style={{ marginTop: "1.75rem" }}>
+              <p className="styx-admission-title">
+                {t("waitlist.extensionIncompatTitle")}
+              </p>
+              <p className="styx-admission-body">
+                {t("waitlist.extensionIncompatBody")}
+              </p>
+            </div>
             <div className="styx-btn-row" style={{ marginTop: "2rem" }}>
               {/* The page's real action. Same component, same href, same label
                   key as the Protocol 01 page. */}
               <Link href="/#download" className="styx-btn">
                 {t("waitlist.extensionNoticeCta")}
+              </Link>
+              <Link href="/app" className="styx-btn">
+                {t("waitlist.extensionIncompatCta")}
               </Link>
             </div>
           </div>

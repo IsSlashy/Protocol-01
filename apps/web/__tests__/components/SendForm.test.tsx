@@ -48,7 +48,11 @@ vi.mock("@/lib/privacy/shieldClient", async (importOriginal) => {
     // Nothing spent in this browser: these tests are about what the form offers
     // from a scan, not about the local spent record. A test that wants that
     // behaviour should override this rather than rely on the default.
-    knownSpentNoteKeys: () => new Set<string>(),
+    // Async like the real one since L5: the store is encrypted and the worker
+    // opens it, so the component awaits this. `staleWorker: false` = a current
+    // worker; the skew states are pinned in storeEncryption.test.ts and
+    // SubscriptionsPanel.test.tsx.
+    knownSpentNoteKeys: async () => ({ keys: new Set<string>(), staleWorker: false }),
     // The chain resolution is fire-and-forget in the component. Resolving to
     // nothing keeps these tests about what the form offers from a scan, which is
     // what they were written for.

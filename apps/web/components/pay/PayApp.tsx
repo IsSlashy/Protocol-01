@@ -292,9 +292,15 @@ export default function PayApp() {
           <Wallet className="mx-auto h-8 w-8 text-p01-cyan" />
           <div>
             <p className="font-display text-p01-text">Connect a wallet</p>
+            {/* "post-quantum payments" is the exact phrase the page header of
+                app/(pay)/app/page.tsx forbids, and this connect card said it:
+                the signature that pays is Ed25519 and stays Ed25519. What is
+                post-quantum here is the stealth address and the note
+                encryption, hybrid X25519 + ML-KEM-768, so that is what the
+                sentence names. Also drops the pre-rename product name. */}
             <p className="mt-1 text-sm text-p01-text-muted">
-              Connect Phantom, or pair your Protocol 01 mobile wallet, to send and receive
-              private, post-quantum payments.
+              Connect Phantom, or pair your Styx mobile wallet, to send and receive
+              payments to hybrid post-quantum stealth addresses.
             </p>
           </div>
           <button

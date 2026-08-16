@@ -21,7 +21,9 @@
  */
 
 import { Connection, PublicKey } from '@solana/web3.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 import {
   buildMerkleProofFromLeavesV3,
@@ -30,7 +32,10 @@ import {
   getPoolsForTokenV3,
   type OnChainCommitment,
   type PoolConfig,
+  fetchSpentNullifierSet,
   isNullifierSpent,
+  isNullifierSpentInSet,
+  readPoolUnspentCount,
   type PoolToken,
   type ShareableNote,
   shareableNoteToReceipt,
@@ -40,6 +45,7 @@ import {
   assertPassphraseAcceptable,
   derivePoolSeeds,
   normalizePassphrase,
+  seedForDerivation,
   seedsInSearchOrder,
   wipePoolSeeds,
   type DerivationVersion,
@@ -75,6 +81,10 @@ import {
   prepareSubscribeJob,
   type PreparedSubscribe,
 } from '../pool/subscribeEphemeral';
+import {
+  recoverSubscriptionVaults,
+  type CandidateNoteSecret,
+} from '../pool/subscriptionRecovery';
 import {
   deriveLicenseSecret,
   encodeLicenseKey,
@@ -413,6 +423,180 @@ export interface PoolLicenseKeyResponse {
 }
 
 /**
+ * The opaque label this identity's local stores are indexed under.
+ *
+ * WHY IT EXISTS. Every local store used to be keyed by the WALLET PUBKEY in
+ * cleartext, so possession of the store proved which wallet owned how many
+ * notes in which pools — readable by any XSS, any extension with `storage`
+ * permission, any disk forensic (leak L5). The label replaces that index: a
+ * short HKDF leg of the pool seed, meaningless without the wallet signature.
+ *
+ * Derived from the V1 seed ON PURPOSE, not the active one: the v1 seed exists
+ * for every identity (it IS the active seed until a passphrase is adopted, and
+ * stays in the set as `legacy` afterwards), so the label survives passphrase
+ * adoption. Deriving from the active seed would orphan every store the moment
+ * a passphrase was armed.
+ *
+ * Public-ish material by construction — it sits in localStorage — and one-way:
+ * HKDF output says nothing about the seed. Same class as the `p01pq:` address.
+ */
+export interface PoolStoreLabelRequest {
+  kind: 'poolStoreLabel';
+  meta: string;
+}
+
+export interface PoolStoreLabelResponse {
+  kind: 'poolStoreLabel';
+  /** 32 hex chars. Stable per identity, across sessions and passphrases. */
+  label: string;
+  /**
+   * The `p01pq:` address of the SAME v1 seed the label comes from. Public-key
+   * material, like every note address. The subscription store seals to THIS
+   * address rather than the active one (see `lib/pay/subscriptions.ts`):
+   * its records are the only pointer to vaults nothing can re-discover, so
+   * they must stay openable across passphrase arm/disarm — which only the v1
+   * seed guarantees, since it exists for every identity forever.
+   */
+  legacyAddress: string;
+}
+
+/** The payout-record fields that survive the whitelist in `poolOpenRecords`.
+ *  Identical to `shieldClient.PayoutRecord`; all five are public values. */
+export interface StoredPayoutRecord {
+  pool: string;
+  leafIndex: number;
+  address: string;
+  txSig: string;
+  denomination: number;
+}
+
+/** The handoff-record fields that survive the whitelist. Identical to
+ *  `lib/pay/handoffs.HandoffRecord`; all three are public values. */
+export interface StoredHandoffRecord {
+  pool: string;
+  leafIndex: number;
+  sealedAt: number;
+}
+
+/** The subscription-record fields that survive the whitelist. Identical to
+ *  `lib/pay/subscriptions.StoredSubscription`; public values only — the
+ *  license key never had a field here and must never gain one. */
+export interface StoredSubscriptionWire {
+  vaultPDA: string;
+  retailer: string;
+  serviceTag: string;
+  serviceName?: string;
+  token: string;
+  denomination: number;
+  rate: string;
+  intervalSlots: string;
+  openTxSig?: string;
+  pool?: string;
+  leafIndex?: number;
+  openedAt: number;
+}
+
+/**
+ * Open the sealed records of the local payout/spent stores (leak L5).
+ *
+ * The stores persist only `p01enc1:` ciphertext; decryption needs the pool
+ * seed, which never leaves this worker, so the read has to happen here. What
+ * crosses back is UI data the main thread legitimately holds anyway — payout
+ * records and spent-note keys, all public values.
+ *
+ * ⛔ THIS IS NOT A DECRYPTION ORACLE, AND MUST NEVER BECOME ONE. The note
+ * store's blobs decrypt under the same seeds and contain three spendable
+ * secrets each; a handler that returned arbitrary decrypted plaintext would
+ * hand those secrets to any same-origin script with a live session, destroying
+ * the exact boundary this worker exists to hold. So a blob only comes back if
+ * its plaintext carries the `p01store: 1` envelope AND matches a whitelisted
+ * record kind, and even then only the whitelisted fields are copied out.
+ * A note blob (no envelope, has `secret`) is counted in `skipped` and nothing
+ * of it crosses.
+ */
+export interface PoolOpenRecordsRequest {
+  kind: 'poolOpenRecords';
+  meta: string;
+  /** `p01enc1:` blobs from the local record stores. Untrusted: each must open
+   *  under one of this identity's seeds and carry the record envelope. */
+  blobs: string[];
+}
+
+/**
+ * 🚨 PRESENCE IS THE VERSION SIGNAL. Every per-kind array below is REQUIRED and
+ * `handlePoolOpenRecords` initializes all of them unconditionally, so a worker
+ * that knows a kind always sends it — `[]` when there are no records. A page
+ * newer than its worker (tab open across a deploy) uses the ABSENCE of an array
+ * to tell "this worker predates the kind" apart from "there are none", which is
+ * what keeps a version skew from painting the user's lists empty after the v1
+ * stores have migrated away (`sealedStore.SealedRecordsAnswer` holds the page
+ * side of this contract). A new record kind MUST follow the same rule: add its
+ * array as required, initialize it unconditionally, never make it optional.
+ */
+export interface PoolOpenRecordsResponse {
+  kind: 'poolOpenRecords';
+  payouts: StoredPayoutRecord[];
+  /** `"<poolPDA>:<leafIndex>"` spent-note keys. */
+  spentKeys: string[];
+  /** Notes this browser handed over (`lib/pay/handoffs.ts`). */
+  handoffs: StoredHandoffRecord[];
+  /** Subscriptions this browser tracks (`lib/pay/subscriptions.ts`). */
+  subscriptions: StoredSubscriptionWire[];
+  /** Blobs that opened under no seed, or whose plaintext is not a record. */
+  skipped: number;
+}
+
+/**
+ * Recover this identity's subscription vaults from the chain (#11), so the
+ * local subscription store is a cache rather than the only pointer to a vault.
+ *
+ * The matching needs note secrets (derived from the pool seeds, or read out of
+ * the caller's encrypted blobs for RECEIVED notes), so it runs in here; the
+ * scan itself is `lib/privacy/pool/subscriptionRecovery.ts`, whose header
+ * carries the leak analysis. The short version: ONE program-wide
+ * `getProgramAccounts` enumeration that is identical for every user, matched
+ * locally — NEVER a per-note `getAccountInfo(vaultPDA)` probe, which would be
+ * leak L4 in a new costume (see `fetchSpentNullifierSet`).
+ *
+ * Read-only: no transaction, nothing written, nothing retained.
+ */
+export interface PoolRecoverSubscriptionsRequest {
+  kind: 'poolRecoverSubscriptions';
+  meta: string;
+  /** Encrypted note blobs from local storage, same contract as `poolScanLocal`.
+   *  Optional, but a received note's secrets exist ONLY in its blob, so a
+   *  subscription paid with one is unrecoverable without them. */
+  blobs?: string[];
+}
+
+/** The recovered-subscription fields that cross back to the page. Public
+ *  values only, whitelist-copied like every record in `poolOpenRecords`: the
+ *  note SECRET that matched stays in here, and the license key keeps having
+ *  no field anywhere. */
+export interface RecoveredSubscriptionWire {
+  vaultPDA: string;
+  retailer: string;
+  /** Base58; `NATIVE_SOL_MINT_BASE58` for SOL vaults. The page joins the
+   *  registry on (retailer, mint) to resolve the serviceTag. */
+  tokenMint: string;
+  token: string;
+  denomination: number;
+  rate: string;
+  intervalSlots: string;
+  /** The note that paid — pool + leaf index, which is all
+   *  `deriveSubscriptionLicenseKey` needs to re-derive the license key. */
+  pool: string;
+  leafIndex: number;
+}
+
+export interface PoolRecoverSubscriptionsResponse {
+  kind: 'poolRecoverSubscriptions';
+  subscriptions: RecoveredSubscriptionWire[];
+  /** Vault accounts the program-wide enumeration returned — everyone's. */
+  vaultsScanned: number;
+}
+
+/**
  * Arm the passphrase that the NEXT `deriveMeta` will mix into the pool seed.
  *
  * Why it is a separate message and why it clears state: the pool seed is built
@@ -436,8 +620,11 @@ export type PoolRequest =
   | PoolImportNoteRequest
   | PoolLicenseKeyRequest
   | PoolNoteAddressRequest
+  | PoolOpenRecordsRequest
   | PoolRecoverRequest
+  | PoolRecoverSubscriptionsRequest
   | PoolResolveSpentRequest
+  | PoolStoreLabelRequest
   | PoolShieldPrepareRequest
   | PoolShieldExecuteRequest
   | PoolScanRequest
@@ -505,6 +692,13 @@ export interface PoolSizeView {
   denomination: number;
   /** Leaves in the tree account — authoritative, unaffected by RPC pruning. */
   totalNotes: number;
+  /**
+   * Notes still unspent, from `DenominatedPoolV3.note_count`. **This is the
+   * anonymity set, and `totalNotes` is not.** A withdrawn note hides nobody.
+   * Measured 2026-08-12: 34 leaves / 8 unspent in the 0.1 SOL pool, 25 / 6 in
+   * the 1 SOL pool — quoting leaves would overstate the set by over 4x.
+   */
+  unspentNotes: number;
   /** Leaves whose insert event the RPC still serves. Recovery-by-scan can only
    *  see these, so a large gap means notes are only findable from local
    *  storage until an archival RPC is available. */
@@ -517,6 +711,18 @@ export interface PoolScanResponse {
   /** Unspent total, in whole tokens. */
   shieldedBalance: number;
   poolSizes: PoolSizeView[];
+  /**
+   * Whether every pass has run. The scan is two-phase: the blinded single-hash
+   * pass identifies current-scheme notes in milliseconds and is emitted as an
+   * INTERIM response (`complete: false`) so the page can paint immediately; the
+   * legacy epoch search — ~41 s of pure hashing per derivation on the measured
+   * pools, the only way a pre-blinding note can be found — then runs and the
+   * terminal response carries `complete: true`. A consumer of an incomplete
+   * response must say the list is still being checked for older notes, and must
+   * never present it as the full picture: on this product a hidden note reads
+   * as lost money.
+   */
+  complete: boolean;
 }
 
 export interface PoolUnshieldPrepareResponse {
@@ -612,8 +818,11 @@ export type PoolResponse =
   | PoolImportNoteResponse
   | PoolLicenseKeyResponse
   | PoolNoteAddressResponse
+  | PoolOpenRecordsResponse
   | PoolRecoverResponse
+  | PoolRecoverSubscriptionsResponse
   | PoolResolveSpentResponse
+  | PoolStoreLabelResponse
   | PoolShieldPrepareResponse
   | PoolShieldExecuteResponse
   | PoolScanResponse
@@ -801,9 +1010,32 @@ function handlePoolScanLocal(req: PoolScanLocalRequest): PoolScanLocalResponse {
   return { kind: 'poolScanLocal', notes, skipped };
 }
 
+/**
+ * Two-phase scan, so the page paints in the time the FAST pass takes.
+ *
+ * Phase 1 walks every pool once (history + spent markers, the RPC cost that
+ * exists either way) and matches notes with the blinded single hash — one
+ * `createCommitmentV3` per leaf per derivation, milliseconds of CPU. Each
+ * pool's cumulative result is pushed through `onInterim` with
+ * `complete: false` the moment it exists.
+ *
+ * Phase 2 is the legacy epoch search: MEASURED 2026-08-12 at 0.1158 ms per
+ * hash, a 6000-epoch window for every leaf the blinded pass did not claim —
+ * 41 s per derivation on the 59-leaf pools, 82 s with a passphrase. That used
+ * to run before anything was shown; now it runs after the paint, reusing the
+ * phase-1 fetches so it costs zero additional RPC, and only its terminal
+ * response says `complete: true`.
+ *
+ * ⛔ Phase 2 is not optional and not skippable per leaf. Whether a foreign-
+ * looking leaf is actually a pre-blinding note of ours is EXACTLY what the
+ * epoch search decides; there is a known unspent legacy note at leaf 30 of
+ * the 0.1 SOL pool, and an "optimisation" that can hide a note is worse than
+ * the delay it removes.
+ */
 async function handlePoolScan(
   req: PoolScanRequest,
   onProgress?: (step: string) => void,
+  onInterim?: (partial: PoolScanResponse) => void,
 ): Promise<PoolScanResponse> {
   const conn = requireConnection();
   const candidates = seedsInSearchOrder(requireSeeds(req.meta));
@@ -815,23 +1047,59 @@ async function handlePoolScan(
   const poolSizes: PoolSizeView[] = [];
   let shieldedBalance = 0;
 
+  /** Everything phase 2 needs, saved from phase 1 so nothing is refetched. */
+  const scanned: {
+    pool: PoolConfig;
+    commitments: Map<string, OnChainCommitment>;
+    spentSet: ReadonlySet<string>;
+    seenLeaves: Set<number>;
+  }[] = [];
+
+  const emitInterim = () =>
+    // Snapshots, not references: the arrays keep growing after the message is
+    // posted, and an interim that mutates under its consumer is a lie in slow
+    // motion.
+    onInterim?.({
+      kind: 'poolScan',
+      notes: [...notes],
+      shieldedBalance,
+      poolSizes: [...poolSizes],
+      complete: false,
+    });
+
+  // ── Phase 1: RPC reads + blinded single-hash matching, per pool ──────────
   for (const pool of pools) {
     onProgress?.(`Scanning the ${pool.denomination} ${pool.token} pool...`);
     const commitments = await fetchPoolCommitments(conn, pool.poolPDA);
     poolSizes.push({
       denomination: pool.denomination,
       totalNotes: await readTreeLeafCount(conn, pool),
+      unspentNotes: await readPoolUnspentCount(conn, pool.poolPDA),
       discoverableNotes: commitments.size,
     });
 
     // Every derivation this identity holds, not just the active one — a wallet
     // that adopted a passphrase still owns everything it shielded before, and a
     // note that stops appearing in the balance is a note the user believes is
-    // gone. The commitment map is fetched once and reused across derivations.
+    // gone. The commitment map AND the spent set are fetched once and reused
+    // across derivations — both are pool-wide, derivation-independent reads,
+    // and recoverNotes would otherwise re-issue the identical
+    // getProgramAccounts per derivation.
+    //
+    // Honest sizing for the spent-set half: measured 2026-08-12 on Helius
+    // devnet at 95-242 ms per call against a scan floor of ~60 s, so the
+    // redundant refetch cost
+    // ~2.5-5% of a scan — hoisted because it is free and because
+    // `handlePoolResolveSpent` already memoizes this exact call per pool, NOT
+    // because anyone could feel the difference.
+    onProgress?.(`Reading spent markers for the ${pool.denomination} ${pool.token} pool...`);
+    const spentSet = await fetchSpentNullifierSet(conn, pool.poolPDA);
     const seenLeaves = new Set<number>();
     for (const candidate of candidates) {
       const { notes: found } = await scanPoolForSeed(conn, pool, candidate.seed, {
         commitments,
+        spentSet,
+        blindedOnly: true,
         onProgress,
       });
       for (const n of found) {
@@ -844,9 +1112,33 @@ async function handlePoolScan(
         if (!n.spent) shieldedBalance += pool.denomination;
       }
     }
+    scanned.push({ pool, commitments, spentSet, seenLeaves });
+    emitInterim();
   }
 
-  return { kind: 'poolScan', notes, shieldedBalance, poolSizes };
+  // ── Phase 2: the legacy epoch search, per pool, reusing phase-1 reads ────
+  // The full pass re-runs the blinded hash per leaf too (one hash, free); the
+  // `seenLeaves` dedupe keeps phase-1 notes from being counted twice, so what
+  // this loop APPENDS is exactly the legacy notes.
+  for (const { pool, commitments, spentSet, seenLeaves } of scanned) {
+    onProgress?.(`Checking the ${pool.denomination} ${pool.token} pool for older notes...`);
+    for (const candidate of candidates) {
+      const { notes: found } = await scanPoolForSeed(conn, pool, candidate.seed, {
+        commitments,
+        spentSet,
+        onProgress,
+      });
+      for (const n of found) {
+        if (seenLeaves.has(n.receipt.leafIndex)) continue;
+        seenLeaves.add(n.receipt.leafIndex);
+        notes.push(toNoteView(n, candidate.derivation));
+        if (!n.spent) shieldedBalance += pool.denomination;
+      }
+    }
+    emitInterim();
+  }
+
+  return { kind: 'poolScan', notes, shieldedBalance, poolSizes, complete: true };
 }
 
 function toNoteView(n: RecoveredNote, derivation: DerivationVersion): PoolNoteView {
@@ -1024,14 +1316,40 @@ async function locateOwnedNote(
   } finally {
     clearInterval(heartbeat);
   }
+  // Pool-wide and derivation-independent, like `commitments` above, so it is
+  // fetched once and shared across the candidate loop for the same reason.
+  const spentSet = await fetchSpentNullifierSet(conn, pool.poolPDA);
+
+  // ONE leaf, two passes — the caller already picked the note by leaf index,
+  // so probing any other leaf is waste, and the waste was the demo-stalling
+  // kind: without `onlyLeaf` each derivation ran the 6000-epoch legacy search
+  // on every foreign leaf in the pool, MEASURED at ~41 s per derivation on the
+  // 59-leaf pools (2026-08-13) — spent between the click on Withdraw and
+  // anything happening. Probing one leaf makes that one blinded hash per
+  // derivation for a current-scheme note, and at most one 6000-epoch window
+  // (~0.7 s) per derivation for a legacy one.
+  //
+  // The blinded pass runs across ALL derivations before any legacy search
+  // starts, for the same reason handlePoolScan phases its work: a v1 note's
+  // blinded hash hits on the legacy seed immediately, and running the active
+  // seed's epoch search first would put ~0.7 s of dead hashing in front of it.
   let owner: { candidate: SeedCandidate; note: RecoveredNote } | null = null;
-  for (const candidate of candidates) {
-    const notes = await recoverNotes(conn, pool, candidate.seed, { commitments, onProgress });
-    const hit = notes.find((n) => n.receipt.leafIndex === req.leafIndex);
-    if (hit) {
-      owner = { candidate, note: hit };
-      break;
+  for (const blindedOnly of [true, false] as const) {
+    for (const candidate of candidates) {
+      const notes = await recoverNotes(conn, pool, candidate.seed, {
+        commitments,
+        spentSet,
+        onlyLeaf: req.leafIndex,
+        blindedOnly,
+        onProgress,
+      });
+      const hit = notes.find((n) => n.receipt.leafIndex === req.leafIndex);
+      if (hit) {
+        owner = { candidate, note: hit };
+        break;
+      }
     }
+    if (owner) break;
   }
 
   // FALLBACK: a RECEIVED note. Its secrets came from the SENDER's seed, so the
@@ -1184,6 +1502,11 @@ async function receivedNoteFromBlobs(
     const onChain = commitments.get(receipt.commitment.toString());
     if (onChain && onChain.leafIndex !== leafIndex) continue;
 
+    // Sanctioned single-note lookup: this runs inside the withdrawal flow, on the
+    // one note about to be spent, so its nullifier is published on chain moments
+    // later and the RPC learns nothing it is not about to see anyway. Every
+    // caller that runs on page load or over a LIST of unspent notes uses
+    // `fetchSpentNullifierSet` instead — see its header.
     const spent = await isNullifierSpent(
       conn,
       pool.poolPDA,
@@ -1445,8 +1768,11 @@ async function handlePoolImportNote(
   let spent: boolean | null = null;
   try {
     onProgress?.('Checking the note against the chain...');
-    spent = await isNullifierSpent(
-      requireConnection(),
+    // Pool-wide read, not a lookup of this note's nullifier PDA. An import is
+    // nowhere near a spend, so asking the RPC about this specific nullifier
+    // would hand it a secret identifier months before it is published.
+    spent = isNullifierSpentInSet(
+      await fetchSpentNullifierSet(requireConnection(), pool.poolPDA),
       pool.poolPDA,
       receipt.nullifierPreimage,
       receipt.secret,
@@ -1737,11 +2063,17 @@ function decryptOwnedBlob(candidates: SeedCandidate[], blob: string): OwnedBlobN
 }
 
 /**
- * Resolve `spent` for the local notes against the chain: one nullifier-PDA
- * existence read per note. Read-only; see `PoolResolveSpentRequest`.
+ * Resolve `spent` for the local notes against the chain. Read-only; see
+ * `PoolResolveSpentRequest`.
  *
- * A single note's failed read must not sink the rest: it lands in
- * `unresolved` and stays absent from the map, which callers treat as unknown.
+ * 🚨 ONE POOL-WIDE READ PER DISTINCT POOL, never one read per note. Asking the
+ * RPC about each unspent note's nullifier PDA is a deanonymisation channel — the
+ * full reasoning is in `fetchSpentNullifierSet`'s header, and it is the reason
+ * this handler no longer takes the obvious shape.
+ *
+ * A failed read must not sink the rest: the affected notes land in `unresolved`
+ * and stay absent from the map, which callers treat as unknown. The failure is
+ * remembered per pool so a dead RPC costs one attempt, not one per note.
  */
 async function handlePoolResolveSpent(
   req: PoolResolveSpentRequest,
@@ -1755,6 +2087,11 @@ async function handlePoolResolveSpent(
   let skipped = 0;
   let unresolved = 0;
   const seen = new Set<string>();
+  /**
+   * Pool base58 -> its spent-nullifier PDA set, or `null` when that pool's read
+   * failed. One RPC round trip per pool, success or failure.
+   */
+  const spentSetsByPool = new Map<string, ReadonlySet<string> | null>();
 
   for (const blob of req.blobs ?? []) {
     const note = decryptOwnedBlob(candidates, blob);
@@ -1772,14 +2109,32 @@ async function handlePoolResolveSpent(
       continue;
     }
 
-    onProgress?.(`Checking note ${checked + unresolved + 1} against the chain...`);
-    try {
-      spent[key] = await isNullifierSpent(conn, pool.poolPDA, note.nullifierPreimage, note.secret);
-      checked += 1;
-    } catch {
-      // RPC hiccup for this one note: report it unresolved rather than guess.
-      unresolved += 1;
+    // `null` is a REMEMBERED FAILURE, not "absent". Without it a dead RPC would
+    // be retried once per note in the pool, which is both slow and a burst the
+    // provider reads as one client hammering one pool.
+    let spentSet = spentSetsByPool.get(note.pool);
+    if (spentSet === undefined) {
+      onProgress?.(`Reading spent markers for the ${pool.denomination} ${pool.token} pool...`);
+      try {
+        spentSet = await fetchSpentNullifierSet(conn, pool.poolPDA);
+      } catch {
+        spentSet = null;
+      }
+      spentSetsByPool.set(note.pool, spentSet);
     }
+
+    if (spentSet === null) {
+      unresolved += 1;
+      continue;
+    }
+
+    spent[key] = isNullifierSpentInSet(
+      spentSet,
+      pool.poolPDA,
+      note.nullifierPreimage,
+      note.secret,
+    );
+    checked += 1;
   }
 
   return { kind: 'poolResolveSpent', spent, checked, skipped, unresolved };
@@ -1809,6 +2164,184 @@ function handlePoolLicenseKey(req: PoolLicenseKeyRequest): PoolLicenseKeyRespons
   );
 }
 
+/**
+ * Recover this identity's subscription vaults from the chain. See
+ * `PoolRecoverSubscriptionsRequest` and the module header of
+ * `subscriptionRecovery.ts` — the RPC shape there is the whole point.
+ *
+ * The commitment function handed down is `starkProver.computeCommitment`, the
+ * SAME wasm call `handlePoolSubscribePrepare` makes when it opens a vault. A
+ * second implementation that drifted by a bit would find nothing and look
+ * exactly like data loss, so none exists.
+ */
+async function handlePoolRecoverSubscriptions(
+  req: PoolRecoverSubscriptionsRequest,
+  onProgress?: (step: string) => void,
+): Promise<PoolRecoverSubscriptionsResponse> {
+  const conn = requireConnection();
+  const candidates = seedsInSearchOrder(requireSeeds(req.meta));
+
+  // Blob-held notes. A note shielded here is ALSO derivable from the seeds, so
+  // blobs only add information for received notes — but passing all of them is
+  // free and keeps the contract identical to `poolResolveSpent`.
+  const blobCandidates: CandidateNoteSecret[] = [];
+  const seen = new Set<string>();
+  for (const blob of req.blobs ?? []) {
+    const note = decryptOwnedBlob(candidates, blob);
+    if (!note) continue;
+    const key = `${note.pool}:${note.leafIndex}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    blobCandidates.push({ pool: note.pool, leafIndex: note.leafIndex, secret: note.secret });
+  }
+
+  // The wasm boots lazily, on the first candidate that actually needs hashing:
+  // a program with no private vaults must cost zero prover start-up.
+  let proverStarted = false;
+  const { recovered, vaultsScanned } = await recoverSubscriptionVaults(
+    conn,
+    candidates.map((c) => c.seed),
+    {
+      blobCandidates,
+      computeSubscriberCommitment: async (secretDecimal) => {
+        const { starkProver } = await import('../pool/starkProver');
+        if (!proverStarted) {
+          await starkProver.start();
+          proverStarted = true;
+        }
+        return starkProver.computeCommitment(secretDecimal);
+      },
+      onProgress,
+    },
+  );
+
+  // Whitelist copy, the same discipline as `handlePoolOpenRecords`: exactly
+  // these nine public fields cross, whatever else the scan result carries.
+  return {
+    kind: 'poolRecoverSubscriptions',
+    vaultsScanned,
+    subscriptions: recovered.map((r) => ({
+      vaultPDA: r.vaultPDA,
+      retailer: r.retailer,
+      tokenMint: r.tokenMint,
+      token: r.token,
+      denomination: r.denomination,
+      rate: r.rate,
+      intervalSlots: r.intervalSlots,
+      pool: r.pool,
+      leafIndex: r.leafIndex,
+    })),
+  };
+}
+
+/** HKDF info for the local-store label. Distinct from every seed info string. */
+const STORE_LABEL_INFO = utf8ToBytes('p01:web:store-label:v1');
+
+/** See `PoolStoreLabelRequest` for why this reads the V1 seed. */
+function handlePoolStoreLabel(req: PoolStoreLabelRequest): PoolStoreLabelResponse {
+  const set = requireSeeds(req.meta);
+  // `?? set.active` is unreachable by construction (the v1 seed is either
+  // active or legacy), kept so a future derivation version cannot turn this
+  // into a crash that locks the user out of their stores.
+  const seed = seedForDerivation(set, 1) ?? set.active;
+  return {
+    kind: 'poolStoreLabel',
+    label: bytesToHex(hkdf(sha256, seed, undefined, STORE_LABEL_INFO, 16)),
+    legacyAddress: createNoteEncryptionAddress(seed),
+  };
+}
+
+/**
+ * Open the sealed payout/spent records. See `PoolOpenRecordsRequest` — the
+ * envelope + whitelist below are what keep this from being a decryption
+ * oracle over the note store, and both checks are load-bearing.
+ */
+function handlePoolOpenRecords(req: PoolOpenRecordsRequest): PoolOpenRecordsResponse {
+  const candidates = seedsInSearchOrder(requireSeeds(req.meta));
+  const payouts: StoredPayoutRecord[] = [];
+  const spentKeys: string[] = [];
+  const handoffs: StoredHandoffRecord[] = [];
+  const subscriptions: StoredSubscriptionWire[] = [];
+  let skipped = 0;
+
+  for (const blob of req.blobs ?? []) {
+    let rec: Record<string, unknown> | null = null;
+    for (const candidate of candidates) {
+      try {
+        rec = JSON.parse(new TextDecoder().decode(decryptNote(candidate.seed, blob)));
+        break;
+      } catch {
+        // Not this derivation's blob. Try the next.
+      }
+    }
+    // The envelope check. A note blob decrypts fine but carries no `p01store`
+    // marker, so it lands here — counted, never returned, secrets never cross.
+    if (!rec || typeof rec !== 'object' || rec.p01store !== 1) {
+      skipped += 1;
+      continue;
+    }
+    if (
+      rec.kind === 'payout' &&
+      typeof rec.pool === 'string' &&
+      Number.isInteger(rec.leafIndex) &&
+      (rec.leafIndex as number) >= 0
+    ) {
+      // Whitelist copy: exactly the five public fields, nothing the blob may
+      // have smuggled alongside them.
+      payouts.push({
+        pool: rec.pool,
+        leafIndex: rec.leafIndex as number,
+        address: String(rec.address ?? ''),
+        txSig: String(rec.txSig ?? ''),
+        denomination: Number(rec.denomination ?? 0),
+      });
+    } else if (rec.kind === 'spent' && typeof rec.key === 'string') {
+      spentKeys.push(rec.key);
+    } else if (
+      rec.kind === 'handoff' &&
+      typeof rec.pool === 'string' &&
+      Number.isInteger(rec.leafIndex) &&
+      (rec.leafIndex as number) >= 0
+    ) {
+      handoffs.push({
+        pool: rec.pool,
+        leafIndex: rec.leafIndex as number,
+        sealedAt: Number(rec.sealedAt ?? 0),
+      });
+    } else if (
+      rec.kind === 'subscription' &&
+      typeof rec.vaultPDA === 'string' &&
+      typeof rec.retailer === 'string' &&
+      typeof rec.serviceTag === 'string'
+    ) {
+      // Field-by-field copy, mirroring `recordSubscription`'s own discipline:
+      // whatever else the blob carries never crosses. Optionals stay optional
+      // so a record tracked by vault address keeps contributing NO note key.
+      const sub: StoredSubscriptionWire = {
+        vaultPDA: rec.vaultPDA,
+        retailer: rec.retailer,
+        serviceTag: rec.serviceTag,
+        token: String(rec.token ?? ''),
+        denomination: Number(rec.denomination ?? 0),
+        rate: String(rec.rate ?? '0'),
+        intervalSlots: String(rec.intervalSlots ?? '0'),
+        openedAt: Number(rec.openedAt ?? 0),
+      };
+      if (typeof rec.serviceName === 'string') sub.serviceName = rec.serviceName;
+      if (typeof rec.openTxSig === 'string') sub.openTxSig = rec.openTxSig;
+      if (typeof rec.pool === 'string') sub.pool = rec.pool;
+      if (Number.isInteger(rec.leafIndex) && (rec.leafIndex as number) >= 0) {
+        sub.leafIndex = rec.leafIndex as number;
+      }
+      subscriptions.push(sub);
+    } else {
+      skipped += 1;
+    }
+  }
+
+  return { kind: 'poolOpenRecords', payouts, spentKeys, handoffs, subscriptions, skipped };
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
@@ -1816,13 +2349,20 @@ function handlePoolLicenseKey(req: PoolLicenseKeyRequest): PoolLicenseKeyRespons
 export async function handlePoolRequest<R extends PoolRequest>(
   req: R,
   onProgress?: (step: string) => void,
+  /**
+   * Streamed partial results for jobs that can honestly produce them — today
+   * only `poolScan`, whose blinded pass finishes ~4 orders of magnitude before
+   * the legacy epoch search does. Every payload says `complete: false` itself;
+   * the terminal return value is the only complete answer.
+   */
+  onInterim?: (partial: PoolResponse) => void,
 ): Promise<PoolResponseFor<R>> {
   let res: PoolResponse;
   switch (req.kind) {
     case 'poolScanLocal':
       return handlePoolScanLocal(req as PoolScanLocalRequest) as never;
     case 'poolScan':
-      res = await handlePoolScan(req, onProgress);
+      res = await handlePoolScan(req, onProgress, onInterim);
       break;
     case 'poolShieldPrepare':
       res = await handlePoolShieldPrepare(req, onProgress);
@@ -1842,6 +2382,9 @@ export async function handlePoolRequest<R extends PoolRequest>(
     case 'poolRecover':
       res = await handlePoolRecover(req, onProgress);
       break;
+    case 'poolRecoverSubscriptions':
+      res = await handlePoolRecoverSubscriptions(req, onProgress);
+      break;
     case 'poolSetPassphrase':
       res = handlePoolSetPassphrase(req);
       break;
@@ -1850,6 +2393,12 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolLicenseKey':
       res = handlePoolLicenseKey(req);
+      break;
+    case 'poolStoreLabel':
+      res = handlePoolStoreLabel(req);
+      break;
+    case 'poolOpenRecords':
+      res = handlePoolOpenRecords(req);
       break;
     case 'poolSubscribePrepare':
       res = await handlePoolSubscribePrepare(req, onProgress);

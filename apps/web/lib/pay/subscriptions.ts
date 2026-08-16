@@ -3,11 +3,11 @@
  * summarize where a subscription stands in words a subscriber can use, and
  * remember which vaults belong to this browser.
  *
- * ## Why this module imports (almost) nothing
+ * ## Why the DECODE half imports (almost) nothing
  *
  * The main web test suite mocks `@solana/web3.js` wholesale for component
- * rendering, so everything here that a test must exercise is pure bytes and
- * bigints. The one import is the CANONICAL period arithmetic,
+ * rendering, so everything decode/summary-side that a test must exercise is
+ * pure bytes and bigints. Its one import is the CANONICAL period arithmetic,
  * `packages/merchant-sdk/src/period-math.ts`, pulled in by relative path
  * exactly as `lib/privacy/serviceRegistry.ts` already pulls the specter-sdk
  * decoder: that module deliberately imports nothing, so it costs the bundle
@@ -15,18 +15,18 @@
  * pinned to. Do not port those functions here; a fifth copy is how the mobile
  * "shows ACTIVE forever" bug happens again.
  *
- * ## The vault account comes in THREE sizes. Never read it by a LEN.
+ * The STORE half (bottom of the file) does import: the shared sealed-store
+ * machinery and the worker bridge, since L5b encrypted the records. Decode
+ * tests are unaffected — only the store functions touch the worker, and they
+ * degrade to the v1 cleartext view when none exists.
  *
- * Live devnet vaults are 263 bytes (created before `client_stealth_meta`),
- * 328 bytes (before `license_commitment`) or 361 bytes (current). Worse, the
- * allocation reserves every `Option` at its `Some` size while Borsh writes the
- * compact form, so the serialized content is SHORTER than the account and the
- * tail is zero padding. The only correct read is sequential: walk the tag
- * bytes, guard every access against `data.length`, and let a truncated or
- * zero-padded tail decode as `None`. This mirrors
- * `apps/mobile/services/subscriptionVault/index.ts:fetchVault` and was checked
- * against the real 361-byte vault 7WaBm7Kq5WDYa5ykFgaUes1ZCXHXqkyfquJEkmBxzyqw
- * on devnet (2026-08-05).
+ * The account DECODER itself now lives in
+ * `lib/privacy/pool/subscriptionVaultAccount.ts` (moved verbatim 2026-08-12 so
+ * the Worker's vault-recovery scan can decode enumerated vaults without
+ * bundling the worker BRIDGE this file imports) and is re-exported below, so
+ * every historical import path through this module still works. The
+ * three-sizes warning travels with it — read it there before touching any
+ * vault read.
  *
  * ## What is deliberately NOT here
  *
@@ -49,247 +49,42 @@ import {
   type VaultPeriodState,
 } from '../../../../packages/merchant-sdk/src/period-math';
 
+import { poolRequest } from '../privacy/workerClient';
+import {
+  isSessionLostError,
+  openSealedRecords,
+  readMap,
+  sealRecord,
+  StaleWorkerError,
+  storeSession,
+  writeMap,
+  type StoreSession,
+} from '../privacy/sealedStore';
+import {
+  NATIVE_SOL_MINT_BASE58,
+  type DecodedSubscriptionVault,
+} from '../privacy/pool/subscriptionVaultAccount';
+import { licenseServiceTag } from '../privacy/license';
+
 export type { EntitlementStatus, VaultPeriodState };
 
 // ---------------------------------------------------------------------------
-// Constants pinned to the chain
+// Account decoding + base58 — moved to lib/privacy/pool/subscriptionVaultAccount.ts
+// (see the header); re-exported verbatim so no import path changes.
 // ---------------------------------------------------------------------------
 
-/**
- * `zk_shielded` on devnet, as a string so this module stays free of web3
- * imports. Must match `ZK_SHIELDED_PROGRAM_ID` in
- * `lib/privacy/pool/denominatedPool.ts:83`; the decoder test pins the account
- * fixture fetched from this program.
- */
-export const ZK_SHIELDED_PROGRAM_ID_BASE58 = 'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c';
-
-/**
- * Anchor account discriminator: `sha256("account:SubscriptionVault")[..8]`.
- * Hardcoded so decoding costs no hash; the test recomputes it independently.
- */
-export const SUBSCRIPTION_VAULT_DISCRIMINATOR = new Uint8Array([
-  0x60, 0x5a, 0xf7, 0xca, 0x9d, 0x10, 0x56, 0xbe,
-]);
-
-/** The mint field a native-SOL vault carries: the system program, 32 zero bytes. */
-export const NATIVE_SOL_MINT_BASE58 = '11111111111111111111111111111111';
-
-// ---------------------------------------------------------------------------
-// Base58 (self-contained, so display needs no web3 PublicKey)
-// ---------------------------------------------------------------------------
-
-const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-const B58_INV: Record<string, number> = (() => {
-  const m: Record<string, number> = {};
-  for (let i = 0; i < B58_ALPHABET.length; i++) m[B58_ALPHABET[i]!] = i;
-  return m;
-})();
-
-export function base58Encode(bytes: Uint8Array): string {
-  let zeros = 0;
-  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
-  const digits: number[] = [];
-  for (let i = zeros; i < bytes.length; i++) {
-    let carry = bytes[i]!;
-    for (let j = 0; j < digits.length; j++) {
-      carry += digits[j]! * 256;
-      digits[j] = carry % 58;
-      carry = (carry / 58) | 0;
-    }
-    while (carry > 0) {
-      digits.push(carry % 58);
-      carry = (carry / 58) | 0;
-    }
-  }
-  let out = '1'.repeat(zeros);
-  for (let i = digits.length - 1; i >= 0; i--) out += B58_ALPHABET[digits[i]!];
-  return out;
-}
-
-export function base58Decode(s: string): Uint8Array {
-  let zeros = 0;
-  while (zeros < s.length && s[zeros] === '1') zeros++;
-  const digits: number[] = [];
-  for (let i = zeros; i < s.length; i++) {
-    const v = B58_INV[s[i]!];
-    if (v === undefined) throw new Error(`invalid base58 character: ${s[i]}`);
-    let carry = v;
-    for (let j = 0; j < digits.length; j++) {
-      carry += digits[j]! * 58;
-      digits[j] = carry % 256;
-      carry = (carry / 256) | 0;
-    }
-    while (carry > 0) {
-      digits.push(carry % 256);
-      carry = (carry / 256) | 0;
-    }
-  }
-  const out = new Uint8Array(zeros + digits.length);
-  for (let i = 0; i < digits.length; i++) out[zeros + i] = digits[digits.length - 1 - i]!;
-  return out;
-}
-
-/** Whether `s` is a plausible Solana address: base58 decoding to 32 bytes. */
-export function isBase58Address(s: string): boolean {
-  try {
-    return base58Decode(s.trim()).length === 32;
-  } catch {
-    return false;
-  }
-}
-
-export function bytesToHex(b: Uint8Array): string {
-  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
-}
-
-// ---------------------------------------------------------------------------
-// Account decoding
-// ---------------------------------------------------------------------------
-
-/** Thrown when the bytes are not a `SubscriptionVault` account. */
-export class NotASubscriptionVaultError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'NotASubscriptionVaultError';
-  }
-}
-
-export interface DecodedSubscriptionVault {
-  /** Set only on LEGACY normal-mode vaults; no live instruction writes it. */
-  subscriberPubkey: string | null;
-  /** The commitment the PDA is seeded on (private mode). */
-  subscriberCommitment: Uint8Array | null;
-  /** Merchant who claims each period, base58. */
-  retailer: string;
-  /** `NATIVE_SOL_MINT_BASE58` for SOL vaults. */
-  tokenMint: string;
-  totalDeposited: bigint;
-  rate: bigint;
-  intervalSlots: bigint;
-  startSlot: bigint;
-  claimedPeriods: bigint;
-  isActive: boolean;
-  isPaused: boolean;
-  pauseSlot: bigint | null;
-  totalPausedSlots: bigint;
-  sourcePool: string | null;
-  /** `blake3(licenseSecret)`, stored verbatim, verified only off chain. */
-  licenseCommitment: Uint8Array | null;
-  /** `data.length` of the account: 263, 328 or 361 on devnet today. */
-  accountLen: number;
-}
-
-/** Sequential little-endian reader with hard bounds. */
-class ByteReader {
-  private off = 0;
-  constructor(private readonly data: Uint8Array) {}
-  get offset(): number {
-    return this.off;
-  }
-  get remaining(): number {
-    return this.data.length - this.off;
-  }
-  private need(n: number, what: string): void {
-    if (this.off + n > this.data.length) {
-      throw new NotASubscriptionVaultError(
-        `account truncated: needed ${n} byte(s) for ${what} at offset ${this.off}, ` +
-          `have ${this.data.length}`,
-      );
-    }
-  }
-  u8(what: string): number {
-    this.need(1, what);
-    return this.data[this.off++]!;
-  }
-  bytes(n: number, what: string): Uint8Array {
-    this.need(n, what);
-    const out = this.data.slice(this.off, this.off + n);
-    this.off += n;
-    return out;
-  }
-  u64(what: string): bigint {
-    const b = this.bytes(8, what);
-    let v = 0n;
-    for (let i = 7; i >= 0; i--) v = (v << 8n) | BigInt(b[i]!);
-    return v;
-  }
-  i64(what: string): bigint {
-    const u = this.u64(what);
-    return u >= 1n << 63n ? u - (1n << 64n) : u;
-  }
-}
-
-/**
- * Decode a `SubscriptionVault` account's data.
- *
- * Layout: `programs/zk_shielded/src/state/subscription_vault.rs`. Fields up to
- * and including `vk_hash_subscriber` and `source_pool` exist in every vault
- * generation; `bump`, `client_stealth_meta` and `license_commitment` are read
- * softly because a 263-byte vault ends early and zero padding must decode as
- * `None`, never as garbage.
- */
-export function decodeSubscriptionVault(data: Uint8Array): DecodedSubscriptionVault {
-  if (data.length < 8) {
-    throw new NotASubscriptionVaultError(`account data is ${data.length} bytes, no discriminator`);
-  }
-  for (let i = 0; i < 8; i++) {
-    if (data[i] !== SUBSCRIPTION_VAULT_DISCRIMINATOR[i]) {
-      throw new NotASubscriptionVaultError(
-        'account discriminator does not match SubscriptionVault, this address holds something else',
-      );
-    }
-  }
-
-  const r = new ByteReader(data.slice(8));
-
-  const subscriberPubkey =
-    r.u8('subscriber_pubkey tag') === 1 ? base58Encode(r.bytes(32, 'subscriber_pubkey')) : null;
-  const subscriberCommitment =
-    r.u8('subscriber_commitment tag') === 1 ? r.bytes(32, 'subscriber_commitment') : null;
-  const retailer = base58Encode(r.bytes(32, 'retailer'));
-  const tokenMint = base58Encode(r.bytes(32, 'token_mint'));
-  const totalDeposited = r.u64('total_deposited');
-  const rate = r.u64('rate');
-  const intervalSlots = r.u64('interval_slots');
-  const startSlot = r.i64('start_slot');
-  const claimedPeriods = r.u64('claimed_periods');
-  const isActive = r.u8('is_active') === 1;
-  const isPaused = r.u8('is_paused') === 1;
-  const pauseSlot = r.u8('pause_slot tag') === 1 ? r.i64('pause_slot') : null;
-  const totalPausedSlots = r.i64('total_paused_slots');
-  r.bytes(32, 'vk_hash_subscriber');
-  const sourcePool = r.u8('source_pool tag') === 1 ? base58Encode(r.bytes(32, 'source_pool')) : null;
-
-  // Soft region. A 263-byte account may end anywhere in here, and what is left
-  // of the allocation is zero padding, whose tag bytes read as None.
-  if (r.remaining >= 1) r.u8('bump');
-  let stealthTagWasSome = false;
-  if (r.remaining >= 1) stealthTagWasSome = r.u8('client_stealth_meta tag') === 1;
-  if (stealthTagWasSome && r.remaining >= 64) r.bytes(64, 'client_stealth_meta');
-  let licenseCommitment: Uint8Array | null = null;
-  if (r.remaining >= 1 && r.u8('license_commitment tag') === 1 && r.remaining >= 32) {
-    licenseCommitment = r.bytes(32, 'license_commitment');
-  }
-
-  return {
-    subscriberPubkey,
-    subscriberCommitment,
-    retailer,
-    tokenMint,
-    totalDeposited,
-    rate,
-    intervalSlots,
-    startSlot,
-    claimedPeriods,
-    isActive,
-    isPaused,
-    pauseSlot,
-    totalPausedSlots,
-    sourcePool,
-    licenseCommitment,
-    accountLen: data.length,
-  };
-}
+export {
+  NATIVE_SOL_MINT_BASE58,
+  NotASubscriptionVaultError,
+  SUBSCRIPTION_VAULT_DISCRIMINATOR,
+  ZK_SHIELDED_PROGRAM_ID_BASE58,
+  base58Decode,
+  base58Encode,
+  bytesToHex,
+  decodeSubscriptionVault,
+  isBase58Address,
+} from '../privacy/pool/subscriptionVaultAccount';
+export type { DecodedSubscriptionVault } from '../privacy/pool/subscriptionVaultAccount';
 
 /** The slice of a decoded vault the canonical period arithmetic reads. */
 export function toPeriodState(v: DecodedSubscriptionVault): VaultPeriodState {
@@ -410,13 +205,54 @@ export function symbolForVaultMint(tokenMintBase58: string): string {
 // ---------------------------------------------------------------------------
 // Local subscription records
 //
-// Same contract as `recordPayout` in `lib/privacy/shieldClient.ts`: a
-// CONVENIENCE for drawing the list without an on-chain sweep, public values
-// only, and losing the store loses nothing the chain does not still hold. It
-// is also the only practical enumeration: a private vault's address is seeded
-// on a commitment derived from the note secret, which lives in the Worker, so
-// the main thread cannot discover vaults it never recorded. The escape hatch
-// for records made elsewhere (or wiped) is tracking a vault by its address.
+// NOT the same contract as `recordPayout` in `lib/privacy/shieldClient.ts`,
+// though the gap narrowed on 2026-08-12. A payout record is a convenience:
+// wipe it and a rescan re-derives every address. A subscription record used to
+// be the ONLY practical enumeration: a private vault's address is seeded on a
+// commitment derived from the note secret, which lives in the Worker, so the
+// main thread cannot discover vaults it never recorded — and
+// `deriveSubscriptionLicenseKey` takes (pool, leafIndex, serviceTag) FROM this
+// record. Since #11 landed, `recoverSubscriptions` below re-discovers every
+// vault this identity's notes opened straight from the chain (vaultPDA,
+// retailer, rate, intervalSlots, pool, leafIndex — hence the license key), so
+// a lost record now degrades to a recovery scan that loses only cosmetics
+// (serviceName, openTxSig, openedAt). Tracking a vault by address remains the
+// escape hatch for a vault whose paying note this identity does not hold.
+//
+// STORAGE (leak L5b). The v1 store put {vaultPDA, retailer, pool, leafIndex,
+// openTxSig} per WALLET PUBKEY in cleartext — (wallet -> note -> vault ->
+// merchant), the subscription flavour of the linkage table L5 closed, plus the
+// merchant's name. v2 seals records with the shared machinery
+// (`lib/privacy/sealedStore.ts`; design header in `shieldClient.ts`), with ONE
+// deliberate difference:
+//
+// SEALED TO THE V1 (LEGACY) ADDRESS, NOT THE ACTIVE ONE — founder-lead ruling
+// 2026-08-12. For this store availability outranks the marginal
+// confidentiality of passphrase-scoping, because what a lost record costs is
+// unrecoverable proof of a purchase the user already paid for. The v1 seed
+// exists for every identity forever (it IS the active seed until a passphrase
+// is adopted, and stays in the set as `legacy` afterwards), so passphrase
+// arm/disarm cannot orphan a record here the way it may orphan a payout or
+// spent record — those degrade to a rescan; these degraded to NOTHING when the
+// ruling was made. The #11 recovery scan has since made these records
+// rebuildable too (minus cosmetics), which is what would eventually permit
+// re-keying this store to the active seed — deliberately NOT done in the same
+// change, so the sealing flip gets its own review.
+//
+// THE REGRESSION, STATED PLAINLY: a browser with an intact store but a
+// PERMANENTLY lost wallet can read this list today (cleartext) and will not be
+// able to after the change — decryption needs a session derived from the
+// wallet's signature. It is bounded: without the wallet the license key is
+// underivable and the vault untouchable, so what is lost is the ability to SEE
+// what one had, not the ability to use it. And a wallet that is merely
+// re-imported restores decryption, because the seed is reproducible from its
+// signature.
+//
+// Migration discipline, same as every v2 store: v2 write lands before the v1
+// delete in the same synchronous turn; reads UNION the v1 leftovers until they
+// are provably empty; no session at all serves the v1 view untouched; a
+// sealed write that fails falls back to WRITING v1 rather than dropping the
+// record — for this store above all, a worse index beats a lost record.
 // ---------------------------------------------------------------------------
 
 /** One subscription, as remembered locally. Public fields ONLY. */
@@ -447,41 +283,177 @@ export interface StoredSubscription {
   openedAt: number;
 }
 
-const SUB_STORE_KEY = 'p01_pay_subscriptions_v1';
+const SUB_STORE_KEY = 'p01_pay_subscriptions_v2';
+/** The pre-L5b store, keyed by wallet pubkey. Read as fallback forever;
+ *  written only when the sealed write fails. */
+const SUB_STORE_KEY_V1 = 'p01_pay_subscriptions_v1';
+
+/** Field-by-field copy on purpose: whatever else the caller's object carries
+ *  (a license key, say) never reaches storage — the same discipline the
+ *  worker's whitelist applies on the way back out. */
+function cleanRecord(rec: StoredSubscription): StoredSubscription {
+  const clean: StoredSubscription = {
+    vaultPDA: rec.vaultPDA,
+    retailer: rec.retailer,
+    serviceTag: rec.serviceTag,
+    token: rec.token,
+    denomination: rec.denomination,
+    rate: rec.rate,
+    intervalSlots: rec.intervalSlots,
+    openedAt: rec.openedAt,
+  };
+  if (rec.serviceName !== undefined) clean.serviceName = rec.serviceName;
+  if (rec.openTxSig !== undefined) clean.openTxSig = rec.openTxSig;
+  if (rec.pool !== undefined) clean.pool = rec.pool;
+  if (rec.leafIndex !== undefined) clean.leafIndex = rec.leafIndex;
+  return clean;
+}
+
+/** Seal one record. `legacyAddress`, NOT `address` — see the header above. */
+function sealSubscription(session: StoreSession, rec: StoredSubscription): string {
+  return sealRecord(session.legacyAddress, {
+    p01store: 1,
+    kind: 'subscription',
+    ...cleanRecord(rec),
+  });
+}
 
 /**
- * Remember a subscription so the list can draw it. Field-by-field copy on
- * purpose: whatever else the caller's object carries (a license key, say)
- * never reaches storage. Re-recording the same vault replaces the record.
+ * Seal one wallet's v1 records into the v2 store and delete the v1 bucket.
+ * Same fund-safety order as every other migration: v2 write lands BEFORE the
+ * v1 delete, in the same synchronous turn, so a throw leaves v1 intact and
+ * the union reads below still serve it.
  */
-export function recordSubscription(walletPubkey: string, rec: StoredSubscription): void {
+function migrateSubscriptionStore(session: StoreSession, walletPubkey: string): void {
   if (typeof localStorage === 'undefined') return;
   try {
-    const clean: StoredSubscription = {
-      vaultPDA: rec.vaultPDA,
-      retailer: rec.retailer,
-      serviceTag: rec.serviceTag,
-      token: rec.token,
-      denomination: rec.denomination,
-      rate: rec.rate,
-      intervalSlots: rec.intervalSlots,
-      openedAt: rec.openedAt,
-    };
-    if (rec.serviceName !== undefined) clean.serviceName = rec.serviceName;
-    if (rec.openTxSig !== undefined) clean.openTxSig = rec.openTxSig;
-    if (rec.pool !== undefined) clean.pool = rec.pool;
-    if (rec.leafIndex !== undefined) clean.leafIndex = rec.leafIndex;
-
-    const all = readSubStore();
-    const list = (all[walletPubkey] ?? []).filter((r) => r.vaultPDA !== clean.vaultPDA);
-    list.push(clean);
-    all[walletPubkey] = list;
-    localStorage.setItem(SUB_STORE_KEY, JSON.stringify(all));
-    announceSubscriptionsChanged();
+    const old = readMap<StoredSubscription>(SUB_STORE_KEY_V1);
+    const mine = old[walletPubkey];
+    if (!mine || mine.length === 0) return;
+    const all = readMap<string>(SUB_STORE_KEY);
+    const list = all[session.label] ?? [];
+    for (const rec of mine) list.push(sealSubscription(session, rec));
+    all[session.label] = list;
+    writeMap(SUB_STORE_KEY, all);
+    delete old[walletPubkey];
+    writeMap(SUB_STORE_KEY_V1, old);
   } catch {
-    // Quota or private-mode failure. The vault is still on chain and still
-    // trackable by address, so this loss is cosmetic.
+    // Quota or private-mode failure: the fallback read below still serves v1.
   }
+}
+
+/** Decrypt this label's sealed records in the worker. */
+async function openSubscriptions(
+  meta: string,
+  session: StoreSession,
+): Promise<{ records: StoredSubscription[]; opened: number; staleWorker: boolean }> {
+  const blobs = readMap<string>(SUB_STORE_KEY)[session.label] ?? [];
+  if (blobs.length === 0) return { records: [], opened: 0, staleWorker: false };
+  const res = await openSealedRecords(meta, blobs);
+  // A version-skewed worker (tab open across a deploy) answers WITHOUT the
+  // `subscriptions` array — it predates the kind and filed our blobs under
+  // `skipped`. The blobs stay intact either way and a fresh worker reads them
+  // again; what must NOT happen is the absence reading as "no records", so
+  // `staleWorker` carries the distinction out. The early return above means
+  // the flag can never be raised for a genuinely empty store. See
+  // sealedStore.SealedRecordsAnswer for the presence contract.
+  //
+  // `opened` is how many blobs the snapshot held. Any caller that REWRITES the
+  // bucket after this await must carry everything past that index over — see
+  // the tail-preservation note in `recordSubscription` — and must not rewrite
+  // AT ALL under `staleWorker`, which blinds the whole snapshot, not a tail.
+  return {
+    records: (res.subscriptions ?? []).map((r) => cleanRecord(r)),
+    opened: blobs.length,
+    staleWorker: res.subscriptions === undefined,
+  };
+}
+
+/**
+ * Rewrite this label's bucket from `keep`, preserving anything appended while
+ * the worker round trip was in flight.
+ *
+ * 🚨 THE BUG THIS EXISTS TO PREVENT. `openSubscriptions` awaits the worker, and
+ * both writers below are reachable concurrently — "Track" in SubscriptionsPanel
+ * and the per-row "Untrack this vault" are on screen together and neither is
+ * disabled while the other runs, and the panels stay mounted across tabs so a
+ * subscribe started elsewhere is still in flight. Rewriting the bucket from the
+ * pre-await snapshot silently ate whatever landed in between.
+ *
+ * Appends only ever go to the end, so everything from `opened` onward is
+ * untouched by what we opened. The residual race is writer-vs-writer, which can
+ * at worst drop a REMOVAL or a replacement — recoverable by re-clicking. Losing
+ * a record is not recoverable: this store is the only practical enumeration of
+ * a private vault (see the header), so it can only be allowed to fail in the
+ * safe direction.
+ */
+function writeKeptSubscriptions(
+  session: StoreSession,
+  keep: StoredSubscription[],
+  opened: number,
+): void {
+  const all = readMap<string>(SUB_STORE_KEY);
+  const tail = (all[session.label] ?? []).slice(opened);
+  const next = [...keep.map((r) => sealSubscription(session, r)), ...tail];
+  if (next.length === 0) delete all[session.label];
+  else all[session.label] = next;
+  writeMap(SUB_STORE_KEY, all);
+}
+
+/**
+ * Remember a subscription so the list can draw it. Re-recording the same
+ * vault replaces the record exactly — the sealed store is opened, filtered on
+ * `vaultPDA` and re-sealed, since randomized ciphertext has no equality of
+ * its own. Records number in the single digits; the cost is unmeasurable.
+ */
+export async function recordSubscription(
+  meta: string,
+  walletPubkey: string,
+  rec: StoredSubscription,
+): Promise<void> {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const session = await storeSession(meta);
+    migrateSubscriptionStore(session, walletPubkey);
+    const { records, opened, staleWorker } = await openSubscriptions(meta, session);
+    if (staleWorker) {
+      // 🚨 A skew-blinded snapshot must never drive the rewrite: `records` is
+      // empty while `opened` covers every blob, so the filter-and-rewrite
+      // below would re-seal ONLY the new record and destroy every existing
+      // one — the exact records that are "the only pointer to a vault nothing
+      // can re-discover" (header above; #11 recovers most of it now, minus
+      // cosmetics, but recovery must stay the parachute, not the plan).
+      // Append instead: the store is append-only ciphertext anyway, and the
+      // read side keeps the LAST record per vault, so the replace semantics
+      // land the moment a current worker opens the bucket.
+      const all = readMap<string>(SUB_STORE_KEY);
+      const list = all[session.label] ?? [];
+      list.push(sealSubscription(session, rec));
+      all[session.label] = list;
+      writeMap(SUB_STORE_KEY, all);
+    } else {
+      const keep = records.filter((r) => r.vaultPDA !== rec.vaultPDA);
+      keep.push(cleanRecord(rec));
+      writeKeptSubscriptions(session, keep, opened);
+    }
+  } catch {
+    // No session or quota failure. This record is the only pointer to a vault
+    // nothing can re-discover (see the header), so dropping it silently is the
+    // one unacceptable outcome; the v1 store is the last resort, and every
+    // read path still unions it.
+    try {
+      const clean = cleanRecord(rec);
+      const all = readMap<StoredSubscription>(SUB_STORE_KEY_V1);
+      const list = (all[walletPubkey] ?? []).filter((r) => r.vaultPDA !== clean.vaultPDA);
+      list.push(clean);
+      all[walletPubkey] = list;
+      writeMap(SUB_STORE_KEY_V1, all);
+    } catch {
+      // Quota failure on both. The vault is still on chain and still
+      // trackable by address — but only if the user kept the address.
+    }
+  }
+  announceSubscriptionsChanged();
 }
 
 /**
@@ -509,36 +481,240 @@ function announceSubscriptionsChanged(): void {
   }
 }
 
-/** This wallet's recorded subscriptions, newest first. */
-export function loadSubscriptions(walletPubkey: string): StoredSubscription[] {
-  const list = readSubStore()[walletPubkey] ?? [];
-  return [...list].sort((a, b) => b.openedAt - a.openedAt);
+/**
+ * This wallet's recorded subscriptions, newest first. `meta: null` (no
+ * session yet) serves the v1 cleartext view, so pre-L5b records never
+ * disappear — and neither does their contribution to `knownSpentNoteKeys`,
+ * which is what keeps a subscribed note out of the pickers.
+ *
+ * `staleWorker: true` means a version-skewed worker could not open the sealed
+ * records: `records` is missing every sealed one, and the caller must say so
+ * (one reload heals it) instead of painting the shortfall as an empty list. A
+ * missing session is NOT skew — nothing migrated, v1 serves in full.
+ *
+ * `lostSession: true` is the third state, same shortfall as skew with a
+ * DIFFERENT cure: the worker restarted under the open tab and lost the seeds
+ * mid-session, so the sealed records are unreadable until the user SIGNS
+ * again — a reload alone changes nothing. Classified by position, exactly as
+ * `shieldClient.openLinkage` documents: a no-keys rejection from
+ * `storeSession` itself is "not signed yet" (v1 complete, no flag); the same
+ * rejection from the open, after `storeSession` succeeded, is the restart.
+ * Both flags are gated on sealed blobs actually existing, so a genuinely
+ * empty store can never raise either.
+ */
+export async function loadSubscriptions(
+  meta: string | null,
+  walletPubkey: string,
+): Promise<{ records: StoredSubscription[]; staleWorker: boolean; lostSession: boolean }> {
+  let sealed: StoredSubscription[] = [];
+  let staleWorker = false;
+  let lostSession = false;
+  // Snapshot v1 BEFORE any migration: the union below is built from this
+  // copy, so rows sealed by this very call keep serving on this call's
+  // answer, whatever the worker turns out to be able to read. The by-vault
+  // map deduplicates, so nothing is counted twice.
+  const left = readMap<StoredSubscription>(SUB_STORE_KEY_V1)[walletPubkey] ?? [];
+  if (meta) {
+    let session: StoreSession | null = null;
+    try {
+      session = await storeSession(meta);
+    } catch {
+      // No worker session ever derived: the v1 snapshot serves in full.
+    }
+    if (session) {
+      const blobs = readMap<string>(SUB_STORE_KEY)[session.label] ?? [];
+      if (blobs.length > 0 || left.length > 0) {
+        try {
+          // A zero-blob call here is the migration probe (see
+          // `openSealedRecords`): it proves the worker can read the kind
+          // before the v1 rows are taken away from the cleartext store.
+          const res = await openSealedRecords(meta, blobs);
+          const answered = res.subscriptions !== undefined;
+          // User-facing skew only when sealed records were actually being
+          // read — a skewed answer to the probe hides nothing (the snapshot
+          // serves the whole list) and only vetoes the migration.
+          staleWorker = !answered && blobs.length > 0;
+          sealed = (res.subscriptions ?? []).map((r) => cleanRecord(r));
+          if (answered) migrateSubscriptionStore(session, walletPubkey);
+        } catch (err) {
+          // Restart, not skew: seeds existed (storeSession succeeded) and are
+          // gone now. Same gate as the skew flag, same reason.
+          if (isSessionLostError(err) && blobs.length > 0) lostSession = true;
+          // Anything else degrades exactly as before: v1 serves, flagless.
+        }
+      }
+    }
+  }
+  const byVault = new Map<string, StoredSubscription>();
+  // Sealed records: LAST write wins. Append order is chronological, and the
+  // stale-append path in `recordSubscription` relies on the newest append
+  // being the one that counts for its replace semantics.
+  for (const rec of sealed) byVault.set(rec.vaultPDA, rec);
+  // v1 leftovers only fill vaults the sealed store does not know.
+  for (const rec of left) {
+    if (!byVault.has(rec.vaultPDA)) byVault.set(rec.vaultPDA, rec);
+  }
+  return {
+    records: [...byVault.values()].sort((a, b) => b.openedAt - a.openedAt),
+    staleWorker,
+    lostSession,
+  };
 }
 
-/** Drop one record. The vault itself is untouched; this forgets, not closes. */
-export function forgetSubscription(walletPubkey: string, vaultPDA: string): void {
+/**
+ * Drop one record. The vault itself is untouched; this forgets, not closes.
+ * The v1 bucket is filtered too, unconditionally: a leftover record there
+ * must not resurrect a row the user just dismissed.
+ */
+export async function forgetSubscription(
+  meta: string,
+  walletPubkey: string,
+  vaultPDA: string,
+): Promise<void> {
   if (typeof localStorage === 'undefined') return;
   try {
-    const all = readSubStore();
-    const list = (all[walletPubkey] ?? []).filter((r) => r.vaultPDA !== vaultPDA);
-    all[walletPubkey] = list;
-    localStorage.setItem(SUB_STORE_KEY, JSON.stringify(all));
-    announceSubscriptionsChanged();
+    const old = readMap<StoredSubscription>(SUB_STORE_KEY_V1);
+    if (old[walletPubkey]?.length) {
+      old[walletPubkey] = old[walletPubkey]!.filter((r) => r.vaultPDA !== vaultPDA);
+      if (old[walletPubkey]!.length === 0) delete old[walletPubkey];
+      writeMap(SUB_STORE_KEY_V1, old);
+    }
   } catch {
     // Same contract as recordSubscription.
   }
+  try {
+    const session = await storeSession(meta);
+    migrateSubscriptionStore(session, walletPubkey);
+    const { records, opened, staleWorker } = await openSubscriptions(meta, session);
+    // 🚨 Same guard as `recordSubscription`: under a skew-blinded snapshot the
+    // rewrite would delete every sealed record, not the one row. The forget
+    // stays one click away — from a reloaded tab, which the panel's stale
+    // notice is already asking for.
+    if (!staleWorker) {
+      writeKeptSubscriptions(
+        session,
+        records.filter((r) => r.vaultPDA !== vaultPDA),
+        opened,
+      );
+    }
+  } catch {
+    // No session: the sealed record stays and the row with it. The forget is
+    // still one click away next session.
+  }
+  announceSubscriptionsChanged();
 }
 
-function readSubStore(): Record<string, StoredSubscription[]> {
-  if (typeof localStorage === 'undefined') return {};
+// ---------------------------------------------------------------------------
+// Recovery (#11) — rebuild the records from the chain, so the store above is
+// a cache rather than the only pointer to a paid-for vault.
+// ---------------------------------------------------------------------------
+
+/** A registry listing, reduced to the strings recovery needs. Plain strings on
+ *  purpose: this module stays free of web3 imports (see the header), so the
+ *  caller converts its `ServiceEntry` keys with `.toBase58()`. */
+export interface RecoverServiceEntry {
+  /** Registry slug — the string a license key is scoped to. */
+  slug: string;
+  /** Display name, cosmetic. */
+  name?: string;
+  /** Payment recipient, base58 — the join key to a vault. */
+  retailer: string;
+  /** Mint of the listing, base58; `NATIVE_SOL_MINT_BASE58` for SOL. A retailer
+   *  may list a SOL plan and an SPL plan, so the join is (retailer, mint). */
+  tokenMint?: string;
+}
+
+export interface RecoverSubscriptionsResult {
+  /** Records newly written by this call, in wire order. */
+  recovered: StoredSubscription[];
+  /** Vaults the scan found that this browser already tracked (left untouched,
+   *  so their cosmetics — serviceName, openTxSig, openedAt — survive). */
+  alreadyTracked: number;
+  /** SubscriptionVault accounts the program-wide enumeration returned —
+   *  everyone's, not this wallet's. Context for the caller's messaging. */
+  vaultsScanned: number;
+}
+
+/**
+ * Find this identity's subscription vaults on chain and record the ones this
+ * browser forgot. The scan itself runs in the Worker
+ * (`lib/privacy/pool/subscriptionRecovery.ts` — its header carries the leak
+ * analysis: ONE program-wide enumeration, never a per-note probe), because the
+ * note secrets the matching needs must not leave it; only whitelisted public
+ * fields come back.
+ *
+ * `blobs` are the encrypted note blobs from local storage — optional, but a
+ * RECEIVED note's secrets exist only there, so without them a subscription
+ * paid with a received note cannot be recovered. `services` resolves each
+ * vault's registry slug into the serviceTag the license key is scoped to;
+ * without a match the tag falls back to the retailer address, exactly as
+ * `licenseServiceTag` defines and as the subscribe path would have written.
+ *
+ * A vault already tracked is NOT overwritten: the recovered record carries no
+ * cosmetics, and replacing a richer record with a sparser one would turn a
+ * recovery into a small loss.
+ */
+export async function recoverSubscriptions(
+  meta: string,
+  walletPubkey: string,
+  opts: { blobs?: string[]; services?: RecoverServiceEntry[] } = {},
+): Promise<RecoverSubscriptionsResult> {
+  let res;
   try {
-    const raw = localStorage.getItem(SUB_STORE_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    return parsed && typeof parsed === 'object'
-      ? (parsed as Record<string, StoredSubscription[]>)
-      : {};
-  } catch {
-    return {};
+    res = await poolRequest({ kind: 'poolRecoverSubscriptions', meta, blobs: opts.blobs });
+  } catch (e) {
+    // A worker so old it predates the handler rejects with the dispatcher's
+    // "Unknown pool request". That is version skew, not a scan result — say so
+    // in the user's words rather than surfacing dispatcher internals.
+    if (/unknown pool request/i.test((e as Error).message ?? '')) throw new StaleWorkerError();
+    throw e;
   }
+  // A version-skewed worker that knows the handler but answers without the
+  // field would be the same condition. This must THROW, not read as "nothing
+  // found": the panel turns an empty result into "no open subscription vault
+  // on chain belongs to this wallet's notes", which would be a false claim —
+  // the worker never scanned for this page's benefit at all.
+  const wire = (res as Partial<typeof res>).subscriptions;
+  if (wire === undefined) throw new StaleWorkerError();
+  const vaultsScanned = res.vaultsScanned ?? 0;
+  if (wire.length === 0) return { recovered: [], alreadyTracked: 0, vaultsScanned };
+
+  const known = new Set(
+    (await loadSubscriptions(meta, walletPubkey)).records.map((r) => r.vaultPDA),
+  );
+  const services = opts.services ?? [];
+
+  const recovered: StoredSubscription[] = [];
+  let alreadyTracked = 0;
+  for (const w of wire) {
+    if (known.has(w.vaultPDA)) {
+      alreadyTracked += 1;
+      continue;
+    }
+    // (retailer, mint) join, the same rule the panel's `serviceForVault`
+    // applies — one retailer may list a SOL and an SPL plan.
+    const svc =
+      services.find(
+        (s) => s.retailer === w.retailer && (s.tokenMint === undefined || s.tokenMint === w.tokenMint),
+      ) ?? null;
+    const rec: StoredSubscription = {
+      vaultPDA: w.vaultPDA,
+      retailer: w.retailer,
+      serviceTag: licenseServiceTag(svc?.slug ?? null, w.retailer),
+      token: w.token,
+      denomination: w.denomination,
+      rate: w.rate,
+      intervalSlots: w.intervalSlots,
+      pool: w.pool,
+      leafIndex: w.leafIndex,
+      // The one unrecoverable non-cosmetic-looking field, and it IS cosmetic:
+      // it only orders the list. The recovery moment is the honest value.
+      openedAt: Date.now(),
+    };
+    if (svc?.name !== undefined) rec.serviceName = svc.name;
+    await recordSubscription(meta, walletPubkey, rec);
+    known.add(w.vaultPDA);
+    recovered.push(rec);
+  }
+  return { recovered, alreadyTracked, vaultsScanned };
 }

@@ -27,7 +27,16 @@ import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { poolRequest } from './workerClient';
 import { loadSubscriptions } from '../pay/subscriptions';
-import type { PoolNoteView } from './worker/poolHandlers';
+import {
+  isSessionLostError,
+  openSealedRecords,
+  readMap,
+  sealRecord,
+  storeSession,
+  writeMap,
+  type StoreSession,
+} from './sealedStore';
+import type { PoolNoteView, PoolScanResponse } from './worker/poolHandlers';
 
 /** Sign one transaction with the connected wallet. */
 export type SignOne = (tx: Transaction) => Promise<Transaction>;
@@ -306,13 +315,24 @@ export function recoverStuckFunds(
   );
 }
 
-/** Read the shielded balance + note list for this identity. */
+/**
+ * Read the shielded balance + note list for this identity.
+ *
+ * The scan is two-phase (see `handlePoolScan`): the blinded single-hash pass
+ * finds current-scheme notes in milliseconds of CPU, the legacy epoch search
+ * takes ~41 s of hashing per derivation. `onPartial` delivers the fast pass's
+ * cumulative results as they exist, each payload marked `complete: false` —
+ * paint them, but SAY the check for older notes is still running: a partial
+ * list presented as complete makes a legacy note read as lost money. The
+ * returned promise resolves with the terminal, complete response.
+ */
 export function scanPool(
   meta: string,
   token: PoolToken,
   onProgress?: (step: string) => void,
+  onPartial?: (partial: PoolScanResponse) => void,
 ) {
-  return poolRequest({ kind: 'poolScan', meta, token }, onProgress);
+  return poolRequest({ kind: 'poolScan', meta, token }, onProgress, onPartial);
 }
 
 /**
@@ -333,8 +353,12 @@ export function scanPool(
  * Notes shielded on another device are absent — the blob is local. That is why
  * this is a fast FIRST paint, never a replacement.
  */
-export function scanPoolLocal(meta: string, walletPubkey: string) {
-  return poolRequest({ kind: 'poolScanLocal', meta, blobs: loadEncryptedNotes(walletPubkey) });
+export async function scanPoolLocal(meta: string, walletPubkey: string) {
+  return poolRequest({
+    kind: 'poolScanLocal',
+    meta,
+    blobs: await loadEncryptedNotes(meta, walletPubkey),
+  });
 }
 
 /**
@@ -397,13 +421,13 @@ export async function importReceivedNote(params: {
       kind: 'poolImportNote',
       meta: params.meta,
       sealedNote: params.sealedNote,
-      encryptedNotes: loadEncryptedNotes(params.walletPubkey),
+      encryptedNotes: await loadEncryptedNotes(params.meta, params.walletPubkey),
     },
     params.onProgress,
   );
   // The blob IS the note's existence on this device; store it before reporting
   // success so a render error can never lose what was just received.
-  storeEncryptedNote(params.walletPubkey, res.encryptedNote);
+  await storeEncryptedNote(params.meta, params.walletPubkey, res.encryptedNote);
   return { note: res.note, merklePath: res.merklePath };
 }
 
@@ -418,10 +442,160 @@ export async function fetchNoteReceiveAddress(meta: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Note persistence (opaque blobs only)
+// Local persistence — encrypted values, opaque index (leak L5)
 // ---------------------------------------------------------------------------
 
-const NOTE_STORE_KEY = 'p01_pay_notes_v1';
+/**
+ * WHAT THE v1 STORES LEAKED, AND WHAT v2 CHANGES
+ * ──────────────────────────────────────────────
+ * Until 2026-08-12 the three stores below sat in localStorage keyed by the
+ * WALLET PUBKEY in cleartext, and two of them held cleartext values: the payout
+ * store's `{pool, leafIndex, address, txSig}` rows were exactly the
+ * (wallet, note, payout address, withdrawal) linkage table that the derived
+ * payout address, the worker boundary and the C7 plan all exist to keep apart.
+ * Readable by any XSS, any extension with the `storage` permission, any disk
+ * forensic, any export-my-data flow.
+ *
+ * v2 keeps the same localStorage transport but changes both halves:
+ *
+ *   INDEX — an opaque label from the worker (`poolStoreLabel`): a 16-byte HKDF
+ *   leg of the v1 pool seed, meaningless without the wallet signature. The
+ *   wallet pubkey no longer appears anywhere in the stores.
+ *
+ *   VALUES — payout and spent records are sealed with the SAME hybrid
+ *   X25519 + ML-KEM-768 `encryptNote` the note store already uses, to this
+ *   identity's own `p01pq:` address. Encryption needs only the PUBLIC address,
+ *   so it runs here on the main thread; decryption needs the pool seed and
+ *   happens only in the worker (`poolOpenRecords`), which whitelists what may
+ *   cross back. The seed itself never reaches this thread — that boundary is
+ *   the same one `handlePoolExportNote` documents, unchanged.
+ *
+ * WHAT THIS CANNOT LOSE. Every v2 read degrades, never destroys: the payout
+ * ADDRESS derivation below is untouched and re-derives every address from
+ * (wallet signature, pool, leafIndex) with no store at all; spent status
+ * re-resolves from the chain; shielded-note blobs re-derive from the seed.
+ * The one exception is a RECEIVED note's blob, which was already ciphertext in
+ * v1 and moves bytes-unchanged.
+ *
+ * MIGRATION. v1 entries are moved lazily, per wallet, the first time a live
+ * session touches a store: note blobs move as-is under the label; payout and
+ * spent rows are sealed and appended, and only then is the wallet's v1 bucket
+ * deleted — in the same synchronous turn, so a thrown encrypt leaves v1
+ * intact. Until a wallet has migrated, every read UNIONS the v1 leftovers, so
+ * no record written before this change ever disappears — a user who cannot
+ * find a payout address loses the money sitting on it.
+ */
+
+const NOTE_STORE_KEY = 'p01_pay_notes_v2';
+const SPENT_STORE_KEY = 'p01_pay_spent_notes_v2';
+const PAYOUT_STORE_KEY = 'p01_pay_pool_payouts_v2';
+
+/** The pre-L5 stores, keyed by wallet pubkey. Read as migration fallback
+ *  forever; written never (except the quota-failure note path below). */
+const NOTE_STORE_KEY_V1 = 'p01_pay_notes_v1';
+const SPENT_STORE_KEY_V1 = 'p01_pay_spent_notes_v1';
+const PAYOUT_STORE_KEY_V1 = 'p01_pay_pool_payouts_v1';
+
+// The session (label + sealing address), map helpers and `sealRecord` live in
+// `sealedStore.ts`, shared with the handoff store — see its header.
+
+/**
+ * Move one wallet's v1 note blobs under the opaque label. The values are
+ * already ciphertext — only the index changes, so this is pure bookkeeping and
+ * cannot fail in a way that loses a blob: the v2 write lands before the v1
+ * bucket is deleted, in the same synchronous turn.
+ */
+function migrateNoteStore(walletPubkey: string, label: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const old = readMap<string>(NOTE_STORE_KEY_V1);
+    const mine = old[walletPubkey];
+    if (!mine || mine.length === 0) return;
+    const all = readMap<string>(NOTE_STORE_KEY);
+    const list = all[label] ?? [];
+    for (const blob of mine) if (!list.includes(blob)) list.push(blob);
+    all[label] = list;
+    writeMap(NOTE_STORE_KEY, all);
+    delete old[walletPubkey];
+    writeMap(NOTE_STORE_KEY_V1, old);
+  } catch {
+    // Quota or private-mode failure: the fallback read below still serves v1.
+  }
+}
+
+/**
+ * Seal one wallet's v1 payout/spent rows into the v2 stores and delete the v1
+ * bucket. Order is the fund-safety property: encrypt-and-write v2 FIRST, then
+ * delete v1 in the same synchronous turn. A throw anywhere leaves v1 exactly
+ * as it was, and every read path unions the v1 leftovers regardless.
+ */
+function migrateLinkageStores(session: StoreSession, walletPubkey: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const oldPayouts = readMap<PayoutRecord>(PAYOUT_STORE_KEY_V1);
+    const minePayouts = oldPayouts[walletPubkey];
+    if (minePayouts && minePayouts.length > 0) {
+      const all = readMap<string>(PAYOUT_STORE_KEY);
+      const list = all[session.label] ?? [];
+      for (const rec of minePayouts) {
+        list.push(
+          sealRecord(session.address, {
+            p01store: 1,
+            kind: 'payout',
+            pool: rec.pool,
+            leafIndex: rec.leafIndex,
+            address: rec.address,
+            txSig: rec.txSig,
+            denomination: rec.denomination,
+          }),
+        );
+      }
+      all[session.label] = list;
+      writeMap(PAYOUT_STORE_KEY, all);
+      delete oldPayouts[walletPubkey];
+      writeMap(PAYOUT_STORE_KEY_V1, oldPayouts);
+    }
+
+    const oldSpent = readMap<string>(SPENT_STORE_KEY_V1);
+    const mineSpent = oldSpent[walletPubkey];
+    if (mineSpent && mineSpent.length > 0) {
+      const all = readMap<string>(SPENT_STORE_KEY);
+      const list = all[session.label] ?? [];
+      for (const key of mineSpent) {
+        list.push(sealRecord(session.address, { p01store: 1, kind: 'spent', key }));
+      }
+      all[session.label] = list;
+      writeMap(SPENT_STORE_KEY, all);
+      delete oldSpent[walletPubkey];
+      writeMap(SPENT_STORE_KEY_V1, oldSpent);
+    }
+  } catch {
+    // Same contract as migrateNoteStore: v1 stays, fallback reads still serve.
+  }
+}
+
+/**
+ * Raised whenever a note blob lands in the store, so an already-rendered count
+ * catches up without a rescan. Same contract as `HANDOFFS_CHANGED_EVENT`
+ * (lib/pay/handoffs.ts): dispatched on write, no payload, listeners re-read.
+ *
+ * Why it exists: PayApp keeps visited panels mounted and merely CSS-hidden, so
+ * PoolPanel's backup count — state since the async store conversion, written
+ * only inside its own `rescan` — froze whenever another surface wrote a blob.
+ * The writer that matters is `importReceivedNote` on the Receive tab: a
+ * received note's blob is its ONLY record (see `storeEncryptedNote`), so the
+ * count under-reported the one kind of note no rescan can bring back.
+ */
+export const NOTES_CHANGED_EVENT = 'p01:notes-changed';
+
+function announceNotesChanged(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(new Event(NOTES_CHANGED_EVENT));
+  } catch {
+    // An environment without Event is not worth failing a write over.
+  }
+}
 
 /**
  * Persist an encrypted note blob. The main thread cannot read these — only the
@@ -434,26 +608,179 @@ const NOTE_STORE_KEY = 'p01_pay_notes_v1';
  * because discovery re-derives everything from the pool seed plus on-chain
  * history (`pool/poolNotes.ts`). For a RECEIVED note (`importReceivedNote`)
  * the blob is the ONLY record: its secrets are not derivable from this wallet's
- * seed, so no rescan brings it back. Do not treat this store as disposable.
+ * seed, so no rescan brings it back. Do not treat this store as disposable —
+ * which is also why a failed label fetch falls back to the v1 wallet-keyed
+ * store rather than dropping the blob: a worse index beats a lost note.
  */
-export function storeEncryptedNote(walletPubkey: string, blob: string): void {
+export async function storeEncryptedNote(
+  meta: string,
+  walletPubkey: string,
+  blob: string,
+): Promise<void> {
   if (typeof localStorage === 'undefined') return;
   try {
-    const all = readNoteStore();
-    const list = all[walletPubkey] ?? [];
+    const { label } = await storeSession(meta);
+    migrateNoteStore(walletPubkey, label);
+    const all = readMap<string>(NOTE_STORE_KEY);
+    const list = all[label] ?? [];
     if (!list.includes(blob)) list.push(blob);
-    all[walletPubkey] = list;
-    localStorage.setItem(NOTE_STORE_KEY, JSON.stringify(all));
+    all[label] = list;
+    writeMap(NOTE_STORE_KEY, all);
   } catch {
-    // Quota or private-mode failure — recovery-by-scan still covers the user.
+    // No session, quota, or private mode. Every caller reaches here moments
+    // after a successful worker round trip, so "no session" is near-impossible
+    // — but a received note's blob is its only record, so the last resort is
+    // the v1 store, which every read path still unions.
+    try {
+      const all = readMap<string>(NOTE_STORE_KEY_V1);
+      const list = all[walletPubkey] ?? [];
+      if (!list.includes(blob)) list.push(blob);
+      all[walletPubkey] = list;
+      writeMap(NOTE_STORE_KEY_V1, all);
+    } catch {
+      // Quota failure on both: recovery-by-scan still covers a shielded note.
+    }
+  }
+  // After both attempts, like `recordHandoff`: listeners re-read through
+  // `loadEncryptedNotes`, which unions the v2 and v1 stores, so the event is
+  // right whichever write landed — and harmless if neither did.
+  announceNotesChanged();
+}
+
+export async function loadEncryptedNotes(meta: string, walletPubkey: string): Promise<string[]> {
+  try {
+    const { label } = await storeSession(meta);
+    migrateNoteStore(walletPubkey, label);
+    return [
+      ...(readMap<string>(NOTE_STORE_KEY)[label] ?? []),
+      // Post-migration this is empty; until then (or after a quota failure
+      // above) it is where the blobs still live.
+      ...(readMap<string>(NOTE_STORE_KEY_V1)[walletPubkey] ?? []),
+    ];
+  } catch {
+    // No worker session: only the v1 view exists. Callers that need the blobs
+    // for a worker request are about to fail on the same missing session anyway.
+    return readMap<string>(NOTE_STORE_KEY_V1)[walletPubkey] ?? [];
   }
 }
 
-export function loadEncryptedNotes(walletPubkey: string): string[] {
-  return readNoteStore()[walletPubkey] ?? [];
+/** The decrypted view of the two linkage stores, plus the v1 leftovers. */
+interface LinkageView {
+  payouts: PayoutRecord[];
+  spentKeys: Set<string>;
+  /** True when a version-skewed worker could not open the sealed records: the
+   *  two fields above are then missing everything sealed, and post-migration
+   *  the v1 union no longer covers for them. Callers must surface this, not
+   *  serve the shortfall as truth — an absent spent key re-offers a spent note
+   *  (~1 SOL of buffer rent to fail), an absent payout row hides funds. */
+  staleWorker: boolean;
+  /** True when the worker LOST this identity's seeds mid-session — it crashed
+   *  under the open tab and workerClient rebooted it with every secret wiped.
+   *  Same shortfall as `staleWorker` (the two fields above are missing
+   *  everything sealed), DIFFERENT cure: only a fresh wallet signature
+   *  re-derives the seeds; a reload alone changes nothing. Callers must never
+   *  show the reload line for this, or the user tries it, it fails, and they
+   *  conclude the money is gone. Structural like the skew flag: it can only
+   *  be raised after sealed blobs were FOUND and the open round trip refused
+   *  them, so a genuinely empty store cannot fire it. */
+  lostSession: boolean;
 }
 
-const SPENT_STORE_KEY = 'p01_pay_spent_notes_v1';
+/**
+ * Open both linkage stores in ONE worker round trip (`poolOpenRecords` sorts
+ * the mixed blobs back into payouts and spent keys), then union whatever is
+ * still sitting in v1 — either because there is no session to migrate under,
+ * or because a quota failure aborted a migration.
+ *
+ * The v1→v2 migration runs AFTER a successful open, never before: sealing the
+ * v1 rows moments before discovering the worker cannot read them back (skewed
+ * or restarted) would make records the user could see seconds ago vanish
+ * behind a banner. The zero-blob round trip is the deliberate probe for that
+ * case — see `openSealedRecords`.
+ */
+async function openLinkage(meta: string, walletPubkey: string): Promise<LinkageView> {
+  let payouts: PayoutRecord[] = [];
+  let spentKeys: string[] = [];
+  let staleWorker = false;
+  let lostSession = false;
+  // Snapshot the v1 leftovers FIRST: the union at the bottom is built from
+  // this copy, so the rows a migration seals in this very call keep serving
+  // on this call's answer. Nothing is counted twice — the by-note map and the
+  // Set below deduplicate on the plaintext key either way.
+  const leftPayouts = readMap<PayoutRecord>(PAYOUT_STORE_KEY_V1)[walletPubkey] ?? [];
+  const leftSpent = readMap<string>(SPENT_STORE_KEY_V1)[walletPubkey] ?? [];
+  // `storeSession` runs on its own first because its rejection means the
+  // worker holds no seeds AND this page never saw it hold any ("not signed
+  // yet"): nothing has migrated under a session that never existed, the v1
+  // snapshot above is the complete view, and a banner over a complete list
+  // would be the false alarm in the other direction. The SAME no-keys
+  // rejection after a session existed is a different fact, classified below.
+  let session: StoreSession | null = null;
+  try {
+    session = await storeSession(meta);
+  } catch {
+    // No worker session ever derived: the v1 snapshot still serves, so
+    // nothing recorded before the L5 change disappears.
+  }
+  if (session) {
+    // Note blobs are ciphertext in v1 and v2 alike — this migration only
+    // moves the index, cannot change readability, and so runs regardless of
+    // what the worker turns out to be able to open.
+    migrateNoteStore(walletPubkey, session.label);
+    const blobs = [
+      ...(readMap<string>(PAYOUT_STORE_KEY)[session.label] ?? []),
+      ...(readMap<string>(SPENT_STORE_KEY)[session.label] ?? []),
+    ];
+    if (blobs.length > 0 || leftPayouts.length > 0 || leftSpent.length > 0) {
+      try {
+        const res = await openSealedRecords(meta, blobs);
+        // A version-skewed worker (old worker, new page, tab open across a
+        // deploy) answers without one array or both — it predates the record
+        // kind, NOT "there are no records". Degrade to the v1 union below
+        // rather than throwing, but carry the skew out as `staleWorker`: after
+        // migration the v1 buckets are empty, and silence here painted the
+        // payout list empty and re-offered spent notes. The flag is gated on
+        // `blobs.length > 0` because only sealed records can be hidden by
+        // skew: a zero-blob answer was a migration probe, and flagging it
+        // would banner a list the v1 snapshot serves in full. The genuinely
+        // empty store (no blobs, no v1 rows) never reaches this branch at
+        // all. See sealedStore.SealedRecordsAnswer.
+        const answered = res.payouts !== undefined && res.spentKeys !== undefined;
+        staleWorker = !answered && blobs.length > 0;
+        payouts = res.payouts ?? [];
+        spentKeys = res.spentKeys ?? [];
+        // Only a worker that just proved it reads both kinds may take the v1
+        // rows away from the cleartext store: their sealed copies are
+        // readable the moment they land.
+        if (answered) migrateLinkageStores(session, walletPubkey);
+      } catch (err) {
+        // `storeSession` succeeded above — live, or from the cache a previous
+        // success left — so seeds existed for this meta, and a no-keys
+        // refusal now means the worker lost them under the open tab: it was
+        // rebooted with every secret wiped. Same empty-looking shortfall as
+        // skew, DIFFERENT cure (a fresh signature, not a reload), so it gets
+        // its own flag. The position of this catch is the classification —
+        // the never-derived shape rejects at `storeSession` above and stays
+        // flagless — and the same `blobs.length > 0` gate as the skew flag
+        // keeps a probe rejection from bannering a complete v1 view.
+        if (isSessionLostError(err) && blobs.length > 0) lostSession = true;
+        // Anything else (timeout, crash mid-call): degrade exactly as
+        // before — the v1 snapshot below still serves, flagless.
+      }
+    }
+  }
+  const byNote = new Map<string, PayoutRecord>();
+  for (const rec of [...payouts, ...leftPayouts]) {
+    const k = `${rec.pool}:${rec.leafIndex}`;
+    if (!byNote.has(k)) byNote.set(k, rec);
+  }
+  return {
+    payouts: [...byNote.values()],
+    spentKeys: new Set([...spentKeys, ...leftSpent]),
+    staleWorker,
+    lostSession,
+  };
+}
 
 /**
  * Notes this browser has withdrawn, keyed `pool:leafIndex`.
@@ -474,21 +801,43 @@ const SPENT_STORE_KEY = 'p01_pay_spent_notes_v1';
  * unspent, an entry here can only ever correct a stale read, never hide a live
  * note. It is a local memory of our own actions, not a substitute for the chain.
  */
-export function recordSpentNote(walletPubkey: string, noteKey: string): void {
-  if (typeof localStorage === 'undefined') return;
+export async function recordSpentNote(
+  meta: string,
+  walletPubkey: string,
+  noteKey: string,
+): Promise<void> {
+  return recordSpentNotes(meta, walletPubkey, [noteKey]);
+}
+
+/** Batched form: `resolveSpentNotes` confirms several at once, and reading the
+ *  store back for dedup costs a worker round trip — pay it once, not per key. */
+async function recordSpentNotes(
+  meta: string,
+  walletPubkey: string,
+  noteKeys: string[],
+): Promise<void> {
+  if (typeof localStorage === 'undefined' || noteKeys.length === 0) return;
   try {
-    const all = readSpentStore();
-    const list = all[walletPubkey] ?? [];
-    if (!list.includes(noteKey)) list.push(noteKey);
-    all[walletPubkey] = list;
-    localStorage.setItem(SPENT_STORE_KEY, JSON.stringify(all));
+    // The read migrates, and its Set is the dedup: sealed blobs are randomized
+    // ciphertext, so equality of records can only be checked on the plaintext.
+    // A blinded read (`staleWorker` or `lostSession`) only weakens the dedup —
+    // this path APPENDS and never rewrites, so the worst outcome is a
+    // duplicate blob the read-side Set absorbs. No guard needed, unlike the
+    // rewriting stores.
+    const existing = (await openLinkage(meta, walletPubkey)).spentKeys;
+    const fresh = noteKeys.filter((k) => !existing.has(k));
+    if (fresh.length === 0) return;
+    const session = await storeSession(meta);
+    const all = readMap<string>(SPENT_STORE_KEY);
+    const list = all[session.label] ?? [];
+    for (const key of fresh) {
+      list.push(sealRecord(session.address, { p01store: 1, kind: 'spent', key }));
+    }
+    all[session.label] = list;
+    writeMap(SPENT_STORE_KEY, all);
   } catch {
     // Quota or private-mode failure. The chain scan still resolves it, slowly.
   }
-}
-
-export function loadSpentNotes(walletPubkey: string): string[] {
-  return readSpentStore()[walletPubkey] ?? [];
 }
 
 /**
@@ -506,40 +855,55 @@ export function loadSpentNotes(walletPubkey: string): string[] {
  * escrowed (`pool` + `leafIndex`). Records imported by vault address carry no
  * note identity and contribute nothing here; for those, and for anything
  * recorded by no one, `resolveSpentNotes` below reads the chain itself.
+ *
+ * `meta: null` (no session yet) still answers from the v1 leftovers and the
+ * subscription store, so the pickers keep whatever protection exists before
+ * the wallet has signed.
+ *
+ * `staleWorker: true` means a version-skewed worker left the set SHORT of
+ * sealed spends (from either source), so a picker filtering on it may re-offer
+ * a note that is already gone — the caller must surface the flag alongside
+ * whatever protection the readable sources still gave.
+ *
+ * `lostSession: true` is the same shortfall with a different cure: the worker
+ * restarted mid-session and lost the seeds, so the sealed spends are
+ * unreadable until the user SIGNS again — a reload alone changes nothing.
+ * The caller must say the right cure for the flag it renders.
  */
-export function knownSpentNoteKeys(walletPubkey: string): Set<string> {
-  const keys = new Set(loadSpentNotes(walletPubkey));
-  for (const p of loadPayouts(walletPubkey)) keys.add(`${p.pool}:${p.leafIndex}`);
-  for (const s of loadSubscriptions(walletPubkey)) {
+export async function knownSpentNoteKeys(
+  meta: string | null,
+  walletPubkey: string,
+): Promise<{ keys: Set<string>; staleWorker: boolean; lostSession: boolean }> {
+  const keys = new Set<string>();
+  let staleWorker = false;
+  let lostSession = false;
+  if (meta) {
+    const view = await openLinkage(meta, walletPubkey);
+    staleWorker = view.staleWorker;
+    lostSession = view.lostSession;
+    for (const k of view.spentKeys) keys.add(k);
+    for (const p of view.payouts) keys.add(`${p.pool}:${p.leafIndex}`);
+  } else {
+    for (const k of readMap<string>(SPENT_STORE_KEY_V1)[walletPubkey] ?? []) keys.add(k);
+    for (const p of readMap<PayoutRecord>(PAYOUT_STORE_KEY_V1)[walletPubkey] ?? []) {
+      keys.add(`${p.pool}:${p.leafIndex}`);
+    }
+  }
+  // `meta` (or null) flows through: the subscription store is sealed too now,
+  // and its loader internally unions the v1 cleartext leftovers until they are
+  // provably empty — a subscribed note that stopped being known here would
+  // walk back into a picker and fail only after a proof and ~1 SOL of rent.
+  // Skew or a lost session in either store leaves this set short, so each
+  // flag ORs across the stores it blinds.
+  const subs = await loadSubscriptions(meta, walletPubkey);
+  staleWorker = staleWorker || subs.staleWorker;
+  lostSession = lostSession || subs.lostSession;
+  for (const s of subs.records) {
     if (s.pool !== undefined && s.leafIndex !== undefined) {
       keys.add(`${s.pool}:${s.leafIndex}`);
     }
   }
-  return keys;
-}
-
-function readSpentStore(): Record<string, string[]> {
-  if (typeof localStorage === 'undefined') return {};
-  try {
-    const raw = localStorage.getItem(SPENT_STORE_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string[]>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function readNoteStore(): Record<string, string[]> {
-  if (typeof localStorage === 'undefined') return {};
-  try {
-    const raw = localStorage.getItem(NOTE_STORE_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string[]>) : {};
-  } catch {
-    return {};
-  }
+  return { keys, staleWorker, lostSession };
 }
 
 // ---------------------------------------------------------------------------
@@ -677,45 +1041,67 @@ export interface PayoutRecord {
   denomination: number;
 }
 
-const PAYOUT_STORE_KEY = 'p01_pay_pool_payouts_v1';
-
 /**
  * Remember a payout address so the UI can list it without a full rescan.
  *
  * This is a CONVENIENCE, not the recovery path: the address is a pure function
  * of (wallet signature, pool, leaf index), so a wiped store costs a rescan and
- * nothing else. Only public values are written.
+ * nothing else. Only public values go IN — but together they are the exact
+ * deposit↔withdrawal↔wallet linkage table, which is why the record is sealed
+ * before it is persisted (see the L5 header above) instead of sitting readable
+ * next to it.
  */
-export function recordPayout(walletPubkey: string, rec: PayoutRecord): void {
+export async function recordPayout(
+  meta: string,
+  walletPubkey: string,
+  rec: PayoutRecord,
+): Promise<void> {
   if (typeof localStorage === 'undefined') return;
   try {
-    const all = readPayoutStore();
-    const list = all[walletPubkey] ?? [];
-    if (!list.some((r) => r.pool === rec.pool && r.leafIndex === rec.leafIndex)) {
-      list.push(rec);
-    }
-    all[walletPubkey] = list;
-    localStorage.setItem(PAYOUT_STORE_KEY, JSON.stringify(all));
+    // The read migrates, and its records are the dedup: sealed blobs are
+    // randomized ciphertext, so (pool, leafIndex) can only be compared on the
+    // plaintext the worker hands back.
+    // A blinded read (`staleWorker` or `lostSession`) only weakens the dedup —
+    // this path APPENDS and never rewrites, so the worst outcome is a
+    // duplicate blob the read-side (pool, leafIndex) map absorbs. No guard
+    // needed.
+    const existing = (await openLinkage(meta, walletPubkey)).payouts;
+    if (existing.some((r) => r.pool === rec.pool && r.leafIndex === rec.leafIndex)) return;
+    const session = await storeSession(meta);
+    const all = readMap<string>(PAYOUT_STORE_KEY);
+    const list = all[session.label] ?? [];
+    list.push(
+      sealRecord(session.address, {
+        p01store: 1,
+        kind: 'payout',
+        pool: rec.pool,
+        leafIndex: rec.leafIndex,
+        address: rec.address,
+        txSig: rec.txSig,
+        denomination: rec.denomination,
+      }),
+    );
+    all[session.label] = list;
+    writeMap(PAYOUT_STORE_KEY, all);
   } catch {
     // Quota or private-mode failure — re-derivation from the note list still
     // finds every payout address.
   }
 }
 
-export function loadPayouts(walletPubkey: string): PayoutRecord[] {
-  return readPayoutStore()[walletPubkey] ?? [];
-}
-
-function readPayoutStore(): Record<string, PayoutRecord[]> {
-  if (typeof localStorage === 'undefined') return {};
-  try {
-    const raw = localStorage.getItem(PAYOUT_STORE_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, PayoutRecord[]>) : {};
-  } catch {
-    return {};
-  }
+/** `staleWorker: true` = a skewed worker could not open the sealed records, so
+ *  `records` is missing every sealed payout — money the user cannot otherwise
+ *  see. The caller must say so (a reload heals it), never render the shortfall
+ *  as an empty history.
+ *  `lostSession: true` = the worker restarted and lost the seeds mid-session:
+ *  the same records are missing, but only signing again heals it — the caller
+ *  must never show the reload line for this one. */
+export async function loadPayouts(
+  meta: string,
+  walletPubkey: string,
+): Promise<{ records: PayoutRecord[]; staleWorker: boolean; lostSession: boolean }> {
+  const view = await openLinkage(meta, walletPubkey);
+  return { records: view.payouts, staleWorker: view.staleWorker, lostSession: view.lostSession };
 }
 
 /** Exactly the sweep transaction's own fee, so the payout account lands on zero.
@@ -804,13 +1190,13 @@ export async function resolveSpentNotes(
   onProgress?: (step: string) => void,
 ): Promise<ResolveSpentOutcome> {
   const res = await poolRequest(
-    { kind: 'poolResolveSpent', meta, blobs: loadEncryptedNotes(walletPubkey) },
+    { kind: 'poolResolveSpent', meta, blobs: await loadEncryptedNotes(meta, walletPubkey) },
     onProgress,
   );
   const confirmedSpent = Object.entries(res.spent)
     .filter(([, isSpent]) => isSpent)
     .map(([key]) => key);
-  for (const key of confirmedSpent) recordSpentNote(walletPubkey, key);
+  await recordSpentNotes(meta, walletPubkey, confirmedSpent);
   return {
     confirmedSpent,
     checked: res.checked,
@@ -846,7 +1232,7 @@ export async function deriveSubscriptionLicenseKey(params: {
   const res = await poolRequest({
     kind: 'poolLicenseKey',
     meta: params.meta,
-    blobs: loadEncryptedNotes(params.walletPubkey),
+    blobs: await loadEncryptedNotes(params.meta, params.walletPubkey),
     pool: params.pool,
     leafIndex: params.leafIndex,
     serviceTag: params.serviceTag,

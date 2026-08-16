@@ -41,7 +41,22 @@ interface PendingRequest {
   resolve: (msg: Extract<StarkWorkerOutMessage, { type: 'proof' }>) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  /** Re-armed on every worker message for this request, so only real silence
+   *  — no ack, no progress, no result — ever trips the watchdog. */
+  rearm: () => void;
 }
+
+/**
+ * Silence watchdog for proof generation, the same pattern as
+ * POOL_SILENCE_TIMEOUT_MS in lib/privacy/workerClient.ts: the timer re-arms on
+ * every message the worker emits for a request, so it measures SILENCE, not
+ * duration. The hard 60 s deadline it replaces killed live jobs on slow
+ * machines while proving nothing about dead ones. The worker acks each request
+ * before entering the (blocking, heartbeat-less) WASM call; proofs measure
+ * 100-500 ms in this worker, so three minutes of true silence after that ack
+ * is a wedged worker, not a slow proof. 180 s matches the proven pool value.
+ */
+export const PROVER_SILENCE_TIMEOUT_MS = 180_000;
 
 // ---------------------------------------------------------------------------
 // Singleton
@@ -93,6 +108,10 @@ class StarkProverService {
             }
             break;
           }
+          case 'progress':
+            // Worker activity for this request — re-arm its silence watchdog.
+            this.pending.get(msg.id)?.rearm();
+            break;
           case 'log':
             console.log('[StarkProver/worker]', msg.message);
             break;
@@ -146,13 +165,27 @@ class StarkProverService {
 
     return new Promise((resolve, reject) => {
       const id = `stark_${++this.counter}`;
-      const timer = setTimeout(() => {
+      const fire = () => {
         if (this.pending.has(id)) {
           this.pending.delete(id);
-          reject(new Error('STARK proof generation timed out'));
+          reject(
+            new Error(
+              'STARK proof generation stalled: no worker activity for ' +
+                `${PROVER_SILENCE_TIMEOUT_MS / 1000}s`,
+            ),
+          );
         }
-      }, 60_000);
-      this.pending.set(id, { resolve, reject, timer });
+      };
+      const entry: PendingRequest = {
+        resolve,
+        reject,
+        timer: setTimeout(fire, PROVER_SILENCE_TIMEOUT_MS),
+        rearm: () => {
+          clearTimeout(entry.timer);
+          entry.timer = setTimeout(fire, PROVER_SILENCE_TIMEOUT_MS);
+        },
+      };
+      this.pending.set(id, entry);
       send(id, worker);
     });
   }

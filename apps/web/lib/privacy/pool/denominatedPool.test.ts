@@ -816,7 +816,10 @@ describe('legacy note positive control', () => {
 
     const fakeConnection = {
       getSlot: async () => slot,
-      getAccountInfo: async () => null, // no NullifierRecord => unspent
+      // No NullifierRecord for this pool => every note in it is unspent.
+      // `recoverNotes` reads spent-ness POOL-WIDE rather than per note, so this
+      // is the one call it makes; see `fetchSpentNullifierSet`.
+      getProgramAccounts: async () => [],
     } as unknown as Connection;
 
     const notes = await recoverNotes(fakeConnection, pool, seed, { commitments });
@@ -840,12 +843,135 @@ describe('legacy note positive control', () => {
     ]);
     const fakeConnection = {
       getSlot: async () => 7200 * 1005,
-      getAccountInfo: async () => null,
+      getProgramAccounts: async () => [],
     } as unknown as Connection;
 
     const notes = await recoverNotes(fakeConnection, pool, seed, { commitments });
     expect(notes.length).toBe(1);
     expect(notes[0].receipt.noteBlinding).toBe(blinding);
     expect(notes[0].receipt.commitment).toBe(blinded);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Blinded-only fast pass — the progressive scan's first phase
+//
+// `blindedOnly: true` is what lets the scan paint in milliseconds: one hash
+// per candidate leaf, no epoch enumeration, no extra RPC. Its contract has two
+// halves and both need a guard: it finds every current-scheme note, and it is
+// allowed to MISS legacy notes only because the caller runs the full pass
+// right after. If the flag ever leaked into the full pass, the leaf-30 legacy
+// note would go invisible — the positive control above is the tripwire.
+// ---------------------------------------------------------------------------
+
+describe('blinded-only fast pass (progressive scan)', () => {
+  const pool = SOL_POOLS_V3[0];
+  const mintField = pubkeyToField(pool.tokenMint);
+  const seed = new Uint8Array(32).fill(3);
+
+  // Two notes owned by the same seed: one current-scheme at leaf 5, one
+  // legacy at leaf 9 (a real epoch where the blinding now goes).
+  const BLINDED_LEAF = 5;
+  const LEGACY_LEAF = 9;
+  const LEGACY_EPOCH = 1000n;
+
+  function fixtures() {
+    const b = deriveNoteMaterial(seed, pool.poolPDA, BLINDED_LEAF);
+    const blindedCommitment = createCommitmentV3(
+      b.nullifierPreimage,
+      b.secret,
+      deriveNoteBlinding(seed, pool.poolPDA, BLINDED_LEAF),
+      mintField,
+    );
+    const l = deriveNoteMaterial(seed, pool.poolPDA, LEGACY_LEAF);
+    const legacyCommitment = createCommitmentV3(
+      l.nullifierPreimage,
+      l.secret,
+      LEGACY_EPOCH,
+      mintField,
+    );
+    const commitments = new Map([
+      [blindedCommitment.toString(), { commitment: blindedCommitment, leafIndex: BLINDED_LEAF }],
+      [legacyCommitment.toString(), { commitment: legacyCommitment, leafIndex: LEGACY_LEAF }],
+    ]);
+    return { blindedCommitment, legacyCommitment, commitments };
+  }
+
+  it('finds the blinded note, defers the legacy one, and never reads the slot', async () => {
+    const { blindedCommitment, commitments } = fixtures();
+    let slotReads = 0;
+    const fakeConnection = {
+      getSlot: async () => {
+        slotReads += 1;
+        return 7200 * 1005;
+      },
+      getProgramAccounts: async () => [],
+    } as unknown as Connection;
+
+    const notes = await recoverNotes(fakeConnection, pool, seed, {
+      commitments,
+      blindedOnly: true,
+    });
+    // The current-scheme note, and ONLY it: the legacy note is invisible to
+    // this pass by design, which is exactly why no caller may present a
+    // blinded-only result as complete.
+    expect(notes.map((n) => n.receipt.leafIndex)).toEqual([BLINDED_LEAF]);
+    expect(notes[0].receipt.commitment).toBe(blindedCommitment);
+    // Zero chain reads beyond what the caller hoisted — the slot only bounds
+    // the epoch search this pass skips.
+    expect(slotReads).toBe(0);
+  });
+
+  it('the full pass over the same pool finds both — the fallback is deferred, never lost', async () => {
+    const { blindedCommitment, legacyCommitment, commitments } = fixtures();
+    const fakeConnection = {
+      getSlot: async () => 7200 * 1005,
+      getProgramAccounts: async () => [],
+    } as unknown as Connection;
+
+    const notes = await recoverNotes(fakeConnection, pool, seed, { commitments });
+    expect(notes.map((n) => n.receipt.leafIndex).sort((a, b) => a - b)).toEqual([
+      BLINDED_LEAF,
+      LEGACY_LEAF,
+    ]);
+    const byLeaf = new Map(notes.map((n) => [n.receipt.leafIndex, n.receipt]));
+    expect(byLeaf.get(BLINDED_LEAF)!.commitment).toBe(blindedCommitment);
+    expect(byLeaf.get(LEGACY_LEAF)!.commitment).toBe(legacyCommitment);
+    expect(byLeaf.get(LEGACY_LEAF)!.noteBlinding).toBe(LEGACY_EPOCH);
+  });
+
+  it('onlyLeaf narrows WHERE without weakening WHAT: each note is still found at its own leaf', async () => {
+    // The spend paths (withdraw, subscribe, hand-over) select a note by leaf
+    // index, so they probe one leaf instead of running the epoch search over
+    // every foreign leaf in the pool. Both schemes must survive the narrowing.
+    const { blindedCommitment, legacyCommitment, commitments } = fixtures();
+    const fakeConnection = {
+      getSlot: async () => 7200 * 1005,
+      getProgramAccounts: async () => [],
+    } as unknown as Connection;
+
+    const atBlinded = await recoverNotes(fakeConnection, pool, seed, {
+      commitments,
+      onlyLeaf: BLINDED_LEAF,
+    });
+    expect(atBlinded.map((n) => n.receipt.leafIndex)).toEqual([BLINDED_LEAF]);
+    expect(atBlinded[0].receipt.commitment).toBe(blindedCommitment);
+
+    // The legacy note still needs — and still gets — the epoch search, just
+    // scoped to its one leaf.
+    const atLegacy = await recoverNotes(fakeConnection, pool, seed, {
+      commitments,
+      onlyLeaf: LEGACY_LEAF,
+    });
+    expect(atLegacy.map((n) => n.receipt.leafIndex)).toEqual([LEGACY_LEAF]);
+    expect(atLegacy[0].receipt.commitment).toBe(legacyCommitment);
+    expect(atLegacy[0].receipt.noteBlinding).toBe(LEGACY_EPOCH);
+
+    // A leaf the RPC does not serve yields nothing, exactly like the full scan.
+    const atUnserved = await recoverNotes(fakeConnection, pool, seed, {
+      commitments,
+      onlyLeaf: 999,
+    });
+    expect(atUnserved).toEqual([]);
   });
 });

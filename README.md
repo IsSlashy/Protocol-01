@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="docs/assets/banner.png" alt="Protocol 01" width="100%" />
+  <img src="docs/assets/banner.png" alt="Styx Protocol" width="100%" />
 </p>
 
-<h1 align="center">Protocol 01</h1>
+<h1 align="center">Styx Protocol</h1>
 
 <p align="center">
   <strong>The privacy layer for Solana.</strong><br/>
-  Post-quantum ZK-STARKs &middot; Stealth addresses &middot; Shielded pools &middot; Private subscriptions &middot; On-chain service registry
+  Hash-based post-quantum STARKs &middot; Stealth addresses &middot; Shielded pools &middot; Subscription vaults &middot; On-chain service registry
 </p>
 
 <p align="center">
@@ -47,7 +47,8 @@
 1. Download the APK on your Android device (Android 10 / API 29+)
 2. Open the file → Allow "Install from unknown sources" if prompted
 3. Tap "Install"
-4. Open Protocol 01
+4. Open **Protocol 01** — the shipped build predates the rename, so that is the
+   name the launcher shows, not Styx
 
 #### First Launch:
 1. Tap **"Create Wallet"** — a 12-word seed is generated locally (never leaves the device)
@@ -69,7 +70,8 @@ Manual install (developer mode):
 3. Open Chrome → `chrome://extensions/`
 4. Enable **"Developer mode"** (top right toggle)
 5. Click **"Load unpacked"** → select the extracted `dist` folder
-6. The Protocol 01 icon appears in the toolbar
+6. The **Protocol 01** icon appears in the toolbar — the archive's manifest still
+   reads that name, so Chrome prints it rather than Styx
 
 ---
 
@@ -77,7 +79,7 @@ Manual install (developer mode):
 
 #### 1. Shield a note
 
-Privacy tab → **Shield** → choose a denomination (0.1 / 1 / 5 / 10 SOL). A ZK-STARK proof is generated on-device (~4–8 s) and the deposit lands in the pool. Wait ~30 s for maturity.
+Privacy tab → **Shield** → choose a denomination (0.1 / 1 / 5 / 10 SOL). A STARK shield proof is generated on-device (~4–8 s; the heavier unshield circuits are the ones measured past 180 s, see the mobile section below) and the deposit lands in the pool. Wait ~30 s for maturity.
 
 #### 2. Subscribe to a live service
 
@@ -143,11 +145,11 @@ in this README is measured against that deployment on the real devnet cluster.
 
 ---
 
-## What is Protocol 01?
+## What is Styx Protocol?
 
-Protocol 01 is a **post-quantum-oriented privacy layer for Solana**, shipped as composable SDKs and a set of on-chain programs.
+Styx Protocol is a **post-quantum-oriented privacy layer for Solana**, shipped as composable SDKs and a set of on-chain programs.
 
-The stack combines **ZK-STARKs** (hash-based, no trusted setup), **hybrid stealth addresses** (X25519 + ML-KEM-768, the NIST-standardized post-quantum KEM), **Winternitz one-time signatures**, and a **custom on-chain FRI verifier**. The cryptography is chosen so that a future quantum adversary — including one harvesting today's traffic to decrypt later — does not get the note secrets: no pairing-based proofs, no trusted setup, hash commitments throughout.
+The stack combines **STARKs** (hash-based, no trusted setup), **hybrid stealth addresses** (X25519 + ML-KEM-768, the NIST-standardized post-quantum KEM), **Winternitz one-time signatures**, and a **custom on-chain FRI verifier**. The cryptography is chosen so that no scheme in the stack falls to Shor: no pairing-based proofs, no trusted setup, hash commitments throughout. One measured caveat outranks that design goal today: the STARK prover is **not zero-knowledge** — a private witness has been recovered from published proof bytes by Lagrange interpolation (`stark/tests/zk_feasibility.rs`), so proof bytes must be treated as revealing note secrets until the additive masking lands. No quantum computer is needed for that recovery; a laptop does it.
 
 ### What is hidden, and what is not
 
@@ -157,13 +159,18 @@ what the code does rather than what a mixer brochure would say:
 **Hidden:**
 - **Your funding wallet never appears in the pool's transactions.** Both the
   deposit and the withdrawal are signed and paid by one-time ephemeral keys, so
-  neither leg carries your main wallet's address.
+  neither leg carries your main wallet's address. The wallet still funds the
+  ephemeral signer in the clear one hop earlier, so both legs remain linkable
+  to it by anyone who follows that hop.
 - **Stealth payments create a unique one-time address per payment** — an
   observer cannot connect two payments to the same recipient from the addresses
   alone.
 - **zkSPL balances and transfer amounts** sit behind Poseidon commitments; the
-  chain stores the commitment, not the number.
-- **Note contents** (owner, blinding) are never posted in clear.
+  chain stores the commitment, not the number. The `p01_zkspl` program is not
+  deployed on devnet, so this layer is SDK and program source today.
+- **Note contents** (owner, blinding) are never posted in clear on-chain — but
+  see the prover caveat above: proof bytes currently allow trace recovery by
+  interpolation.
 
 **NOT hidden — read this before relying on the pool:**
 - **A withdrawal is linkable to its deposit.** The withdrawal proof publishes
@@ -245,9 +252,9 @@ protocol-01/
 
 ## Privacy Stack
 
-### Zero-Knowledge STARKs
+### Hash-based STARKs
 
-Hash-based, transparent, and post-quantum. No trusted setup, no `.ptau` ceremony, no `.zkey` artifacts.
+Hash-based, transparent, and post-quantum. No trusted setup, no `.ptau` ceremony, no `.zkey` artifacts. Not zero-knowledge today: see the witness-recovery caveat above, which is why this heading no longer says "ZK".
 
 | Parameter | Value |
 |-----------|-------|
@@ -316,7 +323,7 @@ On-chain Anchor program (`zk_shielded`). Stores encrypted notes in a sparse Merk
 
 ### zkSPL — Confidential SPL Balances
 
-Account-model privacy layer. Hides balances and transfer amounts using Poseidon commitments (no elliptic-curve blinding, quantum-resistant).
+Account-model privacy layer. Hides balances and transfer amounts using Poseidon commitments (no elliptic-curve blinding, quantum-resistant). The `p01_zkspl` program is not deployed on devnet: what ships today is the SDK and the program source.
 
 ```
 Balance on-chain = Poseidon(balance, salt, owner_pubkey, token_mint)
@@ -399,7 +406,7 @@ Marketing site, SDK docs, weekly update videos (Remotion).
 
 ### Mugen (reference consumer app)
 
-A Gojo-themed fiat-to-crypto P2P exchange built on Protocol 01 — used internally to prove the SDK in production.
+A Gojo-themed fiat-to-crypto P2P exchange built on Styx Protocol — used internally to prove the SDK in production.
 
 ---
 
@@ -600,7 +607,7 @@ anchor test                           # on-chain programs (localnet)
 - [x] ZK shielded pool (STARK, migrated from Groth16 March 2026)
 - [x] Hybrid stealth addresses (X25519 + ML-KEM-768)
 - [x] Denominated privacy pools (fixed-amount Tornado model)
-- [x] Private ZK subscriptions (recurring payments with STARK proofs)
+- [x] Subscription vaults with STARK subscribe proofs (the vault is keyed by a note commitment, not the subscriber wallet; a merchant's vaults are enumerable)
 - [x] STARK verifier on-chain (custom FRI, 6 circuits, Goldilocks)
 - [x] Quantum vault (WOTS+ 67-chain, hash-timelock, commit-reveal)
 - [x] On-chain stealth meta-address registry

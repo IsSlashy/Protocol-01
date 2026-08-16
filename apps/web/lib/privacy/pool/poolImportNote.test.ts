@@ -100,6 +100,21 @@ vi.mock('./denominatedPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./denominatedPool')>();
   return {
     ...actual,
+    // Import now resolves spent-ness from a POOL-WIDE read rather than a lookup
+    // of this note's nullifier PDA: an import is nowhere near a spend, so asking
+    // the RPC about that specific nullifier would hand it a secret identifier
+    // months before it is published. `isNullifierSpentInSet` is stubbed here
+    // alongside it only because this fixture does not model PDA contents; the
+    // real membership derivation is exercised in poolResolveSpent.test.ts.
+    fetchSpentNullifierSet: async () => {
+      chain.reads += 1;
+      if (chain.fail) throw new Error('rpc down');
+      return new Set<string>();
+    },
+    isNullifierSpentInSet: () => chain.spent,
+    // Still stubbed because the WITHDRAW path keeps the single-note pre-flight:
+    // it runs on the one note about to be spent, so its nullifier is published
+    // moments later and the RPC learns nothing it is not about to see.
     isNullifierSpent: async () => {
       chain.reads += 1;
       if (chain.fail) throw new Error('rpc down');

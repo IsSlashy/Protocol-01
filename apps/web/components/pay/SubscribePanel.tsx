@@ -51,6 +51,7 @@ import { SUBSCRIBE_PHASES } from '@/lib/pay/flowProgress';
 import { HANDOFFS_CHANGED_EVENT, handoffKeys } from '@/lib/pay/handoffs';
 import { recordSubscription } from '@/lib/pay/subscriptions';
 import FlowProgress from './FlowProgress';
+import StaleWorkerNotice from './StaleWorkerNotice';
 import SuccessBurst from './SuccessBurst';
 import { truncate } from './util';
 
@@ -254,11 +255,19 @@ export default function SubscribePanel({
   const [scanning, setScanning] = useState(false);
   const [scanStep, setScanStep] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  /** True from the first partial scan result until the scan settles: the list
+   *  came from the fast blinded pass while the legacy epoch search — the only
+   *  pass that can find pre-2026-07-25 notes — is still running. The picker
+   *  must say so rather than present the list as complete. */
+  const [checkingOlderNotes, setCheckingOlderNotes] = useState(false);
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
 
   const rescan = useCallback(async () => {
     setScanning(true);
     setScanError(null);
+    // Whether the scan's fast pass painted anything before a failure — decides
+    // what the error message below must admit about the list on screen.
+    let paintedFromPartialScan = false;
     try {
       // "SOL" is not a shortcut: `scanPool` in shieldClient.ts:191-197 is typed
       // to that one literal, so the SOL pools are the only notes this path can
@@ -289,20 +298,44 @@ export default function SubscribePanel({
       // earlier session or on another device drops out within seconds. It only
       // ever confirms spent, never un-spends, so a failed read leaves the note
       // exactly where it was. Fire and forget: the filter below does the rest.
+      // MERGED, not assigned: the read is async now (encrypted store, worker
+      // opens it), and a plain set could race the subscribe handler's write.
       void shieldClient
         .resolveSpentNotes(meta, owner.toBase58())
-        .then(() => setSpentHere(shieldClient.knownSpentNoteKeys(owner.toBase58())))
+        .then(() => shieldClient.knownSpentNoteKeys(meta, owner.toBase58()))
+        .then((res) => {
+          setSpentHere((prev) => new Set([...prev, ...res.keys]));
+          setStaleWorker((prev) => prev || res.staleWorker);
+          setLostSession((prev) => prev || res.lostSession);
+        })
         .catch(() => {});
-      const res = await shieldClient.scanPool(meta, 'SOL', setScanStep);
+      // SECOND PAINT, chain-read: the scan streams the blinded pass's results
+      // while the legacy epoch search (~41 s of CPU per derivation) still
+      // runs — same pattern as PoolPanel. `checkingOlderNotes` keeps the
+      // early paint honest.
+      const res = await shieldClient.scanPool(meta, 'SOL', setScanStep, (partial) => {
+        paintedFromPartialScan = true;
+        setCheckingOlderNotes(true);
+        setNotes(shieldClient.mergeScanWithLocal(partial.notes, localNotes));
+      });
       // MERGE, not replace: a RECEIVED note's secrets came from the sender's
       // seed, so the seed-deriving chain scan can never return it; replacing
       // wholesale dropped it from this picker the moment the slow scan landed.
       setNotes(shieldClient.mergeScanWithLocal(res.notes, localNotes));
     } catch (e) {
-      setScanError((e as Error).message || 'Pool scan failed.');
+      const msg = (e as Error).message || 'Pool scan failed.';
+      // A partial paint followed by a failure leaves a real but possibly
+      // incomplete list on screen — the error must say so, not less.
+      setScanError(
+        paintedFromPartialScan
+          ? msg +
+              ' The notes shown are from an unfinished scan and older notes may be missing — rescan to finish the check.'
+          : msg,
+      );
     } finally {
       setScanning(false);
       setScanStep(null);
+      setCheckingOlderNotes(false);
     }
   }, [meta]);
 
@@ -339,13 +372,52 @@ export default function SubscribePanel({
    *  would escrow a coin the recipient can still take first, and a subscription
    *  can never be cancelled or refunded once opened. */
   const [handedOver, setHandedOver] = useState<ReadonlySet<string>>(new Set());
+  // A version-skewed worker left `spentHere` or `handedOver` SHORT (see
+  // StaleWorkerNotice): the picker may then offer a note already spent or
+  // already promised away — and a subscription can never be cancelled, so
+  // locking such a note in is the costliest place to be wrong. Latched with
+  // `|| next` since several async reads feed it; reset on a wallet switch.
+  const [staleWorker, setStaleWorker] = useState(false);
+  // Same symptom, different cure: the worker RESTARTED and lost the seeds
+  // mid-session — healed by signing again, not by a reload, so the reload
+  // line must never claim it. Latched and reset exactly like `staleWorker`.
+  const [lostSession, setLostSession] = useState(false);
   useEffect(() => {
-    setSpentHere(shieldClient.knownSpentNoteKeys(owner.toBase58()));
-    setHandedOver(handoffKeys(owner.toBase58()));
-    const catchUp = () => setHandedOver(handoffKeys(owner.toBase58()));
-    window.addEventListener(HANDOFFS_CHANGED_EVENT, catchUp);
-    return () => window.removeEventListener(HANDOFFS_CHANGED_EVENT, catchUp);
-  }, [owner]);
+    // Async read (encrypted store), with a stale guard so a slow answer never
+    // paints one wallet's spends onto another after a switch.
+    setSpentHere(new Set());
+    setStaleWorker(false);
+    setLostSession(false);
+    let stale = false;
+    void shieldClient
+      .knownSpentNoteKeys(meta, owner.toBase58())
+      .then((res) => {
+        if (!stale) {
+          setSpentHere(res.keys);
+          setStaleWorker((prev) => prev || res.staleWorker);
+          setLostSession((prev) => prev || res.lostSession);
+        }
+      })
+      .catch(() => {});
+    setHandedOver(new Set());
+    const readHandoffs = () => {
+      void handoffKeys(meta, owner.toBase58())
+        .then((res) => {
+          if (!stale) {
+            setHandedOver(res.keys);
+            setStaleWorker((prev) => prev || res.staleWorker);
+            setLostSession((prev) => prev || res.lostSession);
+          }
+        })
+        .catch(() => {});
+    };
+    readHandoffs();
+    window.addEventListener(HANDOFFS_CHANGED_EVENT, readHandoffs);
+    return () => {
+      stale = true;
+      window.removeEventListener(HANDOFFS_CHANGED_EVENT, readHandoffs);
+    };
+  }, [meta, owner]);
   const unspent = useMemo(
     () =>
       notes.filter(
@@ -408,7 +480,7 @@ export default function SubscribePanel({
         owner,
         // Lets the worker skip the Merkle-history rebuild for a shielded note,
         // and is the ONLY way it can find a received one.
-        encryptedNotes: shieldClient.loadEncryptedNotes(owner.toBase58()),
+        encryptedNotes: await shieldClient.loadEncryptedNotes(meta, owner.toBase58()),
         connection,
         signOne,
         onProgress: setStep,
@@ -419,14 +491,14 @@ export default function SubscribePanel({
       // withdrawal does, or every list keeps offering it until the pool scan
       // catches up, which takes minutes: another ~1 SOL of buffer rent and
       // ~150 uploads to reach a nullifier collision.
-      shieldClient.recordSpentNote(owner.toBase58(), noteKey(note));
+      await shieldClient.recordSpentNote(meta, owner.toBase58(), noteKey(note));
       setSpentHere((prev) => new Set(prev).add(noteKey(note)));
       // Remember the vault locally so the Subscriptions view can list it
       // without an on-chain sweep, the same convenience `recordPayout` gives
       // withdrawals. Public fields only: the license key is re-derivable from
       // the note secret, is never stored, and `recordSubscription` would drop
       // it anyway.
-      recordSubscription(owner.toBase58(), {
+      await recordSubscription(meta, owner.toBase58(), {
         vaultPDA: typeof out.vaultPDA === 'string' ? out.vaultPDA : out.vaultPDA.toBase58(),
         retailer: service.retailer.toBase58(),
         serviceTag: licenseServiceTag(service.slug, service.retailer.toBase58()),
@@ -548,11 +620,33 @@ export default function SubscribePanel({
                           >
                             {s.name}
                           </p>
+                          {/* 🚨 THIS BADGE IS SELF-ISSUED AND MUST SAY SO.
+                              Measured on devnet 2026-08-13: the registry holds
+                              six listings and all six carry the SAME owner —
+                              ours. The attestation is minted by the same key
+                              that registers the listing, so a bare checkmark
+                              reads as third-party vetting that nobody
+                              performed. The tooltip carries the truth so the
+                              badge cannot be quoted as more than it is; when a
+                              listing is registered by someone we did not
+                              control, this comment and that wording are what
+                              need revisiting. */}
                           {s.verified ? (
-                            <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-p01-cyan" />
+                            <span
+                              title="Listed by Styx Protocol. This badge is issued by the same key that registered the listing — it is not an independent audit or a vetting of the merchant."
+                              className="inline-flex shrink-0 items-center gap-1 text-p01-cyan"
+                            >
+                              <BadgeCheck className="h-3.5 w-3.5 shrink-0" />
+                              <span className="text-[10px] uppercase tracking-wider">
+                                Self-listed
+                              </span>
+                            </span>
                           ) : (
-                            <span className="shrink-0 rounded border border-p01-yellow/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-p01-yellow">
-                              Unverified
+                            <span
+                              title="Registered by a third party, with no attestation from Styx Protocol."
+                              className="shrink-0 rounded border border-p01-yellow/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-p01-yellow"
+                            >
+                              Third-party
                             </span>
                           )}
                         </div>
@@ -607,8 +701,24 @@ export default function SubscribePanel({
             </button>
           </div>
 
+          {checkingOlderNotes && (
+            <p className="mt-2 text-xs text-p01-text-dim">
+              Still checking for older notes — anything found will be added here.
+            </p>
+          )}
           {scanStep && <p className="mt-2 text-xs text-p01-text-dim">{scanStep}</p>}
           {scanError && <p className="mt-2 text-sm text-p01-red">{scanError}</p>}
+
+          {/* Skew or a lost session blunts the spent/handed-over FILTERS, so
+              a note below may already be gone or promised away — the worst
+              place to find out is after locking it into an uncancellable
+              vault. Say the right cure here; skew wins when both latched
+              (the reload forces the signing gate anyway). */}
+          {(staleWorker || lostSession) && (
+            <div className="mt-2">
+              <StaleWorkerNotice lostSession={lostSession && !staleWorker} />
+            </div>
+          )}
 
           {usdcUnsupported && (
             <p className="mt-2 text-xs text-p01-yellow">

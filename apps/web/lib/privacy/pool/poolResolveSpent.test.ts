@@ -20,13 +20,23 @@
  *
  * `noteCrypto` and the license derivation are deliberately NOT mocked: the
  * blobs are sealed and opened by the real hybrid X25519 + ML-KEM-768, exactly
- * as shield writes them. Only `isNullifierSpent` is stubbed — it is the one
- * chain read.
+ * as shield writes them. Only `fetchSpentNullifierSet` is stubbed — it is the
+ * one chain read. `isNullifierSpentInSet` stays real, so these tests exercise
+ * the production membership derivation rather than a copy of it.
+ *
+ * 🚨 Point 1 changed shape on 2026-08-12 and the change is the privacy fix
+ * itself: the handler asks ONE pool-wide question instead of one question per
+ * note. Resolving spent-ness note by note handed the RPC the list of notes this
+ * browser owned and had not yet spent; when one of those PDAs later appeared on
+ * chain, joining the two recovered the querying IP. Two tests below pin the new
+ * shape directly, and the failure-granularity test asserts per-POOL rather than
+ * per-note because that is now the truth.
  *
  * Runs under `vitest.pool.config.mts` (node).
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PublicKey } from '@solana/web3.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { derivePoolSeedLegacy, derivePoolSeedSalted } from './seedDerivation';
@@ -88,10 +98,21 @@ const SPENT_NOTE = fixtureNote(7); // nullifier PDA exists on chain
 const LIVE_NOTE = fixtureNote(8); // no nullifier PDA
 const LEGACY_NOTE = fixtureNote(3); // shielded before the passphrase
 
-/** Mutable chain state the `isNullifierSpent` stub answers from. */
+/**
+ * Mutable chain state the `fetchSpentNullifierSet` stub answers from.
+ *
+ * The stub is POOL-WIDE on purpose: the handler no longer asks the chain about
+ * individual nullifiers, because doing so handed the RPC the list of notes this
+ * browser owns and had not yet spent. `calls` therefore records POOL reads, not
+ * note reads, and `failingPools` fails a whole pool — that is the real failure
+ * granularity now, and the tests below assert it as such.
+ *
+ * `isNullifierSpentInSet` is deliberately NOT stubbed: it is pure, so the tests
+ * exercise the production membership logic instead of a reimplementation of it.
+ */
 const chain = {
-  spentPreimages: new Set<string>(),
-  failingPreimages: new Set<string>(),
+  spentNotes: [] as FixtureNote[],
+  failingPools: new Set<string>(),
   calls: [] as string[],
 };
 
@@ -99,16 +120,20 @@ vi.mock('./denominatedPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./denominatedPool')>();
   return {
     ...actual,
-    isNullifierSpent: async (
-      _conn: unknown,
-      _pool: unknown,
-      nullifierPreimage: bigint,
-      _secret: bigint,
-    ) => {
-      const key = nullifierPreimage.toString();
-      chain.calls.push(key);
-      if (chain.failingPreimages.has(key)) throw new Error('rpc 429');
-      return chain.spentPreimages.has(key);
+    fetchSpentNullifierSet: async (_conn: unknown, poolPDA: PublicKey) => {
+      const pool58 = poolPDA.toBase58();
+      chain.calls.push(pool58);
+      if (chain.failingPools.has(pool58)) throw new Error('rpc 429');
+      // Build the PDA set the real fetch would return, through the SAME
+      // derivation the handler uses to test membership. A stub that shortcut
+      // that derivation would pass while production disagreed.
+      const set = new Set<string>();
+      for (const n of chain.spentNotes) {
+        const nullifier = actual.createNullifierV3(n.nullifierPreimage, n.secret);
+        const [pda] = actual.deriveNullifierPDA(poolPDA, actual.goldilocksU64To32(nullifier));
+        set.add(pda.toBase58());
+      }
+      return set;
     },
   };
 });
@@ -120,8 +145,8 @@ const { clearPoolState, configurePoolHandlers, handlePoolRequest, setPoolSeed } 
 
 beforeEach(() => {
   clearPoolState();
-  chain.spentPreimages = new Set([SPENT_NOTE.nullifierPreimage.toString()]);
-  chain.failingPreimages = new Set();
+  chain.spentNotes = [SPENT_NOTE];
+  chain.failingPools = new Set();
   chain.calls = [];
   configurePoolHandlers('http://localhost:8899');
   setPoolSeed(META, SIGNATURE, PASSPHRASE); // holds the salted AND legacy seeds
@@ -145,7 +170,7 @@ describe('poolResolveSpent', () => {
   });
 
   it('reaches notes shielded before the passphrase, via the legacy seed', async () => {
-    chain.spentPreimages.add(LEGACY_NOTE.nullifierPreimage.toString());
+    chain.spentNotes = [...chain.spentNotes, LEGACY_NOTE];
     const res = await handlePoolRequest({
       kind: 'poolResolveSpent',
       meta: META,
@@ -164,21 +189,40 @@ describe('poolResolveSpent', () => {
     });
     expect(res.skipped).toBe(1);
     expect(res.checked).toBe(1);
-    // The foreign note was never checked against the chain.
-    expect(chain.calls).toEqual([LIVE_NOTE.nullifierPreimage.toString()]);
+    // A blob this identity cannot open never reaches the chain at all. The read
+    // that does happen is POOL-wide, so it says nothing about which notes are
+    // being resolved — that is the whole point of the shape.
+    expect(chain.calls).toEqual([POOL_58]);
   });
 
   it('a failed chain read is unresolved and ABSENT from the map, not guessed', async () => {
-    chain.failingPreimages.add(LIVE_NOTE.nullifierPreimage.toString());
+    // Failure granularity is the POOL, not the note: one pool-wide read serves
+    // every note in it, so when that read fails every note in that pool is
+    // unknown. Absence from the map is what lets the consumer keep its one-way
+    // rule (unspent -> spent only).
+    chain.failingPools.add(POOL_58);
     const res = await handlePoolRequest({
       kind: 'poolResolveSpent',
       meta: META,
       blobs: [blobFor(SALTED_SEED, SPENT_NOTE), blobFor(SALTED_SEED, LIVE_NOTE)],
     });
-    expect(res.unresolved).toBe(1);
-    expect(res.checked).toBe(1);
+    expect(res.unresolved).toBe(2);
+    expect(res.checked).toBe(0);
     expect(`${POOL_58}:${LIVE_NOTE.leafIndex}` in res.spent).toBe(false);
-    expect(res.spent[`${POOL_58}:${SPENT_NOTE.leafIndex}`]).toBe(true);
+    expect(`${POOL_58}:${SPENT_NOTE.leafIndex}` in res.spent).toBe(false);
+  });
+
+  it('reads a failing pool ONCE, not once per note', async () => {
+    // Without a remembered failure the handler would retry the dead RPC for
+    // every note in the pool, which is both slow and a burst the provider reads
+    // as one client hammering one pool.
+    chain.failingPools.add(POOL_58);
+    await handlePoolRequest({
+      kind: 'poolResolveSpent',
+      meta: META,
+      blobs: [blobFor(SALTED_SEED, SPENT_NOTE), blobFor(SALTED_SEED, LIVE_NOTE)],
+    });
+    expect(chain.calls).toEqual([POOL_58]);
   });
 
   it('checks a duplicated blob once', async () => {
@@ -190,6 +234,21 @@ describe('poolResolveSpent', () => {
     });
     expect(res.checked).toBe(1);
     expect(chain.calls).toHaveLength(1);
+  });
+
+  it('asks the chain about the POOL, never about a note', async () => {
+    // The regression this pins: resolving N notes must cost ONE pool-wide read,
+    // not N nullifier-PDA lookups. The old shape handed the RPC the list of
+    // notes this browser owned and had not yet spent, and days later one of
+    // those PDAs appeared on chain — joining the two recovers the querying IP.
+    const notes = [fixtureNote(11), fixtureNote(12), fixtureNote(13), fixtureNote(14)];
+    const res = await handlePoolRequest({
+      kind: 'poolResolveSpent',
+      meta: META,
+      blobs: notes.map((n) => blobFor(SALTED_SEED, n)),
+    });
+    expect(res.checked).toBe(4);
+    expect(chain.calls).toEqual([POOL_58]);
   });
 });
 

@@ -1,0 +1,23 @@
+{
+  "synthetic": true,
+  "note": "SYNTHETIC fixture — hand-built by generate.mjs, never touched any chain. Same clean hypothetical v4 spend as fixtures/v4-synthetic, but the payer history carries two ERRORED signatures. It pins the P3 completeness arithmetic: errored entries are skipped, not scanned, and must still count toward completeness — the regression this guards forced P3 INCONCLUSIVE on any payer with one failed transaction in its history. It is NOT evidence about any real chain, spend, or privacy property.",
+  "spend": "3GYruHF9T86fLHS9wfuwfyBuEkDdbvYwVVHgh7oUFp9KfW6u28R62udKoQVjD1htJhxxGinsDiwJ9LCYtQfwJatx",
+  "kind": "unshield_denominated_stark_v4",
+  "flags": {
+    "maxChunkTx": 200,
+    "depositLimit": 400
+  },
+  "pools": {
+    "Hd3iD5ZWUN4jKGXrJVF2aLrf44kWgdtiTNxRLW2NnxLu": {
+      "label": "SYNTHETIC 1 SOL (errored-history fixture)",
+      "tree": "CHTMuHmhkobqJ7mkqtUSbBtPmX8cUcewK9JajUV3mds4"
+    }
+  },
+  "expect": {
+    "P1": "PASS",
+    "P2": "PASS",
+    "P3": "PASS",
+    "P3b": "FAIL",
+    "P4": "PASS"
+  }
+}

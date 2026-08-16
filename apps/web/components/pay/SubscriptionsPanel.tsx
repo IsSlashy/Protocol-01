@@ -19,13 +19,17 @@
  *
  * A private vault's address is a PDA seeded on `subscriber_commitment`, which
  * derives from the note secret inside the pool Worker. The main thread cannot
- * enumerate them on chain. So the list draws from two sources:
+ * enumerate them on chain. So the list draws from three sources:
  *
  *   1. `recordSubscription`, written at subscribe time (public fields only,
  *      same contract as `recordPayout` for withdrawals);
  *   2. "Track a vault" below, for subscriptions made before the record
  *      existed or on another device: paste the vault address, and the account
- *      is validated (owner + discriminator + decode) before it is remembered.
+ *      is validated (owner + discriminator + decode) before it is remembered;
+ *   3. "Recover from the chain" (#11): the Worker matches this wallet's note
+ *      secrets against a program-wide vault enumeration and re-records what it
+ *      finds. One pool-wide read, never a per-note probe — the leak analysis
+ *      lives on `lib/privacy/pool/subscriptionRecovery.ts`.
  *
  * ## The license key is re-derived, never stored
  *
@@ -48,6 +52,7 @@ import {
   KeyRound,
   Plus,
   RefreshCw,
+  Search,
   Store,
   TriangleAlert,
 } from "lucide-react";
@@ -66,6 +71,7 @@ import {
   loadSubscriptions,
   SUBSCRIPTIONS_CHANGED_EVENT,
   recordSubscription,
+  recoverSubscriptions,
   summarizeSubscription,
   symbolForVaultMint,
   toPeriodState,
@@ -74,7 +80,7 @@ import {
   type StoredSubscription,
   type SubscriptionSummary,
 } from "@/lib/pay/subscriptions";
-import { deriveSubscriptionLicenseKey } from "@/lib/privacy/shieldClient";
+import { deriveSubscriptionLicenseKey, loadEncryptedNotes } from "@/lib/privacy/shieldClient";
 import { licenseServiceTag } from "@/lib/privacy/license";
 import {
   NATIVE_SOL_SENTINEL_MINT,
@@ -82,6 +88,7 @@ import {
   loadServiceRegistry,
   type ServiceEntry,
 } from "@/lib/privacy/serviceRegistry";
+import StaleWorkerNotice from "./StaleWorkerNotice";
 import { truncate } from "./util";
 
 // ---------------------------------------------------------------------------
@@ -208,6 +215,16 @@ export default function SubscriptionsPanel({
   const [currentSlot, setCurrentSlot] = useState<bigint | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  // A version-skewed worker could not open the sealed records (see
+  // StaleWorkerNotice). While true, `records` is missing every sealed row and
+  // the panel must say "reload", NOT paint the ordinary "nothing tracked yet"
+  // empty state — to a user that reads as their subscriptions being gone.
+  const [staleWorker, setStaleWorker] = useState(false);
+  // Same missing rows, different cure: the worker RESTARTED and lost the
+  // seeds mid-session, healed by signing again — the reload line would send
+  // the user to a step that does not fix it. Assigned per refresh, like
+  // `staleWorker`.
+  const [lostSession, setLostSession] = useState(false);
 
   // Vendor roster, best effort and cached: it only decorates the list with
   // merchant names and lets an imported vault pick up its service tag. A
@@ -229,8 +246,17 @@ export default function SubscriptionsPanel({
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
-    const recs = loadSubscriptions(walletKey);
+    // Async since L5b: the records are sealed and the worker opens them. With
+    // no session yet the loader serves the v1 cleartext view, so the list
+    // still paints.
+    const {
+      records: recs,
+      staleWorker: stale,
+      lostSession: lost,
+    } = await loadSubscriptions(meta, walletKey);
     setRecords(recs);
+    setStaleWorker(stale);
+    setLostSession(lost);
     setLive((prev) => {
       const next: Record<string, VaultLive> = {};
       for (const r of recs) next[r.vaultPDA] = prev[r.vaultPDA] ?? { kind: "loading" };
@@ -262,7 +288,7 @@ export default function SubscriptionsPanel({
       }),
     );
     setRefreshing(false);
-  }, [connection, walletKey]);
+  }, [connection, meta, walletKey]);
 
   useEffect(() => {
     void refresh();
@@ -348,7 +374,7 @@ export default function SubscriptionsPanel({
       const decoded = decodeSubscriptionVault(info.data);
       const svc = serviceForVault(services, decoded);
       const decimals = decimalsForVaultMint(decoded.tokenMint);
-      recordSubscription(walletKey, {
+      await recordSubscription(meta, walletKey, {
         vaultPDA: addr,
         retailer: decoded.retailer,
         serviceTag: licenseServiceTag(svc?.slug ?? null, decoded.retailer),
@@ -373,10 +399,52 @@ export default function SubscriptionsPanel({
     }
   }
 
-  function handleForget(vaultPDA: string) {
-    forgetSubscription(walletKey, vaultPDA);
+  async function handleForget(vaultPDA: string) {
+    await forgetSubscription(meta, walletKey, vaultPDA);
     setSelected(null);
     void refresh();
+  }
+
+  // ── Recover from the chain (#11) ─────────────────────────────────────────
+  const [recovering, setRecovering] = useState(false);
+  const [recoverNote, setRecoverNote] = useState<string | null>(null);
+  const [recoverError, setRecoverError] = useState<string | null>(null);
+
+  async function handleRecover() {
+    setRecovering(true);
+    setRecoverNote(null);
+    setRecoverError(null);
+    try {
+      const res = await recoverSubscriptions(meta, walletKey, {
+        // Blobs let the Worker recover a subscription paid with a RECEIVED
+        // note, whose secrets no seed of ours derives.
+        blobs: await loadEncryptedNotes(meta, walletKey),
+        services: services.map((s) => ({
+          slug: s.slug,
+          name: s.name,
+          retailer: s.retailer.toBase58(),
+          tokenMint: s.tokenMint.toBase58(),
+        })),
+      });
+      if (res.recovered.length > 0) {
+        setRecoverNote(
+          `Recovered ${res.recovered.length} subscription${res.recovered.length === 1 ? "" : "s"}.`,
+        );
+        await refresh();
+      } else if (res.alreadyTracked > 0) {
+        setRecoverNote(
+          `Nothing new to recover — this wallet's ${res.alreadyTracked} vault${
+            res.alreadyTracked === 1 ? " is" : "s are"
+          } already tracked here.`,
+        );
+      } else {
+        setRecoverNote("No open subscription vault on chain belongs to this wallet's notes.");
+      }
+    } catch (e) {
+      setRecoverError((e as Error).message || "Recovery failed.");
+    } finally {
+      setRecovering(false);
+    }
   }
 
   function merchantName(rec: StoredSubscription): string {
@@ -664,7 +732,20 @@ export default function SubscriptionsPanel({
             </button>
           </div>
 
-          {records.length === 0 && (
+          {/* The notice REPLACES the empty line, and outranks it: after
+              migration a skewed OR restarted worker reads the store as empty,
+              and "No subscriptions tracked yet" over records that exist is
+              the exact false alarm tasks #12 and #16 exist to prevent — each
+              cause gets its own cure line. A genuinely empty store never sets
+              either flag (the loader asks the worker nothing), so the
+              ordinary empty state below is untouched. */}
+          {(staleWorker || lostSession) && (
+            <div className="mt-3">
+              <StaleWorkerNotice lostSession={lostSession && !staleWorker} />
+            </div>
+          )}
+
+          {records.length === 0 && !staleWorker && !lostSession && (
             <p className="mt-3 text-xs text-p01-text-muted">
               No subscriptions tracked in this browser yet. Subscribe from the Subscribe tab, or
               track an existing vault by its address below. Subscriptions made here before this
@@ -759,6 +840,39 @@ export default function SubscriptionsPanel({
           {trackError && (
             <p className="mt-2 flex items-start gap-1.5 text-xs text-p01-red">
               <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {trackError}
+            </p>
+          )}
+        </div>
+
+        {/* Recover from the chain: the list above is a cache since #11 */}
+        <div className="card p-4">
+          <div className="flex items-center gap-2">
+            <Search className="h-4 w-4 text-p01-cyan" />
+            <p className="font-display text-sm text-p01-text">Recover from the chain</p>
+          </div>
+          <p className="mt-2 text-xs text-p01-text-muted">
+            Lost this list? The private worker matches the notes this wallet owns against the
+            subscription program&apos;s vaults and re-records yours: vault, merchant, price,
+            period and license key all come back. It asks the network one pool-wide question —
+            nothing derived from your notes leaves this device. Only merchant display names and
+            opening-transaction links cannot be restored.
+          </p>
+          <button
+            onClick={() => void handleRecover()}
+            disabled={recovering}
+            className="btn-secondary mt-3 inline-flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-50"
+          >
+            {recovering ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Search className="h-3.5 w-3.5" />
+            )}
+            {recovering ? "Scanning…" : "Recover subscriptions"}
+          </button>
+          {recoverNote && <p className="mt-2 text-xs text-p01-text-muted">{recoverNote}</p>}
+          {recoverError && (
+            <p className="mt-2 flex items-start gap-1.5 text-xs text-p01-red">
+              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {recoverError}
             </p>
           )}
         </div>

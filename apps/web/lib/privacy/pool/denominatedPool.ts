@@ -616,16 +616,104 @@ export function deriveNullifierPDA(
 }
 
 /**
- * Check whether a note has already been spent (subscribed or unshielded) by
- * looking up its on-chain NullifierRecord PDA at
- * [b"nullifier", pool, goldilocksU64To32(nullifier)].
+ * `NullifierRecord` = 8 discriminator + 32 pool + 1 bump.
+ * `programs/zk_shielded/src/state/nullifier_set.rs:146-155`.
  *
- * Cheap pre-flight: a single getAccountInfo, no proof. Lets callers fail fast
- * instead of burning a ~2-minute STARK proof + buffer rent on a note the
- * on-chain double-spend guard would reject anyway (subscribe_private_stark
- * inits the NullifierRecord, so a live record => "Allocate ... already in use").
- * The nullifier value is recomputed locally via `createNullifierV3` (identical
- * to the C1 public input), so no proof generation is needed.
+ * Note what the account does NOT hold: the nullifier itself. That value lives
+ * only in the PDA seeds, which is exactly why the spent-set can be fetched
+ * without naming a single note — see `fetchSpentNullifierSet`.
+ */
+const NULLIFIER_RECORD_LEN = 41;
+const NULLIFIER_RECORD_POOL_OFFSET = 8;
+
+/**
+ * Every spent nullifier in one pool, as a set of PDA addresses.
+ *
+ * 🚨 THIS EXISTS TO CLOSE A DEANONYMISATION CHANNEL. Read before replacing it
+ * with a per-note lookup, which is what it replaced.
+ *
+ * A note's nullifier is secret until the spend publishes it. The previous
+ * implementation asked the RPC `getAccountInfo(nullifierPDA)` once per unspent
+ * note, on every scan, from the user's browser — so an ordinary page load handed
+ * the provider a list of PDAs that do not exist yet. Days later one of them is
+ * created by a withdrawal. The provider joins on the PDA and recovers the IP that
+ * pre-queried it. That is a full deanonymisation which needs no relayer
+ * participation and survives a perfectly honest one.
+ *
+ * This asks a different question: "which nullifier records exist for this pool",
+ * whose answer is identical for every user and reveals nothing about the caller.
+ * Membership is then decided locally. The pool key is the memcmp filter, so the
+ * response is bounded by the pool's spent count, not by the whole program.
+ *
+ * Returns base58 PDA addresses; pair it with `isNullifierSpentInSet`.
+ */
+export async function fetchSpentNullifierSet(
+  connection: Connection,
+  poolPDA: PublicKey,
+): Promise<Set<string>> {
+  const accounts = await connection.getProgramAccounts(ZK_SHIELDED_PROGRAM_ID, {
+    // `dataSlice: 0` — we need the addresses, never the bodies. The body is only
+    // the pool key we already filtered on plus a bump.
+    dataSlice: { offset: 0, length: 0 },
+    filters: [
+      { dataSize: NULLIFIER_RECORD_LEN },
+      { memcmp: { offset: NULLIFIER_RECORD_POOL_OFFSET, bytes: poolPDA.toBase58() } },
+    ],
+  });
+  return new Set(accounts.map((a) => a.pubkey.toBase58()));
+}
+
+/**
+ * The pool's UNSPENT note count, read from `DenominatedPoolV3.note_count`.
+ *
+ * This is the anonymity set. The tree's leaf count is not: it counts every note
+ * ever inserted, including every one already withdrawn, and those cannot hide
+ * anybody. Measured on devnet 2026-08-12 — the 0.1 SOL pool held 34 leaves and
+ * 8 unspent notes, the 1 SOL pool 25 and 6. Quoting the leaf count would have
+ * overstated the set by more than 4x.
+ *
+ * Layout (`programs/zk_shielded/src/state/pool_v3.rs:53-98`), Anchor 8-byte
+ * discriminator first: authority 8..40, token_mint 40..72, denomination 72..80,
+ * epoch_delay 80..88, merkle_root 88..120, tree_depth 120, next_leaf_index
+ * 121..129, vk_hash 129..161, total_shielded 161..169, note_count 169..177.
+ */
+const POOL_V3_NOTE_COUNT_OFFSET = 169;
+
+export async function readPoolUnspentCount(
+  connection: Connection,
+  poolPDA: PublicKey,
+): Promise<number> {
+  const info = await connection.getAccountInfo(poolPDA);
+  if (!info) throw new Error(`Pool account not found: ${poolPDA.toBase58()}`);
+  const data = Buffer.from(info.data);
+  return Number(data.readBigUInt64LE(POOL_V3_NOTE_COUNT_OFFSET));
+}
+
+/**
+ * Decide spent-ness locally against a set from `fetchSpentNullifierSet`.
+ *
+ * Pure computation, no network. The nullifier is recomputed with
+ * `createNullifierV3` — identical to the C1 public input — so no proof is needed.
+ */
+export function isNullifierSpentInSet(
+  spentSet: ReadonlySet<string>,
+  poolPDA: PublicKey,
+  nullifierPreimage: bigint,
+  secret: bigint,
+): boolean {
+  const nullifier = createNullifierV3(nullifierPreimage, secret);
+  const [nullifierPDA] = deriveNullifierPDA(poolPDA, goldilocksU64To32(nullifier));
+  return spentSet.has(nullifierPDA.toBase58());
+}
+
+/**
+ * Single-note spent check. ⚠️ LEAKS THE NULLIFIER PDA TO THE RPC.
+ *
+ * Kept for the one place the leak is already moot: the pre-flight immediately
+ * before a spend, where the nullifier is about to be published on chain anyway
+ * and a stale read costs a ~2-minute STARK proof plus buffer rent. Everywhere
+ * else — and in particular anything that runs on page load or over a list of
+ * unspent notes — use `fetchSpentNullifierSet` + `isNullifierSpentInSet`.
  */
 export async function isNullifierSpent(
   connection: Connection,

@@ -289,9 +289,9 @@ export default function TermsOfService() {
           <h3 className="styx-h3">6.1 Styx Protocol Rights</h3>
           <p>
             All intellectual property rights in the Services, including but not
-            limited to the source code, smart contracts, zero-knowledge
-            circuits, SDK, user interface designs, branding, trademarks, and
-            documentation, are owned by or licensed to the Styx Protocol team.
+            limited to the source code, smart contracts, STARK circuits, SDK,
+            user interface designs, branding, trademarks, and documentation, are
+            owned by or licensed to the Styx Protocol team.
           </p>
 
           <h3 className="styx-h3" style={{ marginTop: "2.25rem" }}>

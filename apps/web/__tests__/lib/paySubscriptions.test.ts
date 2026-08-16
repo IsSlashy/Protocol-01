@@ -12,8 +12,59 @@
  * (zero padding decodes as None, never as garbage).
  */
 
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex as nobleHex, utf8ToBytes } from '@noble/hashes/utils.js';
+
+import { createNoteEncryptionAddress, decryptNote } from '@/lib/privacy/pool/noteCrypto';
+
+// The record store is sealed since L5b and the worker opens it. The worker is
+// faked here with the real noteCrypto primitives, one deterministic seed per
+// meta — the same pattern as __tests__/lib/knownSpentNoteKeys.test.ts. The
+// real handler's envelope whitelist is pinned in
+// lib/privacy/pool/storeEncryption.test.ts; this file is about the store
+// semantics (replace, forget, fallback) and the decoder, which the mock never
+// touches.
+function seedFor(meta: string): Uint8Array {
+  return sha256(utf8ToBytes(`test-seed:${meta}`));
+}
+
+vi.mock('@/lib/privacy/workerClient', () => ({
+  poolRequest: vi.fn(async (req: { kind: string; meta: string; blobs?: string[] }) => {
+    if (req.meta === 'meta-no-session') throw new Error('No pool keys for this identity.');
+    const seed = seedFor(req.meta);
+    if (req.kind === 'poolStoreLabel') {
+      return {
+        kind: 'poolStoreLabel',
+        label: nobleHex(sha256(seed)).slice(0, 32),
+        legacyAddress: createNoteEncryptionAddress(seed),
+      };
+    }
+    if (req.kind === 'poolNoteAddress') {
+      return { kind: 'poolNoteAddress', address: createNoteEncryptionAddress(seed) };
+    }
+    if (req.kind === 'poolOpenRecords') {
+      const subscriptions: unknown[] = [];
+      for (const blob of req.blobs ?? []) {
+        try {
+          const rec = JSON.parse(new TextDecoder().decode(decryptNote(seed, blob)));
+          if (rec.p01store === 1 && rec.kind === 'subscription') subscriptions.push(rec);
+        } catch {
+          // not this identity's blob
+        }
+      }
+      return {
+        kind: 'poolOpenRecords',
+        payouts: [],
+        spentKeys: [],
+        handoffs: [],
+        subscriptions,
+        skipped: 0,
+      };
+    }
+    throw new Error(`unexpected pool request: ${req.kind}`);
+  }),
+}));
 
 import {
   NATIVE_SOL_MINT_BASE58,
@@ -430,40 +481,94 @@ function rec(over: Partial<StoredSubscription> = {}): StoredSubscription {
 }
 
 describe('subscription records', () => {
+  const META = 'meta-w1';
+
   beforeEach(() => {
     localStorage.clear();
   });
 
-  it('records and loads, newest first', () => {
-    recordSubscription('w1', rec({ vaultPDA: 'a', openedAt: 1 }));
-    recordSubscription('w1', rec({ vaultPDA: 'b', openedAt: 2 }));
-    expect(loadSubscriptions('w1').map((r) => r.vaultPDA)).toEqual(['b', 'a']);
-    expect(loadSubscriptions('w2')).toEqual([]);
+  it('records and loads, newest first — and only ciphertext is persisted', async () => {
+    await recordSubscription(META, 'w1', rec({ vaultPDA: 'a', openedAt: 1 }));
+    await recordSubscription(META, 'w1', rec({ vaultPDA: 'b', openedAt: 2 }));
+    expect((await loadSubscriptions(META, 'w1')).records.map((r) => r.vaultPDA)).toEqual([
+      'b',
+      'a',
+    ]);
+    // A genuinely empty identity: an ordinary empty read, and neither banner
+    // flag — the worker was never even asked (no blobs to open, no v1 rows
+    // to probe a migration for).
+    expect(await loadSubscriptions('meta-w2', 'w2')).toEqual({
+      records: [],
+      staleWorker: false,
+      lostSession: false,
+    });
+
+    // The store never saw the cleartext: v1 untouched, v2 sealed blobs only.
+    expect(localStorage.getItem('p01_pay_subscriptions_v1')).toBeNull();
+    const v2 = JSON.parse(localStorage.getItem('p01_pay_subscriptions_v2')!) as Record<
+      string,
+      string[]
+    >;
+    for (const blob of Object.values(v2).flat()) {
+      expect(blob.startsWith('p01enc1:')).toBe(true);
+    }
+    expect(Object.keys(v2)).not.toContain('w1');
   });
 
-  it('re-recording the same vault replaces the record instead of duplicating', () => {
-    recordSubscription('w1', rec({ serviceName: 'Old' }));
-    recordSubscription('w1', rec({ serviceName: 'New', openedAt: 2_000 }));
-    const list = loadSubscriptions('w1');
+  it('re-recording the same vault replaces the record instead of duplicating', async () => {
+    await recordSubscription(META, 'w1', rec({ serviceName: 'Old' }));
+    await recordSubscription(META, 'w1', rec({ serviceName: 'New', openedAt: 2_000 }));
+    const list = (await loadSubscriptions(META, 'w1')).records;
     expect(list).toHaveLength(1);
     expect(list[0]!.serviceName).toBe('New');
   });
 
-  it('NEVER persists fields outside the public contract, licenseKey included', () => {
-    recordSubscription('w1', {
+  it('NEVER persists fields outside the public contract, licenseKey included', async () => {
+    await recordSubscription(META, 'w1', {
       ...rec(),
       licenseKey: 'P01-SHOULD-NEVER-BE-WRITTEN',
     } as unknown as StoredSubscription);
-    const raw = localStorage.getItem('p01_pay_subscriptions_v1')!;
-    expect(raw).not.toContain('licenseKey');
-    expect(raw).not.toContain('P01-SHOULD-NEVER-BE-WRITTEN');
-    expect(loadSubscriptions('w1')).toHaveLength(1);
+    // Neither store carries it — v1 must not exist at all, and the sealed
+    // record comes back without the field because it was never sealed in.
+    expect(localStorage.getItem('p01_pay_subscriptions_v1')).toBeNull();
+    const list = (await loadSubscriptions(META, 'w1')).records;
+    expect(list).toHaveLength(1);
+    expect(list[0]).not.toHaveProperty('licenseKey');
+    expect(JSON.stringify(list)).not.toContain('P01-SHOULD-NEVER-BE-WRITTEN');
   });
 
-  it('forgets one vault and leaves the rest', () => {
-    recordSubscription('w1', rec({ vaultPDA: 'a' }));
-    recordSubscription('w1', rec({ vaultPDA: 'b' }));
-    forgetSubscription('w1', 'a');
-    expect(loadSubscriptions('w1').map((r) => r.vaultPDA)).toEqual(['b']);
+  it('forgets one vault and leaves the rest', async () => {
+    await recordSubscription(META, 'w1', rec({ vaultPDA: 'a' }));
+    await recordSubscription(META, 'w1', rec({ vaultPDA: 'b' }));
+    await forgetSubscription(META, 'w1', 'a');
+    expect((await loadSubscriptions(META, 'w1')).records.map((r) => r.vaultPDA)).toEqual(['b']);
+  });
+
+  it('with NO session, the record falls back to v1 rather than being dropped', async () => {
+    // This store is the only pointer to a vault nothing can re-discover, so a
+    // failed sealed write must land SOMEWHERE readable. The v1 shape is the
+    // last resort, and both the session-less and the sessioned read serve it.
+    await recordSubscription('meta-no-session', 'w1', rec({ vaultPDA: 'a' }));
+    const v1 = JSON.parse(localStorage.getItem('p01_pay_subscriptions_v1')!) as Record<
+      string,
+      StoredSubscription[]
+    >;
+    expect(v1.w1![0]!.vaultPDA).toBe('a');
+    expect((await loadSubscriptions(null, 'w1')).records.map((r) => r.vaultPDA)).toEqual(['a']);
+    expect((await loadSubscriptions(META, 'w1')).records.map((r) => r.vaultPDA)).toEqual(['a']);
+  });
+
+  it('migrates a v1 cleartext store on first sessioned touch, losing nothing', async () => {
+    localStorage.setItem(
+      'p01_pay_subscriptions_v1',
+      JSON.stringify({ w1: [rec({ vaultPDA: 'legacy-vault' })] }),
+    );
+    const list = (await loadSubscriptions(META, 'w1')).records;
+    expect(list.map((r) => r.vaultPDA)).toEqual(['legacy-vault']);
+    // v1 gone, record re-served from ciphertext alone.
+    expect(localStorage.getItem('p01_pay_subscriptions_v1')).toBeNull();
+    expect((await loadSubscriptions(META, 'w1')).records.map((r) => r.vaultPDA)).toEqual([
+      'legacy-vault',
+    ]);
   });
 });

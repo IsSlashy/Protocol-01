@@ -23,12 +23,16 @@ describe('Footer -- Site navigation and community links', () => {
       expect(screen.getAllByText('PROTOCOL 01')).toHaveLength(2);
     });
 
-    it('presents the privacy manifesto tagline', () => {
-      expect(screen.getByText(/Anonymous Solana wallet with stealth addresses/)).toBeInTheDocument();
+    it('presents the brand line without claiming anonymity', () => {
+      // Was "Anonymous Solana wallet ... for private transactions": the sender
+      // is not hidden on any leg, so "anonymous" is refutable.
+      expect(screen.getByText(/Solana wallet with stealth addresses/)).toBeInTheDocument();
+      expect(screen.queryByText(/Anonymous Solana wallet/)).toBeNull();
     });
 
-    it('displays the iconic terminal-style message', () => {
-      expect(screen.getByText(/The system cannot see you/)).toBeInTheDocument();
+    it('displays the terminal-style message as intent, not achievement', () => {
+      // Was "> The system cannot see you." stated as fact.
+      expect(screen.getByText(/Built so the system stops seeing you/)).toBeInTheDocument();
     });
   });
 

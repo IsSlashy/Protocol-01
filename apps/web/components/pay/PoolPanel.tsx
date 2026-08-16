@@ -21,6 +21,7 @@ import {
   loadPayouts,
   knownSpentNoteKeys,
   mergeScanWithLocal,
+  NOTES_CHANGED_EVENT,
   resolveSpentNotes,
   recordPayout,
   recordSpentNote,
@@ -45,6 +46,7 @@ import {
   handoffKeys,
   recordHandoff,
 } from "@/lib/pay/handoffs";
+import StaleWorkerNotice from "./StaleWorkerNotice";
 import { truncate } from "./util";
 
 /** The live V4 SOL pools. Shielding snaps to one of these: a denominated pool
@@ -56,6 +58,21 @@ import { truncate } from "./util";
 function denominationsFor(token: PoolToken): number[] {
   return getPoolsForTokenV3(token).map((p) => p.denomination).sort((a, b) => a - b);
 }
+
+/**
+ * The denomination put in front. Every other pool stays one click away and
+ * nothing is disabled — this is a default, not a restriction.
+ *
+ * Why concentrate: an anonymity set does not add up across pools, it splits.
+ * Measured on devnet 2026-08-12, the SOL pools held 8, 6, 0, 0, 0 and 0 unspent
+ * notes. Six denominations means six sets, four of them empty, and a deposit
+ * into an empty pool is the only one there — it pairs with its withdrawal
+ * trivially, whatever the protocol does.
+ *
+ * Founder ruling 2026-08-12. Per-token, because the USDC pools have their own
+ * ladder and their own occupancy.
+ */
+const PRIMARY_DENOMINATION_BY_TOKEN: Record<PoolToken, number> = { SOL: 1, USDC: 100 };
 
 /** A payout address the user can still move funds out of. */
 interface PayoutView extends PayoutRecord {
@@ -104,7 +121,13 @@ export default function PoolPanel({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const denominations = denominationsFor(token);
-  const [denomination, setDenomination] = useState(denominations[0]!);
+  // Falls back to the smallest when the configured primary is not among this
+  // token's pools, so a config change can never leave the panel with a
+  // denomination that has no pool behind it.
+  const primaryDenomination = denominations.includes(PRIMARY_DENOMINATION_BY_TOKEN[token])
+    ? PRIMARY_DENOMINATION_BY_TOKEN[token]
+    : denominations[0]!;
+  const [denomination, setDenomination] = useState(primaryDenomination);
   const [notes, setNotes] = useState<PoolNoteView[]>([]);
   /** Notes this browser withdrew, keyed `pool:leafIndex`. Seeded from local
    *  storage so it survives a reload, which is the case that actually bit:
@@ -114,6 +137,9 @@ export default function PoolPanel({
   /** True while the list comes from local storage, whose `spent` is a default
    *  rather than a reading. Cleared once the chain walk has answered. */
   const [notesProvisional, setNotesProvisional] = useState(false);
+  /** Blob count for the balance card. State, not a render-time read: the store
+   *  index is a worker-derived label now, so reading it is async. */
+  const [storedNotes, setStoredNotes] = useState(0);
   /** Notes handed to someone and not yet claimed. They STAY in this list on
    *  purpose: sealing consumes nothing, both sides hold a spendable copy, and
    *  hiding them would tell the user their money is gone while it is still
@@ -124,6 +150,12 @@ export default function PoolPanel({
   const [scanning, setScanning] = useState(false);
   const [scanStep, setScanStep] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  /** True from the first partial scan result until the scan settles: the list
+   *  on screen came from the fast blinded pass while the legacy epoch search —
+   *  the only pass that can find pre-2026-07-25 notes — is still running. The
+   *  UI must say so; a partial list presented as complete reads as lost money
+   *  to anyone holding an older note. */
+  const [checkingOlderNotes, setCheckingOlderNotes] = useState(false);
 
   const [shielding, setShielding] = useState(false);
   const [step, setStep] = useState<string | null>(null);
@@ -179,27 +211,105 @@ export default function PoolPanel({
   // Drop the root whenever the wallet changes: a payout key belongs to exactly
   // one wallet, and keeping a stale root across a switch would show one wallet
   // the other's addresses.
+  // A version-skewed worker could not open some sealed records (see
+  // StaleWorkerNotice): the spent set, handoff badges or payout history above
+  // are then SHORT, not empty-because-empty. Latched with `|| next` rather
+  // than assigned, because three independent async reads feed it and a fresh
+  // read of one store must not clear what another detected; reset only on a
+  // wallet switch, alongside the sets it describes. A reload heals it anyway.
+  const [staleWorker, setStaleWorker] = useState(false);
+  // Same symptom, different cure: the worker RESTARTED under this tab and
+  // lost the seeds mid-session, so nothing sealed opens until the user signs
+  // again — a reload alone changes nothing, so the reload line must never
+  // claim this state. Latched and reset exactly like `staleWorker`.
+  const [lostSession, setLostSession] = useState(false);
+
   const ownerKey = owner.toBase58();
   useEffect(() => {
     setPayoutRoot(null);
     setPayouts([]);
     // Spent notes are per wallet and persisted, so re-read them on a switch
-    // rather than carrying one wallet's history into another's list.
-    setSpentLocally(knownSpentNoteKeys(ownerKey));
-    setHandedOver(handoffKeys(ownerKey));
-  }, [ownerKey]);
+    // rather than carrying one wallet's history into another's list. The store
+    // is encrypted and the worker opens it, so the read is async — the stale
+    // guard keeps a slow answer from painting one wallet's spends onto another.
+    setSpentLocally(new Set());
+    setStaleWorker(false);
+    setLostSession(false);
+    let stale = false;
+    void knownSpentNoteKeys(meta, ownerKey)
+      .then((res) => {
+        if (!stale) {
+          setSpentLocally(res.keys);
+          setStaleWorker((prev) => prev || res.staleWorker);
+          setLostSession((prev) => prev || res.lostSession);
+        }
+      })
+      .catch(() => {});
+    setHandedOver(new Set());
+    void handoffKeys(meta, ownerKey)
+      .then((res) => {
+        if (!stale) {
+          setHandedOver(res.keys);
+          setStaleWorker((prev) => prev || res.staleWorker);
+          setLostSession((prev) => prev || res.lostSession);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [meta, ownerKey]);
 
   // A handoff sealed on the Send tab must reach this list without a reload:
   // visited panels stay mounted, so reading once on mount reads once a session.
   useEffect(() => {
-    const catchUp = () => setHandedOver(handoffKeys(ownerKey));
+    let stale = false;
+    const catchUp = () => {
+      void handoffKeys(meta, ownerKey)
+        .then((res) => {
+          if (!stale) {
+            setHandedOver(res.keys);
+            setStaleWorker((prev) => prev || res.staleWorker);
+            setLostSession((prev) => prev || res.lostSession);
+          }
+        })
+        .catch(() => {});
+    };
     window.addEventListener(HANDOFFS_CHANGED_EVENT, catchUp);
-    return () => window.removeEventListener(HANDOFFS_CHANGED_EVENT, catchUp);
-  }, [ownerKey]);
+    return () => {
+      stale = true;
+      window.removeEventListener(HANDOFFS_CHANGED_EVENT, catchUp);
+    };
+  }, [meta, ownerKey]);
+
+  // Same shape for the encrypted-backup count. It became state in the async
+  // store conversion, and its only writer sat inside `rescan` — so a note
+  // imported on the Receive tab (`storeEncryptedNote`, the one writer outside
+  // this panel) froze the count until a rescan, a shield, a withdraw or a
+  // reload. Stale-low is the wrong direction: a received note's blob is its
+  // ONLY record, and no rescan re-derives it.
+  useEffect(() => {
+    let stale = false;
+    const catchUp = () => {
+      void loadEncryptedNotes(meta, ownerKey)
+        .then((blobs) => {
+          if (!stale) setStoredNotes(blobs.length);
+        })
+        .catch(() => {});
+    };
+    window.addEventListener(NOTES_CHANGED_EVENT, catchUp);
+    return () => {
+      stale = true;
+      window.removeEventListener(NOTES_CHANGED_EVENT, catchUp);
+    };
+  }, [meta, ownerKey]);
 
   const rescan = useCallback(async () => {
     setScanning(true);
     setScanError(null);
+    // Whether the scan's fast pass painted anything before a failure — decides
+    // what the error message below must admit about the list on screen.
+    let paintedFromPartialScan = false;
     try {
       // FIRST PAINT, no network. Notes shielded from this browser are already in
       // local storage, encrypted under the pool seed, and carry pool, leaf index,
@@ -230,10 +340,34 @@ export default function PoolPanel({
       // earlier session or on another device drops out within seconds. It only
       // ever confirms spent, never un-spends, so a failed read leaves the note
       // exactly where it was. Fire and forget: the filter below does the rest.
+      // MERGED into the previous set, never assigned over it: the read is async
+      // now, and a plain set could race a `handleUnshield` write and briefly
+      // resurrect the note it just recorded. One-way growth cannot.
       void resolveSpentNotes(meta, owner.toBase58())
-        .then(() => setSpentLocally(knownSpentNoteKeys(owner.toBase58())))
+        .then(() => knownSpentNoteKeys(meta, owner.toBase58()))
+        .then((res) => {
+          setSpentLocally((prev) => new Set([...prev, ...res.keys]));
+          setStaleWorker((prev) => prev || res.staleWorker);
+          setLostSession((prev) => prev || res.lostSession);
+        })
         .catch(() => {});
-      const res = await scanPool(meta, "SOL", setScanStep);
+      // The encrypted-backup count for the balance card. Async for the same
+      // reason as the spent set: the store index is a worker-derived label.
+      void loadEncryptedNotes(meta, owner.toBase58())
+        .then((blobs) => setStoredNotes(blobs.length))
+        .catch(() => {});
+      // SECOND PAINT, chain-read: the scan streams the blinded pass's results
+      // as each pool is walked — real spent readings, milliseconds of hashing —
+      // while the legacy epoch search (~41 s of pure CPU per derivation, the
+      // only pass that can find a pre-blinding note) still runs. Painting them
+      // here is what turns the measured 41-82 s wait into seconds; the line
+      // gated by `checkingOlderNotes` is what keeps the early paint honest.
+      const res = await scanPool(meta, "SOL", setScanStep, (partial) => {
+        paintedFromPartialScan = true;
+        setCheckingOlderNotes(true);
+        setNotes(mergeScanWithLocal(partial.notes, localNotes));
+        setPoolSizes(partial.poolSizes);
+      });
       // MERGE, not replace: the chain scan re-derives from the pool seed, so a
       // RECEIVED note (secrets from the sender's seed) is invisible to it, and
       // replacing wholesale made received money vanish exactly when the slow
@@ -242,12 +376,28 @@ export default function PoolPanel({
       setNotesProvisional(false);
       setPoolSizes(res.poolSizes);
     } catch (e) {
-      setScanError((e as Error).message || "Pool scan failed.");
+      const msg = (e as Error).message || "Pool scan failed.";
+      // If the fast pass painted and the scan then died, the list on screen is
+      // real but may be missing older notes — say exactly that, not less.
+      setScanError(
+        paintedFromPartialScan
+          ? msg +
+              " The notes shown are from an unfinished scan and older notes may be missing — rescan to finish the check."
+          : msg,
+      );
     } finally {
       setScanning(false);
       setScanStep(null);
+      setCheckingOlderNotes(false);
     }
-  }, [meta]);
+    // `ownerKey` alongside `meta`, matching every sibling effect in this file.
+    // The callback closes over `owner`, and today the two always change together
+    // — PayApp passes `identity.meta` and `solPub` from the same source under the
+    // same guard — so omitting it was benign rather than wrong. It was still a
+    // trap set for later: the day `meta` becomes stable across wallets, a stale
+    // `owner` would scan one wallet's pools and paint them as another's, with
+    // nothing in this file to say why.
+  }, [meta, ownerKey]);
 
   useEffect(() => {
     void rescan();
@@ -292,7 +442,14 @@ export default function PoolPanel({
   const refreshPayouts = useCallback(
     async (root: Uint8Array) => {
       const byAddress = new Map<string, PayoutRecord>();
-      for (const rec of loadPayouts(ownerKey)) byAddress.set(rec.address, rec);
+      const stored = await loadPayouts(meta, ownerKey);
+      // A skewed or restarted worker hides the sealed records; the
+      // re-derivation from scanned notes below still finds every address a
+      // live note names, so the list stays as complete as this tab can make
+      // it — and the notice says why it may still be short.
+      setStaleWorker((prev) => prev || stored.staleWorker);
+      setLostSession((prev) => prev || stored.lostSession);
+      for (const rec of stored.records) byAddress.set(rec.address, rec);
       for (const n of notes) {
         const address = derivePoolPayoutKeypair(root, n.pool, n.leafIndex).publicKey.toBase58();
         if (!byAddress.has(address)) {
@@ -319,7 +476,7 @@ export default function PoolPanel({
           .filter((r) => r.lamports > 0),
       );
     },
-    [connection, notes, ownerKey],
+    [connection, notes, meta, ownerKey],
   );
 
   async function handleShowPayouts() {
@@ -383,7 +540,7 @@ export default function PoolPanel({
         signOne,
         onProgress: setStep,
       });
-      storeEncryptedNote(owner.toBase58(), outcome.encryptedNote);
+      await storeEncryptedNote(meta, owner.toBase58(), outcome.encryptedNote);
       setResult(outcome);
       void rescan();
     } catch (e) {
@@ -420,12 +577,12 @@ export default function PoolPanel({
         leafIndex: note.leafIndex,
         recipient: payout.publicKey,
         owner,
-        encryptedNotes: loadEncryptedNotes(owner.toBase58()),
+        encryptedNotes: await loadEncryptedNotes(meta, owner.toBase58()),
         connection,
         signOne,
         onProgress: setStep,
       });
-      recordPayout(ownerKey, {
+      await recordPayout(meta, ownerKey, {
         pool: note.pool,
         leafIndex: note.leafIndex,
         address: payout.publicKey.toBase58(),
@@ -435,7 +592,7 @@ export default function PoolPanel({
       setWithdrawn({ ...out, payout: payout.publicKey.toBase58() });
       // Persist it: this is the only record that survives the reload, and the
       // chain walk that would otherwise settle it takes minutes.
-      recordSpentNote(ownerKey, noteKey(note));
+      await recordSpentNote(meta, ownerKey, noteKey(note));
       setSpentLocally((prev) => new Set(prev).add(noteKey(note)));
       void refreshPayouts(root);
       void rescan();
@@ -452,10 +609,32 @@ export default function PoolPanel({
     setRecovered(null);
     setRecovering(true);
     try {
-      const r = await recoverStuckFunds(meta, denomination, owner, setStep);
+      // EVERY pool, not the selected one. Recovery is strictly pool-scoped —
+      // `recoverStuckFloat` derives its candidate ephemerals from the pool PDA —
+      // and it used to be keyed on the denomination pill, which defaulted to the
+      // smallest. Putting 1 SOL in front moved that default, so a user with
+      // ~1 SOL of proof-buffer rent stranded in the 0.1 SOL pool clicked
+      // Recover and read "nothing stranded" about a pool that was never
+      // searched. Withdrawals make this reachable without ever touching the
+      // selector: `handleUnshield` passes the NOTE's denomination, so a failed
+      // 0.1 SOL withdrawal strands float the selector no longer points at.
+      //
+      // Sweeping all of them costs a few reads against pools the user has never
+      // touched and removes the coupling entirely.
+      const all = await Promise.all(
+        denominations.map((d) => recoverStuckFunds(meta, d, owner, setStep)),
+      );
+      const r = all.reduce(
+        (acc, x) => ({
+          keys: acc.keys + x.keys,
+          lamports: acc.lamports + x.lamports,
+          closedBuffers: acc.closedBuffers + x.closedBuffers,
+        }),
+        { keys: 0, lamports: 0, closedBuffers: 0 },
+      );
       setRecovered(
         r.keys === 0
-          ? "Nothing stranded, no funds to recover."
+          ? "Nothing stranded in any pool, no funds to recover."
           : `Recovered ${(r.lamports / 1e9).toFixed(4)} SOL from ${r.keys} key(s), closed ${r.closedBuffers} proof buffer(s).`,
       );
     } catch (e) {
@@ -474,7 +653,6 @@ export default function PoolPanel({
   // read; the chain scan agrees on the following pass.
   const unspent = notes.filter((n) => !n.spent && !spentLocally.has(noteKey(n)));
   const selectedSize = poolSizes.find((p) => p.denomination === denomination);
-  const storedNotes = loadEncryptedNotes(owner.toBase58()).length;
 
   // ONE source of truth for what the user holds. The balance is the sum of the
   // very list rendered below, not a second number from a different code path.
@@ -489,11 +667,35 @@ export default function PoolPanel({
   // deliberately absent from all of these: the pool scan enumerates the whole
   // epoch window per note per denomination and does not finish in a time a
   // human will wait, so only the Rescan button itself may lock on it.
-  const shieldReason = !signOne
-    ? "This wallet cannot sign transactions, so it cannot shield."
-    : busyNote
-      ? "Paused while the withdrawal runs."
-      : null;
+  /**
+   * 🚨 THE PANEL IS SOL-ONLY, AND THE HEADER CAN SAY OTHERWISE.
+   *
+   * `PayApp` passes `token={poolToken}`, which is "USDC" whenever the selected
+   * asset is USDC — but every action in this file is hardcoded to SOL:
+   * `scanPool(meta, "SOL", …)`, `shieldToPool({ token: "SOL" })`,
+   * `unshieldFromPool({ token: "SOL" })`, and every amount rendered here
+   * divides by 1e9. So with USDC selected the panel drew the USDC pools'
+   * denominations — primary 100 — while the shield button called the **100 SOL**
+   * pool. A wallet holding 100 SOL would have moved 100 real SOL by clicking a
+   * button reached from the USDC tab.
+   *
+   * Refusing is the only honest state until the whole file is token-aware: the
+   * labels, the cost arithmetic and the payout display all assume 9 decimals,
+   * so patching the three `token:` literals would leave a panel that moves the
+   * right asset and misreports every number about it.
+   *
+   * Withdrawal is deliberately NOT gated — existing notes are SOL notes and
+   * must stay reachable from any tab. Only creating a new one is refused.
+   */
+  const poolIsSolOnly = token !== "SOL";
+
+  const shieldReason = poolIsSolOnly
+    ? `The pool only handles SOL today, so it cannot shield ${token}. Switch the asset to SOL to deposit. Any note you already hold stays withdrawable from here.`
+    : !signOne
+      ? "This wallet cannot sign transactions, so it cannot shield."
+      : busyNote
+        ? "Paused while the withdrawal runs."
+        : null;
   const withdrawReason = !signOne
     ? "This wallet cannot sign transactions, so it cannot withdraw."
     : shielding
@@ -547,28 +749,87 @@ export default function PoolPanel({
           <label className="mb-1.5 block text-xs uppercase tracking-wider text-p01-text-muted">
             Denomination
           </label>
+          {/* PRIMARY denomination in front, the rest one click behind it.
+              Not a restriction and nothing is disabled: every pool stays
+              reachable and every existing note keeps its Withdraw button. It is
+              a default that points at the only pool with a real set — measured
+              2026-08-12, the 1 SOL pool held 6 unspent notes and the 10, 100,
+              500 and 1000 SOL pools held zero. Splitting deposits across six
+              pools splits the anonymity set six ways. */}
           <div className="flex flex-wrap gap-2">
-            {denominations.map((d) => (
-              <button
-                key={d}
-                onClick={() => setDenomination(d)}
-                disabled={shielding}
-                title={shielding ? "Locked while the shield runs." : undefined}
-                className={
-                  d === denomination
-                    ? "rounded-lg border border-p01-cyan bg-p01-cyan/10 px-4 py-2 font-mono text-sm text-p01-cyan"
-                    : "rounded-lg border border-p01-border bg-p01-void px-4 py-2 font-mono text-sm text-p01-text-muted hover:text-p01-text disabled:opacity-50"
-                }
-              >
-                {d} SOL
-              </button>
-            ))}
+            {denominations
+              // `===` on the primary alone, NOT `|| d === denomination`: the
+              // fold below keeps every non-primary, so including the selection
+              // here rendered a selected non-primary TWICE, both highlighted,
+              // one with an occupancy count and one without. <details> is
+              // uncontrolled, so both were on screen at once.
+              .filter((d) => d === primaryDenomination)
+              .map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setDenomination(d)}
+                  disabled={shielding}
+                  title={shielding ? "Locked while the shield runs." : undefined}
+                  className={
+                    d === denomination
+                      ? "rounded-lg border border-p01-cyan bg-p01-cyan/10 px-4 py-2 font-mono text-sm text-p01-cyan"
+                      : "rounded-lg border border-p01-border bg-p01-void px-4 py-2 font-mono text-sm text-p01-text-muted hover:text-p01-text disabled:opacity-50"
+                  }
+                >
+                  {d} SOL
+                </button>
+              ))}
           </div>
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs text-p01-text-dim marker:text-p01-text-dim">
+              Other denominations, with how many notes each holds
+            </summary>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {denominations
+                .filter((d) => d !== primaryDenomination)
+                .map((d) => {
+                  const size = poolSizes.find((p) => p.denomination === d);
+                  return (
+                    <button
+                      key={d}
+                      onClick={() => setDenomination(d)}
+                      disabled={shielding}
+                      title={shielding ? "Locked while the shield runs." : undefined}
+                      className={
+                        d === denomination
+                          ? "rounded-lg border border-p01-cyan bg-p01-cyan/10 px-3 py-1.5 font-mono text-xs text-p01-cyan"
+                          : "rounded-lg border border-p01-border bg-p01-void px-3 py-1.5 font-mono text-xs text-p01-text-muted hover:text-p01-text disabled:opacity-50"
+                      }
+                    >
+                      {d} SOL
+                      <span className="ml-1.5 text-p01-text-dim">
+                        {size ? `· ${size.unspentNotes}` : "· ?"}
+                      </span>
+                    </button>
+                  );
+                })}
+            </div>
+          </details>
+          {/* THE NUMBER HERE IS THE UNSPENT COUNT, NEVER THE LEAF COUNT.
+              `totalNotes` counts every note ever inserted, including every one
+              already withdrawn, and a withdrawn note hides nobody. Measured on
+              devnet 2026-08-12: the 0.1 SOL pool held 34 leaves and 8 unspent
+              notes, the 1 SOL pool 25 and 6. The old sentence quoted the leaf
+              count, overstating the set by more than 4x — which is exactly the
+              class of sentence the founder ruling forbids. */}
           <p className="mt-2 text-xs text-p01-text-muted">
             {selectedSize
-              ? `${selectedSize.totalNotes} note${selectedSize.totalNotes === 1 ? "" : "s"} in this pool. Amounts snap to a denomination, so the amount you move is not distinctive. See the privacy note for what withdrawal still reveals.`
+              ? `${selectedSize.unspentNotes} unspent note${selectedSize.unspentNotes === 1 ? "" : "s"} in this pool right now, out of ${selectedSize.totalNotes} ever deposited. Amounts snap to a denomination, so the amount you move is not distinctive. See the privacy note for what withdrawal still reveals.`
               : "Amounts snap to a denomination; arbitrary amounts cannot be shielded."}
           </p>
+          {selectedSize && selectedSize.unspentNotes <= 1 && (
+            <p className="mt-1 text-xs text-p01-yellow">
+              A pool holding {selectedSize.unspentNotes === 0 ? "no" : "one"} unspent note gives you
+              nothing to blend into: a deposit and a withdrawal here would be the only ones, so they
+              pair trivially no matter what the protocol does. Nothing stops you — this is a fact
+              about the pool, not a setting.
+            </p>
+          )}
           {selectedSize && selectedSize.discoverableNotes < selectedSize.totalNotes && (
             <p className="mt-1 text-xs text-p01-text-dim">
               This RPC serves history for only {selectedSize.discoverableNotes} of them.
@@ -603,7 +864,7 @@ export default function PoolPanel({
         <button
           type="button"
           onClick={handleShield}
-          disabled={shielding || !!busyNote || !signOne}
+          disabled={shielding || !!busyNote || !signOne || poolIsSolOnly}
           className="btn-primary flex w-full items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {shielding ? (
@@ -690,6 +951,18 @@ export default function PoolPanel({
 
       {/* ── Context column: what you hold and what it reveals ─────────────── */}
       <div className="min-w-0 space-y-5">
+        {/* Above everything drawn from the sealed stores (notes list, spent
+            filter, handoff badges, payout history): when a skewed or restarted
+            worker left them short, the column must say the right cure before
+            it shows any of them — reload for skew, sign-again for a lost
+            session. Skew wins when both latched: the reload lands the user on
+            the signing gate anyway (the identity never persists), so its
+            instruction heals both, while the reverse is not true.
+            Never gates a button — standing rule, docs/PAY_UX_REWORK_PLAN.md. */}
+        {(staleWorker || lostSession) && (
+          <StaleWorkerNotice lostSession={lostSession && !staleWorker} />
+        )}
+
         {/* Balance. The one place that says what you hold. */}
         <div className="card p-4">
           <div className="flex items-center justify-between">
@@ -717,6 +990,11 @@ export default function PoolPanel({
             <p className="mt-1 text-xs text-p01-text-dim">
               Shown from this device&apos;s records while the chain check runs. A note withdrawn
               elsewhere may still appear until the check finishes; it settles on its own.
+            </p>
+          )}
+          {checkingOlderNotes && (
+            <p className="mt-1 text-xs text-p01-text-dim">
+              Still checking for older notes — anything found will be added here.
             </p>
           )}
           {scanStep && <p className="mt-2 text-xs text-p01-text-dim">{scanStep}</p>}
@@ -785,8 +1063,18 @@ export default function PoolPanel({
             aria-expanded={disclosureOpen}
             className="flex w-full items-center justify-between gap-2 text-left"
           >
+            {/* This one line is the only part of the disclosure that is always
+                on screen, so it is the sentence most people will ever read —
+                and it said "Amounts are hidden", which the paragraph it
+                summarises contradicts three lines down ("the amount is
+                quantised to a denomination"). The amount is not hidden: each
+                pool PDA is seeded on `denomination.to_le_bytes()`, so the
+                transaction names which pool and therefore the size. What the
+                pool buys is that the size is one of six fixed values instead of
+                an exact figure that identifies you by itself. Say that. */}
             <span className="font-medium">
-              Devnet. Amounts are hidden. Matching a withdrawal to its deposit is not.
+              Devnet. Your amount is one of a few fixed sizes, not hidden. Matching a withdrawal
+              to its deposit is not hidden either.
             </span>
             <ChevronDown
               className={
@@ -853,12 +1141,16 @@ export default function PoolPanel({
                       <button
                         type="button"
                         onClick={() => {
-                          recordHandoff(ownerKey, {
+                          // Optimistic state first: the write round-trips the
+                          // worker (sealed store) and the badge must not lag
+                          // the click. The HANDOFFS_CHANGED_EVENT re-read
+                          // reconciles after the write lands.
+                          setHandedOver((prev) => new Set(prev).add(noteKey(n)));
+                          void recordHandoff(meta, ownerKey, {
                             pool: n.pool,
                             leafIndex: n.leafIndex,
                             sealedAt: Date.now(),
                           });
-                          setHandedOver(handoffKeys(ownerKey));
                         }}
                         // Sealing records this by itself. The manual entry
                         // exists because a handoff leaves NO trace anywhere,
@@ -875,8 +1167,13 @@ export default function PoolPanel({
                       <button
                         type="button"
                         onClick={() => {
-                          forgetHandoff(ownerKey, n.pool, n.leafIndex);
-                          setHandedOver(handoffKeys(ownerKey));
+                          // Same optimistic shape as "Mark as handed over".
+                          setHandedOver((prev) => {
+                            const next = new Set(prev);
+                            next.delete(noteKey(n));
+                            return next;
+                          });
+                          void forgetHandoff(meta, ownerKey, n.pool, n.leafIndex);
                         }}
                         // Says what it does and, more importantly, what it does
                         // not: the recipient keeps their copy either way. The

@@ -249,6 +249,12 @@ p01/
 !apps/extension/public/**/*.png
 !apps/web/public/**/*.png
 !apps/mugen/public/**/*.png
+# The App Router serves the favicon and the iOS icon from files named by
+# convention in app/, not from public/, so the rule above cannot reach them.
+# Named one by one rather than opened as a directory glob: app/ is source, and
+# a stray screenshot dropped in there should still be ignored.
+!apps/web/app/icon.png
+!apps/web/app/apple-icon.png
 
 # Internal project planning docs (keep local only)
 /AGENT_SYNC.md

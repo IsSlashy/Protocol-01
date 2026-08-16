@@ -171,7 +171,13 @@ export default function TechStack() {
             </span>
           </h2>
           <div className="section-subtitle space-y-1">
-            <p>We combine the latest advances in zero-knowledge proofs, stealth addressing, and privacy-preserving protocols on Solana.</p>
+            {/* This component has no importer today, so nothing renders it.
+                The sentence is corrected anyway: a false claim parked in dead
+                code is a landmine for whoever wires it back in. The proofs are
+                hash-based STARKs and they are not zero-knowledge, which
+                stark/tests/zk_feasibility.rs demonstrates by recovering a
+                private witness from published proof bytes. */}
+            <p>We combine hash-based STARK proofs, stealth addressing, and privacy-preserving protocols on Solana.</p>
           </div>
         </motion.div>
 

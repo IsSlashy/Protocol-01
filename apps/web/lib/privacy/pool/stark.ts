@@ -299,16 +299,24 @@ async function signSendConfirm(
  * Confirm many signatures tolerantly: batch-poll getSignatureStatuses over a
  * long window (handles slow / rate-limited devnet far better than per-signature
  * confirmTransaction with its fixed 30s timeout).
+ *
+ * Returns the indices (into `sigs`) still unconfirmed when the window closes,
+ * instead of throwing — the caller owns the resend policy. A signature that
+ * LANDED with an on-chain error still throws: a chunk write is a bounds-checked
+ * constant instruction, so the program rejecting it once means it will reject
+ * the identical resend, and paying the fee again buys nothing.
  */
 async function confirmSignatures(
   conn: Connection,
   sigs: string[],
-  timeoutMs = 90_000,
-): Promise<void> {
-  const pending = new Set(sigs);
+  timeoutMs = CHUNK_CONFIRM_WINDOW_MS,
+  onProgress?: (step: string) => void,
+): Promise<number[]> {
+  const pending = new Map<string, number>();
+  sigs.forEach((sig, i) => pending.set(sig, i));
   const deadline = Date.now() + timeoutMs;
   while (pending.size > 0 && Date.now() < deadline) {
-    const arr = [...pending];
+    const arr = [...pending.keys()];
     for (let i = 0; i < arr.length; i += 256) {
       const slice = arr.slice(i, i + 256);
       const { value } = await conn.getSignatureStatuses(slice, { searchTransactionHistory: true });
@@ -322,11 +330,184 @@ async function confirmSignatures(
         }
       });
     }
-    if (pending.size === 0) return;
+    if (pending.size === 0) break;
+    onProgress?.(`Confirming chunk uploads (${pending.size} pending)...`);
     await new Promise((r) => setTimeout(r, 2500));
   }
-  if (pending.size > 0) {
-    throw new Error(`Chunk upload timed out: ${pending.size} chunk(s) unconfirmed`);
+  return [...pending.values()];
+}
+
+// ---------------------------------------------------------------------------
+// Chunked upload with per-chunk resume
+// ---------------------------------------------------------------------------
+
+// A blockhash is valid for ~150 slots (60-90 s), but a ~140 KB proof takes
+// minutes to upload. One blockhash fetched up front expires mid-loop and every
+// remaining chunk dies with "Blockhash not found". Refresh it as we go.
+const CHUNK_BLOCKHASH_MAX_AGE_MS = 30_000;
+
+// One confirm window covers a full blockhash lifetime (90 s is the upper
+// bound), so every transaction sent in a round gets the whole life of its
+// blockhash to land before we judge it lost.
+const CHUNK_CONFIRM_WINDOW_MS = 90_000;
+
+// Resend budget. Round 0 sends everything; each later round re-signs ONLY the
+// unconfirmed chunks with a fresh blockhash and watches for one more full
+// blockhash lifetime. Initial send + 3 resends = four independent blockhash
+// lifetimes per chunk, ~6 minutes of landing opportunity — measured deposits
+// run 63-554 s end to end, so a chunk that misses all four windows is an RPC
+// outage, not congestion, and more rounds would only spend more fees on a
+// dead link.
+const MAX_RESEND_ROUNDS = 3;
+
+/** One upload unit. Chunk writes are offset-addressed on-chain
+ * (`write_proof_chunk(offset, data)`), so resending a chunk is idempotent —
+ * the same bytes land at the same place however many times they arrive. The
+ * index ↔ offset ↔ bytes binding is what resume and readback both navigate by. */
+export interface ProofChunk {
+  index: number;
+  offset: number;
+  bytes: Uint8Array;
+}
+
+/** Split proof bytes into MAX_CHUNK_SIZE upload units. Pure, exported so the
+ * torn-buffer tests can reason about the exact same chunk geometry. */
+export function splitProofIntoChunks(proofBytes: Uint8Array): ProofChunk[] {
+  const chunks: ProofChunk[] = [];
+  for (let index = 0, offset = 0; offset < proofBytes.length; index++, offset += MAX_CHUNK_SIZE) {
+    const end = Math.min(offset + MAX_CHUNK_SIZE, proofBytes.length);
+    chunks.push({ index, offset, bytes: proofBytes.slice(offset, end) });
+  }
+  return chunks;
+}
+
+/**
+ * Compare local proof bytes against the RAW proof-buffer account data (the
+ * PROOF_DATA_OFFSET-byte header included, exactly as getAccountInfo returns
+ * it) and return the indices of chunks whose on-chain bytes differ. Null or
+ * truncated account data marks the unreadable chunks as holes. Pure, so the
+ * torn-buffer detection is provable without a cluster.
+ */
+export function findBufferHoles(
+  proofBytes: Uint8Array,
+  accountData: Uint8Array | null,
+): number[] {
+  const holes: number[] = [];
+  for (const { index, offset, bytes } of splitProofIntoChunks(proofBytes)) {
+    const start = PROOF_DATA_OFFSET + offset;
+    if (accountData === null || accountData.length < start + bytes.length) {
+      holes.push(index);
+      continue;
+    }
+    for (let i = 0; i < bytes.length; i++) {
+      if (accountData[start + i] !== bytes[i]) {
+        holes.push(index);
+        break;
+      }
+    }
+  }
+  return holes;
+}
+
+/**
+ * Upload proof bytes as offset-addressed chunk writes with per-chunk resume,
+ * then prove completeness by reading the buffer back byte for byte.
+ *
+ * The readback is not paranoia. On-chain, `bytes_written` is a HIGH-WATER MARK
+ * (`bytes_written = bytes_written.max(offset + len)`, lib.rs:89-90), not a
+ * count: lose chunk 5 while chunks 6..148 land, and the program's own
+ * completeness check (`bytes_written >= proof_size`, lib.rs:118) passes over a
+ * hole of zeros — verification then fails much later, unreadably, after the
+ * 1.4M CU budget is already spent. No on-chain state distinguishes a complete
+ * buffer from a torn one, so the client is the sole source of truth on which
+ * chunks arrived, and one getAccountInfo (~140 KB) gates the verify
+ * transaction.
+ *
+ * No pacing here by design: every Connection the pool hands this code routes
+ * through createPacedFetch (lib/privacy/worker/pacedFetch.ts), so throughput
+ * is bounded at the transport and this loop must not stack a second queue on
+ * top of it.
+ */
+async function uploadProofChunks(
+  connection: Connection,
+  signer: WalletSigner,
+  proofBuffer: PublicKey,
+  proofBytes: Uint8Array,
+  onProgress?: (step: string) => void,
+): Promise<void> {
+  const chunks = splitProofIntoChunks(proofBytes);
+
+  let chunkBlockhash = '';
+  let chunkBlockhashAt = 0;
+  const refreshBlockhash = async () => {
+    chunkBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
+    chunkBlockhashAt = Date.now();
+  };
+
+  const sendChunks = async (toSend: ProofChunk[], label: string): Promise<string[]> => {
+    const sigs: string[] = [];
+    for (let k = 0; k < toSend.length; k++) {
+      const chunk = toSend[k];
+      onProgress?.(`${label} ${k + 1}/${toSend.length}...`);
+      if (Date.now() - chunkBlockhashAt > CHUNK_BLOCKHASH_MAX_AGE_MS) await refreshBlockhash();
+      const chunkTx = new Transaction().add(
+        buildWriteProofChunkIx(chunk.offset, chunk.bytes, proofBuffer, signer.publicKey),
+      );
+      chunkTx.recentBlockhash = chunkBlockhash;
+      chunkTx.feePayer = signer.publicKey;
+      const signed = await signer.signTransaction(chunkTx);
+      const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
+      sigs.push(sig);
+    }
+    return sigs;
+  };
+
+  // Round 0 sends everything; each later round resends ONLY what did not
+  // confirm. See MAX_RESEND_ROUNDS for why the budget is what it is.
+  let pendingChunks = chunks;
+  for (let round = 0; ; round++) {
+    const label =
+      round === 0
+        ? 'Uploading proof chunk'
+        : `Resending chunk (round ${round}/${MAX_RESEND_ROUNDS})`;
+    const sigs = await sendChunks(pendingChunks, label);
+    onProgress?.('Confirming chunk uploads...');
+    const unconfirmed = await confirmSignatures(connection, sigs, CHUNK_CONFIRM_WINDOW_MS, onProgress);
+    if (unconfirmed.length === 0) break;
+    if (round >= MAX_RESEND_ROUNDS) {
+      throw new Error(
+        `Chunk upload failed: ${unconfirmed.length} chunk(s) unconfirmed after ` +
+          `${MAX_RESEND_ROUNDS} resend round(s). No verify fee was spent.`,
+      );
+    }
+    pendingChunks = unconfirmed.map((i) => pendingChunks[i]);
+    onProgress?.(`${pendingChunks.length} chunk(s) lost, resending with a fresh blockhash...`);
+    await refreshBlockhash();
+  }
+
+  // Authoritative completeness gate — see the doc comment above for why
+  // signature confirmations alone cannot prove the buffer is whole.
+  onProgress?.('Checking uploaded proof against the local bytes...');
+  for (let attempt = 0; ; attempt++) {
+    const info = await connection.getAccountInfo(proofBuffer);
+    const holes = findBufferHoles(proofBytes, info?.data ?? null);
+    if (holes.length === 0) return;
+    if (attempt >= 1) {
+      throw new Error(
+        `Proof buffer is torn on-chain: chunk(s) [${holes.join(', ')}] still differ ` +
+          'from the local proof after a repair pass. Aborting before spending verify CU.',
+      );
+    }
+    // Statuses can confirm a transaction whose write we never saw land
+    // (status races on congested devnet). Writes are idempotent, so patch
+    // exactly the torn chunks and read back once more.
+    onProgress?.(`Readback found ${holes.length} torn chunk(s), repairing...`);
+    await refreshBlockhash();
+    const repairSigs = await sendChunks(
+      holes.map((i) => chunks[i]),
+      'Re-uploading torn chunk',
+    );
+    await confirmSignatures(connection, repairSigs, CHUNK_CONFIRM_WINDOW_MS, onProgress);
   }
 }
 
@@ -374,36 +555,9 @@ export async function submitStarkProof(
     }
   }
 
-  // A blockhash is valid for ~150 slots (60-90 s), but a ~140 KB proof takes
-  // minutes to upload. One blockhash fetched up front expires mid-loop and every
-  // remaining chunk dies with "Blockhash not found". Refresh it as we go.
-  const CHUNK_BLOCKHASH_MAX_AGE_MS = 30_000;
-  let chunkBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
-  let chunkBlockhashAt = Date.now();
-  const totalChunks = Math.ceil(proof.proofBytes.length / MAX_CHUNK_SIZE);
-  const chunkSigs: string[] = [];
-
-  for (let i = 0, offset = 0; offset < proof.proofBytes.length; i++, offset += MAX_CHUNK_SIZE) {
-    onProgress?.(`Uploading proof chunk ${i + 1}/${totalChunks}...`);
-    if (Date.now() - chunkBlockhashAt > CHUNK_BLOCKHASH_MAX_AGE_MS) {
-      chunkBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
-      chunkBlockhashAt = Date.now();
-    }
-    const end = Math.min(offset + MAX_CHUNK_SIZE, proof.proofBytes.length);
-    const chunk = proof.proofBytes.slice(offset, end);
-    const chunkTx = new Transaction().add(
-      buildWriteProofChunkIx(offset, chunk, proofBuffer, authority),
-    );
-    chunkTx.recentBlockhash = chunkBlockhash;
-    chunkTx.feePayer = authority;
-    const signed = await signer.signTransaction(chunkTx);
-
-    const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
-    chunkSigs.push(sig);
-  }
-
-  onProgress?.('Confirming chunk uploads...');
-  await confirmSignatures(connection, chunkSigs);
+  // Chunked upload with per-chunk resume and a byte-for-byte readback gate —
+  // see uploadProofChunks for why confirmations alone cannot prove completeness.
+  await uploadProofChunks(connection, signer, proofBuffer, proof.proofBytes, onProgress);
 
   onProgress?.('Verifying STARK proof on-chain...');
   const verifyTx = new Transaction()
@@ -519,36 +673,9 @@ export async function submitAndVerifyStarkProof(
     }
   }
 
-  // A blockhash is valid for ~150 slots (60-90 s), but a ~140 KB proof takes
-  // minutes to upload. One blockhash fetched up front expires mid-loop and every
-  // remaining chunk dies with "Blockhash not found". Refresh it as we go.
-  const CHUNK_BLOCKHASH_MAX_AGE_MS = 30_000;
-  let chunkBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
-  let chunkBlockhashAt = Date.now();
-  const totalChunks = Math.ceil(proof.proofBytes.length / MAX_CHUNK_SIZE);
-  const chunkSigs: string[] = [];
-
-  for (let i = 0, offset = 0; offset < proof.proofBytes.length; i++, offset += MAX_CHUNK_SIZE) {
-    onProgress?.(`Uploading proof chunk ${i + 1}/${totalChunks}...`);
-    if (Date.now() - chunkBlockhashAt > CHUNK_BLOCKHASH_MAX_AGE_MS) {
-      chunkBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
-      chunkBlockhashAt = Date.now();
-    }
-    const end = Math.min(offset + MAX_CHUNK_SIZE, proof.proofBytes.length);
-    const chunk = proof.proofBytes.slice(offset, end);
-    const chunkTx = new Transaction().add(
-      buildWriteProofChunkIx(offset, chunk, proofBuffer, authority),
-    );
-    chunkTx.recentBlockhash = chunkBlockhash;
-    chunkTx.feePayer = authority;
-    const signed = await signer.signTransaction(chunkTx);
-
-    const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
-    chunkSigs.push(sig);
-  }
-
-  onProgress?.('Confirming chunk uploads...');
-  await confirmSignatures(connection, chunkSigs);
+  // Chunked upload with per-chunk resume and a byte-for-byte readback gate —
+  // see uploadProofChunks for why confirmations alone cannot prove completeness.
+  await uploadProofChunks(connection, signer, proofBuffer, proof.proofBytes, onProgress);
 
   onProgress?.('Verifying STARK proof phase 1...');
   const verifyTx = new Transaction()
@@ -596,6 +723,8 @@ export {
   getProofBufferPDA,
   buildCloseProofBufferIx,
   STARK_VERIFIER_PROGRAM_ID,
+  PROOF_DATA_OFFSET,
+  MAX_CHUNK_SIZE,
   CIRCUIT_SUBSCRIBER_OWNERSHIP,
   CIRCUIT_POOL_COMMITMENT,
   CIRCUIT_BALANCE_PROOF,

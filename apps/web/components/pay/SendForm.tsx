@@ -91,6 +91,7 @@ import { handoffKeys, recordHandoff } from "@/lib/pay/handoffs";
 import FeeRow from "./FeeRow";
 import FlowProgress from "./FlowProgress";
 import HonestyBadge from "./HonestyBadge";
+import StaleWorkerNotice from "./StaleWorkerNotice";
 import SuccessBurst from "./SuccessBurst";
 import { formatAmount, truncate } from "./util";
 
@@ -206,6 +207,11 @@ export default function SendForm({
   const [scanning, setScanning] = useState(false);
   const [scanStep, setScanStep] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  /** True from the first partial scan result until the scan settles: the list
+   *  came from the fast blinded pass while the legacy epoch search — the only
+   *  pass that can find pre-2026-07-25 notes — is still running. The picker
+   *  must say so rather than present the list as complete. */
+  const [checkingOlderNotes, setCheckingOlderNotes] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [noteAddress, setNoteAddress] = useState("");
   const [sealing, setSealing] = useState(false);
@@ -245,6 +251,9 @@ export default function SendForm({
     if (!meta || !owner) return;
     setScanning(true);
     setScanError(null);
+    // Whether the scan's fast pass painted anything before a failure — decides
+    // what the error message below must admit about the list on screen.
+    let paintedFromPartialScan = false;
     try {
       // FIRST PAINT, no network. Notes shielded from this browser are already in
       // local storage, encrypted under the pool seed, and carry pool, leaf index,
@@ -274,20 +283,44 @@ export default function SendForm({
       // exactly where it was. Fire and forget: the filter below does the rest.
       if (owner) {
         const ownerKey = owner.toBase58();
+        // MERGED, not assigned: the read is async now (encrypted store, worker
+        // opens it), and a plain set could race the seal handler's write.
         void resolveSpentNotes(meta, ownerKey)
-          .then(() => setSpentHere(knownSpentNoteKeys(ownerKey)))
+          .then(() => knownSpentNoteKeys(meta, ownerKey))
+          .then((res) => {
+            setSpentHere((prev) => new Set([...prev, ...res.keys]));
+            setStaleWorker((prev) => prev || res.staleWorker);
+            setLostSession((prev) => prev || res.lostSession);
+          })
           .catch(() => {});
       }
-      const res = await scanPool(meta, "SOL", setScanStep);
+      // SECOND PAINT, chain-read: the scan streams the blinded pass's results
+      // while the legacy epoch search (~41 s of CPU per derivation) still
+      // runs — same pattern as PoolPanel. `checkingOlderNotes` keeps the
+      // early paint honest.
+      const res = await scanPool(meta, "SOL", setScanStep, (partial) => {
+        paintedFromPartialScan = true;
+        setCheckingOlderNotes(true);
+        setNotes(mergeScanWithLocal(partial.notes, localNotes));
+      });
       // MERGE, not replace: a RECEIVED note's secrets came from the sender's
       // seed, so the seed-deriving chain scan can never return it; replacing
       // wholesale dropped it from this picker the moment the slow scan landed.
       setNotes(mergeScanWithLocal(res.notes, localNotes));
     } catch (e) {
-      setScanError((e as Error).message || "Pool scan failed.");
+      const msg = (e as Error).message || "Pool scan failed.";
+      // A partial paint followed by a failure leaves a real but possibly
+      // incomplete list on screen — the error must say so, not less.
+      setScanError(
+        paintedFromPartialScan
+          ? msg +
+              " The notes shown are from an unfinished scan and older notes may be missing — rescan to finish the check."
+          : msg,
+      );
     } finally {
       setScanning(false);
       setScanStep(null);
+      setCheckingOlderNotes(false);
     }
   }, [meta, owner]);
 
@@ -304,10 +337,49 @@ export default function SendForm({
   /** Notes already handed to someone and not yet claimed. Not spendable-safe to
    *  hand over a second time: that would promise one coin to two people. */
   const [handedOver, setHandedOver] = useState<ReadonlySet<string>>(new Set());
+  // A version-skewed worker left `spentHere` or `handedOver` SHORT (see
+  // StaleWorkerNotice): this picker may then re-offer a note already spent or
+  // already promised to someone. Latched with `|| next` since two async reads
+  // feed it; reset on a wallet switch with the sets it describes.
+  const [staleWorker, setStaleWorker] = useState(false);
+  // Same symptom, different cure: the worker RESTARTED and lost the seeds
+  // mid-session — healed by signing again, not by a reload, so the reload
+  // line must never claim it. Latched and reset exactly like `staleWorker`.
+  const [lostSession, setLostSession] = useState(false);
   useEffect(() => {
-    setSpentHere(owner ? knownSpentNoteKeys(owner.toBase58()) : new Set<string>());
-    setHandedOver(owner ? handoffKeys(owner.toBase58()) : new Set<string>());
-  }, [owner]);
+    // Async read (encrypted store), with a stale guard so a slow answer never
+    // paints one wallet's spends onto another after a switch.
+    setSpentHere(new Set());
+    setStaleWorker(false);
+    setLostSession(false);
+    let stale = false;
+    if (owner) {
+      void knownSpentNoteKeys(meta ?? null, owner.toBase58())
+        .then((res) => {
+          if (!stale) {
+            setSpentHere(res.keys);
+            setStaleWorker((prev) => prev || res.staleWorker);
+            setLostSession((prev) => prev || res.lostSession);
+          }
+        })
+        .catch(() => {});
+    }
+    setHandedOver(new Set());
+    if (owner) {
+      void handoffKeys(meta ?? null, owner.toBase58())
+        .then((res) => {
+          if (!stale) {
+            setHandedOver(res.keys);
+            setStaleWorker((prev) => prev || res.staleWorker);
+            setLostSession((prev) => prev || res.lostSession);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      stale = true;
+    };
+  }, [meta, owner]);
   // A note already handed to someone is withheld from this picker: handing the
   // same coin to a second person promises both of them money only one can take.
   // It stays withdrawable in the Pool tab, which is how a sender takes it back.
@@ -395,7 +467,7 @@ export default function SendForm({
           denomination: chosen.denomination,
           leafIndex: chosen.leafIndex,
           recipientAddress: noteAddress,
-          encryptedNotes: loadEncryptedNotes(owner.toBase58()),
+          encryptedNotes: await loadEncryptedNotes(meta, owner.toBase58()),
           onProgress: setSealStep,
         }),
       );
@@ -403,7 +475,7 @@ export default function SendForm({
       // changed is that somebody else can now spend it at any moment, and this
       // record is what lets the UI say so, and keep the note out of the pickers
       // that would hand it over twice or lock it into a subscription.
-      recordHandoff(owner.toBase58(), {
+      await recordHandoff(meta, owner.toBase58(), {
         pool: chosen.pool,
         leafIndex: chosen.leafIndex,
         sealedAt: Date.now(),
@@ -619,8 +691,25 @@ export default function SendForm({
                   </button>
                 </div>
 
+                {checkingOlderNotes && (
+                  <p className="mb-2 text-xs text-p01-text-dim">
+                    Still checking for older notes — anything found will be added here.
+                  </p>
+                )}
                 {scanStep && <p className="mb-2 text-xs text-p01-text-dim">{scanStep}</p>}
                 {scanError && <p className="mb-2 text-sm text-p01-red">{scanError}</p>}
+
+                {/* Skew or a lost session does not empty this list (notes
+                    come from the scan) — it blunts the spent/handed-over
+                    FILTERS above, so a note listed below may already be gone
+                    or promised away. The picker must say the right cure
+                    before offering anything; skew wins when both latched
+                    (the reload forces the signing gate anyway). */}
+                {(staleWorker || lostSession) && (
+                  <div className="mb-2">
+                    <StaleWorkerNotice lostSession={lostSession && !staleWorker} />
+                  </div>
+                )}
 
                 {!scanning && unspent.length === 0 && !scanError && (
                   <p className="text-xs text-p01-text-muted">

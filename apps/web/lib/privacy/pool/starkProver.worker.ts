@@ -70,6 +70,7 @@ export type StarkWorkerOutMessage =
   | { type: 'ready' }
   | { type: 'wasmLoaded' }
   | { type: 'wasmError'; error: string }
+  | { type: 'progress'; id: string; step: string }
   | {
       type: 'proof';
       id: string;
@@ -464,6 +465,10 @@ function generateMerkleUpdateProof(
 
 self.onmessage = (event: MessageEvent<WorkerInMessage>) => {
   const data = event.data;
+  // Ack receipt before dispatch: every generate_* call below is one blocking
+  // WASM invocation during which no JS runs, so this is the last activity the
+  // service's silence watchdog can see until the proof lands.
+  post({ type: 'progress', id: data.id, step: `${data.type} started` });
   switch (data.type) {
     case 'generateProof':
       generateProof(data.id, data.secret);
