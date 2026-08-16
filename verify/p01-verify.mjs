@@ -127,9 +127,19 @@ function registerPools(extra, source) {
  * instead of silently matching nothing.
  */
 const SPEND_KINDS = [
+  // The arithmetic, written out, because the transfer entry was wrong by one
+  // field and nothing here would have said so. Both v3 spends share a prefix:
+  //   disc 8 | nullifier 32 | merkle_root 32 | min_epoch u64 | stark_commitment u64
+  //   0..8       8..40           40..72          72..80            80..88
+  // so the commitment sits at 80 in BOTH, and 72 is min_epoch. Transfer read 72,
+  // which on a real transfer yields min_epoch (0 on every note the client
+  // writes), matches no deposit, and reports the spend CLEAN. A false clean, in
+  // the tool whose whole purpose is to refuse them.
+  // Source: programs/zk_shielded/src/lib.rs:347-356 (arg order) and
+  // apps/web/lib/privacy/pool/denominatedPool.ts:2008-2013 (the encoder).
   { name: 'unshield_denominated_stark_v3', commitmentOffset: 80, totalLen: 120 },
   { name: 'subscribe_private_stark', commitmentOffset: 160, totalLen: null },
-  { name: 'transfer_denominated_stark_v3', commitmentOffset: 72, totalLen: null },
+  { name: 'transfer_denominated_stark_v3', commitmentOffset: 80, totalLen: null },
   { name: 'split_note_stark', commitmentOffset: null, totalLen: null },
   // v4 lands here. It must appear with commitmentOffset: null, and P1 then
   // passes only because there is nothing to read — which is the point.
@@ -576,6 +586,173 @@ async function scanProofChunks(rpc, payer, target, { maxTx = 200, onProgress } =
   };
 }
 
+/**
+ * Walk the fee payer's FUNDING EDGES — where its lamports came from, and where
+ * they went.
+ *
+ * WHY THIS EXISTS, AND WHY IT IS THE CHEAPEST ATTACK IN THE FILE
+ * ─────────────────────────────────────────────────────────────
+ * P1-P4 chase a commitment. That is the cryptographic channel, and it is the
+ * one this project has spent months on. It is not the one an analyst would use.
+ *
+ * The spend is signed by an ephemeral key, which is good. But an ephemeral key
+ * starts with zero lamports and cannot pay a fee, so SOMETHING funded it, and on
+ * Solana that something is a public `SystemProgram::transfer`. The client also
+ * sweeps the residue back when the job ends. The ephemeral is therefore bracketed
+ * by two ordinary transfers, and both name the wallet.
+ *
+ * MEASURED on the recorded fixture: the ephemeral's ENTIRE life is 172
+ * transactions inside ~88 slots. Its oldest transaction is the pre-fund, its
+ * newest is the sweep. So the walk does not need the history — it needs its two
+ * ends, which is why this probe deliberately fetches only two transactions and
+ * prints the call count. An attack that costs three RPC calls is not a
+ * theoretical weakness.
+ *
+ * WHAT A PASS MEANS, EXACTLY
+ * ──────────────────────────
+ * PASS = no System transfer at either end of this payer's life names a
+ * counterparty. It does NOT mean the payer is unreachable: a funder could sit
+ * one hop further out, or the link could live off-chain at a relayer that
+ * logged the request. Read it as "the one-hop financial edge is closed", never
+ * as "the payer is anonymous".
+ */
+const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+const SYS_IX_TRANSFER = 2;
+
+/** Decode a System `transfer`. Returns null for every other System instruction. */
+function decodeSystemTransfer(data, accounts, keys) {
+  if (data.length < 12) return null;
+  if (data.readUInt32LE(0) !== SYS_IX_TRANSFER) return null;
+  if (accounts.length < 2) return null;
+  return {
+    source: keys[accounts[0]],
+    destination: keys[accounts[1]],
+    lamports: data.readBigUInt64LE(4),
+  };
+}
+
+async function traceFunderEdges(rpc, payer, { historyLimit } = {}) {
+  let calls = 0;
+  // Request the SAME page size the other history walkers use. The replay cache
+  // keys on exact request params, so a different limit here would be a cache
+  // miss on every recorded fixture — and, worse, would make three probes fetch
+  // three copies of one page against a live RPC.
+  const sigs = await rpc('getSignaturesForAddress', [payer, { limit: historyLimit }]);
+  calls += 1;
+  if (!sigs?.length) {
+    return { edges: [], historyLength: 0, truncated: false, calls, inconclusive: 'no history returned for the payer' };
+  }
+  // getSignaturesForAddress returns NEWEST first. The pre-fund is therefore the
+  // LAST entry and the sweep the FIRST — but only if the whole life fits in one
+  // page. If it does not, the oldest entry we hold is not the payer's first
+  // transaction and its absence of a funder proves nothing, so say so.
+  const truncated = sigs.length >= historyLimit;
+
+  const ends = [];
+  const newest = sigs.find((s) => !s.err);
+  const oldest = [...sigs].reverse().find((s) => !s.err);
+  if (oldest) ends.push({ role: 'pre-fund (oldest)', sig: oldest.signature });
+  if (newest && newest.signature !== oldest?.signature) ends.push({ role: 'sweep (newest)', sig: newest.signature });
+
+  const edges = [];
+  for (const end of ends) {
+    const tx = await getTx(rpc, end.sig);
+    calls += 1;
+    if (!tx) continue;
+    const keys = accountKeysOf(tx);
+    for (const ix of tx.transaction.message.instructions) {
+      if (keys[ix.programIdIndex] !== SYSTEM_PROGRAM) continue;
+      const t = decodeSystemTransfer(b58decode(ix.data), ix.accounts, keys);
+      if (!t) continue;
+      // Only edges that touch the payer, and only counterparties that are not
+      // the payer itself.
+      const other =
+        t.source === payer ? t.destination : t.destination === payer ? t.source : null;
+      if (!other || other === payer) continue;
+      edges.push({
+        role: end.role,
+        direction: t.source === payer ? 'out' : 'in',
+        counterparty: other,
+        lamports: t.lamports,
+        signature: end.sig,
+        slot: tx.slot,
+      });
+    }
+  }
+  return { edges, historyLength: sigs.length, truncated, calls, inconclusive: null };
+}
+
+/**
+ * Count how many INSTRUCTION ARGUMENTS in the payer's history carry the
+ * commitment in the clear — every instruction, not only `write_proof_chunk`.
+ *
+ * WHY P3 IS NOT THIS
+ * ──────────────────
+ * P3 filters strictly on the `write_proof_chunk` discriminator, because its
+ * question is "is the witness inside the proof payload". That filter is correct
+ * for P3 and a blind spot for everything else: the verifier takes
+ * `public_inputs: Vec<u64>` as an INSTRUCTION ARGUMENT, and C1's public inputs
+ * are `[nullifier, commitment]`. So the pair that IS the linkage is published by
+ * the verify calls, in the clear, before the spend even lands.
+ *
+ * This matters for what happens next, not only for what is true today. Removing
+ * the commitment from the spend instruction would turn P1 and P2 green while the
+ * leak survived in the verify instructions — a fix that reads as a win and is a
+ * regression in the report. This probe is what makes that impossible.
+ *
+ * The count is a FLOOR, not a total. It sees only the payer's own history, so
+ * publications on the DEPOSIT side (a different ephemeral) are outside it, as is
+ * any occurrence inside an event log rather than an instruction.
+ */
+async function scanInstructionArguments(rpc, payer, target, { maxTx = 400 } = {}) {
+  const writeDisc = discriminator('write_proof_chunk');
+  const requested = Math.min(1000, maxTx + 1);
+  const sigs = await rpc('getSignaturesForAddress', [payer, { limit: requested }]);
+  if (!sigs?.length) return { sites: [], scanned: 0, available: 0, complete: false };
+  const moreMayExist = sigs.length >= requested;
+
+  const sites = [];
+  let scanned = 0;
+  let errored = 0;
+  for (const s of sigs) {
+    if (scanned >= maxTx) break;
+    if (s.err) {
+      errored += 1;
+      continue;
+    }
+    const tx = await getTx(rpc, s.signature);
+    scanned += 1;
+    if (!tx) continue;
+    const keys = accountKeysOf(tx);
+    for (const ix of tx.transaction.message.instructions) {
+      const data = b58decode(ix.data);
+      // Proof payload is P3's territory. Counting it here would conflate "the
+      // proof contains the witness" with "an instruction argument names it",
+      // which are different defects with different fixes.
+      if (data.length >= 8 && data.subarray(0, 8).equals(writeDisc)) continue;
+      const offsets = [];
+      for (let i = 0; i + 8 <= data.length; i++) {
+        if (data.readBigUInt64LE(i) === target) offsets.push(i);
+      }
+      if (offsets.length) {
+        sites.push({
+          signature: s.signature,
+          program: keys[ix.programIdIndex],
+          slot: tx.slot,
+          dataLength: data.length,
+          offsets,
+        });
+      }
+    }
+  }
+  return {
+    sites,
+    scanned,
+    available: sigs.length,
+    complete: scanned + errored >= sigs.length && !moreMayExist,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // The probes
 // ---------------------------------------------------------------------------
@@ -778,6 +955,102 @@ async function verifySpend(rpc, signature, opts = {}) {
     ),
   );
 
+  // ── P6: the financial edge — the cheapest way to the buyer ────────────────
+  if (payer === null) {
+    results.push(
+      probe(
+        'P6',
+        'the fee payer cannot be traced to a funding wallet',
+        false,
+        'INCONCLUSIVE: no message header, so the fee payer is unknown and no edge was walked.',
+      ),
+    );
+  } else {
+    const funder = await traceFunderEdges(rpc, payer, { historyLimit: Math.min(1000, chunkLimit + 1) });
+    if (funder.inconclusive) {
+      results.push(
+        probe('P6', 'the fee payer cannot be traced to a funding wallet', false, `INCONCLUSIVE: ${funder.inconclusive}`),
+      );
+    } else if (funder.edges.length === 0) {
+      results.push(
+        probe(
+          'P6',
+          'the fee payer cannot be traced to a funding wallet',
+          !funder.truncated,
+          funder.truncated
+            ? `INCONCLUSIVE: the payer's history filled the requested page (${funder.historyLength}), so the ` +
+              `oldest entry held is not provably its first transaction. An unread edge is not a closed one.`
+            : `no System transfer at either end of this payer's ${funder.historyLength}-transaction life names a ` +
+              `counterparty (${funder.calls} RPC calls). One-hop financial edge closed; a funder one hop further ` +
+              `out, or a relayer that logged the request, is NOT covered by this probe.`,
+        ),
+      );
+    } else {
+      const worst = funder.edges
+        .map(
+          (e) =>
+            `${e.role} ${e.direction === 'in' ? 'from' : 'to'} ${e.counterparty} ` +
+            `(${e.lamports} lamports, ${e.signature.slice(0, 12)}…)`,
+        )
+        .join('; ');
+      results.push(
+        probe(
+          'P6',
+          'the fee payer cannot be traced to a funding wallet',
+          false,
+          `the payer is bracketed by ${funder.edges.length} System transfer(s) naming a wallet, found in ` +
+            `${funder.calls} RPC calls over a ${funder.historyLength}-transaction life: ${worst}`,
+        ),
+      );
+    }
+  }
+
+  // ── P7: commitment in instruction ARGUMENTS, outside the proof payload ────
+  if (payer === null || target === null) {
+    results.push(
+      probe(
+        'P7',
+        'no instruction argument outside the proof payload carries the commitment',
+        false,
+        payer === null
+          ? 'INCONCLUSIVE: no message header, so the payer history could not be walked.'
+          : 'INCONCLUSIVE: no commitment was published by the spend, so there is nothing to count. ' +
+            'That is not the same as a clean result — see P6.',
+      ),
+    );
+  } else {
+    const args = await scanInstructionArguments(rpc, payer, target, { maxTx: chunkLimit });
+    const cover = `${args.scanned}/${args.available} tx scanned`;
+    if (!args.complete) {
+      results.push(
+        probe(
+          'P7',
+          'no instruction argument outside the proof payload carries the commitment',
+          false,
+          `INCONCLUSIVE: the payer's history was not exhausted (${cover}). ${args.sites.length} site(s) found so far.`,
+        ),
+      );
+    } else if (args.sites.length === 0) {
+      results.push(
+        probe('P7', 'no instruction argument outside the proof payload carries the commitment', true, `clean across ${cover}`),
+      );
+    } else {
+      const byProgram = new Map();
+      for (const s of args.sites) byProgram.set(s.program, (byProgram.get(s.program) ?? 0) + 1);
+      const breakdown = [...byProgram].map(([p, n]) => `${p.slice(0, 8)}…×${n}`).join(', ');
+      results.push(
+        probe(
+          'P7',
+          'no instruction argument outside the proof payload carries the commitment',
+          false,
+          `${args.sites.length} instruction(s) publish the commitment in the clear (${breakdown}; ${cover}). ` +
+            `This is a FLOOR: publications on the deposit side belong to a different payer and are outside ` +
+            `this walk, as is any occurrence in an event log rather than an instruction.`,
+        ),
+      );
+    }
+  }
+
   // ── P5: context, never a pass/fail ────────────────────────────────────────
   const state = await readPoolState(rpc, poolPDA);
   const context = {
@@ -902,6 +1175,209 @@ function selfTestLive(reports) {
   return broken === 0 ? 0 : 1;
 }
 
+/**
+ * Offline control on the SPEND_KINDS offsets themselves.
+ *
+ * The transfer entry read byte 72 for months. 72 is min_epoch, which the client
+ * writes as 0 on every note, so P1 would have found no commitment on a real
+ * transfer and reported the spend CLEAN. A false clean, in the one tool whose
+ * job is to refuse them, and no fixture covered it because every recorded
+ * fixture is an unshield or a subscribe.
+ *
+ * Restating the right number here would only move the copy. So the layout is
+ * declared as the FIELD LIST the program signature actually has, the offset is
+ * derived from it, and the table is asserted against the derivation. Reordering
+ * an argument on chain and not here now fails, instead of going quiet.
+ */
+const SPEND_LAYOUTS = {
+  // programs/zk_shielded/src/lib.rs — both v3 spends share this prefix.
+  unshield_denominated_stark_v3: [
+    ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['min_epoch', 8], ['stark_commitment', 8],
+  ],
+  transfer_denominated_stark_v3: [
+    ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['min_epoch', 8], ['stark_commitment', 8],
+  ],
+  // subscribe_private_stark is NOT covered: its argument list has not been read
+  // field by field here, and inventing a layout to make a test green would be
+  // worse than the gap. Left explicit so the gap is visible rather than assumed
+  // away.
+};
+
+/**
+ * CHANNEL CONTROL — proves P6 and P7 can say BOTH words.
+ *
+ * P6 has a live positive control already: it PASSES on the synthetic fixtures,
+ * whose payers carry no System transfer. P7 does not, and cannot get one from
+ * those fixtures — they publish no commitment, so P7 has nothing to count and
+ * reports INCONCLUSIVE. A probe observed only in its failing state is a hollow
+ * guard, so its green state is built here instead.
+ *
+ * Four cases, and the fourth is the one that matters:
+ *   1. payer bracketed by two transfers   → P6 decoder finds 2 edges
+ *   2. payer with no System instruction   → P6 decoder finds 0
+ *   3. commitment in an instruction arg   → P7 decoder finds 1 site
+ *   4. commitment inside write_proof_chunk → P7 decoder finds 0
+ *
+ * Case 4 is the boundary between P3 and P7. The proof payload legitimately
+ * contains whatever the prover put there; counting it here would merge "the
+ * proof carries the witness" with "an argument names it" — two defects with
+ * two different fixes, one of which is frozen and the other of which is not.
+ */
+function b58encode(buf) {
+  let n = 0n;
+  for (const b of buf) n = (n << 8n) | BigInt(b);
+  let out = '';
+  while (n > 0n) {
+    out = B58[Number(n % 58n)] + out;
+    n /= 58n;
+  }
+  for (const b of buf) {
+    if (b !== 0) break;
+    out = B58[0] + out;
+  }
+  return out || B58[0];
+}
+
+function selfTestChannelDecoders() {
+  console.log('\n  ── CHANNEL CONTROL (offline) ─────────────────────────────');
+  const PAYER = 'PAYERPAYERPAYERPAYERPAYERPAYERPAYERPAYER111';
+  const WALLET = 'WALLETWALLETWALLETWALLETWALLETWALLETWALLET1';
+  const TARGET = 0xC0FFEE0000000002n;
+  let broken = 0;
+
+  // The encoder is used to build every case below, so it is asserted first.
+  // A silently wrong encoder would make all four cases agree with each other
+  // and with nothing else.
+  const probeBytes = Buffer.from([0, 0, 1, 255, 128, 57, 58]);
+  if (!b58decode(b58encode(probeBytes)).equals(probeBytes)) {
+    console.log('   FAIL  b58 round-trip broken — every case below is meaningless');
+    return 1;
+  }
+
+  const sysTransfer = (lamports) => {
+    const d = Buffer.alloc(12);
+    d.writeUInt32LE(SYS_IX_TRANSFER, 0);
+    d.writeBigUInt64LE(lamports, 4);
+    return b58encode(d);
+  };
+  const tx = (keys, instructions, slot = 1) => ({
+    slot,
+    transaction: { message: { header: { numRequiredSignatures: 1 }, accountKeys: keys, instructions } },
+    meta: {},
+  });
+
+  // Fake RPC: two signatures, newest first, exactly as getSignaturesForAddress
+  // orders them.
+  const mkRpc = (byeSig) => async (method, params) => {
+    if (method === 'getSignaturesForAddress') return [{ signature: 'SWEEP' }, { signature: 'FUND' }];
+    if (method === 'getTransaction') return byeSig[params[0]] ?? null;
+    return null;
+  };
+
+  const check = (label, actual, want) => {
+    if (actual === want) console.log(`   ok    ${label}: ${actual}`);
+    else {
+      broken += 1;
+      console.log(`   FAIL  ${label}: got ${actual}, want ${want}`);
+    }
+  };
+
+  return (async () => {
+    // 1 — bracketed payer. FUND: wallet -> payer. SWEEP: payer -> wallet.
+    const bracketed = {
+      FUND: tx([WALLET, PAYER, SYSTEM_PROGRAM], [{ programIdIndex: 2, accounts: [0, 1], data: sysTransfer(1_000_000n) }]),
+      SWEEP: tx([PAYER, WALLET, SYSTEM_PROGRAM], [{ programIdIndex: 2, accounts: [0, 1], data: sysTransfer(900_000n) }], 9),
+    };
+    const leaky = await traceFunderEdges(mkRpc(bracketed), PAYER, { historyLimit: 401 });
+    check('P6 decoder on a bracketed payer', leaky.edges.length, 2);
+
+    // 2 — the same two ends, carrying no System instruction at all.
+    const clean = {
+      FUND: tx([PAYER, ZK_SHIELDED], [{ programIdIndex: 1, accounts: [0], data: b58encode(Buffer.alloc(16)) }]),
+      SWEEP: tx([PAYER, ZK_SHIELDED], [{ programIdIndex: 1, accounts: [0], data: b58encode(Buffer.alloc(16)) }], 9),
+    };
+    const quiet = await traceFunderEdges(mkRpc(clean), PAYER, { historyLimit: 401 });
+    check('P6 decoder on an unfunded payer', quiet.edges.length, 0);
+
+    // 3 — the commitment as a plain instruction argument.
+    const argBuf = Buffer.alloc(24);
+    argBuf.writeBigUInt64LE(TARGET, 12);
+    const argTx = {
+      FUND: tx([PAYER, STARK_VERIFIER], [{ programIdIndex: 1, accounts: [0], data: b58encode(argBuf) }]),
+      SWEEP: tx([PAYER, STARK_VERIFIER], [{ programIdIndex: 1, accounts: [0], data: b58encode(Buffer.alloc(8)) }], 9),
+    };
+    const found = await scanInstructionArguments(mkRpc(argTx), PAYER, TARGET, { maxTx: 400 });
+    check('P7 decoder on a published argument', found.sites.length, 1);
+
+    // 4 — THE BOUNDARY. Same value, same offset, but inside write_proof_chunk.
+    const chunk = Buffer.concat([
+      discriminator('write_proof_chunk'),
+      Buffer.alloc(8), // offset u32 + len u32, values irrelevant to the filter
+      argBuf,
+    ]);
+    const chunkTx = {
+      FUND: tx([PAYER, STARK_VERIFIER], [{ programIdIndex: 1, accounts: [0], data: b58encode(chunk) }]),
+      SWEEP: tx([PAYER, STARK_VERIFIER], [{ programIdIndex: 1, accounts: [0], data: b58encode(Buffer.alloc(8)) }], 9),
+    };
+    const skipped = await scanInstructionArguments(mkRpc(chunkTx), PAYER, TARGET, { maxTx: 400 });
+    check('P7 decoder ignores the proof payload', skipped.sites.length, 0);
+
+    console.log(
+      broken === 0
+        ? '   PASS  both channel decoders answer in both directions.'
+        : `   ${broken} decoder control(s) broken — P6/P7 results are not trustworthy.`,
+    );
+    return broken === 0 ? 0 : 1;
+  })();
+}
+
+function selfTestOffsets() {
+  console.log('\n  ── OFFSET CONTROL (offline) ──────────────────────────────');
+  const COMMITMENT = 0xC0FFEE0000000001n;
+  const MIN_EPOCH = 0x00000000DEADBEEFn;
+  let broken = 0;
+  let checked = 0;
+
+  for (const kind of SPEND_KINDS) {
+    const layout = SPEND_LAYOUTS[kind.name];
+    if (!layout) continue;
+    checked += 1;
+
+    let derived = 0;
+    const total = layout.reduce((n, [, w]) => n + w, 0);
+    const buf = Buffer.alloc(total);
+    let at = 0;
+    for (const [field, width] of layout) {
+      if (field === 'stark_commitment') { derived = at; buf.writeBigUInt64LE(COMMITMENT, at); }
+      else if (field === 'min_epoch') buf.writeBigUInt64LE(MIN_EPOCH, at);
+      at += width;
+    }
+
+    const read = buf.readBigUInt64LE(kind.commitmentOffset);
+    const ok = kind.commitmentOffset === derived && read === COMMITMENT;
+    if (!ok) {
+      broken += 1;
+      console.log(
+        `   FAIL  ${kind.name}: table says ${kind.commitmentOffset}, the signature says ${derived}` +
+          (read === MIN_EPOCH ? ' — it is reading min_epoch' : ''),
+      );
+    } else {
+      console.log(`   ok    ${kind.name}: commitment at ${derived}, read back intact`);
+    }
+  }
+
+  if (checked === 0) {
+    console.log('   FAIL  no kind was checked, so this control asserted nothing.');
+    return 1;
+  }
+  console.log(
+    broken === 0
+      ? `   PASS  ${checked} spend layout(s) agree with the program signature.`
+      : '   FAIL  an offset disagrees with the signature. Any GREEN from P1 is worthless.',
+  );
+  return broken === 0 ? 0 : 1;
+}
+
 // ---------------------------------------------------------------------------
 // Entry
 // ---------------------------------------------------------------------------
@@ -1014,11 +1490,16 @@ async function main() {
   if (recordDir) writeFixture(recordDir, store, reports[0], opts);
 
   if (selfTest) {
-    process.exit(
-      manifest?.expect
-        ? selfTestAgainstManifest(reports[0], manifest, replayDir)
-        : selfTestLive(reports),
-    );
+    // The offset control runs on every --self-test, replay or live: it needs no
+    // chain and no fixture, and it guards the one thing every fixture missed.
+    const offsets = selfTestOffsets();
+    // Same rule as the offset control: no chain, no fixture, runs every time.
+    // It is the ONLY place P7's green state is ever exercised.
+    const channels = await selfTestChannelDecoders();
+    const probes = manifest?.expect
+      ? selfTestAgainstManifest(reports[0], manifest, replayDir)
+      : selfTestLive(reports);
+    process.exit(offsets === 0 && channels === 0 && probes === 0 ? 0 : 1);
   }
 
   console.log(

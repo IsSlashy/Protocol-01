@@ -299,8 +299,9 @@ export default function PayApp() {
                 encryption, hybrid X25519 + ML-KEM-768, so that is what the
                 sentence names. Also drops the pre-rename product name. */}
             <p className="mt-1 text-sm text-p01-text-muted">
-              Connect Phantom, or pair your Styx mobile wallet, to send and receive
-              payments to hybrid post-quantum stealth addresses.
+              Connect Phantom, or pair your Styx mobile wallet, to send and receive.
+              Recipient addresses are hybrid post-quantum. The signature that pays
+              is Ed25519 and stays Ed25519.
             </p>
           </div>
           <button

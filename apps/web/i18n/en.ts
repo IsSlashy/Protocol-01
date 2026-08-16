@@ -1332,7 +1332,7 @@ const en = {
     securityTitle: 'Security Model',
     threatModel: 'Threat Model',
     threatObservers: 'An observer can pair a deposit with its withdrawal today, because the withdrawal republishes the deposit commitment. What the addresses alone do not give is a link between two stealth payments and one recipient',
-    threatAmounts: 'Amounts are not hidden: pools are fixed-denomination and the pool a note sits in states its value. A note hides its owner and blinding, never its amount',
+    threatAmounts: 'Amounts are public by design, not by omission: a pool holds one denomination, so every note in it is exactly the same size and the amount singles nobody out. What it does reveal is which pool you used, and how much cover that buys depends on how many unspent notes share it. Today it buys none, because the withdrawal republishes the deposit commitment and names its own deposit',
     threatPatterns: 'Spending patterns are analyzable today, because each withdrawal can be matched to its deposit. The encrypted off-chain note handoff is the exception: it has no transaction to analyze',
     threatBalance: 'Balance tracking is not prevented: whoever follows a wallet can count its notes through deposit-withdrawal pairing. The shielded balance is a set of notes, not a number stored in one account',
     guarantees: 'Guarantees',

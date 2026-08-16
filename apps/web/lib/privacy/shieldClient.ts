@@ -26,6 +26,7 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { poolRequest } from './workerClient';
+import { funderConfigured, requestFunding } from './pool/ephemeralFunder';
 import { loadSubscriptions } from '../pay/subscriptions';
 import {
   isSessionLostError,
@@ -219,6 +220,21 @@ export interface SubscribeOutcome {
   serviceTag: string;
   denomination: number;
   fundedLamports: number;
+  /**
+   * Who paid for the job, and therefore whether the user's wallet is on chain.
+   *
+   * This is the honest half of the privacy claim, so it is a RESULT and not a
+   * request parameter: the caller asks for a funder, it may not be there, and
+   * the user is entitled to know which of the two worlds they ended up in
+   * before they are told anything about unlinkability. `'wallet'` means their
+   * address signed a transfer to the ephemeral and received the sweep — probe
+   * P6 reads exactly those two transactions.
+   */
+  fundedBy: 'wallet' | 'funder';
+  /** Set when `fundedBy === 'funder'`; the funding transaction, for the user to check. */
+  funderSignature?: string;
+  /** Why the funder was not used, when one was configured but did not serve. */
+  funderFallbackReason?: string;
 }
 
 /**
@@ -252,26 +268,56 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     onProgress,
   );
 
-  onProgress?.('Approve the funding transaction in your wallet...');
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-  const fundTx = new Transaction().add(
-    SystemProgram.transfer({
-      fromPubkey: owner,
-      toPubkey: new PublicKey(prep.ephemeralPubkey),
-      lamports: prep.requiredLamports,
-    }),
-  );
-  fundTx.recentBlockhash = blockhash;
-  fundTx.feePayer = owner;
+  // ── Who pays ───────────────────────────────────────────────────────────────
+  // Preferred: this deployment's funder, so the user's wallet signs nothing and
+  // never lands on chain. Fallback: the wallet, exactly as before.
+  //
+  // The fallback is deliberately LOUD. Funding through a third party and then
+  // sweeping home would be strictly worse than not using one — it spends someone
+  // else's SOL and still writes the wallet into the newest transaction of the
+  // ephemeral's life, which is precisely what probe P6 reads. So the two
+  // decisions (who funds, where the sweep goes) are made together, here, and
+  // travel together to the worker.
+  let fundedBy: 'wallet' | 'funder' = 'wallet';
+  let funderSignature: string | undefined;
+  let funderFallbackReason: string | undefined;
+  let sweepTo = owner.toBase58();
 
-  const signed = await signOne(fundTx);
-  const fundSig = await connection.sendRawTransaction(signed.serialize());
-  const conf = await connection.confirmTransaction(
-    { signature: fundSig, blockhash, lastValidBlockHeight },
-    'confirmed',
-  );
-  if (conf.value.err) {
-    throw new Error(`Funding transaction failed: ${JSON.stringify(conf.value.err)}`);
+  if (funderConfigured()) {
+    try {
+      onProgress?.('Asking the funder to cover this job (your wallet stays off chain)...');
+      const grant = await requestFunding(prep.ephemeralPubkey, prep.requiredLamports);
+      fundedBy = 'funder';
+      funderSignature = grant.signature;
+      sweepTo = grant.sweepTo;
+    } catch (e) {
+      funderFallbackReason = e instanceof Error ? e.message : String(e);
+      onProgress?.('The funder could not cover this job — falling back to your wallet.');
+    }
+  }
+
+  if (fundedBy === 'wallet') {
+    onProgress?.('Approve the funding transaction in your wallet...');
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    const fundTx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: owner,
+        toPubkey: new PublicKey(prep.ephemeralPubkey),
+        lamports: prep.requiredLamports,
+      }),
+    );
+    fundTx.recentBlockhash = blockhash;
+    fundTx.feePayer = owner;
+
+    const signed = await signOne(fundTx);
+    const fundSig = await connection.sendRawTransaction(signed.serialize());
+    const conf = await connection.confirmTransaction(
+      { signature: fundSig, blockhash, lastValidBlockHeight },
+      'confirmed',
+    );
+    if (conf.value.err) {
+      throw new Error(`Funding transaction failed: ${JSON.stringify(conf.value.err)}`);
+    }
   }
 
   const done = await poolRequest(
@@ -279,6 +325,7 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
       kind: 'poolSubscribeExecute',
       jobId: prep.jobId,
       ownerPubkey: owner.toBase58(),
+      sweepTo,
       retailer: retailer.toBase58(),
       // u64 decimal strings — the worker boundary carries JSON-safe primitives.
       rate: rate.toString(),
@@ -295,6 +342,9 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     serviceTag: done.serviceTag,
     denomination: done.denomination,
     fundedLamports: prep.requiredLamports,
+    fundedBy,
+    funderSignature,
+    funderFallbackReason,
   };
 }
 

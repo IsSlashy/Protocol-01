@@ -66,15 +66,18 @@ node merchant-claim.mjs
 
 **Simulates by default.** It builds the real instruction and asks the cluster to
 execute it without committing, so it needs no key, no SOL, and it cannot move
-anything. Measured 2026-08-13, runtime **207 ms**:
+anything. Re-measured 2026-08-16, runtime **191 ms**:
 
 ```
-vault                : 72n5rpWb2qaPSnnzUjbnoWqQ7qJkESWrA3MQbN3K1TZ
+vault                : 5NRDF1eBnvvbNb9G5N4stCNBSHgfaLxWFf3q2K2A5MPh
 status               : ended
 claimable periods    : 2
 claimable amount     : 0.1 SOL
+retailer             : 2aF8pZzbycK5N3nM6nFXLLSJKe8uQ2M7s5rPRa4VmPiJ
+fee payer            : 7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU
+                       ours, not the retailer. Any funded account works.
 
-CLAIM pushed by someone who is not the merchant
+CLAIM pushed by a key that is NOT the retailer
   result             : ACCEPTED   (5907 CU)
 
 THE SAME CLAIM, redirected to the payer
@@ -83,8 +86,23 @@ THE SAME CLAIM, redirected to the payer
                        Error Code: Unauthorized. Error Number: 6004.
 ```
 
-The whole argument in two lines: **anyone can push the button, nobody can move
-the destination.** The payee is pinned by the account, not by a signature.
+The whole argument in two lines: **anyone with a funded account can push the
+button, nobody can move the destination.** The payee is pinned by the account,
+not by a signature.
+
+### Say "not the retailer", never "a stranger"
+
+The fee payer above is our own program upgrade authority. Until 2026-08-16 this
+script introduced it as a stranger, which is the one line here an auditor could
+have caught, so it is now named for what it is.
+
+A freshly generated key would be the honest illustration and it does not work.
+Measured the same day: a fee payer holding nothing returns `AccountNotFound`
+before the transaction reaches the program, so **both** cases come back REFUSED
+and the demonstration says nothing. The fee payer has to be an account that
+exists. The property is unchanged either way, because it never depended on who
+paid: the destination is read off the vault account, so no signer can redirect
+it.
 
 Simulation is the honest form for a stage. It runs against the deployed program
 and the real vault state, it proves the program's answer, and it cannot be

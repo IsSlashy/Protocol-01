@@ -7,9 +7,15 @@
  * anything. Pass --send <keypair.json> to actually land it.
  *
  * Two things are shown, and the second matters as much as the first:
- *   1. a claim built by a stranger succeeds, and the money goes to the retailer
+ *   1. a claim whose fee payer is NOT the retailer succeeds, and the money goes
+ *      to the retailer anyway
  *   2. the same claim with the payer named as retailer is REFUSED on chain
- * Anyone can push the button. Nobody can move the destination.
+ * Anyone with a funded account can push the button. Nobody can move the
+ * destination.
+ *
+ * The fee payer here is our own key, and the script says so rather than calling
+ * it a stranger. See the note above its declaration for why a freshly generated
+ * key cannot stand in.
  */
 import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import {
@@ -92,13 +98,26 @@ async function simulate(label, payer, namedRetailer) {
   return !err;
 }
 
-// A stranger pays the fee. The retailer is named but does not sign — and is not
-// the fee payer either, so nothing about this transaction is the merchant's.
-const stranger = new PublicKey('7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU');
-await simulate('CLAIM pushed by someone who is not the merchant', stranger, retailer);
+// The property being demonstrated is narrow and real: the fee payer is not the
+// payee, and the escrow pays the payee anyway, because the destination is pinned
+// by the account and not by a signature.
+//
+// This key used to be introduced as "a stranger". It is not one: it is our own
+// program upgrade authority, and that is the single line in this demo an auditor
+// in the room could have caught. It is named for what it is now.
+//
+// A freshly generated key would have been the honest illustration, and it does
+// not work: measured 2026-08-16, simulation of a fee payer that holds nothing
+// returns AccountNotFound before reaching the program, so BOTH cases come back
+// REFUSED and the demonstration says nothing. The fee payer has to be an account
+// that exists. Any funded account would do; this is simply one we can name.
+const payerNotPayee = new PublicKey('7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU');
+console.log(`fee payer            : ${payerNotPayee.toBase58()}`);
+console.log('                       ours, not the retailer. Any funded account works.');
+await simulate('CLAIM pushed by a key that is NOT the retailer', payerNotPayee, retailer);
 
 // The same claim, redirected: the payer names ITSELF as the payee.
-await simulate('THE SAME CLAIM, redirected to the payer', stranger, stranger);
+await simulate('THE SAME CLAIM, redirected to the payer', payerNotPayee, payerNotPayee);
 
 console.log(`\ntotal runtime        : ${Date.now() - t0} ms`);
 console.log('\nSimulated only — nothing was signed and nothing moved.');

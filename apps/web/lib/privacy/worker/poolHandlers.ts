@@ -214,8 +214,17 @@ export interface PoolSubscribePrepareRequest {
 export interface PoolSubscribeExecuteRequest {
   kind: 'poolSubscribeExecute';
   jobId: string;
-  /** Wallet that pre-funded the ephemeral; receives the swept residual. */
+  /** The user's wallet. Identity only — see `sweepTo` for where money goes. */
   ownerPubkey: string;
+  /**
+   * Base58 address that receives the residual rent, when it is not the wallet.
+   *
+   * Set by the page when a third party pre-funded the ephemeral. Omitted means
+   * "sweep home", which is correct for a wallet-funded job and wrong for any
+   * other kind — see `SubscribeExecuteParams.sweepTo` for why sweeping home
+   * after someone else paid is worse than not using a funder at all.
+   */
+  sweepTo?: string;
   /** Merchant who can claim each period. */
   retailer: string;
   /** u64 decimal strings — the worker boundary carries JSON-safe primitives. */
@@ -1938,6 +1947,7 @@ async function handlePoolSubscribeExecute(
       conn,
       {
         ownerPubkey: new PublicKey(req.ownerPubkey),
+        sweepTo: req.sweepTo ? new PublicKey(req.sweepTo) : undefined,
         retailer,
         rate: BigInt(req.rate),
         intervalSlots: BigInt(req.intervalSlots),
