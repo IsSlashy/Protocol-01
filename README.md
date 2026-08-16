@@ -79,7 +79,7 @@ Manual install (developer mode):
 
 #### 1. Shield a note
 
-Privacy tab → **Shield** → choose a denomination (0.1 / 1 / 5 / 10 SOL). A STARK shield proof is generated on-device (~4–8 s; the heavier unshield circuits are the ones measured past 180 s, see the mobile section below) and the deposit lands in the pool. Wait ~30 s for maturity.
+Privacy tab → **Shield** → choose a denomination (0.1 / 1 / 10 / 100 / 500 / 1000 SOL; only the first two have ever been used). A STARK shield proof is generated on-device (~4–8 s; the heavier unshield circuits are the ones measured past 180 s, see the mobile section below) and the deposit lands in the pool. Wait ~30 s for the deposit to confirm and for the wallet to re-scan. This is a confirmation wait, not a privacy delay: nothing on chain makes a note age before it can be spent. Every client pins `min_epoch = 0`, the unshield handler discards the field outright, and the subscribe gate compares against the absolute epoch counter — measured 2026-08-17, `1121 >= 2` is always true, so the gate never bites.
 
 #### 2. Subscribe to a live service
 
@@ -113,7 +113,7 @@ is told this on the paying screen, before the deposit.
 
 The app automatically runs `rescanPool` after a reinstall, wallet switch, or stale boot (>7 days). A blocking lazy-load modal shows per-pool progress, tallies the notes it pulled back, and can't be dismissed until the scan completes.
 
-No cloud, no backend. Your seed is the only thing that ties you to your history.
+No cloud, no backend. A rescan re-derives **your own deposits** from your seed, which is what restores them on a new device. It does not reach a note somebody **handed** you: those secrets came from the sender's seed, so no derivation finds them and the local store is their only witness. Back up the device store, not just the seed.
 
 ---
 
@@ -149,7 +149,7 @@ in this README is measured against that deployment on the real devnet cluster.
 
 Styx Protocol is a **post-quantum-oriented privacy layer for Solana**, shipped as composable SDKs and a set of on-chain programs.
 
-The stack combines **STARKs** (hash-based, no trusted setup), **hybrid stealth addresses** (X25519 + ML-KEM-768, the NIST-standardized post-quantum KEM), **Winternitz one-time signatures**, and a **custom on-chain FRI verifier**. The cryptography is chosen so that no scheme in the stack falls to Shor: no pairing-based proofs, no trusted setup, hash commitments throughout. One measured caveat outranks that design goal today: the STARK prover is **not zero-knowledge** — a private witness has been recovered from published proof bytes by Lagrange interpolation (`stark/tests/zk_feasibility.rs`), so proof bytes must be treated as revealing note secrets until the additive masking lands. No quantum computer is needed for that recovery; a laptop does it.
+The stack combines **STARKs** (hash-based, no trusted setup), **hybrid stealth addresses** (X25519 + ML-KEM-768, the NIST-standardized post-quantum KEM), **Winternitz one-time signatures**, and a **custom on-chain FRI verifier**. The *proof* system is chosen so that no proof falls to Shor: no pairing-based proofs, no trusted setup, hash commitments throughout. The *stack* is not in that position, and saying otherwise here was wrong until 2026-08-17. Solana verifies **Ed25519** and nothing else, so spend authority falls to Shor whatever this layer does. Worse for the pool specifically: the web pool seed is `HKDF(one Ed25519 signature over a fixed message)`, so an adversary who recovers the wallet key re-signs that message, reproduces the seed, and re-derives every note it ever held — retroactively. A user passphrase (derivation v2) closes that for pool notes created after it is set, and reaches neither the stealth identity nor the extension nor mobile. One measured caveat outranks that design goal today: the STARK prover is **not zero-knowledge** — a private witness has been recovered from published proof bytes by Lagrange interpolation (`stark/tests/zk_feasibility.rs`), so proof bytes must be treated as revealing note secrets until the additive masking lands. No quantum computer is needed for that recovery; a laptop does it.
 
 ### What is hidden, and what is not
 
@@ -157,11 +157,17 @@ A privacy protocol owes its users a precise answer here, so this section states
 what the code does rather than what a mixer brochure would say:
 
 **Hidden:**
-- **Your funding wallet never appears in the pool's transactions.** Both the
-  deposit and the withdrawal are signed and paid by one-time ephemeral keys, so
-  neither leg carries your main wallet's address. The wallet still funds the
-  ephemeral signer in the clear one hop earlier, so both legs remain linkable
-  to it by anyone who follows that hop.
+- **The pool transaction is signed by a one-time key rather than by your wallet
+  — always on the withdrawal, but only on SOL for the deposit.** A **USDC**
+  deposit has no ephemeral path: `useEphemeralDepositor = pool.token === 'SOL'`
+  (`apps/mobile/stores/denominatedPoolStore.ts:1176`), so your wallet signs the
+  shield instruction itself and appears on chain as the depositor. The code logs
+  exactly that, and the mobile app tells the depositor so on the shield screen —
+  this README claimed the opposite until 2026-08-17. On the web client USDC is
+  refused outright rather than half-wired. Wherever a one-time key *is* used,
+  your wallet funds it in the clear one hop earlier and the residue is swept
+  back, so the wallet stays reachable from either leg in three RPC calls.
+  Dropping the wallet as the signer is real and worth saying. It is not absence.
 - **Stealth payments create a unique one-time address per payment** — an
   observer cannot connect two payments to the same recipient from the addresses
   alone.
@@ -214,7 +220,9 @@ User generates a STARK proof (Winterfell prover, Goldilocks/Poseidon)
         -> Shielded program applies the state transition
             -> Funds land at a one-time stealth address (X25519 + ML-KEM-768)
                 -> Neither transaction is SIGNED by the user's wallet
-                   (it funded the ephemeral one hop earlier, in the clear)
+                   — except a USDC deposit, which the wallet signs itself.
+                   Elsewhere the wallet funded the ephemeral one hop
+                   earlier, in the clear, and is swept back to afterwards.
 ```
 
 > **Groth16 was fully retired in the March 2026 migration.** The Circom

@@ -1099,7 +1099,7 @@ const en = {
         detail3: 'One-time address derived: P = H(shared_secret) * G + recipient_pubkey',
         detail4: 'Only the recipient can detect and spend funds using their private key',
         detail5: 'v1: X25519 (Curve25519) for efficiency on Solana',
-        detail6: 'v2: X25519 + ML-KEM-768 (FIPS 203) hybrid ECDH, quantum-resistant',
+        detail6: 'v2: X25519 + ML-KEM-768 (FIPS 203), hybrid encapsulation. The KEM itself resists Shor, but the spend, view and KEM keys all derive from one Ed25519 signature over a fixed message: breaking the wallet key lets an adversary re-sign it and re-derive all three.',
         detail7: 'View tags: 1-byte filter enables O(1) scanning without full decryption',
         detail8: 'On-chain registry (EIP-5564 for Solana) via p01_registry program',
       },
@@ -1139,7 +1139,7 @@ const en = {
       },
       merkleTree: {
         title: 'Merkle Tree Proofs',
-        desc: 'A Merkle tree stores all commitments, allowing users to prove they have funds in the shielded pool without revealing which commitment they own. The root is stored on-chain and updated with each deposit.',
+        desc: 'A Merkle tree stores all commitments, and a spend proves its note is in that tree. It does not hide which commitment is yours: the membership circuit takes the leaf as a public input, and a v3 spend carries that same commitment in the clear in its instruction. The root is stored on-chain and updated with each deposit.',
         detail1: 'Binary tree with Poseidon hash at each node',
         detail2: 'Depth 15 = 2^15 = 32,768 commitments capacity per pool',
         detail3: 'Proof size: 15 siblings + 15 path indices',
@@ -1261,7 +1261,7 @@ const en = {
         detail3: 'Persistent stealth keys (Ed25519 + X25519) stored in SecureStore',
         detail4: 'Private Send detects meta-addresses and auto-derives stealth destination',
         detail5: 'QR scanner auto-detects st:01/st:02 and routes to Private Send',
-        detail6: 'On-chain trail: stealth_sender → pool → stealth_receiver (no real wallet visible)',
+        detail6: 'On-chain trail: your wallet → stealth_sender → pool → stealth_receiver. Every hop address is fresh, but the first transfer is an ordinary one that names your wallet.',
         detail7: 'Receive screen shows compact \'Copy P01 ID\' for easy sharing',
       },
       noteSplitting: {
@@ -1277,7 +1277,7 @@ const en = {
       },
       privacyRouter: {
         title: 'Multi-Hop Privacy Router',
-        desc: 'The Privacy Router plans and executes multi-hop routes through the privacy pool system. Routes include shield, unshield, reshield, and split operations with configurable timing delays to maximize anonymity.',
+        desc: 'The Privacy Router plans and executes multi-hop routes through the denominated pools: shield, unshield and reshield, with delays configurable from 15 minutes to 24 hours. Split is wired but dormant, so no split hop is emitted today. The delay is held by the app scheduler, not by the chain, so closing the app ends it.',
         detail1: '5 privacy levels: Minimal (1 hop) → Paranoid (14+ hops, 20 splits)',
         detail2: 'Autonomous runner executes hops in background (60s polling, Android foreground service)',
         detail3: 'Timing jitter: random delays between hops (hours) prevent correlation',

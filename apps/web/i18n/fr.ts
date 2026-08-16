@@ -1088,7 +1088,7 @@ const fr: Translations = {
         detail3: 'Adresse \u00e0 usage unique d\u00e9riv\u00e9e : P = H(secret_partag\u00e9) * G + cl\u00e9_pub_destinataire',
         detail4: 'Seul le destinataire peut d\u00e9tecter et d\u00e9penser les fonds avec sa cl\u00e9 priv\u00e9e',
         detail5: 'v1 : X25519 (Curve25519) pour l\u2019efficacit\u00e9 sur Solana',
-        detail6: 'v2 : X25519 + ML-KEM-768 (FIPS 203) ECDH hybride, r\u00e9sistant au quantique',
+        detail6: 'v2 : X25519 + ML-KEM-768 (FIPS 203), encapsulation hybride. Le KEM lui-m\u00eame r\u00e9siste \u00e0 Shor, mais les cl\u00e9s de d\u00e9pense, de vue et le KEM d\u00e9rivent toutes d\u2019une seule signature Ed25519 sur un message fixe : casser la cl\u00e9 du portefeuille permet de la rejouer et de red\u00e9river les trois.',
         detail7: 'View tags : filtre 1 octet permettant un scan O(1) sans d\u00e9chiffrement complet',
         detail8: 'Registre on-chain (EIP-5564 pour Solana) via le programme p01_registry',
       },
@@ -1128,7 +1128,7 @@ const fr: Translations = {
       },
       merkleTree: {
         title: 'Preuves d\u2019arbre de Merkle',
-        desc: 'Un arbre de Merkle stocke tous les engagements, permettant aux utilisateurs de prouver qu\u2019ils ont des fonds dans le pool blind\u00e9 sans r\u00e9v\u00e9ler quel engagement ils poss\u00e8dent. La racine est stock\u00e9e on-chain et mise \u00e0 jour \u00e0 chaque d\u00e9p\u00f4t.',
+        desc: 'Un arbre de Merkle stocke tous les engagements, et une d\u00e9pense prouve que sa note y figure. Il ne garde pas l\u2019engagement priv\u00e9 : le circuit d\u2019appartenance publie la feuille en entr\u00e9e publique, et une d\u00e9pense v3 porte ce m\u00eame engagement en clair dans son instruction. La racine est stock\u00e9e on-chain et mise \u00e0 jour \u00e0 chaque d\u00e9p\u00f4t.',
         detail1: 'Arbre binaire avec hachage Poseidon \u00e0 chaque n\u0153ud',
         detail2: 'Profondeur 15 = 2^15 = 32 768 engagements de capacit\u00e9 par pool',
         detail3: 'Taille de la preuve : 15 fr\u00e8res + 15 indices de chemin',
@@ -1250,7 +1250,7 @@ const fr: Translations = {
         detail3: 'Cl\u00e9s furtives persistantes (Ed25519 + X25519) stock\u00e9es dans SecureStore',
         detail4: 'L\u2019envoi priv\u00e9 d\u00e9tecte les m\u00e9ta-adresses et d\u00e9rive automatiquement la destination furtive',
         detail5: 'Le scanner QR d\u00e9tecte automatiquement st:01/st:02 et redirige vers l\u2019envoi priv\u00e9',
-        detail6: 'Trace on-chain : exp\u00e9diteur_furtif \u2192 pool \u2192 destinataire_furtif (aucun vrai portefeuille visible)',
+        detail6: 'Trace on-chain : votre portefeuille \u2192 exp\u00e9diteur_furtif \u2192 pool \u2192 destinataire_furtif. Chaque adresse de saut est neuve, mais le premier virement est ordinaire et nomme votre portefeuille.',
         detail7: 'L\u2019\u00e9cran de r\u00e9ception affiche un compact \u00ab Copier l\u2019ID P01 \u00bb pour un partage facile',
       },
       noteSplitting: {
@@ -1266,7 +1266,7 @@ const fr: Translations = {
       },
       privacyRouter: {
         title: 'Routeur de confidentialit\u00e9 multi-sauts',
-        desc: 'Le routeur de confidentialit\u00e9 planifie et ex\u00e9cute des routes multi-sauts \u00e0 travers le syst\u00e8me de pools de confidentialit\u00e9. Les routes incluent des op\u00e9rations de blindage, d\u00e9blindage, re-blindage et division avec des d\u00e9lais temporels configurables pour maximiser l\u2019anonymat.',
+        desc: 'Le routeur de confidentialit\u00e9 planifie et ex\u00e9cute des routes multi-sauts \u00e0 travers le syst\u00e8me de pools de confidentialit\u00e9. Les routes encha\u00eenent blindage, d\u00e9blindage et re-blindage avec des d\u00e9lais configurables de 15 min \u00e0 24 h. La division est c\u00e2bl\u00e9e mais dormante : aucun saut de division n\u2019est \u00e9mis aujourd\u2019hui. Le d\u00e9lai est tenu par l\u2019ordonnanceur de l\u2019app, pas par la cha\u00eene, donc fermer l\u2019app y met fin.',
         detail1: '5 niveaux de confidentialit\u00e9 : Minimal (1 saut) \u2192 Parano\u00efaque (14+ sauts, 20 divisions)',
         detail2: 'L\u2019ex\u00e9cuteur autonome effectue les sauts en arri\u00e8re-plan (sondage 60s, service de premier plan Android)',
         detail3: 'Gigue temporelle : d\u00e9lais al\u00e9atoires entre les sauts (heures) emp\u00eachent la corr\u00e9lation',
