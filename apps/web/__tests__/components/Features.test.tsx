@@ -16,7 +16,14 @@ import Features from '@/components/Features';
 // The fourteen modules, in the order `components/Features.tsx` declares them.
 const MODULES: ReadonlyArray<readonly [name: string, description: string]> = [
   ['Auto-Shield', 'Funds move into the private pool automatically, so your balance never sits exposed on the public ledger.'],
-  ['Stealth Transfers', "Send to a one-time address that nobody can link back to the receiver's real wallet."],
+  // Reworded 2026-08-17. The old text — "an address that nobody can link back to
+  // the receiver's real wallet" — promised an impossibility this repo cannot
+  // demonstrate, and Rule 4 of the claims lexicon now refuses it. The
+  // replacement states the mechanism and names what defeats it.
+  [
+    'Stealth Transfers',
+    "Send to a one-time address derived for that payment alone. It is not the receiver's wallet, and reaching them from it needs their viewing key.",
+  ],
   ['Privacy Pools', 'Deposit into a shared pool of identical notes, so the amount you move is not distinctive.'],
   ['Private Subscriptions', 'Pay recurring bills from a vault addressed by a commitment to a note secret, so the vault does not name your wallet. The price and the interval sit in public in the merchant\'s registry entry.'],
   ['Token Swap', 'Trade one token for another in-app through the Jupiter aggregator. The swap itself is a public Solana transaction.'],

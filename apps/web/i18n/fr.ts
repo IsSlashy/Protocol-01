@@ -172,7 +172,7 @@ const fr: Translations = {
     exploreDocs: 'EXPLORER LA DOCUMENTATION \u2192',
     desc: {
       autoShield: 'Les fonds entrent automatiquement dans le pool priv\u00e9, votre solde n\u2019est donc jamais expos\u00e9 sur le registre public.',
-      stealthTransfers: 'Envoyez vers une adresse \u00e0 usage unique que personne ne peut relier au vrai portefeuille du destinataire.',
+      stealthTransfers: 'Envoyez vers une adresse \u00e0 usage unique, d\u00e9riv\u00e9e pour ce seul paiement. Ce n\'est pas le portefeuille du destinataire, et remonter jusqu\'\u00e0 lui exige sa cl\u00e9 de visualisation.',
       privacyPools: 'D\u00e9posez dans un pool partag\u00e9 de notes identiques, pour que le montant d\u00e9plac\u00e9 ne soit pas distinctif.',
       privateSubscriptions: 'Payez vos factures r\u00e9currentes depuis un coffre adress\u00e9 par un engagement sur un secret de note : le coffre ne nomme pas votre portefeuille. Le prix et l\u2019intervalle sont publics dans l\u2019entr\u00e9e de registre du marchand.',
       tokenSwap: '\u00c9changez un token contre un autre dans l\u2019app via l\u2019agr\u00e9gateur Jupiter. Le swap lui-m\u00eame est une transaction Solana publique.',
@@ -678,10 +678,10 @@ const fr: Translations = {
       },
       extensionParity: {
         title: 'Extension navigateur a parite mobile',
-        desc: 'L\'extension Chrome a rattrape l\'app mobile : transfert note-a-note denomine (C1+C3+C6 → transfer_denominated_stark_v3 avec handoff de note chiffree), unshield prive route par relayer, license keys anonymes, modes subscribe Standard/ZK, pairing d\'appareil scan-import, et connexion telephone-vers-extension via relais chiffre.',
+        desc: 'L\'extension Chrome a rattrape l\'app mobile : transfert note-a-note denomine (C1+C3+C6 → transfer_denominated_stark_v3 avec handoff de note chiffree), unshield prive route par relayer, license keys sans adresse de portefeuille, modes subscribe Standard/ZK, pairing d\'appareil scan-import, et connexion telephone-vers-extension via relais chiffre.',
       },
       licenseKeys: {
-        title: 'License Keys marchand anonymes',
+        title: 'License Keys marchand sans le portefeuille',
         desc: 'S\'abonner genere une license key copiable derivee de l\'identite d\'abonnement on-chain (le subscriber commitment ZK ou une identite classique hachee, jamais le wallet brut). Les marchands re-derivent et matchent depuis l\'etat on-chain, pas de PII, pas de base centrale. Modes de confidentialite simplifies a Standard et ZK Private.',
       },
       relayerHealth: {

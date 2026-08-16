@@ -170,7 +170,7 @@ const en = {
     exploreDocs: 'EXPLORE DOCUMENTATION \u2192',
     desc: {
       autoShield: 'Funds move into the private pool automatically, so your balance never sits exposed on the public ledger.',
-      stealthTransfers: "Send to a one-time address that nobody can link back to the receiver's real wallet.",
+      stealthTransfers: "Send to a one-time address derived for that payment alone. It is not the receiver's wallet, and reaching them from it needs their viewing key.",
       privacyPools: 'Deposit into a shared pool of identical notes, so the amount you move is not distinctive.',
       privateSubscriptions: 'Pay recurring bills from a vault addressed by a commitment to a note secret, so the vault does not name your wallet. The price and the interval sit in public in the merchant\'s registry entry.',
       tokenSwap: 'Trade one token for another in-app through the Jupiter aggregator. The swap itself is a public Solana transaction.',
@@ -682,10 +682,10 @@ const en = {
       },
       extensionParity: {
         title: 'Browser Extension at Mobile Parity',
-        desc: 'The Chrome extension caught up to the mobile app: denominated note-to-note transfer (C1+C3+C6 → transfer_denominated_stark_v3 with encrypted note handoff), relayer-routed private unshield, anonymous license keys, Standard/ZK subscribe modes, scan-import device pairing, and phone-to-extension connect over an encrypted relay.',
+        desc: 'The Chrome extension caught up to the mobile app: denominated note-to-note transfer (C1+C3+C6 → transfer_denominated_stark_v3 with encrypted note handoff), relayer-routed private unshield, license keys that carry no wallet address, Standard/ZK subscribe modes, scan-import device pairing, and phone-to-extension connect over an encrypted relay.',
       },
       licenseKeys: {
-        title: 'Anonymous Merchant License Keys',
+        title: 'Merchant License Keys That Never Carry the Wallet',
         desc: 'Subscribing mints a copy-pasteable license key derived from the on-chain subscription identity (the ZK subscriber commitment or a hashed classic identity, never the raw wallet). Merchants re-derive and match from on-chain state, no PII, no central database. Privacy modes simplified to Standard and ZK Private.',
       },
       relayerHealth: {

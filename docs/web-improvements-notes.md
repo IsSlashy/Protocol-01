@@ -1,5 +1,29 @@
 # protocol-01.dev — notes d'amélioration (2026-05-29)
 
+> ## ⛔ BROUILLON PÉRIMÉ — NE PAS REPRENDRE LES FORMULATIONS
+>
+> **Annoté le 2026-08-17.** Ce document est un brouillon de copie de mai 2026. Ses
+> suggestions d'ergonomie et de structure restent utiles ; **ses formulations ne
+> le sont pas**. Il propose des promesses que le code contredit, mesurées depuis :
+>
+> | ce que le brouillon propose | ce qui est mesuré |
+> |---|---|
+> | « Nothing they can trace », « Move funds no one can trace » | depuis une dépense, **une commande** retrouve le dépôt et le portefeuille du déposant (sonde P4) |
+> | « without anyone seeing who you are » | le portefeuille est atteint en **3 appels RPC** — le préfinancement et le balayage le nomment (sonde P6) |
+> | « no on-chain link between the two » (Privacy Pools) | la dépense republie l'engagement que le dépôt a publié. C'est une propriété des entrées publiques du circuit ; aucun changement côté client ne l'enlève |
+> | « nobody can link back » (Stealth Transfers) | reformulé le 2026-08-17 : l'adresse est à usage unique, et remonter au destinataire exige sa clé de visualisation |
+> | « without the merchant or the chain seeing your wallet or the amount » | le montant du coffre d'abonnement est **on-chain** |
+> | « readable only by you » (Confidential Balances) | `p01_zkspl` n'est **pas déployé** |
+> | « no observer can trace the path end to end » (Multi-Hop) | jamais démontré |
+>
+> Le garde qui empêche ces phrases de revenir dans les dictionnaires est
+> `apps/web/__tests__/lib/claims-lexicon.test.ts` — quatre règles, chacune avec
+> son contrôle qui vérifie qu'elle mord. Une reprise mécanique d'un bullet
+> ci-dessous le fera rougir, et c'est voulu.
+>
+> Le mot juste pour ce que le protocole livrera est **absence**, pas
+> non-liabilité. Voir `verify/README.md` pour ce que l'outil prouve réellement.
+
 Copy vit dans `apps/web/i18n/{en,fr,ja}.ts`. Composants : `Hero.tsx`, `Problem.tsx`, `CTA.tsx`, + la grille de features. Style copy : pas de tirets longs, pas de flèches ; le **gras** est OK ici (c'est voulu, cf. point 4).
 
 ---

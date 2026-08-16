@@ -176,24 +176,45 @@ what the code does rather than what a mixer brochure would say:
 - **A withdrawal is linkable to its deposit.** The withdrawal proof publishes
   the note's commitment, which the deposit already published: matching the two
   is trivial for any observer, and this is a property of the circuit's public
-  inputs — no client-side change can remove it. The pool's anonymity set is
-  effectively 1 today.
-- **Amounts in the denominated pool are public by denomination** (0.1 / 1 / 5 /
-  10 SOL).
+  inputs — no client-side change can remove it.
+- **Your wallet is reachable from any spend in three RPC calls, and it is the
+  cheapest attack here.** Nothing cryptographic is involved: the ephemeral key
+  cannot pay a fee from nothing, so an ordinary `SystemProgram::transfer` funds
+  it and another sweeps the residue back, and both name the wallet. Measured on
+  a real devnet subscription — `verify/p01-verify.mjs` probe P6 does exactly
+  this walk and prints its own call count.
+- **The anonymity set is small, and here are the numbers.** Measured
+  2026-08-17: seven unspent notes in the 1 SOL pool out of twenty-six ever
+  deposited, eight in the 0.1 SOL pool, and zero in every other denomination.
+  Because each note is individually linkable by the point above, the effective
+  set is one.
+- **Amounts in the denominated pool are public by denomination** (0.1 / 1 / 10
+  / 100 / 500 / 1000 SOL, of which only the first two have ever been used).
 - **A merchant's retailer address and subscription vault fields are public** —
   anyone can enumerate a merchant's subscriber vaults.
 
-So the honest claim is: the pool hides *who you are* (your wallet), not *which
-deposit you are*. Work on stronger unlinkability (encrypted off-chain note
-transfer, which has no transaction to link at all) is in progress and will be
-claimed here when it ships, not before.
+So the honest claim is narrower than it used to read here. This paragraph said
+"the pool hides *who you are* (your wallet), not *which deposit you are*" until
+2026-08-17, and that sentence contradicted the caveat three bullets above it: the
+wallet funds the ephemeral in the clear, one hop earlier, and three RPC calls
+close that hop. **The pool hides neither today.** What it does hide is the
+amount's distinctiveness, by denomination.
+
+Handing the note to someone else does not fix this, and both forms were measured
+rather than assumed: an off-chain hand-off emits no transaction at all, so the
+chain is unchanged and the spend still republishes the deposit's commitment; an
+on-chain `transfer_denominated_stark_v3` publishes the OLD commitment in the
+clear at byte 80 of its own instruction, so it adds a public hop instead of
+breaking the chain — verified against both real transfers on devnet, two for
+two. Anything stronger will be claimed here when it ships, not before.
 
 ```
 User generates a STARK proof (Winterfell prover, Goldilocks/Poseidon)
     -> Proof submitted to the on-chain FRI verifier
         -> Shielded program applies the state transition
             -> Funds land at a one-time stealth address (X25519 + ML-KEM-768)
-                -> The user's funding wallet appears in neither transaction
+                -> Neither transaction is SIGNED by the user's wallet
+                   (it funded the ephemeral one hop earlier, in the clear)
 ```
 
 > **Groth16 was fully retired in the March 2026 migration.** The Circom

@@ -192,8 +192,11 @@ const STEPS: { n: string; titleKey: string; descKey: string }[] = [
 /**
  * Six module cards out of the old fourteen.
  *
- * Dropped, and why. The copy lives in i18n/ (off limits), so it could not be
- * reworded and dropping was the only honest lever:
+ * Dropped, and why. At the time the copy was treated as off limits, so dropping
+ * a card was the only honest lever available. That constraint is gone since
+ * 2026-08-17 — `stealthTransfers` was reworded in both dictionaries rather than
+ * dropped, and Rule 4 of `__tests__/lib/claims-lexicon.test.ts` now refuses the
+ * old phrasing outright. The list below is kept as the record of what was said:
  *  multiHopRouting  "no observer can trace the path end to end"
  *  stealthTransfers "a one-time address that nobody can link back"
  *  privateSubscriptions "without the merchant or the chain seeing your wallet or

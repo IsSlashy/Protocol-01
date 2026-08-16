@@ -133,6 +133,65 @@ const AMOUNTS_HIDDEN = [
 const AMOUNTS_HIDDEN_ALLOWED = new Map<string, string>([]);
 
 // ---------------------------------------------------------------------------
+// Rule 4 - unlinkability vocabulary
+//
+// MEASURED 2026-08-17, and the reason this rule exists at all: from a spend,
+// one command reaches the deposit AND the depositing wallet. The commitment is
+// published in the clear by at least five instructions; the pre-fund and the
+// sweep name the wallet in three RPC calls; the unspent set is seven notes in
+// the 1 SOL pool and eight in the 0.1. Handing the note to another wallet
+// changes nothing — off chain it emits no transaction at all, and a
+// `transfer_denominated_stark_v3` republishes the old commitment in the clear
+// at byte 80 (verified against both real v3 transfers on devnet).
+//
+// So no string may assert the link is broken. The word the roadmap can honestly
+// use is ABSENCE — "the buyer's wallet is in no transaction", conditional on a
+// third-party funder AND a received note — never unlinkability.
+//
+// THE TEST IS PER SENTENCE, NOT PER STRING. A negation somewhere in a long
+// paragraph must not license a positive claim three sentences later, and the
+// two honest strings this repo already ships ("unlinkability is not shipped
+// yet", "are NOT yet unlinkable") put the denial in the same breath as the
+// term, which is the only form that is ever true here.
+//
+// "anonymity set" is a MEASUREMENT and is carved out: naming the size of the
+// set is how this repo tells the truth about it, not a promise.
+// ---------------------------------------------------------------------------
+const UNLINK_TERM =
+  /unlinkab|untraceab|intra[cç]abl|non[-\s]?liab|anonymous|anonyme/i;
+
+const UNLINK_PHRASE = [
+  /cannot be (traced|linked|connected)/i,
+  /impossible to (trace|link|connect)/i,
+  /impossible (de |d'|à )?(tracer|relier|remonter)/i,
+  /(personne|nul) ne peut (savoir|remonter|relier|tracer)/i,
+  /nobody can (know|tell|trace|link)/i,
+];
+
+/** Naming the size of the anonymity set is a measurement, not a claim. */
+const ANONYMITY_SET = /anonymity[-\s]set|ensemble d'anonymat/gi;
+
+/** The denial has to sit in the SAME sentence as the term. */
+const UNLINK_DENIAL = /\b(not|never|no longer|isn't|aren't|pas|jamais|aucune?|ni)\b/i;
+
+const UNLINK_ALLOWED = new Map<string, string>([]);
+
+/** Split on sentence enders, keeping it crude on purpose — over-splitting only
+ *  makes the rule stricter, which is the safe direction for a claims guard. */
+function sentences(value: string): string[] {
+  return value.split(/(?<=[.!?;:])\s+|\n+/);
+}
+
+function unlinkViolation(value: string): boolean {
+  for (const raw of sentences(value)) {
+    const s = raw.replace(ANONYMITY_SET, '');
+    const hit = UNLINK_TERM.test(s) || UNLINK_PHRASE.some((re) => re.test(s));
+    if (hit && !UNLINK_DENIAL.test(s)) return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // The scanner. Pure function over a dictionary object so the controls below
 // can feed it poisoned inputs.
 // ---------------------------------------------------------------------------
@@ -174,6 +233,14 @@ function scanClaims(dict: Dict): Violation[] {
         violations.push({ key, rule: 'claims amounts are hidden', value });
         break;
       }
+    }
+
+    if (unlinkViolation(value) && !UNLINK_ALLOWED.has(key)) {
+      violations.push({
+        key,
+        rule: 'asserts unlinkability or anonymity without denying it in the same sentence',
+        value,
+      });
     }
   }
   return violations;
@@ -265,6 +332,45 @@ describe('claims lexicon: the guard itself bites', () => {
     expect(hits.map((v) => v.key).sort()).toEqual(['docs.threatAmounts', 'howItWorks.zeroTraces']);
   });
 
+  it('catches the exact unlinkability claims this repo shipped until 2026-08-17', () => {
+    const poisoned = {
+      features: {
+        desc: {
+          stealthTransfers:
+            "Send to a one-time address that nobody can link back to the receiver's real wallet.",
+        },
+      },
+      roadmap: { items: { licenseKeys: { title: 'Anonymous Merchant License Keys' } } },
+      fr: { furtif: 'une adresse que personne ne peut relier au vrai portefeuille' },
+    };
+    const hits = scanClaims(poisoned).filter((v) =>
+      v.rule.startsWith('asserts unlinkability'),
+    );
+    expect(hits.map((v) => v.key).sort()).toEqual([
+      'features.desc.stealthTransfers',
+      'fr.furtif',
+      'roadmap.items.licenseKeys.title',
+    ]);
+  });
+
+  it('catches a positive claim that hides behind a negation elsewhere in the string', () => {
+    // The whole reason the rule works per sentence. A paragraph that opens with
+    // an honest limitation must not thereby license an absolute two sentences
+    // later — which is exactly how the 46 recorded false claims used to survive
+    // review.
+    const poisoned = {
+      docs: {
+        mixed:
+          'Amounts are not distinctive because pools are fixed-denomination. ' +
+          'The buyer is anonymous.',
+      },
+    };
+    const rules = scanClaims(poisoned).map((v) => v.rule);
+    expect(rules).toContain(
+      'asserts unlinkability or anonymity without denying it in the same sentence',
+    );
+  });
+
   it('passes the true sentences the rules exist to protect', () => {
     const truthful = {
       a: 'Hash-based post-quantum STARK proofs, no trusted setup',
@@ -272,6 +378,11 @@ describe('claims lexicon: the guard itself bites', () => {
       c: 'Transaction signatures are Ed25519 and stay Ed25519',
       d: 'Amounts are not hidden: pools are fixed-denomination',
       e: 'Les montants ne sont pas cachés : les pools sont à dénomination fixe',
+      // Rule 4's two shapes of truth: the denial, and the measurement.
+      f: 'Deposit-to-withdrawal unlinkability is not shipped yet.',
+      g: 'Deposits and withdrawals are NOT yet unlinkable: the unshield republishes the commitment.',
+      h: 'The anonymity set is seven unspent notes in this pool, measured on chain.',
+      i: "L'ensemble d'anonymat compte sept notes non dépensées, mesuré sur la chaîne.",
     };
     expect(pretty(scanClaims(truthful), 'control')).toEqual([]);
   });
