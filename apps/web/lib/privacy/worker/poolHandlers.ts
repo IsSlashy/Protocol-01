@@ -1527,14 +1527,23 @@ async function locateOwnedNote(
   const walkStartedAt = Date.now();
   const heartbeat = setInterval(() => {
     const seconds = Math.round((Date.now() - walkStartedAt) / 1000);
-    onProgress?.(`Reading the pool's history from the RPC (${seconds}s)...`);
+    onProgress?.(`Still looking — ${seconds}s so far. Keep this tab open.`);
   }, 10_000);
-  let commitments: Awaited<ReturnType<typeof fetchPoolCommitments>>;
   try {
-    commitments = await fetchPoolCommitments(conn, pool.poolPDA);
-  } finally {
-    clearInterval(heartbeat);
-  }
+  // ⚠️ THE HEARTBEAT COVERS THE WHOLE SEARCH, NOT JUST THE HISTORY FETCH.
+  //
+  // It used to be cleared the moment `fetchPoolCommitments` returned, and
+  // everything after it — the spent-nullifier read, and the derivation search
+  // whose legacy pass hashes ~6000 candidate epochs per derivation — ran in
+  // silence. The main thread re-arms its request timeout on every progress
+  // message, so a silent stretch longer than that timeout kills a job that is
+  // working fine. MEASURED tonight: "The private-payment worker timed out"
+  // after four minutes on a run that had not failed at anything.
+  //
+  // Cleared in the caller's `finally` below instead, so no path leaves the
+  // interval running.
+  let commitments: Awaited<ReturnType<typeof fetchPoolCommitments>>;
+  commitments = await fetchPoolCommitments(conn, pool.poolPDA);
   // Pool-wide and derivation-independent, like `commitments` above, so it is
   // fetched once and shared across the candidate loop for the same reason.
   const spentSet = await fetchSpentNullifierSet(conn, pool.poolPDA);
@@ -1553,22 +1562,56 @@ async function locateOwnedNote(
   // blinded hash hits on the legacy seed immediately, and running the active
   // seed's epoch search first would put ~0.7 s of dead hashing in front of it.
   let owner: { candidate: SeedCandidate; note: RecoveredNote } | null = null;
-  for (const blindedOnly of [true, false] as const) {
-    for (const candidate of candidates) {
-      const notes = await recoverNotes(conn, pool, candidate.seed, {
-        commitments,
-        spentSet,
-        onlyLeaf: req.leafIndex,
-        blindedOnly,
-        onProgress,
-      });
-      const hit = notes.find((n) => n.receipt.leafIndex === req.leafIndex);
-      if (hit) {
-        owner = { candidate, note: hit };
-        break;
+
+  // 🚨 THE BLOB IS CONSULTED FIRST, AND IT USED TO BE CONSULTED LAST.
+  //
+  // A RECEIVED note's secrets come from the SENDER's seed, so the derivation
+  // search below can never find it — it has to fail COMPLETELY, across every
+  // derivation and both passes, before the fallback runs. That is the most
+  // expensive possible ordering for the one case that already knows the answer:
+  // the local blob names the leaf outright.
+  //
+  // MEASURED tonight on a real run: over four minutes on "Finding your note",
+  // then "The private-payment worker timed out" — because the legacy epoch
+  // search is silent (~41 s per derivation on a 59-leaf pool, and the main
+  // thread re-arms its request timeout only on progress messages).
+  //
+  // Trying the blob first costs one decryption attempt per stored blob and
+  // makes an issued or handed-over note resolve immediately. It cannot mask a
+  // seed-owned note: `receivedNoteFromBlobs` matches on the requested leaf and
+  // validates the commitment against the chain, so a blob that is not this note
+  // simply does not match and the search below still runs.
+  onProgress?.('Checking notes you already hold...');
+  {
+    const received = await receivedNoteFromBlobs(
+      candidates,
+      req.encryptedNotes,
+      pool,
+      req.leafIndex,
+      commitments,
+      conn,
+    );
+    if (received) owner = { candidate: candidates[0], note: received };
+  }
+
+  if (!owner) {
+    for (const blindedOnly of [true, false] as const) {
+      for (const candidate of candidates) {
+        const notes = await recoverNotes(conn, pool, candidate.seed, {
+          commitments,
+          spentSet,
+          onlyLeaf: req.leafIndex,
+          blindedOnly,
+          onProgress,
+        });
+        const hit = notes.find((n) => n.receipt.leafIndex === req.leafIndex);
+        if (hit) {
+          owner = { candidate, note: hit };
+          break;
+        }
       }
+      if (owner) break;
     }
-    if (owner) break;
   }
 
   // FALLBACK: a RECEIVED note. Its secrets came from the SENDER's seed, so the
@@ -1604,14 +1647,19 @@ async function locateOwnedNote(
   const { candidate, note } = owner;
   if (note.spent) throw new Error('This note has already been withdrawn.');
 
-  return {
-    conn,
-    pool,
-    candidate,
-    note,
-    storedPath: extractStoredPath(candidate.seed, req.encryptedNotes, note.receipt.commitment),
-    commitments,
-  };
+    return {
+      conn,
+      pool,
+      candidate,
+      note,
+      storedPath: extractStoredPath(candidate.seed, req.encryptedNotes, note.receipt.commitment),
+      commitments,
+    };
+  } finally {
+    // Every exit, including both throws above. An interval left running in a
+    // worker keeps emitting progress for a job that is over.
+    clearInterval(heartbeat);
+  }
 }
 
 async function handlePoolUnshieldPrepare(

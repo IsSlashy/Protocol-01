@@ -72,7 +72,18 @@ export const dynamic = 'force-dynamic';
 const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
 const RATE_SALT = 'p01:issue-note:v1';
 /** Deliberately tighter than the funder's: this hands over value, not rent. */
-const ISSUES_PER_IP_PER_HOUR = 3;
+const ISSUES_PER_IP_PER_HOUR = (() => {
+  // Overridable, because three per hour is right for a deployment handing out
+  // real value and wrong for one machine testing the flow — where every failed
+  // attempt, including one caused by a bug in this route, spends the quota and
+  // locks the operator out for the rest of the hour. It happened.
+  //
+  // Deliberately a floor of 1 and no upper bound check: an operator raising this
+  // is making a decision about their own treasury, and a silently clamped limit
+  // would be worse than a high one they chose.
+  const raw = Number(process.env.P01_ISSUE_LIMIT_PER_HOUR ?? '');
+  return Number.isInteger(raw) && raw >= 1 ? raw : 3;
+})();
 
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ ok: false, error, ...extra }, { status });
