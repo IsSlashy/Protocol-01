@@ -242,7 +242,21 @@ const SPEND_KINDS = [
   { name: 'unshield_denominated_stark_v3', commitmentOffset: 80, totalLen: 120, recipientOffset: 88 },
   { name: 'subscribe_private_stark', commitmentOffset: 160, totalLen: null, recipientOffset: null },
   { name: 'transfer_denominated_stark_v3', commitmentOffset: 80, totalLen: null, recipientOffset: null },
-  { name: 'split_note_stark', commitmentOffset: null, totalLen: null, recipientOffset: null },
+  // ⚠️ `split_note_stark` was `commitmentOffset: null` — i.e. "this instruction
+  // does not publish the commitment" — until 2026-08-17, and that was FALSE.
+  // Its signature is `(nullifier: [u8;32], merkle_root: [u8;32], min_epoch: u64,
+  // stark_commitment: u64, …)` at `programs/zk_shielded/src/lib.rs:372-381`, so
+  // the commitment sits at 8 + 32 + 32 + 8 = 80, the same place the other two v3
+  // spends put it.
+  //
+  // This is the SECOND entry in this table to have been wrong in the
+  // false-clean direction (see the transfer note above, which was off by one
+  // field). A `null` here does not mean "unchecked", it means "P1 has nothing
+  // to read and therefore PASSES" — so a spend routed through a split would
+  // have been reported as publishing nothing, which is the exact verdict this
+  // tool exists to refuse. It also killed a real idea on the spot: splitting a
+  // note before spending it does NOT break the link to its deposit.
+  { name: 'split_note_stark', commitmentOffset: 80, totalLen: null, recipientOffset: null },
   // v4 lands here. It must appear with commitmentOffset: null, and P1 then
   // passes only because there is nothing to read — which is the point.
   // ⚠️ If v4 keeps a cleartext recipient argument, give it a real
@@ -2199,17 +2213,33 @@ function selfTestLive(reports) {
  * an argument on chain and not here now fails, instead of going quiet.
  */
 const SPEND_LAYOUTS = {
-  // programs/zk_shielded/src/lib.rs — both v3 spends share this prefix.
+  // programs/zk_shielded/src/lib.rs — read field by field from the `pub fn`
+  // signatures, which is the only source that cannot drift from the bytes.
+  // `unshield` carries a trailing `recipient: [u8; 32]`, so this table derives
+  // BOTH published addresses: the commitment P1 reads and the payee P10 reads.
   unshield_denominated_stark_v3: [
-    ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['min_epoch', 8], ['stark_commitment', 8],
+    ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['min_epoch', 8],
+    ['stark_commitment', 8], ['recipient', 32],
   ],
   transfer_denominated_stark_v3: [
     ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['min_epoch', 8], ['stark_commitment', 8],
   ],
-  // subscribe_private_stark is NOT covered: its argument list has not been read
-  // field by field here, and inventing a layout to make a test green would be
-  // worse than the gap. Left explicit so the gap is visible rather than assumed
-  // away.
+  // `:372-381`. Added 2026-08-17 together with the fix to its SPEND_KINDS entry,
+  // which claimed it published no commitment at all.
+  split_note_stark: [
+    ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['min_epoch', 8], ['stark_commitment', 8],
+  ],
+  // `:267-278`. This was previously left out with the note "its argument list
+  // has not been read field by field here, and inventing a layout to make a
+  // test green would be worse than the gap". The signature has now been read,
+  // so the gap closes honestly rather than by assumption — and it independently
+  // confirms the 160 that P1 has been pinned to all along:
+  // 8+32+32+8+32+8+8+32 = 160.
+  subscribe_private_stark: [
+    ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['min_epoch', 8],
+    ['subscriber_commitment', 32], ['rate', 8], ['interval_slots', 8],
+    ['vk_hash_subscriber', 32], ['stark_commitment', 8],
+  ],
 };
 
 /**
@@ -2747,12 +2777,14 @@ function selfTestOffsets() {
     checked += 1;
 
     let derived = 0;
+    let derivedRecipient = null;
     const total = layout.reduce((n, [, w]) => n + w, 0);
     const buf = Buffer.alloc(total);
     let at = 0;
     for (const [field, width] of layout) {
       if (field === 'stark_commitment') { derived = at; buf.writeBigUInt64LE(COMMITMENT, at); }
       else if (field === 'min_epoch') buf.writeBigUInt64LE(MIN_EPOCH, at);
+      else if (field === 'recipient') { derivedRecipient = at; buf.fill(0xAB, at, at + width); }
       at += width;
     }
 
@@ -2766,6 +2798,21 @@ function selfTestOffsets() {
       );
     } else {
       console.log(`   ok    ${kind.name}: commitment at ${derived}, read back intact`);
+    }
+
+    // The payee offset, derived from the same signature. P10 was pinned to 88
+    // from the ENCODER alone; this is the second, independent source, and the
+    // two must agree or one of them is describing bytes nobody writes.
+    const declaredRecipient = kind.recipientOffset ?? null;
+    if (declaredRecipient !== derivedRecipient) {
+      broken += 1;
+      console.log(
+        `   FAIL  ${kind.name}: table says recipient at ${declaredRecipient}, the signature says ` +
+          `${derivedRecipient}. A wrong payee offset reads 32 bytes of something else and prints ` +
+          'a syntactically valid address belonging to nobody.',
+      );
+    } else if (derivedRecipient !== null) {
+      console.log(`   ok    ${kind.name}: recipient at ${derivedRecipient}, agrees with the encoder`);
     }
   }
 
