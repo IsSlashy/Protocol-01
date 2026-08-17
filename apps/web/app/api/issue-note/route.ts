@@ -108,7 +108,7 @@ function inventoryLeaves(): number[] {
   return (process.env.P01_TREASURY_NOTE_LEAVES ?? '')
     .split(',')
     .map((s) => s.trim())
-    // 🚨 THE EMPTY STRING FILTER IS LOad-BEARING, and it was missing.
+    // 🚨 THE EMPTY-STRING FILTER IS LOAD-BEARING, and it was missing.
     // `''.split(',')` is `['']`, and `Number('')` is 0 — which is an integer
     // and is >= 0. So an UNSET variable produced an inventory of exactly one
     // leaf, index 0, and the readiness check reported it as configured. Found

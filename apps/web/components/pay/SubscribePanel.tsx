@@ -587,6 +587,25 @@ export default function SubscribePanel({
     // funder's fallback.
     let spending = note;
     if (!spending) {
+      // Check affordability BEFORE redeeming, because a claim is consumed on
+      // first redemption whether or not the subscription follows. The rendered
+      // `blockedReason` cannot cover this: it computes periods from the selected
+      // note, and there is no note yet — so with none held the button is
+      // enabled and nothing else stands between a click and a note spent on a
+      // subscription that funds zero periods.
+      const issuedPeriods = periodsFunded(
+        DEFAULT_ISSUED_DENOMINATION,
+        decimals,
+        service.priceAtomic,
+      );
+      if (issuedPeriods === 0n) {
+        setError(
+          `${service.name} costs more per period than the ${DEFAULT_ISSUED_DENOMINATION} ` +
+            `${token} note that would be issued, so it would fund nothing. Nothing was spent. ` +
+            `Deposit a larger note, or choose a vendor priced under ${DEFAULT_ISSUED_DENOMINATION} ${token}.`,
+        );
+        return;
+      }
       setError(null);
       setSubmitting(true);
       try {
