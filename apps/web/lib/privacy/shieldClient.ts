@@ -26,7 +26,7 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { poolRequest } from './workerClient';
-import { fetchFunderLookup, fundEphemeralForJob } from './pool/ephemeralFunder';
+import { fetchFunderLookup, funderTicket, fundEphemeralForJob } from './pool/ephemeralFunder';
 import { loadSubscriptions } from '../pay/subscriptions';
 import {
   isSessionLostError,
@@ -591,6 +591,106 @@ export async function importReceivedNote(params: {
   // success so a render error can never lose what was just received.
   await storeEncryptedNote(params.meta, params.walletPubkey, res.encryptedNote);
   return { note: res.note, merklePath: res.merklePath };
+}
+
+export interface IssuedNoteOutcome {
+  note: PoolNoteView;
+  /** The deployment's leaf index, so the caller can name what it received. */
+  leafIndex: number;
+  /** Whether a Merkle path travelled with it, or the spend must rebuild one. */
+  merklePath: 'stored' | 'none';
+  /** The issuer's own words about what this does and does not hide. Render it. */
+  disclosure: string;
+}
+
+/**
+ * Ask this deployment for a note IT deposited, sealed to this identity.
+ *
+ * WHY THIS IS THE DIFFERENCE BETWEEN A RUNBOOK AND A PRODUCT
+ * ─────────────────────────────────────────────────────────
+ * A note the buyer deposited themselves links every subscription bought with it
+ * straight back to them, in one hop, through the deposit — whoever pays for the
+ * subscription. The fix is to spend a note somebody else deposited, and until
+ * now that meant a two-wallet ritual: shield from A, seal to B, import into B,
+ * subscribe from B. Nobody opens a second Phantom to buy a subscription. They
+ * click once, and if the click does not work they leave.
+ *
+ * So the deployment deposits, and this fetches. One wallet, one action, and the
+ * part that has to be true — the depositor is not the buyer — is true by
+ * construction rather than by the user having followed instructions.
+ *
+ * ⛔ AND IT DOES NOT HIDE THEM FROM THE ISSUER. The note derives from a seed the
+ * server holds, so the issuer can regenerate every value this note will ever
+ * publish — subscriber_commitment, the nullifier, the vault PDA — with no
+ * records kept. It can also spend the note itself until the recipient does.
+ * `disclosure` carries the issuer's own statement of that, and callers must show
+ * it rather than summarise it away.
+ *
+ * Throws with the endpoint's reason. Callers must NOT fall back to a
+ * self-deposited note on failure: that silently delivers the linked outcome the
+ * whole mechanism exists to avoid, which is the fallback mistake this codebase
+ * has already made once with the funder.
+ */
+export async function requestIssuedNote(params: {
+  meta: string;
+  walletPubkey: string;
+  token: PoolToken;
+  denomination: number;
+  onProgress?: (step: string) => void;
+}): Promise<IssuedNoteOutcome> {
+  const ticket = funderTicket();
+  if (!ticket) throw new Error('This deployment does not issue notes.');
+
+  // The address is derived in the worker from the pool seed, so the server only
+  // ever learns a public encryption key — never a secret, and never the wallet.
+  params.onProgress?.('Asking for a note (your wallet does not deposit one)...');
+  const recipientAddress = await fetchNoteReceiveAddress(params.meta);
+
+  const res = await fetch('/api/issue-note', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-p01-funder-ticket': ticket },
+    body: JSON.stringify({
+      recipientAddress,
+      token: params.token,
+      denomination: params.denomination,
+    }),
+  });
+  let body: {
+    ok?: boolean;
+    error?: string;
+    sealedNote?: string;
+    leafIndex?: number;
+    disclosure?: string;
+  };
+  try {
+    body = await res.json();
+  } catch {
+    throw new Error(`The note issuer replied with a non-JSON ${res.status}.`);
+  }
+  if (!res.ok || !body.ok || !body.sealedNote) {
+    throw new Error(body.error ? `No note was issued: ${body.error}` : `The issuer replied ${res.status}.`);
+  }
+
+  // Import through the SAME path a hand-delivered note takes. That is
+  // deliberate: `poolImportNote` recomputes the commitment from the secrets and
+  // refuses a mismatch, so a wrong or corrupted issuance cannot enter the store
+  // looking like money — and the issuer is not trusted to have sealed a real
+  // note just because it is the issuer.
+  params.onProgress?.('Opening the note...');
+  const imported = await importReceivedNote({
+    meta: params.meta,
+    walletPubkey: params.walletPubkey,
+    sealedNote: body.sealedNote,
+  });
+
+  return {
+    note: imported.note,
+    leafIndex: body.leafIndex ?? imported.note.leafIndex,
+    merklePath: imported.merklePath,
+    disclosure:
+      body.disclosure ??
+      'This note was deposited by this deployment. It does not hide you from the deployment.',
+  };
 }
 
 /**

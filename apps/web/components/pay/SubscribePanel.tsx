@@ -162,6 +162,17 @@ function noteKey(n: PoolNoteView): string {
   return `${n.pool}:${n.leafIndex}`;
 }
 
+/**
+ * The denomination asked for when this identity holds no note and one is issued.
+ *
+ * The smallest live pool, deliberately. An issued note is the deployment's own
+ * money and the whole denomination is locked by the subscription — so the
+ * default has to be the cheapest thing that works, not the most convenient one
+ * to reason about. A user who wants a larger note can deposit one, which is the
+ * path that names them and which they can now be told about first.
+ */
+const DEFAULT_ISSUED_DENOMINATION = 0.1;
+
 /** The numbered badge that makes the two-step journey read as one. */
 function StepBadge({ n }: { n: number }) {
   return (
@@ -417,6 +428,14 @@ export default function SubscribePanel({
    * either way, so nothing depends on the answer arriving in time.
    */
   const [funderFromServer, setFunderFromServer] = useState<boolean | null>(null);
+  /**
+   * The issuer's own statement about what an issued note does and does not hide.
+   *
+   * Held and rendered verbatim rather than summarised: the endpoint says it can
+   * regenerate every value the note will publish and can spend the note itself
+   * until the recipient does. Paraphrasing that is how it becomes "it's private".
+   */
+  const [issuedDisclosure, setIssuedDisclosure] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     void fetchFunderPubkey().then((pk) => {
@@ -534,14 +553,61 @@ export default function SubscribePanel({
         ? 'Choose a vendor first.'
         : tokenMismatch
           ? `${service.name} prices in a different token than the ${token} pool, so a ${token} note cannot fund it.`
-          : !note
+          : !note && unspent.length > 0
             ? 'Now choose a note to lock.'
             : periods !== null && periods === 0n
               ? 'This note is smaller than one billing period, so it would fund nothing.'
               : null;
 
   async function handleSubscribe() {
-    if (!signOne || !service || !note) return;
+    if (!signOne || !service) return;
+
+    // ── The note, fetched rather than demanded ────────────────────────────
+    //
+    // A note the buyer deposited themselves links every subscription bought
+    // with it back to them in one hop through the deposit, whoever pays for the
+    // subscription. So the buyer has to spend one somebody ELSE deposited — and
+    // the honest way to get there used to be a two-wallet ritual: shield from
+    // A, seal to B, import into B, subscribe from B.
+    //
+    // Nobody opens a second Phantom to buy a subscription. They click once, and
+    // if the click does not work they leave. So when this identity holds no
+    // note, the deployment issues one and the user never sees a step: the part
+    // that has to be true — the depositor is not the buyer — becomes true by
+    // construction instead of by them having followed instructions.
+    //
+    // ⛔ NO FALLBACK. If the issuer cannot serve, this stops. Quietly reverting
+    // to "subscribe with whatever note you have" would deliver the linked
+    // outcome the whole mechanism exists to avoid, and the user would have no
+    // way to tell — which is precisely the mistake already made once with the
+    // funder's fallback.
+    let spending = note;
+    if (!spending) {
+      setError(null);
+      setSubmitting(true);
+      try {
+        const issued = await shieldClient.requestIssuedNote({
+          meta,
+          walletPubkey: owner.toBase58(),
+          token,
+          denomination: DEFAULT_ISSUED_DENOMINATION,
+          onProgress: setStep,
+        });
+        setIssuedDisclosure(issued.disclosure);
+        setNotes((prev) => [...prev, issued.note]);
+        setSelectedNote(noteKey(issued.note));
+        spending = issued.note;
+      } catch (e) {
+        setError((e as Error).message || 'No note could be issued.');
+        return;
+      } finally {
+        setSubmitting(false);
+        setStep(null);
+      }
+    }
+
+    const note_ = spending;
+    if (!note_) return;
     const call = subscribeModule.subscribeFromPool;
     if (!call) {
       setError(
@@ -557,8 +623,8 @@ export default function SubscribePanel({
       const out = await call({
         meta,
         token,
-        denomination: note.denomination,
-        leafIndex: note.leafIndex,
+        denomination: note_.denomination,
+        leafIndex: note_.leafIndex,
         retailer: service.retailer,
         rate: service.priceAtomic,
         intervalSlots: service.intervalSlots,
@@ -589,8 +655,8 @@ export default function SubscribePanel({
       // withdrawal does, or every list keeps offering it until the pool scan
       // catches up, which takes minutes: another ~1 SOL of buffer rent and
       // ~150 uploads to reach a nullifier collision.
-      await shieldClient.recordSpentNote(meta, owner.toBase58(), noteKey(note));
-      setSpentHere((prev) => new Set(prev).add(noteKey(note)));
+      await shieldClient.recordSpentNote(meta, owner.toBase58(), noteKey(note_));
+      setSpentHere((prev) => new Set(prev).add(noteKey(note_)));
       // Remember the vault locally so the Subscriptions view can list it
       // without an on-chain sweep, the same convenience `recordPayout` gives
       // withdrawals. Public fields only: the license key is re-derivable from
@@ -601,13 +667,13 @@ export default function SubscribePanel({
         retailer: service.retailer.toBase58(),
         serviceTag: licenseServiceTag(service.slug, service.retailer.toBase58()),
         serviceName: service.name,
-        token: note.token,
-        denomination: note.denomination,
+        token: note_.token,
+        denomination: note_.denomination,
         rate: service.priceAtomic.toString(),
         intervalSlots: service.intervalSlots.toString(),
         openTxSig: out.txSig,
-        pool: note.pool,
-        leafIndex: note.leafIndex,
+        pool: note_.pool,
+        leafIndex: note_.leafIndex,
         openedAt: Date.now(),
       });
       void rescan();
@@ -944,6 +1010,30 @@ export default function SubscribePanel({
               this subscription reaches it in three steps.
             </span>
           </label>
+        )}
+
+        {/* When this identity holds no note, one is issued and the user never
+            sees a step. That is the point — and it is exactly why the trade has
+            to be stated rather than left implicit. Verbatim from the issuer, so
+            what the server says it can do is what the screen says it can do. */}
+        {!result && unspent.length === 0 && (
+          <p className="flex items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
+            <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
+            <span>
+              <strong className="text-p01-text">You hold no note, so one will be issued to you.</strong>{' '}
+              It was deposited by this deployment, not by you — which is what keeps anyone reading
+              the subscription from reaching your wallet through the deposit. It does{' '}
+              <strong className="text-p01-text">not</strong> hide you from this deployment: the note
+              comes from a seed we hold, so we can recognise every subscription bought with it, and
+              we could spend it ourselves until you do. Deposit your own note instead if you would
+              rather that trade went the other way.
+            </span>
+          </p>
+        )}
+        {issuedDisclosure && !result && (
+          <p className="rounded-lg border border-p01-border p-3 font-mono text-[11px] text-p01-text-dim">
+            {issuedDisclosure}
+          </p>
         )}
 
         {error && (

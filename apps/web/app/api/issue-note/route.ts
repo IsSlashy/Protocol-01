@@ -1,0 +1,319 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { Connection, PublicKey } from '@solana/web3.js';
+
+import { getStore, rateLimitExceeded } from '@/lib/waitlist/store';
+import {
+  buildMerkleProofFromLeavesV3,
+  createCommitmentV3,
+  deriveNoteMaterial,
+  fetchPoolCommitments,
+  getPoolsForTokenV3,
+  pubkeyToField,
+  type OnChainCommitment,
+  type ShareableNote,
+} from '@/lib/privacy/pool/denominatedPool';
+import { deriveNoteBlinding } from '@/lib/privacy/pool/noteBlinding';
+import { encryptNote, isNoteEncryptionAddress } from '@/lib/privacy/pool/noteCrypto';
+
+/**
+ * issue-note — hand a caller a shielded note THIS DEPLOYMENT deposited.
+ *
+ * WHY THIS EXISTS, AND WHY IT IS THE WHOLE PRODUCT
+ * ───────────────────────────────────────────────
+ * Spending a note republishes, in cleartext, the exact commitment its deposit
+ * emitted. The program forces that — the C1 inputs hash binds the argument, C3
+ * proves it is a leaf, the root must be the pool's — so no client change alters
+ * it before the verifier is redeployed. The consequence is one hop:
+ *
+ *   subscription → commitment → the deposit that emitted it → its fee payer
+ *
+ * If that fee payer is the buyer, everything else is decoration: the spend can
+ * be paid by a treasury, swept to a treasury and signed by a fresh ephemeral,
+ * and the buyer is still one hop away through their own deposit.
+ *
+ * So the buyer must spend a note SOMEBODY ELSE deposited. Until now that meant
+ * a two-wallet ritual — shield from A, seal to B, import into B, subscribe from
+ * B — which is a runbook, not a product. A person will do exactly one thing:
+ * click Subscribe. This endpoint is what makes the rest happen underneath.
+ *
+ * ⛔ WHAT THIS DOES NOT DO, AND MUST NEVER BE DESCRIBED AS DOING
+ * ─────────────────────────────────────────────────────────────
+ * It does not make the buyer anonymous to US. The note's secrets are
+ * `HKDF(treasurySeed, poolPDA, counter)` — enumerable offline, forever, from a
+ * seed this server holds. So `subscriber_commitment`, `license_commitment`, the
+ * nullifier and the vault PDA of every subscription bought with an issued note
+ * are each a pure function of a value we can regenerate, with no records kept
+ * and no log written. **Against the issuer the anonymity set is one,
+ * unconditionally and permanently**, and it stays one after any redeploy.
+ *
+ * It also does not transfer exclusive ownership. Holding the seed means this
+ * deployment can spend an issued note itself, at any time, until the recipient
+ * spends it first. On devnet with the operator's own SOL that is a recovery
+ * path; anywhere else it is custody, and it must be stated as custody.
+ *
+ * What it DOES buy is precise and worth having: a chain observer who is not the
+ * issuer and not the merchant cannot get from the subscription to the buyer,
+ * because the deposit names us.
+ *
+ * 🚨 IT GIVES AWAY MONEY, LIKE THE FUNDER, BUT WORSE
+ * ──────────────────────────────────────────────────
+ * A grant from `/api/fund-ephemeral` is rent that comes back. A note is the
+ * denomination itself and does not. The bounds here are: a finite, explicitly
+ * configured inventory that can only shrink; an atomic per-leaf claim so one
+ * note is never issued twice; a durable per-IP rate limit; and the devnet
+ * genesis guard. None of that is an anti-abuse story for real value — the
+ * inventory bound is what makes the worst case a known number rather than a
+ * balance.
+ */
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
+const RATE_SALT = 'p01:issue-note:v1';
+/** Deliberately tighter than the funder's: this hands over value, not rent. */
+const ISSUES_PER_IP_PER_HOUR = 3;
+
+function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
+  return NextResponse.json({ ok: false, error, ...extra }, { status });
+}
+
+function clientIp(req: NextRequest): string {
+  const real = req.headers.get('x-real-ip');
+  if (real) return real.trim();
+  const fwd = req.headers.get('x-forwarded-for');
+  if (fwd) return fwd.split(',')[0].trim();
+  return 'unknown';
+}
+
+/** The treasury's pool seed, 32 bytes as 64 hex characters. */
+function treasurySeed(): Uint8Array | null {
+  const hex = process.env.P01_TREASURY_POOL_SEED;
+  if (!hex || !/^[0-9a-fA-F]{64}$/.test(hex)) return null;
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+/**
+ * The leaf indices this deployment deposited and is willing to give away.
+ *
+ * EXPLICIT, not discovered. The server could scan the pool and claim every leaf
+ * whose commitment its seed reproduces — but a derivation bug, a wrong pool or a
+ * seed reused across environments would then quietly hand out notes nobody meant
+ * to give, and the failure would look like success. A list an operator typed is
+ * a list an operator can be asked about.
+ */
+function inventoryLeaves(): number[] {
+  return (process.env.P01_TREASURY_NOTE_LEAVES ?? '')
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n >= 0);
+}
+
+export async function GET() {
+  // Readiness, in the shape /api/fund-ephemeral uses: every way this is switched
+  // off is silent at the point of use, so it has to be answerable in advance.
+  const seed = treasurySeed();
+  const leaves = inventoryLeaves();
+  const kv = getStore();
+  const reasons: string[] = [];
+  if (!seed) reasons.push('P01_TREASURY_POOL_SEED is unset or not 64 hex characters.');
+  if (leaves.length === 0) reasons.push('P01_TREASURY_NOTE_LEAVES lists no leaf indices.');
+  if (!process.env.P01_FUNDER_TICKET) reasons.push('P01_FUNDER_TICKET is unset.');
+  if (!kv) reasons.push('No durable KV store, so issued notes cannot be tracked and this refuses.');
+  return NextResponse.json({
+    ok: true,
+    configured: reasons.length === 0,
+    inventorySize: leaves.length,
+    reasons,
+    note:
+      'inventorySize counts what was CONFIGURED, not what is still unissued — reading the ' +
+      'remaining count would require the KV lookups an issuance does, and an endpoint that ' +
+      'reports a number it did not check is how a demo discovers an empty inventory on stage.',
+  });
+}
+
+export async function POST(request: NextRequest) {
+  const ticket = process.env.P01_FUNDER_TICKET;
+  const seed = treasurySeed();
+  if (!seed) return bad(503, 'this deployment issues no notes');
+  if (!ticket) return bad(503, 'no ticket configured; refusing to hand out notes anonymously');
+  if (request.headers.get('x-p01-funder-ticket') !== ticket) {
+    return bad(401, 'bad or missing ticket');
+  }
+
+  let body: { recipientAddress?: unknown; token?: unknown; denomination?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return bad(400, 'body must be JSON');
+  }
+
+  const recipientAddress = String(body.recipientAddress ?? '');
+  if (!isNoteEncryptionAddress(recipientAddress)) {
+    return bad(400, 'recipientAddress is not a p01pq: note address');
+  }
+  const token = body.token === 'USDC' ? 'USDC' : 'SOL';
+  const denomination = Number(body.denomination);
+  if (!Number.isFinite(denomination) || denomination <= 0) {
+    return bad(400, 'denomination must be a positive number');
+  }
+  const pool = getPoolsForTokenV3(token).find((p) => p.denomination === denomination);
+  if (!pool) return bad(400, `no ${denomination} ${token} pool is configured`);
+
+  // Same posture as the funder: no durable counter, no handing over value. Here
+  // it is doubly load-bearing, because the claim that stops a note being issued
+  // twice is a KV increment.
+  const kv = getStore();
+  if (!kv) return bad(503, 'no durable store is configured; refusing to issue notes untracked');
+  try {
+    if (await rateLimitExceeded(kv, clientIp(request), RATE_SALT, ISSUES_PER_IP_PER_HOUR)) {
+      return bad(429, 'too many note requests from this address in the last hour', {
+        limit: ISSUES_PER_IP_PER_HOUR,
+      });
+    }
+  } catch (e) {
+    return bad(503, `the rate limiter could not be read: ${(e as Error).message}`);
+  }
+
+  const connection = new Connection(
+    process.env.P01_FUNDER_RPC ?? 'https://api.devnet.solana.com',
+    'confirmed',
+  );
+  // Checked against the chain rather than the URL string, for the same reason
+  // the funder does: an env var pointing at mainnet and named "devnet" would
+  // give away real money.
+  let genesis: string;
+  try {
+    genesis = await connection.getGenesisHash();
+  } catch (e) {
+    return bad(502, `the configured RPC could not be reached: ${(e as Error).message}`);
+  }
+  if (genesis !== DEVNET_GENESIS) {
+    return bad(403, 'this issuer is devnet-only and the configured RPC is not devnet', { genesis });
+  }
+
+  const leaves = inventoryLeaves();
+  if (leaves.length === 0) return bad(503, 'this deployment has no note inventory configured');
+
+  // The pool's leaves, once, for both the on-chain check below and the Merkle
+  // path. Building the path HERE rather than leaving the recipient to rebuild
+  // it is the difference between a subscription that starts immediately and one
+  // that walks the pool's whole history first.
+  let commitments: Map<string, OnChainCommitment>;
+  try {
+    commitments = await fetchPoolCommitments(connection, pool.poolPDA);
+  } catch (e) {
+    return bad(502, `the pool's history could not be read: ${(e as Error).message}`);
+  }
+
+  const poolKey = pool.poolPDA.toBase58();
+  for (const leafIndex of leaves) {
+    // ATOMIC CLAIM, before any work. `incr` returns 1 only for the caller that
+    // created the key, so exactly one concurrent request can win a leaf. Doing
+    // the derivation first and claiming afterwards would let two simultaneous
+    // callers be handed the same note — and a note is spent once, so the second
+    // buyer's subscription would fail on a nullifier collision after ~150
+    // uploads and ~1 SOL of buffer rent.
+    let claim: number;
+    try {
+      claim = await kv.incr(`p01:note:issued:${poolKey}:${leafIndex}`);
+    } catch (e) {
+      return bad(503, `the inventory could not be claimed: ${(e as Error).message}`);
+    }
+    if (claim !== 1) continue; // already issued
+
+    // ⚠️ ARGUMENT ORDER IS (nullifierPreimage, secret, blinding, tokenMintField)
+    // and both of the first two are bigints, so getting them the wrong way round
+    // type-checks and silently produces a commitment that is on no tree. The
+    // on-chain check below is what caught it while writing this; do not remove
+    // that check on the grounds that the derivation is "obviously" right.
+    // Mirrors `poolNotes.ts:175` exactly, which is the derivation the rest of
+    // the app finds notes with.
+    const { secret, nullifierPreimage } = deriveNoteMaterial(seed, pool.poolPDA, leafIndex);
+    const noteBlinding = deriveNoteBlinding(seed, pool.poolPDA, leafIndex);
+    const commitment = createCommitmentV3(
+      nullifierPreimage,
+      secret,
+      noteBlinding,
+      pubkeyToField(pool.tokenMint),
+    );
+
+    // The note must actually BE on the tree, at the leaf we think it is. A
+    // mismatch means the seed, the pool or the index is wrong, and issuing it
+    // would hand someone a blob that cannot be spent — money that looks
+    // received and is not. Refuse the whole request rather than move on: a
+    // configuration error must not be silently absorbed by trying the next leaf.
+    const onChain = commitments.get(commitment.toString());
+    if (!onChain || onChain.leafIndex !== leafIndex) {
+      return bad(500, 'the configured inventory does not match the chain', {
+        leafIndex,
+        found: onChain?.leafIndex ?? null,
+        hint:
+          'P01_TREASURY_POOL_SEED, the pool, or P01_TREASURY_NOTE_LEAVES is wrong. The leaf has ' +
+          'been marked issued to stop a retry loop from consuming the whole inventory.',
+      });
+    }
+
+    let merkle: Pick<ShareableNote, 'merkle_root' | 'merkle_path_elements' | 'merkle_path_indices'> = {};
+    try {
+      let maxIdx = -1;
+      for (const e of commitments.values()) if (e.leafIndex > maxIdx) maxIdx = e.leafIndex;
+      const leavesByIndex: bigint[] = maxIdx >= 0 ? new Array<bigint>(maxIdx + 1).fill(0n) : [];
+      for (const e of commitments.values()) leavesByIndex[e.leafIndex] = e.commitment;
+      const built = buildMerkleProofFromLeavesV3({ leavesByIndex, targetLeafIndex: leafIndex });
+      merkle = {
+        merkle_root: built.root.toString(),
+        merkle_path_elements: built.pathElements.map((e) => e.toString()),
+        merkle_path_indices: built.pathIndices,
+      };
+    } catch {
+      // Ship the note without a path rather than with a wrong one. The
+      // recipient rebuilds from history: slower, always correct.
+    }
+
+    const shareable: ShareableNote = {
+      version: 1,
+      pool: poolKey,
+      secret: secret.toString(),
+      nullifier_preimage: nullifierPreimage.toString(),
+      // The wire key stays `deposit_epoch` and carries the blinding. Renaming it
+      // silently drops the stored Merkle path on every consumer.
+      deposit_epoch: noteBlinding.toString(),
+      token_mint: pool.tokenMint.toString(),
+      commitment: commitment.toString(),
+      leafIndex,
+      token,
+      denominationHuman: denomination,
+      ...merkle,
+    };
+
+    const sealedNote = encryptNote(
+      recipientAddress,
+      new TextEncoder().encode(JSON.stringify(shareable)),
+    );
+
+    return NextResponse.json({
+      ok: true,
+      sealedNote,
+      leafIndex,
+      commitment: commitment.toString(),
+      denomination,
+      token,
+      merklePath: merkle.merkle_root ? 'rebuilt' : 'none',
+      // Said in the response, not only in a doc, because whatever renders this
+      // will be the last thing between the claim and a user believing it.
+      disclosure:
+        'This note was deposited by this deployment, so a chain observer who follows the ' +
+        'subscription back to its deposit lands on us rather than on you. It does NOT hide you ' +
+        'from us: the note derives from a seed this server holds, so we can identify every ' +
+        'subscription bought with it, and we can spend it ourselves until you do.',
+    });
+  }
+
+  return bad(503, 'the note inventory is empty', {
+    configured: leaves.length,
+    hint: 'Deposit more notes from the treasury wallet and extend P01_TREASURY_NOTE_LEAVES.',
+  });
+}
