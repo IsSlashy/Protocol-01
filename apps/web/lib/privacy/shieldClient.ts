@@ -647,6 +647,78 @@ export interface IssuedNoteOutcome {
 }
 
 /**
+ * The message the wallet signs to unlock ONE anonymous buyer identity.
+ *
+ * WHY THERE IS A SEPARATE MESSAGE AT ALL
+ * ──────────────────────────────────────
+ * A pool identity is 32 bytes. The wallet was only ever needed to make those
+ * bytes recoverable without stored state, and to sign the pre-fund — and the
+ * funder does the second job now. So the buyer of a subscription does not have
+ * to be the connected wallet, and should not be: the wallet is the thing an
+ * observer is trying to reach.
+ *
+ * ⛔ SIGNING `buildDerivationMessage` INSTEAD WOULD PRODUCE THE SAME IDENTITY.
+ * Same signature, same seeds, same notes, same addresses — an "ephemeral buyer"
+ * that is the wallet wearing a label. In this app it fails loudly rather than
+ * silently, because the issuing treasury may be that same wallet and the
+ * self-deposit guard refuses a note the buyer's own identity deposited. That is
+ * luck, not design. The message is different on purpose.
+ *
+ * DETERMINISTIC, NOT RANDOM, and that is the second half of the design. A buyer
+ * identity built from `crypto.getRandomValues` cannot be re-derived, and the
+ * license key of every subscription made under it is derived from a note secret
+ * that lives only there — so a cleared browser would destroy the proof of a
+ * subscription that is still being paid for. Keying on the wallet plus an index
+ * keeps it re-derivable forever, with nothing stored, from the same wallet.
+ *
+ * The index is what lets one wallet hold several unrelated buyer identities.
+ * Nothing on chain connects them to each other or to the wallet.
+ */
+export function buildAnonymousBuyerMessage(params: {
+  walletPubkey: string;
+  origin: string;
+  index: number;
+}): string {
+  return [
+    'Protocol 01 — Anonymous subscription identity',
+    '',
+    'Sign to derive a one-off identity that buys a subscription on your behalf.',
+    'This does NOT send a transaction and costs no gas.',
+    '',
+    'The identity holds the note and signs nothing on chain. Your wallet is not',
+    'part of the subscription it creates.',
+    '',
+    `ONLY sign this on ${params.origin}.`,
+    '',
+    `Domain: ${params.origin}`,
+    `Wallet: ${params.walletPubkey}`,
+    `Identity: ${params.index}`,
+    'Version: anon-buyer-v1',
+  ].join('\n');
+}
+
+/**
+ * Derive an anonymous buyer identity in the worker and return its handle.
+ *
+ * `meta` is a label for this worker session, derived from the signature so that
+ * re-deriving the same identity reaches the same label without storing one. The
+ * signature itself is wiped here the moment the worker has answered — the worker
+ * keeps the derived seeds, which is the weaker secret of the two.
+ */
+export async function deriveAnonymousBuyer(params: {
+  signature: Uint8Array;
+}): Promise<{ meta: string; address: string }> {
+  const label = `anon:${Buffer.from(sha256(params.signature)).toString('hex').slice(0, 32)}`;
+  const res = await poolRequest({
+    kind: 'poolDeriveIdentity',
+    meta: label,
+    signature: Array.from(params.signature),
+  });
+  params.signature.fill(0);
+  return { meta: res.meta, address: res.address };
+}
+
+/**
  * What this deployment issues, so a caller can ask for what exists.
  *
  * Leaf indices are only meaningful inside ONE pool — leaf 34 of the 1 SOL pool

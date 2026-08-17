@@ -403,6 +403,54 @@ export interface PoolExportSeedResponse {
   hasLegacySeed: boolean;
 }
 
+/**
+ * Register a SECOND pool identity from a signature, alongside the wallet's own.
+ *
+ * WHY A BUYER SHOULD NOT BE A WALLET
+ * ──────────────────────────────────
+ * Nothing about subscribing needs a browser wallet. A pool identity is 32 bytes;
+ * the wallet was only ever there to do two jobs — produce a seed that is
+ * recoverable without stored state, and sign the pre-fund. The funder does the
+ * second one now, and the first is just "sign a string", which any wallet can do
+ * for any string.
+ *
+ * So the buyer can be an identity this browser makes on the spot: it holds the
+ * note, it spends it, and it is in no transaction because the funder pays. The
+ * connected wallet never touches the chain, and there is no second Phantom, no
+ * second profile, no second seed phrase to keep.
+ *
+ * 🚨 THE SIGNATURE MUST BE OVER A DIFFERENT MESSAGE, AND THAT IS THE WHOLE
+ * DESIGN. Handing this the same signature the wallet's own identity uses would
+ * make the two identities THE SAME KEYS — same notes, same addresses — which is
+ * not an ephemeral buyer, it is the wallet under another name. Worse in this
+ * app specifically: the issuing treasury may be that same wallet, so the note it
+ * received would be one it deposited, and the self-deposit guard would refuse
+ * it. A per-subscription message keeps them cryptographically unrelated while
+ * staying deterministic, so the buyer identity is re-derivable from the wallet
+ * forever with nothing stored.
+ *
+ * ⚠️ WHAT IS LOST IF THE MESSAGE IS NOT REPRODUCIBLE. The license key of a
+ * subscription is derived from the note secret, and that secret lives only under
+ * this identity. An identity built from randomness cannot be re-derived, so
+ * losing the browser loses the proof of subscription. Callers must build the
+ * message from values they can reconstruct — never from a random nonce they
+ * throw away.
+ */
+export interface PoolDeriveIdentityRequest {
+  kind: 'poolDeriveIdentity';
+  /** Label for the new identity. Any string; scoped to this worker session. */
+  meta: string;
+  /** Signature bytes over the per-subscription message. */
+  signature: number[];
+}
+
+export interface PoolDeriveIdentityResponse {
+  kind: 'poolDeriveIdentity';
+  meta: string;
+  /** The `p01pq:` address a note is sealed to for this identity. */
+  address: string;
+}
+
 export interface PoolRecoverRequest {
   kind: 'poolRecover';
   meta: string;
@@ -713,6 +761,7 @@ export interface PoolSetPassphraseRequest {
 }
 
 export type PoolRequest =
+  | PoolDeriveIdentityRequest
   | PoolExportNoteRequest
   | PoolExportSeedRequest
   | PoolImportNoteRequest
@@ -981,6 +1030,7 @@ export interface PoolRecoverResponse {
 }
 
 export type PoolResponse =
+  | PoolDeriveIdentityResponse
   | PoolExportNoteResponse
   | PoolExportSeedResponse
   | PoolImportNoteResponse
@@ -2228,6 +2278,30 @@ async function handlePoolSubscribeExecute(
  * writing into one.
  */
 /**
+ * Register a second identity and hand back only its public receive address.
+ *
+ * The signature crosses in and the seeds never come back out — same boundary
+ * `setPoolSeed` holds for the wallet's own identity. What returns is the
+ * `p01pq:` address, which is public key material and is exactly what an issuer
+ * needs in order to seal a note to it.
+ */
+function handlePoolDeriveIdentity(req: PoolDeriveIdentityRequest): PoolDeriveIdentityResponse {
+  if (!req.meta || req.signature.length < 32) {
+    throw new Error('An identity needs a label and at least 32 bytes of signature.');
+  }
+  const signature = Uint8Array.from(req.signature);
+  setPoolSeed(req.meta, signature);
+  // Wipe the copy this frame made. The worker keeps the derived seeds, not the
+  // signature they came from — that is the stronger secret of the two.
+  signature.fill(0);
+  return {
+    kind: 'poolDeriveIdentity',
+    meta: req.meta,
+    address: createNoteEncryptionAddress(requireActiveSeed(req.meta)),
+  };
+}
+
+/**
  * The one place the seed leaves this worker. See `PoolExportSeedRequest`.
  *
  * Returns the ACTIVE seed only. A legacy seed is reported as a flag rather than
@@ -2689,6 +2763,9 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolNoteAddress':
       res = handlePoolNoteAddress(req);
+      break;
+    case 'poolDeriveIdentity':
+      res = handlePoolDeriveIdentity(req);
       break;
     case 'poolExportSeed':
       res = handlePoolExportSeed(req);
