@@ -66,14 +66,35 @@
  * on the committed fixture: P9 FAIL, measure 2 — the deposit payer is bracketed
  * by `BRop3akx…` on both ends (1573486080 lamports in, 570010780 out).
  *
- * --wallet <pubkey>
- * ─────────────────
+ *   P11 the named address appears in no reachable transaction (--wallet only)
+ *
+ * --wallet <pubkey>, AND WHY P11 IS THE ONE THAT MATTERS FOR AN AUDIT
+ * ──────────────────────────────────────────────────────────────────
  * A structural probe asks "is this payer bracketed by anything". `--wallet`
  * asks the narrower question a structural probe cannot: is THIS address in
  * there. P6 and P9 then say so either way, and P8 FAILS whenever the address
  * appears on either side — because two disjoint counterparty sets are not a
  * defence when the address you asked about is sitting in one of them. It
  * changes no RPC request, so it can be added to any replay of any fixture.
+ *
+ * 🚨 P6/P8/P9/P10 all reason about EDGES, decoded out of System instructions.
+ * That is too narrow for "can an auditor find me", because the cheapest real
+ * extraction decodes nothing at all:
+ *
+ *   $r.result.transaction.message.accountKeys | ForEach-Object { $_.pubkey }
+ *
+ * One line, one RPC call, every account a transaction names. An address can sit
+ * there as a read-only account, a co-signer or a bare program argument, move not
+ * one lamport, and be invisible to every edge probe here while being the first
+ * thing that output prints. P11 asks that question over every transaction
+ * reachable from a spend — the spend, its payer's whole life, the deposit
+ * payer's whole life — at no extra RPC cost, because those transactions were
+ * already fetched.
+ *
+ * Its PASS is expensive on purpose: `traceFunderEdges` stops early when it
+ * FINDS an edge, so a leaky payer may have been read 2 transactions of 172, and
+ * "not in those 2" is not "not in the 172". Any partial walk makes P11
+ * INCONCLUSIVE with the arithmetic printed.
  *
  * P4's line here read "the wallet that funded the deposit is not a party to the
  * spend" until 2026-08-16. It never checked that: `findDeposit` returned a
@@ -881,7 +902,7 @@ async function traceFunderEdges(rpc, payer, { historyLimit } = {}) {
   calls += 1;
   if (!sigs?.length) {
     return {
-      edges: [], historyLength: 0, truncated: false, calls, scanned: 0, deep: false,
+      edges: [], historyLength: 0, truncated: false, calls, scanned: 0, deep: false, namedKeys,
       inconclusive: 'no history returned for the payer',
     };
   }
@@ -897,6 +918,18 @@ async function traceFunderEdges(rpc, payer, { historyLimit } = {}) {
   const live = sigs.filter((s) => !s.err);
   const edges = [];
   const visited = new Set();
+  // EVERY account key of every transaction read, not only the ones that moved
+  // lamports. `systemTransfersIn` answers "who paid whom"; this answers "who is
+  // NAMED", which is a strictly larger set and is what the cheapest real-world
+  // extraction actually dumps:
+  //
+  //   $r.result.transaction.message.accountKeys | ForEach-Object { $_.pubkey }
+  //
+  // An address can sit in accountKeys as a read-only account, a co-signer, or a
+  // program argument and move nothing — invisible to every edge probe here, and
+  // right there in that one line of output. Collected during the walk that was
+  // happening anyway, so it costs no extra RPC call. See probe P11.
+  const namedKeys = new Set();
 
   const visit = async (signature, role) => {
     if (visited.has(signature)) return;
@@ -904,6 +937,7 @@ async function traceFunderEdges(rpc, payer, { historyLimit } = {}) {
     const tx = await getTx(rpc, signature);
     calls += 1;
     if (!tx) return;
+    for (const k of accountKeysOf(tx)) namedKeys.add(k);
     for (const t of systemTransfersIn(tx, payer)) {
       edges.push({ role, ...t, signature, slot: tx.slot });
     }
@@ -917,7 +951,7 @@ async function traceFunderEdges(rpc, payer, { historyLimit } = {}) {
   // The cheap answer, when there is one: the ends already name someone.
   if (edges.length) {
     return {
-      edges, historyLength: sigs.length, truncated, calls, scanned: visited.size, deep: false,
+      edges, historyLength: sigs.length, truncated, calls, scanned: visited.size, deep: false, namedKeys,
       inconclusive: null,
     };
   }
@@ -926,7 +960,7 @@ async function traceFunderEdges(rpc, payer, { historyLimit } = {}) {
   // been read, so pay for it.
   for (const s of live) await visit(s.signature, 'mid-life');
   return {
-    edges, historyLength: sigs.length, truncated, calls, scanned: visited.size, deep: true,
+    edges, historyLength: sigs.length, truncated, calls, scanned: visited.size, deep: true, namedKeys,
     inconclusive: null,
   };
 }
@@ -1812,6 +1846,83 @@ async function verifySpend(rpc, signature, opts = {}) {
     }
   }
 
+  // ── P11: the named address, by the method an auditor actually uses ────────
+  //
+  // WHY EVERY OTHER PROBE HERE IS TOO NARROW FOR THIS QUESTION
+  // ─────────────────────────────────────────────────────────
+  // P6, P8, P9 and P10 all reason about EDGES: who paid whom, decoded out of
+  // System instructions. That is the right shape for "is this payer funded",
+  // and it is the wrong shape for "can an auditor find my address", because the
+  // cheapest real extraction does not decode anything at all:
+  //
+  //   $r.result.transaction.message.accountKeys | ForEach-Object { $_.pubkey }
+  //
+  // That prints EVERY account named by a transaction. An address can sit there
+  // as a read-only account, a co-signer, an ATA owner or a bare program
+  // argument, move not one lamport, and be completely invisible to every edge
+  // probe in this file while being the first line of that output.
+  //
+  // So P11 asks the auditor's question directly: does `--wallet` appear in the
+  // account keys of ANY transaction reachable from this spend — the spend
+  // itself, the whole life of its payer, the whole life of the deposit's payer,
+  // and the payee's onward history. All of those transactions were fetched by
+  // the walks above, so this costs no extra RPC call.
+  //
+  // 🚨 ABSENCE IS ONLY CREDIBLE FROM A COMPLETE WALK. `traceFunderEdges` stops
+  // early when it FINDS an edge, so on a leaky payer it may have read 2
+  // transactions of 172 — and "not in those 2" is not "not in the 172". Every
+  // partial walk is reported as INCONCLUSIVE with the arithmetic shown. This is
+  // the same asymmetry the rest of the file uses: a hit is cheap, an absence is
+  // expensive, and only the absence has to be paid for in full.
+  if (namedWallet) {
+    const P11_NAME = 'the named wallet appears in no reachable transaction';
+    /** Walks whose key set is complete enough to argue absence from. */
+    const parts = [
+      { label: 'the spend transaction', keys: new Set(keys), complete: true, read: 1, of: 1 },
+      spendTrace && {
+        label: "the spend payer's history",
+        keys: spendTrace.namedKeys,
+        complete: !spendTrace.inconclusive && !spendTrace.truncated && spendTrace.deep,
+        read: spendTrace.scanned,
+        of: spendTrace.historyLength,
+      },
+      depositTrace && {
+        label: "the deposit payer's history",
+        keys: depositTrace.namedKeys,
+        complete: !depositTrace.inconclusive && !depositTrace.truncated && depositTrace.deep,
+        read: depositTrace.scanned,
+        of: depositTrace.historyLength,
+      },
+    ].filter(Boolean);
+
+    const hits = parts.filter((p) => p.keys?.has(namedWallet));
+    if (hits.length > 0) {
+      results.push(
+        probe('P11', P11_NAME, false,
+          `${namedWallet} is NAMED in ${hits.map((h) => h.label).join(' and ')}. ` +
+          'Found by listing account keys — no instruction decoded, no proof read, no edge ' +
+          'followed. This is the cheapest extraction there is and every other probe here can ' +
+          'miss it, because an address named by a transaction need not have moved a lamport in it.',
+          hits.length),
+      );
+    } else {
+      const partial = parts.filter((p) => !p.complete);
+      results.push(
+        probe('P11', P11_NAME, partial.length === 0,
+          partial.length === 0
+            ? `${namedWallet} appears in the account keys of NONE of the ` +
+              `${parts.reduce((n, p) => n + p.read, 0)} transactions read across ` +
+              `${parts.length} surface(s), each read in full. ⛔ This covers the transactions ` +
+              'REACHABLE FROM THIS SPEND and nothing else: it says the address is not in this ' +
+              'operation, never that the address is unused or unknown.'
+            : `INCONCLUSIVE: not found, but ${partial.map((p) => `${p.label} was read ` +
+              `${p.read} of ${p.of}`).join('; ')}. A walk that stopped early because it already ` +
+              'found an edge is not evidence of absence — see P6. Absence needs the whole history.',
+          partial.length === 0 ? 0 : null),
+      );
+    }
+  }
+
   // ── P5: context, never a pass/fail ────────────────────────────────────────
   const state = await readPoolState(rpc, poolPDA);
   const context = {
@@ -2580,10 +2691,44 @@ function selfTestChannelDecoders() {
     check('P10 · sees the onward sweep', sweptOut.length, 1);
     check('P10 · names where it went', sweptOut[0]?.counterparty, WALLET);
 
+    // ── P11: the gap between "moved money" and "is named" ──────────────────
+    //
+    // THE CASE THIS FILE EXISTED WITHOUT UNTIL 2026-08-17. A transaction that
+    // NAMES the wallet without transferring anything to or from the payer:
+    // WALLET sits in accountKeys as a plain account of a zk_shielded
+    // instruction. Every edge probe here decodes System instructions, so all of
+    // them see nothing — P6 reports a CLEAN payer. And the cheapest extraction
+    // there is,
+    //
+    //   $r.result.transaction.message.accountKeys | ForEach-Object { $_.pubkey }
+    //
+    // prints the wallet on its first line. Both halves are asserted together
+    // below, because the finding is the DIFFERENCE between them, not either one.
+    const namedNotPaid = {
+      FUND: tx([WALLET, PAYER, ZK_SHIELDED], [{ programIdIndex: 2, accounts: [0, 1], data: b58encode(Buffer.alloc(16)) }]),
+      SWEEP: tx([PAYER, ZK_SHIELDED], [{ programIdIndex: 1, accounts: [0], data: b58encode(Buffer.alloc(16)) }], 9),
+    };
+    const quietWalk = await traceFunderEdges(mkRpc(namedNotPaid), PAYER, { historyLimit: 401 });
+    check('P11 · P6 sees no edge at all here', quietWalk.edges.length, 0);
+    check('P11 · but the wallet IS named', quietWalk.namedKeys.has(WALLET), true);
+    // The walk must have been complete for that absence-of-edges to have meant
+    // anything, and complete is also what makes a P11 absence credible.
+    check('P11 · and the walk was deep, so absence would be arguable', quietWalk.deep, true);
+
+    // The other direction: a payer whose history genuinely never names the
+    // address. Without this, a P11 that returned every key it ever saw — or
+    // simply `true` — would pass the case above and be worthless.
+    check('P11 · a stranger is not named', quietWalk.namedKeys.has(ISSUER), false);
+
+    // And the partial-walk rule. The bracketed payer from case 1 stops early
+    // (2 of 2 here, but `deep` is false), so an absence read off it is not
+    // evidence — P11 reports INCONCLUSIVE on exactly this shape.
+    check('P11 · an early-stopping walk is not marked deep', leaky.deep, false);
+
     console.log(
       broken === 0
         ? '   PASS  every channel decoder answers in both directions.'
-        : `   ${broken} decoder control(s) broken — P6/P7/P8/P9/P10 results are not trustworthy.`,
+        : `   ${broken} decoder control(s) broken — P6/P7/P8/P9/P10/P11 results are not trustworthy.`,
     );
     return broken === 0 ? 0 : 1;
   })();
@@ -2711,9 +2856,16 @@ async function main() {
   const opts = {
     maxChunkTx: Number(arg('--max-chunk-tx', '200')),
     depositLimit: Number(arg('--deposit-limit', '400')),
-    // Not recorded into fixtures and not read back from a manifest: it changes
-    // no RPC request, so it can be supplied on any replay of any fixture, and
-    // pinning it would freeze one operator's question into everyone's control.
+    // ⚠️ An earlier version of this comment said `--wallet` is deliberately NOT
+    // read from a manifest, because "pinning it would freeze one operator's
+    // question into everyone's control". That was wrong for the one fixture it
+    // matters on. `verify/fixtures/v3-subscribe` is the NEGATIVE control: it
+    // exists to assert that a real, leaky v3 spend is still seen as leaky. "The
+    // buyer's wallet is findable in it" is exactly such an assertion, and P11
+    // only exists when a wallet is named — so leaving it off the manifest meant
+    // the cheapest extraction in the file had no frozen control at all.
+    //
+    // The command line still overrides, so anyone can point it at any address.
     wallet: arg('--wallet', null),
   };
 
@@ -2730,6 +2882,11 @@ async function main() {
     // other value can only produce replay misses.
     if (manifest.flags?.maxChunkTx) opts.maxChunkTx = manifest.flags.maxChunkTx;
     if (manifest.flags?.depositLimit) opts.depositLimit = manifest.flags.depositLimit;
+    // The manifest's wallet is a DEFAULT, not an override, unlike the two
+    // above: those shaped the recorded RPC requests, so a different value is a
+    // replay miss. `--wallet` shapes no request at all, so a caller naming
+    // their own address must win.
+    if (!opts.wallet && manifest.flags?.wallet) opts.wallet = manifest.flags.wallet;
     rpc = makeReplayRpc(replayDir);
     const sig = arg('--spend', manifest.spend);
     if (!sig) throw new Error(`${replayDir}/manifest.json names no spend`);
