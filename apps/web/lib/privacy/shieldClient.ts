@@ -630,6 +630,29 @@ export interface IssuedNoteOutcome {
 }
 
 /**
+ * What this deployment issues, so a caller can ask for what exists.
+ *
+ * Leaf indices are only meaningful inside ONE pool — leaf 34 of the 1 SOL pool
+ * and leaf 34 of the 0.1 SOL pool are different notes. A client that hard-codes
+ * a denomination therefore makes every treasury that chose another pool
+ * unreachable, and the symptom is an inventory that "does not match the chain",
+ * which reads like a derivation bug.
+ *
+ * Returns null when this deployment issues nothing, or could not say.
+ */
+export async function fetchIssuableNote(): Promise<{ denomination: number; token: PoolToken } | null> {
+  try {
+    const res = await fetch('/api/issue-note', { method: 'GET' });
+    const body: { ok?: boolean; configured?: boolean; denomination?: number; token?: string } =
+      await res.json();
+    if (!res.ok || !body.ok || !body.configured || !body.denomination) return null;
+    return { denomination: body.denomination, token: body.token === 'USDC' ? 'USDC' : 'SOL' };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Ask this deployment for a note IT deposited, sealed to this identity.
  *
  * WHY THIS IS THE DIFFERENCE BETWEEN A RUNBOOK AND A PRODUCT

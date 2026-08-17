@@ -89,6 +89,11 @@ const goodBody = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `stubEnv` does NOT auto-restore, so a case that stubs an extra variable
+  // leaves it set for every case after it — which is how a test asserting a 429
+  // started reading a denomination another test had pinned and failed on a 400.
+  // Restoring first makes each case state its whole environment.
+  vi.unstubAllEnvs();
   mintedClaims = new Set([CLAIM]);
   counters = new Map();
   vi.stubEnv('P01_TREASURY_POOL_SEED', SEED);
@@ -172,6 +177,21 @@ describe('the refusals that come before the gate', () => {
     mockGetStore.mockReturnValue(null);
     const res = await POST(req(goodBody()));
     expect(res.status).toBe(503);
+  });
+
+  it('refuses a pool this treasury did not deposit into, BEFORE spending the claim', async () => {
+    // Leaf indices only mean something inside one pool: leaf 34 of the 1 SOL
+    // pool and leaf 34 of the 0.1 SOL pool are different notes. Asking for the
+    // wrong one used to look the indices up in the wrong tree and fail on the
+    // on-chain check — after the claim had been consumed, for a reason that
+    // reads like a derivation bug.
+    vi.stubEnv('P01_TREASURY_NOTE_DENOMINATION', '1');
+    const res = await POST(req(goodBody({ denomination: 0.1 })));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/issues 1 SOL notes/);
+    // The claim survives, which is the point of checking here.
+    expect(counters.size).toBe(0);
   });
 
   it('429s an IP over its hourly allowance', async () => {

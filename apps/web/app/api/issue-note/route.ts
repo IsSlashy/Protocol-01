@@ -104,6 +104,24 @@ function treasurySeed(): Uint8Array | null {
  * to give, and the failure would look like success. A list an operator typed is
  * a list an operator can be asked about.
  */
+/**
+ * The denomination the treasury's inventory actually sits in.
+ *
+ * 🚨 LEAF INDICES ARE ONLY MEANINGFUL INSIDE ONE POOL. Every pool has its own
+ * tree, so leaf 34 of the 1 SOL pool and leaf 34 of the 0.1 SOL pool are
+ * different notes — and asking for the wrong one produces "the configured
+ * inventory does not match the chain", which is correct and reads like a
+ * derivation bug.
+ *
+ * The client used to hard-code what it asked for, so a treasury that deposited
+ * into any other pool was simply unreachable. Publishing it here lets the
+ * client ask for what exists instead of guessing.
+ */
+function inventoryDenomination(): number {
+  const raw = Number(process.env.P01_TREASURY_NOTE_DENOMINATION ?? '');
+  return Number.isFinite(raw) && raw > 0 ? raw : 0.1;
+}
+
 function inventoryLeaves(): number[] {
   return (process.env.P01_TREASURY_NOTE_LEAVES ?? '')
     .split(',')
@@ -134,6 +152,10 @@ export async function GET() {
     ok: true,
     configured: reasons.length === 0,
     inventorySize: leaves.length,
+    // The client asks for THIS, rather than assuming. Leaf indices only mean
+    // something inside one pool.
+    denomination: inventoryDenomination(),
+    token: 'SOL',
     reasons,
     note:
       'inventorySize counts what was CONFIGURED, not what is still unissued — reading the ' +
@@ -169,6 +191,15 @@ export async function POST(request: NextRequest) {
   }
   const pool = getPoolsForTokenV3(token).find((p) => p.denomination === denomination);
   if (!pool) return bad(400, `no ${denomination} ${token} pool is configured`);
+  // Refuse a request for a pool this treasury did not deposit into, BEFORE the
+  // claim is consumed. Without this the leaf indices would be looked up in the
+  // wrong tree and fail on the on-chain check — after the claim was spent, for a
+  // reason that reads like a derivation bug rather than a mismatched pool.
+  if (denomination !== inventoryDenomination()) {
+    return bad(400, `this deployment issues ${inventoryDenomination()} ${token} notes`, {
+      denomination: inventoryDenomination(),
+    });
+  }
 
   // Same posture as the funder: no durable counter, no handing over value. Here
   // it is doubly load-bearing, because the claim that stops a note being issued

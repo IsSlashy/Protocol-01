@@ -162,16 +162,12 @@ function noteKey(n: PoolNoteView): string {
   return `${n.pool}:${n.leafIndex}`;
 }
 
-/**
- * The denomination asked for when this identity holds no note and one is issued.
- *
- * The smallest live pool, deliberately. An issued note is the deployment's own
- * money and the whole denomination is locked by the subscription — so the
- * default has to be the cheapest thing that works, not the most convenient one
- * to reason about. A user who wants a larger note can deposit one, which is the
- * path that names them and which they can now be told about first.
- */
-const DEFAULT_ISSUED_DENOMINATION = 0.1;
+// The denomination of an issued note used to be a constant here, 0.1 SOL.
+// It is now ASKED of the deployment (`fetchIssuableNote`), because leaf indices
+// only mean something inside one pool: a treasury that deposited into the 1 SOL
+// pool was simply unreachable, and the symptom was "the configured inventory
+// does not match the chain" — correct, and indistinguishable from a derivation
+// bug.
 
 /** The numbered badge that makes the two-step journey read as one. */
 function StepBadge({ n }: { n: number }) {
@@ -587,6 +583,18 @@ export default function SubscribePanel({
     // funder's fallback.
     let spending = note;
     if (!spending) {
+      // Ask the deployment what it issues rather than assuming: leaf indices
+      // only mean something inside one pool, so a hard-coded denomination makes
+      // every treasury that chose another one unreachable.
+      const issuable = await shieldClient.fetchIssuableNote();
+      if (!issuable) {
+        setError(
+          'You hold no note and this deployment does not issue them, so there is nothing to ' +
+            'subscribe with. Nothing was spent. Deposit a note — and note that a note you ' +
+            'deposit yourself keeps every subscription reachable from your wallet.',
+        );
+        return;
+      }
       // Check affordability BEFORE redeeming, because a claim is consumed on
       // first redemption whether or not the subscription follows. The rendered
       // `blockedReason` cannot cover this: it computes periods from the selected
@@ -594,15 +602,15 @@ export default function SubscribePanel({
       // enabled and nothing else stands between a click and a note spent on a
       // subscription that funds zero periods.
       const issuedPeriods = periodsFunded(
-        DEFAULT_ISSUED_DENOMINATION,
-        decimals,
+        issuable.denomination,
+        decimalsForPoolToken(issuable.token),
         service.priceAtomic,
       );
       if (issuedPeriods === 0n) {
         setError(
-          `${service.name} costs more per period than the ${DEFAULT_ISSUED_DENOMINATION} ` +
-            `${token} note that would be issued, so it would fund nothing. Nothing was spent. ` +
-            `Deposit a larger note, or choose a vendor priced under ${DEFAULT_ISSUED_DENOMINATION} ${token}.`,
+          `${service.name} costs more per period than the ${issuable.denomination} ` +
+            `${issuable.token} note this deployment issues, so it would fund nothing. Nothing was ` +
+            `spent. Choose a vendor priced under ${issuable.denomination} ${issuable.token}.`,
         );
         return;
       }
@@ -612,8 +620,8 @@ export default function SubscribePanel({
         const issued = await shieldClient.requestIssuedNote({
           meta,
           walletPubkey: owner.toBase58(),
-          token,
-          denomination: DEFAULT_ISSUED_DENOMINATION,
+          token: issuable.token,
+          denomination: issuable.denomination,
           claimCode: claimCode.trim(),
           onProgress: setStep,
         });
