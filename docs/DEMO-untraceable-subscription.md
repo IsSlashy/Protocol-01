@@ -34,6 +34,38 @@ buyer.
 
 ## 2. What this is NOT — say this yourself, before you are asked
 
+### 2.0 Name the protected set out loud, first
+
+This defends against **a passive third-party chain analyst** — someone with a
+public RPC and nothing else. It does **not** defend against three parties who
+each hold the link by construction, and someone in the room will derive that
+list if you do not say it:
+
+**The MERCHANT, and it is the cheapest attack of all.** The retailer is
+`accountKeys[1]` of the subscribe, in cleartext, in the transaction the auditor
+already has. `license_commitment` is stored verbatim on chain
+(`subscribe_private_stark.rs:413`), and the shipped SDK does
+`blake3(decodeLicenseKey(key))` → matched vault and **returns it**
+(`packages/merchant-sdk/src/license.ts:317-335`). The buyer **must** present that
+key to get the thing they bought. Cost to the merchant: one hash and one
+`getProgramAccounts`. Nothing in this plan, in `PLAN-v4`, or in C7 touches it,
+and **zero probes look at it.**
+
+**The NOTE ISSUER needs no records.** §2 used to say "if they keep a record" —
+that is materially too weak. Note secrets are `HKDF(treasurySeed, poolPDA,
+counter)`, enumerable offline forever, and `subscriber_commitment`,
+`license_commitment`, the nullifier and the vault PDA are each a pure function of
+that secret. The treasury identifies every subscription it seeded by table
+lookup — with byte 160 deleted, and after any redeploy. Against the issuer the
+anonymity set is **one, unconditionally and permanently**.
+
+**The RPC PROVIDER is a stronger observer than the funder.** `PayApp.tsx:129`
+hands the pool worker the same endpoint the wallet adapter uses, so one provider
+account, one API key, one session sees the connected wallet's own queries **and**
+all ~172 ephemeral sends inside one ~80-second window. Every document names the
+funder as the off-chain observer; the funder sees one address and one amount,
+once.
+
 **It is not unlinkability.** The subscription publishes the note commitment in
 cleartext at instruction byte 160, and the deposit that created the note emitted
 that identical value. Anyone matches the two from public data — probe P4 does it
@@ -45,10 +77,18 @@ note knows who got it. If they keep a record, the link is intact and merely not
 public. That is the same trade Tornado Cash made with its relayers and it must
 be said in those words, not implied away.
 
-**The anonymity set is the treasury's unspent notes.** Measured 2026-08-16: the
-0.1 SOL pool held 34 leaves / 8 unspent, the 1 SOL pool 25 / 6, the 10 SOL pool
-0 / 0. Six notes is not an anonymity set. If you deposit four notes for the demo,
-say "four", not "the pool".
+**The anonymity set is ONE note — never quote a pool count.** An earlier version
+of this document said "the treasury's unspent notes" and cited "6 unspent". That
+is wrong and the code contradicts it: `stark_commitment` at byte 160 names **one
+specific leaf**, and P4 resolves it to its deposit in one hop — measure 1, pinned
+in the committed fixture. The note count never enters the auditor's computation
+at all. Say: **"one note — and it names the treasury, not the buyer."** That is
+the real claim and it is a good one. Inflating it to six invites someone to check.
+
+Worse if pressed: every deposit also names its `depositor: Signer`, so the tree
+partitions by depositor in ~48 RPC calls and the treasury's notes are a publicly
+labelled block. Live census 2026-08-17: 60 leaves ever, 14 unspent, 2 of 13 pools
+non-empty.
 
 **The funder is one address serving one deployment.** The observer's uncertainty
 grows by log2 of the number of users it serves *concurrently*. On a demo
@@ -215,13 +255,31 @@ is the tool refusing to call a partially-open system clean, and it is the reason
 the green lines are worth anything. A tool that agreed with you about everything
 would be evidence of nothing.
 
-To make it replayable without a live RPC — worth doing before the room, because
-the public devnet endpoint throttles:
+### 🚨 Record the fixture WITH `--wallet`, or P11 cannot pass
+
+Naming an address makes the payer walks read the **whole** history, because an
+absence is only credible from a complete read. A fixture recorded without
+`--wallet` holds only the two ends of each payer's life, and replaying it
+exhaustively hard-stops on the first transaction nobody recorded. The walk depth
+is written into the manifest, so a shallow fixture replays shallow and P11
+truthfully says INCONCLUSIVE.
 
 ```
-node verify/p01-verify.mjs --spend <SIG> --record verify/fixtures/demo-treasury
+node verify/p01-verify.mjs --spend <SIG> --wallet <BUYER> --record verify/fixtures/demo-treasury
 node verify/p01-verify.mjs --self-test --replay verify/fixtures/demo-treasury
 ```
+
+Do this **before** the room. The public devnet endpoint throttles, and the
+exhaustive walk is ~268 extra `getTransaction` calls — paid once at record time,
+free on every replay after.
+
+### 🚨 Re-run verify after ANY Recover click
+
+Recovery decides where a stranded ephemeral's residue goes, and one of those
+ephemerals is the one that signed the subscription. A recovery that cannot
+attribute the float now refuses — but a click that happens after your green run
+is a change to the chain that your green run did not measure. If someone presses
+Recover, the report is stale.
 
 The recorded fixture also fills a real gap: **no committed fixture currently
 exercises P10's PASS or FAIL branches**, because all three are subscribes or
@@ -231,14 +289,33 @@ synthetic v4s. Recording a real withdrawal would close that.
 
 ## 6. If someone asks "so is it private?"
 
-The true answer, short:
+The sentence that survives being checked, and only this one:
 
-> The buyer is not in these transactions. The subscription is still publicly
-> matchable to the deposit that funded it, because the note commitment is
-> published in the clear — that is a program-level fact and it needs a
-> redeploy, which is frozen until 4 September for measured soundness reasons.
-> What we removed is the payer channel, which was the cheapest attack: three
-> RPC calls and no cryptography. What remains is the commitment channel, and we
-> ship the tool that measures it.
+> The buyer's wallet address does not appear in the account keys of any
+> transaction reachable from this subscription — not the spend, not the spend
+> payer's history, not the deposit payer's history. Here is the tool, here is
+> the fixture, run it yourself.
+>
+> That is a statement about this operation. It is **not** a statement that the
+> buyer is unfindable. The merchant who validates their license key holds
+> customer-identity ↔ vault ↔ this transaction. Whoever handed them the note can
+> regenerate that link from their own seed without keeping any record. And the
+> anonymity set is one note, which names the treasury rather than the buyer.
+
+### Words that may not be said
+
+- **"untraceable"**, **"unlinkable"** — the commitment link is intact at five
+  published sites minimum and always will be before a redeploy. It terminates at
+  the treasury, which is a different and smaller claim.
+- **"the anonymity set is six"**, or any number derived from a pool's note count.
+  It is one note.
+- **"no one can tell which subscription is yours"** — the issuer always can, and
+  the merchant does the moment you use the thing you bought.
+- **"zero-knowledge"** of anything the prover produces. The prover is not ZK and
+  this repo has an executable positive control that recovers a private witness.
+- **"the buyer's wallet signs nothing"** — not before confirming on a real run
+  that the result says the funder paid. On a bundle built before the funder was
+  configured, it signs the pre-fund.
+- **"P11 passed"** if it printed INCONCLUSIVE. Read the arithmetic instead.
 
 See `docs/PLAN-v4-commitment-channel.md` for what closing the rest requires.
