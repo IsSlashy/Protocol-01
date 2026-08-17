@@ -1,6 +1,6 @@
 {
   "synthetic": true,
-  "note": "SYNTHETIC fixture — hand-built by generate.mjs, never touched any chain. It describes a hypothetical v4 spend whose instruction carries no commitment, so the self-test can prove the tool is CAPABLE of reporting a clean result. It is NOT evidence that any v4 exists, shipped, or is private.",
+  "note": "SYNTHETIC fixture — hand-built by generate.mjs, never touched any chain. It describes a hypothetical v4 spend whose instruction carries no commitment, so the self-test can prove the tool is CAPABLE of reporting a clean result. It is NOT evidence that any v4 exists, shipped, or is private. P9 added 2026-08-17: INCONCLUSIVE here (reported FAIL) because this synthetic spend publishes no commitment, so P4 resolves no deposit and there is no deposit payer to walk. Pinned as FAIL with no measure: a synthetic fixture must never be the thing that certifies a deposit-side green.",
   "spend": "2dJC8huEF77dCmdWWSKxcdgdvzfpo5WZuF7pxSvL2NzHyLqNNrTWGjrebocUgvNcEigbVCzWqeFHPumirAnMxikQ",
   "kind": "unshield_denominated_stark_v4",
   "flags": {
@@ -21,7 +21,8 @@
     "P4": "PASS",
     "P6": "PASS",
     "P7": "FAIL",
-    "P8": "FAIL"
+    "P8": "FAIL",
+    "P9": "FAIL"
   },
   "measure": {
     "P6": 0

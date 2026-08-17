@@ -23,6 +23,31 @@
  *   P6  the spend's fee payer cannot be traced to a funding wallet
  *   P7  no instruction argument outside the proof payload carries the commitment
  *   P8  no single wallet funded both the deposit and the spend
+ *   P9  the DEPOSIT's fee payer cannot be traced to a funding wallet
+ *
+ * 🚨 WHY P9 EXISTS, AND WHY IT IS NOT P6 TWICE
+ * ────────────────────────────────────────────
+ * P6 walks the SPEND payer; P8 walks both and reports only their INTERSECTION.
+ * Neither survives the change this repo is making: route the spend leg through
+ * a shared funder and P6 truthfully names the treasury, P8's two sets become
+ * disjoint and it reports PASS or INCONCLUSIVE — and the user's own wallet
+ * appears in NO line of a default run, while still being three RPC calls from
+ * the deposit. Nothing would have lied. The reading would just have stopped
+ * being printed, which for a verification tool is the same failure.
+ *
+ * P9 names the deposit payer's counterparties unconditionally. P8 already made
+ * that walk and threw it away, so the probe costs no extra RPC calls. MEASURED
+ * on the committed fixture: P9 FAIL, measure 2 — the deposit payer is bracketed
+ * by `BRop3akx…` on both ends (1573486080 lamports in, 570010780 out).
+ *
+ * --wallet <pubkey>
+ * ─────────────────
+ * A structural probe asks "is this payer bracketed by anything". `--wallet`
+ * asks the narrower question a structural probe cannot: is THIS address in
+ * there. P6 and P9 then say so either way, and P8 FAILS whenever the address
+ * appears on either side — because two disjoint counterparty sets are not a
+ * defence when the address you asked about is sitting in one of them. It
+ * changes no RPC request, so it can be added to any replay of any fixture.
  *
  * P4's line here read "the wallet that funded the deposit is not a party to the
  * spend" until 2026-08-16. It never checked that: `findDeposit` returned a
@@ -84,6 +109,7 @@
  *   node verify/p01-verify.mjs --spend <signature> [--rpc URL] [--record DIR]
  *   node verify/p01-verify.mjs --pool <poolPDA> [--limit N] [--rpc URL]
  *   node verify/p01-verify.mjs ... --pools <extra-pools.json>
+ *   node verify/p01-verify.mjs ... --wallet <pubkey>   name one address explicitly
  *
  * Exit code 0 = every probe passed (under --self-test: every control held).
  * 1 = a linkage survived (under --self-test: a control broke). 2 = the tool
@@ -649,18 +675,80 @@ async function scanProofChunks(rpc, payer, target, { maxTx = 200, onProgress } =
  * as "the payer is anonymous".
  */
 const SYSTEM_PROGRAM = '11111111111111111111111111111111';
+const SYS_IX_CREATE_ACCOUNT = 0;
 const SYS_IX_TRANSFER = 2;
+const SYS_IX_CREATE_ACCOUNT_WITH_SEED = 3;
+const SYS_IX_WITHDRAW_NONCE = 5;
+const SYS_IX_TRANSFER_WITH_SEED = 11;
 
-/** Decode a System `transfer`. Returns null for every other System instruction. */
+/**
+ * Decode any System instruction that MOVES LAMPORTS. Returns null for the ones
+ * that do not (`allocate`, `assign`, nonce init/advance/authorize).
+ *
+ * 🚨 WHY THIS IS NOT JUST `transfer`
+ * ──────────────────────────────────
+ * Until 2026-08-17 this matched instruction 2 and nothing else, and every probe
+ * that reads a funding edge was built on it. `transfer` is not the only way to
+ * put lamports on a key: `createAccount` funds and creates in one step,
+ * `createAccountWithSeed` and `transferWithSeed` do the same from a derived
+ * address, and `withdrawNonceAccount` pays out of a nonce account. A client that
+ * pre-funded its ephemeral with any of them would have made probe P6 report
+ * "no System transfer names a counterparty" — a GREEN verdict with the user's
+ * wallet exactly one hop away.
+ *
+ * That was never a hypothetical about attackers. It is the shape a well-meaning
+ * refactor takes: `createAccount` is the natural call when the destination is a
+ * fresh key, which an ephemeral always is. A probe whose blind spot is the
+ * idiomatic path is worse than no probe, because it certifies the failure.
+ *
+ * The returned `kind` travels with the edge so a verdict can say HOW the money
+ * moved. "Bracketed by two transfers" and "created by its funder" are different
+ * facts and a report that flattens them tells the reader less than it knows.
+ */
 function decodeSystemTransfer(data, accounts, keys) {
-  if (data.length < 12) return null;
-  if (data.readUInt32LE(0) !== SYS_IX_TRANSFER) return null;
-  if (accounts.length < 2) return null;
-  return {
-    source: keys[accounts[0]],
-    destination: keys[accounts[1]],
-    lamports: data.readBigUInt64LE(4),
-  };
+  if (data.length < 4) return null;
+  const at = (i) => keys[accounts[i]];
+  switch (data.readUInt32LE(0)) {
+    // { lamports: u64 } — accounts [from, to]
+    case SYS_IX_TRANSFER:
+      if (data.length < 12 || accounts.length < 2) return null;
+      return { source: at(0), destination: at(1), lamports: data.readBigUInt64LE(4), kind: 'transfer' };
+
+    // { lamports: u64, space: u64, owner: Pubkey } — accounts [payer, created]
+    case SYS_IX_CREATE_ACCOUNT:
+      if (data.length < 52 || accounts.length < 2) return null;
+      return { source: at(0), destination: at(1), lamports: data.readBigUInt64LE(4), kind: 'createAccount' };
+
+    // { base: Pubkey, seed: String, lamports: u64, space: u64, owner: Pubkey }
+    // — accounts [payer, created, base?]. The seed is length-prefixed, so the
+    // lamports field does not sit at a fixed offset.
+    case SYS_IX_CREATE_ACCOUNT_WITH_SEED: {
+      if (data.length < 44 || accounts.length < 2) return null;
+      const seedLen = Number(data.readBigUInt64LE(36));
+      const off = 44 + seedLen;
+      if (!Number.isSafeInteger(seedLen) || seedLen < 0 || data.length < off + 8) return null;
+      return {
+        source: at(0), destination: at(1), lamports: data.readBigUInt64LE(off),
+        kind: 'createAccountWithSeed',
+      };
+    }
+
+    // { lamports: u64 } — accounts [nonce, recipient, ...]
+    case SYS_IX_WITHDRAW_NONCE:
+      if (data.length < 12 || accounts.length < 2) return null;
+      return { source: at(0), destination: at(1), lamports: data.readBigUInt64LE(4), kind: 'withdrawNonce' };
+
+    // { lamports: u64, from_seed: String, from_owner: Pubkey }
+    // — accounts [derived source, base signer, destination]. The lamports leave
+    // the DERIVED address, so that is the source; naming the base signer instead
+    // would report an address that lost nothing.
+    case SYS_IX_TRANSFER_WITH_SEED:
+      if (data.length < 12 || accounts.length < 3) return null;
+      return { source: at(0), destination: at(2), lamports: data.readBigUInt64LE(4), kind: 'transferWithSeed' };
+
+    default:
+      return null;
+  }
 }
 
 /**
@@ -696,7 +784,13 @@ function systemTransfersIn(tx, payer) {
     // payer itself.
     const other = t.source === payer ? t.destination : t.destination === payer ? t.source : null;
     if (!other || other === payer) return;
-    found.push({ level, direction: t.source === payer ? 'out' : 'in', counterparty: other, lamports: t.lamports });
+    found.push({
+      level,
+      direction: t.source === payer ? 'out' : 'in',
+      counterparty: other,
+      lamports: t.lamports,
+      kind: t.kind,
+    });
   };
   for (const ix of tx.transaction.message.instructions) consider(ix, 'top');
   for (const group of tx.meta?.innerInstructions ?? []) {
@@ -970,8 +1064,36 @@ function probe(id, name, passed, detail, measure = null) {
   return { id, name, passed, detail, measure };
 }
 
+/**
+ * One sentence about a NAMED address, appended to a funding-edge verdict.
+ *
+ * WHY `--wallet` EXISTS
+ * ─────────────────────
+ * Every funding probe here answers a structural question — "is this payer
+ * bracketed by anything" — and structural answers get quieter as the client
+ * improves. Route the spend leg through a shared treasury and P6 truthfully
+ * reports the treasury, P8 truthfully reports two disjoint sets, and a reader
+ * skimming the run sees no user wallet anywhere. Nothing lied; the thing they
+ * came to check simply stopped being printed.
+ *
+ * `--wallet <pubkey>` asks the one question a structural probe cannot: is THIS
+ * address in there. It changes no verdict on its own (except P8's, below) and
+ * exists so the answer cannot go missing by accident.
+ */
+function namedWalletLine(namedWallet, trace, sideLabel) {
+  if (!namedWallet || !trace || trace.inconclusive) return '';
+  const hit = trace.edges.filter((e) => e.counterparty === namedWallet);
+  return hit.length > 0
+    ? ` ⛔ --wallet: ${namedWallet} IS among the ${sideLabel} payer's counterparties ` +
+      `(${hit.length} edge(s)).`
+    : ` --wallet: ${namedWallet} is NOT among the ${sideLabel} payer's ${trace.edges.length} ` +
+      `counterparty edge(s) over ${trace.scanned} transaction(s) read.`;
+}
+
 async function verifySpend(rpc, signature, opts = {}) {
   const chunkLimit = opts.maxChunkTx ?? 200;
+  /** `--wallet`: an address the operator wants named explicitly. See `namedWalletLine`. */
+  const namedWallet = opts.wallet ?? null;
   const tx = await getTx(rpc, signature);
   if (!tx) throw new Error(`transaction not found (RPC may have pruned it): ${signature}`);
 
@@ -1207,7 +1329,9 @@ async function verifySpend(rpc, signature, opts = {}) {
           funder.truncated
             ? `INCONCLUSIVE: the payer's history filled the requested page (${funder.historyLength}), so the ` +
               `oldest entry held is not provably its first transaction. An unread edge is not a closed one.`
-            : `no System transfer names a counterparty in any of this payer's ${funder.scanned} ` +
+            : namedWalletLine(namedWallet, funder, 'spend').trim() +
+              (namedWallet ? ' ' : '') +
+              `No System instruction names a counterparty in any of this payer's ${funder.scanned} ` +
               `transactions — top-level or inner (${funder.calls} RPC calls). Until 2026-08-16 this probe ` +
               `read only the two ends of the history and only top-level instructions, so this clean ` +
               `verdict now rests on the whole life rather than two samples of it. One-hop financial edge ` +
@@ -1230,7 +1354,8 @@ async function verifySpend(rpc, signature, opts = {}) {
           'the fee payer cannot be traced to a funding wallet',
           false,
           `the payer is bracketed by ${funder.edges.length} System transfer(s) naming a wallet, found in ` +
-            `${funder.calls} RPC calls over a ${funder.historyLength}-transaction life: ${worst}`,
+            `${funder.calls} RPC calls over a ${funder.historyLength}-transaction life: ${worst}` +
+            namedWalletLine(namedWallet, funder, 'spend'),
           funder.edges.length,
         ),
       );
@@ -1345,6 +1470,25 @@ async function verifySpend(rpc, signature, opts = {}) {
   // green P8 only ever exists inside a report where the note is already traced
   // to its deposit, and the run still exits 1. The danger is quoting this line
   // on its own, not the tool.
+  // The deposit payer's walk, done ONCE and shared with P9 below.
+  //
+  // It used to live inside P8's else-branch, which threw it away after a single
+  // set intersection. That was the whole problem: on a report where the spend
+  // leg is funded by a treasury and the deposit leg by the user, P8's sets are
+  // disjoint and P6 names the treasury — so the user's own wallet, which is
+  // sitting right there in this walk, appears in NO probe line. P9 is that
+  // reading, promoted to a verdict of its own. It costs nothing extra.
+  //
+  // `deposit.payer === payer` needs no second walk: the two payers are the same
+  // key, so `spendTrace` already IS this trace.
+  let depositTrace = null;
+  if (deposit !== null && deposit.payer) {
+    depositTrace =
+      deposit.payer === payer && spendTrace !== null
+        ? spendTrace
+        : await traceFunderEdges(rpc, deposit.payer, { historyLimit });
+  }
+
   {
     const pre = overlapPrecheck({ deposit, target, payer, spendTrace });
     let verdict;
@@ -1360,10 +1504,34 @@ async function verifySpend(rpc, signature, opts = {}) {
         1,
       );
     } else {
-      const depositTrace = await traceFunderEdges(rpc, pre.walk, { historyLimit });
       const out = overlapVerdict(depositTrace, spendTrace, deposit.payer, payer);
       if (out.stop) {
         verdict = probe('P8', P8_NAME, false, `INCONCLUSIVE: ${out.stop}`);
+      } else if (
+        namedWallet &&
+        (out.depositSide.has(namedWallet) || out.spendSide.has(namedWallet))
+      ) {
+        // The --wallet override, and the only place the flag changes a verdict.
+        //
+        // Disjointness is a real property and P8 reports it honestly, but it is
+        // the WRONG question once one side is funded by a treasury: the sets
+        // separate precisely because two different parties paid, which is
+        // exactly the arrangement under which a named wallet can sit in one of
+        // them and still be reached. An operator who supplies the address they
+        // care about is asking a narrower question than P8's, and it outranks
+        // P8's here — a green on a run where the address is printed on the next
+        // line is the report contradicting itself.
+        verdict = probe(
+          'P8', P8_NAME, false,
+          `--wallet ${namedWallet} appears on the ` +
+            [out.depositSide.has(namedWallet) ? 'DEPOSIT' : null,
+             out.spendSide.has(namedWallet) ? 'SPEND' : null].filter(Boolean).join(' and ') +
+            ' side. The two counterparty sets may still be disjoint — deposit ' +
+            `{${[...out.depositSide].join(', ')}}, spend {${[...out.spendSide].join(', ')}} — and ` +
+            'that disjointness is not a defence when the address you asked about is sitting in ' +
+            'one of them. See P6 and P9 for which edges name it.',
+          out.common.length,
+        );
       } else {
         // The cost of the two walks only. Reaching this point also required
         // P4's deposit search, which is the expensive part and is NOT counted
@@ -1399,6 +1567,76 @@ async function verifySpend(rpc, signature, opts = {}) {
       }
     }
     results.push(verdict);
+  }
+
+  // ── P9: the DEPOSIT payer's financial edge ────────────────────────────────
+  //
+  // WHY THIS EXISTS, AND WHY IT IS NOT A DUPLICATE OF P6
+  // ────────────────────────────────────────────────────
+  // P6 walks the SPEND payer. P8 walks both and reports only their
+  // INTERSECTION. Neither of those survives the change this repo is about to
+  // make: fund the spend leg from a shared treasury and P6 starts naming the
+  // treasury, while P8's two sets become disjoint and it reports INCONCLUSIVE
+  // or PASS. The user's wallet then appears in NO line of a default run —
+  // while it is still reachable from the deposit in three RPC calls, because
+  // `shieldToPool` has no funder path and the spend republishes the deposit's
+  // commitment in cleartext.
+  //
+  // That is the precise shape of a tool going quiet about a leak it can still
+  // see. P9 is the reading that must not be allowed to disappear: it names the
+  // deposit payer's counterparties unconditionally, whatever the spend leg does.
+  //
+  // A PASS here means what P6's means and no more: no System instruction at
+  // either end of THIS payer's life names a counterparty. It does not mean the
+  // depositor is unknown — the deposit itself names the pool, the amount and
+  // the commitment, and P4 walks from the spend to it.
+  {
+    const P9_NAME = 'the deposit payer cannot be traced to a funding wallet';
+    if (deposit === null) {
+      results.push(
+        probe('P9', P9_NAME, false,
+          target === null
+            ? 'INCONCLUSIVE: no commitment was published, so P4 had nothing to match and there is ' +
+              'no deposit payer to walk.'
+            : 'INCONCLUSIVE: P4 found no deposit for this commitment within the searched window. ' +
+              'That is a gap in what was read, not a clean result — see P4.'),
+      );
+    } else if (!deposit.payer || depositTrace === null) {
+      results.push(
+        probe('P9', P9_NAME, false,
+          `INCONCLUSIVE: the deposit ${deposit.signature.slice(0, 12)}… carries no message header, ` +
+          'so its fee payer is unknown.'),
+      );
+    } else if (depositTrace.inconclusive) {
+      results.push(probe('P9', P9_NAME, false, `INCONCLUSIVE: ${depositTrace.inconclusive}`));
+    } else if (depositTrace.edges.length === 0) {
+      results.push(
+        probe('P9', P9_NAME, !depositTrace.truncated,
+          depositTrace.truncated
+            ? `INCONCLUSIVE: the deposit payer's history filled the requested page ` +
+              `(${depositTrace.historyLength}), so its oldest entry is not provably its first ` +
+              'transaction. An unread edge is not a closed one.'
+            : `no System instruction names a counterparty in any of this deposit payer's ` +
+              `${depositTrace.scanned} transactions (${depositTrace.calls} RPC calls). One-hop ` +
+              'financial edge closed on the DEPOSIT side; a funder one hop further out is not ' +
+              'covered by this probe.' + namedWalletLine(namedWallet, depositTrace, 'deposit'),
+          depositTrace.truncated ? null : 0),
+      );
+    } else {
+      const named = depositTrace.edges
+        .map((e) => `${e.kind ?? 'transfer'} ${e.direction === 'in' ? 'from' : 'to'} ${e.counterparty} ` +
+          `(${e.lamports} lamports, ${e.signature ? `${e.signature.slice(0, 12)}…` : 'this tx'})`)
+        .join('; ');
+      results.push(
+        probe('P9', P9_NAME, false,
+          `the deposit's payer ${deposit.payer} is bracketed by ${depositTrace.edges.length} ` +
+          `lamport-moving System instruction(s) naming a wallet, found in ${depositTrace.calls} RPC ` +
+          `calls: ${named}. Funding the SPEND leg through a third party does not touch this: the ` +
+          'deposit is a separate transaction, paid for separately, and the spend republishes its ' +
+          'commitment in cleartext.' + namedWalletLine(namedWallet, depositTrace, 'deposit'),
+          depositTrace.edges.length),
+      );
+    }
   }
 
   // ── P5: context, never a pass/fail ────────────────────────────────────────
@@ -1786,6 +2024,109 @@ function selfTestChannelDecoders() {
     const quiet = await traceFunderEdges(mkRpc(clean), PAYER, { historyLimit: 401 });
     check('P6 decoder on an unfunded payer', quiet.edges.length, 0);
 
+    // 2b — THE FALSE GREEN THAT WAS AVAILABLE UNTIL 2026-08-17.
+    //
+    // `transfer` is not the only System instruction that moves lamports, and
+    // until this control existed the decoder matched nothing else. Every case
+    // below is a way to put money on an ephemeral that would have produced the
+    // case-2 verdict above — "no System transfer names a counterparty", a GREEN
+    // P6 — with the wallet exactly one hop away.
+    //
+    // `createAccount` is not an exotic choice: it is the IDIOMATIC one when the
+    // destination is a fresh key, which an ephemeral always is. A probe whose
+    // blind spot is the natural refactor certifies the failure it exists to
+    // catch, so each of these is pinned separately rather than as a group.
+    const sysCreateAccount = (lamports) => {
+      const d = Buffer.alloc(52);
+      d.writeUInt32LE(SYS_IX_CREATE_ACCOUNT, 0);
+      d.writeBigUInt64LE(lamports, 4);
+      d.writeBigUInt64LE(0n, 12); // space
+      return b58encode(d); // owner = 32 zero bytes
+    };
+    const sysCreateAccountWithSeed = (lamports, seed) => {
+      const seedBytes = Buffer.from(seed, 'utf8');
+      const d = Buffer.alloc(44 + seedBytes.length + 8 + 32);
+      d.writeUInt32LE(SYS_IX_CREATE_ACCOUNT_WITH_SEED, 0);
+      // base pubkey occupies 4..36 and is irrelevant to the amount
+      d.writeBigUInt64LE(BigInt(seedBytes.length), 36);
+      seedBytes.copy(d, 44);
+      d.writeBigUInt64LE(lamports, 44 + seedBytes.length);
+      return b58encode(d);
+    };
+    const sysTransferWithSeed = (lamports, seed) => {
+      const seedBytes = Buffer.from(seed, 'utf8');
+      const d = Buffer.alloc(20 + seedBytes.length + 32);
+      d.writeUInt32LE(SYS_IX_TRANSFER_WITH_SEED, 0);
+      d.writeBigUInt64LE(lamports, 4);
+      d.writeBigUInt64LE(BigInt(seedBytes.length), 12);
+      seedBytes.copy(d, 20);
+      return b58encode(d);
+    };
+    const sysWithdrawNonce = (lamports) => {
+      const d = Buffer.alloc(12);
+      d.writeUInt32LE(SYS_IX_WITHDRAW_NONCE, 0);
+      d.writeBigUInt64LE(lamports, 4);
+      return b58encode(d);
+    };
+
+    // One funding instruction, one clean sweep, so the edge count IS the
+    // decoder's answer about that instruction and nothing else.
+    const fundedBy = (data, keys, accounts) => ({
+      FUND: tx(keys, [{ programIdIndex: keys.indexOf(SYSTEM_PROGRAM), accounts, data }]),
+      SWEEP: tx([PAYER, ZK_SHIELDED], [{ programIdIndex: 1, accounts: [0], data: b58encode(Buffer.alloc(16)) }], 9),
+    });
+
+    const created = await traceFunderEdges(
+      mkRpc(fundedBy(sysCreateAccount(1_000_000n), [WALLET, PAYER, SYSTEM_PROGRAM], [0, 1])),
+      PAYER, { historyLimit: 401 },
+    );
+    check('P6 decoder sees createAccount funding', created.edges.length, 1);
+    check('P6 names the creator', created.edges[0]?.counterparty, WALLET);
+    check('P6 says how it was funded', created.edges[0]?.kind, 'createAccount');
+    check('P6 reads its amount', String(created.edges[0]?.lamports), '1000000');
+
+    // The seeded variants carry a length-prefixed string BEFORE the amount, so
+    // the lamports field sits at no fixed offset. A decoder that hard-coded
+    // offset 4 would report a wrong — usually absurd — figure rather than
+    // failing, which is the worse outcome of the two.
+    const seeded = await traceFunderEdges(
+      mkRpc(fundedBy(sysCreateAccountWithSeed(2_000_000n, 'p01-ephemeral'), [WALLET, PAYER, SYSTEM_PROGRAM], [0, 1])),
+      PAYER, { historyLimit: 401 },
+    );
+    check('P6 decoder sees createAccountWithSeed funding', seeded.edges.length, 1);
+    check('P6 reads the amount past the seed', String(seeded.edges[0]?.lamports), '2000000');
+
+    // transferWithSeed's accounts are [derived source, base signer, destination]
+    // — the destination is the THIRD, not the second. A decoder that assumed
+    // [from, to] would name the base signer as the recipient and conclude the
+    // payer was never touched.
+    const seededTransfer = await traceFunderEdges(
+      mkRpc(fundedBy(sysTransferWithSeed(3_000_000n, 'seed'), [WALLET, 'BASE1111111111111111111111111111111111', PAYER, SYSTEM_PROGRAM], [0, 1, 2])),
+      PAYER, { historyLimit: 401 },
+    );
+    check('P6 decoder sees transferWithSeed funding', seededTransfer.edges.length, 1);
+    check('P6 names the derived source', seededTransfer.edges[0]?.counterparty, WALLET);
+    check('P6 reads the seeded amount', String(seededTransfer.edges[0]?.lamports), '3000000');
+
+    const fromNonce = await traceFunderEdges(
+      mkRpc(fundedBy(sysWithdrawNonce(4_000_000n), [WALLET, PAYER, SYSTEM_PROGRAM], [0, 1])),
+      PAYER, { historyLimit: 401 },
+    );
+    check('P6 decoder sees a nonce withdrawal', fromNonce.edges.length, 1);
+
+    // The negative half. `allocate` (8) carries a u64 in the same place as
+    // `transfer` carries its lamports, and moves nothing. A decoder that
+    // switched on length instead of on the tag would invent an edge here — a
+    // false RED, which corrodes a tool just as surely in the other direction.
+    const allocate = Buffer.alloc(12);
+    allocate.writeUInt32LE(8, 0);
+    allocate.writeBigUInt64LE(999_999n, 4);
+    const allocated = await traceFunderEdges(
+      mkRpc(fundedBy(b58encode(allocate), [WALLET, PAYER, SYSTEM_PROGRAM], [0, 1])),
+      PAYER, { historyLimit: 401 },
+    );
+    check('P6 decoder ignores allocate, which moves nothing', allocated.edges.length, 0);
+
     // 3 — the commitment as a plain instruction argument.
     const argBuf = Buffer.alloc(24);
     argBuf.writeBigUInt64LE(TARGET, 12);
@@ -1975,6 +2316,43 @@ function selfTestChannelDecoders() {
     check('P8 · deposit payer funded the spend payer', V(trace([ISSUER]), trace([DEP_PAYER])).common?.length, 1);
     check('P8 · spend payer funded the deposit payer', V(trace([PAYER]), trace([FUNDER])).common?.length, 1);
 
+    // ── --wallet: the question a structural probe cannot ask ────────────────
+    //
+    // THE SHAPE THIS EXISTS FOR is one line above: `V(trace([ISSUER]),
+    // trace([FUNDER]))` — deposit paid by one party, spend by another, sets
+    // disjoint, P8 GREEN. That is exactly what this repo is about to build on
+    // the withdrawal leg, and in that report P6 names the treasury, P8 says
+    // "disjoint", and the user's wallet is printed by nothing. `--wallet` is
+    // the reading that survives it, so its controls are pinned here rather
+    // than left to a live run nobody replays.
+    const walletTrace = trace([ISSUER]);
+    check(
+      '--wallet · names an address that IS present',
+      namedWalletLine(ISSUER, walletTrace, 'deposit').includes('IS among'),
+      true,
+    );
+    check(
+      '--wallet · says so when the address is ABSENT',
+      namedWalletLine(FUNDER, walletTrace, 'deposit').includes('is NOT among'),
+      true,
+    );
+    // The flag must be inert when unused, or every existing verdict string
+    // changes and every pinned fixture drifts for no reason.
+    check('--wallet · adds nothing when not supplied', namedWalletLine(null, walletTrace, 'deposit'), '');
+    // An inconclusive walk resolved no set, so "not among them" would be a
+    // statement about a set that was never read — the false clean in miniature.
+    check(
+      '--wallet · stays silent on an inconclusive walk',
+      namedWalletLine(ISSUER, trace([ISSUER], { inconclusive: 'no history' }), 'deposit'),
+      '',
+    );
+    // And the override itself: disjoint sets, a green P8 by its own rule, and
+    // the named address sitting in one of them.
+    const disjoint = V(trace([ISSUER]), trace([FUNDER]));
+    check('--wallet · P8 would be green on these sets', disjoint.common?.length, 0);
+    check('--wallet · but the address is on the deposit side', disjoint.depositSide.has(ISSUER), true);
+    check('--wallet · and absent from the spend side', disjoint.spendSide.has(ISSUER), false);
+
     console.log(
       broken === 0
         ? '   PASS  all three channel decoders answer in both directions.'
@@ -2106,6 +2484,10 @@ async function main() {
   const opts = {
     maxChunkTx: Number(arg('--max-chunk-tx', '200')),
     depositLimit: Number(arg('--deposit-limit', '400')),
+    // Not recorded into fixtures and not read back from a manifest: it changes
+    // no RPC request, so it can be supplied on any replay of any fixture, and
+    // pinning it would freeze one operator's question into everyone's control.
+    wallet: arg('--wallet', null),
   };
 
   let rpc;
