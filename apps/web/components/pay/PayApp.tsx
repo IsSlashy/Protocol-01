@@ -225,8 +225,33 @@ export default function PayApp() {
       // Sign twice and compare: Ed25519 signMessage must be deterministic, or
       // the derived keys would be unrecoverable next session (Ledger may add
       // entropy). The P01 path signs locally and is always deterministic.
+      //
+      // ⚠️ TWO PROMPTS, AND THE SECOND ONE HAS TO WAIT FOR THE FIRST TO SETTLE.
+      // Chaining the calls with nothing between them asks the wallet extension
+      // to open a second popup in the same tick the first one is tearing down,
+      // and a wallet that serialises its requests can leave that second popup
+      // rendered but inert — "loading forever, cannot press confirm", with a
+      // request stuck in its queue that survives a page reload.
+      //
+      // A yield to the macrotask queue is the whole fix. It changes NOTHING
+      // about the check: still two independent signatures, still compared byte
+      // for byte, still refused if they differ. It only stops the second
+      // request racing the first one's teardown.
       const sig = await doSign(encoded);
-      const sig2 = await doSign(encoded);
+      await new Promise((r) => setTimeout(r, 250));
+      let sig2: Uint8Array;
+      try {
+        sig2 = await doSign(encoded);
+      } catch (e) {
+        // Wipe the first signature before surfacing: it is the root secret, and
+        // an early return here used to leave it in memory.
+        sig.fill(0);
+        throw new Error(
+          'The second signature prompt was not completed, so determinism could not be checked ' +
+            'and no keys were derived. This wallet asks twice ON PURPOSE — approve both. ' +
+            `(${(e as Error).message || 'rejected'})`,
+        );
+      }
       const deterministic = sig.length === sig2.length && sig.every((b, i) => b === sig2[i]);
       sig2.fill(0);
       if (!deterministic) {

@@ -48,8 +48,27 @@ worker. Nothing on a server can derive it, so it has to be exported once.
 Still connected as **A**, open:
 
 ```
-https://<deployment>/pay?treasury=1
+https://<deployment>/app?treasury=1
 ```
+
+⚠️ The route is **`/app`**, not `/pay`. The panels live under the `(pay)` route
+GROUP (`app/(pay)/app/page.tsx`), and a parenthesised segment does not appear in
+the URL — so `/pay` is a 404 and every doc that says otherwise sends the operator
+to a blank page.
+
+Three things must all be true before the box exists, because `PoolPanel` is
+mounted only when they are (`PayApp.tsx:460`):
+
+1. wallet **A** connected, chain **Solana**;
+2. the **derivation message signed** — a `signMessage`, not a transaction: it
+   creates nothing on chain and no RPC method can see it. Reject it and the
+   worker holds no keys, so the export answers *"No pool keys for this
+   identity"*;
+3. the **Deposit** tab opened at least once.
+
+A Phantom disconnect unmounts the panel and drops the derived keys, so the box
+vanishing mid-setup usually means the wallet locked or switched account, not
+that anything broke.
 
 The Deposit panel gains a red **"Reveal pool seed"** box. Press it and copy the
 64 hex characters.

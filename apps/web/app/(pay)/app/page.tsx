@@ -126,7 +126,7 @@ const DESCRIPTION =
 /* A link preview is shorter than a meta description and gets read on its own,
    so it leads with the two disclosures rather than the primitives. */
 const SOCIAL_DESCRIPTION =
-  "The devnet money surface: shield, withdraw, subscribe. Your wallet is the fee payer on every transaction, and a withdrawal can still be paired with its deposit. Not audited. No mainnet deployment.";
+  "The devnet money surface: shield, withdraw, subscribe. Depositing names your address, a spend can still be paired with the deposit it spends, and each screen says who paid for it. Not audited. No mainnet deployment.";
 
 /**
  * WHY openGraph, twitter AND keywords ARE ALL RESTATED HERE.
@@ -324,10 +324,25 @@ export default function PayPage() {
                 <span className="styx-chip">Not audited</span>
                 <span className="styx-chip">No mainnet deployment</span>
               </div>
+              {/* 🚨 THIS SAID "your wallet is the fee payer on every
+                  transaction this panel sends" AND THAT STOPPED BEING TRUE.
+                  Where a funder is configured it pays the rent and fees for a
+                  subscription or a withdrawal, and an issued note means the
+                  wallet does not deposit either — so the sentence overstated
+                  the exposure on exactly the paths built to remove it. The
+                  reverse of the usual failure, and just as much a claim the
+                  code contradicts: a banner nobody can trust in one direction
+                  is not trusted in the other either.
+
+                  What is unconditionally true is the DEPOSIT, which moves real
+                  value in and therefore names whoever makes it, and the fact
+                  that this browser sends its own transactions. Each screen
+                  states who paid for that screen's operation, because only the
+                  screen knows. */}
               <p className="styx-note" style={{ marginTop: "0.9rem" }}>
-                Test tokens only. Your wallet is the fee payer on every
-                transaction this panel sends, and this browser submits them
-                itself.
+                Test tokens only. Depositing moves real value in, so it always
+                comes from your address by name; each screen says who paid for
+                everything else. This browser submits its own transactions.
               </p>
             </div>
             <div className="styx-panel-body">
