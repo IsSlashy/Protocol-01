@@ -50,7 +50,7 @@ describe('the message that unlocks a buyer identity', () => {
     // means same seeds: an "ephemeral buyer" that is the wallet wearing a
     // label, holding the wallet's notes, at the wallet's addresses.
     const anon = buildAnonymousBuyerMessage({ walletPubkey: WALLET, origin: ORIGIN, index: 0 });
-    const own = buildDerivationMessage({ walletPubkey: WALLET, origin: ORIGIN });
+    const own = buildDerivationMessage({ walletPubkey: WALLET, origin: ORIGIN, chainTag: 'solana' });
     expect(anon).not.toBe(own);
   });
 
