@@ -398,30 +398,33 @@ export default function SubscribePanel({
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   /**
-   * Whether to refuse rather than pay from this wallet.
+   * ⛔ THERE IS NO SETTING. Subscribing here either keeps the buyer off chain or
+   * does not happen.
    *
-   * 🚨 DEFAULTS TO ON UNCONDITIONALLY, AND THE FIRST VERSION OF THIS DID NOT.
-   * It seeded itself from `funderConfigured()`, which reads
-   * `NEXT_PUBLIC_P01_FUNDER_TICKET` — a value Next inlines at BUILD time. On a
-   * deployment whose funder was switched on without a rebuild, that is `false`,
-   * so the checkbox was not rendered, `useState(false)` left the guard OFF, and
-   * the wallet paid. The protection disarmed itself in exactly the situation it
-   * was written for, silently, while `readiness.ready` was true.
+   * This used to be a checkbox, on by default, that a user could untick. That
+   * was wrong and the founder was right to call it: a property the user can
+   * turn off is not a property of the system, it is a preference — and this
+   * application exists for exactly one thing, which is that a subscription
+   * cannot be walked back to whoever bought it. Offering to sell the same thing
+   * without it makes the guarantee unstatable, because no observer of a
+   * finished subscription can tell which mode produced it.
    *
-   * So the default is ON, full stop, and it stays ON while the SERVER answer is
-   * still pending. A stale bundle now refuses rather than quietly charging the
-   * buyer in public. The cost of being wrong in this direction is a visible
-   * error; in the other it is a permanent public transaction the buyer cannot
-   * detect afterwards.
+   * It also put the decision in the worst possible place: in front of someone
+   * mid-purchase, phrased in terms of rotated tickets and drained treasuries,
+   * choosing between two outcomes they cannot evaluate.
+   *
+   * The cost is real and accepted: when the funder cannot serve, or the only
+   * note available is one this wallet deposited, the subscription STOPS. It
+   * does not quietly become the public kind. Nothing is spent when it stops.
    */
-  const [keepWalletOffChain, setKeepWalletOffChain] = useState(true);
+  const NEVER_EXPOSE_WALLET = true as const;
   /**
    * Whether a funder exists, ASKED OF THE SERVER rather than of the bundle.
    *
-   * `null` = still asking. The checkbox renders as soon as the build-time hint
-   * OR the server says yes, so a correctly-built deployment shows it instantly
-   * and a stale one shows it a round trip later — but the guard is already on
-   * either way, so nothing depends on the answer arriving in time.
+   * `NEXT_PUBLIC_P01_FUNDER_TICKET` is inlined at BUILD time, so a deployment
+   * that switched its funder on without rebuilding reports `false` from the
+   * bundle while the server says yes. Nothing gates on the answer arriving —
+   * the guarantee is unconditional — but the screen can say what is going on.
    */
   const [funderFromServer, setFunderFromServer] = useState<boolean | null>(null);
   /**
@@ -449,25 +452,9 @@ export default function SubscribePanel({
     () => funderConfigured() || funderFromServer === true,
     [funderFromServer],
   );
-  /**
-   * Stand the guard down — but only once the SERVER has said there is no funder.
-   *
-   * Without this, a deployment that legitimately has none would refuse every
-   * subscription, because the guard defaults on. The asymmetry is deliberate:
-   * turning it OFF requires a positive answer from the server, while leaving it
-   * ON requires nothing. "I have not heard back" keeps the protection; only
-   * "there is definitively no funder here" removes it, and the checkbox below
-   * then explains why it is gone rather than silently omitting it.
-   *
-   * It runs once, on that transition, so a user who deliberately unticked — or
-   * reticked — is never overridden afterwards.
-   */
-  const [funderAnswered, setFunderAnswered] = useState(false);
-  useEffect(() => {
-    if (funderAnswered || funderFromServer === null) return;
-    setFunderAnswered(true);
-    if (funderFromServer === false && !funderConfigured()) setKeepWalletOffChain(false);
-  }, [funderFromServer, funderAnswered]);
+  // No stand-down path. A deployment with no funder cannot sell a private
+  // subscription, so it does not sell one — it says so, and the button is
+  // blocked, rather than quietly serving the public kind under the same name.
   const [result, setResult] = useState<SubscribeFromPoolResult | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -638,9 +625,35 @@ export default function SubscribePanel({
       }
     }
 
-    const note_ = spending;
+    let note_ = spending;
     if (!note_) return;
     const call = subscribeModule.subscribeFromPool;
+
+    /**
+     * Swap in a note this deployment deposited, and say so.
+     *
+     * Reached when the note the user holds turns out to trace back to their own
+     * wallet — which cannot be known before `prepare` walks the deposit. The
+     * alternative is to stop and tell them to go and get a different note,
+     * which is a correct refusal and a useless product: they came to subscribe,
+     * not to learn why a note they own is the wrong kind of note.
+     */
+    async function swapForIssuedNote(): Promise<PoolNoteView | null> {
+      const issuable = await shieldClient.fetchIssuableNote();
+      if (!issuable) return null;
+      const issued = await shieldClient.requestIssuedNote({
+        meta,
+        walletPubkey: owner.toBase58(),
+        token: issuable.token,
+        denomination: issuable.denomination,
+        claimCode: claimCode.trim(),
+        onProgress: setStep,
+      });
+      setIssuedDisclosure(issued.disclosure);
+      setNotes((prev) => [...prev, issued.note]);
+      setSelectedNote(noteKey(issued.note));
+      return issued.note;
+    }
     if (!call) {
       setError(
         'subscribeFromPool has not been wired into lib/privacy/shieldClient.ts yet, so nothing ' +
@@ -652,6 +665,69 @@ export default function SubscribePanel({
     setResult(null);
     setSubmitting(true);
     try {
+      // 🚨 THE NOTE THE USER HOLDS MAY BE THE WRONG KIND, AND ONLY `prepare`
+      // CAN SAY SO. Spending a note whose deposit traces back to this wallet
+      // republishes that deposit's identifier, so the subscription is walkable
+      // to the buyer no matter who pays the fees — and nothing in the picker
+      // distinguishes such a note from any other.
+      //
+      // Refusing there would be correct and useless: the user came to
+      // subscribe, not to learn why a note they own is the wrong kind. So the
+      // note is swapped for one this deployment deposited, ONCE, and the
+      // attempt continues. If that cannot be done the error explains which of
+      // the two things was missing rather than repeating the refusal.
+      try {
+        const probe = await call({
+          meta,
+          token,
+          denomination: note_.denomination,
+          leafIndex: note_.leafIndex,
+          retailer: service.retailer,
+          rate: service.priceAtomic,
+          intervalSlots: service.intervalSlots,
+          serviceId: licenseServiceTag(service.slug, service.retailer.toBase58()),
+          owner,
+          encryptedNotes: await shieldClient.loadEncryptedNotes(meta, owner.toBase58()),
+          connection,
+          signOne,
+          onProgress: setStep,
+          neverExposeWallet: NEVER_EXPOSE_WALLET,
+        });
+        // It went through on the held note: that note was not this wallet's.
+        setResult(probe);
+        await shieldClient.recordSpentNote(meta, owner.toBase58(), noteKey(note_));
+        setSpentHere((prev) => new Set(prev).add(noteKey(note_)));
+        await recordSubscription(meta, owner.toBase58(), {
+          vaultPDA: typeof probe.vaultPDA === 'string' ? probe.vaultPDA : probe.vaultPDA.toBase58(),
+          retailer: service.retailer.toBase58(),
+          serviceTag: licenseServiceTag(service.slug, service.retailer.toBase58()),
+          serviceName: service.name,
+          token: note_.token,
+          denomination: note_.denomination,
+          rate: service.priceAtomic.toString(),
+          intervalSlots: service.intervalSlots.toString(),
+          openTxSig: probe.txSig,
+          pool: note_.pool,
+          leafIndex: note_.leafIndex,
+          openedAt: Date.now(),
+        });
+        void rescan();
+        return;
+      } catch (e) {
+        if ((e as Error).name !== 'SelfDepositedNoteError') throw e;
+        setStep('This note traces back to you — fetching one that does not...');
+        const swapped = await swapForIssuedNote();
+        if (!swapped) {
+          throw new Error(
+            'The only note you hold was deposited by your own wallet, so spending it would let ' +
+              'anyone reading the subscription reach you through that deposit — and this ' +
+              'deployment cannot issue you a different one. Nothing was spent. ' +
+              (claimCode.trim() ? '' : 'A claim code is needed to be issued a note.'),
+          );
+        }
+        note_ = swapped;
+      }
+
       const out = await call({
         meta,
         token,
@@ -679,7 +755,8 @@ export default function SubscribePanel({
         // the failure is invisible to the buyer and permanent on the chain.
         // Where there is no funder there is no choice, so the flag is off and
         // the result paragraph says plainly that the wallet paid.
-        neverExposeWallet: keepWalletOffChain,
+        // Not a setting. See NEVER_EXPOSE_WALLET.
+        neverExposeWallet: NEVER_EXPOSE_WALLET,
       });
       setResult(out);
       // Subscribing SPENDS the note: its nullifier is now on chain and the
@@ -1023,25 +1100,33 @@ export default function SubscribePanel({
             </span>
           </p>
         )}
+        {/* There was a checkbox here — "Never pay for this from my wallet",
+            on by default, unticked at will. It is gone.
+
+            A property the user can turn off is not a property of the system.
+            It also made the guarantee unstatable: no observer of a finished
+            subscription can tell which mode produced it, so "subscriptions here
+            cannot be walked back to the buyer" stopped being a sentence anybody
+            could say. And it put the decision in front of someone mid-purchase,
+            phrased in terms of rotated tickets and drained treasuries, choosing
+            between two outcomes they had no way to evaluate.
+
+            What replaces it is not a quieter default. It is that the private
+            outcome is the only one on offer: when it cannot be delivered the
+            subscription stops, and nothing is spent. */}
         {!result && (funderAvailable || funderFromServer === null) && (
-          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
-            <input
-              type="checkbox"
-              checked={keepWalletOffChain}
-              onChange={(e) => setKeepWalletOffChain(e.target.checked)}
-              className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-p01-cyan"
-            />
+          <p className="flex items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
+            <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
             <span>
-              <strong className="text-p01-text">Never pay for this from my wallet.</strong> The
-              funder covers the rent and fees so your address stays out of these transactions. If
-              it cannot — rotated ticket, drained treasury, rate limit, switched off — this{' '}
-              <strong className="text-p01-text">stops without subscribing</strong> rather than
-              quietly charging your wallet in public. Nothing is spent when it stops.
-              <br />
-              Unticking it means: if the funder is unavailable, your wallet pays and anyone reading
-              this subscription reaches it in three steps.
+              <strong className="text-p01-text">Your wallet will not pay for this.</strong> That is
+              how subscriptions work here, not a setting: the funder covers the rent and fees, and
+              the note is one this deployment deposited rather than one that names you. If either
+              cannot be delivered — funder unreachable, rate limited, switched off, or the only
+              note you hold is one you deposited yourself — this{' '}
+              <strong className="text-p01-text">stops without subscribing</strong>. Nothing is
+              spent when it stops.
             </span>
-          </label>
+          </p>
         )}
 
         {/* When this identity holds no note, one is issued and the user never
