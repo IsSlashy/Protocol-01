@@ -884,6 +884,18 @@ export interface PoolSubscribePrepareResponse {
    * exists to refuse.
    */
   depositPayer: string | null;
+  /**
+   * Who funded that payer — the address one hop behind the deposit.
+   *
+   * 🚨 THIS, NOT `depositPayer`, IS WHAT A CALLER MUST COMPARE THE WALLET
+   * AGAINST. A deposit is signed by a fresh ephemeral, so `depositPayer` is
+   * always a key nobody has heard of and never equals the wallet — a guard
+   * built on it cannot fire in the case it exists for. The human is one
+   * transfer behind: an ephemeral cannot pay a fee from nothing.
+   *
+   * `null` = could not be established. UNKNOWN, never safe.
+   */
+  depositFunder: string | null;
   /** The deposit's signature, so a caller can show or verify the claim. */
   depositSignature: string | null;
 }
@@ -2029,6 +2041,61 @@ function handlePoolNoteAddress(req: PoolNoteAddressRequest): PoolNoteAddressResp
  *
  * Neither value's input leaves the worker.
  */
+/**
+ * Who put the lamports on `payer` — one hop, from the oldest end of its life.
+ *
+ * WHY THIS HOP IS THE WHOLE POINT. A pool deposit is signed by a fresh
+ * ephemeral, so the deposit transaction names a key nobody has ever heard of.
+ * The address that matters is one transfer behind it: an ephemeral cannot pay a
+ * fee from nothing, and whoever funded it is the human. Probe P9 walks exactly
+ * this, and a client that decides "was this my own deposit?" without walking it
+ * is asking a question it cannot answer.
+ *
+ * Reads the OLDEST transactions of the payer's life, because that is where a
+ * funding transfer is: the key is created by being funded. Bounded to one small
+ * page — this runs on the subscribe path and must not turn into a history walk.
+ *
+ * Returns null when nothing can be established. Callers must treat null as
+ * UNKNOWN and never as safe: an unfunded-looking payer is far more likely to be
+ * a pruned history than a key that materialised with lamports.
+ */
+async function resolveFunderOfPayer(
+  conn: Connection,
+  payer: string,
+): Promise<string | null> {
+  try {
+    const key = new PublicKey(payer);
+    const sigs = await conn.getSignaturesForAddress(key, { limit: 50 });
+    if (sigs.length === 0) return null;
+    // Newest first, so the funding transfer is at the end.
+    for (const s of [...sigs].reverse().slice(0, 5)) {
+      if (s.err) continue;
+      const tx = await conn.getParsedTransaction(s.signature, {
+        maxSupportedTransactionVersion: 0,
+        commitment: 'confirmed',
+      });
+      if (!tx?.meta) continue;
+      const keys = tx.transaction.message.accountKeys.map((k) => k.pubkey.toBase58());
+      const idx = keys.indexOf(payer);
+      if (idx < 0) continue;
+      const gained = (tx.meta.postBalances[idx] ?? 0) - (tx.meta.preBalances[idx] ?? 0);
+      if (gained <= 0) continue;
+      // Balance deltas rather than decoded instructions, for the reason
+      // `recoverFloat` documents: a transfer can arrive as `transfer`, as
+      // `createAccount`, or through a CPI naming none of them, and the runtime's
+      // own numbers see all three.
+      for (let i = 0; i < keys.length; i++) {
+        if (i === idx) continue;
+        const delta = (tx.meta.postBalances[i] ?? 0) - (tx.meta.preBalances[i] ?? 0);
+        if (delta < 0) return keys[i];
+      }
+    }
+  } catch {
+    // Unknown, which the caller must not read as safe.
+  }
+  return null;
+}
+
 async function handlePoolSubscribePrepare(
   req: PoolSubscribePrepareRequest,
   onProgress?: (step: string) => void,
@@ -2043,6 +2110,29 @@ async function handlePoolSubscribePrepare(
   // so this is exactly the address a stranger reaches in one hop from the
   // subscription. Free: `commitments` is already in hand from the scan.
   const origin = commitments.get(note.receipt.commitment.toString()) ?? null;
+
+  // 🚨 AND THEN ONE HOP FURTHER, WHICH THE FIRST VERSION OF THIS DID NOT DO.
+  //
+  // `origin.depositPayer` is the fee payer of the insert transaction, and in
+  // this client that is ALWAYS a fresh ephemeral — a deposit is signed by
+  // `deriveShieldEphemeral`, never by the wallet. MEASURED on a real devnet
+  // shield: wallet `BRop…TjNN`, deposit fee payer `8Eq1jsbB…`.
+  //
+  // So comparing the connected wallet against `depositPayer` compares a wallet
+  // to an ephemeral, which never matches, and the guard built to catch "you
+  // deposited this note yourself" could not fire in the one case it exists for.
+  // The screen would then have said "your wallet did not sign or pay for this
+  // subscription" — true, and read as "nobody can reach me", while the actual
+  // walk is: deposit → its ephemeral → whoever funded that ephemeral → the
+  // wallet. That is one getSignaturesForAddress away, and it is precisely what
+  // probe P9 measures.
+  //
+  // So resolve the funder of the deposit's payer. Bounded: the ephemeral's
+  // funding transfer is the OLDEST entry of its short life, so a small page from
+  // the far end answers it. `null` stays `null` — unknown, never safe.
+  const depositFunder = origin?.depositPayer
+    ? await resolveFunderOfPayer(conn, origin.depositPayer)
+    : null;
 
   const ctx = await prepareSubscribeJob(
     note.receipt, pool, conn, candidate.seed, onProgress, storedPath,
@@ -2068,6 +2158,7 @@ async function handlePoolSubscribePrepare(
     denomination: pool.denomination,
     derivation: candidate.derivation,
     depositPayer: origin?.depositPayer ?? null,
+    depositFunder,
     depositSignature: origin?.signature ?? null,
   };
 }

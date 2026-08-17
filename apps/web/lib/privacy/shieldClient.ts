@@ -370,10 +370,27 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
   // deposit is safe. An unknown answer is refused under the flag for the same
   // reason an unreadable funder lookup is: this file does not convert "could
   // not see" into "there is nothing there".
+  // 🚨 COMPARED AGAINST `depositFunder`, NOT `depositPayer`. The first version
+  // of this used the payer and could therefore never fire: a deposit is signed
+  // by a fresh ephemeral, so its payer is a key nobody has heard of and never
+  // equals the wallet. MEASURED on a real devnet shield — wallet `BRop…TjNN`,
+  // deposit payer `8Eq1jsbB…`. The guard would have passed, the screen would
+  // have said "your wallet did not sign or pay for this subscription", and that
+  // true sentence would have been read as "nobody can reach me" while the walk
+  // deposit → ephemeral → funder → wallet was one call away.
+  //
+  // Either being unknown is refused. An unresolvable deposit is not a safe one:
+  // it is far more often a pruned history than an origin that does not exist.
   const selfDeposited =
-    prep.depositPayer === null || prep.depositPayer === owner.toBase58();
+    prep.depositPayer === null ||
+    prep.depositFunder === null ||
+    prep.depositPayer === owner.toBase58() ||
+    prep.depositFunder === owner.toBase58();
   if (params.neverExposeWallet && selfDeposited) {
-    throw new SelfDepositedNoteError(prep.depositPayer, prep.depositSignature);
+    throw new SelfDepositedNoteError(
+      prep.depositFunder ?? prep.depositPayer,
+      prep.depositSignature,
+    );
   }
 
   // ── Who pays ───────────────────────────────────────────────────────────────
@@ -421,7 +438,7 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     fundedBy,
     funderSignature,
     funderFallbackReason,
-    depositPayer: prep.depositPayer,
+    depositPayer: prep.depositFunder ?? prep.depositPayer,
     reachableViaDeposit: selfDeposited,
   };
 }

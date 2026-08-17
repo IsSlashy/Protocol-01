@@ -89,7 +89,11 @@ beforeEach(() => {
     requiredLamports: 1_035_725_040,
     denomination: 1,
     derivation: 'v1',
-    depositPayer: TREASURY.toBase58(),
+    // A deposit is ALWAYS signed by a fresh ephemeral, so the payer is a key
+    // nobody has heard of. The address that decides anything is the one that
+    // funded it — see `depositFunder`.
+    depositPayer: 'EPHEMERAL1111111111111111111111111111111111',
+    depositFunder: TREASURY.toBase58(),
     depositSignature: 'DEPOSITSIG',
   };
 });
@@ -105,7 +109,20 @@ describe('a note somebody else deposited', () => {
 
 describe('a note THIS wallet deposited', () => {
   beforeEach(() => {
-    prepareAnswer.depositPayer = OWNER.toBase58();
+    // 🚨 THE SHAPE THE FIRST VERSION OF THIS GUARD COULD NOT SEE. The payer
+    // stays an ephemeral — it always is — and the WALLET is one hop behind it.
+    // Measured on a real devnet shield: wallet BRop…TjNN, deposit payer
+    // 8Eq1jsbB…. Comparing the wallet to the payer never matches, so the guard
+    // passed, the screen said "your wallet did not sign or pay for this", and
+    // that true sentence read as "nobody can reach me" while
+    // deposit → ephemeral → funder → wallet was one RPC call away.
+    prepareAnswer.depositFunder = OWNER.toBase58();
+  });
+
+  it('is not fooled by the deposit being signed by an ephemeral', () => {
+    // Stated as its own case because it is the whole bug: the payer here is
+    // NOT the wallet, and the note is still the wallet's.
+    expect(prepareAnswer.depositPayer).not.toBe(OWNER.toBase58());
   });
 
   it('refuses before spending anything', async () => {
@@ -141,6 +158,7 @@ describe('a note THIS wallet deposited', () => {
 describe('a deposit that could not be found', () => {
   beforeEach(() => {
     prepareAnswer.depositPayer = null;
+    prepareAnswer.depositFunder = null;
     prepareAnswer.depositSignature = null;
   });
 
