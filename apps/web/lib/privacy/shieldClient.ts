@@ -218,6 +218,16 @@ export interface SubscribeParams {
   connection: Connection;
   signOne: SignOne;
   onProgress?: (step: string) => void;
+  /**
+   * Refuse rather than let the wallet pay. See `fundEphemeralForJob`.
+   *
+   * This is the only switch in this file that can turn a working subscription
+   * into a refusal, and it exists because the alternative is worse: a user told
+   * their wallet stays off chain, whose funder was unavailable, ends up with a
+   * subscription they cannot tell apart from the private one and a public
+   * transfer they cannot undo.
+   */
+  neverExposeWallet?: boolean;
 }
 
 export interface SubscribeOutcome {
@@ -295,6 +305,7 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     connection,
     signOne,
     onProgress,
+    neverExposeWallet: params.neverExposeWallet,
   });
   const { fundedBy, funderSignature, funderFallbackReason, sweepTo } = funding;
 

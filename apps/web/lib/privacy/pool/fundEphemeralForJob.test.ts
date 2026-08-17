@@ -18,7 +18,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Keypair, PublicKey, SystemProgram, Transaction, type Connection } from '@solana/web3.js';
 
-import { DirtyEphemeralError, fundEphemeralForJob } from './ephemeralFunder';
+import {
+  DirtyEphemeralError,
+  WalletExposureRefusedError,
+  fundEphemeralForJob,
+} from './ephemeralFunder';
 
 // A real keypair rather than a bare address: the wallet fallback SERIALIZES the
 // transaction it just had signed, and serialization rejects a missing
@@ -162,6 +166,75 @@ describe('the treasury never buys a note', () => {
     stubFunder('ok');
     const d = await fundEphemeralForJob(job({ valueLamports: 0 }));
     expect(d.fundedBy).toBe('funder');
+  });
+});
+
+describe('neverExposeWallet — the last way the buyer lands on chain', () => {
+  // Once the notes are deposited by someone else and the funder pays, the ONLY
+  // remaining route from a subscription to its buyer is this fallback. Every
+  // reason the funder does not serve arrives as one catch, and the fallback
+  // then SUCCEEDS: the subscription exists, nothing errors, and the wallet is
+  // accountKeys[0] of a public transfer bracketing the whole operation. The
+  // buyer cannot detect it afterwards and cannot undo it.
+
+  it('refuses instead of falling back when the funder cannot serve', async () => {
+    stubFunder('refuse');
+    await expect(
+      fundEphemeralForJob(job({ neverExposeWallet: true })),
+    ).rejects.toBeInstanceOf(WalletExposureRefusedError);
+    // Nothing was spent and nothing is stranded: the refusal happens before any
+    // lamport moves and before the wallet is even asked to sign.
+    expect(signed).toHaveLength(0);
+  });
+
+  it('carries the funder’s own reason, so the user can act on it', async () => {
+    // "It failed" is not actionable. A 429, a rotated ticket and a drained
+    // treasury need three different responses.
+    stubFunder('refuse');
+    await expect(
+      fundEphemeralForJob(job({ neverExposeWallet: true })),
+    ).rejects.toThrow(/too many funding requests/);
+  });
+
+  it('refuses when NO funder is configured at all', async () => {
+    // The case the guard would miss if it only wrapped the catch: the funder was
+    // never asked, so there is no failure to catch, and the wallet pays. To a
+    // user who ticked the box that is the same betrayal by a different route.
+    vi.stubEnv('NEXT_PUBLIC_P01_FUNDER_TICKET', '');
+    await expect(
+      fundEphemeralForJob(job({ neverExposeWallet: true })),
+    ).rejects.toBeInstanceOf(WalletExposureRefusedError);
+    expect(signed).toHaveLength(0);
+  });
+
+  it('refuses a value-bearing job, which the funder may never cover', async () => {
+    // A deposit can never be funder-paid, so under this flag it can never run.
+    // Refusing is right: the alternative is charging the wallet in public for
+    // the one operation that is guaranteed to name it.
+    stubFunder('ok');
+    await expect(
+      fundEphemeralForJob(job({ neverExposeWallet: true, valueLamports: DEPOSIT_VALUE })),
+    ).rejects.toBeInstanceOf(WalletExposureRefusedError);
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it('changes NOTHING when the funder does serve', async () => {
+    // The negative control. A flag that also altered the happy path would be
+    // changing behaviour it was not asked to change.
+    stubFunder('ok');
+    const d = await fundEphemeralForJob(job({ neverExposeWallet: true }));
+    expect(d.fundedBy).toBe('funder');
+    expect(d.sweepTo).toBe(FUNDER);
+    expect(signed).toHaveLength(0);
+  });
+
+  it('still falls back when the flag is OFF', async () => {
+    // The other negative control: a deployment with no funder must keep working
+    // for users who did not ask for this.
+    stubFunder('refuse');
+    const d = await fundEphemeralForJob(job({ neverExposeWallet: false }));
+    expect(d.fundedBy).toBe('wallet');
+    expect(signed).toHaveLength(1);
   });
 });
 

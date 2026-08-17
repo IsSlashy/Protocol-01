@@ -195,6 +195,25 @@ export interface JobFundingRequest {
   valueLamports: number;
   /** The user's wallet: the fallback payer, and the fallback sweep target. */
   owner: PublicKey;
+  /**
+   * Refuse the job outright rather than let the wallet pay for it.
+   *
+   * 🚨 WHY THIS IS NOT PARANOIA. Every reason the funder does not serve — a
+   * rotated ticket, a drained treasury, a 429, an operator switching it off, a
+   * missing KV backend — arrives here as one `catch`, and the fallback then
+   * SUCCEEDS. The subscription exists, the user is charged, nothing errors, and
+   * their wallet is now `accountKeys[0]` of a public transfer that brackets the
+   * whole operation. The failure is not that the funder was unavailable; it is
+   * that being unavailable silently changed what the user bought.
+   *
+   * A user who has been told "your wallet stays off chain" has made a decision.
+   * Quietly delivering the other thing because the first was unavailable is the
+   * one outcome they cannot detect afterwards and cannot undo. Refusing costs
+   * them a retry; falling back costs them the property they came for.
+   *
+   * Default false, because a deployment with no funder must still work.
+   */
+  neverExposeWallet?: boolean;
   connection: Connection;
   /** Sign one transaction with the connected wallet. */
   signOne: (tx: Transaction) => Promise<Transaction>;
@@ -230,6 +249,25 @@ export class DirtyEphemeralError extends Error {
         'that can only be swept to one of them.',
     );
     this.name = 'DirtyEphemeralError';
+  }
+}
+
+/**
+ * Thrown when `neverExposeWallet` was set and the funder could not serve.
+ *
+ * Named so the UI can say the right thing: this is NOT "the subscription
+ * failed", it is "the subscription was not made, because making it would have
+ * put your wallet on chain and you asked it not to". Nothing was spent and
+ * nothing is stranded — the refusal happens before any lamport moves.
+ */
+export class WalletExposureRefusedError extends Error {
+  constructor(readonly funderReason: string) {
+    super(
+      'Stopped before spending anything: the funder could not cover this job, and paying for it ' +
+        `from your own wallet would put your address on chain — which you asked to avoid. The ` +
+        `funder said: ${funderReason}`,
+    );
+    this.name = 'WalletExposureRefusedError';
   }
 }
 
@@ -302,6 +340,16 @@ export async function fundEphemeralForJob(
       funderFallbackReason = e instanceof Error ? e.message : String(e);
       req.onProgress?.('The funder could not cover this job — falling back to your wallet.');
     }
+  }
+
+  // The refusal, before any lamport moves and before the wallet is even asked
+  // to sign. Placed here rather than inside the catch above so it covers BOTH
+  // reasons the wallet would otherwise pay: the funder failing, and the funder
+  // never having been asked (no funder configured, or a value-bearing job).
+  if (fundedBy === 'wallet' && req.neverExposeWallet) {
+    throw new WalletExposureRefusedError(
+      funderFallbackReason ?? 'this deployment has no funder configured.',
+    );
   }
 
   if (fundedBy === 'wallet') {

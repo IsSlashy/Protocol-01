@@ -37,6 +37,7 @@ import {
 
 import * as shieldClient from '@/lib/privacy/shieldClient';
 import { licenseServiceTag } from '@/lib/privacy/license';
+import { funderConfigured } from '@/lib/privacy/pool/ephemeralFunder';
 import type { PoolToken } from '@/lib/privacy/pool/denominatedPool';
 import type { PoolNoteView } from '@/lib/privacy/worker/poolHandlers';
 import {
@@ -85,6 +86,16 @@ export interface SubscribeFromPoolParams {
   connection: Connection;
   signOne: (tx: Transaction) => Promise<Transaction>;
   onProgress?: (step: string) => void;
+  /**
+   * Refuse the subscription rather than pay for it from this wallet.
+   *
+   * The fallback it disables is the only remaining way a buyer lands on chain
+   * once the notes are deposited by someone else and the funder pays: every
+   * reason the funder does not serve arrives as one `catch`, and the fallback
+   * then SUCCEEDS. The subscription exists, nothing errors, and the wallet is
+   * `accountKeys[0]` of a public transfer that brackets the whole operation.
+   */
+  neverExposeWallet?: boolean;
 }
 
 export interface SubscribeFromPoolResult {
@@ -367,6 +378,16 @@ export default function SubscribePanel({
 
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Whether to refuse rather than pay from this wallet.
+   *
+   * Defaults to ON when this deployment has a funder, and is not offered at all
+   * when it does not — there is nothing to choose between when the wallet is
+   * the only payer available, and a switch that cannot change anything reads as
+   * a protection that exists.
+   */
+  const funderAvailable = useMemo(() => funderConfigured(), []);
+  const [keepWalletOffChain, setKeepWalletOffChain] = useState(funderAvailable);
   const [result, setResult] = useState<SubscribeFromPoolResult | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -493,6 +514,13 @@ export default function SubscribePanel({
         connection,
         signOne,
         onProgress: setStep,
+        // Default ON wherever a funder exists. Configuring one is a statement
+        // that this deployment does not want buyers on chain, and honouring it
+        // only when it happens to be reachable is honouring it not at all —
+        // the failure is invisible to the buyer and permanent on the chain.
+        // Where there is no funder there is no choice, so the flag is off and
+        // the result paragraph says plainly that the wallet paid.
+        neverExposeWallet: keepWalletOffChain,
       });
       setResult(out);
       // Subscribing SPENDS the note: its nullifier is now on chain and the
@@ -819,6 +847,30 @@ export default function SubscribePanel({
             subscription ends goes to the vendor, rent included.
           </p>
         </div>
+
+        {/* Offered only where there is something to choose between. With no
+            funder the wallet is the only possible payer, and a switch that
+            cannot change the outcome reads as a protection that exists. */}
+        {funderAvailable && !result && (
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
+            <input
+              type="checkbox"
+              checked={keepWalletOffChain}
+              onChange={(e) => setKeepWalletOffChain(e.target.checked)}
+              className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-p01-cyan"
+            />
+            <span>
+              <strong className="text-p01-text">Never pay for this from my wallet.</strong> The
+              funder covers the rent and fees so your address stays out of these transactions. If
+              it cannot — rotated ticket, drained treasury, rate limit, switched off — this{' '}
+              <strong className="text-p01-text">stops without subscribing</strong> rather than
+              quietly charging your wallet in public. Nothing is spent when it stops.
+              <br />
+              Unticking it means: if the funder is unavailable, your wallet pays and anyone reading
+              this subscription reaches it in three steps.
+            </span>
+          </label>
+        )}
 
         {error && (
           <p className="flex items-start gap-1.5 text-sm text-p01-red">
