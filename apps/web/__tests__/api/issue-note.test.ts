@@ -34,6 +34,29 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
   };
 });
 
+/**
+ * A pool history that answers but matches nothing.
+ *
+ * Enough to reach the inventory loop, which is what the claim and idempotency
+ * cases are about, and NOT enough to reach the sealing step — which would drag
+ * tweetnacl into jsdom, where `instanceof Uint8Array` fails across realms on
+ * bytes that are perfectly good. The sealing assertions live in the pool suite,
+ * which runs in node.
+ *
+ * The route then answers 500 "does not match the chain", after claiming the
+ * leaf. That is the state these cases inspect.
+ */
+vi.mock('@/lib/privacy/pool/denominatedPool', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/privacy/pool/denominatedPool')>();
+  return {
+    ...actual,
+    fetchPoolCommitments: vi.fn(async () => ({
+      get: () => undefined,
+      values: () => [] as unknown[],
+    })),
+  };
+});
+
 import { createNoteEncryptionAddress } from '@/lib/privacy/pool/noteCrypto';
 import { POST } from '@/app/api/issue-note/route';
 
@@ -143,6 +166,75 @@ describe('the payment gate', () => {
     await POST(req(goodBody()));
     const again = await POST(req(goodBody()));
     expect(again.status).toBe(409);
+  });
+});
+
+describe('an inventory leaf that was already handed out', () => {
+  /** A KV that remembers, so the idempotency branch can be reached. */
+  function rememberingKv() {
+    const scalars = new Map<string, unknown>();
+    return {
+      incr: vi.fn(async (key: string) => {
+        const next = (counters.get(key) ?? 0) + 1;
+        counters.set(key, next);
+        return next;
+      }),
+      get: vi.fn(async (key: string) => {
+        if (key.startsWith('p01:note:claim-minted:')) {
+          return mintedClaims.has(key.replace('p01:note:claim-minted:', '')) ? 'paid-ref' : null;
+        }
+        return scalars.get(key) ?? null;
+      }),
+      set: vi.fn(async (key: string, value: unknown) => {
+        scalars.set(key, value);
+      }),
+      expire: vi.fn(),
+    };
+  }
+
+  it('is re-issued to the SAME recipient rather than reported as empty', async () => {
+    // The leaf used to be consumed outright before the client could confirm it
+    // had opened the note, so any failure after that point destroyed the
+    // inventory as well as the claim and the retry got "the note inventory is
+    // empty". MEASURED on two consecutive live runs. In production that is a
+    // paying customer's note burned by a transient error.
+    //
+    // Re-sealing the same note to the same address gives them what they paid
+    // for, because it IS the same note: one commitment, one nullifier,
+    // spendable exactly once by whoever holds the secrets.
+    // ONE leaf in stock, so "was it re-issued" and "was the next one handed out
+    // instead" cannot be confused with each other.
+    vi.stubEnv('P01_TREASURY_NOTE_LEAVES', '23');
+    mockGetStore.mockReturnValue(rememberingKv());
+    const first = await POST(req(goodBody()));
+    // The chain is not reachable here, so it stops at the history read — after
+    // the leaf has been claimed, which is the state this case is about.
+    expect(first.status).not.toBe(503);
+
+    mintedClaims.add('SECOND-CLAIM-CODE-AAAA');
+    const again = await POST(req(goodBody({ claimCode: 'SECOND-CLAIM-CODE-AAAA' })));
+    expect(again.status).not.toBe(503);
+    expect(await again.json()).not.toMatchObject({ error: expect.stringMatching(/inventory is empty/) });
+  });
+
+  it('is NOT re-issued to a different recipient', async () => {
+    // ⛔ Two people holding one note is a race where the loser paid for
+    // nothing. No amount of retry convenience is worth manufacturing that.
+    vi.stubEnv('P01_TREASURY_NOTE_LEAVES', '23');
+    mockGetStore.mockReturnValue(rememberingKv());
+    await POST(req(goodBody()));
+
+    mintedClaims.add('OTHER-CLAIM-CODE-AAAAA');
+    const other = await POST(
+      req(
+        goodBody({
+          claimCode: 'OTHER-CLAIM-CODE-AAAAA',
+          recipientAddress: createNoteEncryptionAddress(new Uint8Array(32).fill(9)),
+        }),
+      ),
+    );
+    expect(other.status).toBe(503);
+    expect((await other.json()).error).toMatch(/inventory is empty/);
   });
 });
 

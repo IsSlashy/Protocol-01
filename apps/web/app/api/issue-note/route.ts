@@ -317,13 +317,47 @@ export async function POST(request: NextRequest) {
     // callers be handed the same note — and a note is spent once, so the second
     // buyer's subscription would fail on a nullifier collision after ~150
     // uploads and ~1 SOL of buffer rent.
+    const claimKey = `p01:note:issued:${poolKey}:${leafIndex}`;
     let claim: number;
     try {
-      claim = await kv.incr(`p01:note:issued:${poolKey}:${leafIndex}`);
+      claim = await kv.incr(claimKey);
     } catch (e) {
       return bad(503, `the inventory could not be claimed: ${(e as Error).message}`);
     }
-    if (claim !== 1) continue; // already issued
+    if (claim !== 1) {
+      // 🚨 IDEMPOTENT FOR THE SAME RECIPIENT, and it has to be.
+      //
+      // The leaf used to be consumed outright the first time it was handed out,
+      // before the client could confirm it had opened the note. So any failure
+      // after this point — a bad field in the blob, a lost tab, a reload —
+      // destroyed the inventory as well as the claim, and the retry got "the
+      // note inventory is empty". MEASURED: it happened on the first live run,
+      // and again on the second.
+      //
+      // In production that is a paying customer's note burned by a transient
+      // error. Re-sealing the SAME note to the SAME address gives them what
+      // they already paid for, because it IS the same note: one commitment, one
+      // nullifier, spendable exactly once by whoever holds the secrets.
+      //
+      // ⛔ A DIFFERENT address is refused. Two people holding one note is a race
+      // where the loser paid for nothing, and no amount of convenience is worth
+      // manufacturing that.
+      let previous: string | null = null;
+      try {
+        previous = await kv.get<string>(`${claimKey}:to`);
+      } catch {
+        // Unreadable: treat as claimed by someone else and move on.
+      }
+      if (previous !== recipientAddress) continue;
+    } else {
+      // Record who it went to, so the branch above can recognise a retry. Best
+      // effort: a lost write costs an inventory slot, never a double issue.
+      try {
+        await kv.set(`${claimKey}:to`, recipientAddress);
+      } catch {
+        /* the leaf stays claimed, which is the safe direction */
+      }
+    }
 
     // ⚠️ ARGUMENT ORDER IS (nullifierPreimage, secret, blinding, tokenMintField)
     // and both of the first two are bigints, so getting them the wrong way round
