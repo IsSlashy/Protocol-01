@@ -399,7 +399,25 @@ export async function fundEphemeralForJob(
 
   if (fundedBy === 'wallet') {
     req.onProgress?.('Approve the funding transaction in your wallet...');
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    // 🚨 `finalized`, NOT `confirmed`, and only on the transaction a WALLET signs.
+    //
+    // "Transaction simulation failed: Blockhash not found" with empty logs is
+    // what `confirmed` produces here, and the reason is that two different nodes
+    // are involved. We fetch the blockhash from OUR RPC; the wallet extension
+    // simulates with ITS OWN. A `confirmed` blockhash is seconds old and may not
+    // have reached the wallet's node yet — and the gap is not milliseconds, it
+    // is however long the human takes to read the popup and press approve.
+    //
+    // A `finalized` blockhash is one every node already has. It costs a little
+    // validity window (~60-90s instead of the full ~120s) and buys the thing
+    // that actually matters: the transaction can be simulated by a node we do
+    // not control.
+    //
+    // The ephemeral's own transactions keep `confirmed` deliberately — we build,
+    // sign and submit those ourselves through one connection, with no human and
+    // no second node in between, and there the fresher blockhash is the better
+    // one.
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
     const fundTx = new Transaction().add(
       SystemProgram.transfer({
         fromPubkey: owner,

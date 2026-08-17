@@ -43,10 +43,16 @@ let ephemeral: string;
 let signed: Transaction[] = [];
 let fetchCalls: string[] = [];
 
+/** Commitment the wallet-signed transaction asked its blockhash at. */
+let blockhashCommitment: string | undefined;
+
 function fakeConnection(balance = 0): Connection {
   return {
     getBalance: async () => balance,
-    getLatestBlockhash: async () => ({ blockhash: BLOCKHASH, lastValidBlockHeight: 1 }),
+    getLatestBlockhash: async (c?: string) => {
+      blockhashCommitment = c;
+      return { blockhash: BLOCKHASH, lastValidBlockHeight: 1 };
+    },
     sendRawTransaction: async () => 'FUNDSIG',
     confirmTransaction: async () => ({ value: { err: null } }),
   } as unknown as Connection;
@@ -226,6 +232,23 @@ describe('neverExposeWallet — the last way the buyer lands on chain', () => {
     expect(d.fundedBy).toBe('funder');
     expect(d.sweepTo).toBe(FUNDER);
     expect(signed).toHaveLength(0);
+  });
+
+  it('takes the wallet transaction’s blockhash at FINALIZED, not confirmed', async () => {
+    // "Transaction simulation failed: Blockhash not found", empty logs, on a
+    // wallet-signed pre-fund. Two nodes are involved: we fetch the blockhash
+    // from OUR RPC and the wallet extension simulates with ITS OWN. A
+    // `confirmed` blockhash is seconds old and may not have reached the
+    // wallet's node — and the gap is not milliseconds, it is however long the
+    // human takes to read the popup and press approve.
+    //
+    // Pinned because the fix is one word and nothing else fails when it is
+    // wrong: it works on every machine where both sides happen to share a node,
+    // which includes most development.
+    stubFunder('refuse');
+    await fundEphemeralForJob(job());
+    expect(signed).toHaveLength(1);
+    expect(blockhashCommitment).toBe('finalized');
   });
 
   it('still falls back when the flag is OFF', async () => {
