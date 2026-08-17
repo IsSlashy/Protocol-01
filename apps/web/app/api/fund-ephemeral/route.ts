@@ -135,24 +135,127 @@ function bad(status: number, error: string, extra: Record<string, unknown> = {})
  * time — the lesson `ephemeralFunder.ts` records — so a deployment that turned
  * its funder on without redeploying would serve a client that cannot name it.
  *
- * It returns the address and nothing else: no balance, no ticket, no secret,
- * and no statement about whether the funder would serve any particular request.
+ * It returns the address, and — with `?readiness=1` — whether this deployment
+ * would actually serve. Never a ticket, never a secret.
+ *
+ * 🚨 WHY READINESS IS WORTH AN ENDPOINT
+ * ─────────────────────────────────────
+ * Every way this funder fails is SILENT AT THE POINT OF USE. The client catches
+ * the failure, falls back to the user's wallet, and the operation succeeds —
+ * with the wallet on chain, which is the one outcome the funder exists to
+ * prevent. There are three independent ways to be switched off and none of them
+ * announces itself:
+ *
+ *   1. `NEXT_PUBLIC_P01_FUNDER_TICKET` is inlined at BUILD time, so a
+ *      deployment that set it without redeploying serves a bundle where
+ *      `funderConfigured()` is false and the endpoint is never called at all.
+ *   2. No KV backend means no durable rate limiter, and the POST below refuses
+ *      rather than run as an unmetered faucet.
+ *   3. An empty or drained funder key fails at `sendRawTransaction`.
+ *
+ * Any of those turns a demo into a public wallet transfer, discovered by
+ * whoever opens an explorer afterwards. This makes them answerable in one
+ * request, BEFORE it matters.
+ *
+ * `ready` is the conjunction, so the honest answer is one boolean and the
+ * reasons are there to act on. It deliberately does NOT check the browser
+ * bundle's ticket — no server can see what a past build inlined — so a `ready:
+ * true` deployment can still be one that never calls this endpoint. That gap is
+ * named in `blindSpot` rather than papered over.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const secret = process.env.P01_FUNDER_SECRET_KEY;
   if (!secret) return NextResponse.json({ ok: true, configured: false, funder: null });
+
+  let funder: Keypair;
   try {
-    const funder = Keypair.fromSecretKey(bs58.decode(secret));
-    return NextResponse.json({
-      ok: true,
-      configured: true,
-      funder: funder.publicKey.toBase58(),
-    });
+    funder = Keypair.fromSecretKey(bs58.decode(secret));
   } catch {
     // A misconfigured key is "no usable funder", and saying so is better than a
     // 500: the caller's next move (refuse to attribute a sweep) is the same.
     return NextResponse.json({ ok: true, configured: false, funder: null });
   }
+
+  const base = { ok: true, configured: true, funder: funder.publicKey.toBase58() };
+  if (request.nextUrl.searchParams.get('readiness') !== '1') {
+    return NextResponse.json(base);
+  }
+
+  const reasons: string[] = [];
+
+  // ── The trap that only shows up in the verify report, after the demo ─────
+  //
+  // If the address that DEPOSITS the notes is this same funder, then the
+  // deposit side and the spend side of every subscription share one party, and
+  // probe P8 correctly reports "one treasury behind both ends". That is the
+  // probe working, and it is fatal to the claim being demonstrated — the whole
+  // point of a third-party depositor is that the two ends do not meet.
+  //
+  // It is invisible until someone runs the tool, which is usually after the
+  // transaction exists. Pass `?depositor=<pubkey>` and it is answerable first.
+  const depositor = request.nextUrl.searchParams.get('depositor');
+  if (depositor) {
+    if (depositor === funder.publicKey.toBase58()) {
+      reasons.push(
+        'The depositor you named IS this funder. Every subscription would then have one ' +
+          'treasury on both ends and probe P8 would report exactly that. Deposit the notes from ' +
+          'a different key.',
+      );
+    }
+  }
+
+  if (!process.env.P01_FUNDER_TICKET) {
+    reasons.push('P01_FUNDER_TICKET is unset: the POST refuses to run as an open faucet.');
+  }
+  const limiter = getStore() !== null;
+  if (!limiter) {
+    reasons.push(
+      'No durable KV rate limiter is reachable, so the POST fails closed. Provision ' +
+        'KV_REST_API_URL + KV_REST_API_TOKEN (or the UPSTASH_ pair) or the funder will never serve.',
+    );
+  }
+
+  let balance: number | null = null;
+  let cluster: 'devnet' | 'other' | 'unreachable' = 'unreachable';
+  try {
+    const connection = new Connection(
+      process.env.P01_FUNDER_RPC ?? 'https://api.devnet.solana.com',
+      'confirmed',
+    );
+    cluster = (await connection.getGenesisHash()) === DEVNET_GENESIS ? 'devnet' : 'other';
+    balance = await connection.getBalance(funder.publicKey, 'confirmed');
+  } catch (e) {
+    reasons.push(`The configured RPC could not be reached: ${(e as Error).message}`);
+  }
+  if (cluster === 'other') {
+    reasons.push('The configured RPC is not devnet, and this funder is devnet-only.');
+  }
+  // One grant at the cap, plus fees. Below this the next request can fail
+  // mid-flight, which is the worst moment to discover it.
+  if (balance !== null && balance < MAX_LAMPORTS_PER_REQUEST) {
+    reasons.push(
+      `The funder holds ${balance} lamports, less than one capped grant ` +
+        `(${MAX_LAMPORTS_PER_REQUEST}). A job larger than the balance fails after the client has ` +
+        'already committed to it.',
+    );
+  }
+
+  return NextResponse.json({
+    ...base,
+    readiness: {
+      ready: reasons.length === 0,
+      reasons,
+      limiter,
+      balance,
+      cluster,
+      spentThisInstance,
+      blindSpot:
+        'This cannot see whether the deployed BROWSER BUNDLE carries ' +
+        'NEXT_PUBLIC_P01_FUNDER_TICKET — that value is inlined at build time. A ready deployment ' +
+        'serving a stale bundle never calls this endpoint at all, and every job silently falls ' +
+        'back to the wallet. Confirm on a real run that the result says the funder paid.',
+    },
+  });
 }
 
 export async function POST(request: NextRequest) {

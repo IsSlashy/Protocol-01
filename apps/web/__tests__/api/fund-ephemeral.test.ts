@@ -19,6 +19,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
+import { Keypair } from '@solana/web3.js';
+import bs58 from 'bs58';
 
 const mockGetStore = vi.fn();
 const mockRateLimitExceeded = vi.fn();
@@ -28,8 +30,10 @@ vi.mock('@/lib/waitlist/store', () => ({
   rateLimitExceeded: (...args: unknown[]) => mockRateLimitExceeded(...args),
 }));
 
-// The chain is never reached in these cases — every one of them is refused
-// before the genesis check — but the module imports web3 at load time.
+// A devnet that always answers. Most cases are refused long before the chain is
+// touched, but the one that asserts the limiter's ARGUMENTS has to be allowed
+// through to the end — otherwise it would only prove the limiter is reached,
+// not what it is asked.
 vi.mock('@solana/web3.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@solana/web3.js')>();
   return {
@@ -38,21 +42,36 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
       async getGenesisHash() {
         return 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
       }
+      /** 0 = a fresh ephemeral, which is what the empty-target rule requires. */
       async getBalance() {
         return 0;
       }
       async getLatestBlockhash() {
         return { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1 };
       }
+      async sendRawTransaction() {
+        return 'FUNDSIG';
+      }
+      async confirmTransaction() {
+        return { value: { err: null } };
+      }
     },
   };
 });
 
-import { POST } from '@/app/api/fund-ephemeral/route';
+import { GET, POST } from '@/app/api/fund-ephemeral/route';
 
-/** A valid base58 secret key, so the route gets past its own key parsing. */
-const FUNDER_SECRET =
-  '4wBqpZM9xaSheZzJSMawUHDgZ7miWfSsxmfVF5jJpYP2SUdGiRMhKQNzsD1yc9RJnPHFH1e3hK1kW4YFyy6WNzB1';
+/**
+ * A REAL keypair, base58-encoded the way the route expects.
+ *
+ * A hand-written literal is not good enough here and quietly was not: the POST
+ * path parses its key LAST, after the ticket, the caps and the limiter, so
+ * every refusal case passed while the key was in fact garbage. Only the GET
+ * path, which parses first, exposed it. Generate it, and both paths test the
+ * same funder.
+ */
+const funderKeypair = Keypair.generate();
+const FUNDER_SECRET = bs58.encode(funderKeypair.secretKey);
 const TICKET = 'test-ticket';
 const TARGET = '7gWpzSZAqUiN6uZ9NkfB1gZ5gYtvUvQyFAUhZTjJ6Trh';
 
@@ -110,6 +129,13 @@ describe('the durable rate limiter', () => {
     // The salt is what stops this counter sharing a keyspace with the
     // waitlist's — a collision there would let signups exhaust the funder's
     // allowance, or vice versa, with no visible symptom.
+    //
+    // Asserted on the OVER-LIMIT path deliberately: the limiter has already
+    // been called with its real arguments by then, and the route returns
+    // without building a transaction. Letting it run to the transfer instead
+    // drags `@solana/buffer-layout` into jsdom, which fails on Buffer for
+    // reasons that have nothing to do with rate limiting.
+    mockRateLimitExceeded.mockResolvedValue(true);
     await POST(req({ ephemeralPubkey: TARGET, lamports: 1_000_000 }));
     expect(mockRateLimitExceeded).toHaveBeenCalledWith(
       expect.anything(),
@@ -117,6 +143,61 @@ describe('the durable rate limiter', () => {
       'p01:fund-ephemeral:v1',
       12,
     );
+  });
+});
+
+describe('readiness, answered BEFORE it matters', () => {
+  // Every way this funder is switched off is silent at the point of use: the
+  // client catches, falls back to the wallet, and the job succeeds with the
+  // wallet on chain. That is discovered by whoever opens an explorer
+  // afterwards. These cases pin that the reasons are enumerable in advance.
+  const get = (qs = '') =>
+    GET(
+      new NextRequest(`http://localhost:3000/api/fund-ephemeral${qs}`) as unknown as NextRequest,
+    );
+
+  it('says nothing about readiness unless asked', async () => {
+    // The plain GET is on the recovery path, which runs often and must stay one
+    // cheap answer — no RPC round trip for a balance nobody asked for.
+    const body = await (await get()).json();
+    expect(body.configured).toBe(true);
+    expect(body.funder).toBeTruthy();
+    expect(body.readiness).toBeUndefined();
+  });
+
+  it('reports NOT ready, with a reason, when the limiter is missing', async () => {
+    // The failure I introduced with fail-closed: no KV means the funder never
+    // serves, and without this the first symptom is a demo paying publicly.
+    mockGetStore.mockReturnValue(null);
+    const body = await (await get('?readiness=1')).json();
+    expect(body.readiness.ready).toBe(false);
+    expect(body.readiness.limiter).toBe(false);
+    expect(body.readiness.reasons.join(' ')).toMatch(/KV/);
+  });
+
+  it('refuses the depositor-is-the-funder configuration', async () => {
+    // One treasury on both ends makes P8 report exactly that — the probe
+    // working, and fatal to the claim being demonstrated. Invisible until
+    // someone runs the tool, which is usually after the transaction exists.
+    const funderAddr = (await (await get()).json()).funder;
+    const body = await (await get(`?readiness=1&depositor=${funderAddr}`)).json();
+    expect(body.readiness.ready).toBe(false);
+    expect(body.readiness.reasons.join(' ')).toMatch(/IS this funder/);
+  });
+
+  it('accepts a depositor that is a different key', async () => {
+    const body = await (await get(`?readiness=1&depositor=${TARGET}`)).json();
+    expect(body.readiness.reasons.join(' ')).not.toMatch(/IS this funder/);
+  });
+
+  it('always carries the blind spot it cannot check', async () => {
+    // No server can see what a past build inlined into the browser bundle. A
+    // "ready" deployment serving a stale bundle never calls this endpoint at
+    // all — so the boolean must arrive with its own limit attached, or it will
+    // be read as a guarantee.
+    const body = await (await get('?readiness=1')).json();
+    expect(body.readiness.blindSpot).toMatch(/NEXT_PUBLIC_P01_FUNDER_TICKET/);
+    expect(body.readiness.blindSpot).toMatch(/falls?\s+back to the wallet/);
   });
 });
 
