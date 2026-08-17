@@ -135,6 +135,23 @@ describe('a note THIS wallet deposited', () => {
     expect(executeCalled).toBe(false);
   });
 
+  it('carries the exact `name` the panel branches on', async () => {
+    // 🚨 THE CONTRACT BETWEEN THE GUARD AND THE AUTOMATIC SWAP, and it is a
+    // string. `SubscribePanel` catches, checks `err.name !==
+    // 'SelfDepositedNoteError'`, rethrows anything else, and otherwise fetches a
+    // note this deployment deposited and retries.
+    //
+    // If that name ever changes — a rename, a wrapper, a minifier that mangles
+    // the class — the swap silently stops happening and every buyer holding
+    // their own note is refused instead of served. Nothing else fails, and the
+    // refusal is a correct-looking message, so it would read as the guard
+    // working rather than as the recovery being gone.
+    await subscribeFromPool(params({ neverExposeWallet: true })).then(
+      () => expect.unreachable('should have refused'),
+      (e: Error) => expect(e.name).toBe('SelfDepositedNoteError'),
+    );
+  });
+
   it('says the right cure, which is NOT "retry later"', async () => {
     // Distinct from WalletExposureRefusedError on purpose: that one means the
     // funder is down and a retry may work. This one means no payer on earth
