@@ -150,6 +150,17 @@ describe('the refusals that come before the gate', () => {
     expect(res.status).toBe(503);
   });
 
+  it('has an EMPTY inventory when the variable is unset, not a leaf-0 inventory', async () => {
+    // `''.split(',')` is `['']` and `Number('')` is 0, which is an integer and
+    // is >= 0 — so an unset variable used to produce an inventory of exactly one
+    // leaf, index 0, and readiness reported the deployment as configured. Found
+    // by curling the built route, not by a test, which is why this one exists.
+    vi.stubEnv('P01_TREASURY_NOTE_LEAVES', '');
+    const res = await POST(req(goodBody()));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/no note inventory configured/);
+  });
+
   it('400s a recipient that is not a note address', async () => {
     const res = await POST(req(goodBody({ recipientAddress: 'not-an-address' })));
     expect(res.status).toBe(400);

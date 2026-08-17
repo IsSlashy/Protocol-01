@@ -107,7 +107,15 @@ function treasurySeed(): Uint8Array | null {
 function inventoryLeaves(): number[] {
   return (process.env.P01_TREASURY_NOTE_LEAVES ?? '')
     .split(',')
-    .map((s) => Number(s.trim()))
+    .map((s) => s.trim())
+    // 🚨 THE EMPTY STRING FILTER IS LOad-BEARING, and it was missing.
+    // `''.split(',')` is `['']`, and `Number('')` is 0 — which is an integer
+    // and is >= 0. So an UNSET variable produced an inventory of exactly one
+    // leaf, index 0, and the readiness check reported it as configured. Found
+    // by curling the built route rather than by any test, which is the argument
+    // for curling the built route.
+    .filter((s) => s.length > 0)
+    .map((s) => Number(s))
     .filter((n) => Number.isInteger(n) && n >= 0);
 }
 
