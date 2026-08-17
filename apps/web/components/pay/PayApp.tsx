@@ -205,6 +205,41 @@ export default function PayApp() {
   const chainConnected = solConnected;
   const step: 0 | 1 | 2 = !chainConnected ? 0 : !identity ? 1 : 2;
 
+  /**
+   * Wallets whose signer has been shown to be deterministic, by pubkey.
+   *
+   * PUBLIC DATA ONLY — a list of addresses that passed a check. No signature,
+   * no seed, nothing derived from one. Losing or clearing it costs one extra
+   * prompt, never a key.
+   *
+   * Only PASSES are recorded. A wallet that failed is refused every time it
+   * tries, because the cost of that mistake is notes that cannot be found next
+   * session and the cost of re-asking is one popup.
+   */
+  const SIGNER_VERIFIED_KEY = "p01_deterministic_signer_v1";
+
+  function deterministicSignerVerified(pubkey: string): boolean {
+    try {
+      const raw = window.localStorage.getItem(SIGNER_VERIFIED_KEY);
+      return raw ? (JSON.parse(raw) as string[]).includes(pubkey) : false;
+    } catch {
+      // Unreadable or private mode: re-ask. The cache is an optimisation, and
+      // the safe direction when it is unavailable is to perform the check.
+      return false;
+    }
+  }
+
+  function rememberDeterministicSigner(pubkey: string): void {
+    try {
+      const raw = window.localStorage.getItem(SIGNER_VERIFIED_KEY);
+      const list = raw ? (JSON.parse(raw) as string[]) : [];
+      if (!list.includes(pubkey)) list.push(pubkey);
+      window.localStorage.setItem(SIGNER_VERIFIED_KEY, JSON.stringify(list));
+    } catch {
+      // Quota or private mode. The check simply runs again next time.
+    }
+  }
+
   async function deriveSolana() {
     const doSign = p01Keypair
       ? async (m: Uint8Array) => nacl.sign.detached(m, p01Keypair.secretKey)
@@ -237,28 +272,51 @@ export default function PayApp() {
       // about the check: still two independent signatures, still compared byte
       // for byte, still refused if they differ. It only stops the second
       // request racing the first one's teardown.
+      // ⚠️ AND IT IS ASKED ONCE PER WALLET, NOT ONCE PER SESSION.
+      //
+      // Determinism is a property of the WALLET, not of the session: a signer
+      // that returned the same bytes twice will do so again, and one that did
+      // not is refused and never gets a cached verdict. So re-prompting on
+      // every visit repays a check that can only produce the answer it already
+      // produced, and it is the prompt people get stuck on — a second popup
+      // opening while the first tears down is what leaves an extension showing
+      // "loading" with confirm inert.
+      //
+      // Only a PASS is remembered, keyed by pubkey. A failure caches nothing,
+      // so a non-deterministic wallet is refused every single time.
+      //
+      // What this does not do is make a wallet swap safe: if the same pubkey is
+      // later driven by a signer that produces different bytes, the derived
+      // seed differs and the notes are simply not found. That is already the
+      // failure on every session after the first, cache or no cache — this
+      // moves nothing about it.
+      const alreadyVerified = deterministicSignerVerified(solPub.toBase58());
       const sig = await doSign(encoded);
-      await new Promise((r) => setTimeout(r, 250));
-      let sig2: Uint8Array;
-      try {
-        sig2 = await doSign(encoded);
-      } catch (e) {
-        // Wipe the first signature before surfacing: it is the root secret, and
-        // an early return here used to leave it in memory.
-        sig.fill(0);
-        throw new Error(
-          'The second signature prompt was not completed, so determinism could not be checked ' +
-            'and no keys were derived. This wallet asks twice ON PURPOSE — approve both. ' +
-            `(${(e as Error).message || 'rejected'})`,
-        );
-      }
-      const deterministic = sig.length === sig2.length && sig.every((b, i) => b === sig2[i]);
-      sig2.fill(0);
-      if (!deterministic) {
-        sig.fill(0);
-        throw new Error(
-          "This wallet does not sign deterministically, so your keys could not be recovered later. Use Phantom or Solflare (software wallet)."
-        );
+      if (!alreadyVerified) {
+        await new Promise((r) => setTimeout(r, 250));
+        let sig2: Uint8Array;
+        try {
+          sig2 = await doSign(encoded);
+        } catch (e) {
+          // Wipe the first signature before surfacing: it is the root secret,
+          // and an early return here used to leave it in memory.
+          sig.fill(0);
+          throw new Error(
+            'The second signature prompt was not completed, so determinism could not be checked ' +
+              'and no keys were derived. Nothing was spent. This wallet is asked twice ON PURPOSE, ' +
+              'once only — approve both and it will not be asked again. ' +
+              `(${(e as Error).message || 'rejected'})`,
+          );
+        }
+        const deterministic = sig.length === sig2.length && sig.every((b, i) => b === sig2[i]);
+        sig2.fill(0);
+        if (!deterministic) {
+          sig.fill(0);
+          throw new Error(
+            "This wallet does not sign deterministically, so your keys could not be recovered later. Use Phantom or Solflare (software wallet)."
+          );
+        }
+        rememberDeterministicSigner(solPub.toBase58());
       }
       const derived = await adapter.deriveMeta(sig);
       // The signature IS the root secret — wipe the main-thread copy once the
@@ -352,10 +410,12 @@ export default function PayApp() {
             <p className="font-display text-p01-text">Derive your private keys</p>
           </div>
           <p className="text-sm text-p01-text-muted">
-            Two quick signatures create your stealth spending, viewing and post-quantum
-            (ML-KEM-768) keys, the second only verifies your wallet signs deterministically.
-            No transaction is sent, no gas is paid. Your keys live only in this tab, never
-            uploaded, never stored.
+            {/* The count is now conditional, so the copy has to be too — a
+                screen that promises two prompts and shows one reads as a bug,
+                and one that promises one and shows two reads as a trap. */}
+            {solPub && deterministicSignerVerified(solPub.toBase58())
+              ? "One signature creates your stealth spending, viewing and post-quantum (ML-KEM-768) keys. No transaction is sent, no gas is paid. Your keys live only in this tab, never uploaded, never stored."
+              : "Two signatures, once for this wallet: the first creates your stealth spending, viewing and post-quantum (ML-KEM-768) keys, the second only checks that your wallet signs the same way twice — a wallet that does not would leave your keys unrecoverable later. Approve both and you will not be asked again. No transaction is sent, no gas is paid. Your keys live only in this tab, never uploaded, never stored."}
           </p>
           <div className="flex items-start gap-2 rounded-lg border border-p01-yellow/30 bg-p01-yellow/5 p-3 text-xs text-p01-yellow">
             <ShieldQuestion className="mt-0.5 h-4 w-4 shrink-0" />
