@@ -399,6 +399,24 @@ export default function PayApp() {
           >
             <Smartphone className="h-4 w-4" /> Connect P01 Wallet
           </button>
+          {/* A buyer that is not a wallet at all.
+              Everything downstream already supports this: `p01Keypair` replaces
+              the adapter for `solPub`, for `doSign` — nacl, locally, so there is
+              no extension, no popup and no request queue to get stuck — and for
+              transaction signing. The plumbing existed for the paired-phone
+              path; nothing generated a key here.
+              It is the honest shape for a subscription buyer. The wallet was
+              only ever needed to make a seed recoverable and to sign the
+              pre-fund, and the funder does the second job now.
+              ⚠️ Held in memory only. Whoever closes this tab loses the identity
+              and the license key of anything bought under it, which is why the
+              address is shown with an export rather than quietly created. */}
+          <button
+            className="btn-secondary flex w-full items-center justify-center gap-2"
+            onClick={() => setP01Keypair(Keypair.generate())}
+          >
+            Subscribe anonymously — no wallet
+          </button>
         </div>
       )}
 
