@@ -11,7 +11,6 @@ import {
   Loader2,
   RefreshCw,
   TriangleAlert,
-  Wallet,
 } from "lucide-react";
 import {
   buildPoolPayoutMessage,
@@ -42,6 +41,10 @@ import type {
 } from "@/lib/privacy/worker/poolHandlers";
 import { getPoolsForTokenV3, type PoolToken } from "@/lib/privacy/pool/denominatedPool";
 import { SHIELD_PHASES, WITHDRAW_PHASES } from "@/lib/pay/flowProgress";
+import {
+  requiresSweepHomeConfirmation,
+  SWEEP_HOME_WARNING,
+} from "@/lib/pay/sweepDestination";
 import FlowProgress from "./FlowProgress";
 import SuccessBurst from "./SuccessBurst";
 import {
@@ -198,6 +201,9 @@ export default function PoolPanel({
   const [payouts, setPayouts] = useState<PayoutView[]>([]);
   const [sweeping, setSweeping] = useState<string | null>(null);
   const [sweepTo, setSweepTo] = useState("");
+  /** Payout address whose sweep-to-the-wallet has been confirmed once. Held per
+   *  address, not as a boolean, so arming one payout cannot arm the next. */
+  const [sweepHomeArmed, setSweepHomeArmed] = useState<string | null>(null);
   const [sweepError, setSweepError] = useState<string | null>(null);
 
   // One boolean for the whole panel, derived rather than raised by hand in every
@@ -507,6 +513,36 @@ export default function PoolPanel({
       setSweepError("That is not a valid Solana address.");
       return;
     }
+    // 🚨 THE CHEAPEST WAY BACK TO THIS USER RUNS THROUGH THIS BUTTON.
+    //
+    // The withdrawal's recipient is a plain 32-byte instruction argument, in
+    // cleartext, at a fixed offset. So the walk is: read the spend, read the
+    // payout address out of its bytes, ask for that address's two transactions,
+    // read the second one's destination. Three RPC calls — the same price as
+    // the payer walk this whole effort is about closing, on the same
+    // transaction, and no probe measured it until P10.
+    //
+    // Everything upstream of here can be perfect and one click on this button
+    // publishes the link anyway. It used to be a ONE-CLICK button that prefilled
+    // the wallet, which is worse than a default: it is a recommendation.
+    //
+    // So the address is typed, and typing the connected wallet costs a second,
+    // explicit confirmation. Not a warning next to the action — a stop in front
+    // of it. Sweeping home is a legitimate thing to want and stays available;
+    // it just cannot happen by momentum.
+    if (
+      requiresSweepHomeConfirmation({
+        destination: to.toBase58(),
+        ownerKey,
+        payoutAddress: p.address,
+        armedFor: sweepHomeArmed,
+      })
+    ) {
+      setSweepHomeArmed(p.address);
+      setSweepError(SWEEP_HOME_WARNING);
+      return;
+    }
+    setSweepHomeArmed(null);
     setSweeping(p.address);
     try {
       const root = await requirePayoutRoot();
@@ -939,6 +975,30 @@ export default function PoolPanel({
               <p className="mt-1 truncate font-mono text-xs text-p01-text-dim">
                 leaf #{result.leafIndex} · commitment {truncate(result.commitment, 8, 6)}
               </p>
+              {/* Unconditional, and it mirrors SubscribePanel's funding
+                  paragraph on purpose.
+
+                  A deposit has no funder path and cannot get one: its pre-fund
+                  embeds the denomination itself, so a treasury covering it
+                  would be buying the note rather than lending rent. So the
+                  wallet signs, the wallet pays, and the residue comes back to
+                  the wallet — three separate namings of the same address.
+
+                  The hazard this paragraph exists for is not the deposit. It is
+                  what happens to the READER once another screen truthfully says
+                  "your wallet did not sign this": a silent deposit screen then
+                  reads as the same promise. Saying nothing here is what makes
+                  the honest sentence over there misleading. */}
+              <p className="mt-2 flex items-start gap-2 text-xs text-p01-text-muted">
+                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
+                <span>
+                  <strong className="text-p01-text">Your wallet paid for this, in public.</strong>{' '}
+                  Depositing moves real value in, so it comes from your address by name — and the
+                  leftover rent came back to it afterwards. Anyone reading this deposit reaches
+                  your wallet in three steps, and spending this note later republishes the
+                  commitment printed above, which is what lets them start from the spend.
+                </span>
+              </p>
               <a
                 href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
                 target="_blank"
@@ -1312,21 +1372,36 @@ export default function PoolPanel({
           ) : (
             <>
               {sweepReason && <p className="mb-2 text-xs text-p01-text-dim">{sweepReason}</p>}
-              <div className="mb-2 flex gap-2">
+              {/* There was a "My wallet" button here that prefilled the
+                  connected address in one click. It is gone on purpose.
+
+                  The withdrawal's recipient is a cleartext 32-byte instruction
+                  argument, so a stranger reads this payout address straight out
+                  of the spend and then reads its next transaction. Sweeping
+                  home is therefore the single action that undoes the whole
+                  payout-address mechanism, in three RPC calls, on the same
+                  transaction the rest of this effort is trying to detach from
+                  the user. Offering it as the one-click option made the worst
+                  destination the easiest one — that is not a default, it is a
+                  recommendation.
+
+                  It is still allowed: typing the address works, and `handleSweep`
+                  asks for one explicit confirmation first. What is removed is
+                  doing it by momentum. */}
+              <div className="mb-2">
                 <input
                   value={sweepTo}
-                  onChange={(e) => setSweepTo(e.target.value)}
+                  onChange={(e) => {
+                    setSweepTo(e.target.value);
+                    // Editing the field withdraws the confirmation. Otherwise a
+                    // user could confirm sending home, change their mind, type a
+                    // different address, and the next press would still be armed.
+                    setSweepHomeArmed(null);
+                  }}
                   placeholder="Destination address"
                   spellCheck={false}
-                  className="min-w-0 flex-1 rounded-lg border border-p01-border bg-p01-void px-3 py-2 font-mono text-xs text-p01-text placeholder:text-p01-text-dim"
+                  className="w-full rounded-lg border border-p01-border bg-p01-void px-3 py-2 font-mono text-xs text-p01-text placeholder:text-p01-text-dim"
                 />
-                <button
-                  onClick={() => setSweepTo(ownerKey)}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-p01-border px-3 py-2 text-xs text-p01-text-muted hover:text-p01-text"
-                  title="Links this payout back to your wallet on chain"
-                >
-                  <Wallet className="h-3.5 w-3.5" /> My wallet
-                </button>
               </div>
               <ul className="space-y-2">
                 {payouts.map((p) => (
