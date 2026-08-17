@@ -145,3 +145,24 @@ describe('ownerPubkey is identity, sweepTo is money', () => {
     expect(unshieldDenominatedStarkV3).toHaveBeenCalled();
   });
 });
+
+describe('the withdrawal leg carries the wallet-exposure guard too', () => {
+  it('exposes neverExposeWallet on UnshieldParams', async () => {
+    // 🚨 IT DID NOT, AND THAT MADE THE PROTECTION ONE OPERATION WIDE.
+    //
+    // The subscribe leg was hardened and this one was not, so a buyer who
+    // subscribed cleanly and later withdrew got a withdrawal that fell back to
+    // the wallet silently. That is the worse leg to leave open: a withdrawal
+    // publishes the note's stark_commitment at byte 80 AND a recipient at byte
+    // 88 in the same transaction, so it hands an auditor the note, the payee
+    // and the payer at once.
+    //
+    // A type-level assertion, deliberately: the failure mode was an ABSENT
+    // field, which no runtime test can observe — the call simply omitted it and
+    // everything passed.
+    const { unshieldFromPool } = await import('../shieldClient');
+    type Params = Parameters<typeof unshieldFromPool>[0];
+    const probe: Pick<Params, 'neverExposeWallet'> = { neverExposeWallet: true };
+    expect(probe.neverExposeWallet).toBe(true);
+  });
+});

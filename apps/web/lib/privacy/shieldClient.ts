@@ -26,7 +26,7 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { poolRequest } from './workerClient';
-import { fetchFunderPubkey, fundEphemeralForJob } from './pool/ephemeralFunder';
+import { fetchFunderLookup, fundEphemeralForJob } from './pool/ephemeralFunder';
 import { loadSubscriptions } from '../pay/subscriptions';
 import {
   isSessionLostError,
@@ -122,6 +122,18 @@ export interface UnshieldParams {
   connection: Connection;
   signOne: SignOne;
   onProgress?: (step: string) => void;
+  /**
+   * Refuse rather than let the wallet pay. Same contract as `SubscribeParams`.
+   *
+   * 🚨 THIS LEG WAS LEFT OUT WHEN THE GUARD WAS ADDED, AND THAT MADE THE
+   * PROTECTION ONE OPERATION WIDE. A buyer who subscribes cleanly and later
+   * withdraws got a withdrawal that fell back to the wallet silently — and a
+   * withdrawal publishes the note's `stark_commitment` at byte 80 AND a
+   * recipient at byte 88 in the same transaction, so it hands an auditor the
+   * note, the payee and the payer at once. Hardening only the leg that was
+   * being demonstrated is how a demo passes and a user does not.
+   */
+  neverExposeWallet?: boolean;
 }
 
 /**
@@ -175,6 +187,7 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
     connection,
     signOne,
     onProgress,
+    neverExposeWallet: params.neverExposeWallet,
   });
 
   const done = await poolRequest(
@@ -366,7 +379,13 @@ export async function recoverStuckFunds(
   onProgress?: (step: string) => void,
   leafIndices?: number[],
 ) {
-  const funderPubkey = await fetchFunderPubkey();
+  // ⚠️ THE THREE-STATE ANSWER MATTERS HERE AND NOWHERE ELSE SO MUCH.
+  // "no funder" lets a sweep go home; "could not tell" must not, because
+  // treasury money might be on the key and sweeping it home writes the buyer's
+  // wallet onto the ephemeral that signed their subscription — which is
+  // accountKeys[0] of that subscription. One transient fetch failure used to be
+  // enough, and it fires on a Recover click, i.e. after the verification run.
+  const lookup = await fetchFunderLookup();
   return poolRequest(
     {
       kind: 'poolRecover',
@@ -374,7 +393,8 @@ export async function recoverStuckFunds(
       token: 'SOL',
       denomination,
       ownerPubkey: owner.toBase58(),
-      funderPubkey: funderPubkey ?? undefined,
+      funderPubkey: lookup.state === 'configured' ? lookup.pubkey : undefined,
+      funderUnknown: lookup.state === 'unknown',
       unshieldLeafIndices: leafIndices,
     },
     onProgress,

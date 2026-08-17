@@ -527,7 +527,18 @@ function writeFixture(dir, store, report, opts) {
       'Review `expect` against the run that produced it before committing.',
     spend: report.signature,
     kind: report.kind,
-    flags: { maxChunkTx: opts.maxChunkTx, depositLimit: opts.depositLimit },
+    flags: {
+      maxChunkTx: opts.maxChunkTx,
+      depositLimit: opts.depositLimit,
+      // Recorded because it changes WHICH transactions were fetched, so a
+      // replay must reproduce the same walk or it will miss. A fixture taken
+      // without a named wallet holds only the two ends of each payer's life;
+      // replaying it exhaustively would hard-stop on the first unrecorded
+      // transaction, which is the correct behaviour and the wrong experience.
+      // Recording it is what lets an old fixture stay valid instead of
+      // becoming a landmine the day a new probe wants a deeper read.
+      ...(opts.wallet ? { wallet: opts.wallet, exhaustiveWalk: true } : {}),
+    },
     expect: Object.fromEntries(report.results.map((r) => [r.id, r.passed ? 'PASS' : 'FAIL'])),
     // PASS/FAIL alone is too coarse for a probe that counts. A sixth instruction
     // publishing the commitment leaves P7 at FAIL, so the pin holds and nobody
@@ -906,8 +917,26 @@ function systemTransfersIn(tx, payer) {
  * itself. That is the right way round for a tool that must never report a false
  * clean.
  */
-async function traceFunderEdges(rpc, payer, { historyLimit } = {}) {
+async function traceFunderEdges(rpc, payer, { historyLimit, exhaustive = false } = {}) {
   let calls = 0;
+  // EVERY account key of every transaction read, not only the ones that moved
+  // lamports. `systemTransfersIn` answers "who paid whom"; this answers "who is
+  // NAMED", which is a strictly larger set and is what the cheapest real-world
+  // extraction actually dumps:
+  //
+  //   $r.result.transaction.message.accountKeys | ForEach-Object { $_.pubkey }
+  //
+  // An address can sit in accountKeys as a read-only account, a co-signer, or a
+  // program argument and move nothing — invisible to every edge probe here, and
+  // right there in that one line of output. Collected during the walk that was
+  // happening anyway, so it costs no extra RPC call. See probe P11.
+  //
+  // ⚠️ DECLARED HERE, ABOVE THE EARLY RETURN. It used to be declared further
+  // down and referenced by the no-history return below, which is a temporal
+  // dead zone: that path threw ReferenceError instead of returning a verdict.
+  // It is the path a pruned RPC takes, so the tool crashed exactly where it was
+  // meant to say "I could not see".
+  const namedKeys = new Set();
   // Request the SAME page size the other history walkers use. The replay cache
   // keys on exact request params, so a different limit here would be a cache
   // miss on every recorded fixture — and, worse, would make three probes fetch
@@ -932,18 +961,6 @@ async function traceFunderEdges(rpc, payer, { historyLimit } = {}) {
   const live = sigs.filter((s) => !s.err);
   const edges = [];
   const visited = new Set();
-  // EVERY account key of every transaction read, not only the ones that moved
-  // lamports. `systemTransfersIn` answers "who paid whom"; this answers "who is
-  // NAMED", which is a strictly larger set and is what the cheapest real-world
-  // extraction actually dumps:
-  //
-  //   $r.result.transaction.message.accountKeys | ForEach-Object { $_.pubkey }
-  //
-  // An address can sit in accountKeys as a read-only account, a co-signer, or a
-  // program argument and move nothing — invisible to every edge probe here, and
-  // right there in that one line of output. Collected during the walk that was
-  // happening anyway, so it costs no extra RPC call. See probe P11.
-  const namedKeys = new Set();
 
   const visit = async (signature, role) => {
     if (visited.has(signature)) return;
@@ -963,7 +980,29 @@ async function traceFunderEdges(rpc, payer, { historyLimit } = {}) {
   if (newest && newest.signature !== oldest?.signature) await visit(newest.signature, 'sweep (newest)');
 
   // The cheap answer, when there is one: the ends already name someone.
-  if (edges.length) {
+  //
+  // 🚨 UNLESS SOMEBODY ASKED ABOUT A SPECIFIC ADDRESS. This early return is
+  // correct for P6, whose question ("is this payer bracketed by anything") is
+  // ANSWERED the moment one edge exists. It is fatal to P11, whose question is
+  // "is address X anywhere in here" — and whose absence-answer is only credible
+  // from a complete read.
+  //
+  // The two collide on every single correct run of the treasury plan. A
+  // funder-paid ephemeral is funded in its oldest transaction and swept in its
+  // newest, so the ends ALWAYS name the funder, so `deep` was always false, so
+  // P11 was structurally incapable of ever passing. The runbook meanwhile named
+  // a P11 PASS as the audit answer and forbade presenting the INCONCLUSIVE that
+  // would actually print — scripting a presenter to reach a line the tool was
+  // engineered never to emit.
+  //
+  // So: naming an address buys the whole history. ~268 extra getTransaction on
+  // the measured shapes, which the `--record` step the runbook already
+  // prescribes absorbs once and replays for free forever.
+  //
+  // ⛔ NOT "skip the walk if the only counterparty is the declared funder".
+  // That gates completeness on an operator's assertion about their own
+  // deployment, which is the false clean this whole file exists to refuse.
+  if (edges.length && !exhaustive) {
     return {
       edges, historyLength: sigs.length, truncated, calls, scanned: visited.size, deep: false, namedKeys,
       inconclusive: null,
@@ -1220,6 +1259,10 @@ async function verifySpend(rpc, signature, opts = {}) {
   const chunkLimit = opts.maxChunkTx ?? 200;
   /** `--wallet`: an address the operator wants named explicitly. See `namedWalletLine`. */
   const namedWallet = opts.wallet ?? null;
+  /** Whether the payer walks read the WHOLE history. True on a live run whenever
+   *  an address is named; on a replay it comes from the fixture, because the walk
+   *  depth decides which transactions were recorded. */
+  const exhaustiveWalk = opts.exhaustiveWalk ?? !!namedWallet;
   const tx = await getTx(rpc, signature);
   if (!tx) throw new Error(`transaction not found (RPC may have pruned it): ${signature}`);
 
@@ -1440,7 +1483,9 @@ async function verifySpend(rpc, signature, opts = {}) {
       ),
     );
   } else {
-    const funder = await traceFunderEdges(rpc, payer, { historyLimit });
+    // `exhaustive` when an address was named: P11 reads this walk's key set and
+    // an absence is only credible from a complete read. See traceFunderEdges.
+    const funder = await traceFunderEdges(rpc, payer, { historyLimit, exhaustive: exhaustiveWalk });
     spendTrace = funder;
     if (funder.inconclusive) {
       results.push(
@@ -1612,7 +1657,7 @@ async function verifySpend(rpc, signature, opts = {}) {
     depositTrace =
       deposit.payer === payer && spendTrace !== null
         ? spendTrace
-        : await traceFunderEdges(rpc, deposit.payer, { historyLimit });
+        : await traceFunderEdges(rpc, deposit.payer, { historyLimit, exhaustive: exhaustiveWalk });
   }
 
   {
@@ -1810,7 +1855,7 @@ async function verifySpend(rpc, signature, opts = {}) {
           'apply to.'),
       );
     } else {
-      const payeeTrace = await traceFunderEdges(rpc, recipient, { historyLimit });
+      const payeeTrace = await traceFunderEdges(rpc, recipient, { historyLimit, exhaustive: exhaustiveWalk });
       // OUTBOUND only. The inbound edge is the withdrawal paying this address —
       // it names the pool, which is not a leak and is the whole point of the
       // transaction. What matters is where the money went NEXT.
@@ -2755,6 +2800,24 @@ function selfTestChannelDecoders() {
     // evidence — P11 reports INCONCLUSIVE on exactly this shape.
     check('P11 · an early-stopping walk is not marked deep', leaky.deep, false);
 
+    // 🚨 THE CASE THAT MADE P11 UNREACHABLE, AND THE FIX.
+    //
+    // A funder-paid ephemeral is funded in its oldest transaction and swept in
+    // its newest, so BOTH ends always name the funder, so the early return
+    // above always fired, so `deep` was always false — and P11's completeness
+    // test requires `deep`. The probe the runbook calls "the audit answer" was
+    // therefore incapable of ever passing on a correct run of the very plan it
+    // was written to evidence.
+    //
+    // Naming an address now buys the whole history. Asserted on the SAME
+    // bracketed shape as case 1, so the two lines differ only in the flag.
+    const forced = await traceFunderEdges(mkRpc(bracketed), PAYER, {
+      historyLimit: 401, exhaustive: true,
+    });
+    check('P11 · a named address forces the deep walk', forced.deep, true);
+    check('P11 · and the edges are still all found', forced.edges.length, 2);
+    check('P11 · nothing in the history goes unread', forced.scanned, forced.historyLength);
+
     console.log(
       broken === 0
         ? '   PASS  every channel decoder answers in both directions.'
@@ -2934,6 +2997,13 @@ async function main() {
     // replay miss. `--wallet` shapes no request at all, so a caller naming
     // their own address must win.
     if (!opts.wallet && manifest.flags?.wallet) opts.wallet = manifest.flags.wallet;
+    // Naming an address makes the payer walks exhaustive (see traceFunderEdges),
+    // which fetches transactions a shallow recording never captured. So on a
+    // replay the walk depth comes from the FIXTURE, not from the flag: a
+    // fixture recorded shallow replays shallow and P11 says INCONCLUSIVE with
+    // its arithmetic, which is the truth about what was read. Re-record with
+    // --wallet to get a fixture that can support a P11 pass.
+    opts.exhaustiveWalk = manifest.flags?.exhaustiveWalk === true;
     rpc = makeReplayRpc(replayDir);
     const sig = arg('--spend', manifest.spend);
     if (!sig) throw new Error(`${replayDir}/manifest.json names no spend`);

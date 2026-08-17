@@ -128,9 +128,31 @@ export async function requestFunding(
   return { sweepTo: body.sweepTo, signature: body.signature, lamports: body.lamports ?? lamports };
 }
 
+/**
+ * What the server said about the funder.
+ *
+ * 🚨 THREE STATES, NOT TWO, AND COLLAPSING THEM COSTS THE USER THEIR PRIVACY.
+ * `'none'` and `'unknown'` are different facts with opposite safe behaviours:
+ * with no funder, no third-party money can exist and a recovery sweep may go
+ * home; with an unreadable answer, treasury money MIGHT be on the key and a
+ * sweep home writes the buyer's wallet onto the ephemeral that signed their
+ * subscription. That ephemeral is `accountKeys[0]` of the subscribe, so the
+ * wallet lands on the subscription itself — and it happens on a Recover click,
+ * which is to say AFTER the verification run that said it was clean.
+ *
+ * An earlier version returned `string | null` and mapped every network failure
+ * to `null`, which `resolveSweepDestination` reads as "no funder configured".
+ * One transient fetch error was enough.
+ */
+export type FunderLookup =
+  | { state: 'configured'; pubkey: string }
+  | { state: 'none' }
+  | { state: 'unknown'; reason: string };
+
 /** Cached across calls: the address cannot change without a redeploy, and
- *  recovery asks for it once per pool per run. `undefined` = not asked yet. */
-let cachedFunderPubkey: string | null | undefined;
+ *  recovery asks for it once per pool per run. `undefined` = not asked yet.
+ *  Only definitive answers are cached — see `fetchFunderLookup`. */
+let cachedFunderPubkey: FunderLookup | undefined;
 
 /**
  * This deployment's funder ADDRESS, or `null` when there is none.
@@ -149,23 +171,46 @@ let cachedFunderPubkey: string | null | undefined;
  * Never throws: every caller's fallback for "unknown" is to refuse to attribute
  * a sweep, which is also the right behaviour when the network is down.
  */
-export async function fetchFunderPubkey(signal?: AbortSignal): Promise<string | null> {
+export async function fetchFunderLookup(signal?: AbortSignal): Promise<FunderLookup> {
   if (cachedFunderPubkey !== undefined) return cachedFunderPubkey;
+  let answer: FunderLookup;
   try {
     const res = await fetch('/api/fund-ephemeral', { method: 'GET', signal });
     const body: { ok?: boolean; configured?: boolean; funder?: string | null } = await res.json();
-    cachedFunderPubkey = res.ok && body.ok && body.configured && body.funder ? body.funder : null;
-  } catch {
-    // Do NOT cache a network failure as "no funder": a transient outage would
-    // then make every later recovery in this session sweep on the assumption
-    // that no treasury money can exist, which is the assumption this whole
-    // mechanism exists to stop making.
-    return null;
+    if (!res.ok || !body.ok) {
+      // A 500, an error page, a proxy interstitial. The deployment did not say
+      // "no funder" — it failed to answer, which is a different thing.
+      return { state: 'unknown', reason: `the funder endpoint replied ${res.status}` };
+    }
+    answer = body.configured && body.funder
+      ? { state: 'configured', pubkey: body.funder }
+      : { state: 'none' };
+  } catch (e) {
+    // Do NOT cache a network failure: a transient outage would otherwise make
+    // every later call in this session act on the assumption that no treasury
+    // money can exist, which is the assumption this whole mechanism exists to
+    // stop making.
+    return { state: 'unknown', reason: e instanceof Error ? e.message : String(e) };
   }
-  return cachedFunderPubkey;
+  // Only a definitive answer is memoised.
+  cachedFunderPubkey = answer;
+  return answer;
 }
 
-/** Test seam: drop the memoised address. */
+/**
+ * The funder's address, or `null`.
+ *
+ * ⚠️ Callers that must distinguish "no funder" from "could not tell" MUST use
+ * `fetchFunderLookup` instead. This convenience form collapses the two, which
+ * is only safe where the consequence of being wrong is cosmetic — rendering a
+ * checkbox, say, and not deciding where money goes.
+ */
+export async function fetchFunderPubkey(signal?: AbortSignal): Promise<string | null> {
+  const r = await fetchFunderLookup(signal);
+  return r.state === 'configured' ? r.pubkey : null;
+}
+
+/** Test seam: drop the memoised answer. */
 export function resetFunderPubkeyCache(): void {
   cachedFunderPubkey = undefined;
 }

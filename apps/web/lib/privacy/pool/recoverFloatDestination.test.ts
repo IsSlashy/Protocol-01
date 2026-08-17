@@ -245,6 +245,33 @@ describe('it refuses rather than guess', () => {
     expect(decodeSweep().to).toBe(OWNER.toBase58());
     expect(found.find((f) => f.refused)).toBeUndefined();
   });
+
+  it('sends NOTHING when we could not even find out whether a funder exists', async () => {
+    // 🚨 THE ROUTE THAT SURVIVED THE FIRST VERSION OF THIS FILE. "No funder
+    // configured" and "the lookup failed" were the same branch, so one
+    // transient fetch error made a recovery sweep the treasury's float home —
+    // and with it the buyer's wallet address, onto the ephemeral that signed
+    // their subscription. That ephemeral is accountKeys[0] of the subscribe, so
+    // the wallet lands on the subscription itself. And it fires on a Recover
+    // click: AFTER the verification run that reported it clean.
+    //
+    // Same inputs as the case above, one flag apart. That is the whole finding.
+    const conn = fakeConnection({ sources: [OWNER] });
+    const realGetBalance = conn.getBalance.bind(conn);
+    (conn as unknown as { getBalance: (k: PublicKey) => Promise<number> }).getBalance = async (
+      key: PublicKey,
+    ) => {
+      const bal = await realGetBalance(key);
+      if (bal > 0) currentEphemeral = key;
+      return bal;
+    };
+    const found = await recoverStuckFloat(conn, poolConfig(), SEED, OWNER, {
+      lookback: 1,
+      funderUnknown: true,
+    });
+    expect(sent).toHaveLength(0);
+    expect(found.find((f) => f.refused)?.refused).toBe('unverifiable');
+  });
 });
 
 describe('which keys are searched at all', () => {

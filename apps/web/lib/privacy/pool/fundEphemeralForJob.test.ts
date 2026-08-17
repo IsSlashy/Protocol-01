@@ -236,6 +236,25 @@ describe('neverExposeWallet — the last way the buyer lands on chain', () => {
     expect(d.fundedBy).toBe('wallet');
     expect(signed).toHaveLength(1);
   });
+
+  it('protects the STALE BUNDLE case, where the build-time ticket is absent', async () => {
+    // 🚨 THE ROUTE THAT DISARMED THE FIRST VERSION OF THIS GUARD.
+    //
+    // `NEXT_PUBLIC_P01_FUNDER_TICKET` is inlined at BUILD time. A deployment
+    // that switched its funder on without rebuilding serves a bundle where it
+    // is absent — so the panel used to seed the guard from it, render no
+    // checkbox, default the flag to FALSE, and let the wallet pay. The
+    // protection stood itself down in precisely the situation it was written
+    // for, silently, while the server's readiness check said ready.
+    //
+    // The guard must therefore hold on the ticket's ABSENCE, not on its
+    // presence. Same environment as a stale bundle, flag on: refuse.
+    vi.stubEnv('NEXT_PUBLIC_P01_FUNDER_TICKET', '');
+    await expect(
+      fundEphemeralForJob(job({ neverExposeWallet: true })),
+    ).rejects.toBeInstanceOf(WalletExposureRefusedError);
+    expect(signed).toHaveLength(0);
+  });
 });
 
 describe('an ephemeral that already holds money', () => {

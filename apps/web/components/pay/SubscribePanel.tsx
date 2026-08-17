@@ -37,7 +37,7 @@ import {
 
 import * as shieldClient from '@/lib/privacy/shieldClient';
 import { licenseServiceTag } from '@/lib/privacy/license';
-import { funderConfigured } from '@/lib/privacy/pool/ephemeralFunder';
+import { fetchFunderPubkey, funderConfigured } from '@/lib/privacy/pool/ephemeralFunder';
 import type { PoolToken } from '@/lib/privacy/pool/denominatedPool';
 import type { PoolNoteView } from '@/lib/privacy/worker/poolHandlers';
 import {
@@ -381,13 +381,62 @@ export default function SubscribePanel({
   /**
    * Whether to refuse rather than pay from this wallet.
    *
-   * Defaults to ON when this deployment has a funder, and is not offered at all
-   * when it does not — there is nothing to choose between when the wallet is
-   * the only payer available, and a switch that cannot change anything reads as
-   * a protection that exists.
+   * 🚨 DEFAULTS TO ON UNCONDITIONALLY, AND THE FIRST VERSION OF THIS DID NOT.
+   * It seeded itself from `funderConfigured()`, which reads
+   * `NEXT_PUBLIC_P01_FUNDER_TICKET` — a value Next inlines at BUILD time. On a
+   * deployment whose funder was switched on without a rebuild, that is `false`,
+   * so the checkbox was not rendered, `useState(false)` left the guard OFF, and
+   * the wallet paid. The protection disarmed itself in exactly the situation it
+   * was written for, silently, while `readiness.ready` was true.
+   *
+   * So the default is ON, full stop, and it stays ON while the SERVER answer is
+   * still pending. A stale bundle now refuses rather than quietly charging the
+   * buyer in public. The cost of being wrong in this direction is a visible
+   * error; in the other it is a permanent public transaction the buyer cannot
+   * detect afterwards.
    */
-  const funderAvailable = useMemo(() => funderConfigured(), []);
-  const [keepWalletOffChain, setKeepWalletOffChain] = useState(funderAvailable);
+  const [keepWalletOffChain, setKeepWalletOffChain] = useState(true);
+  /**
+   * Whether a funder exists, ASKED OF THE SERVER rather than of the bundle.
+   *
+   * `null` = still asking. The checkbox renders as soon as the build-time hint
+   * OR the server says yes, so a correctly-built deployment shows it instantly
+   * and a stale one shows it a round trip later — but the guard is already on
+   * either way, so nothing depends on the answer arriving in time.
+   */
+  const [funderFromServer, setFunderFromServer] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    void fetchFunderPubkey().then((pk) => {
+      if (live) setFunderFromServer(pk !== null);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  const funderAvailable = useMemo(
+    () => funderConfigured() || funderFromServer === true,
+    [funderFromServer],
+  );
+  /**
+   * Stand the guard down — but only once the SERVER has said there is no funder.
+   *
+   * Without this, a deployment that legitimately has none would refuse every
+   * subscription, because the guard defaults on. The asymmetry is deliberate:
+   * turning it OFF requires a positive answer from the server, while leaving it
+   * ON requires nothing. "I have not heard back" keeps the protection; only
+   * "there is definitively no funder here" removes it, and the checkbox below
+   * then explains why it is gone rather than silently omitting it.
+   *
+   * It runs once, on that transition, so a user who deliberately unticked — or
+   * reticked — is never overridden afterwards.
+   */
+  const [funderAnswered, setFunderAnswered] = useState(false);
+  useEffect(() => {
+    if (funderAnswered || funderFromServer === null) return;
+    setFunderAnswered(true);
+    if (funderFromServer === false && !funderConfigured()) setKeepWalletOffChain(false);
+  }, [funderFromServer, funderAnswered]);
   const [result, setResult] = useState<SubscribeFromPoolResult | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -848,10 +897,23 @@ export default function SubscribePanel({
           </p>
         </div>
 
-        {/* Offered only where there is something to choose between. With no
-            funder the wallet is the only possible payer, and a switch that
-            cannot change the outcome reads as a protection that exists. */}
-        {funderAvailable && !result && (
+        {/* Rendered while the answer is unknown as well as when it is yes,
+            because the guard is ON in both of those states and a protection
+            that is acting must be visible. It disappears only once the server
+            has confirmed there is no funder — at which point the line below
+            says so instead. */}
+        {!result && funderFromServer === false && !funderConfigured() && (
+          <p className="flex items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
+            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
+            <span>
+              <strong className="text-p01-text">This deployment has no funder.</strong> Your wallet
+              is the only thing that can pay for this subscription, so it will sign a public
+              transfer and anyone reading the subscription reaches it in three steps. There is no
+              setting that changes that here.
+            </span>
+          </p>
+        )}
+        {!result && (funderAvailable || funderFromServer === null) && (
           <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
             <input
               type="checkbox"

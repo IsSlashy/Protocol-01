@@ -138,6 +138,16 @@ export interface RecoverFloatOptions {
    */
   funderPubkey?: PublicKey;
   /**
+   * The caller could not establish whether this deployment has a funder.
+   *
+   * Omitting `funderPubkey` asserts "there is definitively none", which makes
+   * the pre-funder sweep-home behaviour correct because no third-party money
+   * can exist. This flag says the opposite: we do not know, so treasury money
+   * might be here and no attribution is possible. It maps to the same refusal
+   * an unreadable history gets, for the same reason.
+   */
+  funderUnknown?: boolean;
+  /**
    * Leaf indices of notes this caller actually holds, for the UNSHIELD
    * derivation.
    *
@@ -332,6 +342,12 @@ async function resolveSweepDestination(
   opts: RecoverFloatOptions,
 ): Promise<SweepVerdict | SweepRefused> {
   const funder = opts.funderPubkey;
+
+  // We could not find out whether a funder exists. That is NOT the same as
+  // there being none, and treating it as such is how a single transient fetch
+  // error sends the treasury's float — and the buyer's wallet address — onto
+  // the ephemeral that signed their subscription.
+  if (!funder && opts.funderUnknown) return { refused: 'unverifiable', sources: [] };
 
   // No funder on this deployment: no third-party money can be here, so the
   // pre-funder behaviour is still exactly right and costs no RPC calls.

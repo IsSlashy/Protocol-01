@@ -381,6 +381,19 @@ export interface PoolRecoverRequest {
    */
   funderPubkey?: string;
   /**
+   * The page could not establish whether this deployment has a funder.
+   *
+   * 🚨 DIFFERENT FROM omitting `funderPubkey`, and collapsing the two costs the
+   * user their privacy. Omitted means "there is definitively no funder here", so
+   * no third-party money can be on these keys and a sweep home is correct.
+   * `funderUnknown` means the lookup failed — treasury money MIGHT be there, and
+   * sweeping it home writes the wallet onto the ephemeral that signed a
+   * subscription, which is `accountKeys[0]` of that subscription. One transient
+   * fetch error was enough, and it fires on a Recover click: after the
+   * verification run that said the operation was clean.
+   */
+  funderUnknown?: boolean;
+  /**
    * Leaf indices of notes this browser holds.
    *
    * A withdrawal or subscribe derives its ephemeral from the leaf index of the
@@ -2073,6 +2086,7 @@ async function handlePoolRecover(
       ...(await recoverStuckFloat(conn, pool, candidate.seed, owner, {
         onProgress,
         funderPubkey,
+        funderUnknown: req.funderUnknown,
         unshieldLeafIndices: req.unshieldLeafIndices,
       })),
     );
