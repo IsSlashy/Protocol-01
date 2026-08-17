@@ -371,7 +371,20 @@ export async function POST(request: NextRequest) {
       // The wire key stays `deposit_epoch` and carries the blinding. Renaming it
       // silently drops the stored Merkle path on every consumer.
       deposit_epoch: noteBlinding.toString(),
-      token_mint: pool.tokenMint.toString(),
+      // 🚨 THE FIELD, NOT THE ADDRESS. `PublicKey.toString()` is base58, and the
+      // native-SOL mint is `11111111111111111111111111111111` — thirty-two
+      // characters that are ALL DIGITS. So `BigInt(note.token_mint)` on the
+      // import side parsed it as a decimal number instead of failing, produced a
+      // value nothing else agrees with, and the note was rejected with
+      // "commitment does not match its secrets" — a message about the secrets,
+      // for a bug in a field that is not secret.
+      //
+      // The commitment above is computed from `pubkeyToField(...)`, which is 0
+      // for native SOL, so the note WAS the right leaf on chain and still could
+      // not be opened. Any mint whose base58 contains a letter would have thrown
+      // a SyntaxError and been found immediately; this one is the single value
+      // that fails silently.
+      token_mint: pubkeyToField(pool.tokenMint).toString(),
       commitment: commitment.toString(),
       leafIndex,
       token,

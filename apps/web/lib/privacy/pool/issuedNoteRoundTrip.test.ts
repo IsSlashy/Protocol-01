@@ -136,6 +136,34 @@ describe('a note the treasury derives and seals', () => {
   });
 });
 
+describe('the field the route got wrong, in the shape the route writes it', () => {
+  it('rejects a base58 mint, which is what PublicKey.toString() gives', () => {
+    // 🚨 THE BUG THAT BLOCKED A LIVE TEST, AND THE REASON THE SUITE ABOVE MISSED
+    // IT. Every case above builds the note with `pubkeyToField(...)` — correct,
+    // and therefore a reimplementation of the route rather than a test of it.
+    // The route wrote `pool.tokenMint.toString()`, which is BASE58.
+    //
+    // For native SOL that string is `11111111111111111111111111111111`: thirty-
+    // two characters, all digits. `BigInt()` parses it as a decimal number
+    // instead of throwing, so the import recomputed a commitment nothing agreed
+    // with and rejected the note as "commitment does not match its secrets" — a
+    // message about the secrets, for a bug in a field that is not secret.
+    //
+    // Any mint whose base58 contains a letter throws a SyntaxError on the first
+    // attempt. Native SOL is the one value in the system that fails silently,
+    // which is why this is pinned rather than left to the round trip.
+    const { note } = issue(TREASURY_SEED, POOL, LEAF);
+    expect(POOL.tokenMint.toBase58()).toBe('11111111111111111111111111111111');
+    expect(() =>
+      shareableNoteToReceipt({ ...note, token_mint: POOL.tokenMint.toString() }),
+    ).toThrow(/commitment does not match/);
+    // And the correct form, so the case states both halves.
+    expect(() =>
+      shareableNoteToReceipt({ ...note, token_mint: pubkeyToField(POOL.tokenMint).toString() }),
+    ).not.toThrow();
+  });
+});
+
 describe('the argument order that has already been wrong once', () => {
   it('is not symmetric — swapping secret and preimage changes the commitment', () => {
     // `createCommitmentV3(nullifierPreimage, secret, …)`. Both are bigints, so

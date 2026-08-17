@@ -34,17 +34,21 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
   };
 });
 
+import { createNoteEncryptionAddress } from '@/lib/privacy/pool/noteCrypto';
 import { POST } from '@/app/api/issue-note/route';
 
 const TICKET = 'test-ticket';
 const SEED = 'ab'.repeat(32);
 /**
- * A syntactically valid p01pq address: 32 bytes of X25519 plus a 1184-byte
- * ML-KEM-768 public key. The length is checked exactly, so an approximate
- * buffer makes every case 400 at the address check and the suite silently
- * measures nothing — which is what a first draft of this file did.
+ * A REAL receive address, derived like any recipient's.
+ *
+ * A hand-built buffer of the right LENGTH is not enough once a case reaches the
+ * sealing step: the bytes are an X25519 key and an ML-KEM public key, and nacl
+ * rejects nonsense with "unexpected type, use Uint8Array". Deriving it means
+ * every case exercises the same address shape a buyer actually presents.
  */
-const RECIPIENT = `p01pq:${Buffer.alloc(32 + 1184, 7).toString('base64')}`;
+const BUYER_SEED = new Uint8Array(32).fill(77);
+const RECIPIENT = createNoteEncryptionAddress(BUYER_SEED);
 
 /** Claim keys the fake KV considers minted. */
 let mintedClaims: Set<string>;
