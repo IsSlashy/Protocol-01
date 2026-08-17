@@ -1,5 +1,56 @@
 # Demo runbook — a subscription whose buyer is not on chain
 
+---
+
+## 0. THE TEST YOU ARE ABOUT TO RUN — read this first
+
+> **If you shield a note and then subscribe with it from the same wallet, the app
+> will now REFUSE, and it is right to.**
+
+That is not a bug and it is not a regression. Spending a note republishes its
+deposit's identifier in the clear, so an auditor walks
+`subscription → deposit → whoever paid for the deposit` in one hop. If that is
+you, then paying for the subscription through the funder buys **nothing** — you
+are still one hop away through your own deposit. The app used to let you do it
+and say nothing; now it stops and tells you why.
+
+### So the test needs TWO wallets
+
+| | role | must hold |
+|---|---|---|
+| **A** | deposits the notes (the "treasury") | ~0.8 SOL devnet, and it must NOT be the funder key |
+| **B** | the buyer: imports a note, subscribes | nothing — it never pays for anything |
+
+⚠️ **A must not fund B.** If it does, an auditor who walks one hop further out
+than probe P8 does finds the common parent. Fund them from different sources, or
+be ready to say so when asked.
+
+### The shape
+
+```
+A:  /pay → Shield        deposit 2 notes into the 0.1 SOL pool
+B:  /pay → Receive       copy the p01pq:… address
+A:  /pay → Send          seal a note to B's address   ← no transaction at all
+B:  /pay → Receive       paste the blob
+B:  /pay → Subscribe     keep "Never pay for this from my wallet" TICKED
+```
+
+Two notes, not one. A note is spent once and there is no second attempt.
+
+### What you should see, and what must stop you
+
+| screen says | meaning |
+|---|---|
+| ✅ *"Your wallet did not sign or pay for this subscription."* | the funder paid — good |
+| ⛔ *"This note was deposited by your own wallet"* | you used A's wallet to subscribe, or skipped the handoff |
+| ⛔ *"This note's deposit could not be found"* | the RPC pruned it. **Unknown is not safe** — retry on a fuller RPC |
+| ⛔ `falling back to your wallet` | the box was unticked. Stop, fix the funder, use note #2 |
+| ⛔ *"Your wallet paid for this, in public"* | same. Stop |
+
+Then prove it (§5), with `--wallet <B>`.
+
+---
+
 **Written 2026-08-17.** For a live/investor demo on **devnet only**. Read the
 "what this is not" section before saying anything on stage; the claim it
 supports is narrow and it is checkable by anyone in the room.
