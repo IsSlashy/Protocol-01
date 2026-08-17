@@ -908,20 +908,36 @@ export default function SubscribePanel({
                 </span>
               </p>
               {/* The third fact, and the one nothing else on this screen tells
-                them: whether their wallet is in the transaction history. It is
-                a measured property, not a promise — probe P6 in `verify/`
-                reads exactly the two transfers described here, and reaches the
-                wallet in three RPC calls when they exist. Saying nothing would
-                let the page imply the good case. */}
+                them: whether their wallet is in the transaction history.
+
+                🚨 THIS USED TO SAY "your address is in none of these
+                transactions" ON THE FUNDER BRANCH, AND THAT WAS FALSE. It is
+                true only of the subscription's own transactions. The note being
+                spent here was created by a DEPOSIT that the wallet signed and
+                paid for — `shieldToPool` has no funder path at all — and this
+                subscription republishes, in cleartext, the same commitment that
+                deposit published. So the walk is: this transaction → the
+                commitment → the deposit that emitted it → the wallet that paid
+                for the deposit. Funding the spend leg does not touch a single
+                step of that.
+
+                It also used to credit probe P6. P6 fails on ANY named
+                counterparty (`verify/p01-verify.mjs:1219-1237`), so the funder
+                changes the name in the edge and leaves the edge, the measure,
+                and the red verdict exactly where they were. */}
               {result.fundedBy === 'funder' ? (
                 <p className="flex items-start gap-2 text-xs text-p01-text-muted">
                   <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
                   <span>
-                    <strong className="text-p01-text">Your wallet did not sign this.</strong> The
-                    funder paid the rent and fees, so your address is in none of these transactions
-                    and the leftover went back to it, not to you. The funder still saw the request,
-                    its timing and where it came from — this moves the link off the chain, it does
-                    not remove it.
+                    <strong className="text-p01-text">
+                      Your wallet did not sign or pay for this subscription.
+                    </strong>{' '}
+                    The funder covered the rent and fees and the leftover went back to it, not to
+                    you. Two things that does not do: the deposit that created this note was signed
+                    and paid for by your wallet, and this subscription publishes the same note
+                    identifier that deposit did — so anyone can still walk from here to that deposit
+                    and reach your wallet. And the funder saw the request, its timing and where it
+                    came from, so the link moved off the chain rather than away.
                   </span>
                 </p>
               ) : (

@@ -35,7 +35,11 @@ import {
   type PayoutRecord,
   type ShieldOutcome,
 } from "@/lib/privacy/shieldClient";
-import type { PoolNoteView, PoolSizeView } from "@/lib/privacy/worker/poolHandlers";
+import type {
+  PoolNoteView,
+  PoolRecoverResponse,
+  PoolSizeView,
+} from "@/lib/privacy/worker/poolHandlers";
 import { getPoolsForTokenV3, type PoolToken } from "@/lib/privacy/pool/denominatedPool";
 import { SHIELD_PHASES, WITHDRAW_PHASES } from "@/lib/pay/flowProgress";
 import FlowProgress from "./FlowProgress";
@@ -621,22 +625,65 @@ export default function PoolPanel({
       //
       // Sweeping all of them costs a few reads against pools the user has never
       // touched and removes the coupling entirely.
+      // The leaf indices of every note this browser knows about, per pool. A
+      // spend's ephemeral is keyed to the SPENT note's leaf, and a spend
+      // advances no tree, so an old note's stranded float sits nowhere near the
+      // head — outside the window recovery would otherwise search.
+      const leavesByDenomination = new Map<number, number[]>();
+      for (const n of notes) {
+        const list = leavesByDenomination.get(n.denomination) ?? [];
+        list.push(n.leafIndex);
+        leavesByDenomination.set(n.denomination, list);
+      }
       const all = await Promise.all(
-        denominations.map((d) => recoverStuckFunds(meta, d, owner, setStep)),
+        denominations.map((d) =>
+          recoverStuckFunds(meta, d, owner, setStep, leavesByDenomination.get(d) ?? []),
+        ),
       );
       const r = all.reduce(
         (acc, x) => ({
           keys: acc.keys + x.keys,
           lamports: acc.lamports + x.lamports,
+          repaidToFunder: acc.repaidToFunder + x.repaidToFunder,
           closedBuffers: acc.closedBuffers + x.closedBuffers,
+          refused: [...acc.refused, ...x.refused],
         }),
-        { keys: 0, lamports: 0, closedBuffers: 0 },
+        {
+          keys: 0,
+          lamports: 0,
+          repaidToFunder: 0,
+          closedBuffers: 0,
+          refused: [] as PoolRecoverResponse["refused"],
+        },
       );
-      setRecovered(
-        r.keys === 0
-          ? "Nothing stranded in any pool, no funds to recover."
-          : `Recovered ${(r.lamports / 1e9).toFixed(4)} SOL from ${r.keys} key(s), closed ${r.closedBuffers} proof buffer(s).`,
-      );
+      // Say all three things separately. A single "recovered X" line would
+      // report the funder's repayment as money the user got back, and would
+      // report a refusal as nothing having been there — which is the reading
+      // that stops someone coming back for ~1 SOL that is still theirs.
+      const parts: string[] = [];
+      if (r.keys === 0 && r.refused.length === 0) {
+        parts.push("Nothing stranded in any pool, no funds to recover.");
+      } else {
+        if (r.lamports > 0) {
+          parts.push(`Recovered ${(r.lamports / 1e9).toFixed(4)} SOL to your wallet.`);
+        }
+        if (r.repaidToFunder > 0) {
+          parts.push(
+            `Returned ${(r.repaidToFunder / 1e9).toFixed(4)} SOL to the funder that paid for those jobs — ` +
+              `that money was never yours to get back.`,
+          );
+        }
+        if (r.closedBuffers > 0) parts.push(`Closed ${r.closedBuffers} proof buffer(s).`);
+        if (r.lamports === 0 && r.repaidToFunder === 0 && r.closedBuffers === 0) {
+          parts.push("Nothing was swept.");
+        }
+      }
+      for (const ref of r.refused) {
+        parts.push(
+          `⚠️ ${(ref.lamports / 1e9).toFixed(4)} SOL left on the key for note #${ref.leafIndex}: ${ref.sentence}`,
+        );
+      }
+      setRecovered(parts.join(" "));
     } catch (e) {
       setError((e as Error).message || "Recovery failed.");
     } finally {

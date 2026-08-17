@@ -26,7 +26,7 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { poolRequest } from './workerClient';
-import { funderConfigured, requestFunding } from './pool/ephemeralFunder';
+import { fetchFunderPubkey, funderConfigured, requestFunding } from './pool/ephemeralFunder';
 import { loadSubscriptions } from '../pay/subscriptions';
 import {
   isSessionLostError,
@@ -352,15 +352,42 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
  * Reclaim SOL left on ephemerals by earlier failed runs. Proof-buffer rent can
  * only be released by the ephemeral that created it, so this is the only way
  * that money comes back.
+ *
+ * TWO INPUTS THAT LOOK OPTIONAL AND ARE NOT
+ * ─────────────────────────────────────────
+ * `leafIndices` — the leaf indices of the notes this browser holds. A spend's
+ * ephemeral is derived from the leaf index of the note being SPENT, and a spend
+ * advances no tree, so an old note's stranded float sits far below the
+ * head-relative window `recoverFloat` scans on its own. Passing an empty list
+ * silently shrinks what Recover can find; the money is not lost, but nothing
+ * else can reach it.
+ *
+ * The funder address — fetched here, not passed in, because every caller would
+ * otherwise have to remember to. Without it `recoverStuckFloat` cannot tell the
+ * treasury's money from the user's and sweeps everything home, which is how a
+ * crashed funder-paid subscription used to hand ~1.03 SOL of someone else's SOL
+ * to the user's wallet and write that wallet back onto the ephemeral. A failed
+ * fetch degrades to the old behaviour, which is correct exactly when there is
+ * no funder — see `fetchFunderPubkey`.
  */
-export function recoverStuckFunds(
+export async function recoverStuckFunds(
   meta: string,
   denomination: number,
   owner: PublicKey,
   onProgress?: (step: string) => void,
+  leafIndices?: number[],
 ) {
+  const funderPubkey = await fetchFunderPubkey();
   return poolRequest(
-    { kind: 'poolRecover', meta, token: 'SOL', denomination, ownerPubkey: owner.toBase58() },
+    {
+      kind: 'poolRecover',
+      meta,
+      token: 'SOL',
+      denomination,
+      ownerPubkey: owner.toBase58(),
+      funderPubkey: funderPubkey ?? undefined,
+      unshieldLeafIndices: leafIndices,
+    },
     onProgress,
   );
 }

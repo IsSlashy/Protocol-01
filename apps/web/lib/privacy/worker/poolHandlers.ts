@@ -61,7 +61,7 @@ import {
 } from '../pool/noteCrypto';
 import type { StoredMerklePath } from '../pool/unshieldFromPath';
 import { recoverNotes, scanPoolForSeed, type RecoveredNote } from '../pool/poolNotes';
-import { recoverStuckFloat } from '../pool/recoverFloat';
+import { recoverStuckFloat, refusalSentence, type SweepRefusal } from '../pool/recoverFloat';
 import { createPacedFetch } from './pacedFetch';
 import { usePollingConfirmation } from './pollingConfirm';
 import {
@@ -356,7 +356,30 @@ export interface PoolRecoverRequest {
   meta: string;
   token: PoolToken;
   denomination: number;
+  /** The user's WALLET. One of the two addresses a sweep may land on. */
   ownerPubkey: string;
+  /**
+   * This deployment's funder address, when the page could learn it.
+   *
+   * Omitted means "no third-party money can be on these keys", which is the
+   * pre-funder assumption and is only safe when it is TRUE. The page fetches it
+   * from `/api/fund-ephemeral`; a network failure there omits it, and
+   * `recoverStuckFloat` then sweeps as it always did. That is deliberate: a
+   * deployment with no funder must not have its recoveries broken by a
+   * defensive rule aimed at money that cannot exist there.
+   */
+  funderPubkey?: string;
+  /**
+   * Leaf indices of notes this browser holds.
+   *
+   * A withdrawal or subscribe derives its ephemeral from the leaf index of the
+   * note being SPENT, and a spend advances no tree — so its stranded float sits
+   * wherever that note sits, which for an old note is far below the head-relative
+   * window `recoverFloat` scans. Without these, that float is invisible to
+   * Recover and its ~1 SOL of buffer rent is unreachable by anything else,
+   * because `CloseProofBuffer` is `close = authority`.
+   */
+  unshieldLeafIndices?: number[];
 }
 
 /**
@@ -816,10 +839,35 @@ export interface PoolExportNoteResponse {
 
 export interface PoolRecoverResponse {
   kind: 'poolRecover';
-  /** Total lamports swept back to the owner. */
+  /** Total lamports swept to the WALLET. */
   lamports: number;
+  /**
+   * Total lamports returned to the deployment's funder, because it — and not
+   * the wallet — paid for the crashed job. Reported separately because it is
+   * not money the user gets back, and a single total would say it was.
+   */
+  repaidToFunder: number;
   closedBuffers: number;
   keys: number;
+  /**
+   * Ephemerals that held a balance and were deliberately NOT swept, because
+   * who funded them could not be established safely.
+   *
+   * 🚨 The caller MUST surface these. Nothing is lost — every key here is
+   * re-derivable from the seed forever, and its proof buffer was still closed —
+   * but a Recover that silently leaves ~1 SOL behind and reports success reads
+   * as "there was nothing to recover", which is the one reading that stops the
+   * user from ever coming back for it.
+   */
+  refused: Array<{
+    ephemeral: string;
+    leafIndex: number;
+    lamports: number;
+    reason: SweepRefusal;
+    /** Human sentence, already written — render it rather than re-deriving one. */
+    sentence: string;
+    sources: string[];
+  }>;
 }
 
 export type PoolResponse =
@@ -1992,20 +2040,42 @@ async function handlePoolRecover(
   // Sweep every derivation. Float stranded on an ephemeral derived before the
   // wallet adopted a passphrase is only reachable through the legacy seed, and
   // that float is often ~1 SOL of proof-buffer rent.
+  const owner = new PublicKey(req.ownerPubkey);
+  const funderPubkey = req.funderPubkey ? new PublicKey(req.funderPubkey) : undefined;
   const found = [];
   for (const candidate of candidates) {
     found.push(
-      ...(await recoverStuckFloat(conn, pool, candidate.seed, new PublicKey(req.ownerPubkey), {
+      ...(await recoverStuckFloat(conn, pool, candidate.seed, owner, {
         onProgress,
+        funderPubkey,
+        unshieldLeafIndices: req.unshieldLeafIndices,
       })),
     );
   }
 
+  // Split the totals by destination. A single figure would report the funder's
+  // repayment as money the user got back, and the point of the repayment is
+  // that they did not.
+  const ownerB58 = owner.toBase58();
   return {
     kind: 'poolRecover',
-    lamports: found.reduce((n, f) => n + f.lamports, 0),
+    lamports: found.reduce((n, f) => (f.destination === ownerB58 ? n + f.lamports : n), 0),
+    repaidToFunder: found.reduce(
+      (n, f) => (f.destination !== null && f.destination !== ownerB58 ? n + f.lamports : n),
+      0,
+    ),
     closedBuffers: found.reduce((n, f) => n + f.closedBuffers, 0),
     keys: found.length,
+    refused: found
+      .filter((f): f is typeof f & { refused: SweepRefusal } => f.refused !== undefined)
+      .map((f) => ({
+        ephemeral: f.ephemeral,
+        leafIndex: f.leafIndex,
+        lamports: f.strandedLamports ?? 0,
+        reason: f.refused,
+        sentence: refusalSentence(f.refused),
+        sources: f.sources ?? [],
+      })),
   };
 }
 

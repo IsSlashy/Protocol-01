@@ -117,10 +117,16 @@ vi.mock('./poolNotes', () => ({
 }));
 
 vi.mock('./recoverFloat', () => ({
-  recoverStuckFloat: async (_c: unknown, _p: unknown, seed: Uint8Array) => {
+  // `destination` is part of the real return shape and the handler now totals by
+  // it — a recovery that repaid the deployment's funder is not money the user
+  // got back, and one combined figure used to say it was. A mock that omits it
+  // would make the handler count nothing while still reporting keys, which is
+  // exactly the silent-zero this field exists to prevent.
+  recoverStuckFloat: async (_c: unknown, _p: unknown, seed: Uint8Array, owner: { toBase58(): string }) => {
     seen.stuckFloat.push(bytesToHex(seed));
-    return [{ lamports: 1000, closedBuffers: 1 }];
+    return [{ lamports: 1000, closedBuffers: 1, destination: owner.toBase58() }];
   },
+  refusalSentence: () => 'mocked',
 }));
 
 vi.mock('./shieldEphemeral', () => ({
@@ -380,6 +386,12 @@ describe('a wallet that adopts a passphrase keeps its old notes', () => {
     expect(seen.stuckFloat).toEqual([SALTED_HEX, LEGACY_HEX]);
     expect(res.keys).toBe(2);
     expect(res.lamports).toBe(2000);
+    // Both derivations were wallet-funded here, so nothing is owed to a funder.
+    // Asserted rather than assumed: the two totals are computed from the same
+    // list by opposite predicates, so a mistake in either shows up as money
+    // appearing in the wrong column rather than as a missing figure.
+    expect(res.repaidToFunder).toBe(0);
+    expect(res.refused).toEqual([]);
   });
 
   it('still refuses a leaf that belongs to nobody', async () => {

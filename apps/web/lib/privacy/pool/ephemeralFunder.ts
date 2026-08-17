@@ -9,16 +9,37 @@
  * end. Both of those are ordinary public `SystemProgram::transfer`s, and when
  * they point at the user's wallet they bracket the entire operation with the
  * user's name on it. Measured on `verify/fixtures/v3-subscribe`: three RPC calls
- * take a stranger from the subscription to the buyer's wallet. That is probe P6,
- * and it is the cheapest attack on this protocol.
+ * take a stranger from the subscription to the buyer's wallet. That is the
+ * cheapest attack on this protocol.
  *
  * Routing both ends through a shared funder replaces one-wallet-per-user with
- * one treasury shared by everyone this deployment has served. It is a real
- * improvement against a chain observer, and it is NOT anonymity: the funder sees
- * the request, its timing and its origin IP. If the funder keeps a log, the link
- * is intact and merely moved off chain. That trade is exactly the one Tornado
- * Cash made with its relayers, and it must be stated to the user in those words
- * rather than implied.
+ * one treasury shared by everyone this deployment has served.
+ *
+ * ⛔ THIS DOES NOT ADDRESS PROBE P6, AND AN EARLIER VERSION OF THIS HEADER SAID
+ * IT DID
+ * ─────────────────────────────────────────────────────────────────────────────
+ * P6 fails on ANY named counterparty, not on the user's wallet specifically:
+ * `verify/p01-verify.mjs:1219-1237` reports FAIL with `measure = edges.length`
+ * the moment one System transfer names anybody. Its PASS branch (:1201-1218)
+ * requires that NO transfer in the payer's entire life names a counterparty —
+ * structurally unreachable for a fee payer, because a key that was never funded
+ * cannot pay a fee, and the sweep must land the account on exactly zero. So the
+ * edges stay, the measure stays 2, and the probe stays red. What changes is the
+ * ADDRESS WRITTEN IN THEM.
+ *
+ * What that is worth is arithmetic, not rhetoric: the observer's uncertainty
+ * grows by log2 of the number of users the funder is serving concurrently. On a
+ * deployment with one user that is log2(1) = ZERO BITS, and
+ * `getSignaturesForAddress` on the treasury enumerates every job it ever paid
+ * for. This becomes a real improvement when the treasury has real traffic and
+ * not before; until then its defensible value is that the wallet stops being
+ * `accountKeys[0]`, which is a different and much smaller claim.
+ *
+ * And it is NOT anonymity in any case: the funder sees the request, its timing
+ * and its origin IP. If the funder keeps a log, the link is intact and merely
+ * moved off chain. That trade is exactly the one Tornado Cash made with its
+ * relayers, and it must be stated to the user in those words rather than
+ * implied.
  *
  * ⛔ THE HARD BOUNDARY
  * ────────────────────
@@ -98,4 +119,46 @@ export async function requestFunding(
   }
 
   return { sweepTo: body.sweepTo, signature: body.signature, lamports: body.lamports ?? lamports };
+}
+
+/** Cached across calls: the address cannot change without a redeploy, and
+ *  recovery asks for it once per pool per run. `undefined` = not asked yet. */
+let cachedFunderPubkey: string | null | undefined;
+
+/**
+ * This deployment's funder ADDRESS, or `null` when there is none.
+ *
+ * Recovery needs this and cannot get it any other way: `recoverFloat` decides
+ * where a stranded ephemeral's residue may go from a two-element allowlist —
+ * the user's wallet, or the funder — and an unattributable ephemeral is refused
+ * rather than swept. Without this call every treasury-funded job that crashed
+ * would be refused forever, so a missing answer costs recoveries, not safety.
+ *
+ * 🚨 It must NOT be read from `funderTicket()`-style `NEXT_PUBLIC_` config. That
+ * is inlined at build time, so a deployment that switched its funder on without
+ * rebuilding would serve a client that cannot name it — the exact failure that
+ * already keeps `funderConfigured()` false in production. This asks the server.
+ *
+ * Never throws: every caller's fallback for "unknown" is to refuse to attribute
+ * a sweep, which is also the right behaviour when the network is down.
+ */
+export async function fetchFunderPubkey(signal?: AbortSignal): Promise<string | null> {
+  if (cachedFunderPubkey !== undefined) return cachedFunderPubkey;
+  try {
+    const res = await fetch('/api/fund-ephemeral', { method: 'GET', signal });
+    const body: { ok?: boolean; configured?: boolean; funder?: string | null } = await res.json();
+    cachedFunderPubkey = res.ok && body.ok && body.configured && body.funder ? body.funder : null;
+  } catch {
+    // Do NOT cache a network failure as "no funder": a transient outage would
+    // then make every later recovery in this session sweep on the assumption
+    // that no treasury money can exist, which is the assumption this whole
+    // mechanism exists to stop making.
+    return null;
+  }
+  return cachedFunderPubkey;
+}
+
+/** Test seam: drop the memoised address. */
+export function resetFunderPubkeyCache(): void {
+  cachedFunderPubkey = undefined;
 }

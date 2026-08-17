@@ -14,12 +14,20 @@ import bs58 from 'bs58';
  * sweeps the residue back when the job ends. Today both ends point at the user's
  * wallet, which brackets the whole operation with its name on it: measured on
  * `verify/fixtures/v3-subscribe`, three RPC calls take a stranger from the
- * subscription to the buyer's wallet (probe P6). That is the cheapest attack on
- * this protocol and it is not cryptographic.
+ * subscription to the buyer's wallet. That is the cheapest attack on this
+ * protocol and it is not cryptographic.
  *
  * Moving both ends here replaces one wallet-per-user with one treasury shared by
- * every user of this deployment. The anonymity set of the financial channel goes
- * from "one" to "everyone this endpoint has funded".
+ * every user of this deployment.
+ *
+ * ⛔ IT DOES NOT CLOSE PROBE P6, AND AN EARLIER VERSION OF THIS HEADER IMPLIED
+ * IT DID. P6 fails on ANY named counterparty (`verify/p01-verify.mjs:1219-1237`),
+ * so the two edges and the measure of 2 survive this endpoint entirely; only the
+ * address inside them changes. The anonymity set of the financial channel goes
+ * from "one" to "everyone this endpoint has funded CONCURRENTLY" — which on a
+ * single-user deployment is still one, buying log2(1) = zero bits, while
+ * `getSignaturesForAddress` on the treasury enumerates every job it ever paid
+ * for. Say "the wallet is no longer accountKeys[0]". Do not say "unlinkable".
  *
  * ⛔ WHAT THIS ENDPOINT MUST NEVER DO — AND WHY IT IS SHAPED THIS WAY
  * ──────────────────────────────────────────────────────────────────
@@ -73,6 +81,45 @@ const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
 
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ ok: false, error, ...extra }, { status });
+}
+
+/**
+ * Who the funder is, without spending anything.
+ *
+ * WHY THIS EXISTS. `recoverFloat.ts` has to decide where a stranded
+ * ephemeral's residue may go, and the only safe rule is a fixed two-element
+ * allowlist: the user's wallet, or this deployment's funder. Without the
+ * funder's address it must refuse every ephemeral it cannot attribute, which
+ * turns a recovery into a deferral. Until now the address appeared ONLY in a
+ * successful POST body (`sweepTo` below) — that is, only after money had
+ * already been spent, and never for the crashed job that needs recovering.
+ *
+ * Deliberately NOT ticket-gated and deliberately NOT a `NEXT_PUBLIC_` build
+ * value. Not gated, because the funder's address is public the instant it pays
+ * for anything and every grant already hands it back; gating it would protect
+ * nothing and would break recovery for a user whose ticket the operator has
+ * since rotated. Not a build value, because `NEXT_PUBLIC_` is inlined at build
+ * time — the lesson `ephemeralFunder.ts` records — so a deployment that turned
+ * its funder on without redeploying would serve a client that cannot name it.
+ *
+ * It returns the address and nothing else: no balance, no ticket, no secret,
+ * and no statement about whether the funder would serve any particular request.
+ */
+export async function GET() {
+  const secret = process.env.P01_FUNDER_SECRET_KEY;
+  if (!secret) return NextResponse.json({ ok: true, configured: false, funder: null });
+  try {
+    const funder = Keypair.fromSecretKey(bs58.decode(secret));
+    return NextResponse.json({
+      ok: true,
+      configured: true,
+      funder: funder.publicKey.toBase58(),
+    });
+  } catch {
+    // A misconfigured key is "no usable funder", and saying so is better than a
+    // 500: the caller's next move (refuse to attribute a sweep) is the same.
+    return NextResponse.json({ ok: true, configured: false, funder: null });
+  }
 }
 
 export async function POST(request: NextRequest) {
