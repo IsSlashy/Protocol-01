@@ -824,6 +824,26 @@ export interface PoolSubscribePrepareResponse {
   requiredLamports: number;
   denomination: number;
   derivation: DerivationVersion;
+  /**
+   * Who paid for the DEPOSIT that created the note about to be spent, base58.
+   *
+   * 🚨 THE ONE FACT THAT DECIDES WHETHER ANY OF THE REST IS WORTH ANYTHING.
+   * Spending republishes the deposit's commitment in cleartext, so a stranger
+   * walks spend → commitment → deposit in one hop and lands on this address. If
+   * it is the wallet doing the spending, routing the spend through a funder
+   * buys NOTHING — the wallet is still one hop away, through the deposit.
+   *
+   * Costs no RPC call: the pool scan already fetches every insert transaction
+   * to read its event log, and this is `accountKeys[0]` of what it holds.
+   *
+   * `null` when the leaf was not found in the scanned window or its transaction
+   * carried no readable header. Callers must treat `null` as UNKNOWN, never as
+   * safe — an unread channel reported clean is the failure this whole effort
+   * exists to refuse.
+   */
+  depositPayer: string | null;
+  /** The deposit's signature, so a caller can show or verify the claim. */
+  depositSignature: string | null;
 }
 
 export interface PoolSubscribeExecuteResponse {
@@ -1970,7 +1990,16 @@ async function handlePoolSubscribePrepare(
   req: PoolSubscribePrepareRequest,
   onProgress?: (step: string) => void,
 ): Promise<PoolSubscribePrepareResponse> {
-  const { conn, pool, candidate, note, storedPath } = await locateOwnedNote(req, onProgress);
+  const { conn, pool, candidate, note, storedPath, commitments } = await locateOwnedNote(
+    req,
+    onProgress,
+  );
+
+  // Who deposited the note we are about to spend. Looked up by the note's own
+  // commitment, which is the SAME value the spend will republish in cleartext —
+  // so this is exactly the address a stranger reaches in one hop from the
+  // subscription. Free: `commitments` is already in hand from the scan.
+  const origin = commitments.get(note.receipt.commitment.toString()) ?? null;
 
   const ctx = await prepareSubscribeJob(
     note.receipt, pool, conn, candidate.seed, onProgress, storedPath,
@@ -1995,6 +2024,8 @@ async function handlePoolSubscribePrepare(
     requiredLamports: ctx.requiredLamports,
     denomination: pool.denomination,
     derivation: candidate.derivation,
+    depositPayer: origin?.depositPayer ?? null,
+    depositSignature: origin?.signature ?? null,
   };
 }
 

@@ -112,6 +112,18 @@ export interface SubscribeFromPoolResult {
    * off chain when it is not.
    */
   fundedBy?: 'wallet' | 'funder';
+  /**
+   * True when the note spent was deposited by THIS wallet, or when its deposit
+   * could not be found. Either way the subscription is reachable from the buyer
+   * in one hop through the deposit, whoever paid for the subscription itself.
+   *
+   * Optional, and absent is treated as TRUE — the pessimistic reading. Assuming
+   * the good case from a missing field is how a page ends up telling someone
+   * they are unreachable when they are one `getTransaction` away.
+   */
+  reachableViaDeposit?: boolean;
+  /** Who paid for that deposit, base58; `null` = not found in the scanned window. */
+  depositPayer?: string | null;
 }
 
 interface SubscribeModule {
@@ -1039,6 +1051,31 @@ export default function SubscribePanel({
                 counterparty (`verify/p01-verify.mjs:1219-1237`), so the funder
                 changes the name in the edge and leaves the edge, the measure,
                 and the red verdict exactly where they were. */}
+              {/* The deposit half, which decides whether the payment half
+                  matters at all. Rendered FIRST and unconditionally when it is
+                  bad: a reader who sees "your wallet did not pay" and stops
+                  there has been told the smaller true thing and missed the
+                  larger one. Absent field reads as reachable — the pessimistic
+                  default, because the alternative is claiming safety from a
+                  value that was never sent. */}
+              {result.reachableViaDeposit !== false && (
+                <p className="flex items-start gap-2 text-xs text-p01-text-muted">
+                  <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
+                  <span>
+                    <strong className="text-p01-text">
+                      {result.depositPayer
+                        ? 'This note was deposited by your own wallet.'
+                        : 'This note’s deposit could not be found.'}
+                    </strong>{' '}
+                    Spending it republished that deposit’s identifier in the clear, so anyone
+                    reading this subscription reaches{' '}
+                    {result.depositPayer ? 'your wallet' : 'whoever made that deposit'} in one hop
+                    through the deposit —{' '}
+                    <strong className="text-p01-text">whoever paid for the subscription</strong>.
+                    To avoid it, spend a note somebody else deposited.
+                  </span>
+                </p>
+              )}
               {result.fundedBy === 'funder' ? (
                 <p className="flex items-start gap-2 text-xs text-p01-text-muted">
                   <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />

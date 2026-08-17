@@ -333,6 +333,48 @@ export interface ShieldReceipt {
 export interface OnChainCommitment {
   commitment: bigint;
   leafIndex: number;
+  /**
+   * The fee payer of the transaction that inserted this leaf, base58.
+   *
+   * 🚨 WHY A NOTE'S DEPOSITOR IS WORTH CARRYING AROUND. Spending a note
+   * republishes, in cleartext, the exact commitment its deposit emitted — the
+   * program forces it (`subscribe_private_stark.rs`: the C1 inputs hash binds
+   * the argument, C3 proves it is a leaf, the root must be the pool's). So a
+   * stranger walks spend → commitment → deposit in one hop, and lands on
+   * whoever paid for that deposit.
+   *
+   * If that is the same wallet now spending the note, then routing the spend
+   * through a third-party funder buys NOTHING: the wallet is still one hop away
+   * through the deposit. That configuration is the single way to do everything
+   * else right and still be found, and it is invisible from the spend screen.
+   *
+   * Free to collect: this scan already fetches the full transaction for every
+   * pool signature in order to read the event log. The payer is
+   * `accountKeys[0]` of what is already in hand.
+   *
+   * `null` when the transaction carried no readable header.
+   */
+  depositPayer: string | null;
+  /** The insert transaction, so a caller can show or verify the claim. */
+  signature: string;
+}
+
+/**
+ * The fee payer of a fetched transaction, across both message versions.
+ *
+ * Always the FIRST static account key and never one loaded from an address
+ * lookup table, which is what makes this safe to read without resolving
+ * lookups — the same property probe P6 relies on.
+ */
+function feePayerOf(tx: {
+  transaction: { message: unknown };
+}): string | null {
+  const msg = tx.transaction.message as {
+    accountKeys?: Array<{ toBase58(): string }>;
+    staticAccountKeys?: Array<{ toBase58(): string }>;
+  };
+  const first = msg.staticAccountKeys?.[0] ?? msg.accountKeys?.[0];
+  return first ? first.toBase58() : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1361,9 +1403,15 @@ export async function fetchPoolCommitments(
       ),
     );
 
-    for (const tx of txs) {
+    for (let t = 0; t < txs.length; t++) {
+      const tx = txs[t];
       const logs = tx?.meta?.logMessages;
       if (!logs) continue;
+      // Who paid for this insert. Read once per transaction, outside the log
+      // loop, because one transaction can emit several leaves and they all
+      // share a payer.
+      const depositPayer = feePayerOf(tx);
+      const signature = batch[t]!.signature;
       for (const log of logs) {
         const m = log.match(/^Program data: (.+)$/);
         if (!m) continue;
@@ -1390,7 +1438,7 @@ export async function fetchPoolCommitments(
           break;
         }
         if (!decoded) continue;
-        out.set(decoded.commitment.toString(), decoded);
+        out.set(decoded.commitment.toString(), { ...decoded, depositPayer, signature });
       }
     }
 

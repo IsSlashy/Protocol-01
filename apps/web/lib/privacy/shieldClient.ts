@@ -243,6 +243,36 @@ export interface SubscribeParams {
   neverExposeWallet?: boolean;
 }
 
+/**
+ * Thrown when the note being spent was deposited by the wallet doing the
+ * spending, and the caller asked to stay off chain.
+ *
+ * Named separately from `WalletExposureRefusedError` because the cure is
+ * completely different and saying the wrong one wastes the user's time: this is
+ * not "the funder is down, retry later", it is "this note cannot give you what
+ * you asked for, no matter who pays — use a note somebody else deposited".
+ */
+export class SelfDepositedNoteError extends Error {
+  constructor(
+    readonly depositPayer: string | null,
+    readonly depositSignature: string | null,
+  ) {
+    super(
+      depositPayer === null
+        ? 'Stopped before spending anything: this note\'s deposit could not be found in the ' +
+            'scanned history, so there is no way to tell whether your own wallet made it. ' +
+            'Spending republishes the deposit\'s identifier in the clear, so an unknown deposit ' +
+            'is an unknown exposure — it is not the same as a safe one.'
+        : 'Stopped before spending anything: this note was deposited by your own wallet ' +
+            `(${depositPayer}${depositSignature ? `, ${depositSignature.slice(0, 12)}…` : ''}). ` +
+            'Spending it republishes that deposit\'s identifier in the clear, so anyone reading ' +
+            'the subscription reaches your wallet in one hop through the deposit — whoever pays ' +
+            'for the subscription itself. Use a note deposited by someone else.',
+    );
+    this.name = 'SelfDepositedNoteError';
+  }
+}
+
 export interface SubscribeOutcome {
   txSig: string;
   /** Base58 subscription vault PDA. */
@@ -269,6 +299,19 @@ export interface SubscribeOutcome {
   funderSignature?: string;
   /** Why the funder was not used, when one was configured but did not serve. */
   funderFallbackReason?: string;
+  /**
+   * Who paid for the DEPOSIT of the note this subscription spent.
+   *
+   * Reported even when the run succeeded, because it is half the answer to
+   * "is my wallet reachable from this" and no other surface shows it. `null`
+   * means the deposit was not found in the scanned window — unknown, which the
+   * result screen must not render as clean.
+   */
+  depositPayer: string | null;
+  /** True when `depositPayer` is this wallet, or is unknown. The subscription
+   *  is then reachable from the buyer in one hop THROUGH THE DEPOSIT, whoever
+   *  paid for the subscription itself. */
+  reachableViaDeposit: boolean;
 }
 
 /**
@@ -301,6 +344,37 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     },
     onProgress,
   );
+
+  // ── Who DEPOSITED, which decides whether paying matters ───────────────────
+  //
+  // 🚨 THE CONFIGURATION IN WHICH EVERYTHING ELSE HERE BUYS NOTHING.
+  //
+  // Spending republishes the deposit's commitment in cleartext — the program
+  // forces it, and no client change can alter that before the verifier is
+  // redeployed. So a stranger walks: subscription → commitment at byte 160 →
+  // the deposit that emitted it → that deposit's fee payer. One hop, no
+  // cryptography.
+  //
+  // If that fee payer is the wallet now subscribing, the funder is irrelevant.
+  // The spend can be paid by a treasury, swept to a treasury, and signed by an
+  // ephemeral, and the buyer is STILL one hop away through their own deposit.
+  // It is the single way to do all of this correctly and remain findable, and
+  // nothing on the subscribe screen shows it — the note looks the same either
+  // way.
+  //
+  // So it is checked here, in code, rather than asked for in a runbook. Under
+  // `neverExposeWallet` it REFUSES; otherwise it is reported so the result
+  // screen can say which world the user ended up in.
+  //
+  // ⚠️ `null` means the leaf was not found in the scanned window, NOT that the
+  // deposit is safe. An unknown answer is refused under the flag for the same
+  // reason an unreadable funder lookup is: this file does not convert "could
+  // not see" into "there is nothing there".
+  const selfDeposited =
+    prep.depositPayer === null || prep.depositPayer === owner.toBase58();
+  if (params.neverExposeWallet && selfDeposited) {
+    throw new SelfDepositedNoteError(prep.depositPayer, prep.depositSignature);
+  }
 
   // ── Who pays ───────────────────────────────────────────────────────────────
   // One decision, made in `fundEphemeralForJob` and shared with the withdrawal
@@ -347,6 +421,8 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     fundedBy,
     funderSignature,
     funderFallbackReason,
+    depositPayer: prep.depositPayer,
+    reachableViaDeposit: selfDeposited,
   };
 }
 
