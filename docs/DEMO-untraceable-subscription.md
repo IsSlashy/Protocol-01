@@ -140,13 +140,25 @@ treasury deposits through the UI like anyone else.
      it and no rescan brings it back. Do not clear the demo browser.
 
 5. **Buyer subscribes.** `/pay` → Subscribe, using the imported note.
-   - **STOP IMMEDIATELY** if the progress line says
-     `falling back to your wallet`, or if the result paragraph says
-     *"Your wallet paid for this, in public."* Either means the funder did not
-     serve and the buyer's wallet is now on chain. The result also prints
-     `funderFallbackReason` — read it, fix it, use the **second** note.
+   - ✅ **Leave "Never pay for this from my wallet" TICKED.** It is on by default
+     wherever a funder exists. With it on, a funder that cannot serve makes the
+     subscription **stop before spending anything** instead of quietly charging
+     the buyer's wallet in public. That converts the demo's worst outcome —
+     silent, permanent, discovered by whoever opens an explorer — into a visible
+     error you can fix before anyone sees it.
+   - If it stops, the error carries the funder's own reason. A 429, a rotated
+     ticket and a drained treasury need three different fixes; read it, fix it,
+     and use the **second** note.
+   - **STOP IMMEDIATELY** if you ever see the progress line
+     `falling back to your wallet`, or a result paragraph saying *"Your wallet
+     paid for this, in public."* Either means the box was unticked and the
+     buyer's wallet is now on chain.
    - The good outcome reads *"Your wallet did not sign or pay for this
      subscription."*
+   - ⚠️ The buyer's wallet does sign ONE thing: a `signMessage` to derive their
+     pool seed. That is a signature over a string, **not a transaction** — it
+     creates nothing on chain and no RPC method can see it. Say so if asked;
+     it looks like a wallet interaction and is not one.
 
 Cost: roughly 0.3 SOL of devnet SOL per rehearsal.
 
