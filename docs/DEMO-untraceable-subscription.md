@@ -28,11 +28,11 @@ be ready to say so when asked.
 ### The shape
 
 ```
-A:  /pay → Shield        deposit 2 notes into the 0.1 SOL pool
-B:  /pay → Receive       copy the p01pq:… address
-A:  /pay → Send          seal a note to B's address   ← no transaction at all
-B:  /pay → Receive       paste the blob
-B:  /pay → Subscribe     keep "Never pay for this from my wallet" TICKED
+A:  /app → Shield        deposit 2 notes into the 0.1 SOL pool
+B:  /app → Receive       copy the p01pq:… address
+A:  /app → Send          seal a note to B's address   ← no transaction at all
+B:  /app → Receive       paste the blob
+B:  /app → Subscribe     keep "Never pay for this from my wallet" TICKED
 ```
 
 Two notes, not one. A note is spent once and there is no second attempt.
@@ -211,26 +211,26 @@ Deposits require the C6 prover, which lives in the browser worker, so the
 treasury deposits through the UI like anyone else.
 
 1. **Treasury deposits the notes.** Connect the *treasury depositor* wallet to
-   `/pay`, shield **N notes** into one pool (0.1 SOL is the cheapest useful one).
+   `/app`, shield **N notes** into one pool (0.1 SOL is the cheapest useful one).
    Prepare **at least two**: a note is spent once, and there is no second attempt
    on stage.
    - The deposit screen will say *"Your wallet paid for this, in public."* That
      is correct and it is about the **treasury's** wallet, which is exactly the
      arrangement being demonstrated.
 
-2. **Buyer publishes their receive address.** On the buyer's browser, `/pay` →
+2. **Buyer publishes their receive address.** On the buyer's browser, `/app` →
    Receive → copy the `p01pq:…` address.
 
-3. **Treasury seals a note to it.** Still on the treasury browser: `/pay` → Send
+3. **Treasury seals a note to it.** Still on the treasury browser: `/app` → Send
    → paste the buyer's `p01pq:` address → get a `p01enc1:…` blob. **No
    transaction is created** — nothing to observe, nothing to pair.
 
-4. **Buyer imports.** `/pay` → Receive → paste the blob.
+4. **Buyer imports.** `/app` → Receive → paste the blob.
    - 🚨 A received note exists **only in that browser's local storage**. Its
      secrets are not derivable from the buyer's seed, so clearing storage loses
      it and no rescan brings it back. Do not clear the demo browser.
 
-5. **Buyer subscribes.** `/pay` → Subscribe, using the imported note.
+5. **Buyer subscribes.** `/app` → Subscribe, using the imported note.
    - ✅ **Leave "Never pay for this from my wallet" TICKED.** It is on by default
      wherever a funder exists. With it on, a funder that cannot serve makes the
      subscription **stop before spending anything** instead of quietly charging

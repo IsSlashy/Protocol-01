@@ -30,7 +30,7 @@ party and probe P8 reports exactly that. Check with
 
 ## 1. Deposit the notes (once, by hand)
 
-Connect **wallet A** to `/pay` and shield into the **0.1 SOL** pool — the
+Connect **wallet A** to `/app` and shield into the **0.1 SOL** pool — the
 cheapest one that works, and the default the Subscribe tab asks for. Deposit as
 many as you want issuable; each one is real money you are giving away.
 
