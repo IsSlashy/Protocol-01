@@ -170,7 +170,18 @@ export default function PoolPanel({
   const [result, setResult] = useState<ShieldOutcome | null>(null);
   const [busyNote, setBusyNote] = useState<string | null>(null);
   const [withdrawn, setWithdrawn] = useState<
-    { txSig: string; denomination: number; payout: string } | null
+    {
+      txSig: string;
+      denomination: number;
+      payout: string;
+      /** Who paid the rent and fees — decides which of two very different
+       *  sentences the user is owed about this withdrawal. */
+      fundedBy: "wallet" | "funder";
+      /** Why the funder did not serve, when one was configured. Rendered, not
+       *  swallowed: a 429, a 409 and an operator switching it off all put the
+       *  wallet back on chain and are otherwise indistinguishable. */
+      funderFallbackReason?: string;
+    } | null
   >(null);
   const [recovering, setRecovering] = useState(false);
   const [recovered, setRecovered] = useState<string | null>(null);
@@ -1025,6 +1036,44 @@ export default function PoolPanel({
                 to the deposit it spends (the commitment appears in both), so treat it as a
                 transparent transfer.
               </p>
+              {/* Who paid. Two very different sentences, and the user is owed
+                  whichever one is true — `fundedBy` is a RESULT, not a request:
+                  the client asks for a funder, it may not be there, and the
+                  fallback is silent on chain.
+
+                  🚨 Neither branch may say "unlinkable". The payout address is
+                  published in this withdrawal's instruction data in the clear,
+                  so the funder changes who paid the FEES and nothing about who
+                  can be reached from the payee — which is why the sentence
+                  below points at the sweep rather than at the pre-fund. */}
+              {withdrawn.fundedBy === "funder" ? (
+                <p className="mt-2 flex items-start gap-2 text-xs text-p01-text-muted">
+                  <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
+                  <span>
+                    <strong className="text-p01-text">Your wallet did not pay for this.</strong>{' '}
+                    The funder covered the rent and fees and the leftover went back to it. That
+                    removes your address from these transactions — it does not make the withdrawal
+                    private: the payout address above is written into it in the clear, so whoever
+                    reads this reaches whoever you sweep it to. The funder also saw the request and
+                    where it came from.
+                  </span>
+                </p>
+              ) : (
+                <p className="mt-2 flex items-start gap-2 text-xs text-p01-text-muted">
+                  <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
+                  <span>
+                    <strong className="text-p01-text">Your wallet paid for this, in public.</strong>{' '}
+                    It signed a transfer to the signing key before, and got the leftover back
+                    after. Both name your address.
+                    {withdrawn.funderFallbackReason ? (
+                      <>
+                        {' '}The funder was asked and did not serve:{' '}
+                        <span className="font-mono">{withdrawn.funderFallbackReason}</span>
+                      </>
+                    ) : null}
+                  </span>
+                </p>
+              )}
               <a
                 href={`https://explorer.solana.com/tx/${withdrawn.txSig}?cluster=devnet`}
                 target="_blank"

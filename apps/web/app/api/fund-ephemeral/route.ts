@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 
+import { getStore, rateLimitExceeded } from '@/lib/waitlist/store';
+
 /**
  * fund-ephemeral — pay the rent and fees for one pool job, so the user's wallet
  * never appears on chain.
@@ -73,11 +75,42 @@ const MAX_LAMPORTS_PER_REQUEST = 2_000_000_000;
  * Ceiling for one server instance's lifetime. Serverless instances are recycled,
  * so this is a blast-radius bound on a single runaway loop, NOT a daily budget —
  * saying otherwise would be the kind of guard that reads stronger than it is.
+ *
+ * 🚨 AND IT IS WEAKER THAN IT LOOKS, WHICH IS WHY THE KV LIMITER BELOW EXISTS.
+ * `spentThisInstance` is a module-scope `let` inside a serverless function: it
+ * resets on every cold start, and nothing stops an attacker from arriving on a
+ * fresh isolate every time. So this bounds ONE runaway loop within ONE warm
+ * instance and bounds the treasury not at all. The only durable bound is the
+ * per-IP counter in KV.
  */
 const MAX_LAMPORTS_PER_INSTANCE = 20_000_000_000;
 let spentThisInstance = 0;
 
+/**
+ * Grants allowed per IP per hour.
+ *
+ * A legitimate user makes ONE call per pool job. Twelve is generous for a person
+ * retrying a flaky devnet and small enough that the worst hour costs the
+ * treasury a bounded amount rather than its balance. It is not a defence against
+ * a distributed caller and is not described as one — see the faucet note above.
+ */
+const GRANTS_PER_IP_PER_HOUR = 12;
+
+/** Domain separator so this counter can never collide with the waitlist's. */
+const RATE_SALT = 'p01:fund-ephemeral:v1';
+
 const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
+
+/** First hop of the forwarding chain; falls back to a stable sentinel. Same
+ *  shape as the waitlist route's, deliberately — one definition of "who is
+ *  calling" across every rate-limited endpoint. */
+function clientIp(req: NextRequest): string {
+  const real = req.headers.get('x-real-ip');
+  if (real) return real.trim();
+  const fwd = req.headers.get('x-forwarded-for');
+  if (fwd) return fwd.split(',')[0].trim();
+  return 'unknown';
+}
 
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ ok: false, error, ...extra }, { status });
@@ -159,6 +192,36 @@ export async function POST(request: NextRequest) {
   }
   if (spentThisInstance + lamports > MAX_LAMPORTS_PER_INSTANCE) {
     return bad(429, 'this instance has reached its funding ceiling');
+  }
+
+  // ── The only durable bound on this faucet ────────────────────────────────
+  //
+  // FAIL CLOSED, DELIBERATELY. Without a KV backend there is no counter that
+  // survives a cold start, and this endpoint signs transfers out of a treasury
+  // with a public ticket. An unmetered faucet that spends is worse than one
+  // that refuses, and the refusal is not silent: the client reports
+  // `funderFallbackReason` and falls back to the wallet, which is the honest
+  // outcome — the user pays publicly and is TOLD they did.
+  //
+  // This is also the answer to "is KV configured in the deployment that runs
+  // the funder?" — the endpoint no longer has to know. If it is not, the funder
+  // does not serve, and turning it on is a deliberate operator act rather than
+  // an assumption this file makes on their behalf.
+  const kv = getStore();
+  if (!kv) {
+    return bad(503, 'no durable rate limiter is configured; refusing to run as an unmetered faucet');
+  }
+  try {
+    if (await rateLimitExceeded(kv, clientIp(request), RATE_SALT, GRANTS_PER_IP_PER_HOUR)) {
+      return bad(429, 'too many funding requests from this address in the last hour', {
+        limit: GRANTS_PER_IP_PER_HOUR,
+      });
+    }
+  } catch (e) {
+    // A limiter that errors is a limiter that is not limiting. Same posture as
+    // an absent one: refuse. Serving here would make every KV outage a window
+    // in which the treasury is unbounded.
+    return bad(503, `the rate limiter could not be read: ${(e as Error).message}`);
   }
 
   const rpc = process.env.P01_FUNDER_RPC ?? 'https://api.devnet.solana.com';

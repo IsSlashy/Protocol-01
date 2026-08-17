@@ -175,8 +175,19 @@ export interface PoolUnshieldExecuteRequest {
   jobId: string;
   /** Address that receives the withdrawn funds. */
   recipient: string;
-  /** Wallet that pre-funded the ephemeral; receives the swept residual. */
+  /** The user's WALLET. Identity only — see `sweepTo` for where money goes.
+   *  `executeUnshield` refuses `recipient === ownerPubkey`, and that refusal is
+   *  justified by this field meaning the wallet and nothing else. */
   ownerPubkey: string;
+  /**
+   * Base58 address that receives the residual rent, when it is not the wallet.
+   *
+   * Set by the page when a third party pre-funded the ephemeral. Omitted means
+   * "sweep home", which is correct for a wallet-funded job and wrong for any
+   * other kind — see `PoolSubscribeExecuteRequest.sweepTo` for why sweeping
+   * home after someone else paid is worse than not using a funder at all.
+   */
+  sweepTo?: string;
 }
 
 /**
@@ -673,6 +684,18 @@ export interface PoolShieldPrepareResponse {
   /** Base58 — the main thread funds THIS address, then calls execute. */
   ephemeralPubkey: string;
   requiredLamports: number;
+  /**
+   * How much of `requiredLamports` is the user's own VALUE rather than float:
+   * the denomination plus the 0.3% shield fee, neither of which comes back.
+   *
+   * 🚨 It exists so the deposit's refusal to use the funder is STRUCTURAL rather
+   * than an omission. A deposit routed through `fundEphemeralForJob` with this
+   * set can never reach the treasury, and the reason is carried to the user
+   * instead of the funder simply never being asked. Without it, wiring the
+   * deposit leg to the funder is a one-line mistake that looks like consistency
+   * — and it would mean the deployment buying the user's note.
+   */
+  valueLamports: number;
   denomination: number;
   counter: number;
 }
@@ -1237,6 +1260,7 @@ async function handlePoolShieldPrepare(
     jobId: ctx.jobId,
     ephemeralPubkey: ctx.ephemeral.publicKey.toBase58(),
     requiredLamports: ctx.requiredLamports,
+    valueLamports: ctx.valueLamports,
     denomination: pool.denomination,
     counter,
   };
@@ -1592,6 +1616,7 @@ async function handlePoolUnshieldExecute(
       new PublicKey(req.recipient),
       new PublicKey(req.ownerPubkey),
       onProgress,
+      req.sweepTo ? new PublicKey(req.sweepTo) : undefined,
     );
     return {
       kind: 'poolUnshieldExecute',

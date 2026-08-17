@@ -202,7 +202,19 @@ export async function prepareUnshieldJob(
  * Upload both proofs and withdraw to `recipient`. The caller must already have
  * funded the ephemeral with `requiredLamports`.
  *
- * `ownerPubkey` receives the ephemeral's residual once the buffers close.
+ * ⚠️ `ownerPubkey` IS IDENTITY, `sweepTo` IS MONEY — they used to be one thing
+ * and separating them is load-bearing.
+ *
+ * `ownerPubkey` means THE USER'S WALLET, always, whoever paid. The refusal below
+ * (`recipient.equals(ownerPubkey)`) is justified by that meaning and by nothing
+ * else: it is the line that stops the note's whole value landing in the wallet,
+ * it regressed once already, and repurposing `ownerPubkey` to carry the funder
+ * would disable it silently while every test still passed.
+ *
+ * `sweepTo` is where the residual rent goes. Omitted means "sweep home", which
+ * is correct for a wallet-funded job and WRONG for any other kind: sweeping home
+ * after a third party paid spends someone else's SOL and still writes the wallet
+ * into the newest transaction of the ephemeral's life.
  */
 export async function executeUnshield(
   ctx: PreparedUnshield,
@@ -210,6 +222,7 @@ export async function executeUnshield(
   recipient: PublicKey,
   ownerPubkey: PublicKey,
   onProgress?: (step: string) => void,
+  sweepTo?: PublicKey,
 ): Promise<{ txSig: string }> {
   const { ephemeral, poolConfig, prepared, receipt } = ctx;
 
@@ -281,11 +294,19 @@ export async function executeUnshield(
       const eBal = await connection.getBalance(ephemeral.publicKey, 'confirmed');
       const sweepable = eBal - SWEEP_FEE;
       if (sweepable > 0) {
-        onProgress?.('Returning recovered rent to your wallet...');
+        // Default home, and say which of the two happened. A user told
+        // "returning rent to your wallet" when it went to a treasury has been
+        // handed a false receipt, and this is the only line about it they see.
+        const target = sweepTo ?? ownerPubkey;
+        onProgress?.(
+          target.equals(ownerPubkey)
+            ? 'Returning recovered rent to your wallet...'
+            : 'Returning recovered rent to the funder that paid for this job...',
+        );
         const sweepTx = new Transaction().add(
           SystemProgram.transfer({
             fromPubkey: ephemeral.publicKey,
-            toPubkey: ownerPubkey,
+            toPubkey: target,
             lamports: sweepable,
           }),
         );

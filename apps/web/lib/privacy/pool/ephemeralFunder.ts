@@ -51,6 +51,13 @@
  * browser and the client sends its own chunks.
  */
 
+import {
+  Connection,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+} from '@solana/web3.js';
+
 export interface FundingGrant {
   /** Where the residual rent must be swept when the job ends. */
   sweepTo: string;
@@ -161,4 +168,165 @@ export async function fetchFunderPubkey(signal?: AbortSignal): Promise<string | 
 /** Test seam: drop the memoised address. */
 export function resetFunderPubkeyCache(): void {
   cachedFunderPubkey = undefined;
+}
+
+// ---------------------------------------------------------------------------
+// The funding decision — one place, every leg
+// ---------------------------------------------------------------------------
+
+/** Minimal surface of the things this needs, so it is testable without a chain. */
+export interface JobFundingRequest {
+  ephemeralPubkey: string;
+  /** Total lamports the ephemeral needs before the job can run. */
+  requiredLamports: number;
+  /**
+   * How much of `requiredLamports` is the user's own VALUE rather than float.
+   *
+   * Non-zero forbids the funder outright. This is the deposit: its pre-fund
+   * embeds the denomination plus the 0.3% protocol fee, and 1,003,475,300 of a
+   * 1 SOL deposit's 1,573,486,080 never comes back. A treasury covering that is
+   * not lending rent, it is buying the user's note — a mint-your-own-note
+   * faucet with a public ticket in front of it.
+   *
+   * ⚠️ The 2 SOL per-request cap does NOT catch this: it refuses only pools of
+   * 10 SOL and up, so both demo pools sail under it. The refusal has to be
+   * structural and it has to be here.
+   */
+  valueLamports: number;
+  /** The user's wallet: the fallback payer, and the fallback sweep target. */
+  owner: PublicKey;
+  connection: Connection;
+  /** Sign one transaction with the connected wallet. */
+  signOne: (tx: Transaction) => Promise<Transaction>;
+  onProgress?: (step: string) => void;
+}
+
+export interface JobFundingDecision {
+  /** Who paid. `'wallet'` means the user's address is on chain for this job. */
+  fundedBy: 'wallet' | 'funder';
+  /**
+   * Where the residual rent must be swept. NON-OPTIONAL on purpose.
+   *
+   * The two decisions — who funds, where the sweep goes — are one decision.
+   * Funding through a third party and then sweeping home is strictly worse than
+   * not using a funder at all: it spends someone else's SOL AND still writes the
+   * wallet into the newest transaction of the ephemeral's life. An optional
+   * field invites exactly that, by omission, silently.
+   */
+  sweepTo: string;
+  /** The funding transaction, when a funder paid. */
+  funderSignature?: string;
+  /** Why the funder was not used, when one was configured but did not serve. */
+  funderFallbackReason?: string;
+}
+
+/** Thrown when the ephemeral already holds lamports. Named so callers can
+ *  recognise it and point the user at Recover rather than at a retry. */
+export class DirtyEphemeralError extends Error {
+  constructor(readonly balance: number) {
+    super(
+      `This job's signing key already holds ${balance} lamports from an earlier attempt. ` +
+        'Run Recover first — funding on top of it would mix two parties’ money on a key ' +
+        'that can only be swept to one of them.',
+    );
+    this.name = 'DirtyEphemeralError';
+  }
+}
+
+/**
+ * Decide who pays for one pool job, and pay.
+ *
+ * WHY THIS IS ONE FUNCTION AND NOT THREE COPIES
+ * ─────────────────────────────────────────────
+ * This logic lived inline in `subscribeFromPool` and nowhere else, which is
+ * precisely why the deposit and withdrawal legs never got it. Three copies of a
+ * decision this consequential drift, and the drift is invisible: a leg that
+ * forgets the `sweepTo` half still works, still looks right, and quietly puts
+ * the wallet back on chain.
+ *
+ * ⛔ THE HARD BOUNDARY, RESTATED BECAUSE THIS IS WHERE IT WOULD BE CROSSED.
+ * This function must never grow a parameter carrying a proof, a secret, or a
+ * signature request. A third party holding verified C1 and C3 buffers steals the
+ * whole note outright: `retailer` is unconstrained, `rate` and `interval_slots`
+ * are free arguments bound to no proof, `claim_period` is permissionless, and
+ * there is no `cancel`. The funder gets an ADDRESS and an AMOUNT.
+ */
+export async function fundEphemeralForJob(
+  req: JobFundingRequest,
+): Promise<JobFundingDecision> {
+  const { ephemeralPubkey, requiredLamports, valueLamports, owner, connection, signOne } = req;
+
+  // ── Guard 1: an ephemeral that is not empty ──────────────────────────────
+  //
+  // E is deterministic in (seed, pool, leafIndex), so a retry lands on the SAME
+  // key a previous attempt stranded money on. The route refuses a non-empty
+  // target with a 409, and the old code caught that and fell back to the
+  // wallet with `sweepTo = owner` — so a wallet pre-fund landed on top of a
+  // stranded treasury grant, and the single-destination sweep at the end handed
+  // the whole pile to one party.
+  //
+  // There is no correct split: every sweep must land a 0-data account on
+  // exactly zero, so two destinations means two fees and a residue that fails
+  // silently. Refusing BOTH paths is the only outcome where nobody loses, and
+  // it costs a Recover click on a key that stays re-derivable forever.
+  const existing = await connection.getBalance(new PublicKey(ephemeralPubkey), 'confirmed');
+  if (existing > 0) throw new DirtyEphemeralError(existing);
+
+  // Pessimistic defaults: if anything below throws or is skipped, the answer is
+  // "the wallet paid and the sweep goes home", which is the true statement
+  // about a job nobody else funded.
+  let fundedBy: 'wallet' | 'funder' = 'wallet';
+  let funderSignature: string | undefined;
+  let funderFallbackReason: string | undefined;
+  let sweepTo = owner.toBase58();
+
+  // ── Guard 2: never let the treasury buy a note ───────────────────────────
+  //
+  // Honest about what it is: this stops a future contributor wiring the deposit
+  // leg to the funder by analogy. It does NOT stop a stranger — the ticket
+  // ships in the browser bundle and anyone can POST the route directly with any
+  // amount under the cap. The endpoint's own anti-abuse story is the rate
+  // limiter and the devnet guard, not this line.
+  if (valueLamports > 0) {
+    funderFallbackReason =
+      `this job moves ${valueLamports} lamports of your own value, not just rent, so the ` +
+      'funder is not asked — covering it would mean the deployment buying your note.';
+  } else if (funderConfigured()) {
+    try {
+      req.onProgress?.('Asking the funder to cover this job (your wallet stays off chain)...');
+      const grant = await requestFunding(ephemeralPubkey, requiredLamports);
+      fundedBy = 'funder';
+      funderSignature = grant.signature;
+      sweepTo = grant.sweepTo;
+    } catch (e) {
+      funderFallbackReason = e instanceof Error ? e.message : String(e);
+      req.onProgress?.('The funder could not cover this job — falling back to your wallet.');
+    }
+  }
+
+  if (fundedBy === 'wallet') {
+    req.onProgress?.('Approve the funding transaction in your wallet...');
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    const fundTx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: owner,
+        toPubkey: new PublicKey(ephemeralPubkey),
+        lamports: requiredLamports,
+      }),
+    );
+    fundTx.recentBlockhash = blockhash;
+    fundTx.feePayer = owner;
+
+    const signed = await signOne(fundTx);
+    const fundSig = await connection.sendRawTransaction(signed.serialize());
+    const conf = await connection.confirmTransaction(
+      { signature: fundSig, blockhash, lastValidBlockHeight },
+      'confirmed',
+    );
+    if (conf.value.err) {
+      throw new Error(`Funding transaction failed: ${JSON.stringify(conf.value.err)}`);
+    }
+  }
+
+  return { fundedBy, sweepTo, funderSignature, funderFallbackReason };
 }

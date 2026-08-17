@@ -156,6 +156,18 @@ export interface PreparedShield {
   ephemeral: Keypair;
   /** Lamports the user's wallet must move onto E before `executeShield`. */
   requiredLamports: number;
+  /**
+   * The part of `requiredLamports` that is the user's own VALUE and never comes
+   * back: the denomination plus the 0.3% shield fee. MEASURED on devnet for the
+   * 1 SOL pool: 1,003,475,300 of the 1,573,486,080 pre-fund.
+   *
+   * Carried out of here so the funding decision can REFUSE this leg structurally
+   * (`fundEphemeralForJob`) rather than by nobody having thought to ask. A
+   * treasury covering a deposit is not lending rent, it is buying the note — and
+   * the funder's 2 SOL per-request cap does not catch it, because it refuses
+   * only pools of 10 SOL and up.
+   */
+  valueLamports: number;
   prepared: Awaited<ReturnType<typeof prepareShieldInsert>>;
 }
 
@@ -273,7 +285,13 @@ export async function prepareShield(
   const ephemeral = deriveShieldEphemeral(walletSeed, poolConfig.poolPDA, counter);
   const jobId = `shield:${poolConfig.poolPDA.toBase58()}:${counter}`;
 
-  return { jobId, poolConfig, ephemeral, requiredLamports, prepared };
+  // NOT jittered, and not part of the pre-fund arithmetic: this is the honest
+  // answer to "how much of this is the user buying something", which the
+  // funding decision refuses on. Jittering it would make the refusal depend on
+  // a random draw.
+  const valueLamports = Number(poolConfig.denominationAtomic) + protocolFee;
+
+  return { jobId, poolConfig, ephemeral, requiredLamports, valueLamports, prepared };
 }
 
 // ---------------------------------------------------------------------------
