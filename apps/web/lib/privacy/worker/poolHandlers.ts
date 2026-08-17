@@ -362,6 +362,47 @@ export interface PoolNoteAddressResponse {
   address: string;
 }
 
+/**
+ * Hand the ACTIVE pool seed back to the page, as hex.
+ *
+ * ⛔ THIS IS THE MOST DANGEROUS REQUEST IN THIS FILE AND IT EXISTS FOR ONE JOB.
+ * The seed is every note this identity will ever own: whoever holds it derives
+ * every secret, every nullifier, every commitment, and can spend every note —
+ * including ones not yet created. Nothing else in this worker returns it, and
+ * the whole worker boundary exists to keep it here.
+ *
+ * It exists because a deployment that ISSUES notes needs its treasury's seed in
+ * `P01_TREASURY_POOL_SEED`, and that seed is derivable only from a wallet
+ * signature made in a browser. Without this the issuance path cannot be
+ * configured at all, and the operator's alternative is worse: pasting a wallet
+ * private key into a server, or hand-porting an HKDF chain and getting it
+ * subtly wrong.
+ *
+ * `confirm` must be the exact string below. It is not security — a caller who
+ * can post this message can post that string too — it is a guard against this
+ * being reached by a refactor, an autocomplete, or a helpful abstraction that
+ * "just forwards every request kind". A value that must be typed out is a value
+ * somebody had to mean.
+ */
+export interface PoolExportSeedRequest {
+  kind: 'poolExportSeed';
+  meta: string;
+  confirm: 'I am configuring a note-issuing treasury and accept that this seed can spend every note it derives';
+}
+
+export interface PoolExportSeedResponse {
+  kind: 'poolExportSeed';
+  /** 64 lowercase hex characters — the format `P01_TREASURY_POOL_SEED` expects. */
+  seedHex: string;
+  derivation: DerivationVersion;
+  /** True when this identity also has a legacy seed. Notes shielded before a
+   *  passphrase was adopted derive from THAT one, so a treasury configured with
+   *  the active seed alone would fail to reproduce them — and the issuance
+   *  route's on-chain check would refuse, which is the right failure but an
+   *  opaque one without this flag. */
+  hasLegacySeed: boolean;
+}
+
 export interface PoolRecoverRequest {
   kind: 'poolRecover';
   meta: string;
@@ -673,6 +714,7 @@ export interface PoolSetPassphraseRequest {
 
 export type PoolRequest =
   | PoolExportNoteRequest
+  | PoolExportSeedRequest
   | PoolImportNoteRequest
   | PoolLicenseKeyRequest
   | PoolNoteAddressRequest
@@ -928,6 +970,7 @@ export interface PoolRecoverResponse {
 
 export type PoolResponse =
   | PoolExportNoteResponse
+  | PoolExportSeedResponse
   | PoolImportNoteResponse
   | PoolLicenseKeyResponse
   | PoolNoteAddressResponse
@@ -2093,6 +2136,33 @@ async function handlePoolSubscribeExecute(
  * job is in flight for safety — it closes proof buffers, and a live upload is
  * writing into one.
  */
+/**
+ * The one place the seed leaves this worker. See `PoolExportSeedRequest`.
+ *
+ * Returns the ACTIVE seed only. A legacy seed is reported as a flag rather than
+ * returned: an operator who needs it has a passphrase-era treasury and a
+ * decision to make about which notes they are issuing, and handing back two
+ * secrets to a caller who asked for one is how the wrong one ends up in an env
+ * var.
+ */
+function handlePoolExportSeed(req: PoolExportSeedRequest): PoolExportSeedResponse {
+  if (
+    req.confirm !==
+    'I am configuring a note-issuing treasury and accept that this seed can spend every note it derives'
+  ) {
+    throw new Error('Seed export refused: the confirmation string does not match.');
+  }
+  const seeds = requireSeeds(req.meta);
+  return {
+    kind: 'poolExportSeed',
+    seedHex: Array.from(seeds.active)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join(''),
+    derivation: seeds.activeVersion,
+    hasLegacySeed: seeds.legacy !== undefined,
+  };
+}
+
 async function handlePoolRecover(
   req: PoolRecoverRequest,
   onProgress?: (step: string) => void,
@@ -2528,6 +2598,9 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolNoteAddress':
       res = handlePoolNoteAddress(req);
+      break;
+    case 'poolExportSeed':
+      res = handlePoolExportSeed(req);
       break;
     case 'poolRecover':
       res = await handlePoolRecover(req, onProgress);

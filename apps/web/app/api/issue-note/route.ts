@@ -194,6 +194,57 @@ export async function POST(request: NextRequest) {
     return bad(403, 'this issuer is devnet-only and the configured RPC is not devnet', { genesis });
   }
 
+  // ── The payment gate ─────────────────────────────────────────────────────
+  //
+  // A note IS the denomination. Handing one over is handing over money, so it
+  // happens against a claim that something was paid for — not against a ticket
+  // that ships in the browser bundle.
+  //
+  // The shape is deliberately dumb and auditable: a claim code exists in KV, was
+  // put there by whatever took the payment, and is consumed here ATOMICALLY. It
+  // is not a payment integration and does not pretend to be one — it is the
+  // seam a payment integration plugs into, and the thing that stops the endpoint
+  // being a faucet in the meantime.
+  //
+  // ⛔ NO "SKIP IF UNSET". A gate that is optional is a gate that is off in
+  // production on the day it matters, because the env var that enables it is the
+  // one nobody set. Unconfigured means REFUSE, and the operator turns it on by
+  // minting claims rather than by removing a check.
+  const claimCode = String((body as { claimCode?: unknown }).claimCode ?? '');
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(claimCode)) {
+    return bad(402, 'a paid claim code is required to receive a note', {
+      hint: 'Notes are the denomination itself. One is issued per claim, and a claim is created when a payment settles.',
+    });
+  }
+  let claimed: number;
+  try {
+    // `incr` is the whole concurrency argument: exactly one caller sees 1, so a
+    // claim cannot be spent twice even if two requests arrive together. Reading
+    // then writing would let both pass and hand out two notes for one payment.
+    claimed = await kv.incr(`p01:note:claim:${claimCode}`);
+  } catch (e) {
+    return bad(503, `the claim could not be read: ${(e as Error).message}`);
+  }
+  if (claimed !== 1) {
+    return bad(409, 'this claim code has already been used', {
+      hint: 'A claim is worth one note. If a note was not received, recover it rather than reissuing — the first one is spendable.',
+    });
+  }
+  // A claim must have been MINTED, not merely typed. `incr` above created the
+  // key if it was absent, so the existence check has to be separate — and it
+  // has to come after the claim, or two callers race on an unminted code.
+  let minted: string | null = null;
+  try {
+    minted = await kv.get<string>(`p01:note:claim-minted:${claimCode}`);
+  } catch {
+    // Treated as unminted below: an unreadable store must not authorise value.
+  }
+  if (!minted) {
+    return bad(402, 'this claim code was never issued against a payment', {
+      hint: 'The code is now consumed either way, so a guessed code cannot be retried.',
+    });
+  }
+
   const leaves = inventoryLeaves();
   if (leaves.length === 0) return bad(503, 'this deployment has no note inventory configured');
 

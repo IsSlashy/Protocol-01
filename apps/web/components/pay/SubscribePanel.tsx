@@ -436,6 +436,10 @@ export default function SubscribePanel({
    * until the recipient does. Paraphrasing that is how it becomes "it's private".
    */
   const [issuedDisclosure, setIssuedDisclosure] = useState<string | null>(null);
+  /** The claim redeemed for a note. Held here, never persisted: it is worth one
+   *  note and consumed on first redemption, so storing it would keep a spent
+   *  bearer value around and invite a retry that cannot work. */
+  const [claimCode, setClaimCode] = useState('');
   useEffect(() => {
     let live = true;
     void fetchFunderPubkey().then((pk) => {
@@ -591,6 +595,7 @@ export default function SubscribePanel({
           walletPubkey: owner.toBase58(),
           token,
           denomination: DEFAULT_ISSUED_DENOMINATION,
+          claimCode: claimCode.trim(),
           onProgress: setStep,
         });
         setIssuedDisclosure(issued.disclosure);
@@ -1029,6 +1034,22 @@ export default function SubscribePanel({
               rather that trade went the other way.
             </span>
           </p>
+        )}
+        {!result && unspent.length === 0 && (
+          <div className="space-y-1">
+            <input
+              value={claimCode}
+              onChange={(e) => setClaimCode(e.target.value)}
+              placeholder="Claim code"
+              spellCheck={false}
+              className="w-full rounded-lg border border-p01-border bg-p01-void px-3 py-2 font-mono text-xs text-p01-text placeholder:text-p01-text-dim"
+            />
+            <p className="text-xs text-p01-text-dim">
+              A note is real money, so one is issued per claim and a claim is created when a
+              payment settles. It is consumed the first time it is redeemed — if something fails
+              after that, recover the note rather than redeeming again.
+            </p>
+          </div>
         )}
         {issuedDisclosure && !result && (
           <p className="rounded-lg border border-p01-border p-3 font-mono text-[11px] text-p01-text-dim">

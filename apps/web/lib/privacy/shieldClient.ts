@@ -593,6 +593,32 @@ export async function importReceivedNote(params: {
   return { note: res.note, merklePath: res.merklePath };
 }
 
+/**
+ * Export the ACTIVE pool seed, for configuring a note-issuing treasury.
+ *
+ * ⛔ THE MOST DANGEROUS CALL IN THIS FILE. The seed derives every secret, every
+ * nullifier and every commitment of every note this identity will ever own, and
+ * whoever holds it can spend all of them — including notes not yet created.
+ *
+ * It exists because `P01_TREASURY_POOL_SEED` is derivable only from a wallet
+ * signature made in a browser, so a deployment that issues notes cannot be
+ * configured without it. The alternatives are worse: a wallet private key on a
+ * server, or an operator hand-porting an HKDF chain and getting it subtly wrong
+ * in a way that only shows up as notes that cannot be spent.
+ *
+ * The confirmation string is not security — anyone who can call this can pass
+ * it — it guards against the call being reached by a refactor or an
+ * autocomplete. A value that has to be typed out is a value somebody meant.
+ */
+export async function exportPoolSeed(meta: string) {
+  return poolRequest({
+    kind: 'poolExportSeed',
+    meta,
+    confirm:
+      'I am configuring a note-issuing treasury and accept that this seed can spend every note it derives',
+  });
+}
+
 export interface IssuedNoteOutcome {
   note: PoolNoteView;
   /** The deployment's leaf index, so the caller can name what it received. */
@@ -636,6 +662,12 @@ export async function requestIssuedNote(params: {
   walletPubkey: string;
   token: PoolToken;
   denomination: number;
+  /**
+   * A claim minted against a payment. Required — a note is the denomination
+   * itself, and the ticket that authorises the request ships in the browser
+   * bundle, so it cannot also be what authorises the value.
+   */
+  claimCode: string;
   onProgress?: (step: string) => void;
 }): Promise<IssuedNoteOutcome> {
   const ticket = funderTicket();
@@ -653,6 +685,7 @@ export async function requestIssuedNote(params: {
       recipientAddress,
       token: params.token,
       denomination: params.denomination,
+      claimCode: params.claimCode,
     }),
   });
   let body: {
