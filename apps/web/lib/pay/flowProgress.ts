@@ -76,7 +76,13 @@ export const WITHDRAW_PHASES: FlowPhase[] = [
 ];
 
 export const SUBSCRIBE_PHASES: FlowPhase[] = [
-  { id: 'locate', label: 'Finding your note', weight: 0.1, match: /locating|fetching pool leaves|matching notes|reading on-chain tree/i },
+  // `still looking` and `checking notes you already hold` are the worker's
+  // heartbeat and its blob-first probe. They were added to `locateOwnedNote`
+  // without being added here, so a run that was working fine sat on "Starting"
+  // at 5% for minutes — the phase table is the only thing that turns a worker
+  // sentence into a label, and an unmatched sentence leaves the previous one
+  // standing. Before any phase has matched, that previous one is nothing.
+  { id: 'locate', label: 'Finding your note', weight: 0.1, match: /locating|fetching pool leaves|matching notes|reading on-chain tree|still looking|checking notes you already hold/i },
   { id: 'path', label: 'Rebuilding its history', weight: 0.07, match: /merkle|pre-flight root|checking the note|subscriber commitment/i },
   { id: 'prove', label: 'Proving you own it', weight: 0.28, match: /generating c1|generating c3|stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz|pricing/i },
