@@ -1,6 +1,6 @@
 {
   "synthetic": true,
-  "note": "SYNTHETIC fixture — hand-built by generate.mjs, never touched any chain. Same clean hypothetical v4 spend as fixtures/v4-synthetic, but the payer history carries two ERRORED signatures. It pins the P3 completeness arithmetic: errored entries are skipped, not scanned, and must still count toward completeness — the regression this guards forced P3 INCONCLUSIVE on any payer with one failed transaction in its history. It is NOT evidence about any real chain, spend, or privacy property. P9 added 2026-08-17: INCONCLUSIVE here (reported FAIL), same reason as v4-synthetic — no commitment published, so no deposit payer exists to walk.",
+  "note": "SYNTHETIC fixture — hand-built by generate.mjs, never touched any chain. Same clean hypothetical v4 spend as fixtures/v4-synthetic, but the payer history carries two ERRORED signatures. It pins the P3 completeness arithmetic: errored entries are skipped, not scanned, and must still count toward completeness — the regression this guards forced P3 INCONCLUSIVE on any payer with one failed transaction in its history. It is NOT evidence about any real chain, spend, or privacy property. P9 added 2026-08-17: INCONCLUSIVE here (reported FAIL), same reason as v4-synthetic — no commitment published, so no deposit payer exists to walk. P10 added 2026-08-17: INCONCLUSIVE here (reported FAIL), same reason as v4-synthetic — no payee argument declared for this spend kind.",
   "spend": "3GYruHF9T86fLHS9wfuwfyBuEkDdbvYwVVHgh7oUFp9KfW6u28R62udKoQVjD1htJhxxGinsDiwJ9LCYtQfwJatx",
   "kind": "unshield_denominated_stark_v4",
   "flags": {
@@ -22,7 +22,8 @@
     "P6": "PASS",
     "P7": "FAIL",
     "P8": "FAIL",
-    "P9": "FAIL"
+    "P9": "FAIL",
+    "P10": "FAIL"
   },
   "measure": {
     "P6": 0

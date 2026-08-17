@@ -1,5 +1,5 @@
 {
-  "note": "Recorded live from devnet 2026-08-12, re-recorded 2026-08-16 twice: once when P8 was added (it walks the DEPOSIT payer HDudHd6Y, a history no earlier fixture held) and again when P6/P8 began reading inner instructions and the full history. Every probe reproduced its 2026-08-12 verdict and count, so both re-records changed what is read, not what is true. Review `expect` against the run that produced it before committing. P9 added 2026-08-17: it walks the DEPOSIT payer HDudHd6Y and names BRop3akx on both ends of that key's life (prefund 1573486080 in, sweep 570010780 out). P8 already made this walk and discarded it. Pinned at 2 because the reading must not be allowed to vanish when the SPEND leg is funded by a third party — that change makes P6 name a treasury and P8 go quiet, and this is the line that still names the buyer.",
+  "note": "Recorded live from devnet 2026-08-12, re-recorded 2026-08-16 twice: once when P8 was added (it walks the DEPOSIT payer HDudHd6Y, a history no earlier fixture held) and again when P6/P8 began reading inner instructions and the full history. Every probe reproduced its 2026-08-12 verdict and count, so both re-records changed what is read, not what is true. Review `expect` against the run that produced it before committing. P9 added 2026-08-17: it walks the DEPOSIT payer HDudHd6Y and names BRop3akx on both ends of that key's life (prefund 1573486080 in, sweep 570010780 out). P8 already made this walk and discarded it. Pinned at 2 because the reading must not be allowed to vanish when the SPEND leg is funded by a third party — that change makes P6 name a treasury and P8 go quiet, and this is the line that still names the buyer. P10 added 2026-08-17: INCONCLUSIVE here (reported FAIL) because a subscribe publishes no payee argument — it pays a vault PDA derived from a commitment. 🚨 NO committed fixture exercises P10 PASS or FAIL: all three are subscribes or synthetic v4s. Its real branches live only in selfTestChannelDecoders(). Record a real unshield_denominated_stark_v3 and this pin becomes meaningful; until then do not read a green run as evidence about the payee channel.",
   "spend": "4v6RLndUyQFZNNKcdzdSi5JckEeR6vh4DHNhc3du77CuLUZnBMh2A7pcUcDiMSFbvkv8h6VFtzmfKq48qKFHx2A3",
   "kind": "subscribe_private_stark",
   "flags": {
@@ -15,7 +15,8 @@
     "P6": "FAIL",
     "P7": "FAIL",
     "P8": "FAIL",
-    "P9": "FAIL"
+    "P9": "FAIL",
+    "P10": "FAIL"
   },
   "measure": {
     "P4": 1,

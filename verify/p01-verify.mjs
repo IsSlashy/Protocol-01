@@ -24,6 +24,32 @@
  *   P7  no instruction argument outside the proof payload carries the commitment
  *   P8  no single wallet funded both the deposit and the spend
  *   P9  the DEPOSIT's fee payer cannot be traced to a funding wallet
+ *   P10 the withdrawal's PAYEE cannot be traced to a wallet
+ *
+ * 🚨 WHY P10 EXISTS: EVERY OTHER PROBE HERE WATCHES A PAYER
+ * ────────────────────────────────────────────────────────
+ * Until 2026-08-17 the string "recipient" did not appear once in this file. A
+ * `unshield_denominated_stark_v3` publishes its payee as a 32-byte instruction
+ * ARGUMENT in the clear at byte 88 — no walk needed to obtain it — and /pay
+ * derives a fresh payout address per note precisely so that value is not the
+ * user's wallet. One later transfer undoes that, and the whole road is:
+ *
+ *   getTransaction(spend) → recipient at byte 88 → getSignaturesForAddress
+ *   → getTransaction(the sweep) → the wallet
+ *
+ * Three RPC calls, same price as the payer walk, same transaction, same person.
+ * MEASURED in the mobile client on devnet 2026-08-04: `C4MqLbEx…` forwarded
+ * 0.994995 SOL to the user's wallet 8 seconds after the withdrawal, slot
+ * 481027703.
+ *
+ * It is also why funding a withdrawal's pre-fund from a treasury must not be
+ * read as a win: that moves the PAYER edge and touches this one not at all.
+ *
+ * ⚠️ NO COMMITTED FIXTURE EXERCISES P10's PASS OR FAIL. All three are
+ * subscribes or synthetic v4s, which publish no payee argument, so all three
+ * report INCONCLUSIVE. Its real branches live only in `selfTestChannelDecoders`
+ * until a real withdrawal is recorded. A PASS from P10 means "not swept YET",
+ * never "cannot be traced" — the address is published permanently.
  *
  * 🚨 WHY P9 EXISTS, AND WHY IT IS NOT P6 TWICE
  * ────────────────────────────────────────────
@@ -174,13 +200,34 @@ const SPEND_KINDS = [
   // the tool whose whole purpose is to refuse them.
   // Source: programs/zk_shielded/src/lib.rs:347-356 (arg order) and
   // apps/web/lib/privacy/pool/denominatedPool.ts:2008-2013 (the encoder).
-  { name: 'unshield_denominated_stark_v3', commitmentOffset: 80, totalLen: 120 },
-  { name: 'subscribe_private_stark', commitmentOffset: 160, totalLen: null },
-  { name: 'transfer_denominated_stark_v3', commitmentOffset: 80, totalLen: null },
-  { name: 'split_note_stark', commitmentOffset: null, totalLen: null },
+  //
+  // `recipientOffset` is the SECOND cleartext address in these instructions and
+  // until 2026-08-17 no probe read it. `unshield_denominated_stark_v3` takes the
+  // payee as a 32-byte ARGUMENT, not as an account:
+  //   disc 8 | nullifier 32 | merkle_root 32 | min_epoch u64 | commitment u64 | recipient 32
+  //   0..8       8..40           40..72          72..80          80..88          88..120
+  // VERIFIED on both sides rather than taken from one: the arg order is
+  // `programs/zk_shielded/src/lib.rs:215-226` and the encoder that produces
+  // these bytes is `apps/web/lib/privacy/pool/denominatedPool.ts:1583-1592`.
+  // 88 + 32 = 120, which is exactly the `totalLen` already pinned above — so the
+  // recipient is the whole remainder of the instruction, and the two independent
+  // numbers agree.
+  //
+  // The other kinds genuinely have no payee argument and must be `null`, not 0:
+  // a subscribe pays a vault PDA derived from a commitment, a transfer and a
+  // split produce new notes. `null` makes P10 INCONCLUSIVE there rather than
+  // reading 32 bytes of something else and reporting an address that does not
+  // exist.
+  { name: 'unshield_denominated_stark_v3', commitmentOffset: 80, totalLen: 120, recipientOffset: 88 },
+  { name: 'subscribe_private_stark', commitmentOffset: 160, totalLen: null, recipientOffset: null },
+  { name: 'transfer_denominated_stark_v3', commitmentOffset: 80, totalLen: null, recipientOffset: null },
+  { name: 'split_note_stark', commitmentOffset: null, totalLen: null, recipientOffset: null },
   // v4 lands here. It must appear with commitmentOffset: null, and P1 then
   // passes only because there is nothing to read — which is the point.
-  { name: 'unshield_denominated_stark_v4', commitmentOffset: null, totalLen: null },
+  // ⚠️ If v4 keeps a cleartext recipient argument, give it a real
+  // `recipientOffset`. Leaving it null there would silence P10 on the very
+  // version that is supposed to be the improvement.
+  { name: 'unshield_denominated_stark_v4', commitmentOffset: null, totalLen: null, recipientOffset: null },
 ];
 
 // ---------------------------------------------------------------------------
@@ -882,6 +929,37 @@ async function traceFunderEdges(rpc, payer, { historyLimit } = {}) {
     edges, historyLength: sigs.length, truncated, calls, scanned: visited.size, deep: true,
     inconclusive: null,
   };
+}
+
+/**
+ * The address a withdrawal pays into, read out of the spend instruction itself.
+ *
+ * WHY THIS IS THE OTHER HALF OF THE ATTACK
+ * ────────────────────────────────────────
+ * Everything else in this file walks the PAYER — who funded the key that signed.
+ * The payee is a separate and equally cheap road to the same person, and it runs
+ * through a value that is sitting in the spend instruction in the clear, at a
+ * fixed offset, with no walk required to obtain it.
+ *
+ * `/pay` derives a fresh payout address per note precisely so the pool's payee
+ * is not the user's wallet. That mechanism is undone by one later transaction —
+ * the user moving the money — and the whole chain is:
+ *
+ *   getTransaction(spend) → recipient at byte 88 → getSignaturesForAddress
+ *   → getTransaction(the sweep) → the wallet
+ *
+ * Three RPC calls. Same price as the payer walk, same transaction, same person.
+ * MEASURED in the mobile client on devnet 2026-08-04: stealth recipient
+ * `C4MqLbEx…` forwarded 0.994995 SOL to the user's wallet 8 seconds later, slot
+ * 481027703.
+ *
+ * Returns null when this spend kind publishes no payee argument.
+ */
+function readRecipient(spend) {
+  const off = spend.kind.recipientOffset;
+  if (off === null || off === undefined) return null;
+  if (spend.data.length < off + 32) return null;
+  return b58encode(spend.data.subarray(off, off + 32));
 }
 
 /**
@@ -1639,6 +1717,101 @@ async function verifySpend(rpc, signature, opts = {}) {
     }
   }
 
+  // ── P10: the PAYEE — the road nothing here used to look at ────────────────
+  //
+  // WHY A TENTH PROBE, AND WHY IT IS NOT ABOUT PAYERS
+  // ────────────────────────────────────────────────
+  // P1-P3 chase the commitment, P6/P8/P9 chase the payers. Until 2026-08-17 the
+  // string "recipient" did not appear once in this file — so the second
+  // cleartext address in a withdrawal instruction, sitting at a fixed offset
+  // with no walk needed to obtain it, was measured by nothing.
+  //
+  // That gap is not academic and it is not small. `/pay` derives a fresh payout
+  // address per note so the pool's payee is not the user's wallet, and that
+  // mechanism is undone completely by one later transfer. The chain costs three
+  // RPC calls, the same as the payer walk, from the SAME transaction:
+  //
+  //   getTransaction(spend) → recipient at byte 88 → getSignaturesForAddress
+  //   → getTransaction(the sweep) → the wallet
+  //
+  // MEASURED in the mobile client on devnet 2026-08-04: `C4MqLbEx…` forwarded
+  // 0.994995 SOL to the user's wallet 8 seconds after the withdrawal, slot
+  // 481027703.
+  //
+  // 🚨 IT IS ALSO THE REASON A FUNDER ON THE WITHDRAWAL LEG MUST NOT BE READ AS
+  // A WIN. Paying the pre-fund from a treasury moves the PAYER edge and touches
+  // this one not at all. Without P10 that change would read as progress in a
+  // report structurally unable to see what survived it.
+  //
+  // WHAT A PASS MEANS, AND WHAT IT DOES NOT
+  // ───────────────────────────────────────
+  // Only that the payout address has not been emptied YET. It is a statement
+  // about time, not about privacy: the address is still printed in the spend
+  // instruction forever, so a sweep made tomorrow re-links tomorrow. The pass
+  // text says so in its own words, because "P10 passed" is exactly the kind of
+  // line that gets quoted without its qualifier.
+  {
+    const P10_NAME = 'the withdrawal payee cannot be traced to a wallet';
+    const recipient = readRecipient(spend);
+    if (recipient === null) {
+      results.push(
+        probe('P10', P10_NAME, false,
+          `INCONCLUSIVE: ${spend.kind.name} publishes no payee argument, so there is no address ` +
+          'to walk. A subscribe pays a vault PDA derived from a commitment; a transfer and a split ' +
+          'produce new notes. This is not a clean result, it is a spend kind this probe does not ' +
+          'apply to.'),
+      );
+    } else {
+      const payeeTrace = await traceFunderEdges(rpc, recipient, { historyLimit });
+      // OUTBOUND only. The inbound edge is the withdrawal paying this address —
+      // it names the pool, which is not a leak and is the whole point of the
+      // transaction. What matters is where the money went NEXT.
+      const out = payeeTrace.inconclusive ? [] : payeeTrace.edges.filter((e) => e.direction === 'out');
+      if (payeeTrace.inconclusive) {
+        results.push(
+          probe('P10', P10_NAME, false,
+            `INCONCLUSIVE: the payee ${recipient} did not resolve (${payeeTrace.inconclusive}). ` +
+            'The address is still published in the spend instruction in the clear; only its ' +
+            'onward history could not be read.'),
+        );
+      } else if (payeeTrace.truncated) {
+        results.push(
+          probe('P10', P10_NAME, false,
+            `INCONCLUSIVE: the payee ${recipient} filled the requested history page ` +
+            `(${payeeTrace.historyLength}), so its onward transfers are not provably complete.`),
+        );
+      } else if (out.length === 0) {
+        results.push(
+          probe('P10', P10_NAME, true,
+            `the payee ${recipient} has sent nothing onward in its ${payeeTrace.scanned}-transaction ` +
+            `life (${payeeTrace.calls} RPC calls). ⛔ THIS IS A STATEMENT ABOUT TIME, NOT PRIVACY: ` +
+            'the address is published in this spend instruction in the clear at a fixed offset, ' +
+            'permanently, so whoever holds it re-links the moment the funds are moved. Read it as ' +
+            '"not swept yet", never as "cannot be traced".' +
+            (namedWallet && recipient === namedWallet
+              ? ` ⛔ --wallet: the payee IS ${namedWallet}. The withdrawal paid the named wallet ` +
+                'directly, so no onward transfer was ever needed.'
+              : namedWalletLine(namedWallet, payeeTrace, 'payee')),
+            0),
+        );
+      } else {
+        const moved = out
+          .map((e) => `${e.kind ?? 'transfer'} to ${e.counterparty} (${e.lamports} lamports, ` +
+            `${e.signature ? `${e.signature.slice(0, 12)}…` : 'this tx'})`)
+          .join('; ');
+        results.push(
+          probe('P10', P10_NAME, false,
+            `the payee ${recipient} — read straight out of this spend's instruction data at byte ` +
+            `${spend.kind.recipientOffset}, no walk required — has since paid ${out.length} ` +
+            `address(es) in ${payeeTrace.calls} RPC calls: ${moved}. Funding the pre-fund through ` +
+            'a third party does not touch this road: it is the payee, not the payer.' +
+            namedWalletLine(namedWallet, payeeTrace, 'payee'),
+            out.length),
+        );
+      }
+    }
+  }
+
   // ── P5: context, never a pass/fail ────────────────────────────────────────
   const state = await readPoolState(rpc, poolPDA);
   const context = {
@@ -2353,10 +2526,64 @@ function selfTestChannelDecoders() {
     check('--wallet · but the address is on the deposit side', disjoint.depositSide.has(ISSUER), true);
     check('--wallet · and absent from the spend side', disjoint.spendSide.has(ISSUER), false);
 
+    // ── P10: the payee, whose real branches NO fixture reaches ──────────────
+    //
+    // Every committed fixture is a subscribe or a synthetic v4, and neither
+    // publishes a payee argument — so all three report INCONCLUSIVE and P10's
+    // PASS and FAIL paths are exercised nowhere but here. A probe observed only
+    // in the state that does not apply to it is a hollow guard, so these cases
+    // carry the whole weight until a real withdrawal is recorded.
+    const PAYEE = 'QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB';
+    const unshieldIx = (payeeB58, len = 120) => {
+      const d = Buffer.alloc(len);
+      discriminator('unshield_denominated_stark_v3').copy(d, 0);
+      if (payeeB58 && len >= 120) b58decode(payeeB58).copy(d, 88);
+      return b58encode(d);
+    };
+    const spendOf = (data) =>
+      classifySpend(tx([PAYER, ZK_SHIELDED], [{ programIdIndex: 1, accounts: [0], data }]));
+
+    // The offset itself, end to end: real discriminator, real table lookup,
+    // real byte range. Asserting `readRecipient` against a hand-made `kind`
+    // would have agreed with itself and proved nothing about SPEND_KINDS.
+    check('P10 · reads the payee at byte 88', readRecipient(spendOf(unshieldIx(PAYEE))), PAYEE);
+    // A subscribe genuinely has no payee. `null` and not 0: reading 32 bytes at
+    // an offset that means something else would invent an address.
+    const subIx = b58encode(Buffer.concat([discriminator('subscribe_private_stark'), Buffer.alloc(200)]));
+    check('P10 · no payee on a subscribe', readRecipient(spendOf(subIx)), null);
+    // A truncated instruction must refuse rather than read past the end and
+    // report whatever zero bytes decode to — which is a real, valid-looking
+    // address that belongs to nobody.
+    check('P10 · refuses a short instruction', readRecipient(spendOf(unshieldIx(null, 100))), null);
+
+    // The direction filter, which is the probe's actual judgement. The pool
+    // paying the payee is INBOUND and is the transaction working as intended;
+    // counting it would make every withdrawal ever fail this probe for the
+    // crime of having been paid.
+    const payeeIn = {
+      FUND: tx([ZK_SHIELDED, PAYEE, SYSTEM_PROGRAM], [{ programIdIndex: 2, accounts: [0, 1], data: sysTransfer(1_000_000_000n) }]),
+      SWEEP: tx([PAYEE, ZK_SHIELDED], [{ programIdIndex: 1, accounts: [0], data: b58encode(Buffer.alloc(16)) }], 9),
+    };
+    const inOnly = await traceFunderEdges(mkRpc(payeeIn), PAYEE, { historyLimit: 401 });
+    check('P10 · an inbound edge exists', inOnly.edges.length, 1);
+    check('P10 · but nothing went OUT', inOnly.edges.filter((e) => e.direction === 'out').length, 0);
+
+    // And the leak: the payee sends the money on. This is the shape measured in
+    // the mobile client on devnet — stealth recipient, then the wallet, 8
+    // seconds later.
+    const payeeOut = {
+      FUND: tx([ZK_SHIELDED, PAYEE, SYSTEM_PROGRAM], [{ programIdIndex: 2, accounts: [0, 1], data: sysTransfer(1_000_000_000n) }]),
+      SWEEP: tx([PAYEE, WALLET, SYSTEM_PROGRAM], [{ programIdIndex: 2, accounts: [0, 1], data: sysTransfer(994_995_000n) }], 9),
+    };
+    const swept = await traceFunderEdges(mkRpc(payeeOut), PAYEE, { historyLimit: 401 });
+    const sweptOut = swept.edges.filter((e) => e.direction === 'out');
+    check('P10 · sees the onward sweep', sweptOut.length, 1);
+    check('P10 · names where it went', sweptOut[0]?.counterparty, WALLET);
+
     console.log(
       broken === 0
-        ? '   PASS  all three channel decoders answer in both directions.'
-        : `   ${broken} decoder control(s) broken — P6/P7/P8 results are not trustworthy.`,
+        ? '   PASS  every channel decoder answers in both directions.'
+        : `   ${broken} decoder control(s) broken — P6/P7/P8/P9/P10 results are not trustworthy.`,
     );
     return broken === 0 ? 0 : 1;
   })();
