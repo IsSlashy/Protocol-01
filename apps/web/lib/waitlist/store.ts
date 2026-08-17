@@ -14,6 +14,8 @@
  */
 import { createClient, type VercelKV } from '@vercel/kv';
 import { randomBytes } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join as joinPath } from 'node:path';
 import {
   INTERESTS,
   LOCALES,
@@ -96,10 +98,64 @@ function clone<T>(value: T): T {
     : (JSON.parse(JSON.stringify(value)) as T);
 }
 
-/** Development-only Redis stand-in. Not durable; single process only. */
+/**
+ * Development-only Redis stand-in, persisted to one JSON file.
+ *
+ * 🚨 WHY IT WRITES TO DISK. It used to live in `globalThis` and nowhere else,
+ * which is fine for a store that only holds counters — and wrong for the one
+ * thing that now depends on it. A note CLAIM is minted, then redeemed minutes
+ * later by a human clicking through a wallet, and `next dev` restarts itself
+ * whenever it approaches its memory threshold. MEASURED on this machine: five
+ * restarts in one evening. Every one of them silently destroyed every claim
+ * that had been minted and not yet used, and the symptom is
+ * "this claim code was never issued against a payment" — which reads as the
+ * payment gate refusing, not as the store having evaporated.
+ *
+ * A claim is also consumed on first redemption whether or not it works, so a
+ * lost one cannot be retried. That is the right rule against guessing and the
+ * wrong experience when the loss was ours.
+ *
+ * Dev only, one file, no locking, and it does not pretend otherwise: production
+ * gets a real KV or `getStore()` returns null and the callers fail closed.
+ */
 class InMemoryKv implements KvLike {
   private scalars = new Map<string, { v: unknown; exp: number | null }>();
   private sets = new Map<string, Set<string>>();
+  /** Where the snapshot lives. Under the build cache, so it is gitignored and
+   *  goes away with a clean. */
+  private file = joinPath(process.cwd(), '.next', 'cache', 'p01-dev-kv.json');
+
+  constructor() {
+    try {
+      const raw = readFileSync(this.file, 'utf8');
+      const snap = JSON.parse(raw) as {
+        scalars?: [string, { v: unknown; exp: number | null }][];
+        sets?: [string, string[]][];
+      };
+      for (const [k, v] of snap.scalars ?? []) this.scalars.set(k, v);
+      for (const [k, v] of snap.sets ?? []) this.sets.set(k, new Set(v));
+    } catch {
+      // No snapshot yet, or an unreadable one. Starting empty is correct: this
+      // is a cache, and a corrupt file must not stop the dev server booting.
+    }
+  }
+
+  /** Best effort, after every mutation. A lost write costs one re-mint. */
+  private flush(): void {
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      writeFileSync(
+        this.file,
+        JSON.stringify({
+          scalars: [...this.scalars.entries()],
+          sets: [...this.sets.entries()].map(([k, v]) => [k, [...v]]),
+        }),
+      );
+    } catch {
+      // Read-only filesystem, quota, a racing write. The in-memory copy still
+      // serves this process — only the restart-survival is lost.
+    }
+  }
 
   private read(key: string): unknown {
     const e = this.scalars.get(key);
@@ -121,11 +177,13 @@ class InMemoryKv implements KvLike {
       v: clone(value),
       exp: opts?.ex ? Date.now() + opts.ex * 1000 : null,
     });
+    this.flush();
   }
 
   async del(key: string): Promise<void> {
     this.scalars.delete(key);
     this.sets.delete(key);
+    this.flush();
   }
 
   async incr(key: string): Promise<number> {
@@ -133,22 +191,26 @@ class InMemoryKv implements KvLike {
     const next = cur + 1;
     const prev = this.scalars.get(key);
     this.scalars.set(key, { v: next, exp: prev?.exp ?? null });
+    this.flush();
     return next;
   }
 
   async expire(key: string, seconds: number): Promise<void> {
     const e = this.scalars.get(key);
     if (e) e.exp = Date.now() + seconds * 1000;
+    this.flush();
   }
 
   async sadd(key: string, member: string): Promise<void> {
     const s = this.sets.get(key) ?? new Set<string>();
     s.add(member);
     this.sets.set(key, s);
+    this.flush();
   }
 
   async srem(key: string, member: string): Promise<void> {
     this.sets.get(key)?.delete(member);
+    this.flush();
   }
 
   async scard(key: string): Promise<number> {
