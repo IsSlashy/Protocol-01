@@ -21,6 +21,23 @@ and say nothing; now it stops and tells you why.
 | **A** | deposits the notes (the "treasury") | ~0.8 SOL devnet, and it must NOT be the funder key |
 | **B** | the buyer: imports a note, subscribes | nothing — it never pays for anything |
 
+🚨 **AND IF B EVER PAYS FOR ITS NOTE ON CHAIN, IT MUST NOT PAY THE FUNDER.**
+That is the walk measured on 2026-08-18, and it survives everything above: the
+buyer paid the funder 1.003 SOL, the funder financed the depositing ephemeral one
+second later, and P11 read it in two hops. Two transfers, neither naming both
+ends, joined by an address whose own history names both.
+
+So the address that COLLECTS money from buyers — **R, the till** — must never be
+the address that FUNDS ephemerals — **F, the float**. Declare R in
+`P01_TILL_ADDRESS` (public key only) and the deployment refuses to serve when
+they are the same; leave it unset and readiness says so. R and F may settle with
+each other, but in batches, on a schedule unrelated to any single purchase — one
+transfer per purchase is the same leak wearing a second address, and readiness
+reports that too.
+
+✅ The demo path avoids the question entirely: the buyer pays **nothing on
+chain**, they redeem a claim code for a pre-deposited note. Nothing to correlate.
+
 ⚠️ **A must not fund B.** If it does, an auditor who walks one hop further out
 than probe P8 does finds the common parent. Fund them from different sources, or
 be ready to say so when asked.
@@ -194,8 +211,9 @@ Three distinct addresses. Getting this wrong is what kills the demo:
 | role | must not be |
 |---|---|
 | **treasury depositor** — deposits the notes | the funder, and not the buyer |
-| **funder** — pays the subscription's rent and fees | the depositor |
-| **buyer wallet** — connects, imports a note, subscribes | either of the above |
+| **funder (F)** — pays the subscription's rent and fees | the depositor, and never paid by a buyer |
+| **till (R)** — collects money from buyers, if any is collected | the funder. Never funds anything, never deposits |
+| **buyer wallet** — connects, imports a note, subscribes | any of the above |
 
 ⚠️ If the depositor and the funder were both funded from the same parent (e.g.
 both from the upgrade authority `7gWpzSZA…`), an analyst who walks **one hop
