@@ -1,11 +1,25 @@
 use anchor_lang::prelude::*;
 
-// NOTE: The Poseidon syscall is not yet enabled on devnet/mainnet.
-// Until it's enabled, we use a client-computed root approach.
-// The client computes the Merkle tree off-chain and provides the new root.
+// NOTE: the client computes the Merkle tree off-chain and supplies the new
+// root. That is still correct, but NOT for the reason this comment used to
+// give.
 //
-// When enable_poseidon_syscall is activated on the cluster, uncomment:
-// use solana_poseidon::{hashv, Endianness, Parameters};
+// The old text said the Poseidon syscall was "not yet enabled on
+// devnet/mainnet". That is out of date: `sol_poseidon` was contributed by
+// the Light Protocol team and runs at the Solana runtime level. Waiting for
+// it is not the plan and has not been for a while.
+//
+// The reason that actually holds is the FIELD. `sol_poseidon` is BN254; the
+// V3 tree and every circuit behind it are Goldilocks Poseidon (t=3, 30 full
+// rounds, x^7 S-box) — see `merkle_tree_v3.rs` and `stark/src/poseidon`. A
+// BN254 syscall cannot recompute a Goldilocks root, so it is not a drop-in
+// replacement at any point, enabled or not. Adopting it would mean changing
+// the hash the STARK proves over, i.e. the circuits.
+//
+// ⚠️ And it is a moving target: SIMD-0359 changed the syscall's input-length
+// contract behind the `poseidon_enforce_padding` feature gate, so shorter
+// inputs stop being valid when it activates. Anything here that ever calls it
+// must be re-tested on devnet BEFORE that gate reaches mainnet.
 
 /// Merkle tree state stored on-chain
 /// Uses sparse storage for efficiency - only stores non-empty nodes
