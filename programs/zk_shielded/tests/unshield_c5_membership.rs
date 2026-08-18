@@ -449,6 +449,31 @@ fn unshield_is_the_only_way_value_leaves_the_base_pool() {
 // Everything above reads source. Source is where the decision lives, but the
 // pool is protected by the BINARY, and "commented out in lib.rs" only becomes
 // "cannot be called" after a rebuild. These run the real artifact.
+//
+// They come in a matched pair, and the pair is the point:
+//
+//   * the NEGATIVE guards say the two C5 entrypoints are gone;
+//   * the POSITIVE control says every OTHER entrypoint is still there.
+//
+// A file that only ever asserts absence cannot tell a surgical removal from a
+// broken build — an artifact that dispatches nothing at all would satisfy every
+// absence claim in this file and pass. The positive control is what makes
+// "exactly two instructions were removed, and no neighbours" a measurement.
+//
+// MEASURED SHAPE (2026-08-18, litesvm, junk accounts, zeroed arguments):
+//   disabled -> no `Program log: Instruction: ...` line, then Custom(101)
+//               InstructionFallbackNotFound
+//   live     -> `Program log: Instruction: SubscribePrivateStark`, then
+//               Custom(102) InstructionDidNotDeserialize
+// Anchor announces the instruction name only AFTER the discriminator matches,
+// so that log line is direct evidence a route exists rather than an inference
+// from an error number.
+//
+// DO NOT try to answer this question by searching the artifact for
+// discriminator byte patterns. That was attempted on 2026-08-18 and reports
+// ABSENT for `subscribe_private_stark`, which is in production and demonstrably
+// works — the bytes are not stored contiguously in SBF. The method produces
+// confident false negatives about live instructions.
 // ---------------------------------------------------------------------------
 
 use litesvm::LiteSVM;
@@ -463,23 +488,47 @@ use std::path::PathBuf;
 /// `programs/zk_shielded/src/lib.rs` — the deployed devnet id.
 const PROGRAM_ID: &str = "GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c";
 
-/// `sha256("global:unshield")[..8]` and `sha256("global:transfer")[..8]`.
-///
-/// NOT `unshield_stark` / `transfer_stark`. Those names spell different
-/// discriminators — [189, 84, 110, 154, 217, 120, 183, 239] and
-/// [162, 42, 22, 116, 244, 79, 60, 190] — and every base-pool call site in this
-/// repo sends the `_stark` form while Anchor derives the program's from the
-/// FUNCTION names. That mismatch is a separate, older defect: the base-pool
-/// STARK path was already unreachable from every shipped client. It is also why
-/// disabling these two costs nothing today.
-const UNSHIELD_DISC: [u8; 8] = [21, 228, 55, 24, 194, 10, 21, 22];
-const TRANSFER_DISC: [u8; 8] = [163, 52, 200, 231, 140, 3, 69, 186];
-
 /// `anchor_lang::error::ErrorCode::InstructionFallbackNotFound`. Read from the
-/// crate rather than typed as 101, so an Anchor renumbering cannot make this
-/// test assert about the wrong thing.
+/// crate rather than typed as 101, so an Anchor renumbering cannot make these
+/// tests assert about the wrong thing.
 fn fallback_not_found() -> u32 {
     anchor_lang::error::ErrorCode::InstructionFallbackNotFound.into()
+}
+
+/// Anchor's own rule: the discriminator is `sha256("global:<fn name>")[..8]`,
+/// derived from the FUNCTION name in the `#[program]` module.
+///
+/// Computed here rather than transcribed, because a transcribed constant only
+/// proves that two humans typed the same bytes. Cross-checked against
+/// `target/idl/zk_shielded.json` for all five denominated instructions and for
+/// both disabled ones.
+///
+/// This is also the rule the shipped clients get wrong: they build
+/// `global:unshield_stark` / `global:transfer_stark` / `global:shield_stark`
+/// from the FILE names, which spell entirely different discriminators. That
+/// mismatch predates this work and is why disabling the two C5 entrypoints cost
+/// no working flow.
+fn discriminator(name: &str) -> [u8; 8] {
+    let h = solana_sha256_hasher::hashv(&[format!("global:{name}").as_bytes()]).to_bytes();
+    let mut d = [0u8; 8];
+    d.copy_from_slice(&h[..8]);
+    d
+}
+
+/// Every instruction the `#[program]` module currently registers, in source
+/// order — the complete set, not a sample. Comments are already stripped, so the
+/// two disabled registrations do not appear here.
+fn registered_instructions() -> Vec<String> {
+    let code = lib_code();
+    let start = code.find("pub mod zk_shielded").expect("#[program] module");
+    code[start..]
+        .match_indices("pub fn ")
+        .map(|(at, marker)| {
+            let rest = &code[start + at + marker.len()..];
+            let end = rest.find('(').expect("a fn name is followed by `(`");
+            rest[..end].trim().to_string()
+        })
+        .collect()
 }
 
 fn so_path() -> PathBuf {
@@ -489,56 +538,72 @@ fn so_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/deploy/zk_shielded.so")
 }
 
-/// Call `ix` on the real artifact with junk accounts and zeroed arguments, and
-/// require that the program has no route for it at all.
-///
-/// `n_accounts` and `n_arg_bytes` are the shapes `target/idl/zk_shielded.json`
-/// recorded while the instruction was still live. They do not have to be
-/// correct for the assertion to be sound — Anchor dispatches on the
-/// discriminator BEFORE it validates accounts, so a binary that still carries
-/// the entrypoint reaches account validation and reports a constraint error,
-/// while one that does not has nothing to reach. They are right anyway, so that
-/// a failure message shows a realistic call rather than an obviously malformed
-/// one.
-fn assert_unroutable(ix: &str, disc: [u8; 8], n_accounts: usize, n_arg_bytes: usize) {
-    let program = Address::try_from(PROGRAM_ID).expect("program id must parse");
+/// The artifact under test. `P01_ZK_SHIELDED_SO` overrides the path, which is
+/// how a program DUMPED FROM THE CHAIN gets measured by this file instead of
+/// whatever happens to be in the build directory. That seam is what let the
+/// pre-upgrade devnet binary be tested at all.
+fn artifact_bytes() -> Vec<u8> {
     let so = so_path();
-    let bytes = std::fs::read(&so).unwrap_or_else(|e| {
+    std::fs::read(&so).unwrap_or_else(|e| {
         panic!(
             "\n\
              ============================================================\n\
-             CANNOT EXECUTE — target/deploy/zk_shielded.so is not readable.\n\
+             CANNOT EXECUTE — the program artifact is not readable.\n\
              ============================================================\n\
              path  : {}\n\
              error : {}\n\n\
-             This guard executes real SBF bytecode to show the drain entrypoint\n\
-             is gone from the artifact. Without the binary there is nothing to\n\
-             execute, so it FAILS rather than passing on an empty result. There\n\
-             is deliberately no skip.\n\n\
+             These guards execute real SBF bytecode. Without the binary there is\n\
+             nothing to execute, so they FAIL rather than passing on an empty\n\
+             result. There is deliberately no skip.\n\n\
              Build it (the cargo-build-sbf on PATH is too old):\n  \
              ~/.local/share/solana/install/releases/3.1.9/solana-release/bin/cargo-build-sbf.exe \\\n    \
              --manifest-path programs/zk_shielded/Cargo.toml\n\n\
-             A STALE .so is the likelier failure: one built before `{}` was\n\
-             unregistered still dispatches it, and this test will say so.\n\
+             A STALE .so is the likelier failure: one built before the two C5\n\
+             entrypoints were unregistered still dispatches them, and these tests\n\
+             will say so.\n\
              ============================================================\n",
             so.display(),
             e,
-            ix,
         )
-    });
+    })
+}
 
+/// What the program did when called.
+struct Outcome {
+    /// The Anchor error number, if the failure carried one.
+    code: Option<u32>,
+    /// `true` when Anchor announced an instruction name, i.e. the discriminator
+    /// matched and dispatch happened.
+    dispatched: bool,
+    /// Raw debug string, for failure messages. Deliberately not pre-parsed: a
+    /// runtime error carries no Anchor code at all, and flattening the two kinds
+    /// together hides which one occurred.
+    raw: String,
+}
+
+/// Call one instruction on the artifact with junk accounts and zeroed arguments.
+///
+/// The account count and argument length do not have to be right for any
+/// assertion here to be sound: Anchor matches the discriminator BEFORE it
+/// deserializes arguments and before it validates accounts. A live route
+/// therefore dies at 102 (arguments) or in account validation, and a missing
+/// route dies at 101 having announced nothing. 16 accounts covers the widest
+/// instruction in the program (`split_note_stark`, 13); Anchor treats any
+/// surplus as `remaining_accounts`.
+fn call(bytes: &[u8], name: &str, n_arg_bytes: usize) -> Outcome {
+    let program = Address::try_from(PROGRAM_ID).expect("program id must parse");
     let mut svm = LiteSVM::new();
-    svm.add_program(program, &bytes).expect("add_program");
+    svm.add_program(program, bytes).expect("add_program");
 
     let payer = Keypair::new();
     svm.airdrop(&payer.pubkey(), 10_000_000_000).expect("airdrop");
 
     let mut accounts = vec![AccountMeta::new(payer.pubkey(), true)];
-    for _ in 1..n_accounts {
+    for _ in 1..16 {
         accounts.push(AccountMeta::new(Address::new_from_array([7u8; 32]), false));
     }
 
-    let mut data = disc.to_vec();
+    let mut data = discriminator(name).to_vec();
     data.extend(std::iter::repeat(0u8).take(n_arg_bytes));
 
     let instruction = Instruction { program_id: program, accounts, data };
@@ -546,29 +611,33 @@ fn assert_unroutable(ix: &str, disc: [u8; 8], n_accounts: usize, n_arg_bytes: us
     let blockhash = svm.latest_blockhash();
     let tx = Transaction::new(&[&payer], msg, blockhash);
 
-    let err = match svm.send_transaction(tx) {
-        Ok(_) => panic!(
-            "\n\
-             ============================================================\n\
-             `{ix}` EXECUTED SUCCESSFULLY IN THE BUILT PROGRAM\n\
-             ============================================================\n\
-             It was called with {n_arg_bytes} zero bytes of arguments and\n\
-             {n_accounts} junk accounts, and the program accepted it. Whatever\n\
-             else is true, the entrypoint is live in the artifact and the base\n\
-             pool is open.\n\
-             ============================================================\n"
-        ),
-        Err(e) => format!("{:?}", e),
+    let (logs, raw) = match svm.send_transaction(tx) {
+        Ok(m) => (m.logs, "Ok(())".to_string()),
+        Err(e) => (e.meta.logs.clone(), format!("{:?}", e)),
     };
 
-    let code = err
-        .split("Custom(")
-        .nth(1)
-        .and_then(|t| t.split(')').next())
-        .and_then(|n| n.trim().parse::<u32>().ok());
+    Outcome {
+        code: raw
+            .split("Custom(")
+            .nth(1)
+            .and_then(|t| t.split(')').next())
+            .and_then(|n| n.trim().parse::<u32>().ok()),
+        dispatched: logs.iter().any(|l| l.contains("Program log: Instruction: ")),
+        raw,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Negative: the two C5 entrypoints are gone from the artifact.
+// ---------------------------------------------------------------------------
+
+fn assert_unroutable(c: &C5Consumer, n_arg_bytes: usize) {
+    let bytes = artifact_bytes();
+    let ix = c.ix;
+    let o = call(&bytes, ix, n_arg_bytes);
 
     assert_eq!(
-        code,
+        o.code,
         Some(fallback_not_found()),
         "\n\
          ============================================================\n\
@@ -578,11 +647,10 @@ fn assert_unroutable(ix: &str, disc: [u8; 8], n_accounts: usize, n_arg_bytes: us
          sha256(\"global:{}\")[..8] matches no instruction in the binary.\n\n\
          Got instead:\n{}\n\n\
          Any other error means dispatch SUCCEEDED and the call died later, in\n\
-         account validation or in the handler — i.e. the entrypoint is present,\n\
-         and a caller who brings well-formed accounts and an honestly-proved C5\n\
-         statement about notes of their own invention gets what it grants:\n\
-         real funds out of the pool for `unshield`, permanent unbacked leaves in\n\
-         the tree for `transfer`.\n\n\
+         argument deserialization or account validation — i.e. the entrypoint is\n\
+         present, and a caller who brings well-formed accounts and an\n\
+         honestly-proved C5 statement about notes of their own invention gets\n\
+         what it grants:\n\n{}\n\n\
          If the source is correct and this still fires, the .so is stale. Rebuild:\n  \
          ~/.local/share/solana/install/releases/3.1.9/solana-release/bin/cargo-build-sbf.exe \\\n    \
          --manifest-path programs/zk_shielded/Cargo.toml\n\
@@ -590,18 +658,180 @@ fn assert_unroutable(ix: &str, disc: [u8; 8], n_accounts: usize, n_arg_bytes: us
         ix,
         fallback_not_found(),
         ix,
-        err,
+        o.raw,
+        c.stakes,
+    );
+
+    // The error number says a route was not found. This says Anchor never got
+    // as far as naming one — the same fact from the other side, and the half
+    // that cannot be produced by an unrelated failure that happens to be 101.
+    assert!(
+        !o.dispatched,
+        "\n\
+         ============================================================\n\
+         `{ix}` ANSWERED 101 BUT ANCHOR STILL ANNOUNCED IT\n\
+         ============================================================\n\
+         A `Program log: Instruction: ...` line means the discriminator matched.\n\
+         Anchor emits it only after dispatch, so this combination should be\n\
+         impossible and the error code is not measuring what it appears to.\n\n\
+         Raw:\n{}\n\
+         ============================================================\n",
+        o.raw,
     );
 }
 
-/// 11 accounts, 5 × [u8; 32] + u64 + [u8; 32] = 200 bytes of arguments.
+/// `unshield`: 5 x [u8; 32] + u64 + [u8; 32] = 200 bytes of arguments.
 #[test]
 fn the_built_program_cannot_dispatch_unshield_at_all() {
-    assert_unroutable("unshield", UNSHIELD_DISC, 11, 200);
+    assert_unroutable(&UNSHIELD, 200);
 }
 
-/// 7 accounts, 6 × [u8; 32] = 192 bytes of arguments.
+/// `transfer`: 6 x [u8; 32] = 192 bytes of arguments.
 #[test]
 fn the_built_program_cannot_dispatch_transfer_at_all() {
-    assert_unroutable("transfer", TRANSFER_DISC, 7, 192);
+    assert_unroutable(&TRANSFER, 192);
+}
+
+// ---------------------------------------------------------------------------
+// Positive control: every OTHER entrypoint survived.
+// ---------------------------------------------------------------------------
+
+/// The disable took exactly two instructions and no neighbours.
+///
+/// Every instruction still registered in `#[program]` is called on the artifact
+/// and must dispatch. With junk accounts they all fail — that is expected and
+/// required — but they must fail having been FOUND. `InstructionFallbackNotFound`
+/// from any of these means the commenting-out took a live instruction with it,
+/// or the artifact is not the program we think it is.
+///
+/// This is the whole set rather than a chosen five, because a sample cannot
+/// distinguish "we removed two" from "we removed two and something else we did
+/// not check".
+#[test]
+fn every_still_registered_instruction_still_dispatches() {
+    let names = registered_instructions();
+
+    // Anti-vacuity. A parse that returned nothing would make the loop below
+    // assert about an empty set and pass silently, which is the exact failure
+    // mode this file exists to prevent elsewhere.
+    assert!(
+        names.len() >= 20,
+        "\n\
+         only {} instructions parsed out of lib.rs — the scan is broken, not the\n\
+         program. `registered_instructions` looks for `pub fn NAME(` inside\n\
+         `pub mod zk_shielded`; check that marker still exists.\n\
+         Parsed: {:?}",
+        names.len(),
+        names,
+    );
+
+    // The two under disable must not be in the live set at all. This is what
+    // ties the source-level claim to the binary-level one: the same list that
+    // drives the positive control is the list the negative guards deny.
+    for c in [&UNSHIELD, &TRANSFER] {
+        assert!(
+            !names.iter().any(|n| n == c.ix),
+            "\n\
+             `{}` is registered again in lib.rs. Read the DISABLED block above\n\
+             `pub fn {}` before going further — re-registering it ungated is:\n\n{}\n",
+            c.ix,
+            c.ix,
+            c.stakes,
+        );
+    }
+
+    // The production path, named explicitly so a rename cannot quietly shrink
+    // what this test covers.
+    for must in [
+        "subscribe_private_stark",
+        "unshield_denominated_stark_v3",
+        "transfer_denominated_stark_v3",
+        "shield_denominated_v3",
+        "split_note_stark",
+    ] {
+        assert!(
+            names.iter().any(|n| n == must),
+            "`{must}` is no longer registered — the denominated v3 path IS \
+             production, and this test is supposed to be watching it",
+        );
+    }
+
+    let bytes = artifact_bytes();
+
+    // The criterion is `dispatched`, NOT "the error was something other than
+    // 101", and the difference was measured rather than reasoned about. Pointed
+    // at an unrelated artifact (`p01_stark_verifier.so` loaded under this
+    // program id), the weaker version PASSED for all 24: that program answers
+    // Custom(4100) DeclaredProgramIdMismatch, which is not 101, so a control
+    // built on "not 101" green-lit a binary that implements none of these
+    // instructions. Requiring Anchor to NAME the instruction is the only form
+    // of this check that fails against a wrong or broken artifact.
+    let mut not_dispatched: Vec<String> = Vec::new();
+    let mut removed: Vec<String> = Vec::new();
+    let mut first_raw = String::new();
+
+    for name in &names {
+        let o = call(&bytes, name, 0);
+        if o.dispatched {
+            continue;
+        }
+        if o.code == Some(fallback_not_found()) {
+            removed.push(format!("{name}  ->  no route in the artifact (101)"));
+        } else {
+            // Compact: when the artifact is wrong, all 24 fail identically and
+            // 24 full debug dumps bury the one line that identifies the cause.
+            // The first raw failure is printed in full below the list.
+            not_dispatched.push(match o.code {
+                Some(c) => format!("{name}  ->  Custom({c})"),
+                None => format!("{name}  ->  runtime error, no Anchor code"),
+            });
+            if not_dispatched.len() == 1 {
+                first_raw = o.raw;
+            }
+        }
+    }
+
+    assert!(
+        removed.is_empty(),
+        "\n\
+         ============================================================\n\
+         PRODUCTION IS DOWN — LIVE INSTRUCTIONS WERE REMOVED TOO\n\
+         ============================================================\n\
+         These are registered in `#[program]`, and the artifact answers\n\
+         InstructionFallbackNotFound for them. Disabling `unshield` and\n\
+         `transfer` was supposed to take those two and nothing else:\n\n  {}\n\n\
+         {} of {} instructions dispatched.\n\n\
+         If the source is right, the artifact is stale — rebuild it. If the\n\
+         artifact is right, a registration was commented out that should not\n\
+         have been.\n\
+         ============================================================\n",
+        removed.join("\n  "),
+        names.len() - removed.len() - not_dispatched.len(),
+        names.len(),
+    );
+
+    assert!(
+        not_dispatched.is_empty(),
+        "\n\
+         ============================================================\n\
+         THE ARTIFACT NEVER DISPATCHED THESE — IT MAY NOT BE THIS PROGRAM\n\
+         ============================================================\n\
+         Anchor announces `Program log: Instruction: <Name>` the moment a\n\
+         discriminator matches. These produced no such line and did not answer\n\
+         101 either, so the call did not reach dispatch at all:\n\n  {}\n\n\
+         First failure in full:\n{}\n\n\
+         Most likely causes, in order:\n\
+           1. `P01_ZK_SHIELDED_SO` points at a different program. A foreign\n\
+              Anchor binary loaded under this program id answers Custom(4100)\n\
+              DeclaredProgramIdMismatch before it looks at the discriminator.\n\
+           2. The crate was built with the `no-log-ix-name` feature, which\n\
+              compiles the announcement out. Then NONE of the {} would appear\n\
+              here, and this file cannot measure dispatch at all — it would need\n\
+              a different signal.\n\
+           3. The artifact is corrupt.\n\
+         ============================================================\n",
+        not_dispatched.join("\n  "),
+        first_raw,
+        names.len(),
+    );
 }

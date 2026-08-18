@@ -52,6 +52,21 @@ pub mod zk_shielded {
         instructions::initialize_pool::handler(ctx, vk_hash, token_mint)
     }
 
+    // === DISABLED: a pool with no exit must not take deposits. ===
+    //
+    // `unshield` and `transfer` were unregistered above because circuit 5 proves
+    // no membership of the notes it spends. That closed the drain and, in the
+    // same stroke, made `shield` a one-way door: lamports go into the base
+    // ShieldedPool and NOTHING in this program can bring them out again.
+    //
+    // A drain and a trap are not opposites, they are the same defect seen from
+    // either side of the pool, and fixing one without the other just moves who
+    // loses the money. So the entrance closes with the exit, and both reopen
+    // together when C5 publishes its input commitments.
+    //
+    // Costs nothing today for the same measured reason as the other two: every
+    // client builds `global:shield_stark`, which this program has never had.
+    /*
     /// Shield tokens using STARK circuit 6 (merkle_update) — quantum-resistant.
     /// Proves old_root -> new_root given insertion of commitment.
     /// Requires a pre-verified STARK proof buffer from p01_stark_verifier.
@@ -64,6 +79,9 @@ pub mod zk_shielded {
     ) -> Result<()> {
         instructions::shield_stark::handler(ctx, commitment, old_root, new_root, amount)
     }
+    */
+    // === end DISABLED block (shield registration) ===
+
 
     // === DISABLED (circuit-5 only, NO membership proof = unbacked-leaf risk).
     //     Same defect as `unshield` below, same decision, and it should have
@@ -246,6 +264,28 @@ pub mod zk_shielded {
     /// Shield tokens into a denominated pool (deposit exactly denomination amount)
     /// Commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)
     /// No amount in the commitment — denomination enforced at program level
+    // === DISABLED: a pool with no exit must not take deposits. ===
+    //
+    // 🚨 THIS ONE WAS ALREADY A TRAP BEFORE TONIGHT, AND IT IS REACHABLE.
+    //
+    // `unshield_denominated_stark` and `transfer_denominated_stark` — the v2
+    // withdrawal and transfer — are unregistered below, retired for the same
+    // no-membership-proof defect. `shield_denominated` was left registered, so
+    // the v2 denominated pool has accepted deposits it can never pay out.
+    //
+    // And unlike the base pool, a shipped client can still reach it:
+    // `apps/mobile/services/denominatedPool/index.ts:1331` builds
+    // `global:shield_denominated` and lands, while its withdrawal at `:1734`
+    // builds `global:unshield_denominated_stark` and gets
+    // InstructionFallbackNotFound. Deposit works, withdrawal does not, and the
+    // difference only shows up after the money is in.
+    //
+    // ⛔ Re-enabling the v2 WITHDRAWAL is not the fix — it carries the drain
+    // this program retired it for. Production is v3 (`shield_denominated_v3`,
+    // `unshield_denominated_stark_v3`), which requires a C3 membership proof and
+    // is untouched. Anything already sitting in a v2 pool needs a deliberate,
+    // audited migration, not an instruction switched back on.
+    /*
     pub fn shield_denominated(
         ctx: Context<ShieldDenominated>,
         commitment: [u8; 32],
@@ -253,6 +293,9 @@ pub mod zk_shielded {
     ) -> Result<()> {
         instructions::shield_denominated::handler(ctx, commitment, new_root)
     }
+    */
+    // === end DISABLED block (shield_denominated v2 registration) ===
+
 
     // === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
     // unshield_denominated_stark — superseded by unshield_denominated_stark_v3.
