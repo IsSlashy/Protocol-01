@@ -28,6 +28,15 @@ import {
 } from "@/lib/privacy/chains";
 import type { Asset, ChainId, DerivedIdentity } from "@/lib/privacy/chains/types";
 import type { PoolToken } from "@/lib/privacy/pool/denominatedPool";
+import {
+  loadBuyerKey,
+  saveBuyerKey,
+  storageAvailable,
+  exportBuyerKeyHex,
+  isBackedUp,
+  markBackedUp,
+  backupAnswerMatches,
+} from "@/lib/pay/buyerKey";
 import { buildDerivationMessage } from "@/lib/privacy/message";
 import { initStealthWorker } from "@/lib/privacy/workerClient";
 import ChainCoinSelector from "./ChainCoinSelector";
@@ -86,9 +95,81 @@ export default function PayApp() {
     setVisited((prev) => (prev.has(tab) ? prev : new Set([...prev, tab])));
   }, [tab]);
 
-  // P01 mobile wallet (paired via QR — an in-memory Solana keypair).
+  // P01 mobile wallet (paired via QR), or a buyer key created on this device.
   const [p01Keypair, setP01Keypair] = useState<Keypair | null>(null);
   const [showP01, setShowP01] = useState(false);
+
+  // ── The device buyer key ────────────────────────────────────────────────
+  //
+  // 🚨 THIS USED TO LIVE FOR EXACTLY AS LONG AS THE TAB, and the app sealed
+  // paid notes to it anyway. MEASURED 2026-08-17/18: three reloads, three
+  // orphaned identities, three spent single-use claim codes. The issuance
+  // route's own re-seal branch — same leaf, same recipient — could never fire,
+  // because the recipient address never survived long enough to ask twice.
+  //
+  // `keyIsDevice` distinguishes a key this browser created and stored from a
+  // phone paired over QR: only the first is ours to persist, back up or forget.
+  const [keyIsDevice, setKeyIsDevice] = useState(false);
+  const [keyBackedUp, setKeyBackedUp] = useState(false);
+  const [backupAnswer, setBackupAnswer] = useState("");
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [storageBlocked, setStorageBlocked] = useState(false);
+
+  // Rehydrate before anything can be sealed to a new identity.
+  useEffect(() => {
+    const stored = loadBuyerKey();
+    if (!stored) return;
+    setP01Keypair(stored);
+    setKeyIsDevice(true);
+    setKeyBackedUp(isBackedUp(stored.publicKey.toBase58()));
+  }, []);
+
+  /**
+   * Create a buyer key on this device.
+   *
+   * ⛔ Refuses when storage will not hold it. Continuing in memory is precisely
+   * the failure above wearing a friendlier face: the user would get an
+   * identity, pay for a note sealed to it, and lose both on the next reload.
+   */
+  function createDeviceKey() {
+    if (!storageAvailable()) {
+      setStorageBlocked(true);
+      return;
+    }
+    const kp = Keypair.generate();
+    if (!saveBuyerKey(kp)) {
+      setStorageBlocked(true);
+      return;
+    }
+    setP01Keypair(kp);
+    setKeyIsDevice(true);
+    setKeyBackedUp(false);
+    setBackupAnswer("");
+    setBackupError(null);
+  }
+
+  function confirmBackup() {
+    if (!p01Keypair) return;
+    if (!backupAnswerMatches(p01Keypair, backupAnswer)) {
+      setBackupError("That is not the end of the secret above. Copy it again.");
+      return;
+    }
+    markBackedUp(p01Keypair.publicKey.toBase58());
+    setKeyBackedUp(true);
+    setBackupError(null);
+    setBackupAnswer("");
+  }
+
+  function downloadDeviceKey() {
+    if (!p01Keypair) return;
+    const blob = new Blob([exportBuyerKeyHex(p01Keypair)], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `styx-buyer-key-${p01Keypair.publicKey.toBase58().slice(0, 8)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   // Which tabs have an operation in flight, fed by the panels' onBusyChange.
   // The tab bar stays CLICKABLE during an operation on purpose: locking a user
@@ -333,9 +414,18 @@ export default function PayApp() {
   function reset() {
     setIdentities({});
     void clearStealthSessions();
-    // Best-effort zeroization of the paired P01 keypair before dropping it.
-    p01Keypair?.secretKey.fill(0);
-    setP01Keypair(null);
+    // ⚠️ A DEVICE KEY IS NOT DROPPED HERE, and that is deliberate.
+    //
+    // `reset()` is reached from the identity chip and from the stale-worker
+    // notice, whose whole cure is "reconnect and derive again". Forgetting a
+    // stored buyer key on that path would destroy every subscription bought
+    // under it — the license key is recomputed from the note's secret, so
+    // there is nothing to look up afterwards. A paired phone keypair is a
+    // different thing: it lives elsewhere, so zeroing our copy loses nothing.
+    if (!keyIsDevice) {
+      p01Keypair?.secretKey.fill(0);
+      setP01Keypair(null);
+    }
     void disconnect();
   }
 
@@ -387,18 +477,48 @@ export default function PayApp() {
               is Ed25519 and stays Ed25519.
             </p>
           </div>
+          {/* ⚠️ ORDER IS THE ARGUMENT HERE.
+              A wallet was only ever needed to make a seed recoverable and to
+              sign the pre-fund; the funder does the second job now and the
+              stored key does the first. And a buyer who connects a wallet is a
+              buyer whose deposit can name them — the one thing this product
+              exists to avoid. So the device key leads and the wallet folds. */}
           <button
-            className="glass glass-hover w-full py-3.5 font-display text-sm uppercase tracking-[0.15em] text-p01-cyan"
-            onClick={() => setVisible(true)}
+            className="btn-primary flex w-full items-center justify-center gap-2"
+            onClick={createDeviceKey}
           >
-            Connect wallet
+            <KeyRound className="h-4 w-4" /> Create a buyer key on this device
           </button>
-          <button
-            className="btn-secondary flex w-full items-center justify-center gap-2"
-            onClick={() => setShowP01(true)}
-          >
-            <Smartphone className="h-4 w-4" /> Connect P01 Wallet
-          </button>
+          <p className="text-xs text-p01-text-dim">
+            No wallet, no extension, no SOL of your own. The deployment pays the fees, and this
+            key is what your subscriptions belong to.
+          </p>
+          {storageBlocked && (
+            <div className="rounded-lg border border-p01-red/40 bg-p01-red/5 p-3 text-xs text-p01-red">
+              This browser will not let us store the key. Without it, a reload loses the
+              subscription you paid for, so we stopped rather than hand you an identity that
+              dies. Nothing was charged. Try a normal window, or connect a wallet instead.
+            </div>
+          )}
+          <details className="group">
+            <summary className="cursor-pointer list-none text-xs text-p01-text-muted underline-offset-4 hover:text-p01-cyan hover:underline">
+              Use a wallet instead ▸
+            </summary>
+            <div className="mt-3 space-y-3">
+              <button
+                className="glass glass-hover w-full py-3.5 font-display text-sm uppercase tracking-[0.15em] text-p01-cyan"
+                onClick={() => setVisible(true)}
+              >
+                Connect wallet
+              </button>
+              <button
+                className="btn-secondary flex w-full items-center justify-center gap-2"
+                onClick={() => setShowP01(true)}
+              >
+                <Smartphone className="h-4 w-4" /> Connect P01 Wallet
+              </button>
+            </div>
+          </details>
           {/* A buyer that is not a wallet at all.
               Everything downstream already supports this: `p01Keypair` replaces
               the adapter for `solPub`, for `doSign` — nacl, locally, so there is
@@ -411,17 +531,77 @@ export default function PayApp() {
               ⚠️ Held in memory only. Whoever closes this tab loses the identity
               and the license key of anything bought under it, which is why the
               address is shown with an export rather than quietly created. */}
-          <button
-            className="btn-secondary flex w-full items-center justify-center gap-2"
-            onClick={() => setP01Keypair(Keypair.generate())}
-          >
-            Subscribe anonymously — no wallet
-          </button>
+        </div>
+      )}
+
+      {/* Gate 1b — save the key, before anything can be sealed to it.
+          This is a gate, not a notice: the key is the only thing that can spend
+          the notes and show the license keys bought under it, and it is stored
+          in the clear because it cannot encrypt itself — `sealedStore` encrypts
+          under an identity derived by signing WITH this key. */}
+      {p01Keypair && keyIsDevice && !keyBackedUp && (
+        <div className="glass space-y-4 p-6">
+          <div className="flex items-center gap-2">
+            <KeyRound className="h-5 w-5 text-p01-yellow" />
+            <p className="font-display text-p01-text">Save this key</p>
+          </div>
+          <p className="text-sm text-p01-text-muted">
+            This key alone can spend your notes and open every subscription bought with it. It
+            is stored <span className="text-p01-yellow">unencrypted</span> in this browser, and
+            the file you download is the same secret — anyone who reads either holds it.
+          </p>
+          <p className="text-sm text-p01-text-muted">
+            Clearing this browser&apos;s site data without a copy loses every subscription bought
+            under it. The license key is recomputed from the note, so there is nothing we can
+            look up for you.
+          </p>
+          <div className="overflow-x-auto rounded-lg border border-p01-border bg-p01-void p-3">
+            <code className="font-mono text-xs text-p01-cyan">
+              {exportBuyerKeyHex(p01Keypair)}
+            </code>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="btn-secondary flex items-center gap-2"
+              onClick={() => void navigator.clipboard?.writeText(exportBuyerKeyHex(p01Keypair))}
+            >
+              Copy
+            </button>
+            <button className="btn-secondary flex items-center gap-2" onClick={downloadDeviceKey}>
+              Download as text
+            </button>
+          </div>
+          <div className="space-y-2">
+            <label className="block text-xs text-p01-text-muted" htmlFor="backup-check">
+              Type the last four characters of the secret to continue.
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="backup-check"
+                className="w-32 rounded-lg border border-p01-border bg-p01-void px-3 py-2 font-mono text-sm text-p01-text outline-none focus:border-p01-cyan"
+                value={backupAnswer}
+                maxLength={4}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(e) => {
+                  setBackupAnswer(e.target.value);
+                  setBackupError(null);
+                }}
+              />
+              <button className="btn-primary" onClick={confirmBackup}>
+                I saved it
+              </button>
+            </div>
+            {backupError && <p className="text-sm text-p01-red">{backupError}</p>}
+          </div>
         </div>
       )}
 
       {/* Gate 2 — derive keys */}
-      {chainConnected && !identity && (
+      {/* `keyBackedUp` gates this so the backup step is not competing with a
+          signature prompt. A device key that is not saved yet has nothing to
+          derive TO that the user could keep. */}
+      {chainConnected && !identity && (!keyIsDevice || keyBackedUp) && (
         <div className="glass space-y-4 p-6">
           <div className="flex items-center gap-2">
             <KeyRound className="h-5 w-5 text-p01-cyan" />
@@ -431,9 +611,14 @@ export default function PayApp() {
             {/* The count is now conditional, so the copy has to be too — a
                 screen that promises two prompts and shows one reads as a bug,
                 and one that promises one and shows two reads as a trap. */}
+            {/* ⚠️ "never stored" IS SCOPED TO THE WALLET PATH, and has to be.
+                On the device path the signing key is in this browser's storage
+                by design — that is the whole point of it — so a page that
+                exists to correct overstatement must not ship the sentence that
+                would now be false. */}
             {solPub && deterministicSignerVerified(solPub.toBase58())
-              ? "One signature creates your stealth spending, viewing and post-quantum (ML-KEM-768) keys. No transaction is sent, no gas is paid. Your keys live only in this tab, never uploaded, never stored."
-              : "Two signatures, once for this wallet: the first creates your stealth spending, viewing and post-quantum (ML-KEM-768) keys, the second only checks that your wallet signs the same way twice — a wallet that does not would leave your keys unrecoverable later. Approve both and you will not be asked again. No transaction is sent, no gas is paid. Your keys live only in this tab, never uploaded, never stored."}
+              ? `One signature creates your stealth spending, viewing and post-quantum (ML-KEM-768) keys. No transaction is sent, no gas is paid.${keyIsDevice ? " They are derived from the buyer key stored in this browser." : " Your keys live only in this tab, never uploaded, never stored."}`
+              : `Two signatures, once for this wallet: the first creates your stealth spending, viewing and post-quantum (ML-KEM-768) keys, the second only checks that your wallet signs the same way twice — a wallet that does not would leave your keys unrecoverable later. Approve both and you will not be asked again. No transaction is sent, no gas is paid.${keyIsDevice ? " They are derived from the buyer key stored in this browser." : " Your keys live only in this tab, never uploaded, never stored."}`}
           </p>
           <div className="flex items-start gap-2 rounded-lg border border-p01-yellow/30 bg-p01-yellow/5 p-3 text-xs text-p01-yellow">
             <ShieldQuestion className="mt-0.5 h-4 w-4 shrink-0" />

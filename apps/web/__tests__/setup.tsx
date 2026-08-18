@@ -204,7 +204,16 @@ vi.mock('@solana/wallet-adapter-wallets', () => ({
 }));
 
 // ---------- Mock: @solana/web3.js ----------
-vi.mock('@solana/web3.js', () => ({
+// ⚠️ `Keypair` is the REAL implementation, deliberately.
+//
+// The rest of this stub stands in for things that would open sockets or need a
+// wallet. `Keypair` needs neither: it is ed25519 arithmetic, and code that
+// stores or reloads a secret key has to be tested against the real one — a
+// stub would accept a 3-byte "secret" and every round-trip assertion would
+// pass while the shipped path threw. That is exactly the class of bug this
+// project keeps finding, so the mock defers here instead.
+vi.mock('@solana/web3.js', async (importOriginal) => ({
+  ...{ Keypair: (await importOriginal<typeof import('@solana/web3.js')>()).Keypair },
   clusterApiUrl: (network: string) => `https://api.${network}.solana.com`,
   Connection: vi.fn(),
   PublicKey: vi.fn().mockImplementation((key: string) => ({
