@@ -334,9 +334,45 @@ export async function POST(request: NextRequest) {
       hint: 'The code is now consumed either way, so a guessed code cannot be retried.',
     });
   }
+  /**
+   * Give a PAID claim back when this request hands no note over.
+   *
+   * 🚨 The claim is consumed above, before the chain is read, and that is
+   * right: `incr` is the whole concurrency argument. What was wrong is that it
+   * stayed consumed through every refusal below — and most of those refusals
+   * are not errors at all, they are ordinary operational states. The stock is
+   * too young. The RPC blinked. Every note is held by another address because
+   * the buyer reloaded the page. In each case the customer paid, received
+   * nothing, and cannot ask again.
+   *
+   * One of them says the quiet part in its own body: the all-spent refusal
+   * ends with 'Nothing was charged.', which stopped being true the moment
+   * `incr` returned.
+   *
+   * ⛔ GATED ON `minted`, AND THAT GATE IS THE WHOLE ANTI-ABUSE PROPERTY.
+   * A code that was never minted is never released — it is burned on first
+   * touch, exactly as the 402 above promises, so guessing still costs one
+   * attempt per code. Only a claim this deployment actually sold comes back.
+   * Placed after the `minted` check so it cannot be called before that is
+   * known.
+   *
+   * ⚠️ EVERY `return bad(...)` BELOW THIS POINT MUST GO THROUGH HERE, and a
+   * test scans this file to keep it that way. The failure mode is invisible:
+   * the refusal reads as correct and the payment is simply gone.
+   */
+  const release = async (res: NextResponse) => {
+    try {
+      await kv.del(`p01:note:claim:${claimCode}`);
+    } catch {
+      // Best effort. A failed release costs this buyer their retry, which is
+      // the behaviour being fixed — but throwing here would replace an
+      // accurate error with a misleading one, and no note moved either way.
+    }
+    return res;
+  };
 
   const leaves = inventoryLeaves();
-  if (leaves.length === 0) return bad(503, 'this deployment has no note inventory configured');
+  if (leaves.length === 0) return release(bad(503, 'this deployment has no note inventory configured'));
 
   // The pool's leaves, once, for both the on-chain check below and the Merkle
   // path. Building the path HERE rather than leaving the recipient to rebuild
@@ -346,7 +382,7 @@ export async function POST(request: NextRequest) {
   try {
     commitments = await fetchPoolCommitments(connection, pool.poolPDA);
   } catch (e) {
-    return bad(502, `the pool's history could not be read: ${(e as Error).message}`);
+    return release(bad(502, `the pool's history could not be read: ${(e as Error).message}`));
   }
 
   /**
@@ -374,7 +410,7 @@ export async function POST(request: NextRequest) {
   } catch (e) {
     // ⛔ Refuse rather than issue blind. An unread spent-set is not an empty
     // one, and the failure mode of guessing is handing over spent money.
-    return bad(502, `the pool's spent notes could not be read: ${(e as Error).message}`);
+    return release(bad(502, `the pool's spent notes could not be read: ${(e as Error).message}`));
   }
 
   // The clock the maturity rule is measured against. Read once, after the
@@ -387,7 +423,7 @@ export async function POST(request: NextRequest) {
     currentSlot = await connection.getSlot('finalized');
   } catch (e) {
     // ⛔ Refuse rather than issue blind. An unknown clock is not an old note.
-    return bad(502, `the chain's slot could not be read: ${(e as Error).message}`);
+    return release(bad(502, `the chain's slot could not be read: ${(e as Error).message}`));
   }
   const minAge = minAgeSlots();
 
@@ -490,7 +526,7 @@ export async function POST(request: NextRequest) {
     try {
       claim = await kv.incr(claimKey);
     } catch (e) {
-      return bad(503, `the inventory could not be claimed: ${(e as Error).message}`);
+      return release(bad(503, `the inventory could not be claimed: ${(e as Error).message}`));
     }
     if (claim !== 1) {
       // 🚨 IDEMPOTENT FOR THE SAME RECIPIENT, and it has to be.
@@ -538,13 +574,13 @@ export async function POST(request: NextRequest) {
     // configuration error must not be silently absorbed by trying the next leaf.
 
     if (!onChain || onChain.leafIndex !== leafIndex) {
-      return bad(500, 'the configured inventory does not match the chain', {
+      return release(bad(500, 'the configured inventory does not match the chain', {
         leafIndex,
         found: onChain?.leafIndex ?? null,
         hint:
           'P01_TREASURY_POOL_SEED, the pool, or P01_TREASURY_NOTE_LEAVES is wrong. The leaf has ' +
           'been marked issued to stop a retry loop from consuming the whole inventory.',
-      });
+      }));
     }
 
     let merkle: Pick<ShareableNote, 'merkle_root' | 'merkle_path_elements' | 'merkle_path_indices'> = {};
@@ -620,7 +656,7 @@ export async function POST(request: NextRequest) {
   // whoever runs the deployment: one means deposit more notes, the other means
   // the notes are there and gone. Both used to read as "empty".
   if (spentLeaves > 0) {
-    return bad(503, 'every note in this deployment\'s inventory has already been spent', {
+    return release(bad(503, 'every note in this deployment\'s inventory has already been spent', {
       configured: leaves.length,
       spentLeaves,
       heldByOthers,
@@ -628,7 +664,7 @@ export async function POST(request: NextRequest) {
         'A commitment stays on the tree after its note is spent, so the inventory still looks ' +
         'present on chain. Deposit fresh notes from the treasury wallet and extend ' +
         'P01_TREASURY_NOTE_LEAVES with the new leaf indices. Nothing was charged.',
-    });
+    }));
   }
 
   // Said before "empty" and before "held by others", because it is the one
@@ -638,7 +674,7 @@ export async function POST(request: NextRequest) {
   // answer is a time, not a mystery.
   if (tooYoung > 0) {
     const waitSlots = Number.isFinite(shortestWait) ? shortestWait : null;
-    return bad(503, 'the notes in stock are too recently deposited to be issued', {
+    return release(bad(503, 'the notes in stock are too recently deposited to be issued', {
       configured: leaves.length,
       tooYoung,
       minAgeSlots: minAge,
@@ -650,11 +686,11 @@ export async function POST(request: NextRequest) {
         'crowd dilutes a one-second window. Wait for the stock to age, or deposit a batch well ' +
         'ahead of when it will be sold. P01_TREASURY_NOTE_MIN_AGE_SLOTS sets the threshold; ' +
         'lowering it is a privacy decision, not a tuning knob.',
-    });
+    }));
   }
 
   if (heldByOthers > 0) {
-    return bad(503, 'every note in stock is already issued to a different address', {
+    return release(bad(503, 'every note in stock is already issued to a different address', {
       configured: leaves.length,
       heldByOthers,
       recipientAddress,
@@ -664,11 +700,11 @@ export async function POST(request: NextRequest) {
         'different note address than the one that received it — derive from the same wallet. ' +
         'Otherwise the deployment needs more notes: deposit from the treasury and extend ' +
         'P01_TREASURY_NOTE_LEAVES.',
-    });
+    }));
   }
 
-  return bad(503, 'the note inventory is empty', {
+  return release(bad(503, 'the note inventory is empty', {
     configured: leaves.length,
     hint: 'Deposit more notes from the treasury wallet and extend P01_TREASURY_NOTE_LEAVES.',
-  });
+  }));
 }

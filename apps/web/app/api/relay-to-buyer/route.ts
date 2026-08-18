@@ -158,6 +158,45 @@ export async function POST(request: NextRequest) {
     return bad(503, `the payment could not be claimed: ${(e as Error).message}`);
   }
   if (claim !== 1) return bad(409, 'this payment has already been relayed');
+  /**
+   * Give the payment back when this request hands nothing over.
+   *
+   * 🚨 THE BUG THIS EXISTS FOR, AND IT FIRES ON THE MOST ORDINARY
+   * CONDITION IN THE FLOW.
+   *
+   * The claim above is taken BEFORE the chain is read, which is right — two
+   * simultaneous requests carrying the same receipt must not both be served.
+   * But every refusal below it used to keep the claim, and the buyer's
+   * lamports are already on chain by then.
+   *
+   * The worst of them says so out loud: a payment the RPC has not caught up
+   * with yet returns 404 'confirm it and retry', and the retry hits 409 'this
+   * payment has already been relayed'. Forever. The buyer paid, this
+   * deployment kept the money, and the endpoint that was supposed to forward
+   * it is permanently shut to them — for a propagation delay.
+   *
+   * So: the claim is released on every path that does not deliver, and held
+   * only once lamports have actually moved. Releasing is safe against the
+   * race it guards — the window reopens only after this request has decided
+   * to send nothing, so there is no moment where two requests can both be
+   * mid-transfer.
+   *
+   * ⚠️ EVERY `return bad(...)` BELOW THIS POINT MUST GO THROUGH HERE.
+   * `relayClaimReleased` in the test suite scans this file and fails if a new
+   * one is added bare, because the failure mode is invisible: the request
+   * looks correctly refused and the money is simply gone.
+   */
+  const release = async (res: NextResponse) => {
+    try {
+      await kv.del(claimKey);
+    } catch {
+      // Best effort. A failed release costs this buyer their retry, which is
+      // the behaviour we are fixing — but a throw here would replace an
+      // accurate error with a misleading one, and the money has not moved
+      // either way.
+    }
+    return res;
+  };
 
   // What the caller actually paid, read from the chain. Never from the request:
   // an amount the caller states is an amount the caller chooses.
@@ -167,23 +206,23 @@ export async function POST(request: NextRequest) {
       maxSupportedTransactionVersion: 0,
       commitment: 'confirmed',
     });
-    if (!tx?.meta) return bad(404, 'that payment is not on chain yet; confirm it and retry');
+    if (!tx?.meta) return release(bad(404, 'that payment is not on chain yet; confirm it and retry'));
     const keys = tx.transaction.message
       .getAccountKeys()
       .staticAccountKeys.map((k) => k.toBase58());
     const idx = keys.indexOf(funder.publicKey.toBase58());
-    if (idx < 0) return bad(400, 'that transaction did not pay this deployment');
+    if (idx < 0) return release(bad(400, 'that transaction did not pay this deployment'));
     received = (tx.meta.postBalances[idx] ?? 0) - (tx.meta.preBalances[idx] ?? 0);
   } catch (e) {
-    return bad(502, `the payment could not be read: ${(e as Error).message}`);
+    return release(bad(502, `the payment could not be read: ${(e as Error).message}`));
   }
 
-  if (received <= 0) return bad(400, 'that transaction paid this deployment nothing');
+  if (received <= 0) return release(bad(400, 'that transaction paid this deployment nothing'));
   if (received > MAX_RELAY_LAMPORTS) {
-    return bad(400, 'that payment is larger than this relay forwards in one call', {
+    return release(bad(400, 'that payment is larger than this relay forwards in one call', {
       received,
       cap: MAX_RELAY_LAMPORTS,
-    });
+    }));
   }
 
   // The buyer must be empty. A fresh identity always is, and a reused one is a
@@ -191,28 +230,28 @@ export async function POST(request: NextRequest) {
   try {
     const existing = await connection.getBalance(buyer, 'confirmed');
     if (existing > 0) {
-      return bad(409, 'this buyer identity already holds lamports; use a fresh one', { existing });
+      return release(bad(409, 'this buyer identity already holds lamports; use a fresh one', { existing }));
     }
   } catch (e) {
-    return bad(502, `the buyer balance could not be read: ${(e as Error).message}`);
+    return release(bad(502, `the buyer balance could not be read: ${(e as Error).message}`));
   }
 
   // What the ephemeral needs in total. The caller states it because only the
   // caller knows the job; the deployment bounds how much of it it will front.
   const required = Number(body.requiredLamports ?? received);
   if (!Number.isFinite(required) || required <= 0) {
-    return bad(400, 'requiredLamports must be a positive number');
+    return release(bad(400, 'requiredLamports must be a positive number'));
   }
   if (required > MAX_RELAY_LAMPORTS) {
-    return bad(400, 'that job needs more than this relay funds in one call', {
+    return release(bad(400, 'that job needs more than this relay funds in one call', {
       required,
       cap: MAX_RELAY_LAMPORTS,
-    });
+    }));
   }
 
   const subsidy = required - received;
   if (subsidy > MAX_RENT_SUBSIDY_LAMPORTS) {
-    return bad(402, 'that payment does not cover the value this job moves', {
+    return release(bad(402, 'that payment does not cover the value this job moves', {
       received,
       required,
       subsidy,
@@ -220,11 +259,11 @@ export async function POST(request: NextRequest) {
       hint:
         'This deployment fronts the refundable rent and no more. Pay the note value and ask ' +
         'again; nothing was sent.',
-    });
+    }));
   }
 
   const forward = required;
-  if (forward <= FEE_LAMPORTS) return bad(400, 'that job asks for less than the relay fee');
+  if (forward <= FEE_LAMPORTS) return release(bad(400, 'that job asks for less than the relay fee'));
 
   let sig: string;
   try {
@@ -245,9 +284,12 @@ export async function POST(request: NextRequest) {
       'confirmed',
     );
   } catch (e) {
-    return bad(502, `the relay could not be sent: ${(e as Error).message}`);
+    return release(bad(502, `the relay could not be sent: ${(e as Error).message}`));
   }
 
+  // Lamports have moved. From here the claim is CORRECTLY held: a second
+  // request carrying this receipt must not be served, and there is nothing to
+  // give back.
   return NextResponse.json({
     ok: true,
     signature: sig,
