@@ -30,6 +30,24 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
       async getGenesisHash() {
         return 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
       }
+      /**
+       * 🚨 THE METHOD WHOSE ABSENCE READ AS A DIFFERENT BUG.
+       *
+       * The maturity gate added on 2026-08-18 reads the chain's slot. This stub
+       * did not have the method, so the call threw, the route caught it as "the
+       * chain's slot could not be read" and answered 502 — and the two cases
+       * below, which assert a 503 about WHO HOLDS the inventory, failed with
+       * "expected 502 to be 503". The route was right and the stub was a version
+       * behind; a reader chasing that pair would have gone looking in the
+       * inventory logic, which is fine.
+       *
+       * Large enough that the configured minimum age is satisfied, so these
+       * cases keep exercising the inventory loop rather than the maturity
+       * refusal — which has its own case.
+       */
+      async getSlot() {
+        return 500_000_000;
+      }
     },
   };
 });
