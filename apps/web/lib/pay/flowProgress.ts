@@ -62,7 +62,12 @@ export const SHIELD_PHASES: FlowPhase[] = [
   { id: 'derive', label: 'Creating your note', weight: 0.05, match: /deriving note|building v3 shield/i },
   { id: 'prove', label: 'Proving the deposit', weight: 0.25, match: /generating c6|stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz/i },
-  { id: 'upload', label: 'Uploading the proof', weight: 0.45, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
+  // 0.50, not 0.45: the shield's phases summed to 0.95, so a shield could never
+  // report more than 95% and jumped from there to done. Caught by the sum
+  // assertion in the label test, never by looking at it. The missing weight goes
+  // to the upload because it is the longest phase by far — ~150 chunk
+  // transactions against everything else's seconds.
+  { id: 'upload', label: 'Uploading the proof', weight: 0.5, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
   { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|closing/i },
 ];
 
@@ -76,6 +81,18 @@ export const WITHDRAW_PHASES: FlowPhase[] = [
 ];
 
 export const SUBSCRIBE_PHASES: FlowPhase[] = [
+  // Only on the path where the buyer holds nothing and the deployment issues
+  // them a note. Short — ~2.4s measured — but it is the FIRST thing that
+  // happens, and both of its sentences (`shieldClient.ts:790` and `:824`) used
+  // to match nothing at all. An unmatched sentence leaves the previous label
+  // standing, and there is no previous label at the start of a run, so the
+  // screen read "Starting · 0%" through the whole thing. That is the frozen bar
+  // reported all evening, and it was never the worker being stuck.
+  //
+  // It gets its own label rather than being folded into `locate`, because
+  // "Finding your note" would be a lie: there is no note yet, one is being
+  // bought.
+  { id: 'issue', label: 'Getting you a note', weight: 0.03, match: /asking for a note|opening the note/i },
   // `still looking` and `checking notes you already hold` are the worker's
   // heartbeat and its blob-first probe. They were added to `locateOwnedNote`
   // without being added here, so a run that was working fine sat on "Starting"
@@ -86,7 +103,7 @@ export const SUBSCRIBE_PHASES: FlowPhase[] = [
   { id: 'path', label: 'Rebuilding its history', weight: 0.07, match: /merkle|pre-flight root|checking the note|checking who deposited|subscriber commitment/i },
   { id: 'prove', label: 'Proving you own it', weight: 0.28, match: /generating c1|generating c3|stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz|pricing/i },
-  { id: 'upload', label: 'Uploading the proofs', weight: 0.4, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
+  { id: 'upload', label: 'Uploading the proofs', weight: 0.37, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
   { id: 'open', label: 'Opening your subscription', weight: 0.1, match: /verif|opening the subscription|closing/i },
 ];
 

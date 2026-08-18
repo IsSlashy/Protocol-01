@@ -116,10 +116,23 @@ describe('the resume steps specifically, since they are why this file exists', (
  * receive), so the assertion is the honest one: SOME table must recognise it.
  * A sentence no table knows is a sentence the user will never see.
  */
-const HANDLERS_SRC = readFileSync(
-  join(__dirname, '../../lib/privacy/worker/poolHandlers.ts'),
-  'utf8',
-);
+const HANDLERS_SRC = [
+  'lib/privacy/worker/poolHandlers.ts',
+  // ⚠️ THE THIRD FILE, and the one that speaks FIRST.
+  //
+  // Sweeping stark.ts and poolHandlers.ts still left `shieldClient.ts` unread,
+  // and its two sentences — "Asking for a note (your wallet does not deposit
+  // one)..." and "Opening the note..." — are the opening moments of a
+  // subscribe by someone holding nothing. Neither matched any phase. Note how
+  // narrowly the second one missed: the `open` phase matches "opening the
+  // subscription", and this says "opening the note".
+  //
+  // Any file that calls onProgress belongs in this list. A sentence with no
+  // phase is a sentence the user never sees.
+  'lib/privacy/shieldClient.ts',
+]
+  .map((rel) => readFileSync(join(__dirname, '../../', rel), 'utf8'))
+  .join('\n');
 
 const ALL_TABLES = [
   SHIELD_PHASES,
@@ -128,6 +141,26 @@ const ALL_TABLES = [
   SEAL_PHASES,
   RECEIVE_NOTE_PHASES,
 ];
+
+describe('every flow accounts for exactly one whole flow', () => {
+  // The file states "the phases of a flow sum to 1" and nothing enforced it.
+  // Adding a phase without taking its weight from another silently rescales the
+  // bar: percentages drift past 100 and get clamped at 99 (`progressFor` clamps
+  // with Math.min), so the run appears to stall just short of done — which is
+  // the single most alarming place for a payment UI to look stuck.
+  for (const { name, phases } of [
+    { name: 'shield', phases: SHIELD_PHASES },
+    { name: 'withdraw', phases: WITHDRAW_PHASES },
+    { name: 'subscribe', phases: SUBSCRIBE_PHASES },
+    { name: 'seal', phases: SEAL_PHASES },
+    { name: 'receive', phases: RECEIVE_NOTE_PHASES },
+  ]) {
+    it(`${name}`, () => {
+      const sum = phases.reduce((n, p) => n + p.weight, 0);
+      expect(sum, `${name} weights sum to ${sum}`).toBeCloseTo(1, 6);
+    });
+  }
+});
 
 describe('flowProgress recognises the steps poolHandlers.ts emits', () => {
   const steps = [...HANDLERS_SRC.matchAll(/onProgress\?\.\(\s*(['"`])([\s\S]*?)\1\s*\)/g)]
