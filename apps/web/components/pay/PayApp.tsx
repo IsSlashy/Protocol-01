@@ -32,6 +32,7 @@ import {
   loadBuyerKey,
   saveBuyerKey,
   clearBuyerKey,
+  importBuyerKeyHex,
   storageAvailable,
   exportBuyerKeyHex,
   isBackedUp,
@@ -115,6 +116,8 @@ export default function PayApp() {
   const [backupAnswer, setBackupAnswer] = useState("");
   const [backupError, setBackupError] = useState<string | null>(null);
   const [storageBlocked, setStorageBlocked] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
 
   // Rehydrate before anything can be sealed to a new identity.
   useEffect(() => {
@@ -147,6 +150,37 @@ export default function PayApp() {
     setKeyBackedUp(false);
     setBackupAnswer("");
     setBackupError(null);
+  }
+
+  /**
+   * Adopt a key the user already holds — a P01 wallet, a `solana-keygen` file.
+   *
+   * The pairing modal exists and needs the phone to reach `/api/pair/:id` on
+   * THIS origin, which is a LAN round trip and a QR scan. This is the same
+   * outcome with neither: the secret is already in their hands, so there is
+   * nothing to hand over and nothing to back up that they do not have.
+   *
+   * ⚠️ It skips the backup gate deliberately — and only because possession is
+   * the gate. A pasted secret is by definition one the user already has a copy
+   * of; asking them to save what they just read off their own screen teaches
+   * them the prompt means nothing.
+   */
+  function importDeviceKey() {
+    const kp = importBuyerKeyHex(importText);
+    if (!kp) {
+      setImportError("That is not a key. Paste the 128-character secret, or the [1,2,…] array.");
+      return;
+    }
+    if (!storageAvailable() || !saveBuyerKey(kp)) {
+      setStorageBlocked(true);
+      return;
+    }
+    markBackedUp(kp.publicKey.toBase58());
+    setP01Keypair(kp);
+    setKeyIsDevice(true);
+    setKeyBackedUp(true);
+    setImportText("");
+    setImportError(null);
   }
 
   function confirmBackup() {
@@ -501,6 +535,36 @@ export default function PayApp() {
               dies. Nothing was charged. Try a normal window, or connect a wallet instead.
             </div>
           )}
+          <details className="group">
+            <summary className="cursor-pointer list-none text-xs text-p01-text-muted underline-offset-4 hover:text-p01-cyan hover:underline">
+              I already have a P01 key ▸
+            </summary>
+            <div className="mt-3 space-y-2">
+              <p className="text-xs text-p01-text-muted">
+                Paste its secret — the 128-character hex, or the <code>[1,2,…]</code> array a
+                keygen file holds. It becomes this browser&apos;s identity.
+              </p>
+              <textarea
+                className="h-20 w-full rounded-lg border border-p01-border bg-p01-void p-2 font-mono text-xs text-p01-text outline-none focus:border-p01-cyan"
+                value={importText}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="a99bbd87…"
+                onChange={(e) => {
+                  setImportText(e.target.value);
+                  setImportError(null);
+                }}
+              />
+              <button
+                className="btn-secondary w-full disabled:opacity-40"
+                onClick={importDeviceKey}
+                disabled={importText.trim().length === 0}
+              >
+                Use this key
+              </button>
+              {importError && <p className="text-xs text-p01-red">{importError}</p>}
+            </div>
+          </details>
           <details className="group">
             <summary className="cursor-pointer list-none text-xs text-p01-text-muted underline-offset-4 hover:text-p01-cyan hover:underline">
               Use a wallet instead ▸
