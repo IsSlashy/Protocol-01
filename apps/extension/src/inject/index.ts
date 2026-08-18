@@ -634,6 +634,73 @@ function getFavicon(): string | undefined {
   return link?.href || undefined;
 }
 
+// ============ Wallet Standard Types ============
+//
+// Hand-written on purpose. @wallet-standard/base exists in the monorepo root
+// node_modules (apps/web pulls it in) but is NOT a dependency of
+// @protocol-01/extension, and this file is bundled by esbuild into an IIFE that
+// runs in the *page* realm — adding an import here just to get types would
+// either fail pnpm's strict resolution or drag a package into the page bundle
+// for nothing. These declarations mirror @wallet-standard/base@1.x; if the spec
+// moves, this block is what has to move with it.
+
+type IdentifierString = `${string}:${string}`;
+
+/** Mirrors @wallet-standard/wallet's ReadonlyWalletAccount. */
+interface StandardWalletAccount {
+  readonly address: string;
+  readonly publicKey: Uint8Array;
+  readonly chains: readonly IdentifierString[];
+  readonly features: readonly IdentifierString[];
+  readonly label?: string;
+  readonly icon?: string;
+}
+
+interface StandardWallet {
+  readonly version: '1.0.0';
+  readonly name: string;
+  readonly icon: `data:image/svg+xml;base64,${string}`;
+  readonly chains: readonly IdentifierString[];
+  readonly features: Readonly<Record<string, unknown>>;
+  readonly accounts: readonly StandardWalletAccount[];
+}
+
+/** The `{ register }` api the app hands us on both registration paths. */
+interface WalletStandardRegisterApi {
+  register(...wallets: StandardWallet[]): () => void;
+}
+
+interface StandardEventsChangeProperties {
+  readonly chains?: readonly IdentifierString[];
+  readonly features?: Readonly<Record<string, unknown>>;
+  readonly accounts?: readonly StandardWalletAccount[];
+}
+
+type StandardEventsListener = (properties: StandardEventsChangeProperties) => void;
+
+interface SolanaSignTransactionInput {
+  readonly account: StandardWalletAccount;
+  readonly transaction: Uint8Array;
+  readonly chain?: IdentifierString;
+}
+
+interface SolanaSignMessageInput {
+  readonly account: StandardWalletAccount;
+  readonly message: Uint8Array;
+}
+
+interface SolanaSignAndSendTransactionInput {
+  readonly account: StandardWalletAccount;
+  readonly transaction: Uint8Array;
+  readonly chain: IdentifierString;
+  readonly options?: {
+    readonly preflightCommitment?: string;
+    readonly skipPreflight?: boolean;
+    readonly maxRetries?: number;
+    readonly minContextSlot?: number;
+  };
+}
+
 // ============ Window Injection ============
 
 declare global {
@@ -642,9 +709,346 @@ declare global {
     protocol01: typeof provider;
     phantom?: { solana?: typeof provider };
   }
+  // The app dispatches this the first time it calls getWallets(); its detail IS
+  // the registration api. Declaring it here is what keeps the listener below
+  // strictly typed instead of casting an Event.
+  interface WindowEventMap {
+    'wallet-standard:app-ready': CustomEvent<WalletStandardRegisterApi>;
+  }
 }
 
-// Inject provider
+// ============ Wallet Standard Registration ============
+//
+// WHY THIS BLOCK WAS REWRITTEN (2026-08-18). What shipped before dispatched a
+// 'wallet-standard:register' event whose detail was an OBJECT holding a
+// register function. Both halves were wrong:
+//   - the spec's event is 'wallet-standard:register-wallet';
+//   - its detail is a CALLBACK the app invokes with its own api. Read
+//     @wallet-standard/app/lib/esm/wallets.js: the app does
+//     addEventListener('wallet-standard:register-wallet', ({detail: cb}) => cb(api)).
+// So nothing listened to the name we sent, and nothing could have consumed the
+// shape we sent even if it had. Protocol 01 never appeared in a
+// @solana/wallet-adapter modal: to every dApp that does not poke window.solana
+// by hand, this extension looked uninstalled. It went unseen because the whole
+// thing sat inside a `catch {}` commented "registration is optional". It is not
+// optional — it is the only door a wallet-adapter dApp knows how to open.
+
+const WALLET_ICON: `data:image/svg+xml;base64,${string}` =
+  'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIGZpbGw9IiMwMEZGRkYiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0iIzAwMCIgZm9udC1zaXplPSIxMiIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSI+MDE8L3RleHQ+PC9zdmc+';
+
+// localnet is in the list because the manifest injects on http://localhost:*/*
+// and @solana/wallet-standard-util maps a localhost endpoint to
+// 'solana:localnet'; without it the adapter refuses to send from a local dApp.
+// mainnet is in the list because that same mapper falls back to
+// 'solana:mainnet' for ANY endpoint it does not recognise (a custom Helius or
+// Triton URL), and a chain missing from account.chains makes
+// StandardWalletAdapter.sendTransaction throw before it ever reaches us.
+const P01_CHAINS: readonly IdentifierString[] = [
+  'solana:mainnet',
+  'solana:devnet',
+  'solana:testnet',
+  'solana:localnet',
+];
+
+// The only cluster the approval popup actually broadcasts to. Not a preference
+// — a literal: popup/pages/ApproveTransaction.tsx builds
+// `new RpcConnectionManager({ cluster: 'devnet' })` and calls sendRawTransaction
+// on it for every sign-and-send approval, whatever the dApp asked for.
+const SENDABLE_CHAIN: IdentifierString = 'solana:devnet';
+
+// Deliberately WITHOUT 'solana:signAndSendTransaction'.
+// StandardWalletAdapter.sendTransaction takes the signAndSend path only when
+// the ACCOUNT lists that feature, and otherwise falls back to signTransaction
+// followed by the dApp's own connection.sendRawTransaction. Because our popup
+// hardcodes the devnet RPC (see SENDABLE_CHAIN), letting the adapter take the
+// signAndSend path would broadcast a mainnet-intended transaction to devnet and
+// hand the dApp a signature that can never confirm where it is watching.
+// Omitting it here routes every adapter send through the dApp's own endpoint,
+// which is by construction the right cluster. The feature is still published on
+// the wallet below for direct wallet-standard callers, where it refuses any
+// chain it cannot really send on.
+const P01_ACCOUNT_FEATURES: readonly IdentifierString[] = [
+  'solana:signTransaction',
+  'solana:signMessage',
+];
+
+let standardAccounts: readonly StandardWalletAccount[] = [];
+const changeListeners = new Set<StandardEventsListener>();
+
+function emitStandardChange(properties: StandardEventsChangeProperties): void {
+  changeListeners.forEach((listener) => {
+    try {
+      listener(properties);
+    } catch (error) {
+      console.error('Error in wallet-standard change listener:', error);
+    }
+  });
+}
+
+function createStandardAccount(publicKey: PublicKey): StandardWalletAccount {
+  return Object.freeze({
+    address: publicKey.toBase58(),
+    publicKey: publicKey.toBytes(),
+    chains: P01_CHAINS,
+    features: P01_ACCOUNT_FEATURES,
+    label: 'Protocol 01',
+  });
+}
+
+/**
+ * Mirror the provider's connection state into the standard `accounts` array.
+ *
+ * Wired to the provider's own event bus rather than called from the connect
+ * feature, so a dApp that connects through window.solana — or a push from the
+ * background (ACCOUNT_CHANGED / DISCONNECT) — moves the standard wallet too.
+ * One source of truth; provider.connect() emits 'connect' synchronously before
+ * it resolves, so the connect feature can simply read this afterwards.
+ *
+ * The early return is load-bearing, not an optimisation: StandardWalletAdapter
+ * compares accounts by OBJECT IDENTITY (`account !== this.#account` in its
+ * change handler). Rebuilding an identical account object would read as an
+ * account switch and make the adapter re-emit 'connect' on every event.
+ */
+function syncStandardAccounts(): void {
+  const publicKey = provider.publicKey;
+  const next: readonly StandardWalletAccount[] =
+    provider.isConnected && publicKey ? [createStandardAccount(publicKey)] : [];
+
+  const unchanged =
+    next.length === standardAccounts.length &&
+    next.every((account, i) => account.address === standardAccounts[i].address);
+  if (unchanged) return;
+
+  standardAccounts = next;
+  emitStandardChange({ accounts: standardAccounts });
+}
+
+provider.on('connect', syncStandardAccounts);
+provider.on('disconnect', syncStandardAccounts);
+provider.on('accountChanged', syncStandardAccounts);
+
+/**
+ * The extension signs with whatever key the popup currently has unlocked; it
+ * has no way to sign as some other account. Honouring a mismatched `account`
+ * would silently return a signature from a different key than the dApp asked
+ * for, so refuse instead.
+ */
+function assertRequestedAccount(account: StandardWalletAccount): void {
+  const connected = standardAccounts[0];
+  if (!connected) {
+    throw new Error('Protocol 01: wallet not connected');
+  }
+  if (account.address !== connected.address) {
+    throw new Error(
+      `Protocol 01: refusing to sign for ${account.address} — the unlocked wallet is ${connected.address}`
+    );
+  }
+}
+
+function assertSendableChain(chain: IdentifierString): void {
+  if (chain !== SENDABLE_CHAIN) {
+    throw new Error(
+      `Protocol 01: signAndSendTransaction broadcasts on ${SENDABLE_CHAIN} only (the approval popup ` +
+        `builds a devnet connection), so it cannot send a ${chain} transaction. Use signTransaction ` +
+        'and send it on your own connection.'
+    );
+  }
+}
+
+type WireTransaction = Transaction & { _signedBytes?: Uint8Array };
+
+/**
+ * provider.signTransaction() speaks web3.js Transaction objects (it calls
+ * .serialize() on them) while the Wallet Standard speaks wire bytes. Rather
+ * than duplicating the sendMessage/origin/approval plumbing, hand the provider
+ * the smallest object its call site actually touches.
+ */
+function wireTransaction(bytes: Uint8Array): WireTransaction {
+  return {
+    serialize: () => bytes,
+    signatures: [],
+  };
+}
+
+/**
+ * provider.signTransaction does NOT return a signed transaction: it stashes the
+ * signed bytes on the object it was given as `_signedBytes` and returns that
+ * same object (see its own "In production, use Transaction.from()" note). If
+ * that ever changes, this is the line that would otherwise start handing the
+ * dApp the UNSIGNED bytes back — so it throws rather than guesses.
+ */
+function takeSignedBytes(tx: WireTransaction): Uint8Array {
+  const signed = tx._signedBytes;
+  if (!signed) {
+    throw new Error('Protocol 01: signer returned no signed transaction bytes');
+  }
+  return signed;
+}
+
+const walletStandardFeatures: Record<string, unknown> = {
+  'standard:connect': {
+    version: '1.0.0',
+    connect: async (
+      input?: { silent?: boolean }
+    ): Promise<{ accounts: readonly StandardWalletAccount[] }> => {
+      if (input?.silent) {
+        // autoConnect(). CONNECT_SILENT never opens a popup; provider.connect
+        // throws when the origin was never approved, but the spec says a silent
+        // connect returns no accounts rather than failing, so swallow it here.
+        // The adapter still raises WalletAccountError afterwards — autoConnect
+        // on an unapproved origin is a visible no-op, never a prompt.
+        try {
+          await provider.connect({ onlyIfTrusted: true });
+        } catch {
+          return { accounts: [] };
+        }
+        return { accounts: standardAccounts };
+      }
+
+      await provider.connect();
+      return { accounts: standardAccounts };
+    },
+  },
+
+  'standard:disconnect': {
+    version: '1.0.0',
+    disconnect: async (): Promise<void> => {
+      await provider.disconnect();
+    },
+  },
+
+  // Without this feature StandardWalletAdapter throws in its constructor — it
+  // subscribes to 'change' before doing anything else. It is also the only
+  // channel by which an account switch inside the extension reaches the dApp.
+  'standard:events': {
+    version: '1.0.0',
+    on: (event: 'change', listener: StandardEventsListener): (() => void) => {
+      if (event !== 'change') return () => undefined;
+      changeListeners.add(listener);
+      return () => {
+        changeListeners.delete(listener);
+      };
+    },
+  },
+
+  'solana:signTransaction': {
+    version: '1.0.0',
+    // Both are real: the approval popup sniffs the version byte and
+    // deserialises v0 through VersionedTransaction, legacy through
+    // Transaction.from (popup/pages/ApproveTransaction.tsx).
+    supportedTransactionVersions: ['legacy', 0],
+    signTransaction: async (
+      ...inputs: SolanaSignTransactionInput[]
+    ): Promise<readonly { signedTransaction: Uint8Array }[]> => {
+      if (inputs.length === 0) return [];
+      inputs.forEach((input) => assertRequestedAccount(input.account));
+
+      if (inputs.length === 1) {
+        const tx = wireTransaction(inputs[0].transaction);
+        await provider.signTransaction(tx);
+        return [{ signedTransaction: takeSignedBytes(tx) }];
+      }
+
+      // One approval for the whole batch, on purpose. The background stores the
+      // pending approval under a SINGLE 'currentApproval' key in
+      // chrome.storage.session, so N concurrent single-transaction approvals
+      // would overwrite each other and the user would only ever see the last.
+      const txs = inputs.map((input) => wireTransaction(input.transaction));
+      await provider.signAllTransactions(txs);
+      return txs.map((tx) => ({ signedTransaction: takeSignedBytes(tx) }));
+    },
+  },
+
+  'solana:signMessage': {
+    version: '1.0.0',
+    signMessage: async (
+      ...inputs: SolanaSignMessageInput[]
+    ): Promise<readonly { signedMessage: Uint8Array; signature: Uint8Array }[]> => {
+      const outputs: { signedMessage: Uint8Array; signature: Uint8Array }[] = [];
+      // Sequential for the single 'currentApproval' slot reason above: two
+      // approvals in flight at once means one of them is silently lost.
+      for (const input of inputs) {
+        assertRequestedAccount(input.account);
+        const { signature } = await provider.signMessage(input.message);
+        // The popup signs these exact bytes with nacl.sign.detached and adds no
+        // domain prefix, so signedMessage is the input verbatim. The dApp
+        // verifies the signature against whatever we return here — returning
+        // anything else produces a signature that does not verify.
+        outputs.push({ signedMessage: input.message, signature });
+      }
+      return outputs;
+    },
+  },
+};
+
+// Published for direct wallet-standard callers only; P01_ACCOUNT_FEATURES
+// deliberately keeps @solana/wallet-adapter off this path. Gated on the
+// provider actually having the method, so the feature list never advertises
+// something the provider cannot do.
+if (typeof provider.signAndSendTransaction === 'function') {
+  walletStandardFeatures['solana:signAndSendTransaction'] = {
+    version: '1.0.0',
+    supportedTransactionVersions: ['legacy', 0],
+    signAndSendTransaction: async (
+      ...inputs: SolanaSignAndSendTransactionInput[]
+    ): Promise<readonly { signature: Uint8Array }[]> => {
+      const outputs: { signature: Uint8Array }[] = [];
+      for (const input of inputs) {
+        assertRequestedAccount(input.account);
+        assertSendableChain(input.chain);
+        const tx = wireTransaction(input.transaction);
+        // The popup currently ignores these send options (it hardcodes
+        // skipPreflight:false / preflightCommitment:'confirmed'); forwarded
+        // anyway so the wire is not the thing that has to change when it stops.
+        const { signature } = await provider.signAndSendTransaction(tx, {
+          skipPreflight: input.options?.skipPreflight,
+          preflightCommitment: input.options?.preflightCommitment,
+          maxRetries: input.options?.maxRetries,
+          minContextSlot: input.options?.minContextSlot,
+        });
+        // The popup returns base58 out of sendRawTransaction; the standard
+        // wants the raw 64 signature bytes and re-encodes them itself.
+        outputs.push({ signature: base58Decode(signature) });
+      }
+      return outputs;
+    },
+  };
+}
+
+const p01StandardWallet: StandardWallet = Object.freeze({
+  version: '1.0.0',
+  name: 'Protocol 01',
+  icon: WALLET_ICON,
+  chains: P01_CHAINS,
+  features: Object.freeze(walletStandardFeatures),
+  // A getter, not a snapshot: the app holds this one object forever and reads
+  // .accounts after every 'change'. An array captured at registration time
+  // leaves the adapter connecting to nothing — which is exactly what the old
+  // `accounts: []` did.
+  get accounts(): readonly StandardWalletAccount[] {
+    return standardAccounts;
+  },
+});
+// Freezing stops a page from quietly swapping a feature out from under us. It
+// is a speed bump, not a boundary: this script shares the page's realm, so a
+// hostile page can still shadow the whole wallet. The real boundary is the
+// approval popup, which lives in the extension and signs nothing without a
+// click.
+
+function registerWalletStandard(api: WalletStandardRegisterApi): void {
+  // Registering twice is safe and expected: both paths below can fire on the
+  // same page load, and @wallet-standard/app dedupes on OBJECT IDENTITY (a Set
+  // of wallets). Never rebuild p01StandardWallet per registration, or the
+  // dApp's modal grows a second "Protocol 01" entry.
+  try {
+    api.register(p01StandardWallet);
+  } catch (error) {
+    console.error('Protocol 01: wallet-standard registration failed', error);
+  }
+}
+
+// ============ Inject ============
+
 function injectProvider() {
   // Primary: window.protocol01
   if (typeof window.protocol01 === 'undefined') {
@@ -667,33 +1071,24 @@ function injectProvider() {
   // Dispatch events to notify dApps
   window.dispatchEvent(new CustomEvent('protocol01#initialized'));
 
-  // Also dispatch wallet-standard events for compatibility
-  try {
-    const event = new CustomEvent('wallet-standard:register', {
-      detail: {
-        register: (callback: (wallet: unknown) => void) => {
-          callback({
-            name: 'Protocol 01',
-            icon: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIGZpbGw9IiMwMEZGRkYiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0iIzAwMCIgZm9udC1zaXplPSIxMiIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSI+MDE8L3RleHQ+PC9zdmc+',
-            chains: ['solana:mainnet', 'solana:devnet', 'solana:testnet'],
-            features: {
-              'standard:connect': { connect: provider.connect.bind(provider) },
-              'standard:disconnect': { disconnect: provider.disconnect.bind(provider) },
-              'solana:signTransaction': {
-                signTransaction: provider.signTransaction.bind(provider),
-              },
-              'solana:signMessage': { signMessage: provider.signMessage.bind(provider) },
-            },
-            accounts: [],
-          });
-        },
-      },
-    });
-    window.dispatchEvent(event);
-  } catch (e) {
-    // Wallet standard registration is optional
-  }
+  // Both registration paths are required, and which one wins is a race we do
+  // not control. If the app called getWallets() before this script ran, its
+  // 'wallet-standard:app-ready' has already fired and only the dispatch below
+  // is heard; if the app loads later (the common case for a document_start
+  // injection) only the listener fires. A wallet that implements one of the two
+  // is invisible to half the dApps in the ecosystem.
+  window.addEventListener('wallet-standard:app-ready', (event) => {
+    registerWalletStandard(event.detail);
+  });
 
+  window.dispatchEvent(
+    new CustomEvent<(api: WalletStandardRegisterApi) => void>('wallet-standard:register-wallet', {
+      // detail is the CALLBACK, not an object with a register method. The app
+      // invokes it with its own api. This inversion is the whole reason the old
+      // code could not have worked even with the right event name.
+      detail: (api: WalletStandardRegisterApi) => registerWalletStandard(api),
+    })
+  );
 }
 
 // Only inject on http/https pages

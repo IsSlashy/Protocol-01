@@ -389,10 +389,25 @@
       }).then((r) => r.subscriptions);
     },
     /**
-     * Cancel a subscription
+     * Pause a subscription. Freezes the subscription clock and cuts access;
+     * prepaid days are not lost and resume picks them back up.
+     *
+     * BREAKING CHANGE: replaces `cancelSubscription`. A Protocol 01 subscription
+     * is a one-way prepaid envelope — money that enters it can only ever leave it
+     * toward the merchant, and the protocol has no instruction that could send any
+     * of it back. Pause and resume are the whole set of subscriber controls.
      */
-    async cancelSubscription(subscriptionId) {
-      return sendMessage("CANCEL_SUBSCRIPTION", {
+    async pauseSubscription(subscriptionId) {
+      return sendMessage("PAUSE_SUBSCRIPTION", {
+        origin: window.location.origin,
+        subscriptionId
+      });
+    },
+    /**
+     * Resume a paused subscription.
+     */
+    async resumeSubscription(subscriptionId) {
+      return sendMessage("RESUME_SUBSCRIPTION", {
         origin: window.location.origin,
         subscriptionId
       });
@@ -401,6 +416,190 @@
   function getFavicon() {
     const link = document.querySelector("link[rel*='icon']") || document.querySelector("link[rel='shortcut icon']");
     return link?.href || void 0;
+  }
+  var WALLET_ICON = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIGZpbGw9IiMwMEZGRkYiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0iIzAwMCIgZm9udC1zaXplPSIxMiIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSI+MDE8L3RleHQ+PC9zdmc+";
+  var P01_CHAINS = [
+    "solana:mainnet",
+    "solana:devnet",
+    "solana:testnet",
+    "solana:localnet"
+  ];
+  var SENDABLE_CHAIN = "solana:devnet";
+  var P01_ACCOUNT_FEATURES = [
+    "solana:signTransaction",
+    "solana:signMessage"
+  ];
+  var standardAccounts = [];
+  var changeListeners = /* @__PURE__ */ new Set();
+  function emitStandardChange(properties) {
+    changeListeners.forEach((listener) => {
+      try {
+        listener(properties);
+      } catch (error) {
+        console.error("Error in wallet-standard change listener:", error);
+      }
+    });
+  }
+  function createStandardAccount(publicKey) {
+    return Object.freeze({
+      address: publicKey.toBase58(),
+      publicKey: publicKey.toBytes(),
+      chains: P01_CHAINS,
+      features: P01_ACCOUNT_FEATURES,
+      label: "Protocol 01"
+    });
+  }
+  function syncStandardAccounts() {
+    const publicKey = provider.publicKey;
+    const next = provider.isConnected && publicKey ? [createStandardAccount(publicKey)] : [];
+    const unchanged = next.length === standardAccounts.length && next.every((account, i) => account.address === standardAccounts[i].address);
+    if (unchanged) return;
+    standardAccounts = next;
+    emitStandardChange({ accounts: standardAccounts });
+  }
+  provider.on("connect", syncStandardAccounts);
+  provider.on("disconnect", syncStandardAccounts);
+  provider.on("accountChanged", syncStandardAccounts);
+  function assertRequestedAccount(account) {
+    const connected = standardAccounts[0];
+    if (!connected) {
+      throw new Error("Protocol 01: wallet not connected");
+    }
+    if (account.address !== connected.address) {
+      throw new Error(
+        `Protocol 01: refusing to sign for ${account.address} \u2014 the unlocked wallet is ${connected.address}`
+      );
+    }
+  }
+  function assertSendableChain(chain) {
+    if (chain !== SENDABLE_CHAIN) {
+      throw new Error(
+        `Protocol 01: signAndSendTransaction broadcasts on ${SENDABLE_CHAIN} only (the approval popup builds a devnet connection), so it cannot send a ${chain} transaction. Use signTransaction and send it on your own connection.`
+      );
+    }
+  }
+  function wireTransaction(bytes) {
+    return {
+      serialize: () => bytes,
+      signatures: []
+    };
+  }
+  function takeSignedBytes(tx) {
+    const signed = tx._signedBytes;
+    if (!signed) {
+      throw new Error("Protocol 01: signer returned no signed transaction bytes");
+    }
+    return signed;
+  }
+  var walletStandardFeatures = {
+    "standard:connect": {
+      version: "1.0.0",
+      connect: async (input) => {
+        if (input?.silent) {
+          try {
+            await provider.connect({ onlyIfTrusted: true });
+          } catch {
+            return { accounts: [] };
+          }
+          return { accounts: standardAccounts };
+        }
+        await provider.connect();
+        return { accounts: standardAccounts };
+      }
+    },
+    "standard:disconnect": {
+      version: "1.0.0",
+      disconnect: async () => {
+        await provider.disconnect();
+      }
+    },
+    // Without this feature StandardWalletAdapter throws in its constructor — it
+    // subscribes to 'change' before doing anything else. It is also the only
+    // channel by which an account switch inside the extension reaches the dApp.
+    "standard:events": {
+      version: "1.0.0",
+      on: (event, listener) => {
+        if (event !== "change") return () => void 0;
+        changeListeners.add(listener);
+        return () => {
+          changeListeners.delete(listener);
+        };
+      }
+    },
+    "solana:signTransaction": {
+      version: "1.0.0",
+      // Both are real: the approval popup sniffs the version byte and
+      // deserialises v0 through VersionedTransaction, legacy through
+      // Transaction.from (popup/pages/ApproveTransaction.tsx).
+      supportedTransactionVersions: ["legacy", 0],
+      signTransaction: async (...inputs) => {
+        if (inputs.length === 0) return [];
+        inputs.forEach((input) => assertRequestedAccount(input.account));
+        if (inputs.length === 1) {
+          const tx = wireTransaction(inputs[0].transaction);
+          await provider.signTransaction(tx);
+          return [{ signedTransaction: takeSignedBytes(tx) }];
+        }
+        const txs = inputs.map((input) => wireTransaction(input.transaction));
+        await provider.signAllTransactions(txs);
+        return txs.map((tx) => ({ signedTransaction: takeSignedBytes(tx) }));
+      }
+    },
+    "solana:signMessage": {
+      version: "1.0.0",
+      signMessage: async (...inputs) => {
+        const outputs = [];
+        for (const input of inputs) {
+          assertRequestedAccount(input.account);
+          const { signature } = await provider.signMessage(input.message);
+          outputs.push({ signedMessage: input.message, signature });
+        }
+        return outputs;
+      }
+    }
+  };
+  if (typeof provider.signAndSendTransaction === "function") {
+    walletStandardFeatures["solana:signAndSendTransaction"] = {
+      version: "1.0.0",
+      supportedTransactionVersions: ["legacy", 0],
+      signAndSendTransaction: async (...inputs) => {
+        const outputs = [];
+        for (const input of inputs) {
+          assertRequestedAccount(input.account);
+          assertSendableChain(input.chain);
+          const tx = wireTransaction(input.transaction);
+          const { signature } = await provider.signAndSendTransaction(tx, {
+            skipPreflight: input.options?.skipPreflight,
+            preflightCommitment: input.options?.preflightCommitment,
+            maxRetries: input.options?.maxRetries,
+            minContextSlot: input.options?.minContextSlot
+          });
+          outputs.push({ signature: base58Decode(signature) });
+        }
+        return outputs;
+      }
+    };
+  }
+  var p01StandardWallet = Object.freeze({
+    version: "1.0.0",
+    name: "Protocol 01",
+    icon: WALLET_ICON,
+    chains: P01_CHAINS,
+    features: Object.freeze(walletStandardFeatures),
+    // A getter, not a snapshot: the app holds this one object forever and reads
+    // .accounts after every 'change'. An array captured at registration time
+    // leaves the adapter connecting to nothing — which is exactly what the old
+    // `accounts: []` did.
+    get accounts() {
+      return standardAccounts;
+    }
+  });
+  function registerWalletStandard(api) {
+    try {
+      api.register(p01StandardWallet);
+    } catch (error) {
+      console.error("Protocol 01: wallet-standard registration failed", error);
+    }
   }
   function injectProvider() {
     if (typeof window.protocol01 === "undefined") {
@@ -418,30 +617,17 @@
       });
     }
     window.dispatchEvent(new CustomEvent("protocol01#initialized"));
-    try {
-      const event = new CustomEvent("wallet-standard:register", {
-        detail: {
-          register: (callback) => {
-            callback({
-              name: "Protocol 01",
-              icon: "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIGZpbGw9IiMwMEZGRkYiLz48dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0iIzAwMCIgZm9udC1zaXplPSIxMiIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSI+MDE8L3RleHQ+PC9zdmc+",
-              chains: ["solana:mainnet", "solana:devnet", "solana:testnet"],
-              features: {
-                "standard:connect": { connect: provider.connect.bind(provider) },
-                "standard:disconnect": { disconnect: provider.disconnect.bind(provider) },
-                "solana:signTransaction": {
-                  signTransaction: provider.signTransaction.bind(provider)
-                },
-                "solana:signMessage": { signMessage: provider.signMessage.bind(provider) }
-              },
-              accounts: []
-            });
-          }
-        }
-      });
-      window.dispatchEvent(event);
-    } catch (e) {
-    }
+    window.addEventListener("wallet-standard:app-ready", (event) => {
+      registerWalletStandard(event.detail);
+    });
+    window.dispatchEvent(
+      new CustomEvent("wallet-standard:register-wallet", {
+        // detail is the CALLBACK, not an object with a register method. The app
+        // invokes it with its own api. This inversion is the whole reason the old
+        // code could not have worked even with the right event name.
+        detail: (api) => registerWalletStandard(api)
+      })
+    );
   }
   if (window.location.protocol === "https:" || window.location.protocol === "http:") {
     injectProvider();

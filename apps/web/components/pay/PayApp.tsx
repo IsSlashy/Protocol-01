@@ -74,8 +74,39 @@ const firstLive = ALL_ASSETS.find((a) => a.status === "live") ?? ALL_ASSETS[0];
 type Tab = "send" | "receive" | "pool" | "subscribe" | "subs";
 
 export default function PayApp() {
-  const { publicKey, connected, signMessage, signTransaction, signAllTransactions, disconnect } =
-    useWallet();
+  const {
+    publicKey,
+    connected,
+    signMessage,
+    signTransaction,
+    signAllTransactions,
+    disconnect,
+    wallets,
+    select,
+  } = useWallet();
+
+  /**
+   * The P01 extension, if it announced itself to this page.
+   *
+   * It registers through the Wallet Standard exactly as Phantom does, so the
+   * adapter finds it with no configuration. Surfacing it as its OWN button
+   * matters: routing the product's wallet through the generic "Connect wallet"
+   * modal costs a fold, a modal and a pick — three actions to reach the wallet
+   * this app is built around, and one to reach a competitor's.
+   *
+   * `undefined` when the extension is absent, which is the common case: the
+   * button simply does not render, rather than offering something that cannot
+   * work.
+   */
+  const p01Extension = useMemo(
+    () =>
+      wallets.find(
+        (w) =>
+          /protocol\s*01/i.test(w.adapter.name) &&
+          (w.readyState === "Installed" || w.readyState === "Loadable"),
+      ),
+    [wallets],
+  );
   const { setVisible } = useWalletModal();
   const { connection } = useConnection();
 
@@ -543,6 +574,21 @@ export default function PayApp() {
               stored key does the first. And a buyer who connects a wallet is a
               buyer whose deposit can name them — the one thing this product
               exists to avoid. So the device key leads and the wallet folds. */}
+          {/* ⚠️ THE PRODUCT'S OWN WALLET, AT THE TOP, WITH ONE CLICK.
+              It renders only when the extension actually announced itself
+              through the Wallet Standard, so the button never promises
+              something that cannot happen. `select()` is enough — the adapter
+              connects on selection, which is why there is no second step and
+              no modal. */}
+          {p01Extension && (
+            <button
+              className="btn-primary flex w-full items-center justify-center gap-2"
+              onClick={() => select(p01Extension.adapter.name)}
+            >
+              <Wallet className="h-4 w-4" /> Connect the P01 extension
+            </button>
+          )}
+
           {/* The way back in. `reset()` drops the session and keeps the key, so
               without this the stored identity would only return on a reload —
               which reads as "my key is gone" at the exact moment someone is

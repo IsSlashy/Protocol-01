@@ -439,6 +439,35 @@ export default function SubscribePanel({
    *  note and consumed on first redemption, so storing it would keep a spent
    *  bearer value around and invite a retry that cannot work. */
   const [claimCode, setClaimCode] = useState('');
+  /**
+   * What this deployment issues, ASKED ON MOUNT rather than only at click time.
+   *
+   * `undefined` = the server has not answered yet, `null` = it stocks nothing.
+   * Never load-bearing for money: `handleSubscribe` asks again at click time,
+   * because the answer is the server's and can change in between. This copy
+   * exists so the screen can stop putting the issuance path in front of a buyer
+   * it does not apply to.
+   */
+  const [issuableNote, setIssuableNote] = useState<
+    { denomination: number; token: PoolToken } | null | undefined
+  >(undefined);
+  useEffect(() => {
+    let live = true;
+    void shieldClient
+      .fetchIssuableNote()
+      .then((iss) => {
+        if (live) setIssuableNote(iss);
+      })
+      .catch(() => {
+        // Pessimistic on purpose: a deployment we could not ask is treated as
+        // one that issues nothing, so the screen points at the Pool tab instead
+        // of showing a claim-code field whose every redemption would 402.
+        if (live) setIssuableNote(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
   useEffect(() => {
     let live = true;
     void fetchFunderPubkey().then((pk) => {
@@ -522,6 +551,21 @@ export default function SubscribePanel({
       ),
     [notes, spentHere, handedOver]
   );
+  /**
+   * Does this identity already hold something spendable?
+   *
+   * 🚨 THE CLAIM CODE IS ABOUT THE OTHER CASE, AND ONLY THE OTHER CASE.
+   * `/api/issue-note` hands out the deployment's PRE-DEPOSITED inventory and a
+   * claim is what pays for one — none of which concerns a buyer who already
+   * shielded a note of their own. Reported 2026-08-18, one wallet: "la page
+   * subscribe demande toujours un code claim alors que tout se déroulera
+   * automatiquement avec un seul wallet". They were right; the issuance path was
+   * standing in front of a buyer who did not need it.
+   *
+   * Derived from `unspent` — the very list the picker renders — so the field
+   * and the picker can never disagree about whether a note is held.
+   */
+  const holdsNote = unspent.length > 0;
   const services = registry?.services ?? [];
   const service = services.find((s) => s.pda.toBase58() === selectedPda) ?? null;
   const note = unspent.find((n) => noteKey(n) === selectedNote) ?? null;
@@ -589,10 +633,19 @@ export default function SubscribePanel({
       // every treasury that chose another one unreachable.
       const issuable = await shieldClient.fetchIssuableNote();
       if (!issuable) {
+        // The instruction has to be an instruction. This used to end on "Deposit
+        // a note", which reads as the same dead end the screen had just put the
+        // user in — and the field above it was asking for a claim code, so the
+        // only actionable-looking thing on screen was a bearer value no buyer
+        // can mint for themselves. The route that exists from here is the Pool
+        // tab, and the caveat about a self-deposited note stays word for word:
+        // it is the difference between subscribing and subscribing privately.
+        setIssuableNote(null);
         setError(
           'You hold no note and this deployment does not issue them, so there is nothing to ' +
-            'subscribe with. Nothing was spent. Deposit a note — and note that a note you ' +
-            'deposit yourself keeps every subscription reachable from your wallet.',
+            'subscribe with. Nothing was spent. Shield a note in the Pool tab first — and note ' +
+            'that a note you deposit yourself keeps every subscription reachable from your ' +
+            'wallet.',
         );
         return;
       }
@@ -743,13 +796,38 @@ export default function SubscribePanel({
           );
         }
         setStep('This note traces back to you — fetching one that does not...');
-        const swapped = await swapForIssuedNote();
+        // 🚨 EVERY REFUSAL BELOW REACHES A BUYER WHO HOLDS A NOTE, so none of
+        // them may end on "get a claim code". The swap is OUR attempt to rescue
+        // THEIR note; its failures are ours to report, not chores to hand back.
+        //
+        // The old tail was worse than untimely, it was false: `swapForIssuedNote`
+        // returns null on exactly one condition — `fetchIssuableNote()` said this
+        // deployment stocks nothing — and no claim code opens a deployment with
+        // no inventory. It told the user the one thing that could not help.
+        let swapped: PoolNoteView | null;
+        try {
+          swapped = await swapForIssuedNote();
+        } catch (swapErr) {
+          // The issuer refused (402 without a claim, 409 on a spent one, rate
+          // limit, whatever it was). Its reason is kept verbatim at the end
+          // because a 3am debugger needs it, but it is attributed to the issuer
+          // rather than phrased as the buyer's next step: the buyer never asked
+          // to be issued anything, they asked to spend the note they hold.
+          throw new Error(
+            'The only note you hold was deposited by your own wallet, so spending it would let ' +
+              'anyone reading the subscription reach you through that deposit. This deployment ' +
+              'could not hand you a different one, so nothing was spent and no subscription was ' +
+              'opened. Only a note somebody else deposited can buy this privately. The issuer ' +
+              'gave this reason: ' +
+              ((swapErr as Error).message || 'none.'),
+          );
+        }
         if (!swapped) {
           throw new Error(
             'The only note you hold was deposited by your own wallet, so spending it would let ' +
               'anyone reading the subscription reach you through that deposit — and this ' +
-              'deployment cannot issue you a different one. Nothing was spent. ' +
-              (claimCode.trim() ? '' : 'A claim code is needed to be issued a note.'),
+              'deployment issues no notes at all, so there is nothing to swap it for. Nothing ' +
+              'was spent. Only a note somebody else deposited can buy this privately.',
           );
         }
         note_ = swapped;
@@ -1160,7 +1238,15 @@ export default function SubscribePanel({
             sees a step. That is the point — and it is exactly why the trade has
             to be stated rather than left implicit. Verbatim from the issuer, so
             what the server says it can do is what the screen says it can do. */}
-        {!result && unspent.length === 0 && (
+        {/* Not `unspent.length === 0` any more, because that was also true of a
+            deployment that issues nothing — and then this paragraph promised a
+            note nobody was going to hand over. Kept on screen while the server
+            has not answered yet: the sentence is a WARNING about what an issued
+            note fails to hide, so the pessimistic reading is to show it. It goes
+            away only once the deployment has said it stocks nothing, at which
+            point the picker's "Shield one in the Pool tab first" is the true
+            instruction and this one would be a lie. */}
+        {!result && !holdsNote && issuableNote !== null && (
           <p className="flex items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
             <span>
@@ -1174,7 +1260,20 @@ export default function SubscribePanel({
             </span>
           </p>
         )}
-        {!result && unspent.length === 0 && (
+        {/* 🚨 THIS FIELD BELONGS TO THE ISSUANCE PATH AND NOWHERE ELSE.
+            A claim buys ONE note out of this deployment's pre-deposited
+            inventory; a buyer who already shielded a note never touches
+            /api/issue-note, so showing them this asks for a bearer value they
+            have no way to mint, to buy something they do not need. That is the
+            2026-08-18 report, one wallet, note already shielded. Gated on
+            `holdsNote` — the picker's own list — and on the deployment having
+            answered that it actually stocks something, since a code redeemed
+            against empty inventory is a 402 either way.
+
+            Nothing here is removed: the plumbing, the endpoint and the
+            `claimCode` state are untouched, and a buyer who holds nothing on a
+            stocked deployment gets exactly the field they got before. */}
+        {!result && !holdsNote && !!issuableNote && (
           <div className="space-y-1">
             <input
               value={claimCode}
