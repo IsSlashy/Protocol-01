@@ -410,12 +410,81 @@ export async function POST(request: NextRequest) {
   /** How long the closest of those still has to wait, in slots. */
   let shortestWait = Number.POSITIVE_INFINITY;
   for (const leafIndex of leaves) {
-    // ATOMIC CLAIM, before any work. `incr` returns 1 only for the caller that
-    // created the key, so exactly one concurrent request can win a leaf. Doing
-    // the derivation first and claiming afterwards would let two simultaneous
-    // callers be handed the same note — and a note is spent once, so the second
-    // buyer's subscription would fail on a nullifier collision after ~150
-    // uploads and ~1 SOL of buffer rent.
+    // 🚨 EVERY REASON TO SKIP THIS LEAF IS DECIDED BEFORE THE CLAIM IS
+    // TAKEN, AND THAT ORDER IS LOAD-BEARING.
+    //
+    // The claim below is consumed by `incr` and records who it went to. A leaf
+    // skipped AFTER that point is a leaf marked as issued to a caller who was
+    // never given it — harmless for a spent note, which is dead either way, and
+    // actively destructive for a note that is merely TOO YOUNG: it is alive and
+    // will be perfectly good in a few minutes, and binding it to whoever
+    // happened to ask first takes it out of stock for everyone else. An
+    // operator polling while a fresh batch matures would consume their whole
+    // inventory without receiving one note, and a reloaded page presenting a
+    // different note address would bind it to an address nobody holds — the
+    // exact shape documented under `heldByOthers`.
+    //
+    // Nothing here has a side effect: the derivation is pure and the spent set
+    // and the pool history were both read before the loop. So the race the
+    // claim exists to stop is untouched — two callers still serialise on
+    // `incr`, they just both do their arithmetic first.
+    // ⚠️ ARGUMENT ORDER IS (nullifierPreimage, secret, blinding, tokenMintField)
+    // and both of the first two are bigints, so getting them the wrong way round
+    // type-checks and silently produces a commitment that is on no tree. The
+    // on-chain check below is what caught it while writing this; do not remove
+    // that check on the grounds that the derivation is "obviously" right.
+    // Mirrors `poolNotes.ts:175` exactly, which is the derivation the rest of
+    // the app finds notes with.
+    const { secret, nullifierPreimage } = deriveNoteMaterial(seed, pool.poolPDA, leafIndex);
+    const noteBlinding = deriveNoteBlinding(seed, pool.poolPDA, leafIndex);
+    const commitment = createCommitmentV3(
+      nullifierPreimage,
+      secret,
+      noteBlinding,
+      pubkeyToField(pool.tokenMint),
+    );
+
+    // Looked up once, here: the age gate below needs it and so does the
+    // configuration check further down.
+    const onChain = commitments.get(commitment.toString());
+    // 🚨 AGE, BEFORE ANYTHING IS SEALED. See DEFAULT_MIN_AGE_SLOTS: a note
+    // young enough to have been minted for this caller carries their clock, and
+    // no amount of crowd or later delay takes it back off. Skip to the next
+    // leaf rather than refuse the request — young stock beside old stock is a
+    // stocked deployment, exactly like a spent leaf beside a good one.
+    //
+    // ⛔ AN UNKNOWN SLOT IS TREATED AS TOO YOUNG. `depositSlot` is null when the
+    // insert transaction carried no slot, and "we could not tell how old it is"
+    // must not resolve to "old enough". Same direction as every other unknown
+    // on this path.
+    if (onChain && onChain.leafIndex === leafIndex) {
+      const age = onChain.depositSlot === null ? -1 : currentSlot - onChain.depositSlot;
+      if (age < minAge) {
+        tooYoung += 1;
+        if (age >= 0) shortestWait = Math.min(shortestWait, minAge - age);
+        continue;
+      }
+    }
+    // Spent notes are inventory that no longer exists. Skip to the next leaf
+    // rather than refuse the request: an exhausted leaf beside a good one is a
+    // stocked deployment, and a caller must not be turned away because the
+    // FIRST configured index happens to be used up.
+    if (isNullifierSpentInSet(spent, pool.poolPDA, nullifierPreimage, secret)) {
+      spentLeaves += 1;
+      continue;
+    }
+
+    // ATOMIC CLAIM, before any SIDE EFFECT. `incr` returns 1 only for the caller
+    // that created the key, so exactly one concurrent request can win a leaf.
+    // Two callers handed the same note means the second one's subscription
+    // fails on a nullifier collision after ~150 uploads and ~1 SOL of buffer
+    // rent, so this must stay ahead of everything that hands anything over.
+    //
+    // ⚠️ It used to say "before any work", and the work above used to sit below
+    // it. That is no longer true and the difference matters: the derivation and
+    // the two gates above are pure reads, so running them first serialises
+    // nothing differently, while claiming first meant a leaf skipped for being
+    // too young was consumed anyway. See the block at the top of this loop.
     const claimKey = `p01:note:issued:${poolKey}:${leafIndex}`;
     let claim: number;
     try {
@@ -461,55 +530,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ⚠️ ARGUMENT ORDER IS (nullifierPreimage, secret, blinding, tokenMintField)
-    // and both of the first two are bigints, so getting them the wrong way round
-    // type-checks and silently produces a commitment that is on no tree. The
-    // on-chain check below is what caught it while writing this; do not remove
-    // that check on the grounds that the derivation is "obviously" right.
-    // Mirrors `poolNotes.ts:175` exactly, which is the derivation the rest of
-    // the app finds notes with.
-    const { secret, nullifierPreimage } = deriveNoteMaterial(seed, pool.poolPDA, leafIndex);
-    const noteBlinding = deriveNoteBlinding(seed, pool.poolPDA, leafIndex);
-    const commitment = createCommitmentV3(
-      nullifierPreimage,
-      secret,
-      noteBlinding,
-      pubkeyToField(pool.tokenMint),
-    );
 
     // The note must actually BE on the tree, at the leaf we think it is. A
     // mismatch means the seed, the pool or the index is wrong, and issuing it
     // would hand someone a blob that cannot be spent — money that looks
     // received and is not. Refuse the whole request rather than move on: a
     // configuration error must not be silently absorbed by trying the next leaf.
-    // Spent notes are inventory that no longer exists. Skip to the next leaf
-    // rather than refuse the request: an exhausted leaf beside a good one is a
-    // stocked deployment, and a caller must not be turned away because the
-    // FIRST configured index happens to be used up.
-    if (isNullifierSpentInSet(spent, pool.poolPDA, nullifierPreimage, secret)) {
-      spentLeaves += 1;
-      continue;
-    }
 
-    const onChain = commitments.get(commitment.toString());
-    // 🚨 AGE, BEFORE ANYTHING IS SEALED. See DEFAULT_MIN_AGE_SLOTS: a note
-    // young enough to have been minted for this caller carries their clock, and
-    // no amount of crowd or later delay takes it back off. Skip to the next
-    // leaf rather than refuse the request — young stock beside old stock is a
-    // stocked deployment, exactly like a spent leaf beside a good one.
-    //
-    // ⛔ AN UNKNOWN SLOT IS TREATED AS TOO YOUNG. `depositSlot` is null when the
-    // insert transaction carried no slot, and "we could not tell how old it is"
-    // must not resolve to "old enough". Same direction as every other unknown
-    // on this path.
-    if (onChain && onChain.leafIndex === leafIndex) {
-      const age = onChain.depositSlot === null ? -1 : currentSlot - onChain.depositSlot;
-      if (age < minAge) {
-        tooYoung += 1;
-        if (age >= 0) shortestWait = Math.min(shortestWait, minAge - age);
-        continue;
-      }
-    }
     if (!onChain || onChain.leafIndex !== leafIndex) {
       return bad(500, 'the configured inventory does not match the chain', {
         leafIndex,
