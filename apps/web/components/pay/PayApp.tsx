@@ -31,6 +31,7 @@ import type { PoolToken } from "@/lib/privacy/pool/denominatedPool";
 import {
   loadBuyerKey,
   saveBuyerKey,
+  clearBuyerKey,
   storageAvailable,
   exportBuyerKeyHex,
   isBackedUp,
@@ -588,12 +589,37 @@ export default function PayApp() {
                   setBackupError(null);
                 }}
               />
-              <button className="btn-primary" onClick={confirmBackup}>
+              {/* Disabled until the field is full, so the button cannot read as
+                  "done" while the step it completes is still empty — which is
+                  how a real user read it the first time this shipped. */}
+              <button
+                className="btn-primary disabled:opacity-40"
+                onClick={confirmBackup}
+                disabled={backupAnswer.trim().length !== 4}
+              >
                 I saved it
               </button>
             </div>
             {backupError && <p className="text-sm text-p01-red">{backupError}</p>}
           </div>
+          {/* ⚠️ THE WAY OUT, and it only exists at this moment.
+              A secret can be exposed the instant it is shown — pasted into the
+              wrong window, screenshotted, read over a shoulder. Before anything
+              is sealed to this key there is nothing to lose by replacing it, so
+              replacing it is one click. After the backup gate closes the
+              affordance goes away, because by then discarding the key discards
+              the subscriptions bought under it. */}
+          <button
+            className="text-xs text-p01-text-dim underline-offset-4 hover:text-p01-red hover:underline"
+            onClick={() => {
+              clearBuyerKey();
+              setBackupAnswer("");
+              setBackupError(null);
+              createDeviceKey();
+            }}
+          >
+            This secret was exposed — replace it
+          </button>
         </div>
       )}
 
