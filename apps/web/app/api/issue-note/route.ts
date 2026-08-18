@@ -7,6 +7,8 @@ import {
   createCommitmentV3,
   deriveNoteMaterial,
   fetchPoolCommitments,
+  fetchSpentNullifierSet,
+  isNullifierSpentInSet,
   getPoolsForTokenV3,
   pubkeyToField,
   type OnChainCommitment,
@@ -309,6 +311,34 @@ export async function POST(request: NextRequest) {
     return bad(502, `the pool's history could not be read: ${(e as Error).message}`);
   }
 
+  /**
+   * 🚨 WHICH INVENTORY NOTES ARE ALREADY SPENT.
+   *
+   * A commitment stays on the tree forever, so "it is on the tree at the index
+   * we expect" says nothing about whether the note behind it still exists. The
+   * check below used to be the ONLY on-chain check, which means a leaf whose
+   * note had been spent still read as good inventory and would have been
+   * sealed and handed to a paying customer — money that looks received and is
+   * not, discovered only when their subscription fails on a nullifier
+   * collision after ~150 uploads and ~1 SOL of buffer rent.
+   *
+   * MEASURED 2026-08-18: leaf 26 was the whole inventory and a subscription
+   * spent it. Nothing in this route noticed. What prevented the next buyer
+   * from being handed it was the `:to` marker refusing a different recipient —
+   * protection by accident, from a mechanism written for something else.
+   *
+   * `fetchSpentNullifierSet` reads addresses only, never bodies, and names no
+   * note; `isNullifierSpentInSet` then decides locally with no further RPC.
+   */
+  let spent: ReadonlySet<string>;
+  try {
+    spent = await fetchSpentNullifierSet(connection, pool.poolPDA);
+  } catch (e) {
+    // ⛔ Refuse rather than issue blind. An unread spent-set is not an empty
+    // one, and the failure mode of guessing is handing over spent money.
+    return bad(502, `the pool's spent notes could not be read: ${(e as Error).message}`);
+  }
+
   const poolKey = pool.poolPDA.toBase58();
   /**
    * Leaves that exist and are spoken for, but not by this caller.
@@ -321,6 +351,8 @@ export async function POST(request: NextRequest) {
    * address, and it cost a single-use claim code to find out.
    */
   let heldByOthers = 0;
+  /** Configured leaves whose note has already been spent on chain. */
+  let spentLeaves = 0;
   for (const leafIndex of leaves) {
     // ATOMIC CLAIM, before any work. `incr` returns 1 only for the caller that
     // created the key, so exactly one concurrent request can win a leaf. Doing
@@ -394,6 +426,15 @@ export async function POST(request: NextRequest) {
     // would hand someone a blob that cannot be spent — money that looks
     // received and is not. Refuse the whole request rather than move on: a
     // configuration error must not be silently absorbed by trying the next leaf.
+    // Spent notes are inventory that no longer exists. Skip to the next leaf
+    // rather than refuse the request: an exhausted leaf beside a good one is a
+    // stocked deployment, and a caller must not be turned away because the
+    // FIRST configured index happens to be used up.
+    if (isNullifierSpentInSet(spent, pool.poolPDA, nullifierPreimage, secret)) {
+      spentLeaves += 1;
+      continue;
+    }
+
     const onChain = commitments.get(commitment.toString());
     if (!onChain || onChain.leafIndex !== leafIndex) {
       return bad(500, 'the configured inventory does not match the chain', {
@@ -471,6 +512,21 @@ export async function POST(request: NextRequest) {
         'subscription back to its deposit lands on us rather than on you. It does NOT hide you ' +
         'from us: the note derives from a seed this server holds, so we can identify every ' +
         'subscription bought with it, and we can spend it ourselves until you do.',
+    });
+  }
+
+  // Said separately from "empty", because the two need opposite reactions from
+  // whoever runs the deployment: one means deposit more notes, the other means
+  // the notes are there and gone. Both used to read as "empty".
+  if (spentLeaves > 0) {
+    return bad(503, 'every note in this deployment\'s inventory has already been spent', {
+      configured: leaves.length,
+      spentLeaves,
+      heldByOthers,
+      hint:
+        'A commitment stays on the tree after its note is spent, so the inventory still looks ' +
+        'present on chain. Deposit fresh notes from the treasury wallet and extend ' +
+        'P01_TREASURY_NOTE_LEAVES with the new leaf indices. Nothing was charged.',
     });
   }
 

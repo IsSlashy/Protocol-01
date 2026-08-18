@@ -54,6 +54,10 @@ vi.mock('@/lib/privacy/pool/denominatedPool', async (importOriginal) => {
       get: () => undefined,
       values: () => [] as unknown[],
     })),
+    // Nothing spent, so these cases exercise the inventory logic rather than
+    // the spent-note refusal. The refusal has its own case below.
+    fetchSpentNullifierSet: vi.fn(async () => new Set<string>()),
+    isNullifierSpentInSet: vi.fn(() => false),
   };
 });
 
@@ -242,6 +246,52 @@ describe('an inventory leaf that was already handed out', () => {
     // note address. It cost a single-use claim code to work that out.
     expect(body.error).toMatch(/already issued to a different address/);
     expect(body.heldByOthers).toBe(1);
+  });
+});
+
+describe('inventory whose notes have already been spent', () => {
+  it('refuses, and says spent rather than empty', async () => {
+    // 🚨 A COMMITMENT STAYS ON THE TREE AFTER ITS NOTE IS SPENT. So "it is on
+    // the tree at the index we expect" — the only on-chain check this route
+    // used to make — is true of a note that no longer exists. Without this,
+    // a paying customer is sealed a spent note and finds out when their
+    // subscription dies on a nullifier collision, after ~150 uploads and about
+    // 1 SOL of buffer rent.
+    //
+    // MEASURED 2026-08-18: leaf 26 was the entire inventory and a subscription
+    // spent it. Nothing in this route noticed. The only thing that stopped the
+    // next buyer from being handed it was the `:to` marker refusing a different
+    // recipient — protection by accident, from a mechanism written for
+    // something else entirely.
+    const pool = await import('@/lib/privacy/pool/denominatedPool');
+    vi.mocked(pool.isNullifierSpentInSet).mockReturnValue(true);
+
+    const res = await POST(req(goodBody()));
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toMatch(/already been spent/);
+    expect(body.spentLeaves).toBe(2);
+    // ⛔ Never "empty": empty means deposit more, spent means the notes are
+    // there and gone. An operator reading the wrong one looks in the wrong place.
+    expect(body.error).not.toMatch(/inventory is empty/);
+
+    vi.mocked(pool.isNullifierSpentInSet).mockReturnValue(false);
+  });
+
+  it('skips a spent leaf and serves the next one', async () => {
+    // An exhausted leaf beside a good one is still a stocked deployment. A
+    // caller must not be turned away because the FIRST configured index
+    // happens to be used up.
+    const pool = await import('@/lib/privacy/pool/denominatedPool');
+    vi.mocked(pool.isNullifierSpentInSet).mockImplementation(
+      (_set, _pda, _np, _secret) => vi.mocked(pool.isNullifierSpentInSet).mock.calls.length === 1,
+    );
+
+    const res = await POST(req(goodBody()));
+    // Reaches the chain check on the SECOND leaf rather than refusing outright.
+    expect(res.status).not.toBe(503);
+
+    vi.mocked(pool.isNullifierSpentInSet).mockReturnValue(false);
   });
 });
 
