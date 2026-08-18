@@ -945,11 +945,32 @@ export class StealthModule {
   }
 
   /**
-   * Build the send_private_v2 instruction (hybrid quantum-resistant stealth).
+   * ⛔ `send_private_v2` DOES NOT EXIST ON CHAIN. This builder cannot work and
+   * now refuses instead of producing a transaction that is discarded.
    *
-   * Matches the on-chain SendPrivateV2 accounts struct.
-   * Instruction data: Anchor discriminator + amount(u64) + ephemeral_pub_key([u8;32])
-   *   + stealth_address(Pubkey) + view_tag(u8) + kem_ciphertext([u8;1088])
+   * The program removed it and says why, at `programs/specter/src/lib.rs:56`:
+   * passing the 1088-byte ML-KEM ciphertext as one instruction argument
+   * overflowed BOTH the 1232-byte transaction cap and the 4096-byte SBF stack.
+   * It was replaced by a chunked pair — `init_stealth_v2` (header only) then
+   * `write_stealth_kem_chunk` — so there is no single-shot form to point at.
+   * Anchor derives discriminators from function names, so
+   * `sha256("global:send_private_v2")[..8]` resolves to nothing and the
+   * transaction fails with InstructionFallbackNotFound.
+   *
+   * 🚨 IT WAS NEVER EXERCISED, and the code says so itself: the 1088-byte KEM
+   * field was left ZEROED with a comment calling it a placeholder. A caller
+   * reaching this got an instruction that could not be routed, carrying a
+   * ciphertext that could not decapsulate. Two failures, neither reported.
+   *
+   * This is a PUBLISHED package, so the honest failure is an explicit one at
+   * the call rather than a rejected transaction the caller has to decode. Not
+   * silently downgraded to the non-quantum path either: `quantumSafe: true` is
+   * a security request, and answering it with weaker crypto and no error is
+   * the worst of the three options.
+   *
+   * To restore the feature, port this onto the chunked pair — see
+   * `packages/pay-core/src/transport/` which already does exactly that, and
+   * `starknetTransport.ts:122` for the chunk sizing.
    */
   private buildSendPrivateV2Instruction(
     sender: PublicKey,
@@ -961,6 +982,15 @@ export class StealthModule {
     amount: bigint,
     tokenInfo: TokenInfo,
   ): import('@solana/web3.js').TransactionInstruction {
+    throw new Error(
+      'Quantum-safe stealth sends are not available in this SDK version. The on-chain ' +
+        'single-shot instruction (send_private_v2) was removed because the 1088-byte ML-KEM ' +
+        'ciphertext does not fit in a Solana transaction; it was replaced by a chunked ' +
+        'init_stealth_v2 + write_stealth_kem_chunk pair that this builder does not yet ' +
+        'implement. Use quantumSafe: false, or the chunked transport in @styx/pay-core.',
+    );
+
+    // eslint-disable-next-line no-unreachable
     const discriminator = this.anchorDiscriminator('send_private_v2');
 
     // Total data size: 8 (disc) + 8 (amount) + 32 (ephemeral) + 32 (stealth addr) + 1 (view tag) + 1088 (kem)
