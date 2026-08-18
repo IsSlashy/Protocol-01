@@ -65,10 +65,57 @@ pub mod zk_shielded {
         instructions::shield_stark::handler(ctx, commitment, old_root, new_root, amount)
     }
 
+    // === DISABLED (circuit-5 only, NO membership proof = unbacked-leaf risk).
+    //     Same defect as `unshield` below, same decision, and it should have
+    //     been the same commit. ===
+    //
+    // `transfer` is the OTHER C5 consumer. `transfer_stark.rs` rebuilds the same
+    // six-value public-inputs hash - `[nullifier_1, nullifier_2,
+    // output_commitment_1, output_commitment_2, public_amount, token_mint]` -
+    // with no root in it, so like `unshield` it never attests that the notes
+    // being spent were ever deposited.
+    //
+    // It moves no lamports, which is why it was left registered when `unshield`
+    // was disabled. That is not enough. An attacker spends two INVENTED notes
+    // and this instruction inserts two unbacked commitments as real leaves, and
+    // Merkle leaves are PERMANENT. A correctly fixed `unshield` - route (a) in
+    // the block below - would then honour them, because by then their
+    // membership would be genuine. The exploit is planted now and paid out
+    // later, which is the worst shape a defect can have: the audit that
+    // re-enables withdrawals would find a clean instruction and a poisoned tree.
+    //
+    // MEASURED BEFORE DISABLING, and this is why it costs nothing today: NO
+    // CLIENT IN THIS REPO CAN CALL IT. Every base-pool call site builds the
+    // discriminators `global:shield_stark`, `global:transfer_stark` and
+    // `global:unshield_stark` (apps/extension/src/shared/services/zk.ts:1539
+    // among others), while Anchor derives this program's from the FUNCTION
+    // names - `global:shield`, `global:transfer`, `global:unshield`. No IDL this
+    // repo has ever built carries a `_stark`-suffixed base-pool instruction, so
+    // the whole base-pool STARK path has been unreachable from every shipped
+    // client for as long as those names have disagreed. Production is the
+    // denominated v3 instructions, which are untouched.
+    //
+    // CONSEQUENCE, STATED PLAINLY: with both disabled, notes in the base
+    // `ShieldedPool` can no longer be moved or withdrawn by this program. On
+    // devnet that is 3.42 SOL of no monetary value, and there is no mainnet
+    // deployment. Re-enabling is uncommenting, and must happen with route (a).
+    /*
     /// Transfer shielded tokens privately using STARK circuit 5 (transfer) —
     /// quantum-resistant. Spends two input notes and creates two output
     /// commitments. public_amount = 0 (no net value change).
     /// Requires a pre-verified STARK proof buffer from p01_stark_verifier.
+    ///
+    /// UNRESOLVED, SAME DEFECT AS THE DISABLED `unshield` BELOW: this is the
+    /// other C5 consumer, and it proves membership of the spent notes exactly as
+    /// little — `transfer_stark.rs` rebuilds the same six-value public-inputs
+    /// hash with no root in it. It is left registered because it moves no
+    /// lamports and `unshield` was the base pool's only exit, so on its own it
+    /// cannot pay anyone. It is NOT harmless: an attacker can spend two invented
+    /// notes and have this instruction insert two unbacked commitments as real
+    /// leaves, and Merkle leaves are permanent. A correctly-fixed `unshield`
+    /// would then honour those leaves, because their membership would be
+    /// genuine. Disabling this too costs nothing today and should be decided
+    /// alongside re-enabling `unshield`.
     pub fn transfer(
         ctx: Context<TransferStark>,
         nullifier_1: [u8; 32],
@@ -88,7 +135,63 @@ pub mod zk_shielded {
             new_root,
         )
     }
+    */
+    // === end DISABLED block (transfer registration) ===
 
+
+    // === DISABLED (circuit-5 only, NO membership proof of any kind =
+    //     unshield-undeposited risk, FUND LOSS). Same defect class the v2
+    //     denominated instructions were retired for, one circuit worse. ===
+    //
+    // `unshield` was the ONLY instruction that moves value out of the base
+    // `ShieldedPool` (`shield` only pays in; `transfer` moves no lamports), and
+    // it proved nothing about where the spent notes came from:
+    //
+    //   * the handler took `_merkle_root` and never read it — the leading
+    //     underscore was the whole tell;
+    //   * the C5 public-inputs hash it reconstructs binds exactly six values —
+    //     `[nullifier_1, nullifier_2, output_commitment_1, output_commitment_2,
+    //     public_amount, token_mint]` — and no root;
+    //   * so the proof attests knowledge of two nullifiers, two output
+    //     commitments, an amount and a mint, and NEVER that the notes being
+    //     spent were ever deposited.
+    //
+    // The nullifier PDAs are not a defense: they stop reuse of a nullifier, and
+    // the attacker picks their own nullifiers. Four invented witnesses through
+    // the HONEST prover produce a proof this instruction accepts, draining up to
+    // `pool.total_shielded` per pass.
+    //
+    // WHY THIS IS DISABLED RATHER THAN GATED ON A C3 PROOF. Every instruction
+    // that was fixed for this defect — `unshield_denominated_stark_v3`,
+    // `subscribe_private_stark`, `split_note_stark` — pairs C1 with C3 and ties
+    // them through ONE shared value: C1 publishes the note commitment, so the
+    // `stark_commitment` argument can be fed into both public-input hashes and
+    // a lie about either fails one of them. C5 has no such value. Its public
+    // inputs are the six above; `in_commitment_1` / `in_commitment_2` are
+    // computed inside the trace (cycles 3 and 6 of `stark/src/air/transfer.rs`)
+    // and are neither published nor boundary-asserted. There is therefore
+    // nothing on chain to tie a C3 leaf to a C5 input note: bolting two C3
+    // buffers onto this instruction would let an attacker prove membership for
+    // any two publicly-known deposited leaves while spending four invented
+    // notes, and both checks would pass. That is a half-binding that reads as
+    // safe and drains exactly as fast, so it is not being shipped.
+    //
+    // THE REAL FIX, both routes, both blocked here. Either (a) C5 publishes
+    // `in_commitment_1` / `in_commitment_2` as public inputs so a C3 proof per
+    // input note can be tied to them — a circuit + deployed-verifier change,
+    // under hard freeze until 2026-09-04; or (b) the caller reveals the note
+    // `owner` so the program can recompute `nullifier_i == Poseidon(in_commit_i,
+    // owner)` on chain and pivot C3 off `in_commit_i` — sound, but `owner` is
+    // the stable per-user value behind every note this wallet holds, so
+    // publishing it makes all of a user's withdrawals linkable and destroys the
+    // property the pool exists to provide. Route (a) is the one to take.
+    //
+    // The module stays compiled (see instructions/mod.rs) so the handler is
+    // still type-checked against the state structs and route (a) does not also
+    // have to repair bit-rot. Unregistered is as unreachable as uncompiled:
+    // `sha256("global:unshield")[..8]` no longer resolves to anything and the
+    // instruction is gone from the IDL.
+    /*
     /// Unshield tokens from the base pool using STARK circuit 5 (transfer) —
     /// quantum-resistant. public_amount = -amount (two's complement u64)
     /// ensures value conservation between the two output notes and the
@@ -115,6 +218,8 @@ pub mod zk_shielded {
             new_root,
         )
     }
+    */
+    // === end DISABLED block (unshield registration) ===
 
     // REMOVED (P9 STARK migration):
     //   update_verification_key, init_vk_data, write_vk_data — the base pool

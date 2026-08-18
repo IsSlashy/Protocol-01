@@ -1,6 +1,12 @@
 pub mod initialize_pool;
 pub mod shield_stark;
 pub mod transfer_stark;
+// === `unshield` is DISABLED in lib.rs (circuit-5 only, no membership proof of
+// any kind = unshield-undeposited, FUND LOSS). The module is left COMPILED on
+// purpose, unlike the v2 deprecations below: the disablement is meant to be
+// lifted once C5 publishes its input commitments, and a module that keeps
+// type-checking is one the fix does not also have to un-rot. Nothing registers
+// it, so nothing can reach it. See the block above `pub fn unshield` in lib.rs. ===
 pub mod unshield_stark;
 // P9 — REMOVED Groth16 base-pool instructions (replaced by STARK variants):
 //   shield, transfer, unshield, transfer_via_relayer, store_vk_data, update_vk.

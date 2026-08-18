@@ -1,3 +1,65 @@
+//! Base-pool unshield — **NOT REGISTERED**. Do not re-register this handler
+//! as-is; it is a drain.
+//!
+//! # What is wrong with it
+//!
+//! Circuit 5 (`stark/src/air/transfer.rs`) proves a well-formed 2-in-2-out
+//! transfer and nothing else. Its own header says so: "Merkle path verification
+//! is handled separately by MerklePathAir". Its six public inputs are
+//! `[nullifier_1, nullifier_2, output_commitment_1, output_commitment_2,
+//! public_amount, token_mint]`, which is exactly what `handler` rebuilds and
+//! hashes below. No root appears in that list, `merkle_root` reaches the handler
+//! as `_merkle_root` and is never read, and the `is_valid_root(&merkle_root)`
+//! account constraint only says the caller quoted a root the pool once had — it
+//! says nothing about the notes being spent.
+//!
+//! So the proof attests: "I know two nullifiers, two output commitments, an
+//! amount and a mint, and they are consistent." It never attests that the spent
+//! notes were ever deposited. The nullifier PDAs stop a nullifier being reused;
+//! they cannot stop a nullifier being INVENTED. Four made-up witnesses through
+//! the honest prover yield a proof this handler accepts, for up to
+//! `pool.total_shielded`.
+//!
+//! # Why there is no C3 patch for this file
+//!
+//! The C1+C3 pattern used by `unshield_denominated_stark_v3`,
+//! `subscribe_private_stark` and `split_note_stark` works because C1 PUBLISHES
+//! the note commitment. The `stark_commitment` argument is then fed into both
+//! the C1 and the C3 public-input hashes, so `c3.leaf == c1.commitment` holds by
+//! construction and lying about either breaks one of the two hash checks.
+//!
+//! C5 publishes no equivalent. `in_commitment_1` and `in_commitment_2` are
+//! computed at cycles 3 and 6 of the transfer trace and are neither public
+//! inputs nor boundary-asserted — `TransferAir::get_assertions` pins only the
+//! two nullifiers, the two OUTPUT commitments, `public_amount` and `token_mint`.
+//! With no shared value there is no pivot: adding C3 buffers here would let an
+//! attacker prove membership for any two leaves already in the tree (leaf values
+//! are public) while the C5 proof spends four notes of their own invention.
+//! Both checks pass, the drain is unchanged, and the instruction now looks
+//! audited. That is worse than being off.
+//!
+//! # What would actually close it
+//!
+//! Preferred: give C5 `in_commitment_1` / `in_commitment_2` as public inputs,
+//! then require one C3 proof per input note with `c3_i.leaf == in_commitment_i`
+//! and `c3_i.root` pinned by `is_valid_root`. Two input notes need two
+//! membership proofs — one C3 cannot cover both, because a single (leaf, root)
+//! statement says nothing about the other leaf. Two extra proof-buffer accounts
+//! fit this instruction's account list comfortably (it currently names 11, and
+//! the buffers are read-only `AccountInfo`s), so the account budget is not the
+//! obstacle; the missing public input is. That is a circuit and deployed-verifier
+//! change, frozen until 2026-09-04.
+//!
+//! Sound but unacceptable: have the caller reveal `owner`, recompute
+//! `nullifier_i == Poseidon(in_commit_i, owner)` on chain, and pivot C3 off
+//! `in_commit_i`. `owner = Poseidon(spending_key, 0)` is stable across every
+//! note a wallet holds, so publishing it makes all of that wallet's withdrawals
+//! mutually linkable — it trades the fund-loss bug for the loss of the property
+//! the pool exists to provide.
+//!
+//! Until one of those lands, this handler stays unreachable. See the DISABLED
+//! block above `pub fn unshield` in `lib.rs`.
+
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
