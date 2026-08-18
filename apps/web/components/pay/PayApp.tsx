@@ -676,6 +676,51 @@ export default function PayApp() {
       {/* Ready — tabs */}
       {chainConnected && identity && (
         <div className="space-y-4">
+          {/* ⚠️ THE QUESTION THE TABS CANNOT ANSWER.
+              The bar names five protocol primitives. A person arrives wanting
+              one of three OUTCOMES, and the mapping between the two is exactly
+              the knowledge they do not have. Asked "my identity is ready, do I
+              shield now?", the honest answer is usually NO — and nothing on
+              this screen said so.
+              That is not hypothetical: it is how the wrong kind of note gets
+              made. A buyer deposits, spends what they deposited, and the
+              subscription walks back to them in one hop. Measured
+              2026-08-17/18, then measured again by the probes: P9 and P11 red
+              on a run where everything else was right. */}
+          <div className="rounded-lg border border-p01-border bg-p01-surface p-4">
+            <p className="font-display text-sm text-p01-text">What do you want to do?</p>
+            <div className="mt-3 space-y-2">
+              <button
+                onClick={() => setTab("subscribe")}
+                className="w-full rounded-md border border-p01-border bg-p01-void p-3 text-left transition hover:border-p01-cyan"
+              >
+                <span className="text-sm text-p01-cyan">Subscribe to a vendor</span>
+                <span className="mt-1 block text-xs text-p01-text-muted">
+                  You do not need to put money in. A note is issued to you against a claim code,
+                  and nothing is deposited in your name.
+                </span>
+              </button>
+              <button
+                onClick={() => setTab("send")}
+                className="w-full rounded-md border border-p01-border bg-p01-void p-3 text-left transition hover:border-p01-cyan"
+              >
+                <span className="text-sm text-p01-text">Hand a note to someone</span>
+                <span className="mt-1 block text-xs text-p01-text-muted">
+                  You hand over a whole note, not an amount. Needs one you already hold.
+                </span>
+              </button>
+              <button
+                onClick={() => setTab("pool")}
+                className="w-full rounded-md border border-p01-border bg-p01-void p-3 text-left transition hover:border-p01-yellow"
+              >
+                <span className="text-sm text-p01-text">Put money in (deposit)</span>
+                <span className="mt-1 block text-xs text-p01-yellow">
+                  Only to hold value or to hand a note over. A note you deposit yourself is the
+                  one kind that points back at you — do not deposit just to subscribe.
+                </span>
+              </button>
+            </div>
+          </div>
           <div className="flex items-center justify-between">
             {/* flex-wrap: five tabs no longer fit one row inside max-w-md. */}
             <div className="inline-flex flex-wrap rounded-lg border border-p01-border bg-p01-surface p-1">
