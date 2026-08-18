@@ -370,6 +370,22 @@ export const useWalletStore = create<WalletState>()(
           // Save encrypted session for auto-unlock (10 minute timeout)
           await saveSession(keypair.secretKey, password);
 
+          // 🚨 TELL THE BACKGROUND. It keeps its own lock flag in
+          // chrome.storage.session and answers every dApp request from it —
+          // and nothing in this repository ever sent this message, so that flag
+          // was never set and the background refused every signature with
+          // "Wallet is locked. Please unlock your wallet first." while this
+          // popup sat there unlocked. MEASURED 2026-08-18: a shield could not
+          // be signed no matter how many times the password was entered.
+          //
+          // Best effort: a popup that cannot reach the background is a popup
+          // whose signature request has no one to answer it anyway.
+          try {
+            await chrome.runtime.sendMessage({ type: 'WALLET_UNLOCKED' });
+          } catch (e) {
+            console.warn('[WalletStore] could not tell the background we unlocked:', e);
+          }
+
           // Fetch balance and transactions
           get().refreshBalance();
           get().fetchTransactions();
@@ -409,6 +425,17 @@ export const useWalletStore = create<WalletState>()(
             _keypair: keypair,
           });
 
+          // Auto-unlock reaches an unlocked wallet WITHOUT going through
+          // `unlock()`, so it has to send this too. Miss it and reopening the
+          // popup inside the ten-minute session leaves the background locked
+          // while everything on screen says otherwise — the same failure, only
+          // harder to reproduce.
+          try {
+            await chrome.runtime.sendMessage({ type: 'WALLET_UNLOCKED' });
+          } catch (e) {
+            console.warn('[WalletStore] could not tell the background we auto-unlocked:', e);
+          }
+
           // Fetch balance and transactions
           get().refreshBalance();
           get().fetchTransactions();
@@ -426,6 +453,15 @@ export const useWalletStore = create<WalletState>()(
         clearSession();
         // Wipe cached password from memory
         clearSessionPassword();
+
+        // The other half of the unlock message. Without it the two disagree in
+        // the dangerous direction: this popup shows a locked wallet while the
+        // background keeps answering dApp signature requests from a stale flag.
+        void chrome.runtime
+          .sendMessage({ type: 'WALLET_LOCKED' })
+          .catch(() => {
+            /* nothing to tell if the background is gone */
+          });
 
         set({
           isUnlocked: false,
