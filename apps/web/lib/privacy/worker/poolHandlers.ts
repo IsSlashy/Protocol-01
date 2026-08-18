@@ -2279,6 +2279,10 @@ async function handlePoolSubscribePrepare(
   // So resolve the funder of the deposit's payer. Bounded: the ephemeral's
   // funding transfer is the OLDEST entry of its short life, so a small page from
   // the far end answers it. `null` stays `null` — unknown, never safe.
+  // Says what it is doing, because it is a chain walk on the critical path and
+  // a frozen sentence is how the last one got mistaken for a hang. Measured
+  // 2026-08-18 against devnet: ~1s for a payer with 102 signatures.
+  onProgress?.('Checking who deposited this note...');
   const depositFunder = origin?.depositPayer
     ? await resolveFunderOfPayer(conn, origin.depositPayer)
     : null;
@@ -2290,12 +2294,36 @@ async function handlePoolSubscribePrepare(
   // `compute_stark_commitment` returns the Goldilocks felt as a DECIMAL string
   // (stark/src/lib.rs:129-135). `goldilocksU64To32` then puts it in bytes 0..8
   // with 24 zeroes above, which is the exact 32 bytes the vault PDA is seeded on.
+  // ⚠️ THE LAST SILENT STRETCH ON THIS PATH, AND IT IS NOT A SHORT ONE.
+  //
+  // Importing the prover pulls its whole bundle and `start()` boots a nested
+  // worker; only then does the commitment get computed. All of it happens
+  // behind ONE progress message. The main thread re-arms its 180s request
+  // watchdog on every progress message, so this stretch either finishes inside
+  // 180s or the job is killed for being quiet — while it is working.
+  //
+  // That failure mode has already been paid for twice on this path, in
+  // `locateOwnedNote`: same watchdog, same cause, same useless "worker timed
+  // out" shown to someone whose run had not failed at anything. The heartbeat
+  // there is the fix that stuck, so use it here rather than discover it a third
+  // time. Counting elapsed seconds is honest: it is the only number this step
+  // exposes from outside.
   onProgress?.('Computing your subscriber commitment...');
-  const { starkProver } = await import('../pool/starkProver');
-  await starkProver.start();
-  const subscriberCommitment = BigInt(
-    await starkProver.computeCommitment(note.receipt.secret.toString()),
-  );
+  const commitmentStartedAt = Date.now();
+  const commitmentHeartbeat = setInterval(() => {
+    const seconds = Math.round((Date.now() - commitmentStartedAt) / 1000);
+    onProgress?.(`Computing your subscriber commitment — ${seconds}s so far...`);
+  }, 10_000);
+  let subscriberCommitment: bigint;
+  try {
+    const { starkProver } = await import('../pool/starkProver');
+    await starkProver.start();
+    subscriberCommitment = BigInt(
+      await starkProver.computeCommitment(note.receipt.secret.toString()),
+    );
+  } finally {
+    clearInterval(commitmentHeartbeat);
+  }
 
   preparedSubscribes.set(ctx.jobId, { ctx, meta: req.meta, subscriberCommitment });
 

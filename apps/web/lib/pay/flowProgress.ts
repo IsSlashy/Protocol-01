@@ -58,7 +58,7 @@ export function parseResize(step: string | null): { done: number; total: number 
 // ---------------------------------------------------------------------------
 
 export const SHIELD_PHASES: FlowPhase[] = [
-  { id: 'price', label: 'Working out the cost', weight: 0.05, match: /pricing/i },
+  { id: 'price', label: 'Working out the cost', weight: 0.05, match: /pricing|looking for funds left/i },
   { id: 'derive', label: 'Creating your note', weight: 0.05, match: /deriving note|building v3 shield/i },
   { id: 'prove', label: 'Proving the deposit', weight: 0.25, match: /generating c6|stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz/i },
@@ -67,7 +67,7 @@ export const SHIELD_PHASES: FlowPhase[] = [
 ];
 
 export const WITHDRAW_PHASES: FlowPhase[] = [
-  { id: 'locate', label: 'Finding your note', weight: 0.12, match: /locating|fetching pool leaves|matching notes|reading on-chain tree/i },
+  { id: 'locate', label: 'Finding your note', weight: 0.12, match: /locating|fetching pool leaves|matching notes|reading on-chain tree|scanning the|reading spent markers|pool for older notes|looking for funds left/i },
   { id: 'path', label: 'Rebuilding its history', weight: 0.08, match: /merkle|pre-flight root|stored merkle root|checking the note/i },
   { id: 'prove', label: 'Proving you own it', weight: 0.3, match: /generating c1|generating c3|stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz|pricing/i },
@@ -82,8 +82,8 @@ export const SUBSCRIBE_PHASES: FlowPhase[] = [
   // at 5% for minutes — the phase table is the only thing that turns a worker
   // sentence into a label, and an unmatched sentence leaves the previous one
   // standing. Before any phase has matched, that previous one is nothing.
-  { id: 'locate', label: 'Finding your note', weight: 0.1, match: /locating|fetching pool leaves|matching notes|reading on-chain tree|still looking|checking notes you already hold/i },
-  { id: 'path', label: 'Rebuilding its history', weight: 0.07, match: /merkle|pre-flight root|checking the note|subscriber commitment/i },
+  { id: 'locate', label: 'Finding your note', weight: 0.1, match: /locating|fetching pool leaves|matching notes|reading on-chain tree|still looking|checking notes you already hold|scanning the|reading spent markers|pool for older notes|looking for funds left/i },
+  { id: 'path', label: 'Rebuilding its history', weight: 0.07, match: /merkle|pre-flight root|checking the note|checking who deposited|subscriber commitment/i },
   { id: 'prove', label: 'Proving you own it', weight: 0.28, match: /generating c1|generating c3|stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz|pricing/i },
   { id: 'upload', label: 'Uploading the proofs', weight: 0.4, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
@@ -144,7 +144,7 @@ export function progressFor(
  * `locateOwnedNote` in `worker/poolHandlers.ts`.
  */
 export const SEAL_PHASES: FlowPhase[] = [
-  { id: 'locate', label: 'Finding your note in the pool', weight: 0.7, match: /locating|reading pool history|matching notes/i },
+  { id: 'locate', label: 'Finding your note in the pool', weight: 0.7, match: /locating|reading pool history|matching notes|scanning the|reading spent markers|pool for older notes|still looking|checking notes you already hold/i },
   { id: 'path', label: 'Packing its withdrawal path', weight: 0.15, match: /merkle/i },
   { id: 'seal', label: 'Sealing it to the recipient', weight: 0.15, match: /sealing the note/i },
 ];
