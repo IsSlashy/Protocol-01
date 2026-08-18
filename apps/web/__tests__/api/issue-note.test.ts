@@ -234,7 +234,14 @@ describe('an inventory leaf that was already handed out', () => {
       ),
     );
     expect(other.status).toBe(503);
-    expect((await other.json()).error).toMatch(/inventory is empty/);
+    const body = await other.json();
+    // ⚠️ NOT "the inventory is empty". A stocked pool that refuses YOU and an
+    // unstocked deployment need opposite reactions — "derive from the same
+    // wallet" versus "deposit more notes" — and the flat message sent us
+    // reading stock levels while a reloaded page was quietly presenting a new
+    // note address. It cost a single-use claim code to work that out.
+    expect(body.error).toMatch(/already issued to a different address/);
+    expect(body.heldByOthers).toBe(1);
   });
 });
 

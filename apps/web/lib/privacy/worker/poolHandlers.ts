@@ -2157,16 +2157,49 @@ function handlePoolNoteAddress(req: PoolNoteAddressRequest): PoolNoteAddressResp
  * UNKNOWN and never as safe: an unfunded-looking payer is far more likely to be
  * a pruned history than a key that materialised with lamports.
  */
-async function resolveFunderOfPayer(
+/**
+ * How far back to look for the payer's first transaction. A shield ephemeral
+ * lives ~158 signatures; 1000 clears that with room and is the same ceiling
+ * `recoverFloat` uses for the same walk. An address busier than this returns
+ * null rather than a guess.
+ */
+const FUNDER_SIGNATURE_LIMIT = 1000;
+/** How many of the oldest to actually fetch. The funding transfer is the first. */
+const FUNDER_OLDEST_SAMPLE = 5;
+/**
+ * How far the source's loss may sit from the payer's gain and still be called
+ * the source: the difference is that transaction's fee. Generous next to any
+ * real transfer, and far tighter than the 5000-lamport fee that used to win.
+ */
+const FUNDER_AMOUNT_TOLERANCE_LAMPORTS = 1_000_000;
+
+export async function resolveFunderOfPayer(
   conn: Connection,
   payer: string,
 ): Promise<string | null> {
   try {
     const key = new PublicKey(payer);
-    const sigs = await conn.getSignaturesForAddress(key, { limit: 50 });
+    // 🚨 THE PAGE HAS TO REACH THE PAYER'S FIRST TRANSACTION, AND `limit: 50`
+    // DID NOT.
+    //
+    // `getSignaturesForAddress` returns the NEWEST first, so reversing a page of
+    // 50 reaches the oldest of the newest 50 — the true beginning only when the
+    // address has lived 50 signatures or fewer. A shield ephemeral signs ~150
+    // proof-chunk uploads before it does anything else (see the header of
+    // `handlePoolShieldExecute`), so the five entries examined were uploads from
+    // the MIDDLE of its life, in which it only ever pays fees. `gained <= 0`
+    // skipped all five and the function fell through to `null` — for every note
+    // this client has ever deposited, treasury-issued ones included.
+    //
+    // MEASURED 2026-08-18: a subscription refused its own freshly issued note
+    // because of this, and the refusal read as "you deposited this yourself".
+    const sigs = await conn.getSignaturesForAddress(key, { limit: FUNDER_SIGNATURE_LIMIT });
     if (sigs.length === 0) return null;
-    // Newest first, so the funding transfer is at the end.
-    for (const s of [...sigs].reverse().slice(0, 5)) {
+    // Oldest last in the response, so the tail is the start of the key's life.
+    // Nothing else is worth reading: a funding transfer is how the key comes
+    // into existence, and `recoverFloat` records the same shape.
+    const oldestFirst = [...sigs].reverse().slice(0, FUNDER_OLDEST_SAMPLE);
+    for (const s of oldestFirst) {
       if (s.err) continue;
       const tx = await conn.getParsedTransaction(s.signature, {
         maxSupportedTransactionVersion: 0,
@@ -2182,11 +2215,29 @@ async function resolveFunderOfPayer(
       // `recoverFloat` documents: a transfer can arrive as `transfer`, as
       // `createAccount`, or through a CPI naming none of them, and the runtime's
       // own numbers see all three.
+      //
+      // ⛔ NOT "the first account that lost lamports". `accountKeys[0]` IS the
+      // fee payer and its delta is always negative, so that rule returned the
+      // fee payer every time and never the source of the value — right only by
+      // luck, because every funding transfer this repo writes happens to set
+      // `feePayer == source`. The same luck probe P6 was recorded as relying on.
+      //
+      // This matters more than it looks: paired with the widened page above, the
+      // old rule would start returning a CONFIDENT WRONG address instead of
+      // null. The wallet comparison in `shieldClient` would then measure the
+      // wrong thing and let a genuinely self-deposited note through — turning a
+      // guard that fails closed into one that fails silently open.
+      let best: { addr: string; miss: number } | null = null;
       for (let i = 0; i < keys.length; i++) {
         if (i === idx) continue;
         const delta = (tx.meta.postBalances[i] ?? 0) - (tx.meta.preBalances[i] ?? 0);
-        if (delta < 0) return keys[i];
+        if (delta >= 0) continue;
+        // The source loses what the payer gained, plus whatever fee it paid.
+        const miss = Math.abs(-delta - gained);
+        if (miss > FUNDER_AMOUNT_TOLERANCE_LAMPORTS) continue;
+        if (!best || miss < best.miss) best = { addr: keys[i]!, miss };
       }
+      if (best) return best.addr;
     }
   } catch {
     // Unknown, which the caller must not read as safe.

@@ -569,6 +569,20 @@ export default function SubscribePanel({
     // way to tell — which is precisely the mistake already made once with the
     // funder's fallback.
     let spending = note;
+    /**
+     * Did THIS click already redeem the claim code?
+     *
+     * 🚨 A claim is worth one note and is consumed on first redemption whether
+     * or not a note is delivered. The recovery path below re-sends the same code
+     * to fetch a "different" note, which is doubly wrong once this branch has
+     * run: the code is already spent, so the request comes back 409 and the
+     * user is told "No note was issued: this claim code has already been used"
+     * — about a note that WAS issued and is sitting in their store.
+     *
+     * MEASURED 2026-08-18: the claim counter reached 2 on a single click, twice
+     * in one evening, and the 409 masked a successful issuance both times.
+     */
+    let issuedThisClick = false;
     if (!spending) {
       // Ask the deployment what it issues rather than assuming: leaf indices
       // only mean something inside one pool, so a hard-coded denomination makes
@@ -616,6 +630,7 @@ export default function SubscribePanel({
         setNotes((prev) => [...prev, issued.note]);
         setSelectedNote(noteKey(issued.note));
         spending = issued.note;
+        issuedThisClick = true;
       } catch (e) {
         setError((e as Error).message || 'No note could be issued.');
         return;
@@ -715,6 +730,18 @@ export default function SubscribePanel({
         return;
       } catch (e) {
         if ((e as Error).name !== 'SelfDepositedNoteError') throw e;
+        // ⛔ NOTHING TO SWAP TO. The note that was just refused IS the one this
+        // deployment issued seconds ago, so asking for another cannot change the
+        // answer — and the claim that would pay for it is already spent. Say what
+        // actually happened instead of burning the code to rediscover it.
+        if (issuedThisClick) {
+          throw new Error(
+            'The deployment issued you a note, and then refused it — it could not establish who ' +
+              'deposited it, and an unknown depositor is treated as you. Your note is safe and is ' +
+              'in your notes list; your claim code is spent and was not wasted on a second copy. ' +
+              'This is a fault in the deposit lookup, not in your note.',
+          );
+        }
         setStep('This note traces back to you — fetching one that does not...');
         const swapped = await swapForIssuedNote();
         if (!swapped) {

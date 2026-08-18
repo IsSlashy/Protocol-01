@@ -255,10 +255,38 @@ function devMemStore(): InMemoryKv {
  * Resolve the active store. Returns null in production when no KV backend is
  * configured, letting callers respond with 503 rather than silently dropping
  * signups into a per-isolate map.
+ *
+ * `P01_LOCAL_FILE_KV` is the one way past that, and it is deliberately awkward.
+ *
+ * WHY IT EXISTS. Testing the note-issuance flow needs a server that stays up for
+ * the length of a run: `next dev` restarts itself on its memory threshold — five
+ * times in one evening, twice within seconds of a note being issued — and each
+ * restart reloads the page, which loses the worker and the identity the note was
+ * sealed to. `next start` does not do that, but it sets NODE_ENV=production, and
+ * this deployment's KV is Upstash, which a local devnet box does not have.
+ *
+ * WHY IT IS SAFE ENOUGH HERE, AND ONLY HERE. The guard above exists because a
+ * per-isolate map silently loses data across a serverless fleet. One local
+ * `next start` is a single process with a single file behind it, so "durable"
+ * holds for exactly as long as the box does. That is a statement about this
+ * machine, not about the store — which is why it takes a named opt-in rather
+ * than a NODE_ENV sniff or a "no KV? fall back" default. Nothing sets this
+ * variable by accident, and a real deployment that sets it gets the warning
+ * below on every boot.
  */
 export function getStore(): KvLike | null {
   if (realStore) return realStore;
   if (process.env.NODE_ENV === 'development') return devMemStore();
+  if (process.env.P01_LOCAL_FILE_KV === '1') {
+    if (!globalRef.__p01WaitlistMem) {
+      console.warn(
+        '[waitlist] ⚠️ P01_LOCAL_FILE_KV=1 — serving a NON-production store outside development. ' +
+          'One process, one JSON file, no locking. Correct for a local devnet run, wrong for ' +
+          'anything with more than one instance.',
+      );
+    }
+    return devMemStore();
+  }
   return null;
 }
 

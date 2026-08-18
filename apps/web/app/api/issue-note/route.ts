@@ -310,6 +310,17 @@ export async function POST(request: NextRequest) {
   }
 
   const poolKey = pool.poolPDA.toBase58();
+  /**
+   * Leaves that exist and are spoken for, but not by this caller.
+   *
+   * Without this the walk ends at the same "the note inventory is empty" as a
+   * genuinely unstocked deployment, and those two need opposite reactions:
+   * one is "deposit more notes", the other is "you are asking from the wrong
+   * address". MEASURED 2026-08-18: the wrong message sent us looking at stock
+   * levels while the real cause was a reloaded page presenting a fresh note
+   * address, and it cost a single-use claim code to find out.
+   */
+  let heldByOthers = 0;
   for (const leafIndex of leaves) {
     // ATOMIC CLAIM, before any work. `incr` returns 1 only for the caller that
     // created the key, so exactly one concurrent request can win a leaf. Doing
@@ -348,7 +359,10 @@ export async function POST(request: NextRequest) {
       } catch {
         // Unreadable: treat as claimed by someone else and move on.
       }
-      if (previous !== recipientAddress) continue;
+      if (previous !== recipientAddress) {
+        heldByOthers += 1;
+        continue;
+      }
     } else {
       // Record who it went to, so the branch above can recognise a retry. Best
       // effort: a lost write costs an inventory slot, never a double issue.
@@ -457,6 +471,20 @@ export async function POST(request: NextRequest) {
         'subscription back to its deposit lands on us rather than on you. It does NOT hide you ' +
         'from us: the note derives from a seed this server holds, so we can identify every ' +
         'subscription bought with it, and we can spend it ourselves until you do.',
+    });
+  }
+
+  if (heldByOthers > 0) {
+    return bad(503, 'every note in stock is already issued to a different address', {
+      configured: leaves.length,
+      heldByOthers,
+      recipientAddress,
+      hint:
+        'A note is re-issued only to the address it was first sealed to, so this reads as empty ' +
+        'from where you are asking. If you expected to own one of these, you are presenting a ' +
+        'different note address than the one that received it — derive from the same wallet. ' +
+        'Otherwise the deployment needs more notes: deposit from the treasury and extend ' +
+        'P01_TREASURY_NOTE_LEAVES.',
     });
   }
 
