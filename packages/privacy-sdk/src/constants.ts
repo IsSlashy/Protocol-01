@@ -13,15 +13,15 @@ export const PROGRAM_IDS: Record<Network, ProgramIds> = {
     zkShielded: new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c'),
     specter: new PublicKey('FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL'),
     trustless: new PublicKey('11111111111111111111111111111111'), // not yet deployed
-    zkspl: new PublicKey('AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT'), // NOT deployed on devnet: getAccountInfo returns null (checked 2026-08-11)
+    zkspl: new PublicKey('AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT'),
     relayer: new PublicKey('2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW'),
     registry: new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB'),
     feeSplitter: new PublicKey('UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM'),
     stream: new PublicKey('C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx'),
-    subscription: new PublicKey('3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW'), // superseded: subscriptions live in zk_shielded as vaults; this id is NOT deployed
+    subscription: new PublicKey('3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW'),
     quantumVault: new PublicKey('9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv'),
     starkVerifier: new PublicKey('DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs'),
-    arcium: new PublicKey('9kMjmVMYxBa8V9D1aoEjZtUNXTe2gjfzYdKLycn7JvgQ'),
+    arcium: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     whitelist: new PublicKey('5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33'),
     mugenExchange: new PublicKey('EURLevwgmunRQU5piF7QLB1ithMPfxYFXp6jp6eGEAJN'),
     bundler: new PublicKey('FzhzTRz8DZDESoCm851n1qB6sSSCTBGV3aZtLVbDfGGX'), // not in Anchor.toml
@@ -45,6 +45,36 @@ export const PROGRAM_IDS: Record<Network, ProgramIds> = {
   },
 };
 // </auto-generated-program-ids>
+
+/**
+ * WHICH OF THOSE IDS ARE ACTUALLY ON DEVNET, measured rather than declared.
+ *
+ * The block above is regenerated from `Anchor.toml`, and Anchor.toml records
+ * what a program's id WOULD be, not whether anything is deployed at it. Two of
+ * these carried that warning as an inline comment and the generator wiped it on
+ * the next `--write`, which is what an auto-generated block does to a
+ * hand-verified fact. So it lives out here, where it survives.
+ *
+ * Re-checked with `solana account <id> --url devnet` on 2026-08-18:
+ *
+ *   zkShielded  GbVM5yve…  EXISTS, executable  (upgraded that day)
+ *   specter     2okhzLVr…  EXISTS, executable
+ *   zkspl       AY38smtd…  ABSENT
+ *   subscription 3eDvPJTK… ABSENT — superseded; subscriptions live inside
+ *                                    zk_shielded as vaults, there is no
+ *                                    separate program to call
+ *   arcium                  placeholder (system program); Arcium was removed
+ *                                    from this project
+ *
+ * ⛔ Do not deploy `subscription` or `zkspl` to make these resolve. Absent is
+ * the correct state for both; a caller that reaches them is a caller on a path
+ * that should not exist.
+ *
+ * ⚠️ The same sync also moved `specter` off `Ud2JYaq4…`, which is ABSENT on
+ * devnet — this SDK had been pointing at a program that is not there. The
+ * `pnpm check-program-ids` gate exists and reports this drift; it had not been
+ * run.
+ */
 
 /**
  * Get only the deployed program IDs for a given network.

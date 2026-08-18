@@ -70,7 +70,7 @@ export type NetworkId = 'devnet' | 'mainnet-beta' | 'localnet';
  * Program IDs by network. Synced from Anchor.toml.
  */
 export const PROGRAM_IDS: Record<NetworkId, string> = {
-  'devnet': '2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms',
+  'devnet': 'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c',
   'mainnet-beta': '8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY',
   'localnet': 'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c',
 };

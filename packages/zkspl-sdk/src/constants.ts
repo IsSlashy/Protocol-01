@@ -28,12 +28,12 @@ export type ProgramName = 'zkspl' | 'zkShielded';
 export const ZKSPL_PROGRAM_ID = 'AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT';
 
 /** Deployed zk_shielded program ID (devnet — denominated pools + shielded pool). */
-export const ZK_SHIELDED_PROGRAM_ID = '2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms';
+export const ZK_SHIELDED_PROGRAM_ID = 'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c';
 
 export const PROGRAM_IDS: Record<NetworkId, Record<ProgramName, string>> = {
   devnet: {
     zkspl: 'AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT',
-    zkShielded: '2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms',
+    zkShielded: 'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c',
   },
   'mainnet-beta': {
     zkspl: 'EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah',

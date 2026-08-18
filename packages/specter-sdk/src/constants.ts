@@ -13,8 +13,6 @@ import type { Cluster } from './types';
 export const PROGRAM_IDS: Record<Cluster, PublicKey> = {
   'mainnet-beta': new PublicKey('2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp'),
   'testnet': PublicKey.default,
-  // devnet runs the reworked v2 stealth program (chunked KEM announcement +
-  // getProgramAccounts scan). See specter-stealth-onchain-transport notes.
   'devnet': new PublicKey('FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL'),
   'localnet': new PublicKey('2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp'),
 };
@@ -29,7 +27,7 @@ export const REGISTRY_PROGRAM_IDS: Record<Cluster, PublicKey> = {
 export const RELAYER_PROGRAM_IDS: Record<Cluster, PublicKey> = {
   'mainnet-beta': PublicKey.default,
   'testnet': PublicKey.default,
-  'devnet': new PublicKey('Ud2JYaq4frePBy3L2DmddmtPT3nXC1nqxsXEX934Hbw'),
+  'devnet': new PublicKey('2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW'),
   'localnet': new PublicKey('2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW'),
 };
 
