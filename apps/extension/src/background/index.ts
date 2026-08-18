@@ -297,17 +297,32 @@ async function openApprovalPopup(
     pendingApprovalTimestamp: Date.now()
   });
 
-  // Open the extension's native popup only
-  // User clicks on extension icon to see the approval request
+  // 🚨 A BADGE IS NOT A PROMPT.
+  //
+  // `chrome.action.openPopup()` requires a user gesture in Manifest V3, and
+  // this runs from a message handler with no gesture behind it — so it throws
+  // every time and the old fallback was a badge reading "!". The dApp is
+  // meanwhile counting down, and the user, who has no idea a decision is
+  // waiting, gets "Request timeout - user may have closed the approval
+  // window". MEASURED 2026-08-18 on a shield: a badge appeared, nothing opened,
+  // and the deposit failed.
+  //
+  // `chrome.windows.create` needs no gesture. This file already uses it for
+  // payment notifications thirty lines up; the approval path simply never did.
+  // The badge stays as a second signal, not as the only one.
   try {
-    if (chrome.action?.openPopup) {
-      await chrome.action.openPopup();
-    }
+    await chrome.windows.create({
+      url: chrome.runtime.getURL('popup.html#/approve'),
+      type: 'popup',
+      width: 375,
+      height: 640,
+      focused: true,
+    });
   } catch (e) {
-    // openPopup() may fail in some contexts - that's OK
-    // The user can click on the extension icon manually
-
-    // Show a badge to indicate pending approval
+    // A window can still be refused — no display, a policy, a headless
+    // profile. The badge is then all that is left, and it is better than
+    // nothing, but it is the fallback and not the plan.
+    console.warn('[p01] could not open the approval window:', e);
     try {
       await chrome.action.setBadgeText({ text: '!' });
       await chrome.action.setBadgeBackgroundColor({ color: '#39c5bb' });
