@@ -130,6 +130,12 @@ const HANDLERS_SRC = [
   // Any file that calls onProgress belongs in this list. A sentence with no
   // phase is a sentence the user never sees.
   'lib/privacy/shieldClient.ts',
+  // The FOURTH file, found the same way as the third. Its two proving strings
+  // — "Proving you own the note..." and "Proving the note is in the pool..."
+  // — matched nothing, and they cover the ~2 minutes of actual STARK work on
+  // the history route. Two minutes is long enough to convince anyone the app
+  // has died.
+  'lib/privacy/pool/denominatedPool.ts',
 ]
   .map((rel) => readFileSync(join(__dirname, '../../', rel), 'utf8'))
   .join('\n');

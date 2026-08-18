@@ -59,8 +59,17 @@ export function parseResize(step: string | null): { done: number; total: number 
 
 export const SHIELD_PHASES: FlowPhase[] = [
   { id: 'price', label: 'Working out the cost', weight: 0.05, match: /pricing|looking for funds left/i },
-  { id: 'derive', label: 'Creating your note', weight: 0.05, match: /deriving note|building v3 shield/i },
-  { id: 'prove', label: 'Proving the deposit', weight: 0.25, match: /generating c6|stark proof/i },
+  { id: 'derive', label: 'Creating your note', weight: 0.05, match: /deriving note|building v3 shield|reading on-chain tree|computing merkle path/i },
+  // ⚠️ `generating …stark proof`, NOT a bare `stark proof`.
+  //
+  // `progressFor` takes the FIRST phase whose regex matches, and this phase sits
+  // at index 2 while verification sits at index 5. A bare `/stark proof/i`
+  // therefore swallowed "Verifying STARK proof phase 2 (DEEP-ALI)..." and
+  // reported it as proving — a LOWER percent than the floor already reached, so
+  // the monotonic guard discarded it and the bar sat frozen while the raw
+  // sentence underneath kept moving. Every verification string must fall
+  // through to the phase that actually names it.
+  { id: 'prove', label: 'Proving the deposit', weight: 0.25, match: /generating c6|generating the deposit proof|generating[^.]*stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz/i },
   // 0.50, not 0.45: the shield's phases summed to 0.95, so a shield could never
   // report more than 95% and jumped from there to done. Caught by the sum
@@ -68,16 +77,16 @@ export const SHIELD_PHASES: FlowPhase[] = [
   // to the upload because it is the longest phase by far — ~150 chunk
   // transactions against everything else's seconds.
   { id: 'upload', label: 'Uploading the proof', weight: 0.5, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
-  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|closing/i },
+  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|closing|submitting c6|sending v3 shield|v3 shield confirmed/i },
 ];
 
 export const WITHDRAW_PHASES: FlowPhase[] = [
-  { id: 'locate', label: 'Finding your note', weight: 0.12, match: /locating|fetching pool leaves|matching notes|reading on-chain tree|scanning the|reading spent markers|pool for older notes|looking for funds left/i },
+  { id: 'locate', label: 'Finding your note', weight: 0.12, match: /locating|matching notes|scanning the|reading spent markers|pool for older notes|looking for funds left|fetching pool leaves|scanning events|root not in ring/i },
   { id: 'path', label: 'Rebuilding its history', weight: 0.08, match: /merkle|pre-flight root|stored merkle root|checking the note/i },
-  { id: 'prove', label: 'Proving you own it', weight: 0.3, match: /generating c1|generating c3|stark proof/i },
+  { id: 'prove', label: 'Proving you own it', weight: 0.3, match: /generating c1|generating c3|proving you own the note|proving the note is in the pool|generating[^.]*stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz|pricing/i },
   { id: 'upload', label: 'Uploading the proof', weight: 0.35, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
-  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|building v3 unshield|closing/i },
+  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|building v3 unshield|sending v3 unshield|v3 unshield confirmed|submitting c1|closing/i },
 ];
 
 export const SUBSCRIBE_PHASES: FlowPhase[] = [
@@ -99,9 +108,9 @@ export const SUBSCRIBE_PHASES: FlowPhase[] = [
   // at 5% for minutes — the phase table is the only thing that turns a worker
   // sentence into a label, and an unmatched sentence leaves the previous one
   // standing. Before any phase has matched, that previous one is nothing.
-  { id: 'locate', label: 'Finding your note', weight: 0.1, match: /locating|fetching pool leaves|matching notes|reading on-chain tree|still looking|checking notes you already hold|scanning the|reading spent markers|pool for older notes|looking for funds left/i },
+  { id: 'locate', label: 'Finding your note', weight: 0.1, match: /locating|matching notes|still looking|checking notes you already hold|scanning the|reading spent markers|pool for older notes|looking for funds left|fetching pool leaves|scanning events|root not in ring/i },
   { id: 'path', label: 'Rebuilding its history', weight: 0.07, match: /merkle|pre-flight root|checking the note|checking who deposited|subscriber commitment/i },
-  { id: 'prove', label: 'Proving you own it', weight: 0.28, match: /generating c1|generating c3|stark proof/i },
+  { id: 'prove', label: 'Proving you own it', weight: 0.28, match: /generating c1|generating c3|proving you own the note|proving the note is in the pool|generating[^.]*stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz|pricing/i },
   { id: 'upload', label: 'Uploading the proofs', weight: 0.37, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
   { id: 'open', label: 'Opening your subscription', weight: 0.1, match: /verif|opening the subscription|closing/i },
