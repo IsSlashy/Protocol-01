@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How the link survived — Styx unlinkability explainer</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#080a0f; --panel:#10131c; --line:#232838;
+    --ink:#eef1f7; --dim:#8b93a7; --faint:#5c6479;
+    --ok:#2fd39b; --bad:#ff5f6d; --warn:#ffb547; --cool:#6aa8ff;
+  }
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    padding:22px 24px 28px; gap:14px; min-height:100%;
+  }
+  header{width:100%;max-width:1560px;display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap}
+  h1{font-size:20px;font-weight:650;letter-spacing:-.01em}
+  h1 span{color:var(--faint);font-weight:400}
+  .meta{font-size:12px;color:var(--faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  main{width:100%;max-width:1560px;display:grid;grid-template-columns:1.55fr .85fr;gap:22px;align-items:start;flex:1}
+  @media (max-width:1180px){main{grid-template-columns:1fr}}
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:8px;position:relative;overflow:hidden}
+  svg{display:block;width:100%;height:auto}
+  .el{opacity:0;transition:opacity .45s ease}
+  .el.on{opacity:1}
+  aside{display:flex;flex-direction:column;gap:16px;position:sticky;top:22px}
+  .cap{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px 28px;min-height:380px}
+  .cap .kicker{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:10px}
+  .cap h2{font-size:25px;line-height:1.25;font-weight:640;letter-spacing:-.015em;margin-bottom:14px}
+  .cap p{font-size:16px;line-height:1.65;color:#c6cddb;margin-bottom:12px}
+  .cap p b{color:var(--ink);font-weight:600}
+  .cap .hot{color:var(--bad);font-weight:600}
+  .cap .good{color:var(--ok);font-weight:600}
+  .cap .box{display:none}
+  .cap .box.on{display:block}
+  .nav{display:flex;align-items:center;gap:14px}
+  button{
+    background:#1a1f2d;color:var(--ink);border:1px solid var(--line);border-radius:10px;
+    padding:11px 18px;font-size:14px;font-weight:550;cursor:pointer;font-family:inherit;
+  }
+  button:hover{background:#232a3b;border-color:#39415a}
+  button:disabled{opacity:.32;cursor:default}
+  .dots{display:flex;gap:7px;margin-left:auto}
+  .dot{width:9px;height:9px;border-radius:50%;background:#2a3143;cursor:pointer;transition:background .25s,transform .25s}
+  .dot.on{background:var(--cool);transform:scale(1.25)}
+  .hint{font-size:11.5px;color:var(--faint)}
+  kbd{background:#1a1f2d;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-family:ui-monospace,monospace;font-size:11px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>How the link survived <span>— and how our own test missed it</span></h1>
+  <div class="meta">devnet · 2026-08-18 05:38 UTC · probe P11</div>
+</header>
+
+<main>
+  <div class="stage">
+    <!-- ============ STAGE A : THE LEAK ============ -->
+    <svg id="stageA" viewBox="0 0 960 640" role="img" aria-label="Diagram of the payment chain">
+      <defs>
+        <marker id="ah" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+          <path d="M0,1 L9,5 L0,9 z" fill="#5c6479"/>
+        </marker>
+        <marker id="ahRed" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+          <path d="M0,1 L9,5 L0,9 z" fill="#ff5f6d"/>
+        </marker>
+        <marker id="ahHot" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+          <path d="M0,1 L9,5 L0,9 z" fill="#ffb547"/>
+        </marker>
+      </defs>
+
+      <!-- unknown gap : step 0 -->
+      <g class="el" data-steps="0">
+        <line x1="480" y1="128" x2="480" y2="500" stroke="#39415a" stroke-width="2" stroke-dasharray="7 9"/>
+        <circle cx="480" cy="315" r="34" fill="#10131c" stroke="#39415a" stroke-width="2"/>
+        <text x="480" y="326" text-anchor="middle" font-size="30" fill="#8b93a7" font-weight="600">?</text>
+        <text x="700" y="308" font-size="14" fill="#8b93a7">no public link</text>
+        <text x="700" y="330" font-size="14" fill="#8b93a7">between these two</text>
+        <text x="700" y="352" font-size="13" fill="#5c6479">— that is the whole product</text>
+      </g>
+
+      <!-- NODE 1 : wallet -->
+      <g class="el" data-steps="0,1,2,3,4">
+        <rect x="270" y="30" width="420" height="90" rx="13" fill="#151a26" stroke="#39415a" stroke-width="1.5"/>
+        <text x="292" y="62" font-size="17" font-weight="640" fill="#eef1f7">Your wallet</text>
+        <text x="292" y="85" font-size="13" fill="#8b93a7">the person who bought the subscription</text>
+        <text x="292" y="105" font-size="11.5" fill="#5c6479" font-family="ui-monospace,monospace">EheuaGSYEpfN6k2K…hLmC</text>
+      </g>
+
+      <!-- NODE 2 : middleman -->
+      <g class="el" data-steps="1,2,3,4">
+        <rect x="270" y="190" width="420" height="90" rx="13" fill="#151a26" stroke="#4a5270" stroke-width="1.5"/>
+        <text x="292" y="222" font-size="17" font-weight="640" fill="#eef1f7">The middleman account</text>
+        <text x="292" y="245" font-size="13" fill="#8b93a7">takes the customer's money <tspan fill="#ffb547">and</tspan> pays for the private side</text>
+        <text x="292" y="265" font-size="11.5" fill="#5c6479" font-family="ui-monospace,monospace">H8WtBx3QapMCGQUF…dyh7</text>
+      </g>
+
+      <!-- NODE 3 : throwaway -->
+      <g class="el" data-steps="1,2,3,4">
+        <rect x="270" y="350" width="420" height="90" rx="13" fill="#151a26" stroke="#39415a" stroke-width="1.5"/>
+        <text x="292" y="382" font-size="17" font-weight="640" fill="#eef1f7">A throwaway account</text>
+        <text x="292" y="405" font-size="13" fill="#8b93a7">created for this one purchase, used once, discarded</text>
+        <text x="292" y="425" font-size="11.5" fill="#5c6479" font-family="ui-monospace,monospace">6EdR3RsA…</text>
+      </g>
+
+      <!-- NODE 4 : subscription -->
+      <g class="el" data-steps="0,1,2,3,4">
+        <rect x="270" y="510" width="420" height="90" rx="13" fill="#151a26" stroke="#2fd39b" stroke-width="1.5"/>
+        <text x="292" y="542" font-size="17" font-weight="640" fill="#eef1f7">The private subscription</text>
+        <text x="292" y="565" font-size="13" fill="#8b93a7">public on the ledger — with no name attached to it</text>
+        <text x="292" y="585" font-size="11.5" fill="#5c6479" font-family="ui-monospace,monospace">4zWERbE1NPaRgDQs…</text>
+      </g>
+
+      <!-- EDGES -->
+      <g class="el" data-steps="1,2,3">
+        <line x1="480" y1="122" x2="480" y2="182" stroke="#5c6479" stroke-width="2" marker-end="url(#ah)"/>
+        <text x="710" y="148" font-size="13.5" fill="#c6cddb">pays 1.003005 SOL</text>
+        <text x="710" y="168" font-size="12.5" fill="#5c6479">05:31:35 UTC</text>
+      </g>
+      <g class="el" data-steps="4">
+        <line x1="480" y1="122" x2="480" y2="182" stroke="#ffb547" stroke-width="2.5" marker-end="url(#ahHot)"/>
+        <text x="710" y="148" font-size="13.5" fill="#ffb547" font-weight="600">pays 1.003005 SOL</text>
+        <text x="710" y="168" font-size="12.5" fill="#8b93a7">= exactly what the deposit costs</text>
+      </g>
+
+      <g class="el" data-steps="1,2,3">
+        <line x1="480" y1="282" x2="480" y2="342" stroke="#5c6479" stroke-width="2" marker-end="url(#ah)"/>
+        <text x="710" y="308" font-size="13.5" fill="#c6cddb">funds the throwaway</text>
+        <text x="710" y="328" font-size="12.5" fill="#5c6479">05:31:36 UTC</text>
+      </g>
+      <g class="el" data-steps="4">
+        <line x1="480" y1="282" x2="480" y2="342" stroke="#ffb547" stroke-width="2.5" marker-end="url(#ahHot)"/>
+        <text x="710" y="308" font-size="13.5" fill="#ffb547" font-weight="600">one second later</text>
+        <text x="710" y="328" font-size="12.5" fill="#8b93a7">05:31:35 → 05:31:36</text>
+      </g>
+
+      <g class="el" data-steps="1,2,3,4">
+        <line x1="480" y1="442" x2="480" y2="502" stroke="#5c6479" stroke-width="2" marker-end="url(#ah)"/>
+        <text x="710" y="468" font-size="13.5" fill="#c6cddb">pays for the subscription</text>
+        <text x="710" y="488" font-size="12.5" fill="#5c6479">05:38:56 UTC</text>
+      </g>
+
+      <!-- PROBE BADGES : step 2 -->
+      <g class="el" data-steps="2">
+        <rect x="706" y="216" width="232" height="34" rx="8" fill="#2a1418" stroke="#ff5f6d" stroke-width="1.3"/>
+        <text x="722" y="238" font-size="13" fill="#ff5f6d" font-weight="600">✕  history never opened</text>
+
+        <rect x="706" y="376" width="232" height="34" rx="8" fill="#0f2620" stroke="#2fd39b" stroke-width="1.3"/>
+        <text x="722" y="398" font-size="13" fill="#2fd39b" font-weight="600">✓  history checked</text>
+
+        <rect x="706" y="536" width="232" height="34" rx="8" fill="#0f2620" stroke="#2fd39b" stroke-width="1.3"/>
+        <text x="722" y="558" font-size="13" fill="#2fd39b" font-weight="600">✓  checked</text>
+      </g>
+
+      <!-- THE WALK : steps 3,4 -->
+      <g class="el" data-steps="3,4">
+        <path d="M264,555 L200,555 L200,75 L258,75" fill="none" stroke="#ff5f6d" stroke-width="2.5" marker-end="url(#ahRed)"/>
+        <text x="186" y="315" text-anchor="middle" font-size="13" fill="#ff5f6d" font-weight="600" transform="rotate(-90 186 315)">2 hops · 28 lookups · minutes by hand</text>
+        <circle cx="200" cy="235" r="5" fill="#ff5f6d"/>
+        <circle cx="200" cy="395" r="5" fill="#ff5f6d"/>
+      </g>
+
+      <!-- STAMPS -->
+      <g class="el" data-steps="2" transform="rotate(-7 105 60)">
+        <rect x="20" y="30" width="170" height="58" rx="10" fill="none" stroke="#2fd39b" stroke-width="3"/>
+        <text x="105" y="60" text-anchor="middle" font-size="22" font-weight="700" fill="#2fd39b">PASS</text>
+        <text x="105" y="78" text-anchor="middle" font-size="11" fill="#2fd39b">our privacy test</text>
+      </g>
+      <g class="el" data-steps="3,4" transform="rotate(-7 105 60)">
+        <rect x="20" y="30" width="170" height="58" rx="10" fill="none" stroke="#ff5f6d" stroke-width="3"/>
+        <text x="105" y="60" text-anchor="middle" font-size="22" font-weight="700" fill="#ff5f6d">FAIL</text>
+        <text x="105" y="78" text-anchor="middle" font-size="11" fill="#ff5f6d">what was actually true</text>
+      </g>
+    </svg>
+
+    <!-- ============ STAGE B : THE FIX ============ -->
+    <svg id="stageB" viewBox="0 0 960 640" style="display:none">
+      <defs>
+        <marker id="ah2" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+          <path d="M0,1 L9,5 L0,9 z" fill="#5c6479"/>
+        </marker>
+        <marker id="ah2g" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+          <path d="M0,1 L9,5 L0,9 z" fill="#2fd39b"/>
+        </marker>
+      </defs>
+
+      <text x="30" y="28" font-size="12" letter-spacing="1.6" fill="#5c6479">THE PUBLIC SIDE</text>
+      <text x="560" y="28" font-size="12" letter-spacing="1.6" fill="#5c6479">THE PRIVATE SIDE</text>
+      <line x1="500" y1="45" x2="500" y2="620" stroke="#232838" stroke-width="1.5" stroke-dasharray="4 8"/>
+
+      <rect x="20" y="60" width="400" height="86" rx="13" fill="#151a26" stroke="#39415a" stroke-width="1.5"/>
+      <text x="42" y="92" font-size="17" font-weight="640" fill="#eef1f7">Your wallet</text>
+      <text x="42" y="115" font-size="13" fill="#8b93a7">pays for the subscription, in public</text>
+
+      <line x1="220" y1="150" x2="220" y2="222" stroke="#5c6479" stroke-width="2" marker-end="url(#ah2)"/>
+
+      <rect x="20" y="230" width="400" height="100" rx="13" fill="#151a26" stroke="#6aa8ff" stroke-width="1.7"/>
+      <text x="42" y="262" font-size="17" font-weight="640" fill="#6aa8ff">R — the till</text>
+      <text x="42" y="285" font-size="13" fill="#c6cddb">collects customer payments.</text>
+      <text x="42" y="307" font-size="13" fill="#c6cddb">Never funds anything private. Never deposits.</text>
+
+      <path d="M424,280 L555,280" fill="none" stroke="#5c6479" stroke-width="2" stroke-dasharray="7 7" marker-end="url(#ah2)"/>
+      <text x="490" y="262" text-anchor="middle" font-size="11.5" fill="#8b93a7">big batches,</text>
+      <text x="490" y="304" text-anchor="middle" font-size="11.5" fill="#8b93a7">on a schedule</text>
+
+      <rect x="560" y="230" width="380" height="100" rx="13" fill="#151a26" stroke="#2fd39b" stroke-width="1.7"/>
+      <text x="582" y="262" font-size="17" font-weight="640" fill="#2fd39b">F — the float</text>
+      <text x="582" y="285" font-size="13" fill="#c6cddb">stocks up on private notes in advance,</text>
+      <text x="582" y="307" font-size="13" fill="#c6cddb">days before anyone buys anything.</text>
+
+      <line x1="750" y1="338" x2="750" y2="392" stroke="#2fd39b" stroke-width="2" marker-end="url(#ah2g)"/>
+
+      <rect x="560" y="400" width="380" height="86" rx="13" fill="#151a26" stroke="#39415a" stroke-width="1.5"/>
+      <text x="582" y="432" font-size="17" font-weight="640" fill="#eef1f7">A throwaway account</text>
+      <text x="582" y="455" font-size="13" fill="#8b93a7">funded by F, never by R</text>
+
+      <line x1="750" y1="494" x2="750" y2="548" stroke="#2fd39b" stroke-width="2" marker-end="url(#ah2g)"/>
+
+      <rect x="560" y="556" width="380" height="72" rx="13" fill="#151a26" stroke="#2fd39b" stroke-width="1.5"/>
+      <text x="582" y="588" font-size="17" font-weight="640" fill="#eef1f7">The private subscription</text>
+      <text x="582" y="610" font-size="13" fill="#8b93a7">walk it backwards, you land on F, and you stop</text>
+
+      <rect x="20" y="400" width="400" height="150" rx="13" fill="#0f2620" stroke="#2fd39b" stroke-width="1.4"/>
+      <text x="42" y="434" font-size="14" font-weight="640" fill="#2fd39b">Why this closes it</text>
+      <text x="42" y="463" font-size="13" fill="#c6cddb">Nothing on the private side ever touches R,</text>
+      <text x="42" y="484" font-size="13" fill="#c6cddb">so no logbook over there has your name in it.</text>
+      <text x="42" y="513" font-size="13" fill="#c6cddb">R and F do settle up — in large amounts,</text>
+      <text x="42" y="534" font-size="13" fill="#c6cddb">at unrelated times. There is no clock to match.</text>
+    </svg>
+  </div>
+
+  <aside>
+    <div class="cap">
+      <div class="box on" data-box="0">
+        <div class="kicker">Step 1 of 6 · the promise</div>
+        <h2>Buy a subscription without anyone knowing it was you</h2>
+        <p>The subscription itself is <b>public</b> — anyone can see that it exists and that it was paid for. What has to stay hidden is <b>who</b> bought it.</p>
+        <p>So only one question matters: can a stranger start from the subscription and walk backwards, on the public ledger, all the way to your wallet?</p>
+        <p>Yesterday the answer was yes. It took a few minutes.</p>
+      </div>
+      <div class="box" data-box="1">
+        <div class="kicker">Step 2 of 6 · the detour</div>
+        <h2>We hid the name by adding two hops</h2>
+        <p>Think of posting an anonymous letter. You don't want your handwriting on the envelope, so you hand it to a <b>courier</b> with some cash and he posts it for you.</p>
+        <p>That is what these two middle boxes are. Your wallet never touches the subscription. Two separate payments — and <b>neither one of them carries both your name and the destination</b>.</p>
+        <p>That sounds like it works. It doesn't.</p>
+      </div>
+      <div class="box" data-box="2">
+        <div class="kicker">Step 3 of 6 · the false green</div>
+        <h2>Our own test said PASS</h2>
+        <p>We have an automated checker for exactly this. It opened three things: the subscription itself, and the histories of the two accounts that <b>directly</b> paid for it.</p>
+        <p class="hot">It never opened the middleman's history.</p>
+        <p>And the middleman's address was printed on screen, in plain text, by another part of the same tool. <b>We handed ourselves the key and never turned the lock.</b></p>
+      </div>
+      <div class="box" data-box="3">
+        <div class="kicker">Step 4 of 6 · the walk</div>
+        <h2>The courier keeps a logbook</h2>
+        <p>One line above the delivery it reads: <i>"received cash from [your name], 10:31."</i></p>
+        <p>Anyone can read the middleman's history. In it, one line before it funds the throwaway account, sits <b>a payment signed by your wallet</b>.</p>
+        <p>Cost of finding this: <b>28 database lookups</b>. No hacking, no special access, no insider. Just curiosity.</p>
+      </div>
+      <div class="box" data-box="4">
+        <div class="kicker">Step 5 of 6 · the real lesson</div>
+        <h2>A detour moves your name. It doesn't remove it.</h2>
+        <p>And the clock finishes the job: the money went <b class="hot">in one second before it went out</b>, for <b class="hot">exactly the amount</b> the deposit costs.</p>
+        <p>No amount of cryptography survives that. The timing puts back together what the structure took apart.</p>
+        <p>One more thing worth saying out loud: a cruder test <b>had</b> flagged this, and I dismissed it as noise. When one tool says "I found a link" and another says "there is no link", <b>believe the one that found something</b>.</p>
+      </div>
+      <div class="box" data-box="5">
+        <div class="kicker">Step 6 of 6 · the fix</div>
+        <h2>Two accounts instead of one</h2>
+        <p>Today, one single account does both jobs — it takes your money <b>and</b> it pays for the private side. That one fact is the entire leak.</p>
+        <p class="good">Split it in two, and the chain breaks for real.</p>
+        <p>We also fixed the checker — it now opens the middleman's history, and it refuses to say "pass" when it can't see everything. And the live system now <b>blocks</b> any purchase that would create this link, which means <b>today's checkout gets rejected</b>. That isn't a regression. That's the check working.</p>
+      </div>
+    </div>
+
+    <div class="nav">
+      <button id="prev">← Back</button>
+      <button id="next">Next →</button>
+      <div class="dots" id="dots"></div>
+    </div>
+    <div class="hint">Use <kbd>←</kbd> <kbd>→</kbd> or <kbd>space</kbd> to move through the story.</div>
+  </aside>
+</main>
+
+<script>
+  var STEPS = 6, i = 0;
+  var els   = Array.prototype.slice.call(document.querySelectorAll('.el'));
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.box'));
+  var A = document.getElementById('stageA'), B = document.getElementById('stageB');
+  var dots = document.getElementById('dots');
+
+  for (var d = 0; d < STEPS; d++) {
+    var dot = document.createElement('div');
+    dot.className = 'dot';
+    dot.setAttribute('data-i', d);
+    dot.addEventListener('click', function (e) { go(+e.target.getAttribute('data-i')); });
+    dots.appendChild(dot);
+  }
+
+  function go(n, keepHash) {
+    i = Math.max(0, Math.min(STEPS - 1, n));
+    if (!keepHash) { history.replaceState(null, '', '#step-' + (i + 1)); }
+    var last = (i === STEPS - 1);
+    A.style.display = last ? 'none' : 'block';
+    B.style.display = last ? 'block' : 'none';
+    els.forEach(function (el) {
+      var on = el.getAttribute('data-steps').split(',').indexOf(String(i)) !== -1;
+      el.classList.toggle('on', on);
+    });
+    boxes.forEach(function (b) { b.classList.toggle('on', +b.getAttribute('data-box') === i); });
+    Array.prototype.forEach.call(dots.children, function (dt, k) { dt.classList.toggle('on', k === i); });
+    document.getElementById('prev').disabled = (i === 0);
+    document.getElementById('next').disabled = last;
+  }
+
+  document.getElementById('prev').addEventListener('click', function () { go(i - 1); });
+  document.getElementById('next').addEventListener('click', function () { go(i + 1); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); go(i + 1); }
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(i - 1); }
+  });
+  function fromHash() {
+    var m = /^#step-(\d+)$/.exec(location.hash);
+    return m ? (+m[1] - 1) : 0;
+  }
+  window.addEventListener('hashchange', function () { go(fromHash(), true); });
+  go(fromHash());
+</script>
+</body>
+</html>
