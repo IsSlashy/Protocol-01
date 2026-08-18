@@ -475,7 +475,13 @@ async function sharesATransactionWith(
     const oldestBusy = busySigs[busySigs.length - 1]?.slot;
     const oldestBounded = boundedSigs[boundedSigs.length - 1]?.slot;
     if (typeof oldestBusy !== 'number' || typeof oldestBounded !== 'number') return null;
-    return oldestBusy <= oldestBounded ? false : null;
+    // STRICT, and the tie is why. Signature pages are cut by COUNT, not by
+    // slot, so a page whose oldest entry sits in slot N may have been truncated
+    // part-way through slot N and be missing an earlier transaction from that
+    // same slot. With <= that missing transaction reads as absence; with < the
+    // tie is simply unknown, and unknown is refused everywhere else on this
+    // path.
+    return oldestBusy < oldestBounded ? false : null;
   } catch {
     return null;
   }
