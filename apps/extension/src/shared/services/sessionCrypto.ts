@@ -157,27 +157,74 @@ export function isEncryptedBlob(value: unknown): value is EncryptedBlob {
 }
 
 // ---------------------------------------------------------------------------
-// Session password cache (in-memory only, never persisted)
+// Session password cache
 // ---------------------------------------------------------------------------
+//
+// 🚨 IN-MEMORY ALONE MADE THE SESSION USELESS FOR ITS ONLY PURPOSE.
+//
+// `saveSession` encrypts the secret key WITH this password and writes it to
+// chrome.storage.local, so the ciphertext survives anything. The password did
+// not: it lived in this module's heap, and an extension popup closes the
+// moment it loses focus — clicking the page behind it, switching tab, opening
+// another window. The ciphertext was then undecryptable and `tryAutoUnlock`
+// could never succeed, which is why the wallet re-locked every single time.
+//
+// MEASURED 2026-08-18: a wallet unlocked, then locked again on the next click
+// outside the popup, on every attempt, so a dApp signature could not be
+// approved at all.
+//
+// So it also goes to `chrome.storage.session`: memory-backed, never written to
+// disk, wiped when the browser closes. That is the storage area MV3 added for
+// exactly this, and it is what every extension that stays unlocked across a
+// popup close uses.
+//
+// ⚠️ It IS a real weakening, and worth naming rather than burying: anything
+// with extension-context access reads it while unlocked, where before it had
+// to catch the popup open. The alternative is a wallet that cannot stay
+// unlocked, and a user who is asked for a password they have already given.
+// `clearSessionPassword` removes both copies, and lock still means locked.
+
+const SESSION_PW_KEY = 'p01-session-password';
 
 let _sessionPassword: string | null = null;
 
-/**
- * Cache the user's password in memory for the duration of the session.
- * This is required so that we can encrypt/decrypt session secrets without
- * re-prompting the user every time we touch chrome.storage.local.
- *
- * The password is ONLY held in JS heap memory and is cleared on lock.
- */
 export function setSessionPassword(password: string): void {
   _sessionPassword = password;
+  // Best effort: the heap copy is what this context uses; the stored copy is
+  // what the NEXT context reads after this one is gone.
+  void chrome.storage?.session?.set({ [SESSION_PW_KEY]: password }).catch(() => {});
 }
 
 /**
- * Retrieve the cached session password, or null if the wallet is locked.
+ * The cached password for THIS context, or null.
+ *
+ * Synchronous, so it cannot see the stored copy. Callers that run at startup —
+ * auto-unlock above all — must use `loadSessionPassword` instead, because at
+ * that moment the heap is empty by definition.
  */
 export function getSessionPassword(): string | null {
   return _sessionPassword;
+}
+
+/**
+ * The cached password, falling back to the one a previous context stored.
+ *
+ * This is the call that makes auto-unlock possible: a freshly opened popup has
+ * an empty heap and a full session store.
+ */
+export async function loadSessionPassword(): Promise<string | null> {
+  if (_sessionPassword) return _sessionPassword;
+  try {
+    const got = await chrome.storage.session.get(SESSION_PW_KEY);
+    const pw = got?.[SESSION_PW_KEY];
+    if (typeof pw === 'string' && pw) {
+      _sessionPassword = pw;
+      return pw;
+    }
+  } catch {
+    /* no session storage in this context */
+  }
+  return null;
 }
 
 /**
@@ -185,4 +232,6 @@ export function getSessionPassword(): string | null {
  */
 export function clearSessionPassword(): void {
   _sessionPassword = null;
+  // Both copies, or lock does not mean locked.
+  void chrome.storage?.session?.remove(SESSION_PW_KEY).catch(() => {});
 }

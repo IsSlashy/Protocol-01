@@ -8,6 +8,7 @@ import {
   isEncryptedBlob,
   setSessionPassword,
   getSessionPassword,
+  loadSessionPassword,
   clearSessionPassword,
 } from '../services/sessionCrypto';
 import {
@@ -94,8 +95,12 @@ async function tryRestoreSession(): Promise<Keypair | null> {
     let secretKeyArray: number[];
 
     if (isEncryptedBlob(storedKey)) {
-      // Encrypted session (new format) -- need session password
-      const password = getSessionPassword();
+      // ⚠️ `loadSessionPassword`, NOT `getSessionPassword`. This runs while a
+      // freshly opened popup is deciding whether it can restore a session, and
+      // at that moment the heap copy is empty BY DEFINITION — the context that
+      // held it is gone. Reading the synchronous cache here is what made every
+      // auto-unlock fail and the wallet re-lock on every popup close.
+      const password = await loadSessionPassword();
       if (!password) {
         // No cached password means user must re-enter it; session cannot auto-restore
         return null;
