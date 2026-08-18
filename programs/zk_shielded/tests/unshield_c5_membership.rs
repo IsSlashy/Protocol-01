@@ -286,9 +286,42 @@ fn assert_six_value_hash_implies_unregistered(c: &C5Consumer) {
     // 6 × u64 = 48 bytes, and the six are the C5 public inputs. If this is still
     // what the handler hashes, no root is bound, and the instruction must not be
     // reachable.
-    if !(c.code)().contains("let mut pub_buf = [0u8; 48];") {
-        return;
-    }
+    //
+    // ⚠️ NO SILENT SKIP. This used to `return` when the literal was absent, which
+    // meant that renaming the buffer, changing its size, or hoisting it to a
+    // const turned this tripwire AND its sibling into two tests that pass while
+    // checking nothing. It was the only guard in this file without an
+    // anti-vacuity assertion, in a file whose entire subject is guards that
+    // report green without looking.
+    //
+    // A guard that loses sight of what it watches must FAIL, not pass. And it
+    // is meant to fire on the day C5 is finally FIXED: publishing the input
+    // commitments changes this buffer's width, so whoever does that is made to
+    // re-derive this test deliberately instead of inheriting a green one.
+    assert!(
+        (c.code)().contains("let mut pub_buf = [0u8; 48];"),
+        "\n\
+         ============================================================\n\
+         THIS GUARD CAN NO LONGER SEE WHAT IT WAS WATCHING\n\
+         ============================================================\n\
+         instruction : {}\n\n\
+         It asserts that while the handler reconstructs a SIX-VALUE public\n\
+         inputs hash (48 bytes, no root), the instruction must stay\n\
+         unregistered. It located that reconstruction by the literal\n\
+         `let mut pub_buf = [0u8; 48];`, and that declaration is gone.\n\n\
+         Two possibilities, and they need opposite reactions:\n\n\
+           1. The hash now binds a ROOT, i.e. C5 grew input commitments and\n\
+              the real fix landed. Then this test should be rewritten to\n\
+              assert the new binding, and the instruction may be registered\n\
+              again.\n\n\
+           2. Someone renamed or resized the buffer without changing what it\n\
+              covers. Then nothing is fixed, and re-pointing this literal is\n\
+              the whole job.\n\n\
+         Do not delete this assertion to make the suite green. That returns\n\
+         the file to the state where it silently stopped checking.\n\
+         ============================================================\n",
+        c.ix,
+    );
 
     assert!(
         !is_registered(c.ix),
