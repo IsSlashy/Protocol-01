@@ -9,6 +9,7 @@ import {
   SEEDS,
   DENOMINATIONS,
   MERKLE_TREE_DEPTH,
+  MAX_LEAVES,
   SHIELD_FEE_BPS,
   UNSHIELD_FEE_BPS,
   STARK_CIRCUITS,
@@ -345,8 +346,18 @@ describe('Constants', () => {
     expect(UNSHIELD_FEE_BPS).toBe(50);
   });
 
+  // These MUST equal the on-chain constant. The shielded pool is created with
+  // `DEFAULT_TREE_DEPTH = 15` (programs/zk_shielded/src/state/pool_v3.rs) and the
+  // STARK verifier rejects any proof whose depth public input is not
+  // `CANONICAL_DEPTH = 15` (programs/p01_stark_verifier/src/verify.rs).
+  // If this drifts, every root this SDK computes desyncs from the chain and
+  // inserts/proofs are rejected. Mirrors packages/p01-js/src/shielded-pool.test.ts.
   it('should have correct merkle depth', () => {
-    expect(MERKLE_TREE_DEPTH).toBe(20);
+    expect(MERKLE_TREE_DEPTH).toBe(15);
+  });
+
+  it('should have correct max leaves', () => {
+    expect(MAX_LEAVES).toBe(32768); // 2^15
   });
 
   it('should have STARK circuit IDs', () => {

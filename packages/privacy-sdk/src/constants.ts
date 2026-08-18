@@ -201,8 +201,24 @@ export const DENOMINATIONS = {
 
 // ─── Merkle Tree Config ───────────────────────────────────────────────────────
 
-export const MERKLE_TREE_DEPTH = 20;
-export const MAX_LEAVES = 2 ** MERKLE_TREE_DEPTH; // 1,048,576
+/**
+ * Depth of the shielded-pool commitment tree.
+ *
+ * ⚠️ SOURCE OF TRUTH IS ON-CHAIN — DO NOT "ROUND UP" TO 20.
+ *   - `programs/zk_shielded/src/state/pool_v3.rs` → `DEFAULT_TREE_DEPTH: u8 = 15`
+ *   - `programs/p01_stark_verifier/src/verify.rs` → `CANONICAL_DEPTH: u64 = 15`,
+ *     and the proof is REJECTED when the depth public input differs.
+ *   - `programs/zk_shielded/src/instructions/subscribe_private_stark.rs`
+ *     → `require!(tree_depth == 15, ...)`
+ *   - `stark/src/air/merkle_path.rs` → `CANONICAL_DEPTH: usize = 15`
+ *
+ * Every root computation in this package (see `computeNewRoot` in
+ * `modules/shield.ts`) cascades the zero-hash chain exactly this many levels.
+ * A value other than 15 produces a root that can never match the chain and the
+ * insert is rejected.
+ */
+export const MERKLE_TREE_DEPTH = 15;
+export const MAX_LEAVES = 2 ** MERKLE_TREE_DEPTH; // 32,768
 
 // ─── Fee Config ───────────────────────────────────────────────────────────────
 
