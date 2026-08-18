@@ -118,7 +118,16 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
   });
 
   const done = await poolRequest(
-    { kind: 'poolShieldExecute', jobId: prep.jobId, ownerPubkey: owner.toBase58() },
+    {
+      kind: 'poolShieldExecute',
+      jobId: prep.jobId,
+      ownerPubkey: owner.toBase58(),
+      // ⚠️ The residual follows whoever funded the ephemeral. When the
+      // deployment relayed, that residual is its refundable rent and sending it
+      // to the wallet would both take money that is not the wallet's and
+      // rebuild the edge the relay removed.
+      sweepTo: funding.sweepTo,
+    },
     onProgress,
   );
 

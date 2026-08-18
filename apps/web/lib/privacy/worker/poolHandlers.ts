@@ -107,8 +107,24 @@ export interface PoolShieldPrepareRequest {
 export interface PoolShieldExecuteRequest {
   kind: 'poolShieldExecute';
   jobId: string;
-  /** Wallet that pre-funded the ephemeral; receives the swept residual. */
+  /** Wallet that pre-funded the ephemeral. */
   ownerPubkey: string;
+  /**
+   * Where the ephemeral's residual goes.
+   *
+   * 🚨 NOT ALWAYS `ownerPubkey`, and assuming it was cost the whole point of
+   * the relayed deposit. When the deployment funds the ephemeral, the residual
+   * is the deployment's refundable rent, and sweeping it to the wallet both
+   * takes money that is not the wallet's AND rebuilds the `ephemeral → wallet`
+   * edge the relay exists to remove — the exact edge P9 walked on 2026-08-18.
+   *
+   * MEASURED 2026-08-18, 05:19:42: the payment leg relayed correctly and the
+   * sweep still went home, because this field did not exist and the withdrawal
+   * path was the only leg that had one.
+   *
+   * Omitted means `ownerPubkey`, which is right for a wallet-funded deposit.
+   */
+  sweepTo?: string;
 }
 
 export interface PoolScanRequest {
@@ -1421,7 +1437,10 @@ async function handlePoolShieldExecute(
     const { txSig, receipt } = await executeShield(
       job.ctx,
       conn,
-      new PublicKey(req.ownerPubkey),
+      // The residual's destination, which is not always the wallet — see
+      // `sweepTo` on the request type. A relayed deposit's residual is the
+      // deployment's own rent coming back.
+      new PublicKey(req.sweepTo ?? req.ownerPubkey),
       onProgress,
     );
 
