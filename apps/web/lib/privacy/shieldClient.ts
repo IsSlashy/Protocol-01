@@ -26,7 +26,12 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { poolRequest } from './workerClient';
-import { fetchFunderLookup, funderTicket, fundEphemeralForJob } from './pool/ephemeralFunder';
+import {
+  fetchFunderLookup,
+  funderTicket,
+  fundEphemeralForJob,
+  loadFunderAddress,
+} from './pool/ephemeralFunder';
 import { loadSubscriptions } from '../pay/subscriptions';
 import {
   isSessionLostError,
@@ -81,6 +86,26 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
   // deposit leg gets the same dirty-ephemeral guard as the others, and it means
   // a future contributor wiring this to the treasury "for consistency" gets a
   // typed refusal instead of a mint-your-own-note faucet.
+  // ── The deposit is paid THROUGH the deployment ───────────────────────────
+  //
+  // The comment above is still true about who provides the value: it is the
+  // user's, and the funder will not cover it. What changed on 2026-08-18 is
+  // where the wallet sends it.
+  //
+  // Paying the ephemeral directly put the wallet one hop from the deposit, and
+  // the deposit is one hop from every subscription that spends the note —
+  // `subscribe_private_stark` republishes its commitment in cleartext.
+  // MEASURED the same day: P9 found four edges from the deposit payer naming
+  // the wallet, and P11 found the wallet by listing account keys alone.
+  //
+  // So the wallet pays the deployment and the deployment funds the ephemeral.
+  // The wallet still signs — it is still their money — but what it signs points
+  // at the deployment instead of at the pool.
+  //
+  // Falls back to the direct path when the deployment cannot relay, because a
+  // deposit that cannot happen is worse than a deposit that is linkable, and
+  // the screen says which one occurred.
+  await loadFunderAddress();
   const funding = await fundEphemeralForJob({
     ephemeralPubkey: prep.ephemeralPubkey,
     requiredLamports: prep.requiredLamports,
@@ -89,6 +114,7 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
     connection,
     signOne,
     onProgress,
+    relayThroughDeployment: true,
   });
 
   const done = await poolRequest(

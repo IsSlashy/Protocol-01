@@ -53,7 +53,23 @@ const RATE_SALT = 'p01:relay-to-buyer:v1';
 /** Relays per IP per hour. A buyer needs one; a faucet-hunter needs many. */
 const RELAYS_PER_IP_PER_HOUR = 3;
 
-/** What this transaction costs to send. Deducted, so the deployment pays nothing. */
+/**
+ * The most refundable rent this deployment will front on top of a payment.
+ *
+ * 🚨 THE CALLER PAYS THE VALUE, THE DEPLOYMENT PAYS THE RENT, and that split
+ * is what keeps the residue honest. A deposit needs value plus proof-buffer
+ * rent — 1,003,475,300 and 1,573,486,080 respectively for a 1 SOL note, so
+ * about 0.57 SOL of rent. That rent comes back when the buffers close.
+ *
+ * If the caller paid all of it, the residue would be THEIR money and sweeping
+ * it to the deployment would be taking it; sweeping it home would rebuild the
+ * `ephemeral -> wallet` edge P9 walked on 2026-08-18. Fronting it here makes
+ * the residue the deployment's own, so it can come back here with nobody owed
+ * anything and no edge drawn.
+ */
+const MAX_RENT_SUBSIDY_LAMPORTS = 1_500_000_000;
+
+/** What this transaction costs to send. Deducted from the subsidy, not the payment. */
 const FEE_LAMPORTS = 5_000;
 
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
@@ -82,7 +98,7 @@ export async function POST(request: NextRequest) {
   const funder = funderKeypair();
   if (!funder) return bad(503, 'this deployment has no funder key');
 
-  let body: { paymentSignature?: string; buyerPubkey?: string };
+  let body: { paymentSignature?: string; buyerPubkey?: string; requiredLamports?: number };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -181,8 +197,34 @@ export async function POST(request: NextRequest) {
     return bad(502, `the buyer balance could not be read: ${(e as Error).message}`);
   }
 
-  const forward = received - FEE_LAMPORTS;
-  if (forward <= 0) return bad(400, 'that payment does not cover the relay fee');
+  // What the ephemeral needs in total. The caller states it because only the
+  // caller knows the job; the deployment bounds how much of it it will front.
+  const required = Number(body.requiredLamports ?? received);
+  if (!Number.isFinite(required) || required <= 0) {
+    return bad(400, 'requiredLamports must be a positive number');
+  }
+  if (required > MAX_RELAY_LAMPORTS) {
+    return bad(400, 'that job needs more than this relay funds in one call', {
+      required,
+      cap: MAX_RELAY_LAMPORTS,
+    });
+  }
+
+  const subsidy = required - received;
+  if (subsidy > MAX_RENT_SUBSIDY_LAMPORTS) {
+    return bad(402, 'that payment does not cover the value this job moves', {
+      received,
+      required,
+      subsidy,
+      maxSubsidy: MAX_RENT_SUBSIDY_LAMPORTS,
+      hint:
+        'This deployment fronts the refundable rent and no more. Pay the note value and ask ' +
+        'again; nothing was sent.',
+    });
+  }
+
+  const forward = required;
+  if (forward <= FEE_LAMPORTS) return bad(400, 'that job asks for less than the relay fee');
 
   let sig: string;
   try {

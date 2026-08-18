@@ -94,6 +94,69 @@ export function funderConfigured(): boolean {
  * fallback silently puts their wallet back on chain and that is the one thing
  * this path exists to prevent.
  */
+/**
+ * The deployment's funding address, as the readiness endpoint reports it.
+ *
+ * Read at call time rather than inlined at build: a rotated funder key would
+ * otherwise be paid at the old address by every browser still running an old
+ * bundle, and those lamports are not recoverable.
+ */
+let cachedFunderAddress: string | null = null;
+export function funderAddress(): string {
+  if (!cachedFunderAddress) throw new Error('The deployment funding address has not been read yet.');
+  return cachedFunderAddress;
+}
+
+/** Ask the deployment where to pay, and remember it for this session. */
+export async function loadFunderAddress(signal?: AbortSignal): Promise<string | null> {
+  try {
+    const res = await fetch('/api/fund-ephemeral', { method: 'GET', signal });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { funder?: string };
+    cachedFunderAddress = body.funder ?? null;
+    return cachedFunderAddress;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Hand the deployment a payment receipt and have it fund the deposit ephemeral.
+ *
+ * The receipt is a signature, not an amount: the route reads what was actually
+ * paid from the chain, because an amount the caller states is an amount the
+ * caller chooses.
+ */
+export async function relayToBuyer(
+  paymentSignature: string,
+  buyerPubkey: string,
+  requiredLamports: number,
+  signal?: AbortSignal,
+): Promise<{ signature: string; sweepTo: string; lamports: number }> {
+  const ticket = funderTicket();
+  if (!ticket) throw new Error('This deployment has no funder configured.');
+  const res = await fetch('/api/relay-to-buyer', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-p01-funder-ticket': ticket },
+    body: JSON.stringify({ paymentSignature, buyerPubkey, requiredLamports }),
+    signal,
+  });
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    error?: string;
+    signature?: string;
+    lamports?: number;
+  };
+  if (!res.ok || !body.ok || !body.signature) {
+    throw new Error(body.error ?? `the deployment refused to fund the deposit (${res.status})`);
+  }
+  return {
+    signature: body.signature,
+    sweepTo: funderAddress(),
+    lamports: body.lamports ?? 0,
+  };
+}
+
 export async function requestFunding(
   ephemeralPubkey: string,
   lamports: number,
@@ -262,6 +325,18 @@ export interface JobFundingRequest {
   connection: Connection;
   /** Sign one transaction with the connected wallet. */
   signOne: (tx: Transaction) => Promise<Transaction>;
+  /**
+   * Route a value-bearing job's funding through the deployment.
+   *
+   * Without it, the wallet funds the deposit ephemeral directly and is one hop
+   * from the deposit — which the spend then republishes. With it, the wallet
+   * pays the deployment and the deployment funds the ephemeral: two transfers,
+   * neither naming both ends.
+   *
+   * ⚠️ The residue sweeps to the deployment rather than home, because sweeping
+   * home would rebuild the edge. Callers must say so on screen.
+   */
+  relayThroughDeployment?: boolean;
   onProgress?: (step: string) => void;
 }
 
@@ -370,7 +445,63 @@ export async function fundEphemeralForJob(
   // ships in the browser bundle and anyone can POST the route directly with any
   // amount under the cap. The endpoint's own anti-abuse story is the rate
   // limiter and the devnet guard, not this line.
-  if (valueLamports > 0) {
+  if (valueLamports > 0 && req.relayThroughDeployment && funderConfigured()) {
+    // ── The relayed deposit ──────────────────────────────────────────────
+    //
+    // 🚨 THE EDGE THIS EXISTS TO REMOVE. A deposit's ephemeral is funded by
+    // somebody, and that somebody is one hop from the deposit — which is one
+    // hop from the subscription, because the spend republishes the deposit's
+    // commitment in cleartext. MEASURED 2026-08-18: P9 found four edges naming
+    // the buyer's wallet from the deposit payer, and P11 found the wallet by
+    // listing account keys alone.
+    //
+    // So the wallet pays the DEPLOYMENT, and the deployment funds the
+    // ephemeral. Two transfers, neither naming both ends. The wallet is still
+    // asked to sign — it is the user's money — but what it signs no longer
+    // points at the pool.
+    //
+    // ✅ THE RESIDUE GOES TO THE DEPLOYMENT AND OWES NOBODY ANYTHING, because
+    // the wallet pays only `valueLamports` and the deployment fronts the
+    // refundable proof rent on top. The residue that comes back IS that rent.
+    //
+    // The alternative shapes are both wrong: if the wallet pre-funded the whole
+    // amount, sweeping to the deployment would be taking their change, and
+    // sweeping home would rebuild the `ephemeral → wallet` edge P9 walked on
+    // 2026-08-18 — undoing the entire detour for the sake of returning money
+    // that need never have left.
+    req.onProgress?.('Paying the deployment, which will fund the deposit (your wallet stays off the pool)...');
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    const payTx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: owner,
+        toPubkey: new PublicKey(funderAddress()),
+        // ⚠️ THE VALUE, NOT THE WHOLE PRE-FUND. The rest is refundable proof
+        // rent and the deployment fronts it, so the residue that comes back is
+        // the deployment's own and sweeping it there owes the user nothing.
+        // Paying it all here would make the residue theirs, and then the only
+        // two choices are taking it or rebuilding the edge to send it home.
+        lamports: valueLamports,
+      }),
+    );
+    payTx.recentBlockhash = blockhash;
+    payTx.feePayer = owner;
+    const signedPay = await signOne(payTx);
+    const paySig = await connection.sendRawTransaction(signedPay.serialize());
+    const payConf = await connection.confirmTransaction(
+      { signature: paySig, blockhash, lastValidBlockHeight },
+      'confirmed',
+    );
+    if (payConf.value.err) {
+      throw new Error(`Payment to the deployment failed: ${JSON.stringify(payConf.value.err)}`);
+    }
+
+    req.onProgress?.('The deployment is funding the deposit...');
+    const relayed = await relayToBuyer(paySig, ephemeralPubkey, requiredLamports);
+    fundedBy = 'funder';
+    funderSignature = relayed.signature;
+    // ⛔ NOT `owner`. See the residue note above.
+    sweepTo = relayed.sweepTo;
+  } else if (valueLamports > 0) {
     funderFallbackReason =
       `this job moves ${valueLamports} lamports of your own value, not just rent, so the ` +
       'funder is not asked — covering it would mean the deployment buying your note.';
