@@ -11,5 +11,19 @@ import path from 'node:path';
  */
 export default defineConfig({
   resolve: { alias: { '@/': path.resolve(__dirname, './') + '/' } },
-  test: { include: ['lib/privacy/pool/**/*.test.ts'], environment: 'node' },
+  test: {
+    // 🚨 `lib/**`, NOT `lib/privacy/pool/**`.
+    //
+    // The narrower pattern left `lib/privacy/serviceRegistry.test.ts` matched by
+    // NO config in this app: not this one, not the default (`__tests__/**`), not
+    // the ui one (`__tests__/components|pages`). 23 assertions that never ran and
+    // never reported anything — a suite is not green, it is absent, and nothing
+    // distinguishes the two from a passing summary line.
+    //
+    // Verified with `npx vitest list --config <each>`: it was the only orphan in
+    // the repo. Keeping the glob at `lib/**` means the next test written beside a
+    // module, rather than under `pool/`, is picked up instead of silently lost.
+    include: ['lib/**/*.test.ts'],
+    environment: 'node',
+  },
 });
