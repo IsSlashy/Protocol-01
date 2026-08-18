@@ -258,14 +258,51 @@ async function signSendConfirm(
   signer: WalletSigner,
   opts?: { skipPreflight?: boolean },
 ): Promise<string> {
-  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
-  tx.recentBlockhash = blockhash;
-  tx.feePayer = signer.publicKey;
-  const signed = await signer.signTransaction(tx);
-
-  const sig = await conn.sendRawTransaction(signed.serialize(), {
-    skipPreflight: opts?.skipPreflight ?? false,
-  });
+  // 🚨 `finalized`, NOT `confirmed`, AND A RETRY. Both, because they answer two
+  // different failures that produce the identical message.
+  //
+  // A `confirmed` blockhash is known to the node that issued it and not yet to
+  // its neighbours. Every request here goes through a load-balanced provider,
+  // so the node asked to run PREFLIGHT is routinely not the node that gave the
+  // blockhash — and it answers "Blockhash not found" for a transaction that is
+  // perfectly valid. A finalized blockhash is one every node has, at the cost of
+  // ~13s of its ~60s validity, which is ample for a send that happens next.
+  //
+  // MEASURED 2026-08-18: a subscribe reached the proof buffers, landed six
+  // transactions, then died on "Transaction simulation failed: Blockhash not
+  // found" with an empty log — the shape a stale-node preflight has, and one no
+  // amount of reading the program can explain. The same reasoning was already
+  // applied to the wallet-signed funding transaction and stopped there; this
+  // helper sends every buffer init, every resize and both verify phases.
+  //
+  // The retry covers the other cause: under a paced/rate-limited transport the
+  // gap between fetching and sending can outlive the blockhash. Refetching is
+  // the only correct response and costs one round trip.
+  let sig: string | undefined;
+  let blockhash = '';
+  let lastValidBlockHeight = 0;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < BLOCKHASH_SEND_ATTEMPTS; attempt++) {
+    ({ blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('finalized'));
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = signer.publicKey;
+    // Re-signed each attempt: the signature covers the blockhash, so a retry
+    // that reuses the old signature is rejected for a different reason and the
+    // real one is never seen.
+    const signed = await signer.signTransaction(tx);
+    try {
+      sig = await conn.sendRawTransaction(signed.serialize(), {
+        skipPreflight: opts?.skipPreflight ?? false,
+      });
+      break;
+    } catch (e) {
+      lastErr = e;
+      if (!/blockhash not found/i.test((e as Error).message ?? '')) throw e;
+      // Give the provider a moment to agree with itself before asking again.
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  if (!sig) throw lastErr instanceof Error ? lastErr : new Error('Transaction could not be sent');
 
   try {
     // Blockhash-based confirmation waits until the blockhash actually expires
@@ -345,6 +382,13 @@ async function confirmSignatures(
 // minutes to upload. One blockhash fetched up front expires mid-loop and every
 // remaining chunk dies with "Blockhash not found". Refresh it as we go.
 const CHUNK_BLOCKHASH_MAX_AGE_MS = 30_000;
+
+/**
+ * How many times a send retries when the provider says the blockhash does not
+ * exist. Three: one for a node that is merely behind, one for a blockhash that
+ * aged out under a paced transport, and one to fail on rather than loop.
+ */
+const BLOCKHASH_SEND_ATTEMPTS = 3;
 
 // One confirm window covers a full blockhash lifetime (90 s is the upper
 // bound), so every transaction sent in a round gets the whole life of its
