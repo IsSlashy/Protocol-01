@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
-import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { Keypair, Transaction } from "@solana/web3.js";
 import { Buffer } from "buffer";
 import nacl from "tweetnacl";
@@ -14,7 +13,6 @@ import {
   Repeat,
   Send,
   Inbox as InboxIcon,
-  Smartphone,
   Wallet,
   ShieldQuestion,
   Power,
@@ -28,17 +26,6 @@ import {
 } from "@/lib/privacy/chains";
 import type { Asset, ChainId, DerivedIdentity } from "@/lib/privacy/chains/types";
 import type { PoolToken } from "@/lib/privacy/pool/denominatedPool";
-import {
-  loadBuyerKey,
-  saveBuyerKey,
-  clearBuyerKey,
-  importBuyerKeyHex,
-  storageAvailable,
-  exportBuyerKeyHex,
-  isBackedUp,
-  markBackedUp,
-  backupAnswerMatches,
-} from "@/lib/pay/buyerKey";
 import { buildDerivationMessage } from "@/lib/privacy/message";
 import { initStealthWorker } from "@/lib/privacy/workerClient";
 import ChainCoinSelector from "./ChainCoinSelector";
@@ -107,7 +94,6 @@ export default function PayApp() {
       ),
     [wallets],
   );
-  const { setVisible } = useWalletModal();
   const { connection } = useConnection();
 
   const [asset, setAsset] = useState<Asset>(firstLive);
@@ -144,104 +130,12 @@ export default function PayApp() {
   // phone paired over QR: only the first is ours to persist, back up or forget.
   const [keyIsDevice, setKeyIsDevice] = useState(false);
   const [keyBackedUp, setKeyBackedUp] = useState(false);
-  const [backupAnswer, setBackupAnswer] = useState("");
-  const [backupError, setBackupError] = useState<string | null>(null);
-  const [storageBlocked, setStorageBlocked] = useState(false);
-  const [importText, setImportText] = useState("");
-  const [importError, setImportError] = useState<string | null>(null);
 
-  /** The stored key's address, so the connect screen can offer to resume it. */
-  const [storedKeyAddress, setStoredKeyAddress] = useState<string | null>(null);
-
-  // Rehydrate before anything can be sealed to a new identity.
-  useEffect(() => {
-    const stored = loadBuyerKey();
-    if (!stored) return;
-    setStoredKeyAddress(stored.publicKey.toBase58());
-    setP01Keypair(stored);
-    setKeyIsDevice(true);
-    setKeyBackedUp(isBackedUp(stored.publicKey.toBase58()));
-  }, []);
-
-  /**
-   * Create a buyer key on this device.
-   *
-   * ⛔ Refuses when storage will not hold it. Continuing in memory is precisely
-   * the failure above wearing a friendlier face: the user would get an
-   * identity, pay for a note sealed to it, and lose both on the next reload.
-   */
-  function createDeviceKey() {
-    if (!storageAvailable()) {
-      setStorageBlocked(true);
-      return;
-    }
-    const kp = Keypair.generate();
-    if (!saveBuyerKey(kp)) {
-      setStorageBlocked(true);
-      return;
-    }
-    setP01Keypair(kp);
-    setKeyIsDevice(true);
-    setKeyBackedUp(false);
-    setStoredKeyAddress(kp.publicKey.toBase58());
-    setBackupAnswer("");
-    setBackupError(null);
-  }
-
-  /**
-   * Adopt a key the user already holds — a P01 wallet, a `solana-keygen` file.
-   *
-   * The pairing modal exists and needs the phone to reach `/api/pair/:id` on
-   * THIS origin, which is a LAN round trip and a QR scan. This is the same
-   * outcome with neither: the secret is already in their hands, so there is
-   * nothing to hand over and nothing to back up that they do not have.
-   *
-   * ⚠️ It skips the backup gate deliberately — and only because possession is
-   * the gate. A pasted secret is by definition one the user already has a copy
-   * of; asking them to save what they just read off their own screen teaches
-   * them the prompt means nothing.
-   */
-  function importDeviceKey() {
-    const kp = importBuyerKeyHex(importText);
-    if (!kp) {
-      setImportError("That is not a key. Paste the 128-character secret, or the [1,2,…] array.");
-      return;
-    }
-    if (!storageAvailable() || !saveBuyerKey(kp)) {
-      setStorageBlocked(true);
-      return;
-    }
-    markBackedUp(kp.publicKey.toBase58());
-    setP01Keypair(kp);
-    setKeyIsDevice(true);
-    setKeyBackedUp(true);
-    setStoredKeyAddress(kp.publicKey.toBase58());
-    setImportText("");
-    setImportError(null);
-  }
-
-  function confirmBackup() {
-    if (!p01Keypair) return;
-    if (!backupAnswerMatches(p01Keypair, backupAnswer)) {
-      setBackupError("That is not the end of the secret above. Copy it again.");
-      return;
-    }
-    markBackedUp(p01Keypair.publicKey.toBase58());
-    setKeyBackedUp(true);
-    setBackupError(null);
-    setBackupAnswer("");
-  }
-
-  function downloadDeviceKey() {
-    if (!p01Keypair) return;
-    const blob = new Blob([exportBuyerKeyHex(p01Keypair)], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `styx-buyer-key-${p01Keypair.publicKey.toBase58().slice(0, 8)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  // The device-key rehydrate that used to run here is gone with the paths that
+  // created one. Keeping it would silently re-adopt a stored key on mount, so
+  // the extension button — the only way in now — would never be reached.
+  // `lib/pay/buyerKey.ts` is untouched and still tested: a stored key remains
+  // readable, which is what a migration will need.
 
   // Which tabs have an operation in flight, fed by the panels' onBusyChange.
   // The tab bar stays CLICKABLE during an operation on purpose: locking a user
@@ -443,7 +337,29 @@ export default function PayApp() {
       // seed differs and the notes are simply not found. That is already the
       // failure on every session after the first, cache or no cache — this
       // moves nothing about it.
-      const alreadyVerified = deterministicSignerVerified(solPub.toBase58());
+      // ⚠️ OUR OWN SIGNERS SKIP THE SECOND PROMPT, and only ours.
+      //
+      // The check exists because a third-party wallet may sign the same bytes
+      // two different ways, and a seed derived from a randomised signature is
+      // notes nobody can find next session. It is not a question about ed25519
+      // — it is a question about whose implementation is on the other end.
+      //
+      // For the in-page keypair we ARE the implementation: `doSign` is
+      // `nacl.sign.detached` a few lines up. For the P01 extension it is our
+      // extension, signing detached ed25519, deterministic by RFC 8032.
+      //
+      // Asking anyway costs more than a popup here. MEASURED 2026-08-18: the
+      // extension's background keeps a single `currentApproval` in
+      // chrome.storage.session, so the second request killed the first's
+      // message channel and derivation failed with "A listener indicated an
+      // asynchronous response by returning true, but the message channel
+      // closed before a response was received" — a wallet that works, refused
+      // by a check about wallets that do not.
+      //
+      // ⛔ Third-party wallets are unchanged. They are still asked twice.
+      const ownSigner =
+        !!p01Keypair || (!!p01Extension && wallets.some((w) => w.adapter.connected && /protocol\s*01/i.test(w.adapter.name)));
+      const alreadyVerified = ownSigner || deterministicSignerVerified(solPub.toBase58());
       const sig = await doSign(encoded);
       if (!alreadyVerified) {
         await new Promise((r) => setTimeout(r, 250));
@@ -589,121 +505,25 @@ export default function PayApp() {
             </button>
           )}
 
-          {/* ⚠️ ONE BUTTON WHEN THE EXTENSION IS THERE.
-              Every other way in still works and still matters — a key on this
-              device, an imported secret, an external wallet — but offering
-              four doors to someone who has already installed the product's own
-              wallet is how a connect screen becomes a decision. They fold.
-              When the extension is ABSENT they unfold, because a screen with a
-              single button that cannot be pressed is worse than a choice. */}
-          <details className="group" open={!p01Extension}>
-            {p01Extension && (
-              <summary className="cursor-pointer list-none text-xs text-p01-text-dim underline-offset-4 hover:text-p01-cyan hover:underline">
-                Other ways in ▸
-              </summary>
-            )}
-            <div className={clsx("space-y-4", p01Extension && "mt-3")}>
-          {/* The way back in. `reset()` drops the session and keeps the key, so
-              without this the stored identity would only return on a reload —
-              which reads as "my key is gone" at the exact moment someone is
-              trying to switch between two of them. */}
-          {storedKeyAddress && (
-            <button
-              className="btn-primary flex w-full items-center justify-center gap-2"
-              onClick={() => {
-                const kp = loadBuyerKey();
-                if (!kp) return;
-                setP01Keypair(kp);
-                setKeyIsDevice(true);
-                setKeyBackedUp(isBackedUp(kp.publicKey.toBase58()));
-              }}
-            >
-              <KeyRound className="h-4 w-4" /> Resume {truncate(storedKeyAddress, 4, 4)}
-            </button>
-          )}
-          <button
-            className={clsx(
-              "flex w-full items-center justify-center gap-2",
-              storedKeyAddress ? "btn-secondary" : "btn-primary",
-            )}
-            onClick={createDeviceKey}
-          >
-            <KeyRound className="h-4 w-4" />
-            {storedKeyAddress ? "Create a different key" : "Create a buyer key on this device"}
-          </button>
-          {storedKeyAddress && (
-            <p className="text-xs text-p01-yellow">
-              Creating a different key replaces the stored one. Anything bought under{" "}
-              {truncate(storedKeyAddress, 4, 4)} needs its saved copy to be reached again.
-            </p>
-          )}
-          <p className="text-xs text-p01-text-dim">
-            No wallet, no extension, no SOL of your own. The deployment pays the fees, and this
-            key is what your subscriptions belong to.
-          </p>
-          {storageBlocked && (
-            <div className="rounded-lg border border-p01-red/40 bg-p01-red/5 p-3 text-xs text-p01-red">
-              This browser will not let us store the key. Without it, a reload loses the
-              subscription you paid for, so we stopped rather than hand you an identity that
-              dies. Nothing was charged. Try a normal window, or connect a wallet instead.
-            </div>
-          )}
-          {/* Not folded. Someone who already has a P01 wallet is here to use
-              it, and a fold makes the app's own wallet cost one more click
-              than a competitor's extension. */}
-          <div className="rounded-lg border border-p01-border p-3 text-left">
-            <div className="space-y-2">
-              <p className="text-xs text-p01-text-muted">
-                <span className="text-p01-text">Already have a P01 wallet?</span> Paste its
-                secret — the 128-character hex, or the <code>[1,2,…]</code> array a keygen file
-                holds.
+          {/* ⛔ THE P01 EXTENSION IS THE ONLY WAY IN.
+              A key pasted into a text field, a key generated in the page, an
+              external wallet — all of it worked, and all of it existed because
+              the extension could not announce itself. It can now, so the doors
+              that were built around its absence are gone rather than folded:
+              a fold is still a decision, and every one of those paths put the
+              signing key somewhere weaker than the extension holds it.
+              ⚠️ When the extension is missing the screen says so and stops.
+              There is deliberately no fallback — a fallback here is how a
+              buyer ends up with a key in localStorage they never chose. */}
+          {!p01Extension && (
+            <div className="rounded-lg border border-p01-yellow/30 bg-p01-yellow/5 p-4 text-left">
+              <p className="text-sm text-p01-yellow">The P01 extension is not installed.</p>
+              <p className="mt-2 text-xs text-p01-text-muted">
+                It is what holds your keys and signs for you. Install it, then reload this page —
+                it announces itself to the app and the button above appears.
               </p>
-              <textarea
-                className="h-20 w-full rounded-lg border border-p01-border bg-p01-void p-2 font-mono text-xs text-p01-text outline-none focus:border-p01-cyan"
-                value={importText}
-                spellCheck={false}
-                autoComplete="off"
-                placeholder="a99bbd87…"
-                onChange={(e) => {
-                  setImportText(e.target.value);
-                  setImportError(null);
-                }}
-              />
-              <button
-                className="btn-secondary w-full disabled:opacity-40"
-                onClick={importDeviceKey}
-                disabled={importText.trim().length === 0}
-              >
-                Use this key
-              </button>
-              {importError && <p className="text-xs text-p01-red">{importError}</p>}
             </div>
-          </div>
-          <details className="group">
-            <summary className="cursor-pointer list-none text-xs text-p01-text-dim underline-offset-4 hover:text-p01-cyan hover:underline">
-              Use an external wallet instead ▸
-            </summary>
-            <div className="mt-3 space-y-3">
-              <p className="text-xs text-p01-yellow">
-                An external wallet holds your real balance, and a deposit it pays for names you.
-                It works, and it is the option that gives away the most.
-              </p>
-              <button
-                className="glass glass-hover w-full py-3.5 font-display text-sm uppercase tracking-[0.15em] text-p01-cyan"
-                onClick={() => setVisible(true)}
-              >
-                Connect wallet
-              </button>
-              <button
-                className="btn-secondary flex w-full items-center justify-center gap-2"
-                onClick={() => setShowP01(true)}
-              >
-                <Smartphone className="h-4 w-4" /> Connect P01 Wallet
-              </button>
-            </div>
-          </details>
-            </div>
-          </details>
+          )}
           {/* A buyer that is not a wallet at all.
               Everything downstream already supports this: `p01Keypair` replaces
               the adapter for `solPub`, for `doSign` — nacl, locally, so there is
@@ -719,93 +539,9 @@ export default function PayApp() {
         </div>
       )}
 
-      {/* Gate 1b — save the key, before anything can be sealed to it.
-          This is a gate, not a notice: the key is the only thing that can spend
-          the notes and show the license keys bought under it, and it is stored
-          in the clear because it cannot encrypt itself — `sealedStore` encrypts
-          under an identity derived by signing WITH this key. */}
-      {p01Keypair && keyIsDevice && !keyBackedUp && (
-        <div className="glass space-y-4 p-6">
-          <div className="flex items-center gap-2">
-            <KeyRound className="h-5 w-5 text-p01-yellow" />
-            <p className="font-display text-p01-text">Save this key</p>
-          </div>
-          <p className="text-sm text-p01-text-muted">
-            This key alone can spend your notes and open every subscription bought with it. It
-            is stored <span className="text-p01-yellow">unencrypted</span> in this browser, and
-            the file you download is the same secret — anyone who reads either holds it.
-          </p>
-          <p className="text-sm text-p01-text-muted">
-            Clearing this browser&apos;s site data without a copy loses every subscription bought
-            under it. The license key is recomputed from the note, so there is nothing we can
-            look up for you.
-          </p>
-          <div className="overflow-x-auto rounded-lg border border-p01-border bg-p01-void p-3">
-            <code className="font-mono text-xs text-p01-cyan">
-              {exportBuyerKeyHex(p01Keypair)}
-            </code>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              className="btn-secondary flex items-center gap-2"
-              onClick={() => void navigator.clipboard?.writeText(exportBuyerKeyHex(p01Keypair))}
-            >
-              Copy
-            </button>
-            <button className="btn-secondary flex items-center gap-2" onClick={downloadDeviceKey}>
-              Download as text
-            </button>
-          </div>
-          <div className="space-y-2">
-            <label className="block text-xs text-p01-text-muted" htmlFor="backup-check">
-              Type the last four characters of the secret to continue.
-            </label>
-            <div className="flex gap-2">
-              <input
-                id="backup-check"
-                className="w-32 rounded-lg border border-p01-border bg-p01-void px-3 py-2 font-mono text-sm text-p01-text outline-none focus:border-p01-cyan"
-                value={backupAnswer}
-                maxLength={4}
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(e) => {
-                  setBackupAnswer(e.target.value);
-                  setBackupError(null);
-                }}
-              />
-              {/* Disabled until the field is full, so the button cannot read as
-                  "done" while the step it completes is still empty — which is
-                  how a real user read it the first time this shipped. */}
-              <button
-                className="btn-primary disabled:opacity-40"
-                onClick={confirmBackup}
-                disabled={backupAnswer.trim().length !== 4}
-              >
-                I saved it
-              </button>
-            </div>
-            {backupError && <p className="text-sm text-p01-red">{backupError}</p>}
-          </div>
-          {/* ⚠️ THE WAY OUT, and it only exists at this moment.
-              A secret can be exposed the instant it is shown — pasted into the
-              wrong window, screenshotted, read over a shoulder. Before anything
-              is sealed to this key there is nothing to lose by replacing it, so
-              replacing it is one click. After the backup gate closes the
-              affordance goes away, because by then discarding the key discards
-              the subscriptions bought under it. */}
-          <button
-            className="text-xs text-p01-text-dim underline-offset-4 hover:text-p01-red hover:underline"
-            onClick={() => {
-              clearBuyerKey();
-              setBackupAnswer("");
-              setBackupError(null);
-              createDeviceKey();
-            }}
-          >
-            This secret was exposed — replace it
-          </button>
-        </div>
-      )}
+      {/* The device-key backup gate lived here. It guarded a secret this
+          page created; the extension holds its own keys and backs them up
+          itself, so there is nothing here left to save. */}
 
       {/* Gate 2 — derive keys */}
       {/* `keyBackedUp` gates this so the backup step is not competing with a
