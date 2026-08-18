@@ -275,7 +275,12 @@ export class ShieldModule {
     // off-chain Merkle tree management is handled by the caller or a higher
     // layer. The on-chain program uses insert_with_root to accept
     // client-computed roots.
-    const newRoot = this.computeNewRoot(commitmentBytes);
+
+    // ⛔ ONLY VALID FOR A POOL WITH NO LEAVES YET. See
+    // `emptyTreeRootForFirstLeaf` — against a used pool this is a root under
+    // which no existing note can prove membership, and V2 writes it without
+    // asking for a proof.
+    const newRoot = this.emptyTreeRootForFirstLeaf(commitmentBytes);
 
     try {
       let tx: Transaction;
@@ -486,7 +491,12 @@ export class ShieldModule {
       const outCommit1Bytes = Buffer.from(packGoldilocksU64(outputCommitment1));
       const outCommit2Bytes = Buffer.from(packGoldilocksU64(outputCommitment2));
       const merkleRootBytes = Buffer.from(packGoldilocksU64(poolInfo.merkleRoot));
-      const newRoot = this.computeNewRoot(outCommit1Bytes);
+
+      // ⛔ ONLY VALID FOR A POOL WITH NO LEAVES YET. See
+      // `emptyTreeRootForFirstLeaf` — against a used pool this is a root under
+      // which no existing note can prove membership, and V2 writes it without
+      // asking for a proof.
+      const newRoot = this.emptyTreeRootForFirstLeaf(outCommit1Bytes);
 
       // Derive nullifier PDAs
       const [nullifierPDA1] = this.deriveNullifierPDA(poolPDA, nullifier1Bytes);
@@ -1025,7 +1035,12 @@ export class ShieldModule {
     const merkleRootBytes = Buffer.from(packGoldilocksU64(poolInfo.merkleRoot));
     const outCommit1Bytes = Buffer.from(packGoldilocksU64(changeCommitment));
     const outCommit2Bytes = Buffer.alloc(32);
-    const newRoot = this.computeNewRoot(outCommit1Bytes);
+
+    // ⛔ ONLY VALID FOR A POOL WITH NO LEAVES YET. See
+    // `emptyTreeRootForFirstLeaf` — against a used pool this is a root under
+    // which no existing note can prove membership, and V2 writes it without
+    // asking for a proof.
+    const newRoot = this.emptyTreeRootForFirstLeaf(outCommit1Bytes);
 
     // Request a circuit-5 (transfer) STARK proof with publicAmount = -amount
     // (mod Goldilocks, since the field is positive). Host provers are
@@ -1340,15 +1355,34 @@ export class ShieldModule {
   }
 
   /**
-   * Compute the Merkle root that results from inserting a single leaf into an
-   * otherwise-empty tree (the "zero cascade" starting point).
+   * The root of a tree whose ONLY occupied leaf is index 0.
    *
-   * The SDK does not maintain a stateful local Merkle tree — callers that need
-   * an accurate root after multiple insertions must manage their own tree and
-   * override this via the higher-level note manager. For new pools / smoke
-   * tests the zero-cascade root is correct.
+   * 🚨 THIS IS NOT THE ROOT OF ANY POOL THAT HAS EVER BEEN USED, and the name
+   * it used to have — `computeNewRoot` — said otherwise. It cascades the leaf
+   * with the zero-hash chain, which is only the correct answer for the very
+   * first insertion into a brand-new pool. Every subsequent insertion has real
+   * siblings, and this function does not know they exist: it has no tree, no
+   * leaf index, and no chain read.
+   *
+   * ⛔ WHY THAT IS WORSE THAN A WRONG NUMBER. The V2 denominated pool accepts a
+   * client-supplied root with no proof at all
+   * (`programs/zk_shielded/src/state/merkle_tree.rs` `insert_with_root`, reached
+   * from `instructions/shield_denominated.rs`). So a wrong root here is not
+   * rejected — it is WRITTEN, and it replaces the pool's root with one under
+   * which no existing note can prove membership. V3 is safe: it requires a
+   * circuit-6 proof (`shield_denominated_v3.rs`).
+   *
+   * It has been survivable only by accident: this SDK derives the denominated
+   * pool PDA from the seed `denominated_pool`, while the deployed program uses
+   * `denominated_pool_v2` / `denominated_pool_v4`, so the account is never
+   * found and the instruction never lands. Two bugs cancelling is not a
+   * safeguard — fixing the seed alone would arm this one.
+   *
+   * Kept, renamed, and made explicit rather than deleted, because it IS the
+   * right answer for a genuinely empty pool and the callers below are the ones
+   * that need changing.
    */
-  private computeNewRoot(leafBytes: Buffer): Buffer {
+  private emptyTreeRootForFirstLeaf(leafBytes: Buffer): Buffer {
     const zeros = computeGoldilocksZeroCascade(MERKLE_TREE_DEPTH);
     // Interpret the leaf as a Goldilocks u64 (bytes 0..8 LE).
     const leafGl = bytesToGoldilocks(new Uint8Array(leafBytes));
