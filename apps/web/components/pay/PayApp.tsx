@@ -119,10 +119,14 @@ export default function PayApp() {
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
 
+  /** The stored key's address, so the connect screen can offer to resume it. */
+  const [storedKeyAddress, setStoredKeyAddress] = useState<string | null>(null);
+
   // Rehydrate before anything can be sealed to a new identity.
   useEffect(() => {
     const stored = loadBuyerKey();
     if (!stored) return;
+    setStoredKeyAddress(stored.publicKey.toBase58());
     setP01Keypair(stored);
     setKeyIsDevice(true);
     setKeyBackedUp(isBackedUp(stored.publicKey.toBase58()));
@@ -148,6 +152,7 @@ export default function PayApp() {
     setP01Keypair(kp);
     setKeyIsDevice(true);
     setKeyBackedUp(false);
+    setStoredKeyAddress(kp.publicKey.toBase58());
     setBackupAnswer("");
     setBackupError(null);
   }
@@ -179,6 +184,7 @@ export default function PayApp() {
     setP01Keypair(kp);
     setKeyIsDevice(true);
     setKeyBackedUp(true);
+    setStoredKeyAddress(kp.publicKey.toBase58());
     setImportText("");
     setImportError(null);
   }
@@ -460,6 +466,18 @@ export default function PayApp() {
     if (!keyIsDevice) {
       p01Keypair?.secretKey.fill(0);
       setP01Keypair(null);
+    } else {
+      // ⚠️ LEAVE THE SESSION, KEEP THE KEY. Two different things, and the
+      // first version of this conflated them by doing neither: a device key
+      // survived `reset()` on purpose, so `chainConnected` stayed true and the
+      // screen sat on "Sign to derive keys" with no way out at all. Measured
+      // by a user, immediately.
+      //
+      // Storage is untouched, so the identity is resumable from the connect
+      // screen and nothing bought under it is lost.
+      setP01Keypair(null);
+      setKeyIsDevice(false);
+      setKeyBackedUp(false);
     }
     void disconnect();
   }
@@ -497,9 +515,16 @@ export default function PayApp() {
       {/* Gate 1 — connect */}
       {!chainConnected && (
         <div className="glass space-y-4 p-7 text-center">
-          <Wallet className="mx-auto h-8 w-8 text-p01-cyan" />
+          <KeyRound className="mx-auto h-8 w-8 text-p01-cyan" />
           <div>
-            <p className="font-display text-p01-text">Connect a wallet</p>
+            {/* ⚠️ THIS SCREEN USED TO OPEN ON SOMEBODY ELSE'S WALLET.
+                It was titled "Connect a wallet", led with Phantom, and buried
+                the P01 key under two folds — so the product's own wallet was
+                the third option on a screen about wallets. An external wallet
+                is also the WORST option here: it is the account that holds the
+                user's real financial life, and a deposit it pays for names
+                them. It belongs behind a fold, not in front of one. */}
+            <p className="font-display text-p01-text">Your P01 wallet</p>
             {/* "post-quantum payments" is the exact phrase the page header of
                 app/(pay)/app/page.tsx forbids, and this connect card said it:
                 the signature that pays is Ed25519 and stays Ed25519. What is
@@ -507,9 +532,9 @@ export default function PayApp() {
                 encryption, hybrid X25519 + ML-KEM-768, so that is what the
                 sentence names. Also drops the pre-rename product name. */}
             <p className="mt-1 text-sm text-p01-text-muted">
-              Connect Phantom, or pair your Styx mobile wallet, to send and receive.
-              Recipient addresses are hybrid post-quantum. The signature that pays
-              is Ed25519 and stays Ed25519.
+              Everything here runs on a P01 key: subscriptions belong to it, notes are sealed to
+              it, and the deployment pays the fees. Recipient addresses are hybrid post-quantum.
+              The signature that pays is Ed25519 and stays Ed25519.
             </p>
           </div>
           {/* ⚠️ ORDER IS THE ARGUMENT HERE.
@@ -518,12 +543,40 @@ export default function PayApp() {
               stored key does the first. And a buyer who connects a wallet is a
               buyer whose deposit can name them — the one thing this product
               exists to avoid. So the device key leads and the wallet folds. */}
+          {/* The way back in. `reset()` drops the session and keeps the key, so
+              without this the stored identity would only return on a reload —
+              which reads as "my key is gone" at the exact moment someone is
+              trying to switch between two of them. */}
+          {storedKeyAddress && (
+            <button
+              className="btn-primary flex w-full items-center justify-center gap-2"
+              onClick={() => {
+                const kp = loadBuyerKey();
+                if (!kp) return;
+                setP01Keypair(kp);
+                setKeyIsDevice(true);
+                setKeyBackedUp(isBackedUp(kp.publicKey.toBase58()));
+              }}
+            >
+              <KeyRound className="h-4 w-4" /> Resume {truncate(storedKeyAddress, 4, 4)}
+            </button>
+          )}
           <button
-            className="btn-primary flex w-full items-center justify-center gap-2"
+            className={clsx(
+              "flex w-full items-center justify-center gap-2",
+              storedKeyAddress ? "btn-secondary" : "btn-primary",
+            )}
             onClick={createDeviceKey}
           >
-            <KeyRound className="h-4 w-4" /> Create a buyer key on this device
+            <KeyRound className="h-4 w-4" />
+            {storedKeyAddress ? "Create a different key" : "Create a buyer key on this device"}
           </button>
+          {storedKeyAddress && (
+            <p className="text-xs text-p01-yellow">
+              Creating a different key replaces the stored one. Anything bought under{" "}
+              {truncate(storedKeyAddress, 4, 4)} needs its saved copy to be reached again.
+            </p>
+          )}
           <p className="text-xs text-p01-text-dim">
             No wallet, no extension, no SOL of your own. The deployment pays the fees, and this
             key is what your subscriptions belong to.
@@ -535,14 +588,15 @@ export default function PayApp() {
               dies. Nothing was charged. Try a normal window, or connect a wallet instead.
             </div>
           )}
-          <details className="group">
-            <summary className="cursor-pointer list-none text-xs text-p01-text-muted underline-offset-4 hover:text-p01-cyan hover:underline">
-              I already have a P01 key ▸
-            </summary>
-            <div className="mt-3 space-y-2">
+          {/* Not folded. Someone who already has a P01 wallet is here to use
+              it, and a fold makes the app's own wallet cost one more click
+              than a competitor's extension. */}
+          <div className="rounded-lg border border-p01-border p-3 text-left">
+            <div className="space-y-2">
               <p className="text-xs text-p01-text-muted">
-                Paste its secret — the 128-character hex, or the <code>[1,2,…]</code> array a
-                keygen file holds. It becomes this browser&apos;s identity.
+                <span className="text-p01-text">Already have a P01 wallet?</span> Paste its
+                secret — the 128-character hex, or the <code>[1,2,…]</code> array a keygen file
+                holds.
               </p>
               <textarea
                 className="h-20 w-full rounded-lg border border-p01-border bg-p01-void p-2 font-mono text-xs text-p01-text outline-none focus:border-p01-cyan"
@@ -564,12 +618,16 @@ export default function PayApp() {
               </button>
               {importError && <p className="text-xs text-p01-red">{importError}</p>}
             </div>
-          </details>
+          </div>
           <details className="group">
-            <summary className="cursor-pointer list-none text-xs text-p01-text-muted underline-offset-4 hover:text-p01-cyan hover:underline">
-              Use a wallet instead ▸
+            <summary className="cursor-pointer list-none text-xs text-p01-text-dim underline-offset-4 hover:text-p01-cyan hover:underline">
+              Use an external wallet instead ▸
             </summary>
             <div className="mt-3 space-y-3">
+              <p className="text-xs text-p01-yellow">
+                An external wallet holds your real balance, and a deposit it pays for names you.
+                It works, and it is the option that gives away the most.
+              </p>
               <button
                 className="glass glass-hover w-full py-3.5 font-display text-sm uppercase tracking-[0.15em] text-p01-cyan"
                 onClick={() => setVisible(true)}
