@@ -99,6 +99,44 @@ function clientIp(req: NextRequest): string {
   return 'unknown';
 }
 
+/**
+ * How old a deposit must be before its note may be handed to anybody.
+ *
+ * 🚨 THE RULE THAT STOPS A NOTE CARRYING ITS BUYER'S CLOCK.
+ *
+ * MEASURED 2026-08-18, spend `4zWERbE1NPaR…`. The buyer paid at 05:31:35 and
+ * the depositing ephemeral was funded at 05:31:36. One second. So the walk
+ * spend → commitment (cleartext, byte 160) → the deposit that emitted it → the
+ * ephemeral that paid for it → its funder → "the transfer one second before"
+ * lands on the buyer, deterministically, with nothing to guess.
+ *
+ * ⛔ A CROWD DOES NOT FIX THIS AND WAITING AFTERWARDS DOES NOT EITHER. A
+ * thousand buyers an hour still leave one transfer in that second, and a
+ * maturity delay imposed AFTER the purchase moves the spend while leaving the
+ * deposit's timestamp exactly where it was. The join is written at deposit
+ * time and it is permanent.
+ *
+ * What breaks it is refusing to issue a YOUNG note: a deployment that can only
+ * hand out notes deposited long ago cannot mint one to order, so the deposit
+ * carries no information about who asked. That turns the walk back into "which
+ * of the buyers in this window", which is the guess a crowd actually dilutes.
+ *
+ * ~1 hour at 400ms/slot. Overridable so a test deployment can lower it — and
+ * lowering it is a privacy decision, not a tuning knob: at 0 this route is the
+ * mint-to-order shape the measurement above condemns.
+ */
+const DEFAULT_MIN_AGE_SLOTS = 9_000;
+
+function minAgeSlots(): number {
+  const raw = process.env.P01_TREASURY_NOTE_MIN_AGE_SLOTS;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_MIN_AGE_SLOTS;
+  const n = Number(raw);
+  // A malformed value must not silently become 0 — that is the one value that
+  // turns the rule off, and it is the shape this exists to refuse.
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_MIN_AGE_SLOTS;
+  return Math.floor(n);
+}
+
 /** The treasury's pool seed, 32 bytes as 64 hex characters. */
 function treasurySeed(): Uint8Array | null {
   const hex = process.env.P01_TREASURY_POOL_SEED;
@@ -339,6 +377,20 @@ export async function POST(request: NextRequest) {
     return bad(502, `the pool's spent notes could not be read: ${(e as Error).message}`);
   }
 
+  // The clock the maturity rule is measured against. Read once, after the
+  // history, so a note cannot look older than it is because the slot was
+  // sampled late. `finalized` for the same reason the blockhash is: a
+  // confirmed slot can be rolled back, and a rolled-back clock reads as extra
+  // age, which is the direction that would issue a note too young.
+  let currentSlot: number;
+  try {
+    currentSlot = await connection.getSlot('finalized');
+  } catch (e) {
+    // ⛔ Refuse rather than issue blind. An unknown clock is not an old note.
+    return bad(502, `the chain's slot could not be read: ${(e as Error).message}`);
+  }
+  const minAge = minAgeSlots();
+
   const poolKey = pool.poolPDA.toBase58();
   /**
    * Leaves that exist and are spoken for, but not by this caller.
@@ -353,6 +405,10 @@ export async function POST(request: NextRequest) {
   let heldByOthers = 0;
   /** Configured leaves whose note has already been spent on chain. */
   let spentLeaves = 0;
+  /** Configured leaves whose deposit is too recent to hand out yet. */
+  let tooYoung = 0;
+  /** How long the closest of those still has to wait, in slots. */
+  let shortestWait = Number.POSITIVE_INFINITY;
   for (const leafIndex of leaves) {
     // ATOMIC CLAIM, before any work. `incr` returns 1 only for the caller that
     // created the key, so exactly one concurrent request can win a leaf. Doing
@@ -436,6 +492,24 @@ export async function POST(request: NextRequest) {
     }
 
     const onChain = commitments.get(commitment.toString());
+    // 🚨 AGE, BEFORE ANYTHING IS SEALED. See DEFAULT_MIN_AGE_SLOTS: a note
+    // young enough to have been minted for this caller carries their clock, and
+    // no amount of crowd or later delay takes it back off. Skip to the next
+    // leaf rather than refuse the request — young stock beside old stock is a
+    // stocked deployment, exactly like a spent leaf beside a good one.
+    //
+    // ⛔ AN UNKNOWN SLOT IS TREATED AS TOO YOUNG. `depositSlot` is null when the
+    // insert transaction carried no slot, and "we could not tell how old it is"
+    // must not resolve to "old enough". Same direction as every other unknown
+    // on this path.
+    if (onChain && onChain.leafIndex === leafIndex) {
+      const age = onChain.depositSlot === null ? -1 : currentSlot - onChain.depositSlot;
+      if (age < minAge) {
+        tooYoung += 1;
+        if (age >= 0) shortestWait = Math.min(shortestWait, minAge - age);
+        continue;
+      }
+    }
     if (!onChain || onChain.leafIndex !== leafIndex) {
       return bad(500, 'the configured inventory does not match the chain', {
         leafIndex,
@@ -527,6 +601,28 @@ export async function POST(request: NextRequest) {
         'A commitment stays on the tree after its note is spent, so the inventory still looks ' +
         'present on chain. Deposit fresh notes from the treasury wallet and extend ' +
         'P01_TREASURY_NOTE_LEAVES with the new leaf indices. Nothing was charged.',
+    });
+  }
+
+  // Said before "empty" and before "held by others", because it is the one
+  // exhaustion a caller can simply outwait — and because reading it as "empty"
+  // would send an operator depositing MORE young notes, which is the opposite
+  // of what this rule wants. The wait is reported in slots and minutes so the
+  // answer is a time, not a mystery.
+  if (tooYoung > 0) {
+    const waitSlots = Number.isFinite(shortestWait) ? shortestWait : null;
+    return bad(503, 'the notes in stock are too recently deposited to be issued', {
+      configured: leaves.length,
+      tooYoung,
+      minAgeSlots: minAge,
+      waitSlots,
+      waitMinutesApprox: waitSlots === null ? null : Math.ceil((waitSlots * 0.4) / 60),
+      hint:
+        'A note deposited moments before it is handed over carries the clock of whoever bought it: the walk ' +
+        'spend -> commitment -> deposit -> its funder lands on whoever paid just before, and no ' +
+        'crowd dilutes a one-second window. Wait for the stock to age, or deposit a batch well ' +
+        'ahead of when it will be sold. P01_TREASURY_NOTE_MIN_AGE_SLOTS sets the threshold; ' +
+        'lowering it is a privacy decision, not a tuning knob.',
     });
   }
 

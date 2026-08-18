@@ -1935,6 +1935,81 @@ async function verifySpend(rpc, signature, opts = {}) {
   // expensive, and only the absence has to be paid for in full.
   if (namedWallet) {
     const P11_NAME = 'the named wallet appears in no reachable transaction';
+
+    // 🚨 THE FUNDER'S OWN HISTORY — THE HOP THAT MADE THIS PROBE LIE.
+    //
+    // MEASURED 2026-08-18 on spend `4zWERbE1NPaR…`. P11 returned PASS over the
+    // three surfaces below. The buyer's wallet was TWO hops out, and reaching it
+    // cost one getSignaturesForAddress and 27 getTransaction:
+    //
+    //   spend -> its payer -> H8WtBx3Qap…      <- P6 PRINTS THIS ADDRESS ITSELF
+    //         -> that funder's 27-transaction history
+    //         -> 21PjRyhLLg…, signed BY THE BUYER, paying the funder 1.003 SOL
+    //            one second before the funder financed the ephemeral that made
+    //            the deposit. Amount and clock both match the note.
+    //
+    // The funder was NAMED in two surfaces and READ in none. A probe that hands
+    // the auditor an address and then declines to open it measures one step less
+    // than the auditor's walk — and reports the shortfall as a PASS. That is the
+    // exact failure this file exists to refuse, committed by this file.
+    //
+    // ⛔ `in` EDGES ONLY, and the direction is the whole argument. An edge where
+    // lamports ARRIVED names the party that funded this payer: that is the way
+    // back toward a person. `out` edges are vaults, proof buffers and the pool —
+    // protocol accounts that lead away from one, and whose histories are every
+    // other depositor's business, not this walk's. Nothing is lost by the strict
+    // direction: a funder brackets its ephemeral, so its pre-fund already names
+    // it before its sweep does.
+    //
+    // Exhaustive by construction. An absence is the only answer that has to be
+    // paid for in full, and a truncated funder history therefore turns P11
+    // INCONCLUSIVE rather than green — same asymmetry as every walk above. This
+    // cost is P11-only: no other probe reads these transactions.
+    const offLimits = new Set(
+      [...Object.keys(POOLS), SYSTEM_PROGRAM, ZK_SHIELDED, STARK_VERIFIER, poolPDA, payer,
+        deposit?.payer].filter(Boolean),
+    );
+    const funderSurfaces = [];
+    const walked = new Set();
+    for (const [origin, trace] of [
+      ["the spend payer's funder", spendTrace],
+      ["the deposit payer's funder", depositTrace],
+    ]) {
+      if (!trace || trace.inconclusive) continue;
+      for (const e of trace.edges) {
+        if (e.direction !== 'in') continue;
+        if (offLimits.has(e.counterparty) || walked.has(e.counterparty)) continue;
+        walked.add(e.counterparty);
+        // A frozen fixture recorded before this surface existed holds no answer
+        // for these requests, and `makeReplayRpc` treats a miss as a hard stop —
+        // rightly, because answering silence would let an unread channel pass as
+        // clean. That invariant is preserved here without invalidating every
+        // fixture in the repo: an unreadable funder is an INCOMPLETE surface, so
+        // it can only ever turn P11 INCONCLUSIVE, never green. Re-record with
+        // --record --wallet to give a fixture a funder surface it can pass on.
+        let up = null;
+        try {
+          up = await traceFunderEdges(rpc, e.counterparty, { historyLimit, exhaustive: true });
+        } catch (err) {
+          funderSurfaces.push({
+            label: `${origin} ${e.counterparty.slice(0, 8)}…'s own history (unread: ${err.message.slice(0, 60)})`,
+            keys: new Set(),
+            complete: false,
+            read: 0,
+            of: '?',
+          });
+          continue;
+        }
+        funderSurfaces.push({
+          label: `${origin} ${e.counterparty.slice(0, 8)}…'s own history`,
+          keys: up.namedKeys,
+          complete: !up.inconclusive && !up.truncated && up.deep,
+          read: up.scanned,
+          of: up.historyLength,
+        });
+      }
+    }
+
     /** Walks whose key set is complete enough to argue absence from. */
     const parts = [
       { label: 'the spend transaction', keys: new Set(keys), complete: true, read: 1, of: 1 },
@@ -1952,6 +2027,7 @@ async function verifySpend(rpc, signature, opts = {}) {
         read: depositTrace.scanned,
         of: depositTrace.historyLength,
       },
+      ...funderSurfaces,
     ].filter(Boolean);
 
     const hits = parts.filter((p) => p.keys?.has(namedWallet));
@@ -1959,9 +2035,11 @@ async function verifySpend(rpc, signature, opts = {}) {
       results.push(
         probe('P11', P11_NAME, false,
           `${namedWallet} is NAMED in ${hits.map((h) => h.label).join(' and ')}. ` +
-          'Found by listing account keys — no instruction decoded, no proof read, no edge ' +
-          'followed. This is the cheapest extraction there is and every other probe here can ' +
-          'miss it, because an address named by a transaction need not have moved a lamport in it.',
+          'Found by listing account keys — no instruction decoded, no proof read. This is the ' +
+          'cheapest extraction there is and every other probe here can miss it, because an ' +
+          'address named by a transaction need not have moved a lamport in it. A hit on a ' +
+          "funder's own history costs one extra hop, taken from an address the P6/P9 report " +
+          'already prints in full.',
           hits.length),
       );
     } else {

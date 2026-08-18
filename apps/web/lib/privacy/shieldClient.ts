@@ -362,6 +362,41 @@ export interface SubscribeOutcome {
  * No secret crosses this boundary in either direction. The license key comes
  * back derived; the note secret it came from does not.
  */
+/**
+ * Does any single transaction name BOTH addresses?
+ *
+ * The cheapest join there is, and the one an auditor reaches for first. A
+ * transaction that names two addresses is returned by `getSignaturesForAddress`
+ * for each of them, so intersecting two signature pages answers "is there an
+ * on-chain document tying these two together" without decoding one instruction
+ * or fetching one transaction body.
+ *
+ * `true` = yes, and that is proof. `false` = no, AND both histories were read to
+ * their end. `null` = could not be established — either page filled, or the read
+ * failed. Callers must treat `null` as unsafe: an absence measured over a
+ * truncated history is not an absence, it is a shorter look.
+ */
+async function sharesATransactionWith(
+  connection: Connection,
+  a: string,
+  b: string,
+  limit = 1000,
+): Promise<boolean | null> {
+  try {
+    const [left, right] = await Promise.all([
+      connection.getSignaturesForAddress(new PublicKey(a), { limit }),
+      connection.getSignaturesForAddress(new PublicKey(b), { limit }),
+    ]);
+    const seen = new Set(left.map((s) => s.signature));
+    for (const s of right) if (seen.has(s.signature)) return true;
+    // Only now does the negative mean anything, and only if both were complete.
+    if (left.length >= limit || right.length >= limit) return null;
+    return false;
+  } catch {
+    return null;
+  }
+}
+
 export async function subscribeFromPool(params: SubscribeParams): Promise<SubscribeOutcome> {
   const {
     meta, token, denomination, leafIndex, retailer, rate, intervalSlots,
@@ -416,11 +451,46 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
   //
   // Either being unknown is refused. An unresolvable deposit is not a safe one:
   // it is far more often a pruned history than an origin that does not exist.
+  //
+  // 🚨 AND ONE HOP FURTHER STILL, BECAUSE EQUALITY WAS NEVER THE QUESTION.
+  //
+  // Comparing the wallet to the funder catches "I funded my own deposit". It
+  // does not catch the shape this deployment actually ships, where the wallet
+  // PAYS the funder and the funder deposits: two transfers, neither naming both
+  // ends, and the funder standing in the middle with a readable history that
+  // names both.
+  //
+  // MEASURED 2026-08-18, spend `4zWERbE1NPaR…`. This guard passed. The disclosure
+  // said the wallet was not reachable. It was, in two hops:
+  //   spend -> its payer -> the funder H8WtBx3Qap… (probe P6 prints it)
+  //         -> that funder's history -> `21PjRyhLLg…`, SIGNED BY THE WALLET,
+  //            paying the funder 1.003 SOL one second before it financed the
+  //            depositing ephemeral. The amount is the note. The clock is a hint.
+  //
+  // ⛔ SO: NOT `funder === wallet`, BUT `does any transaction name both`. Cheap,
+  // and cheap is the point — this is the extraction an auditor actually runs.
+  // `getSignaturesForAddress` on each address and intersect: a transaction
+  // naming both appears in BOTH lists, so two calls answer it with no
+  // `getTransaction` at all.
+  //
+  // The bound is honest in the only direction that matters. A HIT is proof. An
+  // absence is only trustworthy if neither history was truncated, so a full page
+  // returns `null` — unknown — and `null` is refused exactly like every other
+  // unknown on this path. It sees direct co-naming, not an arbitrary chain: a
+  // funder laundered through a third address still passes here, which is why the
+  // probe file walks further and why this comment does not claim otherwise.
+  onProgress?.('Checking who paid for this note...');
+  const funderNamesWallet =
+    prep.depositFunder === null
+      ? null
+      : await sharesATransactionWith(connection, prep.depositFunder, owner.toBase58());
+
   const selfDeposited =
     prep.depositPayer === null ||
     prep.depositFunder === null ||
     prep.depositPayer === owner.toBase58() ||
-    prep.depositFunder === owner.toBase58();
+    prep.depositFunder === owner.toBase58() ||
+    funderNamesWallet !== false;
   if (params.neverExposeWallet && selfDeposited) {
     throw new SelfDepositedNoteError(
       prep.depositFunder ?? prep.depositPayer,

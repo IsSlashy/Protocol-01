@@ -1461,11 +1461,33 @@ const ISSUANCE_UI = false;
                       Your wallet did not sign or pay for this subscription.
                     </strong>{' '}
                     The funder covered the rent and fees and the leftover went back to it, not to
-                    you. Two things that does not do: the deposit that created this note was signed
-                    and paid for by your wallet, and this subscription publishes the same note
-                    identifier that deposit did — so anyone can still walk from here to that deposit
-                    and reach your wallet. And the funder saw the request, its timing and where it
-                    came from, so the link moved off the chain rather than away.
+                    you.{' '}
+                    {/* This half USED to be written flat, asserting a self-deposit as a fact of
+                        the product. It was, back when every note in the pool was one the buyer
+                        had shielded themselves. It stopped being true the day a third party
+                        could deposit the note — and MEASURED: run `4zWERbE1NPaR…`, whose
+                        guard had already set `reachableViaDeposit: false`, still read this
+                        sentence and told a clean subscription it reached the buyer's wallet.
+                        A false RED on the one screen whose job is to be believed. Same field
+                        the paragraph above reads, so the two can no longer disagree. */}
+                    {result.reachableViaDeposit !== false ? (
+                      <>
+                        Two things that does not do: the deposit that created this note was signed
+                        and paid for by your wallet, and this subscription publishes the same note
+                        identifier that deposit did — so anyone can still walk from here to that
+                        deposit and reach your wallet. And the funder saw the request, its timing
+                        and where it came from, so the link moved off the chain rather than away.
+                      </>
+                    ) : (
+                      <>
+                        Somebody else deposited this note, so the walk this subscription still
+                        opens — it publishes that deposit's identifier in the clear — ends at
+                        their payer and not at you. What is left is off the chain, not on it: the
+                        funder saw the request, its timing and where it came from, and whoever
+                        deposited the note knows which note they handed you. The link moved off
+                        the chain rather than away.
+                      </>
+                    )}
                   </span>
                 </p>
               ) : (

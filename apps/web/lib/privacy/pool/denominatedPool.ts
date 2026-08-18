@@ -355,6 +355,25 @@ export interface OnChainCommitment {
    * `null` when the transaction carried no readable header.
    */
   depositPayer: string | null;
+  /**
+   * The slot the deposit landed in.
+   *
+   * 🚨 WHAT MAKES A NOTE'S AGE MEASURABLE, AND WHY AGE IS NOT COSMETIC.
+   * A note minted the moment it is bought carries the buyer's clock. MEASURED
+   * 2026-08-18: the purchase settled at 05:31:35 and the depositing ephemeral
+   * was funded at 05:31:36 — one second — so walking spend → commitment →
+   * deposit → its funder → "the transfer one second earlier" names the buyer
+   * with no guessing at all. A crowd does not dilute a one-second window: a
+   * thousand buyers a day still leave exactly one transfer in that second.
+   *
+   * Age is the only thing that turns that join back into a guess. An issuer
+   * that will only hand out notes deposited long ago cannot mint to order, so
+   * the deposit stops carrying any information about who asked for it.
+   *
+   * Free to collect: the scan already holds the transaction. `null` when the
+   * response carried no slot.
+   */
+  depositSlot: number | null;
   /** The insert transaction, so a caller can show or verify the claim. */
   signature: string;
 }
@@ -1411,6 +1430,10 @@ export async function fetchPoolCommitments(
       // loop, because one transaction can emit several leaves and they all
       // share a payer.
       const depositPayer = feePayerOf(tx);
+      // The deposit's own clock. Carried for the issuer's maturity rule, which
+      // is what stops a note being minted to a buyer's order — see
+      // `OnChainCommitment.depositSlot`.
+      const depositSlot = typeof tx?.slot === 'number' ? tx.slot : null;
       const signature = batch[t]!.signature;
       for (const log of logs) {
         const m = log.match(/^Program data: (.+)$/);
@@ -1438,7 +1461,7 @@ export async function fetchPoolCommitments(
           break;
         }
         if (!decoded) continue;
-        out.set(decoded.commitment.toString(), { ...decoded, depositPayer, signature });
+        out.set(decoded.commitment.toString(), { ...decoded, depositPayer, depositSlot, signature });
       }
     }
 

@@ -64,6 +64,19 @@ vi.mock('./ephemeralFunder', async (importOriginal) => ({
 import { fundEphemeralForJob } from './ephemeralFunder';
 import { SelfDepositedNoteError, subscribeFromPool } from '../shieldClient';
 
+/**
+ * Signature histories, by address. The guard's last question is answered by
+ * intersecting two of these — a transaction naming two addresses is returned
+ * for both — so a stub that serves nothing else is enough to drive every branch.
+ */
+let histories: Record<string, string[]>;
+const connection = {
+  getSignaturesForAddress: async (key: PublicKey, o?: { limit?: number }) =>
+    (histories[key.toBase58()] ?? [])
+      .slice(0, o?.limit ?? 1000)
+      .map((signature) => ({ signature })),
+} as never;
+
 const params = (over: Record<string, unknown> = {}) =>
   ({
     meta: 'meta',
@@ -74,7 +87,7 @@ const params = (over: Record<string, unknown> = {}) =>
     rate: 1n,
     intervalSlots: 100n,
     owner: OWNER,
-    connection: {} as never,
+    connection,
     signOne: async (t: never) => t,
     ...over,
   }) as never;
@@ -82,6 +95,12 @@ const params = (over: Record<string, unknown> = {}) =>
 beforeEach(() => {
   vi.clearAllMocks();
   executeCalled = false;
+  // Disjoint by default: the funder and the buyer share no transaction, which
+  // is what a note bought without an on-chain payment to the funder looks like.
+  histories = {
+    [TREASURY.toBase58()]: ['TREASURY_TX_1', 'TREASURY_TX_2'],
+    [OWNER.toBase58()]: ['WALLET_TX_1'],
+  };
   prepareAnswer = {
     kind: 'poolSubscribePrepare',
     jobId: 'job',
@@ -104,6 +123,58 @@ describe('a note somebody else deposited', () => {
     expect(out.reachableViaDeposit).toBe(false);
     expect(out.depositPayer).toBe(TREASURY.toBase58());
     expect(executeCalled).toBe(true);
+  });
+});
+
+describe('a note deposited by a funder the wallet PAID', () => {
+  // 🚨 THE SHAPE THAT PASSED THIS GUARD AND WAS STILL FINDABLE.
+  //
+  // MEASURED 2026-08-18, spend `4zWERbE1NPaR…`. The funder is not the wallet, so
+  // every equality above is false and the guard passed. The result screen then
+  // said the wallet was not reachable. It was, in two hops: the funder's own
+  // history holds `21PjRyhLLg…`, SIGNED BY THE WALLET, paying it 1.003 SOL one
+  // second before it financed the depositing ephemeral.
+  //
+  // Equality was never the question. The question is whether any transaction
+  // names both — and the answer costs two `getSignaturesForAddress` calls,
+  // which is precisely why an auditor runs it first.
+  beforeEach(() => {
+    histories = {
+      [TREASURY.toBase58()]: ['TREASURY_TX_1', 'THE_PURCHASE'],
+      [OWNER.toBase58()]: ['WALLET_TX_1', 'THE_PURCHASE'],
+    };
+  });
+
+  it('refuses, though the funder is not the wallet', async () => {
+    expect(prepareAnswer.depositFunder).not.toBe(OWNER.toBase58());
+    await expect(subscribeFromPool(params({ neverExposeWallet: true }))).rejects.toBeInstanceOf(
+      SelfDepositedNoteError,
+    );
+    expect(executeCalled).toBe(false);
+  });
+
+  it('reports it as reachable when the caller proceeds anyway', async () => {
+    const out = await subscribeFromPool(params());
+    expect(out.reachableViaDeposit).toBe(true);
+  });
+});
+
+describe('a funder history too long to argue absence from', () => {
+  // An absence read off a truncated page is not an absence, it is a shorter
+  // look. Same asymmetry as everywhere else on this path: a hit is proof, an
+  // absence has to be paid for in full, and an unknown is refused.
+  beforeEach(() => {
+    histories = {
+      [TREASURY.toBase58()]: Array.from({ length: 1000 }, (_, i) => `T${i}`),
+      [OWNER.toBase58()]: ['WALLET_TX_1'],
+    };
+  });
+
+  it('refuses rather than call a full page clean', async () => {
+    await expect(subscribeFromPool(params({ neverExposeWallet: true }))).rejects.toBeInstanceOf(
+      SelfDepositedNoteError,
+    );
+    expect(executeCalled).toBe(false);
   });
 });
 
