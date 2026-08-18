@@ -28,6 +28,9 @@ import { Keypair, PublicKey } from '@solana/web3.js';
 
 const OWNER = Keypair.generate().publicKey;
 const TREASURY = new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB');
+/** The address that pays for the SPEND, which is a different question from who
+ *  paid for the deposit — and, until 2026-08-18, a question nothing asked. */
+const SPEND_FUNDER = Keypair.generate().publicKey;
 
 /** Whatever the worker last answered for `poolSubscribePrepare`. */
 let prepareAnswer: Record<string, unknown>;
@@ -53,28 +56,45 @@ vi.mock('../workerClient', () => ({
 
 // The funding decision is exercised by its own suite; here it must simply not
 // be reached when the deposit check refuses.
+/** What the deployment answers when asked who funds the spend leg. Mutable so a
+ *  case can turn the funder off, break the lookup, or point it at an address the
+ *  wallet has paid. */
+let funderLookup: { state: string; pubkey?: string; reason?: string };
+
 vi.mock('./ephemeralFunder', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./ephemeralFunder')>()),
   fundEphemeralForJob: vi.fn(async () => ({
     fundedBy: 'funder' as const,
     sweepTo: TREASURY.toBase58(),
   })),
+  // 🚨 REAL BY DEFAULT WOULD MEAN `fetch()` IN A NODE TEST, which resolves to
+  // "unknown", which the spend-leg guard refuses — every case in this file would
+  // go red for a reason that has nothing to do with what it is testing. Stubbing
+  // it makes each case DECLARE who pays, which is the point of the new guard.
+  fetchFunderLookup: vi.fn(async () => funderLookup),
 }));
 
 import { fundEphemeralForJob } from './ephemeralFunder';
-import { SelfDepositedNoteError, subscribeFromPool } from '../shieldClient';
+import {
+  SelfDepositedNoteError,
+  SpendFunderNamesWalletError,
+  subscribeFromPool,
+} from '../shieldClient';
 
 /**
  * Signature histories, by address. The guard's last question is answered by
  * intersecting two of these — a transaction naming two addresses is returned
  * for both — so a stub that serves nothing else is enough to drive every branch.
  */
-let histories: Record<string, string[]>;
+let histories: Record<string, (string | { signature: string; slot: number })[]>;
 const connection = {
+  // Newest-first, exactly like the RPC: the guard's slot-coverage rule reads the
+  // LAST element as the oldest one it managed to see, and getting that backwards
+  // would turn "I read far enough" into "I did not".
   getSignaturesForAddress: async (key: PublicKey, o?: { limit?: number }) =>
     (histories[key.toBase58()] ?? [])
       .slice(0, o?.limit ?? 1000)
-      .map((signature) => ({ signature })),
+      .map((e) => (typeof e === 'string' ? { signature: e } : e)),
 } as never;
 
 const params = (over: Record<string, unknown> = {}) =>
@@ -100,7 +120,11 @@ beforeEach(() => {
   histories = {
     [TREASURY.toBase58()]: ['TREASURY_TX_1', 'TREASURY_TX_2'],
     [OWNER.toBase58()]: ['WALLET_TX_1'],
+    [SPEND_FUNDER.toBase58()]: ['SPEND_FUNDER_TX_1'],
   };
+  // A deployment whose till and float are different addresses: the funder that
+  // pays for spends has never been paid by this buyer.
+  funderLookup = { state: 'configured', pubkey: SPEND_FUNDER.toBase58() };
   prepareAnswer = {
     kind: 'poolSubscribePrepare',
     jobId: 'job',
@@ -270,5 +294,164 @@ describe('a deposit that could not be found', () => {
     const out = await subscribeFromPool(params({ neverExposeWallet: false }));
     expect(out.reachableViaDeposit).toBe(true);
     expect(out.depositPayer).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The SPEND leg — the funder surface this file did not read until 2026-08-18
+// ---------------------------------------------------------------------------
+
+describe('the address that pays for the subscription', () => {
+  // 🚨 THE HALF THE GUARD WAS MISSING WHILE THE PROBE READ BOTH.
+  //
+  // Everything above this line asks who funded the DEPOSIT. P11 walks the
+  // funders of BOTH legs. So a deployment holding a genuinely third-party note —
+  // clean on every assertion in this file — could still hand an auditor the
+  // buyer through the address paying for THIS transaction.
+
+  it('refuses when a transaction names both that funder and the wallet', async () => {
+    histories = {
+      [TREASURY.toBase58()]: ['TREASURY_TX_1'],
+      [OWNER.toBase58()]: ['WALLET_TX_1', 'THE_PURCHASE'],
+      [SPEND_FUNDER.toBase58()]: ['SPEND_FUNDER_TX_1', 'THE_PURCHASE'],
+    };
+    await expect(subscribeFromPool(params({ neverExposeWallet: true }))).rejects.toBeInstanceOf(
+      SpendFunderNamesWalletError,
+    );
+    expect(executeCalled).toBe(false);
+    // Refused BEFORE any money moved, like every other refusal on this path.
+    expect(fundEphemeralForJob).not.toHaveBeenCalled();
+  });
+
+  it('does NOT reuse the note error name, or the panel would loop forever', async () => {
+    // 🚨 THE CONTRACT WITH THE PANEL, AND IT IS A STRING. `SubscribePanel`
+    // recovers from `SelfDepositedNoteError` by swapping in another note. Doing
+    // that here would change nothing — the funder is the same address whichever
+    // note is spent — so it would burn a fresh note per attempt and report a
+    // note problem for a treasury problem.
+    histories = {
+      [OWNER.toBase58()]: ['THE_PURCHASE'],
+      [SPEND_FUNDER.toBase58()]: ['THE_PURCHASE'],
+      [TREASURY.toBase58()]: ['TREASURY_TX_1'],
+    };
+    await subscribeFromPool(params({ neverExposeWallet: true })).then(
+      () => expect.unreachable('should have refused'),
+      (e: Error) => {
+        expect(e.name).toBe('SpendFunderNamesWalletError');
+        expect(e.name).not.toBe('SelfDepositedNoteError');
+      },
+    );
+  });
+
+  it('names the cure as a deployment change, not a user action', async () => {
+    histories = {
+      [OWNER.toBase58()]: ['THE_PURCHASE'],
+      [SPEND_FUNDER.toBase58()]: ['THE_PURCHASE'],
+      [TREASURY.toBase58()]: ['TREASURY_TX_1'],
+    };
+    await expect(subscribeFromPool(params({ neverExposeWallet: true }))).rejects.toThrow(
+      /collects payments must never be the address that funds the spends/,
+    );
+  });
+
+  it('refuses when the deployment cannot say who pays', async () => {
+    // Unknown is not clean. Same posture as the deposit half.
+    funderLookup = { state: 'unknown', reason: 'the funder endpoint replied 502' };
+    await expect(subscribeFromPool(params({ neverExposeWallet: true }))).rejects.toBeInstanceOf(
+      SpendFunderNamesWalletError,
+    );
+  });
+
+  it('stays out of the way when there is no funder at all', async () => {
+    // No funder means the WALLET pre-funds, which is worse — and is already
+    // refused by `fundEphemeralForJob` with a different, accurate cure. This
+    // guard reporting it too would replace that error with a misleading one.
+    funderLookup = { state: 'none' };
+    const out = await subscribeFromPool(params({ neverExposeWallet: true }));
+    expect(out.reachableViaSpendFunder).toBe(false);
+    expect(executeCalled).toBe(true);
+  });
+
+  it('reports the exposure instead of refusing when the caller did not ask', async () => {
+    histories = {
+      [OWNER.toBase58()]: ['THE_PURCHASE'],
+      [SPEND_FUNDER.toBase58()]: ['THE_PURCHASE'],
+      [TREASURY.toBase58()]: ['TREASURY_TX_1'],
+    };
+    const out = await subscribeFromPool(params());
+    expect(out.reachableViaSpendFunder).toBe(true);
+    // The deposit leg is clean in this fixture, and it stays clean: the two
+    // halves are reported separately so the screen cannot claim one from the
+    // other.
+    expect(out.reachableViaDeposit).toBe(false);
+    expect(executeCalled).toBe(true);
+  });
+
+  it('reports both halves clean on a deployment that is actually clean', async () => {
+    const out = await subscribeFromPool(params({ neverExposeWallet: true }));
+    expect(out.reachableViaDeposit).toBe(false);
+    expect(out.reachableViaSpendFunder).toBe(false);
+    expect(executeCalled).toBe(true);
+  });
+});
+
+describe('a busy funder, which is what a working deployment looks like', () => {
+  // 🚨 THE REGRESSION THIS MUST NEVER BECOME.
+  //
+  // The first version of the join returned `null` the moment EITHER page filled.
+  // A funder that has served more than a page of jobs then answers `null`
+  // forever, and the guard above refuses every note for the rest of the
+  // deployment's life. That is the same shape as the funder-resolution bug that
+  // read the newest signatures instead of the oldest: a check that cannot pass
+  // is not a check, it is an outage.
+  //
+  // The absence is still recoverable soundly: a transaction naming both is in
+  // the WALLET's history by definition, so if the wallet's page did not fill,
+  // its history is complete — and it is enough for the funder's window to reach
+  // back past the wallet's first transaction.
+
+  it('still clears a full funder page that reaches back before the wallet existed', async () => {
+    histories = {
+      [TREASURY.toBase58()]: ['TREASURY_TX_1'],
+      // A brand-new buyer, which is exactly the recommended flow.
+      [OWNER.toBase58()]: [{ signature: 'WALLET_TX_1', slot: 900 }],
+      [SPEND_FUNDER.toBase58()]: Array.from({ length: 1000 }, (_, i) => ({
+        signature: `F${i}`,
+        slot: 1000 - i, // newest first: oldest read is slot 1, before the wallet
+      })),
+    };
+    const out = await subscribeFromPool(params({ neverExposeWallet: true }));
+    expect(out.reachableViaSpendFunder).toBe(false);
+    expect(executeCalled).toBe(true);
+  });
+
+  it('still refuses when the funder page stops short of the wallet history', async () => {
+    histories = {
+      [TREASURY.toBase58()]: ['TREASURY_TX_1'],
+      // An older wallet: the funder's window does not cover its whole life, so
+      // the co-naming transaction may sit just off the end of what was read.
+      [OWNER.toBase58()]: [{ signature: 'WALLET_TX_1', slot: 10 }],
+      [SPEND_FUNDER.toBase58()]: Array.from({ length: 1000 }, (_, i) => ({
+        signature: `F${i}`,
+        slot: 5000 - i, // oldest read is slot 4001, long after the wallet's first
+      })),
+    };
+    await expect(subscribeFromPool(params({ neverExposeWallet: true }))).rejects.toBeInstanceOf(
+      SpendFunderNamesWalletError,
+    );
+  });
+
+  it('a hit is still a hit, however long the page', async () => {
+    histories = {
+      [TREASURY.toBase58()]: ['TREASURY_TX_1'],
+      [OWNER.toBase58()]: [{ signature: 'THE_PURCHASE', slot: 4500 }],
+      [SPEND_FUNDER.toBase58()]: [
+        { signature: 'THE_PURCHASE', slot: 4500 },
+        ...Array.from({ length: 999 }, (_, i) => ({ signature: `F${i}`, slot: 4499 - i })),
+      ],
+    };
+    await expect(subscribeFromPool(params({ neverExposeWallet: true }))).rejects.toBeInstanceOf(
+      SpendFunderNamesWalletError,
+    );
   });
 });

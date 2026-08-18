@@ -25,6 +25,15 @@ import bs58 from 'bs58';
 const mockGetStore = vi.fn();
 const mockRateLimitExceeded = vi.fn();
 
+/** Signature histories by address, for the till-versus-funder join. A
+ *  transaction naming two addresses is returned for BOTH, so putting the same
+ *  signature in two lists is what "they have paid each other" looks like. */
+let signatureHistories: Record<string, { signature: string }[]> = {};
+
+/** What the chain reports for the funding TARGET. Non-zero trips the
+ *  empty-target rule, which returns 409 without building a transaction. */
+let targetBalance = 0;
+
 vi.mock('@/lib/waitlist/store', () => ({
   getStore: () => mockGetStore(),
   rateLimitExceeded: (...args: unknown[]) => mockRateLimitExceeded(...args),
@@ -42,9 +51,13 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
       async getGenesisHash() {
         return 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
       }
-      /** 0 = a fresh ephemeral, which is what the empty-target rule requires. */
+      /** 0 = a fresh ephemeral, which is what the empty-target rule requires.
+       *  Settable so a case can be refused by the empty-target rule instead of
+       *  running on into `SystemProgram.transfer`, which drags
+       *  `@solana/buffer-layout` into jsdom and fails on Buffer for reasons that
+       *  have nothing to do with what is being tested. */
       async getBalance() {
-        return 0;
+        return targetBalance;
       }
       async getLatestBlockhash() {
         return { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1 };
@@ -54,6 +67,9 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
       }
       async confirmTransaction() {
         return { value: { err: null } };
+      }
+      async getSignaturesForAddress(key: { toBase58(): string }, o?: { limit?: number }) {
+        return (signatureHistories[key.toBase58()] ?? []).slice(0, o?.limit ?? 1000);
       }
     },
   };
@@ -89,10 +105,17 @@ function req(body: unknown, ticket: string | null = TICKET) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 🚨 `vi.stubEnv` PERSISTS ACROSS CASES. Without this, a case that declares a
+  // till leaves it declared for every case after it — and the one that asserts
+  // "undeclared is refused" silently tests a declared deployment instead. It
+  // passed for the wrong reason, which is the only kind of green worth fearing.
+  vi.unstubAllEnvs();
   vi.stubEnv('P01_FUNDER_SECRET_KEY', FUNDER_SECRET);
   vi.stubEnv('P01_FUNDER_TICKET', TICKET);
   mockGetStore.mockReturnValue({ incr: vi.fn(), expire: vi.fn() });
   mockRateLimitExceeded.mockResolvedValue(false);
+  signatureHistories = {};
+  targetBalance = 0;
 });
 
 describe('the durable rate limiter', () => {
@@ -224,5 +247,111 @@ describe('the older refusals still answer with their own codes', () => {
     const res = await POST(req({ ephemeralPubkey: TARGET, lamports: 1_000_000 }));
     expect(res.status).toBe(503);
     expect((await res.json()).error).toMatch(/no funder configured/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R versus F — the configuration that decides whether any of the rest matters
+// ---------------------------------------------------------------------------
+
+describe('the till and the float', () => {
+  // 🚨 THE SHAPE THAT LEAKED, PINNED SO IT CANNOT BE DEPLOYED AGAIN.
+  //
+  // On 2026-08-18 a subscription passed every probe but P11. The walk was two
+  // hops and no cryptography: the spend's fee payer was funded by the funder,
+  // and the funder's own history held a transfer SIGNED BY THE BUYER, one second
+  // earlier, for exactly the note's amount. Neither transfer named both ends.
+  // The funder in the middle named both.
+  //
+  // Distinct addresses are necessary. Not paying each other per purchase is the
+  // other half, and it needs the chain to see.
+  const TILL = Keypair.generate().publicKey.toBase58();
+  const get = (qs = '') =>
+    GET(
+      new NextRequest(`http://localhost:3000/api/fund-ephemeral${qs}`) as unknown as NextRequest,
+    );
+
+  it('reports the till, so a harness can assert R != F without the operator', async () => {
+    vi.stubEnv('P01_TILL_ADDRESS', TILL);
+    const body = await (await get()).json();
+    expect(body.till).toBe(TILL);
+  });
+
+  it('is NOT ready while the till is undeclared', async () => {
+    // Undeclared is not "fine by default": it means this deployment cannot tell
+    // whether it is the shape that leaked, and unknown has never been clean here.
+    const body = await (await get('?readiness=1')).json();
+    expect(body.readiness.ready).toBe(false);
+    expect(body.readiness.reasons.join(' ')).toMatch(/P01_TILL_ADDRESS is unset/);
+  });
+
+  it('refuses the till-IS-the-funder configuration outright', async () => {
+    vi.stubEnv('P01_TILL_ADDRESS', funderKeypair.publicKey.toBase58());
+    const body = await (await get('?readiness=1')).json();
+    expect(body.readiness.ready).toBe(false);
+    expect(body.readiness.reasons.join(' ')).toMatch(/IS this funder/);
+  });
+
+  it('flags a till and funder that have paid each other', async () => {
+    // Two addresses, one transaction naming both: the same leak wearing a second
+    // address. Per-purchase settlement is what this catches.
+    vi.stubEnv('P01_TILL_ADDRESS', TILL);
+    signatureHistories = {
+      [funderKeypair.publicKey.toBase58()]: [{ signature: 'SETTLEMENT' }, { signature: 'F1' }],
+      [TILL]: [{ signature: 'SETTLEMENT' }],
+    };
+    const body = await (await get('?readiness=1')).json();
+    expect(body.readiness.ready).toBe(false);
+    expect(body.readiness.reasons.join(' ')).toMatch(/names BOTH the till and this funder/);
+  });
+
+  it('does not call a truncated history clean', async () => {
+    vi.stubEnv('P01_TILL_ADDRESS', TILL);
+    signatureHistories = {
+      [funderKeypair.publicKey.toBase58()]: Array.from({ length: 1000 }, (_, i) => ({
+        signature: `F${i}`,
+      })),
+      [TILL]: [{ signature: 'T1' }],
+    };
+    const body = await (await get('?readiness=1')).json();
+    expect(body.readiness.reasons.join(' ')).toMatch(/Could not establish/);
+  });
+
+  it('says nothing about the till when it is separate and unlinked', async () => {
+    vi.stubEnv('P01_TILL_ADDRESS', TILL);
+    signatureHistories = {
+      [funderKeypair.publicKey.toBase58()]: [{ signature: 'F1' }],
+      [TILL]: [{ signature: 'T1' }],
+    };
+    const reasons = (await (await get('?readiness=1')).json()).readiness.reasons.join(' ');
+    expect(reasons).not.toMatch(/P01_TILL_ADDRESS/);
+    expect(reasons).not.toMatch(/names BOTH/);
+  });
+
+  it('REFUSES TO SPEND when the till is the funder', async () => {
+    // The POST half, and the important one: readiness is advice, this is the
+    // gate. Spending here would buy a subscription that looks private and is
+    // walkable in two hops — worse than not running at all.
+    vi.stubEnv('P01_TILL_ADDRESS', funderKeypair.publicKey.toBase58());
+    const res = await POST(req({ ephemeralPubkey: TARGET, lamports: 1_000_000 }));
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toMatch(/till \(P01_TILL_ADDRESS\) is the funder/);
+  });
+
+  it('lets a correctly configured deployment straight through', async () => {
+    // 🚨 THE NEGATIVE CONTROL, AND IT IS THE POINT. A guard that refuses
+    // everything is not a guard, it is an outage — the exact shape of the
+    // funder-resolution bug that returned null for every note.
+    //
+    // Asserted one step PAST the guard rather than at a 200: a non-empty target
+    // is refused with 409 by the rule that follows it, which proves the till
+    // check let the request through without dragging `@solana/buffer-layout`
+    // into jsdom (see the note on the limiter cases above).
+    vi.stubEnv('P01_TILL_ADDRESS', TILL);
+    targetBalance = 1;
+    const res = await POST(req({ ephemeralPubkey: TARGET, lamports: 1_000_000 }));
+    expect(res.status).toBe(409);
+    expect(res.status).not.toBe(503);
   });
 });

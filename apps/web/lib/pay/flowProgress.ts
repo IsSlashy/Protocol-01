@@ -109,7 +109,7 @@ export const SUBSCRIBE_PHASES: FlowPhase[] = [
   // sentence into a label, and an unmatched sentence leaves the previous one
   // standing. Before any phase has matched, that previous one is nothing.
   { id: 'locate', label: 'Finding your note', weight: 0.1, match: /locating|matching notes|still looking|checking notes you already hold|scanning the|reading spent markers|pool for older notes|looking for funds left|fetching pool leaves|scanning events|root not in ring/i },
-  { id: 'path', label: 'Rebuilding its history', weight: 0.07, match: /merkle|pre-flight root|checking the note|checking who deposited|subscriber commitment/i },
+  { id: 'path', label: 'Rebuilding its history', weight: 0.07, match: /merkle|pre-flight root|checking the note|checking who (?:deposited|paid|pays)|subscriber commitment/i },
   { id: 'prove', label: 'Proving you own it', weight: 0.28, match: /generating c1|generating c3|proving you own the note|proving the note is in the pool|generating[^.]*stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz|pricing/i },
   { id: 'upload', label: 'Uploading the proofs', weight: 0.37, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },

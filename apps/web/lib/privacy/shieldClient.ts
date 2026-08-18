@@ -308,6 +308,46 @@ export class SelfDepositedNoteError extends Error {
   }
 }
 
+/**
+ * Thrown when the address that will PAY for this subscription is co-named with
+ * the buyer's wallet by some transaction on chain.
+ *
+ * 🚨 WHY THIS IS A SEPARATE ERROR FROM `SelfDepositedNoteError`, AND WHY THE
+ * DISTINCTION IS LOAD-BEARING RATHER THAN COSMETIC.
+ *
+ * `SubscribePanel` catches `SelfDepositedNoteError` BY NAME and recovers from it
+ * automatically: it fetches a note this deployment deposited and retries. That
+ * recovery is right there, because the problem is the NOTE.
+ *
+ * Here the problem is not the note — it is the funder, which is the same address
+ * whichever note is spent. Reusing that name would send the panel into a
+ * swap-and-retry loop that changes nothing, burning a fresh note on every pass
+ * and reporting a note problem for a treasury problem. So this carries its own
+ * name, the panel rethrows it, and the operator sees the actual cure.
+ *
+ * And the cure is a deployment change, not a user action: the address buyers pay
+ * (R, the till) must never be the address that funds the ephemerals (F, the
+ * float). Settlement between them is batched and delayed, never one transfer per
+ * purchase — otherwise the clock rejoins what the topology separated.
+ */
+export class SpendFunderNamesWalletError extends Error {
+  constructor(readonly funder: string | null) {
+    super(
+      funder === null
+        ? 'Stopped before spending anything: this deployment could not say which address will ' +
+            'pay for the subscription, so there is no way to tell whether it is one your wallet ' +
+            'has already paid. An unknown payer is an unknown exposure, not a safe one.'
+        : 'Stopped before spending anything: the address that funds this subscription ' +
+            `(${funder}) appears in a transaction alongside your wallet. Anyone reading the ` +
+            'subscription reaches that funder from the fee payer, reads its history, and finds ' +
+            'your wallet there — the same two hops an auditor runs first. This is a deployment ' +
+            'problem, not a note problem: the address that collects payments must never be the ' +
+            'address that funds the spends.',
+    );
+    this.name = 'SpendFunderNamesWalletError';
+  }
+}
+
 export interface SubscribeOutcome {
   txSig: string;
   /** Base58 subscription vault PDA. */
@@ -347,6 +387,17 @@ export interface SubscribeOutcome {
    *  is then reachable from the buyer in one hop THROUGH THE DEPOSIT, whoever
    *  paid for the subscription itself. */
   reachableViaDeposit: boolean;
+  /**
+   * True when the address that PAID for this subscription is co-named with the
+   * wallet on chain, or when that could not be established.
+   *
+   * The second half of the question `reachableViaDeposit` answers. A run can be
+   * clean on the deposit leg and reachable on the spend leg — that is exactly
+   * the shape measured on 2026-08-18 — so a screen that shows one and not the
+   * other tells the user a true sentence that reads as the opposite of the
+   * truth.
+   */
+  reachableViaSpendFunder: boolean;
 }
 
 /**
@@ -371,27 +422,60 @@ export interface SubscribeOutcome {
  * on-chain document tying these two together" without decoding one instruction
  * or fetching one transaction body.
  *
- * `true` = yes, and that is proof. `false` = no, AND both histories were read to
- * their end. `null` = could not be established — either page filled, or the read
- * failed. Callers must treat `null` as unsafe: an absence measured over a
- * truncated history is not an absence, it is a shorter look.
+ * `true` = yes, and that is proof. `false` = no, and the windows read were wide
+ * enough for that to mean something. `null` = could not be established. Callers
+ * must treat `null` as unsafe: an absence measured over a truncated history is
+ * not an absence, it is a shorter look.
+ *
+ * 🚨 THE ARGUMENTS ARE NOT INTERCHANGEABLE, AND THE ASYMMETRY IS THE POINT.
+ * `busy` is the address whose history grows without bound — a shared funder pays
+ * for every job this deployment ever ran. `bounded` is the one whose history is
+ * short and, crucially, whose COMPLETENESS is checkable — a buyer's wallet.
+ *
+ * The first version compared two full pages and returned `null` the moment
+ * EITHER filled. On a deployment whose funder has served more than `limit` jobs
+ * that is `null` forever, so the guard above it refuses every note for the rest
+ * of the deployment's life — the same failure mode as the funder-resolution bug
+ * that read the newest signatures instead of the oldest: a check that cannot
+ * pass is not a check, it is an outage.
+ *
+ * The absence is recoverable without giving up soundness. Any transaction naming
+ * both is, by definition, in `bounded`'s history. So if `bounded`'s page did not
+ * fill, its history is COMPLETE, and it is then enough for `busy`'s window to
+ * reach back past `bounded`'s oldest transaction: a co-naming transaction cannot
+ * have happened before the bounded side existed. When that holds, an empty
+ * intersection is a real `false`. When it does not, it is still `null`.
  */
 async function sharesATransactionWith(
   connection: Connection,
-  a: string,
-  b: string,
+  busy: string,
+  bounded: string,
   limit = 1000,
 ): Promise<boolean | null> {
   try {
-    const [left, right] = await Promise.all([
-      connection.getSignaturesForAddress(new PublicKey(a), { limit }),
-      connection.getSignaturesForAddress(new PublicKey(b), { limit }),
+    const [busySigs, boundedSigs] = await Promise.all([
+      connection.getSignaturesForAddress(new PublicKey(busy), { limit }),
+      connection.getSignaturesForAddress(new PublicKey(bounded), { limit }),
     ]);
-    const seen = new Set(left.map((s) => s.signature));
-    for (const s of right) if (seen.has(s.signature)) return true;
-    // Only now does the negative mean anything, and only if both were complete.
-    if (left.length >= limit || right.length >= limit) return null;
-    return false;
+    const seen = new Set(busySigs.map((s) => s.signature));
+    for (const s of boundedSigs) if (seen.has(s.signature)) return true; // proof
+
+    // From here the answer is an absence, and an absence has to be paid for.
+    // The bounded side truncated means its history is NOT complete, so the
+    // transaction naming both may simply be off the end of it.
+    if (boundedSigs.length >= limit) return null;
+    // A side that never transacted cannot co-name anything.
+    if (boundedSigs.length === 0) return false;
+    // Both complete: the classic case, and the only one the old code could see.
+    if (busySigs.length < limit) return false;
+
+    // busy truncated, bounded complete. Sound iff busy's window predates
+    // bounded's first transaction. getSignaturesForAddress returns newest-first,
+    // so the last element is the oldest one read.
+    const oldestBusy = busySigs[busySigs.length - 1]?.slot;
+    const oldestBounded = boundedSigs[boundedSigs.length - 1]?.slot;
+    if (typeof oldestBusy !== 'number' || typeof oldestBounded !== 'number') return null;
+    return oldestBusy <= oldestBounded ? false : null;
   } catch {
     return null;
   }
@@ -498,6 +582,43 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     );
   }
 
+  // ── Who pays for THIS transaction, which is the other half of the walk ────
+  //
+  // 🚨 THE SURFACE THIS FILE DID NOT READ, WHILE THE PROBE DID.
+  //
+  // Everything above asks who funded the DEPOSIT. P11 in verify/p01-verify.mjs
+  // reads the funders of BOTH legs, and the leg checked here — the one that pays
+  // for the subscription itself — had no check at all. So a deployment could
+  // hold a perfectly third-party note and still hand an auditor the buyer:
+  //
+  //   subscription -> its fee payer (a fresh ephemeral)
+  //                -> whoever funded that ephemeral = THIS address
+  //                -> that address's own history -> a transfer signed by the
+  //                   buyer's wallet.
+  //
+  // Two hops, two RPC calls, no cryptography — and the note was never the
+  // problem. Which is why refusing here must NOT trigger the panel's
+  // swap-to-another-note recovery: see SpendFunderNamesWalletError.
+  //
+  // state 'none' is deliberately NOT a refusal here. No funder means the wallet
+  // itself pre-funds, which is worse, is already refused under this same flag by
+  // fundEphemeralForJob, and has a different cure — reporting it here would
+  // replace an accurate error with a misleading one.
+  onProgress?.('Checking who pays for the subscription...');
+  const spendFunder = await fetchFunderLookup();
+  const spendFunderNamesWallet =
+    spendFunder.state === 'configured'
+      ? await sharesATransactionWith(connection, spendFunder.pubkey, owner.toBase58())
+      : spendFunder.state === 'none'
+        ? false
+        : null;
+  const reachableViaSpendFunder = spendFunderNamesWallet !== false;
+  if (params.neverExposeWallet && reachableViaSpendFunder) {
+    throw new SpendFunderNamesWalletError(
+      spendFunder.state === 'configured' ? spendFunder.pubkey : null,
+    );
+  }
+
   // ── Who pays ───────────────────────────────────────────────────────────────
   // One decision, made in `fundEphemeralForJob` and shared with the withdrawal
   // leg. It used to live inline here and nowhere else, which is exactly why the
@@ -545,6 +666,7 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     funderFallbackReason,
     depositPayer: prep.depositFunder ?? prep.depositPayer,
     reachableViaDeposit: selfDeposited,
+    reachableViaSpendFunder,
   };
 }
 

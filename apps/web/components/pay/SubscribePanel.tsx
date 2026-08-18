@@ -122,6 +122,18 @@ export interface SubscribeFromPoolResult {
    * they are unreachable when they are one `getTransaction` away.
    */
   reachableViaDeposit?: boolean;
+  /**
+   * True when the address that PAID for this subscription is co-named with this
+   * wallet on chain, or when that could not be established.
+   *
+   * The other half of the same walk. A run can be clean on the deposit leg and
+   * reachable on this one — the shape measured on 2026-08-18 — so a screen that
+   * renders only the deposit half tells the buyer a true sentence that reads as
+   * the opposite of the truth.
+   *
+   * Optional, and absent is treated as TRUE, for the same reason as above.
+   */
+  reachableViaSpendFunder?: boolean;
   /** Who paid for that deposit, base58; `null` = not found in the scanned window. */
   depositPayer?: string | null;
 }
@@ -1453,6 +1465,25 @@ const ISSUANCE_UI = false;
                   </span>
                 </p>
               )}
+              {/* The payment half. Rendered on the same terms as the deposit half
+                  above and for the same reason: P11 reads the funders of BOTH
+                  legs, so a screen that discloses one leg and stays silent on the
+                  other is not half-right, it is reassuring about a walk it never
+                  looked at. Absent field reads as reachable. */}
+              {result.reachableViaSpendFunder !== false && (
+                <p className="flex items-start gap-2 text-xs text-p01-text-muted">
+                  <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
+                  <span>
+                    <strong className="text-p01-text">
+                      The address that paid for this subscription is tied to your wallet.
+                    </strong>{' '}
+                    A transaction on chain names both, so a reader goes from this subscription to
+                    its fee payer, to whoever funded that payer, and finds your wallet in that
+                    address’s own history — two hops, no cryptography. Spending a different note
+                    does not change it: the same address funds every spend on this deployment.
+                  </span>
+                </p>
+              )}
               {result.fundedBy === 'funder' ? (
                 <p className="flex items-start gap-2 text-xs text-p01-text-muted">
                   <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
@@ -1477,6 +1508,21 @@ const ISSUANCE_UI = false;
                         identifier that deposit did — so anyone can still walk from here to that
                         deposit and reach your wallet. And the funder saw the request, its timing
                         and where it came from, so the link moved off the chain rather than away.
+                      </>
+                    ) : result.reachableViaSpendFunder !== false ? (
+                      /* 🚨 THE CASE THAT USED TO FALL THROUGH TO THE CLEAN TEXT.
+                         A third party deposited the note, so the deposit half is
+                         genuinely clean — and the sentence below would then have
+                         declared the whole walk clean while the address that paid
+                         for this very transaction was co-named with the buyer.
+                         That is the exact false green of 2026-08-18, restated in
+                         the UI instead of the probe. */
+                      <>
+                        Somebody else deposited this note, so the deposit half of the walk does
+                        not end at you. The payment half does: the address that funded this
+                        subscription is named alongside your wallet by a transaction on chain, so
+                        a reader still reaches you — through the payer rather than through the
+                        note. The detour moved your name one step away; it did not remove it.
                       </>
                     ) : (
                       <>

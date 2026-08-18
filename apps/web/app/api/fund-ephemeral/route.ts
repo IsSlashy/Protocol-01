@@ -101,6 +101,71 @@ const RATE_SALT = 'p01:fund-ephemeral:v1';
 
 const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
 
+/**
+ * R, THE TILL — the address buyers pay. Declared here so this deployment can
+ * refuse to be the shape that leaked.
+ *
+ * 🚨 WHAT IT IS FOR, MEASURED RATHER THAN ARGUED.
+ *
+ * On 2026-08-18 a subscription passed every probe but P11, and the walk was two
+ * hops: the spend's fee payer was funded by this funder, and this funder's own
+ * history held a transfer SIGNED BY THE BUYER, one second before it financed the
+ * depositing ephemeral, for exactly the note's amount. Neither transfer named
+ * both ends. The funder standing between them named both.
+ *
+ * The cure is topological, not cryptographic: the address that COLLECTS money
+ * from buyers (R) must never be the address that FUNDS ephemerals (F). They may
+ * settle with each other — in batches, on a schedule, never one transfer per
+ * purchase, or the clock rejoins what the topology separated.
+ *
+ * Only the PUBLIC key is configured here, deliberately. This route never needs
+ * to spend from the till, and a deployment that cannot spend from an address
+ * cannot accidentally make it pay for a job. Declaring it buys exactly one
+ * thing: the ability to REFUSE when R and F are the same address, which is a
+ * misconfiguration no amount of client-side care can survive.
+ */
+function tillAddress(): string | null {
+  const raw = process.env.P01_TILL_ADDRESS?.trim();
+  if (!raw) return null;
+  try {
+    return new PublicKey(raw).toBase58();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Does any one transaction name both addresses?
+ *
+ * The same two-call join the client guard and probe P11 use, restated here
+ * because this is where an operator can be told BEFORE a buyer is exposed rather
+ * than after. A transaction naming two addresses is returned by
+ * `getSignaturesForAddress` for each, so intersecting two pages answers it
+ * without decoding a single instruction.
+ *
+ * `null` = could not establish, which readiness reports as a reason rather than
+ * as an all-clear.
+ */
+async function namesBoth(
+  connection: Connection,
+  a: string,
+  b: string,
+  limit = 1000,
+): Promise<boolean | null> {
+  try {
+    const [left, right] = await Promise.all([
+      connection.getSignaturesForAddress(new PublicKey(a), { limit }),
+      connection.getSignaturesForAddress(new PublicKey(b), { limit }),
+    ]);
+    const seen = new Set(left.map((x) => x.signature));
+    for (const x of right) if (seen.has(x.signature)) return true;
+    if (left.length >= limit || right.length >= limit) return null;
+    return false;
+  } catch {
+    return null;
+  }
+}
+
 /** First hop of the forwarding chain; falls back to a stable sentinel. Same
  *  shape as the waitlist route's, deliberately — one definition of "who is
  *  calling" across every rate-limited endpoint. */
@@ -176,7 +241,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: true, configured: false, funder: null });
   }
 
-  const base = { ok: true, configured: true, funder: funder.publicKey.toBase58() };
+  const base = {
+    ok: true,
+    configured: true,
+    funder: funder.publicKey.toBase58(),
+    // Public by construction and useful to every caller: the verify harness can
+    // assert R != F without being handed the operator's config out of band.
+    till: tillAddress(),
+  };
   if (request.nextUrl.searchParams.get('readiness') !== '1') {
     return NextResponse.json(base);
   }
@@ -204,6 +276,28 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // ── R versus F, the configuration that decides whether any of this works ──
+  //
+  // Checked here because every other place it could be checked is too late: the
+  // client sees it only while a buyer is waiting, and the probe sees it only
+  // after the transaction exists. This is the one surface an operator can read
+  // before a demo.
+  const till = tillAddress();
+  if (!till) {
+    reasons.push(
+      'P01_TILL_ADDRESS is unset, so this deployment cannot tell whether the address buyers ' +
+        'pay is the same one that funds spends. That identity is the leak measured on ' +
+        '2026-08-18: two transfers, neither naming both ends, joined by a funder whose own ' +
+        'history names both.',
+    );
+  } else if (till === funder.publicKey.toBase58()) {
+    reasons.push(
+      'P01_TILL_ADDRESS IS this funder. Every buyer who pays it is then one transaction away ' +
+        'from the address that funds their own subscription, so probe P11 walks buyer -> till ' +
+        '-> ephemeral -> spend in two hops. Use a separate key for the till and settle between ' +
+        'them in batches, never per purchase.',
+    );
+  }
   if (!process.env.P01_FUNDER_TICKET) {
     reasons.push('P01_FUNDER_TICKET is unset: the POST refuses to run as an open faucet.');
   }
@@ -224,6 +318,28 @@ export async function GET(request: NextRequest) {
     );
     cluster = (await connection.getGenesisHash()) === DEVNET_GENESIS ? 'devnet' : 'other';
     balance = await connection.getBalance(funder.publicKey, 'confirmed');
+    // Distinct addresses are necessary and not sufficient: R and F are also
+    // separate if R pays F once per purchase, which is the same leak wearing a
+    // second address. A transaction naming both is proof that has already
+    // happened. Only reachable when the RPC answered — an unreachable chain is
+    // already a reason above.
+    if (till && till !== funder.publicKey.toBase58()) {
+      const joined = await namesBoth(connection, funder.publicKey.toBase58(), till);
+      if (joined === true) {
+        reasons.push(
+          'A transaction names BOTH the till and this funder. They are separate addresses that ' +
+            'have paid each other, which is the per-purchase settlement this split exists to ' +
+            'stop: an auditor reads the funder history and lands on the till, then on its ' +
+            'buyers. Settle in batches, on a schedule unrelated to any single purchase.',
+        );
+      } else if (joined === null) {
+        reasons.push(
+          'Could not establish whether any transaction names both the till and this funder — a ' +
+            'signature page filled or the read failed. An absence read off a truncated history ' +
+            'is not an absence.',
+        );
+      }
+    }
   } catch (e) {
     reasons.push(`The configured RPC could not be reached: ${(e as Error).message}`);
   }
@@ -345,6 +461,28 @@ export async function POST(request: NextRequest) {
     return bad(503, 'funder secret key is not valid base58');
   }
   if (target.equals(funder.publicKey)) return bad(400, 'refusing to fund the funder');
+
+  // ── The one misconfiguration no client can survive ────────────────────────
+  //
+  // If the till and the float are the same address, then every buyer who paid
+  // for their note is one transaction away from the address funding the spend,
+  // and the subscription is walkable in two hops no matter how careful the
+  // browser was. Serving here would spend treasury money to produce a result
+  // that is worse than not running at all — it looks private and is not.
+  //
+  // O(1) and exact: no RPC, no page to truncate, nothing to get wrong. The
+  // deeper question (do they settle per purchase?) needs the chain and lives in
+  // the readiness report above, where an operator reads it before a demo rather
+  // than a buyer discovers it afterwards.
+  const till = tillAddress();
+  if (till && till === funder.publicKey.toBase58()) {
+    return bad(
+      503,
+      'this deployment is misconfigured: the till (P01_TILL_ADDRESS) is the funder, so paying ' +
+        'for a note and paying for the subscription would name the same address. Refusing ' +
+        'rather than producing a subscription that looks private and is not.',
+    );
+  }
 
   // The target must be empty. A fresh ephemeral always is, so this costs a
   // legitimate caller nothing — and it stops the endpoint being used to top up
