@@ -589,6 +589,20 @@ export default function PayApp() {
             </button>
           )}
 
+          {/* ⚠️ ONE BUTTON WHEN THE EXTENSION IS THERE.
+              Every other way in still works and still matters — a key on this
+              device, an imported secret, an external wallet — but offering
+              four doors to someone who has already installed the product's own
+              wallet is how a connect screen becomes a decision. They fold.
+              When the extension is ABSENT they unfold, because a screen with a
+              single button that cannot be pressed is worse than a choice. */}
+          <details className="group" open={!p01Extension}>
+            {p01Extension && (
+              <summary className="cursor-pointer list-none text-xs text-p01-text-dim underline-offset-4 hover:text-p01-cyan hover:underline">
+                Other ways in ▸
+              </summary>
+            )}
+            <div className={clsx("space-y-4", p01Extension && "mt-3")}>
           {/* The way back in. `reset()` drops the session and keeps the key, so
               without this the stored identity would only return on a reload —
               which reads as "my key is gone" at the exact moment someone is
@@ -686,6 +700,8 @@ export default function PayApp() {
               >
                 <Smartphone className="h-4 w-4" /> Connect P01 Wallet
               </button>
+            </div>
+          </details>
             </div>
           </details>
           {/* A buyer that is not a wallet at all.
