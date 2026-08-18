@@ -616,8 +616,8 @@ export default function PayApp() {
               >
                 <span className="text-sm text-p01-cyan">Subscribe to a vendor</span>
                 <span className="mt-1 block text-xs text-p01-text-muted">
-                  You do not need to put money in. A note is issued to you against a claim code,
-                  and nothing is deposited in your name.
+                  Spends a note you hold. Shield one first if you have none — the fees are
+                  covered for you, and your wallet never signs the subscription.
                 </span>
               </button>
               <button

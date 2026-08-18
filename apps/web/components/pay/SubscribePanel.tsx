@@ -418,6 +418,23 @@ export default function SubscribePanel({
    * does not quietly become the public kind. Nothing is spent when it stops.
    */
   const NEVER_EXPOSE_WALLET = true as const;
+
+/**
+ * Whether this screen offers the deployment's pre-deposited inventory.
+ *
+ * `false` since 2026-08-18. A claim code buys one note out of that inventory,
+ * and it made sense while a buyer arrived holding nothing and had no way to
+ * deposit for themselves. The flow now is: connect the extension, shield a
+ * note, subscribe. A buyer who has done that never touches issuance, and one
+ * who has not is better told to shield than handed a field for a code they
+ * have no way to obtain.
+ *
+ * Everything behind it is intact — `/api/issue-note`, `requestIssuedNote`,
+ * the `claimCode` state and the self-deposit swap path — because a stocked
+ * deployment serving a buyer who holds nothing is still a real configuration.
+ * Turning it back on is this one boolean.
+ */
+const ISSUANCE_UI = false;
   /**
    * Whether a funder exists, ASKED OF THE SERVER rather than of the bundle.
    *
@@ -1246,7 +1263,7 @@ export default function SubscribePanel({
             away only once the deployment has said it stocks nothing, at which
             point the picker's "Shield one in the Pool tab first" is the true
             instruction and this one would be a lie. */}
-        {!result && !holdsNote && issuableNote !== null && (
+        {ISSUANCE_UI && !result && !holdsNote && issuableNote !== null && (
           <p className="flex items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
             <span>
@@ -1273,7 +1290,18 @@ export default function SubscribePanel({
             Nothing here is removed: the plumbing, the endpoint and the
             `claimCode` state are untouched, and a buyer who holds nothing on a
             stocked deployment gets exactly the field they got before. */}
-        {!result && !holdsNote && !!issuableNote && (
+        {/* ⛔ THE CLAIM-CODE FIELD IS NOT ON THIS SCREEN ANY MORE.
+            It bought one note out of the deployment's pre-deposited inventory,
+            and it made sense while a buyer arrived holding nothing and could
+            not deposit for themselves. The flow now is: connect the extension,
+            shield a note, subscribe — a buyer who has done that never touches
+            issuance, and one who has not is better told to shield than handed
+            a field for a code they have no way to obtain.
+            `/api/issue-note`, `requestIssuedNote`, `claimCode` and the swap
+            path are all untouched behind this: a stocked deployment can still
+            serve a buyer who holds nothing, and re-showing this input is one
+            boolean. */}
+        {ISSUANCE_UI && !result && !holdsNote && !!issuableNote && (
           <div className="space-y-1">
             <input
               value={claimCode}
