@@ -318,9 +318,12 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       expect(line).toBeInTheDocument();
       expect(line.textContent).not.toMatch(/trustless/);
       expect(line.textContent).toMatch(/p01_liquidity/);
-      // p01_mugen left the workspace on 2026-08-19 with the Mugen product. The
-      // count is the Cargo members less `stark`, which is a library, not a program.
-      expect(line.textContent).not.toMatch(/p01_mugen/);
+      // Counts the list instead of naming what is absent: the P2P escrow program
+      // left the workspace on 2026-08-19 with the product it served, and an
+      // assertion that names a removed thing goes stale the moment it is removed
+      // again. 13 is the Cargo members less `stark`, which is a library.
+      const listed = line.textContent!.replace(/^13 Anchor programs:\s*/, '').split(',');
+      expect(listed).toHaveLength(13);
     });
   });
 

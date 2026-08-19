@@ -24,7 +24,6 @@ Live on Solana devnet. Pre-mainnet by design, third-party security audit pending
 - 15 Anchor programs deployed on devnet
 - 13 TypeScript SDKs for developers who want private payments in their own product
 - 4 demo merchants attested on-chain (Netflix, Spotify, YouTube, Disney+) for the subscription flow
-- A no-KYC fiat-to-crypto P2P exchange (Mugen Exchange) built on top of the stack
 - Weekly 4K build-in-public videos
 
 ## What makes it different

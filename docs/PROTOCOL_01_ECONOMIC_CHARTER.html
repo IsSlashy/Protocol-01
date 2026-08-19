@@ -297,7 +297,7 @@
 <div class="page compact">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
     <h1>The numbers.</h1>
-    <span class="badge badge-cyan">01 / 09</span>
+    <span class="badge badge-cyan">01 / 08</span>
   </div>
   <p class="lead">
     Protocol 01 is a privacy layer for Solana. Merchants integrate via SDK
@@ -342,10 +342,9 @@
     <tr><td class="mono cyan">03</td><td>Core protocol fees &mdash; shield, unshield, transfer</td></tr>
     <tr><td class="mono cyan">04</td><td>Solana network cost &mdash; compute units &amp; rent paid by the user</td></tr>
     <tr><td class="mono cyan">05</td><td>Liquidity pool fee &mdash; optional instant unshield</td></tr>
-    <tr><td class="mono cyan">06</td><td>Mugen exchange fee &mdash; fiat &lt;&gt; crypto P2P (separate product)</td></tr>
-    <tr><td class="mono cyan">07</td><td>Revenue split &mdash; where every basis point flows</td></tr>
-    <tr><td class="mono cyan">08</td><td>Worked example &mdash; SaaS subscription, 12-month cohort</td></tr>
-    <tr><td class="mono cyan">09</td><td>Caps, governance, change policy</td></tr>
+    <tr><td class="mono cyan">06</td><td>Revenue split &mdash; where every basis point flows</td></tr>
+    <tr><td class="mono cyan">07</td><td>Worked example &mdash; SaaS subscription, 12-month cohort</td></tr>
+    <tr><td class="mono cyan">08</td><td>Caps, governance, change policy</td></tr>
   </table>
 
   <h2>What we do NOT charge</h2>
@@ -393,7 +392,7 @@
 <div class="page">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
     <h1>Core protocol fees.</h1>
-    <span class="badge badge-cyan">02 / 09</span>
+    <span class="badge badge-cyan">02 / 08</span>
   </div>
   <p class="lead">
     Three on-chain operations carry a fee. Every other operation is free.
@@ -502,7 +501,7 @@
 <div class="page compact">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
     <h1>Solana network cost.</h1>
-    <span class="badge badge-cyan">03 / 09</span>
+    <span class="badge badge-cyan">03 / 08</span>
   </div>
   <p class="lead">
     Every Solana operation carries a base transaction fee plus a compute
@@ -579,7 +578,7 @@
 <div class="page">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
     <h1>Liquidity pool fee.</h1>
-    <span class="badge badge-cyan">04 / 09</span>
+    <span class="badge badge-cyan">04 / 08</span>
   </div>
   <p class="lead">
     Optional instant-unshield path: the liquidity pool prefunds the user's
@@ -651,91 +650,11 @@
   </div>
 </div>
 
-<!-- =================== PAGE 6: MUGEN EXCHANGE =================== -->
-<div class="page">
-  <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
-    <h1>Mugen exchange fee.</h1>
-    <span class="badge badge-cyan">05 / 09</span>
-  </div>
-  <p class="lead">
-    Mugen is the reference fiat &lt;&gt; crypto P2P exchange built on Protocol
-    01. It is a separate product line with its own fee schedule. Merchants
-    using only Protocol 01 SDK do not pay Mugen fees. Documented here so
-    integrators know the full surface.
-  </p>
-
-  <h2>Mugen fee structure</h2>
-  <p class="small muted">
-    Two-tier model: a visible fee shown at checkout, plus a small spread
-    baked into the exchange rate. The spread covers FX risk and the
-    fiat-rail counterparty premium. Total effective take varies by payment
-    method.
-  </p>
-  <table>
-    <tr>
-      <th>Method</th>
-      <th class="num">Visible fee</th>
-      <th class="num">Hidden spread</th>
-      <th class="num">Total effective</th>
-      <th>Settlement</th>
-    </tr>
-    <tr><td>SEPA / IBAN bank transfer</td><td class="num mono cyan">0.50 %</td><td class="num mono dim">0.80 %</td><td class="num mono pink">1.30 %</td><td class="small">1&ndash;2 days</td></tr>
-    <tr><td>Wise</td><td class="num mono cyan">0.50 %</td><td class="num mono dim">0.80 %</td><td class="num mono pink">1.30 %</td><td class="small">1&ndash;2 hours</td></tr>
-    <tr><td>Revolut</td><td class="num mono cyan">0.50 %</td><td class="num mono dim">0.80 %</td><td class="num mono pink">1.30 %</td><td class="small">Instant</td></tr>
-    <tr><td>Cash (escrowed)</td><td class="num mono cyan">0.50 %</td><td class="num mono dim">1.20 %</td><td class="num mono pink">1.70 %</td><td class="small">Same day</td></tr>
-    <tr><td>Card (Visa / Mastercard)</td><td class="num mono cyan">1.90 %</td><td class="num mono dim">1.00 %</td><td class="num mono pink">2.90 %</td><td class="small">Instant</td></tr>
-  </table>
-
-  <div class="card card-cyan">
-    <h4 class="cyan">Why card is the highest tier</h4>
-    <p class="small muted">
-      Card processors charge 1.5&ndash;2.0% interchange to merchants, plus
-      chargeback exposure of typically 0.3&ndash;0.5% for crypto-adjacent
-      flows. The 1.90% visible fee is set to break even on processor cost,
-      not as protocol revenue. The 1.00% spread covers chargeback reserve
-      and FX volatility on the card-to-SOL leg.
-    </p>
-  </div>
-
-  <h2>Revenue split &mdash; Mugen on-chain fees</h2>
-  <p class="small muted">
-    The total on-chain Mugen fee is ~1.50% averaged across methods. At
-    escrow release, this fee is split atomically between three wallets:
-  </p>
-  <div class="flow-bar">
-    <div style="background: var(--cyan); flex-grow: 20;">20% Protocol 01</div>
-    <div style="background: var(--pink); flex-grow: 65;">65% Mugen ops</div>
-    <div style="background: var(--yellow); flex-grow: 15;">15% Treasury</div>
-  </div>
-  <table>
-    <tr><th>Recipient</th><th class="num">Share</th><th>Use</th></tr>
-    <tr><td><span class="badge badge-cyan">Protocol 01</span></td><td class="num mono cyan">20 %</td><td class="small">SDK, mobile, extension, infra hosting, audits</td></tr>
-    <tr><td><span class="badge badge-pink">Mugen</span></td><td class="num mono pink">65 %</td><td class="small">Fiat rail ops, escrow management, dispute mediation, support</td></tr>
-    <tr><td><span class="badge badge-yellow">Treasury</span></td><td class="num mono yellow">15 %</td><td class="small">DAO grants, governance staking, community programs</td></tr>
-  </table>
-
-  <div class="card card-pink no-break">
-    <h4 class="pink">Layer 1 &mdash; Natural Variance Fiat</h4>
-    <p class="small muted">
-      Mugen splits user payments into canonical SOL denominations
-      (0.1 / 1 / 10 / 100) internally. The bank counterparty sees a
-      natural-looking amount (e.g., &euro;847.32). The chain sees a uniform
-      pool entry. Residual fiat (&lt; 0.50%) is tracked in a separate sub-wallet
-      and reconciled in the next batch &mdash; not lost, not extra fee.
-    </p>
-  </div>
-
-  <div class="page-footer">
-    <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.3 TX-OPACITY &middot; PAGE 05</span>
-  </div>
-</div>
-
 <!-- =================== PAGE 7: REVENUE FLOW =================== -->
 <div class="page">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
     <h1>Where every basis point flows.</h1>
-    <span class="badge badge-cyan">06 / 09</span>
+    <span class="badge badge-cyan">05 / 08</span>
   </div>
   <p class="lead">
     Single source of truth: the on-chain fee splitter program. Each fee
@@ -818,7 +737,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.3 TX-OPACITY &middot; PAGE 06</span>
+    <span>v1.0.3 TX-OPACITY &middot; PAGE 05</span>
   </div>
 </div>
 
@@ -826,7 +745,7 @@
 <div class="page compact">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
     <h1>Worked example.</h1>
-    <span class="badge badge-cyan">07 / 09</span>
+    <span class="badge badge-cyan">06 / 08</span>
   </div>
   <p class="lead">
     A SaaS subscription, monthly billing at &euro;19.99 USDC equivalent, 12-month
@@ -896,7 +815,7 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.3 TX-OPACITY &middot; PAGE 07</span>
+    <span>v1.0.3 TX-OPACITY &middot; PAGE 06</span>
   </div>
 </div>
 
@@ -904,7 +823,7 @@
 <div class="page">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
     <h1>Benchmark &amp; governance.</h1>
-    <span class="badge badge-cyan">08 / 09</span>
+    <span class="badge badge-cyan">07 / 08</span>
   </div>
   <p class="lead">
     Where Protocol 01 sits in the merchant-rail landscape, and the rules
@@ -989,11 +908,6 @@
       <td class="small">Hard cap 3.00% on-chain (<span class="mono">MAX_PREFUND_FEE_BPS</span>)</td>
     </tr>
     <tr>
-      <td>Mugen fee split</td>
-      <td class="small">Mugen team multisig</td>
-      <td class="small">Splits sum-checked on-chain at every release</td>
-    </tr>
-    <tr>
       <td>Splitter recipient ratios</td>
       <td class="small">Multisig + 30-day timelock</td>
       <td class="small">Treasury share cannot drop below 10% per protocol bylaws</td>
@@ -1024,15 +938,15 @@
 
   <div class="page-footer">
     <span>PROTOCOL 01 / ECONOMIC CHARTER</span>
-    <span>v1.0.3 TX-OPACITY &middot; PAGE 08</span>
+    <span>v1.0.3 TX-OPACITY &middot; PAGE 07</span>
   </div>
 </div>
 
-<!-- =================== PAGE 10: SUMMARY =================== -->
+<!-- =================== PAGE 08: SUMMARY =================== -->
 <div class="page">
   <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 10px;">
     <h1>One page summary.</h1>
-    <span class="badge badge-cyan">09 / 09</span>
+    <span class="badge badge-cyan">08 / 08</span>
   </div>
 
   <div class="card card-cyan">
@@ -1069,7 +983,6 @@
     <ul class="small">
       <li>0.30% shield + 0.50% unshield &rarr; protocol fee wallet</li>
       <li>15% of LP fee on instant unshield &rarr; protocol fee wallet</li>
-      <li>20% of Mugen on-chain fee (only if Mugen rail used)</li>
       <li>Of which: 50% engineering, 25% audit, 15% treasury, 10% founder</li>
     </ul>
   </div>
@@ -1077,7 +990,7 @@
   <div class="card" style="margin-top: 10px;">
     <h4>Changelog &mdash; v1.0.3 (2026-07-20)</h4>
     <ul class="small muted">
-      <li>Arcium MPC removed from Protocol 01 (module retired; Mugen governance only) &mdash; MPC vote row dropped from the compute table</li>
+      <li>Arcium MPC removed from Protocol 01 (module retired) &mdash; MPC vote row dropped from the compute table</li>
       <li>PQ stealth announcement account added to the rent table (ML-KEM-768 V2 transport, live on devnet; close instruction on the roadmap)</li>
       <li>Extension Standard / ZK license tiers documented as off-chain product revenue, zero PII</li>
     </ul>

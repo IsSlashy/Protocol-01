@@ -45,11 +45,10 @@ Every payment — recurring, P2P, P2B, B2B, classic or private — pays the same
 
 | Surface | Status |
 |---|---|
-| **13 Solana programs** | STARK verifier, shielded pool (V4), subscription vault, service registry, P2P escrow, stealth relayer (chunked), quantum-safe vault, confidential SPL, liquidity pool, fee splitter, privacy router, Arcium MPC bridge, Mugen exchange |
+| **12 Solana programs** | STARK verifier, shielded pool (V4), subscription vault, service registry, P2P escrow, stealth relayer (chunked), quantum-safe vault, confidential SPL, liquidity pool, fee splitter, privacy router, Arcium MPC bridge |
 | **6 STARK AIRs** | Native on-chain multi-circuit verifier |
 | **8+ TypeScript SDKs** | specter-sdk, merchant-sdk, privacy-sdk, zkspl-sdk, p01-js, whitelist-sdk, arcium-sdk, react-native-zk |
 | **3 clients** | Android app, Chrome MV3 extension, Next.js web app |
-| **Mugen** | No-KYC fiat-to-crypto P2P exchange built on the stack, with its own 12-layer privacy architecture (MagicBlock PER, Arcium, FROST, Nym, Privacy Pools v2) |
 | **Live demo** | Service registry populated with 4 attested merchants on devnet — any wallet can shield, unshield, transfer, subscribe, and cancel privately today |
 
 ---

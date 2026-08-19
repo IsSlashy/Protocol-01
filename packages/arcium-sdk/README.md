@@ -19,7 +19,6 @@ Multi-party computation allows N parties to jointly compute a function over thei
 | **Stealth** | `stealth_scan` | Protected viewing key scanning -- scan for incoming stealth payments without exposing your viewing key to any single party. |
 | **Governance** | `private_vote` / `private_vote_binary` | Encrypted ballot tallying -- vote privately, results computed via MPC. Supports multi-option and binary (yes/no) voting. |
 | **Auction** | `sealed_bid_auction` / `finalize_auction` | Encrypted bid matching -- bids are sealed until MPC reveals the winner. Losing bids remain confidential. |
-| **Mugen** | `mugen_submit_offer` / `mugen_blind_take` / `mugen_cancel_offer` | Encrypted P2P order matching for the Mugen fiat-to-crypto exchange. Trade terms are invisible to everyone until a match occurs. |
 
 ## Install
 
@@ -144,7 +143,6 @@ Each module exports async functions that take an `ArciumClient` and an Anchor `P
 | Stealth | `registerViewingKey()`, `scanAnnouncements()` |
 | Governance | `createProposal()`, `castVote()`, `finalizeTally()`, `castBinaryVote()`, `finalizeBinaryTally()` |
 | Auction | `createAuction()`, `submitSealedBid()`, `finalizeAuction()`, `writeEscrowOutcome()`, `releaseEscrow()` |
-| Mugen | `submitEncryptedOffer()`, `blindTakeOrder()`, `cancelEncryptedOffer()` |
 
 ### PDA Helpers
 

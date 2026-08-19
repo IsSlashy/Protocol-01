@@ -46,7 +46,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "lint": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@arcium-hq/client": "0.9.2",

@@ -24,7 +24,6 @@ For the narrative, market story, and deep technical write-up, jump to the submis
 - Pitched in person at Dogpatch Labs Dublin on 2026-04-27.
 - Aligns directly with Quantum Ireland's mission of post-quantum readiness, applied to a shipped Solana product rather than a research paper.
 - The commercial wedge is private recurring subscriptions for any merchant, registered on-chain through `p01_registry`.
-- Concrete PMF beyond the pure "privacy as a primitive" story, with a reference consumer app (Mugen P2P fiat-to-crypto) built on the same SDKs.
 
 ---
 
@@ -87,7 +86,6 @@ Every link below points to Solana Explorer on devnet.
 | `p01_stream` | Time-locked payment streaming | [`C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx`](https://explorer.solana.com/address/C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx?cluster=devnet) |
 | `p01_whitelist` | Developer access control | [`5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33`](https://explorer.solana.com/address/5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33?cluster=devnet) |
 | `p01_fee_splitter` | Protocol fee routing (0.3 to 0.5%) | [`UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM`](https://explorer.solana.com/address/UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM?cluster=devnet) |
-| `p01_mugen` | Mugen P2P escrow (reference consumer integration) | [`EURLevwgmunRQU5piF7QLB1ithMPfxYFXp6jp6eGEAJN`](https://explorer.solana.com/address/EURLevwgmunRQU5piF7QLB1ithMPfxYFXp6jp6eGEAJN?cluster=devnet) |
 | `p01_bundler` | Tx bundling helper | Experimental, not deployed on devnet |
 | `p01_liquidity` | Instant-unshield liquidity prefund pool | Experimental, not deployed on devnet |
 

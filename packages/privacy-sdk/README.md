@@ -83,7 +83,6 @@ await sdk.shield.unshield({
 | **OTC** | Private OTC trading desk (atomic P2P swaps) | `@protocol-01/privacy-sdk/otc` |
 | **Payroll** | Confidential salary payments (batch) | `@protocol-01/privacy-sdk/payroll` |
 | **Treasury** | Multi-sig treasury with privacy | `@protocol-01/privacy-sdk/treasury` |
-| **Exchange** | P2P fiat-to-crypto (Mugen) | `@protocol-01/privacy-sdk` (main import) |
 
 All modules are accessible through the main SDK instance:
 
@@ -295,7 +294,6 @@ sdk.on('error', (event) => {
 | Quantum Vault | Deployed | Not yet deployed |
 | STARK Verifier | Deployed | Not yet deployed |
 | Bundler | Deployed | Not yet deployed |
-| Mugen Exchange | Deployed | Not yet deployed |
 
 The SDK will throw `PrivacyError(INVALID_CONFIG)` if you try to use mainnet with undeployed programs. Use `getDeployedProgramIds('mainnet')` to check availability.
 
@@ -325,8 +323,7 @@ The SDK will throw `PrivacyError(INVALID_CONFIG)` if you try to use mainnet with
   |     |-- airdrop     (AirdropModule)
   |     |-- otc         (OTCModule)
   |     |-- payroll     (PayrollModule)
-  |     |-- treasury    (TreasuryModule)
-  |     +-- exchange    (MugenExchangeModule)
+  |     +-- treasury    (TreasuryModule)
   |
   +-- react/
   |     |-- PrivacyProvider

@@ -76,13 +76,10 @@ interface WeekUpdate {
 const updates: WeekUpdate[] = [
   {
     week: 1,
-    title: "Mugen Exchange & Superteam Ireland",
+    title: "Superteam Ireland & Dublin",
     date: "April 6 - 12, 2026",
     status: "published",
     highlights: [
-      "Built Mugen Exchange, a separate side project and not part of Styx: peer-to-peer fiat to crypto matching with an on-chain escrow",
-      "That project's Solana program covers escrow, reputation and dispute resolution",
-      "Wired into the mobile app, the extension and the web app",
       "Listed as a Superteam Ireland project",
       "Entered the Colosseum Frontier hackathon, an entry and not an outcome. The event has since closed",
       "Booked five days at Dogpatch Labs in Dublin to build in person",

@@ -34,7 +34,6 @@ The SDKs. A family of TypeScript packages on npm so any developer can add privat
 
 The programs. Around 15 Anchor programs on Solana devnet: the shielded pool, the zkSPL confidential-balance program, the specter stealth-address transport, subscriptions, streaming payments, the on-chain relayer, the STARK verifier, the quantum vault, the service registry, the fee splitter, liquidity.
 
-Mugen Exchange. A peer-to-peer, no-KYC fiat-to-crypto exchange built on top of the same privacy stack, proving the layer can carry a real product.
 
 ## How it works
 

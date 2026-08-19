@@ -23,7 +23,8 @@ import Reveal from "../_styx/Reveal";
  *     aside. The dictionaries disagree: founder.bio and
  *     founder.timeline.protocol01.desc both still enumerate "14 Solana
  *     programs, 7 STARK circuits, 3 client apps, 11 SDKs". 14 is wrong -- it was
- *     already wrong before p01_mugen was removed on 2026-08-19, and 11
+ *     already wrong before the P2P escrow program was removed on 2026-08-19,
+ *     and 11
  *     SDKs cannot be counted from this repository at all. i18n/ is off limits
  *     from this page, so rather than print 14 a few centimetres above a card
  *     that says 12, the page drops that one sentence. See dropBuildInventory

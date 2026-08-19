@@ -289,7 +289,7 @@ D'où la composition relayer + Arcium MPC (threshold decrypt) + event scrubbing 
 
 Même avec Phases A-F, ces leaks restent :
 
-- **Programs touchés visibles dans la tx** (L11) — chaque tx Solana liste les program IDs invoqués. Mitigation : Mugen Privacy Stack v2 Layer 0 (Nym mixnet) + Layer 4 (MagicBlock TDX rollup) pour cacher la tx du L1 entièrement, finalité L1 ultérieure et batchée.
+- **Programs touchés visibles dans la tx** (L11) — chaque tx Solana liste les program IDs invoqués. Mitigation : Privacy Stack v2 Layer 0 (Nym mixnet) + Layer 4 (MagicBlock TDX rollup) pour cacher la tx du L1 entièrement, finalité L1 ultérieure et batchée.
 - **Account access list visible** — Solana exige le déclaratif `accounts: [...]` dans la tx. Mitigation : LUT (Address Lookup Tables) qui cachent les comptes derrière un index, mais le LUT lui-même est public.
 - **Block-level metadata** — slot, blockhash, fee_payer obligatoire (≠ null possible). Solana ≠ Zcash sur ce point.
 - **Quantum** — Ed25519 du fee_payer reste vulnérable Shor. Mitigation : `plan-full-pq-end-to-end-2026-05-03.md` (`p01_quantum_wallet`).

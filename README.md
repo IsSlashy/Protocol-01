@@ -141,7 +141,6 @@ in this README is measured against that deployment on the real devnet cluster.
 | Arcium MPC Bridge | `FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT` |
 | Liquidity Pool (instant unshield) | `6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg` |
 | Fee Splitter | `UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM` |
-| Mugen P2P Escrow | `EURLevwgmunRQU5piF7QLB1ithMPfxYFXp6jp6eGEAJN` |
 
 ---
 
@@ -238,8 +237,7 @@ protocol-01/
 ├── apps/
 │   ├── extension/          # Chrome MV3 wallet + privacy UI
 │   ├── mobile/             # React Native (Expo) wallet + full STARK prover (WebView WASM)
-│   ├── web/                # Next.js 16 marketing site + docs
-│   └── mugen/              # Gojo-themed fiat-to-crypto P2P exchange — reference integration
+│   └── web/                # Next.js 16 marketing site + docs
 ├── packages/                   # 16 packages, 11 published to npm under @protocol-01
 │   ├── specter-sdk/        # npm 0.4.1 — stealth wallets, transfers, service registry
 │   ├── merchant-sdk/       # npm 0.1.2 — server-side: register, payment polling, vaults, permissionless claims, access tokens
@@ -258,7 +256,7 @@ protocol-01/
 │   ├── specter-js/         # unpublished
 │   └── ui/                 # unpublished — shared design tokens + components
 ├── circuits/                   # One design note (ZKSPL.md). The legacy Circom circuits are gone.
-├── programs/                   # 15 Anchor programs (declared IDs; deployment status varies — see table above)
+├── programs/                   # 14 Anchor programs (declared IDs; deployment status varies — see table above)
 │   ├── zk_shielded/            # Shielded pool V4 — shield/unshield/subscribe/pause/resume/claim (STARK)
 │   ├── p01_zkspl/              # Confidential SPL balances (Poseidon commitments)
 │   ├── specter/                # Stealth address registry + private streams
@@ -269,7 +267,6 @@ protocol-01/
 │   ├── p01_registry/           # Stealth meta-address directory + Service Registry (retailers)
 │   ├── p01_stark_verifier/     # Custom FRI verifier (6 circuit AIRs, Goldilocks)
 │   ├── p01_liquidity/          # Instant-unshield liquidity pool (prefund)
-│   ├── p01_mugen/              # Mugen P2P escrow
 │   ├── subscription/           # (in repo, logic merged into zk_shielded)
 │   ├── stream/                 # (in repo, not deployed) Time-locked payment streaming
 │   ├── whitelist/              # (in repo, not deployed) Developer access control
@@ -433,12 +430,6 @@ Marketing site, SDK docs, weekly update videos (Remotion).
 
 **Stack:** Next.js 16, TypeScript, TailwindCSS v4, Framer Motion.
 
-### Mugen (reference consumer app)
-
-A Gojo-themed fiat-to-crypto P2P exchange built on Styx Protocol — used internally to prove the SDK in production.
-
----
-
 ## SDK
 
 11 of the 16 packages are published to npm under the `@protocol-01` scope
@@ -596,10 +587,10 @@ figure.
 |---|---|---|---|
 | specter-sdk | Stealth, wallet, transfers, registry | 240 | Passing |
 | merchant-sdk | Registry, vaults, entitlement, permissionless claims, licenses | 273 | Passing |
-| privacy-sdk | Shield / transfer / unshield / denominated | 111 | Passing |
+| privacy-sdk | Shield / transfer / unshield / denominated | 112 | Passing |
 | privacy-toolkit | Merkle, Goldilocks-Poseidon, commitments | 44 | Passing |
 | zk-sdk | Note + Merkle primitives | 99 | Passing |
-| arcium-sdk | MPC client, Mugen P2P, encryption | 18 | Passing |
+| arcium-sdk | MPC client, encryption | 0 | **No test suite** — its only suite tested the P2P exchange and went with it on 2026-08-19 |
 | auth-sdk | Login with P-01 | 123 | Passing |
 | whitelist-sdk | Encrypted access requests + IPFS | 40 | Passing |
 | p01-js | Merchant pay button + browser SDK | 393 | Passing |
@@ -649,7 +640,6 @@ anchor test                           # on-chain programs (localnet)
 - [x] **Permissionless `claim_period` + close-on-exhaustion** (2026-08-04, proven on devnet by a third-party signer: the program pins where the money goes, not who sends the claim)
 - [x] **MIT license everywhere** (2026-08-04 — root LICENSE, site, and docs now agree with what npm shipped)
 - [x] **Coset-LDE STARK verifier redeployed on devnet** (2026-08-04 — honest proof accepted at 809,812 CU, deployed-verifier gate exit 0, rejection attributed per cause)
-- [x] Mugen — reference fiat-to-crypto P2P exchange
 - [x] **V3 STARK migration end-to-end** (transfer/shield/unshield validated live, Goldilocks parity-locked)
 - [x] **Tx-Opacity Phase A** — `p01_relayer` wired V3 (closes RPC IP leak L19)
 - [x] **Tx-Opacity Phase B** — on-chain event scrub (closes L5-L10)

@@ -1,7 +1,7 @@
 /**
  * Nym mixnet — mobile types.
  *
- * Mirrors the shape the removed Mugen web app used, so future call sites can share
+ * Mirrors the shape the removed P2P exchange web app used, so future call sites can share
  * expectations across platforms. On mobile, the current MVP keeps the client
  * in `unsupported` state and always falls back to plain fetch.
  *

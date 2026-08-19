@@ -143,9 +143,9 @@ describe('Home', () => {
     expect(screen.getByText('Send')).toBeInTheDocument();
     expect(screen.getByText('Receive')).toBeInTheDocument();
     expect(screen.getByText('Swap')).toBeInTheDocument();
-    // Buy was the Mugen P2P rail. Mugen is gone, and the extension has no other
-    // fiat backend, so the button must stay gone -- a dead button that opens a
-    // page with no backend is worse than no button. Fail loudly if it returns.
+    // Buy was the P2P fiat rail. That exchange is gone, and the extension has no
+    // other fiat backend, so the button must stay gone -- a dead button that opens
+    // a page with no backend is worse than no button. Fail loudly if it returns.
     expect(screen.queryByText('Buy')).not.toBeInTheDocument();
   });
 

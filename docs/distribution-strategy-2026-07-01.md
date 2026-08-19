@@ -21,8 +21,10 @@ The skeptics' two corrections are baked in: (1) do NOT sell "audits" cold — yo
 
 ### 14-day action plan
 
-**Day 1 — File tranche-2. Non-negotiable.**
-The dossier at `apps/mugen/TRANCHE-2-SUBMISSION.md` is complete; both live URLs return 200. Grant repo read access to abhwshek@gmail.com, attach the $200 AI-coding receipts, submit via the Earn tranche form. Same day, DM the Superteam point of contact the three devnet escrow explorer tx links to start their review clock. This has sat unfiled for 16 days; it is the fastest money in the entire plan.
+> ⛔ **Struck 2026-08-19.** The original Day 1 was filing a grant tranche for the
+> P2P exchange, and that product was removed from the repository. The day is
+> gone rather than renumbered, so the rest of this plan still reads against the
+> dates it was written for.
 
 **Day 2 — Credibility hygiene sweep on protocol-01.dev (half day).**
 Fix what a diligent buyer finds in an afternoon: README APK link v1.0.1 to v1.0.3, merchant-sdk README claiming "not yet published" when it is live on npm, unify the 13/14/15 program count, delete the unsourced 73%/$4.3B scare stats, remove the "Re-Work in progress / Soon" extension CTA. Draft the post-mortem outline in the afternoon.
@@ -96,8 +98,7 @@ These convert the repo from vitamin to painkiller for the two audiences that mat
 5. **SDK npm hygiene (EXISTS, hours).** merchant-sdk README claims unpublished; make `npm install @protocol-01/merchant-sdk` the advertised path everywhere, sync the /sdk-demo copy. Highest GTM leverage per hour in the repo.
 6. **Chrome Web Store listing for the v0.5.0 extension (artifact EXISTS, work = store assets + review).** Removes the biggest consumer distribution friction for later. Precondition: gate off the ext `zk:` transfer path first — it is a known fund-loss bug and a store reviewer or user hitting it would be a reputation event.
 7. **Mainnet: publish the phased plan, do not rush the launch.** Sequence stated on `/security`: fix remaining circuit criticals, external review funded by services revenue, mainnet with per-pool caps. Turns "not audited, no date" from a dead end into a roadmap a future buyer can plan against.
-8. **Cross-link Mugen `/demo` from protocol-01.dev (EXISTS both sides, minutes).** Two live properties should point at each other; it thickens the proof pack for every grant and pitch.
-9. **Stream SDK gate honesty (copy fix, minutes).** "Live in days, not quarters" next to a whitelist request form is a contradiction; either open the gate or fix the copy.
+8. **Stream SDK gate honesty (copy fix, minutes).** "Live in days, not quarters" next to a whitelist request form is a contradiction; either open the gate or fix the copy.
 
 Explicitly deprioritized: new privacy features, mobile work, the V3 migration, and anything consumer-acquisition shaped. Nothing in the next 8 weeks needs new protocol code.
 
@@ -113,6 +114,4 @@ Explicitly deprioritized: new privacy features, mobile work, the V3 migration, a
 - **Private payroll for Solana teams.** The buyer is the most compliance-sensitive persona in crypto, native Confidential Balances already exist on mainnet, and fixed-denomination notes with maturation delays cannot physically do salaries.
 - **Adult/creator discreet billing.** Their existential pain is the card rail you do not touch; the sellable piece (license mint) is gated on the exact STARK path your audit flagged; SpankPay died with better positioning.
 - **White-label recurring rails for processors (Sphere/Helio).** The primitive went native on Solana mainnet in June 2026 and the named targets already have subscription products; the pitch would signal you did not research them.
-- **Escrow-in-a-link from Mugen.** An escrow link from an unknown in Telegram IS the scam pattern, and `resolve_dispute.rs` makes your key the centralized arbiter — a fee-taking French micro-entreprise controlling disputed no-KYC funds is MiCA exposure you cannot afford.
-
-The pattern across all nine kills: each one required either cold distribution into a hostile market (your admitted weakness), a product that does not exist in sellable form yet, or competing against a free audited native alternative. The chosen move requires none of the three.
+The pattern across all eight kills: each one required either cold distribution into a hostile market (your admitted weakness), a product that does not exist in sellable form yet, or competing against a free audited native alternative. The chosen move requires none of the three.

@@ -11,7 +11,7 @@ is not wired up on mobile specifically.
 
 **Status: Phase 2 (scaffolded, not live)**
 
-The web app at `apps/mugen/` has a working Nym 5-hop mixnet demo via `@nymproject/mix-fetch-full-fat`. Mobile doesn't yet have Nym because:
+A web app in this monorepo had a working Nym 5-hop mixnet demo via `@nymproject/mix-fetch-full-fat` (removed 2026-08-19 with the P2P exchange it belonged to). Mobile doesn't yet have Nym because:
 
 - The Nym TypeScript SDK is browser-only (WebSocket + WASM worker)
 - React Native requires either (a) a WebView-based wrapper (same pattern as STARK prover — see `services/stark/`) or (b) a native Rust/Go port (not upstream yet)

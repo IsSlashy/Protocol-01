@@ -404,14 +404,6 @@ export const OTHER_PROJECTS: ProjectCard[] = [
     links: [{ label: 'code', href: `${GITHUB}/p01-ows-zkkyc` }],
   },
   {
-    name: 'Mugen Exchange',
-    status: 'devnet',
-    statusKind: 'warn',
-    body: "Échange pair à pair, fiat vers crypto, sans KYC, pensé pour ne pas casser la confidentialité d'un portefeuille blindé. Séquestre wSOL, litiges et réputation anonyme tournent dans un vrai programme Anchor sur devnet.",
-    stack: 'Next.js 16, Anchor, Hono, WebSocket chiffré',
-    links: [{ label: 'démo', href: 'https://mugen-exchange.vercel.app' }],
-  },
-  {
     name: 'ULTRAKILL DamageTweaker',
     status: 'public',
     statusKind: 'ok',

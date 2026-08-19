@@ -58,8 +58,8 @@ export interface PendingReceiveAddress {
   status: 'pending' | 'funded' | 'shielding' | 'shielded';
   /** Detected balance in lamports (set when funded) */
   balanceLamports?: number;
-  /** Source of funds — 'receive' (manual), 'moonpay'. The 'mugen' P2P rail was
-   *  removed with the Mugen product on 2026-08-19. */
+  /** Source of funds — 'receive' (manual), 'moonpay'. The P2P fiat rail was
+   *  removed on 2026-08-19 along with the exchange it depended on. */
   source?: 'receive' | 'moonpay';
   /** Expected amount in lamports (for buy tracking) */
   expectedLamports?: number;

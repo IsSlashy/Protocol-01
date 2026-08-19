@@ -12,7 +12,7 @@ Payments, one rail, two modes.
 
 Every payment pays the same automatic on-chain fee (0.3 to 0.5%), one protocol, one fee rail.
 
-Shipped. 13 Solana programs, 6 STARK AIRs, 8+ TypeScript SDKs, 3 clients (Android, Chrome MV3, Next.js), plus Mugen, a no-KYC fiat-to-crypto P2P exchange built on the stack. Live devnet demo. Solo built in ~100 days.
+Shipped. 12 Solana programs, 6 STARK AIRs, 8+ TypeScript SDKs, 3 clients (Android, Chrome MV3, Next.js). Live devnet demo. Solo built in ~100 days.
 
 Devnet program IDs.
 
