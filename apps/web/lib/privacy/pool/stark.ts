@@ -484,7 +484,11 @@ async function uploadProofChunks(
   let chunkBlockhash = '';
   let chunkBlockhashAt = 0;
   const refreshBlockhash = async () => {
-    chunkBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
+    // `finalized` for the same reason as `signSendConfirm` above: every node
+    // knows it. These chunks go out with skipPreflight, so a stale blockhash
+    // does not fail here — it fails LATER, as chunks that never confirm and a
+    // resend round that looks like congestion. Same cause, different mask.
+    chunkBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
     chunkBlockhashAt = Date.now();
   };
 

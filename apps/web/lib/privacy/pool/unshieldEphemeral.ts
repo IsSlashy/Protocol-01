@@ -59,6 +59,7 @@ import {
   SystemProgram,
   Transaction,
 } from '@solana/web3.js';
+import { sendWithFreshBlockhash } from './sendTx';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
@@ -230,7 +231,7 @@ export async function executeUnshield(
     publicKey: ephemeral.publicKey,
     signTransaction: async (t: Transaction) => {
       if (!t.recentBlockhash) {
-        const { blockhash } = await connection.getLatestBlockhash('confirmed');
+        const { blockhash } = await connection.getLatestBlockhash('finalized');
         t.recentBlockhash = blockhash;
       }
       if (!t.feePayer) t.feePayer = ephemeral.publicKey;
@@ -310,11 +311,15 @@ export async function executeUnshield(
             lamports: sweepable,
           }),
         );
-        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-        sweepTx.recentBlockhash = blockhash;
-        sweepTx.feePayer = ephemeral.publicKey;
-        sweepTx.sign(ephemeral);
-        const sig = await connection.sendRawTransaction(sweepTx.serialize());
+        const { signature: sig, blockhash, lastValidBlockHeight } = await sendWithFreshBlockhash(
+          connection,
+          sweepTx,
+          (t) => {
+            t.sign(ephemeral);
+            return t;
+          },
+          ephemeral.publicKey,
+        );
         await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
       }
     } catch (sweepErr: unknown) {

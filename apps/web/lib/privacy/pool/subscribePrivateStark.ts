@@ -36,6 +36,7 @@ import {
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
+import { sendWithFreshBlockhash } from './sendTx';
 import {
   ZK_SHIELDED_PROGRAM_ID,
   deriveNullifierPDA,
@@ -287,11 +288,20 @@ export async function subscribePrivateStark(
       licenseCommitment: params.licenseCommitment,
     });
 
+    // ⚠️ This used to send a transaction whose `recentBlockhash` was never set
+    // here, relying on the signer's fallback — which fetched a `confirmed` one.
+    // Same defect as everywhere else, one level of indirection away.
     const tx = new Transaction().add(ix);
-    const signed = await signer.signTransaction(tx);
-    const txSig = await connection.sendRawTransaction(signed.serialize());
-    const bh = await connection.getLatestBlockhash('confirmed');
-    await connection.confirmTransaction({ signature: txSig, ...bh }, 'confirmed');
+    const { signature: txSig, blockhash, lastValidBlockHeight } = await sendWithFreshBlockhash(
+      connection,
+      tx,
+      (t) => signer.signTransaction(t),
+      signer.publicKey,
+    );
+    await connection.confirmTransaction(
+      { signature: txSig, blockhash, lastValidBlockHeight },
+      'confirmed',
+    );
 
     return { txSig, vaultPDA };
   } finally {

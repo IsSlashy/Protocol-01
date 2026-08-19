@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
+import { sendWithFreshBlockhash } from '@/lib/privacy/pool/sendTx';
 
 import { getStore, rateLimitExceeded } from '@/lib/waitlist/store';
 
@@ -495,17 +496,28 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+  // 🚨 THIS IS THE SEND THAT FAILED WITH "Blockhash not found" ON 2026-08-19,
+  // and it is the FIRST on-chain step of a deposit — so the whole flow died
+  // before it began, with an empty log and a message that reads like a program
+  // bug. It is not: a `confirmed` blockhash is unknown to the sibling node that
+  // runs preflight behind a load balancer. See `sendWithFreshBlockhash`.
   const tx = new Transaction().add(
     SystemProgram.transfer({ fromPubkey: funder.publicKey, toPubkey: target, lamports }),
   );
-  tx.recentBlockhash = blockhash;
-  tx.feePayer = funder.publicKey;
-  tx.sign(funder);
 
   let signature: string;
+  let blockhash: string;
+  let lastValidBlockHeight: number;
   try {
-    signature = await connection.sendRawTransaction(tx.serialize());
+    ({ signature, blockhash, lastValidBlockHeight } = await sendWithFreshBlockhash(
+      connection,
+      tx,
+      (t) => {
+        t.sign(funder);
+        return t;
+      },
+      funder.publicKey,
+    ));
   } catch (e) {
     return bad(502, `funding transaction was rejected: ${(e as Error).message}`);
   }

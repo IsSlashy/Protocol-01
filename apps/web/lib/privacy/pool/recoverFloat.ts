@@ -61,6 +61,7 @@ import {
   SystemProgram,
   Transaction,
 } from '@solana/web3.js';
+import { sendWithFreshBlockhash } from './sendTx';
 
 import {
   CIRCUIT_MERKLE_PATH,
@@ -277,11 +278,15 @@ export async function recoverStuckFloat(
         lamports: sweepable,
       }),
     );
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-    tx.recentBlockhash = blockhash;
-    tx.feePayer = ephemeral.publicKey;
-    tx.sign(ephemeral);
-    const sig = await connection.sendRawTransaction(tx.serialize());
+    const { signature: sig, blockhash, lastValidBlockHeight } = await sendWithFreshBlockhash(
+      connection,
+      tx,
+      (t) => {
+        t.sign(ephemeral);
+        return t;
+      },
+      ephemeral.publicKey,
+    );
     await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
 
     recovered.push({
@@ -432,7 +437,7 @@ function ephemeralSigner(ephemeral: Keypair, connection: Connection): WalletSign
     publicKey: ephemeral.publicKey,
     signTransaction: async (t: Transaction) => {
       if (!t.recentBlockhash) {
-        const { blockhash } = await connection.getLatestBlockhash('confirmed');
+        const { blockhash } = await connection.getLatestBlockhash('finalized');
         t.recentBlockhash = blockhash;
       }
       if (!t.feePayer) t.feePayer = ephemeral.publicKey;

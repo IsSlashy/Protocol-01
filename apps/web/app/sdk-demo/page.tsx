@@ -923,7 +923,7 @@ function DevnetSection() {
       // .signAndSendTransaction), a genuine on-chain interaction, not a mock.
       const connection = new Connection("https://api.devnet.solana.com", "confirmed");
       const owner = new PublicKey(publicKey);
-      const { blockhash } = await connection.getLatestBlockhash("confirmed");
+      const { blockhash } = await connection.getLatestBlockhash("finalized");
 
       const tx = new Transaction({ feePayer: owner, recentBlockhash: blockhash }).add(
         SystemProgram.transfer({

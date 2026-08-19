@@ -32,6 +32,7 @@ import {
   createAssociatedTokenAccountIdempotentInstruction,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
+import { sendWithFreshBlockhash } from './sendTx';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { utf8ToBytes, concatBytes } from '@noble/hashes/utils.js';
@@ -816,11 +817,12 @@ async function signSendConfirmTx(
   tx: Transaction,
   signer: WalletSigner,
 ): Promise<string> {
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-  tx.recentBlockhash = blockhash;
-  tx.feePayer = signer.publicKey;
-  const signed = await signer.signTransaction(tx);
-  const sig = await connection.sendRawTransaction(signed.serialize());
+  const { signature: sig, blockhash, lastValidBlockHeight } = await sendWithFreshBlockhash(
+    connection,
+    tx,
+    (t) => signer.signTransaction(t),
+    signer.publicKey,
+  );
   await connection.confirmTransaction(
     { signature: sig, blockhash, lastValidBlockHeight },
     'confirmed',

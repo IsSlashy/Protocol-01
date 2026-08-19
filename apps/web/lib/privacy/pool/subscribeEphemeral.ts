@@ -46,6 +46,7 @@ import {
   SystemProgram,
   Transaction,
 } from '@solana/web3.js';
+import { sendWithFreshBlockhash } from './sendTx';
 
 import type { StoredMerklePath } from './unshieldFromPath';
 import { prepareUnshieldJob, type PreparedUnshield } from './unshieldEphemeral';
@@ -212,7 +213,7 @@ export async function executeSubscribe(
     publicKey: ephemeral.publicKey,
     signTransaction: async (t: Transaction) => {
       if (!t.recentBlockhash) {
-        const { blockhash } = await connection.getLatestBlockhash('confirmed');
+        const { blockhash } = await connection.getLatestBlockhash('finalized');
         t.recentBlockhash = blockhash;
       }
       if (!t.feePayer) t.feePayer = ephemeral.publicKey;
@@ -276,11 +277,15 @@ export async function executeSubscribe(
             lamports: sweepable,
           }),
         );
-        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-        sweepTx.recentBlockhash = blockhash;
-        sweepTx.feePayer = ephemeral.publicKey;
-        sweepTx.sign(ephemeral);
-        const sig = await connection.sendRawTransaction(sweepTx.serialize());
+        const { signature: sig, blockhash, lastValidBlockHeight } = await sendWithFreshBlockhash(
+          connection,
+          sweepTx,
+          (t) => {
+            t.sign(ephemeral);
+            return t;
+          },
+          ephemeral.publicKey,
+        );
         await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
       }
     } catch (sweepErr: unknown) {

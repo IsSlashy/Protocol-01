@@ -1,4 +1,5 @@
 import type { PoolToken } from './pool/denominatedPool';
+import { sendWithFreshBlockhash } from './pool/sendTx';
 /**
  * shieldClient — main-thread driver for a denominated-pool shield.
  *
@@ -1775,11 +1776,15 @@ export async function sweepPayout(params: {
       lamports,
     }),
   );
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-  tx.recentBlockhash = blockhash;
-  tx.feePayer = payout.publicKey;
-  tx.sign(payout);
-  const txSig = await connection.sendRawTransaction(tx.serialize());
+  const { signature: txSig, blockhash, lastValidBlockHeight } = await sendWithFreshBlockhash(
+    connection,
+    tx,
+    (t) => {
+      t.sign(payout);
+      return t;
+    },
+    payout.publicKey,
+  );
   const conf = await connection.confirmTransaction(
     { signature: txSig, blockhash, lastValidBlockHeight },
     'confirmed',
