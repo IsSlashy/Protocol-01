@@ -94,6 +94,24 @@ export default function PayApp() {
       ),
     [wallets],
   );
+
+  /**
+   * The other wallets this browser actually has — Phantom, Solflare, whatever
+   * announced itself through the Wallet Standard.
+   *
+   * ⚠️ `Installed` ONLY, deliberately narrower than the P01 test above. That one
+   * accepts `Loadable` because the product's own extension is worth offering
+   * even when the adapter is not certain it is there. A competitor's wallet is
+   * not: a button that opens a download page reads as a broken connect, and
+   * this list exists to get a buyer in, not to advertise.
+   */
+  const externalWallets = useMemo(
+    () =>
+      wallets.filter(
+        (w) => !/protocol\s*01/i.test(w.adapter.name) && w.readyState === "Installed",
+      ),
+    [wallets],
+  );
   const { connection } = useConnection();
 
   const [asset, setAsset] = useState<Asset>(firstLive);
@@ -515,12 +533,60 @@ export default function PayApp() {
               ⚠️ When the extension is missing the screen says so and stops.
               There is deliberately no fallback — a fallback here is how a
               buyer ends up with a key in localStorage they never chose. */}
+          {/* ⚠️ THE DOOR THAT WAS BRICKED UP, AND WHY IT IS OPEN AGAIN.
+              From 2026-08-17 this screen accepted the P01 extension and nothing
+              else. The argument was sound — a buyer who connects an external
+              wallet is a buyer whose deposit can name them — but it was applied
+              to the wrong object. It did not remove the linkage, it removed the
+              only way in: no extension meant the page said so and stopped, so
+              shield, subscribe and the whole /pay app were unreachable for
+              everyone who did not already have it installed. A guarantee that
+              is only true because nothing can run is not a guarantee.
+              ⛔ THE ORDER IS STILL THE ARGUMENT. The P01 button is above this
+              one and stays there. These are a fallback, rendered under a line
+              that says what connecting one costs, and only when the browser
+              really has them. Nothing downstream needed changing: `solPub`,
+              `doSign` and the signer runtime have always taken the adapter or a
+              P01 keypair interchangeably. */}
+          {externalWallets.length > 0 && (
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center gap-3">
+                <div className="h-px flex-1 bg-p01-border" />
+                <span className="text-[11px] uppercase tracking-wider text-p01-text-muted">
+                  or another wallet
+                </span>
+                <div className="h-px flex-1 bg-p01-border" />
+              </div>
+              <p className="text-left text-xs text-p01-text-muted">
+                A deposit an external wallet pays for can be walked back to it. The subscription
+                still completes and the receipt says whether yours is reachable — it is not hidden
+                and it is not guessed.
+              </p>
+              {externalWallets.map((w) => (
+                <button
+                  key={w.adapter.name}
+                  className="btn-secondary flex w-full items-center justify-center gap-2"
+                  onClick={() => select(w.adapter.name)}
+                >
+                  {w.adapter.icon && (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={w.adapter.icon} alt="" className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  Connect {w.adapter.name}
+                </button>
+              ))}
+            </div>
+          )}
+
           {!p01Extension && (
             <div className="rounded-lg border border-p01-yellow/30 bg-p01-yellow/5 p-4 text-left">
               <p className="text-sm text-p01-yellow">The P01 extension is not installed.</p>
               <p className="mt-2 text-xs text-p01-text-muted">
                 It is what holds your keys and signs for you. Install it, then reload this page —
                 it announces itself to the app and the button above appears.
+                {externalWallets.length > 0
+                  ? " Until then you can connect one of the wallets below; the trade-off is stated there."
+                  : " No other wallet announced itself to this page either, so there is nothing to connect yet."}
               </p>
             </div>
           )}

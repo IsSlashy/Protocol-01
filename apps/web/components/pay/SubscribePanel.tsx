@@ -410,43 +410,63 @@ export default function SubscribePanel({
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   /**
-   * ⛔ THERE IS NO SETTING. Subscribing here either keeps the buyer off chain or
-   * does not happen.
+   * Whether a reachable buyer REFUSES the purchase, or completes it and says so.
    *
-   * This used to be a checkbox, on by default, that a user could untick. That
-   * was wrong and the founder was right to call it: a property the user can
-   * turn off is not a property of the system, it is a preference — and this
-   * application exists for exactly one thing, which is that a subscription
-   * cannot be walked back to whoever bought it. Offering to sell the same thing
-   * without it makes the guarantee unstatable, because no observer of a
-   * finished subscription can tell which mode produced it.
+   * `false` since 2026-08-19, founder's call, and the reasoning is not the one
+   * this comment used to argue against.
    *
-   * It also put the decision in the worst possible place: in front of someone
-   * mid-purchase, phrased in terms of rotated tickets and drained treasuries,
-   * choosing between two outcomes they cannot evaluate.
+   * The paragraph below is kept because it is still right about the thing it
+   * was written for: a per-user checkbox mid-purchase was a bad idea, and a
+   * property a user unticks is a preference, not a property. That is not what
+   * this constant is any more. It is a deployment-level decision about what to
+   * do when the walk succeeds, and there are only two honest answers — refuse,
+   * or complete and disclose. It never was, and is not now, a switch that makes
+   * the linkage go away.
    *
-   * The cost is real and accepted: when the funder cannot serve, or the only
-   * note available is one this wallet deposited, the subscription STOPS. It
-   * does not quietly become the public kind. Nothing is spent when it stops.
+   * 🚨 WHY REFUSING TURNED OUT TO BE THE WORSE ANSWER, MEASURED.
+   *
+   * Refusing bought no privacy. The walk it refuses on — deposit → ephemeral
+   * → funder → wallet — is two `getSignaturesForAddress` calls, and it stays
+   * two calls whether or not this screen sells anything. What refusing actually
+   * did was close the product: the one flow the connect screen documents
+   * (connect, shield a note, subscribe) makes the buyer the depositor, so the
+   * guard fires on it every time, and `ISSUANCE_UI` had closed the only other
+   * door. Both paths shut, and the disclosure that would have told the truth
+   * never rendered because nothing ever completed.
+   *
+   * ✅ SO THE GUARD STAYS AND ONLY ITS VERDICT CHANGES. Every hop is still
+   * walked, on both legs, and both answers ride back on the result as
+   * `reachableViaDeposit` and `reachableViaSpendFunder`. The panel renders them
+   * with an absent field reading as REACHABLE — pessimistic — so a run that
+   * could not establish an origin says the buyer is reachable rather than
+   * staying quiet. That is the shape a false green would need to defeat, and it
+   * is why flipping this is not the same as switching the check off.
+   *
+   * ⚠️ What this costs, stated plainly: a subscription bought from a note the
+   * buyer deposited themselves IS walkable back to them. The screen says so at
+   * the end. Unlinkability is a property of the note's origin, and the only
+   * thing that gives it is a note somebody else deposited — pre-deposited
+   * inventory, which is why `ISSUANCE_UI` is back on directly below.
    */
-  const NEVER_EXPOSE_WALLET = true as const;
+  const NEVER_EXPOSE_WALLET = false as const;
 
 /**
  * Whether this screen offers the deployment's pre-deposited inventory.
  *
- * `false` since 2026-08-18. A claim code buys one note out of that inventory,
- * and it made sense while a buyer arrived holding nothing and had no way to
- * deposit for themselves. The flow now is: connect the extension, shield a
- * note, subscribe. A buyer who has done that never touches issuance, and one
- * who has not is better told to shield than handed a field for a code they
- * have no way to obtain.
+ * `true` again since 2026-08-19. It was turned off on 2026-08-18 with the
+ * reasoning that a buyer now shields their own note, so nobody needs a claim
+ * code — which was true about mechanics and wrong about the property. A note
+ * you deposit yourself is exactly the note that keeps the subscription walkable
+ * back to you; see NEVER_EXPOSE_WALLET above. Pre-deposited inventory is not a
+ * fallback for buyers who arrived empty-handed, it is THE path that makes the
+ * purchase unlinkable, and closing it left the product with no unlinkable path
+ * at all.
  *
- * Everything behind it is intact — `/api/issue-note`, `requestIssuedNote`,
- * the `claimCode` state and the self-deposit swap path — because a stocked
- * deployment serving a buyer who holds nothing is still a real configuration.
- * Turning it back on is this one boolean.
+ * Nothing behind it had to be rebuilt — `/api/issue-note`, `requestIssuedNote`,
+ * the `claimCode` state and the self-deposit swap path were all left intact on
+ * purpose. Turning it back on is this one boolean.
  */
-const ISSUANCE_UI = false;
+const ISSUANCE_UI = true;
   /**
    * Whether a funder exists, ASKED OF THE SERVER rather than of the bundle.
    *
