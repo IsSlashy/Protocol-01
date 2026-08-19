@@ -314,9 +314,16 @@ export default function Home() {
                   </span>
                 </div>
                 <p className="text-p01-chrome text-xs">
+                  {/* 🚨 THIS SAID "withdraw recommended" UNTIL 2026-08-19, AND THE
+                      WITHDRAWAL DOES NOT EXIST. `unshield` and `transfer` were
+                      unregistered from zk_shielded on 2026-08-19 (circuit 5 proves
+                      no membership), and `shield` with them, so the V1 pool takes
+                      nothing in and lets nothing out. Telling a holder to withdraw
+                      is advice that cannot be followed; the honest line names the
+                      state instead, and does not imply a button exists. */}
                   {hasShieldedFunds
-                    ? `${shieldedBalance.toFixed(4)} SOL — withdraw recommended`
-                    : 'Variable-amount privacy pool'}
+                    ? `${shieldedBalance.toFixed(4)} SOL — no exit, V1 retired`
+                    : 'Variable-amount privacy pool — retired'}
                 </p>
               </div>
             </div>

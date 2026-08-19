@@ -87,6 +87,23 @@ vi.mock('@/shared/store/shielded', () => ({
   }),
 }));
 
+/**
+ * The denominated V3 store, driven per test.
+ *
+ * It was not mocked before, so `serializedNotes` was always empty and every
+ * assertion about the Transfer button measured the empty case by accident. That
+ * matters here: Transfer's destination used to depend on this list.
+ */
+let denomNotes: Array<{ token: string; denominationHuman: number }> = [];
+vi.mock('@/shared/store/denominatedPool', () => {
+  const store = (selector?: (s: unknown) => unknown) => {
+    const state = { serializedNotes: denomNotes, getMyNoteAddress: () => null };
+    return selector ? selector(state) : state;
+  };
+  store.getState = () => ({ serializedNotes: denomNotes, getMyNoteAddress: () => null });
+  return { useDenominatedPoolStore: store };
+});
+
 vi.mock('@/shared/utils', () => ({
   cn: (...classes: unknown[]) => classes.filter(Boolean).join(' '),
   truncateAddress: (addr: string, chars: number) =>
@@ -97,6 +114,7 @@ vi.mock('@/shared/utils', () => ({
 describe('ShieldedWallet', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    denomNotes = [];
   });
 
   it('renders the Shielded Wallet header', () => {
@@ -123,15 +141,23 @@ describe('ShieldedWallet', () => {
     expect(screen.getByText(/Shielded balance/)).toBeInTheDocument();
   });
 
-  it('displays the ZK address', () => {
+  it('displays the post-quantum receive address, and says so when it has none', () => {
     render(
       <MemoryRouter>
         <ShieldedWallet />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('ZK Address')).toBeInTheDocument();
-    expect(screen.getByText('zk:0x1234567890abcdef...')).toBeInTheDocument();
+    // The label moved from "ZK Address" to "Receive Address (PQ)" when the page
+    // moved to the denominated V3 note address. The old assertion outlived the
+    // rename by weeks because this whole file was excluded from the test run.
+    expect(screen.getByText('Receive Address (PQ)')).toBeInTheDocument();
+
+    // No local key in this render, so the field must SAY it has no address
+    // rather than print an empty box — a blank address field is how someone
+    // ends up sending a note into nothing.
+    expect(screen.getByText(/Unavailable \(local key needed\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/^zk:/)).not.toBeInTheDocument();
   });
 
   it('renders the four action buttons (Shield, Unshield, Transfer, Recover)', () => {
@@ -179,12 +205,13 @@ describe('ShieldedWallet', () => {
     );
 
     expect(screen.getByText('ZK-STARK Protection')).toBeInTheDocument();
-    expect(
-      screen.getByText(/post-quantum STARK proofs/),
-    ).toBeInTheDocument();
+    // Matches the sentence the card actually renders. The old assertion looked
+    // for "post-quantum STARK proofs"; the copy says "proved with post-quantum
+    // STARKs", and no run existed to catch the difference.
+    expect(screen.getByText(/proved with post-quantum STARKs/)).toBeInTheDocument();
   });
 
-  it('opens the shield modal when Shield button is clicked', () => {
+  it('sends Shield to the denominated V3 pool, not to a V1 modal', () => {
     render(
       <MemoryRouter>
         <ShieldedWallet />
@@ -197,11 +224,15 @@ describe('ShieldedWallet', () => {
     expect(actionButton).toBeTruthy();
     fireEvent.click(actionButton!);
 
-    expect(screen.getByText('shield SOL')).toBeInTheDocument();
-    expect(screen.getByText('Move SOL into shielded pool')).toBeInTheDocument();
+    // V1 `shield` was unregistered on-chain on 2026-08-19 -- a pool with no exit
+    // must not take deposits. The old in-page modal drove exactly that
+    // instruction, so a regression that brought it back would take money into a
+    // pool nothing can pay out.
+    expect(mockNavigate).toHaveBeenCalledWith('/denominated-shield');
+    expect(screen.queryByText('Move SOL into shielded pool')).not.toBeInTheDocument();
   });
 
-  it('opens the unshield modal when Unshield button is clicked', () => {
+  it('sends Unshield to the denominated V3 pool, not to a V1 modal', () => {
     render(
       <MemoryRouter>
         <ShieldedWallet />
@@ -213,11 +244,23 @@ describe('ShieldedWallet', () => {
     expect(actionButton).toBeTruthy();
     fireEvent.click(actionButton!);
 
-    expect(screen.getByText('unshield SOL')).toBeInTheDocument();
-    expect(screen.getByText('Withdraw from shielded pool')).toBeInTheDocument();
+    expect(mockNavigate).toHaveBeenCalledWith('/denominated-unshield');
+    expect(screen.queryByText('Withdraw from shielded pool')).not.toBeInTheDocument();
   });
 
-  it('navigates to /shielded/transfer when Transfer is clicked', () => {
+  /**
+   * 🚨 THIS TEST USED TO ASSERT THE BUG.
+   *
+   * It read `expect(mockNavigate).toHaveBeenCalledWith('/shielded/transfer')`
+   * and it passed, because the mock left the denominated list empty and the
+   * button fell back to V1. That fallback builds `global:transfer_stark`, a name
+   * zk_shielded has never had, and the instruction it should have used --
+   * `transfer` -- was unregistered on 2026-08-19. So the assertion pinned a
+   * route that generated a full STARK proof and then failed with
+   * `InstructionFallbackNotFound`, after the user had waited for all of it.
+   */
+  it('sends Transfer to the denominated V3 handoff when notes exist', () => {
+    denomNotes = [{ token: 'SOL', denominationHuman: 0.1 }];
     render(
       <MemoryRouter>
         <ShieldedWallet />
@@ -229,7 +272,25 @@ describe('ShieldedWallet', () => {
     expect(actionButton).toBeTruthy();
     fireEvent.click(actionButton!);
 
-    expect(mockNavigate).toHaveBeenCalledWith('/shielded/transfer');
+    expect(mockNavigate).toHaveBeenCalledWith('/denominated-transfer');
+    expect(mockNavigate).not.toHaveBeenCalledWith('/shielded/transfer');
+  });
+
+  it('refuses Transfer rather than falling back to the retired V1 route', () => {
+    denomNotes = [];
+    render(
+      <MemoryRouter>
+        <ShieldedWallet />
+      </MemoryRouter>,
+    );
+
+    const transferLabel = screen.getByText('Transfer');
+    const actionButton = transferLabel.closest('div')?.querySelector('button');
+    expect(actionButton).toBeTruthy();
+    expect(actionButton).toBeDisabled();
+
+    fireEvent.click(actionButton!);
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it('hides balance when the eye toggle is clicked', () => {

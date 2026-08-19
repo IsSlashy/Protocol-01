@@ -17,6 +17,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import manifest from '../../../manifest.json';
 import Welcome from './Welcome';
 
 // Track navigation calls
@@ -115,7 +116,13 @@ describe('Welcome', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(/PROTOCOL v0\.1\.0/)).toBeInTheDocument();
+    // Pinned to manifest.json rather than to a literal: this assertion was
+    // frozen at v0.1.0 while the extension shipped 0.5.0, and nothing caught it
+    // because the whole popup suite was excluded from the run. Reading the
+    // manifest makes the drift itself the failure.
+    expect(
+      screen.getByText(new RegExp(`PROTOCOL v${manifest.version.replace(/[.]/g, String.fromCharCode(92) + '.')}`)),
+    ).toBeInTheDocument();
     expect(screen.getByText(/DEVNET/)).toBeInTheDocument();
   });
 });

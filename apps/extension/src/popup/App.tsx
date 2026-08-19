@@ -24,7 +24,6 @@ import Settings from './pages/Settings';
 import Agent from './pages/Agent';
 import StealthPayments from './pages/StealthPayments';
 import ShieldedWallet from './pages/ShieldedWallet';
-import ShieldedTransfer from './pages/ShieldedTransfer';
 import ConfidentialWallet from './pages/ConfidentialWallet';
 import ConnectDapp from './pages/ConnectDapp';
 import ApproveTransaction from './pages/ApproveTransaction';
@@ -202,7 +201,6 @@ function App() {
           <Route path="/agent" element={<Agent />} />
           <Route path="/stealth-payments" element={<StealthPayments />} />
           <Route path="/shielded" element={<ShieldedWallet />} />
-          <Route path="/shielded/transfer" element={<ShieldedTransfer />} />
           <Route path="/confidential" element={<ConfidentialWallet />} />
           <Route path="/subscription-vaults" element={<SubscriptionVaults />} />
           <Route path="/connected-sites" element={<ConnectedSites />} />

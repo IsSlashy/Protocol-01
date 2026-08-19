@@ -18,17 +18,30 @@ export default defineConfig({
     exclude: [
       'node_modules',
       'dist',
-      // Popup component + page tests are blocked by a React version
-      // conflict between the extension (react ^19.2.3) and react-router-dom
-      // ^6.22.0, which pnpm hoists with a nested react copy. Every test
-      // that calls `render()` throws TypeError: Cannot read properties of
-      // null (reading 'useRef') from react-router/node_modules/react.
-      // Proper fix (post-judging): pnpm override forcing a single react
-      // version, or upgrade react-router-dom to v7 which has React 19
-      // peer-dep support. Meanwhile the shared/utils + shared/services
-      // suites still run, and the extension UI is exercised manually via
-      // the loaded unpacked build.
-      'src/popup/**/*.test.{ts,tsx}',
+      // ⛔ `src/popup/**/*.test.{ts,tsx}` WAS EXCLUDED HERE UNTIL 2026-08-19.
+      //
+      // The stated cause was a React version conflict — extension react ^19.2.3
+      // against react-router-dom ^6.22.0, pnpm hoisting a nested react copy, and
+      // every `render()` throwing "Cannot read properties of null (reading
+      // 'useRef')". The proposed fix was a pnpm override or react-router v7.
+      //
+      // Neither was needed in the end: apps/web hit the same wall, diagnosed it
+      // as no consistent (react, react-dom) pair existing anywhere in the
+      // install, and fixed it on 2026-07-27 by moving root react to 19.2.6 so a
+      // single copy hoists for every workspace. That fix covered this package
+      // too, and nothing here was re-run to notice.
+      //
+      // 🚨 WHAT THE EXCLUSION ACTUALLY COST. 13 files and 161 assertions sat
+      // unexecuted, including ShieldedWallet and ConnectDapp — the shield UI and
+      // the dapp connection. Six of them had gone stale without failing, and one
+      // of the six PINNED A BUG: it asserted that Transfer navigates to
+      // `/shielded/transfer`, a route that builds `global:transfer_stark`, an
+      // instruction zk_shielded has never had. A test that cannot run cannot
+      // tell you it is wrong, so it quietly became documentation for a defect.
+      //
+      // If a render here ever returns an empty <body> again, look for a nested
+      // react copy before suspecting the components — and do not re-add this
+      // line without a measurement that says the conflict is back.
     ],
     coverage: {
       provider: 'v8',

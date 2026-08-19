@@ -52,8 +52,21 @@ export default function ShieldedWallet() {
 
   // Denominated V3 notes are the real shielded funds (the working Goldilocks
   // path). Surface them in the balance + funds list alongside any legacy notes.
-  // The Transfer button routes denom notes to /denominated-transfer (encoded-note
-  // handoff, C1+C3+C6); legacy zk: notes still use /shielded/transfer (circuit 5).
+  //
+  // 🚨 THE LEGACY FALLBACK IS GONE, AND IT NEVER WORKED.
+  //
+  // Transfer used to read `denomNotes.length > 0 ? denominated : /shielded/transfer`,
+  // so a holder of old `zk:` notes and nothing else was sent down the V1 path.
+  // That path builds `global:transfer_stark`, and zk_shielded has never had an
+  // instruction by that name -- only `transfer`, which da8412f7 unregistered on
+  // 2026-08-19 along with `shield` and `unshield`, because circuit 5 proves no
+  // membership. So the fallback was dead twice over: wrong discriminant, and no
+  // instruction behind the right one either.
+  //
+  // What it cost was not nothing. The V1 route generates the full STARK proof
+  // FIRST and fails afterwards, so the user paid the whole wait to be told
+  // `InstructionFallbackNotFound`. Refusing up front, with the reason, is the
+  // only honest version of this button while V1 has no exit.
   const denomNotes = useDenominatedPoolStore((s) => s.serializedNotes);
   const denomBalanceSol = denomNotes
     .filter((n) => n.token === 'SOL')
@@ -508,8 +521,8 @@ export default function ShieldedWallet() {
             icon={<Zap className="w-5 h-5" />}
             label="Transfer"
             color="violet"
-            onClick={() => navigate(denomNotes.length > 0 ? '/denominated-transfer' : '/shielded/transfer')}
-            disabled={shieldedBalance <= 0 && denomNotes.length === 0}
+            onClick={() => navigate('/denominated-transfer')}
+            disabled={denomNotes.length === 0}
           />
           <ActionButton
             icon={<Scan className="w-5 h-5" />}

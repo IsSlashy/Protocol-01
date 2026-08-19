@@ -203,8 +203,12 @@ describe('Home', () => {
     );
 
     expect(screen.getByText('Shielded Wallet')).toBeInTheDocument();
-    expect(screen.getByText('1.5000 SOL shielded')).toBeInTheDocument();
-    expect(screen.getByText('ZK')).toBeInTheDocument();
+    // The card is the LEGACY V1 pool and says so. The subtitle used to read
+    // "withdraw recommended"; zk_shielded unregistered `unshield` on 2026-08-19,
+    // so that was advice nobody could follow. It now names the state.
+    expect(screen.getByText('Legacy')).toBeInTheDocument();
+    expect(screen.getByText('1.5000 SOL — no exit, V1 retired')).toBeInTheDocument();
+    expect(screen.queryByText(/withdraw recommended/i)).not.toBeInTheDocument();
   });
 
   it('navigates to /shielded when Shielded Wallet card is clicked', () => {
