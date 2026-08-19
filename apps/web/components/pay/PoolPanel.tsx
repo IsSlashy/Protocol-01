@@ -195,9 +195,7 @@ export default function PoolPanel({
    * through the deposit — stated here, where changing course is free, rather
    * than at the refusal after ~1 SOL of rent has been committed.
    */
-  const [shieldIntent, setShieldIntent] = useState<"handoff" | "self" | null>(null);
   /** True once Deposit was pressed with no intent chosen: show the question. */
-  const [pendingShield, setPendingShield] = useState(false);
   /** Operator setup surface, off unless `?treasury=1` is in the URL. Read once
    *  in an effect rather than during render, so server and client agree. */
   const [treasuryMode, setTreasuryMode] = useState(false);
@@ -605,27 +603,6 @@ export default function PoolPanel({
       setError("This wallet cannot sign transactions.");
       return;
     }
-    // ── The question that has to come BEFORE the money ────────────────────
-    //
-    // Depositing names you. That is not a defect — a deposit moves real value
-    // into the pool, so some address is named by arithmetic — but it decides
-    // what the note can later be used for, and until now nothing said so until
-    // AFTER the deposit had landed.
-    //
-    // The old shape: deposit (~1 SOL of proof-buffer rent, ~150 uploads, a
-    // wallet signature), then click Subscribe, then be refused because the note
-    // you just paid to create links the subscription back to you. A true
-    // warning, delivered at the most expensive possible moment.
-    //
-    // So the intent is asked at the front, where changing your mind is free.
-    // "To hand to someone else" is what a deposit is FOR: the recipient spends
-    // it and the deposit names you, not them. "To subscribe myself" has an
-    // answer that costs nothing at all — an issued note — and offering it here
-    // is the difference between a product that steers and one that corrects.
-    if (shieldIntent === null) {
-      setPendingShield(true);
-      return;
-    }
     setError(null);
     setResult(null);
     setShielding(true);
@@ -996,68 +973,6 @@ export default function PoolPanel({
             transaction fee (0.000005 SOL).
           </p>
         </details>
-
-        {/* Asked before the deposit, answered in one click, and it changes what
-            happens next rather than merely warning about it. */}
-        {pendingShield && shieldIntent === null && !result && (
-          <div className="space-y-2 rounded-lg border border-p01-cyan/40 p-3">
-            <p className="text-sm text-p01-text">What is this deposit for?</p>
-            <p className="text-xs text-p01-text-muted">
-              Depositing moves real value in, so it comes from your address by name. That is fine —
-              and it decides what the note can be used for afterwards.
-            </p>
-            <button
-              type="button"
-              onClick={() => {
-                setShieldIntent("handoff");
-                setPendingShield(false);
-              }}
-              className="w-full rounded-lg border border-p01-border p-3 text-left text-xs hover:border-p01-cyan"
-            >
-              <strong className="text-p01-text">To hand to someone else.</strong>{" "}
-              <span className="text-p01-text-muted">
-                They spend it, and the deposit names you rather than them. This is what a deposit
-                is good for.
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setShieldIntent("self");
-                setPendingShield(false);
-              }}
-              className="w-full rounded-lg border border-p01-border p-3 text-left text-xs hover:border-p01-yellow"
-            >
-              <strong className="text-p01-text">To spend it myself.</strong>{" "}
-              <span className="text-p01-text-muted">
-                Works, and every spend stays reachable from your wallet in one hop through this
-                deposit — whoever pays for the spend itself. ⚠️ If you only want to subscribe, you
-                do not need to deposit at all: the Subscribe tab issues you a note when you hold
-                none, at no cost and with no deposit in your name.
-              </span>
-            </button>
-          </div>
-        )}
-
-        {shieldIntent === "self" && !result && (
-          <p className="flex items-start gap-2 text-xs text-p01-text-muted">
-            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
-            <span>
-              This note will be spendable by you, and every spend will stay reachable from your
-              wallet through this deposit.{" "}
-              <button
-                type="button"
-                onClick={() => {
-                  setShieldIntent(null);
-                  setPendingShield(true);
-                }}
-                className="underline underline-offset-2 hover:text-p01-cyan"
-              >
-                Change
-              </button>
-            </span>
-          </p>
-        )}
 
         {/* Operator-only, and only on explicit intent: `?treasury=1`.
             Not a permission check — anyone can add a query parameter — but it

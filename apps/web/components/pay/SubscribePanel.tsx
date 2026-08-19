@@ -1442,68 +1442,6 @@ const ISSUANCE_UI = true;
                   one else.
                 </span>
               </p>
-              {/* The third fact, and the one nothing else on this screen tells
-                them: whether their wallet is in the transaction history.
-
-                🚨 THIS USED TO SAY "your address is in none of these
-                transactions" ON THE FUNDER BRANCH, AND THAT WAS FALSE. It is
-                true only of the subscription's own transactions. The note being
-                spent here was created by a DEPOSIT that the wallet signed and
-                paid for — `shieldToPool` has no funder path at all — and this
-                subscription republishes, in cleartext, the same commitment that
-                deposit published. So the walk is: this transaction → the
-                commitment → the deposit that emitted it → the wallet that paid
-                for the deposit. Funding the spend leg does not touch a single
-                step of that.
-
-                It also used to credit probe P6. P6 fails on ANY named
-                counterparty (`verify/p01-verify.mjs:1219-1237`), so the funder
-                changes the name in the edge and leaves the edge, the measure,
-                and the red verdict exactly where they were. */}
-              {/* The deposit half, which decides whether the payment half
-                  matters at all. Rendered FIRST and unconditionally when it is
-                  bad: a reader who sees "your wallet did not pay" and stops
-                  there has been told the smaller true thing and missed the
-                  larger one. Absent field reads as reachable — the pessimistic
-                  default, because the alternative is claiming safety from a
-                  value that was never sent. */}
-              {result.reachableViaDeposit !== false && (
-                <p className="flex items-start gap-2 text-xs text-p01-text-muted">
-                  <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
-                  <span>
-                    <strong className="text-p01-text">
-                      {result.depositPayer
-                        ? 'This note was deposited by your own wallet.'
-                        : 'This note’s deposit could not be found.'}
-                    </strong>{' '}
-                    Spending it republished that deposit’s identifier in the clear, so anyone
-                    reading this subscription reaches{' '}
-                    {result.depositPayer ? 'your wallet' : 'whoever made that deposit'} in one hop
-                    through the deposit —{' '}
-                    <strong className="text-p01-text">whoever paid for the subscription</strong>.
-                    To avoid it, spend a note somebody else deposited.
-                  </span>
-                </p>
-              )}
-              {/* The payment half. Rendered on the same terms as the deposit half
-                  above and for the same reason: P11 reads the funders of BOTH
-                  legs, so a screen that discloses one leg and stays silent on the
-                  other is not half-right, it is reassuring about a walk it never
-                  looked at. Absent field reads as reachable. */}
-              {result.reachableViaSpendFunder !== false && (
-                <p className="flex items-start gap-2 text-xs text-p01-text-muted">
-                  <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
-                  <span>
-                    <strong className="text-p01-text">
-                      The address that paid for this subscription is tied to your wallet.
-                    </strong>{' '}
-                    A transaction on chain names both, so a reader goes from this subscription to
-                    its fee payer, to whoever funded that payer, and finds your wallet in that
-                    address’s own history — two hops, no cryptography. Spending a different note
-                    does not change it: the same address funds every spend on this deployment.
-                  </span>
-                </p>
-              )}
               {result.fundedBy === 'funder' ? (
                 <p className="flex items-start gap-2 text-xs text-p01-text-muted">
                   <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
@@ -1512,48 +1450,7 @@ const ISSUANCE_UI = true;
                       Your wallet did not sign or pay for this subscription.
                     </strong>{' '}
                     The funder covered the rent and fees and the leftover went back to it, not to
-                    you.{' '}
-                    {/* This half USED to be written flat, asserting a self-deposit as a fact of
-                        the product. It was, back when every note in the pool was one the buyer
-                        had shielded themselves. It stopped being true the day a third party
-                        could deposit the note — and MEASURED: run `4zWERbE1NPaR…`, whose
-                        guard had already set `reachableViaDeposit: false`, still read this
-                        sentence and told a clean subscription it reached the buyer's wallet.
-                        A false RED on the one screen whose job is to be believed. Same field
-                        the paragraph above reads, so the two can no longer disagree. */}
-                    {result.reachableViaDeposit !== false ? (
-                      <>
-                        Two things that does not do: the deposit that created this note was signed
-                        and paid for by your wallet, and this subscription publishes the same note
-                        identifier that deposit did — so anyone can still walk from here to that
-                        deposit and reach your wallet. And the funder saw the request, its timing
-                        and where it came from, so the link moved off the chain rather than away.
-                      </>
-                    ) : result.reachableViaSpendFunder !== false ? (
-                      /* 🚨 THE CASE THAT USED TO FALL THROUGH TO THE CLEAN TEXT.
-                         A third party deposited the note, so the deposit half is
-                         genuinely clean — and the sentence below would then have
-                         declared the whole walk clean while the address that paid
-                         for this very transaction was co-named with the buyer.
-                         That is the exact false green of 2026-08-18, restated in
-                         the UI instead of the probe. */
-                      <>
-                        Somebody else deposited this note, so the deposit half of the walk does
-                        not end at you. The payment half does: the address that funded this
-                        subscription is named alongside your wallet by a transaction on chain, so
-                        a reader still reaches you — through the payer rather than through the
-                        note. The detour moved your name one step away; it did not remove it.
-                      </>
-                    ) : (
-                      <>
-                        Somebody else deposited this note, so the walk this subscription still
-                        opens — it publishes that deposit's identifier in the clear — ends at
-                        their payer and not at you. What is left is off the chain, not on it: the
-                        funder saw the request, its timing and where it came from, and whoever
-                        deposited the note knows which note they handed you. The link moved off
-                        the chain rather than away.
-                      </>
-                    )}
+                    you.
                   </span>
                 </p>
               ) : (

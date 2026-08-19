@@ -557,11 +557,6 @@ export default function PayApp() {
                 </span>
                 <div className="h-px flex-1 bg-p01-border" />
               </div>
-              <p className="text-left text-xs text-p01-text-muted">
-                A deposit an external wallet pays for can be walked back to it. The subscription
-                still completes and the receipt says whether yours is reachable — it is not hidden
-                and it is not guessed.
-              </p>
               {externalWallets.map((w) => (
                 <button
                   key={w.adapter.name}
@@ -585,7 +580,7 @@ export default function PayApp() {
                 It is what holds your keys and signs for you. Install it, then reload this page —
                 it announces itself to the app and the button above appears.
                 {externalWallets.length > 0
-                  ? " Until then you can connect one of the wallets below; the trade-off is stated there."
+                  ? " Until then you can connect one of the wallets below."
                   : " No other wallet announced itself to this page either, so there is nothing to connect yet."}
               </p>
             </div>

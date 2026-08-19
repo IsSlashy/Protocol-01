@@ -18,9 +18,13 @@
  *      cost the product its entire entry path, and it is the first test.
  *   2. The P01 extension still LEADS. Order is the argument, and a fallback
  *      that quietly becomes the default would undo the point of the fold.
- *   3. The cost is stated on the screen, next to the button, not in a doc.
- *   4. A wallet the browser does not actually have is never offered — a button
+ *   3. A wallet the browser does not actually have is never offered — a button
  *      that opens a download page reads as a broken connect.
+ *
+ * The screen used to carry a sentence about what connecting an external wallet
+ * costs. It was removed on 2026-08-19: the founder's call is that a disclosure
+ * which does not remove the linkage is a layer, not a fix, and the classic
+ * screen is the one that ships. Nothing here asserts that copy any more.
  *
  * `useWallet` is stubbed because the gate is a pure function of what the
  * adapter reports; the heavy panels are stubbed because they only mount after
@@ -98,19 +102,10 @@ describe("the connect gate offers every door the browser actually has", () => {
     const phantomButton = screen.getByRole("button", { name: /connect phantom/i });
 
     // Order is the argument: the product's own wallet is first in the document,
-    // the external one is under a fold that names what it costs.
+    // the external one sits under it.
     expect(p01Button.compareDocumentPosition(phantomButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
-  });
-
-  it("states the cost of an external wallet next to the button, not elsewhere", () => {
-    walletState.wallets = [phantom];
-    render(<PayApp />);
-
-    // The claim has to survive a copy edit, so match the mechanism rather than
-    // the sentence: a deposit an external wallet pays for is walkable back.
-    expect(screen.getByText(/walked back/i)).toBeInTheDocument();
   });
 
   it("never offers a wallet the browser does not have", () => {
