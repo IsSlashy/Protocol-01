@@ -101,7 +101,6 @@ describe('PrivacySDK', () => {
           quantumVault: dummy,
           starkVerifier: dummy,
           arcium: dummy,
-          mugenExchange: dummy,
           bundler: dummy,
         },
       });
@@ -255,7 +254,6 @@ describe('PrivacySDK', () => {
           quantumVault: dummy,
           starkVerifier: dummy,
           arcium: dummy,
-          mugenExchange: dummy,
           bundler: dummy,
         },
       });

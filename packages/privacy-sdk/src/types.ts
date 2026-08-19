@@ -84,8 +84,6 @@ export interface ProgramIds {
   bundler: PublicKey;
   /** Whitelist program (access control). */
   whitelist: PublicKey;
-  /** Mugen P2P exchange program. */
-  mugenExchange: PublicKey;
 }
 
 // ─── Token ────────────────────────────────────────────────────────────────────

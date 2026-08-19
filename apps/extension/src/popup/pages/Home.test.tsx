@@ -133,7 +133,7 @@ describe('Home', () => {
     expect(screen.getByText('12.3456 SOL')).toBeInTheDocument();
   });
 
-  it('renders the four action buttons', () => {
+  it('renders the three action buttons', () => {
     render(
       <MemoryRouter>
         <Home />
@@ -143,7 +143,10 @@ describe('Home', () => {
     expect(screen.getByText('Send')).toBeInTheDocument();
     expect(screen.getByText('Receive')).toBeInTheDocument();
     expect(screen.getByText('Swap')).toBeInTheDocument();
-    expect(screen.getByText('Buy')).toBeInTheDocument();
+    // Buy was the Mugen P2P rail. Mugen is gone, and the extension has no other
+    // fiat backend, so the button must stay gone -- a dead button that opens a
+    // page with no backend is worse than no button. Fail loudly if it returns.
+    expect(screen.queryByText('Buy')).not.toBeInTheDocument();
   });
 
   it('navigates to /send when Send button is clicked', () => {
@@ -190,21 +193,6 @@ describe('Home', () => {
     fireEvent.click(actionButton!);
 
     expect(mockNavigate).toHaveBeenCalledWith('/swap');
-  });
-
-  it('navigates to /buy when Buy button is clicked', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    const label = screen.getByText('Buy');
-    const actionButton = label.closest('div')?.querySelector('button');
-    expect(actionButton).toBeTruthy();
-    fireEvent.click(actionButton!);
-
-    expect(mockNavigate).toHaveBeenCalledWith('/buy');
   });
 
   it('renders the Shielded Wallet card with balance', () => {

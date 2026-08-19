@@ -10,7 +10,7 @@
  * when the residual exceeds a configurable ratio of the input (default 30%).
  *
  * This is the first integration layer of the 12-layer privacy stack used by the
- * Mugen exchange (fiat-to-crypto, no KYC). Math is currency-agnostic; the fiat
+ * fiat-to-crypto purchases. Math is currency-agnostic; the fiat
  * currency field is kept only for audit trails.
  */
 

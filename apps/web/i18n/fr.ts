@@ -640,10 +640,6 @@ const fr: Translations = {
         title: 'Décodeur d’événements universel',
         desc: 'La reconstruction Merkle côté client parcourt maintenant un registre de 6 layouts d’events (MerkleRootChanged + V1/V2 ShieldDenominated + ShieldStark + TransferDenominatedStark + EscrowRelease) + pagination signatures. Neutralise la dérive de décodeur qui rendait les pools pre-hardening irrécupérables.',
       },
-      mugenExchange: {
-        title: 'Mugen Exchange (P2P fiat)',
-        desc: 'Marketplace P2P fiat-to-crypto à thème Gojo, sans KYC, escrow via wSOL on-chain, couche Treasury Buffer, stack privacy MagicBlock PER + FROST + Nym. Intégration mobile native avec reçu privé + UI cycle de vie des trades. Déployé sur Vercel.',
-      },
       v3StarkE2E: {
         title: 'STARK V3 valide bout en bout',
         desc: 'Transfer STARK V3 valide bout en bout sur devnet (sender vers encoded vers import vers maturation vers unshield, +0,995 SOL net sur la tx test). Parite Goldilocks Poseidon verrouillee entre mobile, extension et verifier on-chain. BN254 retire de toutes les paths de spend.',
@@ -714,7 +710,7 @@ const fr: Translations = {
       },
       fiatOnRamp: {
         title: 'Rampe fiat (Cartes + MoonPay)',
-        desc: 'Int\u00e9gration carte et MoonPay dans l\u2019app, en plus du flow P2P Mugen. Conversion fiat-crypto directe sans quitter l\u2019application, tout en gardant la voie P2P sans KYC pour les users privacy-first.',
+        desc: 'Int\u00e9gration carte et MoonPay dans l\u2019app. Conversion fiat-crypto directe sans quitter l\u2019application.',
       },
       leafInsertedCanonical: {
         title: '\u00c9v\u00e9nement canonique `LeafInserted`',
@@ -1149,7 +1145,7 @@ const fr: Translations = {
         desc: 'Protocol 01 exploite les syscalls cryptographiques natifs de Solana pour la v\u00e9rification on-chain des preuves STARK, r\u00e9partie sur deux instructions pour tenir dans le budget de calcul.',
         detail1: 'V\u00e9rificateur FRI personnalis\u00e9 pour les preuves STARK, corps de Goldilocks, 809 812 CU mesur\u00e9s sur devnet pour une preuve accept\u00e9e',
         detail2: 'Syscall sha256 pour le hachage des chemins de Merkle (post-migration Groth16)',
-        detail3: '14 programmes Anchor : zk_shielded, p01_zkspl, specter, subscription, stream, p01_quantum_vault, p01_quantum_wallet, p01_stark_verifier, p01_registry, p01_relayer, p01-fee-splitter, whitelist, p01_liquidity, p01_mugen',
+        detail3: '13 programmes Anchor : zk_shielded, p01_zkspl, specter, subscription, stream, p01_quantum_vault, p01_quantum_wallet, p01_stark_verifier, p01_registry, p01_relayer, p01-fee-splitter, whitelist, p01_liquidity',
         detail4: 'Coffre quantique : signatures WOTS+, verrouillage temporel par hash, commit-then-reveal (bas\u00e9 sur SHA-256)',
         detail5: 'Invocations inter-programmes pour les transferts de tokens et la v\u00e9rification des preuves',
         detail6: '370+ tests automatis\u00e9s : tests de stress, flux E2E, tests unitaires SDK, tests Rust STARK',

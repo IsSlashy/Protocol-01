@@ -95,7 +95,6 @@ const SHIPPED_CATEGORY: Record<string, CategoryKey> = {
   aiAgent: "appsSdk",
   privacySdkNpm: "appsSdk",
   jupiterSwap: "appsSdk",
-  mugenExchange: "ecosystem",
   colosseumFrontier: "ecosystem",
 };
 
@@ -332,10 +331,6 @@ const roadmap: RoadmapPhase[] = [
         description: "roadmap.items.multiLayoutDecoder.desc",
       },
       // ── Ecosystem / product surface ───────────────────────────
-      {
-        title: "roadmap.items.mugenExchange.title",
-        description: "roadmap.items.mugenExchange.desc",
-      },
       {
         title: "roadmap.items.colosseumFrontier.title",
         description: "roadmap.items.colosseumFrontier.desc",

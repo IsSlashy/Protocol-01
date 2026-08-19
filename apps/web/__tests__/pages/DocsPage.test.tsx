@@ -312,13 +312,15 @@ describe('DocsPage -- Privacy technologies documentation', () => {
     // The old list named 13 programs, one of which ("trustless") does not exist
     // in programs/, while three that do were missing. The count now matches the
     // Cargo workspace members.
-    it('lists the fourteen Anchor programs that are in the workspace', () => {
+    it('lists the thirteen Anchor programs that are in the workspace', () => {
       openTopic('Solana On-Chain Verification');
-      const line = screen.getByText(/^14 Anchor programs:/);
+      const line = screen.getByText(/^13 Anchor programs:/);
       expect(line).toBeInTheDocument();
       expect(line.textContent).not.toMatch(/trustless/);
       expect(line.textContent).toMatch(/p01_liquidity/);
-      expect(line.textContent).toMatch(/p01_mugen/);
+      // p01_mugen left the workspace on 2026-08-19 with the Mugen product. The
+      // count is the Cargo members less `stark`, which is a library, not a program.
+      expect(line.textContent).not.toMatch(/p01_mugen/);
     });
   });
 

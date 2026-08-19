@@ -22,7 +22,6 @@ import SubscriptionDetails from './pages/SubscriptionDetails';
 import Activity from './pages/Activity';
 import Settings from './pages/Settings';
 import Agent from './pages/Agent';
-import Buy from './pages/Buy';
 import StealthPayments from './pages/StealthPayments';
 import ShieldedWallet from './pages/ShieldedWallet';
 import ShieldedTransfer from './pages/ShieldedTransfer';
@@ -32,7 +31,6 @@ import ApproveTransaction from './pages/ApproveTransaction';
 import ApproveSubscription from './pages/ApproveSubscription';
 import ConnectedSites from './pages/ConnectedSites';
 import SubscriptionVaults from './pages/SubscriptionVaults';
-import MugenExchange from './pages/MugenExchange';
 import DenominatedShield from './pages/DenominatedShield';
 import DenominatedUnshield from './pages/DenominatedUnshield';
 import DenominatedTransfer from './pages/DenominatedTransfer';
@@ -201,8 +199,6 @@ function App() {
           <Route path="/activity" element={<Activity />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/link-phone" element={<LinkPhone />} />
-          <Route path="/buy" element={<Buy />} />
-          <Route path="/mugen-exchange" element={<MugenExchange />} />
           <Route path="/agent" element={<Agent />} />
           <Route path="/stealth-payments" element={<StealthPayments />} />
           <Route path="/shielded" element={<ShieldedWallet />} />

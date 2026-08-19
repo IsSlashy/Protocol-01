@@ -24,7 +24,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://protocol-01.dev/*", "https://mugen-exchange.vercel.app/*", "https://*.mugen-exchange.vercel.app/*", "http://localhost:*/*"],
+      "matches": ["https://protocol-01.dev/*", "http://localhost:*/*"],
       "js": ["src/content/index.ts"],
       "run_at": "document_start"
     }
@@ -32,7 +32,7 @@
   "web_accessible_resources": [
     {
       "resources": ["inject.js", "polyfills.js", "circuits/*"],
-      "matches": ["https://protocol-01.dev/*", "https://mugen-exchange.vercel.app/*", "https://*.mugen-exchange.vercel.app/*", "http://localhost:*/*"]
+      "matches": ["https://protocol-01.dev/*", "http://localhost:*/*"]
     }
   ],
   "permissions": [
@@ -54,7 +54,6 @@
     "https://price.jup.ag/*",
     "https://api.groq.com/*",
     "https://generativelanguage.googleapis.com/*",
-    "https://mugen-exchange.vercel.app/*",
     "https://api.coingecko.com/*"
   ],
   "content_security_policy": {

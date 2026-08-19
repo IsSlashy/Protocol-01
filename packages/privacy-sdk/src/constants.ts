@@ -23,7 +23,6 @@ export const PROGRAM_IDS: Record<Network, ProgramIds> = {
     starkVerifier: new PublicKey('DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs'),
     arcium: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     whitelist: new PublicKey('5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33'),
-    mugenExchange: new PublicKey('EURLevwgmunRQU5piF7QLB1ithMPfxYFXp6jp6eGEAJN'),
     bundler: new PublicKey('FzhzTRz8DZDESoCm851n1qB6sSSCTBGV3aZtLVbDfGGX'), // not in Anchor.toml
   },
   mainnet: {
@@ -40,7 +39,6 @@ export const PROGRAM_IDS: Record<Network, ProgramIds> = {
     starkVerifier: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     arcium: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     whitelist: new PublicKey('AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE'),
-    mugenExchange: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     bundler: new PublicKey('11111111111111111111111111111111'), // not yet deployed
   },
 };
@@ -197,13 +195,6 @@ export const SEEDS = {
 
   // stark verifier
   PROOF_BUFFER: 'proof_buffer',
-
-  // mugen exchange
-  MUGEN_CONFIG: 'mugen_config',
-  MUGEN_ORDER: 'mugen_order',
-  MUGEN_ESCROW: 'mugen_escrow',
-  MUGEN_VAULT: 'mugen_vault',
-  MUGEN_REPUTATION: 'mugen_rep',
 } as const;
 
 // ─── Standard Denominations (in lamports/base units) ──────────────────────────

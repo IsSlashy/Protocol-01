@@ -12,7 +12,6 @@ members = [
     "programs/p01_quantum_vault",
     "programs/p01_quantum_wallet",
     "programs/p01_registry",
-    "programs/p01_mugen",
     "programs/p01_liquidity",
     "stark",
 ]

@@ -7,7 +7,6 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   Repeat,
-  Plus,
   Copy,
   Check,
   Settings,
@@ -226,12 +225,6 @@ export default function Home() {
             label="Swap"
             color="violet"
             onClick={() => navigate('/swap')}
-          />
-          <ActionButton
-            icon={<Plus className="w-5 h-5" />}
-            label="Buy"
-            color="orange"
-            onClick={() => navigate('/buy')}
           />
         </div>
 

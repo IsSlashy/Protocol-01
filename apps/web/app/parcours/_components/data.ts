@@ -215,12 +215,6 @@ export const PROGRAMS: ProgramRow[] = [
     sourcePath: 'programs/p01_registry/src/lib.rs',
   },
   {
-    name: 'p01_mugen',
-    id: 'EURLevwgmunRQU5piF7QLB1ithMPfxYFXp6jp6eGEAJN',
-    role: "Séquestre pair à pair pour l'échange fiat vers crypto : création d'ordre, séquestre wSOL, confirmation, litige, expiration.",
-    sourcePath: 'programs/p01_mugen/src/lib.rs',
-  },
-  {
     name: 'p01-fee-splitter',
     id: 'UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM',
     role: 'Répartition des frais de protocole vers un portefeuille fixe.',

@@ -75,13 +75,3 @@ export {
 } from './auction';
 export type { AuctionConfig, BidReceipt, AuctionResult } from './auction';
 
-// ── UC8: Mugen P2P -- Encrypted order matching (Privacy Layer 8) ──────────
-export {
-  submitEncryptedOffer,
-  blindTakeOrder,
-  cancelEncryptedOffer,
-  currencyToHash,
-  generateNonce,
-  MUGEN_CIRCUITS,
-} from './mugen';
-export type { EncryptedOfferParams, BlindTakeParams, OfferReceipt, MatchResult } from './mugen';

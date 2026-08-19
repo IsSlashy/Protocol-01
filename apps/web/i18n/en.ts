@@ -639,10 +639,6 @@ const en = {
         title: 'Universal Event Decoder',
         desc: 'Client Merkle rebuild now walks a registry of 6 event layouts (MerkleRootChanged + V1/V2 ShieldDenominated + ShieldStark + TransferDenominatedStark + EscrowRelease) + signature pagination. Defeats the decoder drift that made pre-hardening pools unrecoverable.',
       },
-      mugenExchange: {
-        title: 'Mugen Exchange (P2P Fiat)',
-        desc: 'Gojo-themed P2P fiat-to-crypto marketplace, no KYC, escrow via wSOL on-chain vault, Treasury Buffer layer, MagicBlock PER + FROST + Nym privacy stack. Mobile-native integration with privacy receipt + trade lifecycle UI. Deployed on Vercel.',
-      },
       colosseumFrontier: {
         title: 'Colosseum Frontier 2026',
         desc: 'Submitted on 2026-04-23 under Ireland team region (Superteam IE affiliation). Accelerator track enabled. Publicly tagged by Superteam Ireland as one of 5 Irish teams in the cohort.',
@@ -714,7 +710,7 @@ const en = {
       },
       fiatOnRamp: {
         title: 'Fiat On-Ramp (Cards + MoonPay)',
-        desc: 'Card and MoonPay integration in-app, alongside the Mugen P2P route. Direct fiat-to-crypto without leaving the app, with the P2P path staying KYC-free for privacy-first users.',
+        desc: 'Card and MoonPay integration in-app. Direct fiat-to-crypto without leaving the app.',
       },
       leafInsertedCanonical: {
         title: 'Universal `LeafInserted` Event',
@@ -1160,7 +1156,7 @@ const en = {
         desc: 'Protocol 01 leverages Solana\'s native cryptographic syscalls for on-chain STARK proof verification, split across two instructions to fit the compute budget.',
         detail1: 'Custom FRI verifier for STARK proofs. Goldilocks field, 809,812 CU measured on devnet for an accepted proof',
         detail2: 'sha256 syscall for Merkle path hashing (post-Groth16 migration)',
-        detail3: '14 Anchor programs: zk_shielded, p01_zkspl, specter, subscription, stream, p01_quantum_vault, p01_quantum_wallet, p01_stark_verifier, p01_registry, p01_relayer, p01-fee-splitter, whitelist, p01_liquidity, p01_mugen',
+        detail3: '13 Anchor programs: zk_shielded, p01_zkspl, specter, subscription, stream, p01_quantum_vault, p01_quantum_wallet, p01_stark_verifier, p01_registry, p01_relayer, p01-fee-splitter, whitelist, p01_liquidity',
         detail4: 'Quantum vault: WOTS+ signatures, hash-timelock, commit-then-reveal (SHA-256 based)',
         detail5: 'Cross-program invocations for token transfers and proof verification',
         detail6: '370+ automated tests: stress tests, E2E flows, SDK unit tests, Rust STARK tests',

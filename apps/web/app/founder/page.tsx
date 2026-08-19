@@ -19,11 +19,11 @@ import Reveal from "../_styx/Reveal";
  * COPY, and the two places it is still not clean:
  *
  *  1. Numbers. The stat cards are countable: 12 is the 13 ids under
- *     [programs.devnet] in Anchor.toml less p01_mugen, which belongs to another
- *     project, and 7 is the AIR modules under stark/src/air with mod.rs set
+ *     [programs.devnet] in Anchor.toml, and 7 is the AIR modules under stark/src/air with mod.rs set
  *     aside. The dictionaries disagree: founder.bio and
  *     founder.timeline.protocol01.desc both still enumerate "14 Solana
- *     programs, 7 STARK circuits, 3 client apps, 11 SDKs". 14 is wrong, and 11
+ *     programs, 7 STARK circuits, 3 client apps, 11 SDKs". 14 is wrong -- it was
+ *     already wrong before p01_mugen was removed on 2026-08-19, and 11
  *     SDKs cannot be counted from this repository at all. i18n/ is off limits
  *     from this page, so rather than print 14 a few centimetres above a card
  *     that says 12, the page drops that one sentence. See dropBuildInventory
@@ -71,7 +71,7 @@ const stats: { value: string; labelKey: string; source?: string }[] = [
   {
     value: "12",
     labelKey: "programs",
-    source: "Anchor.toml [programs.devnet] - p01_mugen",
+    source: "Anchor.toml [programs.devnet]",
   },
   { value: "7", labelKey: "circuits", source: "stark/src/air/*.rs" },
   { value: String(daysSinceStart()), labelKey: "days", source: "2026-01-18" },

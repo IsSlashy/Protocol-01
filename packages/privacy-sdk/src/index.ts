@@ -87,7 +87,6 @@ export type {
   TreasurySpendResult,
   TreasurySolvencyProof,
 } from './modules/treasury';
-export { MugenExchangeModule } from './modules/exchange';
 export { LiquidityModule, P01_LIQUIDITY_PROGRAM_ID } from './modules/liquidity';
 export type {
   LiquidityPoolState,
@@ -130,19 +129,6 @@ export type {
   SplitResult,
   SplitInput,
 } from './modules/denomination';
-export type {
-  MugenOrderParams,
-  MugenOrder,
-  MugenEscrowInfo,
-  MugenReputation,
-  MugenCreateOrderResult,
-  MugenTakeOrderResult,
-  MugenListOrdersFilter,
-  MugenOrderType,
-  MugenOrderStatus,
-  MugenEscrowStatus,
-  PaymentMethod,
-} from './modules/exchange';
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
 export { PrivacyError, PrivacyErrorCode } from './errors';

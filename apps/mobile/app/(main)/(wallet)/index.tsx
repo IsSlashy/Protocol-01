@@ -238,14 +238,6 @@ export default function WalletHomeScreen() {
                 <Text style={[styles.actionLabel, { color: Colors.textSecondary }]}>{t('wallet.swap')}</Text>
               </TouchableOpacity>
 
-              {!isDevnet() && (
-                <TouchableOpacity style={styles.actionButton} onPress={() => router.push('/(main)/(wallet)/buy')} accessibilityLabel={t('wallet.buy')} accessibilityRole="button">
-                  <View style={[styles.actionIcon, { backgroundColor: 'rgba(255, 119, 168, 0.06)' }]}>
-                    <Ionicons name="card" size={20} color={P01Colors.pink} />
-                  </View>
-                  <Text style={[styles.actionLabel, { color: Colors.textSecondary }]}>{t('wallet.buy')}</Text>
-                </TouchableOpacity>
-              )}
             </View>
           </View>
         </Animated.View>

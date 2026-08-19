@@ -27,7 +27,6 @@ import { AirdropModule } from './modules/airdrop';
 import { OTCModule } from './modules/otc';
 import { PayrollModule } from './modules/payroll';
 import { TreasuryModule } from './modules/treasury';
-import { MugenExchangeModule } from './modules/exchange';
 
 /**
  * Protocol 01 Privacy SDK — unified entry point for all privacy operations on Solana.
@@ -85,8 +84,6 @@ export class PrivacySDK {
   readonly payroll: PayrollModule;
   /** Private DAO treasury (shield + vote + audit) */
   readonly treasury: TreasuryModule;
-  /** Mugen Exchange — P2P fiat-to-crypto with ZK compliance, no KYC */
-  readonly exchange: MugenExchangeModule;
 
   private listeners: Map<PrivacyEventType, Set<PrivacyEventCallback>> = new Map();
   private tokenCache: Map<string, TokenInfo> = new Map();
@@ -154,7 +151,6 @@ export class PrivacySDK {
     this.otc = new OTCModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.payroll = new PayrollModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.treasury = new TreasuryModule(this.connection, this.wallet, this.network, this.programIds, resolveToken, this.spendingKey);
-    this.exchange = new MugenExchangeModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
   }
 
   /**

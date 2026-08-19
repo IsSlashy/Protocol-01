@@ -44,7 +44,7 @@ export default function RootLayout() {
     onLayoutReady();
   }, [onLayoutReady]);
 
-  // ── Deep link handler for p01://auth (Mugen QR connect) ──────────────
+  // ── Deep link handler for p01://auth (QR connect) ─────────────────────
   useEffect(() => {
     const handleDeepLink = (event: Linking.EventType) => {
       const url = event.url;

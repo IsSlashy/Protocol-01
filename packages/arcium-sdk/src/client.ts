@@ -29,7 +29,7 @@ function getRandomBytes(n: number): Uint8Array {
   return bytes;
 }
 
-/** Protocol 01 Arcium program ID (deployed on devnet, 2026-04-13 with mugen circuits). */
+/** Protocol 01 Arcium program ID (deployed on devnet, 2026-04-13). */
 export const P01_ARCIUM_PROGRAM_ID = new PublicKey(
   '9kMjmVMYxBa8V9D1aoEjZtUNXTe2gjfzYdKLycn7JvgQ'
 );
@@ -66,12 +66,6 @@ export const CIRCUITS = {
   SEALED_BID_AUCTION: 'sealed_bid_auction',
   /** Sealed-bid auction -- finalization and winner reveal. */
   FINALIZE_AUCTION: 'finalize_auction',
-  /** Mugen P2P -- encrypted sell offer submission. */
-  MUGEN_SUBMIT_OFFER: 'mugen_submit_offer',
-  /** Mugen P2P -- blind take (buyer match attempt). */
-  MUGEN_BLIND_TAKE: 'mugen_blind_take',
-  /** Mugen P2P -- cancel an encrypted offer. */
-  MUGEN_CANCEL_OFFER: 'mugen_cancel_offer',
 } as const;
 
 /** Union type of all MPC circuit names. */

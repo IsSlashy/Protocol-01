@@ -26,7 +26,6 @@ p01_whitelist = "5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33"
 p01_zkspl = "AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT"
 specter = "FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL"
 zk_shielded = "GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c"
-p01_mugen = "EURLevwgmunRQU5piF7QLB1ithMPfxYFXp6jp6eGEAJN"
 
 [programs.localnet]
 p01_fee_splitter = "muCWm9ionWrwBavjsJudquiNSKzNEcTRm5XtKQMkWiD"
