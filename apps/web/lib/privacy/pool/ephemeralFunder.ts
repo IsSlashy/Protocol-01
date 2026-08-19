@@ -544,10 +544,13 @@ export async function fundEphemeralForJob(
     // that actually matters: the transaction can be simulated by a node we do
     // not control.
     //
-    // The ephemeral's own transactions keep `confirmed` deliberately — we build,
-    // sign and submit those ourselves through one connection, with no human and
-    // no second node in between, and there the fresher blockhash is the better
-    // one.
+    // ⚠️ THIS PARAGRAPH USED TO SAY the ephemeral's own transactions keep
+    // `confirmed` deliberately, because we build, sign and submit those through
+    // one connection with no human and no second node in between. The premise
+    // was wrong: one Connection is one ENDPOINT, not one node, and the provider
+    // behind it is load balanced. Measured twice — 2026-08-18 on the proof
+    // buffers, 2026-08-19 on the funding route — so every send now takes a
+    // `finalized` blockhash through `sendWithFreshBlockhash`.
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
     const fundTx = new Transaction().add(
       SystemProgram.transfer({

@@ -1265,20 +1265,27 @@ const ISSUANCE_UI = true;
             phrased in terms of rotated tickets and drained treasuries, choosing
             between two outcomes they had no way to evaluate.
 
-            What replaces it is not a quieter default. It is that the private
-            outcome is the only one on offer: when it cannot be delivered the
-            subscription stops, and nothing is spent. */}
+            🚨 AND THEN THIS PARAGRAPH OUTLIVED THE BEHAVIOUR IT DESCRIBED.
+            It promised, in the present tense, that the wallet does not pay and
+            that the purchase STOPS when the private outcome cannot be
+            delivered. Both stopped being true on 2026-08-19, when
+            `NEVER_EXPOSE_WALLET` went false: `fundEphemeralForJob` now falls
+            back to the wallet instead of throwing, and a self-deposited note is
+            spent instead of refused. The screen kept saying "stops without
+            subscribing" over code that subscribes.
+            ⛔ A promise the code does not keep is worse than no promise: it is
+            the false green this repository keeps auditing out of its own docs,
+            restated in the product. So the copy now describes the mechanism —
+            who pays, and what happens when the funder cannot — and claims
+            nothing about stopping. */}
         {!result && (funderAvailable || funderFromServer === null) && (
           <p className="flex items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
             <span>
-              <strong className="text-p01-text">Your wallet will not pay for this.</strong> That is
-              how subscriptions work here, not a setting: the funder covers the rent and fees, and
-              the note is one this deployment deposited rather than one that names you. If either
-              cannot be delivered — funder unreachable, rate limited, switched off, or the only
-              note you hold is one you deposited yourself — this{' '}
-              <strong className="text-p01-text">stops without subscribing</strong>. Nothing is
-              spent when it stops.
+              <strong className="text-p01-text">The funder pays for this, not your wallet.</strong>{' '}
+              It covers the rent and fees, so the subscription is not signed by you. If the funder
+              cannot serve — unreachable, rate limited, or switched off — your wallet pays instead
+              and the receipt says which one did.
             </span>
           </p>
         )}
