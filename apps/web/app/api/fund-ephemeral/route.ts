@@ -136,6 +136,32 @@ function tillAddress(): string | null {
 }
 
 /**
+ * The operator's 1% sink, as configured. `null` when unset or unparseable.
+ *
+ * ⛔ IT IS A SINK, AND THIS ROUTE IS WHERE THAT WOULD BE VIOLATED FIRST.
+ *
+ * The fee rides inside the transaction the buyer signs, so this address is
+ * CO-NAMED WITH EVERY BUYER: `getSignaturesForAddress` on it enumerates every
+ * customer this deployment has served. That is survivable only while nothing it
+ * touches leads onward. The moment the float funds it — or it funds an
+ * ephemeral — probe P11 walks fee wallet -> ephemeral -> subscription and lands
+ * back on a buyer, and the R != F split is undone by an accounting convenience
+ * that nobody would think of as a privacy change.
+ *
+ * So the POST below refuses to fund it, and readiness refuses a deployment where
+ * it collides with the float or the till.
+ */
+function feeWalletAddress(): string | null {
+  const raw = process.env.P01_FEE_WALLET?.trim();
+  if (!raw) return null;
+  try {
+    return new PublicKey(raw).toBase58();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Does any one transaction name both addresses?
  *
  * The same two-call join the client guard and probe P11 use, restated here
@@ -297,6 +323,30 @@ export async function GET(request: NextRequest) {
         'from the address that funds their own subscription, so probe P11 walks buyer -> till ' +
         '-> ephemeral -> spend in two hops. Use a separate key for the till and settle between ' +
         'them in batches, never per purchase.',
+    );
+  }
+  // The fee sink, on the same readiness surface as the till and for the same
+  // reason: an operator can read this before a demo, whereas the probe reads it
+  // only after the transactions exist.
+  const feeWallet = feeWalletAddress();
+  const rawFeeWallet = process.env.P01_FEE_WALLET?.trim();
+  if (!rawFeeWallet) {
+    reasons.push(
+      'P01_FEE_WALLET is unset, so the 1% has nowhere to go and a relayed deposit will refuse ' +
+        'before the buyer signs.',
+    );
+  } else if (!feeWallet) {
+    reasons.push('P01_FEE_WALLET is not a public key.');
+  } else if (feeWallet === funder.publicKey.toBase58()) {
+    reasons.push(
+      'P01_FEE_WALLET IS this funder. The fee rides inside the transaction the buyer signs, so ' +
+        'this puts the float in a buyer-signed transaction — the 2026-08-18 walk with its middle ' +
+        'step deleted.',
+    );
+  } else if (till && feeWallet === till) {
+    reasons.push(
+      'P01_FEE_WALLET is the same address as the till. They share one account index, so the relay ' +
+        'reads value + fee as the payment and the fee is never collected — with no symptom.',
     );
   }
   if (!process.env.P01_FUNDER_TICKET) {
@@ -482,6 +532,27 @@ export async function POST(request: NextRequest) {
       'this deployment is misconfigured: the till (P01_TILL_ADDRESS) is the funder, so paying ' +
         'for a note and paying for the subscription would name the same address. Refusing ' +
         'rather than producing a subscription that looks private and is not.',
+    );
+  }
+
+  // ⛔ AND THE FEE SINK NEVER RECEIVES FROM THE FLOAT. See `feeWalletAddress`:
+  // that address is co-named with every buyer, so a single transfer from here
+  // gives an auditor fee wallet -> float -> ephemeral -> spend and lands them
+  // back on a customer. It is not a plausible request — but neither was paying
+  // the till instead of the float, and that shipped.
+  const feeWallet = feeWalletAddress();
+  if (feeWallet && target.toBase58() === feeWallet) {
+    return bad(
+      400,
+      'refusing to fund the fee wallet (P01_FEE_WALLET): it is co-named with every buyer, so it ' +
+        'must only ever receive.',
+    );
+  }
+  if (feeWallet && feeWallet === funder.publicKey.toBase58()) {
+    return bad(
+      503,
+      'this deployment is misconfigured: the fee wallet (P01_FEE_WALLET) is the funder, so the ' +
+        'float would appear inside every transaction a buyer signs.',
     );
   }
 

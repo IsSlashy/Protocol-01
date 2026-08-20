@@ -1,4 +1,7 @@
-import type { PoolToken } from './pool/denominatedPool';
+// `findPoolV3` is READ here and only read: the fee basis (atomic denomination +
+// decimals) has to come from the same table the pool itself is built from, or
+// the two drift and the buyer is charged in the wrong currency.
+import { findPoolV3, type PoolToken } from './pool/denominatedPool';
 import { sendWithFreshBlockhash } from './pool/sendTx';
 /**
  * shieldClient — main-thread driver for a denominated-pool shield.
@@ -31,7 +34,6 @@ import {
   fetchFunderLookup,
   funderTicket,
   fundEphemeralForJob,
-  loadFunderAddress,
 } from './pool/ephemeralFunder';
 import { loadSubscriptions } from '../pay/subscriptions';
 import {
@@ -103,10 +105,30 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
   // The wallet still signs — it is still their money — but what it signs points
   // at the deployment instead of at the pool.
   //
-  // Falls back to the direct path when the deployment cannot relay, because a
-  // deposit that cannot happen is worse than a deposit that is linkable, and
-  // the screen says which one occurred.
-  await loadFunderAddress();
+  // ⛔ IT NO LONGER FALLS BACK, AND THAT IS A DELIBERATE PRODUCT CHANGE.
+  //
+  // This used to read "falls back to the direct path when the deployment cannot
+  // relay, because a deposit that cannot happen is worse than a deposit that is
+  // linkable, and the screen says which one occurred". Two of those three
+  // clauses were false. The fallback was silent — `fundEphemeralForJob` set a
+  // reason nobody rendered on this leg — and what it delivered was the exact
+  // `wallet -> ephemeral -> deposit` edge P9 walked on 2026-08-18, on the one
+  // path whose entire purpose is removing it. A buyer cannot detect that
+  // afterwards and cannot undo it; a refusal costs them a retry.
+  //
+  // So a deposit that asked for the relay and cannot get it now REFUSES, with a
+  // typed error saying whether the operator's addresses are wrong
+  // (`DeploymentTillMisconfiguredError` — a retry will not help) or this
+  // particular job is too large for the relay (`RelayCannotServeJobError` — a
+  // smaller denomination will go through). Neither may be caught into a wallet
+  // fallback here or anywhere upstream.
+  //
+  // ⚠️ The address is NOT loaded from `/api/fund-ephemeral` any more. The
+  // deposit is paid to the TILL, and the till must come from the route that
+  // MEASURES it — `/api/relay-to-buyer` — or a rotated address means the buyer
+  // pays one place while the relay reads another, and finds out after the money
+  // has moved.
+  const feePool = findPoolV3(token, denomination);
   const funding = await fundEphemeralForJob({
     ephemeralPubkey: prep.ephemeralPubkey,
     requiredLamports: prep.requiredLamports,
@@ -116,6 +138,15 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
     signOne,
     onProgress,
     relayThroughDeployment: true,
+    // The 1% is a percentage of the pool's own ATOMIC denomination, taken from
+    // the pool table rather than from the human `denomination` above. The
+    // version that multiplied the human number by a hard-coded 1e9 was right for
+    // SOL by coincidence and charged TEN SOL on a 1000 USDC deposit.
+    feeBasis: feePool && {
+      token: feePool.token,
+      denominationAtomic: feePool.denominationAtomic,
+      decimals: feePool.decimals,
+    },
   });
 
   const done = await poolRequest(

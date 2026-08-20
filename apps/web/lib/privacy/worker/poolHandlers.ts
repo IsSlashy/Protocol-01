@@ -40,6 +40,8 @@ import {
   type ShareableNote,
   shareableNoteToReceipt,
   ALL_POOLS_V3,
+  depositBlockFor,
+  PoolClosedToDepositsError,
 } from '../pool/denominatedPool';
 import {
   assertPassphraseAcceptable,
@@ -1171,6 +1173,15 @@ function requireConnection(): Connection {
   return connection;
 }
 
+/**
+ * Resolve a pool, or say which denominations exist.
+ *
+ * ⛔ NEVER REFUSE A CLOSED POOL HERE. This is shared by scan, unshield,
+ * subscribe and recover — every exit. The 0.1 SOL pool is closed to new
+ * deposits and held 10 unspent notes (1.0 SOL) on 2026-08-20; a closure check
+ * in this function would strand them. The deposit refusal lives in
+ * `handlePoolShieldPrepare`, which is the only caller that opens the entrance.
+ */
 function requirePool(token: PoolToken, denomination: number): PoolConfig {
   const pool = findPoolV3(token, denomination);
   if (!pool) {
@@ -1393,9 +1404,24 @@ async function handlePoolShieldPrepare(
   onProgress?: (step: string) => void,
 ): Promise<PoolShieldPrepareResponse> {
   const conn = requireConnection();
+  const pool = requirePool(req.token, req.denomination);
+
+  // 🚨 THE ENTRANCE GATE, AND IT LIVES HERE ON PURPOSE.
+  //
+  // Every deposit — the panel, a script, the live devnet harness, any future
+  // client — reaches the chain through this handler, so this is the only place
+  // a refusal is a guarantee rather than a label. A previous round put the same
+  // flag behind a React chip: the flag existed, one view honoured it, and the
+  // engine was fail-OPEN for everyone else.
+  //
+  // FIRST, before the seed is touched, the tree is read or the ~2-minute C6
+  // proof starts. A refusal that arrives after the proof is a refusal the user
+  // paid for in time and in buffer rent.
+  const blocked = depositBlockFor(pool);
+  if (blocked) throw new PoolClosedToDepositsError(blocked);
+
   // Active seed only: a new note is always created under the current derivation.
   const seed = requireActiveSeed(req.meta);
-  const pool = requirePool(req.token, req.denomination);
 
   // The counter is the tree's leaf index, read inside prepareShield from the
   // tree account — see the comment there for why scanning past notes would be

@@ -33,6 +33,10 @@ import {
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import { sendWithFreshBlockhash } from './sendTx';
+// The jitter's own bounds, imported rather than retyped: the deposit ceiling
+// below has to know the WORST amount `jitterPrefund` can ask a wallet for, and
+// a second copy of those two numbers would drift.
+import { PREFUND_MAX_EXTRA_STEPS, PREFUND_STEP_LAMPORTS } from './prefundAmount';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { utf8ToBytes, concatBytes } from '@noble/hashes/utils.js';
@@ -174,6 +178,26 @@ export interface PoolConfig {
   treePDA: PublicKey;
   vaultATA?: PublicKey;
   version?: 'v2' | 'v3';
+  /**
+   * Whether this pool still accepts NEW deposits. Absent is treated as closed
+   * (`depositBlockFor`), so a pool added to the table without a decision is not
+   * silently opened.
+   *
+   * ⛔ THIS IS AN ENTRANCE FLAG AND NOTHING ELSE. It is read by exactly one
+   * decision — `depositBlockFor`, which `handlePoolShieldPrepare` consults
+   * before it prepares a deposit. It is NOT read by scanning, note-blob
+   * resolution, unshield, subscribe or float recovery, and it must never be:
+   * the 0.1 SOL pool is closed here and held 10 UNSPENT notes worth 1.0 SOL
+   * when measured on chain 2026-08-20. Filtering `SOL_POOLS_V3` /
+   * `ALL_POOLS_V3` / `getPoolsForTokenV3` on this field would report those
+   * notes as gone. You close the entrance, never the exit.
+   *
+   * 🚨 A PREVIOUS ROUND ADDED THIS FLAG AND ONLY A REACT CHIP READ IT, so the
+   * deposit engine was fail-OPEN for every other caller — a script, the live
+   * devnet harness, a future client. The guarantee lives in the worker handler;
+   * the picker is only the convenience.
+   */
+  deposits?: 'open' | 'closed';
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +211,11 @@ export const SOL_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('HfSsGRgVFJGBiiEtRXrHocNPw5dyTQ78hEZH8GWpXaAG'),
     treePDA: new PublicKey('43MRQ91VrrxkD2PqV4QXNJG3BUmu8JmbDUTtWt2dYBAU'),
     version: 'v3',
+    // Measured on chain 2026-08-20: 39 leaves, 10 UNSPENT notes (1.0 SOL).
+    // Closed so deposits concentrate in the 1 SOL pool — an anonymity set does
+    // not add up across denominations, it splits. Those 10 notes stay
+    // scannable, spendable, subscribable and sweepable; only the entrance shut.
+    deposits: 'closed',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1, decimals: 9,
@@ -194,6 +223,12 @@ export const SOL_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS'),
     treePDA: new PublicKey('GGJQwEigkoSk3pzg6eiLtt1cu2kYfCtV5JewNJsMkNdi'),
     version: 'v3',
+    // THE ONE POOL THAT STAYS OPEN. Measured on chain 2026-08-20: 34 leaves,
+    // 11 unspent notes — the largest set we have — and it is the only
+    // denomination the relay can actually fund (see MAX_RELAY_LAMPORTS). The
+    // frozen demo journey runs through here: shield 5DiMyNkJdZxa… leaf 33,
+    // subscribe 4E39AJ37BFZq… vault 7xUisNg8HKhg… 1.00340344 SOL.
+    deposits: 'open',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 10, decimals: 9,
@@ -201,6 +236,13 @@ export const SOL_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('H91CcAemoNktnW785XfnMjQqwThRNe127X5c2XuwtvwQ'),
     treePDA: new PublicKey('AFLnk8gEVY38zG6fopuNb2oHyPZyjVsvyN3wqNVVyWFs'),
     version: 'v3',
+    // Over the relay's 2.5 SOL ceiling: a deposit here needs the denomination
+    // plus 0.3% plus ~0.57 SOL of proof rent up front, which the relay refuses
+    // outright — measured 2026-08-20, 0 leaves in this pool and 100% of
+    // attempts would take the money and land nothing. `depositBlockFor` blocks
+    // it on the arithmetic too, which is what stays true if this flag is
+    // flipped back by hand.
+    deposits: 'closed',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 100, decimals: 9,
@@ -208,6 +250,13 @@ export const SOL_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('AWWQ2QpB6omxywWU5RQYD7D5QvC5kjqo71Vj8QJxCUKu'),
     treePDA: new PublicKey('2DNoAGmpBmq3uTgqVVgE8yKcnGtVk4gkL5n5QHgU97G1'),
     version: 'v3',
+    // Over the relay's 2.5 SOL ceiling: a deposit here needs the denomination
+    // plus 0.3% plus ~0.57 SOL of proof rent up front, which the relay refuses
+    // outright — measured 2026-08-20, 0 leaves in this pool and 100% of
+    // attempts would take the money and land nothing. `depositBlockFor` blocks
+    // it on the arithmetic too, which is what stays true if this flag is
+    // flipped back by hand.
+    deposits: 'closed',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 500, decimals: 9,
@@ -215,6 +264,13 @@ export const SOL_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('A6Dp4q8rVMmhM1F4bXL8VV6BER4xGgmiqoYXQhfhGGAh'),
     treePDA: new PublicKey('BvDHQeryXC1WBYyqdnDsw6QZEUxk3ht86adiwuGm1eme'),
     version: 'v3',
+    // Over the relay's 2.5 SOL ceiling: a deposit here needs the denomination
+    // plus 0.3% plus ~0.57 SOL of proof rent up front, which the relay refuses
+    // outright — measured 2026-08-20, 0 leaves in this pool and 100% of
+    // attempts would take the money and land nothing. `depositBlockFor` blocks
+    // it on the arithmetic too, which is what stays true if this flag is
+    // flipped back by hand.
+    deposits: 'closed',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1000, decimals: 9,
@@ -222,6 +278,13 @@ export const SOL_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('ASMW2Gtg9q2J64jaLhVqHmXBFUmuFtRi9WQoKNdVed7X'),
     treePDA: new PublicKey('ANwpHYapKrw94pxcDfg7ggAad2MwmG5Gr4NYMvLC7Yb1'),
     version: 'v3',
+    // Over the relay's 2.5 SOL ceiling: a deposit here needs the denomination
+    // plus 0.3% plus ~0.57 SOL of proof rent up front, which the relay refuses
+    // outright — measured 2026-08-20, 0 leaves in this pool and 100% of
+    // attempts would take the money and land nothing. `depositBlockFor` blocks
+    // it on the arithmetic too, which is what stays true if this flag is
+    // flipped back by hand.
+    deposits: 'closed',
   },
 ];
 
@@ -233,6 +296,10 @@ export const USDC_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('AnBmWYRKGmcPSVTSgYZJeFgqaHmyLTzT1VJbmejXVSib'),
     treePDA: new PublicKey('FwxkCXBSGjeNqjEpbBGAjuYB5fLV4iqddMbqPq9UDpcz'),
     version: 'v3',
+    // No USDC leg exists end-to-end: the panel's shield/withdraw calls are
+    // hardcoded to SOL (`PoolPanel.tsx`, `poolIsSolOnly`) and no relay route
+    // funds a USDC deposit. Closed rather than offered.
+    deposits: 'closed',
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 10, decimals: 6,
@@ -240,6 +307,10 @@ export const USDC_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('58xgMmQJQbh2H5QMvw7Sw9CmnEGww17i4YtESJU7pcm4'),
     treePDA: new PublicKey('H4syFMw5HovpQ8usEJiPsp69T8VUK6HbnNAcFAS8BewQ'),
     version: 'v3',
+    // No USDC leg exists end-to-end: the panel's shield/withdraw calls are
+    // hardcoded to SOL (`PoolPanel.tsx`, `poolIsSolOnly`) and no relay route
+    // funds a USDC deposit. Closed rather than offered.
+    deposits: 'closed',
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 100, decimals: 6,
@@ -247,6 +318,10 @@ export const USDC_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('Dm6XJCkrqEjd9iC6uMyeaJQ5ADNB4Dd3ap3cCjyUP2RA'),
     treePDA: new PublicKey('GkDqmFJYRx3FJYSbVAULde4WU8q31WSZmHkT1g5HuYKs'),
     version: 'v3',
+    // No USDC leg exists end-to-end: the panel's shield/withdraw calls are
+    // hardcoded to SOL (`PoolPanel.tsx`, `poolIsSolOnly`) and no relay route
+    // funds a USDC deposit. Closed rather than offered.
+    deposits: 'closed',
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 1000, decimals: 6,
@@ -254,6 +329,10 @@ export const USDC_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('BwVswgqjXayXBbwu3WXrbB2MxcJdoRr5KC1aUfwqmGxT'),
     treePDA: new PublicKey('FpmYv4NiAGYKZDvytGEzcmaajZ9voHRjLFpqU8rCunZb'),
     version: 'v3',
+    // No USDC leg exists end-to-end: the panel's shield/withdraw calls are
+    // hardcoded to SOL (`PoolPanel.tsx`, `poolIsSolOnly`) and no relay route
+    // funds a USDC deposit. Closed rather than offered.
+    deposits: 'closed',
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 10000, decimals: 6,
@@ -261,6 +340,10 @@ export const USDC_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('5tjCa8FS41pdAg7dzH6wVePVDPJvbiBSbQxYRwgtXC3w'),
     treePDA: new PublicKey('ABjs9guDCV1th3ixp4hmx2SkGdNBKXuDEptzcBnZjVj4'),
     version: 'v3',
+    // No USDC leg exists end-to-end: the panel's shield/withdraw calls are
+    // hardcoded to SOL (`PoolPanel.tsx`, `poolIsSolOnly`) and no relay route
+    // funds a USDC deposit. Closed rather than offered.
+    deposits: 'closed',
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 20000, decimals: 6,
@@ -268,6 +351,10 @@ export const USDC_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('A6nJv8ib2ek5WjUzknw7ijRRvfTH4Q2Ds63VNpq7FefM'),
     treePDA: new PublicKey('Fw7UvkiBwZyNrUo8WohZWagHLwwArrdKrW6t1PRvzVii'),
     version: 'v3',
+    // No USDC leg exists end-to-end: the panel's shield/withdraw calls are
+    // hardcoded to SOL (`PoolPanel.tsx`, `poolIsSolOnly`) and no relay route
+    // funds a USDC deposit. Closed rather than offered.
+    deposits: 'closed',
   },
   {
     token: 'USDC', tokenMint: USDC_DEVNET_MINT, denomination: 50000, decimals: 6,
@@ -275,6 +362,10 @@ export const USDC_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('27evdDgKsXYa73dpBtULcZMyNMNhk9zhHsFFtNT92M3w'),
     treePDA: new PublicKey('BCoV7J3uaq57bsLGBTubnS1en31GxXnexoXBWJ4e8YpL'),
     version: 'v3',
+    // No USDC leg exists end-to-end: the panel's shield/withdraw calls are
+    // hardcoded to SOL (`PoolPanel.tsx`, `poolIsSolOnly`) and no relay route
+    // funds a USDC deposit. Closed rather than offered.
+    deposits: 'closed',
   },
 ];
 
@@ -288,6 +379,209 @@ export function getPoolsForTokenV3(token: 'SOL' | 'USDC'): PoolConfig[] {
 /** Mirror mobile findPoolV3 line 2846. */
 export function findPoolV3(token: 'SOL' | 'USDC', denomination: number): PoolConfig | undefined {
   return ALL_POOLS_V3.find(p => p.token === token && p.denomination === denomination);
+}
+
+// ---------------------------------------------------------------------------
+// Which pools accept a NEW deposit — the entrance, never the exit
+// ---------------------------------------------------------------------------
+//
+// ⛔ EVERY EXPORT BELOW IS DEPOSIT-SIDE. None of them may ever be substituted
+// for `SOL_POOLS_V3`, `ALL_POOLS_V3`, `getPoolsForTokenV3` or `findPoolV3` on a
+// read path. Scanning, note-blob resolution, unshield, subscribe and float
+// recovery enumerate the FULL table; the 0.1 SOL pool is closed here and held
+// 10 unspent notes (1.0 SOL) on 2026-08-20.
+//
+// TWO INDEPENDENT REASONS A POOL IS BLOCKED, and the order matters:
+//
+//  1. `over-relay-cap` — ARITHMETIC. The relay that funds a deposit refuses
+//     anything above MAX_RELAY_LAMPORTS, and a shield's pre-fund is the
+//     denomination plus 0.3% plus ~0.57 SOL of refundable proof rent. For
+//     10/100/500/1000 SOL that sum is over the cap, so the deposit takes the
+//     buyer's money and delivers nothing, 100% of the time. Measured from
+//     source 2026-08-20.
+//  2. `closed` — POLICY. The `deposits` flag on the pool.
+//
+// The arithmetic OUTRANKS the flag, deliberately: it is the reason that stays
+// true if someone flips a flag back by hand, so a hand-reopened 10 SOL pool is
+// still refused while the relay cannot fund it.
+
+/**
+ * The relay's per-call ceiling, MIRRORED from `app/api/relay-to-buyer/route.ts`
+ * (the `MAX_RELAY_LAMPORTS` literal, 2_500_000_000 as of 2026-08-20).
+ *
+ * 🚨 IT IS A MIRROR, NOT THE SOURCE. That route belongs to another lot and a
+ * Next route module cannot be imported from a node unit test, so the value is
+ * copied here and `relayCapDenominations.test.ts` fs-reads the route's own
+ * source and asserts the two agree. If the route moves its cap, that test goes
+ * red — instead of this picker quietly offering a denomination the relay would
+ * refuse.
+ */
+export const MAX_RELAY_LAMPORTS = 2_500_000_000;
+
+/**
+ * The non-denomination half of a shield's pre-fund: proof-buffer rent, the
+ * ephemeral's tx-fee budget and the rent margin.
+ *
+ * MEASURED on devnet, not estimated. A 1 SOL deposit pre-funded 1,573,486,080
+ * lamports of which 1,003,475,300 was value, leaving 570,010,780 of refundable
+ * rent (`shieldEphemeral.ts:270`, echoed in `relay-to-buyer/route.ts:70`). The
+ * real figure varies by a few thousand lamports with the C6 proof size, which
+ * is far below the 0.01 SOL granularity the jitter rounds to.
+ */
+const SHIELD_RENT_LEG_LAMPORTS = 570_010_780;
+
+/** `fee::SHIELD_FEE_BPS = 30` (0.3%), `shield_denominated_v3.rs:218-220`. */
+const SHIELD_FEE_BPS = 30n;
+const BPS_DENOMINATOR = 10_000n;
+
+/**
+ * The bare pre-fund `prepareShield` computes, before jitter.
+ *
+ * Mirrors `shieldEphemeral.ts:277-281` term for term, INCLUDING the fact that
+ * it adds `denominationAtomic` straight into a lamport sum for every token. For
+ * USDC that over-states the SOL a deposit needs — but it is what the deposit
+ * path actually asks the relay for, so it is what the relay actually refuses,
+ * and an estimate that disagreed with the code would be the wrong kind of
+ * accurate.
+ */
+function shieldPrefundBareLamports(denominationAtomic: bigint): number {
+  const protocolFee = Number((denominationAtomic * SHIELD_FEE_BPS) / BPS_DENOMINATOR);
+  return Number(denominationAtomic) + protocolFee + SHIELD_RENT_LEG_LAMPORTS;
+}
+
+/**
+ * The most `jitterPrefund` can turn `bare` into: rounded UP to a whole 0.01 SOL
+ * plus up to four more of them.
+ *
+ * The headroom is not decoration. Without it the ceiling would admit a
+ * denomination that fits on an average draw and fails on an unlucky one — a
+ * deposit that works most days is worse to debug than one that never works.
+ */
+function shieldPrefundWorstCase(bare: number): number {
+  const rounded = Math.ceil(bare / PREFUND_STEP_LAMPORTS) * PREFUND_STEP_LAMPORTS;
+  return rounded + PREFUND_MAX_EXTRA_STEPS * PREFUND_STEP_LAMPORTS;
+}
+
+/**
+ * What a wallet must hold, worst case, to shield one note into `pool`.
+ *
+ * This is the number the relay compares against its cap, which is why the
+ * picker's ceiling is arithmetic over this rather than a hand-kept list of
+ * "good" denominations — a list goes stale silently the moment either constant
+ * moves, which is the same failure shape as a flag only one view reads.
+ */
+export function estimateShieldPrefundLamports(pool: PoolConfig): number {
+  return shieldPrefundWorstCase(shieldPrefundBareLamports(pool.denominationAtomic));
+}
+
+/**
+ * The largest denomination, in whole token units, whose worst-case pre-fund
+ * still fits under the relay cap. Derived, never asserted: binary search over
+ * `estimateShieldPrefundLamports` itself, so it cannot drift from the function
+ * the block decision uses.
+ *
+ * For SOL today it lands at ~1.884 — above the 1 SOL demo pool and far below
+ * the 10 SOL rung, which is the whole reason exactly one SOL pool survives.
+ */
+export function maxRelayableDenomination(token: PoolToken): number {
+  const decimals = getPoolsForTokenV3(token)[0]?.decimals ?? 9;
+  // `estimate(atomic) >= atomic` for every token, so nothing above the cap can
+  // fit and the cap itself is a safe upper bound for the search.
+  let lo = 0n;
+  let hi = BigInt(MAX_RELAY_LAMPORTS);
+  while (lo < hi) {
+    const mid = (lo + hi + 1n) / 2n;
+    if (shieldPrefundWorstCase(shieldPrefundBareLamports(mid)) <= MAX_RELAY_LAMPORTS) {
+      lo = mid;
+    } else {
+      hi = mid - 1n;
+    }
+  }
+  return Number(lo) / 10 ** decimals;
+}
+
+export type DepositBlockReason = 'closed' | 'over-relay-cap';
+
+export interface DepositBlock {
+  reason: DepositBlockReason;
+  /** Shown to the user verbatim. Says what is blocked AND what still works. */
+  message: string;
+}
+
+/**
+ * Why this pool cannot take a new deposit, or `null` if it can.
+ *
+ * The single decision both halves read: the worker handler refuses on it, and
+ * the panel renders it. One function so the screen and the engine cannot
+ * disagree — the previous round shipped exactly that disagreement.
+ */
+export function depositBlockFor(pool: PoolConfig): DepositBlock | null {
+  const required = estimateShieldPrefundLamports(pool);
+  if (required > MAX_RELAY_LAMPORTS) {
+    return {
+      reason: 'over-relay-cap',
+      message:
+        `The ${pool.denomination} ${pool.token} pool is closed to new deposits: funding one ` +
+        `needs about ${(required / 1e9).toFixed(2)} SOL up front and the relay refuses ` +
+        `anything above ${(MAX_RELAY_LAMPORTS / 1e9).toFixed(1)} SOL, so the deposit would ` +
+        `take the money and never land. Notes you already hold there stay spendable.`,
+    };
+  }
+  // Anything not explicitly opened is closed. A pool added to the table without
+  // a decision must not be silently offered.
+  if (pool.deposits !== 'open') {
+    return {
+      reason: 'closed',
+      message:
+        `The ${pool.denomination} ${pool.token} pool is closed to new deposits so that every ` +
+        `deposit lands in one anonymity set instead of splitting across six. Notes you ` +
+        `already hold there stay spendable — you can still withdraw or subscribe with them.`,
+    };
+  }
+  return null;
+}
+
+/**
+ * The pools a picker may OFFER. Deposit-side only.
+ *
+ * ⛔ Never use this to enumerate pools for scanning, spending or recovery — see
+ * `denominationsForRecovery`.
+ */
+export function poolsOpenForDeposit(token: PoolToken): PoolConfig[] {
+  return getPoolsForTokenV3(token).filter((p) => depositBlockFor(p) === null);
+}
+
+/**
+ * Every denomination, closed or not, for the float-recovery sweep.
+ *
+ * 🚨 THIS EXISTS SO RECOVERY CAN NEVER BE KEYED TO THE DEPOSIT PICKER. It was
+ * once the denomination selector, and a user with ~1 SOL of proof-buffer rent
+ * stranded in the 0.1 SOL pool clicked Recover and read "nothing stranded"
+ * about a pool that was never searched (`PoolPanel.tsx`, `handleRecover`).
+ * Closing the 0.1 pool to deposits makes that coupling fatal rather than
+ * unlucky, so the two lists are separate functions with separate names.
+ */
+export function denominationsForRecovery(token: PoolToken): number[] {
+  return getPoolsForTokenV3(token)
+    .map((p) => p.denomination)
+    .sort((a, b) => a - b);
+}
+
+/**
+ * Thrown by the deposit engine when a pool will not take a new note.
+ *
+ * `name` is the contract, not `instanceof`: this is thrown inside a Web Worker
+ * and reaches the page through structured clone, where the prototype chain is
+ * gone and only the string survives.
+ */
+export class PoolClosedToDepositsError extends Error {
+  readonly reason: DepositBlockReason;
+
+  constructor(block: DepositBlock) {
+    super(block.message);
+    this.name = 'PoolClosedToDepositsError';
+    this.reason = block.reason;
+  }
 }
 
 // ---------------------------------------------------------------------------

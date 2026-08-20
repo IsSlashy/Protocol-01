@@ -40,7 +40,14 @@ import type {
   PoolRecoverResponse,
   PoolSizeView,
 } from "@/lib/privacy/worker/poolHandlers";
-import { getPoolsForTokenV3, type PoolToken } from "@/lib/privacy/pool/denominatedPool";
+import {
+  denominationsForRecovery,
+  depositBlockFor,
+  findPoolV3,
+  poolsOpenForDeposit,
+  type DepositBlock,
+  type PoolToken,
+} from "@/lib/privacy/pool/denominatedPool";
 import { SHIELD_PHASES, WITHDRAW_PHASES } from "@/lib/pay/flowProgress";
 import {
   requiresSweepHomeConfirmation,
@@ -63,9 +70,19 @@ import { truncate } from "./util";
 // Denominations are no longer a hardcoded SOL list: they come from the pool
 // configs for whichever token the header selected. The list used to be SOL-only
 // while the header could say USDC, so the panel shielded SOL and said USDC.
-function denominationsFor(token: PoolToken): number[] {
-  return getPoolsForTokenV3(token).map((p) => p.denomination).sort((a, b) => a - b);
-}
+//
+// 🚨 THERE ARE NOW TWO LISTS AND THEY ARE NOT INTERCHANGEABLE.
+//
+//   `poolsOpenForDeposit(token)`  — what the picker may OFFER. Deposit-side.
+//   `denominationsForRecovery(token)` — every pool, for the float sweep and for
+//                                       anything that reads existing notes.
+//
+// They are two named functions in `denominatedPool.ts` rather than one list and
+// a filter here, because the one time this panel derived recovery's list from
+// the selector, a user with ~1 SOL of proof-buffer rent stranded in the 0.1 SOL
+// pool clicked Recover and was told nothing was stranded. And the picker's
+// filter is a CONVENIENCE: the guarantee is `handlePoolShieldPrepare`, which
+// throws `PoolClosedToDepositsError` for a blocked pool whoever asks.
 
 /**
  * The denomination put in front. Every other pool stays one click away and
@@ -128,13 +145,17 @@ export default function PoolPanel({
    */
   onBusyChange?: (busy: boolean) => void;
 }) {
-  const denominations = denominationsFor(token);
-  // Falls back to the smallest when the configured primary is not among this
-  // token's pools, so a config change can never leave the panel with a
-  // denomination that has no pool behind it.
-  const primaryDenomination = denominations.includes(PRIMARY_DENOMINATION_BY_TOKEN[token])
+  /** Every pool of this token, closed or not. The recovery sweep's list. */
+  const denominations = denominationsForRecovery(token);
+  /** Only the pools a new deposit can actually reach. The picker's list. */
+  const depositable = poolsOpenForDeposit(token).map((p) => p.denomination);
+  // Prefer the configured primary, then whatever is still open, and only then
+  // fall back to a blocked denomination — which happens for USDC, where every
+  // pool is closed. The panel must still render (and still withdraw) in that
+  // state, so the fallback exists; the Shield button refuses it by name below.
+  const primaryDenomination = depositable.includes(PRIMARY_DENOMINATION_BY_TOKEN[token])
     ? PRIMARY_DENOMINATION_BY_TOKEN[token]
-    : denominations[0]!;
+    : (depositable[0] ?? denominations[0]!);
   const [denomination, setDenomination] = useState(primaryDenomination);
   const [notes, setNotes] = useState<PoolNoteView[]>([]);
   /** Notes this browser withdrew, keyed `pool:leafIndex`. Seeded from local
@@ -697,6 +718,13 @@ export default function PoolPanel({
       //
       // Sweeping all of them costs a few reads against pools the user has never
       // touched and removes the coupling entirely.
+      //
+      // ⛔ `denominations` here is `denominationsForRecovery(token)` — the FULL
+      // ladder — and never `depositable`, which the picker filters down to the
+      // pools still open. Closing the 0.1 SOL pool to deposits made that
+      // distinction load-bearing: it is exactly the pool this bug stranded
+      // money in, and it is now permanently absent from the picker's list.
+      //
       // The leaf indices of every note this browser knows about, per pool. A
       // spend's ephemeral is keyed to the SPENT note's leaf, and a spend
       // advances no tree, so an old note's stranded float sits nowhere near the
@@ -782,6 +810,35 @@ export default function PoolPanel({
 
   const shieldCost = (denomination * 1.003 + 1.006).toFixed(3);
 
+  /**
+   * Why the selected denomination cannot take a deposit, or null.
+   *
+   * Read from `depositBlockFor`, the same function `handlePoolShieldPrepare`
+   * refuses on — NOT a rule recomputed here. If this file grew its own copy of
+   * the arithmetic, the screen and the engine could disagree, which is the
+   * exact defect this round exists to remove.
+   */
+  const selectedPool = findPoolV3(token, denomination);
+  const selectedBlock = selectedPool ? depositBlockFor(selectedPool) : null;
+
+  /**
+   * The same answer for every denomination on the ladder, computed once.
+   *
+   * Keyed off `denominations` — the FULL list — so a blocked pool still gets a
+   * chip with its unspent count next to it. Rendering only the open ones would
+   * hide the 0.1 SOL pool's 10 notes from the very screen the user checks them
+   * on. The chip is disabled; the pool is not.
+   */
+  const blockByDenomination = new Map<number, DepositBlock>();
+  for (const d of denominations) {
+    const pool = findPoolV3(token, d);
+    const block = pool ? depositBlockFor(pool) : null;
+    if (block) blockByDenomination.set(d, block);
+  }
+  const blockedDenominations = denominations
+    .filter((d) => blockByDenomination.has(d))
+    .map((d) => ({ denomination: d, block: blockByDenomination.get(d)! }));
+
   // Every disabled action names its reason next to itself. `scanning` is
   // deliberately absent from all of these: the pool scan enumerates the whole
   // epoch window per note per denomination and does not finish in a time a
@@ -810,11 +867,15 @@ export default function PoolPanel({
 
   const shieldReason = poolIsSolOnly
     ? `The pool only handles SOL today, so it cannot shield ${token}. Switch the asset to SOL to deposit. Any note you already hold stays withdrawable from here.`
-    : !signOne
-      ? "This wallet cannot sign transactions, so it cannot shield."
-      : busyNote
-        ? "Paused while the withdrawal runs."
-        : null;
+    : // Before the wallet check, because it is a fact about the pool rather
+      // than about this session: a different wallet would not help.
+      selectedBlock
+      ? selectedBlock.message
+      : !signOne
+        ? "This wallet cannot sign transactions, so it cannot shield."
+        : busyNote
+          ? "Paused while the withdrawal runs."
+          : null;
   const withdrawReason = !signOne
     ? "This wallet cannot sign transactions, so it cannot withdraw."
     : shielding
@@ -869,12 +930,23 @@ export default function PoolPanel({
             Denomination
           </label>
           {/* PRIMARY denomination in front, the rest one click behind it.
-              Not a restriction and nothing is disabled: every pool stays
-              reachable and every existing note keeps its Withdraw button. It is
-              a default that points at the only pool with a real set — measured
-              2026-08-12, the 1 SOL pool held 6 unspent notes and the 10, 100,
-              500 and 1000 SOL pools held zero. Splitting deposits across six
-              pools splits the anonymity set six ways. */}
+              WAS "nothing is disabled" until 2026-08-20, and that is no longer
+              true — the comment is updated rather than left standing, because a
+              comment that describes a property the code lost is worse than none.
+
+              What changed: a denomination whose deposit cannot land is now
+              disabled and says so. Two independent reasons, both read from
+              `depositBlockFor`, the same function the worker refuses on:
+                • 10/100/500/1000 SOL need more pre-funding than the relay will
+                  serve, so those deposits took the money and landed nothing —
+                  100% of the time, measured from the route's own constants.
+                • 0.1 SOL is closed by policy so deposits concentrate in one
+                  anonymity set instead of splitting six ways.
+
+              What did NOT change, and must not: every pool keeps its place in
+              the note list, the scan, recovery and the Withdraw button. The
+              0.1 SOL pool held 10 unspent notes (1.0 SOL) on 2026-08-20. The
+              entrance is shut; the exit is untouched. */}
           <div className="flex flex-wrap gap-2">
             {denominations
               // `===` on the primary alone, NOT `|| d === denomination`: the
@@ -887,8 +959,11 @@ export default function PoolPanel({
                 <button
                   key={d}
                   onClick={() => setDenomination(d)}
-                  disabled={shielding}
-                  title={shielding ? "Locked while the shield runs." : undefined}
+                  disabled={shielding || !!blockByDenomination.get(d)}
+                  title={
+                    blockByDenomination.get(d)?.message ??
+                    (shielding ? "Locked while the shield runs." : undefined)
+                  }
                   className={
                     d === denomination
                       ? "rounded-lg border border-p01-cyan bg-p01-cyan/10 px-4 py-2 font-mono text-sm text-p01-cyan"
@@ -902,18 +977,24 @@ export default function PoolPanel({
           <details className="mt-2">
             <summary className="cursor-pointer text-xs text-p01-text-dim marker:text-p01-text-dim">
               Other denominations, with how many notes each holds
+              {blockedDenominations.length > 0 &&
+                ` — ${blockedDenominations.length} closed to new deposits`}
             </summary>
             <div className="mt-2 flex flex-wrap gap-2">
               {denominations
                 .filter((d) => d !== primaryDenomination)
                 .map((d) => {
                   const size = poolSizes.find((p) => p.denomination === d);
+                  const block = blockByDenomination.get(d);
                   return (
                     <button
                       key={d}
                       onClick={() => setDenomination(d)}
-                      disabled={shielding}
-                      title={shielding ? "Locked while the shield runs." : undefined}
+                      disabled={shielding || !!block}
+                      title={
+                        block?.message ??
+                        (shielding ? "Locked while the shield runs." : undefined)
+                      }
                       className={
                         d === denomination
                           ? "rounded-lg border border-p01-cyan bg-p01-cyan/10 px-3 py-1.5 font-mono text-xs text-p01-cyan"
@@ -924,10 +1005,29 @@ export default function PoolPanel({
                       <span className="ml-1.5 text-p01-text-dim">
                         {size ? `· ${size.unspentNotes}` : "· ?"}
                       </span>
+                      {block && (
+                        <span className="ml-1.5 text-p01-yellow">
+                          {block.reason === "over-relay-cap" ? "· over cap" : "· closed"}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
             </div>
+            {/* The WHY, in the pool's own words. One line per blocked
+                denomination rather than one summary sentence: the two reasons
+                are different facts and collapsing them would make the closure
+                sound like the arithmetic, or the arithmetic sound like a
+                setting someone could turn off. */}
+            {blockedDenominations.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {blockedDenominations.map(({ denomination: d, block }) => (
+                  <li key={d} className="text-xs text-p01-text-dim">
+                    {block.message}
+                  </li>
+                ))}
+              </ul>
+            )}
           </details>
           {/* THE NUMBER HERE IS THE UNSPENT COUNT, NEVER THE LEAF COUNT.
               `totalNotes` counts every note ever inserted, including every one
@@ -1030,10 +1130,14 @@ export default function PoolPanel({
           </p>
         )}
 
+        {/* `selectedBlock` is the belt to the picker's braces: the chips for
+            blocked denominations are already disabled, so it only bites when
+            the fallback selection is itself blocked (USDC, where every pool
+            is). The engine refuses either way — this just stops the click. */}
         <button
           type="button"
           onClick={handleShield}
-          disabled={shielding || !!busyNote || !signOne || poolIsSolOnly}
+          disabled={shielding || !!busyNote || !signOne || poolIsSolOnly || !!selectedBlock}
           className="btn-primary flex w-full items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {shielding ? (

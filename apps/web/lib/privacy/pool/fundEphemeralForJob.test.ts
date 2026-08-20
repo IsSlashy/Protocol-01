@@ -306,3 +306,536 @@ describe('an ephemeral that already holds money', () => {
     ).rejects.toThrow(/Recover/);
   });
 });
+
+// ===========================================================================
+// PORTE 4 (R != F + the 1% operator fee) and PORTE 2's engine half.
+//
+// 🚨 EVERY CASE BELOW IS A DEFECT THAT SHIPPED ONCE. The first attempt at this
+// exact scope (branch `wip/lots-abc-2026-08-20`) wrote the R != F split into
+// four file headers, an env template and a readiness report, and then paid the
+// funder anyway on one line. Prose is not a mechanism. These are the
+// measurements that would have caught each one.
+//
+// The relayed deposit is the ONLY leg where the buyer signs something
+// irreversible before this code is finished — a wallet-signed transfer of a
+// full denomination to an address the deployment holds no spending key for by
+// design. Every other leg can fail all it likes and cost a retry. That
+// asymmetry is why the ordering cases exist at all.
+// ===========================================================================
+
+/**
+ * A NAMESPACE import, deliberately, and not for style.
+ *
+ * These cases name exports that did not exist when they were written. With
+ * named imports a missing export is a MODULE LINK ERROR: vitest reports one
+ * failed file, zero tests, and the twelve pre-existing cases above go dark with
+ * it — so "the suite is red" stops distinguishing a missing export from a wrong
+ * answer, and a real defect can hide behind an unrelated rename. Through a
+ * namespace the module still loads, each case fails on its own assertion, and
+ * the failure names the thing that is missing.
+ */
+import * as funderModule from './ephemeralFunder';
+import { SystemInstruction } from '@solana/web3.js';
+
+/** R, the till: collects from buyers, funds nothing. */
+const TILL = 'BQWLmnLmQPzQvJVGrJyBRA6RPBEqMhMQZ5oXQKmDMhcE';
+/** The operator's fee wallet: a PURE SINK, co-named with every buyer. */
+const FEE_WALLET = 'CtVBK3rQpsPBLuqvhtFbwXcjXWv5PoyqjbJPZ3mV7iVv';
+
+/** A 1 SOL deposit's real pre-fund, measured on devnet 2026-08-18. */
+const DEPOSIT_REQUIRED = 1_573_486_080;
+/** 1% of a 1 SOL note. */
+const DEPOSIT_FEE = 10_000_000;
+
+/** The 1 SOL pool's fee basis, straight out of the pool table. */
+const SOL_1 = { token: 'SOL' as const, denominationAtomic: 1_000_000_000n, decimals: 9 };
+/** The 1000 USDC pool's, whose atoms are NOT lamports. */
+const USDC_1000 = { token: 'USDC' as const, denominationAtomic: 1_000_000_000n, decimals: 6 };
+
+/** The relay's own constants, as `/api/relay-to-buyer` reports them. */
+const RELAY_TERMS = {
+  ok: true,
+  funder: FUNDER,
+  till: TILL,
+  feeWallet: FEE_WALLET,
+  maxRelayLamports: 2_500_000_000,
+  maxRentSubsidyLamports: 1_500_000_000,
+};
+
+/** Everything that happened, in order. The point of several cases below. */
+let calls: string[] = [];
+/** The body the client posted to the relay, so the fee cannot hide in it. */
+let relayedBody: { requiredLamports?: number; buyerPubkey?: string; paymentSignature?: string } | null =
+  null;
+
+function recordingConnection(balance = 0): Connection {
+  return {
+    getBalance: async () => balance,
+    getLatestBlockhash: async (c?: string) => {
+      calls.push(`getLatestBlockhash:${c}`);
+      return { blockhash: BLOCKHASH, lastValidBlockHeight: 1 };
+    },
+    sendRawTransaction: async () => {
+      calls.push('sendRawTransaction');
+      return 'PAYSIG';
+    },
+    confirmTransaction: async () => {
+      calls.push('confirmTransaction');
+      return { value: { err: null } };
+    },
+  } as unknown as Connection;
+}
+
+const recordingSignOne = async (tx: Transaction) => {
+  calls.push('signOne');
+  signed.push(tx);
+  tx.sign(ownerKeypair);
+  return tx;
+};
+
+/**
+ * Stand up a whole deployment's answers: the relay's terms, and its relay POST.
+ *
+ * `terms: null` is a deployment that cannot be asked — a 500, a proxy
+ * interstitial, a dropped connection. Deliberately distinct from a deployment
+ * that answers with an address missing, which is an operator mistake rather
+ * than an outage and has a different cure.
+ */
+function stubDeployment(
+  opts: {
+    terms?: Record<string, unknown> | null;
+    termsStatus?: number;
+    relay?: 'ok' | 'refuse';
+  } = {},
+) {
+  const terms = opts.terms === undefined ? RELAY_TERMS : opts.terms;
+  vi.stubGlobal('fetch', async (url: string, init?: { method?: string; body?: string }) => {
+    const method = init?.method ?? 'GET';
+    calls.push(`${method} ${String(url)}`);
+    fetchCalls.push(String(url));
+    if (String(url).startsWith('/api/relay-to-buyer') && method === 'GET') {
+      if (terms === null) throw new Error('the deployment could not be reached');
+      return {
+        ok: (opts.termsStatus ?? 200) < 400,
+        status: opts.termsStatus ?? 200,
+        json: async () => terms,
+      };
+    }
+    if (String(url).startsWith('/api/relay-to-buyer')) {
+      relayedBody = JSON.parse(init?.body ?? '{}');
+      if (opts.relay === 'refuse') {
+        return {
+          ok: false,
+          status: 402,
+          json: async () => ({
+            ok: false,
+            error: 'that payment does not cover the value this job moves',
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          signature: 'RELAYSIG',
+          lamports: DEPOSIT_REQUIRED,
+          funder: FUNDER,
+          till: TILL,
+        }),
+      };
+    }
+    // `/api/fund-ephemeral` — the float-only grant path, unused by these cases.
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, configured: true, funder: FUNDER }),
+    };
+  });
+}
+
+/** A relayed 1 SOL deposit: the shape `shieldToPool` builds. */
+const deposit = (over: Record<string, unknown> = {}) =>
+  ({
+    ephemeralPubkey: ephemeral,
+    requiredLamports: DEPOSIT_REQUIRED,
+    valueLamports: DEPOSIT_VALUE,
+    feeBasis: SOL_1,
+    owner: OWNER,
+    connection: recordingConnection(),
+    signOne: recordingSignOne,
+    relayThroughDeployment: true,
+    ...over,
+  }) as never;
+
+/** The rejection, or a failure that says what came back instead of one. */
+async function refusal(p: Promise<unknown>): Promise<Error & { reason?: string }> {
+  let value: unknown;
+  try {
+    value = await p;
+  } catch (e) {
+    return e as Error & { reason?: string };
+  }
+  throw new Error(`expected a refusal, got ${JSON.stringify(value)}`);
+}
+
+beforeEach(() => {
+  calls = [];
+  relayedBody = null;
+  // Module state, not test state: the deployment's addresses are cached for the
+  // session and would otherwise leak from one case into the next — which is how
+  // a case asserting "no till declared" quietly runs against a declared one.
+  (funderModule as { resetDeploymentAddresses?: () => void }).resetDeploymentAddresses?.();
+});
+
+describe('the relayed deposit refuses rather than pay the wrong address', () => {
+  // 🚨 D1, MEASURED ON `wip/lots-abc-2026-08-20`. The relayed branch was guarded
+  // by `valueLamports > 0 && relayThroughDeployment && funderConfigured()` and
+  // carried the comment "⛔ THERE IS DELIBERATELY NO `else` HERE THAT FALLS
+  // THROUGH TO PAYING F". There was one: the very next line was
+  // `else if (valueLamports > 0)`, which set a fallback reason and let the
+  // WALLET pre-fund the depositing ephemeral directly — the exact edge P9
+  // walked on 2026-08-18, restored silently, on the one path whose entire
+  // purpose is removing it.
+  //
+  // The user is not told. The deposit succeeds. The screen says it worked.
+
+  it('refuses when the deployment names no till, and signs NOTHING', async () => {
+    stubDeployment({ terms: { ...RELAY_TERMS, till: null } });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('DeploymentTillMisconfiguredError');
+    expect(e.reason).toBe('till-unset');
+    expect(signed).toHaveLength(0);
+    expect(calls).not.toContain('sendRawTransaction');
+  });
+
+  it('refuses when the till IS the funder', async () => {
+    // The 2026-08-18 measurement itself: a buyer who pays F is one transaction
+    // from the address that funds their own spend, and P11 walks it in two hops
+    // with no cryptography.
+    stubDeployment({ terms: { ...RELAY_TERMS, till: FUNDER } });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('DeploymentTillMisconfiguredError');
+    expect(e.reason).toBe('till-equals-funder');
+    expect(signed).toHaveLength(0);
+  });
+
+  it('refuses a till that is not a public key at all', async () => {
+    // Unparseable must fail the same way as unset. A `new PublicKey(...)` throw
+    // escaping from here would be an untyped error the panel cannot classify —
+    // and, worse, it can only happen at the moment the transaction is built,
+    // which on the old ordering was after the wallet had been asked.
+    stubDeployment({ terms: { ...RELAY_TERMS, till: 'not-a-public-key' } });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('DeploymentTillMisconfiguredError');
+    expect(e.reason).toBe('addresses-unreadable');
+    expect(signed).toHaveLength(0);
+  });
+
+  it('refuses when the deployment declares no fee wallet', async () => {
+    stubDeployment({ terms: { ...RELAY_TERMS, feeWallet: null } });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('DeploymentTillMisconfiguredError');
+    expect(e.reason).toBe('fee-wallet-unset');
+    expect(signed).toHaveLength(0);
+  });
+
+  it('refuses when the fee wallet IS the funder', async () => {
+    // The fee rides inside the buyer's own transaction, so a fee wallet equal to
+    // F puts F in that transaction: the two-hop walk with the middle step
+    // removed.
+    stubDeployment({ terms: { ...RELAY_TERMS, feeWallet: FUNDER } });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('DeploymentTillMisconfiguredError');
+    expect(e.reason).toBe('fee-wallet-equals-funder');
+    expect(signed).toHaveLength(0);
+  });
+
+  it('refuses when the fee wallet IS the till', async () => {
+    // 🚨 THE COLLISION WITH NO SYMPTOM. web3.js dedupes an identical pubkey into
+    // ONE account index, so both credits land in one balance delta: the relay
+    // reads `value + fee` as the payment, `subsidy = required - received` merely
+    // shrinks, nothing errors anywhere, and the operator collects no fee while
+    // believing they do.
+    stubDeployment({ terms: { ...RELAY_TERMS, feeWallet: TILL } });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('DeploymentTillMisconfiguredError');
+    expect(e.reason).toBe('fee-wallet-equals-till');
+    expect(signed).toHaveLength(0);
+  });
+
+  it('refuses instead of pre-funding the ephemeral from the wallet when there is no funder', async () => {
+    // 🚨 THE `else if` ITSELF. A deployment serving a bundle built before
+    // `NEXT_PUBLIC_P01_FUNDER_TICKET` was set has `funderConfigured() === false`
+    // — the stale-bundle case this repository has already been bitten by — so
+    // the relayed branch is skipped entirely and the wallet funds the depositing
+    // ephemeral in one public transfer. The caller ASKED for the relay. Getting
+    // the linkable path instead, with no error, is the one outcome the buyer
+    // cannot detect afterwards and cannot undo.
+    vi.stubEnv('NEXT_PUBLIC_P01_FUNDER_TICKET', '');
+    stubDeployment();
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('RelayCannotServeJobError');
+    expect(e.reason).toBe('no-funder-configured');
+    expect(signed).toHaveLength(0);
+    expect(calls).not.toContain('sendRawTransaction');
+  });
+
+  it('still lets the wallet fund a deposit that never asked for the relay', async () => {
+    // ⚠️ THE NEGATIVE CONTROL, AND IT IS THE FROZEN DEMO'S SHAPE. The live
+    // devnet harness funds its ephemeral straight from the wallet and does not
+    // set `relayThroughDeployment`. A refusal that fired on this shape would
+    // take the proven journey down.
+    stubDeployment();
+    const d = await fundEphemeralForJob(deposit({ relayThroughDeployment: false }));
+    expect(d.fundedBy).toBe('wallet');
+    expect(d.sweepTo).toBe(OWNER.toBase58());
+    expect(signed).toHaveLength(1);
+  });
+});
+
+describe('nothing irreversible happens before the relay has agreed to serve', () => {
+  // 🚨 D2. The buyer's payment is the only step in this flow that cannot be
+  // undone: a full denomination, signed by their wallet, sent to an address this
+  // deployment deliberately holds no spending key for. Anything that fails AFTER
+  // it — an unreadable till, a job over the cap, a rate limit, a 502 — strands
+  // that money at the till with no relay and no refund path.
+  //
+  // So the order is: learn the terms, check this job against them, and only then
+  // ask the wallet. The irreversible step is last.
+
+  it('reads the relay terms BEFORE the wallet signs and before the payment is sent', async () => {
+    stubDeployment();
+    await fundEphemeralForJob(deposit());
+    const terms = calls.indexOf('GET /api/relay-to-buyer');
+    expect(terms).toBeGreaterThan(-1);
+    expect(terms).toBeLessThan(calls.indexOf('signOne'));
+    expect(terms).toBeLessThan(calls.indexOf('sendRawTransaction'));
+    // And before the blockhash too. Fetching one commits nothing, but building
+    // the transaction before the terms are known is how a refusal ends up after
+    // the wallet popup instead of before it.
+    expect(terms).toBeLessThan(calls.indexOf('getLatestBlockhash:finalized'));
+  });
+
+  it('signs nothing when the deployment cannot be asked at all', async () => {
+    // An outage is not an all-clear. Paying a cached or guessed till here is how
+    // money reaches an address nobody is watching.
+    stubDeployment({ terms: null });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('RelayCannotServeJobError');
+    expect(e.reason).toBe('terms-unreadable');
+    expect(signed).toHaveLength(0);
+  });
+
+  it('signs nothing when the terms endpoint answers with an error status', async () => {
+    stubDeployment({ terms: { ok: false, error: 'no funder key' }, termsStatus: 503 });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('RelayCannotServeJobError');
+    expect(signed).toHaveLength(0);
+  });
+
+  it('pays the till the RELAY named, so the payer and the reader cannot drift', async () => {
+    // The relay reads `received` from the till's balance delta. If the client
+    // paid an address from a second source — a build-time constant, a different
+    // endpoint — a rotated till means the buyer pays one address while the relay
+    // reads another, and the answer is 400 AFTER the money has moved.
+    stubDeployment();
+    await fundEphemeralForJob(deposit());
+    expect(signed).toHaveLength(1);
+    const to = signed[0].instructions.map((ix) =>
+      SystemInstruction.decodeTransfer(ix).toPubkey.toBase58(),
+    );
+    expect(to).toContain(TILL);
+    expect(to).not.toContain(FUNDER);
+  });
+});
+
+describe('a job the relay cannot serve is refused before the buyer signs', () => {
+  // PORTE 2, engine half. MEASURED FROM SOURCE 2026-08-20:
+  //   relay-to-buyer MAX_RELAY_LAMPORTS        2_500_000_000
+  //   relay-to-buyer MAX_RENT_SUBSIDY_LAMPORTS 1_500_000_000
+  //   fund-ephemeral MAX_LAMPORTS_PER_REQUEST  2_000_000_000
+  // A shield needs denomination * 1.003 + about 0.57 SOL of refundable proof
+  // rent, so MAX_RELAY_LAMPORTS binds at a denomination of roughly 1.92 SOL. The
+  // 10, 100, 500 and 1000 SOL pools therefore take the buyer's money and deliver
+  // NOTHING, 100% of the time: the payment lands and the relay then refuses it.
+
+  it('refuses a 10 SOL deposit, which no relay on this deployment can fund', async () => {
+    stubDeployment();
+    const e = await refusal(
+      fundEphemeralForJob(
+        deposit({
+          valueLamports: 10_030_000_000,
+          requiredLamports: 10_600_010_780,
+          feeBasis: { token: 'SOL', denominationAtomic: 10_000_000_000n, decimals: 9 },
+        }),
+      ),
+    );
+    expect(e.name).toBe('RelayCannotServeJobError');
+    expect(e.reason).toBe('job-over-relay-cap');
+    expect(signed).toHaveLength(0);
+    expect(calls).not.toContain('sendRawTransaction');
+  });
+
+  it('takes the ceiling from the deployment rather than from a constant in this file', async () => {
+    // 🚨 A SECOND COPY OF A CAP IS A CAP THAT DRIFTS. If the client carried its
+    // own 2.5 SOL, an operator lowering the relay's cap would not lower the
+    // client's, and every buyer between the two numbers would pay first and be
+    // refused after. Same deposit, same code, only the deployment's answer
+    // changes — and the outcome has to change with it.
+    stubDeployment({ terms: { ...RELAY_TERMS, maxRelayLamports: 1_000_000_000 } });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('RelayCannotServeJobError');
+    expect(e.reason).toBe('job-over-relay-cap');
+    expect(signed).toHaveLength(0);
+  });
+
+  it('serves the same job when the deployment raises its own ceiling', async () => {
+    // The other half of that property: the client must not be stricter than the
+    // deployment either, or raising the cap does nothing and the client's copy
+    // is the real cap after all.
+    stubDeployment({ terms: { ...RELAY_TERMS, maxRelayLamports: 20_000_000_000 } });
+    const d = await fundEphemeralForJob(
+      deposit({
+        valueLamports: 10_030_000_000,
+        requiredLamports: 10_600_010_780,
+        feeBasis: { token: 'SOL', denominationAtomic: 10_000_000_000n, decimals: 9 },
+      }),
+    );
+    expect(d.fundedBy).toBe('funder');
+  });
+
+  it('refuses when the rent the deployment would front exceeds its own subsidy cap', async () => {
+    // `subsidy = required - received`. The buyer pays the value; the deployment
+    // fronts the refundable proof rent. A job whose rent half is over the cap is
+    // refused by the relay AFTER the payment unless it is refused here BEFORE it.
+    stubDeployment({ terms: { ...RELAY_TERMS, maxRentSubsidyLamports: 100_000 } });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('RelayCannotServeJobError');
+    expect(e.reason).toBe('subsidy-over-cap');
+    expect(signed).toHaveLength(0);
+  });
+});
+
+describe('the operator fee is 1% of the note, in the note’s own units', () => {
+  // 🚨 D4. `operatorFeeLamportsFor(denomination)` on `wip/lots-abc-2026-08-20`
+  // was `Math.round((denomination * 1e9) / 100)` — the HUMAN denomination times
+  // a hard-coded 1e9. That is right for SOL by coincidence, because SOL has nine
+  // decimals, and it is catastrophic for every other pool in the table: the 1000
+  // USDC pool would have charged 10_000_000_000 lamports, which is TEN SOL, in a
+  // transfer the buyer signs without seeing it itemised.
+  //
+  // The pool table already carries `denominationAtomic` and `decimals` for
+  // exactly this reason. A percentage of atoms needs neither a decimal exponent
+  // nor a float.
+
+  it('charges 0.01 SOL on the 1 SOL pool', () => {
+    expect(funderModule.operatorFeeAtomic(SOL_1)).toBe(10_000_000n);
+  });
+
+  it('charges 0.001 SOL on the 0.1 SOL pool, which holds 10 live notes', () => {
+    expect(
+      funderModule.operatorFeeAtomic({
+        token: 'SOL',
+        denominationAtomic: 100_000_000n,
+        decimals: 9,
+      }),
+    ).toBe(1_000_000n);
+  });
+
+  it('charges TEN USDC on the 1000 USDC pool, not ten SOL', () => {
+    const fee = funderModule.operatorFeeAtomic(USDC_1000);
+    expect(fee).toBe(10_000_000n);
+    // The reading that matters: ten of the pool's own unit.
+    expect(Number(fee) / 10 ** USDC_1000.decimals).toBe(10);
+    // And explicitly NOT the 1e9 answer, which is the defect by its number.
+    expect(fee).not.toBe(10_000_000_000n);
+  });
+
+  it('charges 0.01 USDC on the 1 USDC pool', () => {
+    const fee = funderModule.operatorFeeAtomic({
+      token: 'USDC',
+      denominationAtomic: 1_000_000n,
+      decimals: 6,
+    });
+    expect(fee).toBe(10_000n);
+    expect(fee).not.toBe(10_000_000n);
+  });
+
+  it('refuses a non-SOL pool outright, because a lamport transfer cannot pay a USDC fee', async () => {
+    // The founder's shape is a `SystemProgram.transfer` inside the buyer's own
+    // transaction, and that instruction moves LAMPORTS. Charging a USDC pool's
+    // atoms through it would send 10 SOL-millionths per USDC-millionth of
+    // nothing at all; charging its lamport equivalent would need a price feed.
+    // Refusing explicitly is the only honest third option, and it has to happen
+    // before the wallet is asked.
+    stubDeployment();
+    const e = await refusal(fundEphemeralForJob(deposit({ feeBasis: USDC_1000 })));
+    expect(e.name).toBe('RelayCannotServeJobError');
+    expect(e.reason).toBe('fee-not-payable-in-lamports');
+    expect(signed).toHaveLength(0);
+  });
+
+  it('refuses a relayed deposit that states no fee basis at all', async () => {
+    // Silently charging nothing is invisible revenue loss, and it is a CLIENT
+    // bug rather than an operator one. Loud.
+    stubDeployment();
+    const e = await refusal(fundEphemeralForJob(deposit({ feeBasis: undefined })));
+    expect(e.name).toBe('RelayCannotServeJobError');
+    expect(e.reason).toBe('fee-basis-missing');
+    expect(signed).toHaveLength(0);
+  });
+});
+
+describe('what the buyer actually signs', () => {
+  it('is ONE transaction: the note value to the till, the 1% to the fee wallet', async () => {
+    // No second signature and no second transaction — the founder's shape. Two
+    // transactions would double the popups and, worse, make the fee droppable: a
+    // buyer who approves the first and rejects the second has deposited without
+    // paying, and there is no way to collect afterwards.
+    stubDeployment();
+    await fundEphemeralForJob(deposit());
+    expect(signed).toHaveLength(1);
+    const tx = signed[0];
+    expect(tx.instructions).toHaveLength(2);
+
+    const decoded = tx.instructions.map((ix) => SystemInstruction.decodeTransfer(ix));
+    const byDest = new Map(decoded.map((d) => [d.toPubkey.toBase58(), Number(d.lamports)]));
+
+    // 🚨 EXACTLY THE DENOMINATION PLUS THE PROTOCOL FEE, AND NOT ONE LAMPORT
+    // MORE. The relay reads this delta and forwards `requiredLamports`; the note
+    // that lands in the pool has to be exactly the denomination, or notes stop
+    // being indistinguishable by size and the amount defence is gone.
+    expect(byDest.get(TILL)).toBe(DEPOSIT_VALUE);
+    expect(byDest.get(FEE_WALLET)).toBe(DEPOSIT_FEE);
+    // The fee is not folded into the payment, and the payment is not inflated by
+    // it.
+    expect(byDest.get(TILL)).not.toBe(DEPOSIT_VALUE + DEPOSIT_FEE);
+    expect(decoded.every((d) => d.fromPubkey.toBase58() === OWNER.toBase58())).toBe(true);
+  });
+
+  it('asks the relay for the pre-fund UNCHANGED, with no fee added to it', async () => {
+    // Inflating `requiredLamports` by the fee would forward the fee into the
+    // ephemeral, where it ends up either inside the note — breaking the exact
+    // denomination — or swept to F, which is not the operator.
+    stubDeployment();
+    await fundEphemeralForJob(deposit());
+    expect(relayedBody?.requiredLamports).toBe(DEPOSIT_REQUIRED);
+    expect(relayedBody?.requiredLamports).not.toBe(DEPOSIT_REQUIRED + DEPOSIT_FEE);
+  });
+
+  it('sweeps the residue back to the FLOAT, never to the till', async () => {
+    // ⛔ F fronted the refundable proof rent, so the residue that comes back is
+    // F's own money. Sweeping it to the till "for consistency with the payment"
+    // would hand F's rent to an address that never lent it — and sweeping it home
+    // to the wallet would rebuild the `ephemeral -> wallet` edge P9 walked on
+    // 2026-08-18, undoing the entire detour to return money that was never the
+    // buyer's.
+    stubDeployment();
+    const d = await fundEphemeralForJob(deposit());
+    expect(d.fundedBy).toBe('funder');
+    expect(d.sweepTo).toBe(FUNDER);
+    expect(d.sweepTo).not.toBe(TILL);
+    expect(d.sweepTo).not.toBe(OWNER.toBase58());
+  });
+});
