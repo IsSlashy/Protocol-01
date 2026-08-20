@@ -29,7 +29,9 @@ et c'est une dette (§3.2).
 4. C7 est écrit sur `HEAD`. Le vérifieur **déployé** est `b7`, à 111 commits de là.
    C7 est donc écrit contre un vérifieur qui n'est pas celui qui tourne. **§5.**
 5. `sweep_fee_escrow` **ne peut pas fonctionner** : 0,151691 SOL de frais protocole
-   sont verrouillés définitivement, et chaque dépôt en ajoute. **§7.**
+   sont inatteignables **par le binaire déployé**, et chaque dépôt en ajoute. Ce n'est
+   pas une perte définitive — un redéploiement corrigeant l'instruction les récupère.
+   Ce qui est bloqué, c'est le code en place, pas les lamports. **§7.**
 
 ---
 
@@ -47,7 +49,12 @@ C'est la chose la plus utile apprise dans cette session, et elle était jusqu'ic
 et `:60` rejoue le même chiffre pour écarter le risque de la phase 1.
 
 **Ce nombre n'existe nulle part dans le dépôt comme mesure.** Un `grep` sur `docs/`,
-`stark/`, `programs/` ne le trouve que dans ces deux lignes de prose. Le pin mesuré
+`stark/`, `programs/` ne le trouve que dans ces deux lignes de prose.
+
+> Rejoué le 21-08 (une relecture avait mis ce point en doute) :
+> `grep -rn "1316491\|1,316,491\|1_316_491\|1 316 491" docs/ stark/ programs/`
+> → `C7_SPEND_CIRCUIT_PLAN.md:18` et `:60`, plus les occurrences de cette note.
+> Zéro dans `stark/`, zéro dans `programs/`. **La revendication tient.** Le pin mesuré
 de C6 est :
 
 ```
@@ -90,7 +97,7 @@ contradiction est interne au document.** C'est le point à ne pas re-dériver.
 | besoin ZK (2·22+1) | 45 | 45 |
 | verdict | masquage **impossible** | ~**10×** le besoin |
 
-Coût mesuré du doublement :
+Coût mesuré du doublement — **côté vérifieur uniquement** :
 
 - **+660 sha256 par preuve**, à **137,00 CU par hash de 64 octets**
   (sonde déployée sur devnet le 2026-08-20, linéaire de 1 à 2000 hashes)
@@ -98,6 +105,23 @@ Coût mesuré du doublement :
 - Phase 1 atterrit à **≈ 979 000 CU** contre un plafond de **1 400 000**.
 - Un chiffrage indépendant a donné **936 000 – 1 046 000 CU**. Les deux **réfutent**
   le ~1,37 M supposé par le plan.
+
+**Ce qui n'est PAS chiffré ici, et qu'il ne faut pas lire comme gratuit.** Les trois
+nombres ci-dessus décrivent la vérification on-chain. Le **prouveur** est l'autre
+moitié de la facture, et elle n'est pas mesurée :
+
+| poste | attendu | état |
+|---|---|---|
+| temps de preuve | ~`n log n` → proche du double | **NON MESURÉ** |
+| mémoire du prouveur | proche du double | **NON MESURÉ** |
+| taille du blob de preuve | +1 nœud par chemin de Merkle, +1 couche FRI | **NON MESURÉ** |
+| transactions de téléversement (~150 aujourd'hui) | suit la taille du blob | **NON MESURÉ** |
+| rente transitoire (~0,57 SOL par dépôt) | suit le nombre de chunks | **NON MESURÉ** |
+
+Deux de ces lignes ont déjà mordu ce projet : la preuve sur appareil dépasse **180 s**
+et un dépôt coûte aujourd'hui **50-230 s**. Doubler la trace est bon marché **là où on
+l'a regardé** et personne n'a regardé ailleurs. Le passage à 1024 doit donc être
+mesuré sur le prouveur avant d'être décidé, pas seulement sur le plafond de CU.
 
 **La raison structurelle, à retenir plus que les chiffres** : la phase 1 croît en
 `log2(trace_length)`, **pas** en `trace_length`. Doubler la trace ajoute **un** niveau
@@ -287,6 +311,10 @@ Pas une preuve.
 
 **Dette à traiter.** Un `grep` sur `docs/ stark/src/ programs/ apps/web/lib/ scripts/`
 ne trouve **aucun** de ces nombres. Ils viennent de mesures de session (devnet, litesvm).
+
+> Rejoué le 21-08 sur 85 218, 90 420, 137,00 et 979 000, dans les quatre écritures
+> usuelles (`85218`, `85,218`, `85_218`, `85 218`) : **0 occurrence** hors de ce
+> document pour chacun. La dette est réelle et elle est exactement de cette taille.
 Si ce document se perd, ils sont perdus.
 
 | Nombre | Ce que c'est | Provenance |
@@ -302,7 +330,7 @@ Si ce document se perd, ils sont perdus.
 | **11** notes non dépensées | pool 1 SOL au 2026-08-20 | plafond, §2.5 |
 | **≈ 41** notes | plafond aux 42,9 SOL actuels | plafond, §2.5 |
 | **524** slots (~3,5 min) | dépôt → dépense, démo gelée | §2.6 |
-| **0,151691** SOL | frais protocole verrouillés | §7 |
+| **0,151691** SOL | frais protocole inatteignables par le binaire déployé | §7 |
 
 > **85 218 corroboré à l'identique par litesvm et par devnet** est le nombre le plus
 > solide de la liste : deux instruments indépendants, pas une extrapolation. Il mérite
@@ -451,7 +479,8 @@ programs/zk_shielded/src/instructions/sweep_fee_escrow.rs:117
 Décrément direct de lamports sur un `SystemAccount` — un compte que le programme **ne
 possède pas**. Le runtime refuse, toujours.
 
-**0,151691 SOL de frais protocole sont verrouillés définitivement, et chaque dépôt en
+**0,151691 SOL de frais protocole sont inatteignables par le binaire déployé (un
+redéploiement les récupère — ce n'est pas une perte), et chaque dépôt en
 ajoute** (`shield_denominated_v3.rs:197`, `unshield_denominated_stark_v3.rs:159`
 alimentent cet escrow). La campagne de dépôts qui tourne en ce moment **augmente ce
 montant**.
