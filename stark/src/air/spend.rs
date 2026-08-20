@@ -832,6 +832,180 @@ mod tests {
         (trace, nullifier, root, commitment)
     }
 
+    // ========================================================================
+    // MEASURED: what an observer recovers from the PUBLISHED evaluations alone
+    //
+    // These tests exist because an analysis that says "it leaks" is worth
+    // exactly what its instrument is worth until it has been run. On
+    // 2026-08-18 probe P11 printed PASS on a spend whose buyer was two hops
+    // away; the probe had been handed the address and had declined to open it.
+    // So: no reasoning here, only arithmetic on the numbers the proof
+    // actually publishes.
+    //
+    // What the serializer publishes, read at stark/src/compact.rs:4046-4120:
+    // ood_current[col] and ood_next[col] for EVERY column, then per query
+    // lde[col][pos] and lde[col][next_pos] for EVERY column. That blob is
+    // uploaded as public instruction data. A column's OOD value is its
+    // interpolant evaluated at z, so these tests evaluate exactly that and ask
+    // what it gives away.
+    // ========================================================================
+
+    /// g_{2^k}, reproduced from `compact.rs:3394-3410` so this test depends on
+    /// no private helper. 7 generates the Goldilocks multiplicative group;
+    /// g_{2^32} = 7^((p-1)/2^32), then square down to the size wanted.
+    fn domain_generator(domain_size: usize) -> BaseElement {
+        assert!(domain_size.is_power_of_two());
+        let k = domain_size.trailing_zeros();
+        let p_minus_1 = 0xFFFF_FFFF_0000_0000_u64;
+        let g_2_32 = BaseElement::new(7).exp_vartime((p_minus_1 / (1u64 << 32)).into());
+        let mut g = g_2_32;
+        for _ in 0..(32 - k) {
+            g = g * g;
+        }
+        g
+    }
+
+    /// Evaluate a column's interpolant at `z` without computing coefficients.
+    ///
+    /// Barycentric form over the multiplicative subgroup H = {g^0..g^(n-1)}:
+    ///   L_i(z) = g^i * (z^n - 1) / (n * (z - g^i))
+    /// which follows from Z_H(x) = x^n - 1 and its derivative at g^i being
+    /// n * g^(-i). This is the same value the prover writes into
+    /// `ood_current[col]`.
+    fn eval_column_at(values: &[BaseElement], z: BaseElement) -> BaseElement {
+        let n = values.len();
+        let g = domain_generator(n);
+        let n_inv = BaseElement::new(n as u64).inv();
+        let z_n_minus_1 = z.exp_vartime((n as u64).into()) - BaseElement::ONE;
+
+        let mut acc = BaseElement::ZERO;
+        let mut g_i = BaseElement::ONE;
+        for &v in values.iter() {
+            // z is chosen outside the domain, so (z - g^i) is never zero.
+            acc += v * g_i * (z - g_i).inv();
+            g_i *= g;
+        }
+        acc * z_n_minus_1 * n_inv
+    }
+
+    /// One note, Merkle path held fixed, so the only thing varying between
+    /// candidates is the commitment itself.
+    fn trace_for(secret: u64) -> (Vec<Vec<BaseElement>>, BaseElement) {
+        let (elems, idx) = test_path();
+        let (trace, _, _) = build_spend_trace(
+            BaseElement::new(NP),
+            BaseElement::new(secret),
+            BaseElement::new(LEGACY_BLINDING),
+            BaseElement::new(MINT),
+            &elems,
+            &idx,
+        );
+        let (_, _, commitment) = compute_spend_values(
+            BaseElement::new(NP),
+            BaseElement::new(secret),
+            BaseElement::new(LEGACY_BLINDING),
+            BaseElement::new(MINT),
+        );
+        (trace, commitment)
+    }
+
+    /// MEASUREMENT 1 — the delivered design hands the commitment over for free.
+    ///
+    /// Constraint [15] makes col 9 constant, so its interpolant IS the constant
+    /// polynomial and its value at ANY point equals the commitment. An observer
+    /// reads eight bytes at offset 136 of the blob and is done: no witness, no
+    /// query, no candidate list, no work at all.
+    #[test]
+    fn measured_the_published_ood_of_col9_is_the_commitment_itself() {
+        let (trace, commitment) = trace_for(SECRET);
+        // Three unrelated evaluation points. Anything other than a degree-0
+        // column would disagree between them.
+        for z_raw in [0xDEAD_BEEFu64, 0x0123_4567_89AB_CDEF, 3] {
+            let z = BaseElement::new(z_raw);
+            assert_eq!(
+                eval_column_at(&trace[9], z),
+                commitment,
+                "ood_current[9] at z={z_raw} must be the commitment verbatim"
+            );
+        }
+    }
+
+    /// MEASUREMENT 2 — the residual channel, and what it is actually worth.
+    ///
+    /// This is the question the "level -1" redesign turns on. Delete col 9 and
+    /// col 5 and the commitment survives only as the Merkle pipeline's first
+    /// hash input, in cols 0-2. Is THAT interpolant a low-dimensional public
+    /// family — so that one published value solves for the commitment — or is
+    /// it merely a distinguisher over a candidate set?
+    ///
+    /// Two separate things are measured, with different consequences:
+    ///
+    ///  (a) NOT AFFINE. Poseidon's S-box is x^7, so col 0 is not an affine
+    ///      function of the commitment and no single linear equation recovers
+    ///      it. That is the good half, and it is what makes "level -1"
+    ///      qualitatively different from today's degree-0 column.
+    ///
+    ///  (b) STILL A PERFECT DISTINGUISHER. Distinct commitments give distinct
+    ///      published values, so an observer holding the candidate set never
+    ///      needs to invert anything: they recompute each candidate and
+    ///      compare. And the candidate set is not secret — it is the pool's
+    ///      leaves, all public, 34 of them on the 1 SOL pool on 2026-08-20.
+    ///
+    /// So the redesign moves an attack from "read 8 bytes" to "recompute N
+    /// Poseidon pipelines", N being the anonymity set. That is a real change in
+    /// kind. It is NOT hiding.
+    #[test]
+    fn measured_the_merkle_channel_is_a_distinguisher_not_a_solve() {
+        let z = BaseElement::new(0x0BAD_C0FF_EEu64);
+        let secrets: [u64; 8] = [SECRET, 11, 12, 13, 14, 15, 16, 17];
+
+        let observed: Vec<(BaseElement, BaseElement)> = secrets
+            .iter()
+            .map(|&s| {
+                let (trace, commitment) = trace_for(s);
+                (commitment, eval_column_at(&trace[0], z))
+            })
+            .collect();
+
+        // (b) distinctness — every candidate separable from every other.
+        for i in 0..observed.len() {
+            for j in (i + 1)..observed.len() {
+                assert_ne!(
+                    observed[i].1, observed[j].1,
+                    "two candidates share a published value; the channel would not distinguish"
+                );
+            }
+        }
+
+        // The attack: take one proof's published value, discard the witness
+        // entirely, and recover WHICH commitment produced it purely by
+        // recomputing the candidates.
+        let target = observed[0].1;
+        let recovered: Vec<BaseElement> = observed
+            .iter()
+            .filter(|(_, v)| *v == target)
+            .map(|(c, _)| *c)
+            .collect();
+        assert_eq!(recovered.len(), 1, "exactly one candidate must match");
+        assert_eq!(
+            recovered[0], observed[0].0,
+            "the recovered commitment must be the real one"
+        );
+
+        // (a) not affine: were col 0 equal to a + commitment * b for public
+        // vectors a and b, the published values would satisfy the collinearity
+        // relation below, and one division would recover the commitment with
+        // no candidate list at all.
+        let (c1, v1) = observed[0];
+        let (c2, v2) = observed[1];
+        let (c3, v3) = observed[2];
+        let predicted_if_affine = v1 + (v2 - v1) * (c3 - c1) * (c2 - c1).inv();
+        assert_ne!(
+            v3, predicted_if_affine,
+            "col 0 is affine in the commitment: one division would solve it, no candidates needed"
+        );
+    }
+
     fn pub_inputs(nullifier: BaseElement, root: BaseElement) -> SpendPublicInputs {
         SpendPublicInputs {
             nullifier,
