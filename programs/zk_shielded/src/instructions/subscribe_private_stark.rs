@@ -60,6 +60,47 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32], 
 ///
 /// The caller must verify the STARK proof BEFORE calling this instruction.
 /// This instruction only checks that proof_buffer.verified == true.
+///
+/// # This instruction charges NO protocol fee. Confirmed by reading, 2026-08-20.
+///
+/// There is no `calculate_fee` call in this file, no `fee_escrow` account in
+/// `SubscribePrivateStark`, and the money path is a single move of the FULL
+/// denomination: `let amount = pool.denomination` (below), pool -> vault for
+/// exactly `amount`, then `vault.total_deposited = amount`. `shield` charges
+/// 0.3% and `unshield` charges 0.5%; `subscribe` charges 0. The merchant is
+/// funded with the whole note.
+///
+/// # What adding one would cost, so the option stays documented rather than
+/// re-derived
+///
+/// The founder's ruling is that the operator's commission is a 1% client-side
+/// transfer (Lot B5) and that nothing may touch the merchant's payout, so this
+/// is deliberately NOT implemented. If it ever is, the bill is:
+///
+///   * ONE new account, `fee_escrow: SystemAccount`, seeds
+///     `[FEE_ESCROW_SEED_PREFIX, denominated_pool.key()]`. Appending it moves
+///     no existing slot, but Anchor 0.32 rejects a short account list with
+///     AccountNotEnoughKeys (3005) before the handler runs and this crate does
+///     not enable `allow-missing-optionals` — so all four encoders (apps/web,
+///     apps/extension, apps/mobile, packages/merchant-sdk) break until they
+///     ship the extra meta. Same coordinated release the `claim_period` rent
+///     redirect already needs.
+///   * ONE `fee::calculate_fee(amount, <bps>)` call and a lamport split before
+///     the pool -> vault move, plus the rent-exempt top-up dance
+///     `shield_denominated_v3` already has to do on a fresh escrow (a system
+///     account cannot be left under ~890,880 lamports).
+///   * NO new instruction argument, and no change to the vault layout.
+///
+/// The unavoidable consequence, and the reason it is refused: the fee can only
+/// come out of `amount`, because `amount` is all this instruction has. The
+/// payer is an ephemeral key holding only its own pre-fund, and the pool holds
+/// exactly denominations. So `vault.total_deposited` would drop below the
+/// denomination and the merchant would receive less than the note is worth —
+/// which is precisely what the founder refused. A fee charged "from the wallet"
+/// the way `shield` charges it is not available here either: there is no user
+/// wallet in this transaction, on purpose (see
+/// `apps/web/lib/privacy/pool/subscribeEphemeral.ts` and memory
+/// `feedback_fee_not_from_note`).
 #[derive(Accounts)]
 #[instruction(
     nullifier: [u8; 32],

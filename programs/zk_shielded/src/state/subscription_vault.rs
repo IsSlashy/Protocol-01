@@ -6,9 +6,12 @@ use anchor_lang::prelude::*;
 /// A subscription is a ONE-WAY PREPAID ENVELOPE. Every lamport that enters a vault
 /// leaves it toward the retailer and nothing returns to the subscriber. The
 /// subscriber's controls are pause and resume; cancellation and refunds were removed.
-/// The vault ends when the retailer's `claim_period` spends its last funded period,
-/// which pays out the residual and the rent and closes the account. That is the ONLY
-/// way a vault can close.
+/// The vault ends when `claim_period` spends its last funded period, which pays the
+/// retailer the residual and closes the account. That is the ONLY way a vault can
+/// close. The RENT released by that close is not part of the envelope and stopped
+/// following it on 2026-08-20: it was charged to `subscribe_private_stark`'s
+/// ephemeral payer, out of whoever funded the note, and now goes to the source
+/// pool's `fee_escrow` PDA. See `claim_period`'s `rent_beneficiary`.
 ///
 /// **Private mode** (the only mode that can still be created): `subscriber_commitment`
 /// is set and the PDA is seeded on it instead of on a wallet, so the address does not
@@ -233,7 +236,9 @@ impl SubscriptionVault {
     ///
     /// `total_deposited % rate` is a sub-period remainder that never buys a
     /// period. It is not a refund and never was reachable as one: it is swept
-    /// to the retailer by the final `claim_period`, together with the rent.
+    /// to the retailer by the final `claim_period`. The rent used to be swept
+    /// with it and no longer is — the dust is the subscriber's deposit, the
+    /// rent was the funder's, and only the first of the two is the merchant's.
     pub fn funded_periods(&self) -> u64 {
         if self.rate == 0 {
             0
@@ -334,9 +339,12 @@ pub struct VaultSettlement {
 // document a hole and say so in the test name.
 //
 // What they do NOT cover: the account plumbing. That the lamports move, that
-// the account closes, that the rent lands on the retailer, that a paused vault
-// is rejected — all of that is asserted by reading `claim_period.rs`, not by
-// execution. There is no program-test harness in this crate.
+// the account closes, that the rent lands where it is supposed to, that a
+// paused vault is rejected — none of that is arithmetic. It was "asserted by
+// reading `claim_period.rs`" when this comment was written; since the litesvm
+// harness landed it is EXECUTED, by `programs/zk_shielded/tests/
+// subscription_lifecycle.rs` against the real `target/deploy/zk_shielded.so`.
+// Run that file after touching anything below.
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod tests {
@@ -530,10 +538,15 @@ mod tests {
         // 2026-08-01, 890,880 lamports for a zero-data account). That still
         // blocks an intermediate claim.
         //
-        // It can no longer block the LAST one. The closing claim carries the
-        // vault's own rent on top of the payout, and a rent-exempt
-        // SubscriptionVault is worth several times the floor, so the final
-        // claim always lands.
+        // It can no longer block the LAST one, and the reason changed on
+        // 2026-08-20 without the outcome changing. It used to be an accident:
+        // the closing claim moved the vault's whole rent to the retailer along
+        // with the payout, and a rent-exempt SubscriptionVault is worth several
+        // times the floor. The rent now goes to the funder's escrow instead, so
+        // `claim_period` tops the retailer up to its floor OUT of that rent
+        // first and routes only the remainder. The arithmetic below is what
+        // makes that top-up always affordable, which is why it is still the
+        // thing this test pins.
         const RENT_EXEMPT_ZERO_DATA: u64 = 890_880;
         const LAMPORTS_PER_BYTE_YEAR: u64 = 3_480;
         const ACCOUNT_STORAGE_OVERHEAD: u64 = 128;
@@ -692,7 +705,7 @@ mod tests {
         let s = v.settle(9_999).expect("must settle");
         assert_eq!(s.periods, 0);
         assert_eq!(s.payout, 0);
-        assert!(s.is_final, "closes and releases the rent to the retailer");
+        assert!(s.is_final, "closes and releases the rent to the funder's escrow");
     }
 
     #[test]

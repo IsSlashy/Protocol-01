@@ -617,11 +617,29 @@ pub mod zk_shielded {
     /// can push the transaction and pay its fee.
     ///
     /// On the claim that spends the last funded period this also CLOSES the
-    /// vault, paying the retailer the sub-period remainder and the rent. It is
-    /// the only instruction that can close a SubscriptionVault. Refuses while
-    /// the vault is paused UNLESS the vault is already exhausted, which is the
-    /// only way a paused vault can ever be closed now that cancellation is
-    /// gone.
+    /// vault, paying the retailer the sub-period remainder. It is the only
+    /// instruction that can close a SubscriptionVault. Refuses while the vault
+    /// is paused UNLESS the vault is already exhausted, which is the only way a
+    /// paused vault can ever be closed now that cancellation is gone.
+    ///
+    /// THIS DOC SAID "and the rent" until 2026-08-20, and it was accurate. The
+    /// vault's 3,403,440 lamports of rent now go to the source pool's
+    /// `fee_escrow` PDA instead: they were charged to `subscribe_private_stark`'s
+    /// ephemeral payer, funded by whoever bought the note, and reached the
+    /// merchant only as a side effect of Anchor's `close()` needing a
+    /// destination. The retailer still receives a top-up out of that rent when
+    /// the payout alone would leave it above zero and under its own rent-exempt
+    /// floor, because a retailer under that floor makes the runtime unwind the
+    /// whole transaction and the vault could then never close at all.
+    ///
+    /// THIS ADDED A SEVENTH ACCOUNT, `rent_beneficiary`, at the end of
+    /// `ClaimPeriod`. Anchor 0.32 rejects a short account list with
+    /// AccountNotEnoughKeys (3005) inside the resolver, before the handler
+    /// runs, and this crate does NOT enable `allow-missing-optionals` — so
+    /// every claim builder (packages/merchant-sdk/src/claim.ts, apps/mobile,
+    /// apps/extension) must ship the extra meta before this program is
+    /// redeployed, or no merchant can be paid. Coordinated release, not a
+    /// program-only change.
     pub fn claim_period(ctx: Context<ClaimPeriod>) -> Result<()> {
         instructions::claim_period::handler(ctx)
     }
@@ -642,8 +660,9 @@ pub mod zk_shielded {
 
     // === REMOVED: cancel_normal. It refunded the residual to the subscriber
     // and closed the vault. There are no refunds, so it is gone; the exit for a
-    // normal-mode vault is now the same as for a private one — the retailer's
-    // final `claim_period`, which closes the account and takes the rent. ===
+    // normal-mode vault is now the same as for a private one — the final
+    // `claim_period`, which pays the retailer the residual, closes the account
+    // and sends the rent back toward whoever funded it. ===
 
     // -----------------------------------------------------------------------
     // Compliance instructions (ZK-attested range proofs + sanctions innocence)

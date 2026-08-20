@@ -136,6 +136,38 @@ function tillAddress(): string | null {
 }
 
 /**
+ * THE OPERATOR FEE WALLET — where the 1% charged at deposit time lands.
+ *
+ * ⛔ A PURE SINK, AND THAT IS A HARDER RULE THAN THE TILL'S.
+ *
+ * The fee rides as a second instruction inside the transaction the buyer signs,
+ * so this address is co-named with EVERY buyer this deployment serves. Its
+ * `getSignaturesForAddress` history is a global index of buyers. Spending from
+ * it for anything else hands probe P11 a path: fee wallet -> whatever it paid ->
+ * back to a buyer. The till has the same property and survives it only because
+ * nobody is tempted to spend from a till. This is revenue, so someone eventually
+ * will. If it has to move, it moves to a cold address in batches, on a schedule
+ * unrelated to any purchase.
+ *
+ * 🚨 A VALID-BUT-WRONG ADDRESS IS UNDETECTABLE HERE AND EVERYWHERE ELSE IN THIS
+ * CODEBASE. A typo that still parses as a public key is an address nobody holds
+ * the key for: the transfer succeeds, the relay reads the till delta and is
+ * unaffected, readiness sees a well-formed distinct key, and 1% of every deposit
+ * burns forever with no error anywhere. All this can do is parse-validate,
+ * refuse the three identity collisions, and PRINT the address so an operator can
+ * read it back.
+ */
+function feeWalletAddress(): string | null {
+  const raw = process.env.P01_FEE_WALLET?.trim();
+  if (!raw) return null;
+  try {
+    return new PublicKey(raw).toBase58();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Does any one transaction name both addresses?
  *
  * The same two-call join the client guard and probe P11 use, restated here
@@ -249,6 +281,13 @@ export async function GET(request: NextRequest) {
     // Public by construction and useful to every caller: the verify harness can
     // assert R != F without being handed the operator's config out of band.
     till: tillAddress(),
+    // The client reads this AT CALL TIME and adds a transfer to it inside the
+    // buyer's own payment transaction. It ships here rather than as a
+    // `NEXT_PUBLIC_` build value for the same reason the till does: a
+    // `NEXT_PUBLIC_` value is inlined at build, so a rotated fee wallet would
+    // keep being paid at the old address by every browser running an old bundle,
+    // and those lamports are not recoverable.
+    feeWallet: feeWalletAddress(),
   };
   if (request.nextUrl.searchParams.get('readiness') !== '1') {
     return NextResponse.json(base);
@@ -299,6 +338,32 @@ export async function GET(request: NextRequest) {
         'them in batches, never per purchase.',
     );
   }
+
+  // ── The fee wallet: a THIRD address, and it must be inert ────────────────
+  //
+  // The 1% operator fee is charged inside the buyer's own payment transaction,
+  // so whichever address is named there is co-named with every buyer. Three
+  // distinct keys are required, and each collision fails differently:
+  const feeWallet = feeWalletAddress();
+  if (!feeWallet) {
+    reasons.push(
+      'P01_FEE_WALLET is unset, so the deposit path has nowhere to send the 1% operator fee and ' +
+        'refuses to run rather than guess. Set it to a key that is neither the funder nor the ' +
+        'till — and that NEVER pays for anything, because it is co-named with every buyer.',
+    );
+  } else if (feeWallet === funder.publicKey.toBase58()) {
+    reasons.push(
+      'P01_FEE_WALLET IS this funder. The buyer\'s payment transaction would then name the ' +
+        'address that funds their own subscription, which is the two-hop walk of 2026-08-18 with ' +
+        'the middle step removed.',
+    );
+  } else if (till && feeWallet === till) {
+    reasons.push(
+      'P01_FEE_WALLET IS the till. Two credits to one account merge into a single balance delta, ' +
+        'so the relay reads the payment as value + fee, fronts less rent than it should, and the ' +
+        'operator collects no fee at all while believing they do. It fails with no symptom.',
+    );
+  }
   if (!process.env.P01_FUNDER_TICKET) {
     reasons.push('P01_FUNDER_TICKET is unset: the POST refuses to run as an open faucet.');
   }
@@ -338,6 +403,27 @@ export async function GET(request: NextRequest) {
           'Could not establish whether any transaction names both the till and this funder — a ' +
             'signature page filled or the read failed. An absence read off a truncated history ' +
             'is not an absence.',
+        );
+      }
+    }
+    // The same join for the fee wallet, and for the same reason. A fee wallet
+    // that has ever paid F is per-purchase settlement wearing a third address:
+    // an auditor reads F's history, lands on the fee wallet, and the fee
+    // wallet's history is every buyer. Distinct keys are necessary and not
+    // sufficient — this is the sufficiency half.
+    if (feeWallet && feeWallet !== funder.publicKey.toBase58()) {
+      const feeJoined = await namesBoth(connection, funder.publicKey.toBase58(), feeWallet);
+      if (feeJoined === true) {
+        reasons.push(
+          'A transaction names BOTH the fee wallet and this funder. The fee wallet is co-named ' +
+            'with every buyer, so anything it pays for is one hop from a buyer — and it has paid ' +
+            'the funder. It must be a pure sink: it collects and never spends.',
+        );
+      } else if (feeJoined === null) {
+        reasons.push(
+          'Could not establish whether any transaction names both the fee wallet and this ' +
+            'funder — a signature page filled or the read failed. An absence read off a ' +
+            'truncated history is not an absence.',
         );
       }
     }
@@ -475,13 +561,39 @@ export async function POST(request: NextRequest) {
   // deeper question (do they settle per purchase?) needs the chain and lives in
   // the readiness report above, where an operator reads it before a demo rather
   // than a buyer discovers it afterwards.
+  //
+  // ⚠️ DEFENCE IN DEPTH, NOT THE ENFORCING CHECK. This endpoint funds
+  // float-only jobs and never sees the buyer's payment or the fee, so nothing
+  // here can stop a misrouted deposit. The enforcing checks are client-side
+  // (`DeploymentTillMisconfiguredError` in `ephemeralFunder.ts`, which refuses
+  // before the wallet signs) and in `/api/relay-to-buyer`, which reads the
+  // till's balance delta. The misconfiguration is deployment-wide, though, and
+  // refusing here costs one string comparison.
   const till = tillAddress();
-  if (till && till === funder.publicKey.toBase58()) {
+  const feeWallet = feeWalletAddress();
+  const funderBase58 = funder.publicKey.toBase58();
+  if (till && till === funderBase58) {
     return bad(
       503,
       'this deployment is misconfigured: the till (P01_TILL_ADDRESS) is the funder, so paying ' +
         'for a note and paying for the subscription would name the same address. Refusing ' +
         'rather than producing a subscription that looks private and is not.',
+    );
+  }
+  if (feeWallet && feeWallet === funderBase58) {
+    return bad(
+      503,
+      'this deployment is misconfigured: the operator fee wallet (P01_FEE_WALLET) is the funder, ' +
+        "so the buyer's own payment transaction would name the address that funds their spend. " +
+        'Refusing rather than producing a deposit that looks private and is not.',
+    );
+  }
+  if (feeWallet && till && feeWallet === till) {
+    return bad(
+      503,
+      'this deployment is misconfigured: the operator fee wallet (P01_FEE_WALLET) is the till, ' +
+        'so both credits merge into one balance delta — the relay would over-read the payment ' +
+        'and the fee would never be collected, with nothing reporting an error.',
     );
   }
 

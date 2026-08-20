@@ -174,6 +174,26 @@ export interface PoolConfig {
   treePDA: PublicKey;
   vaultATA?: PublicKey;
   version?: 'v2' | 'v3';
+  /**
+   * Whether this client still OFFERS the pool for new deposits. Absent = open,
+   * so every existing literal here and in the extension/mobile twins is
+   * unaffected.
+   *
+   * ⛔ THIS IS A UI OFFER FLAG AND NOTHING ELSE. No commitment, nullifier,
+   * Merkle or proof input reads it; no instruction byte changes with it. It
+   * must NEVER gate scanning, note listing, spending, subscribing, recovery or
+   * note issuance — a closed pool holds real, spendable notes, and hiding it
+   * from those paths is fund loss by omission. The only consumer is
+   * `getDepositablePoolsForTokenV3` below.
+   *
+   * 🧠 Divergence note for the next parity pass: this file's header says the
+   * math is ported BYTE-FOR-BYTE from apps/mobile. This field is not math — it
+   * is a deliberate, web-only divergence in the TABLE, added 2026-08-20. The
+   * extension (`apps/extension/src/shared/services/denominatedPool.ts:173`) and
+   * mobile (`apps/mobile/services/denominatedPool/index.ts:2723`) still offer
+   * every denomination for deposit. Do not "restore" parity by deleting it.
+   */
+  deposits?: 'open' | 'closed';
 }
 
 // ---------------------------------------------------------------------------
@@ -182,11 +202,26 @@ export interface PoolConfig {
 
 export const SOL_POOLS_V3: PoolConfig[] = [
   {
+    // ⛔ CLOSED TO NEW DEPOSITS, NOT DELETED. Measured on devnet 2026-08-20:
+    // 39 leaves, 10 UNSPENT notes = 1.0 SOL of live, spendable value.
+    //
+    // Deleting this entry was the obvious reading of "remove the 0.1 SOL pool"
+    // and it is fund loss by omission, verified by reading the consumers rather
+    // than assumed: `poolHandlers.ts:1218` (handlePoolScanLocal) resolves each
+    // stored note blob's pool by PDA against ALL_POOLS_V3 and `break`s when it
+    // is absent, silently counting the note as "skipped"; `:2053` does
+    // `ALL_POOLS_V3.find(...)!` and would throw; `:1278` would stop enumerating
+    // the pool on chain entirely. The 10 notes would become invisible AND
+    // unspendable through the UI.
+    //
+    // So the pool stays fully readable and fully spendable; only the deposit
+    // picker stops offering it. See `getDepositablePoolsForTokenV3`.
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 0.1, decimals: 9,
     denominationAtomic: 100_000_000n,
     poolPDA: new PublicKey('HfSsGRgVFJGBiiEtRXrHocNPw5dyTQ78hEZH8GWpXaAG'),
     treePDA: new PublicKey('43MRQ91VrrxkD2PqV4QXNJG3BUmu8JmbDUTtWt2dYBAU'),
     version: 'v3',
+    deposits: 'closed',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1, decimals: 9,
@@ -280,12 +315,51 @@ export const USDC_POOLS_V3: PoolConfig[] = [
 
 export const ALL_POOLS_V3: PoolConfig[] = [...SOL_POOLS_V3, ...USDC_POOLS_V3];
 
-/** Mirror mobile getPoolsForTokenV3 line 2842. */
+/**
+ * Mirror mobile getPoolsForTokenV3 line 2842.
+ *
+ * ⛔ READ-SIDE AUTHORITY — RETURNS EVERY POOL, INCLUDING CLOSED ONES, ON
+ * PURPOSE. Do not filter `deposits` in here, not even "just for SOL". Its
+ * callers are:
+ *   - `worker/poolHandlers.ts:1278` — the list of pools handlePoolScan walks on
+ *     chain. Filtering it makes a closed pool's notes undiscoverable.
+ *   - `worker/poolHandlers.ts:1177` — the "available denominations" sentence in
+ *     the error a spend raises when a denomination has no pool.
+ *   - `app/api/issue-note/route.ts:243` — treasury third-party issuance, whose
+ *     `inventoryDenomination()` (:171-174) DEFAULTS TO 0.1 SOL. Issuing hands
+ *     out leaves that are ALREADY in the tree; it deposits nothing, so closing
+ *     deposits must not touch it.
+ * See `getDepositablePoolsForTokenV3` for the deposit-side list.
+ */
 export function getPoolsForTokenV3(token: 'SOL' | 'USDC'): PoolConfig[] {
   return token === 'SOL' ? SOL_POOLS_V3 : USDC_POOLS_V3;
 }
 
-/** Mirror mobile findPoolV3 line 2846. */
+/**
+ * The pools this client still offers for a NEW deposit. The only place the
+ * `deposits` flag is read.
+ *
+ * ⛔ Deposit-side only: the shield picker. Everything that READS or SPENDS an
+ * existing note keeps using `getPoolsForTokenV3` / `ALL_POOLS_V3` /
+ * `findPoolV3`. Swapping any of those for this function is the fund-loss
+ * variant this flag exists to avoid — the four read-side call sites are named
+ * above, plus `subscriptionRecovery.ts:206,210` (sweeps ALL_POOLS_V3) and
+ * `poolHandlers.ts:1218,2053,2637` (resolve a stored blob's pool by PDA).
+ */
+export function getDepositablePoolsForTokenV3(token: 'SOL' | 'USDC'): PoolConfig[] {
+  return getPoolsForTokenV3(token).filter(p => p.deposits !== 'closed');
+}
+
+/**
+ * Mirror mobile findPoolV3 line 2846.
+ *
+ * ⛔ MUST NOT LEARN ABOUT `deposits`. This is the SPEND-side resolver: it is how
+ * an existing note's pool PDA, tree PDA and nullifier PDA are found
+ * (`CreateSubscription.tsx:246,427` in the extension; unshield and subscribe on
+ * the web). Filtering it "for consistency" silently makes the 10 unspent notes
+ * in the closed 0.1 SOL pool unspendable — the same fund loss, one indirection
+ * deeper and with nothing on screen to show for it.
+ */
 export function findPoolV3(token: 'SOL' | 'USDC', denomination: number): PoolConfig | undefined {
   return ALL_POOLS_V3.find(p => p.token === token && p.denomination === denomination);
 }

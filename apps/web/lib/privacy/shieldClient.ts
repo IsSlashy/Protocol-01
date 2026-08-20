@@ -68,6 +68,38 @@ export interface ShieldOutcome {
   encryptedNote: string;
   /** Lamports the wallet moved onto the ephemeral (most of it comes back). */
   fundedLamports: number;
+  /**
+   * Who funded the depositing ephemeral, and therefore which sentence the user
+   * is owed afterwards.
+   *
+   * 🚨 THE TWO PATHS MAKE OPPOSITE PROMISES AND THE SCREEN USED TO STATE ONLY
+   * ONE. `'funder'` means the wallet signed one transaction paying the
+   * deployment's till plus the operator fee, and the residue went back to the
+   * deployment — NOT to the wallet. `'wallet'` means the old story: the wallet
+   * paid the pool directly and its own rent came home. Rendering the wallet
+   * sentence over a relayed deposit tells the user their leftover came back to
+   * an address it never reached.
+   */
+  fundedBy?: 'wallet' | 'funder';
+  /** Why the deployment did not relay, when it was configured but did not serve.
+   *  Render it: the fallback puts the wallet one hop from the pool. */
+  funderFallbackReason?: string;
+}
+
+/**
+ * The operator's fee, in lamports: 1% of the note DENOMINATION.
+ *
+ * 🚨 DERIVED FROM THE DENOMINATION, NOT FROM `valueLamports`. `valueLamports`
+ * already carries the 0.3% protocol fee, so a percentage of it compounds — and
+ * the obvious-looking alternative, `valueLamports / 1.003`, is rounding-fragile
+ * and would drift silently the day SHIELD_FEE_BPS changes. `Math.round` kills
+ * the 0.1-in-binary artefact (0.1 * 1e9 is not an integer in a double).
+ *
+ * ⚠️ The fee is charged in the buyer's own payment transaction and never enters
+ * the pool, so the deposited note stays exactly the denomination.
+ */
+export function operatorFeeLamportsFor(denomination: number): number {
+  return Math.round((denomination * 1e9) / 100);
 }
 
 export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome> {
@@ -99,18 +131,33 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
   // MEASURED the same day: P9 found four edges from the deposit payer naming
   // the wallet, and P11 found the wallet by listing account keys alone.
   //
-  // So the wallet pays the deployment and the deployment funds the ephemeral.
-  // The wallet still signs — it is still their money — but what it signs points
-  // at the deployment instead of at the pool.
+  // So the wallet pays R — the TILL, the address that collects and never funds
+  // anything — and F, the float, funds the ephemeral. Two addresses, on purpose:
+  // paying F directly was the two-hop walk P11 ran, and until 2026-08-20 that is
+  // what this actually did while every surface said otherwise.
   //
-  // Falls back to the direct path when the deployment cannot relay, because a
-  // deposit that cannot happen is worse than a deposit that is linkable, and
-  // the screen says which one occurred.
+  // The wallet still signs — it is still their money — but what it signs points
+  // at the till instead of at the pool, and it carries a second transfer: the
+  // 1% operator fee, to a third address, in the same transaction so the buyer
+  // signs once. That fee never enters the pool; the note stays exactly the
+  // denomination, which is what keeps notes indistinguishable by size.
+  //
+  // ⚠️ The fee wallet is therefore co-named with every buyer. It must be a pure
+  // sink and never fund anything — see the header of `ephemeralFunder.ts`.
+  //
+  // Falls back to the direct path only when this deployment has NO funder at
+  // all. A deployment that has a funder but cannot name three distinct addresses
+  // is refused outright (`DeploymentTillMisconfiguredError`) rather than quietly
+  // paying F, because that fallback would rebuild the leak while readiness still
+  // claimed it was closed.
   await loadFunderAddress();
   const funding = await fundEphemeralForJob({
     ephemeralPubkey: prep.ephemeralPubkey,
     requiredLamports: prep.requiredLamports,
     valueLamports: prep.valueLamports,
+    // `prep.denomination` is the POOL's denomination in SOL, taken from the pool
+    // table rather than from the note blob (`poolHandlers.ts` handlePoolShieldPrepare).
+    operatorFeeLamports: operatorFeeLamportsFor(prep.denomination),
     owner,
     connection,
     signOne,
@@ -139,6 +186,8 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
     denomination: done.denomination,
     encryptedNote: done.encryptedNote,
     fundedLamports: prep.requiredLamports,
+    fundedBy: funding.fundedBy,
+    funderFallbackReason: funding.funderFallbackReason,
   };
 }
 

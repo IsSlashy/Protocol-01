@@ -37,9 +37,34 @@ pub const TREASURY_AUTHORITY: Pubkey = Pubkey::new_from_array([
 /// escrow). Per-tx fee delta on the escrow is still correlatable with the
 /// unshield amount within the same pool, which is closed by Phase E.2 (timing
 /// decorrelation via batched sweep).
+///
+/// SECOND USE since 2026-08-20: `claim_period` closes an exhausted
+/// `SubscriptionVault` to this same PDA, derived from the vault's own
+/// `source_pool`. The vault's 3,403,440 lamports of rent were charged to
+/// `subscribe_private_stark`'s ephemeral payer — the funder's money — and used
+/// to land on the merchant purely because Anchor's `close()` needs a
+/// destination. The escrow is the only destination that is unforgeable by the
+/// caller (`claim_period` has no Signer at all), already written to by every
+/// shield into that pool, and drained solely by TREASURY_AUTHORITY. It adds no
+/// graph edge an indexer did not already have.
 pub const FEE_ESCROW_SEED_PREFIX: &[u8] = b"fee_escrow";
 
 /// Shield fee: 30 basis points (0.3%)
+///
+/// MEASURED 2026-08-20, and it decides the "where should the 0.3% go" question
+/// on its own: this fee is charged ON TOP OF the denomination and paid by the
+/// DEPOSITOR'S OWN WALLET. `shield_denominated_v3::handler` transfers the full
+/// `pool.denomination` to the pool and then makes a SECOND, separate
+/// `system_program::transfer` of the fee from `depositor` into the escrow. It
+/// never comes out of the note. (Memory: `feedback_fee_not_from_note`.)
+///
+/// In the operator-funded inventory model the depositor IS the operator, so
+/// "route the 0.3% to the funder" is not a policy change at all — it is the
+/// operator paying itself and thereby abolishing the fee. Keeping the escrow as
+/// it is costs the operator nothing it does not already get back, and it keeps
+/// a revenue line that works for third-party depositors too. See the sweep-cost
+/// caveat on `sweep_fee_escrow::SweepRecord` before treating escrow balances as
+/// realised revenue.
 pub const SHIELD_FEE_BPS: u64 = 30;
 
 /// Unshield fee: 50 basis points (0.5%)

@@ -42,6 +42,10 @@ import {
   importNote,
   secureRandomU64,
   SOL_POOLS_V3,
+  ALL_POOLS_V3,
+  getPoolsForTokenV3,
+  getDepositablePoolsForTokenV3,
+  findPoolV3,
   ZK_SHIELDED_PROGRAM_ID,
   type ShareableNote,
   type ShieldReceipt,
@@ -973,5 +977,75 @@ describe('blinded-only fast pass (progressive scan)', () => {
       onlyLeaf: 999,
     });
     expect(atUnserved).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deposits-closed flag (0.1 SOL pool)
+// ---------------------------------------------------------------------------
+
+/**
+ * The 0.1 SOL pool was closed to NEW deposits on 2026-08-20. It was NOT deleted,
+ * and this block is the gate that keeps it that way.
+ *
+ * Measured on devnet the same day: pool HfSsGRgVFJGBiiEtRXrHocNPw5dyTQ78hEZH8GWpXaAG
+ * holds 39 leaves and 10 UNSPENT notes = 1.0 SOL of live value. Deleting the
+ * entry — the obvious reading of "remove the pool" — makes those notes
+ * unscannable and unspendable through the UI: `poolHandlers.ts:1218` resolves a
+ * stored blob's pool by PDA against ALL_POOLS_V3 and `break`s when it is absent,
+ * `:2053` asserts non-null and throws, `:1278` stops enumerating the pool on
+ * chain. That is fund loss by omission, so it must fail here first.
+ *
+ * These assertions run against the REAL table, not a fixture, on purpose.
+ */
+describe('deposits-closed pools', () => {
+  const CLOSED_DENOMINATION = 0.1;
+
+  it('hides the closed pool from the deposit picker', () => {
+    const depositable = getDepositablePoolsForTokenV3('SOL').map((p) => p.denomination);
+    expect(depositable).not.toContain(CLOSED_DENOMINATION);
+  });
+
+  it('keeps the closed pool in every read-side list', () => {
+    // What handlePoolScan enumerates on chain (poolHandlers.ts:1278).
+    expect(getPoolsForTokenV3('SOL').map((p) => p.denomination)).toContain(CLOSED_DENOMINATION);
+    // What note-blob resolution walks by PDA (poolHandlers.ts:1218, :2053, :2637)
+    // and what subscriptionRecovery.ts:206,210 sweeps.
+    expect(
+      ALL_POOLS_V3.some((p) => p.token === 'SOL' && p.denomination === CLOSED_DENOMINATION),
+    ).toBe(true);
+    // What spend and subscribe resolve a note's pool with.
+    expect(findPoolV3('SOL', CLOSED_DENOMINATION)).toBeDefined();
+  });
+
+  it('pins the closed pool to the measured devnet accounts', () => {
+    // If either key drifts, the 10 notes stop resolving even though the entry
+    // is still present — the same outcome as deleting it, without the deletion.
+    const pool = findPoolV3('SOL', CLOSED_DENOMINATION)!;
+    expect(pool.poolPDA.toBase58()).toBe('HfSsGRgVFJGBiiEtRXrHocNPw5dyTQ78hEZH8GWpXaAG');
+    expect(pool.treePDA.toBase58()).toBe('43MRQ91VrrxkD2PqV4QXNJG3BUmu8JmbDUTtWt2dYBAU');
+    expect(pool.denominationAtomic).toBe(100_000_000n);
+    expect(pool.deposits).toBe('closed');
+  });
+
+  it('leaves every other SOL pool depositable', () => {
+    const depositable = getDepositablePoolsForTokenV3('SOL').map((p) => p.denomination);
+    // The whole ladder minus the one closed rung. Written out so that closing a
+    // second pool by accident — a stray `deposits: 'closed'` — fails here.
+    expect(depositable).toEqual([1, 10, 100, 500, 1000]);
+  });
+
+  it('leaves USDC untouched', () => {
+    expect(getDepositablePoolsForTokenV3('USDC')).toEqual(getPoolsForTokenV3('USDC'));
+  });
+
+  it('treats a pool with no flag as open', () => {
+    // `deposits` is optional so the extension/mobile twins and every existing
+    // literal keep compiling. Absent MUST mean open, never "unknown".
+    for (const p of getPoolsForTokenV3('SOL')) {
+      if (p.deposits === undefined) {
+        expect(getDepositablePoolsForTokenV3('SOL')).toContain(p);
+      }
+    }
   });
 });

@@ -98,18 +98,49 @@ const PRIVACY_MODES = [
 ];
 
 // ---------------------------------------------------------------------------
-// Interval → slots mapping (Solana ~400ms/slot = 2.5 slots/sec)
-// Mirrors how the mobile subscription vaults are structured:
-//   daily   = 7200 * 1  =  7 200 slots (~24h)
-//   weekly  = 7200 * 7  = 50 400 slots (~7d)
-//   monthly = 7200 * 30 = 216 000 slots (~30d)
-//   yearly  = 7200 * 365 = 2 628 000 slots (~1yr)
-// SLOTS_PER_EPOCH = 7200 (matches denominatedPool.ts constant).
+// Interval → slots mapping. Solana's nominal slot is 400 ms
+// (`packages/merchant-sdk/src/period-math.ts:255`, NOMINAL_SLOT_MS = 400), so a
+// day is 86_400_000 / 400 = 216 000 slots:
+//   daily   = 216 000 *   1 =    216 000 slots (24h)
+//   weekly  = 216 000 *   7 =  1 512 000 slots (7d)
+//   monthly = 216 000 *  30 =  6 480 000 slots (30d)
+//   yearly  = 216 000 * 365 = 78 840 000 slots (365d)
+//
+// 🚨 THIS BLOCK SAID `daily = 7200 * 1 = 7 200 slots (~24h)` UNTIL 2026-08-20,
+// and `SLOTS_PER_DAY` below was literally `7200n`. 7 200 is SLOTS_PER_EPOCH —
+// the on-chain epoch divisor at `programs/zk_shielded/src/state/pool.rs:155`,
+// used correctly by `pool_v3.rs:215` and mirrored in
+// `../../shared/services/denominatedPool.ts` — and an epoch is ~48 minutes, not
+// a day. Every private (ZK) vault created from this screen therefore got an
+// interval 30x too short: "daily" billed every 48 minutes, "monthly" every day.
+//
+// How it was measurable all along: `SubscriptionVaults.tsx:177` renders
+// `interval_slots * 0.4` seconds, so a vault created as "daily" already
+// displayed as "48m" on the very next screen. Nothing asserted it, so nothing
+// failed — hence `CreateSubscription.intervals.test.ts`.
+//
+// Three independent sites already agreed on 216 000 and were never reconciled
+// with this one: `apps/mobile/app/(main)/(streams)/create.tsx:35`,
+// `scripts/seed-services/seed-demo-services.ts:54`, and
+// `apps/mobile/services/solana/streams.ts:645` (which computes
+// 86_400_000 / 400). The seconds this file must land on are the ones in
+// `../../shared/services/stream.ts:101-106` (INTERVAL_SECONDS).
+//
+// ⛔ SLOTS_PER_EPOCH (7 200) is a DIFFERENT quantity — note maturity and
+// deposit-epoch math — and must never be reused as a day divisor here.
+//
+// ⚠️ This fix does NOT repair vaults already on chain. `vault.interval_slots` is
+// written once at `subscribe_private_stark.rs:390` and there is no update
+// instruction, no cancel and no refund, and `claim_period` is permissionless.
+// Every vault already created from this screen keeps draining 30x fast forever.
 // ---------------------------------------------------------------------------
 
-const SLOTS_PER_DAY = 7200n;
+export const SLOTS_PER_DAY = 216000n;
 
-function intervalToSlots(interval: SubscriptionInterval): bigint {
+/** Exported for `CreateSubscription.intervals.test.ts`: the arithmetic above is
+ *  the whole defect, and it cannot be asserted through a page render (this
+ *  module pulls react-router, the stores and the wallet). No behaviour change. */
+export function intervalToSlots(interval: SubscriptionInterval): bigint {
   switch (interval) {
     case 'daily':   return SLOTS_PER_DAY;
     case 'weekly':  return SLOTS_PER_DAY * 7n;

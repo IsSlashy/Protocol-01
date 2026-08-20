@@ -198,11 +198,21 @@ fn the_spl_payout_cannot_be_redirected() {
 }
 
 #[test]
-fn the_instruction_still_declares_the_six_accounts_clients_send() {
-    // The shipped mobile and extension builders emit exactly six accounts, and
-    // both apps pin that number by parsing THIS struct. If the struct shrinks
+fn the_instruction_still_declares_the_seven_accounts_clients_send() {
+    // The shipped mobile and extension builders emit exactly this many accounts,
+    // and both apps pin the number by parsing THIS struct. If the struct shrinks
     // back to three, those guards follow it and stop meaning anything — so the
     // count is pinned here too, from outside.
+    //
+    // WAS SIX until 2026-08-20, deliberately raised to SEVEN by the vault-rent
+    // redirect (C1), which appended `rent_beneficiary`. This number is not a
+    // formality: Anchor 0.32 rejects a short account list with
+    // AccountNotEnoughKeys (3005) inside the resolver, before the handler runs,
+    // naming neither the vault nor the money — and `programs/zk_shielded/
+    // Cargo.toml` enables only `init-if-needed`, NOT `allow-missing-optionals`,
+    // so an optional account still has to occupy its slot (the program's own id
+    // is the absent sentinel). Every claim client is therefore broken until it
+    // ships the seventh meta.
     let c = code();
     let start = c.find("pub struct ClaimPeriod<'info>").expect(
         "ClaimPeriod<'info> not found — this gate is broken, or the instruction was renamed",
@@ -215,15 +225,61 @@ fn the_instruction_still_declares_the_six_accounts_clients_send() {
         .count();
     assert_eq!(
         n,
-        6,
+        7,
         "{}",
         explain(
-            &format!("the account count changed from 6 to {n}"),
-            "Six is what apps/mobile, apps/extension and packages/merchant-sdk all send.\n\
+            &format!("the account count changed from 7 to {n}"),
+            "Seven is what apps/mobile, apps/extension and packages/merchant-sdk must all\n\
+             send: retailer, vault, system_program, token_program?, vault_token_account?,\n\
+             retailer_token_account?, rent_beneficiary?.\n\
              Anchor 0.32 rejects a short list with AccountNotEnoughKeys (3005) inside the\n\
              resolver, before the handler runs, naming neither the vault nor the money.\n\
-             If you ADDED an account on purpose, update the three builders and their guards\n\
-             in the same commit, then change this number.",
+             If you dropped back to six you have reverted the vault-rent redirect and every\n\
+             closing claim pays the merchant 3,403,440 lamports of the FUNDER's rent again.\n\
+             If you ADDED an account on purpose, update these three builders in the same\n\
+             commit — packages/merchant-sdk/src/claim.ts, apps/mobile and apps/extension —\n\
+             then change this number.",
+        )
+    );
+    assert!(
+        body[..end].contains("pub rent_beneficiary:"),
+        "{}",
+        explain(
+            "the rent_beneficiary account is gone",
+            "Without it the closing claim has nowhere to send the vault's rent but the\n\
+             merchant, which is the transfer C1 exists to stop: 3,403,440 lamports per\n\
+             subscription, paid by the funder, landing on the retailer as a side effect of\n\
+             account cleanup.",
+        )
+    );
+}
+
+#[test]
+fn the_rent_destination_is_never_the_callers_to_choose() {
+    // `claim_period` has no Signer at all. A writable lamport destination that
+    // the caller names, without a derivation to pin it against, is 3,403,440
+    // lamports per vault handed to whoever sends the transaction first. This is
+    // pinned from outside `claim_period.rs` for the same reason everything else
+    // in this file is: a merge that reverts that file takes its in-file guards
+    // with it.
+    let c = code();
+    assert!(
+        c.contains("derive_fee_escrow(&pool)"),
+        "{}",
+        explain(
+            "the rent destination is no longer derived",
+            "The beneficiary must be the source pool's fee_escrow PDA, computed by the\n\
+             program from vault.source_pool. Reading it off ctx.accounts instead makes the\n\
+             instruction a free-for-all.",
+        )
+    );
+    assert!(
+        c.contains("beneficiary.key() == expected_escrow"),
+        "{}",
+        explain(
+            "the derived escrow is no longer compared to the supplied account",
+            "Deriving an address and then not checking the caller supplied THAT address is\n\
+             exactly as safe as not deriving one.",
         )
     );
 }

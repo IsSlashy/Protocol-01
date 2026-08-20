@@ -14,7 +14,22 @@
  * the funding wallet one hop from the deposit — the same leak with an extra
  * step. Routing it through the deployment does not: the walk ends here.
  *
- *     A --pays--> this deployment --relays--> B --shields--> pool --spends--> vault
+ *     A --pays--> R (the till)          R and F settle in BATCHES, on a
+ *                     ┆                 schedule unrelated to any purchase
+ *     F (the float) --relays--> B --shields--> pool --spends--> vault
+ *
+ * 🚨 R AND F ARE TWO ADDRESSES AND THIS ROUTE IS WHERE THAT IS ENFORCED ON THE
+ * SERVER. An earlier version of this diagram said "this deployment" as if it
+ * were one address, and the code matched: it looked the payment up by the
+ * FUNDER's balance delta, so the only payment it would accept was one that had
+ * named F. That silently undid R != F — the client could pay the till and the
+ * relay would answer "that transaction did not pay this deployment". Measured
+ * 2026-08-18: F standing between the buyer's payment and the ephemeral it
+ * financed is the two-hop walk probe P11 runs.
+ *
+ * If R and F settle once per purchase, the split buys nothing: an auditor reads
+ * F's history, lands on R, and R's history is every buyer. Batches, delayed,
+ * never per purchase.
  *
  * A and B never appear in a transaction together. What remains is correlation
  * by amount and timing, which this route cannot fix and does not claim to.
@@ -56,16 +71,26 @@ const RELAYS_PER_IP_PER_HOUR = 3;
 /**
  * The most refundable rent this deployment will front on top of a payment.
  *
- * 🚨 THE CALLER PAYS THE VALUE, THE DEPLOYMENT PAYS THE RENT, and that split
- * is what keeps the residue honest. A deposit needs value plus proof-buffer
- * rent — 1,003,475,300 and 1,573,486,080 respectively for a 1 SOL note, so
- * about 0.57 SOL of rent. That rent comes back when the buffers close.
+ * 🚨 THE CALLER PAYS THE VALUE TO R, THE DEPLOYMENT PAYS THE RENT FROM F, and
+ * that split is what keeps the residue honest. A deposit needs value plus
+ * proof-buffer rent — 1,003,475,300 and 1,573,486,080 respectively for a 1 SOL
+ * note, so about 0.57 SOL of rent. That rent comes back when the buffers close,
+ * and it comes back to F, which is the address that lent it.
  *
  * If the caller paid all of it, the residue would be THEIR money and sweeping
  * it to the deployment would be taking it; sweeping it home would rebuild the
  * `ephemeral -> wallet` edge P9 walked on 2026-08-18. Fronting it here makes
  * the residue the deployment's own, so it can come back here with nobody owed
  * anything and no edge drawn.
+ *
+ * ⚠️ THE SPLIT NOW READS ACROSS TWO ADDRESSES, AND THAT COSTS F REAL MONEY PER
+ * PURCHASE. The value lands at R and the rent leaves F, so F is down roughly one
+ * denomination per deposit until R settles with it. Ten 1 SOL deposits drain 10
+ * SOL out of F. Nothing in this repository performs that settlement; it is an
+ * operator runbook item, batched and delayed, and F needs a balance alarm in
+ * front of it — a drained F fails at `sendRawTransaction` and the client falls
+ * back to the wallet, which is the silent degradation the whole funder header is
+ * written about.
  */
 const MAX_RENT_SUBSIDY_LAMPORTS = 1_500_000_000;
 
@@ -88,6 +113,48 @@ function funderKeypair(): Keypair | null {
   }
 }
 
+/**
+ * R, the till — the address the buyer's payment must have credited.
+ *
+ * ⚠️ DELIBERATELY DUPLICATED from `app/api/fund-ephemeral/route.ts`. There is no
+ * shared module both routes may import inside this change's boundary, so this is
+ * a copy and the copy is a hazard worth naming: if the two ever drift — a
+ * different variable name, a different trim, a different parse — the client pays
+ * a till this route does not recognise, and the buyer gets a 400 saying the
+ * transaction did not pay this deployment AFTER their money has already moved.
+ * The cure is one shared `lib/privacy/deploymentAddresses.ts`; until then, edit
+ * both.
+ *
+ * Public key only, and the deployment holds no secret for it on purpose: a
+ * deployment that cannot spend from the till cannot accidentally make the till
+ * pay for a job.
+ */
+function tillAddress(): string | null {
+  const raw = process.env.P01_TILL_ADDRESS?.trim();
+  if (!raw) return null;
+  try {
+    return new PublicKey(raw).toBase58();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The operator fee wallet. Read here only to REFUSE the collisions that would
+ * corrupt the balance-delta read below — this route never sends it anything.
+ *
+ * Same duplication hazard as `tillAddress`, same cure.
+ */
+function feeWalletAddress(): string | null {
+  const raw = process.env.P01_FEE_WALLET?.trim();
+  if (!raw) return null;
+  try {
+    return new PublicKey(raw).toBase58();
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(request: NextRequest) {
   const ticket = process.env.P01_FUNDER_TICKET;
   if (!ticket) return bad(503, 'no ticket configured; refusing to relay anonymously');
@@ -97,6 +164,54 @@ export async function POST(request: NextRequest) {
 
   const funder = funderKeypair();
   if (!funder) return bad(503, 'this deployment has no funder key');
+
+  // ── R != F, checked before anything else costs the buyer something ────────
+  //
+  // 🚨 DELIBERATELY ABOVE THE RATE LIMITER AND FAR ABOVE THE ONE-SHOT CLAIM.
+  // These are pure environment reads — no RPC, no store — and an operator's
+  // misconfiguration must not burn the buyer's single claim on this payment
+  // (`kv.incr` below is one-shot: a burned claim answers 409 forever) or eat
+  // their hourly allowance. Placed here, fixing the env and retrying works.
+  //
+  // ⛔ FAIL CLOSED. Falling through to the old behaviour — accepting a payment
+  // that named F — is the shape measured on 2026-08-18, and it would be invisible
+  // because the relay would still succeed.
+  const till = tillAddress();
+  const feeWallet = feeWalletAddress();
+  const funderBase58 = funder.publicKey.toBase58();
+  if (!till) {
+    return bad(
+      503,
+      'this deployment cannot verify payments: P01_TILL_ADDRESS is unset or is not a public key, ' +
+        'so there is no collection address to read the payment from. Refusing rather than ' +
+        'falling back to the funder, which is the linkage this split exists to remove.',
+    );
+  }
+  if (till === funderBase58) {
+    return bad(
+      503,
+      'this deployment is misconfigured: the till (P01_TILL_ADDRESS) is the funder, so a buyer ' +
+        'who pays it is one transaction from the address that funds their own spend.',
+    );
+  }
+  if (feeWallet === funderBase58) {
+    return bad(
+      503,
+      "this deployment is misconfigured: the operator fee wallet (P01_FEE_WALLET) is the funder, " +
+        "so the buyer's payment transaction names the address that funds their spend.",
+    );
+  }
+  if (feeWallet && feeWallet === till) {
+    // The collision that corrupts the read below rather than blocking it: two
+    // credits to one pubkey are ONE account index in web3.js, so `received`
+    // would be value + fee, the subsidy would shrink, and nothing would error.
+    return bad(
+      503,
+      'this deployment is misconfigured: the operator fee wallet (P01_FEE_WALLET) is the till, ' +
+        'so the fee and the payment land on one account and this route would over-read what was ' +
+        'paid.',
+    );
+  }
 
   let body: { paymentSignature?: string; buyerPubkey?: string; requiredLamports?: number };
   try {
@@ -200,6 +315,24 @@ export async function POST(request: NextRequest) {
 
   // What the caller actually paid, read from the chain. Never from the request:
   // an amount the caller states is an amount the caller chooses.
+  //
+  // 🚨 READ AT THE TILL'S INDEX, NOT THE FUNDER'S — THIS IS WHERE R != F WAS
+  // SILENTLY UNDONE. Until 2026-08-20 this indexed on `funder.publicKey`, so the
+  // only payment the relay would accept was one that had named F, and the R != F
+  // split asserted everywhere else could not actually be used. An auditor walked
+  // it in two RPC calls.
+  //
+  // ✅ WHY THE 1% OPERATOR FEE IN THE SAME TRANSACTION CANNOT DISTURB THIS:
+  //   (a) two `SystemProgram.transfer`s to two distinct pubkeys occupy two
+  //       distinct entries in `message.getAccountKeys().staticAccountKeys`;
+  //   (b) `meta.preBalances` / `meta.postBalances` are positionally aligned with
+  //       that same array, so a credit at the fee wallet's index cannot appear in
+  //       the till's delta;
+  //   (c) both debits AND the network fee land on account index 0, the buyer's
+  //       wallet as fee payer — the till is credit-only in this transaction;
+  //   (d) the ONLY way the two could merge is key equality, because web3.js
+  //       dedupes an identical pubkey into one account index. That case is
+  //       refused above, and again in the client, and again in fund-ephemeral.
   let received = 0;
   try {
     const tx = await connection.getTransaction(signature, {
@@ -210,8 +343,14 @@ export async function POST(request: NextRequest) {
     const keys = tx.transaction.message
       .getAccountKeys()
       .staticAccountKeys.map((k) => k.toBase58());
-    const idx = keys.indexOf(funder.publicKey.toBase58());
-    if (idx < 0) return release(bad(400, 'that transaction did not pay this deployment'));
+    const idx = keys.indexOf(till);
+    // Names the till, so an operator reading this in a log can tell a client
+    // paying the wrong address from a client paying nothing.
+    if (idx < 0) {
+      return release(bad(400, `that transaction did not pay this deployment's collection address`, {
+        till,
+      }));
+    }
     received = (tx.meta.postBalances[idx] ?? 0) - (tx.meta.preBalances[idx] ?? 0);
   } catch (e) {
     return release(bad(502, `the payment could not be read: ${(e as Error).message}`));
@@ -295,9 +434,11 @@ export async function POST(request: NextRequest) {
     signature: sig,
     lamports: forward,
     buyer: buyer.toBase58(),
+    till,
     disclosure:
-      'Your payment reached this deployment and this deployment funded the identity that ' +
-      'will deposit. Those are two transactions and they do not name each other. What still ' +
-      'ties them is the amount and the minutes between them, which this does not hide.',
+      'Your payment reached this deployment\'s collection address, and a different address — the ' +
+      'one that funds jobs — paid the identity that will deposit. Those are two transactions ' +
+      'between two addresses, and neither names both ends. What still ties them is the amount ' +
+      'and the minutes between them, which this does not hide.',
   });
 }

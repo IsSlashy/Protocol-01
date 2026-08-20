@@ -49,6 +49,41 @@
  * (`retailer` is unconstrained, `rate` is a free argument, `claim_period` is
  * permissionless and there is no `cancel`). The ephemeral key stays in the
  * browser and the client sends its own chunks.
+ *
+ * ⛔ THREE ADDRESSES, AND WHICH ONE DOES WHAT IS THE WHOLE MECHANISM
+ * ─────────────────────────────────────────────────────────────────
+ *   R, the till       COLLECTS money from buyers. Never funds anything.
+ *   F, the float      FUNDS ephemerals and receives the swept residue.
+ *                     Never receives a payment from a buyer.
+ *   The fee wallet    RECEIVES the 1% operator fee. A PURE SINK: it collects
+ *                     and it does nothing else, ever.
+ *
+ * R != F is not style. MEASURED 2026-08-18: a subscription passed every probe
+ * but P11, and the walk was two hops with no cryptography — the spend's fee
+ * payer had been funded by F, and F's own history held a transfer SIGNED BY THE
+ * BUYER, one second earlier, for exactly the note's amount. Neither transfer
+ * named both ends; the address standing between them named both. Until
+ * 2026-08-20 this file asserted R != F in prose and then sent the buyer's money
+ * straight to F, so the leak survived the sentence that denied it.
+ *
+ * R and F may settle with each other, but only in batches on a schedule that
+ * has nothing to do with any single purchase. One transfer per purchase is the
+ * same leak wearing a second address, and the clock rejoins what the topology
+ * separated.
+ *
+ * 🚨 THE FEE WALLET IS THE MOST DANGEROUS OF THE THREE, BECAUSE IT LOOKS LIKE
+ * REVENUE AND REVENUE GETS SPENT.
+ *
+ * The 1% fee rides in the SAME transaction the buyer signs, so the fee wallet is
+ * co-named with EVERY buyer this deployment ever serves. Its
+ * `getSignaturesForAddress` history is therefore a global index of buyers — the
+ * same property the till has, and the reason both must stay inert. If the fee
+ * wallet ever funds an ephemeral, pays F, pays R, or pays anything else
+ * traceable, probe P11 walks fee-wallet -> that spend -> whatever it bought, and
+ * the return leg lands on a buyer. The till is safe because nobody is tempted to
+ * spend from it. The fee wallet is not safe, because someone eventually will.
+ * If revenue has to move, it moves to a cold address in batches, on a schedule
+ * unrelated to purchases.
  */
 
 import {
@@ -102,20 +137,76 @@ export function funderConfigured(): boolean {
  * bundle, and those lamports are not recoverable.
  */
 let cachedFunderAddress: string | null = null;
+let cachedTillAddress: string | null = null;
+let cachedFeeWallet: string | null = null;
+
 export function funderAddress(): string {
   if (!cachedFunderAddress) throw new Error('The deployment funding address has not been read yet.');
   return cachedFunderAddress;
 }
 
-/** Ask the deployment where to pay, and remember it for this session. */
+/**
+ * R, the till — the address a buyer's money is actually sent to.
+ *
+ * Returns `null` rather than throwing, unlike `funderAddress()`. That is not
+ * inconsistency: the caller of this has to distinguish "the operator never set a
+ * till" from "the till is the funder" from "the fee wallet is missing", and each
+ * of those has a different cure the operator has to be told. A throw collapses
+ * all of them into one opaque message.
+ */
+export function tillAddress(): string | null {
+  return cachedTillAddress;
+}
+
+/**
+ * The operator's fee wallet. `null` when the deployment did not declare one.
+ *
+ * ⛔ PURE SINK. See the header: this address is co-named with every buyer, so
+ * anything it ever pays for is one hop from a buyer. It collects and nothing
+ * else.
+ */
+export function feeWalletAddress(): string | null {
+  return cachedFeeWallet;
+}
+
+/** Test seam: module state otherwise leaks between cases in one file. */
+export function resetDeploymentAddresses(): void {
+  cachedFunderAddress = null;
+  cachedTillAddress = null;
+  cachedFeeWallet = null;
+}
+
+/**
+ * Ask the deployment where to pay, and remember it for this session.
+ *
+ * 🚨 ALL THREE ADDRESSES ARE WRITTEN TOGETHER, AND ALL THREE ARE CLEARED ON ANY
+ * FAILURE. An earlier version read only `funder` and returned early on `!res.ok`
+ * and on a network throw WITHOUT touching the cache, so a stale address survived
+ * a failed refresh. That was nearly harmless while the buyer paid F — the
+ * address had not changed. It stopped being harmless the moment the buyer's
+ * money started going to the till: an operator who rotates or removes
+ * P01_TILL_ADDRESS, plus one failed refresh, would have this browser keep paying
+ * the OLD till — lamports to an address the operator may no longer control, with
+ * nothing anywhere reporting an error. Clearing makes the relayed path fail
+ * closed (see `DeploymentTillMisconfiguredError`) instead of failing stale.
+ *
+ * The return type stays `Promise<string | null>` deliberately: `shieldClient` is
+ * the only caller and ignores the value, so widening it buys nothing.
+ */
 export async function loadFunderAddress(signal?: AbortSignal): Promise<string | null> {
   try {
     const res = await fetch('/api/fund-ephemeral', { method: 'GET', signal });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { funder?: string };
+    if (!res.ok) {
+      resetDeploymentAddresses();
+      return null;
+    }
+    const body = (await res.json()) as { funder?: string; till?: string; feeWallet?: string };
     cachedFunderAddress = body.funder ?? null;
+    cachedTillAddress = body.till ?? null;
+    cachedFeeWallet = body.feeWallet ?? null;
     return cachedFunderAddress;
   } catch {
+    resetDeploymentAddresses();
     return null;
   }
 }
@@ -152,6 +243,10 @@ export async function relayToBuyer(
   }
   return {
     signature: body.signature,
+    // ⛔ STAYS THE FUNDER, even though the buyer now pays the TILL. F fronted the
+    // refundable proof rent, so the residue that comes back IS F's money.
+    // "Fixing this for consistency" with the payment target would hand F's rent
+    // to an address that never lent it.
     sweepTo: funderAddress(),
     lamports: body.lamports ?? 0,
   };
@@ -301,6 +396,25 @@ export interface JobFundingRequest {
    * structural and it has to be here.
    */
   valueLamports: number;
+  /**
+   * The operator's 1% fee, in lamports. Relayed path only.
+   *
+   * 1% OF THE NOTE DENOMINATION. Never of `valueLamports` (which already carries
+   * the 0.3% protocol fee, so a percentage of it would compound) and never of
+   * `requiredLamports` (which is mostly refundable rent the deployment fronts).
+   *
+   * 🚨 IT IS A SEPARATE INSTRUCTION AND IT NEVER ENTERS THE POOL. Folding it
+   * into `valueLamports` would deposit denomination + 1%, and the note would
+   * stop being exactly the denomination — which is the entire amount-correlation
+   * defence: every note in a pool has to be indistinguishable by size. The fee
+   * therefore rides as a second `SystemProgram.transfer` in the SAME transaction
+   * the buyer already signs, so it costs no extra signature and no extra
+   * transaction.
+   *
+   * ⚠️ Its destination is co-named with the buyer by that transaction. See the
+   * pure-sink warning in this file's header before doing anything with it.
+   */
+  operatorFeeLamports?: number;
   /** The user's wallet: the fallback payer, and the fallback sweep target. */
   owner: PublicKey;
   /**
@@ -391,6 +505,75 @@ export class WalletExposureRefusedError extends Error {
   }
 }
 
+/** Which of the deployment's three addresses is wrong. One reason per cure. */
+export type DeploymentTillProblem =
+  | 'till-unset'
+  | 'till-equals-funder'
+  | 'fee-wallet-unset'
+  | 'fee-wallet-equals-funder'
+  | 'fee-wallet-equals-till'
+  | 'addresses-unreadable';
+
+const TILL_PROBLEM_TEXT: Record<DeploymentTillProblem, string> = {
+  'till-unset':
+    'this deployment did not say which address buyers pay (P01_TILL_ADDRESS is unset), so the ' +
+    'only address left to pay is the one that funds the spends — the two-hop walk measured on ' +
+    '2026-08-18.',
+  'till-equals-funder':
+    'the address buyers pay is the SAME address that funds the spends, so paying it puts you one ' +
+    'transaction from your own subscription. Two separate keys are required.',
+  'fee-wallet-unset':
+    'this deployment charges a 1% operator fee but did not say where it goes (P01_FEE_WALLET is ' +
+    'unset).',
+  'fee-wallet-equals-funder':
+    'the operator fee wallet IS the address that funds the spends, so your payment transaction ' +
+    'would name that funder directly — exactly the edge this path removes.',
+  'fee-wallet-equals-till':
+    'the operator fee wallet IS the till. Both credits then land on one account, the deployment ' +
+    'reads your payment as larger than it was, and the fee is silently never collected.',
+  'addresses-unreadable':
+    'this deployment answered with an address that is not a public key, so there is no verified ' +
+    'destination to send to.',
+};
+
+/**
+ * Thrown when the relayed deposit path cannot name three distinct addresses.
+ *
+ * 🚨 WHY THIS IS ITS OWN ERROR AND NOT `WalletExposureRefusedError`, AND WHY THE
+ * DISTINCTION IS LOAD-BEARING RATHER THAN COSMETIC.
+ *
+ * The reasoning is the same as `SpendFunderNamesWalletError`'s in
+ * `shieldClient.ts`. `WalletExposureRefusedError` means "the funder could not
+ * serve" — a transient state whose cure is a retry, and the UI treats it that
+ * way. This means "the OPERATOR's environment is wrong", and no retry and no
+ * different note fixes it: someone has to set P01_TILL_ADDRESS and
+ * P01_FEE_WALLET to two fresh keys distinct from the funder. Reusing the other
+ * name would send the panel into a retry loop for a problem no retry touches,
+ * and would report a treasury problem for a configuration problem.
+ *
+ * ⛔ THIS MUST NEVER BE CAUGHT INTO A WALLET FALLBACK. Falling back would send
+ * the buyer's deposit to the funder — the exact leak this path exists to remove
+ * — while every readiness surface still said R != F was wired. A silent fallback
+ * makes the founder believe a property holds when it does not, which is worse
+ * than the leak, because the leak would at least be looked for.
+ *
+ * Nothing has moved when this throws: it fires before the blockhash is fetched
+ * and before the wallet is asked to sign.
+ */
+export class DeploymentTillMisconfiguredError extends Error {
+  constructor(
+    readonly reason: DeploymentTillProblem,
+    readonly addresses: { funder: string | null; till: string | null; feeWallet: string | null },
+  ) {
+    super(
+      'Stopped before spending anything: this deployment is misconfigured and ' +
+        `${TILL_PROBLEM_TEXT[reason]} Nothing was sent. This is an operator setting, not ` +
+        'something a retry or a different note can fix.',
+    );
+    this.name = 'DeploymentTillMisconfiguredError';
+  }
+}
+
 /**
  * Decide who pays for one pool job, and pay.
  *
@@ -455,10 +638,11 @@ export async function fundEphemeralForJob(
     // the buyer's wallet from the deposit payer, and P11 found the wallet by
     // listing account keys alone.
     //
-    // So the wallet pays the DEPLOYMENT, and the deployment funds the
-    // ephemeral. Two transfers, neither naming both ends. The wallet is still
-    // asked to sign — it is the user's money — but what it signs no longer
-    // points at the pool.
+    // So the wallet pays R (THE TILL), and F (the float) funds the ephemeral.
+    // Two transfers between two DIFFERENT deployment addresses, neither naming
+    // both ends — one address in the middle would name both, which is exactly
+    // what P11 walked. The wallet is still asked to sign — it is the user's
+    // money — but what it signs no longer points at the pool.
     //
     // ✅ THE RESIDUE GOES TO THE DEPLOYMENT AND OWES NOBODY ANYTHING, because
     // the wallet pays only `valueLamports` and the deployment fronts the
@@ -469,18 +653,90 @@ export async function fundEphemeralForJob(
     // sweeping home would rebuild the `ephemeral → wallet` edge P9 walked on
     // 2026-08-18 — undoing the entire detour for the sake of returning money
     // that need never have left.
+    //
+    // ── FAIL CLOSED, BEFORE ANYTHING MOVES ───────────────────────────────
+    //
+    // Resolved FIRST: before the blockhash, before the wallet is asked to sign,
+    // before a single lamport is committed. Until 2026-08-20 this branch sent
+    // the buyer's money to `funderAddress()` — that is, to F — while the
+    // readiness prose, the env documentation and this file's own header all said
+    // the buyer pays R. The assertion existed; the wiring did not.
+    //
+    // ⛔ THERE IS DELIBERATELY NO `else` HERE THAT FALLS THROUGH TO PAYING F.
+    // A fallback would restore precisely the shape that leaked, silently, on a
+    // deployment whose operator believes the split is wired. Refusing costs a
+    // deposit; falling back costs the property and hides that it is gone.
+    const till = tillAddress();
+    const feeWallet = feeWalletAddress();
+    const addresses = { funder: cachedFunderAddress, till, feeWallet };
+    if (!cachedFunderAddress) {
+      throw new DeploymentTillMisconfiguredError('addresses-unreadable', addresses);
+    }
+    if (!till) throw new DeploymentTillMisconfiguredError('till-unset', addresses);
+    if (till === cachedFunderAddress) {
+      throw new DeploymentTillMisconfiguredError('till-equals-funder', addresses);
+    }
+    if (!feeWallet) throw new DeploymentTillMisconfiguredError('fee-wallet-unset', addresses);
+    if (feeWallet === cachedFunderAddress) {
+      throw new DeploymentTillMisconfiguredError('fee-wallet-equals-funder', addresses);
+    }
+    // 🚨 NOT COSMETIC. web3.js dedupes two identical pubkeys into ONE account
+    // index, so a fee wallet equal to the till makes the relay read
+    // `value + fee` as the payment: `subsidy = required - received` merely
+    // shrinks, nothing errors, and the operator collects no fee while believing
+    // they do. A configuration error with no symptom.
+    if (feeWallet === till) {
+      throw new DeploymentTillMisconfiguredError('fee-wallet-equals-till', addresses);
+    }
+    let tillKey: PublicKey;
+    let feeKey: PublicKey;
+    try {
+      tillKey = new PublicKey(till);
+      feeKey = new PublicKey(feeWallet);
+    } catch {
+      throw new DeploymentTillMisconfiguredError('addresses-unreadable', addresses);
+    }
+
+    // The 1% is the founder's decision and its shape is fixed: it is charged, it
+    // is charged on the note's denomination, and it never touches the pool. A
+    // missing or nonsensical amount is a CLIENT bug rather than an operator one,
+    // and it must be loud — silently charging nothing is invisible revenue loss.
+    const operatorFeeLamports = req.operatorFeeLamports ?? 0;
+    if (!Number.isSafeInteger(operatorFeeLamports) || operatorFeeLamports <= 0) {
+      throw new Error(
+        'The relayed deposit path requires a positive operatorFeeLamports (1% of the note ' +
+          `denomination); got ${String(req.operatorFeeLamports)}.`,
+      );
+    }
+
     req.onProgress?.('Paying the deployment, which will fund the deposit (your wallet stays off the pool)...');
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
     const payTx = new Transaction().add(
       SystemProgram.transfer({
         fromPubkey: owner,
-        toPubkey: new PublicKey(funderAddress()),
+        // ⛔ THE TILL, NOT THE FUNDER. This one line is the R != F wiring; the
+        // rest of the split is documentation about it.
+        toPubkey: tillKey,
         // ⚠️ THE VALUE, NOT THE WHOLE PRE-FUND. The rest is refundable proof
         // rent and the deployment fronts it, so the residue that comes back is
         // the deployment's own and sweeping it there owes the user nothing.
         // Paying it all here would make the residue theirs, and then the only
         // two choices are taking it or rebuilding the edge to send it home.
+        //
+        // ⛔ AND THE FEE IS NOT IN IT. `/api/relay-to-buyer` reads what was paid
+        // from the TILL's balance delta, and the deposited note must be exactly
+        // the denomination or notes stop being indistinguishable by size.
         lamports: valueLamports,
+      }),
+      // The 1% operator fee: a SECOND instruction in the SAME transaction, so
+      // the buyer signs once. Separate destination, so the two credits land at
+      // two distinct account indices and the relay's till delta is untouched by
+      // it — that separation is enforced by the `fee-wallet-equals-till` refusal
+      // above, because key equality is the only way web3.js would merge them.
+      SystemProgram.transfer({
+        fromPubkey: owner,
+        toPubkey: feeKey,
+        lamports: operatorFeeLamports,
       }),
     );
     payTx.recentBlockhash = blockhash;
@@ -496,6 +752,11 @@ export async function fundEphemeralForJob(
     }
 
     req.onProgress?.('The deployment is funding the deposit...');
+    // ⚠️ `requiredLamports` UNCHANGED, and the operator fee must never be added
+    // to it. Inflating it would forward the fee into the ephemeral, and the
+    // ephemeral's whole balance ends up split between the deposited note and the
+    // swept residue — so the fee would either land in the pool (breaking the
+    // exact-denomination property) or be handed to F instead of the operator.
     const relayed = await relayToBuyer(paySig, ephemeralPubkey, requiredLamports);
     fundedBy = 'funder';
     funderSignature = relayed.signature;

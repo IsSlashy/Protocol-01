@@ -17,6 +17,18 @@
 //! the real `target/deploy/zk_shielded.so` with the validator's own compute
 //! accounting.
 //!
+//! # Added 2026-08-20 — where the vault's rent goes
+//!
+//! `claim_period` used to close the vault to the RETAILER, which moved
+//! 3,403,440 lamports of rent from whoever funded the subscription to the
+//! merchant on every closing claim. It now closes to the source pool's
+//! `fee_escrow` PDA. Four tests here asserted the old behaviour by name and by
+//! arithmetic and were inverted; three new ones cover the parts that are only
+//! observable by execution — that a WRONG beneficiary is refused, that a legacy
+//! vault with no `source_pool` still closes to the retailer, and that a closing
+//! claim to an EMPTY merchant wallet still lands because the retailer is topped
+//! up to its rent floor out of the rent first.
+//!
 //! # What this file does NOT prove
 //!
 //! * The vault is seeded with `set_account`, so `subscribe_private_stark` and
@@ -70,8 +82,21 @@ const E_NO_CLAIMABLE_PERIODS: u32 = 6029;
 /// by the runtime AFTER the program has already succeeded.
 const SYSTEM_RENT_EXEMPT: u64 = 890_880;
 
+/// `programs/zk_shielded/src/fee.rs` — the per-pool fee escrow seed. Since
+/// 2026-08-20 this PDA is also where a closing `claim_period` sends the vault's
+/// rent, so the harness has to be able to build it.
+const FEE_ESCROW_SEED_PREFIX: &[u8] = b"fee_escrow";
+
 fn program_id() -> Address {
     Address::try_from(PROGRAM_ID).expect("program id must parse")
+}
+
+/// Mirror of `zk_shielded::fee::derive_fee_escrow`. Deliberately re-derived here
+/// rather than imported: if the program's seed ever changes, a harness that
+/// imported the helper would follow it silently and keep passing, while this one
+/// goes red with Unauthorized — which is the answer a client would get.
+fn fee_escrow(program: &Address, pool: &Address) -> Address {
+    Address::find_program_address(&[FEE_ESCROW_SEED_PREFIX, pool.as_ref()], program).0
 }
 
 fn so_path() -> PathBuf {
@@ -160,6 +185,13 @@ struct VaultSpec {
     total_deposited: u64,
     claimed_periods: u64,
     is_paused: bool,
+    /// The pool the note came from. `subscribe_private_stark` ALWAYS writes
+    /// `Some(pool)`, so `Some` is the default here too — it is the only shape a
+    /// vault on chain can have. It decides where the closing claim sends the
+    /// rent, so a fixture that left it `None` (as this one did until
+    /// 2026-08-20) would silently test the legacy fallback and never the path
+    /// every real vault takes.
+    source_pool: Option<Address>,
 }
 
 impl Default for VaultSpec {
@@ -172,6 +204,7 @@ impl Default for VaultSpec {
             total_deposited: 200_000_000, // 4 funded periods
             claimed_periods: 0,
             is_paused: false,
+            source_pool: Some(Address::new_unique()),
         }
     }
 }
@@ -204,7 +237,9 @@ fn seed_vault(rig: &mut Rig, spec: &VaultSpec) -> Address {
         pause_slot: None,
         total_paused_slots: 0,
         vk_hash_subscriber: [0u8; 32],
-        source_pool: None,
+        source_pool: spec
+            .source_pool
+            .map(|p| anchor_lang::prelude::Pubkey::from(p.to_bytes())),
         bump,
         client_stealth_meta: None,
         license_commitment: None,
@@ -227,22 +262,74 @@ fn seed_vault(rig: &mut Rig, spec: &VaultSpec) -> Address {
             Account { lamports, data, owner: rig.program, executable: false, rent_epoch: 0 },
         )
         .expect("set_account");
+
+    // Seed the pool's fee escrow at its floor. A pool that has ever been
+    // shielded into has one (shield_denominated_v3 tops it to rent-exempt on
+    // first use), so this is the real state, and it makes "the beneficiary
+    // GAINED the rent" a subtraction rather than an account springing into
+    // existence mid-assertion.
+    if let Some(pool) = spec.source_pool {
+        let escrow = fee_escrow(&rig.program, &pool);
+        if rig.svm.get_account(&escrow).map(|a| a.lamports).unwrap_or(0) == 0 {
+            rig.svm
+                .set_account(
+                    escrow,
+                    Account {
+                        lamports: SYSTEM_RENT_EXEMPT,
+                        data: vec![],
+                        owner: Address::from([0u8; 32]), // system program
+                        executable: false,
+                        rent_epoch: 0,
+                    },
+                )
+                .expect("set_account fee_escrow");
+        }
+    }
     pda
 }
 
-fn claim_ix(program: &Address, vault: &Address, retailer: &Address) -> Instruction {
+/// The escrow a closing claim must be pointed at for this vault, read back out
+/// of the account exactly as a client would. `None` once the vault is closed.
+fn beneficiary_of(rig: &Rig, vault: &Address) -> Option<Address> {
+    let acc = rig.vault_account(vault)?;
+    let mut slice: &[u8] = &acc.data[8..];
+    let v = <SubscriptionVault as AnchorDeserialize>::deserialize(&mut slice).ok()?;
+    v.source_pool
+        .map(|p| fee_escrow(&rig.program, &Address::from(p.to_bytes())))
+}
+
+fn claim_ix(
+    program: &Address,
+    vault: &Address,
+    retailer: &Address,
+    rent_beneficiary: Option<Address>,
+) -> Instruction {
     Instruction {
         program_id: *program,
         accounts: vec![
             AccountMeta::new(*retailer, true),
             AccountMeta::new(*vault, false),
             AccountMeta::new_readonly(Address::from([0u8; 32]), false), // system_program
-            // The three Option<..> accounts. Anchor 0.32 rejects a short list
+            // The four Option<..> accounts. Anchor 0.32 rejects a short list
             // with AccountNotEnoughKeys (3005) before the handler runs; an absent
             // optional is the program's own id.
+            //
+            // WAS THREE, and the list WAS six long, until 2026-08-20. The vault
+            // rent redirect appended `rent_beneficiary`, so every claim client
+            // — packages/merchant-sdk/src/claim.ts, apps/mobile,
+            // apps/extension — has to grow a seventh meta before the redeployed
+            // program will accept a single claim from it.
             AccountMeta::new_readonly(*program, false),
             AccountMeta::new_readonly(*program, false),
             AccountMeta::new_readonly(*program, false),
+            // The sentinel must stay READONLY: the program account is
+            // executable, and the runtime refuses a transaction that marks an
+            // executable account writable. The real beneficiary is writable
+            // because the close credits it.
+            match rent_beneficiary {
+                Some(b) => AccountMeta::new(b, false),
+                None => AccountMeta::new_readonly(*program, false),
+            },
         ],
         data: CLAIM_PERIOD_DISC.to_vec(),
     }
@@ -263,8 +350,25 @@ fn claim_raw(
     retailer: &Keypair,
     payer: Option<&Keypair>,
 ) -> Result<u64, String> {
+    // What a correct client does: read the vault, derive the escrow from its
+    // own `source_pool`. The program derives the same address and refuses
+    // anything else, so this is not a convenience — it is the only value that
+    // works.
+    let beneficiary = beneficiary_of(rig, vault);
+    claim_raw_to(rig, vault, retailer, payer, beneficiary)
+}
+
+/// `claim_raw` with the rent destination supplied by hand. The only reason this
+/// exists is to prove the pin holds against a WRONG one.
+fn claim_raw_to(
+    rig: &mut Rig,
+    vault: &Address,
+    retailer: &Keypair,
+    payer: Option<&Keypair>,
+    rent_beneficiary: Option<Address>,
+) -> Result<u64, String> {
     let fee_payer = payer.unwrap_or(retailer);
-    let ix = claim_ix(&rig.program, vault, &retailer.pubkey());
+    let ix = claim_ix(&rig.program, vault, &retailer.pubkey(), rent_beneficiary);
     let msg = Message::new(&[ix], Some(&fee_payer.pubkey()));
     let blockhash = rig.svm.latest_blockhash();
     let tx = match payer {
@@ -359,12 +463,21 @@ fn the_escrow_drains_one_interval_at_a_time() {
         assert!(cu > 0, "period {}: the program must actually have run", period);
     }
 
-    // The FOURTH and final period behaves differently, and this is the single
-    // biggest money-path change the no-cancel lot made. Before it, the vault sat
-    // at its own rent forever with `is_active == true` and no instruction could
-    // close it — 3,403,440 lamports stranded per subscription. Now the closing
-    // claim settles the vault and pays that rent to the RETAILER, so the merchant's
-    // last payment is one rate PLUS the rent.
+    // The FOURTH and final period behaves differently. Two changes are stacked
+    // here and it is worth keeping them apart:
+    //
+    //   1. The no-cancel lot made the closing claim CLOSE the vault. Before it,
+    //      a drained vault sat at its own rent forever with `is_active == true`
+    //      and no instruction could close it — 3,403,440 lamports stranded per
+    //      subscription.
+    //   2. C1 (2026-08-20) changed WHERE that released rent goes. It went to the
+    //      retailer, and this test asserted `spec.rate + vault_rent`. The rent
+    //      was never the merchant's: it was charged to `subscribe_private_stark`'s
+    //      ephemeral payer, funded by whoever bought the note. The merchant's
+    //      last payment is now exactly one rate, and the rent lands in the source
+    //      pool's fee escrow.
+    let escrow = fee_escrow(&rig.program, &spec.source_pool.unwrap());
+    let before_escrow = rig.lamports(&escrow);
     rig.svm
         .warp_to_slot((spec.start_slot + (spec.interval_slots * 4) as i64) as u64);
     let before_retailer = rig.lamports(&retailer.pubkey());
@@ -372,21 +485,30 @@ fn the_escrow_drains_one_interval_at_a_time() {
 
     let final_gain = rig.lamports(&retailer.pubkey()) + 5_000 - before_retailer;
     assert_eq!(
-        final_gain,
-        spec.rate + vault_rent,
-        "the closing claim pays the last rate AND releases the vault's rent to the merchant",
+        final_gain, spec.rate,
+        "the closing claim pays the last rate and NOT the vault's rent",
+    );
+    // And the rent LANDED, rather than merely leaving the merchant. Asserting
+    // only the merchant side would pass just as happily if the lamports had been
+    // burned.
+    assert_eq!(
+        rig.lamports(&escrow) - before_escrow,
+        vault_rent,
+        "the released rent reached the source pool's fee escrow in full",
     );
     assert!(
         rig.vault_account(&vault).is_none(),
         "close-on-exhaustion: the account is gone, so nothing is stranded",
     );
 
-    // Over the whole life the merchant received the deposit and the rent, and the
-    // subscriber received nothing back. That is the one-way prepaid envelope,
-    // stated as an arithmetic identity.
+    // Over the whole life the merchant received the deposit and NOT A LAMPORT
+    // more, and the subscriber received nothing back. That is the one-way
+    // prepaid envelope, stated as an arithmetic identity — and it is now a
+    // cleaner one, because the rent is no longer smuggled into the merchant's
+    // side of it.
     assert_eq!(
         rig.lamports(&retailer.pubkey()) + 4 * 5_000 - 1_000_000_000,
-        spec.total_deposited + vault_rent,
+        spec.total_deposited,
     );
 }
 
@@ -403,22 +525,26 @@ fn time_beyond_the_funding_pays_the_funding_and_not_a_lamport_more() {
         .warp_to_slot((spec.start_slot + (spec.interval_slots * 40) as i64) as u64);
 
     let vault_rent = rig.rent_exempt(SubscriptionVault::LEN);
+    let escrow = fee_escrow(&rig.program, &spec.source_pool.unwrap());
+    let before_escrow = rig.lamports(&escrow);
     let before = rig.lamports(&retailer.pubkey());
     claim(&mut rig, &vault, &retailer).expect("the funded periods are claimable");
     let paid = rig.lamports(&retailer.pubkey()) + 5_000 - before;
 
     // The ESCROW is clamped to the deposit no matter how much wall clock elapsed —
-    // that is the invariant. What the merchant actually receives is that plus the
-    // vault's rent, because this single claim is also the closing one.
+    // that is the invariant. This used to assert `total_deposited + vault_rent`
+    // and then subtract the rent back out to state the invariant; since C1
+    // (2026-08-20) the rent does not reach the merchant at all, so the two
+    // assertions collapse into one and the rent is checked on the other side.
     assert_eq!(
-        paid,
-        spec.total_deposited + vault_rent,
-        "40 elapsed periods against 4 funded ones still pays 4 rates, plus the released rent",
+        paid, spec.total_deposited,
+        "40 elapsed periods against 4 funded ones still pays exactly 4 rates: \
+         elapsed time never creates money, and the rent is not the merchant's",
     );
     assert_eq!(
-        paid - vault_rent,
-        spec.total_deposited,
-        "the escrow half is exactly the deposit: elapsed time never creates money",
+        rig.lamports(&escrow) - before_escrow,
+        vault_rent,
+        "and the released rent is accounted for — it went to the pool's fee escrow",
     );
     assert!(
         rig.vault_account(&vault).is_none(),
@@ -439,27 +565,39 @@ fn time_beyond_the_funding_pays_the_funding_and_not_a_lamport_more() {
 }
 
 #[test]
-fn an_exhausted_vault_is_closed_and_its_rent_goes_to_the_merchant() {
-    // THIS TEST USED TO ASSERT THE OPPOSITE, and the inversion is the record of
-    // what the no-cancel lot changed.
+fn an_exhausted_vault_is_closed_and_its_rent_goes_back_to_the_funder() {
+    // THIS TEST HAS NOW BEEN INVERTED TWICE, and both inversions are the record
+    // of what changed. Keeping the history in the comment is this file's
+    // convention precisely because a test name alone cannot carry it.
     //
-    // Before it: after a full drawdown the account was still there, `is_active`
-    // still `true` (written at subscribe, written `false` nowhere), and its
-    // 3,403,440 lamports of rent were stranded — no instruction in the binary
-    // could close it, and the two deleted cancels would have returned that rent
-    // to the SUBSCRIBER, never to the merchant. MEASURED on devnet 2026-08-04
-    // against the old program: `CzVbxcSs…` is still sitting there, drained to
-    // exactly its rent floor, `is_active: true`, unclosable.
+    // (1) Originally: after a full drawdown the account was still there,
+    // `is_active` still `true` (written at subscribe, written `false` nowhere),
+    // and its 3,403,440 lamports of rent were stranded — no instruction in the
+    // binary could close it, and the two deleted cancels would have returned
+    // that rent to the SUBSCRIBER. MEASURED on devnet 2026-08-04 against the old
+    // program: `CzVbxcSs…` is still sitting there, drained to exactly its rent
+    // floor, `is_active: true`, unclosable.
     //
-    // After it: the closing claim settles and closes the vault, and the rent is
-    // paid to the retailer. Nothing is left for the subscriber, which is the
-    // one-way prepaid envelope working as ruled.
+    // (2) The no-cancel lot: the closing claim settles and closes the vault, and
+    // the rent went to the RETAILER. This test was named
+    // `..._its_rent_goes_to_the_merchant` and asserted
+    // `total_deposited + vault_rent`.
+    //
+    // (3) C1, 2026-08-20: the rent goes to the source pool's fee escrow. "Not
+    // the subscriber's" was never the same claim as "the merchant's" — the rent
+    // was paid by `subscribe_private_stark`'s ephemeral payer, out of whoever
+    // funded the note. The merchant receives the deposit, exactly, and nothing
+    // returns to the subscriber. The one-way prepaid envelope is unchanged; what
+    // changed is that the envelope no longer has 3,403,440 lamports of somebody
+    // else's rent stapled to the outside of it.
     let mut rig = Rig::new();
     let retailer = Keypair::new();
     let spec = VaultSpec { retailer: retailer.pubkey(), ..VaultSpec::default() };
     let vault = seed_vault(&mut rig, &spec);
     rig.svm.airdrop(&retailer.pubkey(), 1_000_000_000).unwrap();
     let vault_rent = rig.rent_exempt(SubscriptionVault::LEN);
+    let escrow = fee_escrow(&rig.program, &spec.source_pool.unwrap());
+    let before_escrow = rig.lamports(&escrow);
     rig.svm
         .warp_to_slot((spec.start_slot + (spec.interval_slots * 40) as i64) as u64);
 
@@ -469,8 +607,96 @@ fn an_exhausted_vault_is_closed_and_its_rent_goes_to_the_merchant() {
     assert!(rig.vault_account(&vault).is_none(), "the vault is CLOSED, not merely emptied");
     assert_eq!(
         rig.lamports(&retailer.pubkey()) + 5_000 - before,
+        spec.total_deposited,
+        "the merchant received the whole deposit and NOT the released rent",
+    );
+    assert_eq!(
+        rig.lamports(&escrow) - before_escrow,
+        vault_rent,
+        "and the rent landed in the source pool's fee escrow, where the treasury \
+         that funded the ephemeral can sweep it",
+    );
+}
+
+#[test]
+fn a_claim_that_names_the_wrong_rent_beneficiary_is_refused() {
+    // THE ONLY EXECUTION-LEVEL PROOF THAT THE PIN HOLDS, and the reason it
+    // matters: `claim_period` has no Signer of any kind. If the beneficiary were
+    // taken on trust, whoever sent the transaction first would take 3,403,440
+    // lamports out of every vault that closes.
+    let mut rig = Rig::new();
+    let retailer = Keypair::new();
+    let spec = VaultSpec { retailer: retailer.pubkey(), ..VaultSpec::default() };
+    let vault = seed_vault(&mut rig, &spec);
+    rig.svm.airdrop(&retailer.pubkey(), 1_000_000_000).unwrap();
+    rig.svm
+        .warp_to_slot((spec.start_slot + (spec.interval_slots * 40) as i64) as u64);
+
+    // A wallet the caller controls, in the beneficiary slot.
+    let thief = Keypair::new();
+    rig.svm.airdrop(&thief.pubkey(), SYSTEM_RENT_EXEMPT).unwrap();
+    let err = claim_raw_to(&mut rig, &vault, &retailer, None, Some(thief.pubkey()))
+        .expect_err("an unpinned destination must be refused");
+    assert!(
+        err.contains(&format!("Custom({})", E_UNAUTHORIZED)),
+        "expected Unauthorized ({}) for a beneficiary that is not the derived \
+         fee escrow, got: {}",
+        E_UNAUTHORIZED,
+        err
+    );
+    assert!(rig.vault_account(&vault).is_some(), "and the vault was NOT closed");
+
+    // The escrow of a DIFFERENT pool is refused too — the derivation is per
+    // pool, so "some escrow of ours" is not the same as "this vault's escrow".
+    let other_escrow = fee_escrow(&rig.program, &Address::new_unique());
+    let err = claim_raw_to(&mut rig, &vault, &retailer, None, Some(other_escrow))
+        .expect_err("another pool's escrow must be refused");
+    assert!(err.contains(&format!("Custom({})", E_UNAUTHORIZED)), "got: {}", err);
+
+    // Omitting it entirely fails closed rather than falling back to the
+    // retailer. A silent fallback would have made this whole change a no-op for
+    // every client that had not shipped the seventh account yet, while the
+    // guards all stayed green.
+    let err = claim_raw_to(&mut rig, &vault, &retailer, None, None)
+        .expect_err("an absent beneficiary must not fall back to the merchant");
+    assert!(err.contains(&format!("Custom({})", E_UNAUTHORIZED)), "got: {}", err);
+    assert!(rig.vault_account(&vault).is_some(), "still not closed");
+
+    // And the correct one settles.
+    claim(&mut rig, &vault, &retailer).expect("the derived escrow is accepted");
+    assert!(rig.vault_account(&vault).is_none());
+}
+
+#[test]
+fn a_legacy_vault_with_no_source_pool_still_closes_to_the_retailer() {
+    // The compatibility path, pinned so it cannot rot. `source_pool: None` is
+    // not reachable through any instruction that still exists —
+    // `subscribe_private_stark` always writes `Some(pool)` — but the field is a
+    // deprecated `Option` kept for layout reasons and an account written before
+    // it existed decodes as `None`. Such a vault has no pool to derive an escrow
+    // from, so the only alternative to the old behaviour is refusing to close it
+    // at all, which would strand it forever.
+    let mut rig = Rig::new();
+    let retailer = Keypair::new();
+    let spec = VaultSpec {
+        retailer: retailer.pubkey(),
+        source_pool: None,
+        ..VaultSpec::default()
+    };
+    let vault = seed_vault(&mut rig, &spec);
+    rig.svm.airdrop(&retailer.pubkey(), 1_000_000_000).unwrap();
+    let vault_rent = rig.rent_exempt(SubscriptionVault::LEN);
+    rig.svm
+        .warp_to_slot((spec.start_slot + (spec.interval_slots * 40) as i64) as u64);
+
+    let before = rig.lamports(&retailer.pubkey());
+    claim(&mut rig, &vault, &retailer).expect("a legacy vault must still be closable");
+    assert!(rig.vault_account(&vault).is_none());
+    assert_eq!(
+        rig.lamports(&retailer.pubkey()) + 5_000 - before,
         spec.total_deposited + vault_rent,
-        "the merchant received the whole deposit AND the released rent",
+        "with no source_pool there is no escrow to route to, so the pre-C1 \
+         behaviour is kept rather than stranding the account",
     );
 }
 
@@ -573,4 +799,101 @@ fn a_payout_under_the_rent_floor_strands_an_empty_merchant_wallet() {
     claim_raw(&mut rig, &vault, &retailer, Some(&payer)).expect("clears the floor now");
     assert_eq!(rig.read_vault(&vault).claimed_periods, 1);
     assert_eq!(rig.lamports(&retailer.pubkey()), SYSTEM_RENT_EXEMPT + spec.rate);
+}
+
+#[test]
+fn the_closing_claim_tops_an_empty_merchant_to_the_rent_floor_out_of_the_rent() {
+    // THE REGRESSION C1 WOULD HAVE SHIPPED WITHOUT A MITIGATION, pinned so the
+    // mitigation cannot be quietly removed as "dead code".
+    //
+    // The test above measures the floor blocking an INTERMEDIATE claim. Until
+    // 2026-08-20 it could never block the CLOSING one, for an accidental
+    // reason: the close carried the vault's 3,403,440 lamports of rent to the
+    // retailer, which is 3.82x the 890,880 floor, so the last claim landed
+    // however small the payout was. Route that rent to the fee escrow and a
+    // closing payout under the floor to a zero-lamport merchant becomes a
+    // transaction that can NEVER execute — the vault can never close, and the
+    // rent it was holding is stranded forever. That is strictly worse than the
+    // merchant keeping it, which is why the redirect had to bring its own
+    // remedy rather than a follow-up ticket.
+    //
+    // The remedy: pay the retailer up to its own floor out of the rent first,
+    // then route the remainder. It is always affordable — 3,403,440 - 890,880 =
+    // 2,512,560 still reaches the escrow.
+    let mut rig = Rig::new();
+    let retailer = Keypair::new();
+    let spec = VaultSpec {
+        retailer: retailer.pubkey(),
+        rate: 300_000,
+        total_deposited: 300_000, // exactly ONE funded period, so claim #1 closes it
+        ..VaultSpec::default()
+    };
+    let vault = seed_vault(&mut rig, &spec);
+    let vault_rent = rig.rent_exempt(SubscriptionVault::LEN);
+    let escrow = fee_escrow(&rig.program, &spec.source_pool.unwrap());
+    let before_escrow = rig.lamports(&escrow);
+
+    // The merchant's payout wallet does not exist. Someone else pays the fee.
+    let payer = Keypair::new();
+    rig.svm.airdrop(&payer.pubkey(), 1_000_000_000).unwrap();
+    assert_eq!(rig.lamports(&retailer.pubkey()), 0, "merchant wallet does not exist yet");
+    assert!(spec.rate < SYSTEM_RENT_EXEMPT, "the payout alone cannot clear the floor");
+    rig.svm
+        .warp_to_slot((spec.start_slot + spec.interval_slots as i64) as u64);
+
+    claim_raw(&mut rig, &vault, &retailer, Some(&payer))
+        .expect("the CLOSING claim must still land on an empty merchant wallet");
+
+    assert!(rig.vault_account(&vault).is_none(), "the vault closed");
+    assert_eq!(
+        rig.lamports(&retailer.pubkey()),
+        SYSTEM_RENT_EXEMPT,
+        "the merchant is left at exactly its rent floor: the {} payout plus a \
+         {} top-up out of the rent, and not one lamport of rent more",
+        spec.rate,
+        SYSTEM_RENT_EXEMPT - spec.rate,
+    );
+    assert_eq!(
+        rig.lamports(&escrow) - before_escrow,
+        vault_rent - (SYSTEM_RENT_EXEMPT - spec.rate),
+        "the funder gets the rest of the rent — {} of {}",
+        vault_rent - (SYSTEM_RENT_EXEMPT - spec.rate),
+        vault_rent,
+    );
+}
+
+#[test]
+fn a_merchant_already_above_the_floor_is_topped_up_by_nothing() {
+    // The other side of the mitigation, and the case that is true of every
+    // merchant that has ever been paid once: no top-up at all, the whole rent
+    // routes. Without this the mitigation could silently widen into "the
+    // merchant keeps a slice of every rent" and the test above would not notice.
+    let mut rig = Rig::new();
+    let retailer = Keypair::new();
+    let spec = VaultSpec {
+        retailer: retailer.pubkey(),
+        rate: 300_000,
+        total_deposited: 300_000,
+        ..VaultSpec::default()
+    };
+    let vault = seed_vault(&mut rig, &spec);
+    let vault_rent = rig.rent_exempt(SubscriptionVault::LEN);
+    let escrow = fee_escrow(&rig.program, &spec.source_pool.unwrap());
+    let before_escrow = rig.lamports(&escrow);
+    rig.svm.airdrop(&retailer.pubkey(), 1_000_000_000).unwrap();
+    let before_retailer = rig.lamports(&retailer.pubkey());
+    rig.svm
+        .warp_to_slot((spec.start_slot + spec.interval_slots as i64) as u64);
+
+    claim(&mut rig, &vault, &retailer).expect("closes");
+    assert_eq!(
+        rig.lamports(&retailer.pubkey()) + 5_000 - before_retailer,
+        spec.rate,
+        "a merchant already above its floor receives the payout and nothing else",
+    );
+    assert_eq!(
+        rig.lamports(&escrow) - before_escrow,
+        vault_rent,
+        "and the whole rent routes to the funder's escrow",
+    );
 }

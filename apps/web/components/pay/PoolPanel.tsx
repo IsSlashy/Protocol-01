@@ -40,7 +40,11 @@ import type {
   PoolRecoverResponse,
   PoolSizeView,
 } from "@/lib/privacy/worker/poolHandlers";
-import { getPoolsForTokenV3, type PoolToken } from "@/lib/privacy/pool/denominatedPool";
+import {
+  getDepositablePoolsForTokenV3,
+  getPoolsForTokenV3,
+  type PoolToken,
+} from "@/lib/privacy/pool/denominatedPool";
 import { SHIELD_PHASES, WITHDRAW_PHASES } from "@/lib/pay/flowProgress";
 import {
   requiresSweepHomeConfirmation,
@@ -63,7 +67,27 @@ import { truncate } from "./util";
 // Denominations are no longer a hardcoded SOL list: they come from the pool
 // configs for whichever token the header selected. The list used to be SOL-only
 // while the header could say USDC, so the panel shielded SOL and said USDC.
-function denominationsFor(token: PoolToken): number[] {
+//
+// 🚨 THERE ARE TWO LISTS, AND THEY ARE NOT INTERCHANGEABLE. Until 2026-08-20 a
+// single `denominationsFor` fed three different jobs — the primary chip, the
+// "other denominations" fold (both deposit-side, both drive the Shield button)
+// and `handleRecover` (read/recovery-side). The 0.1 SOL pool is now closed to
+// new deposits while still holding 10 unspent notes, so one list can no longer
+// answer both questions.
+
+/** Deposit-side. Pools this client still OFFERS for a new shield. Closed pools
+ *  are absent: this is the list the picker renders and the Shield button acts
+ *  on. */
+function depositDenominationsFor(token: PoolToken): number[] {
+  return getDepositablePoolsForTokenV3(token)
+    .map((p) => p.denomination)
+    .sort((a, b) => a - b);
+}
+
+/** Read-side. EVERY pool for this token, closed ones included. Recovery and
+ *  pool-occupancy lookups take this one: a pool closed to deposits still holds
+ *  notes and can still have float stranded in it. */
+function allDenominationsFor(token: PoolToken): number[] {
   return getPoolsForTokenV3(token).map((p) => p.denomination).sort((a, b) => a - b);
 }
 
@@ -128,13 +152,23 @@ export default function PoolPanel({
    */
   onBusyChange?: (busy: boolean) => void;
 }) {
-  const denominations = denominationsFor(token);
-  // Falls back to the smallest when the configured primary is not among this
-  // token's pools, so a config change can never leave the panel with a
-  // denomination that has no pool behind it.
-  const primaryDenomination = denominations.includes(PRIMARY_DENOMINATION_BY_TOKEN[token])
+  /** Read-side: recovery and pool-size lookups. Includes closed pools. */
+  const denominations = allDenominationsFor(token);
+  /** Deposit-side: the picker, and nothing else. */
+  const depositDenominations = depositDenominationsFor(token);
+  /** Pools that exist and still hold notes, but no longer accept a new deposit.
+   *  Derived, not hardcoded, so the sentence on screen cannot drift from the
+   *  table. Empty for every token that has no closed pool, and the sentence
+   *  then does not render at all. */
+  const closedDenominations = denominations.filter((d) => !depositDenominations.includes(d));
+  // Falls back to the smallest DEPOSITABLE one when the configured primary is
+  // not among this token's open pools, so a config change can never leave the
+  // panel defaulting to a pool no new note can be created in. Verified
+  // 2026-08-20: PRIMARY_DENOMINATION_BY_TOKEN.SOL = 1 and the 1 SOL pool is
+  // open, so this fix moved no default.
+  const primaryDenomination = depositDenominations.includes(PRIMARY_DENOMINATION_BY_TOKEN[token])
     ? PRIMARY_DENOMINATION_BY_TOKEN[token]
-    : denominations[0]!;
+    : depositDenominations[0]!;
   const [denomination, setDenomination] = useState(primaryDenomination);
   const [notes, setNotes] = useState<PoolNoteView[]>([]);
   /** Notes this browser withdrew, keyed `pool:leafIndex`. Seeded from local
@@ -707,6 +741,11 @@ export default function PoolPanel({
         list.push(n.leafIndex);
         leavesByDenomination.set(n.denomination, list);
       }
+      // ⛔ `denominations` (the FULL list), never `depositDenominations`. A pool
+      // closed to new deposits still holds notes and still holds whatever float
+      // a failed spend stranded there — closing deposits does not close the
+      // float. Narrowing this to the picker's list re-opens the exact bug the
+      // comment above records, and nothing would fail.
       const all = await Promise.all(
         denominations.map((d) =>
           recoverStuckFunds(meta, d, owner, setStep, leavesByDenomination.get(d) ?? []),
@@ -780,7 +819,30 @@ export default function PoolPanel({
   // deriving both from `unspent` makes that contradiction unrepresentable.
   const shieldedBalance = unspent.reduce((sum, n) => sum + n.denomination, 0);
 
-  const shieldCost = (denomination * 1.003 + 1.006).toFixed(3);
+  /**
+   * What the wallet actually has to have free, and it is TWO numbers.
+   *
+   * 🚨 THE SINGLE FIGURE THIS REPLACES WAS ALREADY WRONG ON THE PATH THAT SHIPS.
+   * It read `denomination * 1.003 + 1.006` — about 2.009 SOL for the 1 SOL pool
+   * — which describes the wallet-pays-everything path. On the relayed path the
+   * wallet moves only the value plus the operator fee; the deployment fronts the
+   * ~1.006 SOL of refundable proof-buffer rent out of its own float. Quoting the
+   * larger number told the user to hold twice what they need, which is the
+   * harmless direction, but the breakdown behind it named a rent charge that
+   * never reaches them.
+   *
+   * Relayed: denomination + 0.3% protocol fee + 1% operator fee = x1.013.
+   * Direct:  denomination + 0.3% protocol fee + ~1.006 SOL of rent it fronts
+   *          itself and gets back.
+   *
+   * Both are stated rather than one being chosen, because this component cannot
+   * honestly tell which will run: the relayed branch is gated on
+   * `NEXT_PUBLIC_P01_FUNDER_TICKET`, which is inlined at BUILD time, so a
+   * deployment that switched the funder on without rebuilding takes the direct
+   * path while every server-side readiness answer says otherwise.
+   */
+  const shieldCostRelayed = (denomination * 1.013).toFixed(3);
+  const shieldCostDirect = (denomination * 1.003 + 1.006).toFixed(3);
 
   // Every disabled action names its reason next to itself. `scanning` is
   // deliberately absent from all of these: the pool scan enumerates the whole
@@ -846,7 +908,7 @@ export default function PoolPanel({
             phases={SHIELD_PHASES}
             step={step}
             running={shielding}
-            note={`About ${shieldCost} SOL is committed while this runs. Most of it is a refundable deposit, returned at the end.`}
+            note={`Your wallet moves about ${shieldCostRelayed} SOL when this deployment relays the payment — the denomination, a 0.3% protocol fee and a 1% operator fee — and it does not get that back. If it cannot relay, your wallet fronts the proof rent too and needs about ${shieldCostDirect} SOL free, most of which is refundable and returns at the end.`}
           />
         </div>
       )}
@@ -869,14 +931,22 @@ export default function PoolPanel({
             Denomination
           </label>
           {/* PRIMARY denomination in front, the rest one click behind it.
-              Not a restriction and nothing is disabled: every pool stays
-              reachable and every existing note keeps its Withdraw button. It is
-              a default that points at the only pool with a real set — measured
-              2026-08-12, the 1 SOL pool held 6 unspent notes and the 10, 100,
-              500 and 1000 SOL pools held zero. Splitting deposits across six
-              pools splits the anonymity set six ways. */}
+              A default, not a restriction: nothing here is disabled, and every
+              existing note keeps its Withdraw button whatever is selected. It
+              points at the only pool with a real set — measured 2026-08-12, the
+              1 SOL pool held 6 unspent notes and the 10, 100, 500 and 1000 SOL
+              pools held zero. Splitting deposits across six pools splits the
+              anonymity set six ways.
+
+              ⚠️ Corrected 2026-08-20: this block used to say "every pool stays
+              reachable". That is no longer true of DEPOSITS — a pool marked
+              `deposits: 'closed'` (today: 0.1 SOL) is absent from both chip
+              rows below. It remains true of everything else: scanning, listing,
+              withdrawing, subscribing and Recover all still see it. */}
           <div className="flex flex-wrap gap-2">
-            {denominations
+            {/* `depositDenominations`, NOT `denominations`: this chip sets the
+                denomination the Shield button deposits into. */}
+            {depositDenominations
               // `===` on the primary alone, NOT `|| d === denomination`: the
               // fold below keeps every non-primary, so including the selection
               // here rendered a selected non-primary TWICE, both highlighted,
@@ -904,7 +974,11 @@ export default function PoolPanel({
               Other denominations, with how many notes each holds
             </summary>
             <div className="mt-2 flex flex-wrap gap-2">
-              {denominations
+              {/* THIS IS THE LINE THAT ACTUALLY CLOSES 0.1 SOL DEPOSITS ON /pay.
+                  The 0.1 SOL pool was reachable here in one click, and the
+                  Shield button then deposited into it. `depositDenominations`
+                  drops it; every other path in this file still sees it. */}
+              {depositDenominations
                 .filter((d) => d !== primaryDenomination)
                 .map((d) => {
                   const size = poolSizes.find((p) => p.denomination === d);
@@ -941,6 +1015,22 @@ export default function PoolPanel({
               ? `${selectedSize.unspentNotes} unspent note${selectedSize.unspentNotes === 1 ? "" : "s"} in this pool right now, out of ${selectedSize.totalNotes} ever deposited. Amounts snap to a denomination, so the amount you move is not distinctive. See the privacy note for what withdrawal still reveals.`
               : "Amounts snap to a denomination; arbitrary amounts cannot be shielded."}
           </p>
+          {/* Why a denomination the user may remember is no longer in the
+              ladder. Same voice as the SOL-only notice above ("Withdrawal is
+              deliberately NOT gated"): say exactly what was closed and exactly
+              what still works, and claim nothing beyond what the code does.
+              Every verb here is backed by a call site — scanning uses
+              `getPoolsForTokenV3`, the Withdraw button passes the NOTE's own
+              denomination (`handleUnshield`), and Recover walks the full
+              `denominations` list. */}
+          {token === "SOL" && closedDenominations.length > 0 && (
+            <p className="mt-1 text-xs text-p01-text-dim">
+              {closedDenominations.map((d) => `${d} SOL`).join(", ")}{" "}
+              {closedDenominations.length === 1 ? "is" : "are"} closed to new deposits and no longer
+              listed above. Notes you already hold there are unaffected: they still show up on a
+              rescan, they still have a Withdraw button, and Recover still searches those pools.
+            </p>
+          )}
           {selectedSize && selectedSize.unspentNotes <= 1 && (
             <p className="mt-1 text-xs text-p01-yellow">
               A pool holding {selectedSize.unspentNotes === 0 ? "no" : "one"} unspent note gives you
@@ -963,14 +1053,20 @@ export default function PoolPanel({
             precise breakdown (rent, per-step fees) one click behind it. */}
         <details className="text-xs text-p01-text-muted">
           <summary className="cursor-pointer marker:text-p01-text-dim">
-            Shielding {denomination} SOL needs about {shieldCost} SOL free for a few minutes. Most
-            of it is a refundable deposit that comes back at the end.
+            Shielding {denomination} SOL costs about {shieldCostRelayed} SOL when this deployment
+            relays the payment, or needs about {shieldCostDirect} SOL free for a few minutes when
+            it cannot — most of that larger figure is a refundable deposit that comes back.
           </summary>
           <p className="mt-1.5 pl-4 text-p01-text-dim">
-            The exact breakdown: the {denomination} SOL denomination, a 0.3% protocol fee, and ~1
-            SOL of proof-buffer rent that is returned when the buffer closes. Withdrawal charges
-            0.5%, and moving the payout off its one-time address afterwards costs one more
-            transaction fee (0.000005 SOL).
+            The exact breakdown: the {denomination} SOL denomination, a 0.3% protocol fee, and a 1%
+            operator fee. The operator fee is a second transfer inside the same transaction you
+            already sign — no extra approval — and it never enters the pool, so the note deposited
+            is exactly {denomination} SOL and stays indistinguishable from every other note of that
+            size. On top of that a deposit needs ~1 SOL of proof-buffer rent, which is returned when
+            the buffer closes: when this deployment relays, it fronts that rent from its own float
+            and takes the refund back, so it never leaves your wallet. When it cannot relay, your
+            wallet fronts it and gets it back. Withdrawal charges 0.5%, and moving the payout off
+            its one-time address afterwards costs one more transaction fee (0.000005 SOL).
           </p>
         </details>
 
@@ -1061,29 +1157,60 @@ export default function PoolPanel({
               <p className="mt-1 truncate font-mono text-xs text-p01-text-dim">
                 leaf #{result.leafIndex} · commitment {truncate(result.commitment, 8, 6)}
               </p>
-              {/* Unconditional, and it mirrors SubscribePanel's funding
-                  paragraph on purpose.
+              {/* Two paths, two different true sentences, and it mirrors
+                  SubscribePanel's funding paragraph on purpose.
 
-                  A deposit has no funder path and cannot get one: its pre-fund
-                  embeds the denomination itself, so a treasury covering it
-                  would be buying the note rather than lending rent. So the
-                  wallet signs, the wallet pays, and the residue comes back to
-                  the wallet — three separate namings of the same address.
+                  🚨 THIS USED TO BE UNCONDITIONAL AND ITS PREMISE HAS BEEN
+                  RETIRED. The comment here said "a deposit has no funder path
+                  and cannot get one", which was true when the wallet funded the
+                  depositing ephemeral directly. The relay landed and it is no
+                  longer true: the wallet now pays this deployment's collection
+                  address and the deployment funds the ephemeral. The half that
+                  survived is still right — the funder never covers the VALUE,
+                  because a treasury that pays for your note owns it — but the
+                  sentence built on top of it was not. In particular "the
+                  leftover rent came back to it afterwards" is FALSE on the
+                  relayed path: the deployment fronted that rent and the residue
+                  sweeps back to the deployment, never to the wallet.
 
-                  The hazard this paragraph exists for is not the deposit. It is
-                  what happens to the READER once another screen truthfully says
-                  "your wallet did not sign this": a silent deposit screen then
-                  reads as the same promise. Saying nothing here is what makes
-                  the honest sentence over there misleading. */}
+                  The paragraph still has to exist. The hazard it was written for
+                  is not the deposit; it is what happens to the READER once
+                  another screen truthfully says "your wallet did not sign this".
+                  A silent deposit screen then reads as the same promise. Saying
+                  nothing here is what makes the honest sentence over there
+                  misleading — so the honest thing is to say which of the two
+                  happened, not to say nothing.
+
+                  `fundedBy` is undefined only for a result produced before this
+                  field existed; the wallet wording is the safe default because
+                  it claims LESS privacy, never more. */}
               <p className="mt-2 flex items-start gap-2 text-xs text-p01-text-muted">
                 <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
-                <span>
-                  <strong className="text-p01-text">Your wallet paid for this, in public.</strong>{' '}
-                  Depositing moves real value in, so it comes from your address by name — and the
-                  leftover rent came back to it afterwards. Anyone reading this deposit reaches
-                  your wallet in three steps, and spending this note later republishes the
-                  commitment printed above, which is what lets them start from the spend.
-                </span>
+                {result.fundedBy === "funder" ? (
+                  <span>
+                    <strong className="text-p01-text">
+                      Your wallet signed one payment, and it did not name the pool.
+                    </strong>{" "}
+                    It paid this deployment&rsquo;s collection address, plus a 1% operator fee to a
+                    separate address, in that single transaction — then the deployment funded the
+                    identity that deposited. Those are two transfers and neither names both ends.
+                    The leftover rent did <em>not</em> come back to you: the deployment fronted it
+                    and swept it back to itself, which is what keeps that residue from redrawing
+                    the line to your wallet. What still ties the two together is the amount and the
+                    minutes between them, which nothing here hides — and spending this note later
+                    republishes the commitment printed above.
+                  </span>
+                ) : (
+                  <span>
+                    <strong className="text-p01-text">Your wallet paid for this, in public.</strong>{" "}
+                    This deployment did not relay the payment, so your wallet funded the depositing
+                    identity directly: the deposit comes from your address by name, and the
+                    leftover rent came back to it afterwards. Anyone reading this deposit reaches
+                    your wallet in three steps, and spending this note later republishes the
+                    commitment printed above, which is what lets them start from the spend.
+                    {result.funderFallbackReason ? ` The deployment said: ${result.funderFallbackReason}` : ""}
+                  </span>
+                )}
               </p>
               <a
                 href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
