@@ -227,3 +227,112 @@ fn the_instruction_still_declares_the_six_accounts_clients_send() {
         )
     );
 }
+
+
+// ===========================================================================
+// The vault address is f(note secret), and that is a linkage waiting for a
+// client change.
+// ===========================================================================
+
+/// The invariant, pinned as TEXT so a merge that resolves
+/// `subscription_vault.rs` to an older side fails loudly instead of silently
+/// deleting the only place it is written down. Same trick, same reason, as the
+/// rest of this file: a guard that lives inside its subject dies with it.
+#[test]
+fn the_note_secret_reuse_invariant_is_still_written_down() {
+    let src = include_str!("../src/state/subscription_vault.rs");
+    for needle in [
+        "A NOTE SECRET MUST NEVER SERVE TWO OPERATIONS",
+        "must derive a FRESH secret",
+        "HOLDS BY USAGE, NOT BY CONSTRUCTION",
+    ] {
+        assert!(
+            src.contains(needle),
+            "{}",
+            explain(
+                "the note-secret reuse invariant was deleted from subscription_vault.rs",
+                "The vault PDA seed is [SEED_PREFIX, retailer, subscriber_id_bytes(), mint] and in\n\
+                 private mode subscriber_id_bytes() is Poseidon(note secret). Two operations that\n\
+                 share a secret therefore land on correlated vault addresses, in accountKeys, in the\n\
+                 clear. Nothing in the program refuses a reused secret — the property holds only\n\
+                 because the client mints one secret per note. The comment IS the control.",
+            )
+        );
+    }
+}
+
+/// The seed this invariant is about must still be the one the program uses.
+///
+/// The comment above is only true while the vault PDA is derived from
+/// `subscriber_id_bytes()`. If a future change seeds the vault on something
+/// else — the nullifier is the tempting one — the warning becomes wrong in a
+/// way that reads as reassuring.
+#[test]
+fn the_vault_is_still_seeded_on_the_subscriber_id() {
+    let src = include_str!("../src/instructions/subscribe_private_stark.rs");
+    let c = strip_comments(&src[..src.find("#[cfg(test)]").unwrap_or(src.len())]);
+    assert!(
+        c.contains("subscriber_commitment.as_ref()"),
+        "{}",
+        explain(
+            "the vault PDA is no longer seeded on the subscriber commitment",
+            "Re-derive the invariant on subscriber_id_bytes() before changing this. In particular\n\
+             the nullifier is NOT a safe substitute: it is also f(secret), so it buys nothing\n\
+             against leaf enumeration, and it is PUBLISHED in SubscribePrivateStarkEvent — which\n\
+             would make the vault address computable from a public log.",
+        )
+    );
+}
+
+/// The mechanism itself, executed rather than described.
+///
+/// Two subscriptions that share a note secret land on the SAME vault address;
+/// two that do not, land on different ones. That is the whole linkage, in four
+/// derivations. It needs no runtime and no `.so` — `find_program_address` is a
+/// pure function, which is exactly why an observer can run it too.
+///
+/// ⚠️ What this test canNOT check is the invariant itself. Nothing on chain
+/// refuses a reused secret, so there is no red state to assert. It pins the
+/// CONSEQUENCE, so that anyone who reads it understands what reuse costs.
+#[test]
+fn sharing_a_note_secret_collides_the_vault_address() {
+    use solana_address::Address;
+    use std::str::FromStr;
+
+    // zk_shielded on devnet. The property is independent of the program id;
+    // the real one is used so the test describes the real deployment.
+    let program = Address::from_str("GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c").unwrap();
+    let prefix = b"subscription_vault";
+    let retailer = [7u8; 32];
+    let mint = [0u8; 32]; // native SOL
+
+    // Stand-ins for Poseidon(secret). Their VALUES do not matter; what matters
+    // is that one is reused and the other is not.
+    let commitment_a = [0xAAu8; 32];
+    let commitment_b = [0xBBu8; 32];
+
+    let derive = |c: &[u8; 32]| {
+        Address::find_program_address(&[prefix, &retailer, c, &mint], &program).0
+    };
+
+    assert_eq!(
+        derive(&commitment_a),
+        derive(&commitment_a),
+        "the derivation is not deterministic; the rest of this test means nothing"
+    );
+    assert_ne!(
+        derive(&commitment_a),
+        derive(&commitment_b),
+        "two different secrets must not collide, or the seed carries no identity at all"
+    );
+
+    // The statement the invariant makes, made concrete: a second operation
+    // reusing the first one's secret is not merely similar, it is the SAME
+    // public address, and anyone reading accountKeys sees both.
+    let renewal_reusing_the_secret = derive(&commitment_a);
+    let first_subscription = derive(&commitment_a);
+    assert_eq!(
+        renewal_reusing_the_secret, first_subscription,
+        "reuse produces one address for two operations - that is the linkage"
+    );
+}

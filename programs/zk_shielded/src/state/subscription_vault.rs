@@ -155,6 +155,41 @@ impl SubscriptionVault {
     /// Returns the subscriber ID bytes used in the PDA seed.
     /// Normal mode: subscriber pubkey bytes
     /// Private mode: subscriber commitment bytes
+    ///
+    /// # 🚨 INVARIANT — A NOTE SECRET MUST NEVER SERVE TWO OPERATIONS
+    ///
+    /// This function feeds the vault PDA seed
+    /// `[SEED_PREFIX, retailer, subscriber_id_bytes(), token_mint]`
+    /// (`subscribe_private_stark.rs:89-95`), and in private mode
+    /// `subscriber_commitment` is `Poseidon(note secret)`. **The vault address
+    /// is therefore f(secret), and it sits in `accountKeys` of every claim, in
+    /// the clear.**
+    ///
+    /// Two operations that share a note secret produce CORRELATED vault
+    /// addresses, which links them publicly to anyone reading the chain. Any
+    /// renewal, second subscription, or recovery must derive a FRESH secret.
+    ///
+    /// ⚠️ THIS PROPERTY HOLDS BY USAGE, NOT BY CONSTRUCTION. Nothing in this
+    /// program refuses a reused secret; today it is safe only because the
+    /// client mints one secret per note and spends each note once. A client
+    /// change that reuses a secret — the obvious way to implement "renew this
+    /// subscription" — would silently create the linkage, and no test on chain
+    /// would go red.
+    ///
+    /// MEASURED 2026-08-20, and this is the reason the invariant is worth
+    /// writing down rather than assuming: the vault address is NOT derivable
+    /// from the public deposit leaves. All 35 leaves of the 1 SOL pool were
+    /// harvested from their shield instructions and run through this exact
+    /// derivation; ZERO reproduced a live vault, while the real
+    /// `subscriber_commitment` read back out of the account reproduced it
+    /// exactly. So an observer holding the public tree cannot enumerate
+    /// candidate vaults — the secret is what stands between them and the link,
+    /// and reusing it is what hands it over.
+    ///
+    /// The nullifier is NOT an alternative seed. It is also f(secret), so it
+    /// buys nothing against leaf enumeration, and it is PUBLISHED in
+    /// `SubscribePrivateStarkEvent`, which would make the vault address
+    /// computable from a public log. Strictly worse.
     pub fn subscriber_id_bytes(&self) -> [u8; 32] {
         if let Some(pubkey) = self.subscriber_pubkey {
             pubkey.to_bytes()

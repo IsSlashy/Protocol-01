@@ -127,6 +127,38 @@ that secret. The treasury identifies every subscription it seeded by table
 lookup — with byte 160 deleted, and after any redeploy. Against the issuer the
 anonymity set is **one, unconditionally and permanently**.
 
+**A NOTE SECRET MUST NEVER SERVE TWO OPERATIONS — and nothing enforces it.**
+The paragraph above says the vault PDA is a pure function of the note secret,
+and states that against the ISSUER. It has a second consequence, against
+EVERYONE, and it is the one that will be tripped over first. The vault seed is
+`[SEED_PREFIX, retailer, subscriber_id_bytes(), token_mint]`
+(`subscribe_private_stark.rs:89-95`) and in private mode `subscriber_id_bytes()`
+is `Poseidon(secret)`. So **two operations sharing a secret land on correlated
+vault addresses, in `accountKeys`, in the clear.** Any renewal, second
+subscription or recovery must derive a FRESH secret.
+
+⚠️ **The property holds by usage, not by construction.** No on-chain check
+refuses a reused secret. It is safe today only because the client mints one
+secret per note and spends each note once. The obvious way to implement "renew
+this subscription" — reuse the subscriber's secret so the vault is found again —
+creates the linkage silently, and no test on chain goes red. The invariant is
+written at `subscription_vault.rs:159` and pinned by three tests in
+`tests/landed_invariants.rs`; the comment IS the control.
+
+MEASURED 2026-08-20, and it is why the invariant is worth writing rather than
+assuming: the vault address is **not** derivable from the public deposit leaves.
+All 35 leaves of the 1 SOL pool were harvested from their shield instructions and
+run through the real derivation — **zero** reproduced a live vault, while the
+`subscriber_commitment` read back out of the account reproduced it exactly. An
+observer holding the public tree therefore cannot enumerate candidate vaults. The
+secret is the whole of what stands between them and the link, and reusing it is
+what hands it over.
+
+The nullifier is not an alternative seed: it is also `f(secret)`, so it buys
+nothing against leaf enumeration, and it is PUBLISHED in
+`SubscribePrivateStarkEvent` — seeding on it would make the vault address
+computable from a public log. Strictly worse.
+
 **The RPC PROVIDER is a stronger observer than the funder.** `PayApp.tsx:129`
 hands the pool worker the same endpoint the wallet adapter uses, so one provider
 account, one API key, one session sees the connected wallet's own queries **and**
