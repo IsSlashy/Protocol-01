@@ -98,7 +98,25 @@ if (typeof (globalThis as unknown as { Worker?: unknown }).Worker === 'undefined
 
 const LIVE = process.env.P01_LIVE_DEVNET === '1';
 const RPC = process.env.P01_LIVE_RPC ?? 'https://api.devnet.solana.com';
-const DENOMINATION = 0.1;
+/**
+ * The demo denomination, and the only pool left open to new deposits.
+ *
+ * WAS 0.1 UNTIL 2026-08-20. Two measured reasons it moved:
+ *
+ *  1. The 0.1 SOL pool is being closed to new deposits, and a harness that
+ *     keeps depositing into a closed pool is a harness that proves the wrong
+ *     thing. Its 10 unspent notes stay scannable and spendable — closing a
+ *     pool closes the entrance, never the exit.
+ *  2. Anonymity set. Measured on chain 2026-08-20: the 1 SOL pool held 33
+ *     leaves and 10 unspent notes. Concentrating every deposit in one
+ *     denomination is the only lever that raises that number, and the size of
+ *     that set is the ceiling on any unlinkability claim this project makes.
+ *
+ * ⚠️ This constant drives the pre-fund arithmetic: a 1 SOL shield moves
+ * 1,003,475,300 lamports of value plus ~0.57 SOL of refundable proof rent, so
+ * the funding wallet needs roughly 1.6 SOL free before this runs, not 0.7.
+ */
+const DENOMINATION = 1;
 
 /** Expand a leading `~` so the documented invocation works from any shell. */
 function expandHome(p: string): string {
@@ -118,7 +136,7 @@ let deposited: { meta: string; leafIndex: number; encryptedNote: string } | null
 
 describe.skipIf(!LIVE)('a shield that actually lands on devnet', () => {
   it(
-    'deposits into the 0.1 SOL V3 pool and comes back with a leaf',
+    'deposits into the 1 SOL V3 pool and comes back with a leaf',
     async () => {
       const wallet = loadKeypair();
       const connection = new Connection(RPC, 'confirmed');
