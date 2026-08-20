@@ -211,11 +211,29 @@ export const SOL_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('HfSsGRgVFJGBiiEtRXrHocNPw5dyTQ78hEZH8GWpXaAG'),
     treePDA: new PublicKey('43MRQ91VrrxkD2PqV4QXNJG3BUmu8JmbDUTtWt2dYBAU'),
     version: 'v3',
-    // Measured on chain 2026-08-20: 39 leaves, 10 UNSPENT notes (1.0 SOL).
-    // Closed so deposits concentrate in the 1 SOL pool — an anonymity set does
-    // not add up across denominations, it splits. Those 10 notes stay
-    // scannable, spendable, subscribable and sweepable; only the entrance shut.
-    deposits: 'closed',
+    // 🎯 REOPENED 2026-08-21 — THIS IS THE CAMPAIGN POOL, AND THE ARITHMETIC IS
+    // WHY.
+    //
+    // It was closed on 2026-08-20 to concentrate deposits in the 1 SOL pool.
+    // That was right about concentration and wrong about which denomination to
+    // concentrate ON, because an anonymity set counts NOTES, not lamports:
+    //
+    //   capital / denomination = notes
+    //   42.9 SOL at 1 SOL   =  ~42 notes
+    //   42.9 SOL at 0.1 SOL = ~420 notes
+    //
+    // Ten times the privacy for the same money. The proof work, the fees and
+    // the ~0.57 SOL of transient proof rent are IDENTICAL per deposit at either
+    // denomination — the circuits do not know what the note is worth — so the
+    // only thing a bigger denomination buys is a smaller set.
+    //
+    // Below ~0.1 the binding constraint stops being capital and becomes TIME:
+    // a deposit takes 50-230 s of proving and ~150 transactions whatever it is
+    // worth, so 0.01 SOL would mean 4,200 deposits and ~100 hours. 0.1 is the
+    // floor where capital and clock meet.
+    //
+    // Measured on chain 2026-08-20: 39 leaves, 10 unspent notes.
+    deposits: 'open',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1, decimals: 9,

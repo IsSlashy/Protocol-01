@@ -172,12 +172,18 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('the deposit engine refuses a closed pool', () => {
-  it('rejects poolShieldPrepare for the closed 0.1 SOL pool, before any work', async () => {
+  it('rejects poolShieldPrepare for a closed pool, before any work', async () => {
+    // 10 SOL, not 0.1. The 0.1 pool was REOPENED on 2026-08-21 as the deposit
+    // campaign's target — an anonymity set counts notes, not lamports, so the
+    // same capital buys ten times more of them there. 10 SOL stays closed for a
+    // harder reason than policy: a deposit needs denomination*1.003 + ~0.57 SOL
+    // of proof rent up front and the relay refuses anything over 2.5 SOL, so it
+    // would take the buyer's money and land nothing, 100% of the time.
     const err = await handlePoolRequest({
       kind: 'poolShieldPrepare',
       meta: META,
       token: 'SOL',
-      denomination: 0.1,
+      denomination: 10,
     }).then(
       () => null,
       (e: Error) => e,
@@ -254,14 +260,18 @@ describe('the deposit engine refuses a closed pool', () => {
 // ---------------------------------------------------------------------------
 
 describe('closing the entrance does not close the exit', () => {
-  it('marks 0.1 SOL closed and still scans it', async () => {
-    const pool = findPoolV3('SOL', 0.1)!;
-    expect(isClosed(pool), 'the 0.1 SOL pool must be closed to deposits').toBe(true);
+  it('marks a pool closed and still scans it', async () => {
+    const pool = findPoolV3('SOL', 10)!;
+    expect(isClosed(pool), 'the 10 SOL pool must be closed to deposits').toBe(true);
+    // And the campaign pool must be OPEN, asserted here so a revert that closes
+    // it again cannot pass quietly.
+    expect(isClosed(findPoolV3('SOL', 0.1)!), 'the 0.1 SOL pool is the campaign target').toBe(false);
 
     await handlePoolRequest({ kind: 'poolScan', meta: META, token: 'SOL' });
 
-    // Every SOL pool, closed ones included. 10 unspent notes live in the 0.1
-    // pool; a scan that skipped it would report them as gone.
+    // Every SOL pool, closed ones included. A closed pool may hold unspent
+    // notes — the 0.1 pool held 10 of them while it was closed — so a scan that
+    // skipped closed pools would report live money as gone.
     for (const p of SOL_POOLS_V3) {
       expect(seen.scanned, `${p.denomination} SOL must still be scanned`).toContain(
         p.poolPDA.toBase58(),
@@ -274,15 +284,15 @@ describe('closing the entrance does not close the exit', () => {
     // The premise, asserted rather than assumed: without it this test would
     // pass while nothing is closed at all, and go on passing after a change
     // that closes the read path — a green test about a case that never occurs.
-    expect(isClosed(findPoolV3('SOL', 0.1)!)).toBe(true);
+    expect(isClosed(findPoolV3('SOL', 10)!)).toBe(true);
 
     await handlePoolRequest({
       kind: 'poolScan',
       meta: META,
       token: 'SOL',
-      denomination: 0.1,
+      denomination: 10,
     });
-    expect(seen.scanned).toContain(POOL_0_1);
+    expect(seen.scanned).toContain(findPoolV3('SOL', 10)!.poolPDA.toBase58());
   });
 });
 
@@ -292,10 +302,14 @@ describe('closing the entrance does not close the exit', () => {
 
 describe('a closed pool stays resolvable', () => {
   it('resolves by (token, denomination)', () => {
-    const pool = findPoolV3('SOL', 0.1);
+    const pool = findPoolV3('SOL', 10);
     expect(pool).toBeDefined();
     expect(isClosed(pool!)).toBe(true);
-    expect(pool!.poolPDA.toBase58()).toBe(POOL_0_1);
+    // The reopened campaign pool must still resolve too — closing and opening
+    // are both deposit-side decisions and neither may touch resolution.
+    const campaign = findPoolV3('SOL', 0.1);
+    expect(campaign).toBeDefined();
+    expect(campaign!.poolPDA.toBase58()).toBe(POOL_0_1);
 
     // The over-cap pools too: `poolScanLocal` and `subscriptionRecovery` resolve
     // a note's pool this way, and an unresolvable pool drops the note silently.
@@ -319,7 +333,10 @@ describe('a closed pool stays resolvable', () => {
 
     // And the closed ones are the majority of that table, which is exactly why
     // filtering the shared enumerations would be a fund-loss change.
-    expect(ALL_POOLS_V3.filter(isClosed).length).toBe(ALL_POOLS_V3.length - 1);
+    // TWO open since 2026-08-21: 0.1 SOL reopened as the deposit campaign's
+    // target, 1 SOL still carries the frozen demo journey. Everything else -
+    // every over-cap SOL pool and every USDC pool - stays closed.
+    expect(ALL_POOLS_V3.filter(isClosed).length).toBe(ALL_POOLS_V3.length - 2);
   });
 });
 
@@ -328,20 +345,22 @@ describe('a closed pool stays resolvable', () => {
 // ---------------------------------------------------------------------------
 
 describe('float recovery still covers closed pools', () => {
-  it('sweeps the closed 0.1 SOL pool when asked for it', async () => {
+  it('sweeps a closed pool when asked for it', async () => {
     // Same premise as the scan test: a recovery test about a "closed" pool is
-    // worth nothing while no pool is closed.
-    expect(isClosed(findPoolV3('SOL', 0.1)!)).toBe(true);
+    // worth nothing while no pool is closed. The exemplar moved from 0.1 to 10
+    // SOL on 2026-08-21 when 0.1 reopened as the campaign target; 10 stays
+    // closed because the relay physically cannot fund a deposit that size.
+    expect(isClosed(findPoolV3('SOL', 10)!)).toBe(true);
 
     const res = await handlePoolRequest({
       kind: 'poolRecover',
       meta: META,
       token: 'SOL',
-      denomination: 0.1,
+      denomination: 10,
       ownerPubkey: OWNER.toBase58(),
     });
 
-    expect(seen.stuckFloat).toContain(POOL_0_1);
+    expect(seen.stuckFloat).toContain(findPoolV3('SOL', 10)!.poolPDA.toBase58());
     expect(res.keys).toBeGreaterThan(0);
   });
 
@@ -355,8 +374,12 @@ describe('float recovery still covers closed pools', () => {
 
     // The deposit ladder is a strict subset — never the same array, never the
     // one recovery reads.
+    // Two rungs since 2026-08-21: 0.1 is the campaign target (ten times the
+    // notes per SOL, because an anonymity set counts notes) and 1 is where the
+    // frozen demo journey lives. Still a strict subset of the recovery ladder.
     const forDeposit = denominatedPool.poolsOpenForDeposit('SOL').map((p) => p.denomination);
-    expect(forDeposit).toEqual([1]);
+    expect(forDeposit).toEqual([0.1, 1]);
+    expect(forDeposit.length).toBeLessThan(forRecovery.length);
     for (const d of forDeposit) expect(forRecovery).toContain(d);
   });
 });

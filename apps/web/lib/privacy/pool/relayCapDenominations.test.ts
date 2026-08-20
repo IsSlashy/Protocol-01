@@ -102,8 +102,11 @@ describe('the shield prefund estimate is the real cost model', () => {
 });
 
 describe('an over-cap denomination is not selectable', () => {
-  it('offers exactly the 1 SOL pool for deposit', () => {
-    expect(openForDeposit().map((p) => p.denomination)).toEqual([1]);
+  it('offers exactly the two pools under the cap', () => {
+    // 0.1 reopened 2026-08-21 as the campaign target. Both sit far under the
+    // relay ceiling; everything above 1 SOL stays out, which is the property
+    // this file exists for.
+    expect(openForDeposit().map((p) => p.denomination)).toEqual([0.1, 1]);
   });
 
   it('never offers a denomination the relay would refuse', () => {
@@ -125,13 +128,29 @@ describe('an over-cap denomination is not selectable', () => {
 
     // Open, servable: nothing to say.
     expect(denominatedPool.depositBlockFor(byDenom(1))).toBeNull();
+    expect(denominatedPool.depositBlockFor(byDenom(0.1))).toBeNull();
 
     // Closed but well within the relay's reach: the honest reason is the
     // closure, not the arithmetic.
-    const small = denominatedPool.depositBlockFor(byDenom(0.1))!;
+    //
+    // The exemplar had to move on 2026-08-21. It was the 0.1 SOL pool, which
+    // reopened as the deposit campaign's target, and after that NO SOL pool is
+    // both flag-closed and under the cap - the two open ones are the only two
+    // under it. A USDC pool is now the only shape that exercises this branch,
+    // and it is the honest one: it is closed by decision, not by arithmetic,
+    // because no USDC relay leg was ever funded.
+    const closedUnderCap = ALL_POOLS_V3.find(
+      (p) => p.token !== 'SOL' && denominatedPool.depositBlockFor(p) !== null,
+    )!;
+    expect(closedUnderCap, 'a flag-closed pool under the cap must exist').toBeDefined();
+    const small = denominatedPool.depositBlockFor(closedUnderCap)!;
     expect(small.reason).toBe('closed');
     expect(small.message).toMatch(/closed to new deposits/i);
     expect(small.message).toMatch(/spend|spendable|withdraw/i);
+    // And it must NOT claim a lamport cost: the relay cap is a lamport bound and
+    // USDC atoms are not lamports. That confusion once printed "needs about
+    // 1.57 SOL up front" for a 1000 USDC deposit, verbatim, to the buyer.
+    expect(small.message).not.toMatch(/SOL up front/i);
 
     // Over the cap: that reason WINS over the flag, because it is the fact that
     // stays true if someone flips the flag back. A pool reopened by hand must
