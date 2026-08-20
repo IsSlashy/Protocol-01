@@ -516,7 +516,15 @@ export interface DepositBlock {
  * disagree — the previous round shipped exactly that disagreement.
  */
 export function depositBlockFor(pool: PoolConfig): DepositBlock | null {
-  const required = estimateShieldPrefundLamports(pool);
+  // ⚠️ THE RELAY CAP IS A LAMPORT BOUND, SO IT ONLY MEANS ANYTHING FOR SOL.
+  //
+  // `estimateShieldPrefundLamports` runs on `denominationAtomic`, and for a
+  // 6-decimal USDC pool those atoms are not lamports. An earlier version
+  // compared them anyway and told the buyer a 1000 USDC deposit "needs about
+  // 1.57 SOL up front" — a number with no meaning, in the wrong unit, rendered
+  // verbatim to the user. Non-SOL pools fall through to the plain closure
+  // below, whose sentence is true for every token.
+  const required = pool.token === 'SOL' ? estimateShieldPrefundLamports(pool) : 0;
   if (required > MAX_RELAY_LAMPORTS) {
     return {
       reason: 'over-relay-cap',
@@ -570,9 +578,19 @@ export function denominationsForRecovery(token: PoolToken): number[] {
 /**
  * Thrown by the deposit engine when a pool will not take a new note.
  *
- * `name` is the contract, not `instanceof`: this is thrown inside a Web Worker
- * and reaches the page through structured clone, where the prototype chain is
- * gone and only the string survives.
+ * ⚠️ NEITHER `instanceof` NOR `name` SURVIVES THE WORKER BOUNDARY, and an
+ * earlier version of this comment claimed `name` did. `workerClient.ts:93`
+ * rejects with `new Error(out.error)` — a PLAIN Error built from the message
+ * string — so a main-thread caller writing
+ * `err.name === 'PoolClosedToDepositsError'` gets `'Error'` and the branch never
+ * fires. Only `message` crosses.
+ *
+ * So the GUARANTEE is not this class: it is the refusal at
+ * `poolHandlers.ts:1421`, which runs inside the worker before anything moves.
+ * This class exists for callers that reach the handler directly — the live
+ * devnet harness does — and to carry `reason` to them. A UI that wants to branch
+ * on the cause must ask `depositBlockFor` itself, which is synchronous, pure,
+ * and on the same side of the boundary as the screen.
  */
 export class PoolClosedToDepositsError extends Error {
   readonly reason: DepositBlockReason;
