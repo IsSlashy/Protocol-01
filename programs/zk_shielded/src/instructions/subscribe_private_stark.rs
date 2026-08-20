@@ -550,3 +550,245 @@ mod stealth_meta_guard {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Structural guard on the PDA bump derivation.
+//
+// This pins the SHAPE of the two note-seeded PDAs: both stay Anchor `init`
+// accounts with a BARE `bump`, i.e. the runtime searches for the canonical
+// bump and the handler takes no bump argument. The reasoning and the
+// measurements are in the block above the `vault` field.
+//
+// The guard exists because the change it blocks is a five-line change that
+// reads as an obvious win and is not one, and because NEITHER of its two
+// failure modes is caught by anything else in the tree:
+//
+//   - `bump = <arg>` on an `init` account still calls find_program_address
+//     (anchor-syn 0.32.1 codegen/accounts/constraints.rs:548-555, spliced at
+//     :1083). It compiles, deploys, passes every test, breaks every shipped
+//     client's instruction encoding, and changes the compute cost by nothing.
+//     There is no failing assertion anywhere that would say so.
+//   - Dropping `init` for `create_program_address` on a caller-supplied bump
+//     gives ~128 valid record addresses per nullifier. That one does not
+//     announce itself either; it shows up as a drained pool.
+//
+// Same discipline as `stealth_meta_guard`: assertions run against CODE with
+// comments stripped, because a comment naming a constraint must never be what
+// satisfies an assertion about the constraint.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod pda_bump_guard {
+    const SRC: &str = include_str!("subscribe_private_stark.rs");
+
+    /// Everything before the first test module, with comments removed.
+    fn code() -> String {
+        let end = SRC.find("mod stealth_meta_guard").expect("guard marker");
+        SRC[..end]
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(at) => &l[..at],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The `#[account(...)]` attribute immediately preceding `pub <field>:`.
+    fn account_attr(code: &str, field_decl: &str) -> String {
+        let field_at = code
+            .find(field_decl)
+            .unwrap_or_else(|| panic!("field `{field_decl}` not found"));
+        let attr_at = code[..field_at]
+            .rfind("#[account(")
+            .unwrap_or_else(|| panic!("no #[account(..)] before `{field_decl}`"));
+        code[attr_at..field_at].to_string()
+    }
+
+    #[test]
+    fn the_comment_stripper_actually_strips() {
+        assert!(
+            SRC.contains("restates public data"),
+            "fixture reworded — pick another phrase from the vault block",
+        );
+        assert!(
+            !code().contains("restates public data"),
+            "code() is leaking comments; the guards below become prose matches",
+        );
+        assert!(code().contains("pub fn handler("));
+    }
+
+    #[test]
+    fn both_note_seeded_pdas_still_search_for_the_canonical_bump() {
+        let code = code();
+        for field in ["pub vault:", "pub nullifier_record:"] {
+            let attr = account_attr(&code, field);
+            assert!(
+                attr.contains("init,") && attr.contains("seeds = ["),
+                "`{field}` is no longer an Anchor `init` + `seeds` account. If the \
+                 derivation was hand-rolled to reach the constant-cost \
+                 `create_program_address` form, the canonical-bump guarantee is \
+                 gone with it — for `nullifier_record` that is ~128 record \
+                 addresses per nullifier and a pool drain. Read the block above \
+                 the `vault` field before changing this line.",
+            );
+            assert!(
+                !attr.contains("bump ="),
+                "`{field}` now takes a bump target. On an `init` account that does \
+                 NOT replace the find_program_address search — anchor-syn 0.32.1 \
+                 emits it either way (codegen/accounts/constraints.rs:548-555, \
+                 spliced at :1083) and a bump target only adds an equality check \
+                 (:512-527). So this buys zero compute units while breaking the \
+                 instruction encoding of every shipped client. Measured, not \
+                 assumed.",
+            );
+        }
+    }
+
+    #[test]
+    fn the_handler_takes_no_bump_argument() {
+        let code = code();
+        let sig_start = code.find("pub fn handler(").expect("handler signature");
+        let sig_end = code[sig_start..].find(") -> Result<").expect("end of signature") + sig_start;
+        assert!(
+            !code[sig_start..sig_end].contains("bump"),
+            "subscribe_private_stark takes a bump argument. Every client \
+             (apps/web, apps/extension, apps/mobile) hand-rolls this instruction's \
+             Borsh payload, so this is a breaking wire change; and on an `init` \
+             account the bump cannot remove the PDA search that motivated it. \
+             Read the block above the `vault` field.",
+        );
+    }
+}
+
+// ===========================================================================
+// WHY THE PDA DERIVATIONS ABOVE ARE STILL `bump` (bare), and why that is not
+// the leak it looks like.
+//
+// This analysis lived inline on `vault` and `nullifier_record` until it was
+// moved down here on 2026-08-21. It was 119 lines in the middle of an accounts
+// struct, and it had shifted every line below it — 38 numbered citations across
+// web, extension, mobile, the SDK and docs point INTO this file, and all of them
+// broke at once. The prose was right and its placement was a cost nobody priced.
+// Keep it here: appended text shifts nothing.
+// ===========================================================================
+//
+// ─────────────────────────────────────────────────────────────────────
+// CONSTANT-COST PDA DERIVATION: MEASURED, AND DELIBERATELY NOT DONE.
+//
+// THE ASK. Ten subscriptions at identical denomination, vault size and
+// program consumed 28,918 to 40,721 CU, all ten distinct — a near-unique
+// fingerprint in the public logs. Cause named correctly: this account and
+// `nullifier_record` are the only two PDAs here derived at RUNTIME with a
+// bare `bump`, so Anchor searches for the canonical bump and the probe
+// count follows the seeds. The proposed fix was to take both bumps as
+// instruction arguments and write `bump = vault_bump`, so the runtime
+// VERIFIES a supplied bump at constant cost instead of SEARCHING. Five
+// lines, one redeploy.
+//
+// It does not work, and the way it fails is invisible. Two findings read
+// out of the pinned toolchain rather than assumed, then the answer to the
+// question that was asked:
+//
+// 1. `bump = <expr>` DOES NOT REMOVE THE SEARCH ON AN `init` ACCOUNT.
+//    anchor-syn 0.32.1 emits `Pubkey::find_program_address` for every
+//    `init` + `seeds` account unconditionally — the `find_pda` token
+//    stream is built at codegen/accounts/constraints.rs:548-555 and spliced
+//    in at :1083 with no branch on whether a bump target was given. A
+//    `bump = <expr>` target only ADDS `if __bump != <expr> { ConstraintSeeds }`
+//    on top of the search (:512-527, whose own comment reads "If the bump
+//    is provided with init *and target*, then force it to be the canonical
+//    bump"). The constant-cost `Pubkey::create_program_address` form lives
+//    ONLY on the non-init path, :1183-1188 — which is exactly why
+//    `denominated_pool` (`bump = denominated_pool.bump`) and `merkle_tree`
+//    already cost a constant and these two do not. So the change costs
+//    every shipped client a coordinated redeploy, adds a byte to the
+//    payload, and buys ZERO compute units. It would have shipped looking
+//    like a fix.
+//
+// 2. DROPPING `init` TO REACH THE CONSTANT FORM IS A DOUBLE-SPEND HOLE.
+//    See the block on `nullifier_record` below. It is not a hole here — a
+//    non-canonical vault is only an address no client would derive — but
+//    the two accounts have to move together or the fingerprint survives on
+//    the half that stayed, and half a distinguisher is a distinguisher.
+//
+// 3. THE FOUNDER'S QUESTION — a bump passed as an argument becomes PUBLIC;
+//    does it reveal anything the transaction does not already reveal?
+//    It becomes public, and it reveals NOTHING NEW. A bump is the unique
+//    `b` for which `create_program_address(seeds ‖ b) == address`. Both
+//    addresses are already on the wire: the vault is account #2 of this
+//    instruction and the nullifier record is account #5. Both seed sets are
+//    already published by this same transaction — `retailer` is account #1,
+//    `subscriber_commitment` and `nullifier` are both emitted in
+//    `SubscribePrivateStarkEvent` at the bottom of this file, and
+//    `token_mint` and the pool key are public account state. Address plus
+//    seeds determines the bump, so an observer can already compute it and
+//    H(bump | transaction) is zero before the argument is added. Passing it
+//    moves a byte, not a fact. This is the pattern Solana's own PDA
+//    documentation teaches: solana-pubkey-2.4.0/src/lib.rs:641-651 passes
+//    `vault_bump_seed` in instruction data.
+//
+// AND THAT ANSWER APPLIES BACKWARDS, to the CU fingerprint itself. The
+// search cost is a deterministic function of the seeds and the program id,
+// and every seed of both PDAs is published by this same transaction (the
+// list is in point 3). So the CU number restates public data: an observer
+// who has the transaction can predict it, whatever the runtime's per-probe
+// metering turns out to be. `find_program_address` walks bumps downward
+// from 255 — the host reference implementation is
+// solana-pubkey-2.4.0/src/lib.rs:828-829, and the on-chain syscall must
+// agree with it because it returns the same canonical bump — so the number
+// of probes is fixed once the canonical bump is, and the canonical bump is
+// fixed once the address is.
+//
+// That does NOT make the fingerprint harmless, and it is NOT a reason to
+// like it. What it does mean is that turning a candidate pool leaf into a
+// predicted CU cost still needs the note secret, because it needs the
+// nullifier, and the CU adds nothing that the nullifier and the vault
+// address in the very same transaction do not already give up. Anyone
+// arguing this instruction leaks the buyer through its compute meter has to
+// show a step that does not already fall out of those two values. Nobody
+// has, and the other data-dependent costs in the handler do not supply one
+// either: `is_valid_root` scans `historical_roots` linearly
+// (state/pool_v3.rs:191-196), but on the `merkle_root` this instruction
+// takes as a cleartext argument, and the license `Option` tag tracks a
+// field written into the public vault account.
+//
+// WHAT WOULD ACTUALLY FLATTEN IT. Only padding: let Anchor search, then
+// burn the difference up to the worst case, 255 extra `create_program_address`
+// probes per PDA on EVERY transaction, forever. That is a real price on
+// every subscriber to erase a number an observer can already derive, and it
+// is not being paid silently. Rejecting a low canonical bump instead is not
+// an option: the note is already deposited, so a rejected bump is a
+// stranded note.
+//
+// A `#[cfg(test)] mod pda_bump_guard` at the bottom of this file pins the
+// shape, because measurement 1 is the kind of change nothing else catches.
+// ─────────────────────────────────────────────────────────────────────
+//
+// ─────────────────────────────────────────────────────────────────────
+// WHY THIS ONE CANNOT TAKE ITS BUMP AS AN ARGUMENT, EVER.
+//
+// The double-spend guard on this instruction is not a comparison; it is
+// the EXISTENCE of this account at ONE address. `init` fails if the
+// account is already there, and that is the whole mechanism.
+//
+// That mechanism holds only because the address is the CANONICAL one.
+// `create_program_address(seeds ‖ b)` succeeds for roughly half of the 256
+// values of `b` — every `b` whose result lands off the ed25519 curve. So a
+// caller who is allowed to choose `b` gets on the order of 128 DISTINCT
+// valid record PDAs for ONE nullifier, and spends the same note once per
+// address. Class: pool drain, and it would pass every check in this file —
+// C1, C3, the inputs-hash bindings and the `nullifier[8..] == 0`
+// canonicalisation all bind the nullifier VALUE, and none of them binds the
+// record's ADDRESS.
+//
+// Anchor's `init` is what forbids this today: with a `bump = <expr>` target
+// it forces the supplied bump to equal the canonical one
+// (anchor-syn 0.32.1 codegen/accounts/constraints.rs:512-527). And the only
+// way to establish that a bump is canonical is to show every higher bump
+// fails — i.e. to run the search. Constant cost and canonicality are the
+// same question asked twice; you cannot have both.
+//
+// Closing the CU fingerprint here therefore means replacing the guard, not
+// the derivation — a nullifier set that is not addressed by the nullifier.
+// That is a state-layout change against live records, not a five-line one.
+// ─────────────────────────────────────────────────────────────────────

@@ -11,6 +11,25 @@
  * nullifier: spending either one marks it spent and the other becomes
  * permanently unspendable. Counter reuse destroys funds.
  *
+ * The same `secret` is also hashed into `subscriber_commitment = Poseidon(secret)`
+ * (`worker/poolHandlers.ts:2366`), which is a subscription vault PDA seed. The
+ * tempting conclusion — that one reuse leaks a link AND strands a note — is
+ * WRONG, and the reason is worth keeping: the two costs are mutually exclusive,
+ * because the guard against the second is what prevents the first.
+ *
+ * Same pool and same counter give the same secret, hence the same nullifier and
+ * the same commitment. Subscribing consumes both: `nullifier_record` and `vault`
+ * are each `init` PDAs of that instruction
+ * (`subscribe_private_stark.rs:125`, `:86`). So a second subscription off a
+ * reused secret does not create a second vault to correlate — it fails, twice
+ * over, on an account that already exists. One commitment can be behind exactly
+ * one vault. What is left is purely the money cost: the stranded note.
+ *
+ * The invariant that does bind is at
+ * `programs/zk_shielded/src/state/subscription_vault.rs:159` — a note secret must
+ * not serve two jobs. Not because reuse leaks, but because one value carrying
+ * both the nullifier and a PDA seed makes a money bug out of a privacy slip.
+ *
  * So the counter must never be guessed from local state alone. Everything here
  * is derived from the chain plus the wallet seed, so a user with a cleared
  * browser (or a different device) reconstructs the exact same picture.

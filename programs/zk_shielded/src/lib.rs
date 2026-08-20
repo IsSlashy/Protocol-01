@@ -412,6 +412,25 @@ pub mod zk_shielded {
     /// still occupies its 65 bytes, always `None`, so `SubscriptionVault::LEN`
     /// and every account decoder keep working against the vaults already live
     /// on devnet.
+    ///
+    /// ARGUMENTS NOT ADDED — `vault_bump: u8` and `nullifier_record_bump: u8`.
+    /// Ten subscriptions at identical denomination and vault size consumed
+    /// 28,918 to 40,721 CU, all ten distinct, because `vault` and
+    /// `nullifier_record` are the two PDAs derived at runtime with a bare
+    /// `bump`. Taking both bumps as arguments and writing `bump = <arg>` looks
+    /// like a five-line fix for that and is not one: on an `init` account
+    /// anchor-syn 0.32.1 runs `find_program_address` either way and a bump
+    /// target only adds an equality check on top, so the change buys zero
+    /// compute units while forcing a coordinated encoder update in apps/web,
+    /// apps/extension and apps/mobile — every one of which hand-rolls this
+    /// payload. Going further and dropping `init` to reach the constant-cost
+    /// `create_program_address` form would hand the caller ~128 valid record
+    /// addresses for one nullifier, i.e. a pool drain. Measurements, citations
+    /// and the answer to "does a public bump reveal anything new" are in the
+    /// block at the END of `instructions/subscribe_private_stark.rs` (it sits
+    /// there, not next to the fields it describes, so that it shifts none of
+    /// the 38 numbered citations that point into that file), pinned by
+    /// `pda_bump_guard` in the same place.
     pub fn subscribe_private_stark(
         ctx: Context<SubscribePrivateStark>,
         nullifier: [u8; 32],

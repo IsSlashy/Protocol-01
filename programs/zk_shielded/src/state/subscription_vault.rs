@@ -176,6 +176,23 @@ impl SubscriptionVault {
     /// subscription" — would silently create the linkage, and no test on chain
     /// would go red.
     ///
+    /// The cost of breaking this is MONEY, not privacy — and the distinction is
+    /// load-bearing, because an earlier draft of this comment got it backwards.
+    /// The secret hashed here is `deriveNoteMaterial(walletSeed, poolPDA,
+    /// counter)` in the web client, whose only per-note input is the counter, so
+    /// two notes minted under one counter share a secret — hence one nullifier
+    /// and one `subscriber_commitment`, hence ONE vault address.
+    ///
+    /// That collision is not an extra leak, it is the guard. `nullifier_record`
+    /// and `vault` are both `init` in `subscribe_private_stark.rs` (`:125`,
+    /// `:86`), so the second subscription off a reused secret cannot land: it
+    /// hits accounts that already exist. Nobody ever observes one commitment
+    /// under two vaults. What is really lost is the second note, stranded
+    /// forever behind a spent nullifier. See
+    /// `apps/web/lib/privacy/pool/poolNotes.ts:5-12`, and
+    /// `sharing_a_note_secret_collides_the_vault_address` in
+    /// `tests/landed_invariants.rs` for the address half, measured.
+    ///
     /// MEASURED 2026-08-20, and this is the reason the invariant is worth
     /// writing down rather than assuming: the vault address is NOT derivable
     /// from the public deposit leaves. All 35 leaves of the 1 SOL pool were
