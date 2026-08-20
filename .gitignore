@@ -301,3 +301,4 @@ docs/*_SECURITY_*.md
 programs/p01_stark_verifier/tests/c7_probe/out/
 programs/p01_stark_verifier/tests/c7_probe/target/
 programs/p01_stark_verifier/tests/c7_probe/Cargo.lock
+apps/web/campaign-progress.jsonl
