@@ -211,29 +211,25 @@ export const SOL_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('HfSsGRgVFJGBiiEtRXrHocNPw5dyTQ78hEZH8GWpXaAG'),
     treePDA: new PublicKey('43MRQ91VrrxkD2PqV4QXNJG3BUmu8JmbDUTtWt2dYBAU'),
     version: 'v3',
-    // 🎯 REOPENED 2026-08-21 — THIS IS THE CAMPAIGN POOL, AND THE ARITHMETIC IS
-    // WHY.
+    // ⛔ CLOSED. ONE DENOMINATION, AND IT IS 1 SOL. Founder decision 2026-08-21.
     //
-    // It was closed on 2026-08-20 to concentrate deposits in the 1 SOL pool.
-    // That was right about concentration and wrong about which denomination to
-    // concentrate ON, because an anonymity set counts NOTES, not lamports:
+    // This pool was briefly reopened the same day on an argument that was
+    // arithmetically right and strategically wrong. The arithmetic: an anonymity
+    // set counts NOTES, not lamports, so the same capital buys ten times more of
+    // them here (42.9 SOL = ~420 notes at 0.1, ~42 at 1). The mistake was
+    // forgetting what the number is FOR.
     //
-    //   capital / denomination = notes
-    //   42.9 SOL at 1 SOL   =  ~42 notes
-    //   42.9 SOL at 0.1 SOL = ~420 notes
+    // An anonymity set in a pool the demo does not use is worth nothing to the
+    // claim the demo makes. Quoting 420 while showing a spend from a pool of 42
+    // is exactly the true-sentence-that-reads-false this project has already
+    // paid for. A set does not add across denominations, it SPLITS — so the
+    // right move is one denomination everywhere, and the one that already
+    // carries the proven journey.
     //
-    // Ten times the privacy for the same money. The proof work, the fees and
-    // the ~0.57 SOL of transient proof rent are IDENTICAL per deposit at either
-    // denomination — the circuits do not know what the note is worth — so the
-    // only thing a bigger denomination buys is a smaller set.
-    //
-    // Below ~0.1 the binding constraint stops being capital and becomes TIME:
-    // a deposit takes 50-230 s of proving and ~150 transactions whatever it is
-    // worth, so 0.01 SOL would mean 4,200 deposits and ~100 hours. 0.1 is the
-    // floor where capital and clock meet.
-    //
-    // Measured on chain 2026-08-20: 39 leaves, 10 unspent notes.
-    deposits: 'open',
+    // Measured 2026-08-21: 41 leaves, 12 unspent notes. They stay scannable,
+    // spendable, subscribable and sweepable — closing an entrance is not closing
+    // an exit, and the read paths below never consult this flag.
+    deposits: 'closed',
   },
   {
     token: 'SOL', tokenMint: NATIVE_SOL_MINT, denomination: 1, decimals: 9,
@@ -241,11 +237,23 @@ export const SOL_POOLS_V3: PoolConfig[] = [
     poolPDA: new PublicKey('6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS'),
     treePDA: new PublicKey('GGJQwEigkoSk3pzg6eiLtt1cu2kYfCtV5JewNJsMkNdi'),
     version: 'v3',
-    // THE ONE POOL THAT STAYS OPEN. Measured on chain 2026-08-20: 34 leaves,
-    // 11 unspent notes — the largest set we have — and it is the only
-    // denomination the relay can actually fund (see MAX_RELAY_LAMPORTS). The
-    // frozen demo journey runs through here: shield 5DiMyNkJdZxa… leaf 33,
-    // subscribe 4E39AJ37BFZq… vault 7xUisNg8HKhg… 1.00340344 SOL.
+    // 🎯 THE ONE OPEN POOL. Every deposit this project makes lands here, and
+    // that is a decision rather than an accident (founder, 2026-08-21).
+    //
+    // Three reasons, in the order they matter:
+    //  1. An anonymity set does not add across denominations, it SPLITS. Two
+    //     half-full pools are strictly worse than one full one.
+    //  2. It is the pool the frozen demo journey runs through, so the number we
+    //     quote and the spend we show come from the same place. A set measured
+    //     somewhere else is a true sentence that reads as a false one.
+    //  3. It is under the relay ceiling (MAX_RELAY_LAMPORTS), which 10 SOL and
+    //     up are not.
+    //
+    // Measured 2026-08-20: 34 leaves, 11 unspent notes. The deposit campaign
+    // (depositCampaign.test.ts) exists to move that second number and nothing
+    // else — it is the only lever on the anonymity set that is not code.
+    // Frozen demo: shield 5DiMyNkJdZxa… leaf 33, subscribe 4E39AJ37BFZq…
+    // vault 7xUisNg8HKhg… 1.00340344 SOL.
     deposits: 'open',
   },
   {

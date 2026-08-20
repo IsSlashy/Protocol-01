@@ -13,10 +13,20 @@
  *
  *   capital / denomination = notes
  *
- * That is the whole formula, and it is why the campaign targets 0.1 SOL rather
- * than 1: the proof work, the transaction fees and the ~0.57 SOL of transient
- * proof rent are IDENTICAL per deposit at either denomination — the circuits do
- * not know what a note is worth — so ten times more notes for the same money.
+ * That formula argues for the SMALLEST denomination — 42.9 SOL buys ~420 notes
+ * at 0.1 SOL and only ~42 at 1 SOL, because the proof work, the fees and the
+ * ~0.57 SOL of transient proof rent are identical either way; the circuits do
+ * not know what a note is worth.
+ *
+ * ⛔ AND THE CAMPAIGN RUNS AT 1 SOL ANYWAY. Founder decision, 2026-08-21, and it
+ * is the right one: a set does not add across denominations, it SPLITS, and a
+ * set in a pool the demo does not spend from is worth nothing to the claim the
+ * demo makes. Quoting 420 while showing a spend out of a pool of 42 is the
+ * true-sentence-that-reads-false this project keeps paying for. One
+ * denomination, and it is the one carrying the proven journey.
+ *
+ * The honest consequence, stated so nobody has to rediscover it: the ceiling is
+ * ~41 notes at the current balance, not 420. Raising it needs capital, not code.
  *
  * ⚠️ RECYCLING BUYS NOTHING. Deposit, spend, redeposit grows the tree without
  * growing the set: at the moment of a spend the candidates are the leaves still
@@ -116,8 +126,12 @@ if (typeof (globalThis as unknown as { Worker?: unknown }).Worker === 'undefined
 const RUN = process.env.P01_DEPOSIT_CAMPAIGN === '1';
 const RPC = process.env.P01_LIVE_RPC ?? 'https://api.devnet.solana.com';
 
-/** 0.1 SOL. See the header: an anonymity set counts notes, not lamports. */
-const DENOMINATION = 0.1;
+/**
+ * 1 SOL — the project's ONE denomination, and the pool the frozen demo spends
+ * from. See the header on why this is not the note-maximising choice and is
+ * still the right one.
+ */
+const DENOMINATION = 1;
 
 /** How many UNSPENT notes to aim for. Overridable so a short run can be tried. */
 const TARGET = Number(process.env.P01_CAMPAIGN_TARGET ?? 400);
@@ -173,14 +187,14 @@ function record(line: Record<string, unknown>): void {
 
 describe.skipIf(!RUN)('deposit campaign', () => {
   it(
-    'fills the 0.1 SOL pool until the capital runs out',
+    'fills the 1 SOL pool until the capital runs out',
     async () => {
       const wallet = loadKeypair();
       const conn = new Connection(RPC, 'confirmed');
       configurePoolHandlers(RPC);
 
       const pool = findPoolV3('SOL', DENOMINATION);
-      expect(pool, 'the 0.1 SOL pool must exist in the table').toBeTruthy();
+      expect(pool, 'the 1 SOL pool must exist in the table').toBeTruthy();
 
       // The same message the page signs, signed the same way — a harness that
       // invented its own signature would derive a different identity than

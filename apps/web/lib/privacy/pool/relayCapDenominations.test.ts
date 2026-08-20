@@ -102,11 +102,12 @@ describe('the shield prefund estimate is the real cost model', () => {
 });
 
 describe('an over-cap denomination is not selectable', () => {
-  it('offers exactly the two pools under the cap', () => {
-    // 0.1 reopened 2026-08-21 as the campaign target. Both sit far under the
-    // relay ceiling; everything above 1 SOL stays out, which is the property
-    // this file exists for.
-    expect(openForDeposit().map((p) => p.denomination)).toEqual([0.1, 1]);
+  it('offers exactly the 1 SOL pool for deposit', () => {
+    // One denomination, by decision (founder, 2026-08-21): a set splits across
+    // denominations rather than adding, and this is the one the frozen demo
+    // spends from. Everything above 1 SOL is out for a harder reason - the
+    // relay cannot fund it - which is the property this file exists for.
+    expect(openForDeposit().map((p) => p.denomination)).toEqual([1]);
   });
 
   it('never offers a denomination the relay would refuse', () => {
@@ -128,7 +129,6 @@ describe('an over-cap denomination is not selectable', () => {
 
     // Open, servable: nothing to say.
     expect(denominatedPool.depositBlockFor(byDenom(1))).toBeNull();
-    expect(denominatedPool.depositBlockFor(byDenom(0.1))).toBeNull();
 
     // Closed but well within the relay's reach: the honest reason is the
     // closure, not the arithmetic.

@@ -263,9 +263,11 @@ describe('closing the entrance does not close the exit', () => {
   it('marks a pool closed and still scans it', async () => {
     const pool = findPoolV3('SOL', 10)!;
     expect(isClosed(pool), 'the 10 SOL pool must be closed to deposits').toBe(true);
-    // And the campaign pool must be OPEN, asserted here so a revert that closes
-    // it again cannot pass quietly.
-    expect(isClosed(findPoolV3('SOL', 0.1)!), 'the 0.1 SOL pool is the campaign target').toBe(false);
+    // And 1 SOL must be the ONLY open one, asserted here so a change that opens
+    // a second denomination cannot pass quietly - splitting the set is the
+    // failure this pins.
+    expect(isClosed(findPoolV3('SOL', 1)!), '1 SOL is the one open pool').toBe(false);
+    expect(isClosed(findPoolV3('SOL', 0.1)!), '0.1 SOL must stay closed').toBe(true);
 
     await handlePoolRequest({ kind: 'poolScan', meta: META, token: 'SOL' });
 
@@ -333,10 +335,10 @@ describe('a closed pool stays resolvable', () => {
 
     // And the closed ones are the majority of that table, which is exactly why
     // filtering the shared enumerations would be a fund-loss change.
-    // TWO open since 2026-08-21: 0.1 SOL reopened as the deposit campaign's
-    // target, 1 SOL still carries the frozen demo journey. Everything else -
-    // every over-cap SOL pool and every USDC pool - stays closed.
-    expect(ALL_POOLS_V3.filter(isClosed).length).toBe(ALL_POOLS_V3.length - 2);
+    // ONE open, and that is the point (founder, 2026-08-21). An anonymity set
+    // does not add across denominations, it splits, so every deposit lands in
+    // the 1 SOL pool - the one the frozen demo spends from.
+    expect(ALL_POOLS_V3.filter(isClosed).length).toBe(ALL_POOLS_V3.length - 1);
   });
 });
 
@@ -374,11 +376,11 @@ describe('float recovery still covers closed pools', () => {
 
     // The deposit ladder is a strict subset — never the same array, never the
     // one recovery reads.
-    // Two rungs since 2026-08-21: 0.1 is the campaign target (ten times the
-    // notes per SOL, because an anonymity set counts notes) and 1 is where the
-    // frozen demo journey lives. Still a strict subset of the recovery ladder.
+    // ONE rung. Every deposit lands in the 1 SOL pool; a set splits across
+    // denominations rather than adding. Still a strict subset of the recovery
+    // ladder, which must keep every pool whatever the deposit side says.
     const forDeposit = denominatedPool.poolsOpenForDeposit('SOL').map((p) => p.denomination);
-    expect(forDeposit).toEqual([0.1, 1]);
+    expect(forDeposit).toEqual([1]);
     expect(forDeposit.length).toBeLessThan(forRecovery.length);
     for (const d of forDeposit) expect(forRecovery).toContain(d);
   });
