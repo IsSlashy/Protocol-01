@@ -34,7 +34,23 @@ const LEGACY_HEX = bytesToHex(derivePoolSeedLegacy(SIGNATURE));
 const SALTED_HEX = bytesToHex(derivePoolSeedSalted(SIGNATURE, PASSPHRASE));
 
 const POOL_58 = 'HfSsGRgVFJGBiiEtRXrHocNPw5dyTQ78hEZH8GWpXaAG'; // 0.1 SOL pool
+/**
+ * The pool every READ path in this file exercises: scan, withdraw, recover.
+ *
+ * Deliberately the CLOSED one (0.1 SOL, `deposits: 'closed'` since 2026-08-20).
+ * It holds 10 unspent notes worth 1.0 SOL on chain, and every assertion below
+ * that reads or spends against it is a second witness that closing a pool to
+ * new deposits does not close it to anything else.
+ */
 const DENOM = 0.1;
+
+/**
+ * The pool the SHIELD assertions use, which must be one still open to deposits
+ * — `handlePoolShieldPrepare` refuses a closed pool before it derives anything,
+ * so 0.1 here would fail on the closure and prove nothing about derivations.
+ * This file is about which SEED signs a shield, not about which pool takes one.
+ */
+const SHIELD_DENOM = 1;
 const META = 'meta-under-test';
 const OWNER = new PublicKey('7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU');
 
@@ -265,7 +281,7 @@ describe('a wallet with no passphrase behaves exactly as before', () => {
       kind: 'poolShieldPrepare',
       meta: META,
       token: 'SOL',
-      denomination: DENOM,
+      denomination: SHIELD_DENOM,
     });
     expect(seen.prepareShield).toEqual([LEGACY_HEX]);
   });
@@ -346,7 +362,7 @@ describe('a wallet that adopts a passphrase keeps its old notes', () => {
       kind: 'poolShieldPrepare',
       meta: META,
       token: 'SOL',
-      denomination: DENOM,
+      denomination: SHIELD_DENOM,
     });
     expect(seen.prepareShield).toEqual([SALTED_HEX]);
   });
@@ -361,7 +377,7 @@ describe('a wallet that adopts a passphrase keeps its old notes', () => {
       kind: 'poolShieldPrepare',
       meta: META,
       token: 'SOL',
-      denomination: DENOM,
+      denomination: SHIELD_DENOM,
     });
     const res = await handlePoolRequest({
       kind: 'poolShieldExecute',
