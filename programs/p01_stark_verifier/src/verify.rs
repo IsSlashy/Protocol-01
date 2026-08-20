@@ -73,7 +73,15 @@ fn get_lde_generator(lde_size: usize) -> Felt {
         2048 => Felt::new(GENERATOR_2048),
         4096 => Felt::new(GENERATOR_4096),
         8192 => Felt::new(GENERATOR_8192),
-        _ => Felt::ONE, // Should never happen for supported circuits
+        // ⛔ FAIL CLOSED. This arm was `_ => Felt::ONE` and that is not a
+        // degraded domain, it is the collapse of the whole low-degree binding:
+        // with g = 1 every LDE position is 1, so Z_D ≡ 0 and the quotient check
+        // becomes vacuous, y_inv = 1 so the FRI fold identity is no longer FRI,
+        // and gen_final = 1 so the final polynomial is always evaluated at the
+        // same point. An unsupported domain size must abort, never verify.
+        // The DEPLOYED verifier (b7-drop-aligned-checks, verify.rs:199) already
+        // returns Err(UnsupportedDomainSize) here; this branch had drifted open.
+        _ => panic!("unsupported LDE domain size"),
     }
 }
 
@@ -85,7 +93,8 @@ fn get_trace_generator(trace_length: usize) -> Felt {
         128 => Felt::new(GENERATOR_128),
         256 => Felt::new(GENERATOR_256),
         512 => Felt::new(GENERATOR_512),
-        _ => Felt::ONE, // Should never happen for supported circuits
+        // ⛔ FAIL CLOSED — same reasoning as get_lde_generator above.
+        _ => panic!("unsupported trace domain size"),
     }
 }
 
