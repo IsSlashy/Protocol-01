@@ -10,3 +10,4 @@ pub mod denominated_pool;
 pub mod balance_proof;
 pub mod confidential_balance;
 pub mod transfer;
+pub mod spend;
