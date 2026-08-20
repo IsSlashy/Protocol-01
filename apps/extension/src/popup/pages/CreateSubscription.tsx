@@ -98,18 +98,41 @@ const PRIVACY_MODES = [
 ];
 
 // ---------------------------------------------------------------------------
-// Interval → slots mapping (Solana ~400ms/slot = 2.5 slots/sec)
-// Mirrors how the mobile subscription vaults are structured:
-//   daily   = 7200 * 1  =  7 200 slots (~24h)
-//   weekly  = 7200 * 7  = 50 400 slots (~7d)
-//   monthly = 7200 * 30 = 216 000 slots (~30d)
-//   yearly  = 7200 * 365 = 2 628 000 slots (~1yr)
-// SLOTS_PER_EPOCH = 7200 (matches denominatedPool.ts constant).
+// Interval → slots mapping.
+//
+// 🚨 THIS CONSTANT WAS 7200 AND THAT IS AN EPOCH, NOT A DAY.
+//
+// At the canonical 400 ms/slot a day is 86_400 / 0.4 = 216_000 slots. 7200 is
+// SLOTS_PER_EPOCH — roughly 48 minutes — and the old comment block said so in
+// its own last line while claiming `7200 * 1 (~24h)` two lines above it. Both
+// cannot be true, and the arithmetic in the same comment ("~400ms/slot") is the
+// half that was right.
+//
+// MEASURED CONSEQUENCE, on chain 2026-08-20: every private subscription this
+// screen ever created carried an interval 30x too short. What the user picked
+// as "monthly" billed every DAY; "daily" billed every 48 minutes. The vault
+// stores raw slots and `claim_period` is permissionless, so a merchant could
+// have drained a year of periods out of a vault in twelve days.
+//
+// Two other definitions in this repository already had it right and disagreed
+// with this one in silence:
+//   scripts/seed-services/seed-demo-services.ts:54  216_000n
+//   apps/mobile/services/solana/streams.ts:645      (24*60*60*1000)/400
+// and the live registry service measured on devnet carries 6_480_000 slots for
+// its 30-day period — which is 216_000 * 30, not 7200 * 30.
+//
+// ⚠️ SLOTS_PER_EPOCH = 7200 is CORRECT where it means an epoch
+// (denominatedPool.ts). It is a different quantity. Do not reunify them.
+//
+//   daily   = 216_000 * 1   =    216 000 slots  =  86 400 s
+//   weekly  = 216_000 * 7   =  1 512 000 slots  = 604 800 s
+//   monthly = 216_000 * 30  =  6 480 000 slots  = 2 592 000 s
+//   yearly  = 216_000 * 365 = 78 840 000 slots  = 31 536 000 s
 // ---------------------------------------------------------------------------
 
-const SLOTS_PER_DAY = 7200n;
+export const SLOTS_PER_DAY = 216_000n;
 
-function intervalToSlots(interval: SubscriptionInterval): bigint {
+export function intervalToSlots(interval: SubscriptionInterval): bigint {
   switch (interval) {
     case 'daily':   return SLOTS_PER_DAY;
     case 'weekly':  return SLOTS_PER_DAY * 7n;
