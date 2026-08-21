@@ -221,6 +221,21 @@ misread as a leaf). A spend touching a pool the table does not know is a hard
 error, not a skipped probe — add the pool to `POOLS`, or pass
 `--pools <json>` shaped `{ "<poolPDA>": { "label": "...", "tree": "<treePDA>" } }`.
 
+**And since 2026-08-21 it refuses to call a short look a clean one.** P4's
+verdict used to be literally `deposit === null`, which folded two opposite
+states into one PASS: *nothing was published* (genuinely clean) and *a
+commitment WAS published and the walk did not find it inside
+`--deposit-limit`*. The second printed PASS while its own sentence read "may be
+RPC pruning, not privacy" — the tool contradicting itself on one line, with the
+boolean being the half people read. It is now a FAIL carrying
+`INCONCLUSIVE, reported as a failure on purpose`, which is the convention this
+file already applies to P3 three times over.
+
+No committed fixture reaches that branch: the two synthetic v4s publish no
+commitment and `v3-subscribe` finds its deposit. Its controls therefore live in
+`selfTestChannelDecoders()`, alongside P10's, and they assert all three states
+plus the rule that an unread window must not read like a traced deposit.
+
 ## Fixtures: `--record` / `--replay`
 
 `--record <dir>` runs live and freezes every RPC response the probes read into

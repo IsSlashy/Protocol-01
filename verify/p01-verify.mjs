@@ -1437,26 +1437,13 @@ async function verifySpend(rpc, signature, opts = {}) {
   if (target !== null) {
     deposit = await traceDepositChain(rpc, POOLS[poolPDA].tree, target, opts.depositLimit ?? 400);
   }
+  const p4 = p4Verdict(target, deposit);
   results.push(
     probe(
       'P4',
       'the spend cannot be traced to its deposit from public data',
-      deposit === null,
-      deposit === null
-        ? target === null
-          ? 'no commitment published, so there is nothing to match against a deposit'
-          : 'no matching LeafInserted found within the searched window (may be RPC pruning, not privacy)'
-        : deposit.hops.length === 1
-          ? `deposit ${deposit.signature} inserted the same commitment at leaf ${deposit.leafIndex}` +
-            (deposit.origin ? '' : ` — and this is NOT the origin: ${deposit.why}`)
-          : `${deposit.hops.length} hops back to ${deposit.origin ? 'the origin' : 'the furthest point reachable'}: ` +
-            deposit.hops
-              .map((h) => `${h.source?.name ?? 'unrecognised'} ${h.signature.slice(0, 12)}… (leaf ${h.leafIndex})`)
-              .join(' ← ') +
-            (deposit.origin
-              ? '. A transfer mints a fresh commitment but publishes the OLD one in the clear at byte 80, so it adds a ' +
-                'public hop rather than breaking the chain.'
-              : `. NOT the origin: ${deposit.why}`),
+      p4.passed,
+      p4.detail,
       // The number of hops is pinned so that a note gaining a transfer between
       // two runs cannot pass unnoticed inside an already-failing probe.
       deposit === null ? null : deposit.hops.length,
@@ -2208,6 +2195,73 @@ async function traceDepositChain(rpc, treePDA, leaf, limit) {
   return { ...last, hops, origin: false, why: `the chain is longer than ${MAX_DEPOSIT_HOPS} hops` };
 }
 
+/**
+ * P4's verdict and its sentence, as one pure function of what the walk found.
+ *
+ * 🚨 IT USED TO BE `deposit === null`, AND THAT FOLDED TWO OPPOSITE STATES
+ * INTO ONE PASS.
+ *
+ *   target === null                  nothing was published, so there is nothing
+ *                                    to match. Genuinely clean. PASS.
+ *   target !== null, deposit found    the walk succeeded. The spend IS traceable
+ *                                    to its deposit. FAIL.
+ *   target !== null, deposit null     a commitment WAS published and the walk
+ *                                    did not find it inside `--deposit-limit`.
+ *                                    That is "I could not look far enough",
+ *                                    which is not the same as "there is nothing
+ *                                    there" — and it used to report PASS while
+ *                                    its own sentence said "may be RPC pruning,
+ *                                    not privacy". The tool contradicted itself
+ *                                    in one line and the boolean was the half
+ *                                    that got read.
+ *
+ * The third case is now a FAIL, which is the convention this file already
+ * applies to P3 three times over: "INCONCLUSIVE, reported as a failure on
+ * purpose ... An unread channel is not a clean one." Two opposite conventions
+ * in one auditing tool is worse than either.
+ *
+ * ⛔ The demo runbook makes P4 an answer to an auditor. A probe that answers
+ * PASS because it gave up is the single most expensive kind of wrong here.
+ */
+function p4Verdict(target, deposit) {
+  if (target === null) {
+    return {
+      passed: true,
+      detail: 'no commitment published, so there is nothing to match against a deposit',
+    };
+  }
+  if (deposit === null) {
+    return {
+      passed: false,
+      detail:
+        'INCONCLUSIVE, reported as a failure on purpose: a commitment WAS published and no ' +
+        'matching LeafInserted was found within the searched window. That is a window too small ' +
+        'or an RPC that has pruned, not a demonstration of privacy. Re-run with --deposit-limit ' +
+        'raised, or --rpc pointing at an archival endpoint, before believing this one.',
+    };
+  }
+  if (deposit.hops.length === 1) {
+    return {
+      passed: false,
+      detail:
+        `deposit ${deposit.signature} inserted the same commitment at leaf ${deposit.leafIndex}` +
+        (deposit.origin ? '' : ` — and this is NOT the origin: ${deposit.why}`),
+    };
+  }
+  return {
+    passed: false,
+    detail:
+      `${deposit.hops.length} hops back to ${deposit.origin ? 'the origin' : 'the furthest point reachable'}: ` +
+      deposit.hops
+        .map((h) => `${h.source?.name ?? 'unrecognised'} ${h.signature.slice(0, 12)}… (leaf ${h.leafIndex})`)
+        .join(' ← ') +
+      (deposit.origin
+        ? '. A transfer mints a fresh commitment but publishes the OLD one in the clear at byte 80, so it adds a ' +
+          'public hop rather than breaking the chain.'
+        : `. NOT the origin: ${deposit.why}`),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Self-tests — the controls
 // ---------------------------------------------------------------------------
@@ -2697,6 +2751,35 @@ function selfTestChannelDecoders() {
       m === 'getSignaturesForAddress' ? [{ signature: 'OPAQUE' }] : m === 'getTransaction' ? opaque[p[0]] ?? null : null;
     const unknown = await traceDepositChain(blindRpc, 'TREE', SPENT, 400);
     check('P4 refuses to call an unrecognised insertion an origin', unknown?.origin, false);
+
+    // ── P4's VERDICT, all three states, because a fixture reaches only two ───
+    //
+    // 🚨 THE BRANCH THAT WAS WRONG IS THE BRANCH NO FIXTURE REACHES. All three
+    // committed fixtures land on `target === null` (the synthetic v4s, PASS) or
+    // on a deposit that is found (v3-subscribe, FAIL). The middle state — a
+    // commitment WAS published and the walk did not find it — is unreachable by
+    // replay without recording a fourth fixture, and it is precisely the state
+    // that reported PASS while its own sentence read "may be RPC pruning, not
+    // privacy". This is the same reason P10's real branches live here.
+    check('P4 passes only when nothing was published', p4Verdict(null, null).passed, true);
+    check('P4 fails when the deposit is found', p4Verdict(SPENT, traced).passed, false);
+    check(
+      'P4 fails when it published a commitment and could not find the deposit',
+      p4Verdict(SPENT, null).passed,
+      false,
+    );
+    check(
+      'P4 says WHY that failure is inconclusive rather than clean',
+      /INCONCLUSIVE, reported as a failure on purpose/.test(p4Verdict(SPENT, null).detail),
+      true,
+    );
+    // And the two failures must not read alike: one is a demonstration, the
+    // other is an admission. An auditor acts differently on each.
+    check(
+      'P4 does not describe an unread window as a traced deposit',
+      /hops back to|inserted the same commitment/.test(p4Verdict(SPENT, null).detail),
+      false,
+    );
 
     // ── P8's rule: every branch, asserted by its REASON ──────────────────────
     //
