@@ -66,8 +66,79 @@ const RELAYS_PER_IP_PER_HOUR = 3;
  * `ephemeral -> wallet` edge P9 walked on 2026-08-18. Fronting it here makes
  * the residue the deployment's own, so it can come back here with nobody owed
  * anything and no edge drawn.
+ *
+ * ⚠️ THIS BOUND CHANGED MEANING ON 2026-08-20 AND THE OLD READING IS NOW WRONG.
+ *
+ * Before, the buyer paid F. So F's own balance delta WAS `received`, F then
+ * forwarded `required`, and F's net outlay per call was exactly
+ * `required - received` — the number this constant bounds. Bounding the subsidy
+ * bounded F's spending, and one constant did both jobs.
+ *
+ * After, the value lands at R and F is credited NOTHING by the buyer. F's cash
+ * outflow per call is now the WHOLE of `required`, and the only thing bounding
+ * it is MAX_RELAY_LAMPORTS (2.5 SOL). This constant survives with a narrower
+ * meaning — HOW MUCH OF THIS JOB DID THE BUYER NOT PAY FOR, measured at R's
+ * index — which is an accounting bound between R and F, not a bound on F's
+ * balance.
+ *
+ * The operational consequence, stated because nothing in this repository
+ * implements it: F drains by roughly one denomination per deposit until R
+ * settles with it in batches. F needs a balance alarm and a settlement runbook.
+ * The settlement must stay batched and unrelated to any single purchase, or the
+ * clock rejoins what the topology separated.
  */
-const MAX_RENT_SUBSIDY_LAMPORTS = 1_500_000_000;
+/*
+ * ⚠️ RECALIBRATED 2026-08-21, AND THE OLD VALUE WAS THE WHOLE OF AN EXPLOIT.
+ *
+ * This constant is the ONLY bound on what one call can take out of F. Both of
+ * its inputs are chosen by the caller — `buyerPubkey` is where the lamports go
+ * and `requiredLamports` is how many — and the ticket that gates the route is
+ * `NEXT_PUBLIC_P01_FUNDER_TICKET`, i.e. it ships inside the browser bundle. So
+ * the guarantee is not "only our client calls this"; it is exactly this number.
+ *
+ * At 1_500_000_000 the arithmetic was: pay R anything at all, ask for
+ * `received + 1.5 SOL`, and F sends 1.5 SOL more than was paid, to an address
+ * the caller names. Three times per IP per hour.
+ *
+ * DERIVED, not chosen. The subsidy F legitimately fronts is the non-value half
+ * of a shield's pre-fund:
+ *
+ *   rent leg, measured on devnet    570,010,780   `denominatedPool.ts:457`
+ *   jitter rounds the sum UP to a
+ *   whole 0.01 SOL                  < 10,000,000  `prefundAmount.ts:43,81`
+ *   ...and adds up to four more     + 40,000,000  `prefundAmount.ts:51,82`
+ *   ------------------------------------------
+ *   worst honest subsidy            < 620,010,780
+ *
+ * 650,000,000 leaves ~0.03 SOL of headroom above the worst honest draw and
+ * refuses everything beyond it. It bounds the loss; it does not eliminate it,
+ * because nothing here can verify that the ephemeral this funds will actually
+ * deposit and sweep the rent home. On a devnet-only route with a public ticket
+ * that residual is accepted and written down rather than implied away.
+ */
+const MAX_RENT_SUBSIDY_LAMPORTS = 650_000_000;
+
+/**
+ * The least the fee wallet must actually have been credited, in basis points of
+ * what landed at the till.
+ *
+ * 🚨 THE FEE HAD NO ON-CHAIN CHECK AT ALL. `feeWallet` appeared only in the
+ * refusals above and never in the read below, so the 1% was enforced by the
+ * client and nowhere else — and the client is not a trust boundary here, for
+ * the same reason the cap above is not: the ticket is in the bundle. Anyone
+ * POSTing this route with a payment that omits the second transfer got the
+ * identical service for free, with no symptom anywhere.
+ *
+ * WHY 99 AND NOT 100. The client charges 1% of the DENOMINATION
+ * (`ephemeralFunder.ts`, `OPERATOR_FEE_BPS = 100n`), while what lands at the
+ * till is the denomination plus the protocol's own 0.3%
+ * (`shieldEphemeral.ts:293`). So an honest fee is 0.01 / 1.003 = 99.70 bps of
+ * `received`, and the client's integer division can shave one atom below that.
+ * 99 bps sits under the honest floor with room to spare and still catches an
+ * omitted fee, a halved fee, or a fee sent to some other address.
+ */
+const MIN_OPERATOR_FEE_BPS_OF_RECEIVED = 99n;
+const FEE_BPS_DENOMINATOR = 10_000n;
 
 /** What this transaction costs to send. Deducted from the subsidy, not the payment. */
 const FEE_LAMPORTS = 5_000;
@@ -88,6 +159,185 @@ function funderKeypair(): Keypair | null {
   }
 }
 
+/** The three addresses one relayed deposit touches. */
+interface PaymentAddresses {
+  /** F, the float: funds the ephemeral, receives the residue, is paid by nobody. */
+  funder: string;
+  /** R, the till: the address buyers pay, and the one this route measures. */
+  till: string;
+  /** The operator's 1% sink. Co-named with every buyer, so it must only receive. */
+  feeWallet: string;
+}
+
+/**
+ * Three distinct, parseable addresses — or every reason there are not.
+ *
+ * 🚨 WHY ALL THREE ARE CHECKED IN ONE PLACE, AND WHY IT IS SHARED WITH THE GET.
+ *
+ * MEASURED 2026-08-18: a subscription passed every probe but P11, and the walk
+ * was two hops with no cryptography. The spend's fee payer had been funded by
+ * F, and F's own history held a transfer SIGNED BY THE BUYER, one second
+ * earlier, for exactly the note's amount. Neither transfer named both ends. The
+ * address standing between them named both.
+ *
+ * The cure is topological: the address that COLLECTS from buyers must never be
+ * the address that FUNDS ephemerals. That was written into an env template, a
+ * readiness report and three file headers on 2026-08-19 — and wired nowhere, so
+ * this route still read the payment off F's index. Prose is not a mechanism.
+ * This function is the mechanism, and both the readiness answer and the refusal
+ * come out of it so they can never disagree.
+ *
+ * The fee wallet joins them because the fee rides INSIDE the buyer's own
+ * transaction:
+ *   - fee wallet == F puts F in a transaction the buyer signed, which is the
+ *     2026-08-18 walk with its middle step deleted;
+ *   - fee wallet == R is worse than either, because it corrupts the read rather
+ *     than blocking it. web3.js merges an identical pubkey into ONE account
+ *     index, so the till's delta would read value + fee, `subsidy = required -
+ *     received` merely shrinks, and the operator collects no fee at all while
+ *     believing they do. Nothing errors.
+ */
+function paymentAddresses(
+  funderPubkey: string,
+): { ok: true; addresses: PaymentAddresses } | { ok: false; reasons: string[] } {
+  const reasons: string[] = [];
+  const rawTill = process.env.P01_TILL_ADDRESS?.trim() ?? '';
+  const rawFee = process.env.P01_FEE_WALLET?.trim() ?? '';
+
+  let till = '';
+  let feeWallet = '';
+  if (!rawTill) {
+    reasons.push(
+      'P01_TILL_ADDRESS is unset, so this deployment has no address for buyers to pay that is ' +
+        'not the float. That identity is the leak measured on 2026-08-18.',
+    );
+  } else {
+    try {
+      till = new PublicKey(rawTill).toBase58();
+    } catch {
+      reasons.push('P01_TILL_ADDRESS is not a public key, so no payment to it could be read.');
+    }
+  }
+  if (!rawFee) {
+    reasons.push('P01_FEE_WALLET is unset, so the operator fee has nowhere to go.');
+  } else {
+    try {
+      feeWallet = new PublicKey(rawFee).toBase58();
+    } catch {
+      reasons.push('P01_FEE_WALLET is not a public key.');
+    }
+  }
+
+  if (till && till === funderPubkey) {
+    reasons.push(
+      'P01_TILL_ADDRESS IS the funder, so every buyer who pays it is one transaction from the ' +
+        'address that funds their own subscription and probe P11 walks it in two hops.',
+    );
+  }
+  if (feeWallet && feeWallet === funderPubkey) {
+    reasons.push(
+      'P01_FEE_WALLET IS the funder, so the float would appear inside the transaction the buyer ' +
+        'signs.',
+    );
+  }
+  if (feeWallet && till && feeWallet === till) {
+    reasons.push(
+      'P01_FEE_WALLET is the same address as the till (P01_TILL_ADDRESS). They would share one ' +
+        'account index, this route would read value + fee as the payment, and the fee would never ' +
+        'be collected — with no symptom anywhere.',
+    );
+  }
+
+  if (reasons.length > 0) return { ok: false, reasons };
+  return { ok: true, addresses: { funder: funderPubkey, till, feeWallet } };
+}
+
+/**
+ * What this relay will serve, so the client does not have to guess.
+ *
+ * 🚨 THE DEFECT THIS CLOSES IS "THE BUYER PAYS FIRST AND IS REFUSED AFTER".
+ * Everything this route can refuse — a job over the cap, a rent subsidy over the
+ * cap, a till that is unset — used to be discovered only by POSTing a receipt,
+ * which is to say only after a full denomination had already left the buyer's
+ * wallet for an address this deployment holds no spending key for. MEASURED
+ * FROM SOURCE the same day: the cap binds at a denomination of about 1.92 SOL,
+ * so the 10, 100, 500 and 1000 SOL pools took the money and delivered nothing,
+ * 100% of the time.
+ *
+ * The ceilings are reported rather than duplicated in the client for the reason
+ * every duplicated constant is eventually wrong: an operator lowering the cap
+ * here would not lower the copy there, and every buyer between the two numbers
+ * would be refused after paying.
+ *
+ * Deliberately NOT ticket-gated: all three addresses are public the instant they
+ * pay for anything, and a client that cannot read them cannot pay safely. It
+ * returns addresses and ceilings only — never the funder's key, never the
+ * ticket.
+ *
+ * `ready: false` with reasons is the honest answer to a broken configuration. A
+ * `till: null` a client might pay past is not.
+ */
+export async function GET(_request: NextRequest) {
+  const funder = funderKeypair();
+  const reasons: string[] = [];
+  let addresses: PaymentAddresses | null = null;
+
+  if (!funder) {
+    reasons.push('This deployment has no usable funder key, so nothing can fund an ephemeral.');
+  } else {
+    const resolved = paymentAddresses(funder.publicKey.toBase58());
+    if (resolved.ok) addresses = resolved.addresses;
+    else reasons.push(...resolved.reasons);
+  }
+  if (!process.env.P01_FUNDER_TICKET) {
+    reasons.push('P01_FUNDER_TICKET is unset: the POST refuses to relay anonymously.');
+  }
+  if (getStore() === null) {
+    reasons.push(
+      'No durable KV store is reachable, so the POST fails closed rather than relay one payment ' +
+        'twice.',
+    );
+  }
+
+  // Reported even when NOT ready, because a client that can see the till is
+  // still better off than one that guesses — but `ready` is what it must act on.
+  const till = addresses?.till ?? tillIfParseable();
+  const feeWallet = addresses?.feeWallet ?? feeWalletIfParseable();
+
+  return NextResponse.json({
+    ok: true,
+    funder: funder?.publicKey.toBase58() ?? null,
+    till,
+    feeWallet,
+    maxRelayLamports: MAX_RELAY_LAMPORTS,
+    maxRentSubsidyLamports: MAX_RENT_SUBSIDY_LAMPORTS,
+    ready: reasons.length === 0,
+    reasons,
+  });
+}
+
+/** The configured till, or null. Only for the report — never for a decision. */
+function tillIfParseable(): string | null {
+  const raw = process.env.P01_TILL_ADDRESS?.trim();
+  if (!raw) return null;
+  try {
+    return new PublicKey(raw).toBase58();
+  } catch {
+    return null;
+  }
+}
+
+/** The configured fee wallet, or null. Same caveat. */
+function feeWalletIfParseable(): string | null {
+  const raw = process.env.P01_FEE_WALLET?.trim();
+  if (!raw) return null;
+  try {
+    return new PublicKey(raw).toBase58();
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(request: NextRequest) {
   const ticket = process.env.P01_FUNDER_TICKET;
   if (!ticket) return bad(503, 'no ticket configured; refusing to relay anonymously');
@@ -97,6 +347,24 @@ export async function POST(request: NextRequest) {
 
   const funder = funderKeypair();
   if (!funder) return bad(503, 'this deployment has no funder key');
+
+  // ── The configuration check, and it is here for its ORDER as much as its
+  // condition ───────────────────────────────────────────────────────────────
+  //
+  // 🚨 `kv.incr` below is ONE-SHOT PER PAYMENT SIGNATURE: a claim taken and not
+  // released answers 409 "already relayed" forever. By the time this route runs
+  // the buyer's lamports have already moved, so an operator's env mistake must
+  // not consume the claim — fixing the env afterwards would not make the buyer
+  // whole. The hourly rate-limit bucket is protected for the same reason: a
+  // deployment that is misconfigured for an hour must not also spend the
+  // allowance of everyone who tried it.
+  //
+  // So: refuse before the claim, before the limiter, before the chain is read.
+  const configured = paymentAddresses(funder.publicKey.toBase58());
+  if (!configured.ok) {
+    return bad(503, configured.reasons.join(' '), { ready: false, reasons: configured.reasons });
+  }
+  const { till, feeWallet } = configured.addresses;
 
   let body: { paymentSignature?: string; buyerPubkey?: string; requiredLamports?: number };
   try {
@@ -112,6 +380,23 @@ export async function POST(request: NextRequest) {
     return bad(400, 'buyerPubkey is not a public key');
   }
   if (buyer.equals(funder.publicKey)) return bad(400, 'refusing to relay to the funder');
+  // ⛔ THE FEE WALLET IS A PURE SINK, AND THIS IS THE LINE THAT MAKES IT ONE.
+  // It is co-named with EVERY buyer — the fee rides in the transaction they
+  // sign, so its history is a global index of this deployment's customers. That
+  // is survivable only while nothing it touches leads onward: the moment the
+  // float pays it, an auditor walks fee wallet -> float -> ephemeral -> spend
+  // and lands back on a buyer, which is probe P11's exact route. It receives; it
+  // never sends and is never sent to from here.
+  //
+  // The till is refused for the mirror reason: F paying R once per relay is the
+  // per-purchase settlement the R != F split exists to prevent, and it would
+  // rejoin by the clock what the topology separated.
+  if (buyer.toBase58() === feeWallet) {
+    return bad(400, 'refusing to fund the fee wallet: it is a sink and must never pay for a job');
+  }
+  if (buyer.toBase58() === till) {
+    return bad(400, 'refusing to relay to the till: the float must not settle with it per payment');
+  }
 
   const signature = String(body.paymentSignature ?? '');
   if (!signature) return bad(400, 'paymentSignature is required');
@@ -198,9 +483,24 @@ export async function POST(request: NextRequest) {
     return res;
   };
 
-  // What the caller actually paid, read from the chain. Never from the request:
-  // an amount the caller states is an amount the caller chooses.
+  // ── What the caller actually paid, read at the TILL'S index ──────────────
+  //
+  // 🚨 THIS LINE IS THE MECHANISM. It used to read `funder.publicKey`'s delta,
+  // which meant the ONLY payment this route would accept was one that had named
+  // F — so a client correctly paying the till got 400 "that transaction did not
+  // pay this deployment", after the money had moved, and a client paying F was
+  // served happily. That is the 2026-08-18 leak, expressed as an array index.
+  //
+  // Never read from the request: an amount the caller states is an amount the
+  // caller chooses.
+  //
+  // The 1% fee cannot bleed into this figure. Two transfers to two DISTINCT
+  // pubkeys occupy two distinct entries in `staticAccountKeys`, and
+  // `pre/postBalances` are positionally aligned with that array — the only way
+  // the two could merge is key equality, which `paymentAddresses` refuses
+  // outright above, before this request took its claim.
   let received = 0;
+  let feeReceived = 0;
   try {
     const tx = await connection.getTransaction(signature, {
       maxSupportedTransactionVersion: 0,
@@ -210,19 +510,65 @@ export async function POST(request: NextRequest) {
     const keys = tx.transaction.message
       .getAccountKeys()
       .staticAccountKeys.map((k) => k.toBase58());
-    const idx = keys.indexOf(funder.publicKey.toBase58());
-    if (idx < 0) return release(bad(400, 'that transaction did not pay this deployment'));
+    const idx = keys.indexOf(till);
+    if (idx < 0) {
+      // Naming the address, because an operator reading a log has to be able to
+      // tell "paid the wrong address" from "paid nothing".
+      return release(
+        bad(400, 'that transaction did not name the address this deployment collects at', { till }),
+      );
+    }
     received = (tx.meta.postBalances[idx] ?? 0) - (tx.meta.preBalances[idx] ?? 0);
+
+    // The operator's cut, read the same way and out of the SAME transaction —
+    // which is the only place it can be read, because the whole point of the
+    // fee riding inside the buyer's own transfer is that there is no second
+    // transaction to approve and therefore none to check separately.
+    //
+    // A missing index is a fee of zero, not an error: "paid a different
+    // address" and "paid nothing" must land on the same refusal, since both
+    // mean this deployment was not paid. The two pubkeys cannot merge into one
+    // index — `paymentAddresses` refused `feeWallet === till` before this
+    // request took its claim.
+    const feeIdx = keys.indexOf(feeWallet);
+    feeReceived =
+      feeIdx < 0 ? 0 : (tx.meta.postBalances[feeIdx] ?? 0) - (tx.meta.preBalances[feeIdx] ?? 0);
   } catch (e) {
     return release(bad(502, `the payment could not be read: ${(e as Error).message}`));
   }
 
-  if (received <= 0) return release(bad(400, 'that transaction paid this deployment nothing'));
+  if (received <= 0) {
+    return release(bad(400, 'that transaction paid the till nothing', { till, received }));
+  }
   if (received > MAX_RELAY_LAMPORTS) {
     return release(bad(400, 'that payment is larger than this relay forwards in one call', {
       received,
       cap: MAX_RELAY_LAMPORTS,
     }));
+  }
+
+  // ⛔ THE FEE IS CHECKED HERE OR IT IS NOT CHECKED ANYWHERE.
+  //
+  // Refused BEFORE the buyer-balance read and before anything is sent, so an
+  // underpaying caller costs this deployment one `getTransaction` and no
+  // lamports. The claim is released, so a caller who genuinely botched the fee
+  // can build a correct payment and try again — the receipt they lose is one
+  // they were never going to be served on.
+  const minFee = Number(
+    (BigInt(Math.max(0, received)) * MIN_OPERATOR_FEE_BPS_OF_RECEIVED) / FEE_BPS_DENOMINATOR,
+  );
+  if (feeReceived < minFee) {
+    return release(
+      bad(402, 'that transaction did not pay the operator fee', {
+        received,
+        feeReceived,
+        minFee,
+        feeWallet,
+        hint:
+          'The fee rides in the same transaction as the payment: one transfer to the till and ' +
+          'one to the fee wallet. Nothing was sent and the payment can be rebuilt.',
+      }),
+    );
   }
 
   // The buyer must be empty. A fresh identity always is, and a reused one is a
@@ -265,9 +611,23 @@ export async function POST(request: NextRequest) {
   const forward = required;
   if (forward <= FEE_LAMPORTS) return release(bad(400, 'that job asks for less than the relay fee'));
 
+  // ── THE SEND AND THE CONFIRMATION ARE TWO DIFFERENT FACTS ────────────────
+  //
+  // 🚨 THIS SPLIT IS A DOUBLE-SPEND FIX, NOT TIDINESS. One `try` used to span
+  // both, so a confirmation timeout — the single most ordinary event on devnet —
+  // reached the `catch` and RELEASED the claim. `sendRawTransaction` had already
+  // returned a signature by then: the transaction was on the wire and the
+  // lamports were on their way. The buyer's retry, or a second tab, then
+  // forwarded the SAME payment again out of the float. Measured cost: one full
+  // pre-fund per event, 1,573,486,080 lamports on the 1 SOL pool, with a receipt
+  // that looks entirely legitimate.
+  //
+  // So the release covers only what happens BEFORE the signature exists.
   let sig: string;
+  let blockhash: string;
+  let lastValidBlockHeight: number;
   try {
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    ({ blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized'));
     const tx = new Transaction().add(
       SystemProgram.transfer({
         fromPubkey: funder.publicKey,
@@ -279,12 +639,52 @@ export async function POST(request: NextRequest) {
     tx.feePayer = funder.publicKey;
     tx.sign(funder);
     sig = await connection.sendRawTransaction(tx.serialize());
-    await connection.confirmTransaction(
+  } catch (e) {
+    // Nothing left this process. The buyer must be able to retry with the same
+    // receipt, or a propagation blip shuts them out of their own money forever.
+    return release(bad(502, `the relay could not be sent: ${(e as Error).message}`));
+  }
+
+  // From here the claim is CORRECTLY HELD WHATEVER HAPPENS. A signature exists,
+  // so the transfer may land at any moment; a second request carrying this
+  // receipt must never be served.
+  try {
+    const conf = await connection.confirmTransaction(
       { signature: sig, blockhash, lastValidBlockHeight },
       'confirmed',
     );
+    if (conf.value.err) {
+      // Landed and FAILED, which is the one after-send outcome that moved
+      // nothing: the transfer errored, so only the float's own fee was spent and
+      // the payment is still relayable. This is a decision about the CHAIN's
+      // answer, not about a timeout, so it is safe to give the claim back.
+      return release(
+        bad(502, `the relay transaction failed on chain: ${JSON.stringify(conf.value.err)}`, {
+          signature: sig,
+        }),
+      );
+    }
   } catch (e) {
-    return release(bad(502, `the relay could not be sent: ${(e as Error).message}`));
+    // ⛔ NO RELEASE HERE, EVER. The answer is missing; the money is not. The
+    // signature is the only way anyone can find out what actually happened, so
+    // it is reported rather than swallowed behind a 502.
+    return NextResponse.json(
+      {
+        ok: true,
+        sent: true,
+        confirmed: false,
+        signature: sig,
+        lamports: forward,
+        buyer: buyer.toBase58(),
+        funder: funder.publicKey.toBase58(),
+        till,
+        warning:
+          `The relay was sent but not confirmed within the window (${(e as Error).message}). The ` +
+          'lamports are already on the wire, so this payment stays claimed and will not be ' +
+          'forwarded twice. Check the signature before retrying anything.',
+      },
+      { status: 202 },
+    );
   }
 
   // Lamports have moved. From here the claim is CORRECTLY held: a second
@@ -292,12 +692,21 @@ export async function POST(request: NextRequest) {
   // give back.
   return NextResponse.json({
     ok: true,
+    sent: true,
+    confirmed: true,
     signature: sig,
     lamports: forward,
     buyer: buyer.toBase58(),
+    // The client sweeps the ephemeral's residue back to whoever fronted the
+    // rent, and it must learn that address from the party that actually sent
+    // rather than assume it. The till is echoed so a client can check it paid
+    // the same address this route measured.
+    funder: funder.publicKey.toBase58(),
+    till,
     disclosure:
-      'Your payment reached this deployment and this deployment funded the identity that ' +
-      'will deposit. Those are two transactions and they do not name each other. What still ' +
-      'ties them is the amount and the minutes between them, which this does not hide.',
+      'Your payment reached this deployment at an address that funds nothing, and a different ' +
+      'address funded the identity that will deposit. Those are two transactions and they do ' +
+      'not name each other. What still ties them is the amount and the minutes between them, ' +
+      'which this does not hide.',
   });
 }

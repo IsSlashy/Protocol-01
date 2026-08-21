@@ -18,8 +18,23 @@ and say nothing; now it stops and tells you why.
 
 | | role | must hold |
 |---|---|---|
-| **A** | deposits the notes (the "treasury") | ~0.8 SOL devnet, and it must NOT be the funder key |
+| **A** | deposits the notes (the "treasury") | **1.58 SOL at peak, ~1.01 SOL net, PER NOTE** — and it must NOT be the funder key |
 | **B** | the buyer: imports a note, subscribes | nothing — it never pays for anything |
+
+🚨 **CE QUE COÛTE UNE NOTE, MESURÉ — et pourquoi A peut être trop pauvre.**
+Un dépôt de 1 SOL préfinance **1 573 486 080 lamports**, dont **1 003 475 300**
+de valeur (dénomination + 0,3 % de frais protocole) et **570 010 780** de rente
+de preuve *remboursable* (`lib/privacy/pool/denominatedPool.ts:449-454`,
+`shieldEphemeral.ts:270`). Donc, par note : **1,5735 SOL au pic**, **~1,0035 SOL
+net**. Deux notes en série : **1,5735 au pic**, **~2,007 SOL net**.
+
+⛔ **Compter AVANT de partir.** Au 2026-08-21 l'autorité
+`7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU` détient **1,4558 SOL** — sous le
+pic d'**une seule** note. Le dépôt échouerait, et il échouerait **tard** : le
+garde-fou de solde du harnais est à 0,5 SOL, donc rien ne se déclenche avant la
+preuve C6, ~3 minutes plus tard, où la panne se lit comme un shield cassé et non
+comme un manque de fonds. Vérifier le solde est la première chose à faire, pas
+la dernière.
 
 🚨 **AND IF B EVER PAYS FOR ITS NOTE ON CHAIN, IT MUST NOT PAY THE FUNDER.**
 That is the walk measured on 2026-08-18, and it survives everything above: the
@@ -45,7 +60,7 @@ be ready to say so when asked.
 ### The shape
 
 ```
-A:  /app → Shield        deposit 2 notes into the 0.1 SOL pool
+A:  /app → Shield        deposit 2 notes into the 1 SOL pool   ← the ONLY open pool
 B:  /app → Receive       copy the p01pq:… address
 A:  /app → Send          seal a note to B's address   ← no transaction at all
 B:  /app → Receive       paste the blob
@@ -187,8 +202,10 @@ the real claim and it is a good one. Inflating it to six invites someone to chec
 
 Worse if pressed: every deposit also names its `depositor: Signer`, so the tree
 partitions by depositor in ~48 RPC calls and the treasury's notes are a publicly
-labelled block. Live census 2026-08-17: 60 leaves ever, 14 unspent, 2 of 13 pools
-non-empty.
+labelled block. Recensement du 2026-08-20, sur les deux seuls pools non vides :
+pool 1 SOL `6NUS4E5Ph…` 34 feuilles / 11 notes non dépensées ; pool 0,1 SOL
+`HfSsGRgV…` 39 feuilles / 10 non dépensées, **fermé aux dépôts mais toujours
+dépensable**. On ferme l'entrée, jamais la sortie.
 
 **The funder is one address serving one deployment.** The observer's uncertainty
 grows by log2 of the number of users it serves *concurrently*. On a demo
@@ -261,7 +278,9 @@ Deposits require the C6 prover, which lives in the browser worker, so the
 treasury deposits through the UI like anyone else.
 
 1. **Treasury deposits the notes.** Connect the *treasury depositor* wallet to
-   `/app`, shield **N notes** into one pool (0.1 SOL is the cheapest useful one).
+   `/app`, shield **N notes** into the **1 SOL** pool — the only one still open
+   to deposits (`denominatedPool.ts:214`, `:271`; refused in the engine at
+   `worker/poolHandlers.ts:1421`, before the ~2-minute C6 proof).
    Prepare **at least two**: a note is spent once, and there is no second attempt
    on stage.
    - The deposit screen will say *"Your wallet paid for this, in public."* That

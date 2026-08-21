@@ -49,6 +49,28 @@
  * (`retailer` is unconstrained, `rate` is a free argument, `claim_period` is
  * permissionless and there is no `cancel`). The ephemeral key stays in the
  * browser and the client sends its own chunks.
+ *
+ * ⛔ THREE ADDRESSES, AND THE SEPARATION IS THE MECHANISM
+ * ──────────────────────────────────────────────────────
+ * A relayed deposit touches three, and no two of them may be the same key:
+ *
+ *   R  the till     collects from buyers. Funds nothing, ever.
+ *   F  the float    funds ephemerals and fronts the refundable proof rent, so
+ *                   the residue sweeps back to it. Is paid by no buyer.
+ *   FEE the sink    takes 1% of the note, inside the buyer's own transaction.
+ *                   Only ever receives.
+ *
+ * MEASURED 2026-08-18: with R and F collapsed into one address, a subscription
+ * passed every probe but P11 and the walk was two hops with no cryptography —
+ * the spend's fee payer had been funded by F, and F's own history held a
+ * transfer signed by the buyer, one second earlier, for exactly the note's
+ * amount. Neither transfer named both ends. The address between them named both.
+ *
+ * That split was written into an env template, a readiness report and several
+ * file headers on 2026-08-19, and wired nowhere: this file still paid F and the
+ * route still read F's balance delta. Prose is not a mechanism. The mechanism is
+ * `fetchRelayTerms` refusing, and `fundEphemeralForJob` paying the address the
+ * relay named.
  */
 
 import {
@@ -57,6 +79,12 @@ import {
   SystemProgram,
   Transaction,
 } from '@solana/web3.js';
+import {
+  forgetRelayPayment,
+  recallRelayPayment,
+  rememberRelayPayment,
+  storageAvailable,
+} from './relayPaymentReceipts';
 
 export interface FundingGrant {
   /** Where the residual rent must be swept when the job ends. */
@@ -94,30 +122,335 @@ export function funderConfigured(): boolean {
  * fallback silently puts their wallet back on chain and that is the one thing
  * this path exists to prevent.
  */
+// ---------------------------------------------------------------------------
+// R != F, the 1% operator fee, and the terms this relay will actually serve
+// ---------------------------------------------------------------------------
+
 /**
- * The deployment's funding address, as the readiness endpoint reports it.
+ * The three addresses a relayed deposit touches, and the two ceilings it must
+ * fit inside — as `/api/relay-to-buyer` reports them.
  *
- * Read at call time rather than inlined at build: a rotated funder key would
- * otherwise be paid at the old address by every browser still running an old
- * bundle, and those lamports are not recoverable.
+ * 🚨 ONE SOURCE, AND IT IS THE ROUTE THAT READS THE PAYMENT. The relay decides
+ * whether a buyer paid by measuring the TILL's balance delta in their
+ * transaction. If the address the client pays came from anywhere else — a build
+ * inlined `NEXT_PUBLIC_`, a different endpoint, a constant in this file — then a
+ * rotated till means the buyer pays one address while the relay reads another,
+ * and the answer is a 400 AFTER the money has moved to an address this
+ * deployment holds no key for. The payer and the reader must read the same
+ * variable.
+ *
+ * The ceilings travel the same way for the same reason: a second copy of a cap
+ * is a cap that drifts, and every buyer between the two numbers pays first and
+ * is refused after.
  */
-let cachedFunderAddress: string | null = null;
-export function funderAddress(): string {
-  if (!cachedFunderAddress) throw new Error('The deployment funding address has not been read yet.');
-  return cachedFunderAddress;
+export interface RelayTerms {
+  /** F, the float. Fronts the refundable proof rent; the residue sweeps here. */
+  funder: string;
+  /** R, the till. Collects from buyers and funds nothing. */
+  till: string;
+  /** The operator's fee sink. See `operatorFeeAtomic` for why it is a sink. */
+  feeWallet: string;
+  /** The most this relay forwards in one call. */
+  maxRelayLamports: number;
+  /** The most refundable rent it will front on top of a payment. */
+  maxRentSubsidyLamports: number;
 }
 
-/** Ask the deployment where to pay, and remember it for this session. */
-export async function loadFunderAddress(signal?: AbortSignal): Promise<string | null> {
-  try {
-    const res = await fetch('/api/fund-ephemeral', { method: 'GET', signal });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { funder?: string };
-    cachedFunderAddress = body.funder ?? null;
-    return cachedFunderAddress;
-  } catch {
-    return null;
+/** Why a deployment's own configuration makes a relayed deposit impossible.
+ *  Every one of these is the OPERATOR's env being wrong: a retry never fixes
+ *  it, so the UI must not offer one. */
+export type TillMisconfiguration =
+  | 'till-unset'
+  | 'till-equals-funder'
+  | 'fee-wallet-unset'
+  | 'fee-wallet-equals-funder'
+  | 'fee-wallet-equals-till'
+  | 'addresses-unreadable';
+
+/**
+ * Thrown when the deployment cannot name three distinct, parseable addresses.
+ *
+ * 🚨 NEVER CATCH THIS INTO A WALLET FALLBACK. Each reason is a shape that was
+ * measured to leak or to lose money:
+ *
+ *   till-equals-funder       the 2026-08-18 walk itself. The buyer pays F, so
+ *                            F's own history holds a transfer signed by the
+ *                            buyer one second before F financed the ephemeral
+ *                            that deposits. Two hops, no cryptography.
+ *   fee-wallet-equals-funder puts F inside the transaction the buyer signs, so
+ *                            the walk loses even its middle step.
+ *   fee-wallet-equals-till   web3.js dedupes an identical pubkey into ONE
+ *                            account index, so both credits land in one delta:
+ *                            the relay reads value + fee as the payment, the
+ *                            subsidy merely shrinks, and the operator collects
+ *                            no fee at all while believing they do. Nothing
+ *                            errors anywhere.
+ *   till-unset / unreadable  there is no address to pay. Paying a guessed one
+ *                            strands a full denomination.
+ */
+export class DeploymentTillMisconfiguredError extends Error {
+  constructor(readonly reason: TillMisconfiguration, detail: string) {
+    super(
+      `Stopped before spending anything: this deployment's payment addresses are misconfigured ` +
+        `(${reason}). ${detail} Nothing was signed and nothing moved — but only the operator can ` +
+        'fix this, so retrying will not help.',
+    );
+    this.name = 'DeploymentTillMisconfiguredError';
   }
+}
+
+/** Why THIS job cannot be relayed. A smaller denomination might be. */
+export type RelayRefusal =
+  | 'no-funder-configured'
+  | 'terms-unreadable'
+  | 'deployment-not-ready'
+  | 'job-over-relay-cap'
+  | 'subsidy-over-cap'
+  | 'fee-not-payable-in-lamports'
+  | 'fee-basis-missing'
+  | 'payment-outstanding'
+  | 'no-receipt-store';
+
+/**
+ * Thrown when the relay cannot serve this particular job.
+ *
+ * 🚨 NEVER CATCH THIS INTO A WALLET FALLBACK EITHER. A caller that asked to be
+ * relayed and silently got the wallet-funded deposit instead has bought the one
+ * thing they were avoiding, cannot detect it afterwards, and cannot undo it.
+ *
+ * MEASURED FROM SOURCE 2026-08-20: a shield needs `denomination * 1.003` plus
+ * about 0.57 SOL of refundable proof rent, and the relay forwards at most
+ * 2,500,000,000 lamports in one call — so the ceiling binds at a denomination of
+ * roughly 1.92 SOL. The 10, 100, 500 and 1000 SOL pools took the buyer's money
+ * and delivered NOTHING, 100% of the time, because the refusal happened after
+ * the payment instead of before it.
+ */
+export class RelayCannotServeJobError extends Error {
+  constructor(readonly reason: RelayRefusal, detail: string) {
+    super(`Stopped before spending anything: this deposit cannot be relayed (${reason}). ${detail}`);
+    this.name = 'RelayCannotServeJobError';
+  }
+}
+
+/**
+ * What the 1% is a percentage OF: the pool's own atomic denomination.
+ *
+ * A structural subset of `PoolConfig`, so the pool table is the only place these
+ * numbers are written down.
+ */
+export interface FeeBasis {
+  /** 'SOL' | 'USDC'. Widened to `string` so the pool table can add tokens. */
+  token: string;
+  /** The denomination in the token's smallest unit — lamports for SOL. */
+  denominationAtomic: bigint;
+  /** How many of those atoms make one whole token. */
+  decimals: number;
+}
+
+/** The operator's cut, in basis points of the note. */
+export const OPERATOR_FEE_BPS = 100n;
+const BPS_DENOMINATOR = 10_000n;
+
+/**
+ * 1% of the note, in the note's OWN atomic unit.
+ *
+ * 🚨 THE DEFECT THIS REPLACES, BY ITS NUMBER. The first version of this was
+ * `Math.round((denomination * 1e9) / 100)` — the HUMAN denomination times a
+ * hard-coded 1e9. That is right for SOL by coincidence, because SOL has nine
+ * decimals. On the 1000 USDC pool it charged 10,000,000,000 lamports — TEN SOL —
+ * inside a transfer the buyer signs without seeing it itemised.
+ *
+ * A percentage of atoms needs neither a decimal exponent nor a float, so this
+ * function is decimals-blind by construction: `decimals` exists on the basis to
+ * let CALLERS decide whether those atoms are lamports, and is deliberately not
+ * read here. Integer division floors, which rounds in the buyer's favour by at
+ * most one atom.
+ *
+ * ⛔ THE FEE WALLET IS CO-NAMED WITH EVERY BUYER AND MUST BE A PURE SINK.
+ * The fee rides inside the transaction the buyer signs, so the fee wallet
+ * appears in an account-key list beside the buyer's own address once per
+ * purchase: `getSignaturesForAddress` on it enumerates every buyer this
+ * deployment has ever served. That is acceptable ONLY while nothing else it
+ * pays for can be joined to a spend. If it ever funds an ephemeral, probe P11
+ * walks fee wallet -> ephemeral -> subscription and lands back on the buyer, and
+ * the whole R != F split is undone by an accounting convenience. It receives; it
+ * never sends into this protocol. `/api/fund-ephemeral` refuses to fund it.
+ */
+export function operatorFeeAtomic(basis: FeeBasis): bigint {
+  return (basis.denominationAtomic * OPERATOR_FEE_BPS) / BPS_DENOMINATOR;
+}
+
+/**
+ * Ask the relay who to pay and what it will serve.
+ *
+ * ⚠️ DELIBERATELY NOT CACHED, unlike `fetchFunderLookup` below. This answer is
+ * read at most once per deposit and decides where a full denomination is sent
+ * irreversibly; a session-long cache would let a browser tab that loaded before
+ * a till rotation keep paying the old address. One HTTP round trip against that
+ * is not a trade worth making.
+ *
+ * Throws — never returns a partial answer. A caller that receives `till: null`
+ * and pays anyway is the stranding defect, so the null never leaves this
+ * function.
+ */
+export async function fetchRelayTerms(signal?: AbortSignal): Promise<RelayTerms> {
+  let body: Record<string, unknown>;
+  try {
+    const res = await fetch('/api/relay-to-buyer', { method: 'GET', signal });
+    if (!res.ok) {
+      throw new RelayCannotServeJobError(
+        'terms-unreadable',
+        `The relay answered ${res.status} when asked what it can serve. An outage is not an ` +
+          'all-clear, and paying a guessed address strands the money.',
+      );
+    }
+    body = (await res.json()) as Record<string, unknown>;
+  } catch (e) {
+    if (e instanceof RelayCannotServeJobError) throw e;
+    throw new RelayCannotServeJobError(
+      'terms-unreadable',
+      `The relay could not be asked what it can serve: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  if (!body || body.ok !== true) {
+    throw new RelayCannotServeJobError(
+      'terms-unreadable',
+      'The relay answered, but not with terms it stands behind.',
+    );
+  }
+
+
+  const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+  const till = text(body.till);
+  const feeWallet = text(body.feeWallet);
+  const funder = text(body.funder);
+
+  // Unset before unparseable: they are different operator mistakes with
+  // different cures, and "you set it to nonsense" is not the same message as
+  // "you did not set it".
+  if (!till) {
+    throw new DeploymentTillMisconfiguredError(
+      'till-unset',
+      'The relay names no till (P01_TILL_ADDRESS), so there is no address to pay.',
+    );
+  }
+  if (!feeWallet) {
+    throw new DeploymentTillMisconfiguredError(
+      'fee-wallet-unset',
+      'The relay names no fee wallet (P01_FEE_WALLET).',
+    );
+  }
+  if (!funder) {
+    throw new DeploymentTillMisconfiguredError(
+      'addresses-unreadable',
+      'The relay names no float, so nothing would fund the deposit and the residue would have ' +
+        'nowhere to sweep.',
+    );
+  }
+
+  // Parsed, then compared in canonical form. Comparing raw strings would let two
+  // spellings of one key read as two addresses, which is the fee-wallet-equals-
+  // till collision arriving through the back door.
+  let tillKey: string;
+  let feeKey: string;
+  let funderKey: string;
+  try {
+    tillKey = new PublicKey(till).toBase58();
+    feeKey = new PublicKey(feeWallet).toBase58();
+    funderKey = new PublicKey(funder).toBase58();
+  } catch (e) {
+    throw new DeploymentTillMisconfiguredError(
+      'addresses-unreadable',
+      `At least one of the relay's addresses is not a public key: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
+
+  if (tillKey === funderKey) {
+    throw new DeploymentTillMisconfiguredError(
+      'till-equals-funder',
+      'The till IS the float. Every buyer who pays it is then one transaction from the address ' +
+        'that funds their own subscription — the two-hop walk measured on 2026-08-18.',
+    );
+  }
+  if (feeKey === funderKey) {
+    throw new DeploymentTillMisconfiguredError(
+      'fee-wallet-equals-funder',
+      'The fee wallet IS the float, so the float would appear in the transaction the buyer signs.',
+    );
+  }
+  if (feeKey === tillKey) {
+    throw new DeploymentTillMisconfiguredError(
+      'fee-wallet-equals-till',
+      'The fee wallet IS the till. web3.js merges them into one account index, so the relay would ' +
+        'read value + fee as the payment and the fee would never be collected — with no symptom.',
+    );
+  }
+
+  const maxRelayLamports = Number(body.maxRelayLamports);
+  const maxRentSubsidyLamports = Number(body.maxRentSubsidyLamports);
+  if (
+    !Number.isFinite(maxRelayLamports) ||
+    maxRelayLamports <= 0 ||
+    !Number.isFinite(maxRentSubsidyLamports) ||
+    maxRentSubsidyLamports < 0
+  ) {
+    throw new RelayCannotServeJobError(
+      'terms-unreadable',
+      'The relay did not state both of its ceilings, so this client cannot tell whether it would ' +
+        'serve this job. Assuming it would is how a buyer pays first and is refused after.',
+    );
+  }
+
+  // ⛔ `ready` IS THE FIELD TO ACT ON. `ok` IS NOT — AND IT IS CHECKED LAST.
+  //
+  // 🚨 THE DEFECT THIS CLOSES, AND IT IS THE ONE THE GET WAS WRITTEN TO
+  // PREVENT. `ok: true` is a literal in the route — it means "this handler
+  // answered", nothing more — and the route publishes `till` and `feeWallet`
+  // even when it has already decided it cannot serve. Everything ABOVE this
+  // point re-derives the ADDRESS and CEILING mistakes, so those were caught, and
+  // only those. Two of the route's non-readiness reasons are invisible from here
+  // and always will be:
+  //
+  //   - `P01_FUNDER_TICKET` unset SERVER-side. The client reads a different
+  //     variable (`NEXT_PUBLIC_P01_FUNDER_TICKET`), so it cannot tell.
+  //   - no durable KV store reachable, which the POST refuses on before it
+  //     reads the chain at all.
+  //
+  // In either state the addresses are valid and distinct, every check above
+  // passes, the wallet signs, and the POST answers 503 — after a full
+  // denomination plus the fee have left for an address this deployment holds no
+  // spending key for. The receipt then dies with the call stack.
+  //
+  // ⚠️ LAST, NOT FIRST, AND THE ORDER IS THE POINT. A misconfigured till makes
+  // the route report BOTH `ready: false` and the till reason, so checking
+  // readiness first would collapse every operator mistake into one untyped
+  // 'deployment-not-ready' — and the UI would offer a buyer a smaller
+  // denomination for a problem no denomination fixes. The precise
+  // `DeploymentTillMisconfiguredError` is raised above; this is the catch-all
+  // for everything the client cannot see, carrying the server's own reasons
+  // verbatim because they name the env var to fix.
+  if (body.ready !== true) {
+    const reasons = Array.isArray(body.reasons)
+      ? body.reasons.filter((r): r is string => typeof r === 'string')
+      : [];
+    throw new RelayCannotServeJobError(
+      'deployment-not-ready',
+      reasons.length > 0
+        ? `The relay reports it cannot serve: ${reasons.join(' ')}`
+        : 'The relay reports it is not ready to serve, without saying why. Paying it anyway ' +
+          'strands the money at an address only the operator can refund.',
+    );
+  }
+
+  return {
+    funder: funderKey,
+    till: tillKey,
+    feeWallet: feeKey,
+    maxRelayLamports,
+    maxRentSubsidyLamports,
+  };
 }
 
 /**
@@ -126,18 +459,25 @@ export async function loadFunderAddress(signal?: AbortSignal): Promise<string | 
  * The receipt is a signature, not an amount: the route reads what was actually
  * paid from the chain, because an amount the caller states is an amount the
  * caller chooses.
+ *
+ * Returns the float the relay actually sent from, so the caller sweeps the
+ * residue to the address that fronted the rent rather than to one it assumed.
  */
 export async function relayToBuyer(
   paymentSignature: string,
   buyerPubkey: string,
   requiredLamports: number,
   signal?: AbortSignal,
-): Promise<{ signature: string; sweepTo: string; lamports: number }> {
+): Promise<{ signature: string; funder: string | null; lamports: number }> {
   const ticket = funderTicket();
   if (!ticket) throw new Error('This deployment has no funder configured.');
   const res = await fetch('/api/relay-to-buyer', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-p01-funder-ticket': ticket },
+    // ⚠️ `requiredLamports` UNCHANGED, with no fee folded into it. The fee never
+    // passes through the ephemeral: money forwarded there ends up either inside
+    // the note — breaking the exact denomination every other note in the pool
+    // shares — or swept to the float, which is not the operator.
     body: JSON.stringify({ paymentSignature, buyerPubkey, requiredLamports }),
     signal,
   });
@@ -146,13 +486,14 @@ export async function relayToBuyer(
     error?: string;
     signature?: string;
     lamports?: number;
+    funder?: string;
   };
   if (!res.ok || !body.ok || !body.signature) {
     throw new Error(body.error ?? `the deployment refused to fund the deposit (${res.status})`);
   }
   return {
     signature: body.signature,
-    sweepTo: funderAddress(),
+    funder: typeof body.funder === 'string' ? body.funder : null,
     lamports: body.lamports ?? 0,
   };
 }
@@ -278,6 +619,18 @@ export function resetFunderPubkeyCache(): void {
   cachedFunderPubkey = undefined;
 }
 
+/**
+ * Drop every remembered address for this deployment.
+ *
+ * The relay's terms are not cached at all (see `fetchRelayTerms`), so this only
+ * has the funder lookup to clear — but callers should not have to know which of
+ * the two is memoised, and a future cache added here would otherwise leak
+ * between tests and between deployments an operator has just rotated.
+ */
+export function resetDeploymentAddresses(): void {
+  resetFunderPubkeyCache();
+}
+
 // ---------------------------------------------------------------------------
 // The funding decision — one place, every leg
 // ---------------------------------------------------------------------------
@@ -337,6 +690,17 @@ export interface JobFundingRequest {
    * home would rebuild the edge. Callers must say so on screen.
    */
   relayThroughDeployment?: boolean;
+  /**
+   * What the 1% operator fee is a percentage of: the pool's own atomic
+   * denomination and its own decimals, straight out of the pool table.
+   *
+   * REQUIRED for a relayed deposit, and its absence is a refusal rather than a
+   * fee of zero. Charging nothing silently is invisible revenue loss, and it is
+   * a CLIENT bug — the pool table always has these numbers — so it should be
+   * loud where a developer will see it rather than quiet where an accountant
+   * will not.
+   */
+  feeBasis?: FeeBasis;
   onProgress?: (step: string) => void;
 }
 
@@ -357,6 +721,14 @@ export interface JobFundingDecision {
   funderSignature?: string;
   /** Why the funder was not used, when one was configured but did not serve. */
   funderFallbackReason?: string;
+  /**
+   * The operator's 1%, in lamports, when a relayed deposit charged it.
+   *
+   * A RESULT, so the screen can itemise what the buyer's single signature
+   * actually moved. It is paid to a third address and never enters the pool, so
+   * it appears in no other total the user sees.
+   */
+  operatorFeeLamports?: number;
 }
 
 /** Thrown when the ephemeral already holds lamports. Named so callers can
@@ -436,6 +808,7 @@ export async function fundEphemeralForJob(
   let fundedBy: 'wallet' | 'funder' = 'wallet';
   let funderSignature: string | undefined;
   let funderFallbackReason: string | undefined;
+  let operatorFeeLamports: number | undefined;
   let sweepTo = owner.toBase58();
 
   // ── Guard 2: never let the treasury buy a note ───────────────────────────
@@ -445,7 +818,7 @@ export async function fundEphemeralForJob(
   // ships in the browser bundle and anyone can POST the route directly with any
   // amount under the cap. The endpoint's own anti-abuse story is the rate
   // limiter and the devnet guard, not this line.
-  if (valueLamports > 0 && req.relayThroughDeployment && funderConfigured()) {
+  if (req.relayThroughDeployment && valueLamports > 0) {
     // ── The relayed deposit ──────────────────────────────────────────────
     //
     // 🚨 THE EDGE THIS EXISTS TO REMOVE. A deposit's ephemeral is funded by
@@ -455,52 +828,237 @@ export async function fundEphemeralForJob(
     // the buyer's wallet from the deposit payer, and P11 found the wallet by
     // listing account keys alone.
     //
-    // So the wallet pays the DEPLOYMENT, and the deployment funds the
-    // ephemeral. Two transfers, neither naming both ends. The wallet is still
-    // asked to sign — it is the user's money — but what it signs no longer
-    // points at the pool.
+    // So the wallet pays the TILL, and the FLOAT funds the ephemeral. Two
+    // transfers, neither naming both ends, and — this is the half that was
+    // missing until 2026-08-20 — no single address standing in both of them.
+    // The wallet is still asked to sign, it is the user's money, but what it
+    // signs no longer points at the pool or at the float.
     //
-    // ✅ THE RESIDUE GOES TO THE DEPLOYMENT AND OWES NOBODY ANYTHING, because
-    // the wallet pays only `valueLamports` and the deployment fronts the
-    // refundable proof rent on top. The residue that comes back IS that rent.
+    // ✅ THE RESIDUE GOES TO THE FLOAT AND OWES NOBODY ANYTHING, because the
+    // wallet pays only `valueLamports` and the float fronts the refundable
+    // proof rent on top. The residue that comes back IS that rent.
     //
     // The alternative shapes are both wrong: if the wallet pre-funded the whole
     // amount, sweeping to the deployment would be taking their change, and
     // sweeping home would rebuild the `ephemeral → wallet` edge P9 walked on
     // 2026-08-18 — undoing the entire detour for the sake of returning money
     // that need never have left.
-    req.onProgress?.('Paying the deployment, which will fund the deposit (your wallet stays off the pool)...');
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
-    const payTx = new Transaction().add(
-      SystemProgram.transfer({
-        fromPubkey: owner,
-        toPubkey: new PublicKey(funderAddress()),
-        // ⚠️ THE VALUE, NOT THE WHOLE PRE-FUND. The rest is refundable proof
-        // rent and the deployment fronts it, so the residue that comes back is
-        // the deployment's own and sweeping it there owes the user nothing.
-        // Paying it all here would make the residue theirs, and then the only
-        // two choices are taking it or rebuilding the edge to send it home.
-        lamports: valueLamports,
-      }),
-    );
-    payTx.recentBlockhash = blockhash;
-    payTx.feePayer = owner;
-    const signedPay = await signOne(payTx);
-    const paySig = await connection.sendRawTransaction(signedPay.serialize());
-    const payConf = await connection.confirmTransaction(
-      { signature: paySig, blockhash, lastValidBlockHeight },
-      'confirmed',
-    );
-    if (payConf.value.err) {
-      throw new Error(`Payment to the deployment failed: ${JSON.stringify(payConf.value.err)}`);
+    //
+    // ⛔ THERE IS NO FALLBACK OUT OF THIS BRANCH, AND THE PREVIOUS ATTEMPT
+    // CLAIMED THE SAME THING ONE LINE ABOVE AN `else if` THAT WAS ONE. Every
+    // exit below is a throw. A caller that asked to be relayed and silently got
+    // a wallet-funded deposit instead has bought exactly the linkability they
+    // paid a detour to avoid, has no way to detect it afterwards, and no way to
+    // undo it. Refusing costs them a retry.
+    //
+    // ⛔ AND EVERY CHECK COMES BEFORE `signOne`. The buyer's payment is the only
+    // irreversible step in this flow — a full denomination sent to an address
+    // this deployment holds no spending key for by design — so anything that
+    // could refuse must refuse first. The order below is: is the relay
+    // reachable at all, is this job priceable, what are the terms, does this job
+    // fit them, and only then ask the wallet.
+    if (!funderConfigured()) {
+      // The stale-bundle case, which this repository has already been bitten by:
+      // `NEXT_PUBLIC_P01_FUNDER_TICKET` is inlined at BUILD time, so a
+      // deployment that switched the relay on without rebuilding serves a
+      // browser that cannot call it. That used to fall through to the wallet.
+      throw new RelayCannotServeJobError(
+        'no-funder-configured',
+        'This browser bundle carries no funder ticket, so the relay cannot be called at all. ' +
+          '(NEXT_PUBLIC_P01_FUNDER_TICKET is inlined at build time — setting it without ' +
+          'redeploying leaves the bundle unable to reach the relay.)',
+      );
+    }
+
+    // Priceable before payable: both of these are decided from the job alone,
+    // so they cost no round trip and refuse before the network is even touched.
+    const basis = req.feeBasis;
+    if (!basis) {
+      throw new RelayCannotServeJobError(
+        'fee-basis-missing',
+        'This deposit states no fee basis, so the 1% cannot be computed from the pool it is ' +
+          'going into. Charging nothing instead would be silent revenue loss.',
+      );
+    }
+    if (basis.token !== 'SOL' || basis.decimals !== 9) {
+      // The fee is a `SystemProgram.transfer` inside the buyer's own
+      // transaction, and that instruction moves LAMPORTS. Sending a USDC pool's
+      // atoms through it would send 10 SOL-millionths per USDC-millionth of
+      // nothing at all; sending their lamport equivalent would need a price
+      // feed this deployment does not have. Refusing explicitly is the only
+      // honest third option — and it is the shape of the defect it replaces,
+      // which charged TEN SOL on a 1000 USDC deposit.
+      throw new RelayCannotServeJobError(
+        'fee-not-payable-in-lamports',
+        `The ${basis.token} pool's fee is ${operatorFeeAtomic(basis)} of its own atoms, and a ` +
+          'lamport transfer cannot pay it. Only SOL pools can be relayed until the fee has a ' +
+          'token leg of its own.',
+      );
+    }
+    const feeLamports = Number(operatorFeeAtomic(basis));
+
+    req.onProgress?.('Asking the deployment what it can serve...');
+    const terms = await fetchRelayTerms();
+
+    // PORTE 2's engine half. MEASURED FROM SOURCE 2026-08-20: the relay forwards
+    // at most 2,500,000,000 lamports per call, so the ceiling binds at a
+    // denomination of about 1.92 SOL — and the 10, 100, 500 and 1000 SOL pools
+    // therefore took the money and delivered nothing, every single time,
+    // because this comparison was made by the server AFTER the payment.
+    //
+    // The numbers come from the deployment rather than from a constant here, on
+    // purpose: a second copy of a cap is a cap that drifts, and every buyer
+    // between the two copies pays first and is refused after.
+    if (requiredLamports > terms.maxRelayLamports) {
+      throw new RelayCannotServeJobError(
+        'job-over-relay-cap',
+        `This deposit needs ${requiredLamports} lamports pre-funded and this relay forwards at ` +
+          `most ${terms.maxRelayLamports} in one call. A smaller denomination will go through.`,
+      );
+    }
+    // `subsidy = required - received`, and `received` is what the buyer is about
+    // to pay the till: exactly `valueLamports`. The float fronts the rest, which
+    // is refundable proof rent and nothing else.
+    const subsidy = requiredLamports - valueLamports;
+    if (subsidy > terms.maxRentSubsidyLamports) {
+      throw new RelayCannotServeJobError(
+        'subsidy-over-cap',
+        `This deposit asks the deployment to front ${subsidy} lamports of rent and it fronts at ` +
+          `most ${terms.maxRentSubsidyLamports}.`,
+      );
+    }
+
+    // ── The receipt for a payment that may already exist ─────────────────
+    //
+    // 🚨 THE SECOND CHARGE THIS PREVENTS. Everything from here to the relay
+    // call is one atomic intention split across two steps that cannot be one
+    // transaction. If the second step throws — a confirmation timeout, a 429, a
+    // 502, or the relay's own 404 'not on chain yet; confirm it and retry' —
+    // the buyer's lamports are already gone. The ephemeral received nothing, so
+    // the "already holds lamports" guard above does NOT bite, the Deposit
+    // button re-enables, and the naive retry signs a second full denomination
+    // plus a second fee. The first payment sits at the till, which this
+    // deployment holds no spending key for.
+    //
+    // The relay releases its one-shot claim on every path that hands nothing
+    // over, precisely so the SAME receipt can be presented again. This is the
+    // half that makes that reachable.
+    const prior = recallRelayPayment(ephemeralPubkey);
+    if (prior && (prior.requiredLamports !== requiredLamports || prior.till !== terms.till)) {
+      // ⛔ NOT a second payment. The job or the till moved under an outstanding
+      // receipt, so neither reusing it nor paying again is safe: reusing it
+      // presents a payment for a different job, paying again charges twice. The
+      // signature is named so the money is findable.
+      throw new RelayCannotServeJobError(
+        'payment-outstanding',
+        `A payment for this deposit is already on chain (${prior.signature}) for ` +
+          `${prior.valueLamports} lamports to ${prior.till}, but this attempt asks for ` +
+          `${requiredLamports} to ${terms.till}. Paying again would charge you twice. Settle or ` +
+          'clear the outstanding payment first.',
+      );
+    }
+    if (!prior && !storageAvailable()) {
+      // Refusing to take money we might not be able to redeem. This browser
+      // context cannot keep a receipt (private mode, or storage disabled), so a
+      // failure between the payment and the relay would be unrecoverable rather
+      // than merely annoying. A refusal costs a retry elsewhere; the
+      // alternative costs a denomination.
+      throw new RelayCannotServeJobError(
+        'no-receipt-store',
+        'This browser cannot store the payment receipt, and a relayed deposit pays before it is ' +
+          'forwarded. Without somewhere to keep the receipt, an interrupted deposit could not be ' +
+          'resumed and would have to be paid for twice. Nothing was signed.',
+      );
+    }
+
+    let paySig: string;
+    if (prior) {
+      // Same job, same till, same amount: the money already moved. Present the
+      // receipt again rather than making a second one.
+      req.onProgress?.('Resuming: your payment already went through, asking the deployment again...');
+      paySig = prior.signature;
+    } else {
+      req.onProgress?.('Paying the deployment, which will fund the deposit (your wallet stays off the pool)...');
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+      const payTx = new Transaction()
+        .add(
+          SystemProgram.transfer({
+            fromPubkey: owner,
+            // ⛔ THE TILL, NEVER THE FLOAT. The address the buyer pays must be the
+            // one the relay measures — it reads `received` from this account's
+            // balance delta — and it must never be the address that funds the
+            // ephemeral, or the buyer is one transaction from their own spend.
+            toPubkey: new PublicKey(terms.till),
+            // ⚠️ THE VALUE, NOT THE WHOLE PRE-FUND, AND NOT THE VALUE PLUS THE
+            // FEE. The rest is refundable proof rent the float fronts, so the
+            // residue that comes back is the float's own and sweeping it there
+            // owes the user nothing. Adding the fee here would put it inside the
+            // note, and the note must be EXACTLY the denomination or it stops
+            // being indistinguishable from every other note in the pool.
+            lamports: valueLamports,
+          }),
+        )
+        .add(
+          SystemProgram.transfer({
+            fromPubkey: owner,
+            // The operator's cut, in the SAME transaction the buyer already
+            // signs: no second popup, and — the reason that matters — no way to
+            // approve the deposit and drop the fee, which two transactions would
+            // hand every buyer for free.
+            toPubkey: new PublicKey(terms.feeWallet),
+            lamports: feeLamports,
+          }),
+        );
+      payTx.recentBlockhash = blockhash;
+      payTx.feePayer = owner;
+      const signedPay = await signOne(payTx);
+      const sent = await connection.sendRawTransaction(signedPay.serialize());
+
+      // ⛔ WRITTEN BEFORE THE CONFIRMATION, NOT AFTER. `sendRawTransaction` has
+      // returned a signature, so the transfer is on the wire and may land whether
+      // or not this process ever hears about it. A receipt written only on a
+      // successful confirm would be missing in exactly the case it is needed:
+      // the confirmation timing out on a payment that landed.
+      //
+      // Recording a payment that ultimately FAILED on chain is the harmless
+      // direction — the relay reads the till's real balance delta and answers
+      // 400 'that transaction paid the till nothing', which names the problem.
+      rememberRelayPayment({
+        ephemeralPubkey,
+        signature: sent,
+        valueLamports,
+        feeLamports,
+        requiredLamports,
+        till: terms.till,
+        createdAt: new Date().toISOString(),
+      });
+      paySig = sent;
+
+      const payConf = await connection.confirmTransaction(
+        { signature: paySig, blockhash, lastValidBlockHeight },
+        'confirmed',
+      );
+      if (payConf.value.err) {
+        // Landed and failed: nothing moved, so the receipt is worthless and
+        // keeping it would block the retry that should happen.
+        forgetRelayPayment(ephemeralPubkey);
+        throw new Error(`Payment to the deployment failed: ${JSON.stringify(payConf.value.err)}`);
+      }
     }
 
     req.onProgress?.('The deployment is funding the deposit...');
     const relayed = await relayToBuyer(paySig, ephemeralPubkey, requiredLamports);
+    // The lamports have moved. From here the receipt has done its job and
+    // keeping it would make a future deposit on this key resume a spent
+    // payment.
+    forgetRelayPayment(ephemeralPubkey);
     fundedBy = 'funder';
     funderSignature = relayed.signature;
-    // ⛔ NOT `owner`. See the residue note above.
-    sweepTo = relayed.sweepTo;
+    operatorFeeLamports = feeLamports;
+    // ⛔ NOT `owner`, and NOT the till. The float fronted the rent, so the
+    // residue is the float's. The relay names the address it actually sent
+    // from; the terms are the fallback for a relay that does not say.
+    sweepTo = relayed.funder ?? terms.funder;
   } else if (valueLamports > 0) {
     funderFallbackReason =
       `this job moves ${valueLamports} lamports of your own value, not just rent, so the ` +
@@ -573,5 +1131,5 @@ export async function fundEphemeralForJob(
     }
   }
 
-  return { fundedBy, sweepTo, funderSignature, funderFallbackReason };
+  return { fundedBy, sweepTo, funderSignature, funderFallbackReason, operatorFeeLamports };
 }

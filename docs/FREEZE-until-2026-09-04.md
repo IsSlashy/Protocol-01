@@ -30,9 +30,20 @@ that day.** Do not investigate anything else first.
 ## Do not, before 2026-09-04
 
 - **Do not rebuild the prover WASM.** No shipped blob is reproducible from any
-  branch today: the web carries `51a947e3`, the extension and mobile carry
-  `4ace8913`, and a rebuild on 2026-08-16 produced a third object, `b7f6e830`.
-  A rebuild therefore cannot be undone by rebuilding again.
+  branch today: a rebuild on 2026-08-16 produced `b7f6e830`, a different object
+  from the `51a947e3` the chain accepts, so a rebuild cannot be undone by
+  rebuilding again. `compact.rs` on this branch contains zero `LDE_COSET_SHIFT`
+  while the shipped binary is the coset build — the source and the artefact are
+  a generation apart, and only the freeze archive covers the blob.
+
+  > ⚠️ CORRECTED 2026-08-21. This bullet used to add "the extension and mobile
+  > carry `4ace8913`". That was true when it was written and was fixed the same
+  > week by `33a50625`, which copied the web's accepted bytes across rather than
+  > reencoding them. **Re-measured 2026-08-21** by decoding the base64 in all
+  > three surfaces: web, extension and mobile each give `51a947e3`, 229,640
+  > bytes, magic `0061736d` — equal to `packages/stark-prover/wasm/p01_stark_bg.wasm`.
+  > The instruction did not change; its reason did, and a reason a reader can
+  > check and find false is how a correct instruction stops being obeyed.
 - **Do not redeploy any program.** The live verifier was built from
   `b7-drop-aligned-checks`, which is an ancestor of neither `master` nor the
   working tree. A deploy from here is a downgrade, not an upgrade.
