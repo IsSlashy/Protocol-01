@@ -876,9 +876,10 @@ export default function PoolPanel({
    * float does, and the float is what gets it back. Quoting it here overstated
    * the price AND promised a refund that goes to somebody else.
    *
-   * `shieldToPool` sets `relayThroughDeployment: true` unconditionally and the
-   * path no longer falls back, so every deposit made from this panel is the
-   * relayed shape or it is refused. What leaves the wallet is one signature
+   * `shieldToPool` relays unless `depositPublicly` is set — which only treasury
+   * mode does — and the relayed path no longer falls back, so an ordinary
+   * deposit from this panel is the relayed shape or it is refused. What leaves
+   * the wallet on that path is one signature
    * carrying two transfers: the value to the till and the operator's 1% to the
    * fee sink. Both are derived from the pool table so a denomination change
    * cannot leave this number behind.
@@ -1269,15 +1270,42 @@ export default function PoolPanel({
                   "your wallet did not sign this": a silent deposit screen then
                   reads as the same promise. Saying nothing here is what makes
                   the honest sentence over there misleading. */}
+              {/* 🚨 BRANCHED ON WHAT HAPPENED, NOT ON WHAT THIS SCREEN ASSUMES.
+                  This paragraph used to say "Your wallet paid for this, in
+                  public" after EVERY deposit. That was true until the relay
+                  landed on 2026-08-21 and is now true only in treasury mode —
+                  and it is the last screen of the main journey, sitting directly
+                  above an explorer link where an ordinary buyer would look for
+                  their own address and not find it. A screen that contradicts
+                  the transaction it links to teaches the reader to distrust
+                  both. `fundedBy` comes back from the funding decision itself,
+                  so the two cannot drift again. */}
               <p className="mt-2 flex items-start gap-2 text-xs text-p01-text-muted">
                 <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
-                <span>
-                  <strong className="text-p01-text">Your wallet paid for this, in public.</strong>{' '}
-                  Depositing moves real value in, so it comes from your address by name — and the
-                  leftover rent came back to it afterwards. Anyone reading this deposit reaches
-                  your wallet in three steps, and spending this note later republishes the
-                  commitment printed above, which is what lets them start from the spend.
-                </span>
+                {result.fundedBy === 'funder' ? (
+                  <span>
+                    <strong className="text-p01-text">
+                      Your wallet is not on this transaction.
+                    </strong>{' '}
+                    You paid this deployment
+                    {result.walletPaidLamports !== null
+                      ? ` ${(result.walletPaidLamports / 1e9).toFixed(4)} SOL`
+                      : ''}{' '}
+                    in one signature, and it funded the one-time key that made the deposit above —
+                    so the deposit does not name you. What still connects the two is the amount and
+                    the minutes between them, which nothing here hides. Spending this note later
+                    republishes the commitment printed above, and that is what lets a reader start
+                    from the spend.
+                  </span>
+                ) : (
+                  <span>
+                    <strong className="text-p01-text">Your wallet paid for this, in public.</strong>{' '}
+                    This deposit was made without the relay, so it comes from your address by name
+                    and the leftover rent came back to it afterwards. Anyone reading this deposit
+                    reaches your wallet in three steps, and spending this note later republishes
+                    the commitment printed above, which is what lets them start from the spend.
+                  </span>
+                )}
               </p>
               <a
                 href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
@@ -1514,9 +1542,11 @@ export default function PoolPanel({
               <p>
                 Neither the deposit nor the withdrawal names your wallet: the deposit is signed
                 by a one-time key, and the withdrawal now pays a fresh address derived for that
-                one note. But your wallet publicly funds the one-time key in both cases, in a
-                transaction it signs itself, so your wallet is still on chain, one hop away, at
-                the same moment.
+                one note. Your wallet no longer funds that key either — since 2026-08-21 a deposit
+                pays this deployment in one signature and the deployment funds the key from a
+                separate address, so there is a third party between you and the pool instead of a
+                single public hop. Two transfers, neither naming both ends. What still connects
+                them is the amount and the minutes between them.
               </p>
               <p>
                 The withdrawal publishes the note commitment in the clear, and the deposit
@@ -1524,9 +1554,11 @@ export default function PoolPanel({
                 The anonymity set is one, not the note count above.
               </p>
               <p>
-                /pay submits every transaction directly, including the hundreds of proof-chunk
-                uploads a withdrawal needs, so your IP reaches the RPC throughout. There is no
-                relayer here, and relaying only the last transaction would not change that.
+                This tab submits every transaction it sends, including the hundreds of proof-chunk
+                uploads a withdrawal needs, so your IP reaches the RPC throughout. One leg is the
+                exception: funding the one-time key is requested from this deployment and signed on
+                its server, so it sees that request and where it came from. Relaying only the last
+                transaction would not change the rest.
               </p>
               <p>
                 What you get today: the amount is quantised to a denomination, the note itself is

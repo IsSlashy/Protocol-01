@@ -29,7 +29,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
-import { getStore, rateLimitExceeded } from '@/lib/waitlist/store';
+import { getStore, rateLimitExceeded, rateLimitRemaining } from '@/lib/waitlist/store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -284,7 +284,7 @@ function paymentAddresses(
  * `ready: false` with reasons is the honest answer to a broken configuration. A
  * `till: null` a client might pay past is not.
  */
-export async function GET(_request: NextRequest) {
+export async function GET(request: NextRequest) {
   const funder = funderKeypair();
   const reasons: string[] = [];
   let addresses: PaymentAddresses | null = null;
@@ -342,9 +342,39 @@ export async function GET(_request: NextRequest) {
   const till = addresses?.till ?? tillIfParseable();
   const feeWallet = addresses?.feeWallet ?? feeWalletIfParseable();
 
+  // ── How many relays this caller has left, WITHOUT spending one ──────────
+  //
+  // 🚨 THE LIMIT WAS ENFORCED AFTER THE BUYER HAD PAID. `RELAYS_PER_IP_PER_HOUR`
+  // is checked inside the POST, which runs once the wallet has already sent the
+  // denomination and the fee to the till. The bucket is per IP, and a group
+  // test — several people on one office wifi, one conference network, one VPN —
+  // is by definition one IP. The fourth tester signed away a full denomination
+  // and got a 429 for it, recoverable only through the stored receipt and only
+  // an hour later.
+  //
+  // That is the same "pay first, be refused after" shape this whole endpoint was
+  // written to close, left open on the one axis nobody had measured. Reporting
+  // the remaining budget lets the client refuse BEFORE the signature.
+  //
+  // ⚠️ `null` is UNKNOWN, not zero — same rule as the float balance. A store
+  // that cannot be read must not delete the only private path.
+  const ip =
+    request.headers.get('x-real-ip') ?? request.headers.get('x-forwarded-for') ?? 'unknown';
+  let relaysRemaining: number | null = null;
+  const store = getStore();
+  if (store) {
+    try {
+      relaysRemaining = await rateLimitRemaining(store, ip, RATE_SALT, RELAYS_PER_IP_PER_HOUR);
+    } catch {
+      relaysRemaining = null;
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     funder: funder?.publicKey.toBase58() ?? null,
+    relaysRemaining,
+    relaysPerHour: RELAYS_PER_IP_PER_HOUR,
     till,
     feeWallet,
     maxRelayLamports: MAX_RELAY_LAMPORTS,

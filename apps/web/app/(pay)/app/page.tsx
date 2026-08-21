@@ -73,8 +73,9 @@ import PayApp from "@/components/pay/PayApp";
  * IntersectionObserver but NOT for a missing hydration.
  *
  * Everything this page puts in a card or a step is a disclosure: not audited, no
- * mainnet, your wallet is on every transaction, a withdrawal can be paired with
- * its deposit. Gating those on JavaScript while the hero renders from HTML would
+ * mainnet, your wallet signs every transaction it sends and is named on a
+ * stealth send, a deposit detours through this deployment, and a withdrawal can
+ * be paired with its deposit. Gating those on JavaScript while the hero renders from HTML would
  * mean the claims survive a bad load and the caveats do not, which is the exact
  * failure this rebrand exists to correct. The motion signature is carried
  * instead by devices that cannot fail: the hero rule draw, `styx-sweep` on
@@ -130,7 +131,7 @@ const SERIF_H3 = {
 const TITLE = "Devnet app · Styx Protocol";
 
 const DESCRIPTION =
-  "Shield, withdraw and subscribe on Solana devnet. Recipients stand behind one-time hybrid stealth addresses, X25519 with ML-KEM-768. Your wallet signs and pays for every transaction. Not audited, and there is no mainnet deployment.";
+  "Shield, withdraw and subscribe on Solana devnet. Recipients stand behind one-time hybrid stealth addresses, X25519 with ML-KEM-768. Your wallet signs every transaction it sends, and a deposit is paid through this deployment rather than straight into the pool. Not audited, and there is no mainnet deployment.";
 
 /* A link preview is shorter than a meta description and gets read on its own,
    so it leads with the two disclosures rather than the primitives. */
@@ -204,9 +205,11 @@ export default function PayPage() {
         <div className="styx-hero-body">
           <div className="styx-stack">
             <p className="styx-lede">
-              Nothing here hides you: your wallet signs and pays for every
-              transaction, and a pool withdrawal republishes its deposit&apos;s
-              commitment.{" "}
+              Nothing here hides you from the start: a stealth send names
+              your wallet as the payer, and a pool withdrawal republishes its
+              deposit&apos;s commitment. A deposit is the one leg that detours
+              — you pay this deployment, and it funds the key that touches the
+              pool.{" "}
               <strong>
                 Your keys are derived from one wallet signature and live in this
                 tab&apos;s worker. They are never uploaded.

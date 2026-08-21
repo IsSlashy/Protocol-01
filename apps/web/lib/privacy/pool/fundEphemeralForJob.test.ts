@@ -375,6 +375,12 @@ const RELAY_TERMS = {
   // Comfortably above one 1 SOL deposit. The cases that matter override it.
   funderLamports: 5_000_000_000,
   relayFeeLamports: 5_000,
+  // ⚠️ MODELLED, like `ready`. A fixture that omits a field the client acts on
+  // is a fixture that cannot exercise the guard reading it — which is how "the
+  // client ignores ready:false" survived a green suite, and it would have
+  // happened again here.
+  relaysRemaining: 3,
+  relaysPerHour: 3,
 };
 
 /** Everything that happened, in order. The point of several cases below. */
@@ -720,6 +726,42 @@ describe('a float that cannot pay refuses before the buyer does', () => {
     // guard that has already cost this project a working journey. Unknown
     // proceeds; the persisted receipt is what makes a later failure cheap.
     stubDeployment({ terms: { ...RELAY_TERMS, funderLamports: null } });
+    const d = await fundEphemeralForJob(deposit());
+    expect(d.fundedBy).toBe('funder');
+    expect(signed).toHaveLength(1);
+  });
+});
+
+describe('an exhausted relay allowance refuses before the buyer pays', () => {
+  // 🚨 THE LIMIT USED TO BITE AFTER THE MONEY MOVED. It is enforced inside the
+  // relay's POST, which the client reaches only once the wallet has paid the
+  // till — so the fourth deposit of the hour signed away a full denomination and
+  // got a 429 for it. The bucket is per IP, and a public test is several people
+  // on ONE office wifi, one conference network, one VPN. The case the goal
+  // creates is exactly the case that was open.
+
+  it('refuses a spent allowance, and signs NOTHING', async () => {
+    stubDeployment({ terms: { ...RELAY_TERMS, relaysRemaining: 0 } });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('RelayCannotServeJobError');
+    expect(e.reason).toBe('relay-budget-spent');
+    // It has to say WHY a second browser on the same desk sees it too, or the
+    // tester concludes the app is broken rather than shared.
+    expect(e.message).toMatch(/sharing one connection/i);
+    expect(signed).toHaveLength(0);
+    expect(calls).not.toContain('sendRawTransaction');
+  });
+
+  it('serves the last relay of the hour', async () => {
+    stubDeployment({ terms: { ...RELAY_TERMS, relaysRemaining: 1 } });
+    const d = await fundEphemeralForJob(deposit());
+    expect(d.fundedBy).toBe('funder');
+  });
+
+  it('treats an unreadable allowance as unknown, never as spent', async () => {
+    // Same rule as the float balance: a KV hiccup at the deployment must not
+    // delete the only private deposit path.
+    stubDeployment({ terms: { ...RELAY_TERMS, relaysRemaining: null } });
     const d = await fundEphemeralForJob(deposit());
     expect(d.fundedBy).toBe('funder');
     expect(signed).toHaveLength(1);

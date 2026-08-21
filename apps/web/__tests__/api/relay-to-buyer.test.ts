@@ -53,6 +53,8 @@ const mockGetStore = vi.fn();
 const mockRateLimitExceeded = vi.fn();
 const mockIncr = vi.fn();
 const mockDel = vi.fn();
+/** The rate bucket's stored count. `null` = this IP has not relayed this hour. */
+const mockKvGet = vi.fn();
 
 /** Account keys of the payment transaction, in order, with their deltas. */
 let paymentKeys: string[] = [];
@@ -67,7 +69,20 @@ let funderBalance: number | 'unreadable' = 5_000_000_000;
  *  `'confirm-throws'` DID leave and the answer never came back. */
 let sendBehaviour: 'ok' | 'send-throws' | 'confirm-throws' = 'ok';
 
-vi.mock('@/lib/waitlist/store', () => ({
+/**
+ * ⚠️ SPREAD THE REAL MODULE, OVERRIDE TWO THINGS.
+ *
+ * The factory used to list its exports, so anything the route later imported
+ * from this module arrived as `undefined` — a call that throws, which the route
+ * catches and reports as "could not read". That is a real behaviour, and it is
+ * not the one under test: `relaysRemaining` came back `null` and the assertion
+ * failed against a mock, not against the code.
+ *
+ * `rateLimitRemaining` therefore runs FOR REAL here, against the fake store
+ * below, so the arithmetic it reports is the arithmetic the deployment uses.
+ */
+vi.mock('@/lib/waitlist/store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/waitlist/store')>()),
   getStore: () => mockGetStore(),
   rateLimitExceeded: (...args: unknown[]) => mockRateLimitExceeded(...args),
 }));
@@ -217,7 +232,17 @@ beforeEach(() => {
   vi.stubEnv('P01_FEE_WALLET', FEE_WALLET);
   mockIncr.mockResolvedValue(1);
   mockDel.mockResolvedValue(undefined);
-  mockGetStore.mockReturnValue({ incr: mockIncr, del: mockDel, expire: vi.fn() });
+  mockKvGet.mockResolvedValue(null);
+  // `get` is part of the store the route now reads: the readiness answer
+  // previews the rate bucket without incrementing it. A mock missing the method
+  // made the preview throw and report "unknown", which is a real behaviour but
+  // not the one under test.
+  mockGetStore.mockReturnValue({
+    get: mockKvGet,
+    incr: mockIncr,
+    del: mockDel,
+    expire: vi.fn(),
+  });
   mockRateLimitExceeded.mockResolvedValue(false);
   buyerBalance = 0;
   funderBalance = 5_000_000_000;
@@ -421,6 +446,15 @@ describe('the client learns this relay’s ceilings from this relay', () => {
     // than meet the shortfall as a 502 afterwards.
     expect(body.funderLamports).toBe(5_000_000_000);
     expect(body.relayFeeLamports).toBe(5_000);
+    // 🚨 THE ALLOWANCE, READ WITHOUT SPENDING ONE. It is enforced inside the
+    // POST, i.e. after the buyer has paid the till, and the bucket is per IP —
+    // so a group test on one connection burned the fourth tester's denomination.
+    // Reporting it here is what lets the client refuse before the signature.
+    expect(body.relaysPerHour).toBe(3);
+    expect(body.relaysRemaining).toBe(3);
+    // Reading it must NOT consume one: `rateLimitExceeded` answers by
+    // incrementing, which is right where the limit bites and wrong here.
+    expect(mockIncr).not.toHaveBeenCalled();
     // Pinned against the DERIVATION, not against a remembered number: the
     // subsidy a shield honestly needs is its rent leg plus the most the jitter
     // can add, and the cap must sit above that and below twice it. A future

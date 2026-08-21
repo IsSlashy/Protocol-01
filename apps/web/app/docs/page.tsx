@@ -163,12 +163,15 @@ for pos in positions {
     detailCount: 6,
     codeExample: `// Trustless on-chain relay flow (v1.0.2, STARK V3)
 //
-// WHICH CLIENTS ACTUALLY RELAY. Mobile does. The web app does not: /app
-// submits every transaction straight from the browser, including the
-// ~280 proof-buffer chunk transactions, each under the same ephemeral
-// key whose pubkey seeds the buffer PDAs. Relaying only the final
-// transaction would buy nothing while those chunks are self-submitted,
-// so it was deliberately not done.
+// WHICH CLIENTS ACTUALLY RELAY. Mobile does. The web app relays exactly
+// ONE leg, since 2026-08-21: funding the ephemeral that deposits. The
+// wallet pays this deployment in a single signature and the deployment
+// funds that key from a separate address, so the deposit transaction
+// does not name the buyer. Everything else /app sends is still
+// self-submitted from the browser, including the ~280 proof-buffer chunk
+// transactions, each under the same ephemeral key whose pubkey seeds the
+// buffer PDAs — so the IP still reaches the RPC throughout, and this
+// deployment sees the funding request and where it came from.
 //
 // WHAT THE RELAYER HIDES WHEN IT IS USED. The IP address and the outer
 // fee payer. Not the signer: the inner transaction is signed with the
@@ -215,12 +218,21 @@ await p01.createSubscription({
     i18nKey: "denominatedPools",
     detailCount: 8,
     codeExample: `// Shield: the deposit is signed by an ephemeral, not by the wallet.
-// The wallet is still what funds that ephemeral, in the clear, on the
-// line above the deposit, so the wallet is one public hop away, not
-// removed. (SOL only. USDC deposits still use the wallet directly:
-// the ephemeral has no funded token account.)
+//
+// UPDATED 2026-08-21. The wallet no longer funds that ephemeral. It pays
+// THIS DEPLOYMENT once — the denomination plus 0.3% protocol plus 1%
+// operator, one signature — and the deployment funds the ephemeral from
+// a different address it controls. Two transfers, neither naming both
+// ends; what still ties them is the amount and the minutes between them.
+// (SOL only. USDC deposits still use the wallet directly: the ephemeral
+// has no funded token account.)
+//
+// 1 SOL is the only denomination open to deposits: 0.1 is closed by
+// policy so the anonymity set stops splitting, and 10 and above are over
+// the relay's ceiling.
 const stealthKp = deriveStealthSigner(wallet, timestamp);
-await fundStealth(wallet, stealthKp, 0.1); // <- public: wallet -> ephemeral
+await payDeployment(wallet, till, feeWallet, 1); // <- public: wallet -> deployment
+await relayToBuyer(paymentSignature, stealthKp.publicKey); // deployment -> ephemeral
 await program.methods.shieldDenominated(commitment, epoch)
   .accounts({ pool, depositor: stealthKp.publicKey })
   .signers([stealthKp]).rpc();

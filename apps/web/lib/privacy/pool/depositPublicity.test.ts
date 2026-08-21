@@ -91,6 +91,21 @@ describe('the page a tester reads before signing says what actually happens', ()
     expect(appPage()).not.toMatch(/public transfer from your wallet\s*$/m);
   });
 
+  it('does not claim the wallet pays for every transaction', () => {
+    // ⚠️ THE SAME CLAIM LIVED IN THREE MORE PLACES than the two rows that were
+    // found first: the hero lede, the meta description a link preview quotes,
+    // and the header comment listing what the page discloses. A phrase repeated
+    // across a page is not fixed by fixing one instance of it, and grepping for
+    // the exact row text missed all three.
+    //
+    // The SendForm badge is deliberately not covered here: a stealth send
+    // really does have no relayer and really is paid by the wallet, so that
+    // sentence is scoped and still true.
+    const page = appPage();
+    expect(page).not.toMatch(/pays for every\s+transaction/i);
+    expect(page).not.toMatch(/wallet is on every transaction/i);
+  });
+
   it('names the operator fee the buyer signs for', () => {
     // It rides inside their own transaction and cannot be declined, so the page
     // that precedes the signature has to say it exists.

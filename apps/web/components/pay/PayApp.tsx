@@ -489,17 +489,33 @@ export default function PayApp() {
                 is also the WORST option here: it is the account that holds the
                 user's real financial life, and a deposit it pays for names
                 them. It belongs behind a fold, not in front of one. */}
-            <p className="font-display text-p01-text">Your P01 wallet</p>
+            {/* Titled for the wallet a tester HAS, not the one they may not.
+                The "Connect the P01 extension" button below never renders for
+                someone who only has Phantom, so heading their card with the
+                extension's name asks them to identify with an object they do
+                not own. The key this app derives is still a P01 key, and the
+                sentence below says so. */}
+            <p className="font-display text-p01-text">Connect a wallet</p>
             {/* "post-quantum payments" is the exact phrase the page header of
                 app/(pay)/app/page.tsx forbids, and this connect card said it:
                 the signature that pays is Ed25519 and stays Ed25519. What is
                 post-quantum here is the stealth address and the note
                 encryption, hybrid X25519 + ML-KEM-768, so that is what the
                 sentence names. Also drops the pre-rename product name. */}
+            {/* ⚠️ "the deployment pays the fees" WAS HERE AND IT WAS BACKWARDS.
+                A deposit sets `payTx.feePayer = owner` and carries the operator's
+                1% in the same signature, so the buyer pays the fees, and the
+                only thing the deployment fronts is the refundable proof rent —
+                which comes back to the deployment, not to them. The product
+                already says this correctly two screens later, on the pool
+                panel; a connect card that promises free is a promise the first
+                real screen breaks. */}
             <p className="mt-1 text-sm text-p01-text-muted">
-              Everything here runs on a P01 key: subscriptions belong to it, notes are sealed to
-              it, and the deployment pays the fees. Recipient addresses are hybrid post-quantum.
-              The signature that pays is Ed25519 and stays Ed25519.
+              Everything here runs on a P01 key: subscriptions belong to it and notes are sealed
+              to it. A deposit costs you one signature — the denomination, a 0.3% protocol fee and
+              a 1% operator fee — while this deployment fronts the refundable proof rent and takes
+              it back afterwards. Recipient addresses are hybrid post-quantum. The signature that
+              pays is Ed25519 and stays Ed25519.
             </p>
           </div>
           {/* ⚠️ ORDER IS THE ARGUMENT HERE.
@@ -577,11 +593,15 @@ export default function PayApp() {
             <div className="rounded-lg border border-p01-yellow/30 bg-p01-yellow/5 p-4 text-left">
               <p className="text-sm text-p01-yellow">The P01 extension is not installed.</p>
               <p className="mt-2 text-xs text-p01-text-muted">
-                It is what holds your keys and signs for you. Install it, then reload this page —
-                it announces itself to the app and the button above appears.
+                {/* ⚠️ "below" pointed UPWARDS: the external-wallet block closes
+                    before this notice opens, and the only thing that follows is
+                    a branch nothing can reach. A tester told to look below sees
+                    nothing there. */}
+                It holds your keys and signs for you, and it is a convenience rather than a
+                requirement. Install it and reload, and its button appears above.
                 {externalWallets.length > 0
-                  ? " Until then you can connect one of the wallets below."
-                  : " No other wallet announced itself to this page either, so there is nothing to connect yet."}
+                  ? " Any wallet listed above works today — the keys this app derives are the same either way."
+                  : " No wallet announced itself to this page, so there is nothing to connect yet. Install Phantom or the P01 extension, then reload."}
               </p>
             </div>
           )}

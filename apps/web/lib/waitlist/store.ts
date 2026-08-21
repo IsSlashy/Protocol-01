@@ -421,6 +421,34 @@ export async function recordConfirmCounters(kv: KvLike, confirmedAt: string): Pr
  * Per-IP hourly rate limit. Returns true when the caller is over the limit.
  * The IP is hashed with a server secret so raw IPs never touch the store.
  */
+/**
+ * How many calls this bucket has left, WITHOUT spending one.
+ *
+ * 🚨 THE DEFECT THIS EXISTS FOR. `rateLimitExceeded` answers by incrementing,
+ * which is right where the limit is enforced and useless where it must be
+ * PREVIEWED. On the relay the limit is checked inside the POST — after the
+ * buyer has already paid the till — so four testers behind one office wifi meant
+ * the fourth signed away a full denomination and met a 429. That is the exact
+ * "pay first, be refused after" shape the readiness GET was written to close,
+ * left open on the one axis nobody measured: the bucket is per IP, and a group
+ * test is by definition one IP.
+ *
+ * Read-only, so a client may call it as often as it likes. It returns the same
+ * bucket the enforcement uses, so the two cannot disagree.
+ */
+export async function rateLimitRemaining(
+  kv: KvLike,
+  ip: string,
+  salt: string,
+  limit = 20,
+): Promise<number> {
+  const hash12 = sha256Hex(ip + salt).slice(0, 12);
+  const hour = new Date().toISOString().slice(0, 13);
+  const used = await kv.get<number>(K.rate(hash12, hour));
+  const n = typeof used === 'number' ? used : Number(used ?? 0);
+  return Math.max(0, limit - (Number.isFinite(n) ? n : 0));
+}
+
 export async function rateLimitExceeded(
   kv: KvLike,
   ip: string,

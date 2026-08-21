@@ -130,7 +130,14 @@ describe("the connect gate offers every door the browser actually has", () => {
     render(<PayApp />);
 
     expect(screen.getByText(/the p01 extension is not installed/i)).toBeInTheDocument();
-    expect(screen.getByText(/no other wallet announced itself/i)).toBeInTheDocument();
+    // ⚠️ WORDING UPDATED 2026-08-21 with the copy it asserts. The notice used to
+    // read "no OTHER wallet announced itself", which framed the P01 extension as
+    // the default and every real wallet as the alternative — backwards for a
+    // public test, where the tester arrives with Phantom and no extension. What
+    // must not change is that a browser with nothing installed is TOLD so
+    // instead of being shown a button that cannot work.
+    expect(screen.getByText(/no wallet announced itself to this page/i)).toBeInTheDocument();
+    expect(screen.getByText(/install phantom or the p01 extension/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^connect /i })).toBeNull();
   });
 });

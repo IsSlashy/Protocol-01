@@ -531,9 +531,26 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       expect(code).toMatch(/DEEP-ALI/);
     });
 
-    it('says the web client submits its own transactions rather than relaying', () => {
+    it('says which ONE leg the web client relays, and that the rest is self-submitted', () => {
+      /**
+       * ⚠️ THIS TEST CHANGED SIDE ON 2026-08-21, DELIBERATELY. It used to pin
+       * `The web app does not` relay — a correct control over a fact that has
+       * since stopped being true: a deposit now funds its ephemeral through
+       * this deployment. Leaving the old assertion would have pinned the docs
+       * to a claim the code contradicts, which is the failure this whole suite
+       * exists to prevent, arriving from the other direction.
+       *
+       * So it still pins the honest half — the IP is not hidden, ~280 chunks
+       * are self-submitted — and now also pins that the one relayed leg is
+       * named rather than glossed.
+       */
       const code = codeOf('On-Chain Relayer (Trustless)', 'private-relay');
-      expect(code).toMatch(/The web app does not/);
+      expect(code).toMatch(/relays exactly/i);
+      expect(code).toMatch(/ONE leg/);
+      expect(code).toMatch(/self-submitted/);
+      expect(code).toMatch(/IP still reaches the RPC/);
+      // And it must NOT go back to denying the relay outright.
+      expect(code).not.toMatch(/The web app does not:/);
       expect(code).toMatch(/The IP address and the outer/);
       expect(code).toMatch(/Not the signer/);
     });

@@ -981,10 +981,12 @@ function Slide9LiveDemo() {
             <p className="styx-step-body">
               Two STARK proofs authorise it, circuits 1 and 3, verified on chain.{" "}
               <strong>
-                What is not hidden: the sender. Your wallet pre-funds the
-                ephemeral signer in public one hop earlier, and the withdrawal
-                republishes the deposit&apos;s commitment, so anyone can pair the
-                two.
+                What is not hidden: the withdrawal republishes the
+                deposit&apos;s commitment, so anyone can pair the two. Since
+                2026-08-21 the wallet no longer pre-funds the ephemeral signer —
+                it pays this deployment once and the deployment funds the
+                signer — so the sender is a hop further away than this slide
+                used to claim, not removed.
               </strong>
             </p>
           </div>

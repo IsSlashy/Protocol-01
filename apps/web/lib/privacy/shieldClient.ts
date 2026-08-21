@@ -94,8 +94,31 @@ export interface ShieldOutcome {
   denomination: number;
   /** Already encrypted to the user's own PQ address — safe to persist as-is. */
   encryptedNote: string;
-  /** Lamports the wallet moved onto the ephemeral (most of it comes back). */
+  /**
+   * The whole pre-fund the job needed, in lamports.
+   *
+   * ⚠️ RENAMED IN MEANING, NOT IN NAME, ON 2026-08-21 — the old JSDoc read
+   * "lamports the wallet moved onto the ephemeral (most of it comes back)" and
+   * BOTH halves were false on the relayed path. The wallet moves nothing onto
+   * the ephemeral (the float does), and nothing comes back to the wallet (the
+   * refundable rent is the float's). Use `walletPaidLamports` for what actually
+   * left the buyer.
+   */
   fundedLamports: number;
+  /**
+   * Who paid, as a FACT about the deposit that just happened.
+   *
+   * ⛔ THE SCREEN MUST NOT INFER THIS. The success card used to state
+   * unconditionally that the wallet had paid in public — true before the relay,
+   * true today only in treasury mode, and false for every ordinary buyer. An
+   * outcome that reports what occurred is the only way a screen and a code path
+   * cannot drift, and this one drifted the same day the relay landed.
+   */
+  fundedBy: 'wallet' | 'funder';
+  /** What the wallet actually sent, and to whom. `null` when it sent nothing. */
+  walletPaidLamports: number | null;
+  /** The operator fee taken in the same signature, when there was one. */
+  operatorFeeLamports: number | null;
 }
 
 export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome> {
@@ -201,6 +224,15 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
     denomination: done.denomination,
     encryptedNote: done.encryptedNote,
     fundedLamports: prep.requiredLamports,
+    fundedBy: funding.fundedBy,
+    // On the relayed path the wallet sends the note's value to the till plus the
+    // operator's fee, and nothing else. On a public (treasury) deposit it
+    // pre-funds the whole job itself.
+    walletPaidLamports:
+      funding.fundedBy === 'funder'
+        ? prep.valueLamports + (funding.operatorFeeLamports ?? 0)
+        : prep.requiredLamports,
+    operatorFeeLamports: funding.operatorFeeLamports ?? null,
   };
 }
 

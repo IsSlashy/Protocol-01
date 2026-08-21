@@ -166,6 +166,16 @@ export interface RelayTerms {
   funderLamports: number | null;
   /** What the relay's own transfer costs the float, on top of the job. */
   relayFeeLamports: number;
+  /**
+   * Relays this caller has left this hour, or `null` when it could not be read.
+   *
+   * ⚠️ The bucket is per IP, so a group test shares one. `null` is unknown and
+   * is NOT treated as empty, for the same reason an unreadable float balance is
+   * not treated as zero.
+   */
+  relaysRemaining: number | null;
+  /** The hourly allowance, so a refusal can say what it is out of. */
+  relaysPerHour: number;
 }
 
 /** Why a deployment's own configuration makes a relayed deposit impossible.
@@ -222,7 +232,8 @@ export type RelayRefusal =
   | 'fee-basis-missing'
   | 'payment-outstanding'
   | 'no-receipt-store'
-  | 'float-too-low';
+  | 'float-too-low'
+  | 'relay-budget-spent';
 
 /**
  * Thrown when the relay cannot serve this particular job.
@@ -466,12 +477,23 @@ export async function fetchRelayTerms(signal?: AbortSignal): Promise<RelayTerms>
       ? body.relayFeeLamports
       : 0;
 
+  const relaysRemaining =
+    typeof body.relaysRemaining === 'number' && Number.isFinite(body.relaysRemaining)
+      ? body.relaysRemaining
+      : null;
+  const relaysPerHour =
+    typeof body.relaysPerHour === 'number' && Number.isFinite(body.relaysPerHour)
+      ? body.relaysPerHour
+      : 0;
+
   return {
     funder: funderKey,
     till: tillKey,
     feeWallet: feeKey,
     funderLamports,
     relayFeeLamports,
+    relaysRemaining,
+    relaysPerHour,
     maxRelayLamports,
     maxRentSubsidyLamports,
   };
@@ -971,6 +993,27 @@ export async function fundEphemeralForJob(
     // exact overreach has cost this project a working journey before. On null
     // the deposit proceeds and the persisted receipt is what makes a failure
     // recoverable.
+    // ── Is there a relay left this hour? ───────────────────────────────────
+    //
+    // 🚨 THE LIMIT USED TO BITE AFTER THE MONEY MOVED. It is enforced inside
+    // the relay's POST, which the client only reaches once the wallet has paid
+    // the till — so on a shared IP the fourth deposit of the hour signed away a
+    // full denomination and received a 429. The bucket is per IP and a group
+    // test is one IP, which is exactly the case a public test creates.
+    //
+    // ⚠️ Refuse only on a budget that can be SEEN spent. `null` means the
+    // deployment could not read its own store, and refusing on that would let a
+    // KV hiccup delete the only private path.
+    if (terms.relaysRemaining !== null && terms.relaysRemaining <= 0) {
+      throw new RelayCannotServeJobError(
+        'relay-budget-spent',
+        `This deployment relays ${terms.relaysPerHour} deposits per hour per network address, and ` +
+          'this one has used them all. Nothing was signed. Wait for the hour to turn over, or ' +
+          'deposit from a different network — several people sharing one connection share one ' +
+          'allowance.',
+      );
+    }
+
     const floatNeeds = requiredLamports + terms.relayFeeLamports;
     if (terms.funderLamports !== null && terms.funderLamports < floatNeeds) {
       throw new RelayCannotServeJobError(
