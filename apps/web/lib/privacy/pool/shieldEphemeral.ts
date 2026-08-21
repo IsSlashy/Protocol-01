@@ -303,13 +303,21 @@ export async function prepareShield(
  * Run the shield with E as depositor. The caller must already have funded E
  * with `requiredLamports` (one user signature) and confirmed that transfer.
  *
- * `ownerPubkey` receives E's residual — recovered proof-buffer rent plus unused
+ * `sweepTo` receives E's residual — recovered proof-buffer rent plus unused
  * fee budget.
  */
 export async function executeShield(
   ctx: PreparedShield,
   connection: Connection,
-  ownerPubkey: PublicKey,
+  /**
+   * Where E's residual goes. ⚠️ NOT NECESSARILY THE OWNER, and it was named
+   * `ownerPubkey` here until 2026-08-22 while its caller has passed
+   * `sweepTo ?? ownerPubkey` all along (`worker/poolHandlers.ts:1469`). On a
+   * relayed deposit this is the deployment's FLOAT: it fronted the rent, so the
+   * rent is its own coming back. The old name is why the progress line below
+   * told a buyer their wallet was being repaid when it was not.
+   */
+  sweepTo: PublicKey,
   onProgress?: (step: string) => void,
 ): Promise<ShieldResult> {
   const { ephemeral, jobId, poolConfig, prepared } = ctx;
@@ -358,11 +366,23 @@ export async function executeShield(
       const eBal = await connection.getBalance(ephemeral.publicKey, 'confirmed');
       const sweepable = eBal - SWEEP_FEE;
       if (sweepable > 0) {
-        onProgress?.('Returning recovered rent to your wallet...');
+        // 🚨 IT SAID "to your wallet", UNCONDITIONALLY, AND ON THE RELAYED
+        // PATH THAT IS FALSE — the rent goes back to the float that fronted it
+        // and the buyer gets nothing. `subscribeEphemeral` and
+        // `unshieldEphemeral` already branch on who paid; the deposit leg was
+        // the one that did not, and it is the leg the relay changed.
+        //
+        // Naming the destination cannot go stale the way a branch can: whoever
+        // reads it can check the address against the sweep transaction.
+        onProgress?.(
+          `Returning recovered rent to ${sweepTo.toBase58().slice(0, 4)}…${sweepTo
+            .toBase58()
+            .slice(-4)}...`,
+        );
         const sweepTx = new Transaction().add(
           SystemProgram.transfer({
             fromPubkey: ephemeral.publicKey,
-            toPubkey: ownerPubkey,
+            toPubkey: sweepTo,
             lamports: sweepable,
           }),
         );
