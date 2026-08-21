@@ -103,12 +103,19 @@ const RELAYS_PER_IP_PER_HOUR = 3;
  * DERIVED, not chosen. The subsidy F legitimately fronts is the non-value half
  * of a shield's pre-fund:
  *
- *   rent leg, measured on devnet    570,010,780   `denominatedPool.ts:457`
+ *   non-value part of the measured
+ *   1 SOL run                       570,486,080   `denominatedPool.ts`
  *   jitter rounds the sum UP to a
  *   whole 0.01 SOL                  < 10,000,000  `prefundAmount.ts:43,81`
  *   ...and adds up to four more     + 40,000,000  `prefundAmount.ts:51,82`
  *   ------------------------------------------
- *   worst honest subsidy            < 620,010,780
+ *   worst honest subsidy            < 620,486,080
+ *
+ * ⚠️ 570,486,080, NOT the 570,010,780 the estimator's constant carries. That
+ * constant sits 475,300 below the run it was measured from, because the split
+ * it came with mislabelled 475,300 lamports of buffer rent as value. Deriving a
+ * REFUSAL from the smaller number would refuse honest deposits on a larger
+ * proof, so the bound is taken from the larger.
  *
  * 650,000,000 leaves ~0.03 SOL of headroom above the worst honest draw and
  * refuses everything beyond it. It bounds the loss; it does not eliminate it,

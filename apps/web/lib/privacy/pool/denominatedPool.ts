@@ -449,10 +449,22 @@ export const MAX_RELAY_LAMPORTS = 2_500_000_000;
  * ephemeral's tx-fee budget and the rent margin.
  *
  * MEASURED on devnet, not estimated. A 1 SOL deposit pre-funded 1,573,486,080
- * lamports of which 1,003,475,300 was value, leaving 570,010,780 of refundable
- * rent (`shieldEphemeral.ts:270`, echoed in `relay-to-buyer/route.ts:70`). The
- * real figure varies by a few thousand lamports with the C6 proof size, which
- * is far below the 0.01 SOL granularity the jitter rounds to.
+ * lamports (`shieldEphemeral.ts:270`). The real figure varies with the C6 proof
+ * size, which is far below the 0.01 SOL granularity the jitter rounds to.
+ *
+ * ⚠️ CORRECTED 2026-08-21 — THE SPLIT WAS WRONG, AND IT WAS THE HALF PEOPLE QUOTE.
+ * This used to read "of which 1,003,475,300 was value, leaving 570,010,780 of
+ * refundable rent". The value leg is not that number: `shieldEphemeral.ts:293`
+ * computes it as `denominationAtomic + denominationAtomic * 30 / 10_000`, which
+ * for a 1 SOL note is 1,003,000,000 EXACTLY — see `shieldValueLamports` below.
+ * The 475,300 difference is buffer rent from a slightly larger proof, and calling
+ * it value overstates what a buyer pays on the RELAYED path, where the value leg
+ * is literally the amount their wallet sends to the till.
+ *
+ * The honest split of that run: 1,003,000,000 value + 570,486,080 non-value
+ * (buffer rent, the 3,000,000 tx budget, the 2,000,000 rent margin). This
+ * constant sits 475,300 BELOW that run's non-value part, which is why everything
+ * derived from it must carry headroom rather than sit on the number.
  */
 const SHIELD_RENT_LEG_LAMPORTS = 570_010_780;
 
@@ -496,6 +508,24 @@ function shieldPrefundWorstCase(bare: number): number {
  * "good" denominations — a list goes stale silently the moment either constant
  * moves, which is the same failure shape as a flag only one view reads.
  */
+/**
+ * The VALUE leg of a shield: the denomination plus the protocol's own 0.3%.
+ *
+ * Mirrors `shieldEphemeral.ts:293` term for term, and it is the number that
+ * matters to a buyer on the relayed path — it is exactly what leaves their
+ * wallet for the till, and exactly what `/api/relay-to-buyer` reads back as
+ * `received` from the till's balance delta.
+ *
+ * ⛔ NOT the pre-fund. `estimateShieldPrefundLamports` adds the refundable
+ * proof rent, which on a relayed deposit the FLOAT fronts and gets back — so
+ * quoting it to the buyer overstates what they pay and, worse, promises them a
+ * refund that goes somewhere else.
+ */
+export function shieldValueLamports(pool: PoolConfig): number {
+  const protocolFee = Number((pool.denominationAtomic * SHIELD_FEE_BPS) / BPS_DENOMINATOR);
+  return Number(pool.denominationAtomic) + protocolFee;
+}
+
 export function estimateShieldPrefundLamports(pool: PoolConfig): number {
   return shieldPrefundWorstCase(shieldPrefundBareLamports(pool.denominationAtomic));
 }

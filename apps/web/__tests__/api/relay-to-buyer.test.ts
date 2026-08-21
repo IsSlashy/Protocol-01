@@ -146,8 +146,16 @@ const BUYER = Keypair.generate().publicKey.toBase58();
 const WALLET = Keypair.generate().publicKey.toBase58();
 const TICKET = 'test-ticket';
 
-/** A 1 SOL deposit, measured on devnet 2026-08-18. */
-const VALUE = 1_003_475_300;
+/**
+ * The VALUE leg of a 1 SOL deposit: the denomination plus the protocol's 0.3%,
+ * DERIVED from the pool table rather than remembered
+ * (`shieldEphemeral.ts:293`). Exactly what the buyer's wallet sends the till,
+ * and exactly what this route reads back as `received`.
+ *
+ * ⚠️ NOT 1,003,475,300. That number is a measured pre-fund TOTAL minus a rent
+ * constant, and the 475,300 it carries is buffer rent, not value.
+ */
+const VALUE = 1_003_000_000;
 const REQUIRED = 1_573_486_080;
 /** 1% of the note denomination, charged in the same transaction. */
 const FEE = 10_000_000;
@@ -541,19 +549,19 @@ describe('the operator fee is checked ON CHAIN, or it is not checked at all', ()
     const body = await res.json();
     expect(res.status).toBe(402);
     expect(body.feeReceived).toBe(9_000_000);
-    expect(body.minFee).toBe(9_934_405);
+    expect(body.minFee).toBe(9_929_700); // floor(1_003_000_000 * 99 / 10_000)
   });
 
   it('accepts a fee exactly at the floor, and nothing sends below it', async () => {
     // WHY 99 bps AND NOT 100. The client charges 1% of the DENOMINATION, while
     // what lands at the till is the denomination plus the protocol's own 0.3%.
     // An honest fee is therefore 0.01 / 1.003 = 99.70 bps of `received`, and the
-    // client's integer division can shave one atom below that. 9,934,405 is the
+    // client's integer division can shave one atom below that. 9,929,700 is the
     // floor for a 1 SOL note; the honest client sends 10,000,000.
-    paymentTx({ [TILL]: VALUE, [FEE_WALLET]: 9_934_405 });
+    paymentTx({ [TILL]: VALUE, [FEE_WALLET]: 9_929_700 });
     expect((await route.POST(payment())).status).toBe(200);
 
-    paymentTx({ [TILL]: VALUE, [FEE_WALLET]: 9_934_404 });
+    paymentTx({ [TILL]: VALUE, [FEE_WALLET]: 9_929_699 });
     expect((await route.POST(payment())).status).toBe(402);
   });
 

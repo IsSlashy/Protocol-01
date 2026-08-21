@@ -22,11 +22,18 @@ and say nothing; now it stops and tells you why.
 | **B** | the buyer: imports a note, subscribes | nothing — it never pays for anything |
 
 🚨 **CE QUE COÛTE UNE NOTE, MESURÉ — et pourquoi A peut être trop pauvre.**
-Un dépôt de 1 SOL préfinance **1 573 486 080 lamports**, dont **1 003 475 300**
-de valeur (dénomination + 0,3 % de frais protocole) et **570 010 780** de rente
-de preuve *remboursable* (`lib/privacy/pool/denominatedPool.ts:449-454`,
-`shieldEphemeral.ts:270`). Donc, par note : **1,5735 SOL au pic**, **~1,0035 SOL
-net**. Deux notes en série : **1,5735 au pic**, **~2,007 SOL net**.
+Un dépôt de 1 SOL préfinance **1 573 486 080 lamports** (`shieldEphemeral.ts:270`),
+dont **1 003 000 000** de valeur — dénomination + 0,3 % de frais protocole,
+calculé et non retenu de mémoire (`shieldEphemeral.ts:293`) — et **570 486 080**
+de rente de preuve, de budget de frais et de marge, *remboursable*. Donc, par
+note : **1,5735 SOL au pic**, **1,003 SOL net**. Deux notes en série :
+**1,5735 au pic**, **2,006 SOL net**.
+
+> ⚠️ Ne pas citer « 1 003 475 300 de valeur ». Ce chiffre circulait dans un
+> commentaire du dépôt et découpait le total au mauvais endroit : les 475 300
+> d'écart sont de la rente de tampon, pas de la valeur. Corrigé le 21-08 à la
+> source. Sur le chemin **relayé**, la valeur est exactement ce que le
+> portefeuille envoie à la caisse, donc l'erreur se voyait sur la facture.
 
 ⛔ **Compter AVANT de partir.** Au 2026-08-21 l'autorité
 `7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU` détient **1,4558 SOL** — sous le

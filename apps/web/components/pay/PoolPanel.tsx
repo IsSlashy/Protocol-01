@@ -45,9 +45,11 @@ import {
   depositBlockFor,
   findPoolV3,
   poolsOpenForDeposit,
+  shieldValueLamports,
   type DepositBlock,
   type PoolToken,
 } from "@/lib/privacy/pool/denominatedPool";
+import { operatorFeeAtomic } from "@/lib/privacy/pool/ephemeralFunder";
 import { SHIELD_PHASES, WITHDRAW_PHASES } from "@/lib/pay/flowProgress";
 import {
   requiresSweepHomeConfirmation,
@@ -808,7 +810,38 @@ export default function PoolPanel({
   // deriving both from `unspent` makes that contradiction unrepresentable.
   const shieldedBalance = unspent.reduce((sum, n) => sum + n.denomination, 0);
 
-  const shieldCost = (denomination * 1.003 + 1.006).toFixed(3);
+  /**
+   * What a deposit actually costs the BUYER, derived rather than remembered.
+   *
+   * 🚨 THIS USED TO BE `denomination * 1.003 + 1.006` AND BOTH HALVES WERE
+   * WRONG AFTER 2026-08-21.
+   *
+   * The `+ 1.006` was a hand-kept copy of the proof-buffer rent — 0.44 SOL above
+   * the measured 0.570010780 (`denominatedPool.ts`, `SHIELD_RENT_LEG_LAMPORTS`)
+   * — and on a RELAYED deposit the buyer never fronts that rent at all: the
+   * float does, and the float is what gets it back. Quoting it here overstated
+   * the price AND promised a refund that goes to somebody else.
+   *
+   * `shieldToPool` sets `relayThroughDeployment: true` unconditionally and the
+   * path no longer falls back, so every deposit made from this panel is the
+   * relayed shape or it is refused. What leaves the wallet is one signature
+   * carrying two transfers: the value to the till and the operator's 1% to the
+   * fee sink. Both are derived from the pool table so a denomination change
+   * cannot leave this number behind.
+   */
+  const costPool = findPoolV3(token, denomination);
+  const valueLamports = costPool ? shieldValueLamports(costPool) : 0;
+  const operatorFeeLamports = costPool
+    ? Number(
+        operatorFeeAtomic({
+          token: costPool.token,
+          denominationAtomic: costPool.denominationAtomic,
+          decimals: costPool.decimals,
+        }),
+      )
+    : 0;
+  const shieldCost = ((valueLamports + operatorFeeLamports) / 1e9).toFixed(3);
+  const operatorFeeSol = (operatorFeeLamports / 1e9).toFixed(3);
 
   /**
    * Why the selected denomination cannot take a deposit, or null.
@@ -907,7 +940,7 @@ export default function PoolPanel({
             phases={SHIELD_PHASES}
             step={step}
             running={shielding}
-            note={`About ${shieldCost} SOL is committed while this runs. Most of it is a refundable deposit, returned at the end.`}
+            note={`${shieldCost} SOL leaves your wallet in one signature: the denomination, the 0.3% protocol fee and the 1% operator fee. The refundable proof rent is this deployment's, not yours.`}
           />
         </div>
       )}
@@ -1063,14 +1096,17 @@ export default function PoolPanel({
             precise breakdown (rent, per-step fees) one click behind it. */}
         <details className="text-xs text-p01-text-muted">
           <summary className="cursor-pointer marker:text-p01-text-dim">
-            Shielding {denomination} SOL needs about {shieldCost} SOL free for a few minutes. Most
-            of it is a refundable deposit that comes back at the end.
+            Shielding {denomination} SOL costs {shieldCost} SOL, and none of it comes back.
           </summary>
           <p className="mt-1.5 pl-4 text-p01-text-dim">
-            The exact breakdown: the {denomination} SOL denomination, a 0.3% protocol fee, and ~1
-            SOL of proof-buffer rent that is returned when the buffer closes. Withdrawal charges
-            0.5%, and moving the payout off its one-time address afterwards costs one more
-            transaction fee (0.000005 SOL).
+            The exact breakdown: the {denomination} SOL denomination, a 0.3% protocol fee, and a 1%
+            operator fee ({operatorFeeSol} SOL). Your wallet signs ONE transaction carrying both
+            transfers, so there is no second approval and no way to pay for the deposit without
+            paying the fee. The ~0.57 SOL of proof-buffer rent a deposit also needs is fronted by
+            this deployment rather than by you, and returns to this deployment when the buffer
+            closes — which is why your figure is smaller than it used to be and why none of it is
+            refundable to you. Withdrawal charges 0.5%, and moving the payout off its one-time
+            address afterwards costs one more transaction fee (0.000005 SOL).
           </p>
         </details>
 
