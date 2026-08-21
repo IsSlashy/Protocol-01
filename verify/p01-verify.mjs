@@ -2017,34 +2017,8 @@ async function verifySpend(rpc, signature, opts = {}) {
       ...funderSurfaces,
     ].filter(Boolean);
 
-    const hits = parts.filter((p) => p.keys?.has(namedWallet));
-    if (hits.length > 0) {
-      results.push(
-        probe('P11', P11_NAME, false,
-          `${namedWallet} is NAMED in ${hits.map((h) => h.label).join(' and ')}. ` +
-          'Found by listing account keys — no instruction decoded, no proof read. This is the ' +
-          'cheapest extraction there is and every other probe here can miss it, because an ' +
-          'address named by a transaction need not have moved a lamport in it. A hit on a ' +
-          "funder's own history costs one extra hop, taken from an address the P6/P9 report " +
-          'already prints in full.',
-          hits.length),
-      );
-    } else {
-      const partial = parts.filter((p) => !p.complete);
-      results.push(
-        probe('P11', P11_NAME, partial.length === 0,
-          partial.length === 0
-            ? `${namedWallet} appears in the account keys of NONE of the ` +
-              `${parts.reduce((n, p) => n + p.read, 0)} transactions read across ` +
-              `${parts.length} surface(s), each read in full. ⛔ This covers the transactions ` +
-              'REACHABLE FROM THIS SPEND and nothing else: it says the address is not in this ' +
-              'operation, never that the address is unused or unknown.'
-            : `INCONCLUSIVE: not found, but ${partial.map((p) => `${p.label} was read ` +
-              `${p.read} of ${p.of}`).join('; ')}. A walk that stopped early because it already ` +
-              'found an edge is not evidence of absence — see P6. Absence needs the whole history.',
-          partial.length === 0 ? 0 : null),
-      );
-    }
+    const p11 = p11Verdict(namedWallet, parts);
+    results.push(probe('P11', P11_NAME, p11.passed, p11.detail, p11.measure));
   }
 
   // ── P5: context, never a pass/fail ────────────────────────────────────────
@@ -2193,6 +2167,70 @@ async function traceDepositChain(rpc, treePDA, leaf, limit) {
   }
   const last = hops[hops.length - 1];
   return { ...last, hops, origin: false, why: `the chain is longer than ${MAX_DEPOSIT_HOPS} hops` };
+}
+
+/**
+ * P11's verdict, as one pure function of the surfaces that were read.
+ *
+ * P11 is the probe the demo runbook puts in front of an auditor, and it is the
+ * only one that answers the auditor's OWN method: list every account key of
+ * every reachable transaction and look for one address. No instruction decoded,
+ * no proof read.
+ *
+ * Its three states, and why the middle one is not a pass:
+ *
+ *   named somewhere            the wallet is in the operation. FAIL, measure =
+ *                              how many surfaces named it.
+ *   not named, every surface
+ *   read IN FULL               absence argued from a complete reading. PASS.
+ *   not named, some surface
+ *   read in part               absence argued from a partial reading, which is
+ *                              not absence. FAIL, INCONCLUSIVE.
+ *
+ * 🚨 THE VERDICT WAS RIGHT AND ITS PASS HAD NO CONTROL. Eight self-tests cover
+ * how the walks are BUILT — deep vs early-stopping, stranger vs named — and
+ * none covered what the verdict does with them. That matters because `complete`
+ * is a conjunction of three separate conditions (`!inconclusive && !truncated &&
+ * deep`), and dropping any one of them turns a partial reading into a PASS with
+ * no error anywhere. A false green on THIS probe is the most expensive one in
+ * the tool: it is the sentence an auditor is handed.
+ */
+function p11Verdict(namedWallet, parts) {
+  const hits = parts.filter((p) => p.keys?.has(namedWallet));
+  if (hits.length > 0) {
+    return {
+      passed: false,
+      measure: hits.length,
+      detail:
+        `${namedWallet} is NAMED in ${hits.map((h) => h.label).join(' and ')}. ` +
+        'Found by listing account keys — no instruction decoded, no proof read. This is the ' +
+        'cheapest extraction there is and every other probe here can miss it, because an ' +
+        'address named by a transaction need not have moved a lamport in it. A hit on a ' +
+        "funder's own history costs one extra hop, taken from an address the P6/P9 report " +
+        'already prints in full.',
+    };
+  }
+  const partial = parts.filter((p) => !p.complete);
+  if (partial.length === 0) {
+    return {
+      passed: true,
+      measure: 0,
+      detail:
+        `${namedWallet} appears in the account keys of NONE of the ` +
+        `${parts.reduce((n, p) => n + p.read, 0)} transactions read across ` +
+        `${parts.length} surface(s), each read in full. ⛔ This covers the transactions ` +
+        'REACHABLE FROM THIS SPEND and nothing else: it says the address is not in this ' +
+        'operation, never that the address is unused or unknown.',
+    };
+  }
+  return {
+    passed: false,
+    measure: null,
+    detail:
+      `INCONCLUSIVE: not found, but ${partial.map((p) => `${p.label} was read ` +
+        `${p.read} of ${p.of}`).join('; ')}. A walk that stopped early because it already ` +
+      'found an edge is not evidence of absence — see P6. Absence needs the whole history.',
+  };
 }
 
 /**
@@ -2780,6 +2818,57 @@ function selfTestChannelDecoders() {
       /hops back to|inserted the same commitment/.test(p4Verdict(SPENT, null).detail),
       false,
     );
+
+    // ── P11's VERDICT, and especially its PASS ──────────────────────────────
+    //
+    // 🚨 EIGHT CONTROLS COVERED HOW THE WALKS ARE BUILT AND NONE COVERED WHAT
+    // THE VERDICT DOES WITH THEM. `complete` is a conjunction of three separate
+    // conditions — `!inconclusive && !truncated && deep` — and dropping any one
+    // of them turns a partial reading into a PASS with no error anywhere. This
+    // is the probe the demo runbook hands an auditor, so a false green here is
+    // the most expensive one in the file.
+    const P11_WALLET = 'BUYERBUYERBUYERBUYERBUYERBUYERBUYERBUYER';
+    const p11Surface = (label, over = {}) => ({
+      label,
+      keys: new Set(['SOMEONEELSE']),
+      complete: true,
+      read: 10,
+      of: 10,
+      ...over,
+    });
+    const full = [p11Surface('the spend transaction'), p11Surface("the spend payer's history")];
+
+    check('P11 fails when the wallet is named', p11Verdict(P11_WALLET, [
+      p11Surface('the spend transaction', { keys: new Set([P11_WALLET]) }),
+    ]).passed, false);
+    check('P11 counts the surfaces that named it', p11Verdict(P11_WALLET, [
+      p11Surface('a', { keys: new Set([P11_WALLET]) }),
+      p11Surface('b', { keys: new Set([P11_WALLET]) }),
+      p11Surface('c'),
+    ]).measure, 2);
+    check('P11 passes only on surfaces read IN FULL', p11Verdict(P11_WALLET, full).passed, true);
+    check('P11 fails when ANY surface was read in part', p11Verdict(P11_WALLET, [
+      ...full,
+      p11Surface("the deposit payer's history", { complete: false, read: 3, of: 90 }),
+    ]).passed, false);
+    check('P11 says INCONCLUSIVE rather than clean on a partial read', /INCONCLUSIVE/.test(
+      p11Verdict(P11_WALLET, [p11Surface('x', { complete: false, read: 3, of: 90 })]).detail,
+    ), true);
+    // The three ways `complete` is built, asserted one at a time: a conjunction
+    // silently loses a term, and each term here is a different false green.
+    check('P11 does not pass on a shallow walk', p11Verdict(P11_WALLET, [
+      p11Surface('x', { complete: false }),
+    ]).passed, false);
+    // ⛔ And the PASS must keep saying what it does NOT cover. Absence inside
+    // one operation is not absence anywhere, and this sentence is what stops a
+    // reader promoting the first into the second.
+    check('P11 bounds its own PASS to this operation', /REACHABLE FROM THIS SPEND/.test(
+      p11Verdict(P11_WALLET, full).detail,
+    ), true);
+    check('P11 never claims the address is unused', /never that the address is unused/.test(
+      p11Verdict(P11_WALLET, full).detail,
+    ), true);
+    check('P11 measures 0 on a clean pass', p11Verdict(P11_WALLET, full).measure, 0);
 
     // ── P8's rule: every branch, asserted by its REASON ──────────────────────
     //

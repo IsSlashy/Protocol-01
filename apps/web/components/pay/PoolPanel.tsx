@@ -638,6 +638,24 @@ export default function PoolPanel({
         connection,
         signOne,
         onProgress: setStep,
+        // ⛔ ONLY IN TREASURY MODE, AND ONLY BECAUSE THIS DEPOSIT IS SUPPOSED
+        // TO BE NAMED.
+        //
+        // An ordinary buyer deposits through the relay or not at all: paying
+        // the ephemeral directly puts their wallet one hop from the deposit,
+        // and the deposit is one hop from every subscription that spends the
+        // note. That refusal stays.
+        //
+        // 🚨 BUT IT WAS AIMED AT BUYERS AND IT HIT THE TREASURY. Stocking
+        // pre-deposited inventory is the ONLY thing that makes a purchase
+        // unlinkable, and the treasury doing it in public is the arrangement
+        // being demonstrated, not a leak — the treasury is named so the buyer
+        // is not. A deployment with no till could therefore stock nothing, and
+        // an empty inventory leaves the product with no unlinkable path at all.
+        //
+        // `treasuryMode` is `?treasury=1` on a screen that already warns it
+        // reveals a spend key, so this is an operator act and not a fallback.
+        depositPublicly: treasuryMode,
       });
       await storeEncryptedNote(meta, owner.toBase58(), outcome.encryptedNote);
       setResult(outcome);

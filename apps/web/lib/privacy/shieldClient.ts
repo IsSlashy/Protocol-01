@@ -59,6 +59,32 @@ export interface ShieldParams {
   connection: Connection;
   signOne: SignOne;
   onProgress?: (step: string) => void;
+  /**
+   * Deposit in the open, naming this wallet on chain, on purpose.
+   *
+   * ⛔ DEFAULT FALSE, AND IT MUST STAY AN EXPLICIT ACT. A buyer depositing their
+   * own note needs the relay: paying the ephemeral directly puts their wallet
+   * one hop from the deposit, and the deposit is one hop from every
+   * subscription that spends the note. Getting that silently is the one outcome
+   * they cannot detect afterwards and cannot undo, which is why the relayed
+   * path refuses rather than falls back.
+   *
+   * 🚨 BUT FORCING THE RELAY ON EVERY DEPOSIT CLOSED THE ONE THAT MAKES ANY OF
+   * IT WORK. The treasury stocking pre-deposited inventory is SUPPOSED to be
+   * named — `docs/DEMO-untraceable-subscription.md` says so in bold: the
+   * deposit screen saying "Your wallet paid for this, in public" is correct,
+   * and it is about the TREASURY's wallet. Unlinkability is a property of the
+   * note's ORIGIN, and a public origin is what makes the buyer's spend
+   * unlinkable: the treasury is named so the buyer is not.
+   *
+   * So a deployment with no till configured could stock nothing, and an empty
+   * inventory leaves the product with no unlinkable path at all. The refusal
+   * was aimed at buyers and it hit the treasury.
+   *
+   * ⚠️ NOT A FALLBACK, and it must never become reachable by one. It is set
+   * from an operator screen that already warns it reveals a spend key.
+   */
+  depositPublicly?: boolean;
 }
 
 export interface ShieldOutcome {
@@ -83,8 +109,10 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
   // ── Who pays ───────────────────────────────────────────────────────────────
   // The wallet. Always, on this leg, and the refusal is STRUCTURAL rather than
   // an omission: `valueLamports` is non-zero for every deposit — the
-  // denomination plus the 0.3% fee, 1,003,475,300 of a 1 SOL deposit's
-  // 1,573,486,080 — so `fundEphemeralForJob` will not ask the funder and says
+  // denomination plus the 0.3% fee, 1,003,000,000 of a 1 SOL deposit's
+  // 1,573,486,080 (NOT 1,003,475,300 — that split counted 475,300 lamports of
+  // buffer rent as value; corrected at the source 2026-08-21) — so
+  // `fundEphemeralForJob` will not ask the funder and says
   // why. Routed through the shared decision anyway, deliberately: it is how the
   // deposit leg gets the same dirty-ephemeral guard as the others, and it means
   // a future contributor wiring this to the treasury "for consistency" gets a
@@ -137,7 +165,10 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
     connection,
     signOne,
     onProgress,
-    relayThroughDeployment: true,
+    // Relayed unless an operator explicitly asked to be named. See
+    // `depositPublicly`: the treasury's deposit is public BY DESIGN, and
+    // refusing it is what left the inventory with nothing to hand out.
+    relayThroughDeployment: !params.depositPublicly,
     // The 1% is a percentage of the pool's own ATOMIC denomination, taken from
     // the pool table rather than from the human `denomination` above. The
     // version that multiplied the human number by a hard-coded 1e9 was right for
