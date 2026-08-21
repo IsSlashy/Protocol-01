@@ -61,6 +61,8 @@ let postBalances: number[] = [];
 /** What the chain reports for the BUYER identity. Non-zero trips the
  *  fresh-identity rule. */
 let buyerBalance = 0;
+/** What the float holds, or `'unreadable'` to make the RPC throw on it. */
+let funderBalance: number | 'unreadable' = 5_000_000_000;
 /** How the relay's own send behaves. `'send-throws'` never left the client;
  *  `'confirm-throws'` DID leave and the answer never came back. */
 let sendBehaviour: 'ok' | 'send-throws' | 'confirm-throws' = 'ok';
@@ -105,7 +107,17 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
           },
         };
       }
-      async getBalance() {
+      async getBalance(pk?: { toBase58?: () => string }) {
+        // 🚨 KEYED BY ADDRESS, NOT ONE NUMBER FOR EVERYONE. The GET reads the
+        // FLOAT's balance and the POST reads the BUYER's, and they answer
+        // opposite questions — "can this deployment pay" against "is this
+        // identity fresh". One shared variable made a case about one of them
+        // silently assert the other.
+        const key = pk?.toBase58?.();
+        if (key === FUNDER) {
+          if (funderBalance === 'unreadable') throw new Error('rpc down');
+          return funderBalance;
+        }
         return buyerBalance;
       }
       async getLatestBlockhash() {
@@ -208,6 +220,7 @@ beforeEach(() => {
   mockGetStore.mockReturnValue({ incr: mockIncr, del: mockDel, expire: vi.fn() });
   mockRateLimitExceeded.mockResolvedValue(false);
   buyerBalance = 0;
+  funderBalance = 5_000_000_000;
   sendBehaviour = 'ok';
   paymentTx({ [TILL]: VALUE, [FEE_WALLET]: FEE });
 });
@@ -404,6 +417,10 @@ describe('the client learns this relay’s ceilings from this relay', () => {
     expect(body.feeWallet).toBe(FEE_WALLET);
     expect(body.funder).toBe(FUNDER);
     expect(body.maxRelayLamports).toBe(2_500_000_000);
+    // What the float holds, so a client can refuse BEFORE the buyer pays rather
+    // than meet the shortfall as a 502 afterwards.
+    expect(body.funderLamports).toBe(5_000_000_000);
+    expect(body.relayFeeLamports).toBe(5_000);
     // Pinned against the DERIVATION, not against a remembered number: the
     // subsidy a shield honestly needs is its rent leg plus the most the jitter
     // can add, and the cap must sit above that and below twice it. A future
@@ -412,6 +429,20 @@ describe('the client learns this relay’s ceilings from this relay', () => {
     const worstHonestSubsidy = 570_010_780 + 10_000_000 + 4 * 10_000_000;
     expect(body.maxRentSubsidyLamports).toBeGreaterThan(worstHonestSubsidy);
     expect(body.maxRentSubsidyLamports).toBeLessThan(2 * worstHonestSubsidy);
+  });
+
+  it('reports an unreadable float balance as null, never as zero', async () => {
+    // ⚠️ UNKNOWN IS NOT EMPTY. A client that read `0` from an RPC outage would
+    // refuse every deposit and delete the only private path over a hiccup —
+    // the shape of overreach that has already cost this project a working
+    // journey. `null` says "could not tell" and the client proceeds.
+    funderBalance = 'unreadable';
+    const body = await (await route.GET(get())).json();
+    expect(body.funderLamports).toBeNull();
+    // And an outage in this one read must not drag the rest of readiness down
+    // with it: the addresses are still correct and still reported.
+    expect(body.ready).toBe(true);
+    expect(body.till).toBe(TILL);
   });
 
   it('never reports anything the deployment has to keep', async () => {

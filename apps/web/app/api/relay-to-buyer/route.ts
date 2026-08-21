@@ -296,6 +296,37 @@ export async function GET(_request: NextRequest) {
     if (resolved.ok) addresses = resolved.addresses;
     else reasons.push(...resolved.reasons);
   }
+
+  // ── What the float can actually cover ────────────────────────────────────
+  //
+  // 🚨 THE FLOAT NOW PAYS THE WHOLE JOB AND IS CREDITED NOTHING, and the only
+  // pre-payment signal a client has is this answer. Before the R != F split the
+  // buyer's lamports landed on F itself, so F's balance was topped up by the
+  // very call that spent it; now the value goes to the till and F drains by one
+  // pre-fund per deposit until the operator settles R into F in batches —
+  // which nothing in this repository does.
+  //
+  // MEASURED 2026-08-21: the devnet authority held 1.4558 SOL while one 1 SOL
+  // deposit needs 1.5735. Without this figure the buyer pays the till first and
+  // discovers the shortfall from a 502 afterwards.
+  //
+  // ⚠️ `null` MEANS UNKNOWN, AND UNKNOWN IS NOT A REFUSAL. An RPC hiccup must
+  // not delete the only private path — that mistake has been made here before.
+  // A client refuses on a balance it can SEE is too small and proceeds on a
+  // balance it cannot read, where the persisted payment receipt is what makes
+  // the retry cost nothing.
+  let funderLamports: number | null = null;
+  if (funder) {
+    try {
+      const rpc = process.env.P01_FUNDER_RPC ?? 'https://api.devnet.solana.com';
+      funderLamports = await new Connection(rpc, 'confirmed').getBalance(
+        funder.publicKey,
+        'confirmed',
+      );
+    } catch {
+      funderLamports = null;
+    }
+  }
   if (!process.env.P01_FUNDER_TICKET) {
     reasons.push('P01_FUNDER_TICKET is unset: the POST refuses to relay anonymously.');
   }
@@ -318,6 +349,11 @@ export async function GET(_request: NextRequest) {
     feeWallet,
     maxRelayLamports: MAX_RELAY_LAMPORTS,
     maxRentSubsidyLamports: MAX_RENT_SUBSIDY_LAMPORTS,
+    // Reported, never folded into `ready`: whether the float can cover THIS job
+    // is a question only the client can ask, because only the client knows the
+    // job. Folding it in would make readiness mean two different things.
+    funderLamports,
+    relayFeeLamports: FEE_LAMPORTS,
     ready: reasons.length === 0,
     reasons,
   });

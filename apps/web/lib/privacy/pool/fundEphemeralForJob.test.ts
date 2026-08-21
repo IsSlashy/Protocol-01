@@ -372,6 +372,9 @@ const RELAY_TERMS = {
   feeWallet: FEE_WALLET,
   maxRelayLamports: 2_500_000_000,
   maxRentSubsidyLamports: 650_000_000,
+  // Comfortably above one 1 SOL deposit. The cases that matter override it.
+  funderLamports: 5_000_000_000,
+  relayFeeLamports: 5_000,
 };
 
 /** Everything that happened, in order. The point of several cases below. */
@@ -682,6 +685,47 @@ describe('the relay’s own verdict outranks anything this client re-derives', (
   });
 });
 
+describe('a float that cannot pay refuses before the buyer does', () => {
+  // 🚨 THE FLOAT SENDS THE WHOLE JOB NOW AND THE BUYER CREDITS IT NOTHING, so
+  // it drains by one pre-fund per deposit until the operator settles the till
+  // into it — which nothing here implements. MEASURED 2026-08-21: the devnet
+  // authority held 1.4558 SOL while one 1 SOL deposit needs 1.5735. Without this
+  // the buyer pays the till first and meets the shortfall as a 502.
+
+  it('refuses when the float is visibly short, and signs NOTHING', async () => {
+    stubDeployment({ terms: { ...RELAY_TERMS, funderLamports: 1_455_800_000 } });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.name).toBe('RelayCannotServeJobError');
+    expect(e.reason).toBe('float-too-low');
+    expect(e.message).toContain('1455800000');
+    expect(signed).toHaveLength(0);
+    expect(calls).not.toContain('sendRawTransaction');
+  });
+
+  it('counts the relay’s own transaction fee, not just the pre-fund', async () => {
+    // Exactly the pre-fund and not one lamport more: the float still has to pay
+    // for the transfer that sends it.
+    stubDeployment({ terms: { ...RELAY_TERMS, funderLamports: DEPOSIT_REQUIRED } });
+    const e = await refusal(fundEphemeralForJob(deposit()));
+    expect(e.reason).toBe('float-too-low');
+
+    stubDeployment({ terms: { ...RELAY_TERMS, funderLamports: DEPOSIT_REQUIRED + 5_000 } });
+    const d = await fundEphemeralForJob(deposit());
+    expect(d.fundedBy).toBe('funder');
+  });
+
+  it('treats an unreadable balance as unknown, never as empty', async () => {
+    // ⚠️ THE OVERREACH THIS AVOIDS. Refusing on `null` would let one RPC hiccup
+    // at the deployment delete the only private deposit path — the shape of
+    // guard that has already cost this project a working journey. Unknown
+    // proceeds; the persisted receipt is what makes a later failure cheap.
+    stubDeployment({ terms: { ...RELAY_TERMS, funderLamports: null } });
+    const d = await fundEphemeralForJob(deposit());
+    expect(d.fundedBy).toBe('funder');
+    expect(signed).toHaveLength(1);
+  });
+});
+
 describe('a payment that already left is never made twice', () => {
   // 🚨 THE BLOCKER THIS PINS, AND IT COST THE BUYER A FULL DENOMINATION. The
   // payment signature lived in a local `const`. When the relay call threw — a
@@ -849,7 +893,18 @@ describe('a job the relay cannot serve is refused before the buyer signs', () =>
     // The other half of that property: the client must not be stricter than the
     // deployment either, or raising the cap does nothing and the client's copy
     // is the real cap after all.
-    stubDeployment({ terms: { ...RELAY_TERMS, maxRelayLamports: 20_000_000_000 } });
+    //
+    // ⚠️ THE FLOAT IS RAISED WITH THE CEILING, ON PURPOSE. A deployment that
+    // lifts its cap to 20 SOL without funding the float cannot serve a 10 SOL
+    // job, and the `float-too-low` refusal is right to say so — but it would
+    // make this case pass for a reason that has nothing to do with ceilings.
+    stubDeployment({
+      terms: {
+        ...RELAY_TERMS,
+        maxRelayLamports: 20_000_000_000,
+        funderLamports: 20_000_000_000,
+      },
+    });
     const d = await fundEphemeralForJob(
       deposit({
         valueLamports: 10_030_000_000,

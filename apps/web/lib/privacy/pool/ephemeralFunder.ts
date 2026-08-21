@@ -154,6 +154,18 @@ export interface RelayTerms {
   maxRelayLamports: number;
   /** The most refundable rent it will front on top of a payment. */
   maxRentSubsidyLamports: number;
+  /**
+   * What the float holds right now, or `null` when the relay could not read it.
+   *
+   * ⚠️ `null` IS UNKNOWN, NOT ZERO, AND NOT A REFUSAL. An RPC hiccup at the
+   * deployment must not delete the only private deposit path — that mistake has
+   * been made in this repository before. Refuse on a shortfall you can see;
+   * proceed on one you cannot, where the persisted payment receipt makes the
+   * retry free.
+   */
+  funderLamports: number | null;
+  /** What the relay's own transfer costs the float, on top of the job. */
+  relayFeeLamports: number;
 }
 
 /** Why a deployment's own configuration makes a relayed deposit impossible.
@@ -209,7 +221,8 @@ export type RelayRefusal =
   | 'fee-not-payable-in-lamports'
   | 'fee-basis-missing'
   | 'payment-outstanding'
-  | 'no-receipt-store';
+  | 'no-receipt-store'
+  | 'float-too-low';
 
 /**
  * Thrown when the relay cannot serve this particular job.
@@ -444,10 +457,21 @@ export async function fetchRelayTerms(signal?: AbortSignal): Promise<RelayTerms>
     );
   }
 
+  const funderLamports =
+    typeof body.funderLamports === 'number' && Number.isFinite(body.funderLamports)
+      ? body.funderLamports
+      : null;
+  const relayFeeLamports =
+    typeof body.relayFeeLamports === 'number' && Number.isFinite(body.relayFeeLamports)
+      ? body.relayFeeLamports
+      : 0;
+
   return {
     funder: funderKey,
     till: tillKey,
     feeWallet: feeKey,
+    funderLamports,
+    relayFeeLamports,
     maxRelayLamports,
     maxRentSubsidyLamports,
   };
@@ -925,6 +949,36 @@ export async function fundEphemeralForJob(
         'subsidy-over-cap',
         `This deposit asks the deployment to front ${subsidy} lamports of rent and it fronts at ` +
           `most ${terms.maxRentSubsidyLamports}.`,
+      );
+    }
+
+    // ── Can the float actually pay? ─────────────────────────────────────────
+    //
+    // 🚨 THE FLOAT SENDS THE WHOLE JOB AND THE BUYER CREDITS IT NOTHING. Before
+    // the R != F split the buyer's lamports landed on the float itself, so the
+    // call that spent it also topped it up. Now the value goes to the till and
+    // the float drains by one pre-fund per deposit until the operator settles R
+    // into F in batches — which nothing here implements.
+    //
+    // MEASURED 2026-08-21: the devnet authority held 1,455,800,000 lamports
+    // while one 1 SOL deposit needs 1,573,486,080. Without this check the buyer
+    // pays the till, the relay tries to send from an empty float, and they learn
+    // it from a 502 with their money already gone.
+    //
+    // ⚠️ ONLY ON A SHORTFALL THAT CAN BE SEEN. `null` is "the relay could not
+    // read its own balance", which is an outage, not a verdict — refusing on it
+    // would let one RPC hiccup delete the only private deposit path, and that
+    // exact overreach has cost this project a working journey before. On null
+    // the deposit proceeds and the persisted receipt is what makes a failure
+    // recoverable.
+    const floatNeeds = requiredLamports + terms.relayFeeLamports;
+    if (terms.funderLamports !== null && terms.funderLamports < floatNeeds) {
+      throw new RelayCannotServeJobError(
+        'float-too-low',
+        `This deployment's float holds ${terms.funderLamports} lamports and this deposit needs ` +
+          `${floatNeeds} (${requiredLamports} pre-fund plus ${terms.relayFeeLamports} of relay ` +
+          `fee). Nothing was signed and nothing moved. A smaller denomination may fit, or the ` +
+          'operator has to settle the till into the float.',
       );
     }
 
