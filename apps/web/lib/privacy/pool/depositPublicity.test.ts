@@ -32,6 +32,7 @@ import { join } from 'node:path';
 const read = (rel: string): string => readFileSync(join(__dirname, rel), 'utf8');
 const shieldClient = (): string => read('../shieldClient.ts');
 const poolPanel = (): string => read('../../../components/pay/PoolPanel.tsx');
+const appPage = (): string => read('../../../app/(pay)/app/page.tsx');
 
 describe('a deposit is relayed unless someone deliberately said otherwise', () => {
   it('no longer forces the relay on every caller', () => {
@@ -60,5 +61,49 @@ describe('a deposit is relayed unless someone deliberately said otherwise', () =
     // appear in front of an ordinary user by accident, which is the failure
     // that actually happens.
     expect(poolPanel()).toMatch(/treasury=1|treasuryMode/);
+  });
+});
+
+describe('the page a tester reads before signing says what actually happens', () => {
+  /**
+   * 🚨 THE PAGE DENIED A MECHANISM THE CODE HAD ACQUIRED THAT MORNING. Under a
+   * heading reading "Four things this page will not pretend", `/app` printed
+   * `relayer: none on this page` and `pre-fund: public transfer from your
+   * wallet`. Both had been true; the relayed deposit made both false the same
+   * day, and this is the page every tester reads immediately before signing.
+   *
+   * ⛔ A PAGE THAT UNDERSTATES ITS PRIVACY IS AS WRONG AS ONE THAT OVERSTATES
+   * IT. The instinct is to police only the second. But a reader who is told
+   * their wallet funds the pool directly will act on that — and the whole point
+   * of the detour is that it no longer does. Both directions are the same
+   * defect: prose that does not match the code.
+   */
+
+  it('does not deny the relayer it now uses', () => {
+    const page = appPage();
+    expect(page).not.toMatch(/no relayer on this page/i);
+    expect(page).not.toMatch(/none on this page/i);
+  });
+
+  it('does not tell the buyer their wallet pre-funds the signer', () => {
+    // The pre-fund now goes from the wallet to the DEPLOYMENT, and the
+    // deployment funds the signer. The old row said the opposite.
+    expect(appPage()).not.toMatch(/public transfer from your wallet\s*$/m);
+  });
+
+  it('names the operator fee the buyer signs for', () => {
+    // It rides inside their own transaction and cannot be declined, so the page
+    // that precedes the signature has to say it exists.
+    expect(appPage()).toMatch(/1% operator fee/i);
+  });
+
+  it('stays consistent with the code it describes', () => {
+    // The cross-file invariant, which is the only one that cannot rot in one
+    // direction: while `shieldToPool` asks for the relay, the page may not deny
+    // having one.
+    const relays = /relayThroughDeployment:\s*!params\.depositPublicly/.test(shieldClient());
+    if (relays) {
+      expect(appPage()).toMatch(/this deployment, for the funding leg/i);
+    }
   });
 });

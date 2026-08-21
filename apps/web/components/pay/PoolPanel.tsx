@@ -45,6 +45,7 @@ import {
   depositBlockFor,
   findPoolV3,
   poolsOpenForDeposit,
+  estimateShieldPrefundLamports,
   shieldValueLamports,
   type DepositBlock,
   type PoolToken,
@@ -630,6 +631,41 @@ export default function PoolPanel({
     setResult(null);
     setShielding(true);
     try {
+      // ── Can this wallet afford it, BEFORE the two-minute proof ────────────
+      //
+      // 🚨 THE WORST FEEDBACK LOOP IN THE APP, AND A FIRST-TIME TESTER HITS IT
+      // FIRST. `poolShieldPrepare` runs the C6 proof before anything is signed,
+      // so a wallet holding nothing used to wait ~2 minutes and then meet a
+      // rejection from its own extension — with no sentence anywhere saying how
+      // much devnet SOL a deposit needs, or where to get it. The deposit is the
+      // first thing anyone tries.
+      //
+      // One RPC read, before the proof, is the whole fix. It is a COURTESY and
+      // not a guarantee: the balance can move between here and the signature,
+      // in which case the wallet refuses and nothing is lost.
+      const needed = treasuryMode
+        // A public deposit pre-funds the whole job from the wallet, rent
+        // included. `estimateShieldPrefundLamports` is the same worst case the
+        // picker and the relay both use.
+        ? (costPool ? estimateShieldPrefundLamports(costPool) : 0)
+        // A relayed deposit costs the value plus the operator's 1%. The
+        // refundable rent is the deployment's and never leaves the wallet.
+        : valueLamports + operatorFeeLamports;
+      // The signature's own fee, plus room for it not to be the only one.
+      const withFees = needed + 100_000;
+      const held = await connection.getBalance(owner, "confirmed");
+      if (held < withFees) {
+        // `finally` already clears `shielding` and `step`; repeating them here
+        // would be two places to keep in step for no gain.
+        setError(
+          `This wallet holds ${(held / 1e9).toFixed(4)} SOL and this deposit needs about ` +
+            `${(withFees / 1e9).toFixed(4)} SOL. Nothing was signed. Devnet SOL is free: ` +
+            `run "solana airdrop 2 ${owner.toBase58()} --url devnet", or use ` +
+            `https://faucet.solana.com — then try again.`,
+        );
+        return;
+      }
+
       const outcome = await shieldToPool({
         meta,
         token: "SOL",

@@ -32,15 +32,24 @@ import PayApp from "@/components/pay/PayApp";
  *     packages/pay-core/src/worker/workerCore.ts:352. Scoped to the send on
  *     purpose: a pool withdrawal pays a per-note DERIVED payout address
  *     (PoolPanel.tsx:286-295), which is not the same object.
- *   · The sender is NOT hidden on any leg. The same transfer carries
+ *   · On a STEALTH SEND the sender is not hidden: the transfer carries
  *     `fromPubkey: sender`, every tx in the batch sets `tx.feePayer = sender`
  *     (workerCore.ts:352, 363), and this browser submits them itself
- *     (PayApp.tsx:151-172). There is no relayer on this page.
- *   · The wallet pre-funds an ephemeral signer with an ordinary public transfer
- *     one hop before the private leg (lib/privacy/pool/unshieldEphemeral.ts
- *     :209-215), and the withdrawal republishes the commitment its deposit
- *     published: devnet leaf 16, commitment 8901821612542787864, present in
- *     both transactions. That linkage is NOT fixed and this page says so.
+ *     (PayApp.tsx:151-172). No relayer stands in that leg.
+ *   · ⚠️ THE POOL LEGS STOPPED WORKING THAT WAY ON 2026-08-21 AND THIS PAGE
+ *     USED TO SAY OTHERWISE. A deposit no longer pre-funds the single-use
+ *     signer from the wallet. The wallet signs ONE visible transfer to this
+ *     deployment's collection address plus a 1% operator fee in the same
+ *     transaction (lib/privacy/pool/ephemeralFunder.ts, the relayed branch),
+ *     and the deployment's float funds the signer from a different address —
+ *     so the transaction that touches the pool does not name the buyer. A
+ *     deposit that cannot be relayed REFUSES; it never falls back silently.
+ *     A withdrawal or a subscription may be paid entirely by the deployment,
+ *     in which case the wallet is on no transaction at all, and the outcome
+ *     reports `fundedBy` so the screen can say which happened.
+ *   · The withdrawal still republishes the commitment its deposit published:
+ *     devnet leaf 16, commitment 8901821612542787864, present in both
+ *     transactions. That linkage is NOT fixed and this page says so.
  *   · The proof system is hash-based: Poseidon and Merkle trees, no elliptic
  *     curves. The stealth address is hybrid X25519 + ML-KEM-768 (FIPS 203).
  *     Transaction signatures are Ed25519 and stay classical, so the page says
@@ -384,31 +393,42 @@ export default function PayPage() {
                 <span className="styx-step-index">01</span>
                 <div>
                   <h3 className="styx-h3" style={SERIF_H3}>
-                    Your wallet is on every transaction
+                    Your wallet signs, and it is not always on chain
                   </h3>
                   <p className="styx-step-body">
-                    Every transaction sent from this page names your connected
-                    wallet as the fee payer, and this browser submits it
-                    directly to the RPC endpoint. There is no relayer on this
-                    page and nothing stands between you and the cluster.
+                    A deposit costs your wallet one signature: a single, fully
+                    visible transaction paying this deployment, plus a 1%
+                    operator fee in the same transaction. This deployment then
+                    funds the single-use key that touches the pool, from a
+                    different address of its own — so the transaction that
+                    deposits does not name you. A withdrawal or a subscription
+                    asks the deployment to cover the whole job; when it does,
+                    your wallet is on no transaction at all, and when it cannot,
+                    your wallet pays and the screen tells you which of the two
+                    happened. A deposit that cannot be relayed is refused rather
+                    than quietly falling back.
                   </p>
                   <div style={{ marginTop: "0.9rem" }}>
                     <div className="styx-row">
-                      <span className="styx-row-key">fee payer</span>
+                      <span className="styx-row-key">you sign</span>
                       <span className="styx-row-leader" />
                       <span className="styx-row-value">
-                        your connected wallet
+                        one transfer, to this deployment
                       </span>
                     </div>
                     <div className="styx-row">
-                      <span className="styx-row-key">submitted by</span>
+                      <span className="styx-row-key">the pool deposit</span>
                       <span className="styx-row-leader" />
-                      <span className="styx-row-value">this browser tab</span>
+                      <span className="styx-row-value">
+                        a single-use key we funded
+                      </span>
                     </div>
                     <div className="styx-row">
                       <span className="styx-row-key">relayer</span>
                       <span className="styx-row-leader" />
-                      <span className="styx-row-value">none on this page</span>
+                      <span className="styx-row-value">
+                        this deployment, for the funding leg
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -461,28 +481,33 @@ export default function PayPage() {
                 <span className="styx-step-index">03</span>
                 <div>
                   <h3 className="styx-h3" style={SERIF_H3}>
-                    One public hop before the private leg
+                    One public hop, and it points at us, not at the pool
                   </h3>
                   <p className="styx-step-body">
-                    Shielding into the pool and opening a subscription both
-                    pre-fund a single-use signer with an ordinary public
-                    transfer from your wallet, one hop before the private step.
-                    That transfer is as visible as any other. A pool withdrawal
-                    then pays a payout address derived per note, and refuses to
-                    pay the connected wallet at all.
+                    Shielding still begins with one ordinary, fully visible
+                    transfer signed by your wallet — but it now pays this
+                    deployment rather than the single-use signer, and this
+                    deployment funds that signer from a separate address. Two
+                    transfers, neither naming both ends. What still ties them is
+                    the amount and the minutes between them, and nothing here
+                    hides either. A pool withdrawal then pays a payout address
+                    derived per note, and refuses to pay the connected wallet at
+                    all.
                   </p>
                   <div style={{ marginTop: "0.9rem" }}>
                     <div className="styx-row">
                       <span className="styx-row-key">pre-fund</span>
                       <span className="styx-row-leader" />
                       <span className="styx-row-value">
-                        public transfer from your wallet
+                        public transfer, from you to this deployment
                       </span>
                     </div>
                     <div className="styx-row">
                       <span className="styx-row-key">signer</span>
                       <span className="styx-row-leader" />
-                      <span className="styx-row-value">ephemeral, one use</span>
+                      <span className="styx-row-value">
+                        one use, funded by this deployment
+                      </span>
                     </div>
                     <div className="styx-row">
                       <span className="styx-row-key">payout</span>
