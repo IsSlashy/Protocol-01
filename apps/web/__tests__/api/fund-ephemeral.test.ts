@@ -29,6 +29,8 @@ const mockRateLimitExceeded = vi.fn();
  *  transaction naming two addresses is returned for BOTH, so putting the same
  *  signature in two lists is what "they have paid each other" looks like. */
 let signatureHistories: Record<string, { signature: string }[]> = {};
+/** What a shared till/funder transaction moved, in lamports. `null` = unreadable. */
+let settlementLamports: number | null = 1_003_000_000;
 
 /** What the chain reports for the funding TARGET. Non-zero trips the
  *  empty-target rule, which returns 409 without building a transaction. */
@@ -70,6 +72,32 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
       }
       async getSignaturesForAddress(key: { toBase58(): string }, o?: { limit?: number }) {
         return (signatureHistories[key.toBase58()] ?? []).slice(0, o?.limit ?? 1000);
+      }
+      // The settlement check reads the AMOUNT a shared transaction moved, so a
+      // mock that only lists signatures can no longer answer the question the
+      // route asks. `settlementLamports` is what the till's balance changed by.
+      async getTransaction(sig: string) {
+        if (settlementLamports === null) return null;
+        return {
+          meta: { preBalances: [0, settlementLamports], postBalances: [0, 0] },
+          transaction: {
+            message: {
+              getAccountKeys: () => ({
+                // ⚠️ FROM THE ENVIRONMENT, NOT FROM `TILL`. That constant is
+                // declared inside a `describe`, and this factory is module
+                // scope — the reference throws, `settlementPurchaseCount`
+                // catches it, and the case then passes through the
+                // could-not-be-read branch while looking like the check simply
+                // did not fire.
+                staticAccountKeys: [
+                  { toBase58: () => 'OTHER' },
+                  { toBase58: () => process.env.P01_TILL_ADDRESS ?? '' },
+                ],
+              }),
+            },
+          },
+          signature: sig,
+        };
       }
     },
   };
@@ -300,9 +328,44 @@ describe('the till and the float', () => {
       [funderKeypair.publicKey.toBase58()]: [{ signature: 'SETTLEMENT' }, { signature: 'F1' }],
       [TILL]: [{ signature: 'SETTLEMENT' }],
     };
+    // ⚠️ THIS CASE CHANGED MEANING ON 2026-08-22, DELIBERATELY. It used to pin
+    // that ANY shared transaction is flagged. That was a correct control over a
+    // rule that turned out to be wrong: settling R into F is the ONLY way the
+    // float is replenished, so a COMPLIANT batch names both too. The old check
+    // fired on the right behaviour, never cleared, and its remedy — settle in
+    // batches — was the act that tripped it. What it pins now is the case that
+    // really is a violation: a settlement carrying ONE purchase.
+    settlementLamports = 1_003_000_000;
     const body = await (await get('?readiness=1')).json();
     expect(body.readiness.ready).toBe(false);
-    expect(body.readiness.reasons.join(' ')).toMatch(/names BOTH the till and this funder/);
+    expect(body.readiness.reasons.join(' ')).toMatch(/carrying ONE purchase/);
+    expect(body.readiness.reasons.join(' ')).toMatch(/A set of one is not a set/);
+  });
+
+  it('does NOT flag a settlement that carried several purchases', async () => {
+    // 🚨 THE HALF THE OLD CHECK GOT BACKWARDS. A batch is the required
+    // behaviour; reporting it as a fault taught the operator to ignore the
+    // reason, and an ignored guard protects nothing.
+    vi.stubEnv('P01_TILL_ADDRESS', TILL);
+    signatureHistories = {
+      [funderKeypair.publicKey.toBase58()]: [{ signature: 'SETTLEMENT' }, { signature: 'F1' }],
+      [TILL]: [{ signature: 'SETTLEMENT' }],
+    };
+    settlementLamports = 7 * 1_003_000_000;
+    const body = await (await get('?readiness=1')).json();
+    expect(body.readiness.reasons.join(' ')).not.toMatch(/ONE purchase/);
+  });
+
+  it('does not call an unreadable settlement clean', async () => {
+    vi.stubEnv('P01_TILL_ADDRESS', TILL);
+    signatureHistories = {
+      [funderKeypair.publicKey.toBase58()]: [{ signature: 'SETTLEMENT' }],
+      [TILL]: [{ signature: 'SETTLEMENT' }],
+    };
+    settlementLamports = null;
+    const body = await (await get('?readiness=1')).json();
+    expect(body.readiness.ready).toBe(false);
+    expect(body.readiness.reasons.join(' ')).toMatch(/Unknown is not clean/);
   });
 
   it('does not call a truncated history clean', async () => {

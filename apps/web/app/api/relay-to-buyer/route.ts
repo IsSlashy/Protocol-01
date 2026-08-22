@@ -30,6 +30,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { getStore, rateLimitExceeded, rateLimitRemaining } from '@/lib/waitlist/store';
+import { namesBoth } from '@/lib/privacy/coNaming';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -166,13 +167,67 @@ function funderKeypair(): Keypair | null {
   }
 }
 
+/**
+ * # 🚨 INVARIANT — A SETTLEMENT MUST CARRY MORE THAN ONE PURCHASE
+ *
+ * The till collects from buyers and the float pays for their deposits, and the
+ * only thing that ever moves value from one to the other is an operator
+ * settling R into F. **That transfer carries forward every address the till
+ * names.** An auditor who walks
+ * `deposit -> its ephemeral -> the float -> the float's history -> the till ->
+ * the till's history` arrives at the set of everyone who has paid the till, and
+ * the buyer is hidden inside that set or is not hidden at all.
+ *
+ * So a settlement of ONE purchase identifies that purchase's buyer exactly.
+ * A set of one is not a set. Two rules, and both are load-bearing:
+ *
+ *   - **at least N purchases**, so the set has width;
+ *   - **at a moment unrelated to any of them**, because a transfer that follows
+ *     a deposit by ninety seconds re-pairs them by the clock even when the
+ *     amounts do not, and the clock is public.
+ *
+ * ⚠️ THIS PROPERTY HOLDS BY OPERATOR DISCIPLINE, NOT BY CONSTRUCTION. The till's
+ * spending key is held off chain, deliberately — a till this deployment could
+ * spend would be a second float, and the whole R != F split would collapse. So
+ * nothing here can refuse a bad settlement. What CAN be done is detect one:
+ * `verify/deposit-walk.mjs` reads the till's history and reports how many
+ * addresses a settlement would carry forward.
+ *
+ * 🚨 IT HAS ALREADY BEEN VIOLATED ONCE, on 2026-08-22, by the author of this
+ * comment: a single deposit was settled by hand minutes later, creating
+ * `float -> till -> buyer` for leaf 72. Measured, not hypothetical.
+ */
 /** The three addresses one relayed deposit touches. */
 interface PaymentAddresses {
   /** F, the float: funds the ephemeral, receives the residue, is paid by nobody. */
   funder: string;
   /** R, the till: the address buyers pay, and the one this route measures. */
   till: string;
-  /** The operator's 1% sink. Co-named with every buyer, so it must only receive. */
+  /**
+   * # 🚨 INVARIANT — NOTHING THE FEE SINK PAYS MAY FUND THIS PROTOCOL
+   *
+   * The 1% rides inside the transaction the buyer signs, so the sink appears in
+   * an account-key list beside a buyer's own address once per purchase:
+   * `getSignaturesForAddress` on it **enumerates every customer this deployment
+   * has ever served**. That is survivable only while nothing it touches leads
+   * back in.
+   *
+   * The moment it funds an ephemeral, or the float, probe P11 walks
+   * `fee sink -> ephemeral -> subscription` and lands on a buyer — and because
+   * the sink names ALL of them, one such transfer exposes the whole customer
+   * list at once, not one buyer.
+   *
+   * ⚠️ THE PROHIBITION IS NARROWER THAN "NEVER SPEND", AND SAYING IT WIDER MAKES
+   * IT EASIER TO IGNORE. An operator sweeping revenue to a cold wallet that
+   * never touches this protocol reveals the OPERATOR, not the buyers, and that
+   * is a business fact rather than a leak. What must never happen is the sink
+   * funding anything that ends up paying for a deposit or a spend.
+   *
+   * ⚠️ HOLDS BY DISCIPLINE ON THE SPENDING SIDE — the key is the operator's and
+   * nothing here can refuse a transfer. What this deployment CAN do, and does in
+   * the readiness answer below, is notice afterwards: if the sink and the float
+   * have ever shared a transaction, it says so and stops serving.
+   */
   feeWallet: string;
 }
 
@@ -315,6 +370,45 @@ export async function GET(request: NextRequest) {
   // A client refuses on a balance it can SEE is too small and proceeds on a
   // balance it cannot read, where the persisted payment receipt is what makes
   // the retry cost nothing.
+  // ── Has the fee sink ever paid the float? ───────────────────────────────
+  //
+  // ⛔ THE ONE PART OF THE SINK INVARIANT A MACHINE CAN CHECK. The prohibition
+  // is on the SPENDING side and the key is the operator's, so nothing here can
+  // refuse the transfer. But the consequence stays visible forever: a
+  // transaction naming both the sink and the float is exactly the edge that
+  // turns a customer list into a walk, and two signature listings find it
+  // without decoding anything — the method probe P11 uses, and the method an
+  // auditor would use against this deployment.
+  //
+  // Reported as NOT READY rather than as a warning, because a deployment in
+  // this state produces deposits that look private and are not, which is the
+  // one outcome a buyer cannot detect and cannot undo.
+  //
+  // ⚠️ `null` is "could not establish" and is NOT a violation. A truncated
+  // listing has read less than the question needs, and refusing on that would
+  // let one slow endpoint delete the only private path.
+  let sinkFundedFloat: boolean | null = null;
+  if (funder && addresses) {
+    try {
+      const rpc = process.env.P01_FUNDER_RPC ?? 'https://api.devnet.solana.com';
+      sinkFundedFloat = await namesBoth(
+        new Connection(rpc, 'confirmed'),
+        addresses.feeWallet,
+        addresses.funder,
+      );
+    } catch {
+      sinkFundedFloat = null;
+    }
+  }
+  if (sinkFundedFloat === true) {
+    reasons.push(
+      'The fee wallet and the float have shared a transaction. The fee wallet is co-named with ' +
+        'every buyer this deployment has served, so an edge from it to the float lets an auditor ' +
+        'walk from any deposit to that whole customer list. Move the fee sink to a fresh address ' +
+        'and never let it fund anything inside this protocol.',
+    );
+  }
+
   let funderLamports: number | null = null;
   if (funder) {
     try {
@@ -384,6 +478,9 @@ export async function GET(request: NextRequest) {
     // job. Folding it in would make readiness mean two different things.
     funderLamports,
     relayFeeLamports: FEE_LAMPORTS,
+    // `null` = could not establish. Reported so a reader can tell "clean" from
+    // "unread", which is the distinction this whole file is built around.
+    sinkFundedFloat,
     ready: reasons.length === 0,
     reasons,
   });

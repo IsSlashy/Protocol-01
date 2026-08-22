@@ -49,6 +49,56 @@ buyer paid the funder 1.003 SOL, the funder financed the depositing ephemeral on
 second later, and P11 read it in two hops. Two transfers, neither naming both
 ends, joined by an address whose own history names both.
 
+## ⛔ Les deux règles d'exploitation que rien ne peut appliquer à ta place
+
+Elles portent sur des clés que **l'opérateur** détient hors chaîne, délibérément : une
+caisse que le déploiement pourrait dépenser serait un second flotteur, et la séparation
+R≠F s'effondrerait. Aucun code ne peut donc les refuser. Les invariants sont écrits dans
+`app/api/relay-to-buyer/route.ts` et épinglés par `lib/privacy/pool/topologyInvariants.test.ts`.
+
+### 1. Un reversement caisse → flotteur doit porter PLUSIEURS achats
+
+Le seul mouvement de valeur de R vers F est un reversement, et il **emporte toutes les
+adresses que la caisse nomme**. Un auditeur marche `dépôt → éphémère → flotteur →
+son historique → caisse → son historique` et arrive sur l'ensemble de ceux qui ont payé la
+caisse. **Reverser un seul achat identifie exactement son acheteur.** Deux règles, les deux
+portantes :
+
+- **au moins N achats**, pour que l'ensemble ait une largeur ;
+- **à un moment sans rapport avec aucun d'eux**, parce qu'un virement qui suit un dépôt de
+  quelques minutes les réapparie par l'horloge même si les montants ne le font pas, et
+  l'horloge est publique.
+
+🚨 **Cette règle a déjà été violée une fois, le 2026-08-22, par moi** : un dépôt unique
+reversé à la main quelques minutes plus tard, ce qui a créé `flotteur → caisse → acheteur`
+pour la feuille 72. Mesuré, pas hypothétique.
+✅ **Détectable** : `node verify/deposit-walk.mjs --wallet <adresse> --deposit <signature>
+--till <caisse>` lit l'historique de la caisse et dit combien d'adresses un reversement
+emporterait. Un ensemble de un n'est pas un ensemble.
+
+### 2. Rien de ce que paie le puits ne doit financer ce protocole
+
+Les 1 % voyagent **dans la transaction que l'acheteur signe**, donc
+`getSignaturesForAddress` sur le puits **énumère tous les clients** du déploiement. S'il
+finance un jour un éphémère ou le flotteur, la sonde P11 marche
+`puits → éphémère → abonnement` et retombe sur un acheteur — et comme le puits les nomme
+**tous**, un seul virement expose la liste entière d'un coup, pas un acheteur.
+
+⚠️ **L'interdiction est plus étroite que « ne jamais dépenser », et l'élargir la rend facile
+à ignorer.** Encaisser ton revenu vers un portefeuille froid qui ne touche jamais ce
+protocole révèle **l'opérateur**, pas les acheteurs : c'est un fait commercial, pas une
+fuite. Ce qui ne doit jamais arriver, c'est que le puits finance quelque chose qui finira
+par payer un dépôt ou une dépense.
+
+✅ **Partiellement détecté par le déploiement lui-même** : la readiness de
+`/api/relay-to-buyer` intersecte les signatures du puits et du flotteur. S'ils ont jamais
+partagé une transaction, elle passe `ready: false` et refuse de servir — parce qu'un
+déploiement dans cet état produit des dépôts qui **paraissent** privés et ne le sont pas,
+ce qu'un acheteur ne peut ni détecter ni annuler. ⚠️ Le champ `sinkFundedFloat` vaut `null`
+quand la question n'a pas pu être tranchée : inconnu, pas propre.
+
+---
+
 So the address that COLLECTS money from buyers — **R, the till** — must never be
 the address that FUNDS ephemerals — **F, the float**. Declare R in
 `P01_TILL_ADDRESS` (public key only) and the deployment refuses to serve when

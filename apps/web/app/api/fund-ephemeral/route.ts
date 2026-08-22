@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { sendWithFreshBlockhash } from '@/lib/privacy/pool/sendTx';
+import { sharedTransaction } from '@/lib/privacy/coNaming';
 
 import { getStore, rateLimitExceeded } from '@/lib/waitlist/store';
 
@@ -162,37 +163,45 @@ function feeWalletAddress(): string | null {
 }
 
 /**
- * Does any one transaction name both addresses?
+ * How many purchases a till-to-float settlement carried, from its amount.
  *
- * The same two-call join the client guard and probe P11 use, restated here
- * because this is where an operator can be told BEFORE a buyer is exposed rather
- * than after. A transaction naming two addresses is returned by
- * `getSignaturesForAddress` for each, so intersecting two pages answers it
- * without decoding a single instruction.
+ * One purchase pays the till the note's VALUE — the denomination plus the
+ * protocol's own 0.3% — which for the 1 SOL pool is 1,003,000,000 lamports
+ * (`lib/privacy/pool/shieldEphemeral.ts:293`). A settlement of k purchases
+ * therefore moves about k of those, less the fee it pays itself.
  *
- * `null` = could not establish, which readiness reports as a reason rather than
- * as an all-clear.
+ * ⚠️ ROUNDED, AND DELIBERATELY GENEROUS AT THE BOUNDARY. The point is to
+ * separate one from more-than-one, not to audit the operator's arithmetic:
+ * anything at least one and a half notes wide counts as more than one, so a
+ * batch that also swept some dust is not called a violation.
+ *
+ * `null` means the transaction could not be read, which the caller reports as
+ * unknown rather than as clean.
  */
-async function namesBoth(
+async function settlementPurchaseCount(
   connection: Connection,
-  a: string,
-  b: string,
-  limit = 1000,
-): Promise<boolean | null> {
+  signature: string,
+  till: string,
+): Promise<number | null> {
   try {
-    const [left, right] = await Promise.all([
-      connection.getSignaturesForAddress(new PublicKey(a), { limit }),
-      connection.getSignaturesForAddress(new PublicKey(b), { limit }),
-    ]);
-    const seen = new Set(left.map((x) => x.signature));
-    for (const x of right) if (seen.has(x.signature)) return true;
-    if (left.length >= limit || right.length >= limit) return null;
-    return false;
+    const tx = await connection.getTransaction(signature, {
+      maxSupportedTransactionVersion: 0,
+      commitment: 'confirmed',
+    });
+    if (!tx?.meta) return null;
+    const keys = tx.transaction.message
+      .getAccountKeys()
+      .staticAccountKeys.map((k) => k.toBase58());
+    const i = keys.indexOf(till);
+    if (i < 0) return null;
+    const moved = Math.abs((tx.meta.postBalances[i] ?? 0) - (tx.meta.preBalances[i] ?? 0));
+    const ONE_PURCHASE = 1_003_000_000;
+    if (moved < ONE_PURCHASE * 1.5) return 1;
+    return Math.round(moved / ONE_PURCHASE);
   } catch {
     return null;
   }
 }
-
 /** First hop of the forwarding chain; falls back to a stable sentinel. Same
  *  shape as the waitlist route's, deliberately — one definition of "who is
  *  calling" across every rate-limited endpoint. */
@@ -375,15 +384,41 @@ export async function GET(request: NextRequest) {
     // happened. Only reachable when the RPC answered — an unreachable chain is
     // already a reason above.
     if (till && till !== funder.publicKey.toBase58()) {
-      const joined = await namesBoth(connection, funder.publicKey.toBase58(), till);
-      if (joined === true) {
-        reasons.push(
-          'A transaction names BOTH the till and this funder. They are separate addresses that ' +
-            'have paid each other, which is the per-purchase settlement this split exists to ' +
-            'stop: an auditor reads the funder history and lands on the till, then on its ' +
-            'buyers. Settle in batches, on a schedule unrelated to any single purchase.',
-        );
-      } else if (joined === null) {
+      // 🚨 THE EDGE IS REQUIRED, SO ITS EXISTENCE IS NOT THE QUESTION.
+      //
+      // This used to report ANY transaction naming both as the per-purchase
+      // settlement — but settling R into F is the ONLY way the float is ever
+      // replenished, so a compliant batch names both too. It fired on the right
+      // behaviour, never cleared (the transaction stays in both histories), and
+      // told the operator to settle in batches, which is the act that trips it.
+      // MEASURED 2026-08-22: one settlement put this endpoint into ready:false
+      // permanently, with advice that causes the condition it reports.
+      //
+      // What separates the two is the AMOUNT. A settlement carrying one
+      // purchase moves about one note's value; a batch of k moves about k of
+      // them. k = 1 identifies that buyer exactly and is the only case this can
+      // call wrong with certainty — so it is the only case that blocks. Larger
+      // k is reported, not judged: this file has no business inventing a
+      // security parameter, and the honest number is the one it prints.
+      const shared = await sharedTransaction(connection, funder.publicKey.toBase58(), till);
+      if (shared.signature) {
+        const purchases = await settlementPurchaseCount(connection, shared.signature, till);
+        if (purchases === 1) {
+          reasons.push(
+            `The till settled into this funder carrying ONE purchase (${shared.signature}). ` +
+              'That transfer names both addresses, so an auditor reads the funder history, ' +
+              'lands on the till, and the till names exactly one buyer — that buyer. A set of ' +
+              'one is not a set. Settle several purchases at once, at a moment unrelated to ' +
+              'any of them.',
+          );
+        } else if (purchases === null) {
+          reasons.push(
+            `The till and this funder share a transaction (${shared.signature}) whose amount ` +
+              'could not be read, so how many purchases it carried is unknown. Unknown is ' +
+              'not clean.',
+          );
+        }
+      } else if (!shared.complete) {
         reasons.push(
           'Could not establish whether any transaction names both the till and this funder — a ' +
             'signature page filled or the read failed. An absence read off a truncated history ' +
