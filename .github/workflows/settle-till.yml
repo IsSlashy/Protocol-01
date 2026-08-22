@@ -27,6 +27,12 @@
 #      60 days, and it emails the owner when it does. The float alarm is the
 #      backstop — it mails on a low float regardless of why nothing settled.
 
+# ⚠️ NOT `run-settler.yml`. That one is "Settler Keeper": a permissionless
+# on-chain keeper that fires `settle()` on p01_liquidity PrefundRecord PDAs and
+# earns a reward. Different program, different money, manual-trigger only. The
+# two names are close enough to be swapped by anyone in a hurry; this one moves
+# the OPERATOR's own SOL between the till and the float.
+
 name: settle-till
 
 on:
