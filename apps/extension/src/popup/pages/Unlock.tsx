@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { AlertCircle, Eye, EyeOff, Loader2, Lock, LogOut, X } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { getLockoutRemaining } from '@/shared/services/crypto';
-import GlitchLogo from '../components/GlitchLogo';
+import Wordmark from '../components/Wordmark';
 import { cn } from '@/shared/utils';
 
 export default function Unlock() {
@@ -111,7 +111,7 @@ export default function Unlock() {
           className="text-center mb-6"
         >
           {/* Glitch Logo */}
-          <GlitchLogo size={80} showText={false} animated={true} />
+          <Wordmark size={80} showText={false} animated={true} />
 
           {/* Terminal status */}
           <div className="mt-4">

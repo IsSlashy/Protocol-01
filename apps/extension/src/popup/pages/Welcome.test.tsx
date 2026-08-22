@@ -3,7 +3,7 @@
  *
  * The Welcome page is the entry point for new users. Post Privy-removal it
  * presents only the two local-wallet onboarding paths:
- * - Protocol 01 branding with the GlitchLogo
+ * - Protocol 01 branding with the Wordmark
  * - "Create New Wallet" (local seed-based)
  * - "Import Seed Phrase"
  *
@@ -32,11 +32,11 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
-// Mock GlitchLogo to avoid animation complexity
-vi.mock('../components/GlitchLogo', () => ({
+// Mock Wordmark to avoid animation complexity
+vi.mock('../components/Wordmark', () => ({
   __esModule: true,
   default: ({ showText }: { showText: boolean; size: number; animated: boolean }) => (
-    <div data-testid="glitch-logo">{showText && 'PROTOCOL'}</div>
+    <div data-testid="wordmark">{showText && 'PROTOCOL'}</div>
   ),
 }));
 
@@ -52,7 +52,7 @@ describe('Welcome', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByTestId('glitch-logo')).toBeInTheDocument();
+    expect(screen.getByTestId('wordmark')).toBeInTheDocument();
   });
 
   it('displays the "Total Invisibility" tagline', () => {

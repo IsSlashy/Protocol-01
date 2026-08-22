@@ -1,36 +1,89 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+/**
+ * Styx extension, global stylesheet.
+ *
+ * 🚨 THE THREE GOOGLE FONTS IMPORTS ARE GONE, AND THEY WERE NEVER SAFE.
+ *
+ * This file opened with three `@import url(...)` lines pointing at Google's
+ * font CDN, and they survived into the built CSS (checked in dist/assets).
+ * The host is deliberately not spelled out below, so a grep for it over the
+ * build returns nothing rather than returning this paragraph. A wallet popup
+ * that reaches out to a font host on every
+ * open is wrong three times over: it leaks that the extension was opened, to a
+ * third party, on a schedule that maps to the user's activity; it renders in a
+ * silent fallback whenever the request is blocked or the machine is offline, so
+ * the typography nobody chose is the typography most users saw; and it makes
+ * the interface depend on a network for something that is 120 KB of static
+ * bytes.
+ *
+ * Newsreader now ships in `public/fonts` and is declared below. The body and
+ * data faces are SYSTEM STACKS on purpose, not a compromise: the site's own
+ * pitch deck sets `--sans` and `--mono` to system stacks, so Segoe UI on
+ * Windows and -apple-system on macOS is the brand as it actually renders.
+ *
+ * Colour tokens live in tailwind.config.js and are mirrored here only for the
+ * handful of places that need raw CSS. Both were realigned on
+ * apps/web/app/_styx/styx.css on 2026-08-23.
+ */
+
+@font-face {
+  font-family: 'Newsreader';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('/fonts/newsreader-latin.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Newsreader';
+  font-style: italic;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('/fonts/newsreader-latin-italic.woff2') format('woff2');
+}
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  /* Protocol 01 Colors - Same as mobile */
-  --p01-void: #0a0a0c;
-  --p01-dark: #0f0f12;
-  --p01-surface: #151518;
-  --p01-elevated: #1a1a1f;
-  --p01-border: #2a2a30;
-  --p01-border-hover: #3a3a40;
+  /* ── Grounds. apps/web/app/_styx/styx.css ── */
+  --p01-void: #070709;
+  --p01-dark: #0d0d10;
+  --p01-surface: #101014;
+  --p01-elevated: #16161b;
 
-  /* Primary */
+  /* ── Rules. Alpha over the paper colour, like the site, so a rule reads
+       the same on every ground instead of being a fixed grey that goes muddy
+       on the darker panels. ── */
+  --p01-border: rgba(234, 231, 223, 0.14);
+  --p01-border-soft: rgba(234, 231, 223, 0.07);
+  --p01-border-hover: rgba(234, 231, 223, 0.24);
+
+  /* ── Accent ── */
   --p01-cyan: #39c5bb;
   --p01-cyan-dim: #2a9d95;
-  --p01-cyan-bright: #00ffe5;
+  --p01-cyan-bright: #5fd8cf;
 
-  /* Accents */
-  --p01-pink: #ff77a8;
-  --p01-pink-hot: #ff2d7a;
-  --p01-yellow: #ffcc00;
-  --p01-red: #ff3366;
+  /* ── Utility. Amber replaces the old #ffcc00; red is desaturated so it
+       stops vibrating against near-black. ── */
+  /* ⛔ Retired 2026-08-23. Aliased to cyan so existing usages land on the
+     palette; do not use these names in new code. */
+  --p01-pink: #39c5bb;
+  --p01-pink-hot: #2a9d95;
+  --p01-amber: #d9a24a;
+  --p01-yellow: #d9a24a;
+  --p01-red: #e0574f;
   --p01-chrome: #c0c0c8;
 
-  /* Fonts - Same as mobile */
-  --font-display: 'Orbitron', system-ui, sans-serif;
-  --font-body: 'Inter', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  /* ── Text. Warm paper, never pure white. ── */
+  --p01-text: #eae7df;
+  --p01-muted: rgba(234, 231, 223, 0.62);
+  --p01-faint: rgba(234, 231, 223, 0.4);
+
+  /* ── Type ── */
+  --font-display: 'Newsreader', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --font-body: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Mono', 'SF Mono', Consolas, monospace;
 }
 
 * {
@@ -44,88 +97,130 @@ html, body, #root {
   height: 600px;
   overflow: hidden;
   background-color: var(--p01-void);
-  color: #ffffff;
-  font-family: 'Inter', system-ui, sans-serif;
+  color: var(--p01-text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* Headings use Orbitron */
+/**
+ * Headings are Newsreader at a LIGHT weight with negative tracking, which is
+ * the site's display voice. The previous rule was Orbitron 700 with +0.02em,
+ * i.e. the opposite instruction on every axis: heavier, wider, and a face
+ * whose personality is "science fiction" rather than "document".
+ */
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-display);
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-weight: 300;
+  letter-spacing: -0.015em;
+  line-height: 1.1;
+  text-wrap: balance;
+  color: var(--p01-text);
 }
 
-/* Font utility classes */
-.font-display {
-  font-family: var(--font-display) !important;
+/* Small headings need the weight back: Newsreader at 300 disappears below
+   about 18px on a dark ground. */
+h4, h5, h6 {
+  font-weight: 400;
+  letter-spacing: -0.005em;
 }
 
-.font-mono {
-  font-family: var(--font-mono) !important;
+.font-display { font-family: var(--font-display) !important; }
+.font-mono { font-family: var(--font-mono) !important; }
+.font-body { font-family: var(--font-body) !important; }
+
+/**
+ * The eyebrow. One class, because it was being rebuilt inline on nearly every
+ * screen with slightly different tracking each time.
+ */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--p01-faint);
 }
 
-.font-body {
-  font-family: var(--font-body) !important;
+/* Digits that line up in columns must not dance as they change. */
+.tabular, td, .amount, .balance {
+  font-variant-numeric: tabular-nums;
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 4px;
+/**
+ * Focus. The old sheet had none at all, which fails the first rule in the
+ * checklist: an extension is operated by keyboard more than a website is,
+ * because it opens over whatever the user was already typing in.
+ */
+:focus-visible {
+  outline: 2px solid var(--p01-cyan);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
-::-webkit-scrollbar-track {
-  background: var(--p01-dark);
+::selection {
+  background: rgba(57, 197, 187, 0.3);
+  color: var(--p01-text);
 }
 
+/* Scrollbar. Hairline, on the same alpha rule as everything else. */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
   background: var(--p01-border);
   border-radius: 2px;
 }
+::-webkit-scrollbar-thumb:hover { background: var(--p01-border-hover); }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #404040;
-}
-
-/* Animations */
+/* ── Motion ─────────────────────────────────────────────────────────────
+   Entrances at 220ms, exits shorter so dismissing feels immediate. */
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
 @keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.animate-fadeIn { animation: fadeIn 160ms ease-out; }
+.animate-slideUp { animation: slideUp 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+
+/**
+ * ⚠️ REQUIRED, AND IT WAS MISSING. Several screens animate on mount. Without
+ * this, a user who has asked their OS to reduce motion still gets all of it,
+ * in a surface that opens unprompted over their work.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
-.animate-fadeIn {
-  animation: fadeIn 0.2s ease-out;
-}
-
-.animate-slideUp {
-  animation: slideUp 0.3s ease-out;
-}
-
-/* Industrial panel */
+/* ── Two legacy classes, retuned rather than deleted ────────────────────
+   Both are referenced from screens that have not been reworked yet. They now
+   resolve to the new palette so nothing renders off-brand in the meantime. */
 .panel-raw {
   background: var(--p01-surface);
   border: 1px solid var(--p01-border);
 }
 
-/* Cyber button */
+/* Was `btn-cyber`: Orbitron, +0.05em tracking, the arcade look. The name is
+   kept only so existing markup keeps working; it is now an ordinary button. */
 .btn-cyber {
   position: relative;
   background: var(--p01-cyan);
-  font-family: var(--font-display);
-  font-weight: 600;
-  letter-spacing: 0.05em;
+  color: var(--p01-void);
+  font-family: var(--font-body);
+  font-weight: 500;
+  letter-spacing: 0;
+  transition: background 140ms ease-out;
 }
 
-.btn-cyber:hover {
-  background: var(--p01-cyan-dim);
-}
+.btn-cyber:hover { background: var(--p01-cyan-bright); }
+.btn-cyber:disabled { opacity: 0.4; cursor: not-allowed; }

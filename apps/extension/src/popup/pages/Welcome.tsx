@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Plus, Download, Smartphone } from 'lucide-react';
-import GlitchLogo from '../components/GlitchLogo';
+import Wordmark from '../components/Wordmark';
 
 // NOTE (Privy removal — Phase 2): the email/OTP login and the "Connect with P01
 // Mobile" QR flow were REMOVED. Email/OTP relied on Privy embedded wallets, and
@@ -28,7 +28,7 @@ export default function Welcome() {
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5 }}
           >
-            <GlitchLogo size={140} showText={true} animated={true} />
+            <Wordmark size={140} showText={true} animated={true} />
           </motion.div>
 
           {/* Tagline */}

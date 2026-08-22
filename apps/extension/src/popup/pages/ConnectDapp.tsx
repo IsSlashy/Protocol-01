@@ -162,7 +162,7 @@ export default function ConnectDapp() {
           transition={{ delay: 0.1 }}
           className="text-center py-2"
         >
-          <span className="text-[#ff2d7a] text-[10px] font-bold tracking-[4px] font-mono">
+          <span className="text-p01-cyan text-[10px] font-bold tracking-[4px] font-mono">
             [ CONNECTION REQUEST ]
           </span>
         </motion.div>
@@ -234,7 +234,7 @@ export default function ConnectDapp() {
                   </div>
                   <div className="flex-1 text-left">
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-[#ff2d7a] font-mono tracking-wider">
+                      <span className="text-[10px] text-p01-cyan font-mono tracking-wider">
                         [{code}]
                       </span>
                       <p className={`text-[11px] font-bold font-mono tracking-wider ${

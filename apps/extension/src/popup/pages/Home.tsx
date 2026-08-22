@@ -31,6 +31,7 @@ import {
 } from '@/shared/utils';
 import { getSolPrice } from '@/shared/services/price';
 import type { TransactionRecord } from '@/shared/types';
+import Wordmark from '@/popup/components/Wordmark';
 
 export default function Home() {
   const navigate = useNavigate();
@@ -123,12 +124,7 @@ export default function Home() {
       {/* Header - Like Mobile */}
       <header className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-3">
-          {/* 01 Logo */}
-          <img
-            src="/01-miku.png"
-            alt="Protocol 01"
-            className="w-9 h-9 rounded-lg object-cover"
-          />
+          <Wordmark size={26} showText={false} />
           <div className="flex items-center gap-2">
             <span className="text-white font-display font-bold tracking-wide">PROTOCOL</span>
             {network === 'devnet' && (

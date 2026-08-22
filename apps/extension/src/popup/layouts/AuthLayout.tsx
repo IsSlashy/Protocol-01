@@ -1,6 +1,6 @@
 import { Outlet } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import GlitchLogo from '../components/GlitchLogo';
+import Wordmark from '../components/Wordmark';
 
 export default function AuthLayout() {
   return (
@@ -14,7 +14,7 @@ export default function AuthLayout() {
           className="flex flex-col items-center"
         >
           {/* Glitching Logo */}
-          <GlitchLogo size={120} showText={true} animated={true} />
+          <Wordmark size={120} showText={true} animated={true} />
 
           {/* Terminal-style status indicator */}
           <motion.div

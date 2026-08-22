@@ -27,6 +27,7 @@ import { useShieldedStore } from '@/shared/store/shielded';
 import { cn, truncateAddress, copyToClipboard } from '@/shared/utils';
 import { decrypt, encrypt, verifyPassword, hashPassword } from '@/shared/services/crypto';
 import { Shield, BarChart3, Smartphone } from 'lucide-react';
+import Wordmark from '@/popup/components/Wordmark';
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -277,12 +278,11 @@ export default function Settings() {
             className="w-full bg-p01-surface rounded-2xl p-4 flex items-center gap-4 hover:bg-p01-surface/80 transition-colors"
             aria-label={copied ? 'Address copied' : 'Copy wallet address'}
           >
-            {/* Avatar */}
-            <img
-              src="/01-miku.png"
-              alt="Protocol 01"
-              className="w-14 h-14 rounded-full object-cover"
-            />
+            {/* Was the 01 raster used as an avatar. An account has no
+                portrait here, so the mark stands in without pretending to. */}
+            <span className="flex h-14 w-14 items-center justify-center rounded-full border border-p01-border bg-p01-surface">
+              <Wordmark size={26} showText={false} />
+            </span>
 
             {/* Info */}
             <div className="flex-1 text-left">

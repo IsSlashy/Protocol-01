@@ -390,12 +390,12 @@ export default function ApproveTransaction() {
           initial={{ y: 10, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.25 }}
-          className="bg-[#ff2d7a]/10 p-4 border border-[#ff2d7a]/30"
+          className="bg-p01-cyan/10 p-4 border border-p01-cyan/30"
         >
           <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-[#ff2d7a] flex-shrink-0" />
+            <AlertTriangle className="w-5 h-5 text-p01-cyan flex-shrink-0" />
             <div>
-              <p className="text-xs font-bold text-[#ff2d7a] font-mono">
+              <p className="text-xs font-bold text-p01-cyan font-mono">
                 VERIFY BEFORE SIGNING
               </p>
               <p className="text-[10px] text-[#888892] font-mono mt-1">

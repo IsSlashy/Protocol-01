@@ -1,16 +1,46 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Wallet, Repeat, Shield, Sparkles } from 'lucide-react';
+import { Compass, RefreshCw, Shield, Wallet } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '@/shared/utils';
 
+/**
+ * 🎯 FOUR TABS, AND "AGENT" IS GONE. Founder ruling 2026-08-23: nobody was
+ * going to use an on-device chat box, and a tab is the most expensive real
+ * estate in a 360px popup. Discover replaces it, because the question a wallet
+ * tab has to answer is "why open this when I am not already sending money".
+ *
+ * Wallet   what you hold
+ * Discover what you can pay for privately  (reads the on-chain registry)
+ * Subs     what you already pay for
+ * Shield   the private balance, and the four things you can do with it
+ *
+ * ⚠️ Icon AND label on every tab. An icon-only tab bar in a wallet is a guess
+ * about someone's money, and `Repeat` for subscriptions was already ambiguous
+ * enough to need one.
+ */
 const navItems = [
   { path: '/', icon: Wallet, label: 'Wallet' },
-  { path: '/subscriptions', icon: Repeat, label: 'Streams' },
-  // Shield tab opens the shielded WALLET dashboard (balance + funds, reads the
-  // denominated notes). Its "Shield" button then routes to /denominated-shield
-  // (the fixed 0.1/1/10/100/1000 denomination picker). Wallet first, picker on tap.
-  { path: '/shielded', icon: Shield, label: 'Shield' },
-  { path: '/agent', icon: Sparkles, label: 'Agent' },
+  { path: '/discover', icon: Compass, label: 'Discover' },
+  { path: '/subscriptions', icon: RefreshCw, label: 'Subs' },
+  { path: '/shield', icon: Shield, label: 'Shield' },
+];
+
+/**
+ * 🚨 EVERY MONEY FLOW HIDES THE TABS, AND MOST OF THEM DID NOT.
+ *
+ * This list held four prefixes. `/denominated-shield`, `/denominated-unshield`,
+ * `/denominated-transfer` and `/subscriptions/new` all kept the tab bar live,
+ * so one stray tap during a three-minute proof abandoned a half-filled deposit
+ * with no warning and no way back to where it was.
+ *
+ * Matched on prefix, so `/shield/withdraw` hides while `/shield` does not.
+ */
+const FLOW_PREFIXES = [
+  '/send',
+  '/receive',
+  '/settings',
+  '/shield/',
+  '/subscriptions/',
 ];
 
 export default function MainLayout() {
@@ -18,9 +48,7 @@ export default function MainLayout() {
   const navigate = useNavigate();
 
   // Hide nav on certain pages
-  const hideNav = ['/send', '/receive', '/swap', '/settings'].some((p) =>
-    location.pathname.startsWith(p)
-  );
+  const hideNav = FLOW_PREFIXES.some((p) => location.pathname.startsWith(p));
 
   return (
     <div className="flex flex-col h-full bg-p01-void">

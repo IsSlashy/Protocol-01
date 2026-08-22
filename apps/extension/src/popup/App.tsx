@@ -15,26 +15,22 @@ import Home from './pages/Home';
 import Send from './pages/Send';
 import SendConfirm from './pages/SendConfirm';
 import Receive from './pages/Receive';
-import Swap from './pages/Swap';
+import Discover from './pages/Discover';
+import Shield from './pages/Shield';
 import Subscriptions from './pages/Subscriptions';
 import CreateSubscription from './pages/CreateSubscription';
 import SubscriptionDetails from './pages/SubscriptionDetails';
 import Activity from './pages/Activity';
 import Settings from './pages/Settings';
-import Agent from './pages/Agent';
-import StealthPayments from './pages/StealthPayments';
-import ShieldedWallet from './pages/ShieldedWallet';
-import ConfidentialWallet from './pages/ConfidentialWallet';
 import ConnectDapp from './pages/ConnectDapp';
 import ApproveTransaction from './pages/ApproveTransaction';
 import ApproveSubscription from './pages/ApproveSubscription';
 import ConnectedSites from './pages/ConnectedSites';
-import SubscriptionVaults from './pages/SubscriptionVaults';
-import DenominatedShield from './pages/DenominatedShield';
 import DenominatedUnshield from './pages/DenominatedUnshield';
 import DenominatedTransfer from './pages/DenominatedTransfer';
 import DenominatedImport from './pages/DenominatedImport';
 import LinkPhone from './pages/LinkPhone';
+import Wordmark from '@/popup/components/Wordmark';
 
 function App() {
   const [isHydrated, setIsHydrated] = useState(false);
@@ -155,11 +151,9 @@ function App() {
     return (
       <div className="w-[360px] h-[600px] bg-p01-void flex items-center justify-center">
         <div className="text-center">
-          <img
-            src="/01-miku.png"
-            alt="Protocol 01"
-            className="w-16 h-16 mx-auto mb-4 rounded-xl animate-pulse"
-          />
+          {/* Was the 01 raster. The mark is drawn now, so the boot state
+              renders before any asset has to load. */}
+          <Wordmark size={44} showText={false} className="mx-auto mb-4 justify-center" />
           <p className="text-white font-display font-bold text-sm tracking-wider mb-1">
             PROTOCOL
           </p>
@@ -191,23 +185,41 @@ function App() {
           <Route path="/send" element={<Send />} />
           <Route path="/send/confirm" element={<SendConfirm />} />
           <Route path="/receive" element={<Receive />} />
-          <Route path="/swap" element={<Swap />} />
+          <Route path="/discover" element={<Discover />} />
           <Route path="/subscriptions" element={<Subscriptions />} />
           <Route path="/subscriptions/new" element={<CreateSubscription />} />
           <Route path="/subscriptions/:id" element={<SubscriptionDetails />} />
           <Route path="/activity" element={<Activity />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/link-phone" element={<LinkPhone />} />
-          <Route path="/agent" element={<Agent />} />
-          <Route path="/stealth-payments" element={<StealthPayments />} />
-          <Route path="/shielded" element={<ShieldedWallet />} />
-          <Route path="/confidential" element={<ConfidentialWallet />} />
-          <Route path="/subscription-vaults" element={<SubscriptionVaults />} />
           <Route path="/connected-sites" element={<ConnectedSites />} />
-          <Route path="/denominated-shield" element={<DenominatedShield />} />
-          <Route path="/denominated-unshield" element={<DenominatedUnshield />} />
-          <Route path="/denominated-transfer" element={<DenominatedTransfer />} />
-          <Route path="/denominated-import" element={<DenominatedImport />} />
+          {/* ── The shield family, one tab ────────────────────────────
+              /shield is now the action, not a dashboard pointing at one.
+              ⚠️ THE OLD PATHS MUST KEEP RESOLVING. background/index.ts builds
+              deep links as bare strings, and App.tsx restores a pendingPath
+              after unlock, so a hash URL from either can still name a route
+              this table would otherwise no longer know. Redirects, not
+              deletions. */}
+          <Route path="/shield" element={<Shield />} />
+          <Route path="/shield/withdraw" element={<DenominatedUnshield />} />
+          <Route path="/shield/send-note" element={<DenominatedTransfer />} />
+          <Route path="/shield/receive-note" element={<DenominatedImport />} />
+
+          <Route path="/shielded" element={<Navigate to="/shield" replace />} />
+          <Route path="/denominated-shield" element={<Navigate to="/shield" replace />} />
+          <Route path="/denominated-unshield" element={<Navigate to="/shield/withdraw" replace />} />
+          <Route path="/denominated-transfer" element={<Navigate to="/shield/send-note" replace />} />
+          <Route path="/denominated-import" element={<Navigate to="/shield/receive-note" replace />} />
+
+          {/* ⛔ PARKED 2026-08-23, not deleted. Founder ruling: personal
+              payments are parked and the agent is retired. The files stay so
+              the work is recoverable; the routes go so nothing lands on them.
+              /swap and /confidential were already unreachable in practice. */}
+          <Route path="/agent" element={<Navigate to="/discover" replace />} />
+          <Route path="/stealth-payments" element={<Navigate to="/shield" replace />} />
+          <Route path="/swap" element={<Navigate to="/" replace />} />
+          <Route path="/confidential" element={<Navigate to="/shield" replace />} />
+          <Route path="/subscription-vaults" element={<Navigate to="/subscriptions" replace />} />
         </Route>
 
         {/* Popup request routes (from dApps) */}

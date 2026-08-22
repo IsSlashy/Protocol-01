@@ -3,7 +3,7 @@
  *
  * The Unlock page is shown when the wallet is initialized but locked.
  * It features:
- * - GlitchLogo with "LOCKED" status badge
+ * - Wordmark with "LOCKED" status badge
  * - Password input with visibility toggle
  * - UNLOCK button with loading state
  * - Error display for invalid passwords
@@ -48,10 +48,10 @@ vi.mock('@/shared/store/wallet', () => ({
   }),
 }));
 
-// Mock GlitchLogo
-vi.mock('../components/GlitchLogo', () => ({
+// Mock Wordmark
+vi.mock('../components/Wordmark', () => ({
   __esModule: true,
-  default: () => <div data-testid="glitch-logo" />,
+  default: () => <div data-testid="wordmark" />,
 }));
 
 vi.mock('@/shared/utils', () => ({
@@ -76,14 +76,14 @@ describe('Unlock', () => {
     expect(screen.getByText('ENTER PASSWORD TO UNLOCK')).toBeInTheDocument();
   });
 
-  it('renders the GlitchLogo', () => {
+  it('renders the Wordmark', () => {
     render(
       <MemoryRouter>
         <Unlock />
       </MemoryRouter>,
     );
 
-    expect(screen.getByTestId('glitch-logo')).toBeInTheDocument();
+    expect(screen.getByTestId('wordmark')).toBeInTheDocument();
   });
 
   it('renders the password input field', () => {
