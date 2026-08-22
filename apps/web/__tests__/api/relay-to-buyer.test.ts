@@ -465,6 +465,43 @@ describe('the client learns this relay’s ceilings from this relay', () => {
     expect(body.maxRentSubsidyLamports).toBeLessThan(2 * worstHonestSubsidy);
   });
 
+  /**
+   * 🚨 THE LIMIT THAT BIT THE FOURTH TESTER, NOW CONFIGURABLE.
+   *
+   * The bucket is per IP and a group test is one IP by definition — several
+   * people on one office wifi share a single allowance. At three, the fourth
+   * person is refused having done nothing, and before 2026-08-21 that refusal
+   * arrived AFTER they had signed away a full denomination.
+   *
+   * The constant is read at module load, like `ISSUES_PER_IP_PER_HOUR`, so the
+   * override has to be exercised through a fresh import. Doing it any other way
+   * would assert against the value this file already imported and pass whatever
+   * the route does.
+   */
+  it('lets an operator raise the per-IP allowance for a group test', async () => {
+    vi.resetModules();
+    process.env.P01_RELAY_LIMIT_PER_HOUR = '25';
+    const fresh = await import('@/app/api/relay-to-buyer/route');
+    const body = await (await fresh.GET(get())).json();
+    expect(body.relaysPerHour).toBe(25);
+    delete process.env.P01_RELAY_LIMIT_PER_HOUR;
+    vi.resetModules();
+  });
+
+  it('falls back to three on a malformed allowance rather than to zero', async () => {
+    // ⛔ 0 is the value that turns the limiter off, and this endpoint spends the
+    // float on every call it serves. A typo must not become an open faucet.
+    for (const bad of ['0', '-4', 'lots', '2.5', '']) {
+      vi.resetModules();
+      process.env.P01_RELAY_LIMIT_PER_HOUR = bad;
+      const fresh = await import('@/app/api/relay-to-buyer/route');
+      const body = await (await fresh.GET(get())).json();
+      expect(body.relaysPerHour, `"${bad}" must not disable the limiter`).toBe(3);
+    }
+    delete process.env.P01_RELAY_LIMIT_PER_HOUR;
+    vi.resetModules();
+  });
+
   it('reports an unreadable float balance as null, never as zero', async () => {
     // ⚠️ UNKNOWN IS NOT EMPTY. A client that read `0` from an RPC outage would
     // refuse every deposit and delete the only private path over a hiccup —

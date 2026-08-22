@@ -12,6 +12,10 @@
     {
       "path": "/api/waitlist/report",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/settle-till",
+      "schedule": "17 * * * *"
     }
   ]
 }

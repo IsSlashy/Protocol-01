@@ -51,8 +51,30 @@ const MAX_RELAY_LAMPORTS = 2_500_000_000;
 /** Namespaces this route's rate-limit buckets away from every other route's. */
 const RATE_SALT = 'p01:relay-to-buyer:v1';
 
-/** Relays per IP per hour. A buyer needs one; a faucet-hunter needs many. */
-const RELAYS_PER_IP_PER_HOUR = 3;
+/**
+ * Relays per IP per hour. A buyer needs one; a faucet-hunter needs many.
+ *
+ * 🚨 THE BUCKET IS PER IP, AND A GROUP TEST IS ONE IP BY DEFINITION. Several
+ * people on one office wifi, one conference network or one VPN share a single
+ * bucket, so at three the FOURTH tester is refused having done nothing. The GET
+ * now publishes `relaysRemaining` and the client refuses before the wallet
+ * signs, so that refusal no longer costs them a denomination — but it is still
+ * a refusal, and on a public test day it is the difference between a demo and
+ * an apology.
+ *
+ * ⚠️ SO IT IS OVERRIDABLE, AND THE DEFAULT STAYS THREE. Same posture as
+ * `ISSUES_PER_IP_PER_HOUR`: a floor of 1, no ceiling, and anything malformed
+ * falls back rather than becoming 0 — 0 is the value that turns the limiter
+ * off, and this endpoint spends the float on every call it serves. An operator
+ * raising this is making a decision about their own float, and the honest
+ * failure is a high number they chose rather than a low one they could not
+ * reach. The bound that actually stops a drain is MAX_RENT_SUBSIDY_LAMPORTS,
+ * not this.
+ */
+const RELAYS_PER_IP_PER_HOUR = (() => {
+  const raw = Number(process.env.P01_RELAY_LIMIT_PER_HOUR ?? '');
+  return Number.isInteger(raw) && raw >= 1 ? raw : 3;
+})();
 
 /**
  * The most refundable rent this deployment will front on top of a payment.
@@ -82,11 +104,15 @@ const RELAYS_PER_IP_PER_HOUR = 3;
  * index — which is an accounting bound between R and F, not a bound on F's
  * balance.
  *
- * The operational consequence, stated because nothing in this repository
- * implements it: F drains by roughly one denomination per deposit until R
- * settles with it in batches. F needs a balance alarm and a settlement runbook.
- * The settlement must stay batched and unrelated to any single purchase, or the
- * clock rejoins what the topology separated.
+ * The operational consequence: F drains by roughly one denomination per deposit
+ * until R settles with it in batches. ✅ IMPLEMENTED 2026-08-22 — it used to say
+ * "nothing in this repository implements it", and what stood in for the
+ * implementation was a runbook, i.e. a person remembering, i.e. leaf 72. The
+ * balance alarm and the batched settlement both live in
+ * `app/api/settle-till/route.ts`, and the capacity arithmetic an operator needs
+ * (how many deposits this float still serves, how much SOL a given batch floor
+ * costs) is `lib/privacy/pool/settlementPolicy.ts`, pinned to the balances
+ * measured on 2026-08-22.
  */
 /*
  * ⚠️ RECALIBRATED 2026-08-21, AND THE OLD VALUE WAS THE WHOLE OF AN EXPLOIT.
@@ -186,12 +212,34 @@ function funderKeypair(): Keypair | null {
  *     a deposit by ninety seconds re-pairs them by the clock even when the
  *     amounts do not, and the clock is public.
  *
- * ⚠️ THIS PROPERTY HOLDS BY OPERATOR DISCIPLINE, NOT BY CONSTRUCTION. The till's
- * spending key is held off chain, deliberately — a till this deployment could
- * spend would be a second float, and the whole R != F split would collapse. So
- * nothing here can refuse a bad settlement. What CAN be done is detect one:
- * `verify/deposit-walk.mjs` reads the till's history and reports how many
- * addresses a settlement would carry forward.
+ * ✅ THIS PROPERTY IS NOW ENFORCED BY A MACHINE, AND UNTIL 2026-08-22 IT WAS NOT.
+ * `app/api/settle-till/route.ts` is the only thing that moves the till, it runs
+ * on a schedule, and it refuses to send unless the till carries at least
+ * `P01_SETTLE_MIN_PURCHASES` purchases AND the last one landed at least
+ * `P01_SETTLE_MIN_QUIET_SECONDS` ago AND a randomised hold has expired. When the
+ * float is too small to ever reach that floor it settles nothing and says so,
+ * rather than buying continuity with the one thing that cannot be bought back.
+ *
+ * ⚠️ WHAT THE OLD VERSION OF THIS PARAGRAPH SAID, AND WHY IT CHANGED. It said
+ * the till's key is held off chain deliberately, because "a till this deployment
+ * could spend would be a second float and the whole R != F split would
+ * collapse". Half of that was wrong and the wrong half is load-bearing: R != F
+ * is a statement about what appears in TRANSACTIONS, and no observer can see
+ * who holds a key, so the split survives the key coming online. What was right
+ * is the behavioural risk — a deployment able to spend R could fund an ephemeral
+ * straight from it and rebuild `buyer -> R -> ephemeral -> deposit`. That risk is
+ * refused by construction in the settler: one destination, taken from the float
+ * keypair and never from a request, and `P01_TILL_SECRET_KEY` read in exactly
+ * one file, which a test enforces by grepping the repository.
+ *
+ * ⚠️ THE BLAST RADIUS DID GROW. A compromise of this deployment now also reaches
+ * the till, bounded by the batch floor times one denomination. Stated because
+ * the previous paragraph's confidence is what made a person the mechanism.
+ *
+ * A violation is still detectable independently: `verify/deposit-walk.mjs` reads
+ * the till's history and reports how many addresses a settlement carries
+ * forward, and `/api/fund-ephemeral?readiness=1` names a settlement that carried
+ * one.
  *
  * 🚨 IT HAS ALREADY BEEN VIOLATED ONCE, on 2026-08-22, by the author of this
  * comment: a single deposit was settled by hand minutes later, creating
