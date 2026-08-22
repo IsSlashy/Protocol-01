@@ -112,22 +112,47 @@ function bad(status: number, error: string, extra: Record<string, unknown> = {})
 }
 
 /**
- * Is this the platform's cron, or someone who holds the cron secret?
+ * Is this the scheduler?
  *
- * Copied in shape from `waitlist/report/route.ts` deliberately — one definition
- * of "this call is the scheduler" across the app. `timingSafeEqual` and the
- * length check before it, because a comparison that returns early on the first
- * wrong byte leaks the secret one byte at a time to a caller who can time it.
+ * TWO SECRETS ARE ACCEPTED, AND THE SECOND ONE IS NOT A WORKAROUND.
+ *
+ * ⛔ THE SCHEDULER CANNOT BE VERCEL'S. Measured 2026-08-22 by deploying it:
+ * "Hobby accounts are limited to daily cron jobs. This cron expression
+ * (17 * * * *) would run more than once per day." Hobby also caps the account
+ * at two cron jobs and both are spoken for by the waitlist. A DAILY tick would
+ * technically run, and it would quietly gut the policy: the randomised hold has
+ * to land on some tick, so at one tick a day the hold is not a hold and the
+ * settlement fires at the same hour every time — a constant an observer reads
+ * off the schedule, which is the thing the hold exists to prevent. Better an
+ * external scheduler that ticks hourly than an on-platform one that makes the
+ * jitter decorative.
+ *
+ * So the tick comes from `.github/workflows/settle-till.yml`, and it holds
+ * `P01_SETTLE_TRIGGER_SECRET` — scoped to THIS ROUTE — rather than `CRON_SECRET`,
+ * which opens every cron route in the app. Handing a third party the key to all
+ * of them to schedule one of them is the trade nobody would make deliberately.
+ * `CRON_SECRET` still works, so moving to a Pro plan is a line in `vercel.json`
+ * and nothing else.
+ *
+ * `timingSafeEqual` with the length check in front, because a comparison that
+ * returns early on the first wrong byte leaks the secret one byte at a time to
+ * a caller who can time it. Both candidates are checked with no early exit on
+ * the first match, so which secret was used is not timeable either.
  */
-function isCronCall(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET;
+function matches(bearer: string, secret: string | undefined): boolean {
   if (!secret) return false;
-  const authz = req.headers.get('authorization');
-  const bearer = authz?.startsWith('Bearer ') ? authz.slice(7) : null;
-  if (!bearer) return false;
   const a = Buffer.from(bearer);
   const b = Buffer.from(secret);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function isCronCall(req: NextRequest): boolean {
+  const authz = req.headers.get('authorization');
+  const bearer = authz?.startsWith('Bearer ') ? authz.slice(7) : null;
+  if (!bearer) return false;
+  const viaPlatform = matches(bearer, process.env.CRON_SECRET);
+  const viaTrigger = matches(bearer, process.env.P01_SETTLE_TRIGGER_SECRET);
+  return viaPlatform || viaTrigger;
 }
 
 function keypairFrom(raw: string | undefined): Keypair | null {

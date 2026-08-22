@@ -1,0 +1,89 @@
+# The tick that settles the till back into the float.
+#
+# WHY THE SCHEDULER IS HERE AND NOT IN vercel.json
+# ────────────────────────────────────────────────
+# Measured 2026-08-22 by deploying it: "Hobby accounts are limited to daily cron
+# jobs. This cron expression (17 * * * *) would run more than once per day."
+# Hobby also caps the account at two cron jobs, and the waitlist holds both.
+#
+# ⛔ A DAILY TICK IS NOT AN ACCEPTABLE FALLBACK. The settlement policy draws a
+# RANDOMISED HOLD so that the gap between the last purchase and the settlement is
+# not a constant an observer can subtract. That hold has to land on some tick —
+# at one tick a day it always lands on the same one, the jitter becomes
+# decorative, and the settlement fires at the same hour forever. Hourly from
+# outside beats daily from inside.
+#
+# Moving to a Vercel Pro plan makes this file redundant: add
+#   { "path": "/api/settle-till", "schedule": "17 * * * *" }
+# back to vercel.json's crons and delete this workflow. The route already accepts
+# CRON_SECRET, so nothing else changes.
+#
+# ⚠️ TWO THINGS TO KNOW ABOUT GITHUB'S SCHEDULER, because a settler nobody
+# notices has stopped is a float that drains to a halt:
+#   1. `schedule` is best-effort and runs late under load — minutes, sometimes
+#      more. Harmless here: every rule in the policy is a MINIMUM, so a late tick
+#      settles later, never sooner, and never below the floor.
+#   2. GitHub DISABLES scheduled workflows in a repository with no activity for
+#      60 days, and it emails the owner when it does. The float alarm is the
+#      backstop — it mails on a low float regardless of why nothing settled.
+
+name: settle-till
+
+on:
+  schedule:
+    # Hourly at :17. Not on the hour: the top of the hour is the busiest slot on
+    # GitHub's scheduler, so :17 is both less delayed and less round.
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+# One tick at a time. The route also takes a KV lock — two overlapping runs
+# would each build a full sweep and the second would carry whatever arrived in
+# between, which is a settlement of one purchase — but not queueing a second run
+# in the first place is cheaper than relying on the lock to refuse it.
+concurrency:
+  group: settle-till
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ask the deployment to settle if the policy allows it
+        env:
+          SECRET: ${{ secrets.P01_SETTLE_TRIGGER_SECRET }}
+          ENDPOINT: https://protocol-01.dev/api/settle-till
+        run: |
+          set -euo pipefail
+          if [ -z "${SECRET:-}" ]; then
+            echo "::error::P01_SETTLE_TRIGGER_SECRET is not set in this repository's secrets."
+            echo "Without it every tick is an unauthenticated status read and NOTHING SETTLES,"
+            echo "silently, while the float drains. Failing loudly instead."
+            exit 1
+          fi
+
+          # -sS keeps curl quiet but still prints errors; --fail-with-body is what
+          # makes an HTTP 4xx/5xx fail the job WITHOUT swallowing the reason, which
+          # plain --fail does. The reason is the whole value of this log line.
+          body=$(curl -sS --fail-with-body --max-time 120 \
+                   -H "authorization: Bearer $SECRET" \
+                   "$ENDPOINT")
+          echo "$body"
+
+          # ⛔ NEVER PIPE THIS INTO ANOTHER COMMAND. `| tail` returns tail's exit
+          # code and manufactures a green run over a red one — the trap already
+          # recorded for p01-verify.mjs and deposit-walk.mjs.
+          settled=$(printf '%s' "$body" | python3 -c "import sys,json;print(json.load(sys.stdin).get('settled'))")
+          verdict=$(printf '%s' "$body" | python3 -c "import sys,json;print(json.load(sys.stdin).get('verdict'))")
+          alarm=$(printf '%s' "$body" | python3 -c "import sys,json;print(json.load(sys.stdin).get('floatAlarm'))")
+
+          echo "verdict=$verdict settled=$settled floatAlarm=$alarm" >> "$GITHUB_STEP_SUMMARY"
+
+          # A refusal is the normal case and must not fail the job — the policy
+          # refuses on most ticks by design. Only a float that can no longer reach
+          # its own batch floor is escalated, because that one needs a human with
+          # a wallet and no amount of waiting fixes it.
+          if [ "$verdict" = "float-too-small-for-batch-floor" ]; then
+            echo "::error::The float cannot reach the batch floor. Deposits will stop before the till can settle. Fund the float; do NOT lower P01_SETTLE_MIN_PURCHASES."
+            exit 1
+          fi

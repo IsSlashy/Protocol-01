@@ -160,6 +160,7 @@ beforeEach(() => {
   };
   kv = memoryKv();
   process.env.CRON_SECRET = CRON_SECRET;
+  delete process.env.P01_SETTLE_TRIGGER_SECRET;
   process.env.P01_TILL_SECRET_KEY = JSON.stringify(Array.from(till.secretKey));
   process.env.P01_FUNDER_SECRET_KEY = JSON.stringify(Array.from(float.secretKey));
   process.env.P01_TILL_ADDRESS = till.publicKey.toBase58();
@@ -211,11 +212,55 @@ describe('who may make it act', () => {
     expect(kv!.map.has('p01:settle:hold-until')).toBe(false);
   });
 
-  it('is inert when no cron secret is configured, even with a bearer', async () => {
+  it('is inert when no secret is configured at all, even with a bearer', async () => {
     delete process.env.CRON_SECRET;
     tillHolds(9, 99999);
     await GET(req('Bearer '));
     expect(chain.sent).toHaveLength(0);
+  });
+
+  /**
+   * The external scheduler's secret is scoped to THIS route.
+   *
+   * Vercel's Hobby plan refuses an hourly cron (measured 2026-08-22), and a
+   * daily one would make the randomised hold decorative — it always lands on
+   * the same tick. So the tick comes from a GitHub workflow, and handing that
+   * workflow `CRON_SECRET` would hand it every cron route in the app.
+   */
+  it('accepts the route-scoped trigger secret', async () => {
+    delete process.env.CRON_SECRET;
+    process.env.P01_SETTLE_TRIGGER_SECRET = 'trigger-value';
+    tillHolds(9, 30 * 86400);
+    const body = await (await GET(req('Bearer trigger-value'))).json();
+    // It reached the side-effect path: a hold was drawn.
+    expect(kv!.map.get('p01:settle:hold-until')).toBeTypeOf('number');
+    expect(body.settled).toBe(false);
+  });
+
+  it('still accepts the platform secret, so moving to Pro is one line elsewhere', async () => {
+    process.env.P01_SETTLE_TRIGGER_SECRET = 'trigger-value';
+    tillHolds(9, 30 * 86400);
+    await GET(cron());
+    expect(kv!.map.get('p01:settle:hold-until')).toBeTypeOf('number');
+  });
+
+  it('refuses a bearer that matches neither secret', async () => {
+    process.env.P01_SETTLE_TRIGGER_SECRET = 'trigger-value';
+    tillHolds(9, 30 * 86400);
+    await GET(req('Bearer neither-of-them'));
+    expect(kv!.map.has('p01:settle:hold-until')).toBe(false);
+    expect(chain.sent).toHaveLength(0);
+  });
+
+  it('does not let an unset trigger secret authorise an empty bearer', async () => {
+    // ⛔ THE CLASSIC. `matches()` returns false on an undefined secret; without
+    // that guard `Buffer.from('')` and an absent variable would compare equal
+    // and every unauthenticated caller would become the scheduler.
+    delete process.env.CRON_SECRET;
+    delete process.env.P01_SETTLE_TRIGGER_SECRET;
+    tillHolds(9, 30 * 86400);
+    await GET(req('Bearer '));
+    expect(kv!.map.has('p01:settle:hold-until')).toBe(false);
   });
 });
 
