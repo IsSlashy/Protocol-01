@@ -174,15 +174,42 @@ jobs:
           targets="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "p01_stark_verifier") | .targets[] | select(.kind[] == "test") | .name')"
 
+          # 🚨 AN ABSENT PIN IS AN ERROR, NOT A WARNING. MEASURED 2026-08-22.
+          #
+          # This loop was written to enforce the pins "the moment one lands, with
+          # no further edit". What it actually did was print two `::warning::`
+          # lines into a GREEN job, every run, for weeks — and a warning inside a
+          # passing job is read by nobody. Both pins were absent the whole time:
+          #
+          #   periodic_stride  needs p01_stark_verifier::periodic_ext_consts
+          #   b4_pair_leaf     needs p01_stark::compact::PairIndexing,
+          #                    generate_*_with_pair_indexing, and
+          #                    CircuitConfig::quotient_segments
+          #
+          # ⛔ NONE of those exist on master. They live on
+          # `b7-drop-aligned-checks`, so this is not "a test somebody forgot to
+          # write": the CODE the pins guard is not on this branch either.
+          # Copying the two files over from b7 does not compile — tried, 1 and 10
+          # errors respectively.
+          #
+          # So the job fails, and it names why. A red CI that states "the
+          # pair-leaf guard lives on b7 and master cannot run it" is worth more
+          # than a green one that whispers it. To make this pass, land the b7
+          # verifier work on master — not by deleting this loop.
+          missing=""
           for pin in periodic_stride b4_pair_leaf; do
             if printf '%s\n' "$targets" | grep -qx "$pin"; then
               echo "::group::pin $pin"
               cargo test -p p01_stark_verifier --release --test "$pin"
               echo "::endgroup::"
             else
-              echo "::warning title=Pin absent::le test '$pin' n'existe pas sur cette branche, la garde correspondante n'est pas exercee"
+              missing="$missing $pin"
             fi
           done
+          if [ -n "$missing" ]; then
+            echo "::error title=Soundness pin absent::Les gardes suivantes ne sont exercees NULLE PART:$missing — elles vivent sur b7-drop-aligned-checks avec le code qu'elles gardent (periodic_ext_consts, PairIndexing, quotient_segments), absent de master. Voir head-b7-divergence-mapped-2026-08-21."
+            exit 1
+          fi
 
       # The subscription state machine — `claimable_periods` and the funding
       # clamp — decides how much money a merchant is owed, and until this step
@@ -218,6 +245,27 @@ jobs:
         run: |
           cargo test -p zk_shielded --lib
           cargo test -p zk_shielded --test landed_invariants
+          # 🚨 ADDED 2026-08-22. Ten assertions guarding the drain that was LIVE
+          # on devnet on 2026-08-18 — the deployed binary still routed
+          # `unshield`, class FUND LOSS, measured on the program dump rather
+          # than deduced — and CI executed NONE of them. Green locally, run by
+          # nothing, which is the same as not having them.
+          #
+          # ⚠️ `--skip the_built_program_cannot_dispatch` IS NOT A WEAKENING, it
+          # is what makes this runnable here at all. That file says so itself:
+          # most of its guards are SOURCE SCANS, because the property is an
+          # implication ("routable only if it proves membership") and an
+          # implication is a fact about the source. Those need no toolchain.
+          # The two excluded ones execute the real SBF artifact and read
+          # `target/deploy/zk_shielded.so` with an `unwrap_or_else` that
+          # PANICS when it is absent — this job has no `cargo-build-sbf`, so
+          # including them would fail for a missing toolchain and teach everyone
+          # to ignore a red step. They stay a local acceptance check, exactly
+          # like `subscription_lifecycle` and `cu_budget.rs` above, whose
+          # comment explains the same constraint and which is why it is
+          # deliberately NOT added here.
+          cargo test -p zk_shielded --test unshield_c5_membership -- \
+            --skip the_built_program_cannot_dispatch
 
       # `continue-on-error: true` was on this step, which made it advisory: a real
       # failure still passed the job, so `-D warnings` pinned nothing. Removed.

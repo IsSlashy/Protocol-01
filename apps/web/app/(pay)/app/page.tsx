@@ -135,8 +135,15 @@ const DESCRIPTION =
 
 /* A link preview is shorter than a meta description and gets read on its own,
    so it leads with the two disclosures rather than the primitives. */
+/* ⚠️ THIS SAID "Depositing names your address" UNTIL 2026-08-22, six lines
+   below a DESCRIPTION that already said the opposite and said it correctly.
+   A link preview is the one string that TRAVELS: it is read by people who
+   never open the page, so a falsehood here outlives every correction made
+   inside the app. The relayed deposit landed on 2026-08-21 and this was
+   missed because the audit that day walked the rendered screens, and a meta
+   tag renders nowhere. */
 const SOCIAL_DESCRIPTION =
-  "The devnet money surface: shield, withdraw, subscribe. Depositing names your address, a spend can still be paired with the deposit it spends, and each screen says who paid for it. Not audited. No mainnet deployment.";
+  "The devnet money surface: shield, withdraw, subscribe. Your wallet signs one public payment to this deployment, which funds the key that touches the pool; a spend can still be paired with the deposit it spends. Not audited. No mainnet deployment.";
 
 /**
  * WHY openGraph, twitter AND keywords ARE ALL RESTATED HERE.
@@ -346,15 +353,35 @@ export default function PayPage() {
                   code contradicts: a banner nobody can trust in one direction
                   is not trusted in the other either.
 
-                  What is unconditionally true is the DEPOSIT, which moves real
-                  value in and therefore names whoever makes it, and the fact
-                  that this browser sends its own transactions. Each screen
-                  states who paid for that screen's operation, because only the
-                  screen knows. */}
+                  🚨 AND THE REPLACEMENT ROTTED IN ONE DAY. It read "Depositing
+                  moves real value in, so it always comes from your address by
+                  name" — chosen on 2026-08-21 as the one thing that could not
+                  change. It changed on 2026-08-22. `PoolPanel` passes
+                  `depositPublicly: treasuryMode`, so an ordinary deposit is the
+                  RELAYED shape or it is refused: the wallet pays this
+                  deployment, this deployment funds the one-time key, and the
+                  buyer's address is not in the pool transaction. Confirmed on
+                  chain — leaf 72, re-read by RPC, the buyer absent from the
+                  deposit's account keys.
+
+                  🧠 THE LESSON IS ABOUT THE SHAPE OF THE MISTAKE, NOT THE
+                  SENTENCE. The 2026-08-21 audit fixed six RESULT screens and
+                  left the ENTRY screens alone, so every surviving falsehood was
+                  one a reader meets BEFORE acting. This banner and
+                  SOCIAL_DESCRIPTION both said the deposit names you while step
+                  01 below and the page's own meta DESCRIPTION said it does not
+                  — four texts, one file, two answers.
+
+                  What is unconditionally true is that the wallet SIGNS once and
+                  in public, and that each screen states who paid for that
+                  screen's operation, because only the screen knows. Where the
+                  money then goes is a per-screen fact and must not be asserted
+                  here. */}
               <p className="styx-note" style={{ marginTop: "0.9rem" }}>
-                Test tokens only. Depositing moves real value in, so it always
-                comes from your address by name; each screen says who paid for
-                everything else. This browser submits its own transactions.
+                Test tokens only. Depositing costs your wallet one public
+                signature paying this deployment, which then funds the one-time
+                key that touches the pool — so your address is not on the pool
+                transaction itself. Each screen says who paid for that screen.
               </p>
             </div>
             <div className="styx-panel-body">

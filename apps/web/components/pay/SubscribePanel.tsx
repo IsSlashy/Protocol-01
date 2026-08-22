@@ -235,10 +235,25 @@ function CostDisclosure() {
           balance, dust, and the vault&apos;s own rent) to the vendor.{' '}
           <span className="font-mono text-p01-red/70">claim_period.rs:309-315.</span>
         </li>
+        {/* 🚨 THIS SAID "your wallet signs one deposit of roughly 1 SOL to hold
+            space for the two proofs" UNCONDITIONALLY, and the result screen at
+            the bottom of this same file says "Your wallet did not sign or pay
+            for this subscription" when the funder serves — which it does:
+            /api/fund-ephemeral answers ready:true in production.
+
+            ⛔ THE FALSE ONE WAS THE ONE READ BEFORE SIGNING. This component is
+            static by design (see CostDisclosure's header), so it cannot branch
+            on an outcome that does not exist yet — the honest fix is to state
+            BOTH shapes and say which decides, not to pick the scarier one and
+            call that caution. A disclosure that overstates the cost is not
+            "safe": it teaches the reader that this panel's numbers are
+            approximate, and the two sentences above it are not. */}
         <li>
-          On top of the note, your wallet signs one deposit of roughly 1 SOL to hold space for the
-          two proofs. It comes back when they close, minus about 0.006 SOL of fees that does not.
-          Same deposit as a withdrawal: this operation needs the same two proofs.
+          On top of the note, roughly 1 SOL is locked to hold space for the two proofs — the same
+          pair a withdrawal needs. It comes back when they close, minus about 0.006 SOL of fees
+          that does not. Who fronts it is decided when you click: this deployment&apos;s funder if
+          it is available, and then your wallet signs nothing and is repaid nothing; your own
+          wallet if it is not. The screen after the purchase names which happened.
         </li>
         <li>
           The subscription hides your wallet only as well as the pool does, which today is not at

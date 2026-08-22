@@ -1259,11 +1259,17 @@ export default function PoolPanel({
               {/* Unconditional, and it mirrors SubscribePanel's funding
                   paragraph on purpose.
 
-                  A deposit has no funder path and cannot get one: its pre-fund
-                  embeds the denomination itself, so a treasury covering it
-                  would be buying the note rather than lending rent. So the
-                  wallet signs, the wallet pays, and the residue comes back to
-                  the wallet — three separate namings of the same address.
+                  ⚠️ THIS SAID "a deposit has no funder path and cannot get one"
+                  AND THAT IS FALSE SINCE 2026-08-21 — six lines above code that
+                  branches on `fundedBy === 'funder'`. The reasoning was that a
+                  deposit's pre-fund embeds the denomination, so a treasury
+                  covering it would be buying the note. The relay answers that
+                  by having the BUYER pay the till and the deployment front only
+                  the rent, which is the one shape the old argument had not
+                  considered. Left as a correction rather than deleted: this
+                  comment is why the paragraph below is unconditional, and a
+                  reader who finds only the conclusion re-derives the wrong
+                  premise.
 
                   The hazard this paragraph exists for is not the deposit. It is
                   what happens to the READER once another screen truthfully says
@@ -1327,8 +1333,14 @@ export default function PoolPanel({
                 Withdrew {withdrawn.denomination} SOL
               </p>
               <p className="mt-1 text-xs text-p01-text-muted">
+                {/* ⚠️ "Only your wallet's signature reaches it" was here and it
+                    is one word away from the opposite meaning. It means "only
+                    you can SPEND it"; a reader takes it as "only you can SEE
+                    it", which the next sentence then contradicts. Two readings,
+                    one of them fatal, on a card whose whole job is to be
+                    believed. Say the narrow thing narrowly. */}
                 Paid to {truncate(withdrawn.payout, 6, 6)}, an address derived for this note
-                alone. Only your wallet&apos;s signature reaches it. Sweep it from the payout
+                alone. Only your key can spend it — anyone can see it. Sweep it from the payout
                 list, whenever and wherever you want. This withdrawal is still publicly matchable
                 to the deposit it spends (the commitment appears in both), so treat it as a
                 transparent transfer.

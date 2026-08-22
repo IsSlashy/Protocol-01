@@ -302,3 +302,18 @@ programs/p01_stark_verifier/tests/c7_probe/out/
 programs/p01_stark_verifier/tests/c7_probe/target/
 programs/p01_stark_verifier/tests/c7_probe/Cargo.lock
 apps/web/campaign-progress.jsonl
+
+# 🚨 THE PROVER BUILD OUTPUT IS NOT THE PROVER WE SHIP, AND IT WAS COMMITTED.
+#
+# `wasm-pack` writes here. On 2026-08-22 this directory held — tracked in git —
+# p01_stark_bg.wasm at 192,732 bytes (sha 4ace8913), the PRE-COSET build of
+# 2026-05-06 that the DEPLOYED verifier rejects. The prover actually shipped is
+# 229,640 bytes (sha 51a947e3) and lives in packages/stark-prover/wasm, which
+# IS tracked on purpose.
+#
+# The failure this caused before is measured and nasty: a rejected proof surfaces
+# only at the END of a ~150-transaction buffer upload, never early. A directory
+# named "wasm-out" is exactly where someone reaches for "the output".
+#
+# `stark/pkg/` was already ignored; this one was not. Kept on disk, out of git.
+stark/wasm-out/
