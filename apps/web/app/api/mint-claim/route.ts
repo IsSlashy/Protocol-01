@@ -37,8 +37,34 @@ import { getStore } from '@/lib/waitlist/store';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/** Claims expire, so an unredeemed one cannot sit as a permanent bearer asset. */
-const CLAIM_TTL_SECONDS = 24 * 60 * 60;
+/**
+ * 🚨 A PAID CLAIM DOES NOT EXPIRE. FOUNDER RULING, 2026-08-22.
+ *
+ * This used to be `{ ex: 24 * 60 * 60 }`, on the reasoning that "an unredeemed
+ * claim cannot sit as a permanent bearer asset". That reasoning protected the
+ * operator's inventory at the paying customer's expense, and the failure it
+ * produced was not "the code stops working" but something worse:
+ *
+ *   1. `claim-minted:<code>` expires after a day.
+ *   2. The customer redeems on day two. `incr` on `claim:<code>` returns 1,
+ *      so the claim is CONSUMED.
+ *   3. `minted` reads null, so the route answers 402 "this claim code was
+ *      never issued against a payment".
+ *   4. The release path is deliberately gated on `minted` (a code that was
+ *      never minted is burned on first touch, which is what makes guessing
+ *      cost something), so the claim is NOT given back.
+ *
+ * The customer paid, is told they never paid, and cannot retry. A bearer asset
+ * somebody bought is not a liability to be timed out; it is the thing they
+ * bought. The merchant may change their prices whenever they like, and that
+ * changes nothing about an entitlement already sold.
+ *
+ * ⚠️ THE COST IS REAL AND IT IS OURS TO CARRY. An unredeemed claim means the
+ * treasury must keep a note in stock for it, with no deadline. That is a debt
+ * we owe, not a risk to push onto the person who already paid. If inventory
+ * pressure ever needs managing, it is managed by minting against stock, never
+ * by cancelling an entitlement somebody holds.
+ */
 
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ ok: false, error, ...extra }, { status });
@@ -70,7 +96,10 @@ export async function POST(request: NextRequest) {
   const claimCode = randomBytes(32).toString('base64url');
 
   try {
-    await kv.set(`p01:note:claim-minted:${claimCode}`, reference, { ex: CLAIM_TTL_SECONDS });
+    // ⛔ NO `ex`. See the block above CLAIM_TTL_SECONDS's removal: a TTL here
+    // makes a paying customer's code answer "never issued against a payment"
+    // and burns it on the way. The absence of an expiry option is the feature.
+    await kv.set(`p01:note:claim-minted:${claimCode}`, reference);
   } catch (e) {
     return bad(503, `the claim could not be recorded: ${(e as Error).message}`);
   }
@@ -78,7 +107,9 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     ok: true,
     claimCode,
-    expiresInSeconds: CLAIM_TTL_SECONDS,
+    // Stated positively and returned to the caller, because the webhook that
+    // hands this to a buyer is where a deadline would otherwise be invented.
+    expires: false,
     reference,
     note:
       'Worth exactly one note. It is consumed on first redemption whether or not a note is ' +
