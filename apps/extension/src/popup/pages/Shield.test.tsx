@@ -40,12 +40,26 @@ const mockScan = vi.fn();
 const mockSweepAll = vi.fn();
 const mockSetError = vi.fn();
 
+/**
+ * 🚨 A stored note carries BOTH `denomination` (atomic, bigint) and
+ * `denominationHuman` (the number a person reads). A fixture that carries only
+ * one of them does not fail loudly — the headline balance quietly renders NaN.
+ * That is the exact mistake `Shield.tsx` warns about above its sum, so the
+ * doubles here have to be faithful to `SerializedReceipt` on both fields.
+ */
+function noteFields(denominationHuman: number) {
+  return {
+    denomination: BigInt(Math.round(denominationHuman * 1e9)),
+    denominationHuman,
+    token: 'SOL' as const,
+  };
+}
+
 /** A note the chain would accept a spend of. */
-function matureNote(denomination = 1, id = 'commit-mature') {
+function matureNote(denominationHuman = 1, id = 'commit-mature') {
   return {
     commitment: { toString: () => id },
-    denomination,
-    token: 'SOL' as const,
+    ...noteFields(denominationHuman),
     // Well past the maturity window, so `Ready` is not a matter of timing luck.
     shieldedAt: Date.now() - 1000 * 60 * 60 * 24,
     source: undefined,
@@ -53,11 +67,10 @@ function matureNote(denomination = 1, id = 'commit-mature') {
 }
 
 /** A note created seconds ago. The chain will refuse to spend it. */
-function freshNote(denomination = 1, id = 'commit-fresh') {
+function freshNote(denominationHuman = 1, id = 'commit-fresh') {
   return {
     commitment: { toString: () => id },
-    denomination,
-    token: 'SOL' as const,
+    ...noteFields(denominationHuman),
     shieldedAt: Date.now(),
     source: undefined,
   };

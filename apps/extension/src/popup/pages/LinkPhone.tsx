@@ -10,12 +10,22 @@
  *      expiry; the CODE is shown separately for the user to type on the phone.
  *   3. A filmed QR is useless without the code, and useless after 180s.
  * The QR encodes the recovery phrase — treat it like the seed itself.
+ *
+ * 🎯 UI PASS. This screen was the last one still painting its own colours:
+ * `bg-[#0a0a0f]`, `border-p01-border/10`, `text-p01-text/60`, `bg-[#13131a]`, plus
+ * `amber-500` and `red-400` straight from Tailwind's default ramp. None of
+ * those are in the token file, and `text-black` on the primary button was the
+ * only pure black in the extension. It is now `Screen` / `Field` / `Button` /
+ * `Panel`, and the cyan glow around the QR is gone — the site has no shadows.
+ *
+ * ⚠️ THE ACTION MOVED TO THE FOOTER. Both states have exactly one thing to do,
+ * and in the QR state it used to sit between the countdown and a warning
+ * paragraph, i.e. below the fold on a short window.
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
-import { ArrowLeft, ShieldAlert, RefreshCw, Smartphone, Eye, EyeOff } from 'lucide-react';
+import { ShieldAlert, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { decrypt, verifyPassword } from '@/shared/services/crypto';
 import {
@@ -24,6 +34,7 @@ import {
   formatCodeForDisplay,
   DEFAULT_TTL_SEC,
 } from '@/shared/services/pairCrypto';
+import { Button, Eyebrow, Field, Panel, Screen } from '@/popup/ui';
 
 export default function LinkPhone() {
   const navigate = useNavigate();
@@ -87,105 +98,115 @@ export default function LinkPhone() {
   }, [encryptedSeedPhrase, passwordHash, password]);
 
   return (
-    <div className="min-h-full bg-[#0a0a0f] text-white flex flex-col">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10">
-        <button onClick={() => navigate(-1)} aria-label="Back" className="p-1.5 rounded-lg hover:bg-white/5">
-          <ArrowLeft size={20} />
-        </button>
-        <h1 className="font-display font-bold text-lg flex items-center gap-2">
-          <Smartphone size={18} className="text-p01-cyan" /> Link a phone
-        </h1>
-      </div>
+    <Screen
+      title="Link a phone"
+      onBack={() => navigate(-1)}
+      footer={
+        !qr ? (
+          <Button
+            full
+            size="lg"
+            loading={loading}
+            disabled={!password}
+            onClick={() => void generate()}
+          >
+            Show pairing QR
+          </Button>
+        ) : (
+          <Button
+            variant="secondary"
+            full
+            size="lg"
+            icon={RefreshCw}
+            loading={loading}
+            onClick={() => void generate()}
+          >
+            Generate a fresh QR
+          </Button>
+        )
+      }
+    >
+      {!qr ? (
+        /* ── Password gate ── */
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-p01-text-muted">
+            Show a one-time QR so the P01 app on your phone can import this wallet.
+          </p>
 
-      <div className="flex-1 px-5 py-4 flex flex-col">
-        {!qr ? (
-          /* ---- Password gate ---- */
-          <div className="flex flex-col gap-4">
-            <p className="text-sm text-white/60 leading-relaxed">
-              Show a one-time QR so the P01 app on your phone can import this wallet.
-              Enter your wallet password to continue.
-            </p>
-
-            <div className="relative">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={(e) => { setPassword(e.target.value); setError(''); }}
-                onKeyDown={(e) => { if (e.key === 'Enter' && password) generate(); }}
-                placeholder="Wallet password"
-                className="w-full bg-[#13131a] border border-white/10 rounded-xl px-4 py-3 pr-10 text-sm outline-none focus:border-p01-cyan/60"
-                autoFocus
-              />
+          <Field
+            label="Wallet password"
+            type={showPassword ? 'text' : 'password'}
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setError('');
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && password) void generate();
+            }}
+            placeholder="Your password"
+            error={error || undefined}
+            autoFocus
+            suffix={
               <button
                 type="button"
                 onClick={() => setShowPassword((s) => !s)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70"
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
+                className="flex h-11 w-11 items-center justify-center rounded-lg text-p01-text-dim outline-none transition-colors duration-exit hover:text-p01-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
               >
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                {showPassword ? (
+                  <EyeOff className="h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <Eye className="h-4 w-4" aria-hidden="true" />
+                )}
               </button>
-            </div>
+            }
+          />
 
-            {error && <p className="text-sm text-red-400">{error}</p>}
-
-            <button
-              onClick={generate}
-              disabled={!password || loading}
-              className="w-full bg-p01-cyan text-black font-semibold rounded-xl py-3 text-sm disabled:opacity-40"
-            >
-              {loading ? 'Preparing…' : 'Show pairing QR'}
-            </button>
-
-            <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 mt-1">
-              <ShieldAlert size={16} className="text-amber-400 mt-0.5 shrink-0" />
-              <p className="text-xs text-amber-200/80 leading-relaxed">
-                The QR encodes your recovery phrase. Don't screenshot it or scan it on a
-                phone you don't trust — anyone with the photo <span className="font-semibold">and</span> the
-                code below could import your wallet.
+          <Panel tone="warn">
+            <div className="flex items-start gap-2">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-p01-amber" aria-hidden="true" />
+              <p className="text-tiny text-p01-amber">
+                The QR encodes your recovery phrase. Anyone holding a photo of it{' '}
+                <em>and</em> the code shown with it can import your wallet, so do not screenshot it
+                and do not scan it on a phone you do not trust.
               </p>
             </div>
+          </Panel>
+        </div>
+      ) : (
+        /* ── QR + code ── */
+        <div className="flex animate-fadeIn flex-col items-center gap-4">
+          <div className="rounded-xl bg-p01-text p-3">
+            <QRCodeSVG
+              value={qr}
+              size={216}
+              level="M"
+              includeMargin={false}
+              bgColor="#eae7df"
+              fgColor="#070709"
+            />
           </div>
-        ) : (
-          /* ---- QR + code ---- */
-          <motion.div
-            initial={{ opacity: 0, scale: 0.97 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="flex flex-col items-center gap-4"
-          >
-            <div className="bg-white p-4 rounded-xl border-4 border-p01-cyan shadow-lg shadow-p01-cyan/20">
-              <QRCodeSVG value={qr} size={232} level="M" includeMargin={false} bgColor="#ffffff" fgColor="#0a0a0f" />
-            </div>
 
-            <div className="w-full text-center">
-              <p className="text-xs uppercase tracking-widest text-white/40 mb-1">Pairing code — type on phone</p>
-              <p className="font-mono text-xl font-bold tracking-[0.2em] text-p01-cyan select-all">
-                {formatCodeForDisplay(code)}
-              </p>
-            </div>
-
-            <p className="text-sm text-white/50">
-              Expires in <span className="font-semibold text-white/80">{secondsLeft}s</span>
+          <div className="w-full text-center">
+            <Eyebrow>Pairing code, type it on the phone</Eyebrow>
+            <p className="mt-1 select-all font-mono text-xl tracking-[0.2em] text-p01-cyan">
+              {formatCodeForDisplay(code)}
             </p>
+            <p className="mt-1 text-tiny tabular text-p01-text-dim">Expires in {secondsLeft}s</p>
+          </div>
 
-            <button
-              onClick={generate}
-              disabled={loading}
-              className="flex items-center gap-2 text-sm text-white/70 hover:text-white border border-white/10 rounded-xl px-4 py-2.5 disabled:opacity-40"
-            >
-              <RefreshCw size={15} /> Generate a fresh QR
-            </button>
-
-            <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
-              <ShieldAlert size={16} className="text-amber-400 mt-0.5 shrink-0" />
-              <p className="text-xs text-amber-200/80 leading-relaxed">
-                On the phone: open the P01 app → <span className="font-semibold">Scan to connect</span>, scan this QR,
-                then type the code above. Do not screenshot this screen.
+          <Panel tone="warn" className="w-full">
+            <div className="flex items-start gap-2">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-p01-amber" aria-hidden="true" />
+              <p className="text-tiny text-p01-amber">
+                On the phone: open the P01 app, choose Scan to connect, scan this, then type the
+                code above. Do not screenshot this screen.
               </p>
             </div>
-          </motion.div>
-        )}
-      </div>
-    </div>
+          </Panel>
+        </div>
+      )}
+    </Screen>
   );
 }

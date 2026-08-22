@@ -1,34 +1,39 @@
 "use client";
 
+/**
+ * Connected sites.
+ *
+ * 🎯 WHAT CHANGED
+ * ──────────────
+ * This screen was written in a different house style from everything around
+ * it: a mono-capitals headline "CONNECTED SITES" over a mono-capitals empty
+ * state "NO CONNECTED SITES", square unrounded panels, and six raw hex greys
+ * (`#555560`, `#888892`, `#444450`, …) that exist nowhere in the token file. It
+ * is now the same screen shape as everything else: `Screen`, `Panel`, `Pill`,
+ * `EmptyState`, and the palette by name.
+ *
+ * ⚠️ THE HEADER USED TO COUNT THE SITES AND SO DID THE LIST. "3 sites
+ * connected" sat above three visible cards. The count is gone; the list is the
+ * count.
+ *
+ * ⛔ THE FOOTER CARD IS GONE. A permanent bar at the bottom explained what a
+ * connected site can do, on a 600px popup, below a list that scrolls. The one
+ * sentence worth keeping now sits once, above the list, where it is read before
+ * the decision rather than after it.
+ */
+
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  ArrowLeft,
-  Globe,
-  Trash2,
-  Shield,
-  Eye,
-  Repeat,
-  Loader2,
-  ExternalLink,
-} from 'lucide-react';
+import { Globe, Trash2, Loader2, ExternalLink } from 'lucide-react';
 import { sendToBackground } from '@/shared/messaging';
 import type { ConnectedDapp, DappPermission } from '@/shared/types';
-import { cn } from '@/shared/utils';
-
-const permissionIcons: Record<DappPermission, React.ElementType> = {
-  viewBalance: Eye,
-  requestTransaction: Shield,
-  requestSubscription: Repeat,
-  viewStealthAddress: Shield,
-};
+import { EmptyState, Panel, Pill, Screen } from '@/popup/ui';
 
 const permissionLabels: Record<DappPermission, string> = {
-  viewBalance: 'View Balance',
+  viewBalance: 'View balance',
   requestTransaction: 'Transactions',
   requestSubscription: 'Subscriptions',
-  viewStealthAddress: 'Stealth',
+  viewStealthAddress: 'Stealth address',
 };
 
 export default function ConnectedSites() {
@@ -73,155 +78,89 @@ export default function ConnectedSites() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-p01-void">
-      {/* Header */}
-      <header className="flex items-center gap-3 px-4 py-3 border-b border-p01-border">
-        <button
-          onClick={() => navigate(-1)}
-          className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
-          aria-label="Go back"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <div>
-          <h1 className="text-white font-bold font-mono tracking-wider text-sm">
-            CONNECTED SITES
-          </h1>
-          <p className="text-[10px] text-[#555560] font-mono">
-            {sites.length} site{sites.length !== 1 ? 's' : ''} connected
-          </p>
+    <Screen title="Connected sites" onBack={() => navigate(-1)}>
+      {isLoading ? (
+        <div className="flex h-full items-center justify-center">
+          <Loader2 className="h-5 w-5 animate-spin text-p01-text-dim" aria-hidden="true" />
+          <span className="sr-only">Loading connected sites</span>
         </div>
-      </header>
+      ) : sites.length === 0 ? (
+        <EmptyState
+          icon={Globe}
+          title="Nothing connected"
+          body="A site you approve appears here, and this is where you cut it off."
+        />
+      ) : (
+        <div className="flex flex-col gap-3">
+          {/* Said once, before the decision rather than under it. */}
+          <p className="text-tiny text-p01-text-dim">
+            Each of these can read your balance and ask you to sign. Disconnect anything you do not
+            recognise.
+          </p>
 
-      <div className="flex-1 overflow-y-auto p-4">
-        {isLoading ? (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 className="w-8 h-8 text-p01-cyan animate-spin" />
-          </div>
-        ) : sites.length === 0 ? (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex flex-col items-center justify-center h-full text-center"
-          >
-            <div className="w-16 h-16 bg-p01-surface border border-p01-border flex items-center justify-center mb-4">
-              <Globe className="w-8 h-8 text-[#555560]" />
-            </div>
-            <h2 className="text-white font-bold font-mono tracking-wider mb-2">
-              NO CONNECTED SITES
-            </h2>
-            <p className="text-[10px] text-[#555560] font-mono max-w-[200px]">
-              When you connect to dApps, they will appear here
-            </p>
-          </motion.div>
-        ) : (
-          <AnimatePresence>
-            <div className="space-y-3">
-              {sites.map((site, index) => (
-                <motion.div
-                  key={site.origin}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 10 }}
-                  transition={{ delay: index * 0.05 }}
-                  className="bg-p01-surface border border-p01-border p-4"
-                >
-                  <div className="flex items-start gap-3">
-                    {/* Site Icon */}
-                    <div className="w-10 h-10 bg-p01-void border border-p01-border flex items-center justify-center flex-shrink-0">
-                      {site.icon ? (
-                        <img
-                          src={site.icon}
-                          alt=""
-                          className="w-6 h-6"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                          }}
-                        />
-                      ) : (
-                        <Globe className="w-5 h-5 text-p01-cyan" />
-                      )}
-                    </div>
+          {sites.map((site) => (
+            <Panel key={site.origin}>
+              <div className="flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-p01-border-soft bg-p01-dark">
+                  {site.icon ? (
+                    <img
+                      src={site.icon}
+                      alt=""
+                      className="h-5 w-5"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  ) : (
+                    <Globe className="h-4 w-4 text-p01-cyan" aria-hidden="true" />
+                  )}
+                </span>
 
-                    {/* Site Info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="text-white font-bold font-mono text-sm truncate">
-                          {site.name}
-                        </h3>
-                        <a
-                          href={site.origin}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[#555560] hover:text-p01-cyan transition-colors"
-                          aria-label={`Open ${site.name} in new tab`}
-                        >
-                          <ExternalLink className="w-3 h-3" aria-hidden="true" />
-                        </a>
-                      </div>
-                      <p className="text-[10px] text-[#555560] font-mono truncate mb-2">
-                        {site.origin}
-                      </p>
-
-                      {/* Permissions */}
-                      <div className="flex flex-wrap gap-1.5">
-                        {site.permissions.map((permission) => {
-                          const Icon = permissionIcons[permission];
-                          return (
-                            <div
-                              key={permission}
-                              className="flex items-center gap-1 px-2 py-1 bg-p01-void border border-p01-border"
-                            >
-                              <Icon className="w-3 h-3 text-p01-cyan" />
-                              <span className="text-[9px] text-[#888892] font-mono">
-                                {permissionLabels[permission]}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Connected Date */}
-                      <p className="text-[9px] text-[#444450] font-mono mt-2">
-                        Connected {formatDate(site.connectedAt)}
-                      </p>
-                    </div>
-
-                    {/* Disconnect Button */}
-                    <button
-                      onClick={() => handleDisconnect(site.origin)}
-                      disabled={disconnecting === site.origin}
-                      aria-label={`Disconnect ${site.name}`}
-                      className={cn(
-                        'p-2 transition-colors',
-                        disconnecting === site.origin
-                          ? 'text-[#555560]'
-                          : 'text-[#555560] hover:text-red-400'
-                      )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <h2 className="truncate font-display text-base font-normal text-p01-text">
+                      {site.name}
+                    </h2>
+                    <a
+                      href={site.origin}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 text-p01-text-dim outline-none transition-colors duration-exit hover:text-p01-cyan focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
+                      aria-label={`Open ${site.name} in a new tab`}
                     >
-                      {disconnecting === site.origin ? (
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-5 h-5" />
-                      )}
-                    </button>
+                      <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                    </a>
                   </div>
-                </motion.div>
-              ))}
-            </div>
-          </AnimatePresence>
-        )}
-      </div>
+                  <p className="truncate font-mono text-tiny text-p01-text-muted">{site.origin}</p>
 
-      {/* Footer Info */}
-      <div className="p-4 border-t border-p01-border">
-        <div className="bg-p01-surface p-3 border border-p01-border">
-          <p className="text-[10px] text-[#555560] font-mono leading-relaxed">
-            Connected sites can view your balance and request transactions.
-            Disconnect sites you no longer use for better security.
-          </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {site.permissions.map((permission) => (
+                      <Pill key={permission}>{permissionLabels[permission]}</Pill>
+                    ))}
+                  </div>
+
+                  <p className="mt-2 text-tiny text-p01-text-dim">
+                    Connected {formatDate(site.connectedAt)}
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => handleDisconnect(site.origin)}
+                  disabled={disconnecting === site.origin}
+                  aria-label={`Disconnect ${site.name}`}
+                  className="-mr-1 -mt-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-p01-text-dim outline-none transition-colors duration-exit hover:text-p01-red focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-p01-text-dim"
+                >
+                  {disconnecting === site.origin ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            </Panel>
+          ))}
         </div>
-      </div>
-    </div>
+      )}
+    </Screen>
   );
 }

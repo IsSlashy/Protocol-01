@@ -126,17 +126,17 @@ export default function SendCryptoModal({
               <div className="flex items-center justify-between p-4 border-b border-p01-border">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
-                    <Send className="w-5 h-5 text-white" />
+                    <Send className="w-5 h-5 text-p01-text" />
                   </div>
                   <div>
-                    <h2 className="text-white font-display font-bold">Send Crypto</h2>
+                    <h2 className="text-p01-text font-display font-bold">Send Crypto</h2>
                     <p className="text-p01-chrome text-xs">to @{displayName}</p>
                   </div>
                 </div>
                 <button
                   onClick={onClose}
                   disabled={isProcessing}
-                  className="p-2 text-p01-chrome hover:text-white transition-colors disabled:opacity-50"
+                  className="p-2 text-p01-chrome hover:text-p01-text transition-colors disabled:opacity-50"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -162,7 +162,7 @@ export default function SendCryptoModal({
                         step="0.0001"
                         min="0"
                         disabled={isProcessing}
-                        className="w-full px-4 py-3 bg-p01-dark border border-p01-border rounded-xl text-white text-lg font-mono placeholder-p01-chrome/40 focus:outline-none focus:border-p01-cyan disabled:opacity-50"
+                        className="w-full px-4 py-3 bg-p01-dark border border-p01-border rounded-xl text-p01-text text-lg font-mono placeholder-p01-chrome/40 focus:outline-none focus:border-p01-cyan disabled:opacity-50"
                       />
                     </div>
                     <TokenSelector
@@ -179,7 +179,7 @@ export default function SendCryptoModal({
                         key={percent}
                         onClick={() => handlePercentage(percent)}
                         disabled={isProcessing}
-                        className="flex-1 py-1.5 text-[10px] font-mono font-medium bg-p01-dark border border-p01-border text-p01-chrome hover:border-p01-cyan/50 hover:text-white transition-colors tracking-wider rounded disabled:opacity-50"
+                        className="flex-1 py-1.5 text-[10px] font-mono font-medium bg-p01-dark border border-p01-border text-p01-chrome hover:border-p01-cyan/50 hover:text-p01-text transition-colors tracking-wider rounded disabled:opacity-50"
                       >
                         {percent}%
                       </button>
@@ -193,7 +193,7 @@ export default function SendCryptoModal({
                     <span className="text-[10px] text-p01-chrome/60 font-mono tracking-wider">
                       AVAILABLE BALANCE
                     </span>
-                    <span className="text-sm font-mono text-white">
+                    <span className="text-sm font-mono text-p01-text">
                       {currentBalance.toFixed(4)} {selectedToken.symbol}
                     </span>
                   </div>
@@ -211,7 +211,7 @@ export default function SendCryptoModal({
                     placeholder="Add a message..."
                     maxLength={100}
                     disabled={isProcessing}
-                    className="w-full px-4 py-3 bg-p01-dark border border-p01-border rounded-xl text-white text-sm font-mono placeholder-p01-chrome/40 focus:outline-none focus:border-p01-cyan disabled:opacity-50"
+                    className="w-full px-4 py-3 bg-p01-dark border border-p01-border rounded-xl text-p01-text text-sm font-mono placeholder-p01-chrome/40 focus:outline-none focus:border-p01-cyan disabled:opacity-50"
                   />
                 </div>
 
@@ -229,7 +229,7 @@ export default function SendCryptoModal({
                     <p className="text-[10px] text-p01-chrome/60 font-mono tracking-wider mb-1">
                       PREVIEW
                     </p>
-                    <p className="text-white text-sm">
+                    <p className="text-p01-text text-sm">
                       Sending <span className="font-mono font-bold text-p01-cyan">{parseFloat(amount).toFixed(4)} {selectedToken.symbol}</span> to @{displayName}
                       {note && <span className="text-p01-chrome"> - "{note}"</span>}
                     </p>
@@ -245,7 +245,7 @@ export default function SendCryptoModal({
                 <button
                   onClick={onClose}
                   disabled={isProcessing}
-                  className="flex-1 py-3 bg-p01-dark border border-p01-border rounded-xl text-p01-chrome font-display font-bold text-sm tracking-wider hover:text-white hover:border-p01-border transition-colors disabled:opacity-50"
+                  className="flex-1 py-3 bg-p01-dark border border-p01-border rounded-xl text-p01-chrome font-display font-bold text-sm tracking-wider hover:text-p01-text hover:border-p01-border transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>

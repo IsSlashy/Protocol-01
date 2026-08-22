@@ -23,10 +23,10 @@ export default function AuthLayout() {
             transition={{ delay: 0.4, duration: 0.4 }}
             className="mt-6 flex flex-col items-center"
           >
-            <span className="text-p01-pink-hot text-[10px] font-bold tracking-[6px] font-mono mb-1">
+            <span className="text-p01-cyan-dim text-[10px] font-bold tracking-[6px] font-mono mb-1">
               [ SYSTEM STATUS ]
             </span>
-            <span className="text-white text-lg font-black tracking-wider">
+            <span className="text-p01-text text-lg font-black tracking-wider">
               SHIELDED
             </span>
             <div className="flex items-center mt-2">

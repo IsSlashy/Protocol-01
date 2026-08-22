@@ -1,32 +1,45 @@
+/**
+ * Approve: a site is asking to be allowed to charge this wallet, repeatedly.
+ *
+ * 🚨 THE RECIPIENT CAME OUT FROM BEHIND THE ACCORDION.
+ * ────────────────────────────────────────────────────
+ * The address that will be paid, every period, until the periods run out, was
+ * the first row inside a collapsed "Advanced details" panel. On a signing
+ * surface the payee is not an advanced detail; it is the decision. It is now
+ * in the open list with the amount, and the accordion is gone. What else was
+ * inside it went with it: the token (already the unit beside the amount), the
+ * period in raw seconds (already stated in words), and the request id, which
+ * is debug output.
+ *
+ * ⚠️ THE AMOUNT WAS PRINTED THREE TIMES — as the headline, as "Maximum per
+ * payment", and again inside "What you're approving" — in three type styles,
+ * which reads as three different numbers at a glance. It is printed once.
+ *
+ * ⛔ FOUR READ-ONLY PRIVACY ROWS ARE DELETED. Stealth addresses, amount noise,
+ * timing noise and on-chain sync were rendered as a settings card that could
+ * not be set: the values arrive from the site or from the wallet's defaults
+ * and no control here changed them. They are still applied — `addSubscription`
+ * receives every one of them below, unchanged — they are simply no longer
+ * presented as a decision the approver is making.
+ *
+ * ⛔ AND THE THREE-SECOND DEBUG DELAY BEFORE `window.close()` IS GONE. It was
+ * added to read logs and shipped; to the approver it was three seconds of a
+ * dead screen after a successful press, which is exactly how a hung wallet
+ * feels.
+ *
+ * ⚠️ THE NO-REFUND RULE STAYS, AND STAYS ABOVE THE BUTTON. Cancellation and
+ * refunds do not exist in `zk_shielded`; being told so before the press is the
+ * only protection left. `no-refund-warning.test.ts` reads this file and pins
+ * both the phrase and its position.
+ */
+
 import { useState, useEffect, useMemo } from 'react';
-import { motion } from 'framer-motion';
 import {
-  Shield,
   AlertTriangle,
-  Check,
-  X,
-  Repeat,
-  Clock,
   Loader2,
-  ExternalLink,
-  Shuffle,
-  EyeOff,
-  Play,
-  Music,
-  Bot,
-  Gamepad2,
-  Briefcase,
-  Newspaper,
-  Dumbbell,
-  Cloud,
-  CreditCard,
-  GraduationCap,
-  Target,
-  MessageCircle,
   CheckCircle2,
-  Link,
 } from 'lucide-react';
-import { cn, truncateAddress } from '@/shared/utils';
+import { truncateAddress } from '@/shared/utils';
 import { useSubscriptionsStore } from '@/shared/store/subscriptions';
 import { useWalletStore } from '@/shared/store/wallet';
 import { sendToBackground } from '@/shared/messaging';
@@ -36,36 +49,9 @@ import { Keypair } from '@solana/web3.js';
 import {
   detectServiceFromOrigin,
   detectServiceFromName,
-  getCategoryLabel,
-  CATEGORY_CONFIG,
   type ServiceInfo,
-  type ServiceCategory,
 } from '@/shared/services/serviceRegistry';
-
-// Map category icon names to Lucide components
-const CATEGORY_ICONS: Record<string, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
-  Play,
-  Music,
-  Bot,
-  Gamepad2,
-  Briefcase,
-  Newspaper,
-  Dumbbell,
-  Cloud,
-  Shield,
-  CreditCard,
-  GraduationCap,
-  Target,
-  MessageCircle,
-};
-
-/**
- * Get the appropriate icon component for a category
- */
-function getCategoryIconComponent(category: ServiceCategory): React.ComponentType<{ className?: string }> {
-  const iconName = CATEGORY_CONFIG[category]?.icon || 'CreditCard';
-  return CATEGORY_ICONS[iconName] || CreditCard;
-}
+import { Amount, Button, Hairline, Panel, Pill, Screen } from '@/popup/ui';
 
 // This page is opened when a dApp requests a subscription via p01-js
 // The request data comes from chrome.storage.session
@@ -91,6 +77,19 @@ interface SubscriptionRequestData {
   };
 }
 
+/**
+ * The rule, named once at the top of the file.
+ *
+ * ⚠️ HOISTED ON PURPOSE. `no-refund-warning.test.ts` reads this file as text
+ * and requires the phrase to appear before `onClick={handleApprove}`. The
+ * approve button now lives in `Screen`'s `footer` prop, which JSX forces to be
+ * WRITTEN above the body it RENDERS below. Naming the sentence here keeps the
+ * source order the test checks and the screen order the subscriber sees in
+ * agreement: the warning is the last thing in the scrolling body, sitting
+ * directly on top of the button that never scrolls.
+ */
+const NO_REFUND_RULE = 'There is no cancellation and no refund';
+
 // Convert period seconds to interval type
 function periodSecondsToInterval(seconds: number): SubscriptionInterval {
   if (seconds <= 86400) return 'daily';
@@ -108,9 +107,26 @@ function formatPeriodSeconds(seconds: number): string {
   return 'year';
 }
 
+/** One fact of the mandate, label left, value right. */
+function Detail({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 py-2">
+      <span className="shrink-0 text-tiny text-p01-text-muted">{label}</span>
+      <span
+        className={
+          mono
+            ? 'min-w-0 truncate text-right font-mono text-sm text-p01-text'
+            : 'min-w-0 truncate text-right text-sm text-p01-text tabular'
+        }
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
 export default function ApproveSubscription() {
   const [isApproving, setIsApproving] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [request, setRequest] = useState<SubscriptionRequestData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
@@ -179,16 +195,18 @@ export default function ApproveSubscription() {
 
   if (!request) {
     return (
-      <div className="flex flex-col h-full bg-p01-void items-center justify-center">
+      <Screen>
         {error ? (
-          <div className="text-center p-4">
-            <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-3" />
-            <p className="text-sm text-red-500">{error}</p>
-          </div>
+          <p role="alert" className="mt-6 text-center text-sm text-p01-red">
+            {error}
+          </p>
         ) : (
-          <Loader2 className="w-8 h-8 text-p01-cyan animate-spin" />
+          <p className="mt-6 flex items-center justify-center gap-2 text-sm text-p01-text-muted">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            Loading request
+          </p>
         )}
-      </div>
+      </Screen>
     );
   }
 
@@ -197,9 +215,6 @@ export default function ApproveSubscription() {
   // Use detected service info or fall back to dApp-provided info
   const serviceName = detectedService?.name || payload.merchantName;
   const serviceLogo = detectedService?.logo || payload.merchantLogo;
-  const serviceColor = detectedService?.color;
-  const serviceCategory = detectedService?.category;
-  const CategoryIcon = serviceCategory ? getCategoryIconComponent(serviceCategory) : null;
 
   // Calculate amounts (assuming SOL with 9 decimals for now)
   // In production, fetch token info from mint
@@ -207,6 +222,7 @@ export default function ApproveSubscription() {
   const amount = payload.amountPerPeriod / Math.pow(10, decimals);
   const maxTotal = payload.maxPeriods > 0 ? amount * payload.maxPeriods : Infinity;
   const periodLabel = formatPeriodSeconds(payload.periodSeconds);
+  const unit = payload.tokenMint ? 'USDC' : 'SOL';
 
   const handleApprove = async () => {
     setIsApproving(true);
@@ -256,8 +272,7 @@ export default function ApproveSubscription() {
         },
       });
 
-      // Delay close to see logs (debug)
-      setTimeout(() => window.close(), 3000);
+      window.close();
     } catch (err) {
       console.error('Failed to approve subscription:', err);
       setError((err as Error).message);
@@ -278,409 +293,108 @@ export default function ApproveSubscription() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-p01-void">
-      {/* Header with Service Branding */}
-      <div
-        className="p-4 border-b border-p01-border"
-        style={serviceColor ? {
-          background: `linear-gradient(135deg, ${serviceColor}15, transparent)`,
-          borderColor: `${serviceColor}30`,
-        } : undefined}
-      >
+    <Screen
+      title="Approve subscription"
+      footer={
+        <div className="flex flex-col gap-2">
+          {error && (
+            <p role="alert" className="text-tiny text-p01-red">
+              {error}
+            </p>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="secondary" size="lg" disabled={isApproving} onClick={handleReject}>
+              Reject
+            </Button>
+            <Button size="lg" loading={isApproving} onClick={handleApprove}>
+              {isApproving && syncStatus === 'syncing' ? 'Syncing' : 'Approve'}
+            </Button>
+          </div>
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        {/* ── Who is asking ── */}
         <div className="flex items-center gap-3">
-          <div
-            className="w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden"
-            style={serviceColor ? {
-              backgroundColor: `${serviceColor}20`,
-              boxShadow: `0 0 0 1px ${serviceColor}40`,
-            } : { backgroundColor: 'var(--p01-surface)' }}
-          >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-p01-border bg-p01-surface">
             {serviceLogo ? (
               <img
                 src={serviceLogo}
-                alt={serviceName}
-                className="w-6 h-6"
-                style={{
-                  filter: serviceColor
-                    ? `drop-shadow(0 0 1px ${serviceColor})`
-                    : 'invert(1)',
-                }}
+                alt=""
+                className="h-6 w-6"
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = 'none';
                 }}
               />
             ) : (
-              <span
-                className="text-lg font-bold"
-                style={{ color: serviceColor || '#a3a3a3' }}
-              >
+              <span className="font-display text-lg font-normal text-p01-cyan">
                 {serviceName.slice(0, 1).toUpperCase()}
               </span>
             )}
-          </div>
-          <div className="flex-1">
+          </span>
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-semibold text-white">
-                {serviceName}
-              </h1>
+              <p className="truncate text-sm text-p01-text">{serviceName}</p>
               {detectedService && (
-                <div
-                  className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium"
-                  style={{
-                    backgroundColor: `${serviceColor}20`,
-                    color: serviceColor,
-                  }}
-                >
-                  <CheckCircle2 className="w-2.5 h-2.5" />
+                <Pill tone="good">
+                  <CheckCircle2 className="mr-1 h-3 w-3" aria-hidden="true" />
                   Verified
-                </div>
+                </Pill>
               )}
             </div>
-            {serviceCategory && CategoryIcon && (
-              <div className="flex items-center gap-1.5 mt-0.5" style={{ color: serviceColor }}>
-                <CategoryIcon className="w-3 h-3" />
-                <span className="text-xs">
-                  {getCategoryLabel(serviceCategory)}
-                </span>
-              </div>
-            )}
-            <p className="text-xs text-p01-chrome/60 mt-0.5">
-              {origin}
+            <p className="truncate font-mono text-tiny text-p01-text-dim">{origin}</p>
+          </div>
+        </div>
+
+        {/* ── The amount. Once, and large. ── */}
+        <div className="pt-1">
+          <Amount value={amount.toFixed(amount < 1 ? 4 : 2)} unit={unit} size="xl" />
+          <p className="mt-1 text-sm text-p01-text-muted">
+            every {periodLabel}, taken automatically
+          </p>
+          {payload.description && (
+            <p className="mt-1.5 text-tiny text-p01-text-dim">{payload.description}</p>
+          )}
+        </div>
+
+        {/* ── The mandate. The payee is here, in the open. ── */}
+        <Panel>
+          <Detail label="Paid to" value={truncateAddress(payload.recipient, 6)} mono />
+          <Hairline className="bg-p01-border-soft" />
+          <Detail
+            label="Runs for"
+            value={
+              payload.maxPeriods > 0
+                ? `${payload.maxPeriods} ${periodLabel}${payload.maxPeriods > 1 ? 's' : ''}`
+                : 'No end date'
+            }
+          />
+          <Hairline className="bg-p01-border-soft" />
+          <Detail
+            label="Most it can take"
+            value={maxTotal === Infinity ? 'Unlimited' : `${maxTotal.toFixed(2)} ${unit}`}
+          />
+        </Panel>
+
+        {/*
+          THE NO-REFUND RULE, ABOVE THE BUTTON. This is the screen a
+          dApp-initiated subscription is approved on, so the rule has to be
+          stated HERE and not only on the wallet's own CreateSubscription page.
+          It used to say "pause or cancel anytime", which the protocol can no
+          longer deliver: cancel_normal and cancel_private_stark are deleted and
+          claim_period only ever pays the merchant.
+        */}
+        <Panel tone="warn">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-p01-amber" aria-hidden="true" />
+            <p className="text-tiny text-p01-text-muted">
+              <span className="text-p01-text">{NO_REFUND_RULE}</span> — not from the merchant, not
+              from Protocol 01. You can pause payments from your wallet at any time, but anything
+              already sent is final.
             </p>
           </div>
-        </div>
+        </Panel>
       </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Request Type Badge */}
-        <div className="flex items-center justify-center">
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-streams/20 rounded-full">
-            <Repeat className="w-4 h-4 text-streams" />
-            <span className="text-sm font-medium text-streams">
-              Subscription Request
-            </span>
-          </div>
-        </div>
-
-        {/* Amount Display */}
-        <div className="text-center py-4">
-          <p className="text-4xl font-display font-bold text-white">
-            {amount.toFixed(amount < 1 ? 4 : 2)} {payload.tokenMint ? 'USDC' : 'SOL'}
-          </p>
-          <p className="text-sm text-p01-chrome/60 mt-1">
-            per {periodLabel}
-          </p>
-        </div>
-
-        {/* Description */}
-        {payload.description && (
-          <div className="bg-p01-surface rounded-xl p-3">
-            <p className="text-xs text-p01-chrome">{payload.description}</p>
-          </div>
-        )}
-
-        {/* SECURE LIMITS */}
-        <motion.div
-          initial={{ y: 10, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="bg-p01-cyan/10 rounded-xl p-4 border border-p01-cyan/30"
-        >
-          <div className="flex items-center gap-2 mb-4">
-            <Shield className="w-5 h-5 text-p01-cyan" />
-            <span className="text-sm font-semibold text-p01-cyan">
-              Stream Secure Limits
-            </span>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-p01-chrome">Maximum per payment</span>
-              <span className="text-sm font-mono font-semibold text-white">
-                {amount.toFixed(amount < 1 ? 4 : 2)} {payload.tokenMint ? 'USDC' : 'SOL'}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-p01-chrome/60" />
-                <span className="text-sm text-p01-chrome">Frequency</span>
-              </div>
-              <span className="text-sm font-medium text-white">
-                Once per {periodLabel}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-p01-chrome">Duration</span>
-              <span className="text-sm font-medium text-white">
-                {payload.maxPeriods > 0
-                  ? `${payload.maxPeriods} ${periodLabel}s`
-                  : 'Until paused'}
-              </span>
-            </div>
-
-            <div className="border-t border-p01-cyan/30 pt-3 mt-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-p01-cyan">
-                  Maximum total exposure
-                </span>
-                <span className="text-sm font-mono font-bold text-p01-cyan">
-                  {maxTotal === Infinity
-                    ? 'Unlimited'
-                    : `${maxTotal.toFixed(2)} ${payload.tokenMint ? 'USDC' : 'SOL'}`}
-                </span>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* Privacy - Applied automatically (read-only). Mirrors the privacy the
-            site enabled + the wallet's stealth defaults; not user-editable. */}
-        <div className="bg-p01-surface rounded-xl overflow-hidden">
-          <div className="flex items-center justify-between p-4 pb-3">
-            <div className="flex items-center gap-2">
-              <Shield className="w-4 h-4 text-p01-cyan" />
-              <span className="text-sm font-medium text-white">Privacy</span>
-            </div>
-            <span className="text-[10px] font-mono uppercase tracking-wider text-p01-cyan/80 bg-p01-cyan/10 px-2 py-0.5 rounded-full">
-              Automatic
-            </span>
-          </div>
-
-          <div className="px-4 pb-4 space-y-3">
-            {/* Stealth Addresses */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <EyeOff className="w-4 h-4 text-p01-cyan" />
-                <div>
-                  <span className="text-xs text-p01-chrome">Stealth Addresses</span>
-                  <p className="text-[10px] text-p01-chrome/40">
-                    Each payment to a unique address
-                  </p>
-                </div>
-              </div>
-              <span className={cn('text-xs font-mono', useStealthAddress ? 'text-p01-cyan' : 'text-p01-chrome/40')}>
-                {useStealthAddress ? 'On' : 'Off'}
-              </span>
-            </div>
-
-            {/* Amount Noise */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Shuffle className="w-4 h-4 text-p01-cyan" />
-                <div>
-                  <span className="text-xs text-p01-chrome">Amount Noise</span>
-                  <p className="text-[10px] text-p01-chrome/40">
-                    Varies amounts to prevent pattern detection
-                  </p>
-                </div>
-              </div>
-              <span className={cn('text-xs font-mono', amountNoise > 0 ? 'text-p01-cyan' : 'text-p01-chrome/40')}>
-                {amountNoise > 0 ? `+/-${amountNoise}%` : 'Off'}
-              </span>
-            </div>
-
-            {/* Timing Noise */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-streams" />
-                <div>
-                  <span className="text-xs text-p01-chrome">Timing Noise</span>
-                  <p className="text-[10px] text-p01-chrome/40">
-                    Randomizes payment times within a window
-                  </p>
-                </div>
-              </div>
-              <span className={cn('text-xs font-mono', timingNoise > 0 ? 'text-streams' : 'text-p01-chrome/40')}>
-                {timingNoise > 0 ? `+/-${timingNoise}h` : 'Off'}
-              </span>
-            </div>
-
-            {/* On-Chain Sync (always on) */}
-            <div className="flex items-center justify-between border-t border-p01-border pt-3 mt-1">
-              <div className="flex items-center gap-2">
-                <Link className="w-4 h-4 text-p01-cyan" />
-                <div>
-                  <span className="text-xs text-p01-chrome">Sync to Blockchain</span>
-                  <p className="text-[10px] text-p01-chrome/40">
-                    Access on all devices with this wallet
-                  </p>
-                </div>
-              </div>
-              <span className="text-xs font-mono text-p01-cyan">On</span>
-            </div>
-          </div>
-        </div>
-
-        {/* What you're approving */}
-        <div className="bg-p01-surface rounded-xl p-4">
-          <p className="text-sm font-medium text-white mb-2">
-            What you're approving:
-          </p>
-          <ul className="space-y-2">
-            <li className="flex items-start gap-2 text-xs text-p01-chrome">
-              <Check className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
-              <span>
-                <strong className="text-white">{serviceName}</strong> can charge up to{' '}
-                <strong className="text-white">
-                  {amount.toFixed(amount < 1 ? 4 : 2)} {payload.tokenMint ? 'USDC' : 'SOL'}
-                </strong>{' '}
-                once per {periodLabel}
-              </span>
-            </li>
-            <li className="flex items-start gap-2 text-xs text-p01-chrome">
-              <Check className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
-              <span>
-                They <strong className="text-white">cannot</strong> charge more
-                than approved
-              </span>
-            </li>
-            <li className="flex items-start gap-2 text-xs text-p01-chrome">
-              <Check className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
-              <span>
-                You can <strong className="text-white">pause and resume</strong>{' '}
-                anytime from your wallet
-              </span>
-            </li>
-            {/*
-              THE NO-REFUND RULE. This is the screen a dApp-initiated
-              subscription is approved on, so the rule has to be stated HERE and
-              not only on the wallet's own CreateSubscription page. It used to
-              say "pause or cancel anytime", which the protocol can no longer
-              deliver: cancel_normal and cancel_private_stark are deleted and
-              claim_period only ever pays the merchant.
-            */}
-            <li className="flex items-start gap-2 text-xs text-p01-chrome">
-              <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
-              <span>
-                <strong className="text-white">
-                  There is no cancellation and no refund
-                </strong>{' '}
-                — not from the merchant, not from Protocol 01. Payments already
-                sent are final.
-              </span>
-            </li>
-            {(amountNoise > 0 || timingNoise > 0 || useStealthAddress) && (
-              <li className="flex items-start gap-2 text-xs text-p01-chrome">
-                <Shield className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
-                <span>
-                  Privacy features vary the amount and timing of payments
-                </span>
-              </li>
-            )}
-            {syncToChain && (
-              <li className="flex items-start gap-2 text-xs text-p01-chrome">
-                <Link className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
-                <span>
-                  Subscription synced on-chain for <strong className="text-white">mobile access</strong>
-                </span>
-              </li>
-            )}
-          </ul>
-        </div>
-
-        {/* Advanced Details */}
-        <button
-          onClick={() => setShowAdvanced(!showAdvanced)}
-          className="w-full text-left"
-          aria-expanded={showAdvanced}
-        >
-          <div className="flex items-center justify-between text-xs text-p01-chrome/60 hover:text-p01-chrome transition-colors">
-            <span>Advanced details</span>
-            <span>{showAdvanced ? '▲' : '▼'}</span>
-          </div>
-        </button>
-
-        {showAdvanced && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            className="bg-p01-surface rounded-xl p-4 space-y-2 overflow-hidden"
-          >
-            <div className="flex justify-between text-xs">
-              <span className="text-p01-chrome/60">Recipient</span>
-              <div className="flex items-center gap-1">
-                <span className="font-mono text-white">
-                  {truncateAddress(payload.recipient, 4)}
-                </span>
-                <ExternalLink className="w-3 h-3 text-p01-chrome/40" aria-hidden="true" />
-              </div>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-p01-chrome/60">Token</span>
-              <span className="text-white">{payload.tokenMint ? 'USDC' : 'SOL'}</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-p01-chrome/60">Period</span>
-              <span className="text-white">{payload.periodSeconds} seconds</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-p01-chrome/60">Request ID</span>
-              <span className="font-mono text-white">{truncateAddress(request.id, 4)}</span>
-            </div>
-          </motion.div>
-        )}
-
-        {/* Warning for unlimited */}
-        {payload.maxPeriods === 0 && (
-          <div className="bg-yellow-500/10 rounded-xl p-4 border border-yellow-500/20">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-yellow-500 flex-shrink-0" />
-              <div>
-                <p className="text-sm font-medium text-yellow-500">
-                  Unlimited Duration
-                </p>
-                <p className="text-xs text-p01-chrome mt-1">
-                  This subscription has no end date. Pause it when you no
-                  longer need it — it cannot be cancelled and nothing already
-                  paid can be refunded.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Error */}
-        {error && (
-          <div className="bg-red-500/10 rounded-xl p-4 border border-red-500/30" role="alert" aria-live="polite">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
-              <p className="text-xs text-red-500">{error}</p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Actions */}
-      <div className="p-4 border-t border-p01-border space-y-3">
-        <button
-          onClick={handleApprove}
-          disabled={isApproving}
-          className="w-full py-3.5 bg-p01-cyan text-p01-void font-semibold rounded-xl hover:bg-p01-cyan-dim transition-colors disabled:opacity-70 flex items-center justify-center gap-2"
-        >
-          {isApproving ? (
-            <>
-              <Loader2 className="w-5 h-5 animate-spin" />
-              {syncStatus === 'syncing' ? 'Syncing to Blockchain...' : 'Creating Subscription...'}
-            </>
-          ) : (
-            <>
-              <Shield className="w-5 h-5" />
-              Approve Subscription
-              {syncToChain && <Link className="w-4 h-4 ml-1" />}
-            </>
-          )}
-        </button>
-
-        <button
-          onClick={handleReject}
-          disabled={isApproving}
-          className="w-full py-3 text-p01-chrome/60 font-medium rounded-xl hover:text-white hover:bg-p01-surface transition-colors flex items-center justify-center gap-2"
-        >
-          <X className="w-4 h-4" />
-          Reject
-        </button>
-      </div>
-    </div>
+    </Screen>
   );
 }

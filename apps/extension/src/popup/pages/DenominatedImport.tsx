@@ -1,34 +1,31 @@
 /**
- * DenominatedImport — import a received shareable note into the local wallet.
+ * DenominatedImport — receive a note someone sent you. Route: /shield/receive-note.
  *
- * Paste the encoded note string handed off by a sender (from DenominatedTransfer).
- * Decodes + previews the token/denomination/pool, then imports it into the
- * denominated pool store. After import the note can be unshielded like any other
- * (the recipient does NOT need to wait for maturity on unshield).
+ * 🎯 IT IS A REAL ACTION NOW. This screen used to hang off a 9px link, which is
+ * why the two halves of a handoff were not symmetrical: sending was a button
+ * and receiving was a footnote. It is one of the four verbs on the Shield tab,
+ * and it opens as a screen with a way back to it.
+ *
+ * Two things happen here, in the order a receiver needs them: their note
+ * address, to hand to the sender, and the paste box for what comes back.
  *
  * Importing is purely local — no transaction, so it publishes nothing. The
  * withdrawal that follows does: it republishes this note's commitment, which the
  * sender's transfer transaction already put on-chain, so the exit is matchable
  * back to that transfer and through it to the sender's deposit. Copy on this
  * screen must not suggest that receiving a note detaches it from its history.
+ *
+ * The success page is gone. Importing lands the note in the list on Shield, so
+ * the screen returns there rather than showing a tick and a Done button.
  */
 
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import {
-  ArrowLeft,
-  Download,
-  CheckCircle,
-  Loader2,
-  AlertTriangle,
-  Copy,
-  Check,
-  Lock,
-} from 'lucide-react';
+import { Check, Copy, Download } from 'lucide-react';
 import { cn, copyToClipboard } from '@/shared/utils';
 import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
 import { ALL_POOLS_V3 } from '@/shared/services/denominatedPool';
+import { Amount, Button, Eyebrow, Panel, Screen } from '@/popup/ui';
 
 export default function DenominatedImport() {
   const navigate = useNavigate();
@@ -36,7 +33,6 @@ export default function DenominatedImport() {
 
   const [encoded, setEncoded] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
   const [addrCopied, setAddrCopied] = useState(false);
 
   // This wallet's own receive address — share it to receive private notes.
@@ -73,191 +69,135 @@ export default function DenominatedImport() {
     setTimeout(() => setAddrCopied(false), 2000);
   };
 
-  const canImport =
-    !!preview && !('invalid' in preview) && preview.known && !loading;
+  const canImport = !!preview && !('invalid' in preview) && preview.known && !loading;
 
   const handleImport = async () => {
     setError(null);
     try {
       await importNoteAction({ encoded: encoded.trim() });
-      setDone(true);
+      // Back to Shield: the note is in the list there, with its own next step.
+      navigate(-1);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     }
   };
 
-  if (done) {
-    return (
-      <div className="flex flex-col h-full bg-p01-void">
-        <header className="flex items-center gap-3 px-4 py-3 border-b border-p01-border">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-2 text-p01-chrome hover:text-white transition-colors"
-            aria-label="Go back"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div className="flex-1 text-center">
-            <h1 className="text-white font-display font-bold tracking-wide text-sm">IMPORT NOTE</h1>
-            <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
-              SHIELDED DENOMINATED POOL
-            </p>
-          </div>
-          <div className="w-9" />
-        </header>
-        <div className="flex-1 overflow-y-auto p-4">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="flex flex-col items-center gap-4 pt-8"
-          >
-            <CheckCircle className="w-16 h-16 text-p01-cyan" />
-            <p className="text-white font-display font-bold text-lg tracking-wide">Note Imported!</p>
-            <p className="text-p01-chrome text-xs text-center">
-              The note is now in your shielded funds. You can unshield it any time. That
-              withdrawal republishes this note&apos;s commitment, which the sender&apos;s
-              transfer already put on-chain — it links your exit to that transfer.
-            </p>
-            <button
-              onClick={() => navigate(-1)}
-              className="mt-4 px-6 py-2 rounded-xl bg-p01-cyan text-p01-void font-bold font-display text-sm tracking-wider"
-            >
-              Done
-            </button>
-          </motion.div>
-        </div>
-      </div>
-    );
-  }
+  const pasteInvalid = !!preview && 'invalid' in preview;
+  const unknownPool = !!preview && !('invalid' in preview) && !preview.known;
 
   return (
-    <div className="flex flex-col h-full bg-p01-void">
-      <header className="flex items-center gap-3 px-4 py-3 border-b border-p01-border">
-        <button
-          onClick={() => navigate(-1)}
-          className="p-2 text-p01-chrome hover:text-white transition-colors"
-          aria-label="Go back"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <div className="flex-1 text-center">
-          <h1 className="text-white font-display font-bold tracking-wide text-sm">IMPORT NOTE</h1>
-          <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
-            SHIELDED DENOMINATED POOL
-          </p>
-        </div>
-        <div className="w-9" />
-      </header>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Your receive address — share to receive private notes */}
-        <div className="p-3 rounded-xl bg-p01-gradient-card border border-p01-cyan/15">
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="flex items-center gap-1.5">
-              <Lock className="w-3 h-3 text-p01-cyan" />
-              <span className="text-p01-chrome text-[10px] font-mono tracking-wider">
-                YOUR RECEIVE ADDRESS (share to receive)
-              </span>
-            </div>
-            {myAddress && (
-              <button
-                onClick={handleCopyAddress}
-                className="flex items-center gap-1 text-p01-cyan text-[10px] hover:text-p01-cyan/80 transition-colors"
-                aria-label={addrCopied ? 'Address copied' : 'Copy your receive address'}
-              >
-                {addrCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                {addrCopied ? 'Copied' : 'Copy'}
-              </button>
-            )}
-          </div>
-          {myAddress ? (
-            <p className="text-p01-chrome/70 text-[9px] font-mono break-all leading-relaxed max-h-16 overflow-y-auto">
-              {myAddress}
-            </p>
-          ) : (
-            <p className="text-p01-red text-[9px] font-mono">
-              Unavailable — a local wallet key is required to derive your receive address.
+    <Screen
+      title="Receive a note"
+      onBack={() => navigate(-1)}
+      footer={
+        <>
+          {error && (
+            <p role="alert" className="mb-2 break-words text-tiny text-p01-red">
+              {error}
             </p>
           )}
-          <p className="text-p01-chrome/40 text-[8px] mt-1.5 leading-relaxed">
-            Public key material (X25519 + ML-KEM-768) — safe to share. Senders encrypt notes to it;
-            only your wallet can open them.
-          </p>
-        </div>
+          <Button
+            full
+            size="lg"
+            icon={Download}
+            loading={loading}
+            disabled={!canImport}
+            onClick={() => void handleImport()}
+          >
+            Add to my notes
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-5">
+        {/* ── Half one: what the sender needs from you ── */}
+        <Panel tone="quiet">
+          <Eyebrow>Your note address</Eyebrow>
+          {myAddress ? (
+            <>
+              <div className="mt-1.5 flex items-start gap-2">
+                <code className="max-h-16 min-w-0 flex-1 overflow-y-auto break-all font-mono text-tiny text-p01-text-muted">
+                  {myAddress}
+                </code>
+                <button
+                  onClick={() => void handleCopyAddress()}
+                  aria-label="Copy your note address"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-p01-text-muted transition-colors duration-exit hover:text-p01-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
+                >
+                  {addrCopied ? (
+                    <Check className="h-4 w-4 text-p01-cyan" aria-hidden="true" />
+                  ) : (
+                    <Copy className="h-4 w-4" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+              <p className="mt-1 text-tiny text-p01-text-dim">
+                Give this to the sender. It is public key material, safe to share; only your wallet
+                can open a note encrypted to it.
+              </p>
+            </>
+          ) : (
+            <p role="alert" className="mt-1.5 text-tiny text-p01-red">
+              Unlock the wallet to see your note address — it is derived from the local key.
+            </p>
+          )}
+        </Panel>
 
-        <div>
-          <p className="text-p01-chrome text-[10px] font-mono mb-2">PASTE RECEIVED NOTE</p>
+        {/* ── Half two: what comes back ── */}
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="received-note" className="text-tiny text-p01-text-muted">
+            The note they sent you
+          </label>
           <textarea
+            id="received-note"
             value={encoded}
             onChange={(e) => {
               setEncoded(e.target.value);
               setError(null);
             }}
-            placeholder="Paste the p01enc1:… encrypted note from the sender..."
+            placeholder="p01enc1:…"
             rows={5}
-            aria-label="Encrypted note"
-            className="w-full bg-p01-surface border border-p01-border rounded-xl p-3 text-white text-[10px] font-mono outline-none focus:border-p01-cyan/40 placeholder:text-p01-chrome/30 resize-none break-all"
+            spellCheck={false}
+            aria-invalid={pasteInvalid || undefined}
+            aria-describedby={pasteInvalid ? 'received-note-err' : undefined}
+            className={cn(
+              'w-full resize-none break-all rounded-lg border bg-p01-dark p-3 font-mono text-tiny text-p01-text',
+              'outline-none transition-colors duration-exit placeholder:text-p01-text-dim',
+              'focus:border-p01-cyan focus-visible:outline-none',
+              pasteInvalid ? 'border-p01-red' : 'border-p01-border',
+            )}
           />
+          {pasteInvalid && (
+            <p id="received-note-err" role="alert" className="text-tiny text-p01-red">
+              Can&apos;t read this. Either the string is cut short, or it was encrypted to a
+              different wallet — only the intended recipient can open one.
+            </p>
+          )}
         </div>
 
-        {/* Preview */}
-        {preview && 'invalid' in preview && (
-          <div className="flex items-start gap-2 p-3 rounded-lg bg-p01-red/10 border border-p01-red/30">
-            <AlertTriangle className="w-4 h-4 text-p01-red shrink-0 mt-0.5" />
-            <p className="text-p01-red text-[10px] font-mono">
-              Can&apos;t read this note. Either the string is incomplete, or it was encrypted to a
-              different wallet (only the intended recipient can open it).
-            </p>
-          </div>
-        )}
+        {/* ── What you are about to accept ── */}
         {preview && !('invalid' in preview) && (
-          <div className="p-3 rounded-xl bg-p01-gradient-card border border-p01-cyan/15 space-y-1">
-            <div className="flex items-center justify-between">
-              <span className="text-p01-chrome text-[10px]">Amount</span>
-              <span className="text-white text-sm font-mono font-bold">
-                {preview.denominationHuman} {preview.token}
+          <Panel tone={unknownPool ? 'warn' : 'default'}>
+            <div className="flex items-center justify-between gap-3">
+              <Amount value={preview.denominationHuman} unit={preview.token} size="sm" />
+              <span className="min-w-0 truncate font-mono text-tiny text-p01-text-dim">
+                pool {preview.pool.slice(0, 12)}…
               </span>
             </div>
-            <p className="text-p01-chrome/40 text-[9px] font-mono truncate">
-              pool {preview.pool.slice(0, 12)}…
-            </p>
-            {!preview.known && (
-              <p className="text-p01-red text-[9px] font-mono mt-1">
-                Unknown pool — this note is not from a recognised V3 pool.
+            {unknownPool ? (
+              <p role="alert" className="mt-2 text-tiny text-p01-amber">
+                This note is not from a pool this wallet recognises, so it cannot be imported.
+              </p>
+            ) : (
+              <p className="mt-2 text-tiny text-p01-text-muted">
+                Importing is local and publishes nothing. Withdrawing it later republishes this
+                note&apos;s commitment, which the sender&apos;s transfer already wrote on-chain — so
+                your exit is matchable back to them.
               </p>
             )}
-          </div>
+          </Panel>
         )}
-
-        {error && (
-          <div className="p-3 rounded-lg bg-p01-red/10 border border-p01-red/30" role="alert" aria-live="assertive">
-            <p className="text-p01-red text-[10px] font-mono break-all">{error}</p>
-          </div>
-        )}
-
-        <button
-          onClick={handleImport}
-          disabled={!canImport}
-          className={cn(
-            'w-full py-3 rounded-xl font-bold font-display text-sm tracking-wider transition-colors flex items-center justify-center gap-2',
-            !canImport
-              ? 'bg-p01-surface border border-p01-border text-p01-chrome/50 cursor-not-allowed'
-              : 'bg-p01-cyan text-p01-void hover:bg-p01-cyan/90',
-          )}
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Importing...
-            </>
-          ) : (
-            <>
-              <Download className="w-4 h-4" />
-              Import Note
-            </>
-          )}
-        </button>
       </div>
-    </div>
+    </Screen>
   );
 }

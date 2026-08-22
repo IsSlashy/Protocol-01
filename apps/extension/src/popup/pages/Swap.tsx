@@ -212,7 +212,7 @@ export default function Swap() {
           <button onClick={() => navigate(-1)} className="p-2 -ml-2 hover:bg-p01-surface rounded-lg transition-colors" aria-label="Go back">
             <ArrowLeft className="w-5 h-5 text-p01-chrome" />
           </button>
-          <h1 className="text-lg font-semibold text-white">Swap</h1>
+          <h1 className="text-lg font-semibold text-p01-text">Swap</h1>
         </div>
         <button onClick={() => setShowSlippage(!showSlippage)} className="p-2 hover:bg-p01-surface rounded-lg transition-colors" aria-label="Slippage settings" aria-expanded={showSlippage}>
           <Settings className="w-5 h-5 text-p01-chrome" />
@@ -280,7 +280,7 @@ export default function Swap() {
                 if (v.split('.').length <= 2) setInputAmount(v);
               }}
               aria-label="Amount to swap"
-              className="flex-1 bg-transparent text-2xl font-semibold text-white outline-none placeholder-p01-chrome/40 min-w-0"
+              className="flex-1 bg-transparent text-2xl font-semibold text-p01-text outline-none placeholder-p01-chrome/40 min-w-0"
             />
             <TokenButton token={inputToken} onClick={() => setShowTokenSelector('input')} />
           </div>
@@ -301,7 +301,7 @@ export default function Swap() {
         <div className="bg-p01-surface rounded-2xl p-4">
           <span className="text-xs text-p01-chrome mb-2 block">You Receive</span>
           <div className="flex items-center gap-3">
-            <div className="flex-1 text-2xl font-semibold text-white min-w-0 truncate">
+            <div className="flex-1 text-2xl font-semibold text-p01-text min-w-0 truncate">
               {status === 'quoting' ? (
                 <Loader2 className="w-5 h-5 animate-spin text-p01-chrome inline" />
               ) : (
@@ -337,16 +337,16 @@ export default function Swap() {
                       </div>
                       <div className="flex justify-between text-xs">
                         <span className="text-p01-chrome">Min Received</span>
-                        <span className="text-white">{formatTokenAmount(quote.otherAmountThreshold, outputToken.decimals)} {outputToken.symbol}</span>
+                        <span className="text-p01-text">{formatTokenAmount(quote.otherAmountThreshold, outputToken.decimals)} {outputToken.symbol}</span>
                       </div>
                       <div className="flex justify-between text-xs">
                         <span className="text-p01-chrome">Route</span>
-                        <span className="text-white">{quote.routePlan.map(r => r.swapInfo.label).join(' → ')}</span>
+                        <span className="text-p01-text">{quote.routePlan.map(r => r.swapInfo.label).join(' → ')}</span>
                       </div>
                       {quote.platformFee && (
                         <div className="flex justify-between text-xs">
                           <span className="text-p01-chrome">Platform Fee</span>
-                          <span className="text-white">{formatTokenAmount(quote.platformFee.amount, outputToken.decimals)} {outputToken.symbol}</span>
+                          <span className="text-p01-text">{formatTokenAmount(quote.platformFee.amount, outputToken.decimals)} {outputToken.symbol}</span>
                         </div>
                       )}
                     </div>
@@ -388,7 +388,7 @@ export default function Swap() {
             <div className="w-16 h-16 rounded-full bg-p01-cyan/20 flex items-center justify-center mb-4">
               <Check className="w-8 h-8 text-p01-cyan" />
             </div>
-            <h2 className="text-xl font-bold text-white mb-2">Swap Successful</h2>
+            <h2 className="text-xl font-bold text-p01-text mb-2">Swap Successful</h2>
             <p className="text-p01-chrome text-sm text-center mb-1">
               {inputAmount} {inputToken.symbol} → {outputAmount} {outputToken.symbol}
             </p>
@@ -421,10 +421,10 @@ export default function Swap() {
             <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mb-4">
               <X className="w-8 h-8 text-red-400" />
             </div>
-            <h2 className="text-xl font-bold text-white mb-2">Swap Failed</h2>
+            <h2 className="text-xl font-bold text-p01-text mb-2">Swap Failed</h2>
             <p className="text-red-300 text-sm text-center mb-4 max-w-[280px]">{errorMessage}</p>
             <div className="flex gap-3">
-              <button onClick={resetSwap} className="px-6 py-2.5 bg-p01-surface text-white font-medium rounded-xl">
+              <button onClick={resetSwap} className="px-6 py-2.5 bg-p01-surface text-p01-text font-medium rounded-xl">
                 Cancel
               </button>
               <button onClick={() => { setStatus('idle'); setErrorMessage(''); handleSwap(); }} className="px-6 py-2.5 bg-p01-cyan text-p01-void font-medium rounded-xl">
@@ -448,7 +448,7 @@ export default function Swap() {
               <button onClick={() => { setShowTokenSelector(null); setTokenSearch(''); }} className="p-2 -ml-2 hover:bg-p01-surface rounded-lg" aria-label="Close token selector">
                 <ArrowLeft className="w-5 h-5 text-p01-chrome" />
               </button>
-              <h2 className="text-lg font-semibold text-white">Select Token</h2>
+              <h2 className="text-lg font-semibold text-p01-text">Select Token</h2>
             </div>
             <div className="p-4">
               <div className="relative">
@@ -459,7 +459,7 @@ export default function Swap() {
                   value={tokenSearch}
                   onChange={e => setTokenSearch(e.target.value)}
                   aria-label="Search tokens"
-                  className="w-full bg-p01-surface rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-p01-chrome/50 outline-none border border-p01-border focus:border-p01-cyan/50"
+                  className="w-full bg-p01-surface rounded-xl pl-10 pr-4 py-2.5 text-sm text-p01-text placeholder-p01-chrome/50 outline-none border border-p01-border focus:border-p01-cyan/50"
                   autoFocus
                 />
               </div>
@@ -481,7 +481,7 @@ export default function Swap() {
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-p01-surface rounded-full hover:bg-p01-elevated transition-colors"
                 >
                   {t.logoURI && <img src={t.logoURI} alt="" className="w-4 h-4 rounded-full" />}
-                  <span className="text-xs text-white font-medium">{t.symbol}</span>
+                  <span className="text-xs text-p01-text font-medium">{t.symbol}</span>
                 </button>
               ))}
             </div>
@@ -507,7 +507,7 @@ export default function Swap() {
                     <div className="w-8 h-8 rounded-full bg-p01-elevated flex items-center justify-center text-xs text-p01-chrome">{t.symbol[0]}</div>
                   )}
                   <div className="text-left">
-                    <p className="text-white text-sm font-medium">{t.symbol}</p>
+                    <p className="text-p01-text text-sm font-medium">{t.symbol}</p>
                     <p className="text-p01-chrome text-xs">{t.name}</p>
                   </div>
                 </button>
@@ -528,7 +528,7 @@ function TokenButton({ token, onClick }: { token: JupiterToken; onClick: () => v
       ) : (
         <div className="w-5 h-5 rounded-full bg-p01-surface flex items-center justify-center text-[10px] text-p01-chrome">{token.symbol[0]}</div>
       )}
-      <span className="text-white text-sm font-medium">{token.symbol}</span>
+      <span className="text-p01-text text-sm font-medium">{token.symbol}</span>
       <ChevronDown className="w-3.5 h-3.5 text-p01-chrome" />
     </button>
   );

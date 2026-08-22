@@ -1,26 +1,67 @@
-import { useState, useEffect } from 'react';
+/**
+ * Send: address, amount, sign, done. One screen.
+ *
+ * 🎯 WHY THIS IS ONE SCREEN AND NOT TWO
+ * ─────────────────────────────────────
+ * Sending used to be Send → SendConfirm. CONTINUE did no network work at all:
+ * it validated the same two fields the button was already gating on, then
+ * re-rendered the same recipient, the same amount and the same fee on a new
+ * route, and only THEN offered the button that actually signs. A confirmation
+ * step that shows nothing the previous screen did not show is not a safeguard,
+ * it is a second chance to read numbers the user just typed.
+ *
+ * So the signing happens here. The user types, sees the fee, presses Send once.
+ *
+ * 🚨 THE FEE WAS PRINTED TWICE, AND ONCE IT WAS ARITHMETIC. Send showed
+ * "ESTIMATED FEE ~0.000005", SendConfirm showed "NETWORK FEE ~0.000005" plus a
+ * TOTAL line computed from it. Three numbers for one 5000-lamport constant. It
+ * appears once now, next to the amount it applies to.
+ *
+ * ⛔ THE FULL-SCREEN SUCCESS PAGE IS GONE. It was a tick, a headline, a repeat
+ * of the three values, an explorer link and a DONE button whose only job was to
+ * go home. A send that worked returns the user to the wallet, where the balance
+ * has changed and the transaction is in the list. That is the receipt.
+ *
+ * ⚠️ ERRORS SIT UNDER THE FIELD THAT CAUSED THEM. One `localError` string used
+ * to collect "invalid address", "invalid amount" and "insufficient balance"
+ * into a single banner floating between the two inputs, so the message never
+ * said which box was wrong. Three states, three places.
+ */
+
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  ArrowLeft,
-  AlertCircle,
-  ShieldCheck,
-  EyeOff,
-} from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { EyeOff } from 'lucide-react';
+
 import { useWalletStore } from '@/shared/store/wallet';
 import { isValidSolanaAddress } from '@/shared/services/wallet';
-import { parseMetaAddress, generateStealthAddress } from '@/shared/services/stealth';
-import { cn } from '@/shared/utils';
+import {
+  parseMetaAddress,
+  generateStealthAddress,
+  createStealthMemo,
+} from '@/shared/services/stealth';
+import { Amount, Button, Eyebrow, Field, Panel, Pill, Screen } from '@/popup/ui';
+
+/** The base signature fee. Stated once, on this screen, next to the amount. */
+const NETWORK_FEE_SOL = 0.000005;
+
+/** Left behind by the percentage shortcuts so the fee still has room. */
+const FEE_RESERVE_SOL = 0.001;
+
+const PERCENTAGES = [25, 50, 75, 100] as const;
 
 export default function Send() {
   const navigate = useNavigate();
-  const { solBalance, network } = useWalletStore();
+  const { solBalance, network, sendTransaction, isLoading, error } = useWalletStore();
 
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
-  const [localError, setLocalError] = useState('');
 
-  // Stealth address detection
+  // One state per thing that can be wrong, so each message can sit under the
+  // control it is about.
+  const [recipientError, setRecipientError] = useState('');
+  const [amountError, setAmountError] = useState('');
+  const [sendError, setSendError] = useState('');
+
   const [isStealthSend, setIsStealthSend] = useState(false);
   const [stealthAddressValid, setStealthAddressValid] = useState(false);
 
@@ -31,11 +72,11 @@ export default function Send() {
       try {
         parseMetaAddress(recipient);
         setStealthAddressValid(true);
-        setLocalError('');
-      } catch (e) {
+        setRecipientError('');
+      } catch {
         setStealthAddressValid(false);
         if (recipient.length > 10) {
-          setLocalError('Invalid stealth meta-address format');
+          setRecipientError('Invalid stealth meta-address format');
         }
       }
     } else {
@@ -44,266 +85,176 @@ export default function Send() {
     }
   }, [recipient]);
 
-  const handleContinue = async () => {
-    setLocalError('');
+  const stealth = isStealthSend && stealthAddressValid;
+
+  const handleSend = async () => {
+    setRecipientError('');
+    setAmountError('');
+    setSendError('');
 
     if (!recipient) {
-      setLocalError('Please enter a recipient address');
+      setRecipientError('Please enter a recipient address');
       return;
     }
 
-    // Handle stealth address
     if (isStealthSend) {
       if (!stealthAddressValid) {
-        setLocalError('Invalid stealth meta-address');
+        setRecipientError('Invalid stealth meta-address');
         return;
       }
-    } else {
-      // Normal address validation
-      if (!isValidSolanaAddress(recipient)) {
-        setLocalError('Invalid Solana address');
-        return;
-      }
+    } else if (!isValidSolanaAddress(recipient)) {
+      setRecipientError('Invalid Solana address');
+      return;
     }
 
     if (!amount || parseFloat(amount) <= 0) {
-      setLocalError('Please enter a valid amount');
+      setAmountError('Please enter a valid amount');
       return;
     }
 
     if (parseFloat(amount) > solBalance) {
-      setLocalError('Insufficient balance');
+      setAmountError('Insufficient balance');
       return;
     }
 
-    // For stealth sends, we need to generate the stealth address
-    if (isStealthSend && stealthAddressValid) {
+    // ⚠️ Unchanged from the two-screen flow: a stealth send derives a fresh
+    // address here and MUST publish its ephemeral key in an on-chain memo, or
+    // the recipient's scanner can never find the payment.
+    let destination = recipient;
+    let memo: string | undefined;
+
+    if (stealth) {
       try {
         const { stealthAddress, ephemeralPubKey } = await generateStealthAddress(recipient);
-
-        navigate('/send/confirm', {
-          state: {
-            recipient: stealthAddress.toBase58(),
-            amount: parseFloat(amount),
-            isStealthSend: true,
-            ephemeralPubKey: Array.from(ephemeralPubKey), // Convert to array for serialization
-            originalMetaAddress: recipient,
-          },
-        });
-      } catch (e) {
-        setLocalError('Failed to generate stealth address');
+        destination = stealthAddress.toBase58();
+        memo = createStealthMemo(Uint8Array.from(ephemeralPubKey));
+      } catch {
+        setRecipientError('Failed to generate stealth address');
+        return;
       }
-    } else {
-      navigate('/send/confirm', {
-        state: { recipient, amount: parseFloat(amount) },
-      });
+    }
+
+    try {
+      await sendTransaction(destination, parseFloat(amount), memo);
+      // Home is the receipt: the balance has moved and the transaction is in
+      // the list there. A success screen with a Done button says less.
+      navigate('/');
+    } catch (err) {
+      setSendError((err as Error).message);
     }
   };
 
-  const percentButtons = [25, 50, 75, 100];
+  const canSend = Boolean(recipient) && Boolean(amount) && (!isStealthSend || stealthAddressValid);
 
   return (
-    <div className="flex flex-col h-full bg-p01-void">
-      {/* Header - Industrial */}
-      <div className="flex items-center gap-3 p-3 border-b border-p01-border bg-p01-surface">
-        <button
-          onClick={() => navigate(-1)}
-          className="p-2 -ml-2 hover:bg-p01-border transition-colors"
-          aria-label="Go back"
-        >
-          <ArrowLeft className="w-4 h-4 text-p01-chrome" />
-        </button>
-        <h1 className="text-sm font-mono font-bold text-white tracking-wider">SEND SOL</h1>
-
-        {/* Stealth Send Badge */}
-        <AnimatePresence>
-          {isStealthSend && stealthAddressValid && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.8 }}
-              className="ml-auto flex items-center gap-1.5 px-2 py-1 bg-p01-cyan/20 border border-p01-cyan rounded text-p01-cyan"
-            >
-              <EyeOff className="w-3 h-3" />
-              <span className="text-[10px] font-mono font-bold tracking-wider">PRIVATE</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Network Badge */}
-        {network === 'devnet' && (
-          <div className="flex justify-center">
-            <span className="px-2 py-0.5 text-[9px] font-mono font-bold bg-yellow-500/10 text-yellow-500 border border-yellow-500/30 tracking-wider">
-              [ DEVNET ]
-            </span>
-          </div>
-        )}
-
-        {/* Available Balance */}
-        <div className="bg-p01-surface border border-p01-border p-3 rounded-lg">
-          <p className="text-[10px] text-p01-text-dim font-mono tracking-wider mb-1">
-            AVAILABLE BALANCE
-          </p>
-          <p className="text-lg font-mono font-bold text-white">{solBalance.toFixed(4)} SOL</p>
-        </div>
-
-        {/* Stealth Send Info Banner */}
-        <AnimatePresence>
-          {isStealthSend && stealthAddressValid && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="bg-p01-cyan/10 border border-p01-cyan/30 p-3 rounded-lg"
-            >
-              <div className="flex items-start gap-2">
-                <EyeOff className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[10px] font-mono font-bold text-p01-cyan tracking-wider mb-1">
-                    [ STEALTH SEND DETECTED ]
-                  </p>
-                  <p className="text-[10px] text-p01-chrome font-mono leading-relaxed">
-                    This payment goes to a fresh address derived for this payment alone, so it
-                    is not tied to the recipient&apos;s published address. Your wallet still
-                    signs and pays for it, and the link breaks only until the recipient sweeps
-                    the funds to their own wallet.
-                  </p>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Recipient Input */}
-        <div>
-          <label htmlFor="send-recipient" className="text-[10px] text-p01-text-dim mb-1.5 block font-mono tracking-wider">
-            RECIPIENT ADDRESS {isStealthSend && <span className="text-p01-cyan">(STEALTH)</span>}
-          </label>
-          <div className="relative">
-            <input
-              id="send-recipient"
-              type="text"
-              value={recipient}
-              onChange={(e) => {
-                setRecipient(e.target.value);
-                setLocalError('');
-              }}
-              placeholder="Enter Solana address or st:01... meta-address"
-              className={cn(
-                'w-full bg-p01-surface border px-3 py-2.5 text-xs font-mono text-white placeholder-p01-text-dim focus:outline-none transition-colors rounded-lg',
-                isStealthSend && stealthAddressValid
-                  ? 'border-p01-cyan focus:border-p01-cyan'
-                  : 'border-p01-border focus:border-p01-cyan'
-              )}
-            />
-            {isStealthSend && stealthAddressValid && (
-              <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                <EyeOff className="w-4 h-4 text-p01-cyan" />
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Amount Input */}
-        <div>
-          <label htmlFor="send-amount" className="text-[10px] text-p01-text-dim mb-1.5 block font-mono tracking-wider">
-            AMOUNT (SOL)
-          </label>
-          <div className="bg-p01-surface border border-p01-border p-4 rounded-lg">
-            <input
-              id="send-amount"
-              type="number"
-              value={amount}
-              onChange={(e) => {
-                setAmount(e.target.value);
-                setLocalError('');
-              }}
-              placeholder="0.00"
-              step="0.0001"
-              min="0"
-              max={solBalance}
-              className="w-full bg-transparent text-2xl font-mono font-bold text-white placeholder-p01-text-dim focus:outline-none"
-            />
-            <div className="flex gap-2 mt-3">
-              {percentButtons.map((percent) => (
-                <button
-                  key={percent}
-                  onClick={() => {
-                    // Leave some for fees
-                    const maxAmount = Math.max(0, solBalance - 0.001);
-                    setAmount(String(((maxAmount * percent) / 100).toFixed(4)));
-                    setLocalError('');
-                  }}
-                  className="flex-1 py-1.5 text-[10px] font-mono font-medium bg-p01-dark border border-p01-border text-p01-chrome hover:border-p01-cyan/50 hover:text-white transition-colors tracking-wider rounded"
-                  aria-label={`Set amount to ${percent}% of balance`}
-                >
-                  {percent}%
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Error */}
-        {localError && (
-          <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg" role="alert" aria-live="polite">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
-            <span className="text-xs font-mono">{localError}</span>
-          </div>
-        )}
-
-        {/* Stealth Privacy Badge - Shown for stealth sends */}
-        {isStealthSend && stealthAddressValid && (
-          <div className="bg-p01-cyan/10 border border-p01-cyan/30 p-3 rounded-lg">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-p01-cyan" />
-                <span className="text-[10px] text-p01-cyan font-mono tracking-wider">
-                  STEALTH ADDRESS
-                </span>
-              </div>
-              {/* No score here on purpose: the old "100" was hardcoded and
-                  measured nothing. A stealth send has one property, stated
-                  below, and it is not a number. */}
-            </div>
-            <p className="text-[10px] text-p01-chrome/70 mt-2">
-              The recipient&apos;s receiving address is fresh and not derivable from their
-              published address. It stays that way until they sweep the funds onward.
+    <Screen
+      title="Send"
+      onBack={() => navigate(-1)}
+      action={network === 'devnet' ? <Pill tone="warn">Devnet</Pill> : undefined}
+      footer={
+        <>
+          <Button
+            full
+            size="lg"
+            icon={stealth ? EyeOff : undefined}
+            loading={isLoading}
+            disabled={!canSend}
+            onClick={() => void handleSend()}
+          >
+            {stealth ? 'Send privately' : 'Send'}
+          </Button>
+          {/* The failure of the action, under the action. */}
+          {(sendError || error) && (
+            <p role="alert" className="mt-2 text-tiny text-p01-red">
+              {sendError || error}
             </p>
-          </div>
-        )}
-
-        {/* Fee estimate */}
-        <div className="bg-p01-surface border border-p01-border p-3 rounded-lg">
-          <div className="flex justify-between items-center">
-            <span className="text-[10px] text-p01-text-dim font-mono tracking-wider">
-              ESTIMATED FEE
-            </span>
-            <span className="text-xs text-p01-chrome font-mono">~0.000005 SOL</span>
+          )}
+        </>
+      }
+    >
+      <div className="flex flex-col gap-5">
+        <div>
+          <Eyebrow>Available</Eyebrow>
+          <div className="mt-1.5">
+            <Amount value={solBalance.toFixed(4)} unit="SOL" size="xl" />
           </div>
         </div>
-      </div>
 
-      {/* Continue Button */}
-      <div className="p-3 border-t border-p01-border bg-p01-surface">
-        <button
-          onClick={handleContinue}
-          disabled={!recipient || !amount || (isStealthSend && !stealthAddressValid)}
-          className={cn(
-            'w-full py-3 font-display font-bold text-sm tracking-wider transition-colors rounded-lg flex items-center justify-center gap-2',
-            !recipient || !amount || (isStealthSend && !stealthAddressValid)
-              ? 'bg-p01-border text-p01-chrome/40 cursor-not-allowed'
-              : isStealthSend && stealthAddressValid
-              ? 'bg-p01-cyan text-p01-void hover:bg-p01-cyan-dim'
-              : 'bg-p01-cyan text-p01-void hover:bg-p01-cyan-dim'
-          )}
-        >
-          {isStealthSend && stealthAddressValid && <EyeOff className="w-4 h-4" />}
-          {isStealthSend && stealthAddressValid ? 'SEND PRIVATELY' : 'CONTINUE'}
-        </button>
+        <Field
+          label="Recipient"
+          id="send-recipient"
+          type="text"
+          value={recipient}
+          onChange={(e) => {
+            setRecipient(e.target.value);
+            setRecipientError('');
+            setSendError('');
+          }}
+          placeholder="Address or st:… meta-address"
+          error={recipientError || undefined}
+          className="font-mono"
+        />
+
+        <div className="flex flex-col gap-2">
+          <Field
+            label="Amount"
+            id="send-amount"
+            type="number"
+            value={amount}
+            onChange={(e) => {
+              setAmount(e.target.value);
+              setAmountError('');
+              setSendError('');
+            }}
+            placeholder="0.00"
+            step="0.0001"
+            min="0"
+            max={solBalance}
+            suffix="SOL"
+            error={amountError || undefined}
+            className="font-mono"
+          />
+
+          <div className="flex gap-2">
+            {PERCENTAGES.map((percent) => (
+              <button
+                key={percent}
+                onClick={() => {
+                  const maxAmount = Math.max(0, solBalance - FEE_RESERVE_SOL);
+                  setAmount(String(((maxAmount * percent) / 100).toFixed(4)));
+                  setAmountError('');
+                  setSendError('');
+                }}
+                className="min-h-[44px] flex-1 rounded-lg border border-p01-border text-tiny text-p01-text-muted transition-colors duration-exit hover:border-p01-border-light hover:text-p01-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan tabular"
+              >
+                {percent}%
+              </button>
+            ))}
+          </div>
+
+          {/* The fee. Once. */}
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-tiny text-p01-text-dim">Network fee</span>
+            <span className="font-mono text-tiny text-p01-text-muted tabular">
+              ~{NETWORK_FEE_SOL} SOL
+            </span>
+          </div>
+        </div>
+
+        {/* Said once, and only when it applies. */}
+        {stealth && (
+          <Panel tone="quiet">
+            <div className="flex items-start gap-2.5">
+              <EyeOff className="mt-0.5 h-4 w-4 shrink-0 text-p01-cyan" aria-hidden="true" />
+              <p className="text-tiny text-p01-text-muted">
+                This lands on a fresh address derived for this payment alone, so it is not tied
+                to the recipient&apos;s published address. Your wallet still signs and pays for
+                it, and the link stays broken only until they sweep the funds onward.
+              </p>
+            </div>
+          </Panel>
+        )}
       </div>
-    </div>
+    </Screen>
   );
 }

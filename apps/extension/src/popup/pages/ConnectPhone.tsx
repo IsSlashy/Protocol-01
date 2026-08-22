@@ -1,12 +1,30 @@
+/**
+ * ConnectPhone — the reverse of LinkPhone: the phone holds the wallet and
+ * hands it to this extension over a one-time encrypted channel.
+ *
+ * 🎯 UI PASS. This screen carried the extension's old house style at full
+ * strength: `CONNECT WITH PHONE`, `SCAN FROM YOUR PHONE`, `WALLET RECEIVED`,
+ * `START OVER`, `CONNECT WALLET` — five mono-capitals headlines on one flow —
+ * plus a whole paragraph of security copy set in uppercase mono, which is the
+ * least readable way to present the one sentence that explains why this is
+ * safe. It reads in sentence case now, in Newsreader, once.
+ *
+ * ⚠️ THE TWO PASSWORD INPUTS HAD NO VISIBLE LABELS, only placeholders and an
+ * `aria-label`. A placeholder disappears the moment you type, which on a
+ * confirm-password pair is exactly when you need to know which box you are in.
+ *
+ * ⛔ Business logic is untouched: the channel, the poll, the TTL and
+ * `importWallet` are the same calls with the same arguments.
+ */
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
-import { ArrowLeft, AlertCircle, Loader2, Smartphone, Shield, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { Loader2, Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { generatePairingCode, formatCodeForDisplay, decryptPairing, DEFAULT_TTL_SEC } from '@/shared/services/pairCrypto';
 import { makeConnectToken } from '@/shared/services/connectPair';
-import { cn } from '@/shared/utils';
+import { Button, Eyebrow, Field, Panel, Screen } from '@/popup/ui';
 
 // Where the phone uploads its (encrypted) seed and where this extension polls it
 // back. Any host serving /api/pair/:id works — both the durable apps/web
@@ -119,141 +137,131 @@ export default function ConnectPhone() {
     }
   };
 
+  /**
+   * ⚠️ Presentation only. `handleImport` owns these strings; this decides which
+   * field each one sits under. An error from `importWallet` belongs to neither
+   * box and falls through to the form-level line above the action.
+   */
+  const stalled = Boolean(error) || secondsLeft === 0;
+  const passwordFieldError = error === 'Password must be at least 8 characters' ? error : undefined;
+  const confirmFieldError = error === 'Passwords do not match' ? error : undefined;
+  const importError = error && !passwordFieldError && !confirmFieldError ? error : '';
+
   return (
-    <div className="flex flex-col h-full bg-p01-void">
-      {/* Header */}
-      <div className="flex items-center gap-3 p-3 border-b border-p01-border bg-p01-surface">
-        <button
-          onClick={() => (step === 'password' ? regenerate() : navigate('/welcome'))}
-          className="p-2 -ml-2 hover:bg-p01-border transition-colors"
-          aria-label="Go back"
-        >
-          <ArrowLeft className="w-4 h-4 text-p01-chrome" />
-        </button>
-        <h1 className="text-sm font-mono font-bold text-white tracking-wider">
-          {step === 'waiting' ? 'CONNECT WITH PHONE' : 'SET PASSWORD'}
-        </h1>
-      </div>
+    <Screen
+      title={step === 'waiting' ? 'Connect with phone' : 'Set a password'}
+      onBack={() => (step === 'password' ? regenerate() : navigate('/welcome'))}
+      footer={
+        step === 'password' ? (
+          <Button
+            full
+            size="lg"
+            loading={isLoading}
+            disabled={!password || !confirmPassword}
+            onClick={handleImport}
+          >
+            Connect wallet
+          </Button>
+        ) : stalled ? (
+          <Button variant="secondary" full size="lg" icon={RefreshCw} onClick={regenerate}>
+            Start over
+          </Button>
+        ) : undefined
+      }
+    >
+      {step === 'waiting' && (
+        <div className="flex animate-fadeIn flex-col items-center gap-4">
+          <p className="text-sm text-p01-text-muted">
+            In the P01 app, open <span className="text-p01-text">Settings, Connect to extension</span>,
+            scan this, then type the code below.
+          </p>
 
-      <div className="flex-1 overflow-y-auto p-4">
-        {step === 'waiting' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
-            <div className="text-center mb-2">
-              <div className="w-14 h-14 mx-auto mb-3 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
-                <Smartphone className="w-7 h-7 text-p01-cyan" />
-              </div>
-              <h2 className="text-base font-display font-bold text-white tracking-wider">SCAN FROM YOUR PHONE</h2>
-              <p className="text-[11px] text-p01-chrome/60 mt-2 font-mono">
-                In the P01 app: <span className="text-p01-cyan">Settings → Connect to extension</span>, scan this, then type the code below.
-              </p>
-            </div>
+          <div className="rounded-xl bg-p01-text p-3">
+            <QRCodeSVG
+              value={tokenRef.current}
+              size={200}
+              level="M"
+              includeMargin={false}
+              bgColor="#eae7df"
+              fgColor="#070709"
+            />
+          </div>
 
-            {/* QR */}
-            <div className="flex justify-center">
-              <div className="p-3 bg-white">
-                <QRCodeSVG value={tokenRef.current} size={208} level="M" includeMargin={false} bgColor="#ffffff" fgColor="#0a0a0f" />
-              </div>
-            </div>
+          <div className="w-full text-center">
+            <Eyebrow>Pairing code, type it on the phone</Eyebrow>
+            <p className="mt-1 select-all font-mono text-xl tracking-[0.2em] text-p01-cyan">
+              {formatCodeForDisplay(codeRef.current)}
+            </p>
+          </div>
 
-            {/* Code */}
-            <div className="bg-p01-surface border border-p01-border p-3 text-center">
-              <p className="text-[10px] text-p01-chrome/60 font-mono tracking-wider mb-1">PAIRING CODE (TYPE ON PHONE)</p>
-              <p className="text-lg font-mono font-bold text-p01-cyan tracking-[2px]">{formatCodeForDisplay(codeRef.current)}</p>
-            </div>
-
-            <div className="flex items-center justify-center gap-2 text-p01-chrome/60">
-              {secondsLeft > 0 && !error && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              <span className="text-[11px] font-mono">
-                {error ? ' ' : secondsLeft > 0 ? `Waiting for phone… expires in ${secondsLeft}s` : 'Expired'}
-              </span>
-            </div>
-
-            {error && (
-              <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400" role="alert">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                <span className="text-xs font-mono">{error}</span>
-              </div>
-            )}
-
-            {(error || secondsLeft === 0) && (
-              <button
-                onClick={regenerate}
-                className="w-full py-3 bg-p01-surface text-p01-chrome font-display font-medium text-sm tracking-wider border border-p01-border flex items-center justify-center gap-2 hover:text-white hover:border-p01-cyan/30 transition-colors"
-              >
-                <RefreshCw className="w-4 h-4" /> START OVER
-              </button>
-            )}
-
-            <div className="bg-p01-surface border border-p01-border p-3">
-              <p className="text-[10px] text-p01-chrome/60 font-mono tracking-wider leading-relaxed">
-                YOUR SEED IS ENCRYPTED ON YOUR PHONE TO THIS ONE-TIME CODE BEFORE IT LEAVES THE DEVICE. THE RELAY ONLY EVER SEES CIPHERTEXT.
-              </p>
-            </div>
-          </motion.div>
-        )}
-
-        {step === 'password' && (
-          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
-            <div className="text-center mb-4">
-              <div className="w-14 h-14 mx-auto mb-4 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
-                <Shield className="w-7 h-7 text-p01-cyan" />
-              </div>
-              <h2 className="text-base font-display font-bold text-white tracking-wider">WALLET RECEIVED</h2>
-              <p className="text-[11px] text-p01-chrome/60 mt-2 font-mono">
-                Set a password to unlock this wallet on this device.
-              </p>
-            </div>
-
-            <div className="space-y-3">
-              <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  aria-label="Password"
-                  className="w-full px-4 py-3 bg-p01-surface border border-p01-border text-white font-mono text-sm focus:outline-none focus:border-p01-cyan transition-colors"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-p01-chrome/60 hover:text-white"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              <input
-                type={showPassword ? 'text' : 'password'}
-                placeholder="Confirm password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                aria-label="Confirm password"
-                className="w-full px-4 py-3 bg-p01-surface border border-p01-border text-white font-mono text-sm focus:outline-none focus:border-p01-cyan transition-colors"
-              />
-            </div>
-
-            {error && (
-              <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-mono" role="alert">
-                {error}
-              </div>
-            )}
-
-            <button
-              onClick={handleImport}
-              disabled={isLoading || !password || !confirmPassword}
-              className={cn(
-                'w-full py-4 font-display font-bold text-sm tracking-wider transition-colors flex items-center justify-center gap-2',
-                isLoading || !password || !confirmPassword
-                  ? 'bg-p01-border text-p01-chrome/40 cursor-not-allowed'
-                  : 'bg-p01-cyan text-p01-void hover:bg-p01-cyan-dim',
+          {error ? (
+            <p role="alert" className="text-center text-tiny text-p01-red">
+              {error}
+            </p>
+          ) : (
+            <p className="flex items-center gap-2 text-tiny tabular text-p01-text-dim">
+              {secondsLeft > 0 && (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
               )}
-            >
-              {isLoading ? (<><Loader2 className="w-4 h-4 animate-spin" /> CONNECTING…</>) : 'CONNECT WALLET'}
-            </button>
-          </motion.div>
-        )}
-      </div>
-    </div>
+              {secondsLeft > 0 ? `Waiting for your phone, expires in ${secondsLeft}s` : 'Expired'}
+            </p>
+          )}
+
+          <Panel tone="quiet" className="w-full">
+            <p className="text-tiny text-p01-text-muted">
+              Your seed is encrypted on the phone, to this one-time code, before it leaves the
+              device. The relay only ever sees ciphertext.
+            </p>
+          </Panel>
+        </div>
+      )}
+
+      {step === 'password' && (
+        <div className="flex animate-fadeIn flex-col gap-4">
+          <p className="text-sm text-p01-text-muted">
+            The wallet arrived. Choose a password to unlock it on this device.
+          </p>
+
+          <Field
+            label="Password"
+            type={showPassword ? 'text' : 'password'}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="At least 8 characters"
+            error={passwordFieldError}
+            autoFocus
+            suffix={
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                className="flex h-11 w-11 items-center justify-center rounded-lg text-p01-text-dim outline-none transition-colors duration-exit hover:text-p01-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
+              >
+                {showPassword ? (
+                  <EyeOff className="h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <Eye className="h-4 w-4" aria-hidden="true" />
+                )}
+              </button>
+            }
+          />
+
+          <Field
+            label="Confirm password"
+            type={showPassword ? 'text' : 'password'}
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            placeholder="Type it again"
+            error={confirmFieldError}
+          />
+
+          {importError && (
+            <p role="alert" className="text-tiny text-p01-red">
+              {importError}
+            </p>
+          )}
+        </div>
+      )}
+    </Screen>
   );
 }

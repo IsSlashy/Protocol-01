@@ -196,28 +196,28 @@ export default function SubscriptionVaults() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/shielded')}
-            className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+            className="p-2 -ml-2 text-p01-chrome hover:text-p01-text transition-colors"
             aria-label="Go back"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex items-center gap-2">
             <Calendar className="w-5 h-5 text-p01-cyan" />
-            <h1 className="text-white font-display font-bold tracking-wide">Subscription Vaults</h1>
+            <h1 className="text-p01-text font-display font-bold tracking-wide">Subscription Vaults</h1>
           </div>
         </div>
         <div className="flex items-center gap-1">
           <button
             onClick={() => publicKey && loadVaults(publicKey)}
             disabled={loading}
-            className="p-2 text-p01-chrome hover:text-white transition-colors disabled:opacity-50"
+            className="p-2 text-p01-chrome hover:text-p01-text transition-colors disabled:opacity-50"
             aria-label="Refresh vaults"
           >
             <RefreshCw className={cn('w-5 h-5', loading && 'animate-spin')} />
           </button>
           <button
             onClick={() => setShowBalance(!showBalance)}
-            className="p-2 text-p01-chrome hover:text-white transition-colors"
+            className="p-2 text-p01-chrome hover:text-p01-text transition-colors"
             aria-label={showBalance ? 'Hide balances' : 'Show balances'}
           >
             {showBalance ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
@@ -276,7 +276,7 @@ export default function SubscriptionVaults() {
                 the user owns nothing when the truth is that this screen cannot
                 see what they own, and then invited them to create a second one.
               */}
-              <p className="text-white font-medium mb-1">No listed subscription vaults</p>
+              <p className="text-p01-text font-medium mb-1">No listed subscription vaults</p>
               <p className="text-p01-chrome text-xs mb-4">
                 Private subscriptions are keyed to a secret, not to your wallet, so they cannot be
                 looked up from this address — that is what keeps them private. Only older
@@ -322,10 +322,10 @@ export default function SubscriptionVaults() {
                       {vault.isPrivateMode ? (
                         <Shield className="w-5 h-5 text-p01-cyan" />
                       ) : (
-                        <Calendar className="w-5 h-5 text-p01-pink" />
+                        <Calendar className="w-5 h-5 text-p01-cyan" />
                       )}
                       <div>
-                        <p className="text-white font-medium text-sm">
+                        <p className="text-p01-text font-medium text-sm">
                           {vault.isPrivateMode ? 'Private Vault' : 'Normal Vault'}
                         </p>
                         <p className="text-p01-chrome text-xs font-mono">
@@ -347,7 +347,7 @@ export default function SubscriptionVaults() {
                       {status === 'ended' && (
                         <span
                           title="Every period this subscription paid for has gone by. It grants no access, and nothing further can be claimed from it."
-                          className="text-[10px] font-mono font-medium text-p01-pink bg-p01-pink/10 px-2 py-0.5 rounded-full border border-p01-pink/20"
+                          className="text-[10px] font-mono font-medium text-p01-cyan bg-p01-cyan/10 px-2 py-0.5 rounded-full border border-p01-cyan/20"
                         >
                           ENDED
                         </span>
@@ -372,13 +372,13 @@ export default function SubscriptionVaults() {
                   <div className="grid grid-cols-2 gap-3 mb-3">
                     <div className="bg-p01-void rounded-lg p-2">
                       <p className="text-p01-chrome text-[10px] mb-0.5">Retailer</p>
-                      <p className="text-white text-xs font-mono">
+                      <p className="text-p01-text text-xs font-mono">
                         {truncateAddress(vault.retailer)}
                       </p>
                     </div>
                     <div className="bg-p01-void rounded-lg p-2">
                       <p className="text-p01-chrome text-[10px] mb-0.5">Rate</p>
-                      <p className="text-white text-xs">
+                      <p className="text-p01-text text-xs">
                         {showBalance
                           ? formatTokenAmount(vault.rate, vault.tokenMint)
                           : '****'}
@@ -386,13 +386,13 @@ export default function SubscriptionVaults() {
                     </div>
                     <div className="bg-p01-void rounded-lg p-2">
                       <p className="text-p01-chrome text-[10px] mb-0.5">Interval</p>
-                      <p className="text-white text-xs">
+                      <p className="text-p01-text text-xs">
                         {formatInterval(vault.intervalSlots)}
                       </p>
                     </div>
                     <div className="bg-p01-void rounded-lg p-2">
                       <p className="text-p01-chrome text-[10px] mb-0.5">Deposited</p>
-                      <p className="text-white text-xs">
+                      <p className="text-p01-text text-xs">
                         {showBalance
                           ? formatTokenAmount(vault.totalDeposited, vault.tokenMint)
                           : '****'}
@@ -434,7 +434,7 @@ export default function SubscriptionVaults() {
                           setActionModal('pause');
                           setError(null);
                         }}
-                        className="flex-1 py-2 px-3 bg-p01-void text-p01-chrome rounded-lg text-xs font-medium hover:bg-p01-dark hover:text-white transition-colors flex items-center justify-center gap-1"
+                        className="flex-1 py-2 px-3 bg-p01-void text-p01-chrome rounded-lg text-xs font-medium hover:bg-p01-dark hover:text-p01-text transition-colors flex items-center justify-center gap-1"
                       >
                         <Pause className="w-3 h-3" />
                         Pause
@@ -509,7 +509,7 @@ export default function SubscriptionVaults() {
                 {actionModal === 'claim' && <DollarSign className="w-6 h-6 text-p01-cyan" />}
               </div>
               <div>
-                <h3 id="vault-action-title" className="text-lg font-display font-bold text-white capitalize">
+                <h3 id="vault-action-title" className="text-lg font-display font-bold text-p01-text capitalize">
                   {actionModal} Vault
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -545,7 +545,7 @@ export default function SubscriptionVaults() {
                   setError(null);
                 }}
                 disabled={isProcessing}
-                className="flex-1 py-3 bg-p01-void text-white font-medium rounded-xl hover:bg-p01-dark transition-colors disabled:opacity-50"
+                className="flex-1 py-3 bg-p01-void text-p01-text font-medium rounded-xl hover:bg-p01-dark transition-colors disabled:opacity-50"
               >
                 Back
               </button>

@@ -1,9 +1,23 @@
 /**
  * DenominatedTransfer — note-to-note transfer of a denominated note.
+ * Route: /shield/send-note, reached from the Shield tab's "Send note" action.
  *
  * Spends a MATURE denominated note (C1 + C3 ownership/membership) and mints a
  * brand-new note for the recipient (C6 insertion), then hands the recipient an
  * encoded "shareable note" string out-of-band. Funds never leave the pool.
+ *
+ * 🚨 THE HANDOFF IS THE SCREEN, NOT A SUCCESS PAGE. This flow produces the ONLY
+ * copy of the recipient's note. The recipient's note secrets are RANDOM, not
+ * seed-derived: if the encoded blob is lost, the funds are unrecoverable by
+ * anyone, including us. The old screen showed that blob under a tick and a
+ * "Note Transferred!" headline with a Done button of equal weight to a 10px
+ * "Copy" link — so the one action that had to happen was the smallest thing on
+ * a page that congratulated the user for finishing. Now:
+ *   - the copy action IS the primary button, full width, at the bottom;
+ *   - "Done" does not exist until the blob has been copied;
+ *   - going back before copying is intercepted and says what is lost.
+ * Warning before leaving is a confirmation step that carries information, which
+ * is the only kind this rework keeps.
  *
  * WHAT IS AND IS NOT HIDDEN — the copy on this screen must respect it:
  *   - No recipient IDENTITY is written on-chain. The transaction names an
@@ -22,10 +36,6 @@
  *     transferDenominatedStarkV3), so the payer is one public hop from the
  *     wallet. Not signing is real; it is not anonymity.
  *
- * The recipient's note secrets are RANDOM (not seed-derived): if the encoded
- * string is lost, the funds are permanently unrecoverable — surfaced loudly on
- * the success screen.
- *
  * Proof generation (C1 + C3 + C6) takes roughly 90-180s in the browser WASM.
  * Keep the popup open throughout. The note must be matured: the on-chain
  * handler checks `current_epoch >= min_epoch + dynamic_delay`
@@ -36,20 +46,11 @@
 
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import {
-  ArrowLeft,
-  Zap,
-  CheckCircle,
-  Loader2,
-  Lock,
-  Copy,
-  Check,
-  AlertTriangle,
-} from 'lucide-react';
+import { Check, Copy, Lock, Send } from 'lucide-react';
 import { cn, copyToClipboard } from '@/shared/utils';
 import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
 import { isNoteEncryptionAddress } from '@/shared/services/noteCrypto';
+import { Amount, Button, EmptyState, Panel, Pill, Screen } from '@/popup/ui';
 
 export default function DenominatedTransfer() {
   const navigate = useNavigate();
@@ -63,17 +64,22 @@ export default function DenominatedTransfer() {
   const [recipientAddr, setRecipientAddr] = useState('');
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
-  const [txSig, setTxSig] = useState<string | null>(null);
   const [encodedNote, setEncodedNote] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
 
   const selectedNote = notes.find((n) => n.commitment.toString() === selectedNoteId);
   const recipientValid = useMemo(
     () => isNoteEncryptionAddress(recipientAddr.trim()),
     [recipientAddr],
   );
-  const canSubmit = selectedNoteId !== null && recipientValid && !loading && !progress;
+  const busy = loading || progress !== null;
+  const canSubmit = selectedNoteId !== null && recipientValid && !busy;
+
+  /** What the blob is worth, for the sentence that says what is lost. */
+  const sentAmount = selectedNote
+    ? `${selectedNote.denominationHuman} ${selectedNote.token}`
+    : 'the note';
 
   const handleTransfer = async () => {
     if (!selectedNoteId || !selectedNote || !recipientValid) return;
@@ -85,9 +91,7 @@ export default function DenominatedTransfer() {
         recipientAddress: recipientAddr.trim(),
         onProgress: (step) => setProgress(step),
       });
-      setTxSig(result.txSig);
       setEncodedNote(result.encryptedNote);
-      setDone(true);
       setProgress(null);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -95,275 +99,239 @@ export default function DenominatedTransfer() {
     }
   };
 
+  // ⚠️ `copied` is STICKY. Everywhere else in this extension the copied tick
+  // resets after two seconds; here it also gates the Done button, and a Done
+  // that disappears again on a timer would be a trap.
   const handleCopy = async () => {
     if (!encodedNote) return;
     await copyToClipboard(encodedNote);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setConfirmLeave(false);
   };
 
-  if (done) {
+  /* ── The handoff. The blob exists here and nowhere else. ──────────────── */
+
+  if (encodedNote) {
+    const leave = () => navigate(-1);
+
     return (
-      <div className="flex flex-col h-full bg-p01-void">
-        <header className="flex items-center gap-3 px-4 py-3 border-b border-p01-border">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-2 text-p01-chrome hover:text-white transition-colors"
-            aria-label="Go back"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div className="flex-1 text-center">
-            <h1 className="text-white font-display font-bold tracking-wide text-sm">TRANSFER</h1>
-            <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
-              SHIELDED DENOMINATED POOL
-            </p>
-          </div>
-          <div className="w-9" />
-        </header>
+      <Screen
+        title="Send this to them"
+        onBack={() => (copied ? leave() : setConfirmLeave(true))}
+        footer={
+          copied ? (
+            <>
+              <Button full size="lg" onClick={leave}>
+                Done
+              </Button>
+              <Button full variant="ghost" className="mt-1" icon={Copy} onClick={() => void handleCopy()}>
+                Copy again
+              </Button>
+            </>
+          ) : (
+            <Button full size="lg" icon={Copy} onClick={() => void handleCopy()}>
+              Copy the encrypted note
+            </Button>
+          )
+        }
+      >
+        <div className="flex flex-col gap-4">
+          {/* Interception. Only ever seen by someone about to lose the note. */}
+          {confirmLeave && (
+            <Panel tone="warn">
+              <p role="alert" className="text-sm text-p01-text">
+                You have not copied it yet. Leave now and {sentAmount} is gone — no one can
+                rebuild this note, and the recipient never receives it.
+              </p>
+              <div className="mt-3 flex items-center gap-2">
+                <Button full icon={Copy} onClick={() => void handleCopy()}>
+                  Copy it
+                </Button>
+                <Button variant="ghost" onClick={leave}>
+                  Leave anyway
+                </Button>
+              </div>
+            </Panel>
+          )}
 
-        <div className="flex-1 overflow-y-auto p-4">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="flex flex-col items-center gap-4 pt-4"
-          >
-            <CheckCircle className="w-14 h-14 text-p01-cyan" />
-            <p className="text-white font-display font-bold text-lg tracking-wide">
-              Note Transferred!
-            </p>
-            <p className="text-p01-chrome text-xs text-center">
-              {selectedNote?.denominationHuman} {selectedNote?.token} moved to a new note.
-              Send the encrypted blob below to the recipient — it is the only way they can
-              claim it.
-            </p>
+          <p className="text-sm text-p01-text-muted">
+            {sentAmount} now sits in a note only the recipient can open. This blob is the only copy
+            of it: keep it or send it, but do not close this without one of the two.
+          </p>
 
-            {/* Encryption + irrecoverable note */}
-            <div className="w-full flex items-start gap-2 p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/40">
-              <AlertTriangle className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" />
-              <p className="text-yellow-300 text-[10px] leading-relaxed">
-                <span className="font-bold">Encrypted to the recipient</span> (post-quantum) — only
-                their wallet can open it, so it is safe to share over any channel. But if neither of
-                you keeps this blob, the {selectedNote?.denominationHuman} {selectedNote?.token} is
-                lost forever.
+          <div>
+            <div className="flex items-center justify-between">
+              <p className="text-tiny text-p01-text-muted">Encrypted note</p>
+              {copied && (
+                <span className="inline-flex items-center gap-1 text-tiny text-p01-cyan">
+                  <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                  Copied
+                </span>
+              )}
+            </div>
+            <div className="mt-1.5 max-h-40 overflow-y-auto rounded-lg border border-p01-border bg-p01-dark p-3">
+              <p className="break-all font-mono text-tiny leading-relaxed text-p01-text-muted">
+                {encodedNote}
               </p>
             </div>
+          </div>
 
-            {/* Encrypted note blob */}
-            {encodedNote && (
-              <div className="w-full">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-p01-chrome text-[10px] font-mono tracking-wider">
-                    ENCRYPTED NOTE (give to recipient)
-                  </span>
-                  <button
-                    onClick={handleCopy}
-                    className="flex items-center gap-1 text-p01-cyan text-[10px] hover:text-p01-cyan/80 transition-colors"
-                    aria-label={copied ? 'Note copied' : 'Copy encoded note'}
-                  >
-                    {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                    {copied ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
-                <div className="p-3 rounded-xl bg-p01-surface border border-p01-border max-h-32 overflow-y-auto">
-                  <p className="text-p01-chrome text-[9px] font-mono break-all leading-relaxed">
-                    {encodedNote}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {txSig && (
-              <p className="text-p01-chrome/50 text-[9px] font-mono break-all text-center">
-                tx: {txSig}
-              </p>
-            )}
-            <button
-              onClick={() => navigate(-1)}
-              className="mt-2 px-6 py-2 rounded-xl bg-p01-cyan text-p01-void font-bold font-display text-sm tracking-wider"
-            >
-              Done
-            </button>
-          </motion.div>
+          <p className="text-tiny text-p01-text-dim">
+            Encrypted to the recipient with X25519 and ML-KEM-768, so any channel is safe to send
+            it over. Their withdrawal republishes this note&apos;s commitment, which links it back
+            to this transfer.
+          </p>
         </div>
-      </div>
+      </Screen>
     );
   }
 
-  return (
-    <div className="flex flex-col h-full bg-p01-void">
-      {/* Header */}
-      <header className="flex items-center gap-3 px-4 py-3 border-b border-p01-border">
-        <button
-          onClick={() => navigate(-1)}
-          className="p-2 text-p01-chrome hover:text-white transition-colors"
-          aria-label="Go back"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <div className="flex-1 text-center">
-          <h1 className="text-white font-display font-bold tracking-wide text-sm">TRANSFER</h1>
-          <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
-            SHIELDED DENOMINATED POOL
-          </p>
-        </div>
-        <div className="w-9" />
-      </header>
+  /* ── Nothing to send ──────────────────────────────────────────────────── */
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Note picker */}
-        <div>
-          <p className="text-p01-chrome text-[10px] font-mono mb-2">SELECT NOTE TO TRANSFER</p>
-          {notes.length === 0 ? (
-            <div className="p-4 rounded-xl bg-p01-surface border border-p01-border text-center">
-              <Lock className="w-8 h-8 text-p01-chrome/30 mx-auto mb-2" />
-              <p className="text-p01-chrome text-sm">No shielded notes found</p>
-              <p className="text-p01-chrome/60 text-xs mt-1">
-                Shield some SOL first to create a shielded note.
-              </p>
+  if (notes.length === 0) {
+    return (
+      <Screen title="Send a note" onBack={() => navigate(-1)}>
+        <EmptyState
+          icon={Lock}
+          title="No notes to send"
+          body="Shield 1 SOL first. A note has to exist before it can be handed to someone."
+          action={
+            <Button variant="secondary" onClick={() => navigate(-1)}>
+              Back to Shield
+            </Button>
+          }
+        />
+      </Screen>
+    );
+  }
+
+  /* ── The form ─────────────────────────────────────────────────────────── */
+
+  const addrInvalid = recipientAddr.trim().length > 0 && !recipientValid;
+
+  return (
+    <Screen
+      title="Send a note"
+      onBack={() => navigate(-1)}
+      footer={
+        <>
+          {error && (
+            <p role="alert" className="mb-2 break-words text-tiny text-p01-red">
+              {error}
+            </p>
+          )}
+          <Button
+            full
+            size="lg"
+            icon={Send}
+            loading={busy}
+            disabled={!canSubmit}
+            onClick={() => void handleTransfer()}
+          >
+            {busy ? (progress ?? 'Sending') : 'Send note'}
+          </Button>
+          <p className="mt-2 text-center text-tiny text-p01-text-dim">
+            Proving takes 2 to 3 minutes. Keep this popup open.
+          </p>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-5">
+        {/* ── Which note ── */}
+        {notes.length === 1 && selectedNote ? (
+          <Panel tone="quiet">
+            <div className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2">
+                <Amount value={selectedNote.denominationHuman} unit={selectedNote.token} size="sm" />
+                {selectedNote.source === 'received' && <Pill>Received</Pill>}
+              </span>
+              <span className="font-mono text-tiny text-p01-text-dim">
+                leaf {selectedNote.leafIndex}
+              </span>
             </div>
-          ) : (
-            <div className="space-y-2">
+          </Panel>
+        ) : (
+          <div>
+            <p className="text-tiny text-p01-text-muted">Note</p>
+            <div role="radiogroup" aria-label="Note to send" className="mt-1.5 flex flex-col gap-2">
               {notes.map((note) => {
                 const id = note.commitment.toString();
                 const selected = id === selectedNoteId;
                 return (
                   <button
                     key={id}
+                    role="radio"
+                    aria-checked={selected}
                     onClick={() => setSelectedNoteId(id)}
                     className={cn(
-                      'w-full p-3 rounded-xl border text-left transition-all',
+                      'flex min-h-[52px] w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left',
+                      'transition-colors duration-exit',
+                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan',
                       selected
-                        ? 'bg-p01-cyan/15 border-p01-cyan'
-                        : 'bg-p01-surface border-p01-border hover:border-p01-cyan/40',
+                        ? 'border-p01-cyan bg-p01-cyan/10'
+                        : 'border-p01-border hover:border-p01-border-light',
                     )}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Lock className={cn('w-4 h-4', selected ? 'text-p01-cyan' : 'text-p01-chrome/60')} />
-                        <span className={cn('text-sm font-mono font-bold', selected ? 'text-p01-cyan' : 'text-white')}>
-                          {note.denominationHuman} {note.token}
-                        </span>
-                        {note.source === 'received' && (
-                          <span className="text-[8px] font-mono text-p01-cyan/70 border border-p01-cyan/30 rounded px-1 py-0.5">
-                            RECEIVED
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-p01-chrome/50 text-[10px] font-mono">
-                        leaf #{note.leafIndex}
-                      </span>
-                    </div>
-                    <p className="text-p01-chrome/40 text-[9px] font-mono mt-1 truncate">
-                      {id.slice(0, 20)}…
-                    </p>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Amount value={note.denominationHuman} unit={note.token} size="sm" />
+                      {note.source === 'received' && <Pill>Received</Pill>}
+                    </span>
+                    <span className="shrink-0 font-mono text-tiny text-p01-text-dim">
+                      leaf {note.leafIndex}
+                    </span>
                   </button>
                 );
               })}
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* Recipient address */}
-        <div>
-          <p className="text-p01-chrome text-[10px] font-mono mb-2">RECIPIENT ADDRESS (p01pq:…)</p>
+        {/* ── Who gets it. Their note address, not a wallet address. ── */}
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="recipient-note-address" className="text-tiny text-p01-text-muted">
+            Their note address
+          </label>
           <textarea
+            id="recipient-note-address"
             value={recipientAddr}
             onChange={(e) => {
               setRecipientAddr(e.target.value);
               setError(null);
             }}
-            placeholder="Paste the recipient's p01pq:… note address"
+            placeholder="p01pq:…"
             rows={3}
-            aria-label="Recipient note address"
+            spellCheck={false}
+            aria-invalid={addrInvalid || undefined}
+            aria-describedby={addrInvalid ? 'recipient-note-address-err' : undefined}
             className={cn(
-              'w-full rounded-xl p-3 text-[10px] font-mono text-white outline-none resize-none break-all bg-p01-surface border transition-colors placeholder:text-p01-chrome/30',
-              recipientAddr.trim() && !recipientValid
-                ? 'border-p01-red/60'
-                : 'border-p01-border focus:border-p01-cyan/40',
+              'w-full resize-none break-all rounded-lg border bg-p01-dark p-3 font-mono text-tiny text-p01-text',
+              'outline-none transition-colors duration-exit placeholder:text-p01-text-dim',
+              'focus:border-p01-cyan focus-visible:outline-none',
+              addrInvalid ? 'border-p01-red' : 'border-p01-border',
             )}
           />
-          {recipientAddr.trim() && !recipientValid && (
-            <p className="text-p01-red text-[9px] font-mono mt-1">
-              Invalid address — expected a p01pq:… post-quantum note address.
+          {addrInvalid ? (
+            <p id="recipient-note-address-err" role="alert" className="text-tiny text-p01-red">
+              Not a note address. It starts with p01pq: and comes from their Receive screen.
+            </p>
+          ) : (
+            <p className="text-tiny text-p01-text-dim">
+              Ask them for it from their Receive screen. A wallet address will not work.
             </p>
           )}
-          {recipientValid && (
-            <p className="text-p01-cyan text-[9px] font-mono mt-1">✓ Valid recipient address</p>
-          )}
         </div>
 
-        {/* Info card */}
-        <div className="p-3 rounded-xl bg-p01-cyan/10 border border-p01-cyan/30">
-          <div className="flex items-start gap-2">
-            <Zap className="w-4 h-4 text-p01-cyan shrink-0 mt-0.5" />
-            <div>
-              <p className="text-[10px] font-mono font-bold text-p01-cyan tracking-wider mb-1">
-                [ NOTE-TO-NOTE TRANSFER ]
-              </p>
-              <p className="text-p01-chrome text-[10px] leading-relaxed">
-                Generates C1 + C3 + C6 STARK proofs (~90-180s). The note must be matured. The
-                output note is encrypted to the recipient (post-quantum X25519 + ML-KEM-768), so
-                the blob is safe to share. Proof rent is recovered after the tx confirms.
-              </p>
-              <p className="text-p01-chrome/70 text-[9px] leading-relaxed mt-2">
-                The recipient is never named on-chain: the transaction carries an ephemeral
-                payer and two commitments, and the blob is handed over off-chain. But the
-                commitment of the note you are spending goes on-chain here — the same value
-                your deposit published — so this transfer is still matchable to your deposit,
-                and the recipient&apos;s later withdrawal is matchable back to this transfer.
-                The ephemeral payer is funded by your wallet moments earlier, in the clear.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Progress / error */}
-        {progress && (
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-p01-surface border border-p01-border" aria-live="polite">
-            <Loader2 className="w-4 h-4 text-p01-cyan animate-spin shrink-0" aria-hidden="true" />
-            <p className="text-p01-chrome text-[10px] font-mono">{progress}</p>
-          </div>
-        )}
-
-        {error && (
-          <div
-            className="p-3 rounded-lg bg-p01-red/10 border border-p01-red/30"
-            role="alert"
-            aria-live="assertive"
-          >
-            <p className="text-p01-red text-[10px] font-mono break-all">{error}</p>
-          </div>
-        )}
-
-        {/* Action button */}
-        <button
-          onClick={handleTransfer}
-          disabled={!canSubmit || notes.length === 0}
-          className={cn(
-            'w-full py-3 rounded-xl font-bold font-display text-sm tracking-wider transition-colors flex items-center justify-center gap-2',
-            !canSubmit || notes.length === 0
-              ? 'bg-p01-surface border border-p01-border text-p01-chrome/50 cursor-not-allowed'
-              : 'bg-p01-cyan text-p01-void hover:bg-p01-cyan/90',
-          )}
-        >
-          {loading || !!progress ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Proving & Transferring...
-            </>
-          ) : (
-            <>
-              <Zap className="w-4 h-4" />
-              Transfer Note
-            </>
-          )}
-        </button>
-
-        <p className="text-p01-chrome/40 text-[9px] font-mono text-center">
-          C1 + C3 + C6 proofs + on-chain transfer takes ~2-3 min. Do not close the popup.
-        </p>
+        {/* ── What lands on-chain, and what you will be holding afterwards ── */}
+        <Panel tone="warn">
+          <p className="text-sm text-p01-text">You will end up holding the only copy.</p>
+          <p className="mt-1 text-tiny text-p01-text-muted">
+            This produces one encrypted blob for the recipient. Lose it before they have it and
+            nobody can rebuild it. The transfer also republishes the commitment of the note you are
+            spending — the same value your deposit wrote — so it stays matchable to that deposit,
+            and the ephemeral payer is funded by your wallet moments earlier, in the clear.
+          </p>
+        </Panel>
       </div>
-    </div>
+    </Screen>
   );
 }

@@ -1,11 +1,29 @@
+/**
+ * Unlock: password in, wallet open.
+ *
+ * 🚨 THIS SCREEN SAID "LOCKED" FOUR TIMES IN FOUR TYPEFACES. A pink mono
+ * `[ LOCKED ]` badge, a bold `WALLET LOCKED` headline under it, an
+ * `ENTER PASSWORD TO UNLOCK` mono subtitle under that, and a padlock glyph
+ * inside the field — plus a `SOLANA NETWORK` footer that answered a question
+ * nobody asks while locked out of their own wallet. Four restatements of one
+ * fact is not emphasis, it is noise, and it pushed the only control on the
+ * screen down past the fold of a 360px popup.
+ *
+ * What is left is what Phantom shows: the mark, one sentence, one field, one
+ * button, one link. The screen is already the lock; it does not need to say so.
+ *
+ * ⚠️ NOT TOUCHED: the lockout timer, `getLockoutRemaining`, the
+ * `afterUnlockPath` redirect and the reset path. Every one of those is
+ * security behaviour, and this was a visual pass.
+ */
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
-import { AlertCircle, Eye, EyeOff, Loader2, Lock, LogOut, X } from 'lucide-react';
+import { Eye, EyeOff, LogOut, X } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { getLockoutRemaining } from '@/shared/services/crypto';
+import { Button, Field } from '@/popup/ui';
 import Wordmark from '../components/Wordmark';
-import { cn } from '@/shared/utils';
 
 export default function Unlock() {
   const navigate = useNavigate();
@@ -102,192 +120,116 @@ export default function Unlock() {
     navigate('/welcome');
   };
 
+  // One message under one field. The lockout outranks a stale "Invalid
+  // password" from the attempt that triggered it.
+  const fieldError = isLockedOut
+    ? `Too many failed attempts. Try again in ${lockoutSeconds}s.`
+    : localError || error || undefined;
+
   return (
-    <div className="flex flex-col h-full bg-p01-void" role="main" aria-label="Unlock wallet">
-      <div className="flex-1 flex flex-col items-center justify-center px-6">
-        <motion.div
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className="text-center mb-6"
-        >
-          {/* Glitch Logo */}
-          <Wordmark size={80} showText={false} animated={true} />
+    <div className="flex h-full flex-col bg-p01-void" role="main" aria-label="Unlock wallet">
+      <header className="flex shrink-0 items-center px-4 py-3">
+        <Wordmark size={20} showText />
+      </header>
 
-          {/* Terminal status */}
-          <div className="mt-4">
-            <span className="text-p01-pink text-[10px] font-bold tracking-[4px] font-mono">
-              [ LOCKED ]
-            </span>
-            <h1 className="text-base font-display font-bold text-white tracking-wider mt-2">
-              WALLET LOCKED
-            </h1>
-            <p className="text-[10px] text-[#555560] font-mono tracking-wider mt-1">
-              ENTER PASSWORD TO UNLOCK
-            </p>
-          </div>
-        </motion.div>
+      <div className="flex flex-1 flex-col items-center justify-center gap-7 px-6 pb-8">
+        <Wordmark size={92} animated />
 
-        {/* Password Input */}
-        <div className="w-full max-w-xs space-y-4">
-          <div className="relative">
-            <div className="absolute left-3 top-1/2 -translate-y-1/2">
-              <Lock className="w-4 h-4 text-p01-chrome/40" />
-            </div>
-            <input
-              type={showPassword ? 'text' : 'password'}
-              placeholder="Enter password"
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setLocalError('');
-              }}
-              onKeyPress={handleKeyPress}
-              className="w-full pl-10 pr-10 py-3 bg-p01-surface border border-p01-border text-white font-mono text-sm focus:outline-none focus:border-p01-cyan transition-colors"
-              autoFocus
-              aria-label="Wallet password"
-              aria-describedby="unlock-error"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-p01-chrome/60 hover:text-white"
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
-            >
-              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-          </div>
+        <div className="w-full">
+          <h1 className="mb-4 text-center font-display text-xl font-light">
+            Enter your password
+          </h1>
 
-          {/* Lockout warning */}
-          {isLockedOut && (
-            <div className="flex items-center gap-2 p-3 bg-warning/10 border border-warning/30 text-warning" role="alert" aria-live="polite">
-              <Lock className="w-4 h-4 flex-shrink-0" />
-              <span className="text-xs font-mono">
-                Too many failed attempts. Try again in {lockoutSeconds}s
-              </span>
-            </div>
-          )}
+          <Field
+            label="Password"
+            type={showPassword ? 'text' : 'password'}
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setLocalError('');
+            }}
+            onKeyPress={handleKeyPress}
+            autoFocus
+            autoComplete="current-password"
+            error={fieldError}
+            suffix={
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="flex h-11 w-11 items-center justify-center rounded-lg text-p01-text-dim transition-colors duration-exit hover:text-p01-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? (
+                  <EyeOff className="h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <Eye className="h-4 w-4" aria-hidden="true" />
+                )}
+              </button>
+            }
+          />
 
-          {/* Error */}
-          {!isLockedOut && (localError || error) && (
-            <div id="unlock-error" className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 text-red-400" role="alert" aria-live="polite">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
-              <span className="text-xs font-mono">{localError || error}</span>
-            </div>
-          )}
-
-          {/* Unlock Button */}
-          <button
-            onClick={handleUnlock}
-            disabled={isLoading || !password || isLockedOut}
-            className={cn(
-              'w-full py-3 font-display font-bold text-sm tracking-wider transition-colors flex items-center justify-center gap-2',
-              isLoading || !password || isLockedOut
-                ? 'bg-p01-border text-p01-chrome/40 cursor-not-allowed'
-                : 'bg-p01-cyan text-p01-void hover:bg-p01-cyan-dim'
-            )}
+          <Button
+            full
+            size="lg"
+            className="mt-4"
+            loading={isLoading}
+            disabled={!password || isLockedOut}
+            onClick={() => void handleUnlock()}
           >
-            {isLoading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                UNLOCKING...
-              </>
-            ) : isLockedOut ? (
-              `LOCKED (${lockoutSeconds}s)`
-            ) : (
-              'UNLOCK'
-            )}
-          </button>
+            Unlock
+          </Button>
         </div>
 
-        {/* Logout link */}
-        <button
-          onClick={handleLogout}
-          className="mt-6 text-[10px] text-[#555560] hover:text-p01-cyan transition-colors font-mono tracking-wider flex items-center gap-1"
-          aria-label="Forgot password? Disconnect wallet"
-        >
-          <LogOut className="w-3 h-3" aria-hidden="true" />
-          FORGOT PASSWORD? DISCONNECT
-        </button>
+        <Button variant="ghost" onClick={handleLogout}>
+          Forgot password?
+        </Button>
       </div>
 
-      {/* Network indicator footer */}
-      <footer className="py-3 text-center border-t border-p01-border">
-        <p className="text-[10px] text-[#555560] tracking-[2px] font-mono uppercase">
-          Solana Network
-        </p>
-      </footer>
+      {/* The one confirmation kept on this screen: it wipes the local wallet,
+          and it is the only place that says the seed phrase still recovers it. */}
+      {showLogoutModal && (
+        <div
+          className="animate-fadeIn fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="disconnect-modal-title"
+        >
+          <div className="w-full max-w-sm rounded-xl border border-p01-border bg-p01-dark">
+            <div className="flex items-center justify-between border-b border-p01-border-soft py-2 pl-4 pr-2">
+              <h2 id="disconnect-modal-title" className="font-display text-lg font-normal">
+                Disconnect wallet
+              </h2>
+              <button
+                onClick={() => setShowLogoutModal(false)}
+                className="flex h-11 w-11 items-center justify-center rounded-lg text-p01-text-muted transition-colors duration-exit hover:text-p01-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
 
-      {/* Logout Modal - Simple confirmation */}
-      <AnimatePresence>
-        {showLogoutModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="disconnect-modal-title"
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-p01-void border border-p01-border w-full max-w-sm"
-            >
-              {/* Modal Header */}
-              <div className="flex items-center justify-between p-4 border-b border-p01-border">
-                <div className="flex items-center gap-2">
-                  <LogOut className="w-5 h-5 text-p01-cyan" />
-                  <h2 id="disconnect-modal-title" className="text-sm font-bold text-white font-mono tracking-wider">
-                    DISCONNECT WALLET
-                  </h2>
-                </div>
-                <button
+            <div className="flex flex-col gap-4 p-4">
+              <p className="text-sm text-p01-text-muted">
+                This removes the wallet from this device only. It still exists on chain, and
+                your 12 or 24 word recovery phrase imports it back at any time.
+              </p>
+
+              <div className="flex gap-2">
+                <Button
+                  full
+                  variant="secondary"
                   onClick={() => setShowLogoutModal(false)}
-                  className="p-1 hover:bg-p01-surface transition-colors"
-                  aria-label="Close"
                 >
-                  <X className="w-4 h-4 text-p01-chrome" />
-                </button>
+                  Cancel
+                </Button>
+                <Button full icon={LogOut} onClick={() => void handleConfirmLogout()}>
+                  Disconnect
+                </Button>
               </div>
-
-              {/* Modal Content */}
-              <div className="p-4 space-y-4">
-                <div className="bg-p01-cyan/10 border border-p01-cyan/30 p-4">
-                  <p className="text-xs text-p01-cyan font-mono font-bold mb-2">
-                    🔑 YOUR FUNDS ARE SAFE
-                  </p>
-                  <ul className="text-[11px] text-p01-chrome font-mono space-y-1">
-                    <li>• This only disconnects from this device</li>
-                    <li>• Your wallet still exists on the blockchain</li>
-                    <li>• Re-import anytime with your seed phrase</li>
-                  </ul>
-                </div>
-
-                <p className="text-[11px] text-p01-chrome/60 font-mono text-center">
-                  After disconnecting, you can import your wallet again using your 12 or 24 word recovery phrase.
-                </p>
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setShowLogoutModal(false)}
-                    className="flex-1 py-3 bg-p01-surface text-p01-chrome font-bold text-sm tracking-wider font-mono border border-p01-border hover:text-white transition-colors"
-                  >
-                    CANCEL
-                  </button>
-                  <button
-                    onClick={handleConfirmLogout}
-                    className="flex-1 py-3 bg-p01-cyan text-p01-void font-bold text-sm tracking-wider font-mono hover:bg-p01-cyan-dim transition-colors"
-                  >
-                    DISCONNECT
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

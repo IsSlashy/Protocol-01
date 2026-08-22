@@ -153,12 +153,13 @@ describe('Settings', () => {
     );
 
     // Find and click the Hide Balance toggle (it's a button with specific class)
+    // ⚠️ Asserted, not `if (toggle)`. The optional form passed vacuously for as
+    // long as the switch was missing, which is exactly when it should fail.
     const hideBalanceSection = screen.getByText('Hide Balance').closest('div[class*="flex"]');
     const toggle = hideBalanceSection?.querySelector('button[class*="rounded-full"]');
-    if (toggle) {
-      fireEvent.click(toggle);
-      expect(mockToggleHideBalance).toHaveBeenCalled();
-    }
+    expect(toggle).toBeTruthy();
+    fireEvent.click(toggle!);
+    expect(mockToggleHideBalance).toHaveBeenCalled();
   });
 
   it('renders the SECURITY section with Backup and Change Password', () => {

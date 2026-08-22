@@ -114,7 +114,10 @@ export default function Shield() {
     let r = 0;
     let m = 0;
     for (const n of notes) {
-      t += n.denomination;
+      // ⚠️ `denomination` is the atomic bigint. `denominationHuman` is the
+      // number a person reads. Adding the former to a JS number is the
+      // mistake that silently makes a balance meaningless.
+      t += n.denominationHuman;
       if (maturityOf(n.shieldedAt).ready) r += 1;
       else m += 1;
     }
@@ -348,7 +351,7 @@ export default function Shield() {
                     <div className="flex items-center gap-3 py-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <Amount value={n.denomination} unit="SOL" size="sm" />
+                          <Amount value={n.denominationHuman} unit="SOL" size="sm" />
                           {m.ready ? (
                             <Pill tone="good">Ready</Pill>
                           ) : (

@@ -3,19 +3,24 @@
  *
  * The ApproveTransaction page handles transaction signing and message signing
  * requests from dApps. It displays:
- * - The requesting dApp's name and icon
+ * - The requesting dApp's name and origin
  * - Whether it is a message sign or transaction sign request
- * - Transaction details (sender, network, privacy mode, fee estimate)
- * - Warning to verify before signing
- * - APPROVE/SIGN and REJECT buttons
+ * - The facts of the signature, always open: signer, network, fee, stealth
+ * - One caution line
+ * - Reject and Approve, side by side
  *
  * Validates:
  * - Loading state while fetching request
  * - Transaction request display
  * - Message signing request display
- * - Privacy badge for stealth transactions
+ * - Stealth row for private transactions
  * - Approve and reject button interactions
- * - Error state handling
+ *
+ * ⚠️ WHY THE COPY ASSERTIONS CHANGED. The screen used monospace capitals as UI
+ * labels ("SIGN TRANSACTION", "EST. FEE", "VERIFY BEFORE SIGNING") and said
+ * several things twice: a badge repeating the header, an origin card repeating
+ * the origin, and stealth announced as both a row and a card. The duplicates
+ * are deleted and the labels are sentence case; these tests follow the screen.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -33,7 +38,10 @@ vi.mock('@/shared/store/wallet', () => ({
   }),
 }));
 
-vi.mock('@/shared/utils', () => ({
+// Partial mock: the UI kit imports `cn` from the same module, so replacing the
+// whole module leaves every shared component without its class merger.
+vi.mock('@/shared/utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/shared/utils')>()),
   truncateAddress: (addr: string, chars: number) =>
     `${addr.slice(0, chars)}...${addr.slice(-chars)}`,
 }));
@@ -90,7 +98,7 @@ describe('ApproveTransaction', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('LOADING REQUEST...')).toBeInTheDocument();
+    expect(screen.getByText('Loading request')).toBeInTheDocument();
   });
 
   it('displays transaction signing request once loaded', async () => {
@@ -114,7 +122,7 @@ describe('ApproveTransaction', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('SIGN TRANSACTION')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Sign transaction' })).toBeInTheDocument();
       expect(screen.getByText('Raydium')).toBeInTheDocument();
     });
   });
@@ -141,15 +149,15 @@ describe('ApproveTransaction', () => {
     );
 
     await waitFor(() => {
-      // "SIGN MESSAGE" appears in both the header and the approve button
-      const signMsgs = screen.getAllByText('SIGN MESSAGE');
-      expect(signMsgs.length).toBeGreaterThanOrEqual(1);
-      expect(screen.getByText('MESSAGE SIGNATURE')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Sign message' })).toBeInTheDocument();
+      expect(screen.getByText('Message')).toBeInTheDocument();
       expect(screen.getByText('Hello, Protocol 01!')).toBeInTheDocument();
+      // The action says what it does, once, and differently from the title.
+      expect(screen.getByRole('button', { name: 'Sign' })).toBeInTheDocument();
     });
   });
 
-  it('shows the "VERIFY BEFORE SIGNING" warning', async () => {
+  it('warns, once, that only trusted sites should be approved', async () => {
     (chrome.storage.session.get as ReturnType<typeof vi.fn>).mockResolvedValue({
       currentApproval: {
         id: 'tx-req-2',
@@ -168,14 +176,13 @@ describe('ApproveTransaction', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('VERIFY BEFORE SIGNING')).toBeInTheDocument();
       expect(
         screen.getByText(/Only approve transactions from sites you trust/),
       ).toBeInTheDocument();
     });
   });
 
-  it('displays the sender address and network', async () => {
+  it('displays the signer address and network, never behind a disclosure', async () => {
     (chrome.storage.session.get as ReturnType<typeof vi.fn>).mockResolvedValue({
       currentApproval: {
         id: 'tx-req-3',
@@ -194,14 +201,14 @@ describe('ApproveTransaction', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('FROM')).toBeInTheDocument();
-      expect(screen.getByText('NETWORK')).toBeInTheDocument();
-      expect(screen.getByText('Solana Devnet')).toBeInTheDocument();
+      expect(screen.getByText('From')).toBeInTheDocument();
+      expect(screen.getByText('Network')).toBeInTheDocument();
+      expect(screen.getByText('Solana devnet')).toBeInTheDocument();
       expect(screen.getByText(/7xKXtg\.\.\.osgAsU/)).toBeInTheDocument();
     });
   });
 
-  it('shows the privacy badge for stealth transactions', async () => {
+  it('shows a single stealth row for private transactions', async () => {
     (chrome.storage.session.get as ReturnType<typeof vi.fn>).mockResolvedValue({
       currentApproval: {
         id: 'tx-req-4',
@@ -223,12 +230,15 @@ describe('ApproveTransaction', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('PRIVATE TRANSACTION')).toBeInTheDocument();
-      expect(screen.getByText('STEALTH')).toBeInTheDocument();
+      expect(screen.getByText('Privacy')).toBeInTheDocument();
+      expect(screen.getByText('Stealth address')).toBeInTheDocument();
+      expect(
+        screen.getByText(/The recipient is not publicly linked to this wallet/),
+      ).toBeInTheDocument();
     });
   });
 
-  it('renders APPROVE and REJECT buttons', async () => {
+  it('renders Approve and Reject', async () => {
     (chrome.storage.session.get as ReturnType<typeof vi.fn>).mockResolvedValue({
       currentApproval: {
         id: 'tx-req-5',
@@ -247,12 +257,12 @@ describe('ApproveTransaction', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('APPROVE')).toBeInTheDocument();
-      expect(screen.getByText('REJECT')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
     });
   });
 
-  it('calls rejectRequest and closes window on REJECT', async () => {
+  it('calls rejectRequest and closes window on Reject', async () => {
     (chrome.storage.session.get as ReturnType<typeof vi.fn>).mockResolvedValue({
       currentApproval: {
         id: 'tx-req-6',
@@ -271,10 +281,10 @@ describe('ApproveTransaction', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('REJECT')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText('REJECT'));
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
 
     await waitFor(() => {
       expect(mockRejectRequest).toHaveBeenCalledWith('tx-req-6', 'User rejected');
@@ -282,7 +292,7 @@ describe('ApproveTransaction', () => {
     });
   });
 
-  it('displays estimated fee for transactions', async () => {
+  it('displays the network fee for transactions', async () => {
     (chrome.storage.session.get as ReturnType<typeof vi.fn>).mockResolvedValue({
       currentApproval: {
         id: 'tx-req-7',
@@ -301,7 +311,7 @@ describe('ApproveTransaction', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('EST. FEE')).toBeInTheDocument();
+      expect(screen.getByText('Network fee')).toBeInTheDocument();
       expect(screen.getByText('~0.000005 SOL')).toBeInTheDocument();
     });
   });

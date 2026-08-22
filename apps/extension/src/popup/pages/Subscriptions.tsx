@@ -2,35 +2,36 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
-  Repeat,
-  ChevronRight,
   AlertCircle,
-  Plus,
-  Shield,
-  EyeOff,
-  Clock,
-  Shuffle,
-  Play,
-  Music,
   Bot,
-  Gamepad2,
   Briefcase,
-  Newspaper,
-  Dumbbell,
-  Cloud,
-  CreditCard,
-  GraduationCap,
-  Target,
-  MessageCircle,
-  RefreshCw,
-  Loader2,
-  User,
-  Grid,
-  Palette,
-  Info,
   CheckCircle,
-  Wallet,
+  ChevronRight,
+  Clock,
+  Cloud,
+  Compass,
+  CreditCard,
+  Dumbbell,
+  EyeOff,
+  Gamepad2,
+  GraduationCap,
+  Grid,
+  Info,
+  Loader2,
+  MessageCircle,
+  Music,
+  Newspaper,
+  Palette,
+  Play,
+  Plus,
+  RefreshCw,
+  Repeat,
+  Shield,
   ShieldCheck,
+  Shuffle,
+  Target,
+  User,
+  Wallet,
 } from 'lucide-react';
 import { cn, formatCurrency } from '@/shared/utils';
 import { useSubscriptionsStore, useSubscriptionStats } from '@/shared/store/subscriptions';
@@ -47,6 +48,17 @@ import {
   type ServiceCategory,
 } from '@/shared/services/serviceRegistry';
 import { fetchAllServices, type OnchainServiceEntry } from '@/shared/services/onchainServiceRegistry';
+import { formatRelativeTime } from '@/shared/utils';
+import {
+  Amount,
+  Button,
+  Eyebrow,
+  EmptyState,
+  Hairline,
+  Panel,
+  Pill,
+  Screen,
+} from '@/popup/ui';
 
 // Map category icon names to Lucide components
 const CATEGORY_ICONS: Record<string, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
@@ -109,11 +121,9 @@ function mapOnchainService(e: OnchainServiceEntry): DisplayService {
   };
 }
 
-type SectionType = 'personal' | 'services';
 
 export default function Subscriptions() {
   const navigate = useNavigate();
-  const [activeSection, setActiveSection] = useState<SectionType>('personal');
   const [showPrivacyInfo, setShowPrivacyInfo] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [services, setServices] = useState<DisplayService[]>([]);
@@ -238,575 +248,127 @@ export default function Subscriptions() {
     });
   };
 
-  const handleCreatePersonalStream = () => {
-    navigate('/subscriptions/new');
-  };
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto">
-      {/* Summary Card */}
-      <div className="p-4">
-        <motion.div
-          initial={{ y: 10, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="bg-p01-gradient-card rounded-2xl p-4 border border-p01-cyan/30"
+    /**
+     * 🎯 REBUILT 2026-08-23. This tab was 491 lines of render behind a
+     * Personal / Services segmented control that opened on Personal, i.e. on
+     * the half being parked. It then showed a merchant catalog, a privacy
+     * score, a sync banner and two separate stream lists, and a merchant you
+     * had already subscribed to rendered `disabled`, so the only way to open
+     * that subscription was to scroll past the whole catalog to a second list.
+     *
+     * It is one question now: what am I paying for. The catalog moved to the
+     * Discover tab, which is the screen built to sell it; keeping a second
+     * copy here is what forced the mode switch in the first place.
+     *
+     * ⛔ The "Create Payment Stream" button is gone with the personal section.
+     * Subscriptions start from a merchant, and a merchant is on Discover.
+     */
+    <Screen
+      title="Subscriptions"
+      action={
+        <button
+          onClick={handleSync}
+          disabled={isSyncing}
+          aria-label="Sync subscriptions from chain"
+          className="flex h-11 w-11 items-center justify-center rounded-lg text-p01-text-muted transition-colors duration-exit hover:text-p01-text disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
         >
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Repeat className="w-5 h-5 text-p01-cyan" />
-              <span className="text-sm font-medium text-p01-cyan">
-                Stream Secure
-              </span>
+          <RefreshCw className={isSyncing ? "h-4 w-4 animate-spin" : "h-4 w-4"} aria-hidden="true" />
+        </button>
+      }
+    >
+      <div className="flex flex-col gap-5">
+        {activeSubscriptions.length > 0 && (
+          <div className="flex items-start justify-between">
+            <div>
+              <Eyebrow>Monthly</Eyebrow>
+              <div className="mt-1.5">
+                <Amount value={stats.monthlyCost.toFixed(3)} unit="SOL" size="lg" />
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleSync}
-                disabled={!publicKey || isSyncing}
-                className="p-1.5 rounded-lg bg-p01-surface/50 hover:bg-p01-surface transition-colors disabled:opacity-50"
-                aria-label="Sync from blockchain"
-              >
-                {isSyncing ? (
-                  <Loader2 className="w-4 h-4 text-p01-cyan animate-spin" />
-                ) : (
-                  <RefreshCw className="w-4 h-4 text-p01-cyan" />
-                )}
-              </button>
-              <button
-                onClick={() => setShowPrivacyInfo(!showPrivacyInfo)}
-                className="p-1.5 rounded-lg bg-p01-surface/50 hover:bg-p01-surface transition-colors"
-                aria-label="Privacy info"
-                aria-expanded={showPrivacyInfo}
-              >
-                <Shield className="w-4 h-4 text-p01-cyan" />
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-display font-bold text-white">
-              {stats.monthlyCost.toFixed(2)}
-            </span>
-            <span className="text-sm text-p01-chrome/60">SOL/month</span>
-          </div>
-
-          <div className="flex items-center justify-between mt-2">
-            <p className="text-xs text-p01-chrome/60">
-              {activeCount} active stream{activeCount !== 1 ? 's' : ''}
-            </p>
-            {nextDue && (
-              <p className="text-xs text-p01-chrome/60">
-                Next: {new Date(nextDue).toLocaleDateString()}
+            <div className="text-right">
+              <Eyebrow>Next payment</Eyebrow>
+              <p className="mt-1.5 text-sm text-p01-text tabular">
+                {stats.nextDue ? formatRelativeTime(stats.nextDue) : "None due"}
               </p>
-            )}
+            </div>
           </div>
-
-          {/* Privacy Score Bar */}
-          {subscriptions.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-p01-border/50">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-p01-chrome/60">Privacy Features On</span>
-                <span className="text-xs font-medium text-p01-cyan">{privacyScore}%</span>
-              </div>
-              <div className="h-1.5 bg-p01-border rounded-full overflow-hidden">
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: `${privacyScore}%` }}
-                  transition={{ duration: 0.5, delay: 0.2 }}
-                  className="h-full bg-p01-cyan rounded-full"
-                />
-              </div>
-            </div>
-          )}
-        </motion.div>
-
-        {/* Privacy Info Panel */}
-        {showPrivacyInfo && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="mt-3 bg-p01-surface rounded-xl p-4 border border-p01-cyan/30"
-          >
-            <h4 className="text-sm font-semibold text-p01-cyan mb-3 flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4" />
-              Privacy Features
-            </h4>
-            <div className="space-y-3">
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-p01-cyan/10 flex items-center justify-center flex-shrink-0">
-                  <Shuffle className="w-4 h-4 text-p01-cyan" />
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-white">Amount Noise</p>
-                  <p className="text-xs text-p01-chrome/60">
-                    Vary amounts by up to 20%
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-p01-cyan/10 flex items-center justify-center flex-shrink-0">
-                  <Clock className="w-4 h-4 text-p01-cyan" />
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-white">Timing Noise</p>
-                  <p className="text-xs text-p01-chrome/60">
-                    Randomize payment times
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-p01-pink/10 flex items-center justify-center flex-shrink-0">
-                  <EyeOff className="w-4 h-4 text-p01-pink" />
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-white">Stealth Addresses</p>
-                  <p className="text-xs text-p01-chrome/60">
-                    Unique address per payment
-                  </p>
-                </div>
-              </div>
-            </div>
-          </motion.div>
         )}
-      </div>
 
-      {/* Section Toggle */}
-      <div className="px-4 mb-4">
-        <div className="flex gap-1 p-1 bg-p01-surface rounded-xl">
-          <button
-            onClick={() => setActiveSection('personal')}
-            aria-pressed={activeSection === 'personal'}
-            className={cn(
-              'flex-1 flex items-center justify-center gap-2 py-3 rounded-lg transition-all font-medium text-sm',
-              activeSection === 'personal'
-                ? 'bg-p01-cyan text-p01-void'
-                : 'text-p01-chrome/60 hover:text-p01-chrome'
-            )}
-          >
-            <User className="w-4 h-4" />
-            Personal
-          </button>
-          <button
-            onClick={() => setActiveSection('services')}
-            aria-pressed={activeSection === 'services'}
-            className={cn(
-              'flex-1 flex items-center justify-center gap-2 py-3 rounded-lg transition-all font-medium text-sm',
-              activeSection === 'services'
-                ? 'bg-p01-pink text-p01-void'
-                : 'text-p01-chrome/60 hover:text-p01-chrome'
-            )}
-          >
-            <Grid className="w-4 h-4" />
-            Services
-          </button>
-        </div>
-      </div>
-
-      {/* Services Section */}
-      {activeSection === 'services' && (
-        <div className="px-4 pb-4">
-          {/* Section Header */}
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Grid className="w-4 h-4 text-p01-pink" />
-              <span className="text-sm font-semibold text-white">Available Services</span>
-            </div>
-            <span className="text-xs text-p01-chrome/60">
-              {services.length} services
-            </span>
-          </div>
-
-          {/* Info Banner */}
-          <div className="flex items-center gap-2 p-3 bg-p01-pink/10 rounded-lg border border-p01-pink/20 mb-4">
-            <Info className="w-4 h-4 text-p01-pink flex-shrink-0" />
-            <p className="text-xs text-p01-chrome/80">
-              Prices are set by service providers via SDK. Subscribe with one tap.
-            </p>
-          </div>
-
-          {/* Services Grid */}
-          <div className="space-y-2">
-            {services.map((service, index) => (
-              <ServiceCard
-                key={service.id}
-                service={service}
-                index={index}
-                onSubscribe={() => handleSubscribeService(service)}
-                isSubscribed={serviceStreams.some(s =>
-                  s.name.toLowerCase().includes(service.name.toLowerCase()) &&
-                  s.status === 'active'
-                )}
-              />
-            ))}
-          </div>
-
-          {/* Active Subscriptions */}
-          {serviceStreams.length > 0 && (
-            <div className="mt-6">
-              <div className="flex items-center gap-2 mb-3">
-                <CheckCircle className="w-4 h-4 text-p01-cyan" />
-                <span className="text-sm font-semibold text-white">
-                  Your Subscriptions ({serviceStreams.length})
-                </span>
-              </div>
-              <div className="space-y-2">
-                {serviceStreams.map((sub, index) => (
-                  <SubscriptionCard
-                    key={sub.id}
-                    subscription={sub}
-                    index={index}
+        {activeSubscriptions.length === 0 ? (
+          /* An empty state that names the next step. The old one said "No
+             subscriptions yet" and stopped, on a tab whose only other control
+             was a mode switch. */
+          <EmptyState
+            icon={RefreshCw}
+            title="No subscriptions yet"
+            body="Subscribe to a merchant and they are paid on a schedule, without ever receiving your name, your email or a card number."
+            action={
+              <Button icon={Compass} onClick={() => navigate("/discover")}>
+                Browse merchants
+              </Button>
+            }
+          />
+        ) : (
+          <div>
+            <Eyebrow>Active</Eyebrow>
+            <div className="mt-1.5">
+              {sortedSubs.map((sub, i) => (
+                <div key={sub.id}>
+                  {i > 0 && <Hairline className="bg-p01-border-soft" />}
+                  <button
                     onClick={() => navigate(`/subscriptions/${sub.id}`)}
-                    accentColor="p01-pink"
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+                    className="flex min-h-[44px] w-full items-center gap-3 py-3 text-left transition-colors duration-exit hover:bg-p01-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-p01-border bg-p01-surface font-display text-base">
+                      {(sub.name || "?").slice(0, 1).toUpperCase()}
+                    </span>
 
-      {/* Personal Payments Section */}
-      {activeSection === 'personal' && (
-        <div className="px-4 pb-4">
-          {/* Section Header */}
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <User className="w-4 h-4 text-p01-cyan" />
-              <span className="text-sm font-semibold text-white">Personal Payments</span>
-            </div>
-            <span className="text-xs text-p01-chrome/60">
-              {personalStreams.length} stream{personalStreams.length !== 1 ? 's' : ''}
-            </span>
-          </div>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate text-sm text-p01-text">{sub.name}</span>
+                        {sub.status === "paused" && <Pill tone="warn">Paused</Pill>}
+                        {sub.useZkPool && <Pill tone="good">Private</Pill>}
+                      </span>
+                      <span className="mt-0.5 block truncate text-tiny text-p01-text-dim">
+                        {sub.status === "active"
+                          ? `Next ${formatRelativeTime(sub.nextPayment)}`
+                          : "Not collecting"}
+                      </span>
+                    </span>
 
-          {/* Info Banner */}
-          <div className="flex items-center gap-2 p-3 bg-p01-cyan/10 rounded-lg border border-p01-cyan/20 mb-4">
-            <Info className="w-4 h-4 text-p01-cyan flex-shrink-0" />
-            <p className="text-xs text-p01-chrome/80">
-              Create custom payment streams for salaries, allowances, or recurring transfers.
-            </p>
-          </div>
-
-          {/* Create Button */}
-          <button
-            onClick={handleCreatePersonalStream}
-            className="w-full flex items-center justify-center gap-2 py-4 bg-p01-cyan text-p01-void font-semibold rounded-xl hover:bg-p01-cyan/90 transition-colors mb-4"
-          >
-            <Plus className="w-5 h-5" />
-            Create Payment Stream
-          </button>
-
-          {/* Personal Streams List */}
-          {personalStreams.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <div className="w-16 h-16 rounded-full bg-p01-cyan/10 flex items-center justify-center mb-4">
-                <Wallet className="w-7 h-7 text-p01-cyan" />
-              </div>
-              <p className="text-sm text-p01-chrome/60 mb-1">
-                No personal streams yet
-              </p>
-              <p className="text-xs text-p01-chrome/40">
-                Create one to pay salaries or recurring transfers
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {personalStreams.map((sub, index) => (
-                <SubscriptionCard
-                  key={sub.id}
-                  subscription={sub}
-                  index={index}
-                  onClick={() => navigate(`/subscriptions/${sub.id}`)}
-                  accentColor="p01-cyan"
-                />
+                    <span className="shrink-0 text-right">
+                      <span className="block text-sm text-p01-text tabular">
+                        {sub.amount} {sub.tokenSymbol}
+                      </span>
+                      <span className="block text-tiny text-p01-text-dim">
+                        {formatInterval(sub.interval)}
+                      </span>
+                    </span>
+                  </button>
+                </div>
               ))}
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* Security Info */}
-      <div className="px-4 pb-4 mt-auto">
-        <div className="flex items-start gap-2 p-3 bg-p01-cyan/10 rounded-lg">
-          <ShieldCheck className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-p01-chrome">
-            <span className="text-p01-cyan font-medium">Protected: </span>
-            All streams are secured on Solana. Recipients can only receive approved amounts.
+        {activeSubscriptions.length > 0 && (
+          <Button variant="secondary" full icon={Compass} onClick={() => navigate("/discover")}>
+            Browse merchants
+          </Button>
+        )}
+
+        {/* ⚠️ The one thing this tab must keep saying. It is the founder's
+            standing decision, and it is the fact a subscriber is most likely
+            to be surprised by. It is not hidden behind a disclosure. */}
+        <Panel tone="warn">
+          <p className="text-tiny text-p01-text">
+            There is no cancellation and no refund. Only the merchant collecting its periods can
+            close a vault, and the final collection sweeps whatever is left in it.
           </p>
-        </div>
+        </Panel>
       </div>
-    </div>
-  );
-}
-
-/**
- * Service Card Component - For available SDK services
- */
-function ServiceCard({
-  service,
-  index,
-  onSubscribe,
-  isSubscribed,
-}: {
-  service: DisplayService;
-  index: number;
-  onSubscribe: () => void;
-  isSubscribed: boolean;
-}) {
-  const Icon = service.icon;
-  const [logoError, setLogoError] = useState(false);
-
-  return (
-    <motion.button
-      initial={{ x: -10, opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      transition={{ delay: index * 0.03 }}
-      onClick={onSubscribe}
-      disabled={isSubscribed}
-      className={cn(
-        'w-full flex items-center gap-3 p-3.5 bg-p01-surface rounded-xl transition-colors text-left',
-        isSubscribed
-          ? 'border border-p01-cyan/30'
-          : 'border border-p01-border hover:bg-p01-elevated'
-      )}
-    >
-      {/* Logo (falls back to the category icon if the CDN image fails to load) */}
-      <div
-        className={cn(
-          'w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0',
-          isSubscribed ? 'bg-p01-cyan/10' : 'bg-p01-pink/10'
-        )}
-      >
-        {service.logo && !logoError ? (
-          <img
-            src={service.logo}
-            alt={service.name}
-            onError={() => setLogoError(true)}
-            className="w-5 h-5"
-            style={{ filter: 'brightness(0) invert(1)', opacity: isSubscribed ? 0.95 : 0.85 }}
-          />
-        ) : (
-          <Icon className={cn('w-5 h-5', isSubscribed ? 'text-p01-cyan' : 'text-p01-pink')} />
-        )}
-      </div>
-
-      {/* Info */}
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-white truncate">{service.name}</p>
-        <div className="flex items-center gap-1.5 mt-0.5">
-          {isSubscribed && (
-            <span className="px-1.5 py-0.5 text-[9px] bg-p01-cyan/20 text-p01-cyan rounded font-medium">
-              ACTIVE
-            </span>
-          )}
-          <span className="text-xs text-p01-chrome/60">{service.category}</span>
-        </div>
-      </div>
-
-      {/* Price */}
-      <div className="text-right flex-shrink-0">
-        <p className="text-sm font-semibold text-white">{service.price} SOL</p>
-        <p className="text-xs text-p01-chrome/60">/{service.frequency}</p>
-      </div>
-
-      {/* Subscribe button */}
-      {!isSubscribed && (
-        <div className="px-3 py-2 bg-p01-pink text-p01-void text-xs font-semibold rounded-lg flex-shrink-0">
-          Subscribe
-        </div>
-      )}
-    </motion.button>
-  );
-}
-
-/**
- * Hook to detect service info for a subscription
- */
-function useServiceInfo(sub: StreamSubscription): ServiceInfo | null {
-  return useMemo(() => {
-    // Try to detect from origin first (most reliable)
-    if (sub.origin) {
-      const fromOrigin = detectServiceFromOrigin(sub.origin);
-      if (fromOrigin) return fromOrigin;
-    }
-
-    // Try to detect from name
-    const fromName = detectServiceFromName(sub.name);
-    return fromName;
-  }, [sub.origin, sub.name]);
-}
-
-/**
- * Get the appropriate icon component for a category
- */
-function getCategoryIconComponent(category: ServiceCategory): React.ComponentType<{ className?: string }> {
-  const iconName = CATEGORY_CONFIG[category]?.icon || 'CreditCard';
-  return CATEGORY_ICONS[iconName] || CreditCard;
-}
-
-/**
- * Subscription Card Component - For user's active subscriptions
- */
-function SubscriptionCard({
-  subscription: sub,
-  index,
-  onClick,
-  accentColor = 'p01-cyan',
-}: {
-  subscription: StreamSubscription;
-  index: number;
-  onClick: () => void;
-  accentColor?: 'p01-cyan' | 'p01-pink';
-}) {
-  const daysUntilNext = Math.ceil(
-    (sub.nextPayment - Date.now()) / (1000 * 60 * 60 * 24)
-  );
-
-  // Detect service info from registry
-  const serviceInfo = useServiceInfo(sub);
-
-  // Determine logo and styling
-  const logo = serviceInfo?.logo || sub.merchantLogo;
-  const brandColor = serviceInfo?.color;
-  const category = serviceInfo?.category;
-  const CategoryIcon = category ? getCategoryIconComponent(category) : null;
-
-  // Check privacy features
-  const hasPrivacyFeatures = sub.amountNoise > 0 || sub.timingNoise > 0 || sub.useStealthAddress;
-  const isActive = sub.status === 'active';
-  const isPaused = sub.status === 'paused';
-  const initial = sub.name.slice(0, 1).toUpperCase();
-
-  const getStatusText = () => {
-    if (isPaused) return 'Stream paused';
-    if (daysUntilNext <= 0) return 'Payment due now';
-    if (daysUntilNext === 1) return 'Due tomorrow';
-    return `Next in ${daysUntilNext} days`;
-  };
-
-  return (
-    <motion.button
-      initial={{ x: -10, opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      transition={{ delay: index * 0.04 }}
-      onClick={onClick}
-      className="w-full flex items-center gap-3 p-3.5 bg-p01-surface rounded-xl hover:bg-p01-elevated transition-colors text-left"
-    >
-      {/* Logo */}
-      <div
-        className={cn(
-          'w-11 h-11 rounded-xl flex items-center justify-center relative flex-shrink-0',
-          isActive ? 'bg-p01-border' : 'bg-p01-border/50'
-        )}
-        style={brandColor && isActive ? {
-          boxShadow: `0 0 0 1px ${brandColor}30`,
-          background: `linear-gradient(135deg, ${brandColor}15, transparent)`,
-        } : undefined}
-      >
-        {logo ? (
-          <img
-            src={logo}
-            alt={sub.name}
-            className={cn('w-6 h-6', !isActive && 'opacity-50')}
-            style={{
-              filter: brandColor && isActive
-                ? `drop-shadow(0 0 1px ${brandColor})`
-                : 'invert(1)',
-            }}
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = 'none';
-            }}
-          />
-        ) : (
-          <span
-            className={cn('text-lg font-bold', isActive ? 'text-p01-chrome/60' : 'text-p01-chrome/40')}
-          >
-            {initial}
-          </span>
-        )}
-
-        {/* Privacy indicator */}
-        {hasPrivacyFeatures && isActive && (
-          <div className={cn(
-            'absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center',
-            accentColor === 'p01-pink' ? 'bg-p01-pink' : 'bg-p01-cyan'
-          )}>
-            <Shield className="w-2.5 h-2.5 text-p01-void" />
-          </div>
-        )}
-      </div>
-
-      {/* Info */}
-      <div className="flex-1 min-w-0">
-        <p
-          className={cn(
-            'text-sm font-medium truncate',
-            isActive ? 'text-white' : 'text-p01-chrome/60'
-          )}
-        >
-          {serviceInfo?.name || sub.name}
-        </p>
-
-        {/* Status row */}
-        <div className="flex items-center gap-1.5 mt-0.5">
-          {isPaused && (
-            <span className="px-1.5 py-0.5 text-[9px] bg-yellow-500/20 text-yellow-500 rounded font-medium">
-              PAUSED
-            </span>
-          )}
-          <span className="text-xs text-p01-chrome/60">{getStatusText()}</span>
-        </div>
-
-        {/* Privacy badges */}
-        {hasPrivacyFeatures && isActive && (
-          <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-            {sub.amountNoise > 0 && (
-              <span className={cn(
-                'px-1.5 py-0.5 text-[9px] rounded',
-                accentColor === 'p01-pink' ? 'bg-p01-pink/20 text-p01-pink' : 'bg-p01-cyan/20 text-p01-cyan'
-              )}>
-                +/-{sub.amountNoise}%
-              </span>
-            )}
-            {sub.timingNoise > 0 && (
-              <span className={cn(
-                'px-1.5 py-0.5 text-[9px] rounded',
-                accentColor === 'p01-pink' ? 'bg-p01-pink/20 text-p01-pink' : 'bg-p01-cyan/20 text-p01-cyan'
-              )}>
-                +/-{sub.timingNoise}h
-              </span>
-            )}
-            {sub.useStealthAddress && !sub.useZkPool && (
-              <span className="px-1.5 py-0.5 text-[9px] bg-p01-pink/20 text-p01-pink rounded">
-                Stealth
-              </span>
-            )}
-            {sub.useZkPool && (
-              <span className="px-1.5 py-0.5 text-[9px] bg-p01-pink/25 text-p01-pink rounded font-medium flex items-center gap-0.5">
-                <EyeOff className="w-2 h-2" />
-                ZK SHIELDED
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Amount */}
-      <div className="text-right flex-shrink-0">
-        <p
-          className={cn(
-            'text-sm font-semibold',
-            isActive ? 'text-white' : 'text-p01-chrome/60'
-          )}
-        >
-          {sub.amount.toFixed(sub.amount < 1 ? 4 : 2)} SOL
-        </p>
-        <p className="text-xs text-p01-chrome/60">
-          {formatInterval(sub.interval)}
-        </p>
-      </div>
-
-      <ChevronRight className="w-4 h-4 text-p01-chrome/40 flex-shrink-0" />
-    </motion.button>
+    </Screen>
   );
 }

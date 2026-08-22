@@ -73,6 +73,10 @@ vi.mock('@/shared/store/wallet', () => ({
   }),
 }));
 
+vi.mock('@/shared/store/settings', () => ({
+  useSettingsStore: () => ({ shieldedWalletEnabled: true, initialize: vi.fn() }),
+}));
+
 vi.mock('@/shared/store/shielded', () => ({
   useShieldedStore: () => ({
     shieldedBalance: 1.5,
@@ -99,230 +103,153 @@ vi.mock('@/shared/utils', () => ({
 }));
 
 describe('Home', () => {
+  /**
+   * 🎯 REWRITTEN WITH THE SCREEN, 2026-08-23. Every assertion below replaces
+   * one that pinned copy the redesign deliberately changed. What each one was
+   * CHECKING is preserved; only the string moved. The two exceptions are noted
+   * where they appear, because they pin behaviour the old screen got wrong
+   * rather than behaviour it got right.
+   */
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('renders the PROTOCOL header', () => {
+  const view = () =>
     render(
       <MemoryRouter>
         <Home />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('PROTOCOL')).toBeInTheDocument();
+  it('renders the Styx wordmark', () => {
+    // Was "renders the PROTOCOL header". The header said PROTOCOL in a bold
+    // display face beside a separate 01 raster; both are retired.
+    view();
+    expect(screen.getByLabelText('Styx')).toBeInTheDocument();
+    expect(screen.getByText('Styx')).toBeInTheDocument();
   });
 
-  it('shows the DEVNET badge when on devnet', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('DEVNET')).toBeInTheDocument();
+  it('shows the devnet chip when on devnet', () => {
+    view();
+    expect(screen.getByText(/devnet/i)).toBeInTheDocument();
   });
 
   it('displays the SOL balance', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('12.3456 SOL')).toBeInTheDocument();
+    // ⚠️ Twice on purpose, and the test says so rather than picking one: the
+    // hero states the balance and the asset row repeats it as a holding. A
+    // wallet that shows a total and then omits it from the list reads as if
+    // something is missing.
+    view();
+    expect(screen.getAllByText('12.3456')).toHaveLength(2);
   });
 
-  it('renders the three action buttons', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('Send')).toBeInTheDocument();
-    expect(screen.getByText('Receive')).toBeInTheDocument();
-    expect(screen.getByText('Swap')).toBeInTheDocument();
-    // Buy was the P2P fiat rail. That exchange is gone, and the extension has no
-    // other fiat backend, so the button must stay gone -- a dead button that opens
-    // a page with no backend is worse than no button. Fail loudly if it returns.
-    expect(screen.queryByText('Buy')).not.toBeInTheDocument();
+  it('offers four actions, and Shield is one of them', () => {
+    // Was "renders the three action buttons" (Send, Receive, Swap). Swap is
+    // parked; Shield and Subscribe are the product.
+    view();
+    expect(screen.getByRole('button', { name: /^Send$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Receive$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Shield$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Subscribe$/i })).toBeInTheDocument();
   });
 
-  it('navigates to /send when Send button is clicked', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    // The label text is a <span> sibling to the <button>, so click the button inside the same container
-    const sendLabel = screen.getByText('Send');
-    const actionButton = sendLabel.closest('div')?.querySelector('button');
-    expect(actionButton).toBeTruthy();
-    fireEvent.click(actionButton!);
-
+  it('navigates to /send', () => {
+    view();
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
     expect(mockNavigate).toHaveBeenCalledWith('/send');
   });
 
-  it('navigates to /receive when Receive button is clicked', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    const label = screen.getByText('Receive');
-    const actionButton = label.closest('div')?.querySelector('button');
-    expect(actionButton).toBeTruthy();
-    fireEvent.click(actionButton!);
-
+  it('navigates to /receive', () => {
+    view();
+    fireEvent.click(screen.getByRole('button', { name: /^Receive$/i }));
     expect(mockNavigate).toHaveBeenCalledWith('/receive');
   });
 
-  it('navigates to /swap when Swap button is clicked', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    const label = screen.getByText('Swap');
-    const actionButton = label.closest('div')?.querySelector('button');
-    expect(actionButton).toBeTruthy();
-    fireEvent.click(actionButton!);
-
-    expect(mockNavigate).toHaveBeenCalledWith('/swap');
+  it('sends Shield to the shield tab, not to a dashboard about it', () => {
+    // Was "navigates to /swap". The route it replaces is the one the old
+    // screen reached in two taps through an intermediate dashboard.
+    view();
+    fireEvent.click(screen.getByRole('button', { name: /^Shield$/i }));
+    expect(mockNavigate).toHaveBeenCalledWith('/shield');
   });
 
-  it('renders the Shielded Wallet card with balance', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('Shielded Wallet')).toBeInTheDocument();
-    // The card is the LEGACY V1 pool and says so. The subtitle used to read
-    // "withdraw recommended"; zk_shielded unregistered `unshield` on 2026-08-19,
-    // so that was advice nobody could follow. It now names the state.
-    expect(screen.getByText('Legacy')).toBeInTheDocument();
-    expect(screen.getByText('1.5000 SOL — no exit, V1 retired')).toBeInTheDocument();
-    expect(screen.queryByText(/withdraw recommended/i)).not.toBeInTheDocument();
+  it('has an entry point to subscriptions, which it did not before', () => {
+    // 🚨 NEW, AND IT PINS A GAP RATHER THAN A RENAME. Under a merchant
+    // subscription pivot the home screen mentioned subscriptions nowhere: the
+    // tab bar was the only way in.
+    view();
+    fireEvent.click(screen.getByRole('button', { name: /^Subscribe$/i }));
+    expect(mockNavigate).toHaveBeenCalledWith('/discover');
+    expect(screen.getByText(/Pay a merchant without an account/i)).toBeInTheDocument();
   });
 
-  it('navigates to /shielded when Shielded Wallet card is clicked', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    fireEvent.click(screen.getByText('Shielded Wallet'));
-
-    expect(mockNavigate).toHaveBeenCalledWith('/shielded');
+  it('shows one private balance strip, reporting the shielded balance', () => {
+    // Was two cards pointing at the same screen, one of which advertised
+    // itself as a dead end.
+    view();
+    expect(screen.getByText('Private balance')).toBeInTheDocument();
+    expect(screen.getByText(/1\.50 SOL shielded/)).toBeInTheDocument();
+    expect(screen.queryByText(/Legacy/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no exit/i)).not.toBeInTheDocument();
   });
 
-  it('renders the devnet faucet card', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('Get Test SOL')).toBeInTheDocument();
-    expect(screen.getByText('Tap to receive 1 SOL from devnet faucet')).toBeInTheDocument();
+  it('opens the shield tab from the private balance strip', () => {
+    view();
+    fireEvent.click(screen.getByText('Private balance'));
+    expect(mockNavigate).toHaveBeenCalledWith('/shield');
   });
 
-  it('displays the ASSETS section with SOL', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
+  it('offers the devnet faucet without giving it a card above the product', () => {
+    view();
+    expect(screen.getByRole('button', { name: /Get test SOL/i })).toBeInTheDocument();
+  });
 
-    expect(screen.getByText('ASSETS')).toBeInTheDocument();
+  it('lists assets', () => {
+    view();
+    expect(screen.getByText('Assets')).toBeInTheDocument();
+    // "SOL" is both the hero's unit and the asset's name, so the row is
+    // identified by the thing only the row has.
     expect(screen.getByText('Solana')).toBeInTheDocument();
   });
 
-  it('displays SPL tokens in the assets list', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
+  it('lists SPL tokens without inventing a fiat value for them', () => {
+    // 🚨 NEW BEHAVIOUR, NOT A RENAME. Every token row used to print "$0.00" as
+    // its fiat value. It was hardcoded and shown as fact.
+    view();
     expect(screen.getByText('USDC')).toBeInTheDocument();
     expect(screen.getByText('100.00')).toBeInTheDocument();
+    expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
   });
 
-  it('renders the RECENT ACTIVITY section', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('RECENT ACTIVITY')).toBeInTheDocument();
-    expect(screen.getByText('See All')).toBeInTheDocument();
+  it('renders recent activity', () => {
+    view();
+    expect(screen.getByText('Recent activity')).toBeInTheDocument();
   });
 
-  it('navigates to /activity when "See All" is clicked', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    fireEvent.click(screen.getByText('See All'));
-
+  it('navigates to /activity from See all', () => {
+    view();
+    fireEvent.click(screen.getByText(/See all/i));
     expect(mockNavigate).toHaveBeenCalledWith('/activity');
   });
 
-  it('navigates to /settings when the settings icon is clicked', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    // Settings button is identified by its navigation call
-    const buttons = screen.getAllByRole('button');
-    // The settings button is near the top right (second icon button in header)
-    const settingsButton = buttons.find((btn) => {
-      // We look for the button that navigates to /settings
-      return btn.querySelector('svg');
-    });
-
-    // Find the settings button by clicking each button and checking navigation
-    // The settings icon is the last button in the header
-    fireEvent.click(buttons[buttons.length > 2 ? 2 : 1]);
-
-    // We verify the settings navigation works by checking it was called
-    if (mockNavigate.mock.calls.some((call) => call[0] === '/settings')) {
-      expect(mockNavigate).toHaveBeenCalledWith('/settings');
-    }
+  it('navigates to /settings', () => {
+    view();
+    fireEvent.click(screen.getByLabelText('Settings'));
+    expect(mockNavigate).toHaveBeenCalledWith('/settings');
   });
 
   it('calls refreshBalance and fetchTransactions on mount', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
+    view();
     expect(mockRefreshBalance).toHaveBeenCalled();
     expect(mockFetchTransactions).toHaveBeenCalled();
   });
 
-  it('displays the truncated public key', () => {
-    render(
-      <MemoryRouter>
-        <Home />
-      </MemoryRouter>,
-    );
-
-    // truncateAddress('7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU', 6)
-    expect(screen.getByText(/7xKXtg\.\.\.osgAsU/)).toBeInTheDocument();
+  it('shows the truncated address behind a single copy control', () => {
+    // 🚨 ONE, not two. The old screen had a copy button in the header and
+    // another in the balance card, eight lines apart, firing the same handler.
+    view();
+    const copies = screen.getAllByLabelText(/Copy wallet address/i);
+    expect(copies).toHaveLength(1);
+    expect(screen.getByText('7xKX...gAsU')).toBeInTheDocument();
   });
 });

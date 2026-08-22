@@ -1,6 +1,20 @@
+/**
+ * Welcome: the first screen, and the only one a brand-new user sees.
+ *
+ * 🎯 WHAT CHANGED, AND WHY. This was three identical full-width blocks in
+ * mono capitals — CREATE NEW WALLET, IMPORT SEED PHRASE, CONNECT WITH PHONE —
+ * stacked at equal weight, so nothing on the screen said which one a new user
+ * should press. Phantom's opening screen has one filled button and everything
+ * else steps back. That is the change: create is primary, import is secondary,
+ * and connecting a phone is a text link, because it is the path for someone who
+ * already has a wallet somewhere else and knows it.
+ *
+ * The tagline stays. It is the one line of voice on the screen and it is the
+ * site's own words.
+ */
+
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { Plus, Download, Smartphone } from 'lucide-react';
+import { Button } from '@/popup/ui';
 import Wordmark from '../components/Wordmark';
 
 // NOTE (Privy removal — Phase 2): the email/OTP login and the "Connect with P01
@@ -13,85 +27,32 @@ export default function Welcome() {
   const navigate = useNavigate();
 
   return (
-    <div className="flex flex-col h-full bg-p01-void">
-      <motion.div
-        key="welcome"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="flex flex-col h-full"
-      >
-        {/* Logo Section */}
-        <div className="flex-1 flex flex-col items-center justify-center">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.5 }}
-          >
-            <Wordmark size={140} showText={true} animated={true} />
-          </motion.div>
+    <div className="flex h-full flex-col bg-p01-void">
+      <div className="flex flex-1 flex-col items-center justify-center gap-5 px-6">
+        <Wordmark size={72} showText animated />
+        <p className="text-sm text-p01-text-muted">Total invisibility</p>
+      </div>
 
-          {/* Tagline */}
-          <motion.p
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3, duration: 0.4 }}
-            className="mt-6 text-[11px] text-[#555560] tracking-[3px] uppercase font-mono"
-          >
-            Total Invisibility
-          </motion.p>
-        </div>
+      <div className="flex shrink-0 flex-col gap-2.5 px-6 pb-6">
+        <Button full size="lg" onClick={() => navigate('/create-wallet')}>
+          Create a new wallet
+        </Button>
 
-        {/* Actions */}
-        <div className="p-6 space-y-3">
-          {/* Create Wallet - Primary */}
-          <motion.button
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.4 }}
-            onClick={() => navigate('/create-wallet')}
-            className="w-full py-4 font-display font-bold text-sm tracking-wider flex items-center justify-center gap-2 transition-colors bg-p01-cyan text-p01-void hover:bg-p01-cyan-dim"
-          >
-            <Plus className="w-4 h-4" />
-            CREATE NEW WALLET
-          </motion.button>
+        <Button full size="lg" variant="secondary" onClick={() => navigate('/import-wallet')}>
+          Import a seed phrase
+        </Button>
 
-          {/* Import Wallet */}
-          <motion.button
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.5 }}
-            onClick={() => navigate('/import-wallet')}
-            className="w-full py-4 bg-p01-surface text-p01-chrome font-display font-medium text-sm tracking-wider border border-p01-border flex items-center justify-center gap-2 hover:text-white hover:border-p01-cyan/30 transition-colors"
-          >
-            <Download className="w-4 h-4" />
-            IMPORT SEED PHRASE
-          </motion.button>
+        {/* Pull the wallet from the Styx mobile app over a one-time encrypted
+            channel. A third filled button made the screen a menu; this is the
+            path you take only if you already know you want it. */}
+        <Button full variant="ghost" onClick={() => navigate('/connect-phone')}>
+          Connect with phone
+        </Button>
 
-          {/* Connect with phone — pull the wallet from the P01 mobile app over a
-              one-time encrypted channel (this laptop needs no camera). */}
-          <motion.button
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.6 }}
-            onClick={() => navigate('/connect-phone')}
-            className="w-full py-4 bg-p01-surface text-p01-chrome font-display font-medium text-sm tracking-wider border border-p01-border flex items-center justify-center gap-2 hover:text-white hover:border-p01-cyan/30 transition-colors"
-          >
-            <Smartphone className="w-4 h-4" />
-            CONNECT WITH PHONE
-          </motion.button>
-
-          {/* Version */}
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.7 }}
-            className="text-center text-[10px] text-[#555560] font-mono mt-4 tracking-wider"
-          >
-            PROTOCOL v0.5.0 • DEVNET
-          </motion.p>
-        </div>
-      </motion.div>
+        <p className="mt-1 text-center text-tiny text-p01-text-dim tabular">
+          Styx v0.5.0 · Devnet
+        </p>
+      </div>
     </div>
   );
 }

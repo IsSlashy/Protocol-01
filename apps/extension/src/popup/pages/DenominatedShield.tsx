@@ -77,12 +77,12 @@ export default function DenominatedShield() {
       <header className="flex items-center gap-3 px-4 py-3 border-b border-p01-border">
         <button
           onClick={() => navigate(-1)}
-          className="p-2 text-p01-chrome hover:text-white transition-colors"
+          className="p-2 text-p01-chrome hover:text-p01-text transition-colors"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1 text-center">
-          <h1 className="text-white font-display font-bold tracking-wide text-sm">
+          <h1 className="text-p01-text font-display font-bold tracking-wide text-sm">
             SHIELD
           </h1>
           <p className="text-p01-cyan text-[9px] font-mono tracking-wider">
@@ -100,7 +100,7 @@ export default function DenominatedShield() {
             className="flex flex-col items-center gap-4 pt-8"
           >
             <CheckCircle className="w-16 h-16 text-p01-cyan" />
-            <p className="text-white font-display font-bold text-lg tracking-wide">
+            <p className="text-p01-text font-display font-bold text-lg tracking-wide">
               Note created!
             </p>
             <p className="text-p01-chrome text-xs text-center">
@@ -157,7 +157,7 @@ export default function DenominatedShield() {
                       'py-3 rounded-xl border text-sm font-mono font-bold transition-all',
                       denomination === pool.denomination
                         ? 'bg-p01-cyan/15 border-p01-cyan text-p01-cyan'
-                        : 'bg-p01-surface border-p01-border text-white hover:border-p01-cyan/40',
+                        : 'bg-p01-surface border-p01-border text-p01-text hover:border-p01-cyan/40',
                     )}
                   >
                     {pool.denomination}
@@ -171,7 +171,7 @@ export default function DenominatedShield() {
               <div className="flex items-start gap-2">
                 <Lock className="w-4 h-4 text-p01-cyan shrink-0 mt-0.5" />
                 <div className="space-y-1">
-                  <p className="text-white text-xs font-medium">
+                  <p className="text-p01-text text-xs font-medium">
                     ZK Denominated Shield (C6)
                   </p>
                   <p className="text-p01-chrome text-[10px]">

@@ -1,21 +1,23 @@
 /**
- * Tests for Send page
+ * Tests for the Send page.
  *
- * The Send page enables users to send SOL to standard Solana addresses
- * or stealth meta-addresses (prefixed with "st:"). It features:
- * - Recipient address input with stealth detection
- * - Amount input with percentage shortcuts (25%, 50%, 75%, 100%)
- * - Balance display and fee estimation
- * - Validation of addresses and amounts
- * - Stealth privacy badge and info banner for private sends
+ * ⚠️ REWRITTEN WITH THE MERGE OF SendConfirm INTO Send (UI pass, 2026-08-23).
+ * The old suite pinned the copy of a two-screen flow: "SEND SOL", "CONTINUE",
+ * "[ DEVNET ]", "AVAILABLE BALANCE" and the mono-capital labels. CONTINUE no
+ * longer exists — the button signs and broadcasts from this screen — so the
+ * expectations move with it rather than being deleted.
  *
- * Validates:
- * - Renders the send form correctly
- * - Address validation errors are displayed
- * - Amount validation (empty, negative, exceeds balance)
- * - Percentage buttons set the correct amounts
- * - Stealth address detection when "st:" prefix is entered
- * - Navigation to confirmation page with correct state
+ * Still covered, one for one with the old file:
+ * - the form renders (balance, both fields, percentage shortcuts, fee)
+ * - each validation failure appears, and now under its own field
+ * - stealth detection on the "st:" prefix, and the button label that follows
+ * - back navigation
+ *
+ * New, because the behaviour is new:
+ * - pressing the button actually calls sendTransaction
+ * - a stealth send carries an on-chain memo
+ * - success returns to the wallet instead of a full-screen Done page
+ * - a failed send reports under the button
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -25,6 +27,7 @@ import Send from './Send';
 import { MOCK_RECIPIENT } from '../../__tests__/helpers';
 
 const mockNavigate = vi.fn();
+const mockSendTransaction = vi.fn(() => Promise.resolve('SIG123'));
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -38,6 +41,10 @@ vi.mock('@/shared/store/wallet', () => ({
   useWalletStore: () => ({
     solBalance: 5.0,
     network: 'devnet',
+    publicKey: 'DRtXHDgC312wpNdNCSb8vCoXDcofCJcPHdAynHjnB5eY',
+    isLoading: false,
+    error: null,
+    sendTransaction: mockSendTransaction,
   }),
 }));
 
@@ -61,69 +68,64 @@ vi.mock('@/shared/services/stealth', () => ({
       ephemeralPubKey: new Uint8Array(32),
     }),
   ),
+  createStealthMemo: vi.fn(() => 'stealth-memo'),
 }));
 
 vi.mock('@/shared/utils', () => ({
   cn: (...classes: unknown[]) => classes.filter(Boolean).join(' '),
 }));
 
+const STEALTH_META = 'st:01valid_stealth_meta_address_long_enough';
+const RECIPIENT_PLACEHOLDER = 'Address or st:… meta-address';
+
+function renderSend() {
+  return render(
+    <MemoryRouter>
+      <Send />
+    </MemoryRouter>,
+  );
+}
+
+const recipientInput = () => screen.getByPlaceholderText(RECIPIENT_PLACEHOLDER);
+const amountInput = () => screen.getByPlaceholderText('0.00');
+const sendButton = () => screen.getByRole('button', { name: /^Send( privately)?$/ });
+
 describe('Send', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSendTransaction.mockResolvedValue('SIG123');
   });
 
-  it('renders the SEND SOL header', () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+  it('renders the Send heading', () => {
+    renderSend();
 
-    expect(screen.getByText('SEND SOL')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Send' })).toBeInTheDocument();
   });
 
   it('shows available balance', () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+    renderSend();
 
-    expect(screen.getByText('AVAILABLE BALANCE')).toBeInTheDocument();
-    expect(screen.getByText('5.0000 SOL')).toBeInTheDocument();
+    expect(screen.getByText('Available')).toBeInTheDocument();
+    expect(screen.getByText('5.0000')).toBeInTheDocument();
   });
 
-  it('displays the DEVNET badge', () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+  it('displays the devnet marker', () => {
+    renderSend();
 
-    expect(screen.getByText('[ DEVNET ]')).toBeInTheDocument();
+    expect(screen.getByText('Devnet')).toBeInTheDocument();
   });
 
   it('renders recipient and amount input fields', () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+    renderSend();
 
-    expect(screen.getByText('RECIPIENT ADDRESS')).toBeInTheDocument();
-    expect(screen.getByText('AMOUNT (SOL)')).toBeInTheDocument();
-    expect(
-      screen.getByPlaceholderText('Enter Solana address or st:01... meta-address'),
-    ).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('0.00')).toBeInTheDocument();
+    expect(screen.getByLabelText('Recipient')).toBeInTheDocument();
+    expect(screen.getByLabelText('Amount')).toBeInTheDocument();
+    expect(recipientInput()).toBeInTheDocument();
+    expect(amountInput()).toBeInTheDocument();
   });
 
   it('renders percentage buttons (25%, 50%, 75%, 100%)', () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+    renderSend();
 
     expect(screen.getByText('25%')).toBeInTheDocument();
     expect(screen.getByText('50%')).toBeInTheDocument();
@@ -132,185 +134,147 @@ describe('Send', () => {
   });
 
   it('sets the amount to the correct percentage when a percent button is clicked', () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+    renderSend();
 
     // 50% of (5.0 - 0.001 fee reserve) = 2.4995
     fireEvent.click(screen.getByText('50%'));
 
-    const amountInput = screen.getByPlaceholderText('0.00') as HTMLInputElement;
-    const value = parseFloat(amountInput.value);
+    const value = parseFloat((amountInput() as HTMLInputElement).value);
     expect(value).toBeCloseTo(2.4995, 3);
   });
 
-  it('shows the estimated fee', () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+  it('shows the network fee exactly once', () => {
+    renderSend();
 
-    expect(screen.getByText('ESTIMATED FEE')).toBeInTheDocument();
-    expect(screen.getByText('~0.000005 SOL')).toBeInTheDocument();
+    expect(screen.getByText('Network fee')).toBeInTheDocument();
+    // ⚠️ getAllByText, deliberately: the two-screen flow printed this constant
+    // three times. One occurrence is the requirement, not an implementation
+    // detail.
+    expect(screen.getAllByText('~0.000005 SOL')).toHaveLength(1);
   });
 
-  it('keeps the CONTINUE button disabled when inputs are empty', () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+  it('keeps the send button disabled when inputs are empty', () => {
+    renderSend();
 
-    const continueBtn = screen.getByText('CONTINUE');
-    expect(continueBtn.closest('button')).toBeDisabled();
+    expect(sendButton()).toBeDisabled();
   });
 
-  it('shows error for empty recipient when CONTINUE is clicked', async () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+  it('leaves the recipient empty until it is typed into', () => {
+    renderSend();
 
-    // Set amount but not recipient
-    const amountInput = screen.getByPlaceholderText('0.00');
-    fireEvent.change(amountInput, { target: { value: '1.0' } });
+    fireEvent.change(amountInput(), { target: { value: '1.0' } });
 
-    // The CONTINUE button is still disabled without recipient, so we directly test validation
-    const recipientInput = screen.getByPlaceholderText(
-      'Enter Solana address or st:01... meta-address',
-    );
-    expect((recipientInput as HTMLInputElement).value).toBe('');
+    expect((recipientInput() as HTMLInputElement).value).toBe('');
   });
 
   it('shows error for insufficient balance', async () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+    renderSend();
 
-    const recipientInput = screen.getByPlaceholderText(
-      'Enter Solana address or st:01... meta-address',
-    );
-    const amountInput = screen.getByPlaceholderText('0.00');
-
-    fireEvent.change(recipientInput, { target: { value: MOCK_RECIPIENT } });
-    fireEvent.change(amountInput, { target: { value: '999' } });
-
-    // Now click CONTINUE
-    const continueBtn = screen.getByText('CONTINUE');
-    fireEvent.click(continueBtn);
+    fireEvent.change(recipientInput(), { target: { value: MOCK_RECIPIENT } });
+    fireEvent.change(amountInput(), { target: { value: '999' } });
+    fireEvent.click(sendButton());
 
     await waitFor(() => {
       expect(screen.getByText('Insufficient balance')).toBeInTheDocument();
     });
+    expect(mockSendTransaction).not.toHaveBeenCalled();
   });
 
   it('shows error for invalid Solana address', async () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+    renderSend();
 
-    const recipientInput = screen.getByPlaceholderText(
-      'Enter Solana address or st:01... meta-address',
-    );
-    const amountInput = screen.getByPlaceholderText('0.00');
-
-    fireEvent.change(recipientInput, { target: { value: 'invalid_address!' } });
-    fireEvent.change(amountInput, { target: { value: '1.0' } });
-
-    const continueBtn = screen.getByText('CONTINUE');
-    fireEvent.click(continueBtn);
+    fireEvent.change(recipientInput(), { target: { value: 'invalid_address!' } });
+    fireEvent.change(amountInput(), { target: { value: '1.0' } });
+    fireEvent.click(sendButton());
 
     await waitFor(() => {
       expect(screen.getByText('Invalid Solana address')).toBeInTheDocument();
     });
+    expect(mockSendTransaction).not.toHaveBeenCalled();
   });
 
   it('shows error for zero or negative amounts', async () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+    renderSend();
 
-    const recipientInput = screen.getByPlaceholderText(
-      'Enter Solana address or st:01... meta-address',
-    );
-    const amountInput = screen.getByPlaceholderText('0.00');
-
-    fireEvent.change(recipientInput, { target: { value: MOCK_RECIPIENT } });
-    fireEvent.change(amountInput, { target: { value: '0' } });
-
-    const continueBtn = screen.getByText('CONTINUE');
-    fireEvent.click(continueBtn);
+    fireEvent.change(recipientInput(), { target: { value: MOCK_RECIPIENT } });
+    fireEvent.change(amountInput(), { target: { value: '0' } });
+    fireEvent.click(sendButton());
 
     await waitFor(() => {
       expect(screen.getByText('Please enter a valid amount')).toBeInTheDocument();
     });
+    expect(mockSendTransaction).not.toHaveBeenCalled();
   });
 
   it('detects stealth address when input starts with "st:"', async () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+    renderSend();
 
-    const recipientInput = screen.getByPlaceholderText(
-      'Enter Solana address or st:01... meta-address',
-    );
-
-    // The stealth label appears in the RECIPIENT ADDRESS label
-    fireEvent.change(recipientInput, {
-      target: { value: 'st:01valid_stealth_meta_address_long_enough' },
-    });
+    fireEvent.change(recipientInput(), { target: { value: STEALTH_META } });
 
     await waitFor(() => {
-      // "(STEALTH)" may appear in both the address label and a subtitle
-      const stealthLabels = screen.getAllByText('(STEALTH)');
-      expect(stealthLabels.length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText(/fresh address derived for this payment alone/)).toBeInTheDocument();
     });
   });
 
-  it('changes the CONTINUE button to SEND PRIVATELY for valid stealth addresses', async () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+  it('labels the button "Send privately" for valid stealth addresses', async () => {
+    renderSend();
 
-    const recipientInput = screen.getByPlaceholderText(
-      'Enter Solana address or st:01... meta-address',
-    );
-    const amountInput = screen.getByPlaceholderText('0.00');
-
-    fireEvent.change(recipientInput, {
-      target: { value: 'st:01valid_stealth_meta_address_long_enough' },
-    });
-    fireEvent.change(amountInput, { target: { value: '1.0' } });
+    fireEvent.change(recipientInput(), { target: { value: STEALTH_META } });
+    fireEvent.change(amountInput(), { target: { value: '1.0' } });
 
     await waitFor(() => {
-      expect(screen.getByText('SEND PRIVATELY')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Send privately' })).toBeInTheDocument();
     });
+  });
+
+  it('signs and broadcasts from this screen, then returns to the wallet', async () => {
+    renderSend();
+
+    fireEvent.change(recipientInput(), { target: { value: MOCK_RECIPIENT } });
+    fireEvent.change(amountInput(), { target: { value: '1.5' } });
+    fireEvent.click(sendButton());
+
+    await waitFor(() => {
+      expect(mockSendTransaction).toHaveBeenCalledWith(MOCK_RECIPIENT, 1.5, undefined);
+    });
+    // ⛔ No full-screen success page with a Done button.
+    expect(mockNavigate).toHaveBeenCalledWith('/');
+  });
+
+  it('sends a stealth payment to the derived address with its memo', async () => {
+    renderSend();
+
+    fireEvent.change(recipientInput(), { target: { value: STEALTH_META } });
+    fireEvent.change(amountInput(), { target: { value: '1.0' } });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send privately' })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send privately' }));
+
+    await waitFor(() => {
+      expect(mockSendTransaction).toHaveBeenCalledWith('StealthAddr123', 1.0, 'stealth-memo');
+    });
+  });
+
+  it('reports a failed send under the button and stays put', async () => {
+    mockSendTransaction.mockRejectedValueOnce(new Error('Blockhash not found'));
+    renderSend();
+
+    fireEvent.change(recipientInput(), { target: { value: MOCK_RECIPIENT } });
+    fireEvent.change(amountInput(), { target: { value: '1.0' } });
+    fireEvent.click(sendButton());
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Blockhash not found');
+    });
+    expect(mockNavigate).not.toHaveBeenCalledWith('/');
   });
 
   it('navigates back when the back button is clicked', () => {
-    render(
-      <MemoryRouter>
-        <Send />
-      </MemoryRouter>,
-    );
+    renderSend();
 
-    // Find the back button (ArrowLeft icon button)
-    const backButton = screen.getAllByRole('button')[0];
-    fireEvent.click(backButton);
+    fireEvent.click(screen.getByLabelText('Go back'));
 
     expect(mockNavigate).toHaveBeenCalledWith(-1);
   });

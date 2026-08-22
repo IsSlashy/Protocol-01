@@ -1,73 +1,57 @@
+/**
+ * One subscription: what it costs, what it has cost, and the key that proves
+ * it is yours.
+ *
+ * 🚨 THE ENTITLEMENT WAS WRITTEN AND NEVER READ
+ * ─────────────────────────────────────────────
+ * `CreateSubscription` mints a license key, persists it through
+ * `useLicenseStore.saveLicense`, and shows it once at the moment of purchase.
+ * `getLicense` was called from nowhere in the extension. So the one artefact a
+ * subscriber actually needs — the string a merchant checks against the
+ * on-chain `license_commitment`, with no account and no email behind it — was
+ * a thing you had to copy in the ninety seconds it was on screen or lose.
+ *
+ * It is stored, keyed by `${retailer}:${mode}`, and this screen is where a
+ * subscription is looked at afterwards. So it is read here, in full, with a
+ * copy button.
+ *
+ * 🎯 WHAT ELSE CHANGED. Six panels became four. "Privacy Active" and "ZK
+ * Shielded Payment" were two separate cards saying overlapping things about
+ * the same subscription in two different accent colours (one of them the
+ * retired pink); the noise preview repeated the amount that is already the
+ * headline. Statistics that read "Unlimited / No limit" for every merchant
+ * subscription ever created are not statistics.
+ */
+
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import {
-  ArrowLeft,
-  ExternalLink,
-  Shield,
-  Clock,
-  AlertTriangle,
-  Play,
-  Pause,
-  Ban,
-  ChevronDown,
   Check,
-  EyeOff,
-  Lock,
-  Music,
-  Bot,
-  Gamepad2,
-  Briefcase,
-  Newspaper,
-  Dumbbell,
-  Cloud,
-  CreditCard,
-  GraduationCap,
-  Target,
-  MessageCircle,
+  ChevronDown,
+  Copy,
+  ExternalLink,
+  KeyRound,
+  Pause,
+  Play,
 } from 'lucide-react';
 import { cn, truncateAddress } from '@/shared/utils';
 import { useSubscriptionsStore } from '@/shared/store/subscriptions';
 import { useWalletStore } from '@/shared/store/wallet';
-import { formatInterval, calculateNextPayment, PaymentRecord } from '@/shared/services/stream';
+import { useLicenseStore } from '@/shared/store/license';
+import { formatInterval, PaymentRecord } from '@/shared/services/stream';
 import { getSolscanUrl } from '@/shared/services/transactions';
 import {
   detectServiceFromName,
   detectServiceFromOrigin,
-  CATEGORY_CONFIG,
   type ServiceInfo,
-  type ServiceCategory,
 } from '@/shared/services/serviceRegistry';
-
-// Map category icon names to Lucide components
-const CATEGORY_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  Play,
-  Music,
-  Bot,
-  Gamepad2,
-  Briefcase,
-  Newspaper,
-  Dumbbell,
-  Cloud,
-  Shield,
-  CreditCard,
-  GraduationCap,
-  Target,
-  MessageCircle,
-};
-
-/**
- * Get the appropriate icon component for a category
- */
-function getCategoryIconComponent(category: ServiceCategory): React.ComponentType<{ className?: string }> {
-  const iconName = CATEGORY_CONFIG[category]?.icon || 'CreditCard';
-  return CATEGORY_ICONS[iconName] || CreditCard;
-}
+import { Amount, Button, EmptyState, Eyebrow, Hairline, Panel, Pill, Screen } from '@/popup/ui';
 
 export default function SubscriptionDetails() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const [showPaymentHistory, setShowPaymentHistory] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const {
     getSubscription,
@@ -77,23 +61,19 @@ export default function SubscriptionDetails() {
     clearError,
   } = useSubscriptionsStore();
 
-  const { _keypair } = useWalletStore();
+  const { getLicense } = useLicenseStore();
 
   const subscription = id ? getSubscription(id) : undefined;
 
-  // Detect service info from registry
+  // Detect service info from the registry: origin first (most reliable), then
+  // the name. Used for the display name only — never for the payee.
   const detectedService = useMemo((): ServiceInfo | null => {
     if (!subscription) return null;
-
-    // Try to detect from origin first (most reliable)
     if (subscription.origin) {
       const fromOrigin = detectServiceFromOrigin(subscription.origin);
       if (fromOrigin) return fromOrigin;
     }
-
-    // Fall back to name-based detection
-    const fromName = detectServiceFromName(subscription.name);
-    return fromName;
+    return detectServiceFromName(subscription.name);
   }, [subscription]);
 
   // Clear error on unmount
@@ -103,27 +83,31 @@ export default function SubscriptionDetails() {
 
   if (!subscription) {
     return (
-      <div className="flex flex-col h-full items-center justify-center">
-        <p className="text-p01-chrome/60">Subscription not found</p>
-        <button
-          onClick={() => navigate('/subscriptions')}
-          className="mt-4 px-4 py-2 bg-p01-surface text-white rounded-lg"
-        >
-          Go Back
-        </button>
-      </div>
+      <Screen title="Subscription" onBack={() => navigate('/subscriptions')}>
+        <EmptyState
+          title="Not found"
+          body="This subscription is no longer on this device."
+          action={
+            <Button variant="secondary" onClick={() => navigate('/subscriptions')}>
+              Back to subscriptions
+            </Button>
+          }
+        />
+      </Screen>
     );
   }
 
-  // Use detected service info or fall back to subscription data
-  // These are prepared for enhanced UI but currently using subscription data directly
-  const _serviceName = detectedService?.name || subscription.name;
-  const _serviceLogo = detectedService?.logo || subscription.merchantLogo;
-  const _serviceColor = detectedService?.color;
-  const _serviceCategory = detectedService?.category;
-  const _CategoryIcon = _serviceCategory ? getCategoryIconComponent(_serviceCategory) : null;
-  // Suppress unused warnings - these will be used in future UI enhancements
-  void _serviceName; void _serviceLogo; void _serviceColor; void _CategoryIcon;
+  const serviceName = detectedService?.name || subscription.name;
+
+  /**
+   * The license key for this subscription. Stored keyed by
+   * `${retailer}:${mode}`, so the lookup is by recipient — a private
+   * subscription mints a `zk` key, a classic one a `standard` key, and
+   * whichever exists is the one this subscription can present.
+   */
+  const license =
+    getLicense(subscription.recipient, 'zk') ??
+    getLicense(subscription.recipient, 'standard');
 
   const daysUntilNext = Math.ceil(
     (subscription.nextPayment - Date.now()) / (1000 * 60 * 60 * 24)
@@ -133,20 +117,6 @@ export default function SubscriptionDetails() {
     ? subscription.maxPayments - subscription.paymentsMade
     : Infinity;
 
-  const maxTotal = subscription.maxPayments > 0
-    ? subscription.amount * subscription.maxPayments
-    : Infinity;
-
-  // Calculate payment preview with noise
-  const paymentPreview = _keypair
-    ? calculateNextPayment(subscription, _keypair)
-    : calculateNextPayment(subscription);
-
-  // Check privacy features
-  const hasPrivacyFeatures =
-    subscription.amountNoise > 0 ||
-    subscription.timingNoise > 0;
-
   const handlePauseResume = () => {
     if (subscription.status === 'active') {
       pauseSubscription(subscription.id);
@@ -155,356 +125,203 @@ export default function SubscriptionDetails() {
     }
   };
 
+  const paused = subscription.status === 'paused';
+  const cancelled = subscription.status === 'cancelled';
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center gap-3 p-4 border-b border-p01-border">
-        <button
-          onClick={() => navigate(-1)}
-          className="p-2 -ml-2 hover:bg-p01-surface rounded-lg transition-colors"
-          aria-label="Go back"
-        >
-          <ArrowLeft className="w-5 h-5 text-p01-chrome" />
-        </button>
-        <h1 className="text-lg font-semibold text-white">Subscription</h1>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Merchant Info */}
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-2xl bg-p01-surface flex items-center justify-center relative">
-            {subscription.merchantLogo ? (
-              <img
-                src={subscription.merchantLogo}
-                alt={subscription.name}
-                className="w-8 h-8"
-                style={{ filter: 'invert(1)' }}
-              />
-            ) : (
-              <span className="text-2xl font-bold text-p01-chrome">
-                {subscription.name.slice(0, 1)}
-              </span>
-            )}
-            {hasPrivacyFeatures && subscription.status === 'active' && (
-              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-p01-cyan flex items-center justify-center">
-                <Shield className="w-3.5 h-3.5 text-p01-void" />
-              </div>
-            )}
-          </div>
-          <div>
-            <h2 className="text-xl font-semibold text-white">
-              {subscription.name}
-            </h2>
-            <div className="flex items-center gap-2 mt-1">
-              {subscription.status === 'active' ? (
-                <span className="flex items-center gap-1 text-xs text-p01-cyan">
-                  <span className="w-1.5 h-1.5 rounded-full bg-p01-cyan animate-pulse" />
-                  Active
-                </span>
-              ) : subscription.status === 'paused' ? (
-                <span className="flex items-center gap-1 text-xs text-yellow-500">
-                  <Pause className="w-3 h-3" />
-                  Paused
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-xs text-red-500">
-                  <Ban className="w-3 h-3" />
-                  Cancelled
-                </span>
-              )}
-              {subscription.origin && (
-                <span className="text-xs text-p01-chrome/40">
-                  via {new URL(subscription.origin).hostname}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Amount */}
-        <div className="bg-p01-surface rounded-xl p-4">
-          <span className="text-xs text-p01-chrome/60 block mb-2">Amount</span>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-white">
-              {subscription.amount.toFixed(subscription.amount < 1 ? 4 : 2)}
+    <Screen
+      title={serviceName}
+      onBack={() => navigate(-1)}
+      footer={
+        cancelled ? undefined : (
+          <>
+            {/*
+              The no-refund rule, stated where "Cancel & Revoke" used to be.
+              A subscription is a one-way prepaid envelope: money that has left
+              your wallet can only ever reach the merchant, and the protocol has
+              no instruction that could send any of it back. Pause and resume are
+              the whole set of controls.
+            */}
+            <p className="mb-2.5 text-tiny text-p01-text-dim">
+              Pausing freezes the clock and cuts access; your prepaid days are not lost. Money
+              already sent can only ever reach the merchant — Protocol 01 cannot return it.
+            </p>
+            <Button full size="lg" variant="secondary" icon={paused ? Play : Pause} onClick={handlePauseResume}>
+              {paused ? 'Resume' : 'Pause'}
+            </Button>
+          </>
+        )
+      }
+    >
+      <div className="flex flex-col gap-5">
+        {/* ── The headline: price, and whether it is running. ── */}
+        <div>
+          <Eyebrow>{subscription.useZkPool ? 'Shielded subscription' : 'Subscription'}</Eyebrow>
+          <div className="mt-1.5 flex items-baseline gap-1.5">
+            <Amount
+              value={subscription.amount.toFixed(subscription.amount < 1 ? 4 : 2)}
+              unit={subscription.tokenSymbol}
+              size="xl"
+            />
+            <span className="text-sm text-p01-text-muted">
+              / {formatInterval(subscription.interval).toLowerCase()}
             </span>
-            <span className="text-sm text-p01-chrome">{subscription.tokenSymbol}</span>
-            <span className="text-sm text-p01-chrome/60">/ {formatInterval(subscription.interval).toLowerCase()}</span>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            {cancelled ? (
+              <Pill tone="bad">Cancelled</Pill>
+            ) : paused ? (
+              <Pill tone="warn">Paused</Pill>
+            ) : (
+              <Pill tone="good">Active</Pill>
+            )}
+            {!cancelled && !paused && (
+              <span className="text-tiny text-p01-text-dim">
+                {daysUntilNext <= 0
+                  ? 'Next payment is due now'
+                  : `Next payment in ${daysUntilNext} day${daysUntilNext !== 1 ? 's' : ''}`}
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Privacy Features Card */}
-        {hasPrivacyFeatures && (
-          <motion.div
-            initial={{ y: 10, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="bg-p01-cyan/10 rounded-xl p-4 border border-p01-cyan/30"
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <Shield className="w-5 h-5 text-p01-cyan" />
-              <span className="text-sm font-semibold text-p01-cyan">
-                Privacy Active
-              </span>
+        {/* ── The key. Written at purchase, read here, nowhere else. ── */}
+        {license && (
+          <Panel>
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4 text-p01-cyan" aria-hidden="true" />
+              <Eyebrow>License key</Eyebrow>
             </div>
-            <p className="text-xs text-p01-chrome/60">
-              Amounts and timing are randomized automatically.
+            <p className="mt-2 break-all rounded-lg border border-p01-border bg-p01-void px-3 py-2.5 font-mono text-tiny leading-relaxed text-p01-text">
+              {license.licenseKey}
             </p>
-
-            {/* Preview next payment */}
-            {subscription.status === 'active' && (
-              <div className="mt-3 pt-3 border-t border-p01-cyan/20">
-                <p className="text-xs text-p01-chrome/60 mb-1">Next payment preview:</p>
-                <p className="text-sm text-white font-mono">
-                  ~{paymentPreview.amount.toFixed(4)} {subscription.tokenSymbol}
-                  {paymentPreview.noise.amountDelta !== 0 && (
-                    <span className="text-p01-chrome/40 text-xs ml-1">
-                      ({paymentPreview.noise.amountDelta > 0 ? '+' : ''}
-                      {paymentPreview.noise.amountDelta.toFixed(4)})
-                    </span>
-                  )}
-                </p>
-              </div>
-            )}
-          </motion.div>
+            <Button
+              variant="secondary"
+              full
+              className="mt-2.5"
+              icon={copied ? Check : Copy}
+              onClick={() => {
+                void navigator.clipboard?.writeText(license.licenseKey);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }}
+            >
+              {copied ? 'Copied' : 'Copy license key'}
+            </Button>
+            <p className="mt-2 text-tiny text-p01-text-dim">
+              Give this to {serviceName} to unlock access. They check it against the
+              commitment your subscription posted on chain, so it works without an account,
+              an email or your wallet address.
+            </p>
+          </Panel>
         )}
 
-        {/* ZK Shielded Payment Badge */}
-        {subscription.useZkPool && (
-          <motion.div
-            initial={{ y: 10, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="bg-p01-pink/10 rounded-xl p-4 border border-p01-pink/30"
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <EyeOff className="w-5 h-5 text-p01-pink" />
-              <span className="text-sm font-semibold text-p01-pink">
-                ZK Shielded Payment
-              </span>
-            </div>
-            <div className="flex items-start gap-2">
-              <Lock className="w-3 h-3 text-p01-pink flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-p01-chrome/60">
-                Payments are funded from the shielded pool and this vault is keyed on-chain by
-                a commitment, not by your address, so it cannot be looked up from your wallet.
-                Your wallet did sign the setup transaction, and the merchant is named in it.
-              </p>
-            </div>
-          </motion.div>
-        )}
-
-        {/* Stats */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-p01-surface rounded-xl p-4">
-            <p className="text-xs text-p01-chrome/60 mb-1">Total Paid</p>
-            <p className="text-lg font-semibold text-white">
-              {subscription.totalPaid.toFixed(subscription.totalPaid < 1 ? 4 : 2)} {subscription.tokenSymbol}
-            </p>
-            <p className="text-xs text-p01-chrome/60">
-              {subscription.paymentsMade} payment{subscription.paymentsMade !== 1 ? 's' : ''}
-            </p>
+        {/* ── What it has cost so far. ── */}
+        <div>
+          <Eyebrow>So far</Eyebrow>
+          <div className="mt-1.5 flex items-center justify-between">
+            <span className="text-sm text-p01-text-muted">Paid</span>
+            <span className="text-sm text-p01-text tabular">
+              {subscription.totalPaid.toFixed(subscription.totalPaid < 1 ? 4 : 2)}{' '}
+              {subscription.tokenSymbol} over {subscription.paymentsMade} payment
+              {subscription.paymentsMade !== 1 ? 's' : ''}
+            </span>
           </div>
-          <div className="bg-p01-surface rounded-xl p-4">
-            <p className="text-xs text-p01-chrome/60 mb-1">Remaining</p>
-            <p className="text-lg font-semibold text-white">
-              {remainingPayments === Infinity ? 'Unlimited' : `${remainingPayments} payments`}
-            </p>
-            <p className="text-xs text-p01-chrome/60">
-              {maxTotal === Infinity
-                ? 'No limit'
-                : `Max: ${maxTotal.toFixed(2)} ${subscription.tokenSymbol}`}
-            </p>
+          {remainingPayments !== Infinity && (
+            <div className="mt-1.5 flex items-center justify-between">
+              <span className="text-sm text-p01-text-muted">Left</span>
+              <span className="text-sm text-p01-text tabular">
+                {remainingPayments} payment{remainingPayments !== 1 ? 's' : ''}
+              </span>
+            </div>
+          )}
+          <div className="mt-1.5 flex items-center justify-between">
+            <span className="text-sm text-p01-text-muted">Paid to</span>
+            <span className="font-mono text-sm text-p01-text">
+              {truncateAddress(subscription.recipient, 4)}
+            </span>
+          </div>
+          <div className="mt-1.5 flex items-center justify-between">
+            <span className="text-sm text-p01-text-muted">Started</span>
+            <span className="text-sm text-p01-text tabular">
+              {new Date(subscription.createdAt).toLocaleDateString()}
+            </span>
           </div>
         </div>
 
-        {/* Next Payment */}
-        {subscription.status === 'active' && (
-          <div className="bg-p01-surface rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Clock className="w-4 h-4 text-p01-chrome/60" />
-              <span className="text-sm text-p01-chrome/60">Next Payment</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-lg font-semibold text-white">
-                {daysUntilNext <= 0 ? 'Due now' : `In ${daysUntilNext} day${daysUntilNext !== 1 ? 's' : ''}`}
-              </span>
-              <span className="text-sm text-p01-chrome">
-                {new Date(subscription.nextPayment).toLocaleDateString()}
-              </span>
-            </div>
-            <div className="mt-2 h-1.5 bg-p01-border rounded-full overflow-hidden">
-              <div
-                className={cn(
-                  'h-full rounded-full',
-                  daysUntilNext <= 0 ? 'bg-red-500' : 'bg-p01-cyan'
-                )}
-                style={{
-                  width: `${Math.min(100, Math.max(0, ((30 - daysUntilNext) / 30) * 100))}%`,
-                }}
-              />
-            </div>
-
-            {/* Auto-payment info */}
-            {daysUntilNext <= 0 && (
-              <p className="mt-2 text-xs text-p01-cyan">
-                Payment will be sent automatically
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Error Display */}
+        {/* ⚠️ A failed payment is the one thing on this screen the user has to
+            act on, so it announces itself rather than sitting in a card. */}
         {error && (
-          <div className="bg-red-500/10 rounded-xl p-4 border border-red-500/30" role="alert" aria-live="polite">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" aria-hidden="true" />
-              <div>
-                <p className="text-sm text-red-500 font-medium">Payment Failed</p>
-                <p className="text-xs text-red-400 mt-1">{error}</p>
-              </div>
-            </div>
-          </div>
+          <p role="alert" className="text-tiny text-p01-red">
+            The last payment failed. {error}
+          </p>
         )}
 
-        {/* Payment History */}
-        <div className="bg-p01-surface rounded-xl">
+        {/* ── History, folded away until asked for. ── */}
+        <div>
           <button
             onClick={() => setShowPaymentHistory(!showPaymentHistory)}
-            className="w-full flex items-center justify-between p-4"
             aria-expanded={showPaymentHistory}
+            className="flex min-h-[44px] w-full items-center justify-between rounded-lg text-left transition-colors duration-exit hover:bg-p01-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
           >
-            <span className="text-sm font-medium text-white">Payment History</span>
+            <span className="text-sm text-p01-text">Payment history</span>
             <ChevronDown
               className={cn(
-                'w-4 h-4 text-p01-chrome transition-transform',
-                showPaymentHistory && 'rotate-180'
+                'h-4 w-4 text-p01-text-dim transition-transform duration-exit',
+                showPaymentHistory && 'rotate-180',
               )}
+              aria-hidden="true"
             />
           </button>
 
           {showPaymentHistory && (
-            <div className="px-4 pb-4">
-              {subscription.payments.length === 0 ? (
-                <p className="text-xs text-p01-chrome/60 text-center py-4">
-                  No payments yet
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {subscription.payments.slice().reverse().map((payment) => (
-                    <PaymentHistoryItem key={payment.id} payment={payment} />
-                  ))}
-                </div>
-              )}
-            </div>
+            subscription.payments.length === 0 ? (
+              <p className="py-2 text-tiny text-p01-text-dim">No payments yet.</p>
+            ) : (
+              <div className="flex flex-col">
+                {subscription.payments.slice().reverse().map((payment, i) => (
+                  <div key={payment.id}>
+                    {i > 0 && <Hairline className="bg-p01-border-soft" />}
+                    <PaymentHistoryItem payment={payment} symbol={subscription.tokenSymbol} />
+                  </div>
+                ))}
+              </div>
+            )
           )}
         </div>
-
-        {/* Details */}
-        <div className="bg-p01-surface rounded-xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-p01-chrome/60">Recipient</span>
-            <div className="flex items-center gap-1">
-              <span className="text-sm font-mono text-white">
-                {truncateAddress(subscription.recipient, 4)}
-              </span>
-              <ExternalLink className="w-3 h-3 text-p01-chrome/40" aria-hidden="true" />
-            </div>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-p01-chrome/60">Created</span>
-            <span className="text-sm text-white">
-              {new Date(subscription.createdAt).toLocaleDateString()}
-            </span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-p01-chrome/60">Subscription ID</span>
-            <span className="text-sm font-mono text-white">
-              {truncateAddress(subscription.id, 4)}
-            </span>
-          </div>
-        </div>
       </div>
-
-      {/* Actions */}
-      {subscription.status !== 'cancelled' && (
-        <div className="p-4 border-t border-p01-border space-y-2">
-          <button
-            onClick={handlePauseResume}
-            className="w-full flex items-center justify-center gap-2 py-3 bg-p01-surface text-white font-medium rounded-xl border border-p01-border hover:bg-p01-elevated transition-colors"
-          >
-            {subscription.status === 'active' ? (
-              <>
-                <Pause className="w-4 h-4" />
-                Pause Subscription
-              </>
-            ) : (
-              <>
-                <Play className="w-4 h-4" />
-                Resume Subscription
-              </>
-            )}
-          </button>
-
-          {/*
-            The no-refund rule, stated where "Cancel & Revoke" used to be.
-            A subscription is a one-way prepaid envelope: money that has left
-            your wallet can only ever reach the merchant, and the protocol has
-            no instruction that could send any of it back. Pause and resume are
-            the whole set of controls.
-          */}
-          <p className="text-p01-chrome/60 text-[11px] leading-relaxed pt-1">
-            This subscription cannot be cancelled or refunded. Pause it at any time
-            and resume later — your prepaid days are not lost while paused. If you
-            want money back, that is between you and the merchant; Protocol 01
-            cannot return it.
-          </p>
-        </div>
-      )}
-
-    </div>
+    </Screen>
   );
 }
 
-function PaymentHistoryItem({ payment }: { payment: PaymentRecord }) {
+function PaymentHistoryItem({ payment, symbol }: { payment: PaymentRecord; symbol: string }) {
   const { network } = useWalletStore();
-  const statusColors = {
-    confirmed: 'text-p01-cyan',
-    pending: 'text-warning',
-    failed: 'text-error',
-  };
 
   return (
-    <div className="flex items-center justify-between py-2 border-b border-p01-border/50 last:border-0">
-      <div>
-        <p className="text-sm text-white">
-          {payment.amount.toFixed(4)} SOL
-          {payment.noise.amountDelta !== 0 && (
-            <span className="text-xs text-p01-chrome/40 ml-1">
-              ({payment.noise.amountDelta > 0 ? '+' : ''}
-              {payment.noise.amountDelta.toFixed(4)})
-            </span>
-          )}
+    <div className="flex items-center gap-3 py-2.5">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm text-p01-text tabular">
+          {payment.amount.toFixed(4)} {symbol}
         </p>
-        <p className="text-xs text-p01-chrome/60">
+        <p className="text-tiny text-p01-text-dim">
           {new Date(payment.timestamp).toLocaleString()}
         </p>
-        {payment.wasStealthPayment && (
-          <span className="text-[9px] text-p01-cyan">Stealth</span>
-        )}
       </div>
-      <div className="text-right">
-        <p className={cn('text-xs font-medium capitalize', statusColors[payment.status])}>
-          {payment.status}
-        </p>
+      {payment.status === 'confirmed' ? (
         <a
           href={getSolscanUrl('tx', payment.signature, network)}
           target="_blank"
           rel="noopener noreferrer"
-          aria-label="View transaction on Solscan"
-          className="text-xs text-p01-chrome/60 hover:text-p01-cyan flex items-center gap-1"
+          className="flex min-h-[44px] items-center gap-1 text-tiny text-p01-text-muted transition-colors duration-exit hover:text-p01-cyan focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
         >
-          View <ExternalLink className="w-3 h-3" aria-hidden="true" />
+          View
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
         </a>
-      </div>
+      ) : (
+        <Pill tone={payment.status === 'failed' ? 'bad' : 'warn'}>
+          {payment.status === 'failed' ? 'Failed' : 'Pending'}
+        </Pill>
+      )}
     </div>
   );
 }

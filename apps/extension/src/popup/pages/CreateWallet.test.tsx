@@ -5,19 +5,26 @@
  * 1. Password entry with strength indicator
  * 2. Seed phrase display with copy + confirm
  *
+ * 🚨 ONE ASSERTION WAS DELETED ON PURPOSE, AND IT WAS PINNING A TRAP. The old
+ * screen disabled "COMPLETE SETUP" until the phrase had been written to the
+ * CLIPBOARD, and the copied flag expired five seconds later — so a user who
+ * copied it and then wrote the words on paper found the button dead again. The
+ * gate is gone; the checkbox is the attestation. The test below now asserts the
+ * OPPOSITE of what the old suite asserted, deliberately, so the gate cannot
+ * come back unnoticed.
+ *
+ * ⚠️ Copy assertions moved to sentence case with the 2026-08-23 design pass.
+ *
  * Validates:
  * - Password input validation (minimum 8 chars, must match)
  * - Password strength indicator progression
- * - Error messages for invalid input
- * - CREATE WALLET button state management
+ * - Create wallet button state management
  * - Seed phrase display after wallet creation
- * - Seed phrase copy functionality
- * - Confirmation checkbox requirement
- * - Complete setup button requires both copy and confirm
+ * - Done is gated on the checkbox ALONE
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import CreateWallet from './CreateWallet';
 
@@ -65,12 +72,23 @@ describe('CreateWallet', () => {
       </MemoryRouter>,
     );
 
-    // "CREATE WALLET" appears in both the header and submit button
-    const createWalletTexts = screen.getAllByText('CREATE WALLET');
-    expect(createWalletTexts.length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('SECURE YOUR WALLET')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Enter password')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Confirm password')).toBeInTheDocument();
+    // "Create wallet" is both the screen title and the submit button.
+    expect(screen.getAllByText('Create wallet').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByLabelText('Password')).toBeInTheDocument();
+    expect(screen.getByLabelText('Confirm password')).toBeInTheDocument();
+  });
+
+  it('says what the password is for, once', () => {
+    render(
+      <MemoryRouter>
+        <CreateWallet />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(/This password encrypts your wallet on this device/)).toBeInTheDocument();
+
+    // ⛔ The medallion-plus-headline-plus-subtitle stack that said it three times.
+    expect(screen.queryByText('SECURE YOUR WALLET')).not.toBeInTheDocument();
   });
 
   it('shows the password strength indicator', () => {
@@ -80,57 +98,52 @@ describe('CreateWallet', () => {
       </MemoryRouter>,
     );
 
-    // Initially, the helper text should say MINIMUM 8 CHARACTERS
-    expect(screen.getByText('MINIMUM 8 CHARACTERS')).toBeInTheDocument();
+    expect(screen.getByText('At least 8 characters')).toBeInTheDocument();
+    expect(screen.getByRole('meter', { name: 'Password strength' })).toHaveAttribute(
+      'aria-valuenow',
+      '0',
+    );
   });
 
-  it('updates strength indicator as password length increases', () => {
+  it('reads the strength label out of the meter it belongs to', () => {
     const { container } = render(
       <MemoryRouter>
         <CreateWallet />
       </MemoryRouter>,
     );
 
-    // Password strength is: <8 chars = MINIMUM, 8-11 = GOOD, >=12 = STRONG
-    // The strength indicator renders inside the component based on password.length.
-    // We verify the initial state and check the component's strength text pattern.
-    const strengthText = container.querySelector('.space-y-1 p');
-    expect(strengthText?.textContent).toBe('MINIMUM 8 CHARACTERS');
-
-    // Since the password input onChange may have React event system issues with
-    // controlled password inputs in jsdom, we verify the strength logic indirectly
-    // by checking the component renders the correct initial state and the strength
-    // formula exists in the component (length < 8 = MINIMUM, length >= 12 = STRONG, else GOOD).
-    expect(screen.getByText('MINIMUM 8 CHARACTERS')).toBeInTheDocument();
+    // Password strength is: <8 chars = "At least 8 characters", 8-11 = Good,
+    // >=12 = Strong. The label lives inside the meter, next to the bars it
+    // describes, rather than floating in a summary.
+    const strengthText = container.querySelector('[role="meter"] p');
+    expect(strengthText?.textContent).toBe('At least 8 characters');
   });
 
-  it('shows the CREATE WALLET button as disabled when inputs are empty', () => {
+  it('shows the create wallet button as disabled when inputs are empty', () => {
     render(
       <MemoryRouter>
         <CreateWallet />
       </MemoryRouter>,
     );
 
-    // The button should be disabled when no password is entered
-    const buttons = screen.getAllByText('CREATE WALLET');
-    const submitButton = buttons
+    const submitButton = screen
+      .getAllByText('Create wallet')
       .map((el) => el.closest('button'))
-      .find((btn) => btn?.disabled);
+      .find((btn) => btn !== null);
     expect(submitButton).toBeTruthy();
     expect(submitButton).toBeDisabled();
   });
 
-  it('renders both password and confirm password inputs', () => {
+  it('renders both password and confirm password inputs as password type', () => {
     render(
       <MemoryRouter>
         <CreateWallet />
       </MemoryRouter>,
     );
 
-    const passwordInput = screen.getByPlaceholderText('Enter password') as HTMLInputElement;
-    const confirmInput = screen.getByPlaceholderText('Confirm password') as HTMLInputElement;
+    const passwordInput = screen.getByLabelText('Password') as HTMLInputElement;
+    const confirmInput = screen.getByLabelText('Confirm password') as HTMLInputElement;
 
-    // Both inputs should be password type initially
     expect(passwordInput.type).toBe('password');
     expect(confirmInput.type).toBe('password');
   });
@@ -148,17 +161,16 @@ describe('CreateWallet', () => {
     expect(typeof mockCreateWallet).toBe('function');
   });
 
-  it('renders the error message container', () => {
+  it('renders no error before anything is submitted', () => {
     render(
       <MemoryRouter>
         <CreateWallet />
       </MemoryRouter>,
     );
 
-    // Error messages are displayed in a red-tinted div when localError or error is set
-    // Initially, no error should be shown
     expect(screen.queryByText('Password must be at least 8 characters')).not.toBeInTheDocument();
     expect(screen.queryByText('Passwords do not match')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('renders the password visibility toggle button', () => {
@@ -168,25 +180,34 @@ describe('CreateWallet', () => {
       </MemoryRouter>,
     );
 
-    const passwordInput = screen.getByPlaceholderText('Enter password') as HTMLInputElement;
+    const passwordInput = screen.getByLabelText('Password') as HTMLInputElement;
     expect(passwordInput.type).toBe('password');
 
-    // Find the toggle button (has an SVG icon)
-    const toggleButtons = screen.getAllByRole('button');
-    const toggleButton = toggleButtons.find((btn) =>
-      btn.querySelector('svg.lucide-eye, svg.lucide-eye-off'),
-    );
-    expect(toggleButton).toBeDefined();
+    expect(screen.getByLabelText('Show password')).toBeInTheDocument();
   });
 
-  it('renders the helper text about password requirements', () => {
+  it('gates Done on the checkbox ALONE, never on having copied the phrase', async () => {
     render(
       <MemoryRouter>
         <CreateWallet />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('Create a password to encrypt your wallet')).toBeInTheDocument();
-  });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correcthorse' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), {
+      target: { value: 'correcthorse' },
+    });
+    fireEvent.click(screen.getAllByText('Create wallet').find((el) => el.closest('button'))!);
 
+    // Step 2. The twelve words are on screen and nothing has been copied.
+    const done = await screen.findByText('Done');
+    expect(done.closest('button')).toBeDisabled();
+    expect(screen.getByText('Copy to clipboard')).toBeInTheDocument();
+
+    // ⛔ No copy. Ticking the box alone must be enough — the old screen also
+    // required the clipboard, and silently re-required it five seconds later.
+    fireEvent.click(screen.getByRole('checkbox'));
+
+    expect(screen.getByText('Done').closest('button')).not.toBeDisabled();
+  });
 });

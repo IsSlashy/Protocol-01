@@ -2,21 +2,19 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
-  ArrowUp,
   ArrowDown,
-  ArrowUpRight,
   ArrowDownLeft,
-  Repeat,
-  Copy,
+  ArrowUp,
+  ArrowUpRight,
   Check,
-  Settings,
-  ChevronRight,
-  RefreshCw,
-  Loader2,
   Clock,
-  ExternalLink,
-  ShieldCheck,
-  Infinity as InfinityIcon,
+  Copy,
+  Droplet,
+  Loader2,
+  RefreshCw,
+  Settings,
+  Shield,
+  Wallet as WalletIcon,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { useShieldedStore } from '@/shared/store/shielded';
@@ -32,6 +30,16 @@ import {
 import { getSolPrice } from '@/shared/services/price';
 import type { TransactionRecord } from '@/shared/types';
 import Wordmark from '@/popup/components/Wordmark';
+import {
+  ActionGrid,
+  Amount,
+  Eyebrow,
+  EmptyState,
+  Hairline,
+  Panel,
+  Pill,
+  Row,
+} from '@/popup/ui';
 
 export default function Home() {
   const navigate = useNavigate();
@@ -120,454 +128,189 @@ export default function Home() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-p01-void">
-      {/* Header - Like Mobile */}
-      <header className="flex items-center justify-between px-4 py-3">
-        <div className="flex items-center gap-3">
-          <Wordmark size={26} showText={false} />
-          <div className="flex items-center gap-2">
-            <span className="text-white font-display font-bold tracking-wide">PROTOCOL</span>
-            {network === 'devnet' && (
-              <span className="px-2 py-0.5 bg-p01-cyan/20 text-p01-cyan text-[10px] font-mono font-bold rounded tracking-wider">
-                DEVNET
-              </span>
-            )}
-          </div>
+    /**
+     * 🎯 REBUILT 2026-08-23. The old home screen carried a balance header, a
+     * three-verb action row, a devnet faucet card, TWO cards pointing at the
+     * same shielded screen (one of them advertising itself as a dead end), an
+     * asset list and a mini activity feed, and no way to reach a subscription
+     * at all. Under a merchant-subscription pivot, the front door did not
+     * mention the product.
+     *
+     * What changed, and why each one:
+     *   - ONE copy control. There were two, in the header and in the balance
+     *     card, firing the same handler eight lines apart.
+     *   - Swap is parked, so the third verb is Shield: the action this product
+     *     is for, rather than one it does not do.
+     *   - The two shielded cards collapse into one strip, and the "no exit, V1
+     *     retired" card is gone. A full-width tappable button that announces
+     *     itself as a dead end is worse than no button.
+     *   - A subscriptions strip, because the tab bar was the only way in.
+     *   - The faucet is a line, not a card above the product. It is test
+     *     plumbing and it was outranking the thing being sold.
+     *   - SPL rows no longer print a fiat value. It was hardcoded to zero and
+     *     shown as fact on every token.
+     */
+    <div className="flex h-full flex-col bg-p01-void">
+      <header className="flex shrink-0 items-center justify-between px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          <Wordmark size={22} showText={true} />
+          {network === 'devnet' && <Pill>Devnet</Pill>}
         </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={handleCopy}
-            className="p-2 text-p01-chrome hover:text-white transition-colors"
-            aria-label={copied ? 'Address copied' : 'Copy wallet address'}
-          >
-            {copied ? <Check className="w-5 h-5 text-p01-cyan" /> : <Copy className="w-5 h-5" />}
-          </button>
-          <button
-            onClick={() => navigate('/settings')}
-            className="p-2 text-p01-chrome hover:text-white transition-colors"
-            aria-label="Settings"
-          >
-            <Settings className="w-5 h-5" />
-          </button>
-        </div>
+        <button
+          onClick={() => navigate('/settings')}
+          aria-label="Settings"
+          className="flex h-11 w-11 items-center justify-center rounded-lg text-p01-text-muted transition-colors duration-exit hover:text-p01-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
+        >
+          <Settings className="h-5 w-5" aria-hidden="true" />
+        </button>
       </header>
 
-      {/* Scrollable Content */}
-      <div className="flex-1 overflow-y-auto pb-4">
-        {/* Balance Card */}
-        <motion.div
-          initial={{ y: 10, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="mx-4 bg-p01-gradient-card border border-p01-border rounded-2xl p-5"
-        >
-          {/* Wallet Address */}
-          <div className="flex items-center justify-center gap-2 text-p01-chrome text-sm mb-1">
-            <span>{publicKey ? truncateAddress(publicKey, 6) : '---'}</span>
-            <button onClick={handleCopy} className="hover:text-white transition-colors" aria-label={copied ? 'Address copied' : 'Copy address'}>
-              {copied ? <Check className="w-4 h-4 text-p01-cyan" /> : <Copy className="w-4 h-4" />}
-            </button>
-            <a
-              href={`https://solscan.io/account/${publicKey}?cluster=${network}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-white transition-colors"
-              aria-label="View on Solscan"
-            >
-              <ExternalLink className="w-4 h-4" />
-            </a>
-          </div>
-
-          {/* Big USD Balance */}
-          <div className="text-center py-4">
-            <div className="flex items-center justify-center gap-2">
-              <p className="text-4xl font-display font-bold text-white">
-                {formatCurrency(usdValue)}
-              </p>
-              <button
-                onClick={() => refreshBalance()}
-                disabled={isRefreshing}
-                className="p-1 text-p01-chrome hover:text-white transition-colors"
-                aria-label="Refresh balance"
-              >
-                <RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
-              </button>
-            </div>
-            <div className="flex items-center justify-center gap-2 mt-2 text-p01-chrome">
-              {/* Solana Icon */}
-              <div className="w-4 h-4 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
-                <span className="text-[8px] text-white font-bold">S</span>
-              </div>
-              <span>{solBalance.toFixed(4)} SOL</span>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* Action Buttons - Round with Different Colors */}
-        <div className="flex justify-center gap-6 py-6">
-          <ActionButton
-            icon={<ArrowUp className="w-5 h-5" />}
-            label="Send"
-            color="cyan"
-            onClick={() => navigate('/send')}
-          />
-          <ActionButton
-            icon={<ArrowDown className="w-5 h-5" />}
-            label="Receive"
-            color="pink"
-            onClick={() => navigate('/receive')}
-          />
-          <ActionButton
-            icon={<Repeat className="w-5 h-5" />}
-            label="Swap"
-            color="violet"
-            onClick={() => navigate('/swap')}
-          />
+      <div className="flex-1 overflow-y-auto px-4 pb-4">
+        {/* Balance. The address sits under it as one control, not two. */}
+        <div className="py-4 text-center">
+          <Amount value={solBalance.toFixed(4)} unit="SOL" size="xl" />
+          <p className="mt-1 text-sm text-p01-text-muted tabular">
+            {solPrice > 0 ? formatCurrency(usdValue) : " "}
+          </p>
+          <button
+            onClick={handleCopy}
+            aria-label={copied ? "Address copied" : "Copy wallet address"}
+            className="mx-auto mt-2 flex min-h-[36px] items-center gap-1.5 rounded-lg px-2 text-tiny text-p01-text-dim transition-colors duration-exit hover:text-p01-text-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
+          >
+            <span className="font-mono">{truncateAddress(publicKey ?? "", 4)}</span>
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-p01-cyan" aria-hidden="true" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+          </button>
         </div>
 
+        <ActionGrid
+          actions={[
+            { label: "Send", icon: ArrowUp, onClick: () => navigate("/send") },
+            { label: "Receive", icon: ArrowDown, onClick: () => navigate("/receive") },
+            { label: "Shield", icon: Shield, onClick: () => navigate("/shield") },
+            { label: "Subscribe", icon: RefreshCw, onClick: () => navigate("/discover") },
+          ]}
+        />
 
-        {/* Faucet Card (Devnet only) */}
-        {network === 'devnet' && (
-          <motion.button
-            initial={{ y: 10, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.1 }}
-            onClick={handleFaucet}
-            disabled={faucetLoading}
-            className="mx-4 mb-4 bg-p01-surface rounded-xl p-4 flex items-center justify-between w-[calc(100%-2rem)] hover:bg-p01-surface/80 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              {/* Solana gradient icon */}
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-yellow to-p01-yellow/60 flex items-center justify-center">
-                {faucetLoading ? (
-                  <Loader2 className="w-5 h-5 text-white animate-spin" />
-                ) : faucetSuccess ? (
-                  <Check className="w-5 h-5 text-white" />
-                ) : (
-                  <span className="text-white font-bold text-sm">S</span>
-                )}
-              </div>
-              <div className="text-left">
-                <p className="text-white font-medium">
-                  {faucetSuccess ? '+1 SOL Received!' : 'Get Test SOL'}
-                </p>
-                <p className="text-p01-chrome text-xs">
-                  {faucetError || 'Tap to receive 1 SOL from devnet faucet'}
-                </p>
-              </div>
-            </div>
-            <ChevronRight className={cn(
-              'w-5 h-5',
-              faucetSuccess ? 'text-p01-cyan' : faucetError ? 'text-error' : 'text-p01-pink'
-            )} />
-          </motion.button>
-        )}
+        {/* The two strips that were duplicated and missing. */}
+        <div className="mt-4 flex flex-col gap-2">
+          {shieldedWalletEnabled && (
+            <Panel className="p-0 px-3">
+              <Row
+                icon={Shield}
+                label="Private balance"
+                sub={
+                  shieldedInitialized
+                    ? `${shieldedBalance.toFixed(2)} SOL shielded`
+                    : "Not set up yet"
+                }
+                chevron
+                onClick={() => navigate("/shield")}
+              />
+            </Panel>
+          )}
 
-        {/* Privacy Pool Card (Hero) */}
-        <motion.button
-          initial={{ y: 10, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.15 }}
-          onClick={() => navigate('/shielded')}
-          className="mx-4 mb-4 bg-p01-gradient-card rounded-2xl p-4 flex items-center justify-between w-[calc(100%-2rem)] hover:opacity-90 transition-all border border-p01-cyan/20"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-p01-cyan/20 flex items-center justify-center">
-              <ShieldCheck className="w-5 h-5 text-p01-cyan" />
-            </div>
-            <div className="text-left">
-              <p className="text-white font-medium">Shielded Pool</p>
-              <p className="text-p01-chrome text-xs">
-                Fixed-denomination shielded notes
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-p01-cyan font-mono bg-p01-cyan/10 px-2 py-0.5 rounded">
-              ZK
-            </span>
-            <ChevronRight className="w-5 h-5 text-p01-cyan" />
-          </div>
-        </motion.button>
-
-        {/* Legacy Shielded Wallet (conditional) */}
-        {showShieldedCard && (
-          <motion.button
-            initial={{ y: 10, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.2 }}
-            onClick={() => navigate('/shielded')}
-            className="mx-4 mb-4 bg-p01-surface rounded-xl p-4 flex items-center justify-between w-[calc(100%-2rem)] hover:bg-p01-surface/80 transition-all border border-p01-border/50"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-p01-chrome/10 flex items-center justify-center">
-                <ShieldCheck className="w-5 h-5 text-p01-chrome/60" />
-              </div>
-              <div className="text-left">
-                <div className="flex items-center gap-2">
-                  <p className="text-white/80 font-medium">Shielded Wallet</p>
-                  <span className="text-[9px] text-p01-chrome/60 font-mono bg-p01-chrome/10 px-1.5 py-0.5 rounded">
-                    Legacy
-                  </span>
-                </div>
-                <p className="text-p01-chrome text-xs">
-                  {/* 🚨 THIS SAID "withdraw recommended" UNTIL 2026-08-19, AND THE
-                      WITHDRAWAL DOES NOT EXIST. `unshield` and `transfer` were
-                      unregistered from zk_shielded on 2026-08-19 (circuit 5 proves
-                      no membership), and `shield` with them, so the V1 pool takes
-                      nothing in and lets nothing out. Telling a holder to withdraw
-                      is advice that cannot be followed; the honest line names the
-                      state instead, and does not imply a button exists. */}
-                  {hasShieldedFunds
-                    ? `${shieldedBalance.toFixed(4)} SOL — no exit, V1 retired`
-                    : 'Variable-amount privacy pool — retired'}
-                </p>
-              </div>
-            </div>
-            <ChevronRight className="w-5 h-5 text-p01-chrome/40" />
-          </motion.button>
-        )}
-
-        {/* Assets Section */}
-        <div className="px-4">
-          <p className="text-p01-chrome text-sm font-display tracking-wider mb-3">ASSETS</p>
-
-          {/* Native SOL - Always show */}
-          <motion.div
-            initial={{ x: -10, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            className="bg-p01-surface rounded-xl p-4 flex items-center justify-between mb-2"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
-                <span className="text-white font-bold text-sm">S</span>
-              </div>
-              <div>
-                <p className="text-white font-medium">Solana</p>
-                <p className="text-p01-chrome text-xs">SOL</p>
-              </div>
-            </div>
-            <div className="text-right">
-              <p className="text-white font-medium">{solBalance.toFixed(4)}</p>
-              <p className="text-p01-chrome text-xs">{formatCurrency(usdValue)}</p>
-            </div>
-          </motion.div>
-
-          {/* SPL Tokens */}
-          {tokens.map((token, index) => (
-            <motion.div
-              key={token.mint}
-              initial={{ x: -10, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              transition={{ delay: (index + 1) * 0.05 }}
-              className="bg-p01-surface rounded-xl p-4 flex items-center justify-between mb-2"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
-                  <span className="text-white font-bold text-xs">
-                    {token.symbol.slice(0, 2)}
-                  </span>
-                </div>
-                <div>
-                  <p className="text-white font-medium">{token.symbol}</p>
-                  <p className="text-p01-chrome text-xs">{truncateAddress(token.mint, 4)}</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-white font-medium">{token.uiBalance}</p>
-                <p className="text-p01-chrome text-xs">$0.00</p>
-              </div>
-            </motion.div>
-          ))}
+          <Panel className="p-0 px-3">
+            <Row
+              icon={RefreshCw}
+              label="Subscriptions"
+              sub="Pay a merchant without an account"
+              chevron
+              onClick={() => navigate("/subscriptions")}
+            />
+          </Panel>
         </div>
 
-        {/* Recent Activity Section */}
-        <div className="px-4 mt-4">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-p01-chrome text-sm font-display tracking-wider">RECENT ACTIVITY</p>
+        {/* Assets */}
+        <div className="mt-5">
+          <Eyebrow>Assets</Eyebrow>
+          <div className="mt-1.5">
+            <Row icon={WalletIcon} label="SOL" sub="Solana" value={solBalance.toFixed(4)} />
+            {tokens.map((token) => (
+              <div key={token.mint}>
+                <Hairline className="bg-p01-border-soft" />
+                {/* No fiat column. It was hardcoded to zero on every token row
+                    and printed as though it had been looked up. */}
+                <Row
+                  label={token.symbol}
+                  sub={truncateAddress(token.mint, 4)}
+                  value={String(token.uiBalance)}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Activity */}
+        <div className="mt-5">
+          <div className="flex items-center justify-between">
+            <Eyebrow>Recent activity</Eyebrow>
             <button
-              onClick={() => navigate('/activity')}
-              className="text-p01-pink text-xs font-medium hover:underline"
-              aria-label="See all activity"
+              onClick={() => navigate("/activity")}
+              className="rounded-lg px-2 py-1 text-tiny text-p01-cyan transition-colors duration-exit hover:text-p01-cyan-bright focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
             >
-              See All
+              See all
             </button>
           </div>
 
-          {/* Recent transactions or empty state */}
-          <div className="bg-p01-surface rounded-xl overflow-hidden">
+          <div className="mt-1.5">
             {isLoadingTransactions && recentTransactions.length === 0 ? (
-              <div className="p-4 flex items-center justify-center">
-                <Loader2 className="w-6 h-6 text-p01-cyan animate-spin" />
+              <div className="flex justify-center py-6">
+                <Loader2 className="h-5 w-5 animate-spin text-p01-text-dim" aria-hidden="true" />
               </div>
             ) : recentTransactions.length === 0 ? (
-              <div className="p-4 flex items-center justify-center">
-                <div className="text-center py-4">
-                  <Clock className="w-8 h-8 text-p01-chrome/40 mx-auto mb-2" />
-                  <p className="text-p01-chrome text-sm">No recent activity</p>
-                  <p className="text-p01-chrome/60 text-xs mt-1">
-                    Your transactions will appear here
-                  </p>
-                </div>
-              </div>
+              <EmptyState
+                icon={Clock}
+                title="Nothing yet"
+                body="Transactions from this wallet will appear here."
+              />
             ) : (
-              <div className="divide-y divide-p01-border">
-                {recentTransactions.map((tx, index) => (
-                  <RecentTransactionRow
-                    key={tx.signature}
-                    tx={tx}
-                    index={index}
-                    network={network}
+              recentTransactions.map((tx: TransactionRecord, i: number) => (
+                <div key={tx.signature}>
+                  {i > 0 && <Hairline className="bg-p01-border-soft" />}
+                  <Row
+                    icon={tx.type === "receive" ? ArrowDownLeft : ArrowUpRight}
+                    label={tx.type === "receive" ? "Received" : "Sent"}
+                    sub={formatRelativeTime(tx.timestamp)}
+                    value={`${tx.type === "receive" ? "+" : "-"}${tx.amount} SOL`}
+                    onClick={() => window.open(getSolscanUrl("tx", tx.signature, network), "_blank")}
                   />
-                ))}
-              </div>
+                </div>
+              ))
             )}
           </div>
         </div>
+
+        {/* Faucet. A line, at the bottom, where test plumbing belongs. */}
+        {network === "devnet" && (
+          <div className="mt-5">
+            <Hairline className="bg-p01-border-soft" />
+            <button
+              onClick={handleFaucet}
+              disabled={faucetLoading}
+              className="flex min-h-[44px] w-full items-center gap-2 text-left text-tiny text-p01-text-dim transition-colors duration-exit hover:text-p01-text-muted disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
+            >
+              {faucetLoading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Droplet className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              {faucetSuccess ? "Airdropped 1 SOL" : "Get test SOL"}
+            </button>
+            {/* The failure used to replace the button's own subtitle and clear
+                itself after five seconds, so a rejected airdrop could vanish
+                before it was read. It stays until the next attempt. */}
+            {faucetError && (
+              <p role="alert" className="mt-1 text-tiny text-p01-red">
+                {faucetError}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
-  );
-}
-
-// Action Button Component with Different Colors
-function ActionButton({
-  icon,
-  label,
-  color,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  color: 'cyan' | 'pink' | 'violet' | 'orange';
-  onClick: () => void;
-}) {
-  const colorClasses = {
-    cyan: 'bg-p01-cyan text-p01-void',
-    pink: 'bg-p01-pink text-white',
-    violet: 'bg-p01-cyan text-white',
-    orange: 'bg-p01-yellow text-p01-void',
-  };
-
-  return (
-    <div className="flex flex-col items-center gap-2">
-      <button
-        onClick={onClick}
-        className={cn(
-          'w-12 h-12 rounded-full flex items-center justify-center transition-transform hover:scale-105 active:scale-95',
-          colorClasses[color]
-        )}
-        aria-label={label}
-      >
-        {icon}
-      </button>
-      <span className="text-xs text-p01-chrome" aria-hidden="true">{label}</span>
-    </div>
-  );
-}
-
-// Recent Transaction Row for Home page
-function RecentTransactionRow({
-  tx,
-  index,
-  network,
-}: {
-  tx: TransactionRecord;
-  index: number;
-  network: string;
-}) {
-  const getIcon = () => {
-    switch (tx.type) {
-      case 'send':
-        return ArrowUpRight;
-      case 'receive':
-      case 'claim':
-        return ArrowDownLeft;
-      case 'swap':
-      case 'subscription':
-        return Repeat;
-      default:
-        return ArrowUpRight;
-    }
-  };
-
-  const getIconColor = () => {
-    switch (tx.type) {
-      case 'send':
-        return 'text-error bg-error/10';
-      case 'receive':
-      case 'claim':
-        return 'text-p01-cyan bg-p01-cyan/10';
-      default:
-        return 'text-p01-chrome/60 bg-p01-surface';
-    }
-  };
-
-  const getLabel = () => {
-    switch (tx.type) {
-      case 'send':
-        return tx.counterparty
-          ? `Sent to ${truncateAddress(tx.counterparty, 4)}`
-          : 'Sent';
-      case 'receive':
-        return tx.counterparty
-          ? `From ${truncateAddress(tx.counterparty, 4)}`
-          : 'Received';
-      case 'claim':
-        return 'Claimed';
-      case 'swap':
-        return 'Swap';
-      case 'subscription':
-        return 'Stream';
-      default:
-        return 'Transaction';
-    }
-  };
-
-  const Icon = getIcon();
-  const iconColor = getIconColor();
-  const solscanUrl = getSolscanUrl('tx', tx.signature, network as 'devnet' | 'mainnet-beta');
-
-  return (
-    <motion.a
-      href={solscanUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      initial={{ x: -10, opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      transition={{ delay: index * 0.05 }}
-      className="flex items-center gap-3 px-3 py-2.5 hover:bg-p01-dark/50 transition-colors"
-    >
-      {/* Icon */}
-      <div
-        className={cn(
-          'w-8 h-8 rounded-full flex items-center justify-center',
-          iconColor
-        )}
-      >
-        <Icon className="w-4 h-4" />
-      </div>
-
-      {/* Info */}
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-white truncate">{getLabel()}</p>
-        <p className="text-xs text-p01-chrome/60">{formatRelativeTime(tx.timestamp)}</p>
-      </div>
-
-      {/* Amount */}
-      <div className="text-right">
-        <p
-          className={cn(
-            'text-sm font-medium',
-            tx.type === 'send' || tx.type === 'subscription'
-              ? 'text-error'
-              : 'text-p01-cyan'
-          )}
-        >
-          {tx.type === 'send' || tx.type === 'subscription' ? '-' : '+'}
-          {tx.amount.toFixed(4)} {tx.tokenSymbol}
-        </p>
-      </div>
-
-      <ExternalLink className="w-3.5 h-3.5 text-p01-chrome/40 flex-shrink-0" />
-    </motion.a>
   );
 }

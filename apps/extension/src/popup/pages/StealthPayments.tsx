@@ -94,7 +94,7 @@ export default function StealthPayments() {
         >
           <ArrowLeft className="w-4 h-4 text-p01-chrome" />
         </button>
-        <h1 className="text-sm font-mono font-bold text-white tracking-wider">STEALTH PAYMENTS</h1>
+        <h1 className="text-sm font-mono font-bold text-p01-text tracking-wider">STEALTH PAYMENTS</h1>
         <div className="ml-auto">
           <ShieldCheck className="w-4 h-4 text-p01-cyan" />
         </div>
@@ -114,7 +114,7 @@ export default function StealthPayments() {
             )}
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-mono font-bold text-white">
+            <span className="text-2xl font-mono font-bold text-p01-text">
               {formatSol(stealthBalance)}
             </span>
             <span className="text-sm text-p01-chrome font-mono">SOL</span>
@@ -349,7 +349,7 @@ function PaymentCard({
             )}
           </div>
           <div className="text-left">
-            <p className="font-mono font-bold text-white text-sm">
+            <p className="font-mono font-bold text-p01-text text-sm">
               +{formatSol(payment.amount)} SOL
             </p>
             <p className="text-[10px] text-p01-chrome font-mono">
@@ -408,7 +408,7 @@ function PaymentCard({
                   STEALTH ADDRESS
                 </p>
                 <div className="flex items-center gap-2">
-                  <p className="text-[10px] text-white font-mono flex-1 break-all">
+                  <p className="text-[10px] text-p01-text font-mono flex-1 break-all">
                     {payment.stealthAddress}
                   </p>
                   <button

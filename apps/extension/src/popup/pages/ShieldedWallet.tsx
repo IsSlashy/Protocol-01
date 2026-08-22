@@ -334,14 +334,14 @@ export default function ShieldedWallet() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate(-1)}
-            className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+            className="p-2 -ml-2 text-p01-chrome hover:text-p01-text transition-colors"
             aria-label="Go back"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-p01-cyan" />
-            <h1 className="text-white font-display font-bold tracking-wide">Shielded Wallet</h1>
+            <h1 className="text-p01-text font-display font-bold tracking-wide">Shielded Wallet</h1>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -356,7 +356,7 @@ export default function ShieldedWallet() {
           <button
             onClick={handleSyncFromBlockchain}
             disabled={isSyncing || !isInitialized}
-            className="p-2 text-p01-chrome hover:text-white transition-colors disabled:opacity-50"
+            className="p-2 text-p01-chrome hover:text-p01-text transition-colors disabled:opacity-50"
             title="Sync from Blockchain"
             aria-label="Sync from blockchain"
           >
@@ -364,14 +364,14 @@ export default function ShieldedWallet() {
           </button>
           <button
             onClick={() => setShowBalance(!showBalance)}
-            className="p-2 text-p01-chrome hover:text-white transition-colors"
+            className="p-2 text-p01-chrome hover:text-p01-text transition-colors"
             aria-label={showBalance ? 'Hide balance' : 'Show balance'}
           >
             {showBalance ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
           </button>
           <button
             onClick={() => setShowInfoModal(true)}
-            className="p-2 text-p01-chrome hover:text-white transition-colors"
+            className="p-2 text-p01-chrome hover:text-p01-text transition-colors"
             aria-label="Show info"
           >
             <Info className="w-5 h-5" />
@@ -394,7 +394,7 @@ export default function ShieldedWallet() {
             <button
               onClick={() => refreshBalance()}
               disabled={isLoading}
-              className="p-1 text-p01-chrome hover:text-white transition-colors"
+              className="p-1 text-p01-chrome hover:text-p01-text transition-colors"
               aria-label="Refresh shielded balance"
             >
               <RefreshCw className={cn('w-4 h-4', isLoading && 'animate-spin')} />
@@ -404,7 +404,7 @@ export default function ShieldedWallet() {
           <div className="text-center py-4">
             <div className="flex items-center justify-center gap-2">
               <Lock className="w-6 h-6 text-p01-cyan/60" />
-              <p className="text-3xl font-display font-bold text-white">
+              <p className="text-3xl font-display font-bold text-p01-text">
                 {isLoading ? (
                   <Loader2 className="w-8 h-8 animate-spin text-p01-cyan" />
                 ) : (
@@ -434,7 +434,7 @@ export default function ShieldedWallet() {
                 {copied ? 'Copied' : 'Copy'}
               </button>
             </div>
-            <p className="text-white text-xs font-mono mt-1 truncate">
+            <p className="text-p01-text text-xs font-mono mt-1 truncate">
               {myPqAddress || (isLoading ? 'Initializing...' : 'Unavailable (local key needed)')}
             </p>
             <div className="flex items-center justify-between mt-1">
@@ -545,10 +545,10 @@ export default function ShieldedWallet() {
           <div className="bg-p01-surface rounded-xl p-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan-dim flex items-center justify-center">
-                <Unlock className="w-5 h-5 text-white" />
+                <Unlock className="w-5 h-5 text-p01-text" />
               </div>
               <div>
-                <p className="text-white font-medium">{solBalance.toFixed(4)} SOL</p>
+                <p className="text-p01-text font-medium">{solBalance.toFixed(4)} SOL</p>
                 <p className="text-p01-chrome text-xs">Available to shield</p>
               </div>
             </div>
@@ -581,7 +581,7 @@ export default function ShieldedWallet() {
                       <Clock className="w-5 h-5 text-yellow-400 animate-pulse" />
                     </div>
                     <div>
-                      <p className="text-white font-medium capitalize">{tx.type}</p>
+                      <p className="text-p01-text font-medium capitalize">{tx.type}</p>
                       <p className="text-p01-chrome text-xs">
                         {tx.status === 'generating_proof' ? 'Generating ZK proof...' : 'Processing...'}
                       </p>
@@ -626,7 +626,7 @@ export default function ShieldedWallet() {
                         <Lock className="w-5 h-5 text-p01-cyan" />
                       </div>
                       <div>
-                        <p className="text-white font-medium font-mono">
+                        <p className="text-p01-text font-medium font-mono">
                           {showBalance ? note.label : '****'}
                         </p>
                         <p className="text-p01-chrome text-xs">
@@ -673,7 +673,7 @@ export default function ShieldedWallet() {
                 <ShieldCheck className="w-5 h-5 text-p01-cyan" />
               </div>
               <div>
-                <p className="text-white font-medium">ZK-STARK Protection</p>
+                <p className="text-p01-text font-medium">ZK-STARK Protection</p>
                 <p className="text-p01-chrome text-xs mt-1">
                   Your shielded transactions are proved with post-quantum STARKs, so a note&apos;s
                   owner is never written on-chain. In the denominated pool the deposit and the
@@ -698,16 +698,16 @@ export default function ShieldedWallet() {
             <div className="flex items-center gap-3 mb-4">
               <div className={cn(
                 'w-12 h-12 rounded-full flex items-center justify-center',
-                actionModal === 'shield' ? 'bg-p01-cyan/20' : 'bg-p01-pink/20'
+                actionModal === 'shield' ? 'bg-p01-cyan/20' : 'bg-p01-cyan/20'
               )}>
                 {actionModal === 'shield' ? (
                   <ArrowDown className="w-6 h-6 text-p01-cyan" />
                 ) : (
-                  <ArrowUp className="w-6 h-6 text-p01-pink" />
+                  <ArrowUp className="w-6 h-6 text-p01-cyan" />
                 )}
               </div>
               <div>
-                <h3 id="shield-modal-title" className="text-lg font-display font-bold text-white capitalize">
+                <h3 id="shield-modal-title" className="text-lg font-display font-bold text-p01-text capitalize">
                   {actionModal} SOL
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -742,7 +742,7 @@ export default function ShieldedWallet() {
                     onChange={(e) => setAmount(e.target.value)}
                     placeholder="0.0"
                     aria-label="Amount in SOL"
-                    className="flex-1 bg-transparent text-2xl font-display font-bold text-white outline-none"
+                    className="flex-1 bg-transparent text-2xl font-display font-bold text-p01-text outline-none"
                   />
                   <span className="text-p01-chrome text-lg">SOL</span>
                 </div>
@@ -775,7 +775,7 @@ export default function ShieldedWallet() {
                   setError(null);
                 }}
                 disabled={isProcessing}
-                className="flex-1 py-3 bg-p01-void text-white font-medium rounded-xl hover:bg-p01-border transition-colors disabled:opacity-50"
+                className="flex-1 py-3 bg-p01-void text-p01-text font-medium rounded-xl hover:bg-p01-border transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -786,7 +786,7 @@ export default function ShieldedWallet() {
                   'flex-1 py-3 font-medium rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2',
                   actionModal === 'shield'
                     ? 'bg-p01-cyan text-p01-void hover:bg-p01-cyan/90'
-                    : 'bg-p01-pink text-white hover:bg-p01-pink/90'
+                    : 'bg-p01-cyan text-p01-text hover:bg-p01-cyan/90'
                 )}
               >
                 {isProcessing ? (
@@ -816,7 +816,7 @@ export default function ShieldedWallet() {
                 <ShieldCheck className="w-6 h-6 text-p01-cyan" />
               </div>
               <div>
-                <h3 id="shielded-info-title" className="text-lg font-display font-bold text-white">
+                <h3 id="shielded-info-title" className="text-lg font-display font-bold text-p01-text">
                   Shielded Transactions
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -827,7 +827,7 @@ export default function ShieldedWallet() {
 
             <div className="space-y-4 text-sm">
               <div className="bg-p01-void rounded-xl p-4">
-                <h4 className="text-white font-medium mb-2">How it works</h4>
+                <h4 className="text-p01-text font-medium mb-2">How it works</h4>
                 <p className="text-p01-chrome/80">
                   Shielded transactions use zero-knowledge STARK proofs to show a spend is
                   valid without revealing the note secret that authorises it. They prove
@@ -837,7 +837,7 @@ export default function ShieldedWallet() {
               </div>
 
               <div className="bg-p01-void rounded-xl p-4">
-                <h4 className="text-white font-medium mb-2">Shield</h4>
+                <h4 className="text-p01-text font-medium mb-2">Shield</h4>
                 <p className="text-p01-chrome/80">
                   Convert transparent SOL into shielded notes. Your wallet signs the deposit
                   and the amount is a fixed denomination, so the deposit is public. What is
@@ -846,7 +846,7 @@ export default function ShieldedWallet() {
               </div>
 
               <div className="bg-p01-void rounded-xl p-4">
-                <h4 className="text-white font-medium mb-2">Transfer</h4>
+                <h4 className="text-p01-text font-medium mb-2">Transfer</h4>
                 <p className="text-p01-chrome/80">
                   Move a note to a new note for someone else. The recipient is never an
                   account in the transaction and the note itself is handed over off-chain.
@@ -856,7 +856,7 @@ export default function ShieldedWallet() {
               </div>
 
               <div className="bg-p01-void rounded-xl p-4">
-                <h4 className="text-white font-medium mb-2">Unshield</h4>
+                <h4 className="text-p01-text font-medium mb-2">Unshield</h4>
                 <p className="text-p01-chrome/80">
                   Withdraw shielded SOL back to a transparent address. The withdrawal
                   republishes the note&apos;s commitment, the same value the deposit
@@ -866,7 +866,7 @@ export default function ShieldedWallet() {
               </div>
 
               <div className="bg-p01-void rounded-xl p-4">
-                <h4 className="text-white font-medium mb-2">Notes & Nullifiers</h4>
+                <h4 className="text-p01-text font-medium mb-2">Notes & Nullifiers</h4>
                 <p className="text-p01-chrome/80">
                   Each shielded balance is stored as encrypted "notes" in a Merkle tree.
                   When spent, a nullifier prevents double-spending without revealing which note was used.
@@ -897,7 +897,7 @@ export default function ShieldedWallet() {
                 <Scan className="w-6 h-6 text-p01-cyan" />
               </div>
               <div>
-                <h3 id="recovery-modal-title" className="text-lg font-display font-bold text-white">
+                <h3 id="recovery-modal-title" className="text-lg font-display font-bold text-p01-text">
                   Recover Private Funds
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -925,7 +925,7 @@ export default function ShieldedWallet() {
                     <div key={index} className="flex items-center gap-2 py-2 border-b border-p01-border/50 last:border-0">
                       <Check className="w-4 h-4 text-p01-cyan" />
                       <div className="flex-1">
-                        <p className="text-white text-sm font-medium">{payment.amount} SOL</p>
+                        <p className="text-p01-text text-sm font-medium">{payment.amount} SOL</p>
                         <p className="text-p01-chrome text-xs font-mono truncate">
                           {payment.stealthAddress.slice(0, 12)}...{payment.stealthAddress.slice(-8)}
                         </p>
@@ -965,7 +965,7 @@ export default function ShieldedWallet() {
                   setError(null);
                 }}
                 disabled={isSweeping}
-                className="flex-1 py-3 bg-p01-void text-white font-medium rounded-xl hover:bg-p01-border transition-colors disabled:opacity-50"
+                className="flex-1 py-3 bg-p01-void text-p01-text font-medium rounded-xl hover:bg-p01-border transition-colors disabled:opacity-50"
               >
                 Close
               </button>
@@ -1027,8 +1027,8 @@ function ActionButton({
 }) {
   const colorClasses = {
     cyan: 'bg-p01-cyan text-p01-void',
-    pink: 'bg-p01-pink text-white',
-    violet: 'bg-p01-cyan text-white',
+    pink: 'bg-p01-cyan text-p01-text',
+    violet: 'bg-p01-cyan text-p01-text',
     green: 'bg-p01-cyan text-p01-void',
   };
 

@@ -1,26 +1,58 @@
+/**
+ * Activity: the transaction history.
+ *
+ * 🚨 EVERY ROW WAS AN EXTERNAL LINK, AND THAT IS WHY THIS SCREEN EXISTED ONCE
+ * PER SESSION. The whole row was an `<a target="_blank">` to Solscan, so the
+ * only thing a user could do with their own history was leave the wallet. A
+ * popup closes the moment focus goes to a new tab, so tapping a row to read it
+ * — which is what a row that looks like a list item invites — destroyed the
+ * screen the user was reading. There was no way to see a signature, a fee or
+ * a counterparty without that happening.
+ *
+ * A row now expands in place. The block explorer is still reachable, as one
+ * explicit link inside the expanded row, where leaving is a choice rather than
+ * the only gesture available.
+ *
+ * ⚠️ IT ALSO HAD NO HEADER AT ALL. `MainLayout` renders no title bar — every
+ * page brings its own — and this one brought a filter bar instead, so the
+ * screen reached from "View all" on the wallet opened with no name and no way
+ * back except the tab bar. It uses `Screen` now, like everything else.
+ */
+
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import {
   ArrowUpRight,
   ArrowDownLeft,
+  Inbox,
   Repeat,
   Shield,
   ExternalLink,
-  Filter,
   RefreshCw,
-  Loader2,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { cn, formatCurrency, truncateAddress, formatRelativeTime } from '@/shared/utils';
 import { getSolscanUrl } from '@/shared/services/transactions';
 import { getSolPrice } from '@/shared/services/price';
+import { EmptyState, Hairline, Pill, Screen } from '@/popup/ui';
 import type { TransactionRecord } from '@/shared/types';
 
 type FilterType = 'all' | 'send' | 'receive' | 'subscription';
 
+/** The stored value is not the word a person reads. */
+const FILTER_LABELS: Record<FilterType, string> = {
+  all: 'All',
+  send: 'Sent',
+  receive: 'Received',
+  subscription: 'Streams',
+};
+
 export default function Activity() {
+  const navigate = useNavigate();
   const [filter, setFilter] = useState<FilterType>('all');
   const [solPrice, setSolPrice] = useState<number>(0);
+  /** Which row is open. One at a time: this is a 360px column. */
+  const [openSignature, setOpenSignature] = useState<string | null>(null);
   const {
     transactions,
     isLoadingTransactions,
@@ -47,92 +79,101 @@ export default function Activity() {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Filter Bar */}
-      <div className="px-4 py-3 border-b border-p01-border">
-        <div className="flex items-center justify-between">
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {(['all', 'send', 'receive', 'subscription'] as FilterType[]).map(
-              (f) => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  aria-pressed={filter === f}
-                  className={cn(
-                    'px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors capitalize',
-                    filter === f
-                      ? 'bg-p01-cyan/20 text-p01-cyan'
-                      : 'bg-p01-surface text-p01-chrome/60 hover:text-white'
-                  )}
-                >
-                  {f === 'subscription' ? 'Streams' : f}
-                </button>
-              )
-            )}
-          </div>
+    <Screen
+      title="Activity"
+      onBack={() => navigate(-1)}
+      action={
+        <button
+          onClick={handleRefresh}
+          disabled={isLoadingTransactions}
+          aria-label="Refresh transactions"
+          className={cn(
+            'flex h-11 w-11 items-center justify-center rounded-lg text-p01-text-muted',
+            'transition-colors duration-exit hover:text-p01-text',
+            'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan',
+            isLoadingTransactions && 'cursor-not-allowed opacity-40',
+          )}
+        >
+          <RefreshCw
+            className={cn('h-[18px] w-[18px]', isLoadingTransactions && 'animate-spin')}
+            aria-hidden="true"
+          />
+        </button>
+      }
+    >
+      {/* ── Filters ── */}
+      <div className="flex gap-2">
+        {(Object.keys(FILTER_LABELS) as FilterType[]).map((f) => (
           <button
-            onClick={handleRefresh}
-            disabled={isLoadingTransactions}
-            className="p-2 text-p01-chrome hover:text-white transition-colors"
-            aria-label="Refresh transactions"
+            key={f}
+            onClick={() => setFilter(f)}
+            aria-pressed={filter === f}
+            className={cn(
+              'min-h-[44px] flex-1 rounded-lg border px-2 text-tiny transition-colors duration-exit',
+              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan',
+              filter === f
+                ? 'border-p01-cyan bg-p01-cyan/10 text-p01-text'
+                : 'border-p01-border text-p01-text-muted hover:border-p01-border-light',
+            )}
           >
-            <RefreshCw
-              className={cn('w-4 h-4', isLoadingTransactions && 'animate-spin')}
-            />
+            {FILTER_LABELS[f]}
           </button>
-        </div>
+        ))}
       </div>
 
-      {/* Transactions List */}
-      <div className="flex-1 overflow-y-auto">
-        {isLoadingTransactions && transactions.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48">
-            <Loader2 className="w-8 h-8 text-p01-cyan animate-spin mb-3" />
-            <p className="text-sm text-p01-chrome/60">Loading transactions...</p>
-          </div>
-        ) : filteredTxs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 text-center px-4">
-            <Filter className="w-12 h-12 text-p01-chrome/40 mb-3" />
-            <p className="text-sm text-p01-chrome/60">
-              {transactions.length === 0
-                ? 'No transactions yet'
-                : 'No transactions found'}
-            </p>
-            <p className="text-xs text-p01-chrome/40 mt-1">
-              {transactions.length === 0
-                ? 'Your transaction history will appear here'
-                : 'Try a different filter'}
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y divide-p01-border">
-            {filteredTxs.map((tx, index) => (
+      {/* ── The list ── */}
+      {isLoadingTransactions && transactions.length === 0 ? (
+        <div className="flex items-center justify-center gap-2 py-10">
+          <RefreshCw className="h-4 w-4 animate-spin text-p01-text-dim" aria-hidden="true" />
+          <p className="text-sm text-p01-text-muted">Loading your history</p>
+        </div>
+      ) : filteredTxs.length === 0 ? (
+        <EmptyState
+          icon={Inbox}
+          title={transactions.length === 0 ? 'Nothing yet' : 'Nothing under this filter'}
+          body={
+            transactions.length === 0
+              ? 'Anything you send, receive or subscribe to shows up here.'
+              : `No ${FILTER_LABELS[filter].toLowerCase()} transactions. Try another filter.`
+          }
+        />
+      ) : (
+        <div className="mt-1">
+          {filteredTxs.map((tx, i) => (
+            <div key={tx.signature}>
+              {i > 0 && <Hairline className="bg-p01-border-soft" />}
               <TransactionRow
-                key={tx.signature}
                 tx={tx}
-                index={index}
                 network={network}
                 solPrice={solPrice}
+                open={openSignature === tx.signature}
+                onToggle={() =>
+                  setOpenSignature(openSignature === tx.signature ? null : tx.signature)
+                }
               />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Screen>
   );
 }
 
 function TransactionRow({
   tx,
-  index,
   network,
   solPrice,
+  open,
+  onToggle,
 }: {
   tx: TransactionRecord;
-  index: number;
   network: string;
   solPrice: number;
+  open: boolean;
+  onToggle: () => void;
 }) {
+  const incoming = tx.type === 'receive' || tx.type === 'claim';
+
   const getIcon = () => {
     switch (tx.type) {
       case 'send':
@@ -146,22 +187,6 @@ function TransactionRow({
         return Repeat;
       default:
         return ArrowUpRight;
-    }
-  };
-
-  const getIconColor = () => {
-    switch (tx.type) {
-      case 'send':
-        return 'text-red-400 bg-red-400/10';
-      case 'receive':
-      case 'claim':
-        return 'text-p01-cyan bg-p01-cyan/10';
-      case 'swap':
-        return 'text-p01-blue bg-p01-blue/10';
-      case 'subscription':
-        return 'text-streams bg-streams/10';
-      default:
-        return 'text-p01-chrome/60 bg-p01-surface';
     }
   };
 
@@ -186,89 +211,98 @@ function TransactionRow({
     }
   };
 
-  const getStatusBadge = () => {
-    if (tx.status === 'pending') {
-      return (
-        <span className="px-1.5 py-0.5 text-[9px] font-mono bg-yellow-500/20 text-yellow-500 rounded">
-          PENDING
-        </span>
-      );
-    }
-    if (tx.status === 'failed') {
-      return (
-        <span className="px-1.5 py-0.5 text-[9px] font-mono bg-red-500/20 text-red-400 rounded">
-          FAILED
-        </span>
-      );
-    }
-    return null;
-  };
-
   const Icon = getIcon();
-  const iconColor = getIconColor();
   const solscanUrl = getSolscanUrl('tx', tx.signature, network as any);
 
   return (
-    <motion.a
-      href={solscanUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      initial={{ x: -10, opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      transition={{ delay: index * 0.03 }}
-      className="flex items-center gap-3 px-4 py-3 hover:bg-p01-surface/50 transition-colors"
-    >
-      {/* Icon */}
-      <div
+    <div>
+      <button
+        onClick={onToggle}
+        aria-expanded={open}
         className={cn(
-          'w-10 h-10 rounded-full flex items-center justify-center',
-          iconColor
+          'flex min-h-[44px] w-full items-center gap-3 rounded-lg py-3 text-left',
+          'transition-colors duration-exit hover:bg-p01-surface',
+          'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan',
         )}
       >
-        <Icon className="w-5 h-5" />
-      </div>
-
-      {/* Info */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="text-sm font-medium text-white truncate">{getLabel()}</p>
-          {tx.isPrivate && (
-            <Shield className="w-3.5 h-3.5 text-p01-cyan flex-shrink-0" />
-          )}
-          {getStatusBadge()}
-        </div>
-        <div className="flex items-center gap-2 text-xs text-p01-chrome/60">
-          <span>{formatRelativeTime(tx.timestamp)}</span>
-          {tx.fee > 0 && (
-            <>
-              <span className="text-p01-chrome/30">|</span>
-              <span>Fee: {tx.fee.toFixed(6)} SOL</span>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Amount */}
-      <div className="text-right">
-        <p
+        <span
           className={cn(
-            'text-sm font-medium',
-            tx.type === 'send' || tx.type === 'subscription'
-              ? 'text-error'
-              : 'text-p01-cyan'
+            'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border',
+            incoming
+              ? 'border-p01-cyan/40 bg-p01-cyan/10'
+              : 'border-p01-border-soft bg-p01-surface',
           )}
         >
-          {tx.type === 'send' || tx.type === 'subscription' ? '-' : '+'}
-          {tx.amount.toFixed(4)} {tx.tokenSymbol}
-        </p>
-        {tx.tokenSymbol === 'SOL' && solPrice > 0 && (
-          <p className="text-xs text-p01-chrome/60">
-            {formatCurrency(tx.amount * solPrice)}
-          </p>
-        )}
-      </div>
+          <Icon
+            className={cn('h-4 w-4', incoming ? 'text-p01-cyan' : 'text-p01-text-muted')}
+            aria-hidden="true"
+          />
+        </span>
 
-      <ExternalLink className="w-4 h-4 text-p01-chrome/40 flex-shrink-0" aria-hidden="true" />
-    </motion.a>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="truncate text-sm text-p01-text">{getLabel()}</span>
+            {tx.isPrivate && (
+              <Shield className="h-3.5 w-3.5 shrink-0 text-p01-cyan" aria-label="Private" />
+            )}
+          </span>
+          <span className="mt-0.5 flex items-center gap-1.5">
+            <span className="text-tiny text-p01-text-dim">
+              {formatRelativeTime(tx.timestamp)}
+            </span>
+            {tx.status === 'pending' && <Pill tone="warn">Pending</Pill>}
+            {tx.status === 'failed' && <Pill tone="bad">Failed</Pill>}
+          </span>
+        </span>
+
+        <span className="shrink-0 text-right">
+          <span
+            className={cn(
+              'block text-sm tabular',
+              incoming ? 'text-p01-cyan' : 'text-p01-text',
+            )}
+          >
+            {incoming ? '+' : '-'}
+            {tx.amount.toFixed(4)} {tx.tokenSymbol}
+          </span>
+          {tx.tokenSymbol === 'SOL' && solPrice > 0 && (
+            <span className="block text-tiny text-p01-text-dim tabular">
+              {formatCurrency(tx.amount * solPrice)}
+            </span>
+          )}
+        </span>
+      </button>
+
+      {/* Detail, in place. Reading a transaction no longer costs the popup. */}
+      {open && (
+        <div className="pb-3 pl-12">
+          <p className="select-all break-all font-mono text-tiny text-p01-text-dim">
+            {tx.signature}
+          </p>
+          {tx.fee > 0 && (
+            <p className="mt-1 text-tiny text-p01-text-muted tabular">
+              Network fee {tx.fee.toFixed(6)} SOL
+            </p>
+          )}
+          {/* ⚠️ Leaving the popup is now one deliberate link, not the whole
+              row. Opening a tab closes this window; that is the browser, not
+              something the screen can soften, so it must not be the default
+              gesture. */}
+          <a
+            href={solscanUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              'mt-1 inline-flex min-h-[44px] items-center gap-1.5 text-tiny text-p01-cyan',
+              'transition-colors duration-exit hover:text-p01-cyan-bright',
+              'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan',
+            )}
+          >
+            Open in Solscan
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+          </a>
+        </div>
+      )}
+    </div>
   );
 }

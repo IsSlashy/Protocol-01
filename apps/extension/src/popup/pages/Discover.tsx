@@ -31,7 +31,7 @@ import {
   resolveServiceBranding,
   type OnchainServiceEntry,
 } from '@/shared/services/onchainServiceRegistry';
-import { useSettingsStore } from '@/shared/store/settings';
+import { useWalletStore } from '@/shared/store/wallet';
 import { Button, Eyebrow, EmptyState, Hairline, Panel, Pill, Screen } from '@/popup/ui';
 
 /** Slots to a human interval. The registry stores slots; nobody thinks in slots. */
@@ -58,7 +58,9 @@ function priceLabel(entry: OnchainServiceEntry): string {
 
 export default function Discover() {
   const navigate = useNavigate();
-  const { network } = useSettingsStore();
+  // ⚠️ `network` is on the WALLET store, not settings. The registry is
+  // devnet-only and fetchAllServices returns [] elsewhere by design.
+  const { network } = useWalletStore();
 
   const [services, setServices] = useState<OnchainServiceEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +71,7 @@ export default function Discover() {
     setLoading(true);
     setError(null);
     try {
-      const all = await fetchAllServices({ network });
+      const all = await fetchAllServices(network, { activeOnly: true });
       // Inactive entries are merchants who switched themselves off. Showing
       // them would send someone into a subscribe flow that cannot complete.
       setServices(all.filter((s) => s.active));

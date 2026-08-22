@@ -188,21 +188,21 @@ export default function ConfidentialWallet() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/shielded')}
-            className="p-2 -ml-2 text-p01-chrome hover:text-white transition-colors"
+            className="p-2 -ml-2 text-p01-chrome hover:text-p01-text transition-colors"
             aria-label="Go back"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex items-center gap-2">
             <Shield className="w-5 h-5 text-p01-cyan" />
-            <h1 className="text-white font-display font-bold tracking-wide">Confidential</h1>
+            <h1 className="text-p01-text font-display font-bold tracking-wide">Confidential</h1>
           </div>
         </div>
         <div className="flex items-center gap-1">
           <button
             onClick={() => refreshBalance()}
             disabled={isLoading || !isInitialized}
-            className="p-2 text-p01-chrome hover:text-white transition-colors disabled:opacity-50"
+            className="p-2 text-p01-chrome hover:text-p01-text transition-colors disabled:opacity-50"
             title="Refresh balance"
             aria-label="Refresh balance"
           >
@@ -210,14 +210,14 @@ export default function ConfidentialWallet() {
           </button>
           <button
             onClick={() => setShowBalance(!showBalance)}
-            className="p-2 text-p01-chrome hover:text-white transition-colors"
+            className="p-2 text-p01-chrome hover:text-p01-text transition-colors"
             aria-label={showBalance ? 'Hide balance' : 'Show balance'}
           >
             {showBalance ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
           </button>
           <button
             onClick={() => setShowInfoModal(true)}
-            className="p-2 text-p01-chrome hover:text-white transition-colors"
+            className="p-2 text-p01-chrome hover:text-p01-text transition-colors"
             aria-label="Show info"
           >
             <Info className="w-5 h-5" />
@@ -247,7 +247,7 @@ export default function ConfidentialWallet() {
           <div className="text-center py-4">
             <div className="flex items-center justify-center gap-2">
               <Shield className="w-6 h-6 text-p01-cyan/60" />
-              <p className="text-3xl font-display font-bold text-white">
+              <p className="text-3xl font-display font-bold text-p01-text">
                 {isLoading && !isInitialized ? (
                   <Loader2 className="w-8 h-8 animate-spin text-p01-cyan" />
                 ) : (
@@ -405,10 +405,10 @@ export default function ConfidentialWallet() {
           </p>
           <div className="bg-p01-surface rounded-xl p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-p01-cyan to-p01-cyan/40 flex items-center justify-center">
-              <ArrowDown className="w-5 h-5 text-white" />
+              <ArrowDown className="w-5 h-5 text-p01-text" />
             </div>
             <div>
-              <p className="text-white font-medium">{solBalance.toFixed(4)} SOL</p>
+              <p className="text-p01-text font-medium">{solBalance.toFixed(4)} SOL</p>
               <p className="text-p01-chrome text-xs">Transparent wallet balance</p>
             </div>
           </div>
@@ -421,13 +421,13 @@ export default function ConfidentialWallet() {
           transition={{ delay: 0.2 }}
           className="mx-4 mt-4 mb-4"
         >
-          <div className="bg-gradient-to-r from-p01-cyan/10 to-p01-pink/10 rounded-xl p-4 border border-p01-cyan/20">
+          <div className="bg-gradient-to-r from-p01-cyan/10 to-p01-cyan/10 rounded-xl p-4 border border-p01-cyan/20">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-full bg-p01-cyan/20 flex items-center justify-center flex-shrink-0">
                 <Shield className="w-5 h-5 text-p01-cyan" />
               </div>
               <div>
-                <p className="text-white font-medium">zkSPL Confidential Balances</p>
+                <p className="text-p01-text font-medium">zkSPL Confidential Balances</p>
                 <p className="text-p01-chrome text-xs mt-1">
                   Your balance is hidden on-chain as a Poseidon commitment. Deposits and withdrawals
                   use ZK proofs to update your balance without revealing it. The accounts involved
@@ -452,16 +452,16 @@ export default function ConfidentialWallet() {
             <div className="flex items-center gap-3 mb-4">
               <div className={cn(
                 'w-12 h-12 rounded-full flex items-center justify-center',
-                actionModal === 'deposit' ? 'bg-p01-cyan/20' : 'bg-p01-pink/20'
+                actionModal === 'deposit' ? 'bg-p01-cyan/20' : 'bg-p01-cyan/20'
               )}>
                 {actionModal === 'deposit' ? (
                   <ArrowDown className="w-6 h-6 text-p01-cyan" />
                 ) : (
-                  <ArrowUp className="w-6 h-6 text-p01-pink" />
+                  <ArrowUp className="w-6 h-6 text-p01-cyan" />
                 )}
               </div>
               <div>
-                <h3 id="conf-action-title" className="text-lg font-display font-bold text-white capitalize">
+                <h3 id="conf-action-title" className="text-lg font-display font-bold text-p01-text capitalize">
                   {actionModal} {tokenSymbol}
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -491,7 +491,7 @@ export default function ConfidentialWallet() {
                     onChange={(e) => setAmount(e.target.value)}
                     placeholder="0.0"
                     aria-label={`Amount in ${tokenSymbol}`}
-                    className="flex-1 bg-transparent text-2xl font-display font-bold text-white outline-none"
+                    className="flex-1 bg-transparent text-2xl font-display font-bold text-p01-text outline-none"
                   />
                   <span className="text-p01-chrome text-lg">{tokenSymbol}</span>
                 </div>
@@ -504,7 +504,7 @@ export default function ConfidentialWallet() {
                 <button
                   key={pct}
                   onClick={() => setPercentage(pct)}
-                  className="flex-1 py-2 text-xs font-medium text-p01-chrome bg-p01-void rounded-lg hover:bg-p01-dark hover:text-white transition-colors border border-p01-dark"
+                  className="flex-1 py-2 text-xs font-medium text-p01-chrome bg-p01-void rounded-lg hover:bg-p01-dark hover:text-p01-text transition-colors border border-p01-dark"
                   aria-label={pct === 100 ? 'Set to max amount' : `Set amount to ${pct}%`}
                 >
                   {pct === 100 ? 'Max' : `${pct}%`}
@@ -539,7 +539,7 @@ export default function ConfidentialWallet() {
                   setError(null);
                 }}
                 disabled={isProcessing}
-                className="flex-1 py-3 bg-p01-void text-white font-medium rounded-xl hover:bg-p01-dark transition-colors disabled:opacity-50"
+                className="flex-1 py-3 bg-p01-void text-p01-text font-medium rounded-xl hover:bg-p01-dark transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -550,7 +550,7 @@ export default function ConfidentialWallet() {
                   'flex-1 py-3 font-medium rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2',
                   actionModal === 'deposit'
                     ? 'bg-p01-cyan text-p01-void hover:bg-p01-cyan/90'
-                    : 'bg-p01-pink text-white hover:bg-p01-pink/90'
+                    : 'bg-p01-cyan text-p01-text hover:bg-p01-cyan/90'
                 )}
               >
                 {isProcessing ? (
@@ -580,7 +580,7 @@ export default function ConfidentialWallet() {
                 <Send className="w-6 h-6 text-p01-cyan" />
               </div>
               <div>
-                <h3 id="conf-transfer-title" className="text-lg font-display font-bold text-white">
+                <h3 id="conf-transfer-title" className="text-lg font-display font-bold text-p01-text">
                   Confidential Transfer
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -599,7 +599,7 @@ export default function ConfidentialWallet() {
                   value={recipient}
                   onChange={(e) => setRecipient(e.target.value)}
                   placeholder="Solana address..."
-                  className="w-full mt-1 bg-transparent text-sm font-mono text-white outline-none placeholder-p01-chrome/40"
+                  className="w-full mt-1 bg-transparent text-sm font-mono text-p01-text outline-none placeholder-p01-chrome/40"
                 />
               </div>
             </div>
@@ -624,7 +624,7 @@ export default function ConfidentialWallet() {
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     placeholder="0.0"
-                    className="flex-1 bg-transparent text-2xl font-display font-bold text-white outline-none"
+                    className="flex-1 bg-transparent text-2xl font-display font-bold text-p01-text outline-none"
                   />
                   <span className="text-p01-chrome text-lg">{tokenSymbol}</span>
                 </div>
@@ -638,7 +638,7 @@ export default function ConfidentialWallet() {
                   key={pct}
                   onClick={() => setPercentage(pct)}
                   aria-label={`Set amount to ${pct}% of balance`}
-                  className="flex-1 py-2 text-xs font-medium text-p01-chrome bg-p01-void rounded-lg hover:bg-p01-dark hover:text-white transition-colors border border-p01-dark"
+                  className="flex-1 py-2 text-xs font-medium text-p01-chrome bg-p01-void rounded-lg hover:bg-p01-dark hover:text-p01-text transition-colors border border-p01-dark"
                 >
                   {pct === 100 ? 'Max' : `${pct}%`}
                 </button>
@@ -663,7 +663,7 @@ export default function ConfidentialWallet() {
                   setError(null);
                 }}
                 disabled={isProcessing}
-                className="flex-1 py-3 bg-p01-void text-white font-medium rounded-xl hover:bg-p01-dark transition-colors disabled:opacity-50"
+                className="flex-1 py-3 bg-p01-void text-p01-text font-medium rounded-xl hover:bg-p01-dark transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -699,7 +699,7 @@ export default function ConfidentialWallet() {
                 <Shield className="w-6 h-6 text-p01-cyan" />
               </div>
               <div>
-                <h3 id="conf-info-title" className="text-lg font-display font-bold text-white">
+                <h3 id="conf-info-title" className="text-lg font-display font-bold text-p01-text">
                   zkSPL Confidential Balances
                 </h3>
                 <p className="text-sm text-p01-chrome/60">
@@ -710,7 +710,7 @@ export default function ConfidentialWallet() {
 
             <div className="space-y-4 text-sm">
               <div className="bg-p01-void rounded-xl p-4">
-                <h4 className="text-white font-medium mb-2">How it works</h4>
+                <h4 className="text-p01-text font-medium mb-2">How it works</h4>
                 <p className="text-p01-chrome/80">
                   zkSPL uses Poseidon hash commitments and post-quantum STARK proofs to hide your
                   balance on-chain. Only you know your actual balance; the blockchain only stores a
@@ -719,7 +719,7 @@ export default function ConfidentialWallet() {
               </div>
 
               <div className="bg-p01-void rounded-xl p-4">
-                <h4 className="text-white font-medium mb-2">Deposit</h4>
+                <h4 className="text-p01-text font-medium mb-2">Deposit</h4>
                 <p className="text-p01-chrome/80">
                   Move tokens from your transparent wallet into the confidential account. The deposit
                   amount is visible, but your new total balance remains hidden.
@@ -727,7 +727,7 @@ export default function ConfidentialWallet() {
               </div>
 
               <div className="bg-p01-void rounded-xl p-4">
-                <h4 className="text-white font-medium mb-2">Withdraw</h4>
+                <h4 className="text-p01-text font-medium mb-2">Withdraw</h4>
                 <p className="text-p01-chrome/80">
                   Move tokens from your confidential account back to your transparent wallet. The
                   withdrawal amount is visible, but your remaining balance stays hidden.
@@ -735,7 +735,7 @@ export default function ConfidentialWallet() {
               </div>
 
               <div className="bg-p01-void rounded-xl p-4">
-                <h4 className="text-white font-medium mb-2">Confidential Transfer</h4>
+                <h4 className="text-p01-text font-medium mb-2">Confidential Transfer</h4>
                 <p className="text-p01-chrome/80">
                   Send tokens to another wallet where the amount is hidden on-chain as an amount
                   hash. Both wallet addresses are still visible. The recipient receives a pending
@@ -745,7 +745,7 @@ export default function ConfidentialWallet() {
               </div>
 
               <div className="bg-p01-void rounded-xl p-4">
-                <h4 className="text-white font-medium mb-2">vs Shielded Pool</h4>
+                <h4 className="text-p01-text font-medium mb-2">vs Shielded Pool</h4>
                 <p className="text-p01-chrome/80">
                   The Shielded Pool uses a UTXO model (notes in a Merkle tree). zkSPL uses an
                   account model with balance commitments. Both provide privacy via ZK proofs,
@@ -786,8 +786,8 @@ function ActionButton({
 }) {
   const colorClasses = {
     cyan: 'bg-p01-cyan text-p01-void',
-    pink: 'bg-p01-pink text-white',
-    violet: 'bg-p01-cyan text-white',
+    pink: 'bg-p01-cyan text-p01-text',
+    violet: 'bg-p01-cyan text-p01-text',
   };
 
   return (

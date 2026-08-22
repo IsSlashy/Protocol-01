@@ -1,11 +1,38 @@
+/**
+ * CreateWallet: a password, then the twelve words.
+ *
+ * 🚨 THE TRAP THAT IS GONE. "COMPLETE SETUP" was disabled until the seed had
+ * been put on the CLIPBOARD, and the copied flag expired after five seconds —
+ * so a user who copied the phrase, wrote it on paper (the thing we are asking
+ * them to do), then reached for the button found it dead again with no
+ * explanation. It punished the correct behaviour and rewarded leaving twelve
+ * words in the system clipboard. The checkbox is the attestation now; copying
+ * is offered, never demanded.
+ *
+ * 🎯 The screen also stopped shouting. A cyan shield medallion above a
+ * `SECURE YOUR WALLET` headline above a mono subtitle said one thing three
+ * times, in a header that already read CREATE WALLET. The Screen title carries
+ * it; the body carries the fields.
+ *
+ * ⚠️ Nothing about key generation, encryption or `createWallet` moved.
+ */
+
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { ArrowLeft, Eye, EyeOff, Copy, Check, Shield, AlertTriangle, Loader2 } from 'lucide-react';
+import { Copy, Check, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { cn, copyToClipboard } from '@/shared/utils';
+import { Button, Field, Panel, Screen } from '@/popup/ui';
 
 type Step = 'password' | 'seedphrase';
+
+/** <8 is refused, 12 or more is the target. Shown as words, not a bar alone. */
+function strengthOf(length: number): { steps: number; label: string } {
+  if (length >= 12) return { steps: 4, label: 'Strong' };
+  if (length >= 8) return { steps: 3, label: 'Good' };
+  if (length >= 3) return { steps: 1, label: 'At least 8 characters' };
+  return { steps: 0, label: 'At least 8 characters' };
+}
 
 export default function CreateWallet() {
   const navigate = useNavigate();
@@ -51,245 +78,194 @@ export default function CreateWallet() {
     setTimeout(() => setCopied(false), 5000);
   };
 
+  // ⛔ No `copied` in this condition. See the header note.
   const handleComplete = () => {
-    if (confirmed && copied) {
+    if (confirmed) {
       navigate('/');
     }
   };
 
-  return (
-    <div className="flex flex-col h-full bg-p01-void">
-      {/* Header */}
-      <div className="flex items-center gap-3 p-3 border-b border-p01-border bg-p01-surface">
-        <button
-          onClick={() => {
-            if (step === 'password') navigate(-1);
-            else setStep('password');
-          }}
-          className="p-2 -ml-2 hover:bg-p01-border transition-colors"
-          aria-label="Go back"
-        >
-          <ArrowLeft className="w-4 h-4 text-p01-chrome" />
-        </button>
-        <h1 className="text-sm font-mono font-bold text-white tracking-wider">
-          {step === 'password' && 'CREATE WALLET'}
-          {step === 'seedphrase' && 'RECOVERY PHRASE'}
-        </h1>
-      </div>
+  const strength = strengthOf(password.length);
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {/* Step 1: Password */}
-        {step === 'password' && (
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="space-y-4"
-          >
-            <div className="text-center mb-6">
-              <div className="w-14 h-14 mx-auto mb-4 bg-p01-cyan/10 border border-p01-cyan/30 flex items-center justify-center">
-                <Shield className="w-7 h-7 text-p01-cyan" />
-              </div>
-              <h2 className="text-base font-display font-bold text-white tracking-wider">SECURE YOUR WALLET</h2>
-              <p className="text-[11px] text-p01-chrome/60 mt-2 font-mono">
-                Create a password to encrypt your wallet
+  // Each message under the field that caused it. Only a failure with no field
+  // of its own — the store refusing to create the wallet — falls through to the
+  // form-level alert at the bottom.
+  const passwordError =
+    localError === 'Password must be at least 8 characters' ? localError : undefined;
+  const confirmError = localError === 'Passwords do not match' ? localError : undefined;
+  const formError = passwordError || confirmError ? undefined : localError || error;
+
+  if (step === 'seedphrase') {
+    return (
+      <Screen
+        title="Recovery phrase"
+        onBack={() => setStep('password')}
+        footer={
+          <Button full size="lg" disabled={!confirmed} onClick={handleComplete}>
+            Done
+          </Button>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <Panel tone="warn">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-p01-amber" aria-hidden="true" />
+              <p className="text-sm text-p01-text">
+                Write these 12 words down on paper. Anyone who reads them owns this wallet, and
+                nobody can give them back to you.
               </p>
             </div>
+          </Panel>
 
-            {/* Password Input */}
-            <div className="space-y-3">
-              <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  aria-label="Password"
-                  className="w-full px-4 py-3 bg-p01-surface border border-p01-border text-white font-mono text-sm focus:outline-none focus:border-p01-cyan transition-colors"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-p01-chrome/60 hover:text-white"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-
-              <input
-                type={showPassword ? 'text' : 'password'}
-                placeholder="Confirm password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                aria-label="Confirm password"
-                className="w-full px-4 py-3 bg-p01-surface border border-p01-border text-white font-mono text-sm focus:outline-none focus:border-p01-cyan transition-colors"
-              />
-            </div>
-
-            {/* Password strength indicator */}
-            <div className="space-y-1" role="meter" aria-label="Password strength" aria-valuemin={0} aria-valuemax={4} aria-valuenow={password.length >= 12 ? 4 : password.length >= 8 ? 3 : password.length >= 3 ? 1 : 0}>
-              <div className="flex gap-1">
-                {[1, 2, 3, 4].map((i) => (
-                  <div
-                    key={i}
-                    className={cn(
-                      'h-1 flex-1 transition-colors',
-                      password.length >= i * 3
-                        ? password.length >= 12
-                          ? 'bg-p01-cyan'
-                          : password.length >= 8
-                          ? 'bg-p01-cyan'
-                          : 'bg-p01-yellow'
-                        : 'bg-p01-border'
-                    )}
-                  />
-                ))}
-              </div>
-              <p className="text-[10px] text-p01-chrome/60 font-mono tracking-wider" aria-live="polite">
-                {password.length < 8 ? 'MINIMUM 8 CHARACTERS' : password.length >= 12 ? 'STRONG' : 'GOOD'}
-              </p>
-            </div>
-
-            {/* Error */}
-            {(localError || error) && (
-              <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-mono" role="alert" aria-live="polite">
-                {localError || error}
-              </div>
-            )}
-
-            {/* Create Button */}
-            <button
-              onClick={handleCreateWallet}
-              disabled={isLoading || !password || !confirmPassword}
-              className={cn(
-                'w-full py-4 font-display font-bold text-sm tracking-wider transition-colors flex items-center justify-center gap-2',
-                isLoading || !password || !confirmPassword
-                  ? 'bg-p01-border text-p01-chrome/40 cursor-not-allowed'
-                  : 'bg-p01-cyan text-p01-void hover:bg-p01-cyan-dim'
-              )}
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  GENERATING...
-                </>
-              ) : (
-                'CREATE WALLET'
-              )}
-            </button>
-          </motion.div>
-        )}
-
-        {/* Step 2: Seed Phrase */}
-        {step === 'seedphrase' && (
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="space-y-4"
-          >
-            {/* Warning */}
-            <div className="p-3 bg-p01-pink/10 border border-p01-pink/30 flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-p01-pink flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs font-mono font-bold text-p01-pink tracking-wider">[ WARNING ]</p>
-                <p className="text-[10px] text-p01-pink/80 mt-1 font-mono">
-                  Write these 12 words down. Never share them with anyone.
-                </p>
-              </div>
-            </div>
-
-
-            {/* Seed Phrase Grid */}
-            <div className="bg-p01-surface border border-p01-border p-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-p01-chrome/60 font-mono tracking-wider">
-                  SEED PHRASE
-                </span>
-                <button
-                  onClick={() => setShowPhrase(!showPhrase)}
-                  className="flex items-center gap-1 text-[10px] text-p01-cyan font-mono tracking-wider"
-                  aria-label={showPhrase ? 'Hide seed phrase' : 'Show seed phrase'}
-                >
-                  {showPhrase ? (
-                    <>
-                      <EyeOff className="w-3 h-3" /> HIDE
-                    </>
-                  ) : (
-                    <>
-                      <Eye className="w-3 h-3" /> SHOW
-                    </>
-                  )}
-                </button>
-              </div>
-
-              <div className="grid grid-cols-3 gap-1">
-                {seedPhrase.map((word, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center gap-1 p-2 bg-p01-dark border border-p01-border"
-                  >
-                    <span className="text-[10px] text-p01-chrome/40 font-mono w-4">
-                      {index + 1}.
-                    </span>
-                    <span className="text-xs text-white font-mono">
-                      {showPhrase ? word : '•••••'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Copy Button */}
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-tiny text-p01-text-muted">Your 12 words</span>
               <button
-                onClick={handleCopySeedPhrase}
-                className="w-full mt-3 py-2 bg-p01-dark border border-p01-border text-p01-chrome font-mono text-[10px] flex items-center justify-center gap-2 hover:text-white hover:border-p01-cyan/30 transition-colors tracking-wider"
-                aria-label={copied ? 'Seed phrase copied' : 'Copy seed phrase to clipboard'}
+                onClick={() => setShowPhrase(!showPhrase)}
+                className="flex min-h-[44px] items-center gap-1.5 rounded-lg px-1 text-tiny text-p01-cyan transition-colors duration-exit hover:text-p01-cyan-bright focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
+                aria-label={showPhrase ? 'Hide seed phrase' : 'Show seed phrase'}
               >
-                {copied ? (
-                  <>
-                    <Check className="w-3 h-3 text-p01-cyan" />
-                    COPIED
-                  </>
+                {showPhrase ? (
+                  <EyeOff className="h-4 w-4" aria-hidden="true" />
                 ) : (
-                  <>
-                    <Copy className="w-3 h-3" />
-                    COPY TO CLIPBOARD
-                  </>
+                  <Eye className="h-4 w-4" aria-hidden="true" />
                 )}
+                {showPhrase ? 'Hide' : 'Show'}
               </button>
             </div>
 
-            {/* Confirm Checkbox */}
-            <label className="flex items-start gap-3 p-3 bg-p01-surface border border-p01-border cursor-pointer">
-              <input
-                type="checkbox"
-                checked={confirmed}
-                onChange={(e) => setConfirmed(e.target.checked)}
-                className="mt-0.5 w-4 h-4 accent-p01-cyan"
-                aria-label="I have saved my seed phrase"
-              />
-              <span className="text-[11px] text-p01-chrome font-mono">
-                I have copied and saved my seed phrase securely.
-              </span>
-            </label>
+            <div className="mt-1 grid grid-cols-3 gap-1.5">
+              {seedPhrase.map((word, index) => (
+                <div
+                  key={index}
+                  className="flex items-baseline gap-1.5 rounded-lg border border-p01-border-soft bg-p01-dark px-2 py-2"
+                >
+                  <span className="w-3.5 shrink-0 text-right font-mono text-[0.625rem] text-p01-text-dim tabular">
+                    {index + 1}
+                  </span>
+                  <span className="truncate font-mono text-tiny text-p01-text">
+                    {showPhrase ? word : '•••••'}
+                  </span>
+                </div>
+              ))}
+            </div>
 
-            {/* Complete Button - requires copy + confirm */}
-            <button
-              onClick={handleComplete}
-              disabled={!confirmed || !copied}
-              className={cn(
-                'w-full py-4 font-display font-bold text-sm tracking-wider transition-colors',
-                !confirmed || !copied
-                  ? 'bg-p01-border text-p01-chrome/40 cursor-not-allowed'
-                  : 'bg-p01-cyan text-p01-void hover:bg-p01-cyan-dim'
-              )}
+            <Button
+              full
+              variant="secondary"
+              className="mt-2.5"
+              icon={copied ? Check : Copy}
+              onClick={() => void handleCopySeedPhrase()}
             >
-              {!copied ? 'COPY SEED PHRASE FIRST' : 'COMPLETE SETUP'}
-            </button>
-          </motion.div>
-        )}
+              {copied ? 'Copied' : 'Copy to clipboard'}
+            </Button>
+          </div>
 
+          <label className="flex min-h-[44px] cursor-pointer items-start gap-3 rounded-xl border border-p01-border bg-p01-surface p-3">
+            <input
+              type="checkbox"
+              checked={confirmed}
+              onChange={(e) => setConfirmed(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-p01-cyan"
+            />
+            <span className="text-sm text-p01-text-muted">
+              I have written my recovery phrase down somewhere safe.
+            </span>
+          </label>
+        </div>
+      </Screen>
+    );
+  }
+
+  return (
+    <Screen
+      title="Create wallet"
+      onBack={() => navigate(-1)}
+      footer={
+        <Button
+          full
+          size="lg"
+          loading={isLoading}
+          disabled={!password || !confirmPassword}
+          onClick={() => void handleCreateWallet()}
+        >
+          Create wallet
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-p01-text-muted">
+          This password encrypts your wallet on this device. It is not your recovery phrase and
+          it cannot be reset.
+        </p>
+
+        <Field
+          label="Password"
+          type={showPassword ? 'text' : 'password'}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="new-password"
+          error={passwordError}
+          suffix={
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="flex h-11 w-11 items-center justify-center rounded-lg text-p01-text-dim transition-colors duration-exit hover:text-p01-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? (
+                <EyeOff className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <Eye className="h-4 w-4" aria-hidden="true" />
+              )}
+            </button>
+          }
+        />
+
+        {/* Strength sits with the field it describes, not in a summary. */}
+        <div
+          className="-mt-2 flex flex-col gap-1.5"
+          role="meter"
+          aria-label="Password strength"
+          aria-valuemin={0}
+          aria-valuemax={4}
+          aria-valuenow={strength.steps}
+        >
+          <div className="flex gap-1">
+            {[1, 2, 3, 4].map((i) => (
+              <div
+                key={i}
+                className={cn(
+                  'h-0.5 flex-1 rounded-full transition-colors duration-exit',
+                  strength.steps >= i
+                    ? strength.steps >= 3
+                      ? 'bg-p01-cyan'
+                      : 'bg-p01-amber'
+                    : 'bg-p01-border',
+                )}
+              />
+            ))}
+          </div>
+          <p className="text-tiny text-p01-text-dim" aria-live="polite">
+            {strength.label}
+          </p>
+        </div>
+
+        <Field
+          label="Confirm password"
+          type={showPassword ? 'text' : 'password'}
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+          autoComplete="new-password"
+          error={confirmError}
+        />
+
+        {formError && (
+          <p role="alert" className="text-tiny text-p01-red">
+            {formError}
+          </p>
+        )}
       </div>
-    </div>
+    </Screen>
   );
 }

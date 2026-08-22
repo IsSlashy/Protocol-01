@@ -105,17 +105,17 @@ export default function TokenSelector({
         <div
           className={cn(
             'w-5 h-5 rounded-full bg-gradient-to-br flex items-center justify-center',
-            TOKEN_COLORS[selectedTokenOption.symbol]?.from || 'from-p01-pink',
+            TOKEN_COLORS[selectedTokenOption.symbol]?.from || 'from-p01-cyan',
             TOKEN_COLORS[selectedTokenOption.symbol]?.to || 'to-p01-cyan'
           )}
         >
-          <span className="text-[8px] font-bold text-white">
+          <span className="text-[8px] font-bold text-p01-text">
             {selectedTokenOption.symbol[0]}
           </span>
         </div>
 
         {/* Token Symbol */}
-        <span className="text-sm font-mono font-medium text-white">
+        <span className="text-sm font-mono font-medium text-p01-text">
           {selectedTokenOption.symbol}
         </span>
 
@@ -152,18 +152,18 @@ export default function TokenSelector({
                   <div
                     className={cn(
                       'w-6 h-6 rounded-full bg-gradient-to-br flex items-center justify-center',
-                      TOKEN_COLORS[token.symbol]?.from || 'from-p01-pink',
+                      TOKEN_COLORS[token.symbol]?.from || 'from-p01-cyan',
                       TOKEN_COLORS[token.symbol]?.to || 'to-p01-cyan'
                     )}
                   >
-                    <span className="text-[10px] font-bold text-white">
+                    <span className="text-[10px] font-bold text-p01-text">
                       {token.symbol[0]}
                     </span>
                   </div>
 
                   {/* Token Info */}
                   <div className="flex-1 text-left">
-                    <p className="text-sm font-mono font-medium text-white">
+                    <p className="text-sm font-mono font-medium text-p01-text">
                       {token.symbol}
                     </p>
                     <p className="text-[10px] text-p01-chrome">

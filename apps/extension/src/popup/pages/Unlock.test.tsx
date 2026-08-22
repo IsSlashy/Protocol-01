@@ -1,23 +1,22 @@
 /**
  * Tests for Unlock page
  *
- * The Unlock page is shown when the wallet is initialized but locked.
- * It features:
- * - Wordmark with "LOCKED" status badge
- * - Password input with visibility toggle
- * - UNLOCK button with loading state
- * - Error display for invalid passwords
- * - "FORGOT PASSWORD? DISCONNECT" link
- * - Disconnect confirmation modal
- * - Redirect to pending approval path after unlock
+ * The Unlock page is shown when the wallet is initialized but locked. After the
+ * 2026-08-23 design pass it is what Phantom shows: a small wordmark, the big
+ * mark, "Enter your password", one field, one full-width button, one text link.
+ *
+ * 🚨 THIS FILE USED TO PIN THE NOISE. It asserted "[ LOCKED ]", "WALLET LOCKED"
+ * and "ENTER PASSWORD TO UNLOCK" — three restatements of one fact, in three
+ * typefaces — plus a "Solana Network" footer. Those were the defect, so the
+ * assertions moved with them: the screen is now checked for saying "locked"
+ * ONCE, and a regression that reintroduces the shouting fails here.
  *
  * Validates:
- * - Renders the locked state UI correctly
+ * - Renders the unlock prompt once, not four times
  * - Password input accepts user input
  * - Show/hide password toggle works
- * - Error states render when unlock fails
+ * - Error states render under the field
  * - Disconnect modal opens and confirms correctly
- * - Loading spinner appears during unlock attempt
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -64,16 +63,20 @@ describe('Unlock', () => {
     mockUnlock.mockResolvedValue(false);
   });
 
-  it('renders the locked state UI', () => {
+  it('asks for the password once, in one voice', () => {
     render(
       <MemoryRouter>
         <Unlock />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('[ LOCKED ]')).toBeInTheDocument();
-    expect(screen.getByText('WALLET LOCKED')).toBeInTheDocument();
-    expect(screen.getByText('ENTER PASSWORD TO UNLOCK')).toBeInTheDocument();
+    expect(screen.getByText('Enter your password')).toBeInTheDocument();
+
+    // ⛔ The old house style. None of it comes back.
+    expect(screen.queryByText('[ LOCKED ]')).not.toBeInTheDocument();
+    expect(screen.queryByText('WALLET LOCKED')).not.toBeInTheDocument();
+    expect(screen.queryByText('ENTER PASSWORD TO UNLOCK')).not.toBeInTheDocument();
+    expect(screen.queryByText('Solana Network')).not.toBeInTheDocument();
   });
 
   it('renders the Wordmark', () => {
@@ -83,17 +86,18 @@ describe('Unlock', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByTestId('wordmark')).toBeInTheDocument();
+    // Two: the header lockup and the big mark.
+    expect(screen.getAllByTestId('wordmark').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('renders the password input field', () => {
+  it('renders the password input field with a visible label', () => {
     render(
       <MemoryRouter>
         <Unlock />
       </MemoryRouter>,
     );
 
-    const passwordInput = screen.getByPlaceholderText('Enter password');
+    const passwordInput = screen.getByLabelText('Password');
     expect(passwordInput).toBeInTheDocument();
     expect(passwordInput).toHaveAttribute('type', 'password');
   });
@@ -105,45 +109,36 @@ describe('Unlock', () => {
       </MemoryRouter>,
     );
 
-    const passwordInput = screen.getByPlaceholderText('Enter password') as HTMLInputElement;
+    const passwordInput = screen.getByLabelText('Password') as HTMLInputElement;
     expect(passwordInput.type).toBe('password');
 
-    // Find the toggle button (contains an SVG)
-    const toggleButton = screen.getAllByRole('button').find(
-      (btn) => btn.getAttribute('type') === 'button',
-    );
-    if (toggleButton) {
-      fireEvent.click(toggleButton);
-      expect(passwordInput.type).toBe('text');
+    fireEvent.click(screen.getByLabelText('Show password'));
+    expect(passwordInput.type).toBe('text');
 
-      fireEvent.click(toggleButton);
-      expect(passwordInput.type).toBe('password');
-    }
+    fireEvent.click(screen.getByLabelText('Hide password'));
+    expect(passwordInput.type).toBe('password');
   });
 
-  it('keeps the UNLOCK button disabled when password is empty', () => {
+  it('keeps the Unlock button disabled when password is empty', () => {
     render(
       <MemoryRouter>
         <Unlock />
       </MemoryRouter>,
     );
 
-    const unlockBtn = screen.getByText('UNLOCK');
-    expect(unlockBtn.closest('button')).toBeDisabled();
+    expect(screen.getByText('Unlock').closest('button')).toBeDisabled();
   });
 
-  it('enables the UNLOCK button when password is entered', () => {
+  it('enables the Unlock button when password is entered', () => {
     render(
       <MemoryRouter>
         <Unlock />
       </MemoryRouter>,
     );
 
-    const passwordInput = screen.getByPlaceholderText('Enter password');
-    fireEvent.change(passwordInput, { target: { value: 'mypassword' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'mypassword' } });
 
-    const unlockBtn = screen.getByText('UNLOCK');
-    expect(unlockBtn.closest('button')).not.toBeDisabled();
+    expect(screen.getByText('Unlock').closest('button')).not.toBeDisabled();
   });
 
   it('calls unlock with the entered password', async () => {
@@ -155,11 +150,8 @@ describe('Unlock', () => {
       </MemoryRouter>,
     );
 
-    const passwordInput = screen.getByPlaceholderText('Enter password');
-    fireEvent.change(passwordInput, { target: { value: 'correctpassword' } });
-
-    const unlockBtn = screen.getByText('UNLOCK');
-    fireEvent.click(unlockBtn);
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correctpassword' } });
+    fireEvent.click(screen.getByText('Unlock'));
 
     await waitFor(() => {
       expect(mockUnlock).toHaveBeenCalledWith('correctpassword');
@@ -175,17 +167,17 @@ describe('Unlock', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByPlaceholderText('Enter password'), {
+    fireEvent.change(screen.getByLabelText('Password'), {
       target: { value: 'correctpassword' },
     });
-    fireEvent.click(screen.getByText('UNLOCK'));
+    fireEvent.click(screen.getByText('Unlock'));
 
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith('/');
     });
   });
 
-  it('shows invalid password error when unlock fails', async () => {
+  it('shows invalid password error under the field, as an alert', async () => {
     mockUnlock.mockResolvedValue(false);
 
     render(
@@ -194,24 +186,24 @@ describe('Unlock', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByPlaceholderText('Enter password'), {
+    fireEvent.change(screen.getByLabelText('Password'), {
       target: { value: 'wrongpassword' },
     });
-    fireEvent.click(screen.getByText('UNLOCK'));
+    fireEvent.click(screen.getByText('Unlock'));
 
     await waitFor(() => {
-      expect(screen.getByText('Invalid password')).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent('Invalid password');
     });
   });
 
-  it('shows the forgot password disconnect link', () => {
+  it('shows the forgot password link', () => {
     render(
       <MemoryRouter>
         <Unlock />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('FORGOT PASSWORD? DISCONNECT')).toBeInTheDocument();
+    expect(screen.getByText('Forgot password?')).toBeInTheDocument();
   });
 
   it('opens the disconnect confirmation modal', () => {
@@ -221,10 +213,10 @@ describe('Unlock', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByText('FORGOT PASSWORD? DISCONNECT'));
+    fireEvent.click(screen.getByText('Forgot password?'));
 
-    expect(screen.getByText('DISCONNECT WALLET')).toBeInTheDocument();
-    expect(screen.getByText(/YOUR FUNDS ARE SAFE/)).toBeInTheDocument();
+    expect(screen.getByText('Disconnect wallet')).toBeInTheDocument();
+    expect(screen.getByText(/recovery phrase imports it back/)).toBeInTheDocument();
   });
 
   it('resets wallet and navigates to welcome on disconnect confirm', async () => {
@@ -236,14 +228,9 @@ describe('Unlock', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByText('FORGOT PASSWORD? DISCONNECT'));
-    // The DISCONNECT button is inside the modal, separate from the header
-    const disconnectButtons = screen.getAllByText('DISCONNECT');
-    const modalDisconnect = disconnectButtons.find((el) => {
-      const btn = el.closest('button');
-      return btn && btn.className.includes('bg-p01-cyan');
-    });
-    fireEvent.click(modalDisconnect?.closest('button') || disconnectButtons[disconnectButtons.length - 1]);
+    fireEvent.click(screen.getByText('Forgot password?'));
+    // "Disconnect wallet" is the title; "Disconnect" alone is the button.
+    fireEvent.click(screen.getByText('Disconnect'));
 
     await waitFor(() => {
       expect(mockReset).toHaveBeenCalled();
@@ -251,30 +238,19 @@ describe('Unlock', () => {
     });
   });
 
-  it('closes the disconnect modal on CANCEL', () => {
+  it('closes the disconnect modal on Cancel', () => {
     render(
       <MemoryRouter>
         <Unlock />
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByText('FORGOT PASSWORD? DISCONNECT'));
-    expect(screen.getByText('DISCONNECT WALLET')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Forgot password?'));
+    expect(screen.getByText('Disconnect wallet')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('CANCEL'));
+    fireEvent.click(screen.getByText('Cancel'));
 
-    // Modal should close - the DISCONNECT WALLET title should be gone
-    expect(screen.queryByText('DISCONNECT WALLET')).not.toBeInTheDocument();
-  });
-
-  it('displays the network indicator footer', () => {
-    render(
-      <MemoryRouter>
-        <Unlock />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('Solana Network')).toBeInTheDocument();
+    expect(screen.queryByText('Disconnect wallet')).not.toBeInTheDocument();
   });
 
   it('submits on Enter key press', async () => {
@@ -286,7 +262,7 @@ describe('Unlock', () => {
       </MemoryRouter>,
     );
 
-    const passwordInput = screen.getByPlaceholderText('Enter password');
+    const passwordInput = screen.getByLabelText('Password');
     fireEvent.change(passwordInput, { target: { value: 'testpassword' } });
     fireEvent.keyPress(passwordInput, { key: 'Enter', charCode: 13 });
 

@@ -36,7 +36,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <div className="w-12 h-12 mb-4 bg-red-500/20 border border-red-500 flex items-center justify-center">
             <span className="text-red-500 text-xl">!</span>
           </div>
-          <h1 className="text-lg font-display font-bold text-white mb-2 tracking-wider">
+          <h1 className="text-lg font-display font-bold text-p01-text mb-2 tracking-wider">
             ERROR
           </h1>
           <p className="text-[11px] text-p01-chrome/60 text-center font-mono mb-4">

@@ -154,7 +154,7 @@ function App() {
           {/* Was the 01 raster. The mark is drawn now, so the boot state
               renders before any asset has to load. */}
           <Wordmark size={44} showText={false} className="mx-auto mb-4 justify-center" />
-          <p className="text-white font-display font-bold text-sm tracking-wider mb-1">
+          <p className="text-p01-text font-display font-bold text-sm tracking-wider mb-1">
             PROTOCOL
           </p>
           <p className="text-[10px] text-p01-chrome/60 font-mono tracking-wider">

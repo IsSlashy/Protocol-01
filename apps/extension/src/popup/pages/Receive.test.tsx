@@ -7,17 +7,24 @@
  * - Stealth meta-address mode toggle
  * - Solana Pay URI format in the QR code
  * - Copy to clipboard
- * - Explorer link to Solscan
- * - Devnet badge and warning
- * - Stealth payments navigation
+ * - Devnet warning
  *
  * Validates:
  * - QR code rendering with correct address
- * - Address display and truncation
- * - Copy button functionality
+ * - Address display in full
+ * - The single copy button
  * - Stealth mode toggle
- * - Network badge display
- * - Navigation to stealth payments page
+ * - Devnet caution shown once
+ *
+ * ⛔ THE STEALTH PAYMENTS ASSERTIONS ARE GONE ON PURPOSE. They pinned a block
+ * that navigated to `/stealth-payments`, and that route was parked on
+ * 2026-08-23: `App.tsx` now redirects it to `/shield`. The test was green while
+ * the button it described sent the user to an unrelated screen — which is
+ * exactly the failure a route test cannot see and a page test should not
+ * enshrine. The block was removed from the page; its assertions go with it.
+ *
+ * ⛔ SO IS THE DOUBLE-COPY ASSERTION. There were two copy controls wired to one
+ * handler. One remains, in the footer, so there is one thing to assert.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -78,14 +85,14 @@ describe('Receive', () => {
     vi.clearAllMocks();
   });
 
-  it('renders the RECEIVE SOL header', () => {
+  it('renders the Receive header', () => {
     render(
       <MemoryRouter>
         <Receive />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('RECEIVE SOL')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Receive' })).toBeInTheDocument();
   });
 
   it('displays the QR code with the Solana Pay URI', () => {
@@ -101,47 +108,27 @@ describe('Receive', () => {
     expect(qrCode.getAttribute('data-value')).toBe(`solana:${MOCK_PUBLIC_KEY}`);
   });
 
-  it('shows the truncated wallet address', () => {
+  it('shows the address in full, once', () => {
     render(
       <MemoryRouter>
         <Receive />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(/7xKXtg2C\.\.\.uJosgAsU/)).toBeInTheDocument();
+    expect(screen.getAllByText(MOCK_PUBLIC_KEY)).toHaveLength(1);
   });
 
-  it('displays the YOUR SOLANA ADDRESS label', () => {
+  it('offers exactly one copy control', () => {
     render(
       <MemoryRouter>
         <Receive />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('YOUR SOLANA ADDRESS')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /copy/i })).toHaveLength(1);
   });
 
-  it('displays the full public key in the address section', () => {
-    render(
-      <MemoryRouter>
-        <Receive />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText(MOCK_PUBLIC_KEY)).toBeInTheDocument();
-  });
-
-  it('shows the COPY ADDRESS button', () => {
-    render(
-      <MemoryRouter>
-        <Receive />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('COPY ADDRESS')).toBeInTheDocument();
-  });
-
-  it('copies address to clipboard when copy button is clicked', async () => {
+  it('copies address to clipboard when the copy button is clicked', async () => {
     const { copyToClipboard: mockCopy } = await import('@/shared/utils');
 
     render(
@@ -150,109 +137,58 @@ describe('Receive', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByText('COPY ADDRESS'));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy address' }));
 
     await waitFor(() => {
       expect(mockCopy).toHaveBeenCalledWith(MOCK_PUBLIC_KEY);
     });
   });
 
-  it('shows "COPIED TO CLIPBOARD" text after copying', async () => {
+  it('confirms the copy on the button itself', async () => {
     render(
       <MemoryRouter>
         <Receive />
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByText('COPY ADDRESS'));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy address' }));
 
     await waitFor(() => {
-      expect(screen.getByText('COPIED TO CLIPBOARD')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
     });
   });
 
-  it('shows the stealth mode toggle (NORMAL)', () => {
+  it('shows the stealth mode toggle, unpressed in normal mode', () => {
     render(
       <MemoryRouter>
         <Receive />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('NORMAL')).toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: 'Stealth' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('shows the DEVNET badge', () => {
+  it('warns about devnet once', () => {
     render(
       <MemoryRouter>
         <Receive />
       </MemoryRouter>,
     );
 
-    const badges = screen.getAllByText('[ DEVNET ]');
-    expect(badges.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('shows the receiving info card', () => {
-    render(
-      <MemoryRouter>
-        <Receive />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('[ RECEIVING ]')).toBeInTheDocument();
     expect(
-      screen.getByText(/SCAN THIS QR CODE OR SHARE YOUR ADDRESS/),
-    ).toBeInTheDocument();
+      screen.getAllByText(/this is a devnet address/i),
+    ).toHaveLength(1);
   });
 
-  it('shows the devnet warning', () => {
+  it('does not offer the parked stealth payments route', () => {
     render(
       <MemoryRouter>
         <Receive />
       </MemoryRouter>,
     );
 
-    const badges = screen.getAllByText('[ DEVNET ]');
-    expect(badges.length).toBeGreaterThanOrEqual(2);
-    expect(
-      screen.getByText(/THIS IS A DEVNET ADDRESS/),
-    ).toBeInTheDocument();
-  });
-
-  it('renders the STEALTH PAYMENTS navigation link', () => {
-    render(
-      <MemoryRouter>
-        <Receive />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('STEALTH PAYMENTS')).toBeInTheDocument();
-    expect(screen.getByText(/1 pending/)).toBeInTheDocument();
-  });
-
-  it('navigates to /stealth-payments when the link is clicked', () => {
-    render(
-      <MemoryRouter>
-        <Receive />
-      </MemoryRouter>,
-    );
-
-    fireEvent.click(screen.getByText('STEALTH PAYMENTS'));
-
-    expect(mockNavigate).toHaveBeenCalledWith('/stealth-payments');
-  });
-
-  it('shows the VIEW link to Solscan explorer', () => {
-    render(
-      <MemoryRouter>
-        <Receive />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('VIEW')).toBeInTheDocument();
-    const viewLink = screen.getByText('VIEW').closest('a');
-    expect(viewLink?.getAttribute('href')).toContain('solscan.io');
-    expect(viewLink?.getAttribute('href')).toContain('devnet');
+    expect(screen.queryByText(/stealth payments/i)).not.toBeInTheDocument();
   });
 
   it('navigates back when the back button is clicked', () => {
@@ -262,8 +198,7 @@ describe('Receive', () => {
       </MemoryRouter>,
     );
 
-    const backButton = screen.getAllByRole('button')[0];
-    fireEvent.click(backButton);
+    fireEvent.click(screen.getByRole('button', { name: 'Go back' }));
 
     expect(mockNavigate).toHaveBeenCalledWith(-1);
   });

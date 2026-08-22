@@ -1,22 +1,39 @@
+/**
+ * Receive: a QR code, the address under it, one button that copies it.
+ *
+ * 🎯 WHAT THIS SCREEN LOST, AND WHY
+ * ─────────────────────────────────
+ * It had TWO copy buttons — a small icon one under the QR and a full-width one
+ * inside an "address" card — wired to the same handler and the same clipboard
+ * write. Two controls for one action is not redundancy, it is a question the
+ * user has to answer before they can copy an address.
+ *
+ * It also said "devnet" three times (a badge at the top, a heading inside a
+ * warning card, and the warning itself), and explained stealth mode twice: once
+ * in a banner and again in an info card, with a third copy hidden behind an (i)
+ * toggle. The rule from the unlock screen applies here: say it once.
+ *
+ * ⛔ THE STEALTH PAYMENTS BLOCK IS GONE BECAUSE ITS DESTINATION IS. Founder
+ * ruling 2026-08-23 parked personal payments: `/stealth-payments` is now a
+ * redirect to `/shield`. A row that reads "3 pending — 0.5 SOL" and then lands
+ * the user somewhere else entirely is worse than no row at all, and the pending
+ * count it displayed was the only place in the product that number appeared, so
+ * it read as an action item that could not be actioned.
+ *
+ * ⚠️ THE ADDRESS IS SHOWN IN FULL. It was truncated under the QR and shown in
+ * full in the card below, so the same address appeared twice in two different
+ * shapes. Mono, selectable, wrapping — the one place monospace belongs.
+ */
+
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  ArrowLeft,
-  Copy,
-  Check,
-  ExternalLink,
-  Shield,
-  ShieldCheck,
-  Eye,
-  EyeOff,
-  Info,
-  ChevronRight,
-} from 'lucide-react';
+import { Check, Copy, Shield, ShieldCheck } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+
 import { useWalletStore } from '@/shared/store/wallet';
 import { useStealthStore } from '@/shared/store/stealth';
-import { copyToClipboard, truncateAddress, cn } from '@/shared/utils';
+import { copyToClipboard, cn } from '@/shared/utils';
+import { Button, Hairline, Panel, Row, Screen } from '@/popup/ui';
 
 export default function Receive() {
   const navigate = useNavigate();
@@ -26,18 +43,12 @@ export default function Receive() {
     stealthModeEnabled,
     toggleStealthMode,
     isInitialized: stealthInitialized,
-    payments,
-    stealthBalance,
   } = useStealthStore();
 
   const [copied, setCopied] = useState(false);
-  const [showStealthInfo, setShowStealthInfo] = useState(false);
 
   // Adresse a afficher (normale ou stealth)
   const displayAddress = stealthModeEnabled && metaAddress ? metaAddress : publicKey;
-
-  // Nombre de paiements stealth en attente
-  const pendingPayments = payments.filter((p) => !p.claimed).length;
 
   // Solana Pay URI format for better wallet compatibility
   const solanaPayUri = displayAddress
@@ -54,354 +65,114 @@ export default function Receive() {
     }
   };
 
+  /**
+   * The mode switch lives in the header, next to the title it changes. It was
+   * a mono-caps chip reading "STEALTH" / "NORMAL"; it now says what pressing it
+   * gives you, in the same voice as the rest of the product.
+   */
+  const modeToggle = stealthInitialized ? (
+    <button
+      onClick={toggleStealthMode}
+      aria-pressed={stealthModeEnabled}
+      className={cn(
+        'flex min-h-[44px] items-center gap-1.5 rounded-lg border px-3 text-tiny transition-colors duration-exit',
+        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-p01-cyan',
+        stealthModeEnabled
+          ? 'border-p01-cyan/40 bg-p01-cyan/10 text-p01-cyan'
+          : 'border-p01-border text-p01-text-muted hover:border-p01-border-light',
+      )}
+    >
+      {stealthModeEnabled ? (
+        <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+      ) : (
+        <Shield className="h-4 w-4" aria-hidden="true" />
+      )}
+      Stealth
+    </button>
+  ) : undefined;
+
   return (
-    <div className="flex flex-col h-full bg-p01-void">
-      {/* Header - Industrial */}
-      <div className="flex items-center gap-3 p-3 border-b border-p01-border bg-p01-surface">
-        <button
-          onClick={() => navigate(-1)}
-          className="p-2 -ml-2 hover:bg-p01-border transition-colors"
-          aria-label="Go back"
+    <Screen
+      title="Receive"
+      onBack={() => navigate(-1)}
+      action={modeToggle}
+      footer={
+        /* The one action on this screen, full width, at the bottom. */
+        <Button
+          full
+          size="lg"
+          icon={copied ? Check : Copy}
+          disabled={!displayAddress}
+          onClick={() => void handleCopy()}
         >
-          <ArrowLeft className="w-4 h-4 text-p01-chrome" />
-        </button>
-        <h1 className="text-sm font-mono font-bold text-white tracking-wider">RECEIVE SOL</h1>
-
-        {/* Stealth Mode Toggle */}
-        {stealthInitialized && (
-          <button
-            onClick={toggleStealthMode}
-            aria-label={stealthModeEnabled ? 'Switch to normal mode' : 'Switch to stealth mode'}
-            aria-pressed={stealthModeEnabled}
-            className={cn(
-              'ml-auto flex items-center gap-1.5 px-2 py-1 text-[10px] font-mono font-bold tracking-wider border transition-all rounded',
-              stealthModeEnabled
-                ? 'bg-p01-cyan/20 border-p01-cyan text-p01-cyan'
-                : 'bg-transparent border-p01-border text-p01-chrome hover:border-p01-cyan/50'
-            )}
-          >
-            {stealthModeEnabled ? (
-              <>
-                <ShieldCheck className="w-3 h-3" />
-                STEALTH
-              </>
-            ) : (
-              <>
-                <Shield className="w-3 h-3" />
-                NORMAL
-              </>
-            )}
-          </button>
-        )}
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Network Badge */}
-        {network === 'devnet' && (
-          <div className="flex justify-center">
-            <span className="px-2 py-0.5 text-[9px] font-mono font-bold bg-yellow-500/10 text-yellow-500 border border-yellow-500/30 tracking-wider">
-              [ DEVNET ]
-            </span>
-          </div>
-        )}
-
-        {/* Stealth Mode Banner */}
-        <AnimatePresence>
-          {stealthModeEnabled && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="bg-p01-cyan/10 border border-p01-cyan/30 p-3 rounded-xl"
-            >
-              <div className="flex items-start gap-2">
-                <ShieldCheck className="w-4 h-4 text-p01-cyan flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-mono font-bold text-p01-cyan tracking-wider">
-                      [ STEALTH MODE ACTIVE ]
-                    </p>
-                    <button
-                      onClick={() => setShowStealthInfo(!showStealthInfo)}
-                      className="text-p01-cyan/70 hover:text-p01-cyan"
-                      aria-label={showStealthInfo ? 'Hide stealth info' : 'Show stealth info'}
-                      aria-expanded={showStealthInfo}
-                    >
-                      <Info className="w-3 h-3" />
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-p01-chrome font-mono tracking-wider mt-1">
-                    Each payment will go to a unique address only you can access.
-                  </p>
-
-                  {/* Expandable Info */}
-                  <AnimatePresence>
-                    {showStealthInfo && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="mt-2 pt-2 border-t border-p01-cyan/20"
-                      >
-                        <p className="text-[9px] text-p01-chrome/70 font-mono leading-relaxed">
-                          The stealth address (meta-address) allows senders to generate unique
-                          one-time addresses for each payment. Only you can detect and spend
-                          these funds using your viewing and spending keys. This provides
-                          maximum privacy as your main address is never revealed.
-                        </p>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* QR Code - Real QR with styling */}
-        <motion.div
-          initial={{ scale: 0.95, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className="flex flex-col items-center"
-        >
-          <div
-            className={cn(
-              'bg-white p-4 rounded-xl border-4 shadow-lg',
-              stealthModeEnabled
-                ? 'border-p01-cyan shadow-p01-cyan/20'
-                : 'border-p01-pink shadow-p01-pink/20'
-            )}
-          >
+          {copied ? 'Copied' : stealthModeEnabled ? 'Copy meta-address' : 'Copy address'}
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-5">
+        {/* ── The QR, and the address it encodes ── */}
+        <div className="flex flex-col items-center gap-3">
+          <div className="rounded-xl bg-p01-text p-3">
             {displayAddress ? (
-              <div className="relative">
-                <QRCodeSVG
-                  value={solanaPayUri}
-                  size={160}
-                  level="H"
-                  includeMargin={false}
-                  bgColor="#ffffff"
-                  fgColor="#0a0a0f"
-                  imageSettings={{
-                    src: stealthModeEnabled ? '/stealth-icon.png' : '/01-logo.png',
-                    x: undefined,
-                    y: undefined,
-                    height: 32,
-                    width: 32,
-                    excavate: true,
-                  }}
-                />
-                {stealthModeEnabled && (
-                  <div className="absolute -top-2 -right-2 w-6 h-6 bg-p01-cyan rounded-full flex items-center justify-center shadow-lg">
-                    <ShieldCheck className="w-4 h-4 text-p01-void" />
-                  </div>
-                )}
-              </div>
+              <QRCodeSVG
+                value={solanaPayUri}
+                size={168}
+                level="H"
+                includeMargin={false}
+                bgColor="#ffffff"
+                fgColor="#070709"
+                imageSettings={{
+                  src: stealthModeEnabled ? '/stealth-icon.png' : '/01-logo.png',
+                  x: undefined,
+                  y: undefined,
+                  height: 32,
+                  width: 32,
+                  excavate: true,
+                }}
+              />
             ) : (
-              <div className="w-40 h-40 bg-p01-surface flex items-center justify-center rounded">
-                <span className="text-p01-chrome text-xs font-mono">NO WALLET</span>
+              <div className="flex h-[168px] w-[168px] items-center justify-center bg-p01-surface">
+                <span className="text-tiny text-p01-text-dim">No wallet</span>
               </div>
             )}
           </div>
 
-          {/* Truncated address under QR */}
-          <div className="mt-3 flex items-center gap-2">
-            <span className="text-p01-chrome text-sm font-mono">
-              {displayAddress
-                ? stealthModeEnabled
-                  ? `st:01...${displayAddress.slice(-8)}`
-                  : truncateAddress(displayAddress, 8)
-                : '---'}
-            </span>
-            <button
-              onClick={handleCopy}
-              className="p-1 hover:bg-p01-surface rounded transition-colors"
-              aria-label={copied ? 'Address copied' : 'Copy address'}
-            >
-              {copied ? (
-                <Check className="w-4 h-4 text-p01-cyan" />
-              ) : (
-                <Copy className="w-4 h-4 text-p01-chrome hover:text-white" />
-              )}
-            </button>
-          </div>
-        </motion.div>
-
-        {/* Address Display - Industrial */}
-        <div className="bg-p01-surface border border-p01-border p-3 rounded-xl">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] text-p01-text-dim font-mono tracking-wider">
-              {stealthModeEnabled ? 'YOUR STEALTH META-ADDRESS' : 'YOUR SOLANA ADDRESS'}
-            </span>
-            {!stealthModeEnabled && publicKey && (
-              <a
-                href={`https://solscan.io/account/${publicKey}?cluster=${network}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 text-[10px] text-p01-cyan font-mono tracking-wider hover:text-p01-cyan-dim transition-colors"
-                aria-label="View address on Solscan"
-              >
-                VIEW
-                <ExternalLink className="w-3 h-3" aria-hidden="true" />
-              </a>
-            )}
-          </div>
-
-          <p className="font-mono text-[10px] text-white break-all mb-3 tracking-wider leading-relaxed select-all">
+          {/* Mono is for addresses. This is one. Selectable, and shown whole:
+              a truncated address cannot be checked against anything. */}
+          <code className="w-full select-all break-all text-center font-mono text-tiny leading-relaxed text-p01-text-muted">
             {displayAddress || '----'}
-          </p>
-
-          <button
-            onClick={handleCopy}
-            className={cn(
-              'w-full flex items-center justify-center gap-2 py-2.5 bg-p01-dark border rounded-lg transition-colors',
-              stealthModeEnabled
-                ? 'border-p01-cyan/30 hover:border-p01-cyan'
-                : 'border-p01-border hover:border-p01-cyan'
-            )}
-          >
-            {copied ? (
-              <>
-                <Check className="w-4 h-4 text-p01-cyan" />
-                <span className="text-xs font-mono font-medium text-p01-cyan tracking-wider">
-                  COPIED TO CLIPBOARD
-                </span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-4 h-4 text-p01-chrome" />
-                <span className="text-xs font-mono font-medium text-white tracking-wider">
-                  COPY {stealthModeEnabled ? 'META-ADDRESS' : 'ADDRESS'}
-                </span>
-              </>
-            )}
-          </button>
+          </code>
         </div>
 
-        {/* Stealth Payments Link */}
-        {stealthInitialized && (
-          <button
-            onClick={() => navigate('/stealth-payments')}
-            className="w-full bg-p01-surface border border-p01-border p-3 rounded-xl flex items-center justify-between hover:border-p01-cyan/50 transition-colors group"
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className={cn(
-                  'w-8 h-8 flex items-center justify-center border rounded-lg',
-                  pendingPayments > 0
-                    ? 'bg-p01-cyan/20 border-p01-cyan'
-                    : 'bg-p01-dark border-p01-border'
-                )}
-              >
-                {pendingPayments > 0 ? (
-                  <EyeOff className="w-4 h-4 text-p01-cyan" />
-                ) : (
-                  <Eye className="w-4 h-4 text-p01-chrome" />
-                )}
-              </div>
-              <div className="text-left">
-                <p className="text-[11px] font-mono font-bold text-white tracking-wider">
-                  STEALTH PAYMENTS
-                </p>
-                <p className="text-[10px] text-p01-chrome font-mono">
-                  {pendingPayments > 0
-                    ? `${pendingPayments} pending - ${(stealthBalance / 1e9).toFixed(4)} SOL`
-                    : 'No pending payments'}
-                </p>
-              </div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-p01-chrome group-hover:text-p01-cyan transition-colors" />
-          </button>
-        )}
+        {/* One sentence about what this address is. Said once. */}
+        <p className="text-tiny text-p01-text-dim">
+          {stealthModeEnabled
+            ? 'Each payment to this meta-address lands on its own fresh address, so payments to you are not grouped under one. Claiming one moves it to your wallet, which links that address to you.'
+            : `Anyone with this address can send you SOL or SPL tokens on ${network}. The address is public and everything sent to it is visible on chain.`}
+        </p>
 
-        {/* Info Card - Terminal style */}
-        <div
-          className={cn(
-            'border p-3 rounded-xl',
-            stealthModeEnabled
-              ? 'bg-p01-cyan/5 border-p01-cyan/30'
-              : 'bg-p01-pink/5 border-p01-pink/30'
-          )}
-        >
-          <div className="flex items-start gap-2">
-            <div
-              className={cn(
-                'w-4 h-4 border flex items-center justify-center flex-shrink-0 mt-0.5 rounded',
-                stealthModeEnabled
-                  ? 'bg-p01-cyan/20 border-p01-cyan'
-                  : 'bg-p01-pink/20 border-p01-pink'
-              )}
-            >
-              <span
-                className={cn(
-                  'text-[8px] font-mono font-bold',
-                  stealthModeEnabled ? 'text-p01-cyan' : 'text-p01-pink'
-                )}
-              >
-                i
-              </span>
-            </div>
-            <div>
-              <p
-                className={cn(
-                  'text-[10px] font-mono font-bold tracking-wider mb-1',
-                  stealthModeEnabled ? 'text-p01-cyan' : 'text-p01-pink'
-                )}
-              >
-                [ {stealthModeEnabled ? 'PRIVATE RECEIVING' : 'RECEIVING'} ]
-              </p>
-              <p className="text-[10px] text-p01-text-dim font-mono tracking-wider leading-relaxed">
-                {stealthModeEnabled
-                  ? 'SHARE THIS META-ADDRESS. EACH PAYMENT LANDS ON ITS OWN FRESH ADDRESS, SO PAYMENTS TO YOU ARE NOT GROUPED UNDER ONE ADDRESS. CLAIMING ONE MOVES IT TO YOUR WALLET, WHICH LINKS THAT ADDRESS TO YOU.'
-                  : `SCAN THIS QR CODE OR SHARE YOUR ADDRESS TO RECEIVE SOL OR SPL TOKENS ON THE ${network.toUpperCase()} NETWORK.`}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Network warning for devnet */}
         {network === 'devnet' && (
-          <div className="bg-yellow-500/5 border border-yellow-500/30 p-3 rounded-xl">
-            <div className="flex items-start gap-2">
-              <div className="w-4 h-4 bg-yellow-500/20 border border-yellow-500 flex items-center justify-center flex-shrink-0 mt-0.5 rounded">
-                <span className="text-[8px] font-mono font-bold text-yellow-500">!</span>
-              </div>
-              <div>
-                <p className="text-[10px] font-mono font-bold text-yellow-500 tracking-wider mb-1">
-                  [ DEVNET ]
-                </p>
-                <p className="text-[10px] text-p01-text-dim font-mono tracking-wider leading-relaxed">
-                  THIS IS A DEVNET ADDRESS. ONLY SEND DEVNET TOKENS TO THIS ADDRESS. REAL TOKENS
-                  WILL BE LOST.
-                </p>
-              </div>
-            </div>
-          </div>
+          <Panel tone="warn">
+            <p className="text-tiny text-p01-amber">
+              This is a devnet address. Tokens with real value sent here are lost.
+            </p>
+          </Panel>
         )}
 
-        {/* Setup Stealth if not initialized */}
+        {/* The only other decision available here, and only when it exists. */}
         {!stealthInitialized && (
-          <div className="bg-p01-surface border border-p01-border p-3 rounded-xl">
-            <div className="flex items-start gap-2">
-              <Shield className="w-4 h-4 text-p01-chrome flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-[10px] font-mono font-bold text-white tracking-wider mb-1">
-                  ENABLE STEALTH ADDRESSES
-                </p>
-                <p className="text-[10px] text-p01-chrome font-mono tracking-wider mb-2">
-                  Stealth addresses provide maximum privacy by generating unique addresses for
-                  each payment.
-                </p>
-                <button
-                  onClick={() => navigate('/settings')}
-                  className="text-[10px] font-mono font-bold text-p01-cyan tracking-wider hover:underline"
-                >
-                  SETUP IN SETTINGS &rarr;
-                </button>
-              </div>
-            </div>
+          <div>
+            <Hairline />
+            <Row
+              icon={Shield}
+              label="Set up a stealth address"
+              sub="A fresh address for every payment, so they are not grouped."
+              onClick={() => navigate('/settings')}
+              chevron
+            />
           </div>
         )}
       </div>
-    </div>
+    </Screen>
   );
 }

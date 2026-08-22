@@ -4,17 +4,23 @@
  * The ConnectDapp page handles dApp connection requests from external sites.
  * It shows:
  * - The requesting site's name, origin, and icon
- * - A "CONNECTION REQUEST" badge
- * - Permission checkboxes (viewBalance, requestTransaction, requestSubscription)
- * - Wallet address display
- * - CONNECT and CANCEL buttons
+ * - The wallet address the site would be connected to
+ * - One sentence describing the whole grant
+ * - Cancel and Connect, side by side
  *
  * Validates:
  * - Loading state while fetching approval request
- * - Permission toggle functionality
- * - Connect button disabled with no permissions selected
- * - Correct calls to approve/reject messaging
  * - Site info display
+ * - That the three pre-ticked permission checkboxes are GONE, and that the
+ *   grant sent to the background is unchanged
+ * - Correct calls to approve/reject messaging
+ *
+ * ⚠️ WHY THE COPY ASSERTIONS CHANGED. This screen used monospace capitals as
+ * UI labels ("JUPITER EXCHANGE", "P-01 WALLET", "[ CONNECTION REQUEST ]") and
+ * offered three permission checkboxes that were pre-ticked, could not
+ * meaningfully be unticked, and were never re-asked. The house style is gone
+ * and so are the checkboxes; these tests follow the screen rather than pinning
+ * it in place.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -28,7 +34,10 @@ vi.mock('@/shared/store/wallet', () => ({
   }),
 }));
 
-vi.mock('@/shared/utils', () => ({
+// Partial mock: the UI kit imports `cn` from the same module, so replacing the
+// whole module leaves every shared component without its class merger.
+vi.mock('@/shared/utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/shared/utils')>()),
   truncateAddress: (addr: string, chars: number) =>
     `${addr.slice(0, chars)}...${addr.slice(-chars)}`,
 }));
@@ -69,7 +78,7 @@ describe('ConnectDapp', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('LOADING REQUEST...')).toBeInTheDocument();
+    expect(screen.getByText('Loading request')).toBeInTheDocument();
   });
 
   it('displays the dApp name and origin once loaded', async () => {
@@ -80,12 +89,12 @@ describe('ConnectDapp', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('JUPITER EXCHANGE')).toBeInTheDocument();
+      expect(screen.getByText('Jupiter Exchange')).toBeInTheDocument();
       expect(screen.getByText('https://app.jupiter.exchange')).toBeInTheDocument();
     });
   });
 
-  it('shows the CONNECTION REQUEST badge', async () => {
+  it('titles the screen with the action, in sentence case', async () => {
     render(
       <MemoryRouter>
         <ConnectDapp />
@@ -93,11 +102,11 @@ describe('ConnectDapp', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('[ CONNECTION REQUEST ]')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Connect' })).toBeInTheDocument();
     });
   });
 
-  it('displays the wallet address', async () => {
+  it('displays the wallet address that would be connected', async () => {
     render(
       <MemoryRouter>
         <ConnectDapp />
@@ -105,12 +114,12 @@ describe('ConnectDapp', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('P-01 WALLET')).toBeInTheDocument();
+      expect(screen.getByText('Wallet')).toBeInTheDocument();
       expect(screen.getByText(/7xKXtg\.\.\.osgAsU/)).toBeInTheDocument();
     });
   });
 
-  it('shows the three default permission checkboxes', async () => {
+  it('offers no permission checkboxes', async () => {
     render(
       <MemoryRouter>
         <ConnectDapp />
@@ -118,13 +127,31 @@ describe('ConnectDapp', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('VIEW BALANCE')).toBeInTheDocument();
-      expect(screen.getByText('REQUEST TRANSACTIONS')).toBeInTheDocument();
-      expect(screen.getByText('REQUEST SUBSCRIPTIONS')).toBeInTheDocument();
+      expect(screen.getByText('Jupiter Exchange')).toBeInTheDocument();
+    });
+
+    // The three pre-ticked boxes were a decision in name only.
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+  });
+
+  it('states the whole grant in one sentence', async () => {
+    render(
+      <MemoryRouter>
+        <ConnectDapp />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/see your balance and ask you to approve transactions and subscriptions/),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/You can disconnect at any time from Settings/),
+      ).toBeInTheDocument();
     });
   });
 
-  it('shows permission descriptions', async () => {
+  it('renders Connect and Cancel', async () => {
     render(
       <MemoryRouter>
         <ConnectDapp />
@@ -132,12 +159,12 @@ describe('ConnectDapp', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('See your wallet balance and token holdings')).toBeInTheDocument();
-      expect(screen.getByText('Ask for approval to send transactions')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
     });
   });
 
-  it('renders CONNECT and CANCEL buttons', async () => {
+  it('calls rejectRequest and closes window on Cancel', async () => {
     render(
       <MemoryRouter>
         <ConnectDapp />
@@ -145,44 +172,10 @@ describe('ConnectDapp', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('CONNECT')).toBeInTheDocument();
-      expect(screen.getByText('CANCEL')).toBeInTheDocument();
-    });
-  });
-
-  it('toggles permission when a checkbox is clicked', async () => {
-    render(
-      <MemoryRouter>
-        <ConnectDapp />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('VIEW BALANCE')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
     });
 
-    // Click VIEW BALANCE to toggle it off
-    fireEvent.click(screen.getByText('VIEW BALANCE'));
-
-    // The checkbox state has changed. We verify that clicking again restores it
-    fireEvent.click(screen.getByText('VIEW BALANCE'));
-
-    // Permission is back on. The UI still renders it.
-    expect(screen.getByText('VIEW BALANCE')).toBeInTheDocument();
-  });
-
-  it('calls rejectRequest and closes window on CANCEL', async () => {
-    render(
-      <MemoryRouter>
-        <ConnectDapp />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('CANCEL')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByText('CANCEL'));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     await waitFor(() => {
       expect(mockRejectRequest).toHaveBeenCalledWith('connect-req-1', 'User rejected');
@@ -190,7 +183,7 @@ describe('ConnectDapp', () => {
     });
   });
 
-  it('calls approveRequest with selected permissions on CONNECT', async () => {
+  it('calls approveRequest with the full grant on Connect', async () => {
     render(
       <MemoryRouter>
         <ConnectDapp />
@@ -198,11 +191,13 @@ describe('ConnectDapp', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('CONNECT')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText('CONNECT'));
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
 
+    // Unchanged from when all three boxes were ticked, which is the state every
+    // real connection was approved in.
     await waitFor(() => {
       expect(mockApproveRequest).toHaveBeenCalledWith('connect-req-1', {
         permissions: expect.arrayContaining([
@@ -211,23 +206,6 @@ describe('ConnectDapp', () => {
           'requestSubscription',
         ]),
       });
-    });
-  });
-
-  it('shows trust info text', async () => {
-    render(
-      <MemoryRouter>
-        <ConnectDapp />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(/This site will be able to perform the selected actions/),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(/You can disconnect at any time from Settings/),
-      ).toBeInTheDocument();
     });
   });
 });

@@ -2,10 +2,15 @@
  * Tests for Welcome page
  *
  * The Welcome page is the entry point for new users. Post Privy-removal it
- * presents only the two local-wallet onboarding paths:
- * - Protocol 01 branding with the Wordmark
- * - "Create New Wallet" (local seed-based)
- * - "Import Seed Phrase"
+ * presents only the local-wallet onboarding paths:
+ * - Styx branding with the Wordmark
+ * - "Create a new wallet" (local seed-based), the single primary action
+ * - "Import a seed phrase", secondary
+ * - "Connect with phone", a text link
+ *
+ * ⚠️ The copy assertions moved to sentence case with the 2026-08-23 design
+ * pass. Mono ALL-CAPS button labels are the house style being removed, so the
+ * old strings are not restored here.
  *
  * Validates:
  * - Renders the logo and tagline
@@ -36,7 +41,7 @@ vi.mock('react-router-dom', async () => {
 vi.mock('../components/Wordmark', () => ({
   __esModule: true,
   default: ({ showText }: { showText: boolean; size: number; animated: boolean }) => (
-    <div data-testid="wordmark">{showText && 'PROTOCOL'}</div>
+    <div data-testid="wordmark">{showText && 'Styx'}</div>
   ),
 }));
 
@@ -45,7 +50,7 @@ describe('Welcome', () => {
     vi.clearAllMocks();
   });
 
-  it('renders the Protocol 01 logo', () => {
+  it('renders the Styx logo', () => {
     render(
       <MemoryRouter>
         <Welcome />
@@ -55,56 +60,56 @@ describe('Welcome', () => {
     expect(screen.getByTestId('wordmark')).toBeInTheDocument();
   });
 
-  it('displays the "Total Invisibility" tagline', () => {
+  it('displays the "Total invisibility" tagline', () => {
     render(
       <MemoryRouter>
         <Welcome />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('Total Invisibility')).toBeInTheDocument();
+    expect(screen.getByText('Total invisibility')).toBeInTheDocument();
   });
 
-  it('shows the CREATE NEW WALLET button', () => {
+  it('shows the create wallet button', () => {
     render(
       <MemoryRouter>
         <Welcome />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('CREATE NEW WALLET')).toBeInTheDocument();
+    expect(screen.getByText('Create a new wallet')).toBeInTheDocument();
   });
 
-  it('shows the IMPORT SEED PHRASE button', () => {
+  it('shows the import seed phrase button', () => {
     render(
       <MemoryRouter>
         <Welcome />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('IMPORT SEED PHRASE')).toBeInTheDocument();
+    expect(screen.getByText('Import a seed phrase')).toBeInTheDocument();
   });
 
-  it('navigates to /create-wallet when CREATE NEW WALLET is clicked', () => {
+  it('navigates to /create-wallet when the create button is clicked', () => {
     render(
       <MemoryRouter>
         <Welcome />
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByText('CREATE NEW WALLET'));
+    fireEvent.click(screen.getByText('Create a new wallet'));
 
     expect(mockNavigate).toHaveBeenCalledWith('/create-wallet');
   });
 
-  it('navigates to /import-wallet when IMPORT SEED PHRASE is clicked', () => {
+  it('navigates to /import-wallet when the import button is clicked', () => {
     render(
       <MemoryRouter>
         <Welcome />
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByText('IMPORT SEED PHRASE'));
+    fireEvent.click(screen.getByText('Import a seed phrase'));
 
     expect(mockNavigate).toHaveBeenCalledWith('/import-wallet');
   });
@@ -121,8 +126,8 @@ describe('Welcome', () => {
     // because the whole popup suite was excluded from the run. Reading the
     // manifest makes the drift itself the failure.
     expect(
-      screen.getByText(new RegExp(`PROTOCOL v${manifest.version.replace(/[.]/g, String.fromCharCode(92) + '.')}`)),
+      screen.getByText(new RegExp(`v${manifest.version.replace(/[.]/g, String.fromCharCode(92) + '.')}`)),
     ).toBeInTheDocument();
-    expect(screen.getByText(/DEVNET/)).toBeInTheDocument();
+    expect(screen.getByText(/Devnet/)).toBeInTheDocument();
   });
 });
