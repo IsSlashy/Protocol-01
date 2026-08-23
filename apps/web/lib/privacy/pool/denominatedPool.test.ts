@@ -540,9 +540,25 @@ describe('note blinding', () => {
     }
   });
 
-  // The whole point: with the real epoch, an observer who sees the published
-  // nullifier can brute-force a few thousand epochs and recover the commitment.
-  // With blinding they cannot — this asserts the search fails.
+  /**
+   * The whole point: with the real epoch, an observer who sees the published
+   * nullifier can brute-force a few thousand epochs and recover the commitment.
+   * With blinding they cannot, and this asserts the search fails.
+   *
+   * ⚠️ EXPLICIT TIMEOUT, AND THE SEARCH MUST NOT SHRINK TO EARN IT.
+   *
+   * This runs ~26,000 real Poseidon commitments: 6,001 to show the attack
+   * succeeds against the old scheme, 20,001 to show it fails against the new
+   * one. That is the demonstration, not overhead. A smaller window would run
+   * faster and prove less: "we did not find it in 200 tries" is not the claim
+   * this test exists to make.
+   *
+   * Measured 2026-08-23 on two machines: 1,680 ms here, 4,191 ms on a second
+   * one, against vitest's 5,000 ms default. The slower machine was at 84% of
+   * budget alone and tipped over under parallel load, failing 2 runs out of 2.
+   * That is not flakiness, it is a deadline set for the wrong machine. The work
+   * is legitimate, so the deadline moves.
+   */
   it('defeats the epoch-enumeration attack that the old scheme allowed', () => {
     const { secret, nullifierPreimage } = deriveNoteMaterial(seedA, pool, 30);
     const mint = pubkeyToField(SOL_POOLS_V3[0].tokenMint);
@@ -572,7 +588,7 @@ describe('note blinding', () => {
       }
     }
     expect(foundBlinded).toBe(false); // and fails against the new one
-  });
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
