@@ -1,9 +1,25 @@
+/**
+ * RecentActivity — the last three things that happened, and a way to the rest.
+ *
+ * 🎯 REBUILT ON THE REALIGNED THEME 2026-08-23.
+ *   - the section had a PINK dot beside its title and a pink-tinted ring around
+ *     its panel. Pink is retired (founder ruling); the send rows were pink too,
+ *     which meant "money left your wallet" and "this is the activity section"
+ *     were said in the same colour.
+ *   - ⛔ ONE ACCENT. A received amount is the accent because it is the only
+ *     state worth colouring; a send is plain text. Three tinted icon discs in a
+ *     column is a colour key nobody asked for.
+ *   - the `BlurView` is gone, for the reason `AssetsList` gives.
+ *
+ * ⚠️ The empty state says one thing, not two. It used to stack "No activity
+ * yet" on "Transactions will appear here", which is the same sentence twice.
+ */
+
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeInUp } from 'react-native-reanimated';
-import { BlurView } from 'expo-blur';
-import { Colors, FontFamily, P01Colors } from '@/constants/theme';
+
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
 import { formatTxDate } from '@/services/solana/transactions';
 import { useT } from '@/i18n';
 
@@ -21,10 +37,10 @@ interface RecentActivityProps {
   onSeeAll: () => void;
 }
 
-const TX_CONFIG: Record<string, { icon: keyof typeof Ionicons.glyphMap; color: string; bg: string }> = {
-  receive: { icon: 'arrow-down', color: P01Colors.cyan, bg: 'rgba(57, 197, 187, 0.10)' },
-  send: { icon: 'arrow-up', color: P01Colors.pink, bg: 'rgba(255, 119, 168, 0.10)' },
-  swap: { icon: 'swap-horizontal', color: P01Colors.blue, bg: 'rgba(59, 130, 246, 0.10)' },
+const TX_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
+  receive: 'arrow-down',
+  send: 'arrow-up',
+  swap: 'swap-horizontal',
 };
 
 export default function RecentActivity({ transactions, onSeeAll }: RecentActivityProps) {
@@ -32,112 +48,138 @@ export default function RecentActivity({ transactions, onSeeAll }: RecentActivit
   const items = transactions.slice(0, 3);
 
   return (
-    <Animated.View entering={FadeInUp.delay(500)} style={styles.section}>
-      {/* Section header */}
+    <View style={styles.section}>
       <View style={styles.sectionHeader}>
-        <View style={styles.headerLeft}>
-          <View style={[styles.headerDot, { backgroundColor: P01Colors.pink }]} />
-          <Text style={styles.sectionTitle}>{t('wallet.recentActivity')}</Text>
-        </View>
-        {transactions.length > 0 && (
-          <TouchableOpacity onPress={onSeeAll} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <Text style={styles.sectionTitle} accessibilityRole="header">
+          {t('wallet.recentActivity')}
+        </Text>
+        {transactions.length > 0 ? (
+          <TouchableOpacity
+            onPress={onSeeAll}
+            style={styles.seeAllButton}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.seeAll')}
+          >
             <Text style={styles.seeAll}>{t('common.seeAll')}</Text>
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
 
-      {/* Glass container */}
-      <View style={styles.glassOuter}>
-        <BlurView intensity={12} tint="dark" style={styles.glassInner}>
-          {items.length === 0 ? (
-            <View style={styles.empty}>
-              <Ionicons name="time-outline" size={32} color={Colors.textTertiary} />
-              <Text style={styles.emptyText}>{t('wallet.noActivity')}</Text>
-              <Text style={styles.emptySubtext}>{t('activity.transactionsWillAppear')}</Text>
-            </View>
-          ) : (
-            items.map((tx, i) => {
-              const cfg = TX_CONFIG[tx.type] || TX_CONFIG.swap;
-              const isLast = i === items.length - 1;
-              return (
-                <View key={tx.signature} style={[styles.txRow, !isLast && styles.txRowBorder]}>
-                  <View style={[styles.txIcon, { backgroundColor: cfg.bg }]}>
-                    <Ionicons name={cfg.icon} size={16} color={cfg.color} />
-                  </View>
-                  <View style={styles.txInfo}>
-                    <Text style={styles.txType}>
-                      {tx.type.charAt(0).toUpperCase() + tx.type.slice(1)}
-                    </Text>
-                    <Text style={styles.txDate}>{formatTxDate(tx.timestamp)}</Text>
-                  </View>
-                  <View style={styles.txAmount}>
-                    <Text style={[styles.txAmountText, { color: tx.type === 'receive' ? P01Colors.cyan : Colors.text }]}>
-                      {tx.type === 'receive' ? '+' : '-'}{tx.amount?.toFixed(4) || '0'} {tx.token || 'SOL'}
-                    </Text>
-                    <Text style={styles.txStatus}>
-                      {tx.status === 'confirmed' ? t('activity.confirmed') : tx.status}
-                    </Text>
-                  </View>
+      <View style={styles.panel}>
+        {items.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>{t('wallet.noActivity')}</Text>
+          </View>
+        ) : (
+          items.map((tx, i) => {
+            const received = tx.type === 'receive';
+            const isLast = i === items.length - 1;
+            return (
+              <View key={tx.signature} style={[styles.txRow, !isLast && styles.txRowBorder]}>
+                <View style={styles.txIcon}>
+                  <Ionicons
+                    name={TX_ICON[tx.type] ?? 'ellipse-outline'}
+                    size={16}
+                    color={Colors.textSecondary}
+                  />
                 </View>
-              );
-            })
-          )}
-        </BlurView>
+                <View style={styles.txInfo}>
+                  <Text style={styles.txType}>
+                    {tx.type.charAt(0).toUpperCase() + tx.type.slice(1)}
+                  </Text>
+                  <Text style={styles.txDate}>{formatTxDate(tx.timestamp)}</Text>
+                </View>
+                <View style={styles.txAmount}>
+                  <Text style={[styles.txAmountText, received && styles.txAmountReceived]}>
+                    {received ? '+' : '-'}
+                    {tx.amount?.toFixed(4) || '0'} {tx.token || 'SOL'}
+                  </Text>
+                  <Text style={styles.txStatus}>
+                    {tx.status === 'confirmed' ? t('activity.confirmed') : tx.status}
+                  </Text>
+                </View>
+              </View>
+            );
+          })
+        )}
       </View>
-    </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  section: { marginBottom: 20 },
+  section: { marginBottom: Spacing['2xl'] },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: Spacing.md,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  headerDot: { width: 4, height: 4, borderRadius: 2 },
   sectionTitle: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    fontFamily: FontFamily.semibold,
+    color: Colors.text,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
   },
-  seeAll: { color: Colors.textTertiary, fontSize: 13, fontFamily: FontFamily.medium },
-  glassOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 119, 168, 0.05)',
+  seeAllButton: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingLeft: Spacing.lg,
   },
-  glassInner: {
-    backgroundColor: 'rgba(12, 12, 14, 0.6)',
-    paddingHorizontal: 16,
+  seeAll: {
+    color: Colors.primary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.medium,
+  },
+  panel: {
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: Spacing.lg,
   },
   empty: {
+    paddingVertical: Spacing['2xl'],
     alignItems: 'center',
-    paddingVertical: 28,
-    gap: 6,
   },
-  emptyText: { color: Colors.textSecondary, fontSize: 14, fontFamily: FontFamily.medium },
-  emptySubtext: { color: Colors.textTertiary, fontSize: 12, fontFamily: FontFamily.regular },
+  emptyText: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.regular,
+  },
   txRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
+    paddingVertical: Spacing.md,
+    minHeight: 60,
   },
   txRowBorder: {
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    borderBottomColor: Colors.borderSoft,
   },
   txIcon: {
-    width: 36, height: 36, borderRadius: 12,
-    justifyContent: 'center', alignItems: 'center', marginRight: 12,
+    width: 36,
+    height: 36,
+    borderRadius: BorderRadius.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.md,
+    backgroundColor: Colors.surfaceTertiary,
   },
   txInfo: { flex: 1 },
-  txType: { color: Colors.text, fontSize: 14, fontFamily: FontFamily.medium },
-  txDate: { color: Colors.textTertiary, fontSize: 12, fontFamily: FontFamily.regular, marginTop: 2 },
+  txType: { color: Colors.text, fontSize: FontSize.md, fontFamily: FontFamily.medium },
+  txDate: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    marginTop: 2,
+  },
   txAmount: { alignItems: 'flex-end' },
-  txAmountText: { fontSize: 14, fontFamily: FontFamily.semibold },
-  txStatus: { color: Colors.textTertiary, fontSize: 11, fontFamily: FontFamily.regular, marginTop: 2 },
+  txAmountText: { fontSize: FontSize.md, fontFamily: FontFamily.mono, color: Colors.text },
+  txAmountReceived: { color: Colors.primary },
+  txStatus: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.xs,
+    fontFamily: FontFamily.regular,
+    marginTop: 2,
+  },
 });

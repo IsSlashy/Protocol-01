@@ -143,10 +143,20 @@ export default function MainLayout() {
           ),
         }}
       />
+      {/* 🎯 TAB BAR REWORKED 2026-08-23, in step with the Chrome extension.
+          Wallet    what you hold
+          Shield    the private balance and what you can do with it
+          Subs      what you already pay for
+          Discover  what you can pay for privately, from the on-chain registry
+
+          "Privacy" became "Shield" because the tab is named after a state and
+          the screen performs an action; "Streams" became "Subs" because the
+          product is merchant subscriptions and a stream is what the parked
+          personal-payment feature was called. */}
       <Tabs.Screen
         name="(privacy)"
         options={{
-          title: 'Privacy',
+          title: 'Shield',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'shield-half' : 'shield-half-outline'}
@@ -159,10 +169,28 @@ export default function MainLayout() {
       <Tabs.Screen
         name="(streams)"
         options={{
-          title: 'Streams',
+          title: 'Subs',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
-              name={focused ? 'water' : 'water-outline'}
+              name={focused ? 'repeat' : 'repeat-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      {/* ⛔ THE AGENT TAB IS RETIRED. Founder ruling: nobody was going to use an
+          on-device chat box, and a tab is the most expensive space in the app.
+          The route stays registered with href:null so any deep link into it
+          still resolves instead of crashing the router; it is simply not a
+          destination any more. */}
+      <Tabs.Screen
+        name="(discover)"
+        options={{
+          title: 'Discover',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'compass' : 'compass-outline'}
               size={24}
               color={color}
             />
@@ -172,14 +200,7 @@ export default function MainLayout() {
       <Tabs.Screen
         name="(agent)"
         options={{
-          title: 'Agent',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'aperture' : 'aperture-outline'}
-              size={24}
-              color={color}
-            />
-          ),
+          href: null,
         }}
       />
       <Tabs.Screen

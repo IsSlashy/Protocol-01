@@ -6,6 +6,21 @@
  * This is intentionally separate from (wallet)/scan.tsx (the address/zk/stealth
  * scanner): it ONLY accepts pairing QRs, so it never routes a pairing blob into
  * the send/transfer handlers and never accidentally treats an address as a pairing.
+ *
+ * 🚨 EVERY ICON-ONLY CONTROL ON THIS SCREEN WAS UNLABELLED. Close, back, and the
+ * torch toggle were bare `TouchableOpacity`s wrapping an `Ionicons` glyph, which
+ * is a button a screen reader can find and cannot name — on a screen whose whole
+ * job is to move a seed phrase between two devices. All three are labelled now,
+ * and the torch announces which state it is in rather than which glyph it shows.
+ *
+ * ⛔ Twenty-two colour literals came out, including two reds that were not the
+ * theme's red (`#ff4444`, `rgba(239,68,68,0.92)`) and a `#666` grey that is not
+ * in the palette at all. The camera scrim is the one thing here that is not a
+ * brand colour by nature; it is now the ink token at 60% opacity rather than a
+ * black nobody can retune.
+ *
+ * ⚠️ The pairing TTL, the `isPairingQR` gate and the mnemonic validation are
+ * untouched. This was a UI pass.
  */
 import React, { useState, useEffect } from 'react';
 import {
@@ -14,7 +29,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   Dimensions,
-  TextInput,
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
@@ -28,6 +42,8 @@ import * as SecureStore from 'expo-secure-store';
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import { p01Alert } from '@/stores/alertStore';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Colors, Spacing, FontFamily, FontSize, BorderRadius } from '@/constants/theme';
 import { isPairingQR, decryptPairing, formatCodeForDisplay } from '@/utils/crypto/pairCrypto';
 import { validateMnemonic } from '@/services/solana/wallet';
 import { useWalletStore } from '@/stores/walletStore';
@@ -122,7 +138,7 @@ export default function ScanConnectScreen() {
   if (!permission) {
     return (
       <SafeAreaView style={styles.center}>
-        <ActivityIndicator size="large" color="#39c5bb" />
+        <ActivityIndicator size="large" color={Colors.primary} />
         <Text style={styles.muted}>Requesting camera permission…</Text>
       </SafeAreaView>
     );
@@ -130,19 +146,28 @@ export default function ScanConnectScreen() {
 
   if (!permission.granted && mode === 'scan') {
     return (
-      <SafeAreaView style={styles.permWrap}>
+      <SafeAreaView style={styles.screen}>
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-            <Ionicons name="close" size={24} color="#fff" />
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={styles.iconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <Ionicons name="close" size={22} color={Colors.text} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Scan to connect</Text>
-          <View style={{ width: 40 }} />
+          <View style={styles.iconBtn} />
         </View>
         <View style={styles.center}>
-          <Ionicons name="camera-outline" size={64} color="#666" />
-          <Text style={styles.permTitle}>Camera permission required</Text>
+          <Ionicons name="camera-outline" size={56} color={Colors.textTertiary} />
+          <Text style={styles.permTitle} accessibilityRole="header">Camera permission required</Text>
           <Text style={styles.muted}>Enable camera access to scan the pairing QR.</Text>
-          <Button onPress={permission.canAskAgain ? requestPermission : () => Linking.openSettings()} className="mt-6">
+          <Button
+            onPress={permission.canAskAgain ? requestPermission : () => Linking.openSettings()}
+            size="lg"
+            style={styles.permButton}
+          >
             {permission.canAskAgain ? 'Grant permission' : 'Open settings'}
           </Button>
         </View>
@@ -153,47 +178,52 @@ export default function ScanConnectScreen() {
   // Code entry ---------------------------------------------------------------
   if (mode === 'code') {
     return (
-      <SafeAreaView style={styles.permWrap}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <SafeAreaView style={styles.screen}>
+        <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={styles.headerRow}>
             <TouchableOpacity
               onPress={() => { setMode('scan'); setScannedQr(null); setCode(''); setError(''); setIsScanning(true); }}
               style={styles.iconBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Back to the scanner"
             >
-              <Ionicons name="arrow-back" size={24} color="#fff" />
+              <Ionicons name="arrow-back" size={22} color={Colors.text} />
             </TouchableOpacity>
             <Text style={styles.headerTitle}>Enter pairing code</Text>
-            <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-              <Ionicons name="close" size={24} color="#fff" />
+            <TouchableOpacity
+              onPress={() => router.back()}
+              style={styles.iconBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            >
+              <Ionicons name="close" size={22} color={Colors.text} />
             </TouchableOpacity>
           </View>
 
-          <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 24 }}>
-            <View style={styles.iconCircle}>
-              <Ionicons name="key-outline" size={36} color="#39c5bb" />
-            </View>
-            <Text style={styles.codeTitle}>Type the code from the extension</Text>
-            <Text style={styles.muted2}>
+          <View style={styles.codeBody}>
+            <Text style={styles.codeTitle} accessibilityRole="header">
+              Type the code from the extension
+            </Text>
+            <Text style={styles.codeLede}>
               It's the 16-character code shown under the QR. Pairing expires shortly, so enter it now.
             </Text>
 
-            <View style={[styles.inputWrap, error ? styles.inputErr : null]}>
-              <TextInput
-                style={styles.input}
-                placeholder="ABCD-EFGH-JKLM-NPQR"
-                placeholderTextColor="#555560"
-                value={code}
-                onChangeText={(t) => { setCode(formatCodeForDisplay(t)); setError(''); }}
-                autoCapitalize="characters"
-                autoCorrect={false}
-                autoFocus
-              />
-            </View>
-            {error ? <Text style={styles.errText}>{error}</Text> : null}
+            {/* The field owns its own error, announced as an alert. */}
+            <Input
+              placeholder="ABCD-EFGH-JKLM-NPQR"
+              value={code}
+              onChangeText={(v) => { setCode(formatCodeForDisplay(v)); setError(''); }}
+              error={error || undefined}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              autoFocus
+              accessibilityLabel="Pairing code"
+              style={styles.codeInput}
+            />
           </View>
 
-          <View style={{ paddingHorizontal: 20, paddingBottom: 28 }}>
-            <Button onPress={handleConnect} disabled={!code.trim() || importing} fullWidth size="lg">
+          <View style={styles.footer}>
+            <Button onPress={handleConnect} disabled={!code.trim()} loading={importing} fullWidth size="lg">
               {importing ? 'Linking…' : 'Connect wallet'}
             </Button>
           </View>
@@ -204,7 +234,7 @@ export default function ScanConnectScreen() {
 
   // Camera scan --------------------------------------------------------------
   return (
-    <View style={{ flex: 1, backgroundColor: '#000' }}>
+    <View style={styles.cameraRoot}>
       <CameraView
         style={StyleSheet.absoluteFillObject}
         facing="back"
@@ -212,44 +242,57 @@ export default function ScanConnectScreen() {
         barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         onBarcodeScanned={isScanning ? handleBarCodeScanned : undefined}
       />
-      {/* Frame overlay */}
+      {/* Frame overlay. The scrim is the ink token at 60%, not an untunable
+          black: the camera feed is the only thing on this app that a brand
+          colour genuinely cannot sit on top of. */}
       <View style={StyleSheet.absoluteFillObject}>
         <View style={styles.dim} />
-        <View style={{ flexDirection: 'row' }}>
-          <View style={styles.dimSide} />
+        <View style={styles.dimRow}>
+          <View style={styles.dim} />
           <View style={styles.scanArea}>
             <View style={[styles.corner, styles.tl]} />
             <View style={[styles.corner, styles.tr]} />
             <View style={[styles.corner, styles.bl]} />
             <View style={[styles.corner, styles.br]} />
           </View>
-          <View style={styles.dimSide} />
+          <View style={styles.dim} />
         </View>
         <View style={styles.dim} />
       </View>
 
-      <View style={{ position: 'absolute', top: height * 0.14, left: 0, right: 0, alignItems: 'center' }}>
-        <Text style={styles.headerTitle}>Scan to connect</Text>
+      <View style={[styles.cameraCaption, { top: height * 0.14 }]} pointerEvents="none">
+        <Text style={styles.headerTitle} accessibilityRole="header">Scan to connect</Text>
         <Text style={styles.muted}>Scan the QR from the extension's “Link a phone”</Text>
       </View>
 
       {error ? (
-        <View style={styles.errBanner}>
-          <Text style={{ color: '#fff', fontWeight: '600' }}>{error}</Text>
+        <View style={[styles.errBanner, { bottom: height * 0.3 }]}>
+          <Text style={styles.errBannerText} accessibilityRole="alert">{error}</Text>
         </View>
       ) : null}
 
-      <SafeAreaView style={{ position: 'absolute', top: 0, left: 0, right: 0 }} edges={['top']}>
+      <SafeAreaView style={styles.cameraChrome} edges={['top']}>
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.iconBtnDark}>
-            <Ionicons name="close" size={24} color="#fff" />
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={styles.iconBtnOverlay}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <Ionicons name="close" size={22} color={Colors.text} />
           </TouchableOpacity>
-          <View style={{ width: 40 }} />
           <TouchableOpacity
             onPress={() => setTorchOn(!torchOn)}
-            style={[styles.iconBtnDark, torchOn ? { backgroundColor: '#39c5bb' } : null]}
+            style={[styles.iconBtnOverlay, torchOn && styles.iconBtnOverlayOn]}
+            accessibilityRole="button"
+            accessibilityLabel={torchOn ? 'Turn the torch off' : 'Turn the torch on'}
+            accessibilityState={{ selected: torchOn }}
           >
-            <Ionicons name={torchOn ? 'flash' : 'flash-outline'} size={22} color={torchOn ? '#0a0a0a' : '#fff'} />
+            <Ionicons
+              name={torchOn ? 'flash' : 'flash-outline'}
+              size={20}
+              color={torchOn ? Colors.background : Colors.text}
+            />
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -258,28 +301,123 @@ export default function ScanConnectScreen() {
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, backgroundColor: '#0a0a0c', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
-  permWrap: { flex: 1, backgroundColor: '#0a0a0c' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14 },
-  headerTitle: { color: '#fff', fontSize: 18, fontWeight: '700' },
-  iconBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#151518', alignItems: 'center', justifyContent: 'center' },
-  iconBtnDark: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
-  muted: { color: '#888892', fontSize: 13, marginTop: 8, textAlign: 'center' },
-  muted2: { color: '#888892', fontSize: 14, lineHeight: 20, marginTop: 6, marginBottom: 20 },
-  permTitle: { color: '#fff', fontSize: 20, fontWeight: '600', marginTop: 16, textAlign: 'center' },
-  iconCircle: { width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(57,197,187,0.12)', alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 16 },
-  codeTitle: { color: '#fff', fontSize: 20, fontWeight: '700', textAlign: 'center' },
-  inputWrap: { backgroundColor: '#0f0f12', borderRadius: 14, borderWidth: 1, borderColor: '#2a2a30', paddingHorizontal: 16, paddingVertical: 4 },
-  inputErr: { borderColor: '#ff4444' },
-  input: { color: '#fff', fontSize: 18, letterSpacing: 2, paddingVertical: 14, fontWeight: '600', textAlign: 'center' },
-  errText: { color: '#ff4444', fontSize: 13, marginTop: 10, textAlign: 'center' },
-  errBanner: { position: 'absolute', bottom: height * 0.3, alignSelf: 'center', backgroundColor: 'rgba(239,68,68,0.92)', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12 },
-  dim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' },
-  dimSide: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' },
+  fill: { flex: 1 },
+  screen: { flex: 1, backgroundColor: Colors.background },
+  center: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing['2xl'],
+  },
+
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+  },
+  headerTitle: {
+    color: Colors.text,
+    fontFamily: FontFamily.displayMedium,
+    fontSize: FontSize.lg,
+  },
+  // 44pt, which the 40pt discs these replace were not.
+  iconBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: BorderRadius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconBtnOverlay: {
+    width: 44,
+    height: 44,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconBtnOverlayOn: {
+    backgroundColor: Colors.primary,
+  },
+
+  muted: {
+    color: Colors.textSecondary,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    marginTop: Spacing.sm,
+    textAlign: 'center',
+  },
+  permTitle: {
+    color: Colors.text,
+    fontFamily: FontFamily.display,
+    fontSize: FontSize.xl,
+    marginTop: Spacing.lg,
+    textAlign: 'center',
+  },
+  permButton: {
+    marginTop: Spacing['2xl'],
+  },
+
+  codeBody: {
+    flex: 1,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing['3xl'],
+  },
+  codeTitle: {
+    color: Colors.text,
+    fontFamily: FontFamily.display,
+    fontSize: FontSize.xl,
+  },
+  codeLede: {
+    color: Colors.textSecondary,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
+    lineHeight: 22,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xl,
+  },
+  codeInput: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.lg,
+    letterSpacing: 2,
+    textAlign: 'center',
+  },
+  footer: {
+    paddingHorizontal: Spacing.xl,
+    paddingBottom: Spacing['3xl'],
+  },
+
+  // Camera
+  cameraRoot: { flex: 1, backgroundColor: Colors.background },
+  cameraChrome: { position: 'absolute', top: 0, left: 0, right: 0 },
+  cameraCaption: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
+  dim: { flex: 1, backgroundColor: Colors.background, opacity: 0.6 },
+  dimRow: { flexDirection: 'row' },
   scanArea: { width: SCAN_AREA_SIZE, height: SCAN_AREA_SIZE },
-  corner: { position: 'absolute', width: 30, height: 30, borderColor: '#39c5bb' },
-  tl: { top: 0, left: 0, borderTopWidth: 4, borderLeftWidth: 4, borderTopLeftRadius: 8 },
-  tr: { top: 0, right: 0, borderTopWidth: 4, borderRightWidth: 4, borderTopRightRadius: 8 },
-  bl: { bottom: 0, left: 0, borderBottomWidth: 4, borderLeftWidth: 4, borderBottomLeftRadius: 8 },
-  br: { bottom: 0, right: 0, borderBottomWidth: 4, borderRightWidth: 4, borderBottomRightRadius: 8 },
+  corner: { position: 'absolute', width: 28, height: 28, borderColor: Colors.primary },
+  tl: { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: BorderRadius.sm },
+  tr: { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: BorderRadius.sm },
+  bl: { bottom: 0, left: 0, borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: BorderRadius.sm },
+  br: { bottom: 0, right: 0, borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: BorderRadius.sm },
+
+  errBanner: {
+    position: 'absolute',
+    alignSelf: 'center',
+    maxWidth: '86%',
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.error,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+  },
+  errBannerText: {
+    color: Colors.text,
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    textAlign: 'center',
+  },
 });

@@ -39,11 +39,11 @@ import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
 const P01 = {
   cyan: '#39c5bb',
   cyanDim: 'rgba(57, 197, 187, 0.15)',
-  pink: '#ff77a8',
+  pink: '#39c5bb',
   pinkDim: 'rgba(255, 119, 168, 0.15)',
   blue: '#3b82f6',
   blueDim: 'rgba(59, 130, 246, 0.15)',
-  yellow: '#ffcc00',
+  yellow: '#d9a24a',
   yellowDim: 'rgba(255, 204, 0, 0.15)',
 };
 
@@ -213,7 +213,7 @@ export default function ViewKeysScreen() {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#ffffff" />
+          <Ionicons name="arrow-back" size={24} color="#eae7df" />
         </TouchableOpacity>
         <View style={styles.headerTitle}>
           <Ionicons name="key" size={20} color={P01.cyan} />
@@ -408,7 +408,7 @@ export default function ViewKeysScreen() {
                   <QRCode
                     value={selectedKey.key}
                     size={180}
-                    backgroundColor="#ffffff"
+                    backgroundColor="#eae7df"
                     color="#000000"
                   />
                 </View>
@@ -541,7 +541,7 @@ const styles = StyleSheet.create({
   headerText: {
     fontSize: 18,
     fontFamily: FontFamily.bold,
-    color: '#ffffff',
+    color: '#eae7df',
   },
   importButton: {
     padding: 8,
@@ -569,19 +569,19 @@ const styles = StyleSheet.create({
   infoBannerTitle: {
     fontSize: 14,
     fontFamily: FontFamily.bold,
-    color: '#ffffff',
+    color: '#eae7df',
     marginBottom: 4,
   },
   infoBannerText: {
     fontSize: 13,
     fontFamily: FontFamily.regular,
-    color: '#888892',
+    color: 'rgba(234, 231, 223, 0.62)',
     lineHeight: 20,
   },
   sectionTitle: {
     fontSize: 11,
     fontFamily: FontFamily.bold,
-    color: '#555560',
+    color: 'rgba(234, 231, 223, 0.40)',
     letterSpacing: 1,
     marginBottom: Spacing.md,
     marginTop: Spacing.md,
@@ -611,12 +611,12 @@ const styles = StyleSheet.create({
   keyOptionTitle: {
     fontSize: 15,
     fontFamily: FontFamily.semibold,
-    color: '#ffffff',
+    color: '#eae7df',
   },
   keyOptionDesc: {
     fontSize: 12,
     fontFamily: FontFamily.regular,
-    color: '#888892',
+    color: 'rgba(234, 231, 223, 0.62)',
     marginTop: 2,
   },
   permissionTags: {
@@ -656,12 +656,12 @@ const styles = StyleSheet.create({
   savedKeyTitle: {
     fontSize: 14,
     fontFamily: FontFamily.medium,
-    color: '#ffffff',
+    color: '#eae7df',
   },
   savedKeyDate: {
     fontSize: 12,
     fontFamily: FontFamily.regular,
-    color: '#555560',
+    color: 'rgba(234, 231, 223, 0.40)',
     marginTop: 2,
   },
   warningCard: {
@@ -679,7 +679,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     fontFamily: FontFamily.regular,
-    color: '#888892',
+    color: 'rgba(234, 231, 223, 0.62)',
     lineHeight: 18,
   },
   modalOverlay: {
@@ -709,17 +709,17 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontFamily: FontFamily.bold,
-    color: '#ffffff',
+    color: '#eae7df',
   },
   modalSubtitle: {
     fontSize: 12,
     fontFamily: FontFamily.regular,
-    color: '#888892',
+    color: 'rgba(234, 231, 223, 0.62)',
     marginTop: 2,
   },
   qrContainer: {
     alignItems: 'center',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#eae7df',
     borderRadius: BorderRadius.lg,
     padding: Spacing.lg,
     marginBottom: Spacing.lg,
@@ -733,7 +733,7 @@ const styles = StyleSheet.create({
   keyText: {
     fontSize: 11,
     fontFamily: FontFamily.mono,
-    color: '#888892',
+    color: 'rgba(234, 231, 223, 0.62)',
     lineHeight: 18,
   },
   modalActions: {
@@ -768,7 +768,7 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
     fontSize: 13,
     fontFamily: FontFamily.mono,
-    color: '#ffffff',
+    color: '#eae7df',
     minHeight: 100,
     textAlignVertical: 'top',
     marginBottom: Spacing.lg,
@@ -787,7 +787,7 @@ const styles = StyleSheet.create({
   cancelButtonText: {
     fontSize: 16,
     fontFamily: FontFamily.bold,
-    color: '#ffffff',
+    color: '#eae7df',
   },
   importButton2: {
     flex: 1,
@@ -802,7 +802,7 @@ const styles = StyleSheet.create({
   importButtonText: {
     fontSize: 16,
     fontFamily: FontFamily.bold,
-    color: '#ffffff',
+    color: '#eae7df',
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -813,7 +813,7 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 14,
     fontFamily: FontFamily.medium,
-    color: '#ffffff',
+    color: '#eae7df',
     marginTop: Spacing.md,
   },
 });

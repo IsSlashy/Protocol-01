@@ -1,3 +1,14 @@
+/**
+ * BottomSheet — a panel that slides up over the screen.
+ *
+ * 🎯 RESTYLED ON THE REALIGNED THEME 2026-08-23. The gesture and snap-point
+ * behaviour is untouched; what changed is that the surface, the rule, the grab
+ * handle and the title now read tokens instead of Tailwind names, the title is
+ * set in the display face like every other heading in the app, and the close
+ * control is a real 44pt target with a label a screen reader can announce
+ * (it was a bare 24px icon with no name at all).
+ */
+
 import React, { useCallback, useEffect, useRef } from 'react';
 import {
   View,
@@ -9,9 +20,12 @@ import {
   PanResponder,
   TouchableWithoutFeedback,
   ScrollView,
+  StyleSheet,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+
+import { Colors, Spacing, FontFamily, FontSize, BorderRadius } from '@/constants/theme';
 
 interface BottomSheetProps {
   visible: boolean;
@@ -137,42 +151,47 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
   if (!visible) return null;
 
   return (
-    <Modal transparent visible={visible} animationType="none">
-      <View className="flex-1">
-        <TouchableWithoutFeedback onPress={closeSheet}>
-          <Animated.View
-            className="absolute inset-0 bg-black/60"
-            style={{ opacity: backdropOpacity }}
-          />
+    <Modal transparent visible={visible} animationType="none" onRequestClose={closeSheet}>
+      <View style={styles.root}>
+        <TouchableWithoutFeedback onPress={closeSheet} accessibilityLabel="Close">
+          <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]} />
         </TouchableWithoutFeedback>
 
         <Animated.View
-          className="absolute left-0 right-0 bg-p01-surface rounded-t-3xl"
-          style={{
-            transform: [{ translateY }],
-            height: SCREEN_HEIGHT,
-            paddingBottom: insets.bottom,
-          }}
+          style={[
+            styles.sheet,
+            {
+              transform: [{ translateY }],
+              height: SCREEN_HEIGHT,
+              paddingBottom: insets.bottom,
+            },
+          ]}
           {...panResponder.panHandlers}
         >
-          <View className="items-center pt-3 pb-2">
-            <View className="w-10 h-1 bg-p01-border rounded-full" />
+          <View style={styles.handleRow}>
+            <View style={styles.handle} />
           </View>
 
           {title && (
-            <View className="flex-row items-center justify-between px-6 py-4 border-b border-p01-border">
-              <Text className="text-white text-lg font-semibold">{title}</Text>
+            <View style={styles.header}>
+              <Text style={styles.title} numberOfLines={1}>
+                {title}
+              </Text>
               <TouchableOpacity
                 onPress={closeSheet}
+                style={styles.close}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
               >
-                <Ionicons name="close" size={24} color="#888892" />
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
               </TouchableOpacity>
             </View>
           )}
 
           <ScrollView
-            className="flex-1 px-6"
+            style={styles.body}
+            contentContainerStyle={styles.bodyContent}
             showsVerticalScrollIndicator={false}
             bounces={false}
           >
@@ -183,5 +202,72 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
     </Modal>
   );
 };
+
+/**
+ * The scrim behind a modal: the ground colour at 72%, derived from the token
+ * rather than written out, so a change to the ink reaches it. `b8` is 0.72 in
+ * the 8-digit hex form React Native accepts.
+ */
+const SCRIM = `${Colors.background}b8`;
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: SCRIM,
+  },
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: BorderRadius['2xl'],
+    borderTopRightRadius: BorderRadius['2xl'],
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  handleRow: {
+    alignItems: 'center',
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.sm,
+  },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.borderLight,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingLeft: Spacing['2xl'],
+    paddingRight: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.border,
+  },
+  title: {
+    flex: 1,
+    fontFamily: FontFamily.displayMedium,
+    fontSize: FontSize.xl,
+    color: Colors.text,
+  },
+  close: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  body: {
+    flex: 1,
+  },
+  bodyContent: {
+    paddingHorizontal: Spacing['2xl'],
+    paddingTop: Spacing.lg,
+  },
+});
 
 export default BottomSheet;

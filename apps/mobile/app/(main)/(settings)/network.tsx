@@ -1,21 +1,40 @@
+/**
+ * Network — which cluster this wallet talks to.
+ *
+ * 🎯 REBUILT ON THE REALIGNED THEME AND THE SHARED KIT 2026-08-23.
+ *
+ * ⛔ THE THREE COLOURED DOTS ARE GONE. Each network row carried a dot in its
+ * own hue — `#22c55e` green, `#eab308` yellow, `#3b82f6` blue — three colours
+ * from outside the palette, in a system that has one accent and reserves amber
+ * for caution. They also carried no information the radio to their right did
+ * not already carry, and the green one was actively misleading: it read as
+ * "safe" on the network where the money is real.
+ *
+ * 🚨 CAUTION IS NOW WHERE THE CAUTION IS. Amber marks Mainnet, because Mainnet
+ * is the choice that spends real SOL. Devnet and Testnet are stated plainly.
+ *
+ * ⛔ THE STATUS CARD IS GONE. It restated the selected row's own label and
+ * description directly underneath it — the same two sentences, twice, on a
+ * screen with four rows.
+ *
+ * ⚠️ ONE PRIMARY ACTION: Save. "Test connection" is secondary and stays in the
+ * scroll; the save bar is pinned above the tab bar with real insets rather than
+ * the hardcoded `paddingBottom: 140` that used to guess at it.
+ */
+
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  ActivityIndicator,
-  StyleSheet,
-} from 'react-native';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { p01Alert } from '@/stores/alertStore';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Header } from '@/components/common';
+import { Button } from '@/components/ui';
+import { RadioOption, SettingsSection } from '../../../components/settings';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing, Layout } from '@/constants/theme';
 import { getCluster, getConnection, setCluster } from '../../../services/solana/connection';
 import { useT } from '@/i18n';
 
@@ -26,76 +45,10 @@ const STORAGE_KEYS = {
   CUSTOM_RPC: 'settings_custom_rpc',
 };
 
-/* ──────────────────────── Glass Card ──────────────────────── */
-
-interface GlassCardProps {
-  children: React.ReactNode;
-  delay?: number;
-  style?: object;
-}
-
-const GlassCard: React.FC<GlassCardProps> = ({ children, delay = 0, style }) => (
-  <Animated.View entering={FadeInDown.delay(delay).duration(350)} style={[styles.glassOuter, style]}>
-    <View style={styles.glassBlur}>
-      {children}
-    </View>
-  </Animated.View>
-);
-
-/* ──────────────────────── Section Title ──────────────────────── */
-
-const SectionTitle: React.FC<{ title: string; delay?: number }> = ({ title, delay = 0 }) => (
-  <Animated.Text
-    entering={FadeInDown.delay(delay).duration(300)}
-    style={styles.sectionTitle}
-  >
-    {title}
-  </Animated.Text>
-);
-
-/* ──────────────────────── Glass Divider ──────────────────────── */
-
-const GlassDivider: React.FC = () => (
-  <View style={styles.divider} />
-);
-
-/* ──────────────────────── Network Radio Row ──────────────────────── */
-
-interface NetworkRadioProps {
-  label: string;
-  description: string;
-  selected: boolean;
-  color: string;
-  onSelect: () => void;
-}
-
-const NetworkRadio: React.FC<NetworkRadioProps> = ({ label, description, selected, color, onSelect }) => (
-  <TouchableOpacity
-    style={styles.radioRow}
-    onPress={onSelect}
-    activeOpacity={0.7}
-    accessibilityRole="radio"
-    accessibilityState={{ selected }}
-    accessibilityLabel={`${label}: ${description}`}
-  >
-    <View style={styles.radioLeft}>
-      <View style={[styles.networkDot, { backgroundColor: color }]} />
-      <View style={{ flex: 1 }}>
-        <Text style={styles.radioLabel}>{label}</Text>
-        <Text style={styles.radioDescription}>{description}</Text>
-      </View>
-    </View>
-    <View style={[styles.radioCircle, selected && styles.radioCircleSelected]}>
-      {selected && <View style={styles.radioCircleInner} />}
-    </View>
-  </TouchableOpacity>
-);
-
-/* ──────────────────────── Screen ──────────────────────── */
-
 export default function NetworkSettingsScreen() {
   const t = useT();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const [selectedNetwork, setSelectedNetwork] = useState<NetworkType>(getCluster());
   const [customRpcUrl, setCustomRpcUrl] = useState('');
@@ -206,449 +159,165 @@ export default function NetworkSettingsScreen() {
     }
   };
 
-  const getNetworkColor = (network?: NetworkType) => {
-    switch (network || selectedNetwork) {
-      case 'mainnet-beta':
-        return '#22c55e';
-      case 'devnet':
-        return '#eab308';
-      case 'testnet':
-        return '#3b82f6';
-      default:
-        return '#888';
-    }
-  };
-
-  const getNetworkLabel = () => {
-    switch (selectedNetwork) {
-      case 'mainnet-beta':
-        return 'Mainnet-Beta';
-      case 'devnet':
-        return 'Devnet';
-      case 'testnet':
-        return 'Testnet';
-    }
-  };
-
-  const getNetworkDescription = () => {
-    switch (selectedNetwork) {
-      case 'mainnet-beta':
-        return 'Production Solana network. All transactions use real SOL.';
-      case 'devnet':
-        return 'Development network. Get free test SOL from the faucet.';
-      case 'testnet':
-        return 'Testnet for experimental features. May be unstable.';
-    }
-  };
-
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
-      <Animated.View entering={FadeInDown.delay(50).duration(300)} style={styles.header}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="arrow-back" size={20} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>{t('settings.network')}</Text>
-        <View style={{ width: 40 }} />
-      </Animated.View>
+    <View style={styles.screen}>
+      <Header title={t('settings.network')} showBack onBackPress={() => router.back()} />
 
       <ScrollView
-        style={{ flex: 1 }}
+        style={styles.flex}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 200 }}
+        // Clears the pinned save bar: its own height plus the tab bar it sits above.
+        contentContainerStyle={{
+          paddingBottom: Layout.tabBarTotalHeight + insets.bottom + 96,
+        }}
       >
-        {/* SELECT NETWORK */}
-        <SectionTitle title="SELECT NETWORK" delay={80} />
-        <GlassCard delay={100}>
-          <NetworkRadio
+        <SettingsSection style={styles.firstSection}>
+          <RadioOption
             label={t('settings.mainnet')}
-            description="Production network (real funds)"
+            description="Real funds. Every transaction spends real SOL."
             selected={selectedNetwork === 'mainnet-beta'}
-            color="#22c55e"
             onSelect={() => handleNetworkSelect('mainnet-beta')}
           />
-          <GlassDivider />
-          <NetworkRadio
+          <RadioOption
             label={t('settings.devnet')}
-            description="Development network (test tokens)"
+            description="Test tokens with no value. Free SOL from the faucet."
             selected={selectedNetwork === 'devnet'}
-            color="#eab308"
             onSelect={() => handleNetworkSelect('devnet')}
           />
-          <GlassDivider />
-          <NetworkRadio
+          <RadioOption
             label="Testnet"
-            description={t('common.experimental')}
+            description="Experimental. Resets and downtime are expected."
             selected={selectedNetwork === 'testnet'}
-            color="#3b82f6"
             onSelect={() => handleNetworkSelect('testnet')}
           />
-        </GlassCard>
+        </SettingsSection>
 
-        {/* Network Status */}
-        <SectionTitle title="STATUS" delay={160} />
-        <GlassCard delay={180}>
-          <View style={styles.statusRow}>
-            <View style={[styles.statusDot, { backgroundColor: getNetworkColor() }]} />
-            <Text style={styles.statusLabel}>{getNetworkLabel()}</Text>
+        {/* Amber is caution, and this is the only choice here that can cost
+            anything. Stated once, next to the choice that causes it. */}
+        {selectedNetwork === 'mainnet-beta' ? (
+          <View style={[styles.notice, styles.noticeWarn]}>
+            <Ionicons name="warning-outline" size={18} color={Colors.yellow} />
+            <Text style={[styles.noticeText, styles.noticeTextWarn]}>
+              Switching to Mainnet puts real funds behind every action in this app.
+            </Text>
           </View>
-          <Text style={styles.statusDescription}>{getNetworkDescription()}</Text>
-        </GlassCard>
+        ) : null}
 
-        {/* Test Connection */}
-        <Animated.View entering={FadeInDown.delay(240).duration(350)} style={styles.testSection}>
-          <TouchableOpacity
-            style={styles.testButton}
+        <View style={styles.testWrap}>
+          <Button
+            variant="secondary"
+            fullWidth
+            loading={isTesting}
             onPress={handleTestConnection}
-            disabled={isTesting}
-            activeOpacity={0.7}
-            accessibilityRole="button"
             accessibilityLabel="Test network connection"
+            icon={<Ionicons name="pulse-outline" size={18} color={Colors.text} />}
           >
-            <View style={styles.testButtonBlur}>
-              {isTesting ? (
-                <ActivityIndicator color={P01Colors.cyan} />
-              ) : (
-                <View style={styles.testButtonContent}>
-                  <Ionicons name="pulse-outline" size={20} color={P01Colors.cyan} />
-                  <Text style={styles.testButtonText}>Test Connection</Text>
-                </View>
-              )}
-            </View>
-          </TouchableOpacity>
+            Test connection
+          </Button>
 
-          {/* Test Result */}
-          {testResult && (
-            <Animated.View
-              entering={FadeInUp.duration(250)}
-              style={[
-                styles.testResultContainer,
-                testResult === 'success' ? styles.testResultSuccess : styles.testResultError,
-              ]}
-            >
+          {testResult ? (
+            <View style={styles.testResult} accessibilityRole="alert">
               <Ionicons
-                name={testResult === 'success' ? 'checkmark-circle' : 'close-circle'}
-                size={20}
-                color={testResult === 'success' ? P01Colors.cyan : '#ef4444'}
+                name={testResult === 'success' ? 'checkmark-circle-outline' : 'close-circle-outline'}
+                size={18}
+                color={testResult === 'success' ? Colors.primary : Colors.error}
               />
               <Text
                 style={[
                   styles.testResultText,
-                  { color: testResult === 'success' ? P01Colors.cyan : '#ef4444' },
+                  { color: testResult === 'success' ? Colors.primary : Colors.error },
                 ]}
               >
                 {testResult === 'success'
-                  ? t('common.success')
+                  ? `Reached ${selectedNetwork === 'mainnet-beta' ? 'Mainnet' : selectedNetwork === 'devnet' ? 'Devnet' : 'Testnet'}.`
                   : t('common.failed')}
               </Text>
-            </Animated.View>
-          )}
-        </Animated.View>
-
-        {/* Warning for Mainnet */}
-        {selectedNetwork === 'mainnet-beta' && (
-          <Animated.View entering={FadeInDown.duration(300)} style={styles.alertOuter}>
-            <View style={styles.glassBlur}>
-              <View style={styles.alertContent}>
-                <Ionicons name="warning" size={20} color="#eab308" />
-                <Text style={styles.alertTextYellow}>
-                  You are connecting to Mainnet. All transactions will use real SOL and tokens. Make sure you understand the risks.
-                </Text>
-              </View>
             </View>
-          </Animated.View>
-        )}
-
-        {/* Info for Devnet */}
-        {selectedNetwork === 'devnet' && (
-          <Animated.View entering={FadeInDown.duration(300)} style={styles.alertOuter}>
-            <View style={styles.glassBlur}>
-              <View style={styles.alertContent}>
-                <Ionicons name="information-circle" size={20} color={P01Colors.cyan} />
-                <Text style={styles.alertTextMuted}>
-                  Devnet tokens have no real value. You can get free test SOL using the airdrop button on the wallet screen.
-                </Text>
-              </View>
-            </View>
-          </Animated.View>
-        )}
-
-        {/* Info for Testnet */}
-        {selectedNetwork === 'testnet' && (
-          <Animated.View entering={FadeInDown.duration(300)} style={styles.alertOuter}>
-            <View style={styles.glassBlur}>
-              <View style={styles.alertContent}>
-                <Ionicons name="flask-outline" size={20} color="#3b82f6" />
-                <Text style={styles.alertTextBlue}>
-                  Testnet is used for experimental features and may experience downtime or resets. Not recommended for regular use.
-                </Text>
-              </View>
-            </View>
-          </Animated.View>
-        )}
+          ) : null}
+        </View>
       </ScrollView>
 
-      {/* Save Button — fixed above tab bar */}
-      <Animated.View entering={FadeInUp.delay(300).duration(350)} style={styles.saveWrapper}>
-        <TouchableOpacity
-          style={styles.saveButton}
+      {/* The one primary action, pinned so it never scrolls out of reach. */}
+      <View
+        style={[
+          styles.saveBar,
+          { paddingBottom: Layout.tabBarTotalHeight + insets.bottom + Spacing.md },
+        ]}
+      >
+        <Button
+          fullWidth
+          size="lg"
+          loading={isSaving}
           onPress={handleSaveNetwork}
-          disabled={isSaving}
-          activeOpacity={0.8}
-          accessibilityRole="button"
           accessibilityLabel="Save network settings"
         >
-          {isSaving ? (
-            <ActivityIndicator color="#0a0a0a" />
-          ) : (
-            <Text style={styles.saveButtonText}>{t('common.save')}</Text>
-          )}
-        </TouchableOpacity>
-      </Animated.View>
-    </SafeAreaView>
+          {t('common.save')}
+        </Button>
+      </View>
+    </View>
   );
 }
 
-/* ──────────────────────── Styles ──────────────────────── */
-
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: Colors.background,
   },
-
-  /* Header */
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.lg,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.full,
-    backgroundColor: '#0f0f12',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    color: Colors.text,
-    fontSize: 18,
-    fontFamily: FontFamily.semibold,
-  },
-
-  /* Section Title */
-  sectionTitle: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontFamily: FontFamily.semibold,
-    letterSpacing: 1,
-    paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.sm,
-    marginTop: Spacing.lg,
-  },
-
-  /* Glass Card */
-  glassOuter: {
-    marginHorizontal: Spacing.lg,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-  },
-  glassBlur: {
-    backgroundColor: '#0f0f12',
-  },
-
-  /* Divider */
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    marginHorizontal: Spacing.lg,
-  },
-
-  /* Network Radio Row */
-  radioRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.lg,
-  },
-  radioLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  flex: {
     flex: 1,
   },
-  networkDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginRight: Spacing.md,
-  },
-  radioLabel: {
-    color: Colors.text,
-    fontSize: 16,
-    fontFamily: FontFamily.medium,
-  },
-  radioDescription: {
-    color: Colors.textSecondary,
-    fontSize: 13,
-    marginTop: 2,
-  },
-  radioCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: Spacing.md,
-  },
-  radioCircleSelected: {
-    borderColor: P01Colors.cyan,
-  },
-  radioCircleInner: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: P01Colors.cyan,
-  },
-
-  /* Status Card */
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingTop: Spacing.lg,
-    paddingHorizontal: Spacing.lg,
-  },
-  statusDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: Spacing.md,
-  },
-  statusLabel: {
-    color: Colors.text,
-    fontSize: 16,
-    fontFamily: FontFamily.medium,
-  },
-  statusDescription: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.sm,
-    paddingBottom: Spacing.lg,
-  },
-
-  /* Test Connection */
-  testSection: {
-    marginHorizontal: Spacing.lg,
+  firstSection: {
     marginTop: Spacing.lg,
   },
-  testButton: {
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-  },
-  testButtonBlur: {
-    backgroundColor: '#0f0f12',
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  testButtonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  testButtonText: {
-    color: P01Colors.cyan,
-    fontSize: 15,
-    fontFamily: FontFamily.semibold,
-    marginLeft: Spacing.sm,
-  },
-  testResultContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: Spacing.md,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.lg,
-  },
-  testResultSuccess: {
-    backgroundColor: 'rgba(57, 197, 187, 0.08)',
-  },
-  testResultError: {
-    backgroundColor: 'rgba(239, 68, 68, 0.08)',
-  },
-  testResultText: {
-    fontSize: 14,
-    fontFamily: FontFamily.medium,
-    marginLeft: Spacing.sm,
-  },
 
-  /* Alert Cards */
-  alertOuter: {
-    marginHorizontal: Spacing.lg,
-    marginTop: Spacing.lg,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-  },
-  alertContent: {
+  notice: {
     flexDirection: 'row',
     alignItems: 'flex-start',
+    gap: Spacing.md,
+    marginTop: Spacing.lg,
+    marginHorizontal: Spacing.xl,
     padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  alertTextYellow: {
-    color: '#eab308',
-    fontSize: 14,
-    marginLeft: Spacing.md,
-    flex: 1,
-    lineHeight: 20,
+  noticeWarn: {
+    backgroundColor: Colors.warningDim,
+    borderColor: Colors.yellow,
   },
-  alertTextMuted: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    marginLeft: Spacing.md,
+  noticeText: {
     flex: 1,
-    lineHeight: 20,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    lineHeight: 19,
   },
-  alertTextBlue: {
-    color: '#60a5fa',
-    fontSize: 14,
-    marginLeft: Spacing.md,
-    flex: 1,
-    lineHeight: 20,
+  noticeTextWarn: {
+    color: Colors.yellow,
   },
 
-  /* Save Button */
-  saveWrapper: {
+  testWrap: {
+    marginTop: Spacing['2xl'],
+    paddingHorizontal: Spacing.xl,
+    gap: Spacing.md,
+  },
+  testResult: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  testResultText: {
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+  },
+
+  saveBar: {
     position: 'absolute',
-    bottom: 0,
     left: 0,
     right: 0,
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: 140,
-    paddingTop: Spacing.lg,
-  },
-  saveButton: {
-    paddingVertical: 16,
-    borderRadius: BorderRadius.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: P01Colors.cyan,
-    shadowColor: P01Colors.cyan,
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-  },
-  saveButtonText: {
-    color: '#09090b',
-    fontFamily: FontFamily.semibold,
-    fontSize: 16,
+    bottom: 0,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.md,
+    backgroundColor: Colors.background,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.borderSoft,
   },
 });

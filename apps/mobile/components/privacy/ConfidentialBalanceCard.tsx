@@ -106,7 +106,7 @@ export default function ConfidentialBalanceCard({
       >
         {/* Inner card background */}
         <LinearGradient
-          colors={['#111118', '#0d0d12', '#0a0a0c']}
+          colors={['#111118', '#0d0d12', '#070709']}
           start={{ x: 0, y: 0 }}
           end={{ x: 0.5, y: 1 }}
           style={styles.card}

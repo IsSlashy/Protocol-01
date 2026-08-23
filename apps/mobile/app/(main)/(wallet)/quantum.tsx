@@ -1,14 +1,35 @@
 /**
  * Quantum Wallet screen.
  *
- * Single-screen demo of the post-quantum smart-contract wallet:
+ * Single-screen view of the post-quantum smart-contract wallet:
  *   - init (first time)
  *   - receive (auto-deposits from the user's Ed25519 in the background)
  *   - send (optimistic UI, STARK-gated background settlement)
  *   - pending sends list
  *
- * Visual: matches P-01 design tokens (cyan + pink, dark canvas, Orbitron
- * for hero numbers via FontFamily.heading).
+ * 🎯 RESTYLED 2026-08-23. The old header of this file said the visuals
+ * "matched P-01 design tokens (cyan + pink … Orbitron for hero numbers)". All
+ * three of those are retired: pink is gone, Orbitron was never in
+ * `FontFamily`, and the panels here were painted with `'#101014'` and
+ * `'#0d0d10'` written out by hand — the literal values of `Colors.surface` and
+ * `Colors.surfaceSecondary`, copied rather than imported, which is how a screen
+ * gets left behind by a theme change.
+ *
+ *   - ⛔ `P01Colors.green` IS GONE from the confirmed-send state. The design
+ *     system's first line is "NO green"; the token was quietly aliased to cyan
+ *     in the sweep, so this screen was already rendering cyan while claiming
+ *     green. It says what it means now.
+ *   - ⛔ `P01Colors.pinkHot` was the failure colour and the cancel affordance.
+ *     Failure is `Colors.error`.
+ *   - "QUANTUM WALLET", "CREATE QUANTUM VAULT", "SEND INSTANT" were caps with
+ *     letterspacing and `fontWeight: '900'` on top of a bold face. Sentence
+ *     case, display face for the heading, `ui/Button` for the actions — which
+ *     also gets the 44pt floor and the busy state the hand-rolled buttons
+ *     lacked.
+ *   - the cancel control was an 11pt word with 4pt of padding. 44pt.
+ *
+ * ⛔ `initWallet`, `enqueueSend`, `startAutoDeposit`, `wipeLocal` and the
+ * prover handshake are untouched.
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -21,7 +42,6 @@ import {
   ActivityIndicator,
   StyleSheet,
   Pressable,
-  Share,
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -30,8 +50,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
-import { Colors, P01Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
+
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing, Layout } from '@/constants/theme';
+import { Button } from '@/components/ui/Button';
 import { useQuantumWalletStore, preProveQuantumAuth } from '@/stores/quantumWalletStore';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 
@@ -143,34 +164,50 @@ export default function QuantumWalletScreen() {
   return (
     <ScrollView
       style={st.root}
-      contentContainerStyle={[st.scroll, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 100 }]}
+      contentContainerStyle={[
+        st.scroll,
+        {
+          paddingTop: insets.top + Spacing.md,
+          paddingBottom: Layout.tabBarTotalHeight + insets.bottom + Spacing['2xl'],
+        },
+      ]}
       keyboardShouldPersistTaps="handled"
     >
       {/* ── Header ── */}
       <View style={st.header}>
-        <TouchableOpacity onPress={() => router.back()} style={st.headerBtn}>
-          <Ionicons name="chevron-back" size={24} color={Colors.text} />
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={st.headerBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
-        <View style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={st.title}>QUANTUM WALLET</Text>
-          <Text style={st.subtitle}>STARK-gated · post-quantum</Text>
+        <View style={st.headerTitleWrap}>
+          <Text style={st.title} accessibilityRole="header">Quantum wallet</Text>
+          <Text style={st.subtitle}>STARK-gated custody</Text>
         </View>
-        <TouchableOpacity onPress={() => refreshOnChainState()} style={st.headerBtn}>
-          <Ionicons name="refresh" size={20} color={P01Colors.cyan} />
+        <TouchableOpacity
+          onPress={() => refreshOnChainState()}
+          style={st.headerBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Refresh on-chain state"
+        >
+          <Ionicons name="refresh-outline" size={20} color={Colors.textSecondary} />
         </TouchableOpacity>
       </View>
 
-      {/* ── Balance hero ── */}
-      <Animated.View entering={FadeIn.duration(300)} style={st.heroCard}>
+      {/* ── Balance ── */}
+      <View style={st.hero}>
         <Text style={st.heroLabel}>Unified balance</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+        <View style={st.heroRow}>
           <Text style={st.heroAmount}>{unifiedSol}</Text>
           <Text style={st.heroUnit}>SOL</Text>
         </View>
         {inTransitSol ? (
           <View style={st.transitRow}>
-            <ActivityIndicator size="small" color={P01Colors.pink} />
-            <Text style={st.transitText}>{inTransitSol} SOL migrating to vault…</Text>
+            <ActivityIndicator size="small" color={Colors.textSecondary} />
+            <Text style={st.transitText}>{inTransitSol} SOL moving into the vault…</Text>
           </View>
         ) : null}
         {initialized ? (
@@ -178,118 +215,105 @@ export default function QuantumWalletScreen() {
             <View style={st.metaPill}>
               <Text style={st.metaPillText}>nonce {nonce}</Text>
             </View>
-            <View style={[st.metaPill, { borderColor: P01Colors.cyan + '55' }]}>
-              <Ionicons name="shield-checkmark" size={11} color={P01Colors.cyan} />
-              <Text style={[st.metaPillText, { color: P01Colors.cyan }]}>PQ vault</Text>
+            <View style={[st.metaPill, st.metaPillAccent]}>
+              <Ionicons name="shield-checkmark" size={11} color={Colors.primary} />
+              <Text style={[st.metaPillText, { color: Colors.primary }]}>PQ vault</Text>
             </View>
           </View>
         ) : null}
-      </Animated.View>
+      </View>
 
-      {/* ── Init prompt ── */}
+      {/* ── Init ── */}
       {!initialized ? (
-        <Animated.View entering={FadeInDown.duration(300).delay(80)} style={st.initCard}>
-          <Ionicons name="construct" size={28} color={P01Colors.pink} />
-          <Text style={st.initTitle}>Create your quantum-safe vault</Text>
-          <Text style={st.initDesc}>
+        <View style={st.card}>
+          <Text style={st.cardHeading}>Create your quantum-safe vault</Text>
+          <Text style={st.body}>
             Funds in this vault are released only on presentation of a STARK proof of preimage
-            knowledge. Even if your Ed25519 key is broken by a future quantum computer, your
-            funds remain unrecoverable to anyone except you.
+            knowledge. If your Ed25519 key is broken by a future quantum computer, the vault does
+            not open with it.
           </Text>
-          <TouchableOpacity
-            disabled={isInitializing || !prover.isReady}
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            loading={isInitializing}
+            disabled={!prover.isReady}
             onPress={handleInit}
-            style={[
-              st.bigBtn,
-              { opacity: prover.isReady ? 1 : 0.5 },
-            ]}
+            style={st.cardAction}
           >
-            {isInitializing ? (
-              <ActivityIndicator color="#000" />
-            ) : (
-              <>
-                <Ionicons name="shield" size={18} color="#000" />
-                <Text style={st.bigBtnText}>
-                  {prover.isReady ? 'CREATE QUANTUM VAULT' : 'LOADING PROVER…'}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </Animated.View>
+            {prover.isReady ? 'Create vault' : 'Loading prover…'}
+          </Button>
+        </View>
       ) : null}
 
       {/* ── Send ── */}
       {initialized ? (
-        <Animated.View entering={FadeInDown.duration(300).delay(120)} style={st.card}>
-          <View style={st.cardHeader}>
-            <Ionicons name="arrow-up-circle" size={18} color={P01Colors.pink} />
-            <Text style={st.cardTitle}>Send</Text>
-          </View>
+        <View style={st.card}>
+          <Text style={st.cardHeading}>Send</Text>
           <TextInput
             style={st.input}
             placeholder="Recipient address"
-            placeholderTextColor={Colors.textSecondary}
+            placeholderTextColor={Colors.textTertiary}
             value={sendRecipient}
             onChangeText={setSendRecipient}
             autoCapitalize="none"
             autoCorrect={false}
+            accessibilityLabel="Recipient address"
           />
           <TextInput
             style={st.input}
             placeholder="Amount in SOL"
-            placeholderTextColor={Colors.textSecondary}
+            placeholderTextColor={Colors.textTertiary}
             value={sendAmount}
             onChangeText={setSendAmount}
             keyboardType="decimal-pad"
+            accessibilityLabel="Amount in SOL"
           />
-          <TouchableOpacity
-            disabled={isSending}
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            loading={isSending}
             onPress={handleSend}
-            style={[st.bigBtn, { backgroundColor: P01Colors.pink }]}
+            style={st.cardAction}
           >
-            {isSending ? (
-              <ActivityIndicator color="#000" />
-            ) : (
-              <>
-                <Ionicons name="paper-plane" size={18} color="#000" />
-                <Text style={st.bigBtnText}>SEND INSTANT</Text>
-              </>
-            )}
-          </TouchableOpacity>
+            Send
+          </Button>
           <Text style={st.hint}>
-            UI deducts immediately. STARK proves + on-chain settles in the background. Cached
-            proof is reused across sends — only the first one waits for full prove time.
+            The balance drops straight away. The STARK proof and the on-chain settlement happen
+            afterwards, in the background; only the first send waits for a full prove.
           </Text>
-        </Animated.View>
+        </View>
       ) : null}
 
       {/* ── Receive ── */}
       {initialized && ownerIdB58 ? (
-        <Animated.View entering={FadeInDown.duration(300).delay(160)} style={st.card}>
-          <View style={st.cardHeader}>
-            <Ionicons name="arrow-down-circle" size={18} color={P01Colors.cyan} />
-            <Text style={st.cardTitle}>Receive</Text>
-          </View>
-          <Pressable onPress={handleCopyAddress} style={st.addrBox}>
+        <View style={st.card}>
+          <Text style={st.cardHeading}>Receive</Text>
+          <Pressable
+            onPress={handleCopyAddress}
+            style={st.addrBox}
+            accessibilityRole="button"
+            accessibilityLabel="Copy your vault address"
+          >
             <Text style={st.addrText} numberOfLines={1} ellipsizeMode="middle">
               {ownerIdB58}
             </Text>
-            <Ionicons name="copy" size={16} color={P01Colors.cyan} />
+            <Ionicons name="copy-outline" size={16} color={Colors.textSecondary} />
           </Pressable>
           <Text style={st.hint}>
-            Share this address with anyone. Funds land in your Ed25519 layer, then auto-migrate
-            into the quantum vault within seconds — no user action required.
+            Share this with anyone. Funds land in your Ed25519 layer and move into the quantum
+            vault within seconds, with nothing for you to do.
           </Text>
-        </Animated.View>
+        </View>
       ) : null}
 
       {/* ── Pending sends ── */}
       {pendingSends.length > 0 ? (
-        <Animated.View entering={FadeInDown.duration(300).delay(200)} style={st.card}>
-          <View style={st.cardHeader}>
-            <Ionicons name="time" size={18} color={P01Colors.yellow} />
-            <Text style={st.cardTitle}>In flight</Text>
-            {isProcessing ? <ActivityIndicator size="small" color={P01Colors.yellow} /> : null}
+        <View style={st.card}>
+          <View style={st.cardHeadingRow}>
+            <Text style={st.cardHeading}>In flight</Text>
+            {isProcessing ? <ActivityIndicator size="small" color={Colors.textSecondary} /> : null}
           </View>
           {pendingSends.map((p) => (
             <View key={p.id} style={st.pendingRow}>
@@ -300,27 +324,32 @@ export default function QuantumWalletScreen() {
                 </Text>
                 <Text style={[
                   st.pendingStatus,
-                  p.status === 'confirmed' && { color: P01Colors.green },
-                  p.status === 'failed' && { color: P01Colors.pinkHot },
+                  p.status === 'confirmed' && { color: Colors.primary },
+                  p.status === 'failed' && { color: Colors.error },
                 ]}>
                   {p.status === 'proving' ? 'Generating STARK proof…'
                     : p.status === 'submitting' ? 'Submitting on-chain…'
-                    : p.status === 'confirmed' ? '✓ Confirmed'
-                    : p.status === 'failed' ? `✗ ${p.error ?? 'failed'}`
+                    : p.status === 'confirmed' ? 'Confirmed'
+                    : p.status === 'failed' ? (p.error ?? 'Failed')
                     : 'Queued'}
                 </Text>
               </View>
               {p.status === 'pending' ? (
-                <TouchableOpacity onPress={() => cancelPending(p.id)}>
-                  <Text style={st.cancelBtn}>cancel</Text>
+                <TouchableOpacity
+                  onPress={() => cancelPending(p.id)}
+                  style={st.cancelBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel this send"
+                >
+                  <Text style={st.cancelText}>Cancel</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
           ))}
-        </Animated.View>
+        </View>
       ) : null}
 
-      {/* ── Danger zone (collapsed by default — surfaced for the demo) ── */}
+      {/* ── Destructive, and last ── */}
       {initialized ? (
         <TouchableOpacity
           onPress={() =>
@@ -334,6 +363,8 @@ export default function QuantumWalletScreen() {
             )
           }
           style={st.wipeBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Wipe local quantum state"
         >
           <Text style={st.wipeText}>Wipe local quantum state</Text>
         </TouchableOpacity>
@@ -342,213 +373,185 @@ export default function QuantumWalletScreen() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
 const st = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
-  scroll: { paddingHorizontal: 20, gap: 14 },
+  scroll: { paddingHorizontal: Spacing.xl, gap: Spacing.lg },
+
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 6,
+    minHeight: 56,
   },
   headerBtn: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  headerTitleWrap: { flex: 1, alignItems: 'center' },
   title: {
-    fontFamily: FontFamily.bold,
-    fontSize: 16,
-    fontWeight: '900',
-    letterSpacing: 2,
+    fontFamily: FontFamily.displayMedium,
+    fontSize: FontSize.xl,
     color: Colors.text,
   },
   subtitle: {
-    fontSize: 10,
-    color: Colors.textSecondary,
-    marginTop: 2,
-    letterSpacing: 0.5,
+    fontSize: FontSize.xs,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    marginTop: 1,
   },
-  heroCard: {
-    backgroundColor: '#151518',
-    borderColor: P01Colors.cyan + '33',
-    borderWidth: 1,
-    borderRadius: BorderRadius.lg,
-    padding: 20,
-    marginTop: 8,
-  },
+
+  hero: { paddingVertical: Spacing.lg },
   heroLabel: {
-    fontSize: 11,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
     color: Colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 1.2,
-    marginBottom: 6,
+    marginBottom: Spacing.sm,
   },
+  heroRow: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.sm },
   heroAmount: {
-    fontFamily: FontFamily.bold,
-    fontSize: 44,
-    fontWeight: '900',
-    color: P01Colors.cyan,
+    fontFamily: FontFamily.display,
+    fontSize: FontSize['4xl'],
+    color: Colors.text,
+    letterSpacing: -1,
   },
   heroUnit: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.display,
     color: Colors.textSecondary,
   },
   transitRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 8,
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
   },
   transitText: {
-    fontSize: 11,
-    color: P01Colors.pink,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
   },
-  metaRow: { flexDirection: 'row', gap: 8, marginTop: 12, flexWrap: 'wrap' },
+  metaRow: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md, flexWrap: 'wrap' },
   metaPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
     paddingVertical: 3,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#2a2a30',
+    borderRadius: BorderRadius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
   },
+  metaPillAccent: { borderColor: Colors.primaryMuted, backgroundColor: Colors.primaryDim },
   metaPillText: {
-    fontSize: 10,
+    fontSize: FontSize.xs,
     color: Colors.textSecondary,
     fontFamily: FontFamily.mono,
   },
-  initCard: {
-    backgroundColor: '#151518',
-    borderColor: P01Colors.pink + '33',
-    borderWidth: 1,
-    borderRadius: BorderRadius.lg,
-    padding: 18,
-    gap: 8,
-    alignItems: 'center',
-  },
-  initTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.text,
-    textAlign: 'center',
-  },
-  initDesc: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 17,
-    marginBottom: 6,
-  },
+
   card: {
-    backgroundColor: '#151518',
-    borderColor: '#2a2a30',
-    borderWidth: 1,
+    backgroundColor: Colors.surface,
+    borderColor: Colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BorderRadius.lg,
-    padding: 14,
-    gap: 10,
+    padding: Spacing.lg,
+    gap: Spacing.md,
   },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  cardTitle: {
-    fontSize: 13,
-    fontWeight: '700',
+  cardHeadingRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  cardHeading: {
+    fontSize: FontSize.lg,
+    fontFamily: FontFamily.displayMedium,
     color: Colors.text,
     flex: 1,
   },
+  cardAction: { marginTop: Spacing.xs },
+  body: {
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+    lineHeight: 20,
+  },
   input: {
-    backgroundColor: '#0f0f12',
-    borderColor: '#2a2a30',
-    borderWidth: 1,
+    backgroundColor: Colors.surfaceSecondary,
+    borderColor: Colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: BorderRadius.md,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    minHeight: 48,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
     color: Colors.text,
     fontFamily: FontFamily.mono,
-    fontSize: 13,
-  },
-  bigBtn: {
-    backgroundColor: P01Colors.cyan,
-    borderRadius: BorderRadius.md,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  bigBtnText: {
-    fontWeight: '900',
-    color: '#000',
-    fontSize: 13,
-    letterSpacing: 1,
+    fontSize: FontSize.sm,
   },
   hint: {
-    fontSize: 11,
-    color: Colors.textSecondary,
-    lineHeight: 15,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    lineHeight: 19,
   },
   addrBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#0f0f12',
+    gap: Spacing.sm,
+    backgroundColor: Colors.surfaceSecondary,
     borderRadius: BorderRadius.md,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderColor: P01Colors.cyan + '44',
-    borderWidth: 1,
+    minHeight: 48,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    borderColor: Colors.border,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   addrText: {
     flex: 1,
     fontFamily: FontFamily.mono,
-    fontSize: 12,
-    color: P01Colors.cyan,
+    fontSize: FontSize.sm,
+    color: Colors.text,
   },
   pendingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#2a2a30',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.borderSoft,
   },
   pendingAmount: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.medium,
     color: Colors.text,
   },
   pendingRecipient: {
     fontFamily: FontFamily.mono,
-    fontSize: 11,
+    fontSize: FontSize.xs,
     color: Colors.textSecondary,
-    fontWeight: '400',
   },
   pendingStatus: {
-    fontSize: 11,
+    fontSize: FontSize.xs,
+    fontFamily: FontFamily.regular,
     color: Colors.textSecondary,
     marginTop: 2,
   },
   cancelBtn: {
-    fontSize: 11,
-    color: P01Colors.pinkHot,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.md,
+  },
+  cancelText: {
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.medium,
+    color: Colors.error,
   },
   wipeBtn: {
     alignSelf: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginTop: 10,
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.lg,
+    marginTop: Spacing.sm,
   },
   wipeText: {
-    fontSize: 11,
-    color: Colors.textSecondary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
     textDecorationLine: 'underline',
   },
 });

@@ -405,7 +405,7 @@ export default function ConfidentialBalanceScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Gradient Header */}
-      <LinearGradient colors={['#0d1117', '#0a0a0c']} style={styles.header}>
+      <LinearGradient colors={['#0d1117', '#070709']} style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
           <Ionicons name="arrow-back" size={24} color={Colors.textPrimary} />
         </TouchableOpacity>
@@ -487,7 +487,7 @@ export default function ConfidentialBalanceScreen() {
               colors={selectedToken === NATIVE_SOL_MINT_STR ? ['#3b82f6', '#2563eb'] : ['#2563eb', '#7c3aed']}
               style={styles.walletIconCircle}
             >
-              <Ionicons name={selectedToken === NATIVE_SOL_MINT_STR ? 'diamond-outline' : 'cash-outline'} size={20} color="#fff" />
+              <Ionicons name={selectedToken === NATIVE_SOL_MINT_STR ? 'diamond-outline' : 'cash-outline'} size={20} color="#eae7df" />
             </LinearGradient>
             <View style={styles.walletInfo}>
               <Text style={styles.walletAvailableLabel}>

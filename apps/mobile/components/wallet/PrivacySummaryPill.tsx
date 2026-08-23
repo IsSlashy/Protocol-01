@@ -1,9 +1,26 @@
+/**
+ * PrivacySummaryPill — the private balance, as one line on the front door.
+ *
+ * 🎯 REBUILT ON THE REALIGNED THEME 2026-08-23.
+ *   - the label was an all-caps, letterspaced "PRIVACY SUMMARY". That house
+ *     style is being removed everywhere; it is sentence case now, and the copy
+ *     says what the number is rather than naming a report.
+ *   - the row was a `BlurView` over a translucent grey with a cyan-tinted ring.
+ *     A blur costs a frame on every scroll and said nothing the panel fill and
+ *     one hairline do not.
+ *   - the whole row is one target and it is 56pt, so the amount and the label
+ *     are both part of the same tap rather than decoration beside it.
+ *
+ * ⚠️ The prop names and the `onPress` destination are unchanged: the arithmetic
+ * that produces these three numbers lives on the wallet screen and is not this
+ * component's business.
+ */
+
 import React from 'react';
 import { TouchableOpacity, View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeInUp } from 'react-native-reanimated';
-import { BlurView } from 'expo-blur';
-import { Colors, FontFamily, P01Colors } from '@/constants/theme';
+
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
 import { useT } from '@/i18n';
 
 interface PrivacySummaryPillProps {
@@ -23,59 +40,42 @@ export default function PrivacySummaryPill({
   const total = shieldedBalance + confidentialBalance + denominatedBalance;
 
   return (
-    <Animated.View entering={FadeInUp.delay(300)} style={styles.outer}>
-      <TouchableOpacity onPress={onPress} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={`Private balance ${total.toFixed(4)} SOL`} accessibilityHint="Opens privacy dashboard">
-        <BlurView intensity={12} tint="dark" style={styles.pill}>
-          <View style={styles.iconWrap}>
-            <Ionicons name="shield-half" size={16} color={P01Colors.cyan} />
-          </View>
-          <View style={styles.info}>
-            <Text style={styles.label}>{t('wallet.privacySummary')}</Text>
-            <Text style={styles.amount}>{total.toFixed(4)} SOL</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={14} color={Colors.textTertiary} />
-        </BlurView>
-      </TouchableOpacity>
-    </Animated.View>
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      style={styles.row}
+      accessibilityRole="button"
+      accessibilityLabel={`${t('wallet.privacySummary')}, ${total.toFixed(4)} SOL`}
+    >
+      <Ionicons name="shield-half-outline" size={18} color={Colors.primary} />
+      <Text style={styles.label}>{t('wallet.privacySummary')}</Text>
+      <Text style={styles.amount}>{total.toFixed(4)} SOL</Text>
+      <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  outer: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.06)',
-    marginBottom: 20,
-  },
-  pill: {
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    backgroundColor: 'rgba(12, 12, 14, 0.6)',
-    gap: 12,
+    gap: Spacing.md,
+    minHeight: 56,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
   },
-  iconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: 'rgba(57, 197, 187, 0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  info: { flex: 1 },
   label: {
-    fontSize: 11,
-    fontFamily: FontFamily.medium,
-    color: Colors.textTertiary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    flex: 1,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.regular,
+    color: Colors.text,
   },
   amount: {
-    fontSize: 15,
-    fontFamily: FontFamily.bold,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.mono,
     color: Colors.text,
-    marginTop: 1,
   },
 });

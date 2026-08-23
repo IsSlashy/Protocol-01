@@ -1,3 +1,25 @@
+/**
+ * Receive SOL — a one-time private address, or the public one.
+ *
+ * 🎯 RESTYLED AND CUT DOWN 2026-08-23.
+ *   - ⛔ THE LOCAL `P01` PALETTE IS DELETED, including a `pinkDim` that was
+ *     still the literal old pink rgba. The network badge, the info card and the
+ *     P01 ID row all read it, so three separate elements on this screen were
+ *     off-palette in a way no theme edit could fix.
+ *   - the labels were "ONE-TIME PRIVATE ADDRESS" and "YOUR WALLET ADDRESS" in
+ *     caps with letterspacing. Sentence case.
+ *   - the QR was drawn with a `#000000` on `#eae7df` pair written inline.
+ *     Same two colours, from the tokens that hold them.
+ *   - ⛔ THE "HOW IT WORKS" CARD IS GONE. Three green-tick bullets restating
+ *     the mode the user had already chosen at the top of the screen, and in
+ *     public mode the last one ("Transactions are visible on-chain to
+ *     everyone") duplicated the warning immediately above it. One statement per
+ *     mode, in the place the mode is explained.
+ *
+ * ⚠️ The two badges under the QR became one line of text. "Auto-shields" said
+ * the same thing as the Private tab being selected and the paragraph below it.
+ */
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -9,30 +31,22 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import QRCode from 'react-native-qrcode-svg';
 
 import { useWalletStore } from '@/stores/walletStore';
 import { useAutoShieldStore } from '@/stores/autoShieldStore';
 import { getMetaAddress } from '@/services/stealth/keys';
 import { getCluster } from '@/services/solana/connection';
-import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
-
-// P-01 Design System Colors
-const P01 = {
-  cyan: '#39c5bb',
-  cyanDim: 'rgba(57, 197, 187, 0.15)',
-  pink: '#ff77a8',
-  pinkDim: 'rgba(255, 119, 168, 0.15)',
-};
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing, Layout } from '@/constants/theme';
 
 export default function ReceiveScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { publicKey } = useWalletStore();
   const { generateReceiveAddress, isGenerating, load } = useAutoShieldStore();
 
@@ -67,6 +81,12 @@ export default function ReceiveScreen() {
 
   const displayAddress = showPublic ? publicKey : stealthAddress;
   const isPrivate = !showPublic && !!stealthAddress;
+
+  const cluster = getCluster();
+  const networkLabel =
+    cluster === 'mainnet-beta' ? 'Solana mainnet'
+      : cluster === 'devnet' ? 'Solana devnet'
+        : 'Solana testnet';
 
   const handleCopy = async () => {
     if (displayAddress) {
@@ -108,36 +128,36 @@ export default function ReceiveScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
-      <Animated.View entering={FadeInDown.delay(100)} style={styles.header}>
+      <View style={styles.header}>
         <TouchableOpacity
           onPress={() => router.back()}
           style={styles.backButton}
           accessibilityRole="button"
           accessibilityLabel="Go back"
         >
-          <Ionicons name="arrow-back" size={24} color={Colors.text} />
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Receive SOL</Text>
+        <Text style={styles.headerTitle} accessibilityRole="header">Receive SOL</Text>
         <View style={styles.backButton} />
-      </Animated.View>
+      </View>
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: Layout.tabBarTotalHeight + insets.bottom + Spacing['2xl'] },
+        ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Privacy Mode Toggle */}
-        <Animated.View entering={FadeInUp.delay(150)} style={styles.modeToggle}>
+        {/* Which address the sender gets */}
+        <View style={styles.modeToggle}>
           <TouchableOpacity
             style={[styles.modeButton, !showPublic && styles.modeButtonActive]}
             onPress={() => setShowPublic(false)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: !showPublic }}
+            accessibilityLabel="Private address"
           >
-            <Ionicons
-              name="shield-checkmark"
-              size={16}
-              color={!showPublic ? Colors.background : Colors.textSecondary}
-            />
             <Text style={[styles.modeButtonText, !showPublic && styles.modeButtonTextActive]}>
               Private
             </Text>
@@ -145,176 +165,135 @@ export default function ReceiveScreen() {
           <TouchableOpacity
             style={[styles.modeButton, showPublic && styles.modeButtonActive]}
             onPress={() => setShowPublic(true)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: showPublic }}
+            accessibilityLabel="Public address"
           >
-            <Ionicons
-              name="eye-outline"
-              size={16}
-              color={showPublic ? Colors.background : Colors.textSecondary}
-            />
             <Text style={[styles.modeButtonText, showPublic && styles.modeButtonTextActive]}>
               Public
             </Text>
           </TouchableOpacity>
-        </Animated.View>
+        </View>
 
-        {/* QR Code Section */}
-        <Animated.View entering={FadeInUp.delay(200)} style={styles.qrSection}>
-          <View style={styles.qrContainer} accessibilityLabel="QR code for receive address" accessibilityRole="image">
+        {/* QR */}
+        <View style={styles.qrSection}>
+          <View
+            style={styles.qrContainer}
+            accessibilityLabel="QR code for receive address"
+            accessibilityRole="image"
+          >
             {displayAddress ? (
               <QRCode
                 value={`solana:${displayAddress}`}
                 size={200}
-                color="#000000"
-                backgroundColor="#ffffff"
+                color={Colors.background}
+                backgroundColor={Colors.text}
               />
             ) : (
               <View style={styles.qrPlaceholder}>
-                <ActivityIndicator size="large" color={Colors.primary} />
-                <Text style={styles.qrPlaceholderText}>Generating...</Text>
+                <ActivityIndicator size="large" color={Colors.background} />
               </View>
             )}
           </View>
+          <Text style={styles.network}>{networkLabel}</Text>
+        </View>
 
-          {/* Badges */}
-          <View style={styles.badgeRow}>
-            {isPrivate && (
-              <View style={[styles.badge, styles.privacyBadge]}>
-                <Ionicons name="shield-checkmark" size={14} color={P01.cyan} />
-                <Text style={[styles.badgeText, { color: P01.cyan }]}>Auto-shields</Text>
-              </View>
-            )}
-            <View style={styles.badge}>
-              <View style={[styles.networkDot, { backgroundColor: P01.pink }]} />
-              <Text style={[styles.badgeText, { color: P01.pink }]}>
-                Solana {getCluster() === 'mainnet-beta' ? 'Mainnet' : getCluster() === 'devnet' ? 'Devnet' : 'Testnet'}
-              </Text>
-            </View>
-          </View>
-        </Animated.View>
-
-        {/* Address Card */}
-        <Animated.View entering={FadeInUp.delay(300)} style={styles.addressCard}>
+        {/* The address itself */}
+        <View style={styles.addressCard}>
           <Text style={styles.addressLabel}>
-            {isPrivate ? 'ONE-TIME PRIVATE ADDRESS' : 'YOUR WALLET ADDRESS'}
+            {isPrivate ? 'One-time address' : 'Your wallet address'}
           </Text>
           <Text style={styles.addressText} selectable>
-            {displayAddress || 'Generating...'}
+            {displayAddress || 'Generating…'}
           </Text>
 
-          {/* Action Buttons */}
           <View style={styles.actionButtons}>
             <TouchableOpacity
-              style={[styles.actionButton, copied && styles.actionButtonActive]}
+              style={styles.actionButton}
               onPress={handleCopy}
               disabled={!displayAddress}
               accessibilityRole="button"
               accessibilityLabel={copied ? 'Address copied' : 'Copy address'}
+              accessibilityState={{ disabled: !displayAddress }}
             >
               <Ionicons
                 name={copied ? 'checkmark' : 'copy-outline'}
-                size={20}
-                color={copied ? Colors.background : Colors.primary}
+                size={18}
+                color={copied ? Colors.primary : Colors.text}
               />
-              <Text style={[styles.actionButtonText, copied && styles.actionButtonTextActive]}>
-                {copied ? 'Copied!' : 'Copy'}
-              </Text>
+              <Text style={styles.actionButtonText}>{copied ? 'Copied' : 'Copy'}</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.actionButton} onPress={handleShare} disabled={!displayAddress} accessibilityRole="button" accessibilityLabel="Share address">
-              <Ionicons name="share-outline" size={20} color={Colors.primary} />
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={handleShare}
+              disabled={!displayAddress}
+              accessibilityRole="button"
+              accessibilityLabel="Share address"
+              accessibilityState={{ disabled: !displayAddress }}
+            >
+              <Ionicons name="share-outline" size={18} color={Colors.text} />
               <Text style={styles.actionButtonText}>Share</Text>
             </TouchableOpacity>
 
-            {isPrivate && (
+            {isPrivate ? (
               <TouchableOpacity
                 style={styles.actionButton}
                 onPress={handleNewAddress}
                 disabled={isGenerating}
                 accessibilityRole="button"
-                accessibilityLabel="Generate new address"
+                accessibilityLabel="Generate a new one-time address"
+                accessibilityState={{ disabled: isGenerating, busy: isGenerating }}
               >
-                <Ionicons name="refresh-outline" size={20} color={Colors.primary} />
+                <Ionicons name="refresh-outline" size={18} color={Colors.text} />
                 <Text style={styles.actionButtonText}>New</Text>
               </TouchableOpacity>
-            )}
+            ) : null}
           </View>
-        </Animated.View>
+        </View>
 
-        {/* P01 ID — persistent stealth address for P01-to-P01 transfers */}
-        {isPrivate && metaAddress && (
-          <Animated.View entering={FadeInUp.delay(350)}>
-            <TouchableOpacity
-              style={styles.metaRow}
-              onPress={async () => {
-                await Clipboard.setStringAsync(metaAddress);
-                setCopiedMeta(true);
-                if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                setTimeout(async () => { try { await Clipboard.setStringAsync(''); } catch {} }, 60_000);
-                setTimeout(() => setCopiedMeta(false), 2000);
-              }}
-            >
-              <Ionicons name="finger-print" size={16} color={P01.cyan} />
-              <Text style={styles.metaLabel}>
-                {copiedMeta ? 'P01 ID copied!' : 'Copy P01 ID (for P01 users)'}
-              </Text>
-              <Ionicons name={copiedMeta ? 'checkmark' : 'copy-outline'} size={14} color={P01.cyan} />
-            </TouchableOpacity>
-          </Animated.View>
-        )}
+        {/* P01 ID — the persistent stealth address, for P01-to-P01 transfers */}
+        {isPrivate && metaAddress ? (
+          <TouchableOpacity
+            style={styles.metaRow}
+            onPress={async () => {
+              await Clipboard.setStringAsync(metaAddress);
+              setCopiedMeta(true);
+              if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              setTimeout(async () => { try { await Clipboard.setStringAsync(''); } catch {} }, 60_000);
+              setTimeout(() => setCopiedMeta(false), 2000);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Copy your P01 ID"
+          >
+            <Ionicons
+              name={copiedMeta ? 'checkmark' : 'finger-print-outline'}
+              size={16}
+              color={copiedMeta ? Colors.primary : Colors.textSecondary}
+            />
+            <Text style={styles.metaLabel}>
+              {copiedMeta ? 'P01 ID copied' : 'Copy your P01 ID, for other Styx users'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
 
-        {/* Privacy Info */}
+        {/* One statement per mode. */}
         {isPrivate ? (
-          <Animated.View entering={FadeInUp.delay(400)} style={styles.infoCard}>
-            <View style={styles.infoRow}>
-              <Ionicons name="shield-checkmark" size={20} color={P01.cyan} />
-              <Text style={[styles.infoTitle, { color: P01.cyan }]}>Private Receive</Text>
-            </View>
-            <Text style={styles.infoText}>
-              This is a one-time address. Funds sent here will be automatically
-              shielded into your privacy pool. Your main wallet is never exposed.
+          <View style={styles.note}>
+            <Text style={styles.noteText}>
+              A fresh address, used once. Funds sent here are shielded into your pool
+              automatically, and the sender never handles your wallet address.
             </Text>
-          </Animated.View>
+          </View>
         ) : (
-          <Animated.View entering={FadeInUp.delay(400)} style={styles.infoCard}>
-            <View style={styles.infoRow}>
-              <Ionicons name="warning" size={20} color={P01.pink} />
-              <Text style={[styles.infoTitle, { color: P01.pink }]}>Public Address</Text>
-            </View>
-            <Text style={styles.infoText}>
-              This is your main wallet address. Sending to this address is visible
-              on-chain and can be linked to your identity. Use Private mode instead.
+          <View style={[styles.note, styles.noteCaution]}>
+            <Ionicons name="eye-outline" size={16} color={Colors.yellow} />
+            <Text style={styles.noteText}>
+              Your main wallet address. Anything sent here is visible on chain and sits beside
+              everything else this wallet has ever done.
             </Text>
-          </Animated.View>
+          </View>
         )}
-
-        {/* Tips */}
-        <Animated.View entering={FadeInUp.delay(500)} style={styles.tipsCard}>
-          <Text style={styles.tipsTitle}>How it works</Text>
-          <View style={styles.tipRow}>
-            <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
-            <Text style={styles.tipText}>
-              {isPrivate
-                ? 'Fresh address generated each time — never reused'
-                : 'Always verify the address before sending'}
-            </Text>
-          </View>
-          <View style={styles.tipRow}>
-            <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
-            <Text style={styles.tipText}>
-              {isPrivate
-                ? 'Funds auto-shield to your privacy pool (~60s)'
-                : 'This address can receive SOL and SPL tokens'}
-            </Text>
-          </View>
-          <View style={styles.tipRow}>
-            <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
-            <Text style={styles.tipText}>
-              {isPrivate
-                ? 'Your real wallet is never visible to the sender'
-                : 'Transactions are visible on-chain to everyone'}
-            </Text>
-          </View>
-        </Animated.View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -329,36 +308,41 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.md,
+    minHeight: 56,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.surfaceSecondary,
+    width: 44,
+    height: 44,
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerTitle: {
     color: Colors.text,
-    fontSize: 18,
-    fontFamily: FontFamily.semibold,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: Spacing.xl,
   },
   modeToggle: {
     flexDirection: 'row',
-    backgroundColor: Colors.surfaceSecondary,
+    backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
     padding: 4,
-    marginBottom: Spacing.xl,
+    marginTop: Spacing.lg,
+    marginBottom: Spacing['3xl'],
   },
   modeButton: {
     flex: 1,
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.xs,
-    paddingVertical: Spacing.sm,
+    minHeight: 44,
     borderRadius: BorderRadius.md,
   },
   modeButtonActive: {
@@ -366,90 +350,57 @@ const styles = StyleSheet.create({
   },
   modeButtonText: {
     color: Colors.textSecondary,
-    fontSize: 14,
-    fontFamily: FontFamily.semibold,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.medium,
   },
   modeButtonTextActive: {
     color: Colors.background,
   },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingHorizontal: Spacing.xl,
-    paddingBottom: 120,
-  },
   qrSection: {
     alignItems: 'center',
-    marginBottom: Spacing['2xl'],
+    marginBottom: Spacing['3xl'],
+    gap: Spacing.md,
   },
   qrContainer: {
     backgroundColor: Colors.text,
     borderRadius: BorderRadius.xl,
     padding: Spacing.lg,
-    marginBottom: Spacing.lg,
   },
   qrPlaceholder: {
     width: 200,
     height: 200,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: Spacing.md,
   },
-  qrPlaceholderText: {
+  network: {
     color: Colors.textTertiary,
-    fontSize: 14,
-  },
-  badgeRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  badge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: P01.pinkDim,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.full,
-    gap: Spacing.xs,
-  },
-  privacyBadge: {
-    backgroundColor: P01.cyanDim,
-  },
-  badgeText: {
-    fontSize: 13,
-    fontFamily: FontFamily.medium,
-  },
-  networkDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
   },
   addressCard: {
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.border,
-    padding: Spacing.xl,
-    marginBottom: Spacing.xl,
+    padding: Spacing.lg,
+    marginBottom: Spacing.lg,
   },
   addressLabel: {
-    color: Colors.textTertiary,
-    fontSize: 11,
-    fontFamily: FontFamily.semibold,
-    letterSpacing: 1,
-    marginBottom: Spacing.md,
+    color: Colors.textSecondary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    marginBottom: Spacing.sm,
   },
   addressText: {
     color: Colors.text,
-    fontSize: 13,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.mono,
-    lineHeight: 22,
-    marginBottom: Spacing.xl,
+    lineHeight: 21,
+    marginBottom: Spacing.lg,
   },
   actionButtons: {
     flexDirection: 'row',
-    gap: Spacing.md,
+    gap: Spacing.sm,
   },
   actionButton: {
     flex: 1,
@@ -457,85 +408,47 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.sm,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    backgroundColor: Colors.surfaceTertiary,
-    borderWidth: 1,
+    minHeight: 44,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.border,
-  },
-  actionButtonActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
   },
   actionButtonText: {
     color: Colors.text,
-    fontSize: 14,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.medium,
-  },
-  actionButtonTextActive: {
-    color: Colors.background,
-  },
-  infoCard: {
-    backgroundColor: Colors.primaryDim,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.2)',
-    padding: Spacing.lg,
-    marginBottom: Spacing.xl,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    marginBottom: Spacing.sm,
-  },
-  infoTitle: {
-    color: Colors.primary,
-    fontSize: 14,
-    fontFamily: FontFamily.semibold,
-  },
-  infoText: {
-    color: Colors.textSecondary,
-    fontSize: 13,
-    fontFamily: FontFamily.regular,
-    lineHeight: 20,
   },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: Spacing.sm,
-    paddingVertical: Spacing.md,
-    marginBottom: Spacing.xl,
+    minHeight: 44,
+    marginBottom: Spacing.lg,
   },
   metaLabel: {
-    color: P01.cyan,
-    fontSize: 13,
-    fontFamily: FontFamily.medium,
-  },
-  tipsCard: {
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.lg,
-  },
-  tipsTitle: {
     color: Colors.textSecondary,
-    fontSize: 13,
-    fontFamily: FontFamily.semibold,
-    marginBottom: Spacing.md,
-  },
-  tipRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    marginBottom: Spacing.sm,
-  },
-  tipText: {
-    color: Colors.textSecondary,
-    fontSize: 13,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.regular,
+  },
+  note: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderSoft,
+    backgroundColor: Colors.surfaceSecondary,
+  },
+  noteCaution: {
+    borderColor: Colors.yellow,
+    backgroundColor: Colors.warningDim,
+  },
+  noteText: {
     flex: 1,
+    color: Colors.textSecondary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    lineHeight: 20,
   },
 });

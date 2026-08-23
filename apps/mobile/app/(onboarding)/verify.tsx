@@ -104,14 +104,14 @@ export default function VerifyScreen() {
 
   if (isLoading || correctOrder.length === 0) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a0c', alignItems: 'center', justifyContent: 'center' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#070709', alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator size="large" color="#39c5bb" />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a0c' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#070709' }}>
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 60, paddingBottom: 24 }}
@@ -135,7 +135,7 @@ export default function VerifyScreen() {
           >
             <Ionicons name="shield-checkmark" size={32} color="#39c5bb" />
           </View>
-          <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
+          <Text style={{ color: '#eae7df', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
             {t('onboarding.verifyBackup')}
           </Text>
           <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
@@ -147,9 +147,9 @@ export default function VerifyScreen() {
         <Animated.View
           entering={FadeInDown.delay(400).duration(600)}
           style={{
-            backgroundColor: '#0f0f12',
+            backgroundColor: '#0d0d10',
             borderWidth: 1,
-            borderColor: error ? 'rgba(239, 68, 68, 0.5)' : '#2a2a30',
+            borderColor: error ? 'rgba(239, 68, 68, 0.5)' : 'rgba(234, 231, 223, 0.14)',
             borderRadius: 16,
             padding: 16,
             marginBottom: 24,
@@ -157,7 +157,7 @@ export default function VerifyScreen() {
           }}
         >
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <Text style={{ color: '#555560', fontSize: 13 }}>
+            <Text style={{ color: 'rgba(234, 231, 223, 0.40)', fontSize: 13 }}>
               {selectedWords.length} / {correctOrder.length} words
             </Text>
             {selectedWords.length > 0 && (
@@ -169,8 +169,8 @@ export default function VerifyScreen() {
 
           {selectedWords.length === 0 ? (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 32 }}>
-              <Ionicons name="arrow-down" size={32} color="#2a2a30" />
-              <Text style={{ color: '#2a2a30', marginTop: 8 }}>{t('onboarding.tapWordsToAdd')}</Text>
+              <Ionicons name="arrow-down" size={32} color="rgba(234, 231, 223, 0.14)" />
+              <Text style={{ color: 'rgba(234, 231, 223, 0.14)', marginTop: 8 }}>{t('onboarding.tapWordsToAdd')}</Text>
             </View>
           ) : (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -211,7 +211,7 @@ export default function VerifyScreen() {
 
         {/* Word Pool */}
         <Animated.View entering={FadeInDown.delay(600).duration(600)}>
-          <Text style={{ color: '#555560', fontSize: 13, marginBottom: 12 }}>{t('onboarding.availableWords')}</Text>
+          <Text style={{ color: 'rgba(234, 231, 223, 0.40)', fontSize: 13, marginBottom: 12 }}>{t('onboarding.availableWords')}</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {shuffledWords.map((word, index) => {
               const isSelected = selectedWords.includes(word);
@@ -244,7 +244,7 @@ export default function VerifyScreen() {
               borderRadius: 12,
               alignItems: 'center',
               marginBottom: 16,
-              backgroundColor: isComplete ? '#39c5bb' : '#2a2a30',
+              backgroundColor: isComplete ? '#39c5bb' : 'rgba(234, 231, 223, 0.14)',
               ...(isComplete
                 ? {
                     shadowColor: '#39c5bb',
@@ -260,7 +260,7 @@ export default function VerifyScreen() {
               style={{
                 fontSize: 17,
                 fontWeight: 'bold',
-                color: isComplete ? '#ffffff' : '#555560',
+                color: isComplete ? '#eae7df' : 'rgba(234, 231, 223, 0.40)',
               }}
             >
               {t('onboarding.verify')}
@@ -272,7 +272,7 @@ export default function VerifyScreen() {
             activeOpacity={0.7}
             style={{ paddingVertical: 12, alignItems: 'center' }}
           >
-            <Text style={{ color: '#555560', fontSize: 16 }}>{t('onboarding.skipForNow')}</Text>
+            <Text style={{ color: 'rgba(234, 231, 223, 0.40)', fontSize: 16 }}>{t('onboarding.skipForNow')}</Text>
           </TouchableOpacity>
         </Animated.View>
       </View>

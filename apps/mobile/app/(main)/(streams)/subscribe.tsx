@@ -33,7 +33,15 @@ import {
 } from '../../../services/denominatedPool';
 import { vaultDecrypt } from '../../../utils/crypto/noteVault';
 import { iconKeyToIonicons, formatPriceSOL, formatInterval } from '../../../services/solana/serviceRegistry';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import {
+  Colors,
+  FontFamily,
+  FontSize,
+  BorderRadius,
+  Spacing,
+  Layout,
+} from '@/constants/theme';
+import { Badge } from '@/components/ui';
 import { useT } from '@/i18n';
 import OperationProgressBar from '@/components/ui/OperationProgressBar';
 
@@ -642,18 +650,21 @@ function SubscribeContent() {
     });
   };
 
-  const accent = (useZkPool || useZkVault) ? P01Colors.pink : P01Colors.cyan;
-  const accentDim = (useZkPool || useZkVault) ? P01Colors.pinkDim : P01Colors.cyanDim;
-
   return (
     <View style={st.container}>
-      {/* Header */}
-      <View style={[st.header, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={Colors.text} />
+      {/* ── Header ── */}
+      <View style={[st.header, { paddingTop: insets.top + Spacing.sm }]}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={st.backBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={st.headerTitle}>{t('subscribe.title')}</Text>
-        <View style={{ width: 40 }} />
+        <Text style={st.headerTitle} numberOfLines={1}>{t('subscribe.title')}</Text>
+        <View style={st.headerSpacer} />
       </View>
 
       {isSubscribing && (
@@ -666,24 +677,43 @@ function SubscribeContent() {
         />
       )}
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: Spacing.xl, paddingBottom: 140 }} showsVerticalScrollIndicator={false}>
-        {/* Service Hero */}
-        <Animated.View entering={FadeIn.duration(300)} style={st.heroCard}>
-          <View style={[st.heroIcon, { backgroundColor: accentDim }]}>
-            <Ionicons name={icon as any} size={36} color={accent} />
+      <ScrollView
+        style={st.flex}
+        contentContainerStyle={st.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── What you are buying ──
+            No panel: the merchant and the price ARE the page, and a border
+            around the headline is decoration around the only thing that
+            matters. */}
+        <Animated.View entering={FadeIn.duration(250)} style={st.hero}>
+          <View style={st.heroIcon}>
+            <Ionicons name={icon as any} size={26} color={Colors.primary} />
           </View>
-          <Text style={st.heroName}>{serviceName}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 4, marginTop: 8 }}>
-            <Text style={[st.heroPrice, { color: accent }]}>{price}</Text>
-            <Text style={st.heroPriceUnit}>SOL/{frequency}</Text>
+          <View style={st.heroText}>
+            <View style={st.heroNameRow}>
+              <Text style={st.heroName} numberOfLines={2}>{serviceName}</Text>
+              {verified && (
+                <Ionicons
+                  name="checkmark-circle"
+                  size={16}
+                  color={Colors.primary}
+                  accessibilityLabel="Listed as verified in the on-chain registry"
+                />
+              )}
+            </View>
+            <View style={st.heroPriceRow}>
+              <Text style={st.heroPrice}>{price}</Text>
+              <Text style={st.heroPriceUnit}>SOL / {frequency}</Text>
+            </View>
           </View>
         </Animated.View>
 
-        {/* Duration (hidden in vault mode — vault is open-ended) */}
+        {/* ── Duration (hidden in vault mode — a vault is open-ended) ── */}
         {!useZkVault && (
-          <Animated.View entering={FadeInDown.delay(80).duration(250)} style={{ marginTop: 24 }}>
+          <Animated.View entering={FadeInDown.delay(60).duration(220)} style={st.section}>
             <Text style={st.sectionLabel}>{t('subscribe.duration')}</Text>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={st.optionRow}>
               {([1, 6, 12] as const).map(m => {
                 const sel = duration === m;
                 const affordable = canAffordDuration(m);
@@ -698,17 +728,20 @@ function SubscribeContent() {
                     disabled={!affordable}
                     style={[
                       st.durationBtn,
-                      sel && affordable && { backgroundColor: accent },
-                      !affordable && { opacity: 0.35 },
+                      sel && affordable && st.durationBtnSelected,
+                      !affordable && st.optionDisabled,
                     ]}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: sel, disabled: !affordable }}
+                    accessibilityLabel={`${m} ${m === 1 ? t('subscribe.month') : t('subscribe.months')}`}
                   >
-                    <Text style={[st.durationNum, sel && affordable && { color: '#000' }]}>{m}</Text>
-                    <Text style={[st.durationUnit, sel && affordable && { color: '#000' }]}>
+                    <Text style={[st.durationNum, sel && affordable && st.onAccent]}>{m}</Text>
+                    <Text style={[st.durationUnit, sel && affordable && st.onAccentQuiet]}>
                       {m === 1 ? t('subscribe.month') : t('subscribe.months')}
                     </Text>
                     {!affordable && (
-                      <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 2 }}>
+                      <Text style={st.durationShort}>
                         {(price * m).toFixed(2)} SOL needed
                       </Text>
                     )}
@@ -719,88 +752,104 @@ function SubscribeContent() {
           </Animated.View>
         )}
 
-        {/* Payment Method — 2 modes: Classique (wallet) vs Privé (ZK) */}
-        <Animated.View entering={FadeInDown.delay(160).duration(250)} style={{ marginTop: 24 }}>
+        {/* ── Where the money comes from ── */}
+        <Animated.View entering={FadeInDown.delay(120).duration(220)} style={st.section}>
           <Text style={st.sectionLabel}>{t('subscribe.payWith')}</Text>
-          <View style={{ gap: 8 }}>
-            {/* Classique — direct wallet payment */}
+          <View style={st.optionColumn}>
+            {/* Wallet — the merchant sees the paying address. */}
             <TouchableOpacity
               onPress={() => { Haptics.selectionAsync(); setUiMode('classic'); }}
-              style={[st.methodCard, uiMode === 'classic' && { backgroundColor: P01Colors.cyanDim }]}
+              style={[st.methodCard, uiMode === 'classic' && st.methodCardSelected]}
               activeOpacity={0.7}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: uiMode === 'classic' }}
             >
-              <Radio selected={uiMode === 'classic'} color={P01Colors.cyan} />
-              <View style={[st.methodIcon, { backgroundColor: uiMode === 'classic' ? 'rgba(57,197,187,0.2)' : Colors.surfaceTertiary }]}>
-                <Ionicons name="wallet" size={20} color={uiMode === 'classic' ? P01Colors.cyan : Colors.textSecondary} />
-              </View>
-              <View style={{ flex: 1 }}>
+              <Radio selected={uiMode === 'classic'} color={Colors.primary} />
+              <View style={st.methodBody}>
                 <Text style={st.methodTitle}>{t('subscribe.wallet')}</Text>
                 <Text style={st.methodDesc}>{t('subscribe.directPayment')}</Text>
               </View>
             </TouchableOpacity>
 
-            {/* Privé — auto-route to vault if supported, else oneshot */}
+            {/* Shielded note — routed to the vault when the merchant supports
+                one, otherwise a single unshield per period. */}
             {supportsPrivate && (
               <TouchableOpacity
                 onPress={() => { Haptics.selectionAsync(); setUiMode('private'); }}
-                style={[st.methodCard, uiMode === 'private' && { backgroundColor: P01Colors.pinkDim }]}
+                style={[st.methodCard, uiMode === 'private' && st.methodCardSelected]}
                 activeOpacity={0.7}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: uiMode === 'private' }}
               >
-                <Radio selected={uiMode === 'private'} color={P01Colors.pink} />
-                <View style={[st.methodIcon, { backgroundColor: uiMode === 'private' ? 'rgba(255,119,168,0.2)' : Colors.surfaceTertiary }]}>
-                  <Ionicons name={supportsVault ? 'lock-closed' : 'eye-off'} size={20} color={uiMode === 'private' ? P01Colors.pink : Colors.textSecondary} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={st.methodTitle}>Privé</Text>
+                <Radio selected={uiMode === 'private'} color={Colors.primary} />
+                <View style={st.methodBody}>
+                  <View style={st.methodTitleRow}>
+                    <Text style={st.methodTitle}>Shielded note</Text>
+                    <Badge variant={uiMode === 'private' ? 'good' : 'neutral'} size="sm">
+                      {supportsVault ? 'Vault' : 'One-shot'}
+                    </Badge>
+                  </View>
+                  {/*
+                    Was two sentences of French on an English screen, and the
+                    vault one offered "Pause/reprise" beside a stop the
+                    protocol cannot perform. Both paths are stated in the same
+                    voice now, and neither offers a way back.
+                  */}
                   <Text style={st.methodDesc}>
                     {supportsVault
-                      // No cancellation and no refund: the vault pays the
-                      // retailer only. Saying "cancel / refund as shielded
-                      // notes" here contradicted the one-way warning further
-                      // down THIS screen.
-                      ? `Vault privé — pull ${formatPriceSOL(priceLamports)} SOL every ${formatInterval(intervalSlotsBig)}. Pause/reprise à tout moment. Ni annulation ni remboursement.`
-                      : 'Paiement unique privé via note shielded. Ni annulation ni remboursement, repaye manuellement chaque période.'}
+                      ? `The vault pulls ${formatPriceSOL(priceLamports)} SOL every ${formatInterval(intervalSlotsBig)} from the note you deposit. Pause and resume whenever you like. No cancellation and no refund.`
+                      : 'One period at a time, paid out of a shielded note. No cancellation and no refund; you repay manually each period.'}
                   </Text>
-                </View>
-                <View style={[st.zkBadge, uiMode === 'private' && { backgroundColor: 'rgba(255,119,168,0.25)' }]}>
-                  <Text style={[st.zkBadgeText, uiMode === 'private' && { color: P01Colors.pink }]}>{supportsVault ? 'VAULT' : 'ZK'}</Text>
                 </View>
               </TouchableOpacity>
             )}
           </View>
 
-          {/* ZK balance info (both zk-oneshot and zk-vault need a note ≥ price) */}
+          {/* Shielded balance — both ZK paths need a note at least as big as
+              the price, so this is the gate on the button below. */}
           {(useZkPool || useZkVault) && (
-            <Animated.View entering={FadeIn.duration(200)} style={st.zkInfo}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Animated.View entering={FadeIn.duration(180)} style={st.balanceCard}>
+              <View style={st.balanceRow}>
                 <View>
-                  <Text style={st.zkInfoLabel}>{t('streams.privateBalance')}</Text>
-                  <Text style={st.zkInfoAmount}>{privateBalance.toFixed(privateBalance < 1 ? 4 : 2)} SOL</Text>
+                  <Text style={st.balanceLabel}>{t('streams.privateBalance')}</Text>
+                  <Text style={st.balanceAmount}>
+                    {privateBalance.toFixed(privateBalance < 1 ? 4 : 2)} SOL
+                  </Text>
                 </View>
-                <Ionicons name={privateBalance >= price ? 'checkmark-circle' : 'alert-circle'}
-                  size={22} color={privateBalance >= price ? P01Colors.green : Colors.error} />
+                <Ionicons
+                  name={privateBalance >= price ? 'checkmark-circle' : 'alert-circle'}
+                  size={22}
+                  color={privateBalance >= price ? Colors.primary : Colors.error}
+                />
               </View>
               {privateBalance < price && (
-                <TouchableOpacity onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
-                  style={st.shieldMoreBtn}>
-                  <Text style={st.shieldMoreText}>{t('subscribe.shieldMoreSOL')}</Text>
-                </TouchableOpacity>
+                <>
+                  <Text style={st.balanceShort} accessibilityRole="alert">
+                    Not enough shielded. You need a matured note of at least {price} SOL.
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
+                    style={st.shieldMoreBtn}
+                    accessibilityRole="button"
+                  >
+                    <Text style={st.shieldMoreText}>{t('subscribe.shieldMoreSOL')}</Text>
+                  </TouchableOpacity>
+                </>
               )}
             </Animated.View>
           )}
 
-          {/* Note picker — only when Privé mode is selected and the user has
-              ≥ 2 mature SOL notes that could fund the vault. Default = null
-              (auto-pick smallest-mature ≥ rate). User can override here. */}
+          {/* Note picker — only when the user actually has a choice to make.
+              Default is null: auto-pick the smallest mature note ≥ rate. */}
           {(useZkPool || useZkVault) && (() => {
             const matureForFunding = availableNotes
               .filter(n => n.token === 'SOL' && n.status === 'mature' && n.denomination >= price)
               .sort((a, b) => a.denomination - b.denomination);
             if (matureForFunding.length < 2) return null;
             return (
-              <Animated.View entering={FadeIn.duration(200)} style={{ marginTop: 12 }}>
-                <Text style={[st.zkInfoLabel, { marginBottom: 8 }]}>Note used to fund this subscription</Text>
-                <View style={{ gap: 6 }}>
+              <Animated.View entering={FadeIn.duration(180)} style={st.notePicker}>
+                <Text style={st.sectionLabel}>Note used to fund this subscription</Text>
+                <View style={st.optionColumn}>
                   {matureForFunding.map(n => {
                     const sel = selectedNoteId === n.id;
                     const periodsCovered = price > 0 ? Math.floor(n.denomination / price) : 0;
@@ -808,26 +857,18 @@ function SubscribeContent() {
                       <TouchableOpacity
                         key={n.id}
                         onPress={() => { Haptics.selectionAsync(); setSelectedNoteId(sel ? null : n.id); }}
-                        style={{
-                          padding: 12,
-                          borderRadius: BorderRadius.md,
-                          backgroundColor: sel ? P01Colors.pinkDim : Colors.surfaceTertiary,
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: 12,
-                        }}
+                        style={[st.noteCard, sel && st.methodCardSelected]}
                         activeOpacity={0.7}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: sel }}
                       >
-                        <Radio selected={sel} color={P01Colors.pink} />
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ color: sel ? P01Colors.pink : Colors.text, fontWeight: '600', fontFamily: FontFamily.medium }}>
+                        <Radio selected={sel} color={Colors.primary} />
+                        <View style={st.methodBody}>
+                          <Text style={st.noteAmount}>
                             {n.denomination.toFixed(n.denomination < 1 ? 4 : 2)} SOL
-                            {((n as any).poolVersion === 'v3') && (
-                              <Text style={{ fontSize: 10, color: Colors.textTertiary }}>  V3</Text>
-                            )}
                           </Text>
-                          <Text style={{ fontSize: 11, color: Colors.textTertiary, marginTop: 2, fontFamily: FontFamily.regular }}>
-                            {n.id.slice(0, 8)}…{n.id.slice(-4)}  ·  covers {periodsCovered} period{periodsCovered === 1 ? '' : 's'}
+                          <Text style={st.noteMeta}>
+                            {n.id.slice(0, 8)}…{n.id.slice(-4)} · covers {periodsCovered} period{periodsCovered === 1 ? '' : 's'}
                           </Text>
                         </View>
                       </TouchableOpacity>
@@ -843,75 +884,107 @@ function SubscribeContent() {
                   buys extra periods and, on the closing claim, whatever never
                   bought a period goes to the retailer with the rest.
                 */}
-                <Text style={{ fontSize: 10, color: Colors.textTertiary, marginTop: 6, fontStyle: 'italic' }}>
-                  Smallest auto-picked if none selected. The whole note funds the vault — anything above
-                  the price buys extra periods and never comes back to you.
+                <Text style={st.noteFootnote}>
+                  Smallest is picked automatically if you choose none. The whole note funds the
+                  vault — anything above the price buys extra periods and never comes back to you.
                 </Text>
               </Animated.View>
             );
           })()}
 
-          {/* Privacy toggle for normal wallet */}
+          {/* Stealth + noise, on the public wallet path only. */}
           {paymentMode === 'wallet' && (
-            <TouchableOpacity onPress={() => { Haptics.selectionAsync(); setEnablePrivacy(!enablePrivacy); }}
-              style={[st.privacyToggle, enablePrivacy && { backgroundColor: P01Colors.cyanDim }]} activeOpacity={0.8}>
-              <Ionicons name="shield-checkmark" size={18} color={enablePrivacy ? P01Colors.cyan : Colors.textSecondary} />
-              <View style={{ flex: 1 }}>
+            <TouchableOpacity
+              onPress={() => { Haptics.selectionAsync(); setEnablePrivacy(!enablePrivacy); }}
+              style={[st.toggleRow, enablePrivacy && st.methodCardSelected]}
+              activeOpacity={0.8}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: enablePrivacy }}
+              accessibilityLabel={t('subscribe.privacyShield')}
+            >
+              <Ionicons
+                name="shield-checkmark"
+                size={18}
+                color={enablePrivacy ? Colors.primary : Colors.textSecondary}
+              />
+              <View style={st.methodBody}>
                 <Text style={st.methodTitle}>{t('subscribe.privacyShield')}</Text>
                 <Text style={st.methodDesc}>{t('subscribe.noiseAndStealth')}</Text>
               </View>
-              <View style={[st.switchTrack, enablePrivacy && { backgroundColor: P01Colors.cyan }]}>
-                <View style={[st.switchThumb, enablePrivacy && { alignSelf: 'flex-end' }]} />
+              <View style={[st.switchTrack, enablePrivacy && st.switchTrackOn]}>
+                <View style={[st.switchThumb, enablePrivacy && st.switchThumbOn]} />
               </View>
             </TouchableOpacity>
           )}
 
-          {/* Prepay toggle — pay all N months now and save 10% (wallet path only) */}
+          {/* Prepay every period now, at a discount. Wallet path only: the ZK
+              path settles fixed denominations and cannot pay an arbitrary
+              discounted amount. */}
           {canPrepay && (
-            <TouchableOpacity onPress={() => { Haptics.selectionAsync(); setPrepay(!prepay); }}
-              style={[st.privacyToggle, prepay && { backgroundColor: P01Colors.cyanDim }]} activeOpacity={0.8}>
-              <Ionicons name="cash-outline" size={18} color={prepay ? P01Colors.cyan : Colors.textSecondary} />
-              <View style={{ flex: 1 }}>
+            <TouchableOpacity
+              onPress={() => { Haptics.selectionAsync(); setPrepay(!prepay); }}
+              style={[st.toggleRow, prepay && st.methodCardSelected]}
+              activeOpacity={0.8}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: prepay }}
+              accessibilityLabel={`Prepay ${duration} months`}
+            >
+              <Ionicons
+                name="cash-outline"
+                size={18}
+                color={prepay ? Colors.primary : Colors.textSecondary}
+              />
+              <View style={st.methodBody}>
                 <Text style={st.methodTitle}>Prepay {duration} months</Text>
-                <Text style={st.methodDesc}>Pay once now and save 10% ({chargeNow.toFixed(4)} SOL)</Text>
+                <Text style={st.methodDesc}>
+                  Pay once now and save 10% ({chargeNow.toFixed(4)} SOL)
+                </Text>
               </View>
-              <View style={[st.switchTrack, prepay && { backgroundColor: P01Colors.cyan }]}>
-                <View style={[st.switchThumb, prepay && { alignSelf: 'flex-end' }]} />
+              <View style={[st.switchTrack, prepay && st.switchTrackOn]}>
+                <View style={[st.switchThumb, prepay && st.switchThumbOn]} />
               </View>
             </TouchableOpacity>
           )}
         </Animated.View>
 
-        {/* Summary */}
-        <Animated.View entering={FadeInDown.delay(240).duration(250)} style={st.summaryCard}>
+        {/* ── What you are about to pay ── */}
+        <Animated.View entering={FadeInDown.delay(180).duration(220)} style={st.summaryCard}>
           {useZkVault ? (
             <>
               <View style={st.summaryRow}>
                 <Text style={st.summaryLabel}>{serviceName} — recurring vault</Text>
-                <Text style={st.summaryValue}>{price.toFixed(4)} SOL / {formatInterval(intervalSlotsBig)}</Text>
+                <Text style={st.summaryValue}>
+                  {price.toFixed(4)} SOL / {formatInterval(intervalSlotsBig)}
+                </Text>
               </View>
               <View style={st.summaryDivider} />
               <View style={st.summaryRow}>
                 <Text style={st.summaryTotal}>Initial deposit</Text>
-                <Text style={[st.summaryTotal, { color: accent }]}>≥ {price.toFixed(4)} SOL</Text>
+                <Text style={st.summaryTotalValue}>≥ {price.toFixed(4)} SOL</Text>
               </View>
             </>
           ) : (
             <>
               <View style={st.summaryRow}>
-                <Text style={st.summaryLabel}>{serviceName} x {duration}mo</Text>
+                <Text style={st.summaryLabel}>{serviceName} × {duration} mo</Text>
                 <Text style={st.summaryValue}>{(price * duration).toFixed(4)} SOL</Text>
               </View>
               {discount && (
                 <View style={st.summaryRow}>
-                  <Text style={[st.summaryLabel, { color: P01Colors.green }]}>{t('subscribe.discount')}</Text>
-                  <Text style={[st.summaryValue, { color: P01Colors.green }]}>-{(price * duration * 0.1).toFixed(4)}</Text>
+                  <Text style={st.summaryLabelAccent}>{t('subscribe.discount')}</Text>
+                  <Text style={st.summaryValueAccent}>
+                    -{(price * duration * 0.1).toFixed(4)}
+                  </Text>
                 </View>
               )}
               <View style={st.summaryDivider} />
               <View style={st.summaryRow}>
-                <Text style={st.summaryTotal}>{isPrepay ? 'Pay now' : t('subscribe.firstPayment')}</Text>
-                <Text style={[st.summaryTotal, { color: accent }]}>{(isPrepay ? chargeNow : price).toFixed(4)} SOL</Text>
+                <Text style={st.summaryTotal}>
+                  {isPrepay ? 'Pay now' : t('subscribe.firstPayment')}
+                </Text>
+                <Text style={st.summaryTotalValue}>
+                  {(isPrepay ? chargeNow : price).toFixed(4)} SOL
+                </Text>
               </View>
             </>
           )}
@@ -923,10 +996,13 @@ function SubscribeContent() {
           protocol has no instruction that can ever pay any of it back. The
           non-vault paths still cannot be refunded by the protocol, so both are
           stated, just with the accuracy each deserves.
+
+          ⛔ It is NOT behind a disclosure. Founder ruling: the sentence that
+          costs someone money has to be readable without a tap.
         */}
-        <Animated.View entering={FadeInDown.delay(270).duration(250)} style={st.oneWayCard}>
+        <Animated.View entering={FadeInDown.delay(210).duration(220)} style={st.oneWayCard}>
           <View style={st.oneWayHeader}>
-            <Ionicons name="warning-outline" size={16} color={P01Colors.yellow} />
+            <Ionicons name="warning-outline" size={16} color={Colors.yellow} />
             <Text style={st.oneWayTitle}>
               {useZkVault ? t('subscribe.oneWayTitle') : t('subscribe.finalTitle')}
             </Text>
@@ -938,16 +1014,26 @@ function SubscribeContent() {
         </Animated.View>
       </ScrollView>
 
-      {/* CTA */}
-      <View style={[st.cta, { paddingBottom: insets.bottom + 90 }]}>
-        <TouchableOpacity onPress={handleSubscribe}
+      {/* ── The one action ── */}
+      <View style={[st.cta, { paddingBottom: insets.bottom + Layout.tabBarTotalHeight }]}>
+        <TouchableOpacity
+          onPress={handleSubscribe}
           disabled={isSubscribing || ((useZkPool || useZkVault) && privateBalance < price)}
-          style={[st.ctaBtn, { backgroundColor: isSubscribing ? Colors.surfaceTertiary : accent },
-            ((useZkPool || useZkVault) && privateBalance < price) && { opacity: 0.4 }]}
-          activeOpacity={0.8}>
+          style={[
+            st.ctaBtn,
+            isSubscribing && st.ctaBtnBusy,
+            ((useZkPool || useZkVault) && privateBalance < price) && st.ctaBtnDisabled,
+          ]}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityState={{
+            disabled: isSubscribing || ((useZkPool || useZkVault) && privateBalance < price),
+            busy: isSubscribing,
+          }}
+        >
           {isSubscribing ? (
-            <View style={{ alignItems: 'center', gap: 4 }}>
-              <ActivityIndicator size="small" color="#000" />
+            <View style={st.ctaBusyBody}>
+              <ActivityIndicator size="small" color={Colors.background} />
               {progress && <Text style={st.ctaProgress}>{progress}</Text>}
             </View>
           ) : (
@@ -955,7 +1041,7 @@ function SubscribeContent() {
               <Ionicons
                 name={useZkVault ? 'lock-closed' : useZkPool ? 'eye-off' : 'checkmark-circle'}
                 size={20}
-                color="#000"
+                color={Colors.background}
               />
               <Text style={st.ctaText}>
                 {useZkVault
@@ -979,127 +1065,386 @@ function Radio({ selected, color }: { selected: boolean; color: string }) {
 }
 
 const st = StyleSheet.create({
-  oneWayCard: {
-    marginTop: 16,
-    padding: 12,
-    borderRadius: BorderRadius.md,
-    backgroundColor: 'rgba(255,204,0,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,204,0,0.4)',
-    gap: 6,
-  },
-  oneWayHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  oneWayTitle: {
-    fontSize: 12,
-    fontFamily: FontFamily.bold,
-    letterSpacing: 1,
-    color: P01Colors.yellow,
-  },
-  oneWayBody: {
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: FontFamily.regular,
-    color: Colors.textSecondary,
-  },
   container: { flex: 1, backgroundColor: Colors.background },
+  flex: { flex: 1 },
+  scrollContent: {
+    paddingHorizontal: Layout.screenPadding,
+    paddingBottom: Spacing['5xl'],
+  },
+
+  // Header
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl, paddingBottom: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingBottom: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.borderSoft,
   },
   backBtn: {
-    width: 40, height: 40, borderRadius: BorderRadius.full,
-    backgroundColor: Colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center',
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  headerTitle: { fontSize: 18, fontFamily: FontFamily.semibold, color: Colors.text },
+  headerTitle: {
+    flex: 1,
+    fontFamily: FontFamily.displayMedium,
+    fontSize: FontSize.xl,
+    color: Colors.text,
+  },
+  headerSpacer: { width: 44 },
 
   // Hero
-  heroCard: {
-    alignItems: 'center', padding: 28,
-    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.xl,
+  hero: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.lg,
+    paddingTop: Spacing['2xl'],
   },
   heroIcon: {
-    width: 72, height: 72, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+    width: 52,
+    height: 52,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primaryDim,
   },
-  heroName: { fontSize: 22, fontFamily: FontFamily.bold, color: Colors.text },
-  heroPrice: { fontSize: 32, fontFamily: FontFamily.bold },
-  heroPriceUnit: { fontSize: 14, fontFamily: FontFamily.regular, color: Colors.textSecondary },
+  heroText: { flex: 1, minWidth: 0 },
+  heroNameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  heroName: {
+    flexShrink: 1,
+    fontFamily: FontFamily.display,
+    fontSize: FontSize['2xl'],
+    color: Colors.text,
+  },
+  heroPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  heroPrice: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.lg,
+    color: Colors.text,
+  },
+  heroPriceUnit: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+  },
 
-  // Section label
-  sectionLabel: { fontSize: 14, fontFamily: FontFamily.semibold, color: Colors.text, marginBottom: 10 },
+  // Sections
+  section: { marginTop: Spacing['3xl'] },
+  sectionLabel: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.md,
+  },
+  optionRow: { flexDirection: 'row', gap: Spacing.sm },
+  optionColumn: { gap: Spacing.sm },
+  optionDisabled: { opacity: 0.35 },
 
   // Duration
   durationBtn: {
-    flex: 1, alignItems: 'center', padding: 14,
-    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.lg,
+    flex: 1,
+    minHeight: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
   },
-  durationNum: { fontSize: 20, fontFamily: FontFamily.bold, color: Colors.text },
-  durationUnit: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 2 },
-  saveBadge: {
-    marginTop: 6, paddingHorizontal: 6, paddingVertical: 2,
-    backgroundColor: P01Colors.greenDim, borderRadius: 4,
+  durationBtnSelected: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
   },
-  saveText: { fontSize: 9, fontFamily: FontFamily.semibold, color: P01Colors.green },
+  durationNum: {
+    fontFamily: FontFamily.displayMedium,
+    fontSize: FontSize.xl,
+    color: Colors.text,
+  },
+  durationUnit: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  durationShort: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  onAccent: { color: Colors.background },
+  onAccentQuiet: { color: Colors.background, opacity: 0.7 },
 
   // Method cards
   methodCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 14, backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.lg,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.md,
+    minHeight: 44,
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
   },
-  methodIcon: {
-    width: 40, height: 40, borderRadius: BorderRadius.sm, alignItems: 'center', justifyContent: 'center',
+  methodCardSelected: {
+    backgroundColor: Colors.primaryDim,
+    borderColor: Colors.primaryMuted,
   },
-  methodTitle: { fontSize: 14, fontFamily: FontFamily.semibold, color: Colors.text },
-  methodDesc: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 1 },
+  methodBody: { flex: 1, minWidth: 0 },
+  methodTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  methodTitle: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.md,
+    color: Colors.text,
+  },
+  methodDesc: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    lineHeight: 19,
+    color: Colors.textSecondary,
+    marginTop: 3,
+  },
 
   // Radio
-  radio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  radioDot: { width: 10, height: 10, borderRadius: 5 },
-
-  // ZK badge
-  zkBadge: { paddingHorizontal: 8, paddingVertical: 3, backgroundColor: Colors.surfaceTertiary, borderRadius: 6 },
-  zkBadgeText: { fontSize: 10, fontFamily: FontFamily.bold, color: Colors.textTertiary },
-
-  // ZK info
-  zkInfo: {
-    marginTop: 8, padding: 14,
-    backgroundColor: 'rgba(255,119,168,0.06)', borderRadius: BorderRadius.md,
+  radio: {
+    width: 20,
+    height: 20,
+    borderRadius: BorderRadius.full,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
   },
-  zkInfoLabel: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textSecondary },
-  zkInfoAmount: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.text, marginTop: 2 },
+  radioDot: { width: 10, height: 10, borderRadius: BorderRadius.full },
+
+  // Shielded balance
+  balanceCard: {
+    marginTop: Spacing.md,
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surfaceSecondary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderSoft,
+  },
+  balanceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  balanceLabel: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    color: Colors.textSecondary,
+  },
+  balanceAmount: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.lg,
+    color: Colors.text,
+    marginTop: 2,
+  },
+  balanceShort: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    lineHeight: 19,
+    color: Colors.error,
+    marginTop: Spacing.sm,
+  },
   shieldMoreBtn: {
-    marginTop: 10, paddingVertical: 10, borderRadius: BorderRadius.sm,
-    backgroundColor: P01Colors.pink, alignItems: 'center',
+    marginTop: Spacing.md,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: BorderRadius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
   },
-  shieldMoreText: { fontSize: 12, fontFamily: FontFamily.semibold, color: '#000' },
+  shieldMoreText: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.text,
+  },
 
-  // Privacy toggle
-  privacyToggle: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 14, marginTop: 8, backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.lg,
+  // Note picker
+  notePicker: { marginTop: Spacing.lg },
+  noteCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    minHeight: 56,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  noteAmount: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.md,
+    color: Colors.text,
+  },
+  noteMeta: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  noteFootnote: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    lineHeight: 17,
+    color: Colors.textTertiary,
+    marginTop: Spacing.sm,
+  },
+
+  // Toggles
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    minHeight: 56,
+    padding: Spacing.lg,
+    marginTop: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
   },
   switchTrack: {
-    width: 44, height: 26, borderRadius: 13,
-    backgroundColor: Colors.surfaceTertiary, justifyContent: 'center', padding: 2,
+    width: 44,
+    height: 26,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.surfaceTertiary,
+    justifyContent: 'center',
+    padding: 2,
   },
-  switchThumb: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff' },
+  switchTrackOn: { backgroundColor: Colors.primary },
+  switchThumb: {
+    width: 22,
+    height: 22,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.textTertiary,
+  },
+  switchThumbOn: { alignSelf: 'flex-end', backgroundColor: Colors.background },
 
   // Summary
   summaryCard: {
-    marginTop: 24, padding: 16,
-    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.lg,
+    marginTop: Spacing['3xl'],
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
   },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  summaryLabel: { fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary },
-  summaryValue: { fontSize: 13, fontFamily: FontFamily.medium, color: Colors.text },
-  summaryDivider: { height: 1, backgroundColor: Colors.surfaceTertiary, marginVertical: 8 },
-  summaryTotal: { fontSize: 15, fontFamily: FontFamily.semibold, color: Colors.text },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  summaryLabel: {
+    flexShrink: 1,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+  },
+  summaryLabelAccent: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    color: Colors.primary,
+  },
+  summaryValue: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.sm,
+    color: Colors.text,
+  },
+  summaryValueAccent: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.sm,
+    color: Colors.primary,
+  },
+  summaryDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: Colors.border,
+    marginVertical: Spacing.sm,
+  },
+  summaryTotal: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.md,
+    color: Colors.text,
+  },
+  summaryTotalValue: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.md,
+    color: Colors.primary,
+  },
+
+  // The one-way warning. Amber is caution, and this is the only amber on the
+  // screen.
+  oneWayCard: {
+    marginTop: Spacing.lg,
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.warningDim,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.yellow,
+    gap: Spacing.sm,
+  },
+  oneWayHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  oneWayTitle: {
+    flex: 1,
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.yellow,
+  },
+  oneWayBody: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    lineHeight: 19,
+    color: Colors.textSecondary,
+  },
 
   // CTA
-  cta: { paddingHorizontal: Spacing.xl, paddingTop: Spacing.md, backgroundColor: Colors.background },
-  ctaBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 16, borderRadius: BorderRadius.lg,
+  cta: {
+    paddingHorizontal: Layout.screenPadding,
+    paddingTop: Spacing.md,
+    backgroundColor: Colors.background,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.borderSoft,
   },
-  ctaText: { fontSize: 16, fontFamily: FontFamily.bold, color: '#000' },
-  ctaProgress: { fontSize: 11, fontFamily: FontFamily.medium, color: '#000', opacity: 0.7 },
+  ctaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    minHeight: 52,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.primary,
+  },
+  ctaBtnBusy: { backgroundColor: Colors.primaryMuted },
+  ctaBtnDisabled: { opacity: 0.4 },
+  ctaBusyBody: { alignItems: 'center', gap: 2 },
+  ctaText: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.lg,
+    color: Colors.background,
+  },
+  ctaProgress: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    color: Colors.background,
+    opacity: 0.75,
+  },
 });

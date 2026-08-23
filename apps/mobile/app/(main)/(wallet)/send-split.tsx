@@ -1,12 +1,29 @@
 /**
- * Split Send Screen
+ * Split Send — one payment, delivered in parts, at times you did not choose.
  *
- * Allows users to send SOL using transaction splitting for maximum privacy.
- * The payment is split into multiple parts routed through temp wallets
- * and delivered at random times.
+ * 🎯 RESTYLED 2026-08-23.
+ *   - ⛔ THE LOCAL `P01` PALETTE IS DELETED. Eight colours declared at the top
+ *     of this file, including the retired pink and a `yellowDim` that was still
+ *     the OLD amber (`rgba(255, 204, 0, …)`) after the theme had moved to
+ *     `#d9a24a`. Two more literals — `'#eae7df'` and `'#000000'` — were spelled
+ *     out in a dozen style rules instead of read from the tokens that hold
+ *     exactly those values.
+ *   - ⛔ BOTH GRADIENT BUTTONS ARE GONE, and with them `expo-linear-gradient`.
+ *     The primary action is `ui/Button`, so it gets the 44pt floor, the real
+ *     `disabled` state and the busy announcement for free — the hand-rolled one
+ *     dimmed to 50% opacity while staying pressable.
+ *   - "SPLIT CONFIGURATION", "SUMMARY", "MAX" were caps. Sentence case.
+ *   - 🚨 "for maximum privacy" IS DELETED FROM THE COPY. It is not a phrase
+ *     this project is allowed to use: the anonymity set here is the set of
+ *     temp wallets, the recipient still receives every part, and an unqualified
+ *     superlative is the exact shape `privacy-claims.test.ts` exists to catch
+ *     on its sibling screens. It now says what splitting actually does.
+ *
+ * ⛔ `createSplit`, `executeSplit`, the fee estimate and the slider bounds are
+ * untouched.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -18,36 +35,24 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import Slider from '@react-native-community/slider';
 
 import { useWalletStore } from '@/stores/walletStore';
 import { useSplitTransactionStore } from '@/stores/splitTransactionStore';
-import { TransactionSplitter, DEFAULT_SPLIT_CONFIG } from '@/services/privacy/transactionSplitter';
+import { TransactionSplitter } from '@/services/privacy/transactionSplitter';
 import { getKeypair } from '@/services/solana/wallet';
-import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing, Layout } from '@/constants/theme';
+import { Button } from '@/components/ui/Button';
 import { p01Alert } from '@/stores/alertStore';
-
-// P-01 Design System Colors
-const P01 = {
-  cyan: '#39c5bb',
-  cyanDim: 'rgba(57, 197, 187, 0.15)',
-  pink: '#ff77a8',
-  pinkDim: 'rgba(255, 119, 168, 0.15)',
-  blue: '#3b82f6',
-  blueDim: 'rgba(59, 130, 246, 0.15)',
-  yellow: '#ffcc00',
-  yellowDim: 'rgba(255, 204, 0, 0.15)',
-};
 
 export default function SendSplitScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ recipient?: string; amount?: string }>();
 
   const { balance } = useWalletStore();
@@ -178,14 +183,16 @@ export default function SendSplitScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#ffffff" />
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backButton}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
-        <View style={styles.headerTitle}>
-          <Ionicons name="git-branch" size={20} color={P01.pink} />
-          <Text style={styles.headerText}>Split Send</Text>
-        </View>
-        <View style={{ width: 40 }} />
+        <Text style={styles.headerText} accessibilityRole="header">Split send</Text>
+        <View style={styles.backButton} />
       </View>
 
       <KeyboardAvoidingView
@@ -199,246 +206,217 @@ export default function SendSplitScreen() {
         >
           {step === 'configure' && (
             <>
-              {/* Info Banner */}
-              <Animated.View entering={FadeInDown.delay(100)}>
-                <View style={styles.infoBanner}>
-                  <Ionicons name="shield-checkmark" size={20} color={P01.cyan} />
-                  <Text style={styles.infoBannerText}>
-                    Split transactions divide your payment into multiple parts delivered
-                    at random times for maximum privacy.
-                  </Text>
-                </View>
-              </Animated.View>
+              <Text style={styles.lede}>
+                One payment, sent as several smaller ones from temporary wallets at times you
+                did not pick. It costs more in fees and it does not hide the recipient.
+              </Text>
 
-              {/* Recipient Input */}
-              <Animated.View entering={FadeInDown.delay(200)}>
-                <Text style={styles.inputTitle}>Recipient Address</Text>
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={styles.addressInput}
-                    value={recipient}
-                    onChangeText={setRecipient}
-                    placeholder="Solana wallet address..."
-                    placeholderTextColor={Colors.textTertiary}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                  <TouchableOpacity onPress={handlePaste} style={styles.inputAction}>
-                    <Ionicons name="clipboard-outline" size={20} color={P01.cyan} />
-                  </TouchableOpacity>
-                </View>
-              </Animated.View>
-
-              {/* Amount Input */}
-              <Animated.View entering={FadeInDown.delay(300)}>
-                <View style={styles.amountHeader}>
-                  <Text style={styles.inputTitle}>Amount</Text>
-                  <TouchableOpacity onPress={handleSetMax}>
-                    <Text style={styles.maxButton}>MAX</Text>
-                  </TouchableOpacity>
-                </View>
-                <View style={styles.amountContainer}>
-                  <TextInput
-                    style={styles.amountInput}
-                    value={amount}
-                    onChangeText={setAmount}
-                    placeholder="0.0"
-                    placeholderTextColor={Colors.textTertiary}
-                    keyboardType="decimal-pad"
-                  />
-                  <Text style={styles.amountSuffix}>SOL</Text>
-                </View>
-              </Animated.View>
-
-              {/* Split Configuration */}
-              <Animated.View entering={FadeInDown.delay(400)}>
-                <Text style={styles.sectionTitle}>SPLIT CONFIGURATION</Text>
-
-                {/* Number of Splits */}
-                <View style={styles.configRow}>
-                  <View style={styles.configLabel}>
-                    <Ionicons name="git-branch" size={18} color={P01.pink} />
-                    <Text style={styles.configText}>Number of Splits</Text>
-                  </View>
-                  <Text style={styles.configValue}>{numSplits}</Text>
-                </View>
-                <Slider
-                  style={styles.slider}
-                  minimumValue={2}
-                  maximumValue={10}
-                  step={1}
-                  value={numSplits}
-                  onValueChange={setNumSplits}
-                  minimumTrackTintColor={P01.pink}
-                  maximumTrackTintColor={Colors.border}
-                  thumbTintColor={P01.pink}
+              {/* Recipient */}
+              <Text style={styles.inputTitle}>Recipient address</Text>
+              <View style={styles.inputContainer}>
+                <TextInput
+                  style={styles.addressInput}
+                  value={recipient}
+                  onChangeText={setRecipient}
+                  placeholder="Solana address"
+                  placeholderTextColor={Colors.textTertiary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  accessibilityLabel="Recipient address"
                 />
-
-                {/* Time Window */}
-                <View style={styles.configRow}>
-                  <View style={styles.configLabel}>
-                    <Ionicons name="time" size={18} color={P01.blue} />
-                    <Text style={styles.configText}>Delivery Window</Text>
-                  </View>
-                  <Text style={styles.configValue}>{timeWindow}h</Text>
-                </View>
-                <Slider
-                  style={styles.slider}
-                  minimumValue={1}
-                  maximumValue={24}
-                  step={1}
-                  value={timeWindow}
-                  onValueChange={setTimeWindow}
-                  minimumTrackTintColor={P01.blue}
-                  maximumTrackTintColor={Colors.border}
-                  thumbTintColor={P01.blue}
-                />
-
-                {/* Amount Noise Toggle */}
                 <TouchableOpacity
-                  style={styles.toggleRow}
-                  onPress={() => setNoiseEnabled(!noiseEnabled)}
+                  onPress={handlePaste}
+                  style={styles.inputAction}
+                  accessibilityRole="button"
+                  accessibilityLabel="Paste address"
                 >
-                  <View style={styles.configLabel}>
-                    <Ionicons name="analytics" size={18} color={P01.cyan} />
-                    <Text style={styles.configText}>Amount Noise</Text>
-                  </View>
-                  <View style={[styles.toggle, noiseEnabled && styles.toggleActive]}>
-                    <View style={[styles.toggleThumb, noiseEnabled && styles.toggleThumbActive]} />
-                  </View>
+                  <Ionicons name="clipboard-outline" size={20} color={Colors.textSecondary} />
                 </TouchableOpacity>
-              </Animated.View>
+              </View>
+
+              {/* Amount */}
+              <View style={styles.amountHeader}>
+                <Text style={styles.inputTitle}>Amount</Text>
+                <TouchableOpacity
+                  onPress={handleSetMax}
+                  style={styles.maxButton}
+                  accessibilityRole="button"
+                  accessibilityLabel="Maximum amount"
+                >
+                  <Text style={styles.maxButtonText}>Max</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.amountContainer}>
+                <TextInput
+                  style={styles.amountInput}
+                  value={amount}
+                  onChangeText={setAmount}
+                  placeholder="0.0"
+                  placeholderTextColor={Colors.textTertiary}
+                  keyboardType="decimal-pad"
+                  accessibilityLabel="Amount in SOL"
+                />
+                <Text style={styles.amountSuffix}>SOL</Text>
+              </View>
+
+              {/* Configuration */}
+              <Text style={styles.sectionTitle}>How it is split</Text>
+
+              <View style={styles.configRow}>
+                <Text style={styles.configText}>Number of parts</Text>
+                <Text style={styles.configValue}>{numSplits}</Text>
+              </View>
+              <Slider
+                style={styles.slider}
+                minimumValue={2}
+                maximumValue={10}
+                step={1}
+                value={numSplits}
+                onValueChange={setNumSplits}
+                minimumTrackTintColor={Colors.primary}
+                maximumTrackTintColor={Colors.border}
+                thumbTintColor={Colors.primary}
+                accessibilityLabel="Number of parts"
+              />
+
+              <View style={styles.configRow}>
+                <Text style={styles.configText}>Delivered over</Text>
+                <Text style={styles.configValue}>{timeWindow}h</Text>
+              </View>
+              <Slider
+                style={styles.slider}
+                minimumValue={1}
+                maximumValue={24}
+                step={1}
+                value={timeWindow}
+                onValueChange={setTimeWindow}
+                minimumTrackTintColor={Colors.primary}
+                maximumTrackTintColor={Colors.border}
+                thumbTintColor={Colors.primary}
+                accessibilityLabel="Delivery window in hours"
+              />
+
+              <TouchableOpacity
+                style={styles.toggleRow}
+                onPress={() => setNoiseEnabled(!noiseEnabled)}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: noiseEnabled }}
+                accessibilityLabel="Vary the size of each part"
+              >
+                <Text style={styles.configText}>Vary the size of each part</Text>
+                <View style={[styles.toggle, noiseEnabled && styles.toggleActive]}>
+                  <View style={[styles.toggleThumb, noiseEnabled && styles.toggleThumbActive]} />
+                </View>
+              </TouchableOpacity>
 
               {/* Summary */}
               {amountNum > 0 && (
-                <Animated.View entering={FadeInUp.delay(100)}>
-                  <View style={styles.summaryCard}>
-                    <Text style={styles.summaryTitle}>SUMMARY</Text>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryLabel}>Amount</Text>
-                      <Text style={styles.summaryValue}>{amountNum.toFixed(4)} SOL</Text>
-                    </View>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryLabel}>Splits</Text>
-                      <Text style={styles.summaryValue}>{numSplits} transactions</Text>
-                    </View>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryLabel}>Time Window</Text>
-                      <Text style={styles.summaryValue}>{timeWindow} hours</Text>
-                    </View>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryLabel}>Est. Fees</Text>
-                      <Text style={styles.summaryValue}>~{estimatedFees.toFixed(6)} SOL</Text>
-                    </View>
-                    <View style={styles.summaryDivider} />
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryLabelBold}>Total</Text>
-                      <Text style={styles.summaryValueBold}>{total.toFixed(4)} SOL</Text>
-                    </View>
+                <View style={styles.summaryCard}>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Amount</Text>
+                    <Text style={styles.summaryValue}>{amountNum.toFixed(4)} SOL</Text>
                   </View>
-                </Animated.View>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Parts</Text>
+                    <Text style={styles.summaryValue}>{numSplits}</Text>
+                  </View>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Delivered over</Text>
+                    <Text style={styles.summaryValue}>{timeWindow} hours</Text>
+                  </View>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Estimated fees</Text>
+                    <Text style={styles.summaryValue}>~{estimatedFees.toFixed(6)} SOL</Text>
+                  </View>
+                  <View style={styles.summaryDivider} />
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabelBold}>Total</Text>
+                    <Text style={styles.summaryValueBold}>{total.toFixed(4)} SOL</Text>
+                  </View>
+                </View>
               )}
             </>
           )}
 
           {step === 'preview' && (
             <>
-              <Animated.View entering={FadeInDown.delay(100)}>
-                <View style={styles.previewHeader}>
-                  <Ionicons name="calendar" size={24} color={P01.pink} />
-                  <Text style={styles.previewTitle}>Delivery Schedule</Text>
-                </View>
-                <Text style={styles.previewSubtitle}>
-                  Your payment will be split and delivered as follows:
-                </Text>
-              </Animated.View>
+              <Text style={styles.previewTitle} accessibilityRole="header">Delivery schedule</Text>
+              <Text style={styles.previewSubtitle}>
+                The recipient receives these {splitPreview.length} payments, from different
+                addresses, at these times.
+              </Text>
 
               {splitPreview.map((item, index) => (
-                <Animated.View
-                  key={index}
-                  entering={FadeInDown.delay(200 + index * 100)}
-                  style={styles.scheduleItem}
-                >
-                  <View style={styles.scheduleIcon}>
-                    <Text style={styles.scheduleIndex}>{index + 1}</Text>
-                  </View>
+                <View key={index} style={styles.scheduleItem}>
+                  <Text style={styles.scheduleIndex}>{index + 1}</Text>
                   <Text style={styles.scheduleText}>{item}</Text>
-                </Animated.View>
+                </View>
               ))}
 
-              <Animated.View entering={FadeInUp.delay(500)} style={styles.warningBox}>
-                <Ionicons name="information-circle" size={20} color={P01.yellow} />
+              <View style={styles.warningBox}>
+                <Ionicons name="alert-circle-outline" size={18} color={Colors.yellow} />
                 <Text style={styles.warningText}>
-                  Keep the app installed. You'll receive notifications as each part is delivered.
-                  The recipient will receive funds from different addresses at different times.
+                  Keep the app installed until the last part lands. Each one is notified as it
+                  completes.
                 </Text>
-              </Animated.View>
+              </View>
             </>
           )}
 
           {step === 'executing' && (
-            <Animated.View entering={FadeInDown} style={styles.executingContainer}>
-              <View style={styles.executingIcon}>
-                <ActivityIndicator size="large" color={P01.cyan} />
-              </View>
-              <Text style={styles.executingTitle}>Executing Split Transaction</Text>
+            <View style={styles.executingContainer}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={styles.executingTitle} accessibilityRole="header">Setting up the split</Text>
               <Text style={styles.executingMessage}>{progressMessage}</Text>
 
-              <View style={styles.progressBar}>
+              <View
+                style={styles.progressBar}
+                accessibilityRole="progressbar"
+                accessibilityValue={{ min: 0, max: 100, now: Math.round(progress) }}
+              >
                 <View style={[styles.progressFill, { width: `${progress}%` }]} />
               </View>
               <Text style={styles.progressText}>{Math.round(progress)}%</Text>
 
               <Text style={styles.executingWarning}>
-                Please keep the app open during initial funding...
+                Keep the app open while the temporary wallets are funded.
               </Text>
-            </Animated.View>
+            </View>
           )}
         </ScrollView>
 
-        {/* Bottom Button */}
+        {/* One action per step. */}
         {step !== 'executing' && (
-          <View style={styles.bottomContainer}>
+          <View style={[styles.bottomContainer, { paddingBottom: Layout.tabBarTotalHeight + insets.bottom }]}>
             {step === 'configure' ? (
-              <TouchableOpacity
-                style={[styles.actionButton, (!recipient || !amount) && styles.buttonDisabled]}
+              <Button
+                variant="primary"
+                size="lg"
+                fullWidth
+                loading={isProcessing}
+                disabled={!recipient || !amount}
                 onPress={handlePreview}
-                disabled={!recipient || !amount || isProcessing}
               >
-                <LinearGradient
-                  colors={[P01.pink, '#ff2d7a']}
-                  style={styles.buttonGradient}
-                >
-                  {isProcessing ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <>
-                      <Ionicons name="eye" size={20} color="#fff" />
-                      <Text style={styles.buttonText}>Preview Schedule</Text>
-                    </>
-                  )}
-                </LinearGradient>
-              </TouchableOpacity>
+                Preview schedule
+              </Button>
             ) : (
               <View style={styles.buttonRow}>
-                <TouchableOpacity
-                  style={styles.backButtonBottom}
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  style={styles.backAction}
                   onPress={() => setStep('configure')}
                 >
-                  <Text style={styles.backButtonText}>Back</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.confirmButton}
+                  Back
+                </Button>
+                <Button
+                  variant="primary"
+                  size="lg"
+                  style={styles.confirmAction}
                   onPress={handleExecute}
                 >
-                  <LinearGradient
-                    colors={[P01.cyan, '#00ffe5']}
-                    style={styles.buttonGradient}
-                  >
-                    <Ionicons name="checkmark-circle" size={20} color="#000" />
-                    <Text style={styles.confirmButtonText}>Confirm & Send</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
+                  Send
+                </Button>
               </View>
             )}
           </View>
@@ -458,24 +436,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    backgroundColor: Colors.surface,
+    minHeight: 56,
   },
   backButton: {
-    padding: 8,
-    marginLeft: -8,
-  },
-  headerTitle: {
-    flexDirection: 'row',
+    width: 44,
+    height: 44,
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
   },
   headerText: {
-    fontSize: 18,
-    fontFamily: FontFamily.bold,
-    color: '#ffffff',
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
+    color: Colors.text,
   },
   keyboardView: {
     flex: 1,
@@ -484,52 +456,46 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    padding: Spacing.md,
-    paddingBottom: 120,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.lg,
+    paddingBottom: Spacing['3xl'],
   },
-  infoBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    backgroundColor: P01.cyanDim,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.3)',
-  },
-  infoBannerText: {
-    flex: 1,
-    fontSize: 13,
+  lede: {
+    fontSize: FontSize.md,
     fontFamily: FontFamily.regular,
-    color: '#888892',
-    lineHeight: 20,
+    color: Colors.textSecondary,
+    lineHeight: 22,
+    marginBottom: Spacing['2xl'],
   },
   inputTitle: {
-    fontSize: 14,
-    fontFamily: FontFamily.semibold,
-    color: '#ffffff',
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
     marginBottom: Spacing.sm,
   },
   inputContainer: {
     backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
+    borderRadius: BorderRadius.lg,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingRight: Spacing.sm,
-    marginBottom: Spacing.lg,
-    borderWidth: 1,
+    paddingLeft: Spacing.lg,
+    paddingRight: Spacing.xs,
+    marginBottom: Spacing.xl,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.border,
   },
   addressInput: {
     flex: 1,
-    padding: Spacing.md,
-    fontSize: 14,
+    paddingVertical: Spacing.md,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.mono,
-    color: '#ffffff',
+    color: Colors.text,
   },
   inputAction: {
-    padding: 8,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   amountHeader: {
     flexDirection: 'row',
@@ -538,38 +504,42 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
   },
   maxButton: {
-    fontSize: 12,
-    fontFamily: FontFamily.bold,
-    color: P01.cyan,
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingLeft: Spacing.lg,
+  },
+  maxButtonText: {
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.medium,
+    color: Colors.primary,
   },
   amountContainer: {
     backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
+    borderRadius: BorderRadius.lg,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.lg,
-    borderWidth: 1,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing['2xl'],
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.border,
   },
   amountInput: {
     flex: 1,
     paddingVertical: Spacing.lg,
-    fontSize: 28,
-    fontFamily: FontFamily.bold,
-    color: '#ffffff',
+    fontSize: FontSize['2xl'],
+    fontFamily: FontFamily.display,
+    color: Colors.text,
   },
   amountSuffix: {
-    fontSize: 18,
-    fontFamily: FontFamily.medium,
-    color: '#888892',
+    fontSize: FontSize.lg,
+    fontFamily: FontFamily.display,
+    color: Colors.textSecondary,
   },
   sectionTitle: {
-    fontSize: 11,
-    fontFamily: FontFamily.bold,
-    color: '#555560',
-    letterSpacing: 1,
-    marginBottom: Spacing.md,
+    fontSize: FontSize.lg,
+    fontFamily: FontFamily.displayMedium,
+    color: Colors.text,
+    marginBottom: Spacing.lg,
   },
   configRow: {
     flexDirection: 'row',
@@ -577,260 +547,195 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.xs,
   },
-  configLabel: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
   configText: {
-    fontSize: 14,
-    fontFamily: FontFamily.medium,
-    color: '#ffffff',
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.regular,
+    color: Colors.text,
   },
   configValue: {
-    fontSize: 14,
-    fontFamily: FontFamily.bold,
-    color: P01.cyan,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.mono,
+    color: Colors.text,
   },
   slider: {
     width: '100%',
     height: 40,
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.lg,
   },
   toggleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: Spacing.sm,
-    marginBottom: Spacing.md,
+    minHeight: 48,
+    marginBottom: Spacing.lg,
   },
   toggle: {
     width: 50,
     height: 28,
-    borderRadius: 14,
-    backgroundColor: Colors.border,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.surfaceTertiary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
     justifyContent: 'center',
     padding: 2,
   },
   toggleActive: {
-    backgroundColor: P01.cyanDim,
+    backgroundColor: Colors.primaryDim,
+    borderColor: Colors.primaryMuted,
   },
   toggleThumb: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#888892',
+    width: 22,
+    height: 22,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.textTertiary,
   },
   toggleThumbActive: {
-    backgroundColor: P01.cyan,
+    backgroundColor: Colors.primary,
     marginLeft: 'auto',
   },
   summaryCard: {
     backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    padding: Spacing.lg,
     marginTop: Spacing.md,
-  },
-  summaryTitle: {
-    fontSize: 11,
-    fontFamily: FontFamily.bold,
-    color: '#555560',
-    letterSpacing: 1,
-    marginBottom: Spacing.md,
   },
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: Spacing.sm,
+    marginBottom: Spacing.md,
   },
   summaryLabel: {
-    fontSize: 14,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.regular,
-    color: '#888892',
+    color: Colors.textSecondary,
   },
   summaryValue: {
-    fontSize: 14,
-    fontFamily: FontFamily.medium,
-    color: '#ffffff',
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.mono,
+    color: Colors.text,
   },
   summaryDivider: {
-    height: 1,
-    backgroundColor: Colors.border,
-    marginVertical: Spacing.sm,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: Colors.borderSoft,
+    marginBottom: Spacing.md,
   },
   summaryLabelBold: {
-    fontSize: 14,
-    fontFamily: FontFamily.bold,
-    color: '#ffffff',
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.medium,
+    color: Colors.text,
   },
   summaryValueBold: {
-    fontSize: 14,
-    fontFamily: FontFamily.bold,
-    color: P01.pink,
-  },
-  previewHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: Spacing.sm,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.mono,
+    color: Colors.text,
   },
   previewTitle: {
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
-    color: '#ffffff',
+    fontSize: FontSize['2xl'],
+    fontFamily: FontFamily.display,
+    color: Colors.text,
   },
   previewSubtitle: {
-    fontSize: 14,
+    fontSize: FontSize.md,
     fontFamily: FontFamily.regular,
-    color: '#888892',
-    marginBottom: Spacing.lg,
+    color: Colors.textSecondary,
+    lineHeight: 22,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.xl,
   },
   scheduleItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.sm,
-  },
-  scheduleIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: P01.pinkDim,
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.borderSoft,
   },
   scheduleIndex: {
-    fontSize: 14,
-    fontFamily: FontFamily.bold,
-    color: P01.pink,
+    width: 20,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.mono,
+    color: Colors.textTertiary,
   },
   scheduleText: {
     flex: 1,
-    fontSize: 14,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.mono,
-    color: '#ffffff',
+    color: Colors.text,
   },
   warningBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
-    backgroundColor: P01.yellowDim,
+    gap: Spacing.sm,
+    backgroundColor: Colors.warningDim,
     borderRadius: BorderRadius.md,
     padding: Spacing.md,
-    marginTop: Spacing.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 204, 0, 0.3)',
+    marginTop: Spacing.xl,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.yellow,
   },
   warningText: {
     flex: 1,
-    fontSize: 13,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.regular,
-    color: '#888892',
+    color: Colors.text,
     lineHeight: 20,
   },
   executingContainer: {
     alignItems: 'center',
-    paddingVertical: Spacing['3xl'],
-  },
-  executingIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: P01.cyanDim,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.lg,
+    paddingVertical: Spacing['5xl'],
   },
   executingTitle: {
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
-    color: '#ffffff',
+    fontSize: FontSize['2xl'],
+    fontFamily: FontFamily.display,
+    color: Colors.text,
+    marginTop: Spacing['2xl'],
     marginBottom: Spacing.sm,
   },
   executingMessage: {
-    fontSize: 14,
-    fontFamily: FontFamily.medium,
-    color: P01.cyan,
-    marginBottom: Spacing.lg,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.xl,
+    textAlign: 'center',
   },
   progressBar: {
     width: '100%',
-    height: 8,
-    backgroundColor: Colors.surface,
-    borderRadius: 4,
+    height: 6,
+    backgroundColor: Colors.surfaceTertiary,
+    borderRadius: BorderRadius.full,
     overflow: 'hidden',
     marginBottom: Spacing.sm,
   },
   progressFill: {
     height: '100%',
-    backgroundColor: P01.cyan,
-    borderRadius: 4,
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.full,
   },
   progressText: {
-    fontSize: 14,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.mono,
-    color: '#888892',
-    marginBottom: Spacing.lg,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.xl,
   },
   executingWarning: {
-    fontSize: 12,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.regular,
-    color: '#555560',
+    color: Colors.textTertiary,
     textAlign: 'center',
   },
   bottomContainer: {
-    padding: Spacing.md,
-    paddingBottom: 120,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.md,
     backgroundColor: Colors.background,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  actionButton: {
-    borderRadius: BorderRadius.md,
-    overflow: 'hidden',
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  buttonGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: Spacing.lg,
-  },
-  buttonText: {
-    fontSize: 16,
-    fontFamily: FontFamily.bold,
-    color: '#ffffff',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.borderSoft,
   },
   buttonRow: {
     flexDirection: 'row',
-    gap: Spacing.sm,
+    gap: Spacing.md,
   },
-  backButtonBottom: {
-    flex: 1,
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
-    paddingVertical: Spacing.lg,
-    alignItems: 'center',
-  },
-  backButtonText: {
-    fontSize: 16,
-    fontFamily: FontFamily.bold,
-    color: '#ffffff',
-  },
-  confirmButton: {
-    flex: 2,
-    borderRadius: BorderRadius.md,
-    overflow: 'hidden',
-  },
-  confirmButtonText: {
-    fontSize: 16,
-    fontFamily: FontFamily.bold,
-    color: '#000000',
-  },
+  backAction: { flex: 1 },
+  confirmAction: { flex: 2 },
 });

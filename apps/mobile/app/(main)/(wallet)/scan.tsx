@@ -1,3 +1,28 @@
+/**
+ * Scan — a QR code, or an address typed by hand.
+ *
+ * 🎯 REWRITTEN IN StyleSheet 2026-08-23. This screen was almost entirely
+ * Tailwind class strings (`text-white`, `bg-black/50`, `border-red-500`,
+ * `placeholderTextColor="#666666"`), which is the exact failure mode the
+ * realignment is closing: those names resolve in a config file nobody edits
+ * when the design changes, so the token sweep over `constants/theme.ts` moved
+ * every screen except the ones written this way. `text-white` in particular is
+ * the single most visible thing the realignment removes — the brand's text is
+ * warm paper, not white.
+ *
+ * ⚠️ THE CAMERA SCRIM IS THE ONE PLACE A NEAR-BLACK IS CORRECT, and it is still
+ * a token: `Colors.background` with an alpha suffix, so it darkens toward the
+ * app's own ink rather than toward a black the brand does not use.
+ *
+ * 🚨 THE ERROR OVER THE VIEWFINDER NOW ANNOUNCES ITSELF. It was a red pill with
+ * no `accessibilityRole`, which meant a screen-reader user pointing a camera at
+ * an invalid code got silence and a scanner that had stopped.
+ *
+ * ⛔ Nothing about what a scanned code MEANS changed: the P01 auth branch, the
+ * `zk:` and `st:01` prefixes, the Solana Pay stripping and every route this
+ * screen pushes to are untouched.
+ */
+
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -11,21 +36,30 @@ import {
   ActivityIndicator,
   Linking,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import { Button } from '@/components/ui/Button';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing, Layout } from '@/constants/theme';
 import { isValidSolanaAddress } from '@/utils/format/address';
 import { isP01AuthRequest, parseAuthQR } from '@/services/auth/p01Auth';
 
 const { width, height } = Dimensions.get('window');
 const SCAN_AREA_SIZE = width * 0.7;
 
+/** The viewfinder scrim: the app's own ink at ~70%, not a black from nowhere. */
+const SCRIM = Colors.background + 'B3';
+/** The pill behind a control sitting on top of the camera feed. */
+const OVER_CAMERA = Colors.background + 'CC';
+
 type ScanMode = 'camera' | 'manual';
 
 export default function ScanScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  // The tab bar floats over every screen in this stack; bottom actions clear it.
+  const bottomClearance = Layout.tabBarTotalHeight + insets.bottom;
   const cameraRef = useRef<CameraView>(null);
 
   const [mode, setMode] = useState<ScanMode>('camera');
@@ -131,62 +165,57 @@ export default function ScanScreen() {
     });
   };
 
-  // Loading state
+  // Waiting on the permission object itself
   if (!permission) {
     return (
-      <SafeAreaView className="flex-1 bg-p01-void items-center justify-center">
-        <ActivityIndicator size="large" color="#39c5bb" />
-        <Text className="text-white mt-4">Requesting camera permission...</Text>
+      <SafeAreaView style={[styles.ground, styles.centred]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={styles.centredNote}>Asking for camera access…</Text>
       </SafeAreaView>
     );
   }
 
-  // No permission state
+  // Permission refused
   if (!permission.granted) {
     return (
-      <SafeAreaView className="flex-1 bg-p01-void">
-        <View className="flex-row items-center justify-between px-5 py-4">
+      <SafeAreaView style={styles.ground}>
+        <View style={styles.header}>
           <TouchableOpacity
             onPress={() => router.back()}
-            className="w-10 h-10 bg-p01-surface rounded-full items-center justify-center"
+            style={styles.headerButton}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
           >
-            <Ionicons name="close" size={24} color="#ffffff" />
+            <Ionicons name="close" size={24} color={Colors.textSecondary} />
           </TouchableOpacity>
-          <Text className="text-white text-lg font-semibold">Scan QR Code</Text>
-          <View className="w-10" />
+          <Text style={styles.headerTitle} accessibilityRole="header">Scan</Text>
+          <View style={styles.headerButton} />
         </View>
 
-        <View className="flex-1 items-center justify-center px-6">
-          <Ionicons name="camera-outline" size={64} color="#666666" />
-          <Text className="text-white text-xl font-semibold mt-4 text-center">
-            Camera Permission Required
+        <View style={styles.centred}>
+          <Ionicons name="camera-outline" size={48} color={Colors.textTertiary} />
+          <Text style={styles.blockedTitle}>Camera access is off</Text>
+          <Text style={styles.blockedBody}>
+            Styx needs the camera to read a QR code. Nothing is recorded or sent anywhere.
           </Text>
-          <Text className="text-p01-text-muted text-center mt-2">
-            Please enable camera access in your device settings to scan QR codes.
-          </Text>
-          {permission.canAskAgain ? (
-            <Button onPress={requestPermission} className="mt-6">
-              Grant Permission
-            </Button>
-          ) : (
-            <Button
-              onPress={() => Linking.openSettings()}
-              className="mt-6"
-            >
-              Open Settings
-            </Button>
-          )}
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            style={styles.blockedAction}
+            onPress={permission.canAskAgain ? requestPermission : () => Linking.openSettings()}
+          >
+            {permission.canAskAgain ? 'Allow camera' : 'Open settings'}
+          </Button>
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <View className="flex-1 bg-black">
-      {/* Camera View with Barcode Scanner */}
+    <View style={styles.cameraRoot}>
       {mode === 'camera' && (
-        <View className="flex-1 bg-black">
-          {/* Real Camera Feed */}
+        <View style={styles.cameraRoot}>
           <CameraView
             ref={cameraRef}
             style={StyleSheet.absoluteFillObject}
@@ -197,202 +226,130 @@ export default function ScanScreen() {
             }}
             onBarcodeScanned={isScanning ? handleBarCodeScanned : undefined}
           />
-          {/* Scan Frame Overlay */}
-          <View style={styles.overlay}>
-              {/* Top Overlay */}
-              <View style={styles.overlayTop} />
 
-              {/* Middle Row */}
-              <View style={styles.overlayMiddle}>
-                {/* Left Overlay */}
-                <View style={styles.overlaySide} />
-
-                {/* Scan Area */}
-                <View style={styles.scanArea}>
-                  {/* Corner Markers */}
-                  <View style={[styles.corner, styles.cornerTopLeft]} />
-                  <View style={[styles.corner, styles.cornerTopRight]} />
-                  <View style={[styles.corner, styles.cornerBottomLeft]} />
-                  <View style={[styles.corner, styles.cornerBottomRight]} />
-
-                  {/* Scanning Line Animation */}
-                  {isScanning && (
-                    <View style={styles.scanLine} />
-                  )}
-                </View>
-
-                {/* Right Overlay */}
-                <View style={styles.overlaySide} />
+          {/* Viewfinder */}
+          <View style={StyleSheet.absoluteFillObject}>
+            <View style={styles.scrim} />
+            <View style={styles.overlayMiddle}>
+              <View style={styles.scrim} />
+              <View style={styles.scanArea}>
+                <View style={[styles.corner, styles.cornerTopLeft]} />
+                <View style={[styles.corner, styles.cornerTopRight]} />
+                <View style={[styles.corner, styles.cornerBottomLeft]} />
+                <View style={[styles.corner, styles.cornerBottomRight]} />
               </View>
-
-              {/* Bottom Overlay */}
-              <View style={styles.overlayBottom} />
+              <View style={styles.scrim} />
             </View>
+            <View style={styles.scrim} />
+          </View>
 
-            {/* Instructions */}
-            <View
-              style={{
-                position: 'absolute',
-                top: height * 0.15,
-                left: 0,
-                right: 0,
-                alignItems: 'center',
-              }}
-            >
-              <Text className="text-white text-lg font-semibold">
-                Scan QR Code
-              </Text>
-              <Text className="text-p01-text-muted text-sm mt-1">
-                Position the QR code within the frame
-              </Text>
+          {/* Instruction */}
+          <View style={[styles.instructions, { top: height * 0.15 }]} pointerEvents="none">
+            <Text style={styles.instructionsTitle}>Point at a QR code</Text>
+            <Text style={styles.instructionsBody}>An address, or a Styx sign-in request</Text>
+          </View>
+
+          {/* Error */}
+          {error ? (
+            <View style={[styles.error, { bottom: height * 0.32 }]} accessibilityRole="alert">
+              <Text style={styles.errorText}>{error}</Text>
             </View>
+          ) : null}
 
-            {/* Error Message */}
-            {error && (
-              <View
-                style={{
-                  position: 'absolute',
-                  bottom: height * 0.35,
-                  backgroundColor: 'rgba(239, 68, 68, 0.9)',
-                  paddingHorizontal: 20,
-                  paddingVertical: 10,
-                  borderRadius: 12,
-                }}
-              >
-                <Text className="text-white font-medium">{error}</Text>
-              </View>
-            )}
-
-          {/* Header */}
-          <SafeAreaView
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-            }}
-            edges={['top']}
-          >
-            <View className="flex-row items-center justify-between px-5 py-4">
+          {/* Top controls */}
+          <SafeAreaView style={styles.topBar} edges={['top']}>
+            <View style={styles.header}>
               <TouchableOpacity
                 onPress={() => router.back()}
-                className="w-10 h-10 bg-black/50 rounded-full items-center justify-center"
+                style={[styles.headerButton, styles.overCamera]}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
               >
-                <Ionicons name="close" size={24} color="#ffffff" />
+                <Ionicons name="close" size={22} color={Colors.text} />
               </TouchableOpacity>
-              <View className="w-10" />
               <TouchableOpacity
                 onPress={() => setTorchOn(!torchOn)}
-                className={`w-10 h-10 rounded-full items-center justify-center ${
-                  torchOn ? 'bg-p01-cyan' : 'bg-black/50'
-                }`}
+                style={[styles.headerButton, torchOn ? styles.torchOn : styles.overCamera]}
+                accessibilityRole="button"
+                accessibilityLabel={torchOn ? 'Turn the torch off' : 'Turn the torch on'}
+                accessibilityState={{ selected: torchOn }}
               >
                 <Ionicons
                   name={torchOn ? 'flash' : 'flash-outline'}
-                  size={22}
-                  color={torchOn ? '#0a0a0a' : '#ffffff'}
+                  size={20}
+                  color={torchOn ? Colors.background : Colors.text}
                 />
               </TouchableOpacity>
             </View>
           </SafeAreaView>
 
-          {/* Bottom Controls */}
-          <SafeAreaView
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
-            }}
-            edges={['bottom']}
-          >
-            <View className="px-5 pb-6">
-              <TouchableOpacity
-                onPress={() => setMode('manual')}
-                className="bg-p01-surface/90 py-4 rounded-xl items-center flex-row justify-center"
-              >
-                <Ionicons name="create-outline" size={20} color="#39c5bb" />
-                <Text className="text-white font-medium ml-2">
-                  Enter Address Manually
-                </Text>
-              </TouchableOpacity>
-
-              {/* Re-enable scanning if paused */}
-              {!isScanning && (
-                <TouchableOpacity
-                  onPress={() => setIsScanning(true)}
-                  className="bg-p01-cyan/20 py-3 rounded-xl items-center mt-3"
-                >
-                  <Text className="text-p01-cyan font-medium">
-                    Scan Again
-                  </Text>
-                </TouchableOpacity>
+          {/* Bottom controls */}
+          <SafeAreaView style={styles.bottomBar} edges={['bottom']}>
+            <View style={[styles.bottomInner, { paddingBottom: bottomClearance }]}>
+              {!isScanning ? (
+                <Button variant="primary" size="lg" fullWidth onPress={() => setIsScanning(true)}>
+                  Scan again
+                </Button>
+              ) : (
+                <Button variant="secondary" size="lg" fullWidth onPress={() => setMode('manual')}>
+                  Type an address instead
+                </Button>
               )}
             </View>
           </SafeAreaView>
         </View>
       )}
 
-      {/* Manual Input Mode */}
       {mode === 'manual' && (
-        <SafeAreaView className="flex-1 bg-p01-void">
+        <SafeAreaView style={styles.ground}>
           <KeyboardAvoidingView
-            className="flex-1"
+            style={styles.flex}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           >
-            {/* Header */}
-            <View className="flex-row items-center justify-between px-5 py-4">
+            <View style={styles.header}>
               <TouchableOpacity
                 onPress={() => setMode('camera')}
-                className="w-10 h-10 bg-p01-surface rounded-full items-center justify-center"
+                style={styles.headerButton}
+                accessibilityRole="button"
+                accessibilityLabel="Back to the camera"
               >
-                <Ionicons name="arrow-back" size={24} color="#ffffff" />
+                <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
               </TouchableOpacity>
-              <Text className="text-white text-lg font-semibold">
-                Enter Address
-              </Text>
+              <Text style={styles.headerTitle} accessibilityRole="header">Enter address</Text>
               <TouchableOpacity
                 onPress={() => router.back()}
-                className="w-10 h-10 bg-p01-surface rounded-full items-center justify-center"
+                style={styles.headerButton}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
               >
-                <Ionicons name="close" size={24} color="#ffffff" />
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
-            <View className="flex-1 px-5 pt-6">
-              {/* Input */}
-              <View className="mb-4">
-                <Text className="text-p01-text-muted text-sm mb-2 font-medium">
-                  WALLET ADDRESS
-                </Text>
-                <View
-                  className={`bg-p01-surface rounded-xl px-4 py-4 border ${
-                    error ? 'border-red-500' : 'border-p01-border'
-                  }`}
-                >
-                  <TextInput
-                    className="text-white text-base"
-                    placeholder="Enter Solana address or .sol domain"
-                    placeholderTextColor="#666666"
-                    value={manualAddress}
-                    onChangeText={(text) => {
-                      setManualAddress(text);
-                      setError('');
-                    }}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    multiline
-                  />
-                </View>
-                {error && (
-                  <Text className="text-red-500 text-xs mt-2">{error}</Text>
-                )}
+            <View style={styles.manualBody}>
+              <Text style={styles.fieldLabel}>Wallet address</Text>
+              <View style={[styles.field, error ? styles.fieldError : null]}>
+                <TextInput
+                  style={styles.fieldInput}
+                  placeholder="Solana address or .sol domain"
+                  placeholderTextColor={Colors.textTertiary}
+                  value={manualAddress}
+                  onChangeText={(text) => {
+                    setManualAddress(text);
+                    setError('');
+                  }}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  multiline
+                  accessibilityLabel="Wallet address"
+                />
               </View>
-
+              {error ? (
+                <Text style={styles.fieldErrorText} accessibilityRole="alert">{error}</Text>
+              ) : null}
             </View>
 
-            {/* Bottom Button */}
-            <View className="px-5 pb-6">
+            <View style={[styles.manualFooter, { paddingBottom: bottomClearance }]}>
               <Button
                 onPress={handleManualSubmit}
                 disabled={!manualAddress.trim()}
@@ -410,24 +367,65 @@ export default function ScanScreen() {
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  overlayTop: {
+  flex: { flex: 1 },
+  ground: { flex: 1, backgroundColor: Colors.background },
+  cameraRoot: { flex: 1, backgroundColor: Colors.background },
+  centred: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing['3xl'],
   },
-  overlayMiddle: {
+  centredNote: {
+    color: Colors.textSecondary,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
+    marginTop: Spacing.lg,
+  },
+
+  header: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    minHeight: 56,
   },
-  overlaySide: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+  headerButton: {
+    width: 44,
+    height: 44,
+    borderRadius: BorderRadius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  overlayBottom: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+  headerTitle: {
+    color: Colors.text,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
   },
+  overCamera: { backgroundColor: OVER_CAMERA },
+  torchOn: { backgroundColor: Colors.primary },
+
+  // Permission refused
+  blockedTitle: {
+    color: Colors.text,
+    fontFamily: FontFamily.display,
+    fontSize: FontSize['2xl'],
+    textAlign: 'center',
+    marginTop: Spacing['2xl'],
+  },
+  blockedBody: {
+    color: Colors.textSecondary,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginTop: Spacing.sm,
+  },
+  blockedAction: { marginTop: Spacing['3xl'] },
+
+  // Viewfinder
+  scrim: { flex: 1, backgroundColor: SCRIM },
+  overlayMiddle: { flexDirection: 'row' },
   scanArea: {
     width: SCAN_AREA_SIZE,
     height: SCAN_AREA_SIZE,
@@ -435,48 +433,85 @@ const styles = StyleSheet.create({
   },
   corner: {
     position: 'absolute',
-    width: 30,
-    height: 30,
-    borderColor: '#39c5bb',
+    width: 28,
+    height: 28,
+    borderColor: Colors.primary,
   },
-  cornerTopLeft: {
-    top: 0,
-    left: 0,
-    borderTopWidth: 4,
-    borderLeftWidth: 4,
-    borderTopLeftRadius: 8,
-  },
-  cornerTopRight: {
-    top: 0,
-    right: 0,
-    borderTopWidth: 4,
-    borderRightWidth: 4,
-    borderTopRightRadius: 8,
-  },
-  cornerBottomLeft: {
-    bottom: 0,
-    left: 0,
-    borderBottomWidth: 4,
-    borderLeftWidth: 4,
-    borderBottomLeftRadius: 8,
-  },
-  cornerBottomRight: {
-    bottom: 0,
-    right: 0,
-    borderBottomWidth: 4,
-    borderRightWidth: 4,
-    borderBottomRightRadius: 8,
-  },
-  scanLine: {
+  cornerTopLeft: { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: 8 },
+  cornerTopRight: { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 8 },
+  cornerBottomLeft: { bottom: 0, left: 0, borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 8 },
+  cornerBottomRight: { bottom: 0, right: 0, borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 8 },
+
+  instructions: {
     position: 'absolute',
-    top: '50%',
-    left: 10,
-    right: 10,
-    height: 2,
-    backgroundColor: '#39c5bb',
-    shadowColor: '#39c5bb',
-    shadowOpacity: 0.8,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 0 },
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    gap: Spacing.xs,
   },
+  instructionsTitle: {
+    color: Colors.text,
+    fontFamily: FontFamily.displayMedium,
+    fontSize: FontSize.xl,
+  },
+  instructionsBody: {
+    color: Colors.textSecondary,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+  },
+
+  error: {
+    position: 'absolute',
+    alignSelf: 'center',
+    maxWidth: '86%',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.error,
+    backgroundColor: Colors.surface,
+  },
+  errorText: {
+    color: Colors.error,
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    textAlign: 'center',
+  },
+
+  topBar: { position: 'absolute', top: 0, left: 0, right: 0 },
+  bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0 },
+  bottomInner: { paddingHorizontal: Spacing.xl },
+
+  // Manual entry
+  manualBody: { flex: 1, paddingHorizontal: Spacing.xl, paddingTop: Spacing['2xl'] },
+  fieldLabel: {
+    color: Colors.textSecondary,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    marginBottom: Spacing.sm,
+  },
+  field: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    minHeight: 56,
+    justifyContent: 'center',
+  },
+  fieldError: { borderColor: Colors.error },
+  fieldInput: {
+    color: Colors.text,
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.md,
+    lineHeight: 22,
+  },
+  fieldErrorText: {
+    color: Colors.error,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    marginTop: Spacing.sm,
+  },
+  manualFooter: { paddingHorizontal: Spacing.xl },
 });

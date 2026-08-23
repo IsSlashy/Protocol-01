@@ -133,7 +133,7 @@ export default function CreateWalletScreen() {
   }));
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a0c' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#070709' }}>
       <View style={{ flex: 1, paddingHorizontal: 32, paddingTop: 80 }}>
         {/* Logo */}
         <Animated.View
@@ -148,7 +148,7 @@ export default function CreateWalletScreen() {
           entering={FadeInDown.delay(400).duration(600)}
           style={{ alignItems: 'center', marginBottom: 48 }}
         >
-          <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
+          <Text style={{ color: '#eae7df', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
             {t('onboarding.creatingWallet')}
           </Text>
           <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
@@ -161,7 +161,7 @@ export default function CreateWalletScreen() {
           entering={FadeInDown.delay(600).duration(600)}
           style={{ marginBottom: 48 }}
         >
-          <View style={{ height: 8, backgroundColor: '#151518', borderRadius: 999, overflow: 'hidden' }}>
+          <View style={{ height: 8, backgroundColor: '#101014', borderRadius: 999, overflow: 'hidden' }}>
             <Animated.View
               style={[
                 progressBarStyle,
@@ -179,9 +179,9 @@ export default function CreateWalletScreen() {
         <Animated.View
           entering={FadeInDown.delay(800).duration(600)}
           style={{
-            backgroundColor: '#0f0f12',
+            backgroundColor: '#0d0d10',
             borderWidth: 1,
-            borderColor: '#2a2a30',
+            borderColor: 'rgba(234, 231, 223, 0.14)',
             borderRadius: 16,
             padding: 24
           }}
@@ -213,7 +213,7 @@ export default function CreateWalletScreen() {
         >
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#39c5bb', marginRight: 8 }} />
-            <Text style={{ color: '#555560', fontSize: 14 }}>
+            <Text style={{ color: 'rgba(234, 231, 223, 0.40)', fontSize: 14 }}>
               {t('onboarding.encryptedSecurity')}
             </Text>
           </View>

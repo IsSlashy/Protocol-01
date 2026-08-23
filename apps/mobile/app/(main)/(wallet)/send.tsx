@@ -1,3 +1,32 @@
+/**
+ * Send SOL — the public transfer.
+ *
+ * 🎯 RESTYLED 2026-08-23.
+ *   - ⛔ THE LOCAL `P01` PALETTE IS DELETED. This file declared its own four
+ *     colours at the top, one of them the retired pink, which is precisely how
+ *     a token sweep over `constants/theme.ts` can move an app and leave a
+ *     screen behind. Every colour is `Colors.*` now.
+ *   - the field labels were "AMOUNT" and "RECIPIENT ADDRESS", caps and
+ *     letterspaced. That house style is being removed everywhere.
+ *   - the "public send" notice was PINK. It is a caution, and caution in this
+ *     system is amber; pink was decoration on the one line of this screen that
+ *     is actually a warning. It also pointed the user at Private Send, which is
+ *     the parked personal-payments feature — it now says what is visible and
+ *     stops there.
+ *   - every target is at least 44pt, and both errors carry
+ *     `accessibilityRole="alert"` beside the field that produced them.
+ *
+ * ⛔ LEFT ALONE ON PURPOSE, and reported rather than changed:
+ *   - the confirm dialog. It restates what is on screen, so by the lean rule it
+ *     should go — but `authenticateForSend()` returns true when the user has
+ *     biometrics switched off, and then this dialog is the ONLY thing between a
+ *     tap and an irreversible transfer. Removing it is a security change, not a
+ *     UI one.
+ *   - the jump to the full-screen `send-success` route. Collapsing that into a
+ *     return-to-where-you-were is the right call, but the success screen is not
+ *     part of this pass and removing its only entry point would orphan it.
+ */
+
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
@@ -9,30 +38,23 @@ import {
   Platform,
   StyleSheet,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { useWalletStore } from '@/stores/walletStore';
 import { useSecuritySettings } from '@/hooks/useSecuritySettings';
 import { isValidAddress } from '@/services/solana/transactions';
-import { isDevnet, getCluster } from '@/services/solana/connection';
+import { getCluster } from '@/services/solana/connection';
 import { formatBalance } from '@/services/solana/balance';
-import { Colors, FontFamily, BorderRadius, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing, Layout } from '@/constants/theme';
+import { Button } from '@/components/ui/Button';
 import { p01Alert } from '@/stores/alertStore';
-
-// P-01 Design System Colors - NO purple allowed
-const P01 = {
-  cyan: '#39c5bb',
-  cyanDim: 'rgba(57, 197, 187, 0.15)',
-  pink: '#ff77a8',
-  pinkDim: 'rgba(255, 119, 168, 0.15)',
-};
 
 export default function SendScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ address?: string }>();
   const {
     balance,
@@ -210,7 +232,12 @@ export default function SendScreen() {
     );
   };
 
-  const isFormValid = recipient && amount && !recipientError && !amountError && !sending;
+  const isFormValid = !!recipient && !!amount && !recipientError && !amountError && !sending;
+
+  const networkLabel =
+    currentNetwork === 'mainnet-beta' ? 'Mainnet'
+      : currentNetwork === 'devnet' ? 'Devnet'
+        : 'Testnet';
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -219,28 +246,30 @@ export default function SendScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         {/* Header */}
-        <Animated.View entering={FadeInDown.delay(100)} style={styles.header}>
+        <View style={styles.header}>
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.backButton}
             accessibilityRole="button"
             accessibilityLabel="Go back"
           >
-            <Ionicons name="arrow-back" size={24} color={Colors.text} />
+            <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Send SOL</Text>
+          <Text style={styles.headerTitle} accessibilityRole="header">Send SOL</Text>
           <View style={styles.backButton} />
-        </Animated.View>
+        </View>
 
         <ScrollView
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: Layout.tabBarTotalHeight + insets.bottom + Spacing['2xl'] },
+          ]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Amount Input */}
-          <Animated.View entering={FadeInUp.delay(200)} style={styles.amountSection}>
-            <Text style={styles.amountLabel}>AMOUNT</Text>
+          {/* Amount */}
+          <View style={styles.amountSection}>
             <View style={styles.amountInputContainer}>
               <TextInput
                 style={styles.amountInput}
@@ -254,11 +283,12 @@ export default function SendScreen() {
               />
               <Text style={styles.amountSymbol}>SOL</Text>
             </View>
-            <Text style={styles.usdValue}>
-              ≈ ${usdValue.toFixed(2)} USD
-            </Text>
 
-            {/* Percentage Buttons */}
+            {/* Only when a price was actually looked up. */}
+            {solPrice > 0 ? (
+              <Text style={styles.usdValue}>≈ ${usdValue.toFixed(2)}</Text>
+            ) : null}
+
             <View style={styles.percentButtons}>
               {[0.25, 0.5, 0.75, 1].map((percent) => (
                 <TouchableOpacity
@@ -269,32 +299,31 @@ export default function SendScreen() {
                   accessibilityLabel={percent === 1 ? 'Maximum amount' : `${percent * 100} percent of balance`}
                 >
                   <Text style={styles.percentButtonText}>
-                    {percent === 1 ? 'MAX' : `${percent * 100}%`}
+                    {percent === 1 ? 'Max' : `${percent * 100}%`}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
 
             {amountError ? (
-              <Text style={styles.errorText}>{amountError}</Text>
+              <Text style={styles.errorText} accessibilityRole="alert">{amountError}</Text>
             ) : null}
 
-            <View style={styles.balanceRow}>
-              <Text style={styles.balanceLabel}>Available:</Text>
-              <Text style={styles.balanceValue}>{formattedSolBalance} SOL</Text>
-            </View>
-          </Animated.View>
+            <Text style={styles.balanceLine}>
+              Available {formattedSolBalance} SOL
+            </Text>
+          </View>
 
-          {/* Recipient Input */}
-          <Animated.View entering={FadeInUp.delay(300)} style={styles.recipientSection}>
-            <Text style={styles.inputLabel}>RECIPIENT ADDRESS</Text>
+          {/* Recipient */}
+          <View style={styles.recipientSection}>
+            <Text style={styles.inputLabel}>To</Text>
             <View style={[
               styles.inputContainer,
               recipientError ? styles.inputError : null,
             ]}>
               <TextInput
                 style={styles.textInput}
-                placeholder="Enter Solana address"
+                placeholder="Solana address"
                 placeholderTextColor={Colors.textTertiary}
                 value={recipient}
                 onChangeText={handleRecipientChange}
@@ -307,11 +336,11 @@ export default function SendScreen() {
               />
               <TouchableOpacity
                 onPress={() => router.push('/(main)/(wallet)/scan')}
-                style={styles.scanButton}
+                style={styles.inlineButton}
                 accessibilityRole="button"
                 accessibilityLabel="Scan QR code"
               >
-                <Ionicons name="scan-outline" size={20} color={Colors.primary} />
+                <Ionicons name="scan-outline" size={20} color={Colors.textSecondary} />
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={async () => {
@@ -319,82 +348,56 @@ export default function SendScreen() {
                   const text = await getStringAsync();
                   if (text) { setRecipient(text.trim()); validateRecipient(text.trim()); }
                 }}
-                style={[styles.scanButton, { marginLeft: Spacing.xs }]}
+                style={styles.inlineButton}
                 accessibilityRole="button"
                 accessibilityLabel="Paste address"
               >
-                <Ionicons name="clipboard-outline" size={20} color={Colors.primary} />
+                <Ionicons name="clipboard-outline" size={20} color={Colors.textSecondary} />
               </TouchableOpacity>
             </View>
             {recipientError ? (
-              <Text style={styles.errorText}>{recipientError}</Text>
+              <Text style={styles.errorText} accessibilityRole="alert">{recipientError}</Text>
             ) : null}
-          </Animated.View>
+          </View>
 
-          {/* Privacy Warning */}
-          <Animated.View entering={FadeInUp.delay(350)} style={styles.privacyWarning}>
-            <Ionicons name="eye-outline" size={16} color={P01.pink} />
-            <Text style={styles.privacyWarningText}>
-              Public send — visible on-chain. Use Private Send for full privacy.
+          {/* What this transfer reveals. Amber, because it is a caution. */}
+          <View style={styles.caution}>
+            <Ionicons name="eye-outline" size={16} color={Colors.yellow} />
+            <Text style={styles.cautionText}>
+              A public transfer. The amount, the recipient and this wallet are all visible on chain.
             </Text>
-          </Animated.View>
+          </View>
 
-          {/* Transaction Info */}
-          <Animated.View entering={FadeInUp.delay(400)} style={styles.infoCard}>
+          {/* Transaction detail */}
+          <View style={styles.infoCard}>
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Network Fee</Text>
+              <Text style={styles.infoLabel}>Network fee</Text>
               <Text style={styles.infoValue}>~0.000005 SOL</Text>
             </View>
             <View style={styles.infoDivider} />
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Reserved (MAX)</Text>
+              <Text style={styles.infoLabel}>Held back for fees on Max</Text>
               <Text style={styles.infoValue}>{FEE_RESERVE_SOL} SOL</Text>
             </View>
             <View style={styles.infoDivider} />
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Network</Text>
-              <View style={[
-                styles.networkBadge,
-                currentNetwork === 'mainnet-beta' && { backgroundColor: Colors.successDim },
-              ]}>
-                <View style={[
-                  styles.networkDot,
-                  currentNetwork === 'mainnet-beta' && { backgroundColor: Colors.success },
-                ]} />
-                <Text style={[
-                  styles.networkText,
-                  currentNetwork === 'mainnet-beta' && { color: Colors.success },
-                ]}>
-                  {currentNetwork === 'mainnet-beta' ? 'Mainnet' :
-                   currentNetwork === 'devnet' ? 'Devnet' : 'Testnet'}
-                </Text>
-              </View>
+              <Text style={styles.infoValue}>{networkLabel}</Text>
             </View>
-          </Animated.View>
+          </View>
 
-          {/* Send Button */}
-          <Animated.View entering={FadeInUp.delay(500)} style={{ marginTop: Spacing.xl }}>
-            <TouchableOpacity
-              onPress={handleSend}
-              disabled={!isFormValid}
-              accessibilityRole="button"
-              accessibilityLabel={sending ? 'Sending' : 'Send SOL'}
-              accessibilityState={{ disabled: !isFormValid }}
-              style={[
-                styles.sendButton,
-                !isFormValid ? styles.sendButtonDisabled : null,
-              ]}
-            >
-              {sending ? (
-                <Text style={styles.sendButtonText}>Sending...</Text>
-              ) : (
-                <>
-                  <Ionicons name="arrow-up" size={20} color={Colors.background} />
-                  <Text style={styles.sendButtonText}>Send SOL</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </Animated.View>
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            loading={sending || loading}
+            disabled={!isFormValid}
+            onPress={handleSend}
+            accessibilityLabel="Send SOL"
+            style={styles.sendButton}
+          >
+            Send SOL
+          </Button>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -413,116 +416,98 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.md,
+    minHeight: 56,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.surfaceSecondary,
+    width: 44,
+    height: 44,
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerTitle: {
     color: Colors.text,
-    fontSize: 18,
-    fontFamily: FontFamily.semibold,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
     paddingHorizontal: Spacing.xl,
-    paddingBottom: 140,
   },
   amountSection: {
     alignItems: 'center',
-    marginBottom: Spacing.lg,
-    paddingVertical: Spacing.lg,
-  },
-  amountLabel: {
-    color: Colors.textTertiary,
-    fontSize: 12,
-    fontFamily: FontFamily.semibold,
-    letterSpacing: 1,
-    marginBottom: Spacing.lg,
+    paddingTop: Spacing['3xl'],
+    paddingBottom: Spacing['2xl'],
   },
   amountInputContainer: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    marginBottom: Spacing.sm,
+    gap: Spacing.sm,
   },
   amountInput: {
     color: Colors.text,
-    fontSize: 48,
-    fontFamily: FontFamily.bold,
+    fontSize: FontSize['5xl'],
+    fontFamily: FontFamily.display,
     minWidth: 60,
     textAlign: 'center',
+    padding: 0,
   },
   amountSymbol: {
     color: Colors.textSecondary,
-    fontSize: 24,
-    fontFamily: FontFamily.medium,
-    marginLeft: Spacing.sm,
+    fontSize: FontSize['2xl'],
+    fontFamily: FontFamily.display,
   },
   usdValue: {
     color: Colors.textSecondary,
-    fontSize: 15,
-    fontFamily: FontFamily.regular,
-    marginBottom: Spacing.xl,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.mono,
+    marginTop: Spacing.sm,
   },
   percentButtons: {
     flexDirection: 'row',
     gap: Spacing.sm,
-    marginBottom: Spacing.lg,
+    marginTop: Spacing['2xl'],
   },
   percentButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.lg,
-    backgroundColor: Colors.surfaceSecondary,
-    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.border,
   },
   percentButtonText: {
-    color: Colors.primary,
-    fontSize: 13,
-    fontFamily: FontFamily.semibold,
-  },
-  balanceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-  },
-  balanceLabel: {
-    color: Colors.textTertiary,
-    fontSize: 13,
-    fontFamily: FontFamily.regular,
-  },
-  balanceValue: {
-    color: Colors.textSecondary,
-    fontSize: 13,
+    color: Colors.text,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.medium,
+  },
+  balanceLine: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    marginTop: Spacing.lg,
   },
   recipientSection: {
     marginBottom: Spacing['2xl'],
   },
   inputLabel: {
-    color: Colors.textTertiary,
-    fontSize: 12,
-    fontFamily: FontFamily.semibold,
-    letterSpacing: 1,
+    color: Colors.textSecondary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
     marginBottom: Spacing.sm,
   },
   inputContainer: {
-    backgroundColor: Colors.surfaceSecondary,
+    backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: Colors.primary + '40',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    padding: Spacing.lg,
+    alignItems: 'center',
+    paddingLeft: Spacing.lg,
+    paddingRight: Spacing.xs,
+    paddingVertical: Spacing.xs,
   },
   inputError: {
     borderColor: Colors.error,
@@ -530,110 +515,74 @@ const styles = StyleSheet.create({
   textInput: {
     flex: 1,
     color: Colors.text,
-    fontSize: 15,
+    fontSize: FontSize.md,
     fontFamily: FontFamily.mono,
     lineHeight: 22,
+    paddingVertical: Spacing.md,
   },
-  scanButton: {
-    width: 40,
-    height: 40,
+  inlineButton: {
+    width: 44,
+    height: 44,
     borderRadius: BorderRadius.md,
-    backgroundColor: Colors.primaryDim,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: Spacing.md,
   },
   errorText: {
     color: Colors.error,
-    fontSize: 12,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.regular,
     marginTop: Spacing.sm,
+    alignSelf: 'flex-start',
   },
-  privacyWarning: {
+  caution: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: Spacing.sm,
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
+    padding: Spacing.md,
     marginBottom: Spacing.xl,
-    backgroundColor: 'rgba(255, 119, 168, 0.08)',
+    backgroundColor: Colors.warningDim,
     borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.yellow,
   },
-  privacyWarningText: {
-    color: P01.pink,
-    fontSize: 12,
+  cautionText: {
+    color: Colors.text,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.regular,
+    lineHeight: 19,
     flex: 1,
   },
   infoCard: {
-    backgroundColor: Colors.surfaceSecondary,
+    backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.border,
-    padding: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
   },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: Spacing.sm,
+    paddingVertical: Spacing.md,
+    gap: Spacing.lg,
   },
   infoLabel: {
     color: Colors.textSecondary,
-    fontSize: 14,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.regular,
+    flexShrink: 1,
   },
   infoValue: {
     color: Colors.text,
-    fontSize: 14,
-    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.mono,
   },
   infoDivider: {
-    height: 1,
-    backgroundColor: Colors.border,
-    marginVertical: Spacing.sm,
-  },
-  networkBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: P01.pinkDim,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.full,
-    gap: Spacing.xs,
-  },
-  networkDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: P01.pink,
-  },
-  networkText: {
-    color: P01.pink,
-    fontSize: 12,
-    fontFamily: FontFamily.medium,
-  },
-  bottomSection: {
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md,
-    paddingBottom: 140,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: Colors.borderSoft,
   },
   sendButton: {
-    backgroundColor: Colors.primary,
-    borderRadius: BorderRadius.lg,
-    paddingVertical: Spacing.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-  },
-  sendButtonDisabled: {
-    backgroundColor: Colors.textTertiary,
-    opacity: 0.5,
-  },
-  sendButtonText: {
-    color: Colors.background,
-    fontSize: 16,
-    fontFamily: FontFamily.semibold,
+    marginTop: Spacing['2xl'],
   },
 });

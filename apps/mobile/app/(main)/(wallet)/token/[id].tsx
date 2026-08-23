@@ -259,7 +259,7 @@ export default function TokenDetailScreen() {
             onPress={() => router.back()}
             className="w-10 h-10 bg-p01-surface rounded-full items-center justify-center"
           >
-            <Ionicons name="arrow-back" size={24} color="#ffffff" />
+            <Ionicons name="arrow-back" size={24} color="#eae7df" />
           </TouchableOpacity>
           <Text className="text-white text-lg font-semibold">Token</Text>
           <View className="w-10" />
@@ -292,7 +292,7 @@ export default function TokenDetailScreen() {
           onPress={() => router.back()}
           className="w-10 h-10 bg-p01-surface rounded-full items-center justify-center"
         >
-          <Ionicons name="arrow-back" size={24} color="#ffffff" />
+          <Ionicons name="arrow-back" size={24} color="#eae7df" />
         </TouchableOpacity>
         <View className="flex-row items-center">
           <View className="w-8 h-8 bg-p01-surface-light rounded-full items-center justify-center mr-2">
@@ -307,7 +307,7 @@ export default function TokenDetailScreen() {
           <Ionicons
             name={balanceHidden ? 'eye-outline' : 'eye-off-outline'}
             size={20}
-            color="#ffffff"
+            color="#eae7df"
           />
         </TouchableOpacity>
       </View>

@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
 
-// P-01 Design System Background: void = #0a0a0c
+// P-01 Design System Background: void = #070709
 export default function WalletLayout() {
   return (
     <Stack

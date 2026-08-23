@@ -1,5 +1,15 @@
+/**
+ * ProgressSteps — the checklist the wallet-creation screen ticks off.
+ *
+ * Colour literals replaced with tokens 2026-08-23; the shapes and the timing
+ * are unchanged. The one visible change is the label face: step text was the
+ * platform default at 16pt, so it did not match the body face anywhere else in
+ * the app.
+ */
 import React, { useEffect } from 'react';
 import { View, Text } from 'react-native';
+
+import { Colors, Spacing, FontFamily, FontSize } from '../../constants/theme';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -60,12 +70,12 @@ const StepItem: React.FC<{ step: Step; index: number }> = ({ step }) => {
               width: 24,
               height: 24,
               borderRadius: 12,
-              backgroundColor: '#39c5bb',
+              backgroundColor: Colors.primary,
               alignItems: 'center',
               justifyContent: 'center',
             }}
           >
-            <Ionicons name="checkmark" size={16} color="#0a0a0c" />
+            <Ionicons name="checkmark" size={16} color={Colors.background} />
           </View>
         );
       case 'in_progress':
@@ -77,7 +87,7 @@ const StepItem: React.FC<{ step: Step; index: number }> = ({ step }) => {
                 height: 24,
                 borderRadius: 12,
                 borderWidth: 2,
-                borderColor: '#39c5bb',
+                borderColor: Colors.primary,
                 borderTopColor: 'transparent',
               }}
             />
@@ -91,7 +101,7 @@ const StepItem: React.FC<{ step: Step; index: number }> = ({ step }) => {
               height: 24,
               borderRadius: 12,
               borderWidth: 2,
-              borderColor: '#2a2a30',
+              borderColor: Colors.border,
             }}
           />
         );
@@ -102,20 +112,21 @@ const StepItem: React.FC<{ step: Step; index: number }> = ({ step }) => {
     <Animated.View
       style={[
         containerStyle,
-        { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
+        { flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md },
       ]}
     >
       {getIcon()}
       <Text
         style={{
-          marginLeft: 16,
-          fontSize: 16,
+          marginLeft: Spacing.lg,
+          fontFamily: FontFamily.regular,
+          fontSize: FontSize.md,
           color:
             step.status === 'completed'
-              ? '#39c5bb'
+              ? Colors.primary
               : step.status === 'in_progress'
-              ? '#ffffff'
-              : '#555560',
+              ? Colors.text
+              : Colors.textTertiary,
         }}
       >
         {step.label}

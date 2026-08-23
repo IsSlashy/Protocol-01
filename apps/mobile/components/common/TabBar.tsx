@@ -1,12 +1,20 @@
+/**
+ * TabBar — a generic bottom tab strip.
+ *
+ * 🎯 REBUILT ON THE REALIGNED THEME 2026-08-23. Colours were Tailwind names and
+ * two raw literals; heights were Tailwind's, not `Layout`'s. Every tab is now a
+ * real 44pt target, announces itself as a tab, and says whether it is selected —
+ * none of which it did before, on the one control that is on screen the whole
+ * time the app is open.
+ */
+
 import React from 'react';
-import { View, Text, TouchableOpacity, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, Dimensions, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, {
-  useAnimatedStyle,
-  withSpring,
-  interpolate,
-} from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, withSpring } from 'react-native-reanimated';
+
+import { Colors, Spacing, FontFamily, FontSize, BorderRadius, Layout } from '@/constants/theme';
 
 interface TabItem {
   key: string;
@@ -25,6 +33,7 @@ interface TabBarProps {
 }
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const INDICATOR_WIDTH = 28;
 
 export const TabBar: React.FC<TabBarProps> = ({
   tabs,
@@ -42,10 +51,10 @@ export const TabBar: React.FC<TabBarProps> = ({
     return {
       transform: [
         {
-          translateX: withSpring(activeIndex * tabWidth + tabWidth / 2 - 20, {
-            damping: 20,
-            stiffness: 200,
-          }),
+          translateX: withSpring(
+            activeIndex * tabWidth + tabWidth / 2 - INDICATOR_WIDTH / 2,
+            { damping: 20, stiffness: 200 }
+          ),
         },
       ],
     };
@@ -53,15 +62,13 @@ export const TabBar: React.FC<TabBarProps> = ({
 
   return (
     <View
-      className={`bg-p01-surface border-t border-p01-border ${className || ''}`}
-      style={{ paddingBottom: insets.bottom }}
+      style={[styles.bar, { paddingBottom: insets.bottom }]}
+      className={className}
+      accessibilityRole="tablist"
     >
-      <Animated.View
-        className="absolute top-0 w-10 h-1 bg-p01-cyan rounded-full"
-        style={indicatorStyle}
-      />
+      <Animated.View style={[styles.indicator, indicatorStyle]} />
 
-      <View className="flex-row h-16">
+      <View style={styles.row}>
         {tabs.map((tab) => {
           const isActive = tab.key === activeTab;
           const iconName = isActive && tab.activeIcon ? tab.activeIcon : tab.icon;
@@ -70,33 +77,32 @@ export const TabBar: React.FC<TabBarProps> = ({
             <TouchableOpacity
               key={tab.key}
               onPress={() => onTabPress(tab.key)}
-              className="flex-1 items-center justify-center"
+              style={styles.tab}
               activeOpacity={0.7}
+              accessibilityRole="tab"
+              accessibilityLabel={tab.label}
+              accessibilityState={{ selected: isActive }}
             >
-              <View className="relative">
+              <View>
                 <Ionicons
                   name={iconName}
-                  size={24}
-                  color={isActive ? '#39c5bb' : '#555560'}
+                  size={22}
+                  color={isActive ? Colors.primary : Colors.textTertiary}
                 />
-                {tab.badge !== undefined && tab.badge > 0 && (
-                  <View className="absolute -top-1 -right-2 bg-p01-cyan min-w-[16px] h-4 rounded-full items-center justify-center px-1">
-                    <Text className="text-p01-void text-[10px] font-bold">
+                {tab.badge !== undefined && tab.badge > 0 ? (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>
                       {tab.badge > 99 ? '99+' : tab.badge}
                     </Text>
                   </View>
-                )}
+                ) : null}
               </View>
-              {showLabels && (
-                <Text
-                  className={`
-                    text-xs mt-1
-                    ${isActive ? 'text-p01-cyan font-medium' : 'text-p01-text-secondary'}
-                  `}
-                >
+
+              {showLabels ? (
+                <Text style={[styles.label, isActive && styles.labelActive]} numberOfLines={1}>
                   {tab.label}
                 </Text>
-              )}
+              ) : null}
             </TouchableOpacity>
           );
         })}
@@ -104,5 +110,58 @@ export const TabBar: React.FC<TabBarProps> = ({
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  bar: {
+    backgroundColor: Colors.surfaceSecondary,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.border,
+  },
+  indicator: {
+    position: 'absolute',
+    top: 0,
+    width: INDICATOR_WIDTH,
+    height: 2,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.primary,
+  },
+  row: {
+    flexDirection: 'row',
+    height: Layout.tabBarHeight,
+  },
+  tab: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  label: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    color: Colors.textTertiary,
+  },
+  labelActive: {
+    fontFamily: FontFamily.medium,
+    color: Colors.primary,
+  },
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -10,
+    minWidth: 16,
+    height: 16,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: Spacing.xs,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
+  },
+  badgeText: {
+    fontFamily: FontFamily.medium,
+    fontSize: 10,
+    color: Colors.background,
+  },
+});
 
 export default TabBar;

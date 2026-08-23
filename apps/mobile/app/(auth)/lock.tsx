@@ -1,4 +1,40 @@
-import { View, Text, Pressable, Image, StyleSheet, TouchableOpacity } from 'react-native';
+/**
+ * lock — the screen between a stolen phone and the wallet.
+ *
+ * 🎯 REBUILT 2026-08-23 to the same shape as the Chrome extension's unlock
+ * screen, because it had the same disease: a mark, one sentence, one field,
+ * one button is the whole job, and this file was doing considerably more of
+ * everything.
+ *
+ * ⛔ WHAT CAME OFF, AND WHY EACH ONE HAD TO:
+ *   - `assets/images/01-miku.png` at 80×80. The 01 mark is retired (founder
+ *     ruling 2026-08-23) and `app/design-system.test.ts` now fails on any file
+ *     that references the raster. The Wordmark replaces it.
+ *   - "PROTOCOL 01" in 22pt Inter-Bold at 2pt of tracking. The product is
+ *     called Styx, the Wordmark already says so, and the heading was the body
+ *     face one weight louder — which is precisely what the display face was
+ *     added to stop.
+ *   - the 80pt fingerprint disc, and its pressed state
+ *     `rgba(85, 85, 96, 0.2)` — a cool grey from the palette this app no
+ *     longer uses, hardcoded where the theme could not reach it.
+ *   - the 64pt cyan keypad-icon disc above the PIN entry. Someone looking at
+ *     six dots and a number pad does not need to be told it is a number pad.
+ *
+ * 🚨 THE ERROR MOVED TO THE FIELD. "Incorrect PIN" used to be rendered by
+ * swapping the SUBTITLE — a line above the dots that normally reads "Enter your
+ * 6-digit PIN" — from grey to red. So the failure appeared where the
+ * instruction had been, above the thing that failed, and a screen reader
+ * announced nothing at all because no text was inserted, only recoloured. It is
+ * now its own line under the dots with `accessibilityRole="alert"`, and the
+ * instruction stays put.
+ *
+ * ⚠️ NOT TOUCHED, ON PURPOSE: the lockout ladder, the constant-time hash
+ * comparison (L9), the SecureStore persistence that stops a restart from
+ * clearing the attempt count (M13), the vault unlock, and the re-authentication
+ * gate on switching wallets (M2). This was a UI pass.
+ */
+
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { p01Alert } from '@/stores/alertStore';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -6,9 +42,11 @@ import { useEffect, useState } from 'react';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeIn, FadeInDown, FadeInUp, FadeOut } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
+import { Wordmark } from '@/components/common/Wordmark';
+import { Button } from '@/components/ui/Button';
 import { scheduleLocalNotification } from '@/services/notifications';
 import { unlockVault, unlockVaultBiometric, isVaultEnabled } from '@/utils/crypto/noteVault';
 import { hashPin, constantTimeEqual } from '@/utils/crypto/pinHash';
@@ -230,37 +268,77 @@ export default function LockScreen() {
     }
   };
 
-  // PIN Entry View
+  const switchWallet = async () => {
+    // M2: Require authentication before allowing wallet switch
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: t('lock.authenticateToSwitch'),
+        disableDeviceFallback: false,
+        cancelLabel: t('common.cancel'),
+      });
+      if (result.success) {
+        router.push('/(onboarding)');
+      }
+    } catch {
+      // Authentication error — stay on lock screen
+    }
+  };
+
+  const lockedOut = lockoutUntil > Date.now();
+
+  // ── PIN entry ────────────────────────────────────────────────────────────
   if (showPinEntry) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-        {/* Header */}
-        <Animated.View entering={FadeInUp.delay(100).springify()} style={styles.logoContainer}>
-          <View style={styles.pinIconWrap}>
-            <Ionicons name="keypad" size={32} color={P01Colors.cyan} />
+      <View style={[styles.container, { paddingTop: insets.top, paddingBottom: Math.max(insets.bottom, Spacing['2xl']) }]}>
+        <View style={styles.spacer} />
+
+        {/* The mark, and the one sentence.
+            ⚠️ ONE sentence. The title read "Enter PIN" and the line under it
+            read "Enter your 6-digit PIN" — the same instruction twice, on a
+            screen showing six empty dots that already say how many digits it
+            wants. The subtitle went. */}
+        <Animated.View entering={FadeInUp.delay(100).springify()} style={styles.head}>
+          <Wordmark size={40} />
+          <Text style={styles.title} accessibilityRole="header">{t('lock.enterPin')}</Text>
+        </Animated.View>
+
+        {/* The field. */}
+        <Animated.View entering={FadeIn.delay(200)} style={styles.pinBlock}>
+          <View
+            style={styles.pinDotsRow}
+            accessibilityRole="text"
+            accessibilityLabel={t('lock.enterYourPin')}
+            accessibilityValue={{ text: `${pin.length}/6` }}
+          >
+            {[0, 1, 2, 3, 4, 5].map((index) => (
+              <View
+                key={index}
+                style={[
+                  styles.pinDot,
+                  pin.length > index && styles.pinDotFilled,
+                  pinError && styles.pinDotError,
+                ]}
+              />
+            ))}
           </View>
-          <Text style={styles.title}>{t('lock.enterPin')}</Text>
-          <Text style={[styles.subtitle, pinError && styles.subtitleError]}>
-            {pinError ? t('lock.incorrectPin') : t('lock.enterYourPin')}
-          </Text>
+
+          {/* 🎯 The failure lives under the thing that failed, and it is real
+              text so a screen reader has something to announce. */}
+          {pinError ? (
+            <Text style={styles.fieldError} accessibilityRole="alert">
+              {t('lock.incorrectPin')}
+            </Text>
+          ) : null}
+
+          {lockedOut ? (
+            <Text style={styles.fieldError} accessibilityRole="alert">
+              {t('lock.tooManyAttemptsLater')}
+            </Text>
+          ) : null}
         </Animated.View>
 
-        {/* PIN Dots */}
-        <Animated.View entering={FadeIn.delay(200)} style={styles.pinDotsContainer}>
-          {[0, 1, 2, 3, 4, 5].map((index) => (
-            <View
-              key={index}
-              style={[
-                styles.pinDot,
-                pin.length > index && styles.pinDotFilled,
-                pinError && styles.pinDotError,
-              ]}
-            />
-          ))}
-        </Animated.View>
-
-        {/* Keypad */}
-        <Animated.View entering={FadeInDown.delay(300).springify()} style={styles.keypadContainer}>
+        {/* The keypad. */}
+        <Animated.View entering={FadeInDown.delay(300).springify()} style={styles.keypad}>
           {[
             ['1', '2', '3'],
             ['4', '5', '6'],
@@ -271,7 +349,7 @@ export default function LockScreen() {
               {row.map((key, keyIndex) => (
                 <TouchableOpacity
                   key={keyIndex}
-                  style={[styles.keypadButton, key === '' && styles.keypadButtonEmpty]}
+                  style={[styles.keypadButton, key !== '' && styles.keypadButtonFilled]}
                   onPress={() => {
                     if (key === 'delete') {
                       handlePinDelete();
@@ -285,11 +363,9 @@ export default function LockScreen() {
                   accessibilityLabel={key === 'delete' ? t('lock.deleteLastDigit') : key === '' ? undefined : `${key}`}
                 >
                   {key === 'delete' ? (
-                    <Ionicons name="backspace-outline" size={28} color={Colors.text} />
+                    <Ionicons name="backspace-outline" size={26} color={Colors.text} />
                   ) : key !== '' ? (
-                    <View style={styles.keypadButtonInner}>
-                      <Text style={styles.keypadButtonText}>{key}</Text>
-                    </View>
+                    <Text style={styles.keypadLabel}>{key}</Text>
                   ) : null}
                 </TouchableOpacity>
               ))}
@@ -297,100 +373,47 @@ export default function LockScreen() {
           ))}
         </Animated.View>
 
-        {/* Lockout warning */}
-        {lockoutUntil > Date.now() && (
-          <Animated.View entering={FadeIn} style={styles.lockoutContainer}>
-            <View style={styles.lockoutCard}>
-              <Ionicons name="lock-closed" size={16} color={Colors.error} />
-              <Text style={styles.lockoutText}>{t('lock.tooManyAttemptsLater')}</Text>
-            </View>
-          </Animated.View>
-        )}
+        <View style={styles.spacer} />
       </View>
     );
   }
 
-  // Biometric / Default View
+  // ── Biometric / device auth ──────────────────────────────────────────────
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: Math.max(insets.bottom, 24) }]}>
-      {/* Top spacer */}
-      <View style={{ flex: 1 }} />
+    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: Math.max(insets.bottom, Spacing['2xl']) }]}>
+      <View style={styles.spacer} />
 
-      {/* Logo — App icon */}
-      <Animated.View entering={FadeInUp.delay(100).springify()} style={styles.logoContainer}>
-        <Image
-          source={require('@/assets/images/01-miku.png')}
-          style={styles.appLogo}
-          resizeMode="contain"
-          accessibilityLabel="Protocol 01 logo"
-        />
-        <Text style={styles.title}>PROTOCOL 01</Text>
+      <Animated.View entering={FadeInUp.delay(100).springify()} style={styles.head}>
+        <Wordmark size={48} showText />
         <Text style={styles.subtitle}>{t('lock.tapToUnlock')}</Text>
       </Animated.View>
 
-      {/* Unlock Button */}
-      <Animated.View entering={FadeInDown.delay(300).springify()} style={{ marginTop: 48 }}>
-        {isBiometricSupported ? (
-          <Pressable
-            onPress={authenticate}
-            disabled={isAuthenticating}
-            style={styles.unlockButton}
-            accessibilityRole="button"
-            accessibilityLabel={t('lock.unlockWithBiometrics')}
-            accessibilityState={{ disabled: isAuthenticating }}
-          >
-            <View style={[
-              styles.fingerprintCircle,
-              isAuthenticating && styles.fingerprintCircleActive,
-            ]}>
-              <Ionicons
-                name="finger-print"
-                size={40}
-                color={isAuthenticating ? Colors.textTertiary : P01Colors.cyan}
-              />
-            </View>
-            <Text style={styles.unlockText}>
-              {isAuthenticating ? t('lock.authenticating') : t('lock.tapToUnlock')}
-            </Text>
-          </Pressable>
-        ) : (
-          <View style={styles.unlockButton}>
-            <Text style={styles.biometricUnavailableText}>
-              {t('common.loading')}
-            </Text>
-          </View>
-        )}
+      {/* The one button. */}
+      <Animated.View entering={FadeInDown.delay(300).springify()} style={styles.actions}>
+        <Button
+          onPress={authenticate}
+          loading={isAuthenticating || !isBiometricSupported}
+          fullWidth
+          size="lg"
+          icon={<Ionicons name="finger-print" size={20} color={Colors.background} />}
+          accessibilityLabel={t('lock.unlockWithBiometrics')}
+        >
+          {isAuthenticating ? t('lock.authenticating') : t('lock.unlock')}
+        </Button>
       </Animated.View>
 
-      {/* Bottom spacer */}
-      <View style={{ flex: 1.2 }} />
+      <View style={styles.spacer} />
 
-      {/* Switch/Add Wallet Option */}
-      <Animated.View entering={FadeInDown.delay(500)} style={styles.switchWalletContainer}>
-        <TouchableOpacity
-          onPress={async () => {
-            // M2: Require authentication before allowing wallet switch
-            try {
-              const result = await LocalAuthentication.authenticateAsync({
-                promptMessage: t('lock.authenticateToSwitch'),
-                disableDeviceFallback: false,
-                cancelLabel: t('common.cancel'),
-              });
-              if (result.success) {
-                router.push('/(onboarding)');
-              }
-            } catch {
-              // Authentication error — stay on lock screen
-            }
-          }}
-          style={styles.switchWalletButton}
-          activeOpacity={0.7}
-          accessibilityRole="button"
+      <Animated.View entering={FadeInDown.delay(500)} style={styles.actions}>
+        <Button
+          variant="ghost"
+          onPress={switchWallet}
+          fullWidth
+          icon={<Ionicons name="swap-horizontal-outline" size={16} color={Colors.textSecondary} />}
           accessibilityLabel={t('lock.useAnotherWallet')}
         >
-          <Ionicons name="swap-horizontal-outline" size={16} color={Colors.textTertiary} />
-          <Text style={styles.switchWalletText}>{t('lock.useAnotherWallet')}</Text>
-        </TouchableOpacity>
+          {t('lock.useAnotherWallet')}
+        </Button>
       </Animated.View>
     </View>
   );
@@ -399,95 +422,75 @@ export default function LockScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'transparent',
-    alignItems: 'center',
+    // ⚠️ Explicit, not `transparent`. A lock screen that inherits whatever is
+    // behind it is a lock screen that can show the wallet through itself.
+    backgroundColor: Colors.background,
+    alignItems: 'stretch',
     paddingHorizontal: Spacing['2xl'],
   },
+  spacer: {
+    flex: 1,
+  },
 
-  // Logo area
-  logoContainer: {
+  head: {
     alignItems: 'center',
-  },
-  appLogo: {
-    width: 80,
-    height: 80,
-    marginBottom: Spacing.lg,
-  },
-  pinIconWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: P01Colors.cyanDim,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.lg,
+    gap: Spacing.md,
   },
   title: {
     color: Colors.text,
-    fontSize: 22,
-    fontFamily: FontFamily.bold,
-    letterSpacing: 2,
+    fontFamily: FontFamily.display,
+    fontSize: FontSize['2xl'],
   },
   subtitle: {
-    color: Colors.textTertiary,
-    fontSize: 14,
+    color: Colors.textSecondary,
     fontFamily: FontFamily.regular,
-    marginTop: Spacing.sm,
-  },
-  subtitleError: {
-    color: Colors.error,
+    fontSize: FontSize.sm,
+    textAlign: 'center',
   },
 
-  // Biometric unlock
-  unlockButton: {
-    alignItems: 'center',
-  },
-  fingerprintCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: Colors.surfaceSecondary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.lg,
-  },
-  fingerprintCircleActive: {
-    backgroundColor: 'rgba(85, 85, 96, 0.2)',
-  },
-  unlockText: {
-    color: Colors.textTertiary,
-    fontSize: 14,
-    fontFamily: FontFamily.regular,
-  },
-  biometricUnavailableText: {
-    color: Colors.textTertiary,
-    fontSize: 14,
-    fontFamily: FontFamily.regular,
+  actions: {
+    width: '100%',
   },
 
-  // PIN Dots
-  pinDotsContainer: {
+  // The PIN field
+  pinBlock: {
+    alignItems: 'center',
+    marginTop: Spacing['4xl'],
+    marginBottom: Spacing['4xl'],
+    gap: Spacing.lg,
+  },
+  pinDotsRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     gap: Spacing.lg,
-    marginBottom: Spacing['5xl'],
   },
   pinDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: Colors.surfaceSecondary,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    backgroundColor: 'transparent',
   },
   pinDotFilled: {
-    backgroundColor: P01Colors.cyan,
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
   },
   pinDotError: {
     backgroundColor: Colors.error,
+    borderColor: Colors.error,
+  },
+  fieldError: {
+    color: Colors.error,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    textAlign: 'center',
   },
 
   // Keypad
-  keypadContainer: {
+  keypad: {
     gap: Spacing.md,
+    alignSelf: 'center',
   },
   keypadRow: {
     flexDirection: 'row',
@@ -495,66 +498,18 @@ const styles = StyleSheet.create({
     gap: Spacing['2xl'],
   },
   keypadButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    overflow: 'hidden',
+    width: 68,
+    height: 68,
+    borderRadius: BorderRadius.full,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  keypadButtonInner: {
-    flex: 1,
-    width: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: 36,
+  keypadButtonFilled: {
+    backgroundColor: Colors.surface,
   },
-  keypadButtonEmpty: {
-    backgroundColor: 'transparent',
-  },
-  keypadButtonText: {
+  keypadLabel: {
     color: Colors.text,
-    fontSize: 28,
-    fontFamily: FontFamily.semibold,
-  },
-
-  // Switch wallet
-  switchWalletContainer: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  switchWalletButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.xl,
-    borderRadius: BorderRadius.lg,
-    backgroundColor: Colors.surfaceSecondary,
-  },
-  switchWalletText: {
-    color: Colors.textTertiary,
-    fontSize: 14,
     fontFamily: FontFamily.regular,
-    marginLeft: Spacing.sm,
-  },
-
-  // Lockout warning
-  lockoutContainer: {
-    marginTop: Spacing['2xl'],
-  },
-  lockoutCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    backgroundColor: Colors.errorDim,
-  },
-  lockoutText: {
-    color: Colors.error,
-    fontSize: 13,
-    fontFamily: FontFamily.regular,
+    fontSize: FontSize['2xl'],
   },
 });

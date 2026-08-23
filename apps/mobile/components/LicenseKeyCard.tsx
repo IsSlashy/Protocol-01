@@ -83,7 +83,10 @@ export function LicenseKeyCard(props: LicenseKeyCardProps) {
 
   const isActive = props.status === 'active';
   const isPaused = props.status === 'paused';
-  const statusLabel = isActive ? 'ACTIVE' : isPaused ? 'PAUSED' : 'EXPIRED';
+  // Sentence case. The all-caps house style is retired: shouting a status
+  // does not make it clearer, and this card sits next to a key the user has
+  // to read character by character.
+  const statusLabel = isActive ? 'Active' : isPaused ? 'Paused' : 'Expired';
   const statusColor = isActive
     ? P01Colors.cyan
     : isPaused
@@ -94,7 +97,7 @@ export function LicenseKeyCard(props: LicenseKeyCardProps) {
     <View style={[styles.card, !isActive && styles.cardInactive]}>
       <View style={styles.header}>
         <Text style={styles.eyebrow} numberOfLines={1}>
-          LICENSE KEY{props.serviceName ? ` · ${props.serviceName.toUpperCase()}` : ''}
+          License key{props.serviceName ? ` · ${props.serviceName}` : ''}
         </Text>
         <View
           style={[
@@ -132,7 +135,7 @@ export function LicenseKeyCard(props: LicenseKeyCardProps) {
             color={copied ? P01Colors.cyan : Colors.textSecondary}
           />
           <Text style={[styles.copyBtnText, copied && { color: P01Colors.cyan }]}>
-            {copied ? 'COPIED' : 'COPY'}
+            {copied ? 'Copied' : 'Copy'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -184,7 +187,7 @@ const styles = StyleSheet.create({
   keyContainer: {
     paddingVertical: 14,
     paddingHorizontal: 8,
-    backgroundColor: '#0a0a0c',
+    backgroundColor: '#070709',
     borderRadius: 6,
     alignItems: 'center',
     marginBottom: 12,
@@ -195,7 +198,7 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     fontSize: 16,
     letterSpacing: 1.1,
-    color: '#00ffe5',
+    color: '#5fd8cf',
     fontWeight: '600',
     textAlign: 'center',
   },

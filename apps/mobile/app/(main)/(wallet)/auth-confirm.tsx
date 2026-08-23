@@ -1,3 +1,29 @@
+/**
+ * Sign in to a service with this wallet.
+ *
+ * 🎯 REWRITTEN IN StyleSheet 2026-08-23, and off three retired palettes at
+ * once. This file was Tailwind end to end and carried colours from outside the
+ * design system entirely: `bg-green-500/20` with a `#22c55e` tick for an active
+ * subscription (this system has NO green — success is cyan, and the theme's own
+ * first line says so), `bg-red-500/20` with `#ef4444`, and a `LinearGradient`
+ * disc behind the checkmark. Every heading was `text-white font-bold`.
+ *
+ * ⛔ THE GRADIENTS ARE GONE. Two of them: a cyan→cyan-bright disc on success
+ * and a cyan→cyan disc — a gradient between a colour and itself — behind the
+ * fallback service icon. Neither carried information.
+ *
+ * 🚨 THE PRIMARY BUTTON HELD A `<View>`. `ui/Button` renders its children
+ * inside a `<Text>`, so the label was a view nested in text with its own
+ * hardcoded `#0a0a0a`; it takes the icon through the prop that exists for it.
+ *
+ * ⚠️ THE SUCCESS STATE HAS NO Done BUTTON AND KEEPS ITS AUTO-RETURN. It is one
+ * line and a tick for the two seconds before `router.back()` fires, which is
+ * the "go back to where you were" the lean rules ask for, not a page.
+ *
+ * ⛔ `authenticateWithService`, the payload parsing, the expiry branch and the
+ * subscription lookup are untouched.
+ */
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -5,14 +31,15 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Image,
-  Alert,
+  StyleSheet,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+
 import { Button } from '@/components/ui/Button';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing, Layout } from '@/constants/theme';
 import {
   AuthQRPayload,
   authenticateWithService,
@@ -26,6 +53,7 @@ type AuthState = 'loading' | 'ready' | 'authenticating' | 'success' | 'error';
 
 export default function AuthConfirmScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     payload: string;
     serviceName: string;
@@ -118,21 +146,30 @@ export default function AuthConfirmScreen() {
     router.back();
   };
 
-  // Session expired
+  const closeButton = (
+    <TouchableOpacity
+      onPress={handleCancel}
+      style={styles.headerButton}
+      accessibilityRole="button"
+      accessibilityLabel="Close"
+    >
+      <Ionicons name="close" size={22} color={Colors.textSecondary} />
+    </TouchableOpacity>
+  );
+
+  // The request is stale
   if (isExpired) {
     return (
-      <SafeAreaView className="flex-1 bg-p01-void">
-        <View className="flex-1 items-center justify-center px-6">
-          <View className="w-20 h-20 bg-red-500/20 rounded-full items-center justify-center mb-6">
-            <Ionicons name="time-outline" size={40} color="#ef4444" />
-          </View>
-          <Text className="text-white text-xl font-bold mb-2">
-            Session Expired
-          </Text>
-          <Text className="text-p01-text-muted text-center mb-8">
-            This connection request has expired. Please scan a new QR code.
-          </Text>
-          <Button onPress={handleCancel} variant="secondary" fullWidth>
+      <SafeAreaView style={styles.ground}>
+        <View style={styles.header}>
+          {closeButton}
+          <View style={styles.headerButton} />
+        </View>
+        <View style={styles.centred}>
+          <Ionicons name="time-outline" size={40} color={Colors.textTertiary} />
+          <Text style={styles.centredTitle} accessibilityRole="header">This request expired</Text>
+          <Text style={styles.centredBody}>Ask the service for a new QR code and scan it again.</Text>
+          <Button variant="secondary" size="lg" fullWidth style={styles.centredAction} onPress={handleCancel}>
             Back
           </Button>
         </View>
@@ -140,68 +177,40 @@ export default function AuthConfirmScreen() {
     );
   }
 
-  // Loading state
   if (state === 'loading') {
     return (
-      <SafeAreaView className="flex-1 bg-p01-void items-center justify-center">
-        <ActivityIndicator size="large" color="#39c5bb" />
-        <Text className="text-white mt-4">Loading...</Text>
+      <SafeAreaView style={[styles.ground, styles.centred]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={styles.centredBody}>Checking this request…</Text>
       </SafeAreaView>
     );
   }
 
-  // Success state
   if (state === 'success') {
     return (
-      <SafeAreaView className="flex-1 bg-p01-void">
-        <View className="flex-1 items-center justify-center px-6">
-          <LinearGradient
-            colors={['#39c5bb', '#00ffe5']}
-            className="w-24 h-24 rounded-full items-center justify-center mb-6"
-          >
-            <Ionicons name="checkmark" size={48} color="#0a0a0a" />
-          </LinearGradient>
-          <Text className="text-white text-2xl font-bold mb-2">
-            Connected!
-          </Text>
-          <Text className="text-p01-text-muted text-center">
-            You are now connected to {serviceName}
-          </Text>
-        </View>
+      <SafeAreaView style={[styles.ground, styles.centred]}>
+        <Ionicons name="checkmark-circle" size={44} color={Colors.primary} />
+        <Text style={styles.centredTitle} accessibilityRole="header">Signed in to {serviceName}</Text>
       </SafeAreaView>
     );
   }
 
-  // Error state
   if (state === 'error') {
     return (
-      <SafeAreaView className="flex-1 bg-p01-void">
-        <View className="flex-row items-center justify-between px-5 py-4">
-          <TouchableOpacity
-            onPress={handleCancel}
-            className="w-10 h-10 bg-p01-surface rounded-full items-center justify-center"
-          >
-            <Ionicons name="close" size={24} color="#ffffff" />
-          </TouchableOpacity>
-          <Text className="text-white text-lg font-semibold">Error</Text>
-          <View className="w-10" />
+      <SafeAreaView style={styles.ground}>
+        <View style={styles.header}>
+          {closeButton}
+          <View style={styles.headerButton} />
         </View>
-
-        <View className="flex-1 items-center justify-center px-6">
-          <View className="w-20 h-20 bg-red-500/20 rounded-full items-center justify-center mb-6">
-            <Ionicons name="alert-circle" size={40} color="#ef4444" />
-          </View>
-          <Text className="text-white text-xl font-bold mb-2">
-            Connection failed
-          </Text>
-          <Text className="text-p01-text-muted text-center mb-8">
-            {error}
-          </Text>
-          <View className="w-full gap-3">
-            <Button onPress={loadData} fullWidth>
-              Retry
+        <View style={styles.centred}>
+          <Ionicons name="alert-circle-outline" size={40} color={Colors.error} />
+          <Text style={styles.centredTitle} accessibilityRole="header">Could not sign in</Text>
+          <Text style={styles.centredBody} accessibilityRole="alert">{error}</Text>
+          <View style={styles.centredActions}>
+            <Button variant="primary" size="lg" fullWidth onPress={loadData}>
+              Try again
             </Button>
-            <Button onPress={handleCancel} variant="secondary" fullWidth>
+            <Button variant="ghost" size="md" fullWidth onPress={handleCancel}>
               Cancel
             </Button>
           </View>
@@ -210,169 +219,227 @@ export default function AuthConfirmScreen() {
     );
   }
 
-  // Ready state - show confirmation UI
+  const blockedBySubscription = requiresSubscription && !subscription?.active;
+
   return (
-    <SafeAreaView className="flex-1 bg-p01-void">
-      {/* Header */}
-      <View className="flex-row items-center justify-between px-5 py-4">
-        <TouchableOpacity
-          onPress={handleCancel}
-          className="w-10 h-10 bg-p01-surface rounded-full items-center justify-center"
-        >
-          <Ionicons name="close" size={24} color="#ffffff" />
-        </TouchableOpacity>
-        <Text className="text-white text-lg font-semibold">
-          Connection
-        </Text>
-        <View className="w-10" />
+    <SafeAreaView style={styles.ground}>
+      <View style={styles.header}>
+        {closeButton}
+        <View style={styles.headerButton} />
       </View>
 
-      {/* Content */}
-      <View className="flex-1 px-6 pt-8">
-        {/* Service Info */}
-        <View className="items-center mb-8">
+      <View style={styles.body}>
+        {/* Who is asking */}
+        <View style={styles.service}>
           {serviceLogo ? (
-            <Image
-              source={{ uri: serviceLogo }}
-              className="w-20 h-20 rounded-2xl mb-4"
-              resizeMode="cover"
-            />
+            <Image source={{ uri: serviceLogo }} style={styles.serviceLogo} resizeMode="cover" />
           ) : (
-            <LinearGradient
-              colors={['#39c5bb', '#ff77a8']}
-              className="w-20 h-20 rounded-2xl items-center justify-center mb-4"
-            >
-              <Ionicons name="apps" size={36} color="#ffffff" />
-            </LinearGradient>
+            <View style={[styles.serviceLogo, styles.serviceLogoFallback]}>
+              <Ionicons name="apps-outline" size={30} color={Colors.textSecondary} />
+            </View>
           )}
-          <Text className="text-white text-2xl font-bold mb-2">
-            {serviceName}
-          </Text>
-          <Text className="text-p01-text-muted text-center">
-            wants to access your account
-          </Text>
+          <Text style={styles.serviceName} accessibilityRole="header">{serviceName}</Text>
+          <Text style={styles.serviceAsk}>wants to verify who you are</Text>
         </View>
 
-        {/* Wallet Info */}
-        <View className="bg-p01-surface rounded-2xl p-5 mb-4">
-          <View className="flex-row items-center mb-3">
-            <View className="w-10 h-10 bg-p01-cyan/20 rounded-full items-center justify-center mr-3">
-              <Ionicons name="wallet-outline" size={20} color="#39c5bb" />
-            </View>
-            <View className="flex-1">
-              <Text className="text-p01-text-muted text-xs mb-1">WALLET</Text>
-              <Text className="text-white font-mono text-sm">
-                {walletAddress
-                  ? `${walletAddress.slice(0, 8)}...${walletAddress.slice(-8)}`
-                  : 'Loading...'}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Subscription Status */}
-        {requiresSubscription && (
-          <View className="bg-p01-surface rounded-2xl p-5 mb-4">
-            <View className="flex-row items-center">
-              <View
-                className={`w-10 h-10 rounded-full items-center justify-center mr-3 ${
-                  subscription?.active ? 'bg-green-500/20' : 'bg-red-500/20'
-                }`}
-              >
-                <Ionicons
-                  name={subscription?.active ? 'checkmark-circle' : 'close-circle'}
-                  size={20}
-                  color={subscription?.active ? '#22c55e' : '#ef4444'}
-                />
-              </View>
-              <View className="flex-1">
-                <Text className="text-p01-text-muted text-xs mb-1">
-                  SUBSCRIPTION
-                </Text>
-                <Text
-                  className={`font-semibold ${
-                    subscription?.active ? 'text-green-500' : 'text-red-500'
-                  }`}
-                >
-                  {subscription?.active ? 'Active' : 'Inactive'}
-                </Text>
-              </View>
-            </View>
-          </View>
-        )}
-
-        {/* Permissions */}
-        <View className="bg-p01-surface rounded-2xl p-5">
-          <Text className="text-p01-text-muted text-xs mb-3">
-            THIS APP WILL BE ABLE TO:
-          </Text>
-          <View className="gap-3">
-            <View className="flex-row items-center">
-              <Ionicons
-                name="finger-print-outline"
-                size={18}
-                color="#39c5bb"
-                style={{ marginRight: 12 }}
-              />
-              <Text className="text-white flex-1">
-                Verify your wallet identity
-              </Text>
-            </View>
-            {requiresSubscription && (
-              <View className="flex-row items-center">
-                <Ionicons
-                  name="card-outline"
-                  size={18}
-                  color="#39c5bb"
-                  style={{ marginRight: 12 }}
-                />
-                <Text className="text-white flex-1">
-                  Verify your subscription status
-                </Text>
-              </View>
-            )}
-          </View>
-        </View>
-      </View>
-
-      {/* Bottom Actions */}
-      <View className="px-6 pb-6 gap-3">
-        {state === 'authenticating' ? (
-          <View className="bg-p01-cyan rounded-xl py-4 items-center flex-row justify-center">
-            <ActivityIndicator color="#0a0a0a" style={{ marginRight: 8 }} />
-            <Text className="text-p01-void font-semibold">
-              Authenticating...
+        {/* What it will see */}
+        <View style={styles.panel}>
+          <View style={styles.panelRow}>
+            <Text style={styles.panelLabel}>Wallet</Text>
+            <Text style={styles.panelValue}>
+              {walletAddress
+                ? `${walletAddress.slice(0, 8)}…${walletAddress.slice(-8)}`
+                : 'Loading…'}
             </Text>
           </View>
-        ) : (
-          <>
-            <Button
-              onPress={handleConfirm}
-              fullWidth
-              size="lg"
-              disabled={requiresSubscription && !subscription?.active}
-            >
-              <View className="flex-row items-center">
-                <Ionicons
-                  name="finger-print"
-                  size={20}
-                  color="#0a0a0a"
-                  style={{ marginRight: 8 }}
-                />
-                <Text className="text-p01-void font-semibold text-lg">
-                  Confirm with Biometrics
+
+          {requiresSubscription ? (
+            <>
+              <View style={styles.divider} />
+              <View style={styles.panelRow}>
+                <Text style={styles.panelLabel}>Subscription</Text>
+                <Text
+                  style={[
+                    styles.panelValue,
+                    subscription?.active ? styles.valueGood : styles.valueBad,
+                  ]}
+                >
+                  {subscription?.active ? 'Active' : 'Not active'}
                 </Text>
               </View>
-            </Button>
-            <TouchableOpacity
-              onPress={handleCancel}
-              className="py-3 items-center"
-            >
-              <Text className="text-p01-text-muted">Cancel</Text>
-            </TouchableOpacity>
-          </>
-        )}
+            </>
+          ) : null}
+        </View>
+
+        <Text style={styles.permissionsTitle}>Signing in lets it check</Text>
+        <View style={styles.permission}>
+          <Ionicons name="finger-print-outline" size={18} color={Colors.textSecondary} />
+          <Text style={styles.permissionText}>That this wallet is yours</Text>
+        </View>
+        {requiresSubscription ? (
+          <View style={styles.permission}>
+            <Ionicons name="card-outline" size={18} color={Colors.textSecondary} />
+            <Text style={styles.permissionText}>That your subscription is paid up</Text>
+          </View>
+        ) : null}
+
+        {blockedBySubscription ? (
+          <Text style={styles.blocked} accessibilityRole="alert">
+            {serviceName} needs an active subscription before you can sign in.
+          </Text>
+        ) : null}
+      </View>
+
+      <View style={[styles.footer, { paddingBottom: Layout.tabBarTotalHeight + insets.bottom }]}>
+        <Button
+          variant="primary"
+          size="lg"
+          fullWidth
+          loading={state === 'authenticating'}
+          disabled={blockedBySubscription}
+          onPress={handleConfirm}
+          icon={<Ionicons name="finger-print" size={20} color={Colors.background} />}
+          accessibilityLabel="Confirm with biometrics"
+        >
+          Confirm with biometrics
+        </Button>
+        <Button variant="ghost" size="md" fullWidth onPress={handleCancel}>
+          Cancel
+        </Button>
       </View>
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  ground: { flex: 1, backgroundColor: Colors.background },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    minHeight: 56,
+  },
+  headerButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  centred: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing['3xl'],
+  },
+  centredTitle: {
+    color: Colors.text,
+    fontFamily: FontFamily.display,
+    fontSize: FontSize['2xl'],
+    textAlign: 'center',
+    marginTop: Spacing.lg,
+  },
+  centredBody: {
+    color: Colors.textSecondary,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginTop: Spacing.sm,
+  },
+  centredAction: { marginTop: Spacing['3xl'] },
+  centredActions: { width: '100%', gap: Spacing.md, marginTop: Spacing['3xl'] },
+
+  body: { flex: 1, paddingHorizontal: Spacing.xl },
+  service: { alignItems: 'center', paddingVertical: Spacing['3xl'] },
+  serviceLogo: {
+    width: 72,
+    height: 72,
+    borderRadius: BorderRadius.xl,
+    marginBottom: Spacing.lg,
+  },
+  serviceLogoFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  serviceName: {
+    color: Colors.text,
+    fontFamily: FontFamily.display,
+    fontSize: FontSize['3xl'],
+    textAlign: 'center',
+  },
+  serviceAsk: {
+    color: Colors.textSecondary,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
+    marginTop: Spacing.xs,
+  },
+
+  panel: {
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing['2xl'],
+  },
+  panelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.lg,
+    paddingVertical: Spacing.lg,
+  },
+  panelLabel: {
+    color: Colors.textSecondary,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+  },
+  panelValue: {
+    color: Colors.text,
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.sm,
+    flexShrink: 1,
+  },
+  valueGood: { color: Colors.primary },
+  valueBad: { color: Colors.error },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: Colors.borderSoft,
+  },
+
+  permissionsTitle: {
+    color: Colors.textSecondary,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    marginBottom: Spacing.md,
+  },
+  permission: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  permissionText: {
+    color: Colors.text,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
+    flex: 1,
+  },
+  blocked: {
+    color: Colors.yellow,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    lineHeight: 20,
+    marginTop: Spacing.lg,
+  },
+
+  footer: {
+    paddingHorizontal: Spacing.xl,
+    gap: Spacing.sm,
+  },
+});

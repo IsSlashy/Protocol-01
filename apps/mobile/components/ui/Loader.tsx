@@ -1,5 +1,20 @@
+/**
+ * Loader — three dots, a pulse, or a bounce.
+ *
+ * 🎯 RETUNED ON THE REALIGNED THEME 2026-08-23. The dots were `#39c5bb`
+ * written out four times as a literal; they are `Colors.primary` now, so a
+ * future accent change reaches them. The label reads `Colors.textSecondary`
+ * through the theme instead of a Tailwind class name.
+ *
+ * ♿ The whole component is one accessibility node announcing itself as busy.
+ * Three independently animating dots used to be three unlabelled views, which
+ * a screen reader either skipped or read as nothing at all.
+ */
+
 import React, { useEffect, useRef } from 'react';
-import { View, Animated, Easing, Text } from 'react-native';
+import { View, Animated, Easing, Text, StyleSheet } from 'react-native';
+
+import { Colors, Spacing, FontFamily, FontSize } from '@/constants/theme';
 
 type LoaderSize = 'sm' | 'md' | 'lg';
 type LoaderVariant = 'ghost' | 'pulse' | 'dots';
@@ -11,10 +26,10 @@ interface LoaderProps {
   className?: string;
 }
 
-const sizeStyles: Record<LoaderSize, { container: number; dot: number; text: string }> = {
-  sm: { container: 24, dot: 4, text: 'text-xs' },
-  md: { container: 40, dot: 6, text: 'text-sm' },
-  lg: { container: 60, dot: 8, text: 'text-base' },
+const sizeStyles: Record<LoaderSize, { container: number; dot: number; text: number }> = {
+  sm: { container: 24, dot: 4, text: FontSize.xs },
+  md: { container: 40, dot: 6, text: FontSize.sm },
+  lg: { container: 60, dot: 8, text: FontSize.md },
 };
 
 const GhostLoader: React.FC<{ size: LoaderSize }> = ({ size }) => {
@@ -77,43 +92,28 @@ const GhostLoader: React.FC<{ size: LoaderSize }> = ({ size }) => {
     };
   }, []);
 
+  const dot = {
+    width: sizeStyle.dot,
+    height: sizeStyle.dot,
+    borderRadius: sizeStyle.dot / 2,
+    backgroundColor: Colors.primary,
+  };
+
   return (
     <Animated.View
-      style={{
-        width: sizeStyle.container,
-        height: sizeStyle.container,
-        transform: [{ scale }],
-      }}
-      className="items-center justify-center"
+      style={[
+        styles.center,
+        {
+          width: sizeStyle.container,
+          height: sizeStyle.container,
+          transform: [{ scale }],
+        },
+      ]}
     >
-      <View className="flex-row items-center gap-1">
-        <Animated.View
-          style={{
-            width: sizeStyle.dot,
-            height: sizeStyle.dot,
-            borderRadius: sizeStyle.dot / 2,
-            backgroundColor: '#39c5bb',
-            opacity: opacity1,
-          }}
-        />
-        <Animated.View
-          style={{
-            width: sizeStyle.dot,
-            height: sizeStyle.dot,
-            borderRadius: sizeStyle.dot / 2,
-            backgroundColor: '#39c5bb',
-            opacity: opacity2,
-          }}
-        />
-        <Animated.View
-          style={{
-            width: sizeStyle.dot,
-            height: sizeStyle.dot,
-            borderRadius: sizeStyle.dot / 2,
-            backgroundColor: '#39c5bb',
-            opacity: opacity3,
-          }}
-        />
+      <View style={styles.dotRow}>
+        <Animated.View style={[dot, { opacity: opacity1 }]} />
+        <Animated.View style={[dot, { opacity: opacity2 }]} />
+        <Animated.View style={[dot, { opacity: opacity3 }]} />
       </View>
     </Animated.View>
   );
@@ -163,18 +163,14 @@ const PulseLoader: React.FC<{ size: LoaderSize }> = ({ size }) => {
 
   return (
     <View
-      style={{
-        width: sizeStyle.container,
-        height: sizeStyle.container,
-      }}
-      className="items-center justify-center"
+      style={[styles.center, { width: sizeStyle.container, height: sizeStyle.container }]}
     >
       <Animated.View
         style={{
           width: sizeStyle.container,
           height: sizeStyle.container,
           borderRadius: sizeStyle.container / 2,
-          backgroundColor: '#39c5bb',
+          backgroundColor: Colors.primary,
           transform: [{ scale }],
           opacity,
         }}
@@ -226,16 +222,16 @@ const DotsLoader: React.FC<{ size: LoaderSize }> = ({ size }) => {
     width: sizeStyle.dot,
     height: sizeStyle.dot,
     borderRadius: sizeStyle.dot / 2,
-    backgroundColor: '#39c5bb',
+    backgroundColor: Colors.primary,
   };
 
   return (
     <View
-      style={{
-        width: sizeStyle.container,
-        height: sizeStyle.container,
-      }}
-      className="flex-row items-center justify-center gap-1"
+      style={[
+        styles.dotRow,
+        styles.center,
+        { width: sizeStyle.container, height: sizeStyle.container },
+      ]}
     >
       <Animated.View style={[dotStyle, { transform: [{ translateY: translateY1 }] }]} />
       <Animated.View style={[dotStyle, { transform: [{ translateY: translateY2 }] }]} />
@@ -259,15 +255,37 @@ export const Loader: React.FC<LoaderProps> = ({
   }[variant];
 
   return (
-    <View className={`items-center justify-center ${className || ''}`}>
+    <View
+      style={styles.center}
+      className={className}
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel={label ?? 'Loading'}
+      accessibilityState={{ busy: true }}
+    >
       <LoaderComponent size={size} />
-      {label && (
-        <Text className={`text-p01-text-secondary ${sizeStyle.text} mt-2`}>
-          {label}
-        </Text>
-      )}
+      {label ? (
+        <Text style={[styles.label, { fontSize: sizeStyle.text }]}>{label}</Text>
+      ) : null}
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  center: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  label: {
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+    marginTop: Spacing.sm,
+  },
+});
 
 export default Loader;

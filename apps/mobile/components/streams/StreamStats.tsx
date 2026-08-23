@@ -1,6 +1,18 @@
+/**
+ * StreamStats — a small grid of label/value facts.
+ *
+ * 🎯 REBUILT IN StyleSheet ON THE REALIGNED THEME 2026-08-23. It was written in
+ * utility classes (`bg-p01-surface`, `text-white`) with three colour literals
+ * inline: a pink border for the highlighted tile, an opaque grey border for the
+ * rest, and pure white for the value. This app styles in `StyleSheet.create`
+ * and its text is warm paper — both were true before this file was written.
+ */
+
 import React from 'react';
-import { View, Text, ViewProps } from 'react-native';
+import { View, Text, StyleSheet, ViewProps } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
 
 interface StatItem {
   label: string;
@@ -18,43 +30,28 @@ export const StreamStats: React.FC<StreamStatsProps> = ({
   stats,
   columns = 2,
   className,
+  style,
   ...props
 }) => {
   return (
-    <View
-      className={`${columns === 2 ? 'flex-row flex-wrap' : ''} ${className || ''}`}
-      {...props}
-    >
+    <View style={[styles.grid, style]} className={className} {...props}>
       {stats.map((stat, index) => (
         <View
           key={index}
-          className={`
-            ${columns === 2 ? 'w-1/2' : 'w-full'}
-            ${index % 2 === 0 && columns === 2 ? 'pr-2' : columns === 2 ? 'pl-2' : ''}
-            mb-4
-          `}
+          style={[styles.cell, columns === 2 ? styles.cellHalf : styles.cellFull]}
         >
-          <View
-            className="bg-p01-surface rounded-xl p-3"
-            style={{
-              borderWidth: 1,
-              borderColor: stat.highlight ? 'rgba(255, 119, 168, 0.3)' : 'rgba(42, 42, 48, 0.5)',
-            }}
-          >
-            <View className="flex-row items-center gap-2 mb-1">
+          <View style={[styles.tile, stat.highlight && styles.tileHighlight]}>
+            <View style={styles.tileHead}>
               {stat.icon && (
                 <Ionicons
                   name={stat.icon}
                   size={14}
-                  color={stat.highlight ? '#ff77a8' : '#888892'}
+                  color={stat.highlight ? Colors.primary : Colors.textSecondary}
                 />
               )}
-              <Text className="text-p01-text-secondary text-xs">{stat.label}</Text>
+              <Text style={styles.tileLabel}>{stat.label}</Text>
             </View>
-            <Text
-              className={`font-semibold ${stat.highlight ? '' : 'text-white'}`}
-              style={stat.highlight ? { color: '#ff77a8' } : {}}
-            >
+            <Text style={[styles.tileValue, stat.highlight && styles.tileValueHighlight]}>
               {stat.value}
             </Text>
           </View>
@@ -63,5 +60,41 @@ export const StreamStats: React.FC<StreamStatsProps> = ({
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  grid: { flexDirection: 'row', flexWrap: 'wrap' },
+  cell: { marginBottom: Spacing.md },
+  cellHalf: { width: '50%', paddingHorizontal: Spacing.xs },
+  cellFull: { width: '100%' },
+  tile: {
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  tileHighlight: {
+    backgroundColor: Colors.primaryDim,
+    borderColor: Colors.primaryMuted,
+  },
+  tileHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.xs,
+  },
+  tileLabel: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    color: Colors.textSecondary,
+  },
+  // Amounts are mono. A stat tile is nearly always a number.
+  tileValue: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.md,
+    color: Colors.text,
+  },
+  tileValueHighlight: { color: Colors.primary },
+});
 
 export default StreamStats;

@@ -1,3 +1,21 @@
+/**
+ * Shielded transfer.
+ *
+ * 🎯 REBUILT ON THE REALIGNED THEME 2026-08-23. This file was the clearest case
+ * of a screen that a theme sweep cannot reach: `#eae7df` and
+ * `rgba(234, 231, 223, 0.62)` were written out as literals nineteen times, so
+ * the values happened to be right today and would silently be wrong on the next
+ * retune. They are `Colors.text` and `Colors.textSecondary` now.
+ *
+ * ⛔ THE GRADIENT BUTTON IS GONE. The primary action was a blue-to-blue
+ * `LinearGradient` with a grey gradient for its disabled state — a second
+ * accent, and a disabled treatment that only looked disabled. It is the kit's
+ * `Button`, which is disabled in fact as well as in colour.
+ *
+ * ⛔ And "MAX" is "Max". An all-caps shouted label is the house style being
+ * removed everywhere.
+ */
+
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -6,14 +24,12 @@ import {
   TouchableOpacity,
   TextInput,
   StyleSheet,
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
@@ -23,7 +39,8 @@ import { useStarkProver } from '@/providers/StarkProverProvider';
 import { getKeypair } from '@/services/solana/wallet';
 import { submitGenericStarkProof, type GenericStarkProof, CIRCUIT_TRANSFER } from '@/services/stark';
 import { PublicKey, Transaction } from '@solana/web3.js';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
+import { Button } from '@/components/ui';
 import { p01Alert } from '@/stores/alertStore';
 
 export default function ShieldedTransferScreen() {
@@ -190,42 +207,57 @@ export default function ShieldedTransferScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#ffffff" />
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backButton}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
-        <View style={styles.headerTitle}>
-          <Ionicons name="flash" size={20} color={P01Colors.blue} />
-          <Text style={styles.headerText}>Shielded Transfer</Text>
-        </View>
-        <View style={{ width: 40 }} />
+        <Text style={styles.headerText}>Shielded transfer</Text>
+        <View style={styles.headerSpacer} />
       </View>
 
       <KeyboardAvoidingView style={styles.keyboardView} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" scrollEventThrottle={16} showsVerticalScrollIndicator={false}>
           <Animated.View entering={FadeInDown.delay(100)}>
             <View style={styles.balanceCard}>
-              <View style={styles.balanceRow}>
-                <View style={styles.balanceIcon}>
-                  <Ionicons name="shield" size={20} color={P01Colors.cyan} />
-                </View>
-                <View>
-                  <Text style={styles.balanceLabel}>Available Shielded</Text>
-                  <Text style={styles.balanceValue}>{shieldedBalance.toFixed(4)} SOL</Text>
-                </View>
-              </View>
+              <Text style={styles.balanceLabel}>Available shielded</Text>
+              <Text style={styles.balanceValue}>{shieldedBalance.toFixed(4)} SOL</Text>
             </View>
           </Animated.View>
 
           <Animated.View entering={FadeInDown.delay(200)}>
-            <Text style={styles.inputTitle}>Recipient ZK Address</Text>
+            <Text style={styles.inputTitle}>Recipient ZK address</Text>
             <View style={styles.inputContainer}>
-              <TextInput style={styles.addressInput} value={recipient} onChangeText={setRecipient} placeholder="zk:abc123..." placeholderTextColor={Colors.textTertiary} autoCapitalize="none" autoCorrect={false} />
+              <TextInput
+                style={styles.addressInput}
+                value={recipient}
+                onChangeText={setRecipient}
+                placeholder="zk:abc123..."
+                placeholderTextColor={Colors.textTertiary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                accessibilityLabel="Recipient ZK address"
+              />
               <View style={styles.inputActions}>
-                <TouchableOpacity onPress={handlePaste} style={styles.inputAction}>
-                  <Ionicons name="clipboard-outline" size={20} color={P01Colors.cyan} />
+                <TouchableOpacity
+                  onPress={handlePaste}
+                  style={styles.inputAction}
+                  accessibilityRole="button"
+                  accessibilityLabel="Paste address"
+                >
+                  <Ionicons name="clipboard-outline" size={18} color={Colors.textSecondary} />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={handleScan} style={styles.inputAction}>
-                  <Ionicons name="scan-outline" size={20} color={P01Colors.cyan} />
+                <TouchableOpacity
+                  onPress={handleScan}
+                  style={styles.inputAction}
+                  accessibilityRole="button"
+                  accessibilityLabel="Scan a QR code"
+                >
+                  <Ionicons name="scan-outline" size={18} color={Colors.textSecondary} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -234,12 +266,25 @@ export default function ShieldedTransferScreen() {
           <Animated.View entering={FadeInDown.delay(300)}>
             <View style={styles.amountHeader}>
               <Text style={styles.inputTitle}>Amount</Text>
-              <TouchableOpacity onPress={handleSetMax}>
-                <Text style={styles.maxButton}>MAX</Text>
+              <TouchableOpacity
+                onPress={handleSetMax}
+                style={styles.maxButton}
+                accessibilityRole="button"
+                accessibilityLabel="Use the full shielded balance"
+              >
+                <Text style={styles.maxButtonText}>Max</Text>
               </TouchableOpacity>
             </View>
             <View style={styles.amountContainer}>
-              <TextInput style={styles.amountInput} value={amount} onChangeText={setAmount} placeholder="0.0" placeholderTextColor={Colors.textTertiary} keyboardType="decimal-pad" />
+              <TextInput
+                style={styles.amountInput}
+                value={amount}
+                onChangeText={setAmount}
+                placeholder="0.0"
+                placeholderTextColor={Colors.textTertiary}
+                keyboardType="decimal-pad"
+                accessibilityLabel="Amount in SOL"
+              />
               <Text style={styles.amountSuffix}>SOL</Text>
             </View>
           </Animated.View>
@@ -247,7 +292,7 @@ export default function ShieldedTransferScreen() {
           {amountNum > 0 && (
             <Animated.View entering={FadeInUp.delay(100)}>
               <View style={styles.summaryCard}>
-                <Text style={styles.summaryTitle}>Transaction Summary</Text>
+                <Text style={styles.summaryTitle}>Summary</Text>
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Amount</Text>
                   <Text style={styles.summaryValue}>{amountNum.toFixed(4)} SOL</Text>
@@ -267,7 +312,7 @@ export default function ShieldedTransferScreen() {
 
           <Animated.View entering={FadeInDown.delay(400)}>
             <View style={styles.privacyInfo}>
-              <Ionicons name="eye-off" size={18} color={P01Colors.cyan} />
+              <Ionicons name="eye-off-outline" size={16} color={Colors.textSecondary} />
               {/*
                 Was 'This transfer is fully private. Amount, sender, and
                 recipient are hidden on-chain.' Three absolutes, none of them
@@ -283,39 +328,27 @@ export default function ShieldedTransferScreen() {
 
           {isProcessing && (
             <Animated.View entering={FadeInUp} style={styles.proofContainer}>
-              <View style={styles.proofHeader}>
-                <ActivityIndicator color={P01Colors.cyan} />
-                <Text style={styles.proofTitle}>Generating ZK Proof</Text>
-              </View>
+              <Text style={styles.proofTitle}>Generating the proof</Text>
               <View style={styles.progressBar}>
                 <View style={[styles.progressFill, { width: `${proofProgress}%` }]} />
               </View>
-              <Text style={styles.proofStatus}>{proofStatus}</Text>
-              <Text style={styles.proofWarning}>Please keep the app open. This may take 30-60 seconds.</Text>
+              <Text style={styles.proofStatus} accessibilityLiveRegion="polite">{proofStatus}</Text>
+              <Text style={styles.proofWarning}>Keep the app open. This takes 30 to 60 seconds.</Text>
             </Animated.View>
           )}
         </ScrollView>
 
         <View style={styles.bottomContainer}>
-          <TouchableOpacity
-            style={[styles.transferButton, (!recipient || !amount || isProcessing) && styles.transferButtonDisabled]}
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            loading={isProcessing}
+            disabled={!recipient || !amount}
             onPress={handleTransfer}
-            disabled={!recipient || !amount || isProcessing}
           >
-            <LinearGradient colors={isProcessing ? ['#333', '#222'] : [P01Colors.blue, '#2563eb']} style={styles.transferGradient}>
-              {isProcessing ? (
-                <View style={styles.processingRow}>
-                  <ActivityIndicator color="#fff" size="small" />
-                  <Text style={styles.transferText}>Processing...</Text>
-                </View>
-              ) : (
-                <>
-                  <Ionicons name="flash" size={20} color="#fff" />
-                  <Text style={styles.transferText}>Send Privately</Text>
-                </>
-              )}
-            </LinearGradient>
-          </TouchableOpacity>
+            Send privately
+          </Button>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -324,49 +357,127 @@ export default function ShieldedTransferScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderBottomWidth: 1, borderBottomColor: Colors.border, backgroundColor: Colors.surface },
-  backButton: { padding: 8, marginLeft: -8 },
-  headerTitle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  headerText: { fontSize: 18, fontFamily: FontFamily.bold, color: '#ffffff' },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md, minHeight: 56,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.borderSoft,
+  },
+  backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  headerSpacer: { width: 44 },
+  headerText: {
+    flex: 1, fontSize: FontSize.xl, fontFamily: FontFamily.displayMedium, color: Colors.text,
+  },
   keyboardView: { flex: 1 },
   content: { flex: 1 },
-  scrollContent: { padding: Spacing.md, paddingBottom: 100 },
-  balanceCard: { backgroundColor: Colors.surface, borderRadius: BorderRadius.lg, padding: Spacing.md, marginBottom: Spacing.lg, borderWidth: 1, borderColor: 'rgba(57, 197, 187, 0.2)' },
-  balanceRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  balanceIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: P01Colors.cyanDim, alignItems: 'center', justifyContent: 'center' },
-  balanceLabel: { fontSize: 12, fontFamily: FontFamily.medium, color: '#888892' },
-  balanceValue: { fontSize: 20, fontFamily: FontFamily.bold, color: '#ffffff' },
-  inputTitle: { fontSize: 14, fontFamily: FontFamily.semibold, color: '#ffffff', marginBottom: Spacing.sm },
-  inputContainer: { backgroundColor: Colors.surface, borderRadius: BorderRadius.md, flexDirection: 'row', alignItems: 'center', paddingRight: Spacing.sm, marginBottom: Spacing.lg, borderWidth: 1, borderColor: Colors.border },
-  addressInput: { flex: 1, padding: Spacing.md, fontSize: 14, fontFamily: FontFamily.mono, color: '#ffffff' },
-  inputActions: { flexDirection: 'row', gap: 8 },
-  inputAction: { padding: 8 },
-  amountHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm },
-  maxButton: { fontSize: 12, fontFamily: FontFamily.bold, color: P01Colors.cyan },
-  amountContainer: { backgroundColor: Colors.surface, borderRadius: BorderRadius.md, flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.md, marginBottom: Spacing.lg, borderWidth: 1, borderColor: Colors.border },
-  amountInput: { flex: 1, paddingVertical: Spacing.lg, fontSize: 28, fontFamily: FontFamily.bold, color: '#ffffff' },
-  amountSuffix: { fontSize: 18, fontFamily: FontFamily.medium, color: '#888892' },
-  summaryCard: { backgroundColor: Colors.surface, borderRadius: BorderRadius.md, padding: Spacing.md, marginBottom: Spacing.lg },
-  summaryTitle: { fontSize: 12, fontFamily: FontFamily.bold, color: '#555560', letterSpacing: 1, marginBottom: Spacing.md },
+  scrollContent: { padding: Spacing.xl, paddingBottom: 100 },
+
+  balanceCard: {
+    backgroundColor: Colors.surface, borderRadius: BorderRadius.lg,
+    padding: Spacing.lg, marginBottom: Spacing['2xl'],
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
+  },
+  balanceLabel: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+  },
+  balanceValue: {
+    fontSize: FontSize['2xl'], fontFamily: FontFamily.display, color: Colors.text, marginTop: 2,
+  },
+
+  inputTitle: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.medium,
+    color: Colors.textSecondary, marginBottom: Spacing.sm,
+  },
+  inputContainer: {
+    backgroundColor: Colors.surface, borderRadius: BorderRadius.md,
+    flexDirection: 'row', alignItems: 'center',
+    paddingRight: Spacing.sm, marginBottom: Spacing['2xl'],
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  addressInput: {
+    flex: 1, minHeight: 48, paddingHorizontal: Spacing.lg,
+    fontSize: FontSize.sm, fontFamily: FontFamily.mono, color: Colors.text,
+  },
+  inputActions: { flexDirection: 'row' },
+  inputAction: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+
+  amountHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  maxButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: Spacing.sm },
+  maxButtonText: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.medium, color: Colors.primary,
+  },
+  amountContainer: {
+    backgroundColor: Colors.surface, borderRadius: BorderRadius.md,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: Spacing.lg, marginBottom: Spacing['2xl'],
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  amountInput: {
+    flex: 1, paddingVertical: Spacing.lg,
+    fontSize: FontSize['2xl'], fontFamily: FontFamily.monoMedium, color: Colors.text,
+  },
+  amountSuffix: {
+    fontSize: FontSize.lg, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+  },
+
+  summaryCard: {
+    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.md,
+    padding: Spacing.lg, marginBottom: Spacing['2xl'],
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
+  },
+  summaryTitle: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.medium,
+    color: Colors.textTertiary, marginBottom: Spacing.md,
+  },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: Spacing.sm },
-  summaryLabel: { fontSize: 14, fontFamily: FontFamily.regular, color: '#888892' },
-  summaryValue: { fontSize: 14, fontFamily: FontFamily.medium, color: '#ffffff' },
-  summaryDivider: { height: 1, backgroundColor: Colors.border, marginVertical: Spacing.sm },
-  summaryLabelBold: { fontSize: 14, fontFamily: FontFamily.bold, color: '#ffffff' },
-  summaryValueBold: { fontSize: 14, fontFamily: FontFamily.bold, color: P01Colors.cyan },
-  privacyInfo: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, backgroundColor: 'rgba(57, 197, 187, 0.1)', borderRadius: BorderRadius.md, padding: Spacing.md, marginBottom: Spacing.lg, borderWidth: 1, borderColor: 'rgba(57, 197, 187, 0.2)' },
-  privacyText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: '#888892', lineHeight: 20 },
-  proofContainer: { backgroundColor: Colors.surface, borderRadius: BorderRadius.md, padding: Spacing.lg, marginBottom: Spacing.lg, borderWidth: 1, borderColor: 'rgba(57, 197, 187, 0.3)' },
-  proofHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: Spacing.md },
-  proofTitle: { fontSize: 16, fontFamily: FontFamily.bold, color: '#ffffff' },
-  progressBar: { height: 6, backgroundColor: Colors.background, borderRadius: 3, overflow: 'hidden', marginBottom: Spacing.sm },
-  progressFill: { height: '100%', backgroundColor: P01Colors.cyan, borderRadius: 3 },
-  proofStatus: { fontSize: 13, fontFamily: FontFamily.medium, color: P01Colors.cyan, marginBottom: 4 },
-  proofWarning: { fontSize: 12, fontFamily: FontFamily.regular, color: '#555560' },
-  bottomContainer: { padding: Spacing.md, paddingBottom: 120, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.border },
-  transferButton: { borderRadius: BorderRadius.md, overflow: 'hidden' },
-  transferButtonDisabled: { opacity: 0.5 },
-  transferGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: Spacing.lg },
-  processingRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  transferText: { fontSize: 16, fontFamily: FontFamily.bold, color: '#ffffff' },
+  summaryLabel: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+  },
+  summaryValue: { fontSize: FontSize.sm, fontFamily: FontFamily.mono, color: Colors.text },
+  summaryDivider: {
+    height: StyleSheet.hairlineWidth, backgroundColor: Colors.border, marginVertical: Spacing.sm,
+  },
+  summaryLabelBold: { fontSize: FontSize.sm, fontFamily: FontFamily.medium, color: Colors.text },
+  summaryValueBold: { fontSize: FontSize.sm, fontFamily: FontFamily.monoMedium, color: Colors.text },
+
+  privacyInfo: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm,
+    borderRadius: BorderRadius.md, padding: Spacing.md, marginBottom: Spacing['2xl'],
+    backgroundColor: Colors.surfaceSecondary,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
+  },
+  privacyText: {
+    flex: 1, fontSize: FontSize.sm, fontFamily: FontFamily.regular,
+    color: Colors.textSecondary, lineHeight: 20,
+  },
+
+  proofContainer: {
+    backgroundColor: Colors.surface, borderRadius: BorderRadius.md,
+    padding: Spacing.lg, marginBottom: Spacing['2xl'],
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
+  },
+  proofTitle: {
+    fontSize: FontSize.lg, fontFamily: FontFamily.displayMedium,
+    color: Colors.text, marginBottom: Spacing.md,
+  },
+  progressBar: {
+    height: 4, backgroundColor: Colors.surfaceTertiary, borderRadius: 2,
+    overflow: 'hidden', marginBottom: Spacing.sm,
+  },
+  progressFill: { height: '100%', backgroundColor: Colors.primary, borderRadius: 2 },
+  proofStatus: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.medium,
+    color: Colors.text, marginBottom: Spacing.xs,
+  },
+  proofWarning: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular, color: Colors.textTertiary,
+  },
+
+  bottomContainer: {
+    paddingHorizontal: Spacing.xl, paddingTop: Spacing.md, paddingBottom: 120,
+    backgroundColor: Colors.background,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.borderSoft,
+  },
 });

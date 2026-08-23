@@ -1,7 +1,16 @@
 /**
- * TransferAnimation — Full-screen overlay shown during active BLE/NFC data transfer
+ * TransferAnimation — dots moving between two phones while the note is in
+ * flight.
  *
- * Shows animated dots flowing between two phone icons (sender → receiver).
+ * 🎯 REALIGNED ON constants/theme.ts 2026-08-23.
+ *
+ * ⛔ THE TRANSPORT BADGE WAS COLOUR-CODED BLUE FOR BLE AND PINK FOR NFC. The
+ * pink was the retired accent, still reachable through `P01Colors.pink`, and
+ * neither colour said anything the word next to it did not. One accent.
+ *
+ * ⚠️ The claim under the animation is about the TRANSPORT and stays: BLE is
+ * X25519 + XSalsa20-Poly1305 between the two devices. It says nothing about
+ * what the chain can see, and it must not start to.
  */
 
 import React, { useEffect, useRef } from 'react';
@@ -13,7 +22,7 @@ import {
   Easing,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, FontFamily, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
 
 interface Props {
   isSending: boolean;
@@ -105,15 +114,14 @@ export default function TransferAnimation({ isSending, transport, peerName }: Pr
     return () => pulse.stop();
   }, []);
 
-  const transportIcon = transport === 'ble' ? 'bluetooth' : 'phone-portrait';
-  const transportColor = transport === 'ble' ? P01Colors.blue : P01Colors.pink;
+  const transportIcon = transport === 'ble' ? 'bluetooth' : 'phone-portrait-outline';
 
   return (
     <View style={styles.container}>
       {/* Transport badge */}
-      <View style={[styles.badge, { backgroundColor: transportColor + '20' }]}>
-        <Ionicons name={transportIcon} size={14} color={transportColor} />
-        <Text style={[styles.badgeText, { color: transportColor }]}>
+      <View style={styles.badge}>
+        <Ionicons name={transportIcon} size={14} color={Colors.textSecondary} />
+        <Text style={styles.badgeText}>
           {transport === 'ble' ? 'Bluetooth' : 'NFC'}
         </Text>
       </View>
@@ -122,7 +130,7 @@ export default function TransferAnimation({ isSending, transport, peerName }: Pr
       <Animated.View style={[styles.phonesRow, { transform: [{ scale: scaleAnim }] }]}>
         {/* Sender phone */}
         <View style={[styles.phoneBox, isSending && styles.phoneBoxActive]}>
-          <Ionicons name="phone-portrait" size={36} color={isSending ? P01Colors.cyan : Colors.textSecondary} />
+          <Ionicons name="phone-portrait-outline" size={32} color={isSending ? Colors.primary : Colors.textSecondary} />
           <Text style={styles.phoneLabel}>{isSending ? 'You' : peerName || 'Peer'}</Text>
         </View>
 
@@ -135,21 +143,21 @@ export default function TransferAnimation({ isSending, transport, peerName }: Pr
 
         {/* Receiver phone */}
         <View style={[styles.phoneBox, !isSending && styles.phoneBoxActive]}>
-          <Ionicons name="phone-portrait" size={36} color={!isSending ? P01Colors.cyan : Colors.textSecondary} />
+          <Ionicons name="phone-portrait-outline" size={32} color={!isSending ? Colors.primary : Colors.textSecondary} />
           <Text style={styles.phoneLabel}>{!isSending ? 'You' : peerName || 'Peer'}</Text>
         </View>
       </Animated.View>
 
       {/* Status text */}
-      <View style={styles.statusRow}>
-        <Ionicons name="lock-closed" size={14} color={P01Colors.green} />
+      <View style={styles.statusRow} accessibilityLiveRegion="polite">
+        <Ionicons name="lock-closed-outline" size={14} color={Colors.textSecondary} />
         <Text style={styles.statusText}>
-          {isSending ? 'Sending encrypted note...' : 'Receiving encrypted note...'}
+          {isSending ? 'Sending the encrypted note…' : 'Receiving the encrypted note…'}
         </Text>
       </View>
 
       <Text style={styles.hint}>
-        End-to-end encrypted. Only you and the recipient can read this note.
+        The link between the two devices is end-to-end encrypted.
       </Text>
     </View>
   );
@@ -164,12 +172,17 @@ const styles = StyleSheet.create({
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
     borderRadius: 20,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
   },
-  badgeText: { fontSize: 12, fontFamily: FontFamily.semibold },
+  badgeText: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.medium, color: Colors.textSecondary,
+  },
   phonesRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -179,20 +192,19 @@ const styles = StyleSheet.create({
   },
   phoneBox: {
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 16,
+    gap: Spacing.sm,
+    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.xl,
+    borderRadius: BorderRadius.lg,
     backgroundColor: Colors.surface,
     borderWidth: 1,
     borderColor: Colors.border,
   },
   phoneBoxActive: {
-    borderColor: P01Colors.cyan + '60',
-    backgroundColor: P01Colors.cyanDim,
+    borderColor: Colors.primaryMuted,
   },
   phoneLabel: {
-    fontSize: 11,
+    fontSize: FontSize.xs,
     fontFamily: FontFamily.medium,
     color: Colors.textSecondary,
   },
@@ -207,7 +219,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: P01Colors.cyan,
+    backgroundColor: Colors.primary,
     position: 'absolute',
   },
   statusRow: {
@@ -216,15 +228,16 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   statusText: {
-    fontSize: 15,
-    fontFamily: FontFamily.semibold,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.medium,
     color: Colors.text,
   },
   hint: {
-    fontSize: 12,
+    fontSize: FontSize.xs,
     fontFamily: FontFamily.regular,
     color: Colors.textTertiary,
     textAlign: 'center',
+    lineHeight: 16,
     paddingHorizontal: Spacing.xl,
   },
 });

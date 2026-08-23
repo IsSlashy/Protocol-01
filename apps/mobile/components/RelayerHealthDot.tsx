@@ -12,7 +12,7 @@ const DOT_COLOR: Record<RelayerStatusLevel | 'unknown', string> = {
   green: '#39c5bb',
   orange: '#f5a623',
   red: '#ff3b3b',
-  unknown: '#555560',
+  unknown: 'rgba(234, 231, 223, 0.40)',
 };
 
 export function RelayerHealthDot() {

@@ -47,7 +47,7 @@ export default function WelcomeScreen() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a0c' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#070709' }}>
       <LinearGradient
         colors={['rgba(57,197,187,0.03)', 'transparent', 'rgba(57,197,187,0.02)']}
         start={{ x: 0.5, y: 0 }}
@@ -61,7 +61,7 @@ export default function WelcomeScreen() {
         </Animated.View>
 
         <Animated.View entering={FadeInUp.delay(600).duration(600)} style={{ marginTop: 24, alignItems: 'center' }}>
-          <Text style={{ color: '#ff2d7a', fontSize: 12, fontWeight: 'bold', letterSpacing: 6, marginBottom: 8 }}>
+          <Text style={{ color: '#2a9d95', fontSize: 12, fontWeight: 'bold', letterSpacing: 6, marginBottom: 8 }}>
             {t('onboarding.systemStatus')}
           </Text>
           <Text style={{ color: 'white', fontSize: 24, fontWeight: '900', letterSpacing: 2, textAlign: 'center' }}>
@@ -69,7 +69,7 @@ export default function WelcomeScreen() {
           </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
             <View style={{ width: 8, height: 8, backgroundColor: '#39c5bb', marginRight: 8 }} />
-            <Text style={{ color: '#555560', fontSize: 12, letterSpacing: 4 }}>
+            <Text style={{ color: 'rgba(234, 231, 223, 0.40)', fontSize: 12, letterSpacing: 4 }}>
               {t('onboarding.ready')}
             </Text>
           </View>

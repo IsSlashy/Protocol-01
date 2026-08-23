@@ -1,13 +1,35 @@
+/**
+ * ScreenWrapper — safe area, keyboard, optional scroll, and the ground colour.
+ *
+ * ⛔ THE GRADIENT IS GONE. `withGradient` painted a diagonal
+ * `#070709 → #0d0d10 → #070709` behind the whole screen. Two things were wrong
+ * with it: the ground is one flat ink on the site and in the extension, and the
+ * gradient's own stops were hardcoded here, so the theme realignment could not
+ * reach them — a screen using it kept the old ground while its neighbours moved.
+ *
+ * ⚠️ THE PROP STAYS AND IS ACCEPTED, so no call site has to change; it simply
+ * renders the flat ground now. Delete it when nothing passes it any more.
+ */
+
 import React from 'react';
-import { View, StatusBar, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import {
+  View,
+  StatusBar,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
+
+import { Colors } from '@/constants/theme';
 
 interface ScreenWrapperProps {
   children: React.ReactNode;
   scrollable?: boolean;
   safeArea?: boolean;
   edges?: ('top' | 'bottom' | 'left' | 'right')[];
+  /** Accepted for compatibility. The ground is flat; see the note above. */
   withGradient?: boolean;
   keyboardAvoiding?: boolean;
   className?: string;
@@ -19,7 +41,6 @@ export const ScreenWrapper: React.FC<ScreenWrapperProps> = ({
   scrollable = false,
   safeArea = true,
   edges = ['top', 'bottom'],
-  withGradient = false,
   keyboardAvoiding = false,
   className,
   contentContainerClassName,
@@ -30,7 +51,7 @@ export const ScreenWrapper: React.FC<ScreenWrapperProps> = ({
     if (scrollable) {
       return (
         <ScrollView
-          className="flex-1"
+          style={styles.flex}
           contentContainerClassName={contentContainerClassName}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -46,7 +67,7 @@ export const ScreenWrapper: React.FC<ScreenWrapperProps> = ({
     if (keyboardAvoiding) {
       return (
         <KeyboardAvoidingView
-          className="flex-1"
+          style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
           {renderContent()}
@@ -58,31 +79,22 @@ export const ScreenWrapper: React.FC<ScreenWrapperProps> = ({
 
   return (
     <>
-      <StatusBar barStyle="light-content" backgroundColor="#0a0a0c" />
-      {withGradient ? (
-        <LinearGradient
-          colors={['#0a0a0c', '#0f0f12', '#0a0a0c']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          className={`flex-1 ${className || ''}`}
-        >
-          <Container
-            edges={edges}
-            className="flex-1"
-          >
-            {renderWithKeyboardAvoiding()}
-          </Container>
-        </LinearGradient>
-      ) : (
-        <Container
-          edges={edges}
-          className={`flex-1 bg-p01-void ${className || ''}`}
-        >
-          {renderWithKeyboardAvoiding()}
-        </Container>
-      )}
+      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+      <Container edges={edges} style={styles.ground} className={className}>
+        {renderWithKeyboardAvoiding()}
+      </Container>
     </>
   );
 };
+
+const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
+  ground: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+});
 
 export default ScreenWrapper;

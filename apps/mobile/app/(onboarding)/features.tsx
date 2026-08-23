@@ -48,7 +48,7 @@ export default function FeaturesScreen() {
       title: t('onboarding.privateStreams'),
       subtitle: t('onboarding.streamingPayments'),
       description: t('onboarding.privateStreamsDesc'),
-      color: '#ff77a8',
+      color: '#39c5bb',
     },
     {
       id: '3',
@@ -96,7 +96,7 @@ export default function FeaturesScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-[#0a0a0c]">
+    <SafeAreaView className="flex-1 bg-[#070709]">
       {/* Skip Button */}
       <Animated.View entering={FadeIn.delay(300)} className="absolute top-16 right-6 z-10">
         <TouchableOpacity onPress={handleSkip} activeOpacity={0.7}>

@@ -197,7 +197,7 @@ export default function AISettingsScreen() {
               borderRadius: 19,
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: '#0f0f12',
+              backgroundColor: '#0d0d10',
             }}
           >
             <Ionicons name="chevron-back" size={22} color={Colors.text} />
@@ -250,7 +250,7 @@ export default function AISettingsScreen() {
                     borderRadius: 10,
                     overflow: 'hidden',
                     width: '48.5%',
-                    backgroundColor: isActive ? 'rgba(57, 197, 187, 0.12)' : '#0f0f12',
+                    backgroundColor: isActive ? 'rgba(57, 197, 187, 0.12)' : '#0d0d10',
                   }}
                 >
                   <Ionicons
@@ -294,7 +294,7 @@ export default function AISettingsScreen() {
                           paddingVertical: 8,
                           borderRadius: 10,
                           alignItems: 'center',
-                          backgroundColor: isActive ? 'rgba(57, 197, 187, 0.15)' : '#0f0f12',
+                          backgroundColor: isActive ? 'rgba(57, 197, 187, 0.15)' : '#0d0d10',
                         }}
                       >
                         <Text style={{ color: isActive ? P01Colors.cyan : Colors.text, fontSize: 12, fontFamily: FontFamily.medium }}>
@@ -683,7 +683,7 @@ function SectionTitle({ title }: { title: string }) {
 function GlassCard({ children }: { children: React.ReactNode }) {
   return (
     <View style={{ borderRadius: 20, overflow: 'hidden' }}>
-      <View style={{ backgroundColor: '#0f0f12' }}>
+      <View style={{ backgroundColor: '#0d0d10' }}>
         {children}
       </View>
     </View>
@@ -775,7 +775,7 @@ function GlassDivider() {
 function InfoBox({ text }: { text: string }) {
   return (
     <View style={{ borderRadius: 14, overflow: 'hidden', marginTop: 8 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', padding: 12, backgroundColor: '#0f0f12' }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', padding: 12, backgroundColor: '#0d0d10' }}>
         <Ionicons name="shield-checkmark-outline" size={16} color={P01Colors.cyan} style={{ marginTop: 1 }} />
         <Text style={{ color: Colors.textTertiary, fontSize: FontSize.xs, lineHeight: 18, marginLeft: 8, flex: 1 }}>{text}</Text>
       </View>

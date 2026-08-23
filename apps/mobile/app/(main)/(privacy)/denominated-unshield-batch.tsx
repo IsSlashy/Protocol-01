@@ -46,7 +46,8 @@ import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { getKeypair } from '@/services/solana/wallet';
 import { getConnection } from '@/services/solana/connection';
 import { Buffer } from 'buffer';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
+import { Button } from '@/components/ui';
 import { requireBiometricAuth } from '@/utils/biometricGate';
 import { p01Alert } from '@/stores/alertStore';
 import { useT } from '@/i18n';
@@ -316,16 +317,21 @@ export default function DenominatedUnshieldBatchScreen() {
     }
   };
 
+  /**
+   * ⚠️ In-flight was the caution amber. Amber is for something the user should
+   * read twice, and "this note is being proved" is neither a warning nor a
+   * result — three rows of amber made a working batch look like a problem.
+   */
   const statusColor = (s: BatchNoteStatus | undefined): string => {
     switch (s) {
       case 'done':
-        return P01Colors.cyan;
+        return Colors.primary;
       case 'failed':
         return Colors.error;
       case 'proving':
       case 'unshielding':
       case 'sweeping':
-        return P01Colors.yellow;
+        return Colors.textSecondary;
       default:
         return Colors.textTertiary;
     }
@@ -337,13 +343,17 @@ export default function DenominatedUnshieldBatchScreen() {
       <View style={st.header}>
         <TouchableOpacity
           onPress={running ? undefined : handleClose}
-          style={[st.backBtn, running && { opacity: 0.4 }]}
+          style={[st.backBtn, running && st.backBtnDisabled]}
           disabled={running}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel={t('common.back')}
+          accessibilityState={{ disabled: running }}
         >
-          <Ionicons name="arrow-back" size={22} color={Colors.text} />
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
         <Text style={st.headerTitle}>{t('privacy.batchUnshieldTitle')}</Text>
-        <View style={{ width: 40 }} />
+        <View style={st.headerSpacer} />
       </View>
 
       <ScrollView
@@ -360,9 +370,9 @@ export default function DenominatedUnshieldBatchScreen() {
           </View>
           <View style={st.summaryRow}>
             <Text style={st.summaryLabel}>{t('privacy.batchSelectedCount', { count: selectedIds.length })}</Text>
-            {running && <ActivityIndicator size="small" color={P01Colors.cyan} />}
+            {running && <ActivityIndicator size="small" color={Colors.primary} />}
             {allDone && (
-              <Ionicons name="checkmark-circle" size={20} color={P01Colors.cyan} />
+              <Ionicons name="checkmark-circle-outline" size={20} color={Colors.primary} />
             )}
           </View>
         </View>
@@ -372,18 +382,21 @@ export default function DenominatedUnshieldBatchScreen() {
         <View style={st.recipientRow}>
           <TouchableOpacity
             onPress={() => setUseOwnWallet((v) => !v)}
-            style={[st.toggleChip, useOwnWallet && { backgroundColor: P01Colors.cyanDim }]}
+            style={[st.toggleChip, useOwnWallet && st.toggleChipActive]}
             disabled={running}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: useOwnWallet, disabled: running }}
+            accessibilityLabel={t('shieldUnshield.myWallet')}
           >
             <Ionicons
               name={useOwnWallet ? 'person-circle' : 'person-circle-outline'}
-              size={14}
-              color={useOwnWallet ? P01Colors.cyan : Colors.textSecondary}
+              size={16}
+              color={useOwnWallet ? Colors.primary : Colors.textSecondary}
             />
             <Text
               style={[
                 st.toggleChipText,
-                { color: useOwnWallet ? P01Colors.cyan : Colors.textSecondary },
+                { color: useOwnWallet ? Colors.primary : Colors.textSecondary },
               ]}
             >
               {t('shieldUnshield.myWallet')}
@@ -391,7 +404,7 @@ export default function DenominatedUnshieldBatchScreen() {
           </TouchableOpacity>
         </View>
         <TextInput
-          style={[st.input, (useOwnWallet || running) && { opacity: 0.5 }]}
+          style={[st.input, (useOwnWallet || running) && st.inputDisabled]}
           value={recipient}
           onChangeText={setRecipient}
           placeholder="Solana pubkey / st:01…"
@@ -399,6 +412,7 @@ export default function DenominatedUnshieldBatchScreen() {
           editable={!useOwnWallet && !running}
           autoCapitalize="none"
           autoCorrect={false}
+          accessibilityLabel={t('privacy.batchRecipientLabel')}
         />
         <Text style={st.helpText}>{t('privacy.batchRecipientHelp')}</Text>
 
@@ -412,10 +426,7 @@ export default function DenominatedUnshieldBatchScreen() {
           return (
             <View
               key={note.id}
-              style={[
-                st.noteRow,
-                isCurrent && { borderColor: P01Colors.cyan, borderWidth: 1 },
-              ]}
+              style={[st.noteRow, isCurrent && st.noteRowCurrent]}
             >
               <View style={{ flex: 1 }}>
                 <Text style={st.noteAmount}>
@@ -425,15 +436,17 @@ export default function DenominatedUnshieldBatchScreen() {
                   {statusLabel(s?.status)}
                   {s?.txSig ? ` · ${s.txSig.slice(0, 8)}…` : ''}
                 </Text>
-                {s?.error && <Text style={st.noteError}>{s.error}</Text>}
+                {s?.error && (
+                  <Text style={st.noteError} accessibilityRole="alert">{s.error}</Text>
+                )}
               </View>
               {(s?.status === 'proving' ||
                 s?.status === 'unshielding' ||
                 s?.status === 'sweeping') && (
-                <ActivityIndicator size="small" color={P01Colors.yellow} />
+                <ActivityIndicator size="small" color={Colors.textSecondary} />
               )}
               {s?.status === 'done' && (
-                <Ionicons name="checkmark-circle" size={18} color={P01Colors.cyan} />
+                <Ionicons name="checkmark-circle-outline" size={18} color={Colors.primary} />
               )}
               {s?.status === 'failed' && (
                 <Ionicons name="alert-circle" size={18} color={Colors.error} />
@@ -443,37 +456,46 @@ export default function DenominatedUnshieldBatchScreen() {
         })}
       </ScrollView>
 
-      {/* Bottom action bar */}
-      <View style={[st.bottomBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+      {/* Bottom action bar — one primary at a time. */}
+      <View style={[st.bottomBar, { paddingBottom: Math.max(insets.bottom, Spacing.md) }]}>
         {!anyStarted && (
-          <TouchableOpacity
-            onPress={handleStart}
-            style={[st.cta, (!starkReady || running) && { opacity: 0.4 }]}
-            disabled={!starkReady || running}
-          >
-            <Ionicons name="wallet-outline" size={16} color="#000" />
-            <Text style={st.ctaText}>{t('privacy.batchStart')}</Text>
-          </TouchableOpacity>
+          <View style={st.ctaSlot}>
+            <Button
+              variant="primary"
+              size="lg"
+              fullWidth
+              disabled={!starkReady}
+              loading={running}
+              onPress={handleStart}
+            >
+              {t('privacy.batchStart')}
+            </Button>
+          </View>
         )}
-        {running && (
-          <View style={[st.cta, { opacity: 0.7 }]}>
-            <ActivityIndicator size="small" color="#000" />
-            <Text style={st.ctaText}>{t('privacy.batchRunning')}</Text>
+        {running && anyStarted && (
+          <View style={st.ctaSlot}>
+            <Button variant="primary" size="lg" fullWidth loading disabled onPress={() => {}}>
+              {t('privacy.batchRunning')}
+            </Button>
           </View>
         )}
         {anyStarted && !running && failedIds.length > 0 && (
-          <TouchableOpacity
-            onPress={handleRetry}
-            style={[st.cta, { backgroundColor: P01Colors.yellow }]}
-          >
-            <Ionicons name="refresh" size={16} color="#000" />
-            <Text style={st.ctaText}>{t('privacy.batchRetry')}</Text>
-          </TouchableOpacity>
+          <View style={st.ctaSlot}>
+            <Button
+              variant="primary"
+              size="lg"
+              fullWidth
+              onPress={handleRetry}
+              icon={<Ionicons name="refresh" size={16} color={Colors.background} />}
+            >
+              {t('privacy.batchRetry')}
+            </Button>
+          </View>
         )}
         {anyStarted && !running && (
-          <TouchableOpacity onPress={handleClose} style={st.closeBtn}>
-            <Text style={st.closeBtnText}>{t('privacy.batchClose')}</Text>
-          </TouchableOpacity>
+          <Button variant="secondary" size="lg" onPress={handleClose}>
+            {t('privacy.batchClose')}
+          </Button>
         )}
       </View>
     </View>
@@ -481,80 +503,88 @@ export default function DenominatedUnshieldBatchScreen() {
 }
 
 const st = StyleSheet.create({
-  container: { flex: 1, backgroundColor: 'transparent' },
+  container: { flex: 1, backgroundColor: Colors.background },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.md, minHeight: 56,
   },
-  backBtn: {
-    width: 40, height: 40, borderRadius: BorderRadius.full,
-    backgroundColor: Colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center',
+  backBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  backBtnDisabled: { opacity: 0.4 },
+  headerSpacer: { width: 44 },
+  headerTitle: {
+    flex: 1, fontSize: FontSize.xl, fontFamily: FontFamily.displayMedium, color: Colors.text,
   },
-  headerTitle: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.text },
 
   summaryCard: {
-    backgroundColor: Colors.surfaceSecondary,
-    borderRadius: BorderRadius.xl,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
     padding: Spacing.lg,
-    marginBottom: Spacing.lg,
-    gap: 10,
+    marginBottom: Spacing.xl,
+    gap: Spacing.sm,
   },
   summaryRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
-  summaryLabel: { fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary },
-  summaryVal: { fontSize: 20, fontFamily: FontFamily.bold, color: Colors.text },
+  summaryLabel: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+  },
+  summaryVal: {
+    fontSize: FontSize.xl, fontFamily: FontFamily.monoMedium, color: Colors.text,
+  },
 
   sectionLabel: {
-    fontSize: 13, fontFamily: FontFamily.semibold, color: Colors.textSecondary,
-    marginBottom: 8,
+    fontSize: FontSize.sm, fontFamily: FontFamily.medium, color: Colors.textSecondary,
+    marginBottom: Spacing.sm,
   },
-  recipientRow: { flexDirection: 'row', gap: 6, marginBottom: 8 },
+  recipientRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.sm },
   toggleChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 10, paddingVertical: 6,
-    borderRadius: BorderRadius.sm, backgroundColor: Colors.surfaceSecondary,
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    minHeight: 44, paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.sm,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
   },
-  toggleChipText: { fontSize: 12, fontFamily: FontFamily.medium },
+  toggleChipActive: { borderColor: Colors.primary },
+  toggleChipText: { fontSize: FontSize.sm, fontFamily: FontFamily.medium },
   input: {
-    backgroundColor: Colors.surfaceSecondary,
+    minHeight: 48,
+    backgroundColor: Colors.surface,
     borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    fontSize: 13,
+    borderWidth: 1, borderColor: Colors.border,
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.mono,
     color: Colors.text,
   },
+  inputDisabled: { opacity: 0.5 },
   helpText: {
-    fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary,
-    marginTop: 6, lineHeight: 15,
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular, color: Colors.textTertiary,
+    marginTop: Spacing.sm, lineHeight: 16,
   },
 
   noteRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: Colors.surfaceSecondary,
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+    backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
-    padding: Spacing.md, marginBottom: 8,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: Spacing.lg, marginBottom: Spacing.sm,
   },
-  noteAmount: { fontSize: 14, fontFamily: FontFamily.bold, color: Colors.text },
-  noteStatus: { fontSize: 11, fontFamily: FontFamily.medium, marginTop: 2 },
-  noteError: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.error, marginTop: 2 },
+  noteRowCurrent: { borderColor: Colors.primary },
+  noteAmount: {
+    fontSize: FontSize.md, fontFamily: FontFamily.monoMedium, color: Colors.text,
+  },
+  noteStatus: { fontSize: FontSize.xs, fontFamily: FontFamily.medium, marginTop: 2 },
+  noteError: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular, color: Colors.error, marginTop: 2,
+  },
 
   bottomBar: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingHorizontal: Spacing.xl, paddingTop: 12,
-    backgroundColor: Colors.surfaceSecondary,
-    borderTopWidth: 1, borderTopColor: Colors.surfaceTertiary,
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+    paddingHorizontal: Spacing.xl, paddingTop: Spacing.md,
+    backgroundColor: Colors.background,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.borderSoft,
   },
-  cta: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 14, borderRadius: BorderRadius.md,
-    backgroundColor: P01Colors.cyan,
-  },
-  ctaText: { fontSize: 14, fontFamily: FontFamily.bold, color: '#000' },
-  closeBtn: {
-    paddingHorizontal: 16, paddingVertical: 14, borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surfaceTertiary,
-  },
-  closeBtnText: { fontSize: 13, fontFamily: FontFamily.semibold, color: Colors.text },
+  ctaSlot: { flex: 1 },
 });

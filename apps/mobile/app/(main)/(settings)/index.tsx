@@ -1,14 +1,40 @@
+/**
+ * Settings — the index.
+ *
+ * 🎯 REBUILT ON THE REALIGNED THEME AND THE SHARED KIT 2026-08-23.
+ *
+ * WHAT WAS HERE. A local `GlassCard`, a local `SectionTitle` and a local
+ * `GlassDivider`, none of which were glass and all three of which existed
+ * identically in five sibling files. Their fills were hex literals
+ * (`#0d0d10`, `rgba(255,255,255,0.06)`) written inline, so the token sweep over
+ * `constants/theme.ts` could not reach this screen at all. Every section header
+ * was `.toUpperCase()`, and eight elements faded in on a staggered 50→540ms
+ * ladder — half a second of choreography to show a list of links.
+ *
+ * All three components are now `components/settings/`, which existed and which
+ * nothing imported.
+ *
+ * ⛔ TWO ROWS DELETED, NOT RESTYLED.
+ *   - "RPC Endpoint · Solana" pushed to `/network`, the same route as the
+ *     Network row directly above it, and its value was the word "Solana" —
+ *     a constant, on a Solana wallet. Two rows, one destination, no decision.
+ *   - The version footer restated `v… · CODENAME`, which the About row two
+ *     lines above already shows as its value.
+ *
+ * ⚠️ THE DANGER ZONE STAYS BEHIND A DISCLOSURE and stays last. Deleting the
+ * wallet is the one irreversible action in the app; it should be reachable and
+ * never adjacent to something ordinary.
+ *
+ * 🚨 `app/_layout.tsx` sets `Text.defaultProps.allowFontScaling = false` for
+ * the whole app, so Dynamic Type does nothing here. Left alone deliberately —
+ * see the report; turning it on needs a layout pass over every screen, not one.
+ */
+
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-} from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { p01Alert } from '@/stores/alertStore';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
@@ -16,9 +42,10 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import * as Linking from 'expo-linking';
 import Constants from 'expo-constants';
-import Animated, { FadeInDown } from 'react-native-reanimated';
 
-import { SettingsRow, ToggleRow, CurrencyModal } from '../../../components/settings';
+import { Header } from '@/components/common';
+import { Button } from '@/components/ui';
+import { SettingsRow, SettingsSection, ToggleRow, CurrencyModal } from '../../../components/settings';
 import { useWalletStore } from '../../../stores/walletStore';
 import { useSettingsStore, Currency, CURRENCY_SYMBOLS } from '../../../stores/settingsStore';
 import { useShieldedStore } from '../../../stores/shieldedStore';
@@ -28,48 +55,14 @@ import { useSubscriptionVaultStore } from '../../../stores/subscriptionVaultStor
 import { useStreamStore } from '../../../stores/streamStore';
 import { lockVault } from '../../../utils/crypto/noteVault';
 import { getCluster } from '../../../services/solana/connection';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing, Layout } from '@/constants/theme';
 import { RELEASE_CODENAME } from '@/constants/release';
 import { useT, LANGUAGES, useLangStore } from '@/i18n';
-
-/* ──────────────────────── Glass Card ──────────────────────── */
-
-interface GlassCardProps {
-  children: React.ReactNode;
-  delay?: number;
-  style?: object;
-}
-
-const GlassCard: React.FC<GlassCardProps> = ({ children, delay = 0, style }) => (
-  <Animated.View entering={FadeInDown.delay(delay).duration(350)} style={[styles.glassOuter, style]}>
-    <View style={styles.glassBlur}>
-      {children}
-    </View>
-  </Animated.View>
-);
-
-/* ──────────────────────── Section Title ──────────────────────── */
-
-const SectionTitle: React.FC<{ title: string; delay?: number }> = ({ title, delay = 0 }) => (
-  <Animated.Text
-    entering={FadeInDown.delay(delay).duration(300)}
-    style={styles.sectionTitle}
-  >
-    {title}
-  </Animated.Text>
-);
-
-/* ──────────────────────── Divider ──────────────────────── */
-
-const GlassDivider: React.FC = () => (
-  <View style={styles.divider} />
-);
-
-/* ──────────────────────── Screen ──────────────────────── */
 
 export default function SettingsScreen() {
   const t = useT();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   // Local wallet only (Privy removed — spec §3 Phase 1).
   const { publicKey, logout: walletLogout, hasWallet: hasLocalWallet, balance } = useWalletStore();
   const {
@@ -103,7 +96,7 @@ export default function SettingsScreen() {
 
   const walletAddress = publicKey || '';
   const truncatedAddress = walletAddress
-    ? `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`
+    ? `${walletAddress.slice(0, 4)}…${walletAddress.slice(-4)}`
     : 'No wallet';
 
   const currentNetwork = getCluster();
@@ -265,154 +258,128 @@ export default function SettingsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
-      <Animated.View entering={FadeInDown.delay(50).duration(300)} style={styles.header}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="arrow-back" size={20} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>{t('settings.title')}</Text>
-        <View style={{ width: 40 }} />
-      </Animated.View>
+    <View style={styles.screen}>
+      <Header title={t('settings.title')} showBack onBackPress={() => router.back()} />
 
       <ScrollView
-        style={{ flex: 1 }}
+        style={styles.flex}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 140 }}
+        contentContainerStyle={{
+          paddingBottom: Layout.tabBarTotalHeight + insets.bottom + Spacing['3xl'],
+        }}
       >
-        {/* WALLET */}
-        <SectionTitle title={t('wallet.title').toUpperCase()} delay={80} />
-        <GlassCard delay={100}>
+        {/* ── The wallet this is. One row, and the only thing it does is copy. ── */}
+        <SettingsSection style={styles.firstSection}>
           <TouchableOpacity
             style={styles.walletRow}
             onPress={handleCopyAddress}
+            disabled={!walletAddress}
             activeOpacity={0.7}
             accessibilityRole="button"
-            accessibilityLabel={`Copy wallet address ${truncatedAddress}`}
+            accessibilityLabel={
+              walletAddress ? `Copy wallet address ${truncatedAddress}` : t('wallet.noWallet')
+            }
           >
-            <View style={styles.walletRowLeft}>
-              <View style={styles.walletIcon}>
-                <Ionicons name="wallet-outline" size={20} color={P01Colors.cyan} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowLabel}>{t('wallet.title')}</Text>
-                <Text style={styles.rowSublabel}>
-                  {walletAddress ? truncatedAddress : t('wallet.noWallet')}
-                </Text>
-              </View>
+            <View style={styles.walletText}>
+              <Text style={styles.walletLabel}>{t('wallet.title')}</Text>
+              <Text style={styles.walletAddress} numberOfLines={1}>
+                {walletAddress ? truncatedAddress : t('wallet.noWallet')}
+              </Text>
             </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              {copied ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons name="checkmark" size={16} color={P01Colors.cyan} />
-                  <Text style={styles.copiedText}>{t('common.copied')}</Text>
-                </View>
-              ) : (
-                <Ionicons name="copy-outline" size={18} color="#666" />
-              )}
-            </View>
+            {copied ? (
+              <View style={styles.copiedRow}>
+                <Ionicons name="checkmark" size={16} color={Colors.primary} />
+                <Text style={styles.copiedText}>{t('common.copied')}</Text>
+              </View>
+            ) : walletAddress ? (
+              <Ionicons name="copy-outline" size={18} color={Colors.textTertiary} />
+            ) : null}
           </TouchableOpacity>
-        </GlassCard>
+        </SettingsSection>
 
-        {/* SECURITY */}
-        <SectionTitle title={t('settings.security').toUpperCase()} delay={130} />
-        <GlassCard delay={150}>
+        {/* ── Security ── */}
+        <SettingsSection title={t('settings.security')}>
           <SettingsRow
             label={t('settings.security')}
             leftIcon="shield-outline"
             onPress={() => router.push('/(main)/(settings)/security')}
           />
-          <GlassDivider />
           <SettingsRow
             label={t('settings.backup')}
             leftIcon="key-outline"
             onPress={() => router.push('/(main)/(settings)/backup')}
           />
-          <GlassDivider />
           <SettingsRow
             label="Connect to extension"
+            description="Send this wallet to the browser extension"
             leftIcon="desktop-outline"
             onPress={() => router.push('/(main)/(settings)/connect-extension')}
           />
-        </GlassCard>
+        </SettingsSection>
 
-        {/* PRIVACY */}
-        <SectionTitle title={t('settings.privacy').toUpperCase()} delay={180} />
-        <GlassCard delay={200}>
+        {/* ── Privacy ── */}
+        <SettingsSection title={t('settings.privacy')}>
           <SettingsRow
             label={t('settings.privacy')}
+            description="Decoys, stealth addresses and relay routing"
             leftIcon="eye-off-outline"
             onPress={() => router.push('/(main)/(settings)/privacy')}
           />
-        </GlassCard>
+        </SettingsSection>
 
-        {/* PRIVACY FEATURES */}
-        <SectionTitle title={t('settings.privacyFeatures').toUpperCase()} delay={230} />
-        <GlassCard delay={250}>
+        {/* ⚠️ Two retired modules, kept switchable because money can still be
+            sitting in them. The balance is stated on the row itself when there
+            is one — a toggle that quietly holds funds is how they get lost. */}
+        <SettingsSection
+          title={t('settings.privacyFeatures')}
+          footer="Both are superseded by the denominated privacy pool. Turn one on only to move money out of it."
+        >
           <ToggleRow
-            label="Shielded Wallet (Legacy)"
+            label="Shielded wallet"
             description={hasShieldedFunds
-              ? `${shieldedBalance.toFixed(4)} SOL in pool — withdraw recommended`
-              : 'Variable-amount privacy pool. Use Privacy Pool instead for stronger anonymity.'}
+              ? `Retired. ${shieldedBalance.toFixed(4)} SOL still in the pool — withdraw it.`
+              : 'Retired. Variable amounts, so a deposit and its withdrawal match on size.'}
             value={shieldedWalletEnabled}
             onValueChange={setShieldedWalletEnabled}
           />
-          <GlassDivider />
           <ToggleRow
-            label="Confidential Balance"
+            label="Confidential balance"
             description={hasConfidentialFunds
-              ? `${confidentialSolBalance.toFixed(4)} SOL confidential — withdraw recommended`
-              : 'Hide token amounts on-chain. Sender and recipient remain visible.'}
+              ? `Retired. ${confidentialSolBalance.toFixed(4)} SOL still confidential — withdraw it.`
+              : 'Retired. Hides token amounts on chain; sender and recipient stay visible.'}
             value={confidentialBalanceEnabled}
             onValueChange={setConfidentialBalanceEnabled}
           />
-        </GlassCard>
+        </SettingsSection>
 
-        {/* NETWORK */}
-        <SectionTitle title={t('settings.network').toUpperCase()} delay={280} />
-        <GlassCard delay={300}>
+        {/* ── Network ── */}
+        <SettingsSection title={t('settings.network')}>
           <SettingsRow
             label={t('settings.network')}
             value={networkDisplay}
             leftIcon="globe-outline"
             onPress={() => router.push('/(main)/(settings)/network')}
           />
-          <GlassDivider />
-          <SettingsRow
-            label={t('settings.rpcEndpoint')}
-            value="Solana"
-            leftIcon="server-outline"
-            onPress={() => router.push('/(main)/(settings)/network')}
-          />
-        </GlassCard>
+        </SettingsSection>
 
-        {/* PREFERENCES */}
-        <SectionTitle title={t('settings.general').toUpperCase()} delay={330} />
-        <GlassCard delay={350}>
+        {/* ── Preferences ── */}
+        <SettingsSection title={t('settings.general')}>
           <SettingsRow
             label="Currency"
-            value={currency}
+            value={`${currency} ${CURRENCY_SYMBOLS[currency]}`}
             leftIcon="cash-outline"
             onPress={handleCurrencySelect}
           />
-          <GlassDivider />
           <SettingsRow
             label={t('settings.notifications')}
+            description="Opens this app's page in system settings"
             leftIcon="notifications-outline"
             onPress={handleNotifications}
           />
-          <GlassDivider />
-          <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-              <Ionicons name="language-outline" size={20} color={Colors.textSecondary} />
-              <Text style={{ fontSize: 15, fontFamily: FontFamily.medium, color: Colors.text }}>{t('settings.language')}</Text>
-            </View>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
+
+          <View style={styles.languageBlock}>
+            <Text style={styles.languageLabel}>{t('settings.language')}</Text>
+            <View style={styles.languageChoices} accessibilityRole="radiogroup">
               {LANGUAGES.map((lang) => {
                 const isActive = useLangStore.getState().locale === lang.id;
                 return (
@@ -423,294 +390,222 @@ export default function SettingsScreen() {
                       useLangStore.getState().setLocale(lang.id);
                     }}
                     activeOpacity={0.7}
-                    style={{
-                      flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: BorderRadius.md,
-                      backgroundColor: isActive ? P01Colors.cyanDim : 'rgba(255,255,255,0.04)',
-                      borderWidth: 1, borderColor: isActive ? P01Colors.cyan : 'transparent',
-                    }}
+                    accessibilityRole="radio"
+                    accessibilityLabel={lang.label}
+                    accessibilityState={{ checked: isActive }}
+                    style={[styles.languageChoice, isActive && styles.languageChoiceActive]}
                   >
-                    <Text style={{
-                      fontSize: 14, fontFamily: FontFamily.semibold,
-                      color: isActive ? P01Colors.cyan : Colors.textSecondary,
-                    }}>{lang.native}</Text>
-                    <Text style={{
-                      fontSize: 10, fontFamily: FontFamily.regular,
-                      color: isActive ? P01Colors.cyan : Colors.textTertiary, marginTop: 2,
-                    }}>{lang.label}</Text>
+                    <Text style={[styles.languageNative, isActive && styles.languageNativeActive]}>
+                      {lang.native}
+                    </Text>
+                    <Text style={[styles.languageSub, isActive && styles.languageSubActive]}>
+                      {lang.label}
+                    </Text>
                   </TouchableOpacity>
                 );
               })}
             </View>
           </View>
-        </GlassCard>
+        </SettingsSection>
 
-        {/* ABOUT */}
-        <SectionTitle title={t('settings.about').toUpperCase()} delay={380} />
-        <GlassCard delay={400}>
+        {/* ── About ── */}
+        <SettingsSection title={t('settings.about')}>
           <SettingsRow
             label={t('settings.about')}
             value={`v${Constants.expoConfig?.version ?? '0.0.0'} · ${RELEASE_CODENAME}`}
             leftIcon="information-circle-outline"
             onPress={() => router.push('/(main)/(settings)/about')}
           />
-        </GlassCard>
+        </SettingsSection>
 
-        {/* Disconnect Button */}
-        <Animated.View entering={FadeInDown.delay(450).duration(350)} style={styles.disconnectOuter}>
-          <View style={styles.disconnectBlur}>
-            <TouchableOpacity
-              style={styles.disconnectTouch}
-              onPress={handleDisconnect}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Disconnect wallet"
-            >
-              <Ionicons name="log-out-outline" size={18} color={P01Colors.cyan} />
-              <Text style={styles.disconnectText}>{t('settings.disconnect')}</Text>
-            </TouchableOpacity>
-          </View>
-        </Animated.View>
+        {/* ── Leaving. Not styled as a primary action: it is not one. ── */}
+        <View style={styles.disconnectWrap}>
+          <Button
+            variant="secondary"
+            fullWidth
+            onPress={handleDisconnect}
+            accessibilityLabel="Disconnect this wallet from the device"
+            icon={<Ionicons name="log-out-outline" size={18} color={Colors.text} />}
+          >
+            {t('settings.disconnect')}
+          </Button>
+        </View>
 
-        {/* Advanced Section Toggle */}
-        <Animated.View entering={FadeInDown.delay(510).duration(300)} style={styles.advancedToggle}>
+        {/* ── The one irreversible thing in the app, behind a disclosure. ── */}
+        <View style={styles.dangerWrap}>
           <TouchableOpacity
-            style={styles.advancedToggleTouch}
             onPress={() => setShowAdvanced(!showAdvanced)}
             activeOpacity={0.7}
+            style={styles.dangerToggle}
             accessibilityRole="button"
             accessibilityLabel={showAdvanced ? 'Hide advanced options' : 'Show advanced options'}
+            accessibilityState={{ expanded: showAdvanced }}
           >
-            <Text style={styles.advancedToggleText}>
-              {showAdvanced ? t('common.close') : t('settings.dangerZone')}
-            </Text>
+            <Text style={styles.dangerToggleText}>{t('settings.dangerZone')}</Text>
             <Ionicons
               name={showAdvanced ? 'chevron-up' : 'chevron-down'}
               size={14}
-              color="#666"
+              color={Colors.textTertiary}
             />
           </TouchableOpacity>
-        </Animated.View>
 
-        {/* Danger Zone */}
-        {showAdvanced && (
-          <Animated.View entering={FadeInDown.duration(250)} style={styles.dangerOuter}>
-            <View style={styles.dangerBlur}>
-              <Text style={styles.dangerLabel}>
-                {t('settings.dangerZone')}
+          {showAdvanced ? (
+            <View style={styles.dangerBody}>
+              <Text style={styles.dangerNote}>
+                Deleting removes the keypair from this device. Only your recovery phrase
+                brings it back.
               </Text>
-              <TouchableOpacity
-                style={styles.deleteButton}
+              <Button
+                variant="danger"
+                fullWidth
                 onPress={handleDeleteWallet}
-                activeOpacity={0.7}
-                accessibilityRole="button"
                 accessibilityLabel="Delete wallet permanently"
+                icon={<Ionicons name="trash-outline" size={16} color={Colors.error} />}
               >
-                <Ionicons name="trash-outline" size={16} color="#ef4444" />
-                <Text style={styles.deleteButtonText}>{t('settings.resetWallet')}</Text>
-              </TouchableOpacity>
+                {t('settings.resetWallet')}
+              </Button>
             </View>
-          </Animated.View>
-        )}
-
-        {/* Version Footer */}
-        <Animated.View entering={FadeInDown.delay(540).duration(300)} style={styles.footer}>
-          <Text style={styles.footerVersion}>Protocol 01 v{Constants.expoConfig?.version ?? '0.0.0'} · {RELEASE_CODENAME}</Text>
-          <Text style={styles.footerBuilt}>Built on Solana</Text>
-        </Animated.View>
+          ) : null}
+        </View>
       </ScrollView>
 
-      {/* Currency Selection Modal */}
       <CurrencyModal
         visible={currencyModalVisible}
         currentCurrency={currency}
         onSelect={setCurrency}
         onClose={() => setCurrencyModalVisible(false)}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
-/* ──────────────────────── Styles ──────────────────────── */
-
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: Colors.background,
   },
-
-  /* Header */
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.lg,
+  flex: {
+    flex: 1,
   },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.full,
-    backgroundColor: '#0f0f12',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    color: Colors.text,
-    fontSize: 18,
-    fontFamily: FontFamily.semibold,
-  },
-
-  /* Section Title */
-  sectionTitle: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontFamily: FontFamily.semibold,
-    letterSpacing: 1,
-    paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.sm,
+  firstSection: {
     marginTop: Spacing.lg,
   },
 
-  /* Glass Card */
-  glassOuter: {
-    marginHorizontal: Spacing.lg,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-  },
-  glassBlur: {
-    backgroundColor: '#0f0f12',
-  },
-
-  /* Divider */
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    marginHorizontal: Spacing.lg,
-  },
-
-  /* Wallet Row */
+  /* Wallet */
   walletRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: Spacing.lg,
+    gap: Spacing.md,
+    minHeight: 60,
+    paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.lg,
   },
-  walletRowLeft: {
+  walletText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  walletLabel: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+  },
+  walletAddress: {
+    color: Colors.text,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.mono,
+    marginTop: 3,
+  },
+  copiedRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
-  },
-  walletIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.md,
-    backgroundColor: 'rgba(57, 197, 187, 0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: Spacing.md,
-  },
-  rowLabel: {
-    color: Colors.text,
-    fontSize: 16,
-    fontFamily: FontFamily.medium,
-  },
-  rowSublabel: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    marginTop: 2,
+    gap: Spacing.xs,
   },
   copiedText: {
-    color: P01Colors.cyan,
-    fontSize: 12,
-    marginLeft: 4,
+    color: Colors.primary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+  },
+
+  /* Language */
+  languageBlock: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.lg,
+  },
+  languageLabel: {
+    color: Colors.text,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.regular,
+    marginBottom: Spacing.md,
+  },
+  languageChoices: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  languageChoice: {
+    flex: 1,
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: 'transparent',
+  },
+  languageChoiceActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primaryDim,
+  },
+  languageNative: {
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.medium,
+    color: Colors.textSecondary,
+  },
+  languageNativeActive: {
+    color: Colors.primary,
+  },
+  languageSub: {
+    fontSize: FontSize.xs,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    marginTop: 2,
+  },
+  languageSubActive: {
+    color: Colors.primaryMuted,
   },
 
   /* Disconnect */
-  disconnectOuter: {
-    marginTop: Spacing.lg,
-    marginHorizontal: Spacing.lg,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-  },
-  disconnectBlur: {
-    backgroundColor: '#0f0f12',
-  },
-  disconnectTouch: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.lg,
-  },
-  disconnectText: {
-    color: P01Colors.cyan,
-    fontSize: 16,
-    fontFamily: FontFamily.medium,
-    marginLeft: Spacing.sm,
-  },
-
-  /* Advanced Toggle */
-  advancedToggle: {
-    marginTop: Spacing['2xl'],
-    marginHorizontal: Spacing.lg,
-  },
-  advancedToggleTouch: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.md,
-  },
-  advancedToggleText: {
-    color: 'rgba(136, 136, 146, 0.5)',
-    fontSize: 12,
-    marginRight: Spacing.sm,
-  },
-
-  /* Danger Zone */
-  dangerOuter: {
-    marginTop: Spacing.sm,
-    marginHorizontal: Spacing.lg,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-  },
-  dangerBlur: {
-    backgroundColor: '#0f0f12',
-    padding: Spacing.lg,
-  },
-  dangerLabel: {
-    color: 'rgba(239, 68, 68, 0.7)',
-    fontSize: 12,
-    textAlign: 'center',
-    marginBottom: Spacing.md,
-  },
-  deleteButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.md,
-    backgroundColor: 'rgba(239, 68, 68, 0.08)',
-    borderRadius: BorderRadius.md,
-  },
-  deleteButtonText: {
-    color: '#ef4444',
-    fontSize: 14,
-    fontFamily: FontFamily.medium,
-    marginLeft: Spacing.sm,
-  },
-
-  /* Footer */
-  footer: {
-    alignItems: 'center',
+  disconnectWrap: {
     marginTop: Spacing['3xl'],
-    marginBottom: Spacing.xl,
+    paddingHorizontal: Spacing.xl,
   },
-  footerVersion: {
-    color: 'rgba(136, 136, 146, 0.5)',
-    fontSize: 12,
+
+  /* Danger zone */
+  dangerWrap: {
+    marginTop: Spacing['2xl'],
+    paddingHorizontal: Spacing.xl,
   },
-  footerBuilt: {
-    color: 'rgba(136, 136, 146, 0.3)',
-    fontSize: 12,
-    marginTop: 4,
+  dangerToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    minHeight: 44,
+  },
+  dangerToggleText: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+  },
+  dangerBody: {
+    marginTop: Spacing.md,
+    gap: Spacing.md,
+  },
+  dangerNote: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    lineHeight: 19,
+    textAlign: 'center',
   },
 });

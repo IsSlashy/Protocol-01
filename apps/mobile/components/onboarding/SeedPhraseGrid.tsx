@@ -1,9 +1,22 @@
+/**
+ * SeedPhraseGrid — twelve words, and the one button that copies them.
+ *
+ * Colour literals replaced with tokens 2026-08-23. The word itself is now set
+ * in the MONO face: a seed phrase is data to be transcribed character by
+ * character, and the rule in this design system is that addresses, hashes and
+ * amounts are mono for exactly that reason. `rn` and `m` should not be
+ * ambiguous in the one place where getting a letter wrong loses the wallet.
+ *
+ * ⚠️ The 60-second clipboard scrub in `handleCopyAll` is untouched.
+ */
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, Pressable } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
+
+import { Colors, Spacing, FontFamily, FontSize, BorderRadius } from '../../constants/theme';
 
 interface SeedPhraseGridProps {
   words: string[];
@@ -54,29 +67,36 @@ export const SeedPhraseGrid: React.FC<SeedPhraseGridProps> = ({
           <Animated.View
             key={`${word}-${index}`}
             entering={FadeInDown.delay(index * revealDelay).duration(400)}
-            style={{ width: '31%', marginBottom: 12 }}
+            style={{ width: '31%', marginBottom: Spacing.md }}
           >
             <Pressable
               onPress={() => selectable && handleWordPress(word, index)}
               disabled={!selectable}
               style={{
-                backgroundColor: '#151518',
+                backgroundColor: Colors.surface,
                 borderWidth: 1,
-                borderColor: '#2a2a30',
-                borderRadius: 12,
-                paddingVertical: 12,
-                paddingHorizontal: 8,
+                borderColor: Colors.border,
+                borderRadius: BorderRadius.md,
+                paddingVertical: Spacing.md,
+                paddingHorizontal: Spacing.sm,
               }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={{ color: '#39c5bb', fontSize: 11, width: 20 }}>
-                  {index + 1}.
+                <Text
+                  style={{
+                    color: Colors.textTertiary,
+                    fontFamily: FontFamily.mono,
+                    fontSize: FontSize.xs,
+                    width: 20,
+                  }}
+                >
+                  {index + 1}
                 </Text>
                 <Text
                   style={{
-                    color: '#ffffff',
-                    fontSize: 14,
-                    fontWeight: '500',
+                    color: Colors.text,
+                    fontFamily: FontFamily.mono,
+                    fontSize: FontSize.sm,
                     flex: 1,
                     textAlign: 'center',
                   }}
@@ -95,20 +115,30 @@ export const SeedPhraseGrid: React.FC<SeedPhraseGridProps> = ({
           <TouchableOpacity
             onPress={handleCopyAll}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Copy the whole recovery phrase"
             style={{
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
-              marginTop: 16,
-              paddingVertical: 12,
+              minHeight: 44,
+              marginTop: Spacing.lg,
+              paddingVertical: Spacing.md,
             }}
           >
             <Ionicons
               name={copied ? 'checkmark-circle' : 'copy-outline'}
               size={18}
-              color="#39c5bb"
+              color={Colors.primary}
             />
-            <Text style={{ color: '#39c5bb', marginLeft: 8, fontWeight: '500' }}>
+            <Text
+              style={{
+                color: Colors.primary,
+                marginLeft: Spacing.sm,
+                fontFamily: FontFamily.medium,
+                fontSize: FontSize.md,
+              }}
+            >
               {copied ? 'Copied!' : 'Copy All'}
             </Text>
           </TouchableOpacity>

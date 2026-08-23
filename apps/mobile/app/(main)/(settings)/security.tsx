@@ -1,26 +1,40 @@
+/**
+ * Security settings — how this device proves it is you.
+ *
+ * 🎯 REBUILT ON THE REALIGNED THEME AND THE SHARED KIT 2026-08-23.
+ *
+ * ⛔ TWO ROWS WERE PASSING THEIR OWN LABEL AS THEIR DESCRIPTION.
+ * "Block Screenshots / Block Screenshots" and the biometric row's
+ * `t('common.disabled')` told the user nothing twice. A second line that
+ * restates the first is worse than no second line: it looks like an
+ * explanation, so it stops the reader from asking for one.
+ *
+ * ⛔ THE CLOSING INFO CARD IS GONE. "Enabling biometrics adds an extra layer of
+ * security to protect your assets" is a sentence with no decision in it, at the
+ * bottom of a screen made entirely of decisions.
+ *
+ * ⛔ The PIN sheet's gradient icon tile is flat, and the step dots no longer
+ * use `P01Colors.green` — a key that exists only to alias away a green the
+ * design system forbids in its own first line.
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  Modal,
-  StyleSheet,
-} from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { p01Alert } from '@/stores/alertStore';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import * as ScreenCapture from 'expo-screen-capture';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeInDown, SlideInDown, SlideOutDown } from 'react-native-reanimated';
+import Animated, { SlideInDown, SlideOutDown } from 'react-native-reanimated';
 
-import { SettingsRow, ToggleRow } from '../../../components/settings';
+import { Header } from '@/components/common';
+import { Button } from '@/components/ui';
+import { SettingsRow, SettingsSection, ToggleRow } from '../../../components/settings';
 import { PinInput } from '../../../components/onboarding';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing, Layout } from '@/constants/theme';
 import { hashPin, constantTimeEqual } from '@/utils/crypto/pinHash';
 import { useT } from '@/i18n';
 
@@ -40,40 +54,7 @@ const LOCK_TIMEOUTS = [
   { label: 'Never', value: -1 },
 ];
 
-/* ──────────────────────── Glass Card ──────────────────────── */
-
-interface GlassCardProps {
-  children: React.ReactNode;
-  delay?: number;
-  style?: object;
-}
-
-const GlassCard: React.FC<GlassCardProps> = ({ children, delay = 0, style }) => (
-  <Animated.View entering={FadeInDown.delay(delay).duration(350)} style={[styles.glassOuter, style]}>
-    <View style={styles.glassBlur}>
-      {children}
-    </View>
-  </Animated.View>
-);
-
-/* ──────────────────────── Section Title ──────────────────────── */
-
-const SectionTitle: React.FC<{ title: string; delay?: number }> = ({ title, delay = 0 }) => (
-  <Animated.Text
-    entering={FadeInDown.delay(delay).duration(300)}
-    style={styles.sectionTitle}
-  >
-    {title}
-  </Animated.Text>
-);
-
-/* ──────────────────────── Divider ──────────────────────── */
-
-const GlassDivider: React.FC = () => (
-  <View style={styles.divider} />
-);
-
-/* ──────────────────────── Change PIN Modal ──────────────────────── */
+/* ──────────────────────── Change PIN sheet ──────────────────────── */
 
 type PinStep = 'verify' | 'new' | 'confirm';
 
@@ -212,7 +193,13 @@ function ChangePinModal({ visible, hasPinSet, biometricsEnabled, onClose, onSucc
       onRequestClose={onClose}
     >
       <View style={pm.overlay}>
-        <TouchableOpacity style={pm.backdrop} activeOpacity={1} onPress={onClose} />
+        <TouchableOpacity
+          style={pm.backdrop}
+          activeOpacity={1}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+        />
         <Animated.View
           entering={SlideInDown.duration(200)}
           exiting={SlideOutDown.duration(150)}
@@ -222,15 +209,11 @@ function ChangePinModal({ visible, hasPinSet, biometricsEnabled, onClose, onSucc
             <View style={pm.dragHandle} />
           </View>
 
-          {/* Header */}
           <View style={pm.header}>
-            <LinearGradient
-              colors={[P01Colors.cyanDim, 'rgba(57, 197, 187, 0.05)']}
-              style={pm.iconWrap}
-            >
-              <Ionicons name="keypad" size={28} color={P01Colors.cyan} />
-            </LinearGradient>
-            <View style={{ flex: 1 }}>
+            <View style={pm.iconWrap}>
+              <Ionicons name="keypad-outline" size={22} color={Colors.primary} />
+            </View>
+            <View style={pm.headerText}>
               <Text style={pm.title}>{getTitle()}</Text>
               <Text style={pm.subtitle}>{getSubtitle()}</Text>
             </View>
@@ -259,12 +242,18 @@ function ChangePinModal({ visible, hasPinSet, biometricsEnabled, onClose, onSucc
               onComplete={handleComplete}
               error={error}
             />
+            {/* The error sits under the field that caused it, and announces
+                itself: a PIN that silently refuses reads as a broken keypad. */}
+            {error ? (
+              <Text style={pm.error} accessibilityRole="alert">
+                {step === 'confirm' ? 'Those two PINs do not match.' : 'That PIN is not right.'}
+              </Text>
+            ) : null}
           </View>
 
-          {/* Cancel */}
-          <TouchableOpacity style={pm.cancelBtn} onPress={onClose}>
-            <Text style={pm.cancelText}>{t('common.cancel')}</Text>
-          </TouchableOpacity>
+          <Button variant="secondary" fullWidth onPress={onClose}>
+            {t('common.cancel')}
+          </Button>
         </Animated.View>
       </View>
     </Modal>
@@ -276,6 +265,7 @@ function ChangePinModal({ visible, hasPinSet, biometricsEnabled, onClose, onSucc
 export default function SecuritySettingsScreen() {
   const t = useT();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const [biometricsEnabled, setBiometricsEnabled] = useState(false);
   const [biometricsAvailable, setBiometricsAvailable] = useState(false);
@@ -399,102 +389,71 @@ export default function SecuritySettingsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
-      <Animated.View entering={FadeInDown.delay(50).duration(300)} style={styles.header}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="arrow-back" size={20} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>{t('settings.security')}</Text>
-        <View style={{ width: 40 }} />
-      </Animated.View>
+    <View style={styles.screen}>
+      <Header title={t('settings.security')} showBack onBackPress={() => router.back()} />
 
       <ScrollView
-        style={{ flex: 1 }}
+        style={styles.flex}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{
+          paddingBottom: Layout.tabBarTotalHeight + insets.bottom + Spacing['3xl'],
+        }}
       >
-        {/* AUTHENTICATION */}
-        <SectionTitle title="AUTHENTICATION" delay={80} />
-        <GlassCard delay={100}>
+        {/* ── Unlocking ── */}
+        <SettingsSection title="Unlocking" style={styles.firstSection}>
           <SettingsRow
             label={hasPinSet ? t('settings.changePin') : t('settings.pinCode')}
+            description={hasPinSet ? undefined : 'Not set yet'}
             leftIcon="keypad-outline"
             onPress={handleChangePIN}
           />
-          <GlassDivider />
           <ToggleRow
             label={t('settings.biometric')}
             description={
               biometricsAvailable
-                ? t('lock.useBiometric')
-                : t('common.disabled')
+                ? 'Unlock with the sensor instead of typing the PIN'
+                : 'No sensor enrolled on this device'
             }
             value={biometricsEnabled}
             onValueChange={handleBiometricsToggle}
             disabled={!biometricsAvailable}
           />
-        </GlassCard>
-
-        {/* AUTO-LOCK */}
-        <SectionTitle title="AUTO-LOCK" delay={150} />
-        <GlassCard delay={170}>
           <SettingsRow
             label={t('settings.autoLock')}
+            description="How long the app can sit in the background before it locks"
             value={getLockTimeoutLabel()}
             leftIcon="time-outline"
             onPress={handleLockTimeoutSelect}
           />
-        </GlassCard>
+        </SettingsSection>
 
-        {/* TRANSACTION SECURITY */}
-        <SectionTitle title="TRANSACTION SECURITY" delay={220} />
-        <GlassCard delay={240}>
+        {/* ── Spending ── */}
+        <SettingsSection title="Spending">
           <ToggleRow
-            label="Require auth for sends"
-            description="Authenticate before sending transactions"
+            label="Confirm sends"
+            description="Authenticate before a transaction leaves this device"
             value={requireAuthForSends}
             onValueChange={handleAuthForSendsToggle}
           />
-        </GlassCard>
+        </SettingsSection>
 
-        {/* ADVANCED */}
-        <SectionTitle title="ADVANCED" delay={290} />
-        <GlassCard delay={310}>
+        {/* ── On screen ── */}
+        <SettingsSection title="On screen">
           <ToggleRow
             label={t('settings.hideBalanceDefault')}
-            description={t('wallet.hideBalance')}
+            description="Open the wallet with the amount masked"
             value={hideBalance}
             onValueChange={handleHideBalanceToggle}
           />
-          <GlassDivider />
           <ToggleRow
             label={t('settings.blockScreenshots')}
-            description={t('settings.blockScreenshots')}
+            description="Stop screenshots and screen recording inside the app"
             value={blockScreenshots}
             onValueChange={handleBlockScreenshotsToggle}
           />
-        </GlassCard>
-
-        {/* Info Card */}
-        <Animated.View entering={FadeInDown.delay(380).duration(350)} style={styles.infoOuter}>
-          <View style={styles.glassBlur}>
-            <View style={styles.infoContent}>
-              <Ionicons name="information-circle" size={20} color={P01Colors.cyan} />
-              <Text style={styles.infoText}>
-                Enabling biometrics and transaction authentication adds an extra layer of security to protect your assets.
-              </Text>
-            </View>
-          </View>
-        </Animated.View>
+        </SettingsSection>
       </ScrollView>
 
-      {/* Change PIN Modal */}
       <ChangePinModal
         visible={showPinModal}
         hasPinSet={hasPinSet}
@@ -502,90 +461,24 @@ export default function SecuritySettingsScreen() {
         onClose={() => setShowPinModal(false)}
         onSuccess={handlePinSuccess}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
-/* ──────────────────────── Styles ──────────────────────── */
-
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: Colors.background,
   },
-
-  /* Header */
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.lg,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.full,
-    backgroundColor: '#0f0f12',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    color: Colors.text,
-    fontSize: 18,
-    fontFamily: FontFamily.semibold,
-  },
-
-  /* Section Title */
-  sectionTitle: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontFamily: FontFamily.semibold,
-    letterSpacing: 1,
-    paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.sm,
-    marginTop: Spacing.lg,
-  },
-
-  /* Glass Card */
-  glassOuter: {
-    marginHorizontal: Spacing.lg,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-  },
-  glassBlur: {
-    backgroundColor: '#0f0f12',
-  },
-
-  /* Divider */
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    marginHorizontal: Spacing.lg,
-  },
-
-  /* Info Card */
-  infoOuter: {
-    marginHorizontal: Spacing.lg,
-    marginTop: Spacing.lg,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-  },
-  infoContent: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    padding: Spacing.lg,
-  },
-  infoText: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    marginLeft: Spacing.md,
+  flex: {
     flex: 1,
-    lineHeight: 20,
+  },
+  firstSection: {
+    marginTop: Spacing.lg,
   },
 });
 
-/* ──────────────────────── PIN Modal Styles ──────────────────────── */
+/* ──────────────────────── PIN sheet styles ──────────────────────── */
 
 const pm = StyleSheet.create({
   overlay: {
@@ -594,16 +487,17 @@ const pm = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.75)',
+    // Colors.background at 78%: the scrim is the ground with alpha, not a colour.
+    backgroundColor: 'rgba(7, 7, 9, 0.78)',
   },
   sheet: {
     backgroundColor: Colors.surface,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    borderTopLeftRadius: BorderRadius['2xl'],
+    borderTopRightRadius: BorderRadius['2xl'],
     paddingHorizontal: Spacing.xl,
-    paddingBottom: 40,
-    borderTopWidth: 1,
-    borderTopColor: `${P01Colors.cyan}30`,
+    paddingBottom: Spacing['4xl'],
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.border,
   },
   dragRow: {
     alignItems: 'center',
@@ -619,23 +513,30 @@ const pm = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    gap: Spacing.md,
     marginBottom: Spacing.lg,
   },
   iconWrap: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderSoft,
+    backgroundColor: Colors.surfaceSecondary,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  headerText: {
+    flex: 1,
+    minWidth: 0,
+  },
   title: {
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
     color: Colors.text,
   },
   subtitle: {
-    fontSize: 13,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.regular,
     color: Colors.textTertiary,
     marginTop: 2,
@@ -645,47 +546,42 @@ const pm = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: Spacing.xl,
-    gap: 4,
+    gap: Spacing.xs,
   },
   stepRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: Spacing.xs,
   },
   stepDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: Colors.border,
   },
   stepDotActive: {
-    backgroundColor: P01Colors.cyan,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    backgroundColor: Colors.primary,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
   stepDotDone: {
-    backgroundColor: P01Colors.green,
+    backgroundColor: Colors.primaryMuted,
   },
   stepLine: {
-    width: 32,
-    height: 2,
+    width: 28,
+    height: StyleSheet.hairlineWidth,
     backgroundColor: Colors.border,
   },
   pinWrap: {
     paddingHorizontal: Spacing.md,
     marginBottom: Spacing.xl,
   },
-  cancelBtn: {
-    paddingVertical: 14,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  cancelText: {
-    fontSize: 15,
-    fontFamily: FontFamily.semibold,
-    color: Colors.text,
+  error: {
+    marginTop: Spacing.md,
+    textAlign: 'center',
+    color: Colors.error,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
   },
 });

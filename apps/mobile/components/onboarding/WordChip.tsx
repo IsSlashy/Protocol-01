@@ -7,6 +7,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 
+import { Colors, Spacing, FontFamily, FontSize, BorderRadius } from '../../constants/theme';
+
 interface WordChipProps {
   word: string;
   index?: number;
@@ -53,27 +55,27 @@ export const WordChip: React.FC<WordChipProps> = ({
     switch (variant) {
       case 'selected':
         return {
-          bg: 'rgba(57, 197, 187, 0.2)',
-          border: '#39c5bb',
-          text: '#39c5bb',
+          bg: Colors.primaryDim,
+          border: Colors.primary,
+          text: Colors.primary,
         };
       case 'correct':
         return {
-          bg: 'rgba(57, 197, 187, 0.3)',
-          border: '#39c5bb',
-          text: '#39c5bb',
+          bg: Colors.successDim,
+          border: Colors.primary,
+          text: Colors.primary,
         };
       case 'incorrect':
         return {
-          bg: 'rgba(239, 68, 68, 0.2)',
-          border: '#ef4444',
-          text: '#ef4444',
+          bg: Colors.errorDim,
+          border: Colors.error,
+          text: Colors.error,
         };
       default:
         return {
-          bg: selected ? '#2a2a30' : '#151518',
-          border: '#2a2a30',
-          text: selected ? '#555560' : '#ffffff',
+          bg: selected ? Colors.surfaceTertiary : Colors.surface,
+          border: Colors.border,
+          text: selected ? Colors.textTertiary : Colors.text,
         };
     }
   };
@@ -85,11 +87,14 @@ export const WordChip: React.FC<WordChipProps> = ({
       style={[
         animatedStyle,
         {
-          paddingHorizontal: 16,
-          paddingVertical: 10,
-          borderRadius: 12,
+          // 44pt is the floor for anything you can tap. These chips were 40.
+          minHeight: 44,
+          justifyContent: 'center',
+          paddingHorizontal: Spacing.lg,
+          paddingVertical: Spacing.md,
+          borderRadius: BorderRadius.md,
           borderWidth: 1,
-          margin: 4,
+          margin: Spacing.xs,
           backgroundColor: styles.bg,
           borderColor: styles.border,
           opacity: disabled || selected ? 0.5 : 1,
@@ -99,14 +104,24 @@ export const WordChip: React.FC<WordChipProps> = ({
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       disabled={disabled || selected}
+      accessibilityRole="button"
+      accessibilityLabel={word}
+      accessibilityState={{ disabled: disabled || selected, selected }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
         {showIndex && index !== undefined && (
-          <Text style={{ color: '#39c5bb', fontSize: 11, marginRight: 8 }}>
-            {index + 1}.
+          <Text
+            style={{
+              color: Colors.textTertiary,
+              fontFamily: FontFamily.mono,
+              fontSize: FontSize.xs,
+              marginRight: Spacing.sm,
+            }}
+          >
+            {index + 1}
           </Text>
         )}
-        <Text style={{ fontWeight: '500', color: styles.text, fontSize: 14 }}>
+        <Text style={{ fontFamily: FontFamily.mono, color: styles.text, fontSize: FontSize.sm }}>
           {word}
         </Text>
       </View>

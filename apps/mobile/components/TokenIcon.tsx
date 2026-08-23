@@ -73,7 +73,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   fallbackText: {
-    color: '#ffffff',
+    color: '#eae7df',
     fontWeight: 'bold',
   },
 });

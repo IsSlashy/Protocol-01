@@ -201,7 +201,7 @@ export default function TokenSelector({ visible, onClose, onSelect, excludeMint 
           }
           ListHeaderComponent={
             !query.trim() ? (
-              <Text style={styles.sectionTitle}>Popular Tokens</Text>
+              <Text style={styles.sectionTitle}>Popular tokens</Text>
             ) : searching ? (
               <View style={styles.searchingRow}>
                 <ActivityIndicator size="small" color={Colors.primary} />
@@ -230,13 +230,13 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
   },
   headerTitle: {
-    fontSize: 18,
-    fontFamily: FontFamily.semibold,
+    fontSize: 20,
+    fontFamily: FontFamily.displayMedium,
     color: Colors.text,
   },
   closeButton: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     borderRadius: BorderRadius.full,
     backgroundColor: Colors.surface,
     justifyContent: 'center',
@@ -265,14 +265,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     paddingBottom: Spacing['4xl'],
   },
+  // ⛔ Was uppercase with 1pt of tracking. A tracked-out all-caps label is the
+  // house style being removed; a quiet sentence-case line does the same job.
   sectionTitle: {
     fontSize: 13,
-    fontFamily: FontFamily.semibold,
+    fontFamily: FontFamily.medium,
     color: Colors.textTertiary,
     marginBottom: Spacing.md,
     marginTop: Spacing.sm,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
   },
   tokenRow: {
     flexDirection: 'row',

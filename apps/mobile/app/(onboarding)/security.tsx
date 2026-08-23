@@ -125,7 +125,7 @@ export default function SecurityScreen() {
   // PIN Setup View
   if (showPinSetup) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a0c' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#070709' }}>
         <View style={{ flex: 1, paddingHorizontal: 32, paddingTop: 80 }}>
           {/* Back Button */}
           <TouchableOpacity
@@ -163,7 +163,7 @@ export default function SecurityScreen() {
             >
               <Ionicons name="keypad" size={32} color="#39c5bb" />
             </View>
-            <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
+            <Text style={{ color: '#eae7df', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
               {isConfirming ? t('onboarding.confirmYourPin') : t('onboarding.createPin')}
             </Text>
             <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
@@ -205,7 +205,7 @@ export default function SecurityScreen() {
   const canContinue = selectedMethod !== 'none' && selectedMethod !== 'pin';
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a0c' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#070709' }}>
       <View style={{ flex: 1, paddingHorizontal: 32, paddingTop: 80 }}>
         {/* Header */}
         <Animated.View
@@ -225,7 +225,7 @@ export default function SecurityScreen() {
           >
             <Ionicons name="lock-closed" size={32} color="#39c5bb" />
           </View>
-          <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
+          <Text style={{ color: '#eae7df', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
             {t('onboarding.secureWallet')}
           </Text>
           <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
@@ -249,8 +249,8 @@ export default function SecurityScreen() {
                 padding: 20,
                 borderRadius: 16,
                 borderWidth: 1,
-                backgroundColor: selectedMethod === 'pin' ? 'rgba(57, 197, 187, 0.1)' : '#0f0f12',
-                borderColor: selectedMethod === 'pin' ? '#39c5bb' : '#2a2a30',
+                backgroundColor: selectedMethod === 'pin' ? 'rgba(57, 197, 187, 0.1)' : '#0d0d10',
+                borderColor: selectedMethod === 'pin' ? '#39c5bb' : 'rgba(234, 231, 223, 0.14)',
               }}
             >
               <View
@@ -261,17 +261,17 @@ export default function SecurityScreen() {
                   alignItems: 'center',
                   justifyContent: 'center',
                   marginRight: 16,
-                  backgroundColor: selectedMethod === 'pin' ? 'rgba(57, 197, 187, 0.2)' : '#151518',
+                  backgroundColor: selectedMethod === 'pin' ? 'rgba(57, 197, 187, 0.2)' : '#101014',
                 }}
               >
                 <Ionicons
                   name="keypad"
                   size={24}
-                  color={selectedMethod === 'pin' ? '#39c5bb' : '#555560'}
+                  color={selectedMethod === 'pin' ? '#39c5bb' : 'rgba(234, 231, 223, 0.40)'}
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600' }}>{t('onboarding.pinCode')}</Text>
+                <Text style={{ color: '#eae7df', fontSize: 18, fontWeight: '600' }}>{t('onboarding.pinCode')}</Text>
                 <Text style={{ color: '#a0a0a0', fontSize: 14 }}>{t('onboarding.sixDigitCode')}</Text>
               </View>
               {selectedMethod === 'pin' && (
@@ -297,15 +297,15 @@ export default function SecurityScreen() {
                 borderWidth: 1,
                 opacity: biometricsAvailable ? 1 : 0.5,
                 backgroundColor: !biometricsAvailable
-                  ? '#0a0a0c'
+                  ? '#070709'
                   : selectedMethod === 'biometrics'
                   ? 'rgba(57, 197, 187, 0.1)'
-                  : '#0f0f12',
+                  : '#0d0d10',
                 borderColor: !biometricsAvailable
-                  ? '#151518'
+                  ? '#101014'
                   : selectedMethod === 'biometrics'
                   ? '#39c5bb'
-                  : '#2a2a30',
+                  : 'rgba(234, 231, 223, 0.14)',
               }}
             >
               <View
@@ -316,17 +316,17 @@ export default function SecurityScreen() {
                   alignItems: 'center',
                   justifyContent: 'center',
                   marginRight: 16,
-                  backgroundColor: selectedMethod === 'biometrics' ? 'rgba(57, 197, 187, 0.2)' : '#151518',
+                  backgroundColor: selectedMethod === 'biometrics' ? 'rgba(57, 197, 187, 0.2)' : '#101014',
                 }}
               >
                 <Ionicons
                   name={biometricType === 'face' ? 'scan' : 'finger-print'}
                   size={24}
-                  color={selectedMethod === 'biometrics' ? '#39c5bb' : '#555560'}
+                  color={selectedMethod === 'biometrics' ? '#39c5bb' : 'rgba(234, 231, 223, 0.40)'}
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: '#ffffff', fontSize: 18, fontWeight: '600' }}>
+                <Text style={{ color: '#eae7df', fontSize: 18, fontWeight: '600' }}>
                   {biometricType === 'face' ? t('onboarding.faceId') : t('onboarding.fingerprint')}
                 </Text>
                 <Text style={{ color: '#a0a0a0', fontSize: 14 }}>
@@ -358,7 +358,7 @@ export default function SecurityScreen() {
               borderRadius: 12,
               alignItems: 'center',
               marginBottom: 16,
-              backgroundColor: canContinue ? '#39c5bb' : '#2a2a30',
+              backgroundColor: canContinue ? '#39c5bb' : 'rgba(234, 231, 223, 0.14)',
               ...(canContinue
                 ? {
                     shadowColor: '#39c5bb',
@@ -374,7 +374,7 @@ export default function SecurityScreen() {
               style={{
                 fontSize: 17,
                 fontWeight: 'bold',
-                color: canContinue ? '#ffffff' : '#555560',
+                color: canContinue ? '#eae7df' : 'rgba(234, 231, 223, 0.40)',
               }}
             >
               {t('onboarding.continue')}

@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ServiceSelector, ServiceLogo } from './ServiceSelector';
 import { ServiceInfo, detectServiceFromName, CATEGORY_CONFIG } from '../../services/subscriptions/serviceRegistry';
 import { useWalletStore } from '@/stores/walletStore';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
 import { useT } from '@/i18n';
 
 interface CreateStreamFormProps {
@@ -57,7 +57,7 @@ const getFrequencies = (t: (k: string) => string): { label: string; value: Payme
 
 export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
   balance, symbol, onCreateStream, onSubmit, onSelectContact,
-  loading = false, accentColor = P01Colors.cyan, submitLabel,
+  loading = false, accentColor = Colors.primary, submitLabel,
   hideServiceSelector = false, hideAmount = false,
 }) => {
   const t = useT();
@@ -135,7 +135,9 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
             placeholderTextColor={Colors.textTertiary} value={recipient}
             onChangeText={setRecipient} autoCapitalize="none" autoCorrect={false} />
         </View>
-        {errors.recipient && <Text style={st.error}>{errors.recipient}</Text>}
+        {errors.recipient && (
+          <Text style={st.error} accessibilityRole="alert">{errors.recipient}</Text>
+        )}
       </View>
 
       {/* Service selector */}
@@ -175,7 +177,9 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
               keyboardType="decimal-pad" />
             <Text style={st.dimLabel}>{tok}</Text>
           </View>
-          {errors.amount && <Text style={st.error}>{errors.amount}</Text>}
+          {errors.amount && (
+            <Text style={st.error} accessibilityRole="alert">{errors.amount}</Text>
+          )}
         </View>
       )}
 
@@ -243,7 +247,7 @@ export const CreateStreamForm: React.FC<CreateStreamFormProps> = ({
       {/* Submit */}
       <TouchableOpacity onPress={handleSubmit} disabled={!isValid || loading}
         style={[st.submitBtn, { backgroundColor: isValid ? accentColor : `${accentColor}40` }, loading && { opacity: 0.7 }]}>
-        <Ionicons name="water" size={18} color="#000" />
+        <Ionicons name="water" size={18} color={Colors.background} />
         <Text style={st.submitText}>{loading ? t('createStream.creating') : (submitLabel || t('createStream.createStream'))}</Text>
       </TouchableOpacity>
     </ScrollView>
@@ -291,7 +295,7 @@ const st = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     paddingVertical: 16, borderRadius: BorderRadius.lg, marginBottom: 32,
   },
-  submitText: { fontSize: 16, fontFamily: FontFamily.semibold, color: '#000' },
+  submitText: { fontSize: FontSize.lg, fontFamily: FontFamily.medium, color: Colors.background },
 });
 
 export default CreateStreamForm;

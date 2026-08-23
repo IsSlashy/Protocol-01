@@ -1,6 +1,16 @@
 /**
- * AlertModal — Minimal P01 alert dialog.
- * Driven by useAlertStore. Mount once in _layout.tsx.
+ * AlertModal — the app's alert dialog. Driven by useAlertStore, mounted once
+ * in _layout.tsx.
+ *
+ * 🎯 RETUNED ON THE REALIGNED THEME 2026-08-23.
+ *   - `question` used `P01Colors.pink`. Pink is retired; it now resolves to
+ *     cyan through the alias, but writing the name kept a retired colour alive
+ *     in the source. It reads the accent directly.
+ *   - the card was `#101014`, the destructive button `#e0574f` and the primary
+ *     label `#000` — three literals the theme sweep could not reach. Tokens.
+ *   - the title is set in the display face, like every heading in the app.
+ *   - both buttons are 44pt tall. They were 12pt of padding around 14pt text,
+ *     which lands at 42 and is the sort of miss nobody sees until a thumb does.
  */
 import React, { useEffect, useRef } from 'react';
 import {
@@ -10,14 +20,14 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAlertStore, type AlertButton } from '@/stores/alertStore';
-import { Colors, FontFamily, BorderRadius, P01Colors } from '@/constants/theme';
+import { Colors, Spacing, FontFamily, FontSize, BorderRadius } from '@/constants/theme';
 
 const ICONS: Record<string, { name: keyof typeof Ionicons.glyphMap; color: string }> = {
-  warning: { name: 'warning', color: P01Colors.yellow },
-  error:   { name: 'alert-circle', color: '#ff3366' },
-  success: { name: 'checkmark-circle', color: P01Colors.cyan },
-  info:    { name: 'information-circle', color: P01Colors.cyan },
-  question:{ name: 'help-circle', color: P01Colors.pink },
+  warning: { name: 'warning', color: Colors.yellow },
+  error:   { name: 'alert-circle', color: Colors.error },
+  success: { name: 'checkmark-circle', color: Colors.primary },
+  info:    { name: 'information-circle', color: Colors.textSecondary },
+  question:{ name: 'help-circle', color: Colors.primary },
 };
 
 export default function AlertModal() {
@@ -55,7 +65,7 @@ export default function AlertModal() {
               {/* Icon + Title row */}
               <View style={st.headerRow}>
                 {iconInfo && (
-                  <View style={[st.iconWrap, { backgroundColor: `${iconInfo.color}15` }]}>
+                  <View style={st.iconWrap}>
                     <Ionicons name={iconInfo.name} size={20} color={iconInfo.color} />
                   </View>
                 )}
@@ -69,7 +79,8 @@ export default function AlertModal() {
               <View style={st.buttons}>
                 {buttons.length > 1 && buttons.filter(b => b.style === 'cancel').map((btn, i) => (
                   <TouchableOpacity key={`c${i}`} onPress={() => handleButton(btn)}
-                    activeOpacity={0.7} style={st.btnCancel}>
+                    activeOpacity={0.7} style={st.btnCancel}
+                    accessibilityRole="button" accessibilityLabel={btn.text}>
                     <Text style={st.btnCancelText}>{btn.text}</Text>
                   </TouchableOpacity>
                 ))}
@@ -78,8 +89,11 @@ export default function AlertModal() {
                   return (
                     <TouchableOpacity key={`a${i}`} onPress={() => handleButton(btn)}
                       activeOpacity={0.8}
-                      style={[st.btnPrimary, destructive && { backgroundColor: '#ff3366' }]}>
-                      <Text style={st.btnPrimaryText}>{btn.text}</Text>
+                      accessibilityRole="button" accessibilityLabel={btn.text}
+                      style={[st.btnPrimary, destructive && st.btnDestructive]}>
+                      <Text style={[st.btnPrimaryText, destructive && st.btnDestructiveText]}>
+                        {btn.text}
+                      </Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -92,55 +106,73 @@ export default function AlertModal() {
   );
 }
 
+/**
+ * The scrim behind a modal: the ground colour at 72%, derived from the token
+ * rather than written out, so a change to the ink reaches it. `b8` is 0.72 in
+ * the 8-digit hex form React Native accepts.
+ */
+const SCRIM = `${Colors.background}b8`;
+
 const st = StyleSheet.create({
   overlay: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: SCRIM,
   },
   card: {
     width: '82%', maxWidth: 340,
-    backgroundColor: '#151518',
-    borderRadius: BorderRadius.xl,
-    padding: 20,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.xl,
   },
 
   // Header
   headerRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8,
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginBottom: Spacing.sm,
   },
   iconWrap: {
-    width: 34, height: 34, borderRadius: 10,
+    width: 32, height: 32,
     alignItems: 'center', justifyContent: 'center',
   },
   title: {
-    flex: 1, fontSize: 16, fontFamily: FontFamily.semibold, color: Colors.text,
+    flex: 1, fontSize: FontSize.xl, fontFamily: FontFamily.displayMedium, color: Colors.text,
   },
 
   // Message
   message: {
-    fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary,
-    lineHeight: 19, marginBottom: 18, marginTop: 4,
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+    lineHeight: 20, marginBottom: Spacing.xl, marginTop: Spacing.xs,
   },
 
   // Buttons
   buttons: {
-    flexDirection: 'row', gap: 8,
+    flexDirection: 'row', gap: Spacing.sm,
   },
   btnPrimary: {
-    flex: 1, paddingVertical: 12, borderRadius: BorderRadius.md,
+    flex: 1, minHeight: 44, borderRadius: BorderRadius.md,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: P01Colors.cyan,
+    backgroundColor: Colors.primary,
+    borderWidth: 1, borderColor: 'transparent',
   },
   btnPrimaryText: {
-    fontSize: 14, fontFamily: FontFamily.semibold, color: '#000',
+    fontSize: FontSize.md, fontFamily: FontFamily.medium, color: Colors.background,
+  },
+  // Destructive is outlined, not filled: the loudest thing in a dialog should
+  // not be the button that cannot be undone.
+  btnDestructive: {
+    backgroundColor: Colors.errorDim, borderColor: Colors.error,
+  },
+  btnDestructiveText: {
+    color: Colors.error,
   },
   btnCancel: {
-    flex: 1, paddingVertical: 12, borderRadius: BorderRadius.md,
+    flex: 1, minHeight: 44, borderRadius: BorderRadius.md,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1, borderColor: Colors.border,
   },
   btnCancelText: {
-    fontSize: 14, fontFamily: FontFamily.medium, color: Colors.textSecondary,
+    fontSize: FontSize.md, fontFamily: FontFamily.medium, color: Colors.textSecondary,
   },
 });
 

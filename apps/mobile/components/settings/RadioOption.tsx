@@ -1,12 +1,21 @@
-import React from 'react';
-import { TouchableOpacity, View, Text } from 'react-native';
+/**
+ * RadioOption — one choice out of a set.
+ *
+ * 🚨 THE ACCENT IN HERE WAS THE WRONG CYAN. The local `COLORS` map hardcoded
+ * `#06b6d4`, which is Tailwind's cyan-500, not the brand's `#39c5bb`. The two
+ * are close enough that nobody caught it and far enough apart that the selected
+ * radio never matched the switch three rows above it. That is the whole case
+ * for reading `constants/theme.ts` instead of retyping a colour.
+ *
+ * ⚠️ `accessibilityRole="radio"` with `checked` state, not `selected`: a radio
+ * announces as checked, and the group it belongs to reads as a set rather than
+ * as four unrelated buttons.
+ */
 
-const COLORS = {
-  text: '#ffffff',
-  textSecondary: '#9ca3af',
-  textMuted: '#6b7280',
-  cyan: '#06b6d4',
-};
+import React from 'react';
+import { TouchableOpacity, View, Text, StyleSheet } from 'react-native';
+
+import { Colors, Spacing, FontFamily, FontSize } from '@/constants/theme';
 
 interface RadioOptionProps {
   label: string;
@@ -25,53 +34,76 @@ export const RadioOption: React.FC<RadioOptionProps> = ({
 }) => {
   return (
     <TouchableOpacity
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingVertical: 16,
-        paddingHorizontal: 16,
-        opacity: disabled ? 0.5 : 1,
-      }}
-      onPress={onSelect}
+      style={[styles.row, disabled && styles.disabled]}
+      onPress={disabled ? undefined : onSelect}
       disabled={disabled}
       activeOpacity={0.7}
+      accessibilityRole="radio"
+      accessibilityLabel={label}
+      accessibilityHint={description}
+      accessibilityState={{ checked: selected, disabled }}
     >
-      <View style={{ flex: 1, marginRight: 12 }}>
-        <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '500' }}>
-          {label}
-        </Text>
-        {description && (
-          <Text style={{ color: COLORS.textSecondary, fontSize: 14, marginTop: 4 }}>
-            {description}
-          </Text>
-        )}
+      <View style={styles.text}>
+        <Text style={[styles.label, selected && styles.labelSelected]}>{label}</Text>
+        {description ? <Text style={styles.description}>{description}</Text> : null}
       </View>
 
-      <View
-        style={{
-          width: 24,
-          height: 24,
-          borderRadius: 12,
-          borderWidth: 2,
-          borderColor: selected ? COLORS.cyan : COLORS.textMuted,
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        {selected && (
-          <View
-            style={{
-              width: 12,
-              height: 12,
-              borderRadius: 6,
-              backgroundColor: COLORS.cyan,
-            }}
-          />
-        )}
+      <View style={[styles.ring, selected && styles.ringSelected]}>
+        {selected ? <View style={styles.dot} /> : null}
       </View>
     </TouchableOpacity>
   );
 };
+
+const styles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.lg,
+    minHeight: 52,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+  },
+  disabled: {
+    opacity: 0.4,
+  },
+  text: {
+    flex: 1,
+    minWidth: 0,
+  },
+  label: {
+    color: Colors.text,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.regular,
+  },
+  labelSelected: {
+    fontFamily: FontFamily.medium,
+  },
+  description: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    lineHeight: 18,
+    marginTop: 2,
+  },
+  ring: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: Colors.borderLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ringSelected: {
+    borderColor: Colors.primary,
+  },
+  dot: {
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    backgroundColor: Colors.primary,
+  },
+});
 
 export default RadioOption;

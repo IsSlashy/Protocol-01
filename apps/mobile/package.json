@@ -21,6 +21,7 @@
     "@ethersproject/shims": "^5.8.0",
     "@expo-google-fonts/inter": "^0.4.2",
     "@expo-google-fonts/jetbrains-mono": "^0.4.1",
+    "@expo-google-fonts/newsreader": "^0.4.1",
     "@expo/metro-runtime": "^6.1.2",
     "@expo/vector-icons": "^15.1.1",
     "@noble/curves": "^2.2.0",

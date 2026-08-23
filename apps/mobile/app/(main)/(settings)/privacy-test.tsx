@@ -1,19 +1,42 @@
+/**
+ * Privacy tech tests — the developer tool behind the seven-tap door in About.
+ *
+ * 🎯 RETONED 2026-08-23. It is an internal screen, which is exactly why it had
+ * drifted furthest: a local `COLORS` map with a green `#22c55e`, a red
+ * `#ef4444`, a grey `#808088` that is in no palette, a `pink` key kept alive
+ * next to `cyan`, and — twice, inline — `#8B5CF6`, a PURPLE, in a design system
+ * whose header forbids purple in its first paragraph. A tool nobody outside the
+ * team sees is still the team's own eye test.
+ *
+ * ⛔ NO SHOUTED MONO LABELS. `LOGS (12)`, `VALIDATION CHECKLIST`, `ON-CHAIN`,
+ * `PQ-SAFE` were the arcade house style the brand is removing. The log stream
+ * itself stays mono — that is data in columns, which is what mono is for.
+ *
+ * ⚠️ Every test button now says what it costs. Only one of the five spends
+ * real devnet SOL, and it used to be distinguishable from the four free ones
+ * only by being pink.
+ */
+
 import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
-  ActivityIndicator,
+  StyleSheet,
 } from 'react-native';
 import { p01Alert } from '@/stores/alertStore';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
+
+import { Header } from '@/components/common';
+import { Button } from '@/components/ui';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing, Layout } from '@/constants/theme';
 import { useWalletStore } from '../../../stores/walletStore';
 import { applyAmountNoise, createNoiseAdjustment } from '../../../utils/crypto/amountNoise';
-import { applyTimingNoise, calculateNextPaymentWithNoise } from '../../../utils/privacy/timingNoise';
+import { applyTimingNoise } from '../../../utils/privacy/timingNoise';
 import {
   generateStealthKeys,
   generateStealthAddress,
@@ -21,25 +44,10 @@ import {
 } from '../../../utils/crypto/stealth';
 import {
   sendDecoyTransactions,
-  sendPrivateTransaction,
   calculateDecoyFees,
   PRIVACY_LEVELS,
 } from '../../../services/solana/decoyTransactions';
-import { sendSol } from '../../../services/solana/transactions';
-import { Keypair, PublicKey } from '@solana/web3.js';
 import { useStarkProver } from '../../../providers/StarkProverProvider';
-
-const COLORS = {
-  void: '#0a0a0c',
-  surface: '#151518',
-  border: '#2a2a30',
-  cyan: '#39c5bb',
-  pink: '#ff77a8',
-  text: '#ffffff',
-  textMuted: '#808088',
-  success: '#22c55e',
-  error: '#ef4444',
-};
 
 interface LogEntry {
   timestamp: string;
@@ -47,8 +55,11 @@ interface LogEntry {
   type: 'info' | 'success' | 'error' | 'warning';
 }
 
+type TestId = 'amount' | 'timing' | 'stealth' | 'decoy' | 'stark';
+
 export default function PrivacyTestScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { publicKey, balance, refreshBalance } = useWalletStore();
   const { isReady: starkReady, generateProof: starkGenerateProof } = useStarkProver();
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -388,278 +399,213 @@ export default function PrivacyTestScreen() {
 
   const getLogColor = (type: LogEntry['type']) => {
     switch (type) {
-      case 'success': return COLORS.cyan;
-      case 'error': return COLORS.error;
-      case 'warning': return COLORS.pink;
-      default: return COLORS.textMuted;
+      case 'success': return Colors.primary;
+      case 'error': return Colors.error;
+      case 'warning': return Colors.yellow;
+      default: return Colors.textTertiary;
     }
   };
 
+  const TESTS: { id: TestId; label: string; note: string; icon: keyof typeof Ionicons.glyphMap; run: () => void; disabled?: boolean }[] = [
+    { id: 'amount', label: 'Amount noise', note: 'Offline', icon: 'pulse-outline', run: testAmountNoise },
+    { id: 'timing', label: 'Timing noise', note: 'Offline', icon: 'time-outline', run: testTimingNoise },
+    { id: 'stealth', label: 'Stealth address', note: 'Offline', icon: 'eye-off-outline', run: testStealthAddresses },
+    { id: 'decoy', label: 'Decoy transactions', note: 'Spends devnet SOL', icon: 'shuffle-outline', run: testDecoyTransactions },
+    {
+      id: 'stark',
+      label: 'STARK proof',
+      note: starkReady ? 'Offline, post-quantum' : 'Loading the WASM prover',
+      icon: 'hardware-chip-outline',
+      run: testStarkProof,
+      disabled: !starkReady,
+    },
+  ];
+
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.void }} edges={['top']}>
-      {/* Header */}
-      <View style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-      }}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 12,
-            backgroundColor: COLORS.surface,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Ionicons name="arrow-back" size={20} color={COLORS.text} />
-        </TouchableOpacity>
-        <Text style={{ color: COLORS.text, fontSize: 18, fontWeight: '600' }}>
-          Privacy Tech Tests
-        </Text>
-        <View style={{ width: 40 }} />
+    <View style={styles.screen}>
+      <Header title="Privacy tech tests" showBack onBackPress={() => router.back()} />
+
+      <View style={styles.balanceRow}>
+        <Text style={styles.balanceLabel}>Wallet balance</Text>
+        <Text style={styles.balanceValue}>{balance?.sol?.toFixed(4) || '0'} SOL</Text>
       </View>
 
-      {/* Balance Info */}
-      <View style={{
-        marginHorizontal: 16,
-        padding: 12,
-        backgroundColor: COLORS.surface,
-        borderRadius: 12,
-        marginBottom: 12,
-      }}>
-        <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>Wallet Balance</Text>
-        <Text style={{ color: COLORS.cyan, fontSize: 20, fontWeight: '700' }}>
-          {balance?.sol?.toFixed(4) || '0'} SOL
-        </Text>
+      <View style={styles.tests}>
+        {TESTS.map((test) => {
+          const running = currentTest === test.id;
+          const off = isLoading || test.disabled;
+          return (
+            <TouchableOpacity
+              key={test.id}
+              onPress={off ? undefined : test.run}
+              disabled={off}
+              activeOpacity={0.7}
+              style={[styles.test, running && styles.testRunning, off && styles.testOff]}
+              accessibilityRole="button"
+              accessibilityLabel={`${test.label}. ${test.note}.`}
+              accessibilityState={{ disabled: !!off, busy: running }}
+            >
+              <Ionicons
+                name={test.icon}
+                size={18}
+                color={test.id === 'decoy' ? Colors.yellow : Colors.primary}
+              />
+              <View style={styles.testText}>
+                <Text style={styles.testLabel}>{test.label}</Text>
+                <Text style={[styles.testNote, test.id === 'decoy' && styles.testNoteWarn]}>
+                  {running ? 'Running…' : test.note}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
-      {/* Test Buttons */}
-      <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
-        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-          <TouchableOpacity
-            onPress={testAmountNoise}
-            disabled={isLoading}
-            style={{
-              flex: 1,
-              padding: 12,
-              backgroundColor: currentTest === 'amount' ? COLORS.cyan : COLORS.surface,
-              borderRadius: 12,
-              alignItems: 'center',
-            }}
-          >
-            {currentTest === 'amount' ? (
-              <ActivityIndicator color={COLORS.void} />
-            ) : (
-              <>
-                <Ionicons name="pulse" size={20} color={COLORS.cyan} />
-                <Text style={{ color: COLORS.text, fontSize: 11, marginTop: 4 }}>Amount Noise</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={testTimingNoise}
-            disabled={isLoading}
-            style={{
-              flex: 1,
-              padding: 12,
-              backgroundColor: currentTest === 'timing' ? COLORS.cyan : COLORS.surface,
-              borderRadius: 12,
-              alignItems: 'center',
-            }}
-          >
-            {currentTest === 'timing' ? (
-              <ActivityIndicator color={COLORS.void} />
-            ) : (
-              <>
-                <Ionicons name="time" size={20} color={COLORS.pink} />
-                <Text style={{ color: COLORS.text, fontSize: 11, marginTop: 4 }}>Timing Noise</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-          <TouchableOpacity
-            onPress={testStealthAddresses}
-            disabled={isLoading}
-            style={{
-              flex: 1,
-              padding: 12,
-              backgroundColor: currentTest === 'stealth' ? COLORS.cyan : COLORS.surface,
-              borderRadius: 12,
-              alignItems: 'center',
-            }}
-          >
-            {currentTest === 'stealth' ? (
-              <ActivityIndicator color={COLORS.void} />
-            ) : (
-              <>
-                <Ionicons name="eye-off" size={20} color={COLORS.cyan} />
-                <Text style={{ color: COLORS.text, fontSize: 11, marginTop: 4 }}>Stealth Address</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={testDecoyTransactions}
-            disabled={isLoading}
-            style={{
-              flex: 1,
-              padding: 12,
-              backgroundColor: currentTest === 'decoy' ? COLORS.pink : COLORS.surface,
-              borderRadius: 12,
-              alignItems: 'center',
-              borderWidth: 1,
-              borderColor: COLORS.pink + '50',
-            }}
-          >
-            {currentTest === 'decoy' ? (
-              <ActivityIndicator color={COLORS.void} />
-            ) : (
-              <>
-                <Ionicons name="shuffle" size={20} color={COLORS.pink} />
-                <Text style={{ color: COLORS.text, fontSize: 11, marginTop: 4 }}>Decoy TX</Text>
-                <Text style={{ color: COLORS.pink, fontSize: 8 }}>ON-CHAIN</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        <TouchableOpacity
-          onPress={testStarkProof}
-          disabled={isLoading || !starkReady}
-          style={{
-            padding: 14,
-            backgroundColor: currentTest === 'stark' ? '#8B5CF6' : COLORS.surface,
-            borderRadius: 12,
-            alignItems: 'center',
-            flexDirection: 'row',
-            justifyContent: 'center',
-            gap: 8,
-            marginBottom: 8,
-            borderWidth: 1,
-            borderColor: '#8B5CF6' + '50',
-            opacity: starkReady ? 1 : 0.5,
-          }}
-        >
-          {currentTest === 'stark' ? (
-            <ActivityIndicator color={COLORS.text} />
-          ) : (
-            <>
-              <Ionicons name="hardware-chip" size={18} color="#8B5CF6" />
-              <Text style={{ color: COLORS.text, fontSize: 13, fontWeight: '600' }}>
-                STARK Proof {starkReady ? '' : '(loading WASM...)'}
-              </Text>
-              <Text style={{ color: '#8B5CF6', fontSize: 9 }}>PQ-SAFE</Text>
-            </>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={runAllTests}
-          disabled={isLoading}
-          style={{
-            padding: 14,
-            backgroundColor: COLORS.cyan,
-            borderRadius: 12,
-            alignItems: 'center',
-          }}
-        >
-          <Text style={{ color: COLORS.void, fontSize: 14, fontWeight: '600' }}>
-            Run All Offline Tests
-          </Text>
-        </TouchableOpacity>
+      <View style={styles.runAll}>
+        <Button fullWidth onPress={runAllTests} disabled={isLoading}>
+          Run the offline tests
+        </Button>
       </View>
 
-      {/* Logs */}
-      <View style={{ flex: 1, paddingHorizontal: 16 }}>
-        <View style={{
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 8,
-        }}>
-          <Text style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: '500' }}>
-            LOGS ({logs.length})
-          </Text>
-          <TouchableOpacity onPress={clearLogs}>
-            <Text style={{ color: COLORS.cyan, fontSize: 12 }}>Clear</Text>
+      {/* ── Log stream. Mono, because it is columns of data. ── */}
+      <View style={styles.logsWrap}>
+        <View style={styles.logsHeader}>
+          <Text style={styles.logsTitle}>Logs ({logs.length})</Text>
+          <TouchableOpacity
+            onPress={clearLogs}
+            style={styles.clear}
+            accessibilityRole="button"
+            accessibilityLabel="Clear the log"
+          >
+            <Text style={styles.clearText}>Clear</Text>
           </TouchableOpacity>
         </View>
 
         <ScrollView
-          style={{
-            flex: 1,
-            backgroundColor: COLORS.surface,
-            borderRadius: 12,
-            padding: 12,
+          style={styles.logs}
+          contentContainerStyle={{
+            padding: Spacing.md,
+            paddingBottom: Layout.tabBarTotalHeight + insets.bottom + Spacing.lg,
           }}
           showsVerticalScrollIndicator={false}
         >
           {logs.length === 0 ? (
-            <Text style={{ color: COLORS.textMuted, fontSize: 12, fontStyle: 'italic' }}>
-              No logs yet. Run a test to see results.
-            </Text>
+            <Text style={styles.logsEmpty}>Nothing yet. Run a test.</Text>
           ) : (
             logs.map((log, i) => (
-              <Text
-                key={i}
-                style={{
-                  color: getLogColor(log.type),
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                  marginBottom: 2,
-                }}
-              >
+              <Text key={i} style={[styles.logLine, { color: getLogColor(log.type) }]}>
                 [{log.timestamp}] {log.message}
               </Text>
             ))
           )}
         </ScrollView>
       </View>
-
-      {/* Checklist */}
-      <View style={{
-        padding: 16,
-        backgroundColor: COLORS.surface,
-        borderTopWidth: 1,
-        borderTopColor: COLORS.border,
-      }}>
-        <Text style={{ color: COLORS.textMuted, fontSize: 10, marginBottom: 8 }}>
-          VALIDATION CHECKLIST
-        </Text>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          {[
-            { name: 'Amount Noise', icon: 'pulse' },
-            { name: 'Timing Noise', icon: 'time' },
-            { name: 'Stealth Addr', icon: 'eye-off' },
-            { name: 'Decoy TX', icon: 'shuffle' },
-            { name: 'STARK Proof', icon: 'hardware-chip' },
-          ].map((item, i) => (
-            <View
-              key={i}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: COLORS.void,
-                paddingHorizontal: 8,
-                paddingVertical: 4,
-                borderRadius: 6,
-                gap: 4,
-              }}
-            >
-              <Ionicons name={item.icon as any} size={12} color={COLORS.textMuted} />
-              <Text style={{ color: COLORS.textMuted, fontSize: 10 }}>{item.name}</Text>
-            </View>
-          ))}
-        </View>
-      </View>
-    </SafeAreaView>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: Colors.background },
+
+  balanceRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.lg,
+  },
+  balanceLabel: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+  },
+  balanceValue: {
+    color: Colors.text,
+    fontSize: FontSize.lg,
+    fontFamily: FontFamily.mono,
+  },
+
+  tests: {
+    paddingHorizontal: Spacing.xl,
+    gap: Spacing.sm,
+  },
+  test: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    minHeight: 52,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceSecondary,
+  },
+  testRunning: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primaryDim,
+  },
+  testOff: { opacity: 0.4 },
+  testText: { flex: 1, minWidth: 0 },
+  testLabel: {
+    color: Colors.text,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.regular,
+  },
+  testNote: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.xs,
+    fontFamily: FontFamily.regular,
+    marginTop: 1,
+  },
+  testNoteWarn: { color: Colors.yellow },
+
+  runAll: {
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.lg,
+  },
+
+  logsWrap: { flex: 1, marginTop: Spacing.xl },
+  logsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.xl,
+    paddingBottom: Spacing.sm,
+  },
+  logsTitle: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+  },
+  clear: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingLeft: Spacing.lg,
+  },
+  clearText: {
+    color: Colors.primary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+  },
+  logs: {
+    flex: 1,
+    marginHorizontal: Spacing.xl,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderSoft,
+    backgroundColor: Colors.surfaceSecondary,
+  },
+  logsEmpty: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+  },
+  logLine: {
+    fontSize: 11,
+    fontFamily: FontFamily.mono,
+    lineHeight: 16,
+    marginBottom: 1,
+  },
+});

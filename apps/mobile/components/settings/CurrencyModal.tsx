@@ -1,7 +1,28 @@
+/**
+ * CurrencyModal — pick the currency prices are shown in.
+ *
+ * 🚨 THIS FILE WAS THE LAST TAILWIND HOLDOUT IN THE GROUP. Every colour in it
+ * was a utility class — `bg-p01-surface`, `text-white`, `text-p01-gray`,
+ * `bg-p01-cyan/10` — which resolve in `tailwind.config.js`, a file nobody edits
+ * when the design changes. So the 2026-08-23 token sweep moved the six screens
+ * around this sheet and left the sheet itself on the old palette, still setting
+ * its labels in pure white. It is `StyleSheet.create` on `Colors.*` now, like
+ * the rest of the app.
+ *
+ * ⛔ THE SYMBOL DISC IS GONE. Every row carried a 40pt circle containing `$`,
+ * `€`, `¥` — the same glyph that is already the first character of the row's
+ * own label. It was decoration standing in for information.
+ *
+ * ⚠️ Selecting closes the sheet. There is no Apply step: the choice IS the
+ * action, and a confirmation that adds no information is a tap tax.
+ */
+
 import React from 'react';
-import { View, Text, TouchableOpacity, Modal, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, ScrollView, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+
+import { Colors, Spacing, FontFamily, FontSize, BorderRadius } from '@/constants/theme';
 import { Currency, CURRENCY_SYMBOLS } from '../../stores/settingsStore';
 
 interface CurrencyModalProps {
@@ -34,76 +55,130 @@ export const CurrencyModal: React.FC<CurrencyModalProps> = ({
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <TouchableOpacity
-        className="flex-1 bg-black/70 justify-end"
-        activeOpacity={1}
-        onPress={onClose}
-      >
-        <TouchableOpacity activeOpacity={1}>
-          <View className="bg-p01-surface rounded-t-3xl pb-8">
-            {/* Header */}
-            <View className="flex-row items-center justify-between px-5 py-4 border-b border-p01-border">
-              <Text className="text-white text-lg font-semibold">Select Currency</Text>
-              <TouchableOpacity
-                onPress={onClose}
-                className="w-8 h-8 rounded-full bg-p01-elevated items-center justify-center"
-              >
-                <Ionicons name="close" size={18} color="#888892" />
-              </TouchableOpacity>
-            </View>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close currency picker"
+        />
 
-            {/* Currency List */}
-            <ScrollView className="max-h-96">
-              {CURRENCIES.map((item) => {
-                const isSelected = item.code === currentCurrency;
-                return (
-                  <TouchableOpacity
-                    key={item.code}
-                    className={`flex-row items-center justify-between px-5 py-4 ${
-                      isSelected ? 'bg-p01-cyan/10' : ''
-                    }`}
-                    onPress={() => handleSelect(item.code)}
-                    activeOpacity={0.7}
-                  >
-                    <View className="flex-row items-center">
-                      <View
-                        className={`w-10 h-10 rounded-full items-center justify-center mr-3 ${
-                          isSelected ? 'bg-p01-cyan/20' : 'bg-p01-elevated'
-                        }`}
-                      >
-                        <Text
-                          className={`text-lg font-bold ${
-                            isSelected ? 'text-p01-cyan' : 'text-white'
-                          }`}
-                        >
-                          {CURRENCY_SYMBOLS[item.code]}
-                        </Text>
-                      </View>
-                      <View>
-                        <Text className={`text-base font-medium ${isSelected ? 'text-p01-cyan' : 'text-white'}`}>
-                          {item.code}
-                        </Text>
-                        <Text className="text-p01-gray text-sm">{item.name}</Text>
-                      </View>
-                    </View>
-                    {isSelected && (
-                      <Ionicons name="checkmark-circle" size={24} color="#39c5bb" />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+        <View style={styles.sheet}>
+          <View style={styles.header}>
+            <Text style={styles.title}>Currency</Text>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.close}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            >
+              <Ionicons name="close" size={20} color={Colors.textSecondary} />
+            </TouchableOpacity>
           </View>
-        </TouchableOpacity>
-      </TouchableOpacity>
+
+          <ScrollView style={styles.list} bounces={false}>
+            {CURRENCIES.map((item, i) => {
+              const isSelected = item.code === currentCurrency;
+              return (
+                <TouchableOpacity
+                  key={item.code}
+                  style={[styles.row, i > 0 && styles.rowRule]}
+                  onPress={() => handleSelect(item.code)}
+                  activeOpacity={0.7}
+                  accessibilityRole="radio"
+                  accessibilityLabel={`${item.code}, ${item.name}`}
+                  accessibilityState={{ checked: isSelected }}
+                >
+                  <View style={styles.rowText}>
+                    <Text style={[styles.code, isSelected && styles.codeSelected]}>
+                      {item.code} {CURRENCY_SYMBOLS[item.code]}
+                    </Text>
+                    <Text style={styles.name}>{item.name}</Text>
+                  </View>
+                  {isSelected ? (
+                    <Ionicons name="checkmark" size={20} color={Colors.primary} />
+                  ) : null}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
     </Modal>
   );
 };
+
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    // Colors.background at 72%: the scrim is the ground with alpha, not a colour.
+    backgroundColor: 'rgba(7, 7, 9, 0.72)',
+  },
+  sheet: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: BorderRadius['2xl'],
+    borderTopRightRadius: BorderRadius['2xl'],
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.border,
+    paddingBottom: Spacing['4xl'],
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.borderSoft,
+  },
+  title: {
+    color: Colors.text,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
+  },
+  close: {
+    width: 44,
+    height: 44,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  list: {
+    maxHeight: 380,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 56,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+  },
+  rowRule: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.borderSoft,
+  },
+  rowText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  code: {
+    color: Colors.text,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.regular,
+  },
+  codeSelected: {
+    color: Colors.primary,
+    fontFamily: FontFamily.medium,
+  },
+  name: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    marginTop: 2,
+  },
+});
 
 export default CurrencyModal;

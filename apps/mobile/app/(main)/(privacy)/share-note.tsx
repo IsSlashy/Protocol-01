@@ -1,5 +1,18 @@
 /**
- * Share Note Screen — Send a private note to a nearby device via Bluetooth or NFC
+ * Share a note to a nearby device.
+ *
+ * 🎯 REBUILT ON THE REALIGNED THEME 2026-08-23. What this used to be: every
+ * panel was a `BlurView` over a translucent grey with a `LinearGradient`
+ * stacked on top, and four of those gradients ran cyan into `rgba(255, 119,
+ * 168, …)` — the retired hot pink, hardcoded here where the theme sweep could
+ * not reach it. So the screen kept a second accent after the brand dropped it,
+ * and paid for it with three composited layers per card. Panels are a fill and
+ * a hairline now, which is what the site and the extension draw.
+ *
+ * ⚠️ THE SUCCESS VIEW STAYS A VIEW, NOT A NAVIGATION. It is tempting to bounce
+ * the user back automatically, and the comment below the imports says why that
+ * is a bug: `success` survives from a previous session, so an effect watching
+ * it fires on a screen nobody just finished. It is one line and one button.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -13,15 +26,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { useSharingStore } from '@/stores/sharingStore';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import type { TransportType } from '@/services/sharing/types';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
+import { Button } from '@/components/ui';
 import { p01Alert } from '@/stores/alertStore';
 
 import BleDeviceList from '@/components/sharing/BleDeviceList';
@@ -88,22 +100,32 @@ export default function ShareNoteScreen() {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <Animated.View entering={FadeInDown.delay(50)} style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color={Colors.text} />
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={styles.backBtn}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Share Note</Text>
-          <View style={{ width: 40 }} />
+          <Text style={styles.headerTitle}>Share note</Text>
+          <View style={styles.headerSpacer} />
         </Animated.View>
         <View style={styles.centered}>
           <Animated.View entering={FadeInUp.delay(100)} style={styles.emptyContent}>
-            <Ionicons name="alert-circle-outline" size={48} color={Colors.textTertiary} />
-            <Text style={styles.emptyTitle}>No Note Selected</Text>
+            <View style={styles.emptyIcon}>
+              <Ionicons name="radio-outline" size={28} color={Colors.textTertiary} />
+            </View>
+            <Text style={styles.emptyTitle}>No note selected</Text>
             <Text style={styles.emptyText}>
-              Go to your notes and tap "Nearby" on a mature note to share it.
+              Open your notes and choose Nearby on a mature note to share it.
             </Text>
-            <TouchableOpacity style={styles.doneBtn} onPress={() => router.back()}>
-              <Text style={styles.doneBtnText}>Go Back</Text>
-            </TouchableOpacity>
+            <View style={styles.emptyAction}>
+              <Button variant="primary" size="lg" fullWidth onPress={() => router.back()}>
+                Back to notes
+              </Button>
+            </View>
           </Animated.View>
         </View>
       </SafeAreaView>
@@ -174,34 +196,35 @@ export default function ShareNoteScreen() {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <Animated.View entering={FadeInDown.delay(50)} style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color={Colors.text} />
+          <TouchableOpacity
+            onPress={() => { cancelSession(); router.back(); }}
+            style={styles.backBtn}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Share Note</Text>
-          <View style={{ width: 40 }} />
+          <Text style={styles.headerTitle}>Share note</Text>
+          <View style={styles.headerSpacer} />
         </Animated.View>
         <View style={styles.centered}>
-          <Animated.View entering={FadeInUp.delay(100)}>
-            <View style={styles.successGlassOuter}>
-              <BlurView intensity={15} tint="dark" style={styles.successGlass}>
-                <LinearGradient
-                  colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <Ionicons name="checkmark-circle" size={64} color={P01Colors.green} />
-                <Text style={styles.successTitle}>Note Shared!</Text>
-                <Text style={styles.successDetail}>
-                  Securely transferred via {selectedTransport === 'ble' ? 'Bluetooth' : 'NFC'}.
-                </Text>
-                <TouchableOpacity
-                  style={styles.doneBtn}
-                  onPress={() => { cancelSession(); router.back(); }}
-                >
-                  <Text style={styles.doneBtnText}>Done</Text>
-                </TouchableOpacity>
-              </BlurView>
+          <Animated.View entering={FadeInUp.delay(100)} style={styles.emptyContent}>
+            <Ionicons name="checkmark-circle-outline" size={40} color={Colors.primary} />
+            <Text style={styles.successTitle}>Note sent</Text>
+            <Text style={styles.emptyText}>
+              Delivered over {selectedTransport === 'ble' ? 'Bluetooth' : 'NFC'} and acknowledged
+              by the other device.
+            </Text>
+            <View style={styles.emptyAction}>
+              <Button
+                variant="primary"
+                size="lg"
+                fullWidth
+                onPress={() => { cancelSession(); router.back(); }}
+              >
+                Done
+              </Button>
             </View>
           </Animated.View>
         </View>
@@ -229,29 +252,24 @@ export default function ShareNoteScreen() {
         <TouchableOpacity
           onPress={() => { cancelSession(); router.back(); }}
           style={styles.backBtn}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
-          <Ionicons name="arrow-back" size={22} color={Colors.text} />
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Share Note</Text>
-        <View style={{ width: 40 }} />
+        <Text style={styles.headerTitle}>Share note</Text>
+        <View style={styles.headerSpacer} />
       </Animated.View>
 
       {sessionState !== 'idle' && <ShareProgressIndicator state={sessionState} />}
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        {/* Note ready badge */}
+        {/* Note ready */}
         <Animated.View entering={FadeInUp.delay(100)}>
-          <View style={styles.noteReadyOuter}>
-            <BlurView intensity={12} tint="dark" style={styles.noteReadyGlass}>
-              <LinearGradient
-                colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-              <Ionicons name="shield-checkmark" size={18} color={P01Colors.green} />
-              <Text style={styles.noteReadyText}>Mature note ready to share</Text>
-            </BlurView>
+          <View style={styles.noteReadyRow}>
+            <Ionicons name="shield-checkmark-outline" size={16} color={Colors.primary} />
+            <Text style={styles.noteReadyText}>Mature note ready to share</Text>
           </View>
         </Animated.View>
 
@@ -260,48 +278,37 @@ export default function ShareNoteScreen() {
           <Text style={styles.label}>Choose how to send</Text>
         </Animated.View>
         <View style={styles.transportRow}>
-          <Animated.View entering={FadeInUp.delay(200)} style={{ flex: 1 }}>
+          <Animated.View entering={FadeInUp.delay(200)} style={styles.transportSlot}>
             <TouchableOpacity
               style={[
-                styles.transportCardOuter,
-                selectedTransport === 'ble' && styles.transportCardOuterActive,
+                styles.transportCard,
+                selectedTransport === 'ble' && styles.transportCardActive,
                 !isBleAvailable && styles.transportCardDisabled,
               ]}
               onPress={handleStartBle}
               disabled={!isBleAvailable}
+              accessibilityRole="button"
+              accessibilityState={{ selected: selectedTransport === 'ble', disabled: !isBleAvailable }}
+              accessibilityLabel="Send over Bluetooth"
             >
-              <BlurView intensity={12} tint="dark" style={styles.transportCardGlass}>
-                <LinearGradient
-                  colors={selectedTransport === 'ble'
-                    ? ['rgba(57, 197, 187, 0.10)', 'rgba(57, 197, 187, 0.03)', 'transparent']
-                    : ['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <Ionicons name="bluetooth" size={28} color={isBleAvailable ? P01Colors.blue : Colors.textTertiary} />
-                <Text style={styles.transportTitle}>Bluetooth</Text>
-                <Text style={styles.transportDesc}>
-                  {isBleAvailable ? 'Scan nearby' : 'Unavailable'}
-                </Text>
-              </BlurView>
+              <Ionicons
+                name="bluetooth"
+                size={24}
+                color={isBleAvailable ? Colors.primary : Colors.textTertiary}
+              />
+              <Text style={styles.transportTitle}>Bluetooth</Text>
+              <Text style={styles.transportDesc}>
+                {isBleAvailable ? 'Scan nearby' : 'Unavailable'}
+              </Text>
             </TouchableOpacity>
           </Animated.View>
 
           {/* NFC — disabled, coming soon */}
-          <Animated.View entering={FadeInUp.delay(260)} style={{ flex: 1 }}>
-            <View style={[styles.transportCardOuter, styles.transportCardDisabled]}>
-              <BlurView intensity={12} tint="dark" style={styles.transportCardGlass}>
-                <LinearGradient
-                  colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <Ionicons name="phone-portrait" size={28} color={Colors.textTertiary} />
-                <Text style={styles.transportTitle}>NFC Tap</Text>
-                <Text style={styles.transportDesc}>Coming Soon</Text>
-              </BlurView>
+          <Animated.View entering={FadeInUp.delay(260)} style={styles.transportSlot}>
+            <View style={[styles.transportCard, styles.transportCardDisabled]}>
+              <Ionicons name="phone-portrait-outline" size={24} color={Colors.textTertiary} />
+              <Text style={styles.transportTitle}>NFC tap</Text>
+              <Text style={styles.transportDesc}>Coming soon</Text>
             </View>
           </Animated.View>
         </View>
@@ -332,36 +339,20 @@ export default function ShareNoteScreen() {
         {/* Error */}
         {error && (
           <Animated.View entering={FadeInUp.delay(100)}>
-            <View style={styles.errorCardOuter}>
-              <BlurView intensity={12} tint="dark" style={styles.errorCardGlass}>
-                <LinearGradient
-                  colors={['rgba(239, 68, 68, 0.08)', 'rgba(239, 68, 68, 0.02)', 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={StyleSheet.absoluteFill}
-                />
-                <Ionicons name="alert-circle" size={16} color={Colors.error} />
-                <Text style={styles.errorText}>{error}</Text>
-              </BlurView>
+            <View style={styles.errorPanel} accessibilityRole="alert">
+              <Ionicons name="alert-circle" size={16} color={Colors.error} />
+              <Text style={styles.errorText}>{error}</Text>
             </View>
           </Animated.View>
         )}
 
         {/* Security footer */}
         <Animated.View entering={FadeInUp.delay(320)}>
-          <View style={styles.securityOuter}>
-            <BlurView intensity={8} tint="dark" style={styles.securityGlass}>
-              <LinearGradient
-                colors={['rgba(57, 197, 187, 0.04)', 'transparent']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-              <Ionicons name="lock-closed" size={14} color={Colors.textTertiary} />
-              <Text style={styles.securityText}>
-                End-to-end encrypted. BLE: X25519 + XSalsa20-Poly1305. NFC: PIN-derived key.
-              </Text>
-            </BlurView>
+          <View style={styles.securityRow}>
+            <Ionicons name="lock-closed-outline" size={13} color={Colors.textTertiary} />
+            <Text style={styles.securityText}>
+              End-to-end encrypted. BLE: X25519 + XSalsa20-Poly1305. NFC: PIN-derived key.
+            </Text>
           </View>
         </Animated.View>
       </ScrollView>
@@ -380,118 +371,111 @@ export default function ShareNoteScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: 'transparent' },
+  container: { flex: 1, backgroundColor: Colors.background },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.md,
+    minHeight: 56,
   },
-  backBtn: {
-    width: 40, height: 40, borderRadius: 9999,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    justifyContent: 'center', alignItems: 'center',
+  backBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
+  headerSpacer: { width: 44 },
+  headerTitle: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
   },
-  headerTitle: { color: Colors.text, fontSize: 20, fontFamily: FontFamily.bold },
   scrollView: { flex: 1 },
-  scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: 120 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xl },
-  emptyContent: { alignItems: 'center', gap: Spacing.lg },
-  emptyTitle: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.text },
-  emptyText: { fontSize: 14, fontFamily: FontFamily.regular, color: Colors.textSecondary, textAlign: 'center', lineHeight: 20 },
+  scrollContent: { paddingHorizontal: Spacing.xl, paddingTop: Spacing.lg, paddingBottom: 120 },
+  centered: { flex: 1, justifyContent: 'center', paddingHorizontal: Spacing['3xl'] },
 
-  /* Success glass card */
-  successGlassOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
+  /* Empty / success */
+  emptyContent: { alignItems: 'center' },
+  emptyIcon: {
+    width: 56, height: 56, borderRadius: BorderRadius.full,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
+    marginBottom: Spacing['2xl'],
   },
-  successGlass: {
-    alignItems: 'center',
-    gap: Spacing.lg,
-    padding: Spacing.xl * 2,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+  emptyTitle: {
+    fontSize: FontSize['2xl'], fontFamily: FontFamily.display,
+    color: Colors.text, textAlign: 'center',
   },
-  successTitle: { fontSize: 22, fontFamily: FontFamily.bold, color: Colors.text },
-  successDetail: { fontSize: 14, fontFamily: FontFamily.regular, color: Colors.textSecondary, textAlign: 'center' },
-  doneBtn: {
-    paddingHorizontal: 24, paddingVertical: 12,
-    borderRadius: BorderRadius.md, backgroundColor: P01Colors.cyanDim, marginTop: Spacing.md,
+  successTitle: {
+    fontSize: FontSize['2xl'], fontFamily: FontFamily.display,
+    color: Colors.text, textAlign: 'center', marginTop: Spacing.lg,
   },
-  doneBtnText: { fontSize: 15, fontFamily: FontFamily.semibold, color: P01Colors.cyan },
+  emptyText: {
+    fontSize: FontSize.md, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+    textAlign: 'center', lineHeight: 22, marginTop: Spacing.sm,
+  },
+  emptyAction: { width: '100%', marginTop: Spacing['3xl'] },
 
-  /* Note ready glass card */
-  noteReadyOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
+  /* Note ready */
+  noteReadyRow: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
     marginBottom: Spacing.xl,
   },
-  noteReadyGlass: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    padding: Spacing.md,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+  noteReadyText: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.medium, color: Colors.textSecondary,
   },
-  noteReadyText: { fontSize: 14, fontFamily: FontFamily.medium, color: P01Colors.green },
-  label: { fontSize: 14, fontFamily: FontFamily.semibold, color: Colors.textSecondary, marginBottom: Spacing.sm },
+  label: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.medium,
+    color: Colors.textSecondary, marginBottom: Spacing.md,
+  },
 
-  /* Transport glass cards */
+  /* Transport cards — a fill and a hairline. */
   transportRow: { flexDirection: 'row', gap: Spacing.md, marginBottom: Spacing.xl },
-  transportCardOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
-  },
-  transportCardOuterActive: {
-    borderColor: P01Colors.cyan,
-  },
-  transportCardGlass: {
+  transportSlot: { flex: 1 },
+  transportCard: {
     alignItems: 'center',
-    gap: 8,
+    gap: Spacing.sm,
+    minHeight: 100,
     paddingVertical: Spacing.xl,
     paddingHorizontal: Spacing.md,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
-  },
-  transportCardDisabled: { opacity: 0.4 },
-  transportTitle: { fontSize: 15, fontFamily: FontFamily.semibold, color: Colors.text },
-  transportDesc: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary, textAlign: 'center' },
-
-  /* Error glass card */
-  errorCardOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
+    borderRadius: BorderRadius.lg,
+    backgroundColor: Colors.surface,
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.15)',
-    marginBottom: Spacing.lg,
+    borderColor: Colors.border,
   },
-  errorCardGlass: {
+  transportCardActive: { borderColor: Colors.primary },
+  transportCardDisabled: { opacity: 0.4 },
+  transportTitle: {
+    fontSize: FontSize.md, fontFamily: FontFamily.medium, color: Colors.text,
+  },
+  transportDesc: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textTertiary, textAlign: 'center',
+  },
+
+  /* Error */
+  errorPanel: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: Spacing.sm,
+    backgroundColor: Colors.errorDim,
+    borderRadius: BorderRadius.md,
     padding: Spacing.md,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    marginBottom: Spacing.lg,
   },
-  errorText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: Colors.error },
+  errorText: {
+    flex: 1, fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: Colors.error,
+  },
 
-  /* Security footer glass */
-  securityOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.05)',
-  },
-  securityGlass: {
+  /* Security note */
+  securityRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
-    padding: Spacing.md,
-    backgroundColor: 'rgba(12, 12, 14, 0.45)',
+    gap: Spacing.sm,
+    paddingTop: Spacing.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.borderSoft,
   },
-  securityText: { flex: 1, fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary, lineHeight: 16 },
+  securityText: {
+    flex: 1, fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textTertiary, lineHeight: 16,
+  },
 });

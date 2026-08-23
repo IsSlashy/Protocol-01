@@ -234,7 +234,7 @@ const st = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   cardIconActive: { backgroundColor: `${P01Colors.cyan}18` },
-  cardIconDefault: { backgroundColor: '#1a1a1f' },
+  cardIconDefault: { backgroundColor: '#16161b' },
   cardTitle: { fontSize: 14, fontFamily: FontFamily.medium, color: Colors.text },
   cardPreview: {
     fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 3,

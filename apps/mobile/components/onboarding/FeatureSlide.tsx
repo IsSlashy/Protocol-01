@@ -1,14 +1,32 @@
+/**
+ * FeatureSlide — one page of the onboarding carousel.
+ *
+ * 🚨 IT WAS STYLED IN CLASSES THAT DO NOT RESOLVE. `text-white` on the title
+ * (the brand's text is warm paper, never white) and, on the description,
+ * `text-[rgba(234, 231, 223, 0.62)]` — an arbitrary Tailwind value containing
+ * SPACES, which the class parser cannot read, so that line has been rendering
+ * in the platform default colour rather than the muted grey somebody intended.
+ * A class that silently does nothing is worse than a wrong colour: nothing
+ * about the source says it is broken. Both are `StyleSheet` + tokens now.
+ *
+ * ⛔ The 30pt coloured drop-shadow behind the icon and the 15pt `textShadow`
+ * glow on the title are gone with the rest of the neon. The icon still takes
+ * the caller's `color`, tinted into its own disc, which is the whole of what
+ * the glow was trying to say.
+ */
+
 import React, { useEffect } from 'react';
-import { View, Text, Dimensions } from 'react-native';
+import { View, StyleSheet, Dimensions } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
   withDelay,
   Easing,
-  FadeIn,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
+
+import { Colors, Spacing, FontFamily, FontSize } from '../../constants/theme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -58,60 +76,58 @@ export const FeatureSlide: React.FC<FeatureSlideProps> = ({
   }));
 
   return (
-    <View
-      className="flex-1 items-center justify-center px-8"
-      style={{ width: SCREEN_WIDTH }}
-    >
-      {/* Icon container with glow */}
-      <Animated.View
-        style={[
-          iconStyle as any,
-          {
-            shadowColor: color,
-            shadowOpacity: 0.5,
-            shadowRadius: 30,
-            shadowOffset: { width: 0, height: 0 },
-            elevation: 10,
-          },
-        ]}
-        className="mb-12"
-      >
-        <View
-          className="w-32 h-32 rounded-full items-center justify-center"
-          style={{
-            backgroundColor: `${color}15`,
-            borderWidth: 2,
-            borderColor: `${color}40`,
-          }}
-        >
-          <Ionicons name={icon} size={56} color={color} />
+    <View style={[styles.slide, { width: SCREEN_WIDTH }]}>
+      <Animated.View style={[iconStyle as any, styles.iconWrap]}>
+        <View style={[styles.iconDisc, { borderColor: color }]}>
+          <Ionicons name={icon} size={52} color={color} />
         </View>
       </Animated.View>
 
-      {/* Title */}
-      <Animated.Text
-        style={[
-          titleStyle as any,
-          {
-            textShadowColor: color,
-            textShadowOffset: { width: 0, height: 0 },
-            textShadowRadius: 15,
-          },
-        ]}
-        className="text-3xl font-bold text-white text-center mb-4"
-      >
+      <Animated.Text style={[titleStyle as any, styles.title]} accessibilityRole="header">
         {title}
       </Animated.Text>
 
-      {/* Description */}
-      <Animated.Text
-        style={descStyle as any}
-        className="text-lg text-[#888892] text-center leading-7 px-4"
-      >
+      <Animated.Text style={[descStyle as any, styles.description]}>
         {description}
       </Animated.Text>
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  slide: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing['3xl'],
+  },
+  iconWrap: {
+    marginBottom: Spacing['5xl'],
+  },
+  iconDisc: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+  },
+  title: {
+    color: Colors.text,
+    fontFamily: FontFamily.display,
+    fontSize: FontSize['3xl'],
+    textAlign: 'center',
+    marginBottom: Spacing.lg,
+  },
+  description: {
+    color: Colors.textSecondary,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.lg,
+    lineHeight: 28,
+    textAlign: 'center',
+    paddingHorizontal: Spacing.lg,
+  },
+});
 
 export default FeatureSlide;

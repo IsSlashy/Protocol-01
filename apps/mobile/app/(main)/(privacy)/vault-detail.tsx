@@ -1,3 +1,18 @@
+/**
+ * One subscription vault, in detail.
+ *
+ * 🎯 RESTYLED ON THE REALIGNED THEME 2026-08-23. What was here:
+ *   - `#8B5CF6`, a violet, on the mode badge, the progress rows and the
+ *     spinner. The design system has one accent and violet is not in it — the
+ *     colour was hardcoded in six places, so the theme sweep could not touch it.
+ *   - five bordered cards stacked one per fact, each one a panel around a
+ *     label and a value. They are hairline rows now: a border per fact is a
+ *     border between a thing and the same thing.
+ *   - "Vault Detail" set in Inter-Bold, i.e. body text one weight louder.
+ *
+ * ⚠️ `STATUS_LABEL` still comes from `entitlementStatus`, never `isActive`.
+ */
+
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
@@ -21,7 +36,15 @@ import {
 } from '@/services/subscriptionVault';
 import { getConnection } from '@/services/solana/connection';
 import { useStarkProver } from '@/providers/StarkProverProvider';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Badge } from '@/components/ui';
+import {
+  Colors,
+  FontFamily,
+  FontSize,
+  BorderRadius,
+  Spacing,
+  Layout,
+} from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 import { useT } from '@/i18n';
 
@@ -40,6 +63,15 @@ const STATUS_LABEL: Record<ReturnType<typeof entitlementStatus>, string> = {
   unknown: 'Checking',
   current: 'Active',
   ended: 'Ended',
+};
+
+/** The same five states, in the four tones the design system has. */
+const STATUS_TONE: Record<ReturnType<typeof entitlementStatus>, 'neutral' | 'good' | 'warn'> = {
+  inactive: 'neutral',
+  paused: 'warn',
+  unknown: 'neutral',
+  current: 'good',
+  ended: 'neutral',
 };
 
 export default function VaultDetailScreen() {
@@ -168,110 +200,119 @@ export default function VaultDetailScreen() {
     }
   };
 
+  const header = (
+    <View style={styles.header}>
+      <TouchableOpacity
+        onPress={() => router.back()}
+        style={styles.iconBtn}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        accessibilityRole="button"
+        accessibilityLabel="Go back"
+      >
+        <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
+      </TouchableOpacity>
+      <Text style={styles.headerTitle} numberOfLines={1}>Vault</Text>
+      <View style={styles.headerSpacer} />
+    </View>
+  );
+
   if (!vaultInfo) {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color={Colors.text} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Vault Detail</Text>
-          <View style={{ width: 40 }} />
-        </View>
-        <Text style={styles.loadingText}>Loading...</Text>
+        {header}
+        <Text style={styles.loadingText}>Loading…</Text>
       </SafeAreaView>
     );
   }
 
+  const status = entitlementStatus(vaultInfo, currentSlot ?? 0);
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={Colors.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Vault Detail</Text>
-        <View style={{ width: 40 }} />
-      </View>
+      {header}
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        {/* Mode badge */}
-        {isPrivate && (
-          <View style={styles.privateBadge}>
-            <Ionicons name="hardware-chip" size={16} color="#8B5CF6" />
-            <Text style={styles.privateBadgeText}>
-              Private Mode {starkReady ? '— STARK Ready' : ''}
+        {/* ── The headline: what it costs, and whether it is running ── */}
+        <View style={styles.headline}>
+          <Text style={styles.headlineLabel}>Rate</Text>
+          <View style={styles.headlineRow}>
+            <Text style={styles.headlineAmount}>
+              {(Number(vaultInfo.rate) / 1e9).toFixed(3)}
             </Text>
+            <Text style={styles.headlineUnit}>SOL per period</Text>
           </View>
-        )}
-
-        <View style={styles.detailCard}>
-          <Text style={styles.detailLabel}>Status</Text>
-          <Text style={styles.detailValue}>
-            {STATUS_LABEL[entitlementStatus(vaultInfo, currentSlot ?? 0)]}
-          </Text>
+          <View style={styles.headlineMeta}>
+            <Badge variant={STATUS_TONE[status]} size="sm">{STATUS_LABEL[status]}</Badge>
+            {isPrivate && (
+              <Badge variant="neutral" size="sm">
+                {starkReady ? 'Private · prover ready' : 'Private'}
+              </Badge>
+            )}
+          </View>
         </View>
 
-        <View style={styles.detailCard}>
-          <Text style={styles.detailLabel}>Retailer</Text>
-          <Text style={styles.detailValue}>{vaultInfo.retailer}</Text>
-        </View>
-
-        <View style={styles.detailCard}>
-          <Text style={styles.detailLabel}>Total Deposited</Text>
-          <Text style={styles.detailValue}>
-            {(Number(vaultInfo.totalDeposited) / 1e9).toFixed(3)} SOL
-          </Text>
-        </View>
-
-        <View style={styles.detailCard}>
-          <Text style={styles.detailLabel}>Rate</Text>
-          <Text style={styles.detailValue}>
-            {(Number(vaultInfo.rate) / 1e9).toFixed(3)} SOL per period
-          </Text>
-        </View>
-
-        <View style={styles.detailCard}>
-          <Text style={styles.detailLabel}>Claimed Periods</Text>
-          <Text style={styles.detailValue}>{Number(vaultInfo.claimedPeriods)}</Text>
+        {/* ── The facts, as rows. One rule between them, not five borders. ── */}
+        <View style={styles.facts}>
+          <Fact label="Retailer" value={vaultInfo.retailer} mono />
+          <Fact
+            label="Total deposited"
+            value={`${(Number(vaultInfo.totalDeposited) / 1e9).toFixed(3)} SOL`}
+            mono
+          />
+          <Fact label="Claimed periods" value={String(Number(vaultInfo.claimedPeriods))} mono />
         </View>
 
         {/* STARK progress */}
         {starkStatus && (
-          <View style={styles.starkProgress}>
-            <ActivityIndicator size="small" color="#8B5CF6" />
-            <Text style={styles.starkProgressText}>{starkStatus}</Text>
+          <View style={styles.progressRow}>
+            <ActivityIndicator size="small" color={Colors.primary} />
+            <Text style={styles.progressText}>{starkStatus}</Text>
           </View>
         )}
 
+        {/* ── The one control a vault has ── */}
         <View style={styles.actions}>
           {vaultInfo.isActive && !vaultInfo.isPaused && (
             <TouchableOpacity
-              style={[styles.actionBtn, { backgroundColor: P01Colors.yellowDim }]}
+              style={styles.actionBtn}
               onPress={handlePause}
               disabled={isLoading}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Pause this subscription"
+              accessibilityState={{ disabled: isLoading, busy: isLoading }}
             >
               {isLoading ? (
-                <ActivityIndicator size="small" color={P01Colors.yellow} />
+                <ActivityIndicator size="small" color={Colors.text} />
               ) : (
-                <Text style={[styles.actionText, { color: P01Colors.yellow }]}>Pause</Text>
+                <>
+                  <Ionicons name="pause" size={18} color={Colors.text} />
+                  <Text style={styles.actionText}>Pause</Text>
+                </>
               )}
             </TouchableOpacity>
           )}
 
           {vaultInfo.isActive && vaultInfo.isPaused && (
             <TouchableOpacity
-              style={[styles.actionBtn, { backgroundColor: P01Colors.cyanDim }]}
+              style={[styles.actionBtn, styles.actionBtnPrimary]}
               onPress={handleResume}
               disabled={isLoading}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Resume this subscription"
+              accessibilityState={{ disabled: isLoading, busy: isLoading }}
             >
               {isLoading ? (
-                <ActivityIndicator size="small" color={P01Colors.cyan} />
+                <ActivityIndicator size="small" color={Colors.background} />
               ) : (
-                <Text style={[styles.actionText, { color: P01Colors.cyan }]}>Resume</Text>
+                <>
+                  <Ionicons name="play" size={18} color={Colors.background} />
+                  <Text style={[styles.actionText, styles.actionTextPrimary]}>Resume</Text>
+                </>
               )}
             </TouchableOpacity>
           )}
-
         </View>
 
         {/*
@@ -297,131 +338,189 @@ export default function VaultDetailScreen() {
 
         {/* Progress from store */}
         {isLoading && progress && (
-          <View style={styles.starkProgress}>
-            <ActivityIndicator size="small" color={P01Colors.cyan} />
-            <Text style={[styles.starkProgressText, { color: P01Colors.cyan }]}>{progress}</Text>
+          <View style={styles.progressRow}>
+            <ActivityIndicator size="small" color={Colors.primary} />
+            <Text style={styles.progressText}>{progress}</Text>
           </View>
         )}
       </ScrollView>
-
     </SafeAreaView>
+  );
+}
+
+function Fact({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <View style={styles.fact}>
+      <Text style={styles.factLabel}>{label}</Text>
+      <Text
+        style={[styles.factValue, mono && styles.factValueMono]}
+        numberOfLines={1}
+        ellipsizeMode="middle"
+      >
+        {value}
+      </Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+  scrollView: { flex: 1 },
+  scrollContent: {
+    paddingHorizontal: Layout.screenPadding,
+    paddingBottom: Layout.tabBarTotalHeight + Spacing['4xl'],
+  },
+
+  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.md,
+    paddingBottom: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.borderSoft,
   },
-  backBtn: {
-    width: 40, height: 40, borderRadius: 9999,
-    backgroundColor: Colors.surfaceSecondary,
-    justifyContent: 'center', alignItems: 'center',
+  iconBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
+    flex: 1,
+    fontFamily: FontFamily.displayMedium,
+    fontSize: FontSize.xl,
     color: Colors.text,
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
   },
-  scrollView: { flex: 1 },
-  scrollContent: {
-    paddingHorizontal: Spacing.xl,
-    paddingBottom: 120,
-  },
+  headerSpacer: { width: 44 },
+
   loadingText: {
-    fontSize: 14,
     fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
     color: Colors.textSecondary,
     textAlign: 'center',
-    marginTop: Spacing['3xl'],
+    marginTop: Spacing['4xl'],
   },
-  privateBadge: {
+
+  // Headline
+  headline: { paddingTop: Spacing['2xl'] },
+  headlineLabel: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+  },
+  headlineRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  headlineAmount: {
+    fontFamily: FontFamily.display,
+    fontSize: FontSize['4xl'],
+    color: Colors.text,
+    fontVariant: ['tabular-nums'],
+  },
+  headlineUnit: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
+    color: Colors.textSecondary,
+  },
+  headlineMeta: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+
+  // Facts
+  facts: { marginTop: Spacing['3xl'] },
+  fact: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(139, 92, 246, 0.08)',
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(139, 92, 246, 0.2)',
+    justifyContent: 'space-between',
+    gap: Spacing.lg,
+    minHeight: 48,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.borderSoft,
   },
-  privateBadgeText: {
-    fontSize: 13,
-    fontFamily: FontFamily.medium,
-    color: '#8B5CF6',
+  factLabel: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
   },
-  detailCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
+  factValue: {
+    flexShrink: 1,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    color: Colors.text,
+    textAlign: 'right',
+  },
+  factValueMono: { fontFamily: FontFamily.mono },
+
+  // Progress
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    marginTop: Spacing.xl,
     padding: Spacing.lg,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.primaryDim,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.primaryMuted,
   },
-  detailLabel: {
-    fontSize: 12,
-    fontFamily: FontFamily.semibold,
-    color: Colors.textTertiary,
-    marginBottom: 4,
-  },
-  detailValue: {
-    fontSize: 14,
-    fontFamily: FontFamily.mono,
+  progressText: {
+    flex: 1,
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
     color: Colors.text,
   },
-  starkProgress: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: 'rgba(139, 92, 246, 0.08)',
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: 'rgba(139, 92, 246, 0.2)',
-  },
-  starkProgressText: {
-    fontSize: 13,
-    fontFamily: FontFamily.medium,
-    color: '#8B5CF6',
-    flex: 1,
-  },
+
+  // Actions
   actions: {
     flexDirection: 'row',
-    gap: Spacing.sm,
-    marginTop: Spacing.xl,
+    gap: Spacing.md,
+    marginTop: Spacing['2xl'],
   },
   actionBtn: {
     flex: 1,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    minHeight: 52,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
   },
+  actionBtnPrimary: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   actionText: {
-    fontSize: 14,
-    fontFamily: FontFamily.bold,
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.md,
+    color: Colors.text,
   },
+  actionTextPrimary: { color: Colors.background },
+
+  // No-refund notice
   noRefundCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: Spacing.sm,
-    marginTop: Spacing.lg,
-    padding: Spacing.md,
+    marginTop: Spacing.xl,
+    padding: Spacing.lg,
     borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceSecondary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderSoft,
   },
   noRefundText: {
     flex: 1,
-    fontSize: 12,
-    lineHeight: 18,
     fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    lineHeight: 19,
     color: Colors.textSecondary,
   },
 });

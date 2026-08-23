@@ -1,3 +1,23 @@
+/**
+ * Shielded wallet — the RETIRED V1 module, kept so its money has an exit.
+ *
+ * 🎯 WHAT CHANGED 2026-08-23. This screen is not the product any more and it
+ * should not look like the front door.
+ *   - The gradient header is gone. So is the second gradient behind a 40pt
+ *     disc that decorated the transparent balance. Both painted their own
+ *     hexes, so the theme realignment could not reach them and this screen
+ *     kept the old ground while its neighbours moved.
+ *   - `TRANSPARENT BALANCE` and `PENDING` were all-caps with letter-spacing;
+ *     the section headings are sentence case in the display face now.
+ *   - The pending and failure states used raw Tailwind colours (`#ef4444`,
+ *     `#fbbf24`) that live outside `constants/theme.ts` entirely.
+ *   - It says at the top what it is: retired, here to be emptied.
+ *
+ * ⚠️ NO LOGIC WAS TOUCHED. Both progress pipelines, the STARK path, the
+ * Groth16/relay fallback, the biometric gate and the stealth sweep are the code
+ * that was here before, arguments included.
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -14,8 +34,6 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import Animated, { FadeInDown } from 'react-native-reanimated';
-import { LinearGradient } from 'expo-linear-gradient';
 
 import { useWalletStore } from '@/stores/walletStore';
 import { useShieldedStore } from '@/stores/shieldedStore';
@@ -23,7 +41,7 @@ import { useStarkProver } from '@/providers/StarkProverProvider';
 import { getKeypair } from '@/services/solana/wallet';
 import { submitGenericStarkProof, type GenericStarkProof, CIRCUIT_CONFIDENTIAL_BALANCE } from '@/services/stark';
 import { PublicKey, Transaction } from '@solana/web3.js';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
 import { requireBiometricAuth } from '@/utils/biometricGate';
 import { p01Alert } from '@/stores/alertStore';
 
@@ -360,36 +378,55 @@ export default function ShieldedWalletScreen() {
     } finally { setIsSweeping(false); }
   };
 
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header — gradient with subtle cyan bottom border */}
-      <LinearGradient colors={['#0d1117', '#0a0a0c']} style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color={Colors.textPrimary} />
+      {/* Header — flat ground and a hairline, like every other screen. */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.iconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
-        <View style={styles.headerTitle}>
-          <Ionicons name="shield-checkmark" size={22} color={P01Colors.cyan} />
-          <Text style={styles.headerText}>Shielded Wallet</Text>
-        </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity onPress={() => setShowBalance(!showBalance)}>
-            <Ionicons name={showBalance ? 'eye' : 'eye-off'} size={22} color={Colors.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setShowInfo(true)} style={{ marginLeft: 12 }}>
-            <Ionicons name="information-circle-outline" size={22} color={Colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
-        {/* Subtle cyan bottom border */}
-        <View style={styles.headerBorder} />
-      </LinearGradient>
+        <Text style={styles.headerText} accessibilityRole="header">Shielded wallet</Text>
+        <TouchableOpacity
+          onPress={() => setShowBalance(!showBalance)}
+          style={styles.iconBtn}
+          accessibilityRole="button"
+          accessibilityLabel={showBalance ? 'Hide the balance' : 'Show the balance'}
+        >
+          <Ionicons name={showBalance ? 'eye-outline' : 'eye-off-outline'} size={20} color={Colors.textSecondary} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => setShowInfo(true)}
+          style={styles.iconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="What shielding does and does not hide"
+        >
+          <Ionicons name="information-circle-outline" size={20} color={Colors.textSecondary} />
+        </TouchableOpacity>
+      </View>
 
       <ScrollView
         style={styles.content}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
-        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={handleRefresh} tintColor={P01Colors.cyan} />}
+        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={handleRefresh} tintColor={Colors.primary} />}
       >
+        {/*
+          Say what this is, at the top, before any number. The Shield tab holds
+          the denominated pool; this module is V1 and the only reason to open it
+          is to take money out of it.
+        */}
+        <Text style={styles.retiredNotice}>
+          This is the retired V1 module. It is kept so the money still in it has a way out; new
+          notes are created on the Shield tab.
+        </Text>
+
         <ShieldedBalanceCard
           isLoading={isLoading}
           shieldedBalance={shieldedBalance}
@@ -410,80 +447,61 @@ export default function ShieldedWalletScreen() {
           onReceiveNearby={() => router.push('/(main)/(privacy)/receive-note' as any)}
         />
 
-        {/* Transparent Balance */}
-        <Animated.View entering={FadeInDown.delay(300)}>
-          <Text style={styles.sectionTitle}>TRANSPARENT BALANCE</Text>
-          <View style={styles.transparentCard}>
-            <LinearGradient
-              colors={['#3b82f6', '#2563eb']}
-              style={styles.transparentIcon}
-            >
-              <Ionicons name="lock-open" size={20} color="#fff" />
-            </LinearGradient>
-            <View style={styles.transparentInfo}>
-              <Text style={styles.transparentLabel}>Available to shield</Text>
-              <Text style={styles.transparentAmount}>{balance?.sol?.toFixed(4) || '0'} SOL</Text>
-            </View>
-          </View>
-        </Animated.View>
+        {/* Transparent balance */}
+        <Text style={styles.sectionTitle}>In the open</Text>
+        <View style={styles.transparentRow}>
+          <Text style={styles.transparentLabel}>Available to shield</Text>
+          <Text style={styles.transparentAmount}>{balance?.sol?.toFixed(4) || '0'} SOL</Text>
+        </View>
 
-        {/* Pending Transactions */}
+        {/* Pending transactions */}
         {pendingTransactions.length > 0 && (
-          <Animated.View entering={FadeInDown.delay(350)}>
-            <Text style={styles.sectionTitle}>PENDING</Text>
+          <>
+            <Text style={styles.sectionTitle}>In flight</Text>
             {pendingTransactions.map((tx) => {
               const isFailed = tx.status === 'failed';
               return (
-                <View
-                  key={tx.id}
-                  style={[
-                    styles.pendingCard,
-                    {
-                      borderLeftWidth: 3,
-                      borderLeftColor: isFailed ? '#ef4444' : '#fbbf24',
-                    },
-                    isFailed && styles.pendingCardFailed,
-                  ]}
-                >
-                  <View style={[styles.pendingIcon, isFailed && { backgroundColor: 'rgba(239, 68, 68, 0.2)' }]}>
-                    {isFailed ? (
-                      <Ionicons name="close-circle" size={22} color="#ef4444" />
-                    ) : (
-                      <ActivityIndicator color="#fbbf24" size="small" />
-                    )}
-                  </View>
+                <View key={tx.id} style={[styles.pendingCard, isFailed && styles.pendingCardFailed]}>
+                  {isFailed ? (
+                    <Ionicons name="alert-circle-outline" size={20} color={Colors.error} />
+                  ) : (
+                    <ActivityIndicator color={Colors.yellow} size="small" />
+                  )}
                   <View style={styles.pendingInfo}>
                     <Text style={styles.pendingType}>{tx.type}</Text>
                     {isFailed ? (
-                      <View style={styles.pendingErrorBadge}>
-                        <Text style={styles.pendingErrorText}>
-                          {tx.error || 'Transaction failed'}
-                        </Text>
-                      </View>
+                      <Text style={styles.pendingError} accessibilityRole="alert">
+                        {tx.error || 'Transaction failed'}
+                      </Text>
                     ) : (
                       <Text style={styles.pendingStatus}>
-                        {tx.status === 'generating_proof' ? 'Generating ZK proof...' : 'Processing...'}
+                        {tx.status === 'generating_proof' ? 'Generating the proof' : 'Processing'}
                       </Text>
                     )}
                   </View>
                   {isFailed && (
-                    <TouchableOpacity onPress={() => dismissPendingTransaction(tx.id)} style={styles.dismissButton}>
+                    <TouchableOpacity
+                      onPress={() => dismissPendingTransaction(tx.id)}
+                      style={styles.iconBtn}
+                      accessibilityRole="button"
+                      accessibilityLabel="Dismiss this failed transaction"
+                    >
                       <Ionicons name="close" size={18} color={Colors.textTertiary} />
                     </TouchableOpacity>
                   )}
                 </View>
               );
             })}
-          </Animated.View>
+          </>
         )}
 
         {/*
           Dropped 'No one can see amounts, senders, or recipients on-chain.'
           The spend proof publishes the note commitment the deposit published
           (services/denominatedPool/index.ts:3192), so a withdrawal is
-          matchable to its deposit — measured on devnet, anonymity set 1. The
-          title said ZK-SNARK while the body said STARK; the STARK is the one
-          that ships, so the title now matches.
+          matchable to its deposit — measured on devnet. The title said
+          ZK-SNARK while the body said STARK; the STARK is the one that ships,
+          so the title now matches.
         */}
         <PrivacyInfoCard
           title="STARK Protection"
@@ -498,8 +516,8 @@ export default function ShieldedWalletScreen() {
           action={actionModal === 'shield' ? 'Shield' : (useRelay ? 'Private Unshield' : 'Unshield')}
           subtitle={actionModal === 'shield' ? 'Move SOL into shielded pool' : (useRelay ? 'Withdraw via decentralized relay' : 'Withdraw from shielded pool')}
           iconName={actionModal === 'shield' ? 'arrow-down' : 'arrow-up'}
-          accentColor={actionModal === 'shield' ? P01Colors.cyan : P01Colors.pink}
-          dimColor={actionModal === 'shield' ? P01Colors.cyanDim : P01Colors.pinkDim}
+          accentColor={Colors.primary}
+          dimColor={Colors.primaryDim}
           amount={amount}
           onChangeAmount={setAmount}
           maxAmount={actionModal === 'shield' ? (balance?.sol || 0) : shieldedBalance}
@@ -510,16 +528,21 @@ export default function ShieldedWalletScreen() {
           {actionModal === 'unshield' && (
             <View style={styles.relayToggleRow}>
               <View style={styles.relayToggleLeft}>
-                <Ionicons name="shield-checkmark" size={16} color={useRelay ? P01Colors.cyan : '#666'} />
-                <Text style={[styles.relayToggleLabel, useRelay && { color: P01Colors.cyan }]}>
+                <Ionicons
+                  name="shield-checkmark-outline"
+                  size={16}
+                  color={useRelay ? Colors.primary : Colors.textTertiary}
+                />
+                <Text style={[styles.relayToggleLabel, useRelay && styles.relayToggleLabelOn]}>
                   Private Relay
                 </Text>
               </View>
               <Switch
                 value={useRelay}
                 onValueChange={setUseRelay}
-                trackColor={{ false: '#333', true: P01Colors.cyanDim }}
-                thumbColor={useRelay ? P01Colors.cyan : '#888'}
+                trackColor={{ false: Colors.surfaceTertiary, true: Colors.primaryDim }}
+                thumbColor={useRelay ? Colors.primary : Colors.textTertiary}
+                accessibilityLabel="Withdraw through the relay"
               />
             </View>
           )}
@@ -556,134 +579,128 @@ export default function ShieldedWalletScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    position: 'relative',
+    minHeight: 56,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.borderSoft,
   },
-  headerBorder: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 1,
-    backgroundColor: 'rgba(57, 197, 187, 0.10)',
+  headerText: {
+    flex: 1,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
+    color: Colors.text,
+    paddingHorizontal: Spacing.xs,
   },
-  backButton: { padding: 8, marginLeft: -8 },
-  headerTitle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  headerText: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.textPrimary },
-  headerActions: { flexDirection: 'row', alignItems: 'center' },
-  content: { flex: 1 },
-  scrollContent: { padding: Spacing.lg, paddingBottom: 120 },
-  sectionTitle: {
-    fontSize: 11,
-    fontFamily: FontFamily.bold,
-    color: Colors.textTertiary,
-    letterSpacing: 1,
-    marginTop: Spacing.md,
-    marginBottom: Spacing.sm,
-  },
-  transparentCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  transparentIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  iconBtn: {
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  transparentInfo: { flex: 1 },
-  transparentLabel: {
-    fontSize: 12,
+
+  content: { flex: 1 },
+  scrollContent: { padding: Spacing.xl, paddingBottom: 120 },
+
+  retiredNotice: {
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    marginBottom: 2,
+    color: Colors.yellow,
+    lineHeight: 19,
+    marginBottom: Spacing.xl,
+  },
+
+  sectionTitle: {
+    fontSize: FontSize.lg,
+    fontFamily: FontFamily.displayMedium,
+    color: Colors.text,
+    marginTop: Spacing['2xl'],
+    marginBottom: Spacing.md,
+  },
+
+  // Transparent balance — a row, not a card with a gradient disc on it.
+  transparentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 48,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.borderSoft,
+  },
+  transparentLabel: {
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
   },
   transparentAmount: {
-    fontSize: 16,
-    fontFamily: FontFamily.bold,
-    color: Colors.textPrimary,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.medium,
+    color: Colors.text,
+    fontVariant: ['tabular-nums'],
   },
+
+  // Pending
   pendingCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    gap: 12,
+    gap: Spacing.md,
+    padding: Spacing.lg,
     marginBottom: Spacing.sm,
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
   },
   pendingCardFailed: {
-    backgroundColor: 'rgba(239, 68, 68, 0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
+    borderColor: Colors.error,
+    backgroundColor: Colors.errorDim,
   },
-  pendingIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(251, 191, 36, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pendingInfo: { flex: 1 },
+  pendingInfo: { flex: 1, minWidth: 0 },
   pendingType: {
-    fontSize: 14,
-    fontFamily: FontFamily.bold,
-    color: Colors.textPrimary,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.medium,
+    color: Colors.text,
     textTransform: 'capitalize',
   },
   pendingStatus: {
-    fontSize: 12,
+    fontSize: FontSize.xs,
     fontFamily: FontFamily.regular,
     color: Colors.textTertiary,
+    marginTop: 2,
   },
-  pendingErrorBadge: {
-    alignSelf: 'flex-start',
-    marginTop: 3,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: BorderRadius.sm,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+  pendingError: {
+    fontSize: FontSize.xs,
+    fontFamily: FontFamily.regular,
+    color: Colors.error,
+    marginTop: 2,
   },
-  pendingErrorText: {
-    fontSize: 12,
-    fontFamily: FontFamily.medium,
-    color: '#ef4444',
-  },
-  dismissButton: { padding: 8, marginLeft: 4 },
+
+  // Relay toggle, inside the amount modal
   relayToggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginHorizontal: 4,
-    marginTop: 8,
-    backgroundColor: 'rgba(57, 197, 187, 0.06)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.12)',
+    minHeight: 48,
+    paddingHorizontal: Spacing.lg,
+    marginHorizontal: Spacing.xs,
+    marginTop: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
   },
   relayToggleLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: Spacing.sm,
   },
   relayToggleLabel: {
-    fontSize: 14,
-    fontFamily: FontFamily.medium,
-    color: '#888',
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
   },
+  relayToggleLabelOn: { color: Colors.primary },
 });

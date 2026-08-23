@@ -532,12 +532,12 @@ export default function SwapScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Try again"
                 >
-                  <Ionicons name="refresh" size={22} color="#0a0a0c" />
+                  <Ionicons name="refresh" size={22} color="#070709" />
                   <Text style={styles.swapButtonText}>Try Again</Text>
                 </TouchableOpacity>
               ) : (
                 <View style={styles.swapButtonInner}>
-                  <Ionicons name="swap-horizontal" size={22} color={canSwap ? '#0a0a0c' : Colors.textTertiary} />
+                  <Ionicons name="swap-horizontal" size={22} color={canSwap ? '#070709' : Colors.textTertiary} />
                   <Text style={[
                     styles.swapButtonText,
                     !canSwap && styles.swapButtonTextDisabled,
@@ -818,7 +818,7 @@ const styles = StyleSheet.create({
   swapButtonText: {
     fontSize: 17,
     fontFamily: FontFamily.semibold,
-    color: '#0a0a0c',
+    color: '#070709',
   },
   swapButtonTextDisabled: {
     color: Colors.textTertiary,
@@ -871,6 +871,6 @@ const styles = StyleSheet.create({
   successButtonText: {
     fontSize: 15,
     fontFamily: FontFamily.semibold,
-    color: '#0a0a0c',
+    color: '#070709',
   },
 });

@@ -1,4 +1,29 @@
-import React, { useState, useEffect, useCallback } from 'react';
+/**
+ * Backup & recovery — the seed phrase, the encrypted archive, and the notes.
+ *
+ * 🎯 REBUILT ON THE REALIGNED THEME AND THE SHARED KIT 2026-08-23.
+ *
+ * ⛔ FOUR ROWS WERE PASSING THEIR OWN LABEL AS THEIR DESCRIPTION.
+ * "Restore Backup / Restore Backup" appeared under itself; so did the import
+ * row. A second line that repeats the first looks like an explanation and
+ * therefore stops the reader from looking for one.
+ *
+ * 🚨 THE PASSWORD ERRORS WERE MODAL ALERTS. "Password must be at least 8
+ * characters" and "Passwords do not match" were thrown as `p01Alert` over the
+ * form, which dismisses, leaves no trace next to the field, and is announced
+ * with no relationship to the input that caused it. They are inline now, under
+ * their own field, with `accessibilityRole="alert"` — the rule the extension's
+ * `Field` bakes in, applied here by hand because these are raw `TextInput`s.
+ *
+ * ⛔ AND THE SUCCESS/DANGER COLOURS WERE OFF-PALETTE: `#22c55e` green for a
+ * completed backup in a system whose first rule is that there is no green, and
+ * `#f87171`/`rgba(252,165,165,…)` for warnings where the palette has one red.
+ *
+ * ⚠️ NOTHING ABOUT WHAT IS BACKED UP CHANGED. Same store calls, same crypto,
+ * same three flows. This is a pass over how they read.
+ */
+
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,21 +31,22 @@ import {
   TouchableOpacity,
   Modal,
   TextInput,
-  ActivityIndicator,
   StyleSheet,
   Share,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { p01Alert } from '@/stores/alertStore';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
-import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-
 import * as ScreenCapture from 'expo-screen-capture';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+
+import { Header } from '@/components/common';
+import { Button } from '@/components/ui';
+import { SettingsRow, SettingsSection } from '@/components/settings';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing, Layout } from '@/constants/theme';
 import { useT } from '@/i18n';
 import { useWalletStore } from '@/stores/walletStore';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
@@ -36,28 +62,6 @@ import {
 } from '@/services/backup';
 import { importWallet } from '@/services/solana/wallet';
 import { scheduleLocalNotification } from '@/services/notifications';
-
-/* ──────────────────────── Glass Card ──────────────────────── */
-
-const GlassCard: React.FC<{ children: React.ReactNode; delay?: number; style?: object }> = ({
-  children,
-  delay = 0,
-  style,
-}) => (
-  <Animated.View entering={FadeInDown.delay(delay).duration(350)} style={[styles.glassOuter, style]}>
-    <View style={styles.glassBlur}>
-      {children}
-    </View>
-  </Animated.View>
-);
-
-const SectionTitle: React.FC<{ title: string; delay?: number }> = ({ title, delay = 0 }) => (
-  <Animated.Text entering={FadeInDown.delay(delay).duration(300)} style={styles.sectionTitle}>
-    {title}
-  </Animated.Text>
-);
-
-const GlassDivider: React.FC = () => <View style={styles.divider} />;
 
 /* ──────────────────────── Screen ──────────────────────── */
 
@@ -84,6 +88,8 @@ export default function BackupRecoveryScreen() {
   const [exportHint, setExportHint] = useState('');
   const [exporting, setExporting] = useState(false);
   const [showExportPassword, setShowExportPassword] = useState(false);
+  const [exportPasswordError, setExportPasswordError] = useState('');
+  const [exportConfirmError, setExportConfirmError] = useState('');
 
   // Import modal
   const [showImportModal, setShowImportModal] = useState(false);
@@ -92,6 +98,7 @@ export default function BackupRecoveryScreen() {
   const [importPreview, setImportPreview] = useState<BackupMetadata | null>(null);
   const [importing, setImporting] = useState(false);
   const [showImportPassword, setShowImportPassword] = useState(false);
+  const [importError, setImportError] = useState('');
 
   // Note stats
   const activeNotes = getActiveNotes();
@@ -183,15 +190,21 @@ export default function BackupRecoveryScreen() {
     setExportPassword('');
     setExportConfirmPassword('');
     setExportHint('');
+    setExportPasswordError('');
+    setExportConfirmError('');
   };
 
   const handleCreateBackup = async () => {
+    // Errors land under the field that caused them, not in a sheet over the form.
+    setExportPasswordError('');
+    setExportConfirmError('');
+
     if (exportPassword.length < 8) {
-      p01Alert(t('common.warning'), 'Password must be at least 8 characters.');
+      setExportPasswordError('At least 8 characters.');
       return;
     }
     if (exportPassword !== exportConfirmPassword) {
-      p01Alert(t('common.error'), 'Passwords do not match.');
+      setExportConfirmError('These two do not match.');
       return;
     }
 
@@ -240,7 +253,7 @@ export default function BackupRecoveryScreen() {
       ).catch(() => {});
     } catch (err) {
       setExporting(false);
-      p01Alert(t('common.error'), (err as Error).message);
+      setExportPasswordError((err as Error).message);
     }
   };
 
@@ -251,6 +264,7 @@ export default function BackupRecoveryScreen() {
     setImportData('');
     setImportPassword('');
     setImportPreview(null);
+    setImportError('');
   };
 
   // Parse preview when import data changes
@@ -264,12 +278,14 @@ export default function BackupRecoveryScreen() {
   }, [importData]);
 
   const handleRestoreBackup = async () => {
+    setImportError('');
+
     if (!importData.trim()) {
-      p01Alert(t('common.error'), t('alerts.errorGeneric'));
+      setImportError('Paste the backup first.');
       return;
     }
     if (!importPassword) {
-      p01Alert(t('common.error'), t('alerts.errorGeneric'));
+      setImportError('Enter the password this backup was made with.');
       return;
     }
 
@@ -331,7 +347,7 @@ export default function BackupRecoveryScreen() {
       }
     } catch (err) {
       setImporting(false);
-      p01Alert(t('common.error'), (err as Error).message);
+      setImportError((err as Error).message);
     }
   };
 
@@ -363,650 +379,530 @@ export default function BackupRecoveryScreen() {
   // ── Render ──
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <Animated.View entering={FadeInDown.delay(50).duration(300)} style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
-          <Ionicons name="arrow-back" size={20} color={Colors.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>{t('settings.backup')}</Text>
-        <View style={{ width: 40 }} />
-      </Animated.View>
+    <View style={styles.screen}>
+      <Header title={t('settings.backup')} showBack onBackPress={() => router.back()} />
 
-      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
-        {/* Backup Status Card */}
-        <GlassCard delay={100}>
-          <View style={styles.statusRow}>
-            <View style={[styles.statusIcon, { backgroundColor: isBackedUp ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)' }]}>
-              <Ionicons
-                name={isBackedUp ? 'shield-checkmark' : 'shield-outline'}
-                size={24}
-                color={isBackedUp ? '#22c55e' : '#ef4444'}
-              />
-            </View>
-            <View style={{ flex: 1, marginLeft: Spacing.lg }}>
-              <Text style={styles.rowLabel}>
-                {isBackedUp ? t('settings.backup') : t('settings.backupNow')}
-              </Text>
-              <Text style={styles.rowDescription}>
-                {isBackedUp && lastBackupAt
-                  ? `${t('settings.lastBackup')}: ${new Date(lastBackupAt).toLocaleDateString()}`
-                  : t('settings.backupNow')}
-              </Text>
-            </View>
+      <ScrollView
+        style={styles.flex}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{
+          paddingBottom: Layout.tabBarTotalHeight + insets.bottom + Spacing['3xl'],
+        }}
+      >
+        {/* ── The one fact this screen exists to change. ── */}
+        <View style={[styles.status, isBackedUp ? styles.statusGood : styles.statusBad]}>
+          <Ionicons
+            name={isBackedUp ? 'shield-checkmark-outline' : 'warning-outline'}
+            size={20}
+            color={isBackedUp ? Colors.primary : Colors.error}
+          />
+          <View style={styles.statusText}>
+            <Text style={[styles.statusTitle, !isBackedUp && styles.statusTitleBad]}>
+              {isBackedUp ? 'This wallet is backed up' : 'This wallet is not backed up'}
+            </Text>
+            <Text style={styles.statusBody}>
+              {isBackedUp && lastBackupAt
+                ? `${t('settings.lastBackup')}: ${new Date(lastBackupAt).toLocaleDateString()}`
+                : 'Lose this device without a backup and the funds and notes on it are gone.'}
+            </Text>
           </View>
-        </GlassCard>
+        </View>
 
-        {/* Warning if not backed up */}
-        {!isBackedUp && (
-          <Animated.View entering={FadeInDown.delay(150).duration(350)} style={styles.warningOuter}>
-            <View style={[styles.glassBlur, { padding: Spacing.lg }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                <View style={styles.warningIcon}>
-                  <Ionicons name="warning" size={22} color="#ef4444" />
-                </View>
-                <View style={{ flex: 1, marginLeft: Spacing.md }}>
-                  <Text style={styles.warningTitle}>Back Up Your Wallet</Text>
-                  <Text style={styles.warningDescription}>
-                    If you lose this device without a backup, your funds and privacy notes are gone forever.
-                  </Text>
-                </View>
-              </View>
-            </View>
-          </Animated.View>
-        )}
+        {/* ── Seed phrase ── */}
+        <SettingsSection
+          title={t('settings.seedPhrase')}
+          footer="Never share it. Anyone who has it can spend everything this wallet holds."
+        >
+          <SettingsRow
+            label={t('settings.seedPhrase')}
+            description="12 words. Asks for your device authentication first."
+            leftIcon="key-outline"
+            rightIcon="lock-closed-outline"
+            onPress={handleShowSeedPhrase}
+          />
+        </SettingsSection>
 
-        {/* ── SEED PHRASE ── */}
-        <SectionTitle title={t('settings.seedPhrase').toUpperCase()} delay={200} />
-        <GlassCard delay={220}>
-          <TouchableOpacity style={styles.actionRow} onPress={handleShowSeedPhrase} activeOpacity={0.7}>
-            <View style={[styles.actionIcon, { backgroundColor: 'rgba(57, 197, 187, 0.15)' }]}>
-              <Ionicons name="key" size={20} color={P01Colors.cyan} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>{t('settings.seedPhrase')}</Text>
-              <Text style={styles.rowDescription}>{t('settings.viewKeys')}</Text>
-            </View>
-            <Ionicons name="lock-closed" size={16} color={Colors.textTertiary} />
-          </TouchableOpacity>
-        </GlassCard>
+        {/* ── Encrypted archive ── */}
+        <SettingsSection
+          title="Encrypted backup"
+          footer="Holds the seed phrase and every privacy note, sealed with XSalsa20-Poly1305. Without the password it is unreadable — including by us."
+        >
+          <SettingsRow
+            label={t('settings.exportKeys')}
+            description={`Wallet and ${activeNotes.length} note${activeNotes.length !== 1 ? 's' : ''}, password protected`}
+            leftIcon="download-outline"
+            onPress={handleExportBackup}
+          />
+          <SettingsRow
+            label={t('settings.restoreBackup')}
+            description="Paste an archive and its password"
+            leftIcon="push-outline"
+            onPress={handleOpenImport}
+          />
+        </SettingsSection>
 
-        <Animated.View entering={FadeInDown.delay(240).duration(300)} style={styles.tipOuter}>
-          <View style={[styles.glassBlur, { padding: Spacing.md }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="eye-off" size={14} color="#eab308" />
-              <Text style={styles.tipText}>
-                Never share your seed phrase. Write it down and store it offline.
-              </Text>
-            </View>
+        {/* ── Privacy notes ── */}
+        <SettingsSection title="Privacy notes">
+          <View style={styles.stats}>
+            <Stat value={String(activeNotes.length)} label="Active" />
+            <View style={styles.statRule} />
+            <Stat value={String(solNoteCount)} label="SOL" />
+            <View style={styles.statRule} />
+            <Stat value={String(usdcNoteCount)} label="USDC" />
+            <View style={styles.statRule} />
+            <Stat value={totalNoteValue.toFixed(2)} label="SOL total" />
           </View>
-        </Animated.View>
-
-        {/* ── ENCRYPTED BACKUP ── */}
-        <SectionTitle title="ENCRYPTED BACKUP" delay={280} />
-        <GlassCard delay={300}>
-          <TouchableOpacity style={styles.actionRow} onPress={handleExportBackup} activeOpacity={0.7}>
-            <View style={[styles.actionIcon, { backgroundColor: 'rgba(59, 130, 246, 0.15)' }]}>
-              <Ionicons name="download-outline" size={20} color={P01Colors.blue} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>{t('settings.exportKeys')}</Text>
-              <Text style={styles.rowDescription}>
-                Wallet + {activeNotes.length} note{activeNotes.length !== 1 ? 's' : ''} — password protected
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
-          </TouchableOpacity>
-          <GlassDivider />
-          <TouchableOpacity style={styles.actionRow} onPress={handleOpenImport} activeOpacity={0.7}>
-            <View style={[styles.actionIcon, { backgroundColor: 'rgba(255, 119, 168, 0.15)' }]}>
-              <Ionicons name="push-outline" size={20} color={P01Colors.pink} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>{t('settings.restoreBackup')}</Text>
-              <Text style={styles.rowDescription}>{t('settings.restoreBackup')}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
-          </TouchableOpacity>
-        </GlassCard>
-
-        {/* ── PRIVACY NOTES ── */}
-        <SectionTitle title="PRIVACY NOTES" delay={360} />
-        <GlassCard delay={380}>
-          <View style={styles.noteStatsRow}>
-            <View style={styles.noteStat}>
-              <Text style={styles.noteStatValue}>{activeNotes.length}</Text>
-              <Text style={styles.noteStatLabel}>Active Notes</Text>
-            </View>
-            <View style={[styles.noteStatDivider]} />
-            <View style={styles.noteStat}>
-              <Text style={styles.noteStatValue}>{solNoteCount}</Text>
-              <Text style={styles.noteStatLabel}>SOL Notes</Text>
-            </View>
-            <View style={[styles.noteStatDivider]} />
-            <View style={styles.noteStat}>
-              <Text style={styles.noteStatValue}>{usdcNoteCount}</Text>
-              <Text style={styles.noteStatLabel}>USDC Notes</Text>
-            </View>
-            <View style={[styles.noteStatDivider]} />
-            <View style={styles.noteStat}>
-              <Text style={styles.noteStatValue}>{totalNoteValue.toFixed(2)}</Text>
-              <Text style={styles.noteStatLabel}>SOL Total</Text>
-            </View>
-          </View>
-          <GlassDivider />
-          <TouchableOpacity style={styles.actionRow} onPress={handleExportNotes} activeOpacity={0.7}>
-            <View style={[styles.actionIcon, { backgroundColor: 'rgba(57, 197, 187, 0.15)' }]}>
-              <Ionicons name="document-text-outline" size={20} color={P01Colors.cyan} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>{t('privacy.backupNotes')}</Text>
-              <Text style={styles.rowDescription}>{t('privacy.notesStoredLocally')}</Text>
-            </View>
-            <Ionicons name="copy-outline" size={16} color={Colors.textTertiary} />
-          </TouchableOpacity>
-          <GlassDivider />
-          <TouchableOpacity style={styles.actionRow} onPress={handleImportNotes} activeOpacity={0.7}>
-            <View style={[styles.actionIcon, { backgroundColor: 'rgba(255, 119, 168, 0.15)' }]}>
-              <Ionicons name="add-circle-outline" size={20} color={P01Colors.pink} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>{t('privacy.importNote')}</Text>
-              <Text style={styles.rowDescription}>{t('privacy.import')}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
-          </TouchableOpacity>
-        </GlassCard>
-
-        {/* Info Card */}
-        <Animated.View entering={FadeInDown.delay(450).duration(350)} style={styles.infoOuter}>
-          <View style={styles.glassBlur}>
-            <View style={styles.infoContent}>
-              <Ionicons name="information-circle" size={20} color={P01Colors.cyan} />
-              <Text style={styles.infoText}>
-                Encrypted backups include your seed phrase and all privacy pool notes. They are protected with XSalsa20-Poly1305 encryption. Without the password, the backup is unreadable.
-              </Text>
-            </View>
-          </View>
-        </Animated.View>
+          <SettingsRow
+            label={t('privacy.backupNotes')}
+            description={t('privacy.notesStoredLocally')}
+            leftIcon="document-text-outline"
+            rightIcon="copy-outline"
+            onPress={handleExportNotes}
+          />
+          <SettingsRow
+            label={t('privacy.importNote')}
+            description="Bring a note in from another device"
+            leftIcon="add-circle-outline"
+            onPress={handleImportNotes}
+          />
+        </SettingsSection>
       </ScrollView>
 
-      {/* ════════════ Seed Phrase Modal ════════════ */}
+      {/* ════════════ Seed phrase ════════════ */}
       <Modal
         visible={showSeedModal}
         animationType="slide"
         presentationStyle="pageSheet"
         onRequestClose={() => { setShowSeedModal(false); setSeedPhrase([]); }}
       >
-        <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => { setShowSeedModal(false); setSeedPhrase([]); }} style={styles.backButton}>
-              <Ionicons name="close" size={20} color={Colors.text} />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>{t('settings.seedPhrase')}</Text>
-            <View style={{ width: 40 }} />
-          </View>
+        <View style={[styles.modal, { paddingTop: insets.top }]}>
+          <SheetHeader
+            title={t('settings.seedPhrase')}
+            onClose={() => { setShowSeedModal(false); setSeedPhrase([]); }}
+          />
 
-          <ScrollView style={{ flex: 1, paddingHorizontal: Spacing.lg }}>
-            {/* Warning */}
-            <Animated.View entering={FadeInUp.delay(100).duration(350)} style={styles.modalWarningOuter}>
-              <View style={[styles.glassBlur, { padding: Spacing.lg }]}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons name="warning" size={20} color="#ef4444" />
-                  <Text style={styles.modalWarningText}>
-                    Do not share this phrase. Anyone with it can steal your funds.
-                  </Text>
+          <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+            <View style={styles.seedWarning}>
+              <Ionicons name="eye-off-outline" size={18} color={Colors.error} />
+              <Text style={styles.seedWarningText}>
+                Do not photograph this and do not type it into anything but a wallet you own.
+                Screenshots are blocked while it is on screen.
+              </Text>
+            </View>
+
+            <View style={styles.seedGrid}>
+              {seedPhrase.map((word, index) => (
+                <View key={index} style={styles.seedCell}>
+                  <Text style={styles.seedIndex}>{index + 1}</Text>
+                  <Text style={styles.seedWord}>{word}</Text>
                 </View>
-              </View>
-            </Animated.View>
+              ))}
+            </View>
 
-            {/* Seed Grid */}
-            <Animated.View entering={FadeInUp.delay(200).duration(350)} style={styles.seedGridOuter}>
-              <View style={styles.glassBlur}>
-                <View style={{ padding: Spacing.lg }}>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                    {seedPhrase.map((word, index) => (
-                      <View key={index} style={styles.seedWordWrapper}>
-                        <View style={styles.seedWordCell}>
-                          <Text style={styles.seedWordIndex}>{index + 1}.</Text>
-                          <Text style={styles.seedWordText}>{word}</Text>
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              </View>
-            </Animated.View>
-
-            {/* Copy */}
-            <Animated.View entering={FadeInUp.delay(300).duration(350)}>
-              <TouchableOpacity style={styles.secondaryButton} onPress={handleCopySeed} activeOpacity={0.7}>
-                <Ionicons name={seedCopied ? 'checkmark' : 'copy-outline'} size={18} color={seedCopied ? P01Colors.cyan : Colors.text} />
-                <Text style={[styles.secondaryButtonText, seedCopied && { color: P01Colors.cyan }]}>
-                  {seedCopied ? t('common.copied') : t('onboarding.copyAll')}
-                </Text>
-              </TouchableOpacity>
-            </Animated.View>
-
-            {/* Confirm */}
-            <Animated.View entering={FadeInUp.delay(400).duration(350)}>
-              <TouchableOpacity style={styles.primaryButton} onPress={handleConfirmSeedBackup} activeOpacity={0.8}>
-                <Text style={styles.primaryButtonText}>{t('common.done')}</Text>
-              </TouchableOpacity>
-            </Animated.View>
+            <View style={styles.modalActions}>
+              <Button
+                variant="secondary"
+                fullWidth
+                onPress={handleCopySeed}
+                icon={
+                  <Ionicons
+                    name={seedCopied ? 'checkmark' : 'copy-outline'}
+                    size={18}
+                    color={seedCopied ? Colors.primary : Colors.text}
+                  />
+                }
+              >
+                {seedCopied ? t('common.copied') : t('onboarding.copyAll')}
+              </Button>
+              <Button fullWidth size="lg" onPress={handleConfirmSeedBackup}>
+                I have written it down
+              </Button>
+            </View>
           </ScrollView>
         </View>
       </Modal>
 
-      {/* ════════════ Export Modal ════════════ */}
+      {/* ════════════ Export ════════════ */}
       <Modal
         visible={showExportModal}
         animationType="slide"
         presentationStyle="pageSheet"
         onRequestClose={() => setShowExportModal(false)}
       >
-        <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => setShowExportModal(false)} style={styles.backButton}>
-              <Ionicons name="close" size={20} color={Colors.text} />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>{t('settings.exportKeys')}</Text>
-            <View style={{ width: 40 }} />
-          </View>
+        <View style={[styles.modal, { paddingTop: insets.top }]}>
+          <SheetHeader title={t('settings.exportKeys')} onClose={() => setShowExportModal(false)} />
 
-          <ScrollView style={{ flex: 1, paddingHorizontal: Spacing.lg }} keyboardShouldPersistTaps="handled">
-            {/* Summary */}
-            <Animated.View entering={FadeInUp.delay(100)} style={styles.exportSummary}>
-              <View style={styles.glassBlur}>
-                <View style={{ padding: Spacing.lg }}>
-                  <Text style={styles.exportSummaryTitle}>Backup Contents</Text>
-                  <View style={styles.exportItem}>
-                    <Ionicons name="key" size={16} color={P01Colors.cyan} />
-                    <Text style={styles.exportItemText}>Wallet seed phrase</Text>
-                  </View>
-                  <View style={styles.exportItem}>
-                    <Ionicons name="shield-half" size={16} color={P01Colors.cyan} />
-                    <Text style={styles.exportItemText}>
-                      {activeNotes.length} privacy note{activeNotes.length !== 1 ? 's' : ''}
-                      {totalNoteValue > 0 ? ` (${totalNoteValue.toFixed(2)} SOL)` : ''}
-                    </Text>
-                  </View>
-                  <View style={styles.exportItem}>
-                    <Ionicons name="settings" size={16} color={P01Colors.cyan} />
-                    <Text style={styles.exportItemText}>App settings</Text>
-                  </View>
-                </View>
-              </View>
-            </Animated.View>
+          <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+            <Text style={styles.modalBlurb}>
+              One sealed blob containing your seed phrase, {activeNotes.length} privacy note
+              {activeNotes.length !== 1 ? 's' : ''}
+              {totalNoteValue > 0 ? ` worth ${totalNoteValue.toFixed(2)} SOL` : ''}, and your
+              settings. The password is the only key to it.
+            </Text>
 
-            {/* Password */}
-            <Animated.View entering={FadeInUp.delay(200)}>
-              <Text style={styles.inputLabel}>Backup Password</Text>
-              <View style={styles.passwordRow}>
-                <TextInput
-                  style={[styles.input, { flex: 1 }]}
-                  value={exportPassword}
-                  onChangeText={setExportPassword}
-                  placeholder="Min. 8 characters"
-                  placeholderTextColor={Colors.textTertiary}
-                  secureTextEntry={!showExportPassword}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <TouchableOpacity onPress={() => setShowExportPassword(!showExportPassword)} style={styles.eyeButton}>
-                  <Ionicons name={showExportPassword ? 'eye-off' : 'eye'} size={20} color={Colors.textTertiary} />
-                </TouchableOpacity>
-              </View>
+            <Field
+              label="Backup password"
+              value={exportPassword}
+              onChangeText={(v) => { setExportPassword(v); setExportPasswordError(''); }}
+              placeholder="At least 8 characters"
+              secure={!showExportPassword}
+              onToggleSecure={() => setShowExportPassword(!showExportPassword)}
+              error={exportPasswordError}
+            />
 
-              <Text style={styles.inputLabel}>Confirm Password</Text>
-              <TextInput
-                style={styles.input}
-                value={exportConfirmPassword}
-                onChangeText={setExportConfirmPassword}
-                placeholder="Re-enter password"
-                placeholderTextColor={Colors.textTertiary}
-                secureTextEntry={!showExportPassword}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
+            <Field
+              label="Confirm password"
+              value={exportConfirmPassword}
+              onChangeText={(v) => { setExportConfirmPassword(v); setExportConfirmError(''); }}
+              placeholder="Type it again"
+              secure={!showExportPassword}
+              error={exportConfirmError}
+            />
 
-              <Text style={styles.inputLabel}>Password Hint (optional)</Text>
-              <TextInput
-                style={styles.input}
-                value={exportHint}
-                onChangeText={setExportHint}
-                placeholder="e.g. 'favorite movie'"
-                placeholderTextColor={Colors.textTertiary}
-                autoCapitalize="none"
-              />
-            </Animated.View>
+            <Field
+              label="Hint (optional)"
+              value={exportHint}
+              onChangeText={setExportHint}
+              placeholder="Something only you would read correctly"
+            />
 
-            {/* Create */}
-            <Animated.View entering={FadeInUp.delay(300)}>
-              <TouchableOpacity
-                style={[styles.primaryButton, exporting && { opacity: 0.6 }]}
-                onPress={handleCreateBackup}
-                activeOpacity={0.8}
-                disabled={exporting}
-              >
-                {exporting ? (
-                  <ActivityIndicator color={Colors.background} />
-                ) : (
-                  <Text style={styles.primaryButtonText}>{t('settings.backupNow')}</Text>
-                )}
-              </TouchableOpacity>
-            </Animated.View>
+            <View style={styles.modalActions}>
+              <Button fullWidth size="lg" loading={exporting} onPress={handleCreateBackup}>
+                {t('settings.backupNow')}
+              </Button>
+            </View>
           </ScrollView>
         </View>
       </Modal>
 
-      {/* ════════════ Import Modal ════════════ */}
+      {/* ════════════ Import ════════════ */}
       <Modal
         visible={showImportModal}
         animationType="slide"
         presentationStyle="pageSheet"
         onRequestClose={() => setShowImportModal(false)}
       >
-        <View style={[styles.modalContainer, { paddingTop: insets.top }]}>
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => setShowImportModal(false)} style={styles.backButton}>
-              <Ionicons name="close" size={20} color={Colors.text} />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>{t('settings.restoreBackup')}</Text>
-            <View style={{ width: 40 }} />
-          </View>
+        <View style={[styles.modal, { paddingTop: insets.top }]}>
+          <SheetHeader title={t('settings.restoreBackup')} onClose={() => setShowImportModal(false)} />
 
-          <ScrollView style={{ flex: 1, paddingHorizontal: Spacing.lg }} keyboardShouldPersistTaps="handled">
-            <Animated.View entering={FadeInUp.delay(100)}>
-              <Text style={styles.inputLabel}>Backup Data</Text>
-              <TextInput
-                style={[styles.input, { minHeight: 100, textAlignVertical: 'top' }]}
-                value={importData}
-                onChangeText={setImportData}
-                placeholder="Paste your encrypted backup here..."
-                placeholderTextColor={Colors.textTertiary}
-                multiline
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-            </Animated.View>
+          <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+            <Field
+              label="Backup"
+              value={importData}
+              onChangeText={(v) => { setImportData(v); setImportError(''); }}
+              placeholder="Paste the encrypted backup"
+              multiline
+            />
 
-            {/* Preview */}
-            {importPreview && (
-              <Animated.View entering={FadeInUp.delay(150)} style={styles.previewOuter}>
-                <View style={styles.glassBlur}>
-                  <View style={{ padding: Spacing.md }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                      <Ionicons name="checkmark-circle" size={16} color="#22c55e" />
-                      <Text style={[styles.rowLabel, { marginLeft: 8, fontSize: 14 }]}>Valid Backup Detected</Text>
-                    </View>
-                    <Text style={styles.previewLine}>
-                      Created: {new Date(importPreview.createdAt).toLocaleDateString()}
-                    </Text>
-                    {importPreview.hint ? (
-                      <Text style={styles.previewLine}>
-                        Hint: {importPreview.hint}
-                      </Text>
-                    ) : null}
-                  </View>
-                </View>
-              </Animated.View>
-            )}
-
-            <Animated.View entering={FadeInUp.delay(200)}>
-              <Text style={styles.inputLabel}>Backup Password</Text>
-              <View style={styles.passwordRow}>
-                <TextInput
-                  style={[styles.input, { flex: 1 }]}
-                  value={importPassword}
-                  onChangeText={setImportPassword}
-                  placeholder="Enter backup password"
-                  placeholderTextColor={Colors.textTertiary}
-                  secureTextEntry={!showImportPassword}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <TouchableOpacity onPress={() => setShowImportPassword(!showImportPassword)} style={styles.eyeButton}>
-                  <Ionicons name={showImportPassword ? 'eye-off' : 'eye'} size={20} color={Colors.textTertiary} />
-                </TouchableOpacity>
+            {importPreview ? (
+              <View style={styles.preview}>
+                <Ionicons name="checkmark-circle-outline" size={16} color={Colors.primary} />
+                <Text style={styles.previewText}>
+                  Readable archive from {new Date(importPreview.createdAt).toLocaleDateString()}
+                  {importPreview.hint ? ` · hint: ${importPreview.hint}` : ''}
+                </Text>
               </View>
-            </Animated.View>
+            ) : null}
 
-            <Animated.View entering={FadeInUp.delay(300)}>
-              <TouchableOpacity
-                style={[styles.primaryButton, (importing || !importPreview) && { opacity: 0.5 }]}
+            <Field
+              label="Backup password"
+              value={importPassword}
+              onChangeText={(v) => { setImportPassword(v); setImportError(''); }}
+              placeholder="The password this archive was made with"
+              secure={!showImportPassword}
+              onToggleSecure={() => setShowImportPassword(!showImportPassword)}
+              error={importError}
+            />
+
+            <View style={styles.modalActions}>
+              <Button
+                fullWidth
+                size="lg"
+                loading={importing}
+                disabled={!importPreview}
                 onPress={handleRestoreBackup}
-                activeOpacity={0.8}
-                disabled={importing || !importPreview}
               >
-                {importing ? (
-                  <ActivityIndicator color={Colors.background} />
-                ) : (
-                  <Text style={styles.primaryButtonText}>{t('settings.restoreBackup')}</Text>
-                )}
-              </TouchableOpacity>
-            </Animated.View>
+                {t('settings.restoreBackup')}
+              </Button>
+            </View>
           </ScrollView>
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
+
+/* ──────────────────────── Pieces ──────────────────────── */
+
+const Stat: React.FC<{ value: string; label: string }> = ({ value, label }) => (
+  <View style={styles.stat}>
+    <Text style={styles.statValue}>{value}</Text>
+    <Text style={styles.statLabel}>{label}</Text>
+  </View>
+);
+
+const SheetHeader: React.FC<{ title: string; onClose: () => void }> = ({ title, onClose }) => (
+  <View style={styles.sheetHeader}>
+    <Text style={styles.sheetTitle}>{title}</Text>
+    <TouchableOpacity
+      onPress={onClose}
+      style={styles.sheetClose}
+      accessibilityRole="button"
+      accessibilityLabel="Close"
+    >
+      <Ionicons name="close" size={22} color={Colors.textSecondary} />
+    </TouchableOpacity>
+  </View>
+);
+
+/**
+ * ⚠️ A visible label, always. A placeholder is not a label: it disappears the
+ * moment the field is used, which is exactly when the user needs it.
+ */
+const Field: React.FC<{
+  label: string;
+  value: string;
+  onChangeText: (v: string) => void;
+  placeholder?: string;
+  secure?: boolean;
+  onToggleSecure?: () => void;
+  multiline?: boolean;
+  error?: string;
+}> = ({ label, value, onChangeText, placeholder, secure, onToggleSecure, multiline, error }) => (
+  <View style={styles.field}>
+    <Text style={styles.fieldLabel}>{label}</Text>
+    <View style={styles.fieldRow}>
+      <TextInput
+        style={[
+          styles.input,
+          multiline && styles.inputMultiline,
+          !!error && styles.inputError,
+        ]}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={Colors.textTertiary}
+        secureTextEntry={secure}
+        multiline={multiline}
+        autoCapitalize="none"
+        autoCorrect={false}
+        accessibilityLabel={label}
+      />
+      {onToggleSecure ? (
+        <TouchableOpacity
+          onPress={onToggleSecure}
+          style={styles.eye}
+          accessibilityRole="button"
+          accessibilityLabel={secure ? 'Show password' : 'Hide password'}
+        >
+          <Ionicons name={secure ? 'eye-outline' : 'eye-off-outline'} size={20} color={Colors.textTertiary} />
+        </TouchableOpacity>
+      ) : null}
+    </View>
+    {error ? (
+      <Text style={styles.fieldError} accessibilityRole="alert">{error}</Text>
+    ) : null}
+  </View>
+);
 
 /* ──────────────────────── Styles ──────────────────────── */
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: 'transparent' },
+  screen: { flex: 1, backgroundColor: Colors.background },
+  flex: { flex: 1 },
 
-  /* Header */
-  header: {
+  /* Status */
+  status: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.md,
+    marginTop: Spacing.lg,
+    marginHorizontal: Spacing.xl,
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  statusGood: { borderColor: Colors.primaryMuted, backgroundColor: Colors.primaryDim },
+  statusBad: { borderColor: Colors.error, backgroundColor: Colors.errorDim },
+  statusText: { flex: 1, minWidth: 0 },
+  statusTitle: {
+    color: Colors.text,
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.medium,
+  },
+  statusTitleBad: { color: Colors.error },
+  statusBody: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    lineHeight: 19,
+    marginTop: 2,
+  },
+
+  /* Note stats */
+  stats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.sm,
+  },
+  stat: { flex: 1, alignItems: 'center' },
+  statValue: {
+    color: Colors.text,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.mono,
+  },
+  statLabel: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.xs,
+    fontFamily: FontFamily.regular,
+    marginTop: 3,
+  },
+  statRule: {
+    width: StyleSheet.hairlineWidth,
+    alignSelf: 'stretch',
+    marginVertical: Spacing.xs,
+    backgroundColor: Colors.borderSoft,
+  },
+
+  /* Sheets */
+  modal: { flex: 1, backgroundColor: Colors.background },
+  modalBody: { flex: 1, paddingHorizontal: Spacing.xl },
+  modalBlurb: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    lineHeight: 20,
+    marginTop: Spacing.md,
+  },
+  modalActions: {
+    marginTop: Spacing['2xl'],
+    marginBottom: Spacing['4xl'],
+    gap: Spacing.md,
+  },
+  sheetHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.borderSoft,
   },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.full,
-    backgroundColor: '#0f0f12',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
+  sheetTitle: {
     color: Colors.text,
-    fontSize: 18,
-    fontFamily: FontFamily.semibold,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
+  },
+  sheetClose: {
+    width: 44,
+    height: 44,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
 
-  /* Section */
-  sectionTitle: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontFamily: FontFamily.semibold,
-    letterSpacing: 1,
-    paddingHorizontal: Spacing.lg,
-    marginBottom: Spacing.sm,
-    marginTop: Spacing.lg,
-  },
-
-  /* Glass Card */
-  glassOuter: {
-    marginHorizontal: Spacing.lg,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-  },
-  glassBlur: { backgroundColor: '#0f0f12' },
-  divider: { height: 1, backgroundColor: 'rgba(255, 255, 255, 0.06)', marginHorizontal: Spacing.lg },
-
-  /* Status */
-  statusRow: { padding: Spacing.lg, flexDirection: 'row', alignItems: 'center' },
-  statusIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-
-  /* Rows */
-  rowLabel: { color: Colors.text, fontSize: 16, fontFamily: FontFamily.medium },
-  rowDescription: { color: Colors.textSecondary, fontSize: 13, marginTop: 2 },
-
-  actionRow: {
+  /* Seed */
+  seedWarning: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: Spacing.md + 2,
-    paddingHorizontal: Spacing.lg,
+    alignItems: 'flex-start',
     gap: Spacing.md,
-  },
-  actionIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  /* Warning */
-  warningOuter: {
-    marginHorizontal: Spacing.lg,
-    marginTop: Spacing.md,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-  },
-  warningIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.full,
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  warningTitle: { color: '#f87171', fontSize: 16, fontFamily: FontFamily.semibold, marginBottom: 4 },
-  warningDescription: { color: 'rgba(252, 165, 165, 0.8)', fontSize: 14, lineHeight: 20 },
-
-  /* Tip */
-  tipOuter: {
-    marginHorizontal: Spacing.lg,
-    marginTop: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    overflow: 'hidden',
-  },
-  tipText: { color: '#eab308', fontSize: 12, marginLeft: Spacing.sm, flex: 1 },
-
-  /* Note Stats */
-  noteStatsRow: {
-    flexDirection: 'row',
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.md,
-  },
-  noteStat: { flex: 1, alignItems: 'center' },
-  noteStatValue: { color: Colors.text, fontSize: 18, fontFamily: FontFamily.bold },
-  noteStatLabel: { color: Colors.textTertiary, fontSize: 11, fontFamily: FontFamily.medium, marginTop: 2 },
-  noteStatDivider: { width: 1, backgroundColor: 'rgba(255, 255, 255, 0.06)', marginVertical: 4 },
-
-  /* Info */
-  infoOuter: {
-    marginHorizontal: Spacing.lg,
     marginTop: Spacing.lg,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-  },
-  infoContent: { flexDirection: 'row', alignItems: 'flex-start', padding: Spacing.lg },
-  infoText: { color: Colors.textSecondary, fontSize: 13, marginLeft: Spacing.md, flex: 1, lineHeight: 20 },
-
-  /* Modal */
-  modalContainer: { flex: 1, backgroundColor: '#09090b' },
-  modalWarningOuter: {
-    marginBottom: Spacing.xl,
+    padding: Spacing.lg,
     borderRadius: BorderRadius.lg,
-    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.error,
+    backgroundColor: Colors.errorDim,
   },
-  modalWarningText: { color: '#f87171', fontSize: 14, marginLeft: Spacing.sm, flex: 1 },
-
-  /* Seed Grid */
-  seedGridOuter: {
-    marginBottom: Spacing.xl,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
+  seedWarningText: {
+    flex: 1,
+    color: Colors.error,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    lineHeight: 19,
   },
-  seedWordWrapper: { width: '33.33%', padding: Spacing.sm },
-  seedWordCell: {
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    borderRadius: BorderRadius.md,
+  seedGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    marginTop: Spacing.xl,
+  },
+  seedCell: {
+    flexBasis: '31%',
+    flexGrow: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
     paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
+    borderRadius: BorderRadius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderSoft,
+    backgroundColor: Colors.surfaceSecondary,
   },
-  seedWordIndex: { color: Colors.textSecondary, fontSize: 12, width: 20 },
-  seedWordText: { color: Colors.text, fontFamily: FontFamily.mono, fontSize: 14, flex: 1 },
-
-  /* Buttons */
-  secondaryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.md + 2,
-    borderRadius: BorderRadius.md,
-    marginBottom: Spacing.md,
-    backgroundColor: '#0f0f12',
-    gap: Spacing.sm,
+  seedIndex: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.xs,
+    fontFamily: FontFamily.mono,
+    minWidth: 14,
   },
-  secondaryButtonText: { fontFamily: FontFamily.semibold, color: Colors.text },
-  primaryButton: {
-    backgroundColor: P01Colors.cyan,
-    paddingVertical: Spacing.md + 2,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-    marginBottom: Spacing.xl,
-    shadowColor: P01Colors.cyan,
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-  },
-  primaryButtonText: { color: Colors.background, fontFamily: FontFamily.semibold, fontSize: 16 },
-
-  /* Export Modal */
-  exportSummary: {
-    marginBottom: Spacing.xl,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-  },
-  exportSummaryTitle: {
+  seedWord: {
+    flex: 1,
     color: Colors.text,
-    fontFamily: FontFamily.semibold,
-    fontSize: 16,
-    marginBottom: Spacing.md,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.mono,
   },
-  exportItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: 6 },
-  exportItemText: { color: Colors.textSecondary, fontSize: 14 },
 
-  /* Inputs */
-  inputLabel: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    fontFamily: FontFamily.semibold,
-    letterSpacing: 0.5,
-    marginBottom: 6,
-    marginTop: Spacing.md,
+  /* Fields */
+  field: { marginTop: Spacing.xl },
+  fieldLabel: {
+    color: Colors.textTertiary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    marginBottom: Spacing.sm,
   },
+  fieldRow: { flexDirection: 'row', alignItems: 'center' },
   input: {
-    backgroundColor: '#0f0f12',
+    flex: 1,
+    minHeight: 48,
+    backgroundColor: Colors.surfaceSecondary,
     borderRadius: BorderRadius.md,
-    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
     color: Colors.text,
     fontFamily: FontFamily.mono,
-    fontSize: 14,
+    fontSize: FontSize.sm,
   },
-  passwordRow: { flexDirection: 'row', alignItems: 'center', gap: 0 },
-  eyeButton: {
+  inputMultiline: { minHeight: 110, textAlignVertical: 'top' },
+  inputError: { borderColor: Colors.error },
+  eye: {
     position: 'absolute',
-    right: 12,
-    padding: 4,
+    right: 4,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fieldError: {
+    color: Colors.error,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    marginTop: Spacing.sm,
   },
 
-  /* Import Preview */
-  previewOuter: {
+  /* Import preview */
+  preview: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.sm,
     marginTop: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    overflow: 'hidden',
   },
-  previewLine: { color: Colors.textSecondary, fontSize: 13, marginTop: 4 },
+  previewText: {
+    flex: 1,
+    color: Colors.textSecondary,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    lineHeight: 19,
+  },
 });

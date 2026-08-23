@@ -1,5 +1,21 @@
+/**
+ * Avatar — initials on a panel, or an image.
+ *
+ * 🚨 THE TINT PALETTE IS GONE. This hashed the name into a seven-colour list
+ * that included `#f97316` orange, `#eab308` yellow and `#14b8a6` teal. None of
+ * those are in the theme, and the amber one collided head-on with the rule that
+ * amber means CAUTION: a merchant whose name happened to hash to index 5 was
+ * rendered in the warning colour, permanently, for no reason. A per-user colour
+ * that carries no meaning is decoration that can lie.
+ *
+ * An avatar is now a panel with a hairline rule, like every other surface, and
+ * the initials are read in the text colour.
+ */
+
 import React from 'react';
-import { View, Image, Text } from 'react-native';
+import { View, Image, Text, StyleSheet } from 'react-native';
+
+import { Colors, FontFamily, FontSize } from '@/constants/theme';
 
 type AvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
@@ -12,43 +28,34 @@ interface AvatarProps {
   className?: string;
 }
 
-const sizeStyles: Record<AvatarSize, { container: string; text: string; status: string; dimension: number }> = {
-  xs: {
-    container: 'w-6 h-6',
-    text: 'text-xs',
-    status: 'w-2 h-2',
-    dimension: 24,
-  },
-  sm: {
-    container: 'w-8 h-8',
-    text: 'text-sm',
-    status: 'w-2.5 h-2.5',
-    dimension: 32,
-  },
-  md: {
-    container: 'w-10 h-10',
-    text: 'text-base',
-    status: 'w-3 h-3',
-    dimension: 40,
-  },
-  lg: {
-    container: 'w-14 h-14',
-    text: 'text-lg',
-    status: 'w-3.5 h-3.5',
-    dimension: 56,
-  },
-  xl: {
-    container: 'w-20 h-20',
-    text: 'text-2xl',
-    status: 'w-4 h-4',
-    dimension: 80,
-  },
+const DIMENSION: Record<AvatarSize, number> = {
+  xs: 24,
+  sm: 32,
+  md: 40,
+  lg: 56,
+  xl: 80,
 };
 
-const statusColors = {
-  online: 'bg-p01-cyan',
-  offline: 'bg-gray-500',
-  away: 'bg-yellow-500',
+const LABEL_SIZE: Record<AvatarSize, number> = {
+  xs: FontSize.xs,
+  sm: FontSize.sm,
+  md: FontSize.md,
+  lg: FontSize.lg,
+  xl: FontSize['2xl'],
+};
+
+const DOT: Record<AvatarSize, number> = {
+  xs: 8,
+  sm: 10,
+  md: 12,
+  lg: 14,
+  xl: 16,
+};
+
+const STATUS_COLOR: Record<NonNullable<AvatarProps['status']>, string> = {
+  online: Colors.primary,
+  offline: Colors.textTertiary,
+  away: Colors.yellow,
 };
 
 const getInitials = (name: string): string => {
@@ -59,20 +66,6 @@ const getInitials = (name: string): string => {
   return name.slice(0, 2).toUpperCase();
 };
 
-const getColorFromName = (name: string): string => {
-  const colors = [
-    '#39c5bb',
-    '#3b82f6',
-    '#ff77a8',
-    '#14b8a6',
-    '#f97316',
-    '#eab308',
-    '#06b6d4',
-  ];
-  const hash = name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  return colors[hash % colors.length];
-};
-
 export const Avatar: React.FC<AvatarProps> = ({
   source,
   name,
@@ -81,48 +74,67 @@ export const Avatar: React.FC<AvatarProps> = ({
   status = 'offline',
   className,
 }) => {
-  const sizeStyle = sizeStyles[size];
-  const bgColor = name ? getColorFromName(name) : '#2a2a30';
+  const dimension = DIMENSION[size];
+  const round = { width: dimension, height: dimension, borderRadius: dimension / 2 };
+  const dot = DOT[size];
 
   return (
-    <View className={`relative ${className || ''}`}>
+    <View style={styles.wrap} className={className}>
       {source ? (
         <Image
           source={{ uri: source }}
-          className={`${sizeStyle.container} rounded-full`}
-          style={{
-            borderWidth: 2,
-            borderColor: '#2a2a30',
-          }}
+          style={[round, styles.face]}
+          accessibilityLabel={name}
         />
       ) : (
-        <View
-          className={`${sizeStyle.container} rounded-full items-center justify-center`}
-          style={{
-            backgroundColor: bgColor,
-            borderWidth: 2,
-            borderColor: 'rgba(255,255,255,0.1)',
-          }}
-        >
-          <Text className={`${sizeStyle.text} font-bold text-p01-void`}>
+        <View style={[round, styles.face, styles.placeholder]}>
+          <Text style={[styles.initials, { fontSize: LABEL_SIZE[size] }]} numberOfLines={1}>
             {name ? getInitials(name) : '?'}
           </Text>
         </View>
       )}
 
-      {showStatus && (
+      {showStatus ? (
         <View
-          className={`
-            absolute bottom-0 right-0
-            ${sizeStyle.status}
-            ${statusColors[status]}
-            rounded-full
-            border-2 border-p01-void
-          `}
+          style={[
+            styles.status,
+            {
+              width: dot,
+              height: dot,
+              borderRadius: dot / 2,
+              backgroundColor: STATUS_COLOR[status],
+            },
+          ]}
         />
-      )}
+      ) : null}
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  wrap: {
+    position: 'relative',
+  },
+  face: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  placeholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surface,
+  },
+  initials: {
+    fontFamily: FontFamily.medium,
+    color: Colors.text,
+  },
+  status: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    borderWidth: 2,
+    borderColor: Colors.background,
+  },
+});
 
 export default Avatar;

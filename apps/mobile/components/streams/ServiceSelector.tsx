@@ -20,9 +20,19 @@ import {
   getServicesByCategory,
   getAllCategories,
 } from '../../services/subscriptions/serviceRegistry';
+import { Colors, FontFamily } from '@/constants/theme';
 
-const VIOLET = '#8b5cf6';
-const ACCENT_PINK = '#ff77a8';
+/**
+ * 🎯 RETONED 2026-08-23. This file declared its own palette at the top: a
+ * violet the design system does not contain, plus a second constant still
+ * carrying the retired pink in its name, and then scattered four more greys and
+ * four opaque borders through six hundred lines of inline styles. None of that
+ * could be reached by a theme sweep, which is exactly how the app ended up
+ * looking like two products from one screen to the next.
+ *
+ * ⛔ There is one accent, and violet is not it.
+ */
+const ACCENT = Colors.primary;
 
 interface ServiceSelectorProps {
   selectedService: ServiceInfo | null;
@@ -47,9 +57,9 @@ const ServiceLogo: React.FC<{
 
   const backgroundColor = service.color
     ? `${service.color}20`
-    : 'rgba(139, 92, 246, 0.2)';
+    : Colors.primaryDim;
 
-  const textColor = service.color || VIOLET;
+  const textColor = service.color || ACCENT;
 
   // First letter fallback
   const firstLetter = service.name.charAt(0).toUpperCase();
@@ -64,7 +74,7 @@ const ServiceLogo: React.FC<{
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: showBorder ? 2 : 0,
-        borderColor: service.color || VIOLET,
+        borderColor: service.color || ACCENT,
       }}
     >
       {!imageError && service.logo ? (
@@ -82,7 +92,7 @@ const ServiceLogo: React.FC<{
         <Text
           style={{
             color: textColor,
-            fontWeight: 'bold',
+            fontFamily: FontFamily.medium,
             fontSize: size * 0.4,
           }}
         >
@@ -121,7 +131,7 @@ const ServiceItem: React.FC<{
         <ServiceLogo service={service} size={48} showBorder={selected} />
         <Text
           style={{
-            color: selected ? '#fff' : '#888892',
+            color: selected ? Colors.text : Colors.textSecondary,
             fontSize: 11,
             marginTop: 6,
             textAlign: 'center',
@@ -142,14 +152,14 @@ const ServiceItem: React.FC<{
         alignItems: 'center',
         paddingVertical: 12,
         paddingHorizontal: 16,
-        backgroundColor: selected ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
+        backgroundColor: selected ? Colors.primaryDim : 'transparent',
         borderRadius: 12,
         marginBottom: 4,
       }}
     >
       <ServiceLogo service={service} size={44} />
       <View style={{ flex: 1, marginLeft: 12 }}>
-        <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }}>
+        <Text style={{ color: Colors.text, fontFamily: FontFamily.medium, fontSize: 15 }}>
           {service.name}
         </Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
@@ -158,13 +168,13 @@ const ServiceItem: React.FC<{
             size={12}
             color={categoryConfig.color}
           />
-          <Text style={{ color: '#888892', fontSize: 12, marginLeft: 4 }}>
+          <Text style={{ color: Colors.textSecondary, fontSize: 12, marginLeft: 4 }}>
             {categoryConfig.label}
           </Text>
         </View>
       </View>
       {selected && (
-        <Ionicons name="checkmark-circle" size={24} color={VIOLET} />
+        <Ionicons name="checkmark-circle" size={24} color={ACCENT} />
       )}
     </TouchableOpacity>
   );
@@ -195,7 +205,7 @@ const CategoryChip: React.FC<{
         paddingVertical: 8,
         borderRadius: 20,
         marginRight: 8,
-        backgroundColor: selected ? `${color}30` : 'rgba(42, 42, 48, 0.8)',
+        backgroundColor: selected ? `${color}30` : Colors.surfaceTertiary,
         borderWidth: 1,
         borderColor: selected ? color : 'transparent',
       }}
@@ -203,13 +213,13 @@ const CategoryChip: React.FC<{
       <Ionicons
         name={icon as any}
         size={14}
-        color={selected ? color : '#888892'}
+        color={selected ? color : Colors.textSecondary}
       />
       <Text
         style={{
-          color: selected ? color : '#888892',
+          color: selected ? color : Colors.textSecondary,
           fontSize: 13,
-          fontWeight: '500',
+          fontFamily: FontFamily.medium,
           marginLeft: 6,
         }}
       >
@@ -218,7 +228,7 @@ const CategoryChip: React.FC<{
       {count !== undefined && (
         <Text
           style={{
-            color: selected ? color : '#666',
+            color: selected ? color : Colors.textTertiary,
             fontSize: 11,
             marginLeft: 4,
           }}
@@ -278,7 +288,7 @@ const ServiceSelectorModal: React.FC<ServiceSelectorModalProps> = ({
       presentationStyle="pageSheet"
       onRequestClose={handleClose}
     >
-      <View style={{ flex: 1, backgroundColor: '#0a0a0b' }}>
+      <View style={{ flex: 1, backgroundColor: Colors.background }}>
         {/* Header */}
         <View
           style={{
@@ -288,13 +298,13 @@ const ServiceSelectorModal: React.FC<ServiceSelectorModalProps> = ({
             paddingHorizontal: 16,
             paddingVertical: 16,
             borderBottomWidth: 1,
-            borderBottomColor: 'rgba(42, 42, 48, 0.5)',
+            borderBottomColor: Colors.border,
           }}
         >
           <TouchableOpacity onPress={handleClose}>
-            <Ionicons name="close" size={24} color="#888892" />
+            <Ionicons name="close" size={24} color={Colors.textSecondary} />
           </TouchableOpacity>
-          <Text style={{ color: '#fff', fontSize: 17, fontWeight: '600' }}>
+          <Text style={{ color: Colors.text, fontSize: 17, fontFamily: FontFamily.medium }}>
             Select Service
           </Text>
           <View style={{ width: 24 }} />
@@ -306,21 +316,21 @@ const ServiceSelectorModal: React.FC<ServiceSelectorModalProps> = ({
             style={{
               flexDirection: 'row',
               alignItems: 'center',
-              backgroundColor: 'rgba(42, 42, 48, 0.8)',
+              backgroundColor: Colors.surfaceTertiary,
               borderRadius: 12,
               paddingHorizontal: 12,
               height: 44,
             }}
           >
-            <Ionicons name="search" size={20} color="#888892" />
+            <Ionicons name="search" size={20} color={Colors.textSecondary} />
             <TextInput
               value={searchQuery}
               onChangeText={setSearchQuery}
               placeholder="Search services..."
-              placeholderTextColor="#666"
+              placeholderTextColor={Colors.textTertiary}
               style={{
                 flex: 1,
-                color: '#fff',
+                color: Colors.text,
                 fontSize: 15,
                 marginLeft: 8,
               }}
@@ -329,7 +339,7 @@ const ServiceSelectorModal: React.FC<ServiceSelectorModalProps> = ({
             />
             {searchQuery.length > 0 && (
               <TouchableOpacity onPress={() => setSearchQuery('')}>
-                <Ionicons name="close-circle" size={20} color="#888892" />
+                <Ionicons name="close-circle" size={20} color={Colors.textSecondary} />
               </TouchableOpacity>
             )}
           </View>
@@ -348,7 +358,7 @@ const ServiceSelectorModal: React.FC<ServiceSelectorModalProps> = ({
             category="all"
             label="All"
             icon="apps"
-            color={VIOLET}
+            color={ACCENT}
             selected={selectedCategory === 'all'}
             onPress={() => setSelectedCategory('all')}
           />
@@ -376,9 +386,9 @@ const ServiceSelectorModal: React.FC<ServiceSelectorModalProps> = ({
             <View style={{ paddingHorizontal: 16 }}>
               <Text
                 style={{
-                  color: '#888892',
+                  color: Colors.textSecondary,
                   fontSize: 13,
-                  fontWeight: '600',
+                  fontFamily: FontFamily.medium,
                   marginBottom: 12,
                   textTransform: 'uppercase',
                   letterSpacing: 0.5,
@@ -404,7 +414,7 @@ const ServiceSelectorModal: React.FC<ServiceSelectorModalProps> = ({
 
               <Text
                 style={{
-                  color: '#666',
+                  color: Colors.textTertiary,
                   fontSize: 13,
                   marginTop: 24,
                   textAlign: 'center',
@@ -422,7 +432,7 @@ const ServiceSelectorModal: React.FC<ServiceSelectorModalProps> = ({
                 <>
                   <Text
                     style={{
-                      color: '#888892',
+                      color: Colors.textSecondary,
                       fontSize: 12,
                       marginLeft: 8,
                       marginBottom: 8,
@@ -446,10 +456,10 @@ const ServiceSelectorModal: React.FC<ServiceSelectorModalProps> = ({
                     paddingVertical: 40,
                   }}
                 >
-                  <Ionicons name="search-outline" size={48} color="#444" />
+                  <Ionicons name="search-outline" size={48} color={Colors.textTertiary} />
                   <Text
                     style={{
-                      color: '#888892',
+                      color: Colors.textSecondary,
                       fontSize: 15,
                       marginTop: 12,
                     }}
@@ -458,7 +468,7 @@ const ServiceSelectorModal: React.FC<ServiceSelectorModalProps> = ({
                   </Text>
                   <Text
                     style={{
-                      color: '#666',
+                      color: Colors.textTertiary,
                       fontSize: 13,
                       marginTop: 4,
                     }}
@@ -476,7 +486,7 @@ const ServiceSelectorModal: React.FC<ServiceSelectorModalProps> = ({
           style={{
             padding: 16,
             borderTopWidth: 1,
-            borderTopColor: 'rgba(42, 42, 48, 0.5)',
+            borderTopColor: Colors.border,
           }}
         >
           <TouchableOpacity
@@ -488,10 +498,10 @@ const ServiceSelectorModal: React.FC<ServiceSelectorModalProps> = ({
               paddingVertical: 12,
             }}
           >
-            <Ionicons name="add-circle-outline" size={20} color="#888892" />
+            <Ionicons name="add-circle-outline" size={20} color={Colors.textSecondary} />
             <Text
               style={{
-                color: '#888892',
+                color: Colors.textSecondary,
                 fontSize: 14,
                 marginLeft: 8,
               }}
@@ -534,11 +544,11 @@ export const ServiceSelector: React.FC<ServiceSelectorProps> = ({
         style={{
           flexDirection: 'row',
           alignItems: 'center',
-          backgroundColor: 'rgba(21, 21, 24, 1)',
+          backgroundColor: Colors.surface,
           borderWidth: 1,
           borderColor: selectedService
-            ? `${selectedService.color || VIOLET}50`
-            : 'rgba(42, 42, 48, 0.5)',
+            ? `${selectedService.color || ACCENT}50`
+            : Colors.border,
           borderRadius: 12,
           padding: 12,
         }}
@@ -547,10 +557,10 @@ export const ServiceSelector: React.FC<ServiceSelectorProps> = ({
           <>
             <ServiceLogo service={selectedService} size={40} />
             <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }}>
+              <Text style={{ color: Colors.text, fontFamily: FontFamily.medium, fontSize: 15 }}>
                 {selectedService.name}
               </Text>
-              <Text style={{ color: '#888892', fontSize: 12, marginTop: 2 }}>
+              <Text style={{ color: Colors.textSecondary, fontSize: 12, marginTop: 2 }}>
                 {CATEGORY_CONFIG[selectedService.category].label}
               </Text>
             </View>
@@ -561,7 +571,7 @@ export const ServiceSelector: React.FC<ServiceSelectorProps> = ({
                 padding: 4,
               }}
             >
-              <Ionicons name="close-circle" size={20} color="#888892" />
+              <Ionicons name="close-circle" size={20} color={Colors.textSecondary} />
             </TouchableOpacity>
           </>
         ) : (
@@ -571,24 +581,24 @@ export const ServiceSelector: React.FC<ServiceSelectorProps> = ({
                 width: 40,
                 height: 40,
                 borderRadius: 20,
-                backgroundColor: 'rgba(139, 92, 246, 0.2)',
+                backgroundColor: Colors.primaryDim,
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
             >
-              <Ionicons name="apps-outline" size={20} color={VIOLET} />
+              <Ionicons name="apps-outline" size={20} color={ACCENT} />
             </View>
             <Text
               style={{
                 flex: 1,
-                color: '#666',
+                color: Colors.textTertiary,
                 fontSize: 15,
                 marginLeft: 12,
               }}
             >
               {placeholder}
             </Text>
-            <Ionicons name="chevron-forward" size={20} color="#888892" />
+            <Ionicons name="chevron-forward" size={20} color={Colors.textSecondary} />
           </>
         )}
       </TouchableOpacity>

@@ -1,14 +1,25 @@
 /**
- * ShareProgressIndicator — Animated step progress for BLE/NFC sharing flow
+ * ShareProgressIndicator — where the transfer has got to.
  *
- * Steps: Connect → Verify → Encrypt → Send → Done
- * Active step pulses with a glow animation.
+ * Steps: Connect → Verify → Encrypt → Transfer → Done.
+ *
+ * 🎯 REALIGNED ON constants/theme.ts 2026-08-23.
+ *
+ * ⛔ THE GLOW BEHIND THE ACTIVE STEP IS GONE — a coloured disc pulsing its
+ * opacity under the circle, which is the neon treatment the brand is removing.
+ * The scale pulse is what says "this one is happening"; the light did not add a
+ * second fact, it just emitted.
+ *
+ * ⛔ AND COMPLETED IS NO LONGER A DIFFERENT COLOUR FROM ACTIVE. Completed was
+ * the retired green, active was cyan, and pending was grey: three colours for
+ * one axis. Done and doing are both the accent; the checkmark is what separates
+ * them, and it survives a screenshot in greyscale.
  */
 
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, FontFamily, P01Colors, Spacing } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, Spacing } from '@/constants/theme';
 import type { ShareSessionState } from '@/services/sharing/types';
 
 const STEPS = [
@@ -43,16 +54,16 @@ function stateToStepIndex(state: ShareSessionState): number {
 
 function stateLabel(state: ShareSessionState): string {
   switch (state) {
-    case 'scanning': return 'Scanning for devices...';
-    case 'connecting': return 'Connecting...';
-    case 'key-exchange': return 'Exchanging keys...';
-    case 'verifying-fingerprint': return 'Verify fingerprint';
-    case 'encrypting': return 'Encrypting note...';
-    case 'decrypting': return 'Decrypting note...';
-    case 'sending': return 'Sending encrypted note...';
-    case 'receiving': return 'Receiving note...';
-    case 'importing': return 'Importing note...';
-    case 'success': return 'Transfer complete!';
+    case 'scanning': return 'Scanning for devices…';
+    case 'connecting': return 'Connecting…';
+    case 'key-exchange': return 'Exchanging keys…';
+    case 'verifying-fingerprint': return 'Verify the code';
+    case 'encrypting': return 'Encrypting the note…';
+    case 'decrypting': return 'Decrypting the note…';
+    case 'sending': return 'Sending the encrypted note…';
+    case 'receiving': return 'Receiving the note…';
+    case 'importing': return 'Importing the note…';
+    case 'success': return 'Transfer complete';
     case 'error': return 'Transfer failed';
     default: return '';
   }
@@ -70,14 +81,13 @@ function PulsingCircle({
   isCompleted: boolean;
 }) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const glowAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (isActive) {
       const pulse = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
-            toValue: 1.2,
+            toValue: 1.12,
             duration: 800,
             easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
@@ -90,53 +100,23 @@ function PulsingCircle({
           }),
         ]),
       );
-      const glow = Animated.loop(
-        Animated.sequence([
-          Animated.timing(glowAnim, {
-            toValue: 0.4,
-            duration: 800,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.timing(glowAnim, {
-            toValue: 0,
-            duration: 800,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-        ]),
-      );
       pulse.start();
-      glow.start();
-      return () => { pulse.stop(); glow.stop(); };
+      return () => { pulse.stop(); };
     } else {
       pulseAnim.setValue(1);
-      glowAnim.setValue(0);
     }
   }, [isActive]);
 
   return (
     <View style={circleStyles.wrapper}>
-      {isActive && (
-        <Animated.View
-          style={[
-            circleStyles.glow,
-            {
-              opacity: glowAnim,
-              backgroundColor: color,
-              transform: [{ scale: pulseAnim }],
-            },
-          ]}
-        />
-      )}
       <Animated.View
         style={[
           circleStyles.circle,
           {
             borderColor: color,
-            backgroundColor: isCompleted ? color + '25' : 'transparent',
             transform: [{ scale: isActive ? pulseAnim : 1 }],
           },
+          isCompleted && circleStyles.circleCompleted,
         ]}
       >
         {isCompleted ? (
@@ -151,20 +131,15 @@ function PulsingCircle({
 
 const circleStyles = StyleSheet.create({
   wrapper: { width: 36, height: 36, justifyContent: 'center', alignItems: 'center' },
-  glow: {
-    position: 'absolute',
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-  },
   circle: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    borderWidth: 1.5,
+    borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  circleCompleted: { backgroundColor: Colors.primaryDim },
 });
 
 interface Props {
@@ -181,11 +156,9 @@ export default function ShareProgressIndicator({ state }: Props) {
         {STEPS.map((step, i) => {
           const isCompleted = i < activeIndex;
           const isActive = i === activeIndex;
-          const color = isCompleted
-            ? P01Colors.green
-            : isActive
-            ? P01Colors.cyan
-            : Colors.textTertiary;
+          // Reached or reaching is the accent; not yet is quiet. One axis, two
+          // states, and the checkmark inside the circle carries the third fact.
+          const color = isCompleted || isActive ? Colors.primary : Colors.textTertiary;
 
           return (
             <React.Fragment key={step.key}>
@@ -193,7 +166,7 @@ export default function ShareProgressIndicator({ state }: Props) {
                 <View
                   style={[
                     styles.line,
-                    { backgroundColor: isCompleted ? P01Colors.green : Colors.border },
+                    { backgroundColor: isCompleted ? Colors.primary : Colors.border },
                   ]}
                 />
               )}
@@ -211,11 +184,10 @@ export default function ShareProgressIndicator({ state }: Props) {
         })}
       </View>
       {label ? (
-        <Text style={[
-          styles.statusLabel,
-          state === 'success' && { color: P01Colors.green },
-          state === 'error' && { color: Colors.error },
-        ]}>
+        <Text
+          style={[styles.statusLabel, state === 'error' && styles.statusLabelError]}
+          accessibilityLiveRegion="polite"
+        >
           {label}
         </Text>
       ) : null}
@@ -232,12 +204,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
   },
   step: { alignItems: 'center', gap: 4 },
-  line: { flex: 1, height: 1.5, marginHorizontal: 2 },
+  line: { flex: 1, height: 1, marginHorizontal: 2 },
   stepLabel: { fontSize: 10, fontFamily: FontFamily.medium },
   statusLabel: {
     marginTop: Spacing.sm,
-    fontSize: 13,
-    fontFamily: FontFamily.medium,
-    color: P01Colors.cyan,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
   },
+  statusLabelError: { color: Colors.error },
 });

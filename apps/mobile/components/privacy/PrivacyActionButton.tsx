@@ -88,9 +88,9 @@ export default function PrivacyActionButton({
           style={styles.iconCircle}
         >
           {loading ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color="#eae7df" />
           ) : (
-            <Ionicons name={icon} size={22} color="#fff" />
+            <Ionicons name={icon} size={22} color="#eae7df" />
           )}
         </LinearGradient>
       </View>

@@ -29,7 +29,7 @@ import { Colors, FontFamily, BorderRadius, Spacing, Shadows } from '@/constants/
 // P-01 Design System Colors - NO purple allowed
 const P01 = {
   cyan: '#39c5bb',
-  cyanBright: '#00ffe5',
+  cyanBright: '#5fd8cf',
   cyanDim: 'rgba(57, 197, 187, 0.15)',
 };
 import { getExplorerUrl } from '@/services/solana/connection';

@@ -36,7 +36,15 @@ import {
   type SubscriptionOutlook,
 } from '../../../services/subscriptionVault';
 import { withKeepAwake } from '../../../utils/keepAwakeDuring';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import {
+  Colors,
+  FontFamily,
+  FontSize,
+  BorderRadius,
+  Spacing,
+  Layout,
+} from '@/constants/theme';
+import { Badge } from '@/components/ui';
 import { useT } from '@/i18n';
 import OperationProgressBar from '@/components/ui/OperationProgressBar';
 import { LicenseKeyCard } from '@/components/LicenseKeyCard';
@@ -129,13 +137,15 @@ function DetailContent() {
   }, [stream?.id, stream?.vaultAddress, stream?.useZkVault, vaults]);
 
   const serviceInfo = stream?.serviceId ? getServiceById(stream.serviceId) : null;
-  const accent = stream?.useZkPool ? P01Colors.pink : P01Colors.cyan;
-  const accentDim = stream?.useZkPool ? P01Colors.pinkDim : P01Colors.cyanDim;
+  // ⛔ There is no `accent` local any more. It used to branch to pink whenever
+  // the subscription was ZK-funded, which turned "paid from a shielded note"
+  // into a second colour language running through the whole screen. It is a
+  // badge on the headline now, and the accent is the one accent.
 
   if (!stream) {
     return (
-      <View style={[st.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color={P01Colors.cyan} />
+      <View style={st.loadingRoot}>
+        <ActivityIndicator size="large" color={Colors.primary} />
       </View>
     );
   }
@@ -145,9 +155,18 @@ function DetailContent() {
     ? (stream.paymentsCompleted / stream.totalPayments) * 100
     : (stream.amountStreamed / stream.totalAmount) * 100;
 
-  const statusColor = stream.status === 'active' ? P01Colors.cyan
-    : stream.status === 'paused' ? P01Colors.yellow
-    : stream.status === 'completed' ? P01Colors.green : Colors.error;
+  // The four states, in the four tones the system has. `completed` is not a
+  // failure and not a warning: it is the normal way a subscription ends now
+  // that the final claim closes the vault.
+  const statusTone: 'good' | 'warn' | 'neutral' | 'bad' =
+    stream.status === 'active' ? 'good'
+    : stream.status === 'paused' ? 'warn'
+    : stream.status === 'completed' ? 'neutral' : 'bad';
+  const statusLabel = stream.status === 'active' ? t('common.active')
+    : stream.status === 'paused' ? t('common.paused')
+    // "Stopped", not "Cancelled": only a LOCAL schedule can reach this state,
+    // and stopping one moves no money. A vault has no such control at all.
+    : stream.status === 'completed' ? t('common.completed') : 'Stopped';
 
   // ── Handlers ──────────────────────────────────────────────
 
@@ -453,13 +472,19 @@ function DetailContent() {
 
   return (
     <View style={st.container}>
-      {/* Header */}
-      <View style={[st.header, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={Colors.text} />
+      {/* ── Header ── */}
+      <View style={[st.header, { paddingTop: insets.top + Spacing.sm }]}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={st.iconBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={st.headerTitle}>{stream.name}</Text>
-        <View style={{ width: 40 }} />
+        <Text style={st.headerTitle} numberOfLines={1}>{stream.name}</Text>
+        <View style={st.headerSpacer} />
       </View>
 
       {/* Sticky STARK progress bar — pause/resume only */}
@@ -473,17 +498,34 @@ function DetailContent() {
         />
       )}
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: Spacing.xl, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
-        {/* Status pill */}
-        <Animated.View entering={FadeIn.duration(250)} style={{ alignItems: 'center', marginBottom: 20 }}>
-          <View style={[st.statusPill, { backgroundColor: `${statusColor}20` }]}>
-            <View style={[st.statusDot, { backgroundColor: statusColor }]} />
-            <Text style={[st.statusText, { color: statusColor }]}>{stream.status.toUpperCase()}</Text>
+      <ScrollView
+        style={st.flex}
+        contentContainerStyle={[
+          st.scrollContent,
+          { paddingBottom: insets.bottom + Layout.tabBarTotalHeight + Spacing['2xl'] },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* ── What it costs and where it stands ──
+            ⛔ The status was a pill reading "ACTIVE" in capitals, centred on
+            its own line above everything. It is a badge beside the amount now:
+            the amount is the headline, the state is a note on it. */}
+        <Animated.View entering={FadeIn.duration(250)} style={st.headline}>
+          <Text style={st.headlineLabel}>{t('streams.paymentAmount')}</Text>
+          <View style={st.headlineRow}>
+            <Text style={st.headlineAmount}>{stream.amountPerPayment.toFixed(4)}</Text>
+            <Text style={st.headlineUnit}>SOL {formatFrequency(stream.frequency)}</Text>
+          </View>
+          <View style={st.headlineMeta}>
+            <Badge variant={statusTone} size="sm">{statusLabel}</Badge>
+            {(stream.useZkPool || stream.useZkVault) && (
+              <Badge variant="neutral" size="sm">Paid from a shielded note</Badge>
+            )}
           </View>
         </Animated.View>
 
         {/* License key — persistent on-chain-derived access token, no PII */}
-        <Animated.View entering={FadeInDown.delay(40).duration(250)}>
+        <Animated.View entering={FadeInDown.delay(40).duration(220)} style={st.block}>
           <LicenseKeyCard
             status={stream.status as 'active' | 'paused' | 'completed' | 'cancelled'}
             stream={stream}
@@ -493,60 +535,69 @@ function DetailContent() {
           />
         </Animated.View>
 
-        {/* Main amount card */}
-        <Animated.View entering={FadeInDown.delay(60).duration(250)} style={st.card}>
-          <Text style={st.cardLabel}>{t('streams.paymentAmount')}</Text>
-          <Text style={st.bigAmount}>{stream.amountPerPayment.toFixed(4)}</Text>
-          <Text style={[st.bigUnit, { color: accent }]}>SOL {formatFrequency(stream.frequency)}</Text>
-
-          {/* Progress bar */}
-          {stream.totalPayments && (
-            <View style={{ marginTop: 16 }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+        {/* ── Progress and totals ── */}
+        <Animated.View entering={FadeInDown.delay(60).duration(220)} style={st.block}>
+          {stream.totalPayments ? (
+            <View style={st.progressBlock}>
+              <View style={st.rowBetween}>
                 <Text style={st.dimText}>{t('streams.progress')}</Text>
-                <Text style={st.smallWhite}>{stream.paymentsCompleted}/{stream.totalPayments}</Text>
+                <Text style={st.monoValue}>
+                  {stream.paymentsCompleted}/{stream.totalPayments}
+                </Text>
               </View>
               <View style={st.progressTrack}>
-                <View style={[st.progressFill, { width: `${Math.min(progress, 100)}%`, backgroundColor: accent }]} />
+                <View style={[st.progressFill, { width: `${Math.min(progress, 100)}%` }]} />
               </View>
             </View>
-          )}
+          ) : null}
 
-          {/* Stats row */}
           <View style={st.statsRow}>
-            <View style={{ alignItems: 'center', flex: 1 }}>
+            <View style={st.stat}>
               <Text style={st.dimText}>{t('streams.totalSent')}</Text>
               <Text style={st.statNum}>{stream.amountStreamed.toFixed(4)}</Text>
             </View>
             <View style={st.statDivider} />
-            <View style={{ alignItems: 'center', flex: 1 }}>
+            <View style={st.stat}>
               <Text style={st.dimText}>{t('streams.payments')}</Text>
               <Text style={st.statNum}>{stream.paymentsCompleted}</Text>
             </View>
           </View>
         </Animated.View>
 
-        {/* Next payment */}
+        {/* ── Next payment ── */}
         {stream.status === 'active' && (
-          <Animated.View entering={FadeInDown.delay(120).duration(250)}
-            style={[st.card, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
-            <View>
+          <Animated.View entering={FadeInDown.delay(100).duration(220)} style={[st.block, st.rowBetween]}>
+            <View style={st.flexShrink}>
               <Text style={st.dimText}>{t('streams.nextPaymentIn')}</Text>
-              <Text style={[st.nextTime, { color: isDue ? Colors.error : accent }]}>{timeUntil(stream.nextPaymentDate)}</Text>
+              <Text style={[st.nextTime, isDue && st.nextTimeDue]}>
+                {timeUntil(stream.nextPaymentDate)}
+              </Text>
               <Text style={st.dimText}>{fmt(stream.nextPaymentDate)}</Text>
             </View>
             {isDue && (
-              <TouchableOpacity onPress={handlePayNow} disabled={paying}
-                style={[st.payBtn, { backgroundColor: accent }]}>
+              <TouchableOpacity
+                onPress={handlePayNow}
+                disabled={paying}
+                style={st.payBtn}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: paying, busy: paying }}
+                accessibilityLabel={stream.useZkPool ? t('streams.payZK') : t('streams.payNow')}
+              >
                 {paying ? (
-                  <View style={{ alignItems: 'center' }}>
-                    <ActivityIndicator size="small" color="#000" />
+                  <View style={st.payBusy}>
+                    <ActivityIndicator size="small" color={Colors.background} />
                     {payProgress && <Text style={st.payProgressText}>{payProgress}</Text>}
                   </View>
                 ) : (
                   <>
-                    <Ionicons name={stream.useZkPool ? 'eye-off' : 'flash'} size={16} color="#000" />
-                    <Text style={st.payBtnText}>{stream.useZkPool ? t('streams.payZK') : t('streams.payNow')}</Text>
+                    <Ionicons
+                      name={stream.useZkPool ? 'eye-off' : 'flash'}
+                      size={16}
+                      color={Colors.background}
+                    />
+                    <Text style={st.payBtnText}>
+                      {stream.useZkPool ? t('streams.payZK') : t('streams.payNow')}
+                    </Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -554,18 +605,27 @@ function DetailContent() {
           </Animated.View>
         )}
 
-        {/* Recipient */}
-        <Animated.View entering={FadeInDown.delay(180).duration(250)} style={st.card}>
-          <Text style={st.cardLabel}>{t('streams.recipient')}</Text>
-          <TouchableOpacity onPress={handleCopy} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        {/* ── Recipient ── */}
+        <Animated.View entering={FadeInDown.delay(140).duration(220)} style={st.block}>
+          <Text style={st.blockLabel}>{t('streams.recipient')}</Text>
+          <TouchableOpacity
+            onPress={handleCopy}
+            style={st.copyRow}
+            accessibilityRole="button"
+            accessibilityLabel="Copy the recipient address"
+          >
             <Text style={st.monoText} numberOfLines={1}>{stream.recipientAddress}</Text>
-            <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={16} color={copied ? P01Colors.cyan : Colors.textSecondary} />
+            <Ionicons
+              name={copied ? 'checkmark' : 'copy-outline'}
+              size={16}
+              color={copied ? Colors.primary : Colors.textSecondary}
+            />
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Schedule */}
-        <Animated.View entering={FadeInDown.delay(240).duration(250)} style={st.card}>
-          <Text style={st.cardLabel}>{t('streams.schedule')}</Text>
+        {/* ── Schedule ── */}
+        <Animated.View entering={FadeInDown.delay(180).duration(220)} style={st.block}>
+          <Text style={st.blockLabel}>{t('streams.schedule')}</Text>
           {[
             [t('streams.frequency'), formatFrequency(stream.frequency)],
             [t('streams.started'), fmt(stream.startDate)],
@@ -573,18 +633,28 @@ function DetailContent() {
           ].map(([k, v]) => (
             <View key={k} style={st.schedRow}>
               <Text style={st.dimText}>{k}</Text>
-              <Text style={st.smallWhite}>{v}</Text>
+              <Text style={st.monoValue}>{v}</Text>
             </View>
           ))}
         </Animated.View>
 
-        {/* Actions */}
+        {/* ── Actions ── */}
         {(stream.status === 'active' || stream.status === 'paused') && (
-          <Animated.View entering={FadeInDown.delay(300).duration(250)} style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
-            <TouchableOpacity onPress={handlePauseResume}
-              style={[st.actionBtn, { backgroundColor: accentDim }]}>
-              <Ionicons name={stream.status === 'active' ? 'pause' : 'play'} size={18} color={accent} />
-              <Text style={[st.actionText, { color: accent }]}>{stream.status === 'active' ? t('streams.pause') : t('streams.resume')}</Text>
+          <Animated.View entering={FadeInDown.delay(220).duration(220)} style={st.actions}>
+            <TouchableOpacity
+              onPress={handlePauseResume}
+              style={st.actionBtn}
+              accessibilityRole="button"
+              accessibilityLabel={stream.status === 'active' ? t('streams.pause') : t('streams.resume')}
+            >
+              <Ionicons
+                name={stream.status === 'active' ? 'pause' : 'play'}
+                size={18}
+                color={Colors.primary}
+              />
+              <Text style={st.actionText}>
+                {stream.status === 'active' ? t('streams.pause') : t('streams.resume')}
+              </Text>
             </TouchableOpacity>
             {/*
               A vault-backed subscription has NO stop control: the deposit is a
@@ -593,10 +663,14 @@ function DetailContent() {
               at all, so stopping it only stops future payments.
             */}
             {!stream.vaultAddress && (
-              <TouchableOpacity onPress={stopLocalStream}
-                style={[st.actionBtn, { backgroundColor: 'rgba(255,51,102,0.12)' }]}>
-                <Ionicons name="close-circle" size={18} color={Colors.error} />
-                <Text style={[st.actionText, { color: Colors.error }]}>{t('common.cancel')}</Text>
+              <TouchableOpacity
+                onPress={stopLocalStream}
+                style={[st.actionBtn, st.actionBtnDanger]}
+                accessibilityRole="button"
+                accessibilityLabel="Stop this schedule"
+              >
+                <Ionicons name="close-circle-outline" size={18} color={Colors.error} />
+                <Text style={[st.actionText, st.actionTextDanger]}>Stop</Text>
               </TouchableOpacity>
             )}
           </Animated.View>
@@ -604,7 +678,7 @@ function DetailContent() {
 
         {/* The no-refund rule, where the Cancel button used to be. */}
         {!!stream.vaultAddress && (stream.status === 'active' || stream.status === 'paused') && (
-          <Animated.View entering={FadeInDown.delay(320).duration(250)} style={st.noRefundCard}>
+          <Animated.View entering={FadeInDown.delay(260).duration(220)} style={st.noRefundCard}>
             <Ionicons name="information-circle-outline" size={16} color={Colors.textSecondary} />
             <Text style={st.noRefundText}>
               {t('streams.noRefundNotice')}
@@ -615,121 +689,287 @@ function DetailContent() {
           </Animated.View>
         )}
 
-        {/* Payment History */}
+        {/* ── Payment history ── */}
         {stream.paymentHistory.length > 0 && (
-          <Animated.View entering={FadeInDown.delay(360).duration(250)} style={st.card}>
-            <Text style={st.cardLabel}>{t('streams.paymentHistory')} ({stream.paymentHistory.length})</Text>
+          <Animated.View entering={FadeInDown.delay(300).duration(220)} style={st.block}>
+            <Text style={st.blockLabel}>
+              {t('streams.paymentHistory')} ({stream.paymentHistory.length})
+            </Text>
             {stream.paymentHistory.slice().reverse().map((p, i) => (
-              <TouchableOpacity key={p.id}
+              <TouchableOpacity
+                key={p.id}
                 onPress={() => p.signature ? Linking.openURL(getExplorerUrl(p.signature, 'tx')) : null}
-                style={[st.historyRow, i > 0 && { borderTopWidth: 1, borderTopColor: Colors.surfaceTertiary }]}>
-                <View style={[st.historyIcon, { backgroundColor: p.status === 'success' ? P01Colors.cyanDim : 'rgba(255,51,102,0.15)' }]}>
-                  <Ionicons name={p.status === 'success' ? 'checkmark' : 'close'} size={12}
-                    color={p.status === 'success' ? P01Colors.cyan : Colors.error} />
+                style={[st.historyRow, i > 0 && st.historyRowDivided]}
+                accessibilityRole={p.signature ? 'link' : 'text'}
+                accessibilityLabel={
+                  p.signature
+                    ? `${p.amount.toFixed(4)} SOL on ${fmtFull(p.timestamp)}, open in the explorer`
+                    : `${p.amount.toFixed(4)} SOL on ${fmtFull(p.timestamp)}`
+                }
+              >
+                <View style={[st.historyIcon, p.status !== 'success' && st.historyIconFailed]}>
+                  <Ionicons
+                    name={p.status === 'success' ? 'checkmark' : 'close'}
+                    size={12}
+                    color={p.status === 'success' ? Colors.primary : Colors.error}
+                  />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={st.smallWhite}>{p.amount.toFixed(4)} SOL</Text>
+                <View style={st.flexShrink}>
+                  <Text style={st.monoValue}>{p.amount.toFixed(4)} SOL</Text>
                   <Text style={st.dimText}>{fmtFull(p.timestamp)}</Text>
                 </View>
-                {p.signature && <Ionicons name="open-outline" size={14} color={P01Colors.cyan} />}
+                {p.signature && (
+                  <Ionicons name="open-outline" size={14} color={Colors.textTertiary} />
+                )}
               </TouchableOpacity>
             ))}
           </Animated.View>
         )}
       </ScrollView>
-
     </View>
   );
 }
 
 const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+  flex: { flex: 1 },
+  flexShrink: { flex: 1, minWidth: 0 },
+  loadingRoot: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scrollContent: { paddingHorizontal: Layout.screenPadding },
+
+  // Header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingBottom: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.borderSoft,
+  },
+  iconBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: {
+    flex: 1,
+    fontFamily: FontFamily.displayMedium,
+    fontSize: FontSize.xl,
+    color: Colors.text,
+  },
+  headerSpacer: { width: 44 },
+
+  // Headline
+  headline: { paddingTop: Spacing['2xl'] },
+  headlineLabel: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+  },
+  headlineRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  headlineAmount: {
+    fontFamily: FontFamily.display,
+    fontSize: FontSize['4xl'],
+    color: Colors.text,
+    fontVariant: ['tabular-nums'],
+  },
+  headlineUnit: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
+    color: Colors.textSecondary,
+  },
+  headlineMeta: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+
+  // Blocks — a fill and a rule, never a shadow.
+  block: {
+    marginTop: Spacing.xl,
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  blockLabel: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.md,
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+
+  // Progress
+  progressBlock: { marginBottom: Spacing.lg, gap: Spacing.sm },
+  progressTrack: {
+    height: 4,
+    borderRadius: 2,
+    overflow: 'hidden',
+    backgroundColor: Colors.surfaceTertiary,
+  },
+  progressFill: { height: '100%', borderRadius: 2, backgroundColor: Colors.primary },
+
+  // Stats
+  statsRow: { flexDirection: 'row' },
+  stat: { flex: 1, alignItems: 'center', gap: 2 },
+  statDivider: { width: StyleSheet.hairlineWidth, backgroundColor: Colors.border },
+  statNum: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.lg,
+    color: Colors.text,
+  },
+
+  // Next payment
+  nextTime: {
+    fontFamily: FontFamily.displayMedium,
+    fontSize: FontSize['2xl'],
+    color: Colors.primary,
+    marginVertical: 2,
+  },
+  nextTimeDue: { color: Colors.yellow },
+  payBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    minHeight: 44,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.primary,
+  },
+  payBusy: { alignItems: 'center' },
+  payBtnText: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.background,
+  },
+  payProgressText: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    color: Colors.background,
+    marginTop: 2,
+  },
+
+  // Text helpers
+  dimText: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+  },
+  monoValue: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.sm,
+    color: Colors.text,
+  },
+  monoText: {
+    flex: 1,
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+  },
+
+  // Recipient
+  copyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    minHeight: 44,
+  },
+
+  // Schedule
+  schedRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+
+  // Actions
+  actions: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    marginTop: Spacing.xl,
+  },
+  actionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    minHeight: 48,
+    borderRadius: BorderRadius.md,
+    backgroundColor: 'transparent',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  // Destructive is outlined, never the loudest thing on the screen.
+  actionBtnDanger: { borderColor: Colors.error, backgroundColor: Colors.errorDim },
+  actionText: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.md,
+    color: Colors.primary,
+  },
+  actionTextDanger: { color: Colors.error },
+
+  // No-refund notice
   noRefundCard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
-    marginBottom: 20,
-    padding: 12,
+    gap: Spacing.sm,
+    marginTop: Spacing.xl,
+    padding: Spacing.lg,
     borderRadius: BorderRadius.md,
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.surfaceTertiary,
+    backgroundColor: Colors.surfaceSecondary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderSoft,
   },
   noRefundText: {
     flex: 1,
-    fontSize: 12,
-    lineHeight: 18,
     fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    lineHeight: 19,
     color: Colors.textSecondary,
   },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl, paddingBottom: Spacing.md,
-  },
-  backBtn: {
-    width: 40, height: 40, borderRadius: BorderRadius.full,
-    backgroundColor: Colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center',
-  },
-  headerTitle: { fontSize: 18, fontFamily: FontFamily.semibold, color: Colors.text },
-
-  // Status
-  statusPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 6, borderRadius: BorderRadius.full,
-  },
-  statusDot: { width: 7, height: 7, borderRadius: 4 },
-  statusText: { fontSize: 12, fontFamily: FontFamily.semibold },
-
-  // Cards
-  card: {
-    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.xl,
-    padding: Spacing.xl, marginBottom: 12,
-  },
-  cardLabel: { fontSize: 12, fontFamily: FontFamily.medium, color: Colors.textSecondary, marginBottom: 10 },
-
-  // Big amount
-  bigAmount: { fontSize: 36, fontFamily: FontFamily.bold, color: Colors.text, textAlign: 'center' },
-  bigUnit: { fontSize: 15, fontFamily: FontFamily.semibold, textAlign: 'center', marginTop: 2 },
-
-  // Progress
-  progressTrack: { height: 6, backgroundColor: Colors.surfaceTertiary, borderRadius: 3, overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 3 },
-
-  // Stats
-  statsRow: {
-    flexDirection: 'row', marginTop: 16, paddingTop: 14,
-    borderTopWidth: 1, borderTopColor: Colors.surfaceTertiary,
-  },
-  statDivider: { width: 1, backgroundColor: Colors.surfaceTertiary },
-  statNum: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.text, marginTop: 2 },
-
-  // Next payment
-  nextTime: { fontSize: 22, fontFamily: FontFamily.bold, marginVertical: 2 },
-  payBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 16, paddingVertical: 10, borderRadius: BorderRadius.md,
-  },
-  payBtnText: { fontSize: 13, fontFamily: FontFamily.semibold, color: '#000' },
-  payProgressText: { fontSize: 9, fontFamily: FontFamily.medium, color: '#000', marginTop: 2 },
-
-  // Text helpers
-  dimText: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textSecondary },
-  smallWhite: { fontSize: 13, fontFamily: FontFamily.medium, color: Colors.text },
-  monoText: { fontSize: 13, fontFamily: FontFamily.mono, color: Colors.textSecondary, flex: 1 },
-
-  // Schedule
-  schedRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-
-  // Actions
-  actionBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 14, borderRadius: BorderRadius.lg,
-  },
-  actionText: { fontSize: 14, fontFamily: FontFamily.semibold },
 
   // History
-  historyRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
-  historyIcon: {
-    width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    minHeight: 48,
+    paddingVertical: Spacing.sm,
   },
+  historyRowDivided: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.borderSoft,
+  },
+  historyIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: BorderRadius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primaryDim,
+  },
+  historyIconFailed: { backgroundColor: Colors.errorDim },
 });

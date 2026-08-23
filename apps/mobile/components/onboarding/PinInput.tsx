@@ -1,5 +1,18 @@
-import React, { useRef, useEffect, useCallback } from 'react';
-import { View, Text, TextInput, Pressable, Platform } from 'react-native';
+/**
+ * PinInput — six boxes and a hidden field.
+ *
+ * 🚨 IT DECLARED ITS OWN RED. `#ef4444` for the error border, the error dot and
+ * the error digit; the theme's red is `#e0574f`, desaturated on purpose so it
+ * stops vibrating against near-black ink. Same story for the surface, the
+ * border and the accent: six literals, none reachable by a theme sweep. Tokens
+ * now.
+ *
+ * ⚠️ The hidden `TextInput` keeps its real 1×1 size and its `autoFocus`. That
+ * is not a style detail — a zero-sized input does not open the keyboard on
+ * Android.
+ */
+import React, { useRef, useEffect } from 'react';
+import { View, Text, TextInput, Pressable } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -8,6 +21,8 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
+
+import { Colors, Spacing, FontFamily, FontSize, BorderRadius } from '../../constants/theme';
 
 interface PinInputProps {
   length?: number;
@@ -117,16 +132,16 @@ export const PinInput: React.FC<PinInputProps> = ({
               }));
 
               const getBorderColor = () => {
-                if (error) return '#ef4444';
-                if (isFilled) return '#39c5bb';
-                if (isActive) return 'rgba(57, 197, 187, 0.5)';
-                return '#2a2a30';
+                if (error) return Colors.error;
+                if (isFilled) return Colors.primary;
+                if (isActive) return Colors.primaryMuted;
+                return Colors.border;
               };
 
               const getBgColor = () => {
-                if (error) return 'rgba(239, 68, 68, 0.2)';
-                if (isFilled) return 'rgba(57, 197, 187, 0.2)';
-                return '#151518';
+                if (error) return Colors.errorDim;
+                if (isFilled) return Colors.primaryDim;
+                return Colors.surface;
               };
 
               return (
@@ -137,11 +152,11 @@ export const PinInput: React.FC<PinInputProps> = ({
                     {
                       width: 56,
                       height: 56,
-                      borderRadius: 16,
+                      borderRadius: BorderRadius.lg,
                       alignItems: 'center',
                       justifyContent: 'center',
                       backgroundColor: getBgColor(),
-                      borderWidth: 2,
+                      borderWidth: 1,
                       borderColor: getBorderColor(),
                     },
                   ]}
@@ -150,18 +165,18 @@ export const PinInput: React.FC<PinInputProps> = ({
                     secureEntry ? (
                       <View
                         style={{
-                          width: 16,
-                          height: 16,
-                          borderRadius: 8,
-                          backgroundColor: error ? '#ef4444' : '#39c5bb',
+                          width: 14,
+                          height: 14,
+                          borderRadius: 7,
+                          backgroundColor: error ? Colors.error : Colors.primary,
                         }}
                       />
                     ) : (
                       <Text
                         style={{
-                          fontSize: 24,
-                          fontWeight: 'bold',
-                          color: error ? '#ef4444' : '#39c5bb',
+                          fontSize: FontSize['2xl'],
+                          fontFamily: FontFamily.medium,
+                          color: error ? Colors.error : Colors.primary,
                         }}
                       >
                         {value[index]}
@@ -175,7 +190,15 @@ export const PinInput: React.FC<PinInputProps> = ({
       </Pressable>
 
       {/* Keypad hint */}
-      <Text style={{ textAlign: 'center', color: '#555560', fontSize: 14, marginTop: 24 }}>
+      <Text
+        style={{
+          textAlign: 'center',
+          color: Colors.textTertiary,
+          fontFamily: FontFamily.regular,
+          fontSize: FontSize.sm,
+          marginTop: Spacing['2xl'],
+        }}
+      >
         Enter a {length}-digit PIN
       </Text>
     </View>

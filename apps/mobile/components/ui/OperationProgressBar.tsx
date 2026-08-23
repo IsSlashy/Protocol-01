@@ -1,8 +1,21 @@
 // Shared progress bar for long-running ZK operations (shield/unshield/subscribe/cancel).
+//
+// 🎯 RETUNED 2026-08-23. Three things were off the system:
+//   - the track was `rgba(0,224,255,0.12)`, a neon cyan that appears nowhere in
+//     `constants/theme.ts` and nowhere on the site. The fill and the track were
+//     therefore two different cyans, one of them invented here.
+//   - the sticky bar was a filled cyan panel inside a solid cyan border, which
+//     made a progress indicator the loudest element on a screen the user is
+//     waiting on. It is a panel with a hairline rule now, and the accent is
+//     carried by the spinner and the bar.
+//   - the status line was set in mono. Mono is for addresses, hashes and
+//     amounts; a sentence in mono reads as machine output, not as an update.
+//     The counter stays mono, because it is a number that ticks.
+//   - the cancel control was a 28pt target. It is 44.
 import React from 'react';
 import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, P01Colors, Spacing, FontFamily } from '@/constants/theme';
+import { Colors, Spacing, FontFamily, FontSize, BorderRadius } from '@/constants/theme';
 
 export interface OperationProgressBarProps {
   progress: string | null;
@@ -79,7 +92,7 @@ export function OperationProgressBar({
     return (
       <View>
         <View style={st.stickyProgress}>
-          <ActivityIndicator size="small" color={P01Colors.cyan} />
+          <ActivityIndicator size="small" color={Colors.primary} />
           <Text style={st.stickyProgressText} numberOfLines={2}>{label}</Text>
           {onCancel && (
             <TouchableOpacity
@@ -111,50 +124,49 @@ const st = StyleSheet.create({
     marginBottom: Spacing.md,
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
-    borderRadius: 12,
-    backgroundColor: 'rgba(57, 197, 187, 0.15)',
-    borderWidth: 1,
-    borderColor: P01Colors.cyan,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
     gap: Spacing.sm,
   },
   stickyProgressText: {
     flex: 1,
     color: Colors.text,
-    fontSize: 13,
+    fontSize: FontSize.sm,
     fontFamily: FontFamily.medium,
   },
   stickyCancel: {
-    width: 28,
-    height: 28,
-    borderRadius: 9999,
-    backgroundColor: Colors.surfaceSecondary,
+    width: 44,
+    height: 44,
+    borderRadius: BorderRadius.full,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  progressWrap: { marginTop: 12, paddingHorizontal: 2 },
+  progressWrap: { marginTop: Spacing.md, paddingHorizontal: 2 },
   progressRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     marginBottom: 6,
   },
   progressLabel: {
-    flex: 1, fontSize: 11, fontFamily: FontFamily.mono,
-    color: Colors.textSecondary, letterSpacing: 0.3,
+    flex: 1, fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
   },
   progressCount: {
-    fontSize: 11, fontFamily: FontFamily.bold,
-    color: P01Colors.cyan, marginLeft: 8,
+    fontSize: FontSize.xs, fontFamily: FontFamily.monoMedium,
+    color: Colors.primary, marginLeft: Spacing.sm,
   },
   progressTrack: {
-    height: 4, borderRadius: 2, overflow: 'hidden',
-    backgroundColor: 'rgba(0,224,255,0.12)',
+    height: 3, borderRadius: 2, overflow: 'hidden',
+    backgroundColor: Colors.borderSoft,
   },
   progressFill: {
-    height: '100%', backgroundColor: P01Colors.cyan, borderRadius: 2,
+    height: '100%', backgroundColor: Colors.primary, borderRadius: 2,
   },
   keepOpenWarning: {
     marginHorizontal: Spacing.xl,
-    marginTop: 4,
-    fontSize: 11,
+    marginTop: Spacing.xs,
+    fontSize: FontSize.xs,
     fontFamily: FontFamily.regular,
     color: Colors.textTertiary,
     textAlign: 'center',

@@ -69,10 +69,13 @@ export default {
     airdrop: 'Airdrop',
     airdropSuccess: 'Airdrop re\u00e7u ! %{amount} SOL',
     airdropFailed: 'Airdrop \u00e9chou\u00e9',
-    privacySummary: 'R\u00e9sum\u00e9 confidentialit\u00e9',
+    privacySummary: 'Solde priv\u00e9',
     shielded: 'Prot\u00e9g\u00e9',
     confidential: 'Confidentiel',
     denominated: 'D\u00e9nomin\u00e9',
+    shield: 'Prot\u00e9ger',
+    subscribe: 'S\u2019abonner',
+    subscriptions: 'Abonnements',
   },
 
   // ── Send ────────────────────────────────────────────────────
@@ -312,6 +315,10 @@ export default {
     noteSent: 'Note envoy\u00e9e',
     shareWithRecipient: 'Partagez la note avec le destinataire. Toute personne ayant ce lien peut r\u00e9clamer les fonds.',
     backToNotes: 'Retour aux notes',
+    noteHeldHere: 'Cette note est le seul titre du destinataire sur les fonds. Elle n’est conservée que sur cet appareil.',
+    notCopiedTitle: 'Vous n’avez pas copié la note',
+    notCopiedBody: 'Toute personne détenant cette note peut réclamer les fonds, et le destinataire ne peut pas les réclamer sans elle. Elle reste sous la note transférée dans votre liste, sur cet appareil uniquement.',
+    leaveAnyway: 'Quitter quand même',
   },
 
   // ── Streams ─────────────────────────────────────────────────

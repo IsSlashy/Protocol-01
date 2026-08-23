@@ -1,6 +1,22 @@
+/**
+ * EmptyState — what a screen says when it has nothing to show.
+ *
+ * 🎯 REBUILT ON THE REALIGNED THEME 2026-08-23.
+ *   - the title was `text-white text-xl font-bold`: pure white, in the body
+ *     face one weight louder. Both are the exact habits the realignment
+ *     removes. It is warm paper, in the display face.
+ *   - the icon sat in a cyan-tinted disc with a cyan ring. An accent used on
+ *     something that carries no decision spends the one loud colour the system
+ *     has on nothing. It is a quiet panel now.
+ *   - ONE primary action. The secondary is a ghost button and is optional; if a
+ *     screen needs two equally weighted choices here, the screen is the problem.
+ */
+
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+
+import { Colors, Spacing, FontFamily, FontSize, BorderRadius } from '@/constants/theme';
 import { Button } from '../ui/Button';
 
 interface EmptyStateProps {
@@ -27,56 +43,73 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   className,
 }) => {
   return (
-    <View className={`flex-1 items-center justify-center px-8 py-12 ${className || ''}`}>
+    <View style={styles.root} className={className}>
       {illustration || (
-        <View
-          className="w-20 h-20 rounded-full items-center justify-center mb-6"
-          style={{
-            backgroundColor: 'rgba(57, 197, 187, 0.1)',
-            borderWidth: 1,
-            borderColor: 'rgba(57, 197, 187, 0.2)',
-          }}
-        >
-          <Ionicons name={icon} size={36} color="#39c5bb" />
+        <View style={styles.iconWrap}>
+          <Ionicons name={icon} size={28} color={Colors.textTertiary} />
         </View>
       )}
 
-      <Text className="text-white text-xl font-bold text-center mb-2">
-        {title}
-      </Text>
+      <Text style={styles.title}>{title}</Text>
 
-      {description && (
-        <Text className="text-p01-text-secondary text-center text-base mb-6 leading-6">
-          {description}
-        </Text>
-      )}
+      {description ? <Text style={styles.description}>{description}</Text> : null}
 
-      {(actionLabel || secondaryActionLabel) && (
-        <View className="w-full gap-3">
-          {actionLabel && onAction && (
-            <Button
-              variant="primary"
-              size="lg"
-              fullWidth
-              onPress={onAction}
-            >
+      {actionLabel || secondaryActionLabel ? (
+        <View style={styles.actions}>
+          {actionLabel && onAction ? (
+            <Button variant="primary" size="lg" fullWidth onPress={onAction}>
               {actionLabel}
             </Button>
-          )}
-          {secondaryActionLabel && onSecondaryAction && (
-            <Button
-              variant="ghost"
-              size="md"
-              fullWidth
-              onPress={onSecondaryAction}
-            >
+          ) : null}
+          {secondaryActionLabel && onSecondaryAction ? (
+            <Button variant="ghost" size="md" fullWidth onPress={onSecondaryAction}>
               {secondaryActionLabel}
             </Button>
-          )}
+          ) : null}
         </View>
-      )}
+      ) : null}
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing['3xl'],
+    paddingVertical: Spacing['5xl'],
+  },
+  iconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: BorderRadius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    marginBottom: Spacing['2xl'],
+  },
+  title: {
+    fontFamily: FontFamily.display,
+    fontSize: FontSize['2xl'],
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  description: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.md,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginTop: Spacing.sm,
+  },
+  actions: {
+    width: '100%',
+    gap: Spacing.md,
+    marginTop: Spacing['3xl'],
+  },
+});
 
 export default EmptyState;

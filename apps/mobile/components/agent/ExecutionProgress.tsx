@@ -52,7 +52,7 @@ const StepIndicator: React.FC<{ status: ExecutionStep['status'] }> = ({ status }
   if (status === 'completed') {
     return (
       <View className="w-6 h-6 rounded-full bg-p01-cyan items-center justify-center">
-        <Ionicons name="checkmark" size={14} color="#0a0a0c" />
+        <Ionicons name="checkmark" size={14} color="#070709" />
       </View>
     );
   }
@@ -60,7 +60,7 @@ const StepIndicator: React.FC<{ status: ExecutionStep['status'] }> = ({ status }
   if (status === 'failed') {
     return (
       <View className="w-6 h-6 rounded-full bg-red-500 items-center justify-center">
-        <Ionicons name="close" size={14} color="#ffffff" />
+        <Ionicons name="close" size={14} color="#eae7df" />
       </View>
     );
   }
@@ -110,7 +110,7 @@ export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({
   });
 
   const statusConfig = {
-    pending: { color: '#888892', icon: 'time-outline' as const },
+    pending: { color: 'rgba(234, 231, 223, 0.62)', icon: 'time-outline' as const },
     executing: { color: '#39c5bb', icon: 'flash' as const },
     success: { color: '#39c5bb', icon: 'checkmark-circle' as const },
     failed: { color: '#ef4444', icon: 'close-circle' as const },
@@ -179,7 +179,7 @@ export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({
                     className="w-0.5 h-4 mt-1"
                     style={{
                       backgroundColor:
-                        step.status === 'completed' ? '#39c5bb' : '#2a2a30',
+                        step.status === 'completed' ? '#39c5bb' : 'rgba(234, 231, 223, 0.14)',
                     }}
                   />
                 )}
@@ -209,7 +209,7 @@ export const ExecutionProgress: React.FC<ExecutionProgressProps> = ({
 
       {txHash && (
         <View className="flex-row items-center mt-4 pt-4 border-t border-p01-border">
-          <Ionicons name="link-outline" size={14} color="#888892" />
+          <Ionicons name="link-outline" size={14} color="rgba(234, 231, 223, 0.62)" />
           <Text className="text-p01-text-secondary text-xs ml-2 font-mono">
             {txHash.slice(0, 8)}...{txHash.slice(-8)}
           </Text>

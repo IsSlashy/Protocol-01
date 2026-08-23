@@ -14,8 +14,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { PublicKey } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
@@ -31,25 +29,26 @@ import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { licenseServiceTag } from '@/services/license/derive';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { useT } from '@/i18n';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import {
+  Colors,
+  FontFamily,
+  FontSize,
+  BorderRadius,
+  Spacing,
+  Layout,
+} from '@/constants/theme';
+import { Badge } from '@/components/ui';
 import { p01Alert } from '@/stores/alertStore';
 import { withKeepAwake } from '@/utils/keepAwakeDuring';
 
-function GlassCard({ children, style }: { children: React.ReactNode; style?: any }) {
-  return (
-    <View style={[styles.glassOuter, style]}>
-      <BlurView intensity={14} tint="dark" style={styles.glassBlur}>
-        <LinearGradient
-          colors={['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        />
-        {children}
-      </BlurView>
-    </View>
-  );
+/**
+ * ⛔ `GlassCard` IS GONE. It stacked a `BlurView` behind a three-stop diagonal
+ * gradient — cyan into pink into transparent — and every panel on this screen
+ * used it, so the screen rendered as frosted glass over a colour the brand
+ * retired. The site draws a panel as a fill and a hairline rule. So does this.
+ */
+function Panel({ children, style }: { children: React.ReactNode; style?: any }) {
+  return <View style={[styles.panel, style]}>{children}</View>;
 }
 
 export default function SubscribePrivateScreen() {
@@ -318,18 +317,24 @@ export default function SubscribePrivateScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
-      <Animated.View entering={FadeInDown.delay(0)} style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={Colors.text} />
+      {/* ── Header ── */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.iconBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Private Subscription</Text>
-        <View style={{ width: 40 }} />
-      </Animated.View>
+        <Text style={styles.headerTitle} numberOfLines={1}>Private subscription</Text>
+        <View style={styles.headerSpacer} />
+      </View>
 
       {(isLoading || starkStatus) && (
         <View style={styles.stickyProgress}>
-          <ActivityIndicator size="small" color={P01Colors.cyan} />
+          <ActivityIndicator size="small" color={Colors.primary} />
           <Text style={styles.stickyProgressText} numberOfLines={2}>
             {starkStatus ?? progress ?? 'Processing...'}
           </Text>
@@ -347,142 +352,110 @@ export default function SubscribePrivateScreen() {
         </View>
       )}
 
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* STARK status badge */}
-        <Animated.View entering={FadeInDown.delay(50)}>
-          <GlassCard>
-            <View style={styles.starkBadgeInner}>
-              <View style={[
-                styles.starkIndicator,
-                { backgroundColor: starkReady ? 'rgba(16, 185, 129, 0.15)' : 'rgba(139, 92, 246, 0.1)' },
-              ]}>
-                <Ionicons
-                  name="hardware-chip"
-                  size={18}
-                  color={starkReady ? '#10B981' : Colors.textTertiary}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.starkBadgeTitle, starkReady && { color: '#10B981' }]}>
-                  {starkReady ? 'STARK Ready' : 'STARK Loading...'}
-                </Text>
-                <Text style={styles.starkBadgeSubtext}>
-                  {starkReady ? 'Quantum-resistant proof available' : 'Preparing prover...'}
-                </Text>
-              </View>
-              <View style={[
-                styles.starkDot,
-                { backgroundColor: starkReady ? '#10B981' : Colors.textTertiary },
-              ]} />
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* ── Prover state ──
+            One line, because it carries exactly one decision: whether the
+            button below can do anything yet. It used to be a 40pt tinted
+            square, a title, a subtitle and a status dot, in violet. */}
+        <Animated.View entering={FadeInDown.delay(40)} style={styles.proverRow}>
+          <View style={[styles.proverDot, starkReady && styles.proverDotReady]} />
+          <Text style={styles.proverText}>
+            {starkReady
+              ? 'Prover ready — proofs are generated on this phone.'
+              : 'Preparing the prover…'}
+          </Text>
+        </Animated.View>
+
+        {/* ── 1. The note that funds it ── */}
+        <Animated.View entering={FadeInDown.delay(80)}>
+          <Text style={styles.sectionTitle}>Note</Text>
+
+          {matureNotes.length === 0 ? (
+            <Panel>
+              <Text style={styles.emptyTitle}>No matured note</Text>
+              <Text style={styles.emptyText}>
+                Shield SOL first. A note is spendable once it matures, and the wait is
+                enforced on chain — no screen can shorten it.
+              </Text>
+            </Panel>
+          ) : (
+            <View style={styles.noteList}>
+              {matureNotes.map((note, i) => {
+                const selected = selectedNoteId === note.id;
+                return (
+                  <Animated.View key={note.id} entering={FadeInUp.delay(110 + i * 40)}>
+                    <TouchableOpacity
+                      style={[styles.noteCard, selected && styles.noteCardSelected]}
+                      onPress={() => setSelectedNoteId(note.id)}
+                      activeOpacity={0.7}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={`${note.denomination} ${note.token} note`}
+                    >
+                      <View style={[styles.radio, selected && styles.radioSelected]}>
+                        {selected && <View style={styles.radioDot} />}
+                      </View>
+                      <View style={styles.noteBody}>
+                        <Text style={styles.noteAmount}>
+                          {note.denomination} {note.token}
+                        </Text>
+                        <Text style={styles.noteMeta}>Matured, ready to spend</Text>
+                      </View>
+                      <Badge variant="good" size="sm">Ready</Badge>
+                    </TouchableOpacity>
+                  </Animated.View>
+                );
+              })}
             </View>
-          </GlassCard>
-        </Animated.View>
-
-        {/* Note Selection */}
-        <Animated.View entering={FadeInDown.delay(100)}>
-          <Text style={styles.sectionTitle}>1. Select Note</Text>
-
-          {matureNotes.length === 0 && (
-            <GlassCard>
-              <View style={styles.emptyInner}>
-                <Ionicons name="receipt-outline" size={28} color={Colors.textTertiary} />
-                <Text style={styles.emptyText}>
-                  No mature notes available. Shield SOL first and wait for maturity.
-                </Text>
-              </View>
-            </GlassCard>
           )}
-
-          {matureNotes.map((note, i) => (
-            <Animated.View key={note.id} entering={FadeInUp.delay(130 + i * 50)}>
-              <TouchableOpacity
-                style={[
-                  styles.noteCardOuter,
-                  selectedNoteId === note.id && styles.noteCardOuterSelected,
-                ]}
-                onPress={() => setSelectedNoteId(note.id)}
-                activeOpacity={0.7}
-              >
-                <BlurView intensity={14} tint="dark" style={styles.noteCardBlur}>
-                  <LinearGradient
-                    colors={
-                      selectedNoteId === note.id
-                        ? ['rgba(57, 197, 187, 0.1)', 'rgba(57, 197, 187, 0.03)', 'transparent']
-                        : ['rgba(57, 197, 187, 0.06)', 'rgba(255, 119, 168, 0.03)', 'transparent']
-                    }
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={StyleSheet.absoluteFill}
-                    pointerEvents="none"
-                  />
-                  <View style={styles.noteCardRow}>
-                    <View style={styles.noteIconWrap}>
-                      <Ionicons
-                        name={selectedNoteId === note.id ? 'radio-button-on' : 'radio-button-off'}
-                        size={20}
-                        color={selectedNoteId === note.id ? P01Colors.cyan : Colors.textTertiary}
-                      />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.noteAmount}>
-                        {note.denomination} {note.token}
-                      </Text>
-                      <Text style={styles.noteSubtext}>Mature &bull; Ready to use</Text>
-                    </View>
-                    {selectedNoteId === note.id && (
-                      <Ionicons name="checkmark-circle" size={20} color={P01Colors.cyan} />
-                    )}
-                  </View>
-                </BlurView>
-              </TouchableOpacity>
-            </Animated.View>
-          ))}
         </Animated.View>
 
-        {/* Retailer Address */}
+        {/* ── 2. Who gets paid ── */}
+        <Animated.View entering={FadeInUp.delay(160)}>
+          <Text style={styles.sectionTitle}>Retailer address</Text>
+          <TextInput
+            style={styles.input}
+            value={retailer}
+            onChangeText={setRetailer}
+            placeholder="Solana public key"
+            placeholderTextColor={Colors.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            accessibilityLabel="Retailer address"
+          />
+        </Animated.View>
+
+        {/* ── 3. How much, per period ── */}
         <Animated.View entering={FadeInUp.delay(200)}>
-          <Text style={styles.sectionTitle}>2. Retailer Address</Text>
-          <GlassCard>
+          <Text style={styles.sectionTitle}>Rate per period</Text>
+          <View style={styles.inputRow}>
             <TextInput
-              style={styles.input}
-              value={retailer}
-              onChangeText={setRetailer}
-              placeholder="Enter retailer pubkey"
-              placeholderTextColor={Colors.textTertiary}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </GlassCard>
-        </Animated.View>
-
-        {/* Rate */}
-        <Animated.View entering={FadeInUp.delay(250)}>
-          <Text style={styles.sectionTitle}>3. Rate per Period (SOL)</Text>
-          <GlassCard>
-            <TextInput
-              style={styles.input}
+              style={styles.inputFlex}
               value={rate}
               onChangeText={setRate}
               placeholder="1"
               placeholderTextColor={Colors.textTertiary}
               keyboardType="decimal-pad"
+              accessibilityLabel="Rate per period in SOL"
             />
-          </GlassCard>
+            <Text style={styles.inputSuffix}>SOL</Text>
+          </View>
         </Animated.View>
 
-        {/* Progress indicator */}
+        {/* Progress, in place, once something is running. */}
         {(isLoading || starkStatus) && (
-          <Animated.View entering={FadeInUp.delay(300)}>
-            <GlassCard style={{ marginTop: Spacing.lg }}>
-              <View style={styles.progressInner}>
-                <View style={styles.progressSpinner}>
-                  <ActivityIndicator size="small" color={P01Colors.cyan} />
-                </View>
-                <Text style={styles.progressText}>
-                  {starkStatus ?? progress ?? 'Processing...'}
-                </Text>
-              </View>
-            </GlassCard>
+          <Animated.View entering={FadeInUp.delay(240)}>
+            <Panel style={styles.progressPanel}>
+              <ActivityIndicator size="small" color={Colors.primary} />
+              <Text style={styles.progressText}>
+                {starkStatus ?? progress ?? 'Processing...'}
+              </Text>
+            </Panel>
           </Animated.View>
         )}
 
@@ -499,10 +472,10 @@ export default function SubscribePrivateScreen() {
           English, and a hardcoded English block here made that assertion
           vacuous on exactly the path where the money becomes irrecoverable.
         */}
-        <Animated.View entering={FadeInUp.delay(330)}>
+        <Animated.View entering={FadeInUp.delay(280)}>
           <View style={styles.oneWayCard}>
             <View style={styles.oneWayHeader}>
-              <Ionicons name="warning-outline" size={16} color={P01Colors.yellow} />
+              <Ionicons name="warning-outline" size={16} color={Colors.yellow} />
               <Text style={styles.oneWayTitle}>{t('subscribe.oneWayTitle')}</Text>
             </View>
             <Text style={styles.oneWayBody}>{t('subscribe.oneWayBody')}</Text>
@@ -510,37 +483,35 @@ export default function SubscribePrivateScreen() {
           </View>
         </Animated.View>
 
-        {/* Submit Button */}
-        <Animated.View entering={FadeInUp.delay(350)}>
+        {/* ── The one action ── */}
+        <Animated.View entering={FadeInUp.delay(320)}>
           <TouchableOpacity
             style={[styles.submitBtn, isLoading && styles.submitBtnDisabled]}
             onPress={handleSubmit}
             disabled={isLoading}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: isLoading, busy: isLoading }}
           >
-            <Ionicons name="shield-checkmark" size={20} color="#000" />
-            <Text style={styles.submitText}>Create Private Subscription</Text>
+            <Ionicons name="lock-closed" size={18} color={Colors.background} />
+            <Text style={styles.submitText}>Open the vault</Text>
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Privacy footer note */}
-        <Animated.View entering={FadeInUp.delay(400)}>
-          <View style={styles.privacyNote}>
-            <Ionicons name="lock-closed" size={14} color={Colors.textTertiary} />
-            {/*
-              'No private data leaves your phone' was false here for the same
-              reason it was false on the privacy home screen: the proof is
-              uploaded, and subscribe_private_stark carries the deposit's note
-              commitment as `stark_commitment`
-              (services/subscriptionVault/index.ts:549 -> :768). The wallet also
-              signs this instruction (:552), so it is on chain by name.
-            */}
-            <Text style={styles.privacyNoteText}>
-              STARK proofs generated on-device — your note's secrets are never sent to a server.
-              Your wallet still signs this subscription, and the proof carries the same note
-              commitment your deposit published.
-            </Text>
-          </View>
+        {/*
+          'No private data leaves your phone' was false here for the same
+          reason it was false on the privacy home screen: the proof is
+          uploaded, and subscribe_private_stark carries the deposit's note
+          commitment as `stark_commitment`
+          (services/subscriptionVault/index.ts:549 -> :768). The wallet also
+          signs this instruction (:552), so it is on chain by name.
+        */}
+        <Animated.View entering={FadeInUp.delay(360)}>
+          <Text style={styles.footnote}>
+            STARK proofs are generated on-device — your note's secrets are never sent to a
+            server. Your wallet still signs this subscription, and the proof carries the same
+            note commitment your deposit published.
+          </Text>
         </Animated.View>
       </ScrollView>
     </SafeAreaView>
@@ -548,258 +519,258 @@ export default function SubscribePrivateScreen() {
 }
 
 const styles = StyleSheet.create({
-  oneWayCard: {
-    marginTop: Spacing.lg,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.md,
-    backgroundColor: 'rgba(255,204,0,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,204,0,0.4)',
-    gap: 6,
+  container: { flex: 1, backgroundColor: Colors.background },
+  scrollView: { flex: 1 },
+  scrollContent: {
+    paddingHorizontal: Layout.screenPadding,
+    paddingBottom: Layout.tabBarTotalHeight + Spacing['4xl'],
   },
-  oneWayHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  oneWayTitle: {
-    fontSize: 12,
-    fontFamily: FontFamily.bold,
-    letterSpacing: 1,
-    color: P01Colors.yellow,
-  },
-  oneWayBody: {
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: FontFamily.regular,
-    color: Colors.textSecondary,
-  },
-  oneWayStrong: {
-    fontFamily: FontFamily.bold,
-    color: Colors.text,
-  },
-  container: { flex: 1, backgroundColor: 'transparent' },
+
+  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.md,
+    paddingBottom: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.borderSoft,
   },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 9999,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    justifyContent: 'center',
+  iconBtn: {
+    width: 44,
+    height: 44,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
+    flex: 1,
+    fontFamily: FontFamily.displayMedium,
+    fontSize: FontSize.xl,
     color: Colors.text,
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
   },
-  scrollView: { flex: 1 },
-  scrollContent: {
-    paddingHorizontal: Spacing.xl,
-    paddingBottom: 120,
-  },
+  headerSpacer: { width: 44 },
 
-  // Glass card base
-  glassOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
-    marginBottom: Spacing.md,
-  },
-  glassBlur: {
+  // Panel: a fill and a rule.
+  panel: {
     padding: Spacing.lg,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
   },
 
-  // STARK badge
-  starkBadgeInner: {
+  // Prover state
+  proverRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  starkIndicator: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  starkBadgeTitle: {
-    fontSize: 14,
-    fontFamily: FontFamily.semibold,
-    color: Colors.textSecondary,
-  },
-  starkBadgeSubtext: {
-    fontSize: 12,
-    fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    marginTop: 2,
-  },
-  starkDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-
-  // Section titles
-  sectionTitle: {
-    fontSize: 15,
-    fontFamily: FontFamily.semibold,
-    color: Colors.textSecondary,
-    marginBottom: Spacing.md,
-    marginTop: Spacing.lg,
-  },
-
-  // Empty state
-  emptyInner: {
     alignItems: 'center',
     gap: Spacing.sm,
-    paddingVertical: Spacing.md,
+    paddingTop: Spacing.xl,
   },
-  emptyText: {
-    fontSize: 13,
+  proverDot: {
+    width: 7,
+    height: 7,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.textTertiary,
+  },
+  proverDotReady: { backgroundColor: Colors.primary },
+  proverText: {
+    flex: 1,
     fontFamily: FontFamily.regular,
-    color: Colors.textTertiary,
-    lineHeight: 18,
-    textAlign: 'center',
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
   },
 
-  // Note cards
-  noteCardOuter: {
-    borderRadius: 20,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.07)',
-    marginBottom: Spacing.sm,
+  // Sections
+  sectionTitle: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+    marginTop: Spacing['3xl'],
+    marginBottom: Spacing.md,
   },
-  noteCardOuterSelected: {
-    borderColor: P01Colors.cyan,
-  },
-  noteCardBlur: {
-    padding: Spacing.lg,
-    backgroundColor: 'rgba(12, 12, 14, 0.65)',
-  },
-  noteCardRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  noteIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(57, 197, 187, 0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  noteAmount: {
-    fontSize: 16,
-    fontFamily: FontFamily.bold,
+
+  // Empty
+  emptyTitle: {
+    fontFamily: FontFamily.displayMedium,
+    fontSize: FontSize.lg,
     color: Colors.text,
   },
-  noteSubtext: {
-    fontSize: 12,
+  emptyText: {
     fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    lineHeight: 19,
+    color: Colors.textSecondary,
+    marginTop: Spacing.xs,
+  },
+
+  // Notes
+  noteList: { gap: Spacing.sm },
+  noteCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    minHeight: 60,
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  noteCardSelected: {
+    backgroundColor: Colors.primaryDim,
+    borderColor: Colors.primaryMuted,
+  },
+  noteBody: { flex: 1, minWidth: 0 },
+  noteAmount: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.md,
+    color: Colors.text,
+  },
+  noteMeta: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
     color: Colors.textTertiary,
     marginTop: 2,
   },
-
-  // Inputs
-  input: {
-    color: Colors.text,
-    fontFamily: FontFamily.mono,
-    fontSize: 14,
-    padding: 0,
+  radio: {
+    width: 20,
+    height: 20,
+    borderRadius: BorderRadius.full,
+    borderWidth: 2,
+    borderColor: Colors.textTertiary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioSelected: { borderColor: Colors.primary },
+  radioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.primary,
   },
 
-  // Sticky progress (below header, always visible during long flow)
+  // Inputs — 44pt floor, visible label above, never a placeholder as the label.
+  input: {
+    minHeight: 48,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surfaceSecondary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    color: Colors.text,
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.sm,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 48,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surfaceSecondary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  inputFlex: {
+    flex: 1,
+    color: Colors.text,
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.sm,
+    padding: 0,
+  },
+  inputSuffix: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    color: Colors.textTertiary,
+  },
+
+  // Sticky progress, under the header, visible for the whole long flow.
   stickyProgress: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: Spacing.xl,
-    marginBottom: Spacing.md,
+    gap: Spacing.sm,
+    marginHorizontal: Layout.screenPadding,
+    marginTop: Spacing.md,
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
-    borderRadius: 12,
-    backgroundColor: 'rgba(57, 197, 187, 0.15)',
-    borderWidth: 1,
-    borderColor: P01Colors.cyan,
-    gap: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.primaryDim,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.primaryMuted,
   },
   stickyProgressText: {
     flex: 1,
-    color: Colors.text,
-    fontSize: 13,
     fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.text,
   },
   stickyCancel: {
-    width: 28,
-    height: 28,
-    borderRadius: 9999,
-    backgroundColor: Colors.surfaceSecondary,
-    justifyContent: 'center',
+    width: 44,
+    height: 44,
     alignItems: 'center',
+    justifyContent: 'center',
   },
 
-  // Progress
-  progressInner: {
+  // In-place progress
+  progressPanel: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-  },
-  progressSpinner: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(57, 197, 187, 0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: Spacing.md,
+    marginTop: Spacing.xl,
   },
   progressText: {
-    fontSize: 13,
-    fontFamily: FontFamily.medium,
-    color: P01Colors.cyan,
     flex: 1,
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
   },
 
-  // Submit button
-  submitBtn: {
-    backgroundColor: P01Colors.pink,
-    borderRadius: 14,
-    paddingVertical: Spacing.lg,
-    marginTop: Spacing['2xl'],
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 10,
+  // The one-way warning. Amber is caution, and this is the only amber here.
+  oneWayCard: {
+    marginTop: Spacing['3xl'],
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.warningDim,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.yellow,
+    gap: Spacing.sm,
   },
-  submitBtnDisabled: {
-    opacity: 0.4,
+  oneWayHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  oneWayTitle: {
+    flex: 1,
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.yellow,
   },
-  submitText: {
-    fontSize: 16,
-    fontFamily: FontFamily.bold,
-    color: '#000',
-  },
-
-  // Privacy footer
-  privacyNote: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    justifyContent: 'center',
-    marginTop: Spacing.lg,
-  },
-  privacyNoteText: {
-    fontSize: 11,
+  oneWayBody: {
     fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    lineHeight: 19,
+    color: Colors.textSecondary,
+  },
+
+  // Submit
+  submitBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    minHeight: 52,
+    marginTop: Spacing.xl,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.primary,
+  },
+  submitBtnDisabled: { opacity: 0.4 },
+  submitText: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.lg,
+    color: Colors.background,
+  },
+
+  footnote: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    lineHeight: 17,
     color: Colors.textTertiary,
+    marginTop: Spacing.lg,
   },
 });

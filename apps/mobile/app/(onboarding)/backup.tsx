@@ -88,7 +88,7 @@ export default function BackupScreen() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a0c', alignItems: 'center', justifyContent: 'center' }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#070709', alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator size="large" color="#39c5bb" />
       </SafeAreaView>
     );
@@ -97,10 +97,10 @@ export default function BackupScreen() {
   // Show error if seed phrase failed to load
   if (seedPhrase.length === 0) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a0c', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#070709', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
         <View style={{ alignItems: 'center' }}>
           <Ionicons name="warning" size={48} color="#ef4444" />
-          <Text style={{ color: '#ffffff', fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginTop: 16, marginBottom: 8 }}>
+          <Text style={{ color: '#eae7df', fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginTop: 16, marginBottom: 8 }}>
             {t('onboarding.failedToLoadSeed')}
           </Text>
           <Text style={{ color: '#a0a0a0', textAlign: 'center', marginBottom: 24 }}>
@@ -110,7 +110,7 @@ export default function BackupScreen() {
             onPress={() => router.replace('/(onboarding)/create-wallet')}
             style={{ backgroundColor: '#39c5bb', paddingHorizontal: 24, paddingVertical: 14, borderRadius: 12 }}
           >
-            <Text style={{ color: '#ffffff', fontWeight: '600', fontSize: 16 }}>{t('onboarding.tryAgain')}</Text>
+            <Text style={{ color: '#eae7df', fontWeight: '600', fontSize: 16 }}>{t('onboarding.tryAgain')}</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -118,7 +118,7 @@ export default function BackupScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#0a0a0c' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#070709' }}>
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 60, paddingBottom: 24 }}
@@ -142,7 +142,7 @@ export default function BackupScreen() {
           >
             <Ionicons name="key" size={32} color="#39c5bb" />
           </View>
-          <Text style={{ color: '#ffffff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
+          <Text style={{ color: '#eae7df', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
             {t('onboarding.backupSeedPhrase')}
           </Text>
           <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
@@ -154,9 +154,9 @@ export default function BackupScreen() {
         <Animated.View
           entering={FadeInDown.delay(400).duration(600)}
           style={{
-            backgroundColor: '#0f0f12',
+            backgroundColor: '#0d0d10',
             borderWidth: 1,
-            borderColor: '#2a2a30',
+            borderColor: 'rgba(234, 231, 223, 0.14)',
             borderRadius: 16,
             padding: 20,
             marginBottom: 24,
@@ -179,7 +179,7 @@ export default function BackupScreen() {
               marginTop: 16,
               paddingVertical: 12,
               borderWidth: 1,
-              borderColor: '#2a2a30',
+              borderColor: 'rgba(234, 231, 223, 0.14)',
               borderRadius: 12,
             }}
           >
@@ -239,14 +239,14 @@ export default function BackupScreen() {
                 justifyContent: 'center',
                 marginRight: 12,
                 backgroundColor: hasAcknowledged ? '#39c5bb' : 'transparent',
-                borderColor: hasAcknowledged ? '#39c5bb' : '#2a2a30',
+                borderColor: hasAcknowledged ? '#39c5bb' : 'rgba(234, 231, 223, 0.14)',
               }}
             >
               {hasAcknowledged && (
-                <Ionicons name="checkmark" size={16} color="#ffffff" />
+                <Ionicons name="checkmark" size={16} color="#eae7df" />
               )}
             </View>
-            <Text style={{ color: '#ffffff', flex: 1, fontSize: 15 }}>
+            <Text style={{ color: '#eae7df', flex: 1, fontSize: 15 }}>
               {t('onboarding.acknowledgeSeed')}
             </Text>
           </TouchableOpacity>
@@ -264,7 +264,7 @@ export default function BackupScreen() {
               paddingVertical: 16,
               borderRadius: 12,
               alignItems: 'center',
-              backgroundColor: hasAcknowledged ? '#39c5bb' : '#2a2a30',
+              backgroundColor: hasAcknowledged ? '#39c5bb' : 'rgba(234, 231, 223, 0.14)',
               ...(hasAcknowledged
                 ? {
                     shadowColor: '#39c5bb',
@@ -280,7 +280,7 @@ export default function BackupScreen() {
               style={{
                 fontSize: 17,
                 fontWeight: 'bold',
-                color: hasAcknowledged ? '#ffffff' : '#555560',
+                color: hasAcknowledged ? '#eae7df' : 'rgba(234, 231, 223, 0.40)',
               }}
             >
               {t('onboarding.writtenThemDown')}

@@ -69,10 +69,13 @@ export default {
     airdrop: 'Airdrop',
     airdropSuccess: 'Airdrop received! %{amount} SOL',
     airdropFailed: 'Airdrop failed',
-    privacySummary: 'Privacy Summary',
+    privacySummary: 'Private balance',
     shielded: 'Shielded',
     confidential: 'Confidential',
     denominated: 'Denominated',
+    shield: 'Shield',
+    subscribe: 'Subscribe',
+    subscriptions: 'Subscriptions',
   },
 
   // ── Send ────────────────────────────────────────────────────
@@ -327,6 +330,15 @@ export default {
     noteSent: 'Note Sent',
     shareWithRecipient: 'Share the note with the recipient. Anyone with this link can claim the funds.',
     backToNotes: 'Back to Notes',
+    // ⚠️ The transfer screen is where the recipient's note first exists as a
+    // string. It IS persisted — `transferredTo` on the spent note
+    // (stores/denominatedPoolStore.ts:2090, :2253) — and re-sharable from the
+    // notes list, so the copy says "this device" rather than "the only copy",
+    // which would have been the reassuring version of a false statement.
+    noteHeldHere: 'This note is the recipient’s only claim on the funds. It is kept on this device and nowhere else.',
+    notCopiedTitle: 'You have not copied the note',
+    notCopiedBody: 'Anyone holding this note can claim the funds, and the recipient cannot claim them without it. It stays under the transferred note in your notes list, on this device only.',
+    leaveAnyway: 'Leave anyway',
   },
 
   // ── Streams ─────────────────────────────────────────────────

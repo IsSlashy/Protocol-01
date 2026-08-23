@@ -1,6 +1,27 @@
+/**
+ * StreamingIndicator — a dot that says something is live.
+ *
+ * 🎯 REBUILT ON THE REALIGNED THEME 2026-08-23, and made much quieter.
+ *
+ * 🚨 WHAT IT WAS: FOUR looping animations at once — a pulse, a scale, an
+ * opacity fade and an expanding ripple — driving a hot-pink dot that also
+ * carried a 6px drop shadow of itself, plus a fifth interpolation fading the
+ * amount text in and out so the number a user was reading changed brightness
+ * while they read it. That is not an indicator, it is a light show, and it ran
+ * for as long as the screen was open.
+ *
+ * What survives is the one thing the component is for: a slow two-second pulse
+ * on a single accent dot. Everything else was the neon house style the brand
+ * is removing.
+ *
+ * ⚠️ Every prop is unchanged, including `size`, `label` and `showRate`, so no
+ * call site has to move.
+ */
+
 import React, { useEffect, useRef } from 'react';
-import { View, Text, Animated, Easing, ViewProps } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, Animated, Easing, StyleSheet, ViewProps } from 'react-native';
+
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
 
 interface StreamingIndicatorProps extends ViewProps {
   amount?: number;
@@ -12,31 +33,7 @@ interface StreamingIndicatorProps extends ViewProps {
   label?: string;
 }
 
-const ACCENT_PINK = '#ff77a8';
-
-const sizeStyles = {
-  sm: {
-    container: 'px-3 py-2',
-    dot: 6,
-    amountText: 'text-sm',
-    rateText: 'text-xs',
-    gap: 'gap-1.5',
-  },
-  md: {
-    container: 'px-4 py-3',
-    dot: 8,
-    amountText: 'text-base',
-    rateText: 'text-sm',
-    gap: 'gap-2',
-  },
-  lg: {
-    container: 'px-5 py-4',
-    dot: 10,
-    amountText: 'text-xl',
-    rateText: 'text-base',
-    gap: 'gap-2.5',
-  },
-};
+const DOT: Record<'sm' | 'md' | 'lg', number> = { sm: 6, md: 8, lg: 10 };
 
 export const StreamingIndicator: React.FC<StreamingIndicatorProps> = ({
   amount,
@@ -47,223 +44,67 @@ export const StreamingIndicator: React.FC<StreamingIndicatorProps> = ({
   showRate = true,
   label,
   className,
+  style,
   ...props
 }) => {
-  const pulseAnim = useRef(new Animated.Value(0.3)).current;
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-  const rippleAnim = useRef(new Animated.Value(0)).current;
-  const opacityAnim = useRef(new Animated.Value(1)).current;
-
-  const sizeStyle = sizeStyles[size];
+  const pulse = useRef(new Animated.Value(1)).current;
+  const dot = DOT[size];
 
   useEffect(() => {
-    if (isActive) {
-      const pulseAnimation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 800,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 0.3,
-            duration: 800,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-        ])
-      );
-
-      const scaleAnimation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(scaleAnim, {
-            toValue: 1.5,
-            duration: 800,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.timing(scaleAnim, {
-            toValue: 1,
-            duration: 800,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-        ])
-      );
-
-      const opacityAnimation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(opacityAnim, {
-            toValue: 0.4,
-            duration: 800,
-            useNativeDriver: true,
-          }),
-          Animated.timing(opacityAnim, {
-            toValue: 1,
-            duration: 800,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-
-      const rippleAnimation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(rippleAnim, {
-            toValue: 1,
-            duration: 1500,
-            easing: Easing.out(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.timing(rippleAnim, {
-            toValue: 0,
-            duration: 0,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-
-      pulseAnimation.start();
-      scaleAnimation.start();
-      opacityAnimation.start();
-      rippleAnimation.start();
-
-      return () => {
-        pulseAnimation.stop();
-        scaleAnimation.stop();
-        opacityAnimation.stop();
-        rippleAnimation.stop();
-      };
+    if (!isActive) {
+      pulse.setValue(0.4);
+      return;
     }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 0.35,
+          duration: 1000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 1000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
   }, [isActive]);
 
-  const rippleScale = rippleAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 2.5],
-  });
+  const theDot = (
+    <Animated.View
+      style={[
+        styles.dot,
+        { width: dot, height: dot, borderRadius: dot / 2, opacity: pulse },
+        !isActive && styles.dotIdle,
+      ]}
+    />
+  );
 
-  const rippleOpacity = rippleAnim.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [0.5, 0.2, 0],
-  });
-
-  // Simple label mode (for badges)
+  // Label mode — used inline inside a card.
   if (label !== undefined) {
     return (
-      <View
-        className={`flex-row items-center ${sizeStyle.gap} ${className || ''}`}
-        {...props}
-      >
-        <View className="relative">
-          {/* Outer pulse ring */}
-          <Animated.View
-            style={{
-              position: 'absolute',
-              width: sizeStyle.dot * 2,
-              height: sizeStyle.dot * 2,
-              borderRadius: sizeStyle.dot,
-              backgroundColor: ACCENT_PINK,
-              transform: [{ scale: scaleAnim }],
-              opacity: opacityAnim.interpolate({
-                inputRange: [0.4, 1],
-                outputRange: [0.3, 0],
-              }),
-              left: -sizeStyle.dot / 2,
-              top: -sizeStyle.dot / 2,
-            }}
-          />
-          {/* Inner dot */}
-          <Animated.View
-            style={{
-              width: sizeStyle.dot,
-              height: sizeStyle.dot,
-              borderRadius: sizeStyle.dot / 2,
-              backgroundColor: ACCENT_PINK,
-              opacity: opacityAnim,
-              shadowColor: ACCENT_PINK,
-              shadowOpacity: 0.8,
-              shadowRadius: 6,
-              shadowOffset: { width: 0, height: 0 },
-            }}
-          />
-        </View>
-        {label && (
-          <Text
-            className={`font-semibold ${sizeStyle.rateText}`}
-            style={{ color: ACCENT_PINK }}
-          >
-            {label}
-          </Text>
-        )}
+      <View style={[styles.labelRow, style]} className={className} {...props}>
+        {theDot}
+        {label ? <Text style={styles.labelText}>{label}</Text> : null}
       </View>
     );
   }
 
-  // Full mode with amount and rate
+  // Full mode — the dot, the amount and the rate.
   return (
-    <View
-      className={`
-        flex-row items-center
-        rounded-xl
-        ${sizeStyle.container}
-        ${className || ''}
-      `}
-      style={{ backgroundColor: 'rgba(255, 119, 168, 0.1)', borderWidth: 1, borderColor: 'rgba(255, 119, 168, 0.3)' }}
-      {...props}
-    >
-      <View className="relative items-center justify-center mr-3">
-        {isActive && (
-          <Animated.View
-            className="absolute rounded-full"
-            style={{
-              width: sizeStyle.dot * 2,
-              height: sizeStyle.dot * 2,
-              backgroundColor: ACCENT_PINK,
-              transform: [{ scale: rippleScale }],
-              opacity: rippleOpacity,
-            }}
-          />
-        )}
-        <Animated.View
-          className="rounded-full"
-          style={{
-            width: sizeStyle.dot,
-            height: sizeStyle.dot,
-            backgroundColor: ACCENT_PINK,
-            opacity: pulseAnim,
-            transform: [{ scale: scaleAnim }],
-            shadowColor: ACCENT_PINK,
-            shadowOpacity: 0.8,
-            shadowRadius: 6,
-            shadowOffset: { width: 0, height: 0 },
-          }}
-        />
-      </View>
-
-      <View className="flex-1">
-        <View className="flex-row items-center">
-          <Animated.Text
-            className={`font-bold ${sizeStyle.amountText}`}
-            style={{
-              color: ACCENT_PINK,
-              opacity: isActive
-                ? pulseAnim.interpolate({
-                    inputRange: [0.3, 1],
-                    outputRange: [0.7, 1],
-                  })
-                : 0.5,
-            }}
-          >
-            {amount?.toFixed(6)} {symbol}
-          </Animated.Text>
-          {isActive && (
-            <View className="ml-2">
-              <Ionicons name="pulse" size={16} color={ACCENT_PINK} />
-            </View>
-          )}
-        </View>
+    <View style={[styles.panel, style]} className={className} {...props}>
+      {theDot}
+      <View style={styles.panelBody}>
+        <Text style={[styles.amount, sizeAmount[size]]}>
+          {amount?.toFixed(6)} {symbol}
+        </Text>
         {showRate && ratePerSecond !== undefined && (
-          <Text className={`text-p01-text-secondary ${sizeStyle.rateText}`}>
+          <Text style={styles.rate}>
             {isActive ? 'Streaming' : 'Paused'} at {ratePerSecond.toFixed(8)}/sec
           </Text>
         )}
@@ -271,5 +112,50 @@ export const StreamingIndicator: React.FC<StreamingIndicatorProps> = ({
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  dot: { backgroundColor: Colors.primary },
+  dotIdle: { backgroundColor: Colors.textTertiary },
+
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  labelText: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.xs,
+    color: Colors.primary,
+  },
+
+  panel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  panelBody: { flex: 1, minWidth: 0 },
+  // An amount is mono, and it does not fade while somebody is reading it.
+  amount: {
+    fontFamily: FontFamily.mono,
+    color: Colors.text,
+  },
+  rate: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+});
+
+const sizeAmount = StyleSheet.create({
+  sm: { fontSize: FontSize.sm },
+  md: { fontSize: FontSize.md },
+  lg: { fontSize: FontSize.xl },
+});
 
 export default StreamingIndicator;

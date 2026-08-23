@@ -11,13 +11,15 @@ export {
 } from './ui';
 
 // Wallet Components
+// ⛔ The six unrendered Tailwind relics that used to be listed here were
+// deleted on 2026-08-23. See the note in ./wallet/index.ts.
 export {
-  BalanceCard,
-  AssetRow,
-  ActivityItem,
-  SendForm,
-  ReceiveQR,
-  PrivacySelector,
+  WalletHeader,
+  AssetsList,
+  RecentActivity,
+  PrivacySummaryPill,
+  SubscriptionsStrip,
+  DevnetAirdropFAB,
 } from './wallet';
 
 // Streams Components

@@ -1,23 +1,52 @@
-import React, { useState, useEffect, useCallback } from 'react';
+/**
+ * Deposit — turn transparent SOL into one shielded note.
+ *
+ * 🎯 WHAT THIS SCREEN LOST, 2026-08-23
+ * ────────────────────────────────────
+ * It was a picker, then a bottom sheet that repeated the picker's numbers back
+ * at you, then a full-screen success card with a Done button. Three surfaces,
+ * two of which added no information the previous one had not already shown.
+ *
+ * The sheet is gone. Choosing a denomination shows what will happen and who
+ * signs it, and there is ONE button. The success card is gone too: on success
+ * the screen goes back to Shield, where the new note is sitting in the list
+ * with its countdown running. That IS the receipt, and it is the place the user
+ * was going anyway.
+ *
+ * ⚠️ THE DENOMINATION USUALLY ARRIVES ALREADY CHOSEN. The Shield tab carries
+ * the picker inline now and passes `denomination` as a route param; this screen
+ * preselects it. The grid stays because a deep link, or a holder of an older
+ * note, can land here without one.
+ *
+ * ⛔ ONLY THE 1 SOL POOL TAKES NEW DEPOSITS (founder, 2026-08-21). Every other
+ * pool is SHOWN and REFUSED WITH THE REASON rather than hidden — a denomination
+ * that silently vanishes reads as a bug to someone who holds a note in it.
+ *
+ * 🚨 THE ONE THING THAT MAY NOT BE COLLAPSED AWAY is who signs the deposit, and
+ * it is NOT the same for both tokens: on SOL a one-time key signs and the
+ * wallet funds it with a public transfer; on USDC the wallet itself is the
+ * depositor (`useEphemeralDepositor` is `pool.token === 'SOL' && localKp`,
+ * stores/denominatedPoolStore.ts:1176). Both lines are keyed off the token, in
+ * two places, and `app/privacy-claims.test.ts` fails if either one is dropped
+ * or merged into a single reassuring sentence.
+ *
+ * ⚠️ NO LOGIC WAS TOUCHED. `handleConfirmShield` — the balance pre-check, the
+ * filled_subtrees layout chooser, the C6 proof, the public-input invariant and
+ * the two store calls — is the same code with the same arguments.
+ */
+
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
-  ActivityIndicator,
-  Modal,
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import Animated, {
-  FadeIn,
-  FadeInDown,
-  SlideInDown,
-  SlideOutDown,
-} from 'react-native-reanimated';
 import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 
 import { useDenominatedPoolStore, findSafeShieldCounter } from '@/stores/denominatedPoolStore';
@@ -44,14 +73,23 @@ import { useStarkProver } from '@/providers/StarkProverProvider';
 import { Buffer } from 'buffer';
 import { withKeepAwake } from '@/utils/keepAwakeDuring';
 import { useT } from '@/i18n';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Button } from '@/components/ui/Button';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
 
 type TokenTab = 'SOL' | 'USDC';
+
+/** ⛔ The only pool open to new deposits. See the header note. */
+const OPEN_TOKEN: TokenTab = 'SOL';
+const OPEN_DENOMINATION = 1;
+
+const isOpenPool = (pool: PoolConfig) =>
+  pool.token === OPEN_TOKEN && pool.denomination === OPEN_DENOMINATION;
 
 // ─── Main Screen ──────────────────────────────────────────────────
 export default function DenominatedShieldScreen() {
   const router = useRouter();
   const t = useT();
+  const params = useLocalSearchParams<{ denomination?: string }>();
   const [tokenTab, setTokenTab] = useState<TokenTab>('SOL');
   const [walletBalance, setWalletBalance] = useState<number>(0);
   const [loadingBalance, setLoadingBalance] = useState(true);
@@ -61,12 +99,12 @@ export default function DenominatedShieldScreen() {
   // would fire two parallel shields → counter collision. `submitting` is
   // flipped on tap immediately and reset in the finally block.
   const [submitting, setSubmitting] = useState(false);
-  const [resultModal, setResultModal] = useState<{
-    visible: boolean;
-    type: 'success' | 'error';
-    title: string;
-    message: string;
-  }>({ visible: false, type: 'success', title: '', message: '' });
+  /**
+   * The refusal a user needs, next to the control that produced it, with
+   * `accessibilityRole="alert"`. It used to be a modal — a dialog that has to
+   * be dismissed before the number it is complaining about can be seen again.
+   */
+  const [failure, setFailure] = useState<string | null>(null);
 
   const {
     isLoading,
@@ -106,10 +144,23 @@ export default function DenominatedShieldScreen() {
     refreshPoolInfo();
   }, [fetchBalance]);
 
+  /**
+   * Preselect. The Shield tab already asked the question, so this screen does
+   * not ask it again; it states the consequence and executes.
+   */
+  useEffect(() => {
+    if (selectedPool) return;
+    const wanted = params.denomination ? Number(params.denomination) : OPEN_DENOMINATION;
+    const match = pools.find(p => p.denomination === wanted && isOpenPool(p))
+      ?? pools.find(isOpenPool);
+    if (match) setSelectedPool(match);
+  }, [params.denomination, pools, selectedPool]);
+
   const balanceSol = walletBalance / LAMPORTS_PER_SOL;
 
   const handleSelectPool = useCallback((pool: PoolConfig) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setFailure(null);
     setSelectedPool(pool);
   }, []);
 
@@ -117,6 +168,7 @@ export default function DenominatedShieldScreen() {
     if (!selectedPool) return;
     if (submitting) return; // re-tap guard (sync — fires before isLoading flips)
     setSubmitting(true);
+    setFailure(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
@@ -132,13 +184,10 @@ export default function DenominatedShieldScreen() {
 
     const needed = Number(selectedPool.denominationAtomic);
     if (selectedPool.token === 'SOL' && currentBalance < needed + 50_000) {
-      setSelectedPool(null);
-      setResultModal({
-        visible: true,
-        type: 'error',
-        title: 'Insufficient Balance',
-        message: `You need ${selectedPool.denomination} SOL + fees.\nCurrent: ${(currentBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL`,
-      });
+      setFailure(
+        `Not enough SOL. This deposit needs ${selectedPool.denomination} SOL plus network fees, ` +
+        `and your wallet holds ${(currentBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL.`,
+      );
       return;
     }
 
@@ -294,39 +343,41 @@ export default function DenominatedShieldScreen() {
         await withKeepAwake('p01-shield', () => shieldNote(selectedPool));
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      const pool = selectedPool;
-      setSelectedPool(null);
-      setResultModal({
-        visible: true,
-        type: 'success',
-        title: 'Deposited!',
-        message: `${pool.denomination} ${pool.token}${pool.version === 'v3' ? ' (V3)' : ''} is now in your private wallet.\nIt will be ready to use in ~1 hour.`,
-      });
-      fetchBalance();
+      // ⛔ No success card, no Done button. The note is on the Shield screen
+      // with its countdown already running, which is both the receipt and
+      // where the user was going next.
+      router.back();
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setSelectedPool(null);
-      setResultModal({
-        visible: true,
-        type: 'error',
-        title: 'Deposit Failed',
-        message: err.message || 'An unknown error occurred.',
-      });
+      setFailure(err.message || 'The deposit did not go through.');
     }
     } finally {
       setSubmitting(false);
     }
-  }, [selectedPool, walletBalance, walletPublicKey, shieldNote, shieldNoteV3, fetchBalance, starkReady, generateMerkleUpdateProof, submitting]);
+  }, [selectedPool, walletBalance, walletPublicKey, shieldNote, shieldNoteV3, router, starkReady, generateMerkleUpdateProof, submitting]);
+
+  const busy = isLoading || submitting;
+  const canAfford = useMemo(
+    () => (selectedPool && selectedPool.token === 'SOL'
+      ? balanceSol >= selectedPool.denomination
+      : true),
+    [selectedPool, balanceSol],
+  );
 
   return (
     <SafeAreaView style={st.container} edges={['top']}>
       {/* Header */}
       <View style={st.header}>
-        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={Colors.text} />
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={st.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={st.headerTitle}>Deposit</Text>
-        <View style={{ width: 40 }} />
+        <Text style={st.headerTitle} accessibilityRole="header">{t('privacy.deposit')}</Text>
+        <View style={st.headerSpacer} />
       </View>
 
       <ScrollView
@@ -334,76 +385,78 @@ export default function DenominatedShieldScreen() {
         contentContainerStyle={st.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Balance */}
-        <Animated.View entering={FadeIn.duration(300)}>
-          <View style={st.balanceCard}>
-            <Text style={st.balanceLabel}>Available</Text>
-            <View style={st.balanceRow}>
-              <Text style={st.balanceValue}>
-                {loadingBalance ? '...' : balanceSol.toFixed(4)}
-              </Text>
-              <Text style={st.balanceSuffix}>SOL</Text>
-            </View>
-          </View>
-        </Animated.View>
+        {/* Balance — a line, not a card. It informs one decision. */}
+        <Text style={st.balanceLabel}>In your wallet</Text>
+        <View style={st.balanceRow}>
+          <Text style={st.balanceValue}>{loadingBalance ? '—' : balanceSol.toFixed(4)}</Text>
+          <Text style={st.balanceUnit}>SOL</Text>
+        </View>
 
         {/* Token toggle */}
-        <Animated.View entering={FadeInDown.delay(50).duration(250)}>
-          <View style={st.tokenRow}>
-            {(['SOL', 'USDC'] as TokenTab[]).map(tab => (
+        <View style={st.tokenRow}>
+          {(['SOL', 'USDC'] as TokenTab[]).map(tab => {
+            const active = tokenTab === tab;
+            return (
               <TouchableOpacity
                 key={tab}
-                style={[st.tokenBtn, tokenTab === tab && st.tokenBtnActive]}
-                onPress={() => { Haptics.selectionAsync(); setTokenTab(tab); }}
+                style={[st.tokenBtn, active && st.tokenBtnActive]}
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setTokenTab(tab);
+                  setSelectedPool(null);
+                  setFailure(null);
+                }}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={tab}
               >
-                <Text style={[st.tokenText, tokenTab === tab && st.tokenTextActive]}>
-                  {tab}
-                </Text>
+                <Text style={[st.tokenText, active && st.tokenTextActive]}>{tab}</Text>
               </TouchableOpacity>
-            ))}
-          </View>
-        </Animated.View>
-
-        {/* Amount chips */}
-        <Animated.View entering={FadeInDown.delay(100).duration(300)}>
-          <Text style={st.sectionLabel}>Choose amount</Text>
-          <View style={st.chipsGrid}>
-            {pools.map((pool) => {
-              const canAfford = pool.token === 'SOL' ? balanceSol >= pool.denomination : true;
-
-              return (
-                <TouchableOpacity
-                  key={pool.poolPDA.toBase58()}
-                  style={[
-                    st.chip,
-                    !canAfford && st.chipDimmed,
-                  ]}
-                  onPress={() => handleSelectPool(pool)}
-                  disabled={isLoading || !canAfford}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[st.chipAmount, !canAfford && st.chipAmountDim]}>
-                    {pool.denomination}
-                  </Text>
-                  <Text style={st.chipToken}>{pool.token}</Text>
-                  {pool.version === 'v3' && (
-                    <View style={st.v3Badge}>
-                      <Text style={st.v3BadgeText}>V3</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </Animated.View>
-
-        {/* Hint */}
-        <View style={st.hint}>
-          <Ionicons name="information-circle-outline" size={14} color={Colors.textTertiary} />
-          <Text style={st.hintText}>
-            Deposits with the same amount are indistinguishable from each other.
-          </Text>
+            );
+          })}
         </View>
+
+        {/* Denominations. Closed pools are shown and refused, never hidden. */}
+        <Text style={st.sectionLabel}>Amount</Text>
+        <View style={st.chipsGrid}>
+          {pools.map((pool) => {
+            const open = isOpenPool(pool);
+            const selected = selectedPool?.poolPDA.equals(pool.poolPDA) ?? false;
+            return (
+              <TouchableOpacity
+                key={pool.poolPDA.toBase58()}
+                style={[st.chip, selected && st.chipSelected, !open && st.chipClosed]}
+                onPress={() => handleSelectPool(pool)}
+                disabled={busy || !open}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityState={{ selected, disabled: !open }}
+                accessibilityLabel={
+                  `${pool.denomination} ${pool.token}${open ? '' : ', closed to new deposits'}`
+                }
+              >
+                <Text style={[st.chipAmount, selected && st.chipAmountSelected]}>
+                  {pool.denomination}
+                </Text>
+                <Text style={st.chipToken}>{open ? pool.token : 'closed'}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/*
+          The refusal, with its reason. Founder decision 2026-08-21: one
+          denomination, because a crowd does not add across pools, it splits.
+        */}
+        <Text style={st.refusal}>
+          Only the {OPEN_DENOMINATION} SOL pool takes new deposits. Every deposit lands there so
+          the crowd stays in one place instead of splitting across six. Notes you already hold in
+          the other pools stay spendable, and you can withdraw or send them as usual.
+        </Text>
+
+        <Text style={st.note}>
+          Deposits with the same amount are indistinguishable from each other.
+        </Text>
 
         {/*
           Who signs the deposit, per token. This is the one thing the deposit
@@ -415,336 +468,252 @@ export default function DenominatedShieldScreen() {
           :1235-1239. Keying the line off `tokenTab` keeps the two cases from
           ever being collapsed into one reassuring sentence.
         */}
-        <View style={st.hint}>
+        <View style={st.disclosure}>
           <Ionicons
             name={tokenTab === 'SOL' ? 'key-outline' : 'eye-outline'}
-            size={14}
-            color={tokenTab === 'SOL' ? P01Colors.cyan : P01Colors.yellow}
+            size={16}
+            color={tokenTab === 'SOL' ? Colors.primary : Colors.yellow}
           />
-          <Text style={st.hintText}>
+          <Text style={st.disclosureText}>
             {tokenTab === 'SOL'
               ? t('shieldUnshield.depositSignerSol')
               : t('shieldUnshield.depositSignerUsdc')}
           </Text>
         </View>
 
-        {error && !isLoading && (
-          <View style={st.errorCard}>
-            <Ionicons name="warning" size={16} color={Colors.error} />
-            <Text style={st.errorText}>{error}</Text>
-          </View>
+        {/*
+          Kept from the old confirm sheet's fine print. This is a fund-safety
+          warning, not a privacy claim, and dropping it as a side effect of a
+          layout pass would be a regression in its own right.
+        */}
+        <Text style={st.note}>{t('privacy.notesStoredLocally')}</Text>
+
+        {/* ─── The one action ─────────────────────────────── */}
+        {selectedPool && (
+          <>
+            {/*
+              The last surface before the deposit is signed, so it repeats who
+              signs rather than only saying where the note is kept.
+              `selectedPool.token` is what actually routes the depositor choice,
+              so read it here rather than `tokenTab`.
+            */}
+            <Text style={st.finePrint}>
+              {selectedPool.token === 'SOL'
+                ? t('shieldUnshield.depositSignerSol')
+                : t('shieldUnshield.depositSignerUsdc')}
+            </Text>
+
+            <Button
+              variant="primary"
+              size="lg"
+              fullWidth
+              loading={busy}
+              disabled={busy || !canAfford}
+              style={st.action}
+              onPress={handleConfirmShield}
+              accessibilityLabel={`Deposit ${selectedPool.denomination} ${selectedPool.token}`}
+            >
+              {`Deposit ${selectedPool.denomination} ${selectedPool.token}`}
+            </Button>
+
+            {/* ⚠️ The progress line lives OUTSIDE the button. A loading button
+                renders a spinner and drops its children, and a proof that runs
+                for two minutes behind a bare spinner is indistinguishable from
+                a hang. */}
+            {busy && (
+              <Text style={st.progress} accessibilityLiveRegion="polite">
+                {progress || 'Depositing. Keep the app open; the proof runs on this phone.'}
+              </Text>
+            )}
+
+            {!canAfford && !busy && (
+              <Text style={st.error} accessibilityRole="alert">
+                Your wallet holds {balanceSol.toFixed(4)} SOL, and this deposit needs{' '}
+                {selectedPool.denomination} SOL plus network fees.
+              </Text>
+            )}
+          </>
+        )}
+
+        {/* Errors sit under the control that produced them and announce
+            themselves: a wallet flow that fails quietly costs money. */}
+        {failure && (
+          <Text style={st.error} accessibilityRole="alert">{failure}</Text>
+        )}
+        {error && !isLoading && !failure && (
+          <Text style={st.error} accessibilityRole="alert">{error}</Text>
         )}
       </ScrollView>
-
-      {/* ─── Confirm Sheet ──────────────────────────────── */}
-      {selectedPool && (
-        <Modal
-          visible
-          transparent
-          animationType="none"
-          onRequestClose={() => { if (!isLoading) setSelectedPool(null); }}
-          statusBarTranslucent
-        >
-          <View style={cs.overlay}>
-            <TouchableOpacity
-              style={cs.backdrop}
-              activeOpacity={1}
-              onPress={isLoading ? undefined : () => setSelectedPool(null)}
-            />
-            <Animated.View
-              entering={SlideInDown.duration(200)}
-              exiting={SlideOutDown.duration(150)}
-              style={cs.sheet}
-            >
-              <View style={cs.dragRow}>
-                <View style={cs.dragHandle} />
-              </View>
-
-              {/* Amount */}
-              <View style={cs.amountRow}>
-                <Text style={cs.amountValue}>{selectedPool.denomination}</Text>
-                <Text style={cs.amountToken}>{selectedPool.token}</Text>
-              </View>
-
-              {/* Details */}
-              <View style={cs.details}>
-                <View style={cs.detailRow}>
-                  <Text style={cs.detailLabel}>Your balance</Text>
-                  <Text style={cs.detailValue}>{balanceSol.toFixed(4)} SOL</Text>
-                </View>
-                <View style={cs.detailRow}>
-                  <Text style={cs.detailLabel}>Ready in</Text>
-                  <Text style={cs.detailValue}>~1 hour</Text>
-                </View>
-              </View>
-
-              {/* Processing */}
-              {isLoading && (
-                <Animated.View entering={FadeIn.duration(200)} style={cs.processingCard}>
-                  <ActivityIndicator size="small" color={P01Colors.cyan} />
-                  <Text style={cs.processingText}>{progress || 'Processing...'}</Text>
-                </Animated.View>
-              )}
-
-              {/* Buttons */}
-              <View style={cs.actions}>
-                <TouchableOpacity
-                  style={cs.cancelBtn}
-                  onPress={() => setSelectedPool(null)}
-                  disabled={isLoading}
-                >
-                  <Text style={cs.cancelText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[cs.confirmBtn, (isLoading || submitting) && { opacity: 0.5 }]}
-                  onPress={handleConfirmShield}
-                  disabled={isLoading || submitting}
-                >
-                  {(isLoading || submitting) ? (
-                    <ActivityIndicator size="small" color="#000" />
-                  ) : (
-                    <Text style={cs.confirmText}>
-                      Deposit {selectedPool.denomination} {selectedPool.token}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-
-              {/*
-                The confirm sheet is the last surface before the deposit is
-                signed, so it repeats who signs rather than only saying where
-                the note is kept. `selectedPool.token` is what actually routes
-                the depositor choice, so read it here rather than `tokenTab`.
-              */}
-              <Text style={cs.finePrint}>
-                {selectedPool.token === 'SOL'
-                  ? t('shieldUnshield.depositSignerSol')
-                  : t('shieldUnshield.depositSignerUsdc')}
-              </Text>
-              {/*
-                Kept from the previous fine print. This is a fund-safety
-                warning, not a privacy claim, and dropping it as a side effect
-                of a copy pass would be a regression in its own right.
-              */}
-              <Text style={cs.finePrint}>
-                {t('privacy.notesStoredLocally')}
-              </Text>
-            </Animated.View>
-          </View>
-        </Modal>
-      )}
-
-      {/* ─── Result Modal ───────────────────────────────── */}
-      {resultModal.visible && (
-        <Modal visible transparent animationType="fade" statusBarTranslucent>
-          <View style={rm.overlay}>
-            <TouchableOpacity
-              style={rm.backdrop}
-              activeOpacity={1}
-              onPress={() => setResultModal(m => ({ ...m, visible: false }))}
-            />
-            <View style={rm.card}>
-              <View style={[rm.iconWrap, {
-                backgroundColor: resultModal.type === 'success' ? P01Colors.cyanDim : Colors.errorDim,
-              }]}>
-                <Ionicons
-                  name={resultModal.type === 'success' ? 'checkmark-circle' : 'alert-circle'}
-                  size={40}
-                  color={resultModal.type === 'success' ? P01Colors.cyan : Colors.error}
-                />
-              </View>
-              <Text style={rm.title}>{resultModal.title}</Text>
-              <Text style={rm.message}>{resultModal.message}</Text>
-              <View style={rm.actions}>
-                {resultModal.type === 'success' && (
-                  <TouchableOpacity
-                    style={rm.primaryBtn}
-                    onPress={() => {
-                      setResultModal(m => ({ ...m, visible: false }));
-                      router.push('/(main)/(privacy)/denominated-notes' as any);
-                    }}
-                  >
-                    <Text style={rm.primaryText}>View Notes</Text>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity
-                  style={rm.secondaryBtn}
-                  onPress={() => setResultModal(m => ({ ...m, visible: false }))}
-                >
-                  <Text style={rm.secondaryText}>
-                    {resultModal.type === 'success' ? 'Done' : 'OK'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      )}
     </SafeAreaView>
   );
 }
 
-// ─── Main Styles ──────────────────────────────────────────────────
+// ─── Styles ───────────────────────────────────────────────────────
 const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    minHeight: 56,
   },
   backBtn: {
-    width: 40, height: 40, borderRadius: 9999,
-    backgroundColor: Colors.surfaceSecondary, justifyContent: 'center', alignItems: 'center',
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  headerTitle: { color: Colors.text, fontSize: 20, fontFamily: FontFamily.bold },
+  headerTitle: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
+    paddingHorizontal: Spacing.xs,
+  },
+  headerSpacer: { width: 44 },
+
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: 120 },
+  scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing['6xl'] },
 
   // Balance
-  balanceCard: {
-    backgroundColor: '#0f0f12', borderRadius: 20, padding: 20, marginBottom: Spacing.lg,
+  balanceLabel: {
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+    marginTop: Spacing.md,
   },
-  balanceLabel: { fontSize: 13, fontFamily: FontFamily.medium, color: Colors.textSecondary, marginBottom: 4 },
-  balanceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
-  balanceValue: { fontSize: 32, fontFamily: FontFamily.bold, color: Colors.text },
-  balanceSuffix: { fontSize: 16, fontFamily: FontFamily.medium, color: Colors.textSecondary },
+  balanceRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  balanceValue: {
+    fontSize: FontSize['3xl'],
+    fontFamily: FontFamily.display,
+    color: Colors.text,
+    fontVariant: ['tabular-nums'],
+  },
+  balanceUnit: {
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+  },
 
   // Token toggle
-  tokenRow: { flexDirection: 'row', gap: 8, marginBottom: Spacing.lg },
-  tokenBtn: {
-    paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20,
-    backgroundColor: Colors.surfaceSecondary,
+  tokenRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginTop: Spacing['3xl'],
   },
-  tokenBtnActive: { backgroundColor: P01Colors.cyanDim },
-  tokenText: { fontSize: 14, fontFamily: FontFamily.semibold, color: Colors.textSecondary },
-  tokenTextActive: { color: P01Colors.cyan },
+  tokenBtn: {
+    minHeight: 44,
+    minWidth: 88,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xl,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  tokenBtnActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryDim },
+  tokenText: {
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.medium,
+    color: Colors.textSecondary,
+  },
+  tokenTextActive: { color: Colors.text },
 
-  // Chips
+  // Denominations
   sectionLabel: {
-    fontSize: 14, fontFamily: FontFamily.semibold, color: Colors.text, marginBottom: 12,
+    fontSize: FontSize.lg,
+    fontFamily: FontFamily.displayMedium,
+    color: Colors.text,
+    marginTop: Spacing['3xl'],
+    marginBottom: Spacing.md,
   },
   chipsGrid: {
-    flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
   },
   chip: {
-    width: '30%' as any,
+    width: '31%',
     flexGrow: 1,
+    minHeight: 64,
     alignItems: 'center',
-    paddingVertical: 18,
-    borderRadius: 16,
-    backgroundColor: '#0f0f12',
-    borderWidth: 1,
-    borderColor: 'rgba(57, 197, 187, 0.15)',
+    justifyContent: 'center',
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
   },
-  chipDimmed: { opacity: 0.35, borderColor: Colors.border },
-  chipAmount: { fontSize: 22, fontFamily: FontFamily.bold, color: Colors.text },
-  chipAmountDim: { color: Colors.textSecondary },
-  chipToken: { fontSize: 12, fontFamily: FontFamily.medium, color: Colors.textSecondary, marginTop: 2 },
-  v3Badge: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 4,
-    backgroundColor: 'rgba(0, 224, 255, 0.18)',
+  chipSelected: { borderColor: Colors.primary, backgroundColor: Colors.primaryDim },
+  chipClosed: { opacity: 0.4 },
+  chipAmount: {
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
+    color: Colors.textSecondary,
+    fontVariant: ['tabular-nums'],
   },
-  v3BadgeText: {
-    fontSize: 8,
-    fontFamily: FontFamily.bold,
-    color: P01Colors.cyan,
-    letterSpacing: 0.5,
+  chipAmountSelected: { color: Colors.text },
+  chipToken: {
+    fontSize: FontSize.xs,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    marginTop: 2,
   },
 
-  // Hint
-  hint: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
-    padding: 12, backgroundColor: '#0f0f12', borderRadius: 12, marginBottom: Spacing.lg,
+  refusal: {
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    color: Colors.yellow,
+    lineHeight: 19,
+    marginTop: Spacing.lg,
   },
-  hintText: { flex: 1, fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textTertiary, lineHeight: 17 },
+  note: {
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    lineHeight: 19,
+    marginTop: Spacing.lg,
+  },
 
-  // Error
-  errorCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: Colors.errorDim, borderRadius: 12, padding: 12,
+  disclosure: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.sm,
+    marginTop: Spacing.lg,
   },
-  errorText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: Colors.error },
-});
+  disclosureText: {
+    flex: 1,
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+    lineHeight: 19,
+  },
 
-// ─── Confirm Sheet Styles ─────────────────────────────────────────
-const cs = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.7)' },
-  sheet: {
-    backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    paddingHorizontal: Spacing.xl, paddingBottom: 40,
-  },
-  dragRow: { alignItems: 'center', paddingTop: 10, paddingBottom: 16 },
-  dragHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: Colors.border },
-  amountRow: {
-    flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center',
-    gap: 8, marginBottom: 20,
-  },
-  amountValue: { fontSize: 48, fontFamily: FontFamily.bold, color: Colors.text },
-  amountToken: { fontSize: 20, fontFamily: FontFamily.medium, color: Colors.textSecondary },
-  details: {
-    backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 14, padding: 14, marginBottom: 16,
-  },
-  detailRow: {
-    flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8,
-  },
-  detailLabel: { fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textTertiary },
-  detailValue: { fontSize: 13, fontFamily: FontFamily.semibold, color: Colors.text },
-  processingCard: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-    backgroundColor: P01Colors.cyanDim, borderRadius: 12, padding: 12, marginBottom: 12,
-  },
-  processingText: { fontSize: 13, fontFamily: FontFamily.medium, color: P01Colors.cyan },
-  actions: { flexDirection: 'row', gap: 10 },
-  cancelBtn: {
-    flex: 0.35, paddingVertical: 14, borderRadius: 12, alignItems: 'center',
-    borderWidth: 1, borderColor: Colors.border,
-  },
-  cancelText: { fontSize: 15, fontFamily: FontFamily.semibold, color: Colors.text },
-  confirmBtn: {
-    flex: 0.65, paddingVertical: 14, borderRadius: 12, alignItems: 'center',
-    backgroundColor: P01Colors.cyan,
-  },
-  confirmText: { fontSize: 15, fontFamily: FontFamily.bold, color: '#000' },
   finePrint: {
-    fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary,
-    textAlign: 'center', marginTop: 12,
+    fontSize: FontSize.xs,
+    fontFamily: FontFamily.regular,
+    color: Colors.textTertiary,
+    lineHeight: 17,
+    marginTop: Spacing['3xl'],
   },
-});
-
-// ─── Result Modal Styles ──────────────────────────────────────────
-const rm = StyleSheet.create({
-  overlay: {
-    flex: 1, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.75)',
+  action: { marginTop: Spacing.md },
+  progress: {
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+    lineHeight: 19,
+    textAlign: 'center',
+    marginTop: Spacing.md,
   },
-  backdrop: { ...StyleSheet.absoluteFillObject },
-  card: {
-    width: '85%', maxWidth: 360, backgroundColor: Colors.surface,
-    borderRadius: 20, overflow: 'hidden', alignItems: 'center', padding: 24,
+  error: {
+    fontSize: FontSize.sm,
+    fontFamily: FontFamily.regular,
+    color: Colors.error,
+    lineHeight: 19,
+    marginTop: Spacing.md,
   },
-  iconWrap: {
-    width: 64, height: 64, borderRadius: 32,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 16,
-  },
-  title: { fontSize: 20, fontFamily: FontFamily.bold, color: Colors.text, marginBottom: 8 },
-  message: {
-    fontSize: 14, fontFamily: FontFamily.regular, color: Colors.textSecondary,
-    textAlign: 'center', lineHeight: 20, marginBottom: 20,
-  },
-  actions: { width: '100%', gap: 10 },
-  primaryBtn: {
-    paddingVertical: 14, borderRadius: 12, alignItems: 'center',
-    backgroundColor: P01Colors.cyan,
-  },
-  primaryText: { fontSize: 15, fontFamily: FontFamily.bold, color: '#000' },
-  secondaryBtn: {
-    paddingVertical: 14, borderRadius: 12, alignItems: 'center',
-    borderWidth: 1, borderColor: Colors.border,
-  },
-  secondaryText: { fontSize: 15, fontFamily: FontFamily.semibold, color: Colors.text },
 });

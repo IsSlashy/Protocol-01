@@ -1,3 +1,26 @@
+/**
+ * Send a note — and the one screen in the app that produces a secret the user
+ * must carry off it by hand.
+ *
+ * 🚨 WHY THIS SCREEN IS NOT THE USUAL SUCCESS CARD. The transfer mints a fresh
+ * `(secret, nullifier_preimage)` pair for the recipient and hands it back as
+ * one encoded string. Nothing on chain, and nothing on the recipient's device,
+ * knows that string yet: until it is copied out of here and delivered, the
+ * recipient has no claim on the money. So the copy control is the PRIMARY
+ * action, in the accent, full width — not one of two equal chips under a
+ * checkmark — and leaving without having taken it asks first.
+ *
+ * ⚠️ AND THE WARNING SAYS WHAT IS TRUE, NOT WHAT IS SCARIEST. The string is
+ * persisted as `transferredTo` on the spent note
+ * (stores/denominatedPoolStore.ts:2090, :2253) and can be re-shared from the
+ * notes list, so this does not claim it is the only copy. It says it lives on
+ * this device and nowhere else, which is the fact that should change behaviour.
+ *
+ * 🎯 Realigned on constants/theme.ts 2026-08-23: the note cards, the radios and
+ * the send button were hardcoded `#3b82f6`, and the button label `#000` — a
+ * second accent and a pure black the palette does not contain.
+ */
+
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
@@ -6,6 +29,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   Share,
+  BackHandler,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -32,7 +56,8 @@ import {
 } from '@/services/denominatedPool';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { getConnection } from '@/services/solana/connection';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
+import { Button } from '@/components/ui';
 import { p01Alert } from '@/stores/alertStore';
 import { useT } from '@/i18n';
 
@@ -83,6 +108,10 @@ function TransferScreenContent() {
   const [result, setResult] = useState<{ txSig: string; shareableNote: string } | null>(null);
   // Sync re-tap guard (store's isLoading flips after STARK gen starts).
   const [submitting, setSubmitting] = useState(false);
+  // Has the note left this screen yet? Copy or share both count; the guard
+  // below is about the user having the string, not about which control gave it
+  // to them.
+  const [noteTaken, setNoteTaken] = useState(false);
 
   const matureNotes = useMemo(
     () => notes.filter(n => n.status === 'mature'),
@@ -262,64 +291,132 @@ function TransferScreenContent() {
     await Clipboard.setStringAsync(result.shareableNote);
     setTimeout(() => Clipboard.setStringAsync(''), 60000);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setNoteTaken(true);
     p01Alert(t('alerts.copied'), t('alerts.clipboardClears'));
   }, [result]);
 
   const handleShare = useCallback(async () => {
     if (!result) return;
     await Share.share({ message: result.shareableNote, title: 'Protocol 01 — Private Note' });
+    setNoteTaken(true);
   }, [result]);
+
+  /**
+   * Leaving the result screen. ⚠️ This is the one confirmation in this pass
+   * that is NOT deleted: it carries information the user cannot get anywhere
+   * else on the way out, and the alternative to reading it is a recipient who
+   * never receives the money.
+   */
+  const leaveResult = useCallback(
+    (go: () => void) => {
+      if (noteTaken) {
+        go();
+        return;
+      }
+      p01Alert(
+        t('denomTransfer.notCopiedTitle'),
+        t('denomTransfer.notCopiedBody'),
+        [
+          { text: t('shieldUnshield.copyNote'), onPress: () => { handleCopy(); } },
+          { text: t('denomTransfer.leaveAnyway'), style: 'destructive', onPress: go },
+        ],
+        'warning',
+      );
+    },
+    [noteTaken, handleCopy, t],
+  );
+
+  // Android's hardware back is a way off this screen too, and it bypassed every
+  // control on it.
+  useEffect(() => {
+    if (!result) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (noteTaken) return false;
+      leaveResult(() => router.back());
+      return true;
+    });
+    return () => sub.remove();
+  }, [result, noteTaken, leaveResult, router]);
 
   // ─── Result screen ─────────────────────────────────
   if (result) {
     return (
       <View style={[st.container, { paddingTop: insets.top }]}>
         <View style={st.header}>
-          <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
-            <Ionicons name="arrow-back" size={22} color={Colors.text} />
+          <TouchableOpacity
+            onPress={() => leaveResult(() => router.back())}
+            style={st.backBtn}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.back')}
+          >
+            <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
           </TouchableOpacity>
           <Text style={st.headerTitle}>{t('denomTransfer.noteSent')}</Text>
-          <View style={{ width: 40 }} />
+          <View style={st.headerSpacer} />
         </View>
 
-        <View style={st.resultContainer}>
-          <Animated.View entering={FadeIn.duration(400)} style={st.resultContent}>
-            <View style={st.resultIcon}>
-              <Ionicons name="checkmark-circle" size={48} color={P01Colors.cyan} />
-            </View>
-            <Text style={st.resultTitle}>{t('denomTransfer.noteSent')}</Text>
-            {note && (
-              <Text style={st.resultAmount}>{note.denomination} {note.token}</Text>
-            )}
-            <Text style={st.resultTx}>Tx: {result.txSig.slice(0, 16)}...</Text>
+        <ScrollView
+          style={st.scroll}
+          contentContainerStyle={[st.scrollContent, { paddingBottom: Spacing['3xl'] }]}
+        >
+          <Animated.View entering={FadeIn.duration(300)}>
+            {note ? (
+              <Text style={st.resultAmount}>
+                {note.denomination} {note.token}
+              </Text>
+            ) : null}
+            <Text style={st.resultTx}>{result.txSig.slice(0, 16)}…</Text>
 
-            <Text style={st.resultHint}>
-              {t('denomTransfer.shareWithRecipient')}
-            </Text>
-
-            <View style={st.resultActions}>
-              <TouchableOpacity style={st.resultBtn} onPress={handleCopy}>
-                <Ionicons name="copy-outline" size={18} color={P01Colors.cyan} />
-                <Text style={st.resultBtnText}>{t('shieldUnshield.copyNote')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={st.resultBtn} onPress={handleShare}>
-                <Ionicons name="share-outline" size={18} color={P01Colors.cyan} />
-                <Text style={st.resultBtnText}>{t('common.share')}</Text>
-              </TouchableOpacity>
+            {/* The note itself, on screen. It was previously invisible: the
+                user was asked to copy a thing they had never been shown. */}
+            <Text style={st.blobLabel}>{t('denomTransfer.shareWithRecipient')}</Text>
+            <View style={st.blobPanel}>
+              <Text style={st.blobText} numberOfLines={4} selectable>
+                {result.shareableNote}
+              </Text>
             </View>
 
-            <View style={st.warningRow}>
-              <Ionicons name="lock-closed" size={12} color={P01Colors.yellow} />
-              <Text style={st.warningText}>{t('shieldUnshield.shareNote')}</Text>
+            <View style={st.cautionPanel}>
+              <Ionicons name="alert-circle-outline" size={16} color={Colors.warning} />
+              <Text style={st.cautionText}>{t('denomTransfer.noteHeldHere')}</Text>
             </View>
           </Animated.View>
+        </ScrollView>
 
-          <TouchableOpacity
-            style={st.doneBtn}
-            onPress={() => router.push('/(main)/(privacy)/denominated-notes' as any)}
+        {/* One primary action, and it is the one that gets the note out. */}
+        <View style={[st.footer, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            onPress={handleCopy}
+            accessibilityLabel={t('shieldUnshield.copyNote')}
+            icon={
+              <Ionicons
+                name={noteTaken ? 'checkmark' : 'copy-outline'}
+                size={18}
+                color={Colors.background}
+              />
+            }
           >
-            <Text style={st.doneBtnText}>{t('denomTransfer.backToNotes')}</Text>
-          </TouchableOpacity>
+            {noteTaken ? t('common.copied') : t('shieldUnshield.copyNote')}
+          </Button>
+
+          <Button variant="secondary" size="md" fullWidth onPress={handleShare}>
+            {t('common.share')}
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="md"
+            fullWidth
+            onPress={() =>
+              leaveResult(() => router.push('/(main)/(privacy)/denominated-notes' as any))
+            }
+          >
+            {t('denomTransfer.backToNotes')}
+          </Button>
         </View>
       </View>
     );
@@ -329,11 +426,17 @@ function TransferScreenContent() {
   return (
     <View style={[st.container, { paddingTop: insets.top }]}>
       <View style={st.header}>
-        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={Colors.text} />
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={st.backBtn}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel={t('common.back')}
+        >
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
         <Text style={st.headerTitle}>{t('denomTransfer.title')}</Text>
-        <View style={{ width: 40 }} />
+        <View style={st.headerSpacer} />
       </View>
 
       <ScrollView
@@ -342,17 +445,23 @@ function TransferScreenContent() {
       >
         {matureNotes.length === 0 ? (
           <Animated.View entering={FadeIn.duration(300)} style={st.emptyState}>
-            <Ionicons name="receipt-outline" size={48} color={Colors.textTertiary} />
+            <View style={st.emptyIcon}>
+              <Ionicons name="receipt-outline" size={28} color={Colors.textTertiary} />
+            </View>
             <Text style={st.emptyTitle}>{t('shieldUnshield.noMatureNotes')}</Text>
             <Text style={st.emptyDesc}>
               {t('shieldUnshield.depositFirst')}
             </Text>
-            <TouchableOpacity
-              style={st.emptyBtn}
-              onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
-            >
-              <Text style={st.emptyBtnText}>{t('privacy.deposit')}</Text>
-            </TouchableOpacity>
+            <View style={st.emptyAction}>
+              <Button
+                variant="primary"
+                size="lg"
+                fullWidth
+                onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
+              >
+                {t('privacy.deposit')}
+              </Button>
+            </View>
           </Animated.View>
         ) : (
           <>
@@ -370,12 +479,10 @@ function TransferScreenContent() {
                         setSelectedNoteId(n.id);
                       }}
                       activeOpacity={0.7}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: isSelected }}
+                      accessibilityLabel={`${n.denomination} ${n.token}`}
                     >
-                      <View style={[st.noteIcon, isSelected && st.noteIconSelected]}>
-                        <Text style={[st.noteIconText, isSelected && st.noteIconTextSelected]}>
-                          {n.token === 'SOL' ? 'S' : '$'}
-                        </Text>
-                      </View>
                       <View style={st.noteInfo}>
                         <Text style={st.noteAmount}>{n.denomination} {n.token}</Text>
                         <Text style={st.noteId}>{t('denomTransfer.readyToSend')}</Text>
@@ -390,7 +497,7 @@ function TransferScreenContent() {
             </Animated.View>
 
             {error && (
-              <View style={st.errorCard}>
+              <View style={st.errorCard} accessibilityRole="alert">
                 <Ionicons name="alert-circle" size={16} color={Colors.error} />
                 <Text style={st.errorText}>{error}</Text>
               </View>
@@ -402,24 +509,34 @@ function TransferScreenContent() {
       {/* Send button */}
       {matureNotes.length > 0 && (
         <View style={[st.footer, { paddingBottom: 80 + insets.bottom }]}>
-          <TouchableOpacity
-            style={[st.sendBtn, (!selectedNoteId || isLoading || submitting) && st.sendBtnDisabled]}
+          <Button
+            variant="primary"
+            size="lg"
+            fullWidth
+            loading={isLoading}
+            disabled={!selectedNoteId || submitting}
             onPress={handleTransfer}
-            disabled={!selectedNoteId || isLoading || submitting}
+            icon={
+              isLoading ? undefined : (
+                <Ionicons name="paper-plane-outline" size={18} color={Colors.background} />
+              )
+            }
           >
-            {isLoading ? (
-              <Text style={st.sendBtnText}>
-                {isProving ? t('shieldUnshield.generatingProof') : progress || t('common.processing')}
-              </Text>
-            ) : (
-              <>
-                <Ionicons name="paper-plane" size={18} color="#000" />
-                <Text style={st.sendBtnText}>
-                  {note ? `${t('common.send')} ${note.denomination} ${note.token}` : t('shieldUnshield.sendNote')}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
+            {note
+              ? `${t('common.send')} ${note.denomination} ${note.token}`
+              : t('shieldUnshield.sendNote')}
+          </Button>
+
+          {/* ⚠️ The button spinner replaces its label, and proof generation is
+              the longest wait in the app. The step goes under the button
+              instead of being swallowed by it. */}
+          {isLoading ? (
+            <Text style={st.progressText} accessibilityLiveRegion="polite">
+              {isProving
+                ? t('shieldUnshield.generatingProof')
+                : progress || t('common.processing')}
+            </Text>
+          ) : null}
         </View>
       )}
     </View>
@@ -430,105 +547,121 @@ const st = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
+    paddingHorizontal: Spacing.md, minHeight: 56,
   },
   backBtn: {
-    width: 40, height: 40, borderRadius: 9999,
-    backgroundColor: Colors.surfaceSecondary, justifyContent: 'center', alignItems: 'center',
+    width: 44, height: 44,
+    justifyContent: 'center', alignItems: 'center',
   },
-  headerTitle: { color: Colors.text, fontSize: 20, fontFamily: FontFamily.bold },
+  headerSpacer: { width: 44 },
+  headerTitle: {
+    flex: 1, color: Colors.text, fontSize: FontSize.xl, fontFamily: FontFamily.displayMedium,
+  },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: Spacing.xl },
 
   // Section
   sectionLabel: {
-    fontSize: 14, fontFamily: FontFamily.medium, color: Colors.textSecondary, marginBottom: 12,
+    fontSize: FontSize.sm, fontFamily: FontFamily.medium,
+    color: Colors.textSecondary, marginBottom: Spacing.md,
   },
 
-  // Notes list
-  notesList: { gap: 8 },
+  // Notes list — a flat panel and a hairline, like every other panel.
+  notesList: { gap: Spacing.sm },
   noteCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 16, borderRadius: 16, backgroundColor: '#0f0f12',
-    borderWidth: 1.5, borderColor: 'transparent',
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+    minHeight: 64, padding: Spacing.lg,
+    borderRadius: BorderRadius.lg, backgroundColor: Colors.surface,
+    borderWidth: 1, borderColor: Colors.border,
   },
-  noteCardSelected: { borderColor: '#3b82f6' },
-  noteIcon: {
-    width: 40, height: 40, borderRadius: 12,
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  noteIconSelected: { backgroundColor: 'rgba(59, 130, 246, 0.2)' },
-  noteIconText: { fontSize: 16, fontFamily: FontFamily.bold, color: '#3b82f6' },
-  noteIconTextSelected: { color: '#3b82f6' },
+  noteCardSelected: { borderColor: Colors.primary },
   noteInfo: { flex: 1 },
-  noteAmount: { fontSize: 16, fontFamily: FontFamily.bold, color: Colors.text },
-  noteId: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 2 },
+  noteAmount: { fontSize: FontSize.lg, fontFamily: FontFamily.monoMedium, color: Colors.text },
+  noteId: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textSecondary, marginTop: 2,
+  },
   radio: {
-    width: 22, height: 22, borderRadius: 11,
-    borderWidth: 2, borderColor: Colors.border,
+    width: 22, height: 22, borderRadius: BorderRadius.full,
+    borderWidth: 1.5, borderColor: Colors.borderLight,
     alignItems: 'center', justifyContent: 'center',
   },
-  radioSelected: { borderColor: '#3b82f6' },
-  radioDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#3b82f6' },
+  radioSelected: { borderColor: Colors.primary },
+  radioDot: {
+    width: 10, height: 10, borderRadius: BorderRadius.full,
+    backgroundColor: Colors.primary,
+  },
 
   // Empty state
   emptyState: {
     alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 60, gap: 12,
+    paddingVertical: Spacing['6xl'],
   },
-  emptyTitle: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.text },
+  emptyIcon: {
+    width: 56, height: 56, borderRadius: BorderRadius.full,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
+    marginBottom: Spacing['2xl'],
+  },
+  emptyTitle: {
+    fontSize: FontSize['2xl'], fontFamily: FontFamily.display,
+    color: Colors.text, textAlign: 'center',
+  },
   emptyDesc: {
-    fontSize: 14, fontFamily: FontFamily.regular, color: Colors.textSecondary,
-    textAlign: 'center', lineHeight: 20, paddingHorizontal: 20,
+    fontSize: FontSize.md, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+    textAlign: 'center', lineHeight: 22, marginTop: Spacing.sm,
   },
-  emptyBtn: {
-    paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12,
-    backgroundColor: P01Colors.cyanDim, marginTop: 8,
-  },
-  emptyBtnText: { fontSize: 14, fontFamily: FontFamily.semibold, color: P01Colors.cyan },
+  emptyAction: { width: '100%', marginTop: Spacing['3xl'] },
 
   // Error
   errorCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: Colors.errorDim, borderRadius: 12, padding: 12, marginTop: 16,
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    backgroundColor: Colors.errorDim, borderRadius: BorderRadius.md,
+    padding: Spacing.md, marginTop: Spacing.lg,
   },
-  errorText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: Colors.error },
+  errorText: {
+    flex: 1, fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: Colors.error,
+  },
 
   // Footer
-  footer: { paddingHorizontal: Spacing.xl, paddingTop: Spacing.md },
-  sendBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 16, borderRadius: 14, backgroundColor: '#3b82f6',
+  footer: { paddingHorizontal: Spacing.xl, paddingTop: Spacing.md, gap: Spacing.md },
+  progressText: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular,
+    color: Colors.textSecondary, textAlign: 'center',
   },
-  sendBtnDisabled: { opacity: 0.4 },
-  sendBtnText: { fontSize: 16, fontFamily: FontFamily.bold, color: '#000' },
 
   // Result
-  resultContainer: { flex: 1, justifyContent: 'space-between', paddingHorizontal: Spacing.xl },
-  resultContent: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
-  resultIcon: { marginBottom: 8 },
-  resultTitle: { fontSize: 22, fontFamily: FontFamily.bold, color: Colors.text },
-  resultAmount: { fontSize: 18, fontFamily: FontFamily.semibold, color: '#3b82f6' },
-  resultTx: { fontSize: 12, fontFamily: FontFamily.mono, color: Colors.textTertiary },
-  resultHint: {
-    fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary,
-    textAlign: 'center', lineHeight: 19, marginTop: 12, paddingHorizontal: 16,
+  resultAmount: {
+    fontSize: FontSize['3xl'], fontFamily: FontFamily.display, color: Colors.text,
+    marginTop: Spacing.lg,
   },
-  resultActions: { flexDirection: 'row', gap: 12, marginTop: 20 },
-  resultBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12,
-    backgroundColor: P01Colors.cyanDim,
+  resultTx: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.mono, color: Colors.textTertiary,
+    marginTop: Spacing.xs,
   },
-  resultBtnText: { fontSize: 14, fontFamily: FontFamily.medium, color: P01Colors.cyan },
-  warningRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 16,
+  blobLabel: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+    lineHeight: 20, marginTop: Spacing['2xl'], marginBottom: Spacing.md,
   },
-  warningText: { fontSize: 12, fontFamily: FontFamily.regular, color: P01Colors.yellow },
-  doneBtn: {
-    paddingVertical: 16, borderRadius: 14, alignItems: 'center',
-    backgroundColor: '#0f0f12', marginBottom: 80,
+  blobPanel: {
+    backgroundColor: Colors.surfaceSecondary,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
+    padding: Spacing.lg,
   },
-  doneBtnText: { fontSize: 15, fontFamily: FontFamily.semibold, color: Colors.text },
+  blobText: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.mono, color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  cautionPanel: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm,
+    backgroundColor: Colors.warningDim,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md, marginTop: Spacing.lg,
+  },
+  cautionText: {
+    flex: 1, fontSize: FontSize.sm, fontFamily: FontFamily.regular,
+    color: Colors.text, lineHeight: 19,
+  },
 });

@@ -28,13 +28,13 @@ interface ActionPreviewProps {
 const actionConfig: Record<ActionType, { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
   send: { icon: 'arrow-up-circle', color: '#39c5bb' },
   swap: { icon: 'swap-horizontal', color: '#3b82f6' },
-  stream: { icon: 'water', color: '#ff77a8' },
+  stream: { icon: 'water', color: '#39c5bb' },
   stake: { icon: 'layers', color: '#f97316' },
   bridge: { icon: 'git-network', color: '#14b8a6' },
 };
 
 const statusConfig: Record<ActionStatus, { label: string; color: string }> = {
-  preview: { label: 'Preview', color: '#888892' },
+  preview: { label: 'Preview', color: 'rgba(234, 231, 223, 0.62)' },
   pending: { label: 'Pending', color: '#eab308' },
   confirmed: { label: 'Confirmed', color: '#39c5bb' },
   failed: { label: 'Failed', color: '#ef4444' },
@@ -112,7 +112,7 @@ export const ActionPreview: React.FC<ActionPreviewProps> = ({
         <View className="flex-row items-center justify-between mb-4">
           {estimatedFee && (
             <View className="flex-row items-center">
-              <Ionicons name="flash-outline" size={14} color="#888892" />
+              <Ionicons name="flash-outline" size={14} color="rgba(234, 231, 223, 0.62)" />
               <Text className="text-p01-text-secondary text-xs ml-1">
                 Est. fee: {estimatedFee}
               </Text>

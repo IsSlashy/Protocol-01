@@ -1,8 +1,14 @@
 /**
- * FingerprintVerification — Modal showing visual fingerprint for MITM check
+ * FingerprintVerification — the man-in-the-middle check, as a comparison the
+ * user makes with their eyes.
  *
- * Displays 6 hex blocks that both devices should match.
- * Users confirm by visual comparison (like Signal safety numbers).
+ * Six hex blocks that both devices must show. Confirmed by visual comparison,
+ * the way Signal safety numbers are.
+ *
+ * 🎯 REALIGNED ON constants/theme.ts 2026-08-23. The code itself is the only
+ * thing on this card that the accent is spent on now: the shield disc above the
+ * title was a second cyan object competing with the six digits the whole modal
+ * exists to make you read.
  */
 
 import React from 'react';
@@ -15,7 +21,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
 
 interface Props {
   visible: boolean;
@@ -56,11 +62,11 @@ export default function FingerprintVerification({
           {/* Header */}
           <View style={styles.iconRow}>
             <View style={styles.shieldIcon}>
-              <Ionicons name="shield-checkmark" size={32} color={P01Colors.cyan} />
+              <Ionicons name="shield-checkmark-outline" size={24} color={Colors.textSecondary} />
             </View>
           </View>
 
-          <Text style={styles.title}>Verify Connection</Text>
+          <Text style={styles.title}>Verify the connection</Text>
           <Text style={styles.subtitle}>
             Compare this code with{' '}
             {peerName ? (
@@ -73,23 +79,34 @@ export default function FingerprintVerification({
 
           {/* Fingerprint display */}
           <View style={styles.fingerprintBox}>
-            <Text style={styles.fingerprintText}>{fingerprint}</Text>
+            <Text style={styles.fingerprintText} accessibilityLabel={`Code ${fingerprint}`}>
+              {fingerprint}
+            </Text>
           </View>
 
           <Text style={styles.hint}>
-            If the codes don't match, tap "No Match" — someone may be intercepting the connection.
+            If the codes differ, choose “They differ” — someone may be intercepting the
+            connection.
           </Text>
 
           {/* Actions */}
           <View style={styles.actions}>
-            <TouchableOpacity style={styles.rejectBtn} onPress={handleReject}>
-              <Ionicons name="close" size={18} color={Colors.error} />
-              <Text style={styles.rejectText}>No Match</Text>
+            <TouchableOpacity
+              style={styles.rejectBtn}
+              onPress={handleReject}
+              accessibilityRole="button"
+              accessibilityLabel="The codes differ, cancel the connection"
+            >
+              <Text style={styles.rejectText}>They differ</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm}>
-              <Ionicons name="checkmark" size={18} color="#000" />
-              <Text style={styles.confirmText}>Codes Match</Text>
+            <TouchableOpacity
+              style={styles.confirmBtn}
+              onPress={handleConfirm}
+              accessibilityRole="button"
+              accessibilityLabel="The codes match, continue"
+            >
+              <Text style={styles.confirmText}>They match</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -98,10 +115,17 @@ export default function FingerprintVerification({
   );
 }
 
+/**
+ * The scrim, derived from the ground token the way `components/ui/AlertModal`
+ * derives it, so a change to the ink reaches it. `b8` is 0.72 in the 8-digit
+ * hex form React Native accepts.
+ */
+const SCRIM = `${Colors.background}b8`;
+
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: SCRIM,
     justifyContent: 'center',
     alignItems: 'center',
     padding: Spacing.xl,
@@ -110,55 +134,56 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
-    padding: Spacing.xl,
+    padding: Spacing['2xl'],
     alignItems: 'center',
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.border,
   },
-  iconRow: { marginBottom: Spacing.md },
+  iconRow: { marginBottom: Spacing.lg },
   shieldIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: P01Colors.cyanDim,
+    width: 48,
+    height: 48,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.surfaceTertiary,
     justifyContent: 'center',
     alignItems: 'center',
   },
   title: {
-    fontSize: 20,
-    fontFamily: FontFamily.bold,
+    fontSize: FontSize['2xl'],
+    fontFamily: FontFamily.display,
     color: Colors.text,
     marginBottom: Spacing.sm,
+    textAlign: 'center',
   },
   subtitle: {
-    fontSize: 14,
+    fontSize: FontSize.md,
     fontFamily: FontFamily.regular,
     color: Colors.textSecondary,
     textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: Spacing.lg,
+    lineHeight: 22,
+    marginBottom: Spacing.xl,
   },
-  peerName: { fontFamily: FontFamily.semibold, color: P01Colors.cyan },
+  peerName: { fontFamily: FontFamily.medium, color: Colors.text },
   fingerprintBox: {
     backgroundColor: Colors.background,
     borderRadius: BorderRadius.md,
-    paddingVertical: Spacing.lg,
+    paddingVertical: Spacing.xl,
     paddingHorizontal: Spacing.xl,
     marginBottom: Spacing.lg,
     borderWidth: 1,
-    borderColor: P01Colors.cyan + '40',
+    borderColor: Colors.primaryMuted,
     width: '100%',
     alignItems: 'center',
   },
   fingerprintText: {
-    fontSize: 20,
-    fontFamily: FontFamily.mono,
-    color: P01Colors.cyan,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.monoMedium,
+    color: Colors.primary,
     letterSpacing: 2,
     textAlign: 'center',
   },
   hint: {
-    fontSize: 12,
+    fontSize: FontSize.xs,
     fontFamily: FontFamily.regular,
     color: Colors.textTertiary,
     textAlign: 'center',
@@ -172,26 +197,24 @@ const styles = StyleSheet.create({
   },
   rejectBtn: {
     flex: 1,
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 14,
+    minHeight: 48,
+    paddingHorizontal: Spacing.lg,
     borderRadius: BorderRadius.md,
     backgroundColor: Colors.errorDim,
     borderWidth: 1,
-    borderColor: Colors.error + '40',
+    borderColor: Colors.error,
   },
-  rejectText: { fontSize: 15, fontFamily: FontFamily.semibold, color: Colors.error },
+  rejectText: { fontSize: FontSize.md, fontFamily: FontFamily.medium, color: Colors.error },
   confirmBtn: {
     flex: 1,
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 14,
+    minHeight: 48,
+    paddingHorizontal: Spacing.lg,
     borderRadius: BorderRadius.md,
-    backgroundColor: P01Colors.cyan,
+    backgroundColor: Colors.primary,
   },
-  confirmText: { fontSize: 15, fontFamily: FontFamily.bold, color: '#000' },
+  confirmText: { fontSize: FontSize.md, fontFamily: FontFamily.medium, color: Colors.background },
 });

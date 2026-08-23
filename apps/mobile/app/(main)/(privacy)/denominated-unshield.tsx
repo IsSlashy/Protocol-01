@@ -1,3 +1,23 @@
+/**
+ * Withdraw — take one note back out to a transparent address.
+ *
+ * 🎯 WHAT CHANGED 2026-08-23. Nothing about what it does; everything about how
+ * it reads.
+ *   - ⛔ NO MORE ALL-CAPS LABELS. `USED NOTES`, `IMMATURE`, and four uppercase
+ *     section headers with letter-spacing. That house style is being removed.
+ *   - The emergency mode was painted in an orange (`#FF6B35`) that exists in no
+ *     palette this project has ever had — it was neither the caution amber nor
+ *     the red, so it read as a third meaning nobody defined. Emergency is
+ *     destructive: it is the red now.
+ *   - Headings are the display face, and the confirm button is the shared
+ *     `Button`, so it inherits the 44pt floor, the disabled treatment and the
+ *     busy state instead of restating them.
+ *   - Errors sit next to what produced them with `accessibilityRole="alert"`.
+ *
+ * ⚠️ `executeUnshield` — the stealth resolution, the biometric gate, the C1/C3
+ * proofs and both store calls — is untouched, arguments included.
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput,
@@ -7,7 +27,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import {
   useDenominatedPoolStore, type StoredNote, type NoteStatus,
@@ -26,7 +45,8 @@ import { getConnection } from '@/services/solana/connection';
 import { useWalletStore } from '@/stores/walletStore';
 import { PublicKey } from '@solana/web3.js';
 import { Buffer } from 'buffer';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
+import { Button } from '@/components/ui/Button';
 import { OperationProgressBar } from '@/components/ui/OperationProgressBar';
 import { requireBiometricAuth } from '@/utils/biometricGate';
 import { withKeepAwake } from '@/utils/keepAwakeDuring';
@@ -309,295 +329,269 @@ export default function DenominatedUnshieldScreen() {
     }
   }, [emergencyToggle, executeUnshield, t]);
 
-  const statusIcon = (status: NoteStatus) => {
+
+  // ⛔ Sentence case, and one tone per state. A note is ready, waiting, or done.
+  const statusTone = (status: NoteStatus) => {
     switch (status) {
-      case 'mature': return { name: 'checkmark-circle' as const, color: P01Colors.cyan };
-      case 'pending': return { name: 'time' as const, color: P01Colors.yellow };
-      default: return { name: 'close-circle' as const, color: Colors.textTertiary };
+      case 'mature': return { label: t('common.ready'), good: true };
+      case 'pending': return { label: t('privacy.maturing'), good: false };
+      default: return { label: t('privacy.spent'), good: false };
     }
   };
+
+  const canSubmit = !!selectedNote && !isLoading && !submitting;
 
   return (
     <View style={[st.container, { paddingTop: insets.top }]}>
       {/* ── Header ── */}
       <View style={st.header}>
-        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
-          <Ionicons name="arrow-back" size={20} color={Colors.text} />
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={st.iconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={st.headerTitle}>
+        <Text style={st.headerTitle} accessibilityRole="header">
           {emergencyToggle ? t('privacy.emergencyUnshield') : t('shieldUnshield.unshieldTitle')}
         </Text>
-        <View style={{ width: 40 }} />
+        <View style={st.iconBtn} />
       </View>
 
       {isLoading && (
         <View style={st.stickyProgress}>
-          <ActivityIndicator size="small" color={P01Colors.cyan} />
+          <ActivityIndicator size="small" color={Colors.primary} />
           <Text style={st.stickyProgressText} numberOfLines={2}>
-            {isProving ? `${progress ?? 'Processing'} (proving…)` : (progress ?? 'Processing…')}
+            {isProving ? `${progress ?? 'Processing'} (proving)` : (progress ?? 'Processing')}
           </Text>
           <TouchableOpacity
-            style={st.stickyCancel}
+            style={st.iconBtn}
             onPress={resetOperationState}
             accessibilityRole="button"
             accessibilityLabel="Cancel stuck operation"
           >
-            <Ionicons name="close" size={16} color={Colors.text} />
+            <Ionicons name="close" size={18} color={Colors.textSecondary} />
           </TouchableOpacity>
         </View>
       )}
 
       <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: Spacing.xl, paddingBottom: insets.bottom + 100 }}
+        style={st.scroll}
+        contentContainerStyle={[st.scrollContent, { paddingBottom: insets.bottom + 100 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Mode Toggle ── */}
-        <Animated.View entering={FadeInDown.duration(250)}>
-          <View style={st.toggle}>
-            <ToggleBtn
-              label={t('shieldUnshield.normal')}
-              active={!emergencyToggle}
-              color={P01Colors.cyan}
-              onPress={() => { setEmergencyToggle(false); setSelectedNote(null); }}
-            />
-            <ToggleBtn
-              label={t('shieldUnshield.emergency')}
-              icon="warning"
-              active={emergencyToggle}
-              color="#FF6B35"
-              onPress={() => { setEmergencyToggle(true); setSelectedNote(null); }}
-            />
-          </View>
-        </Animated.View>
+        {/* ── Mode ── */}
+        <View style={st.toggle}>
+          <ToggleBtn
+            label={t('shieldUnshield.normal')}
+            active={!emergencyToggle}
+            color={Colors.primary}
+            onPress={() => { setEmergencyToggle(false); setSelectedNote(null); }}
+          />
+          <ToggleBtn
+            label={t('shieldUnshield.emergency')}
+            icon="warning-outline"
+            active={emergencyToggle}
+            color={Colors.error}
+            onPress={() => { setEmergencyToggle(true); setSelectedNote(null); }}
+          />
+        </View>
 
-        {/* ── Emergency Warning ── */}
         {emergencyToggle && (
-          <Animated.View entering={FadeInDown.duration(200)}>
-            <View style={st.alertCard}>
-              <Ionicons name="warning" size={16} color="#FF6B35" />
-              <Text style={st.alertText}>{t('shieldUnshield.emergencyWarning')}</Text>
-            </View>
-          </Animated.View>
+          <Text style={st.emergencyNotice} accessibilityRole="alert">
+            {t('shieldUnshield.emergencyWarning')}
+          </Text>
         )}
 
-        {/* ── Section: Select Note ── */}
-        <Animated.View entering={FadeInDown.delay(60).duration(250)}>
-          <View style={st.sectionLabelRow}>
-            <Text style={[st.sectionLabel, { marginTop: 0, marginBottom: 0 }]}>
-              {emergencyToggle ? t('shieldUnshield.selectANote') : t('shieldUnshield.selectMatureNote')}
-            </Text>
-            <TouchableOpacity
-              onPress={doRefresh}
-              disabled={refreshing}
-              style={st.refreshBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Refresh note statuses"
-            >
-              {refreshing ? (
-                <ActivityIndicator size="small" color={P01Colors.cyan} />
-              ) : (
-                <Ionicons name="refresh" size={16} color={P01Colors.cyan} />
-              )}
-              <Text style={st.refreshBtnText}>{refreshing ? 'Checking…' : 'Refresh'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {selectableNotes.length === 0 && notes.filter(n => n.status !== 'spent').length === 0 && (
-            <View style={st.emptyCard}>
-              <View style={st.emptyIcon}>
-                <Ionicons name="receipt-outline" size={24} color={Colors.textTertiary} />
-              </View>
-              <Text style={st.emptyText}>{t('shieldUnshield.noNotesFound')}</Text>
-              <TouchableOpacity
-                style={st.emptyAction}
-                onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
-              >
-                <Text style={st.emptyActionText}>{t('shieldUnshield.goToShield')}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {!emergencyToggle && matureNotes.length === 0 && pendingNotes.length > 0 && (
-            <View style={st.infoCard}>
-              <Ionicons name="time-outline" size={16} color={P01Colors.yellow} />
-              <Text style={st.infoText}>
-                {t('shieldUnshield.notesMaturing', { count: pendingNotes.length })}
-              </Text>
-            </View>
-          )}
-
-          {usedNotes.length > 0 && (
-            <View style={st.usedHint}>
-              <Ionicons name="information-circle-outline" size={14} color={Colors.textTertiary} />
-              <Text style={st.usedHintText}>
-                {usedNotes.length} note{usedNotes.length === 1 ? '' : 's'} already used (shown below, can't be reused)
-              </Text>
-            </View>
-          )}
-
-          <View style={{ gap: 8 }}>
-            {selectableNotes.map((note, i) => {
-              const isSelected = selectedNote?.id === note.id;
-              const icon = statusIcon(note.status);
-              return (
-                <Animated.View key={note.id} entering={FadeInDown.delay(100 + i * 40).duration(250)}>
-                  <TouchableOpacity
-                    style={[st.noteCard, isSelected && st.noteCardSelected]}
-                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setSelectedNote(note); }}
-                    disabled={isLoading}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[st.noteIcon, { backgroundColor: `${icon.color}18` }]}>
-                      <Ionicons name={icon.name} size={20} color={icon.color} />
-                    </View>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={st.noteAmount}>{note.denomination} {note.token}</Text>
-                      <Text style={st.noteTime}>{new Date(note.shieldedAt).toLocaleString()}</Text>
-                    </View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      {note.status === 'pending' && emergencyToggle && (
-                        <Badge text={t('shieldUnshield.immature').toUpperCase()} color="#FF6B35" />
-                      )}
-                      <Ionicons
-                        name={isSelected ? 'radio-button-on' : 'radio-button-off'}
-                        size={20}
-                        color={isSelected ? P01Colors.cyan : Colors.textTertiary}
-                      />
-                    </View>
-                  </TouchableOpacity>
-                </Animated.View>
-              );
-            })}
-          </View>
-
-          {usedNotes.length > 0 && (
-            <View style={{ gap: 6, marginTop: Spacing.lg }}>
-              <Text style={st.usedSectionLabel}>USED NOTES</Text>
-              {usedNotes.map((note) => (
-                <View key={note.id} style={st.usedNoteCard}>
-                  <View style={[st.noteIcon, { backgroundColor: 'rgba(255,255,255,0.04)' }]}>
-                    <Ionicons name="checkmark-done" size={18} color={Colors.textTertiary} />
-                  </View>
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={st.usedNoteAmount}>{note.denomination} {note.token}</Text>
-                    <Text style={st.usedNoteTime}>
-                      {note.status === 'spent' ? 'Spent' : 'Transferred'} · {new Date(note.shieldedAt).toLocaleDateString()}
-                    </Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          )}
-        </Animated.View>
-
-        {/* ── Section: Recipient ── */}
-        <Animated.View entering={FadeInDown.delay(180).duration(250)}>
-          <Text style={st.sectionLabel}>{t('shieldUnshield.recipientAddress')}</Text>
-
-          <View style={st.toggle}>
-            <ToggleBtn
-              label={t('shieldUnshield.myWallet')}
-              active={useOwnWallet}
-              color={P01Colors.cyan}
-              onPress={() => setUseOwnWallet(true)}
-            />
-            <ToggleBtn
-              label={t('shieldUnshield.custom')}
-              active={!useOwnWallet}
-              color={P01Colors.cyan}
-              onPress={() => { setUseOwnWallet(false); setRecipient(''); }}
-            />
-          </View>
-
-          {!useOwnWallet && (
-            <TextInput
-              style={st.addressInput}
-              value={recipient}
-              onChangeText={setRecipient}
-              placeholder={t('shieldUnshield.solanaAddress')}
-              placeholderTextColor={Colors.textTertiary}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          )}
-
-          {useOwnWallet && recipient ? (
-            <View style={st.addressPreview}>
-              <Ionicons name="wallet-outline" size={14} color={Colors.textSecondary} />
-              <Text style={st.addressPreviewText} numberOfLines={1}>{recipient}</Text>
-            </View>
-          ) : null}
-
-          {/*
-            The one-time recipient is a relay, not a destination, and the screen
-            has to say so where the address is chosen. The pool pays a stealth
-            address, then this app forwards it to whatever is above after a
-            3-7s delay, automatically and without asking
-            (stores/denominatedPoolStore.ts:1566-1570; measured at ~8s on
-            devnet, :1424-1426). The delay was deliberately NOT grown, because
-            the link an analyst uses is algebraic rather than temporal: this
-            withdrawal republishes the note commitment the deposit published
-            (services/denominatedPool/index.ts:3192 → :3277 → :2941).
-          */}
-          <View style={st.recipientNotice}>
-            <Ionicons name="information-circle-outline" size={14} color={Colors.textTertiary} />
-            <Text style={st.recipientNoticeText}>
-              {t('shieldUnshield.recipientRelayNotice')}
-            </Text>
-          </View>
-        </Animated.View>
-
-        {/* ── Confirm Button ── */}
-        <Animated.View entering={FadeInDown.delay(260).duration(250)}>
+        {/* ── Which note ── */}
+        <View style={st.sectionRow}>
+          <Text style={st.sectionTitleFlush}>
+            {emergencyToggle ? t('shieldUnshield.selectANote') : t('shieldUnshield.selectMatureNote')}
+          </Text>
           <TouchableOpacity
-            style={[
-              st.confirmBtn,
-              emergencyToggle && selectedNote?.status === 'pending' && st.confirmBtnEmergency,
-              (!selectedNote || isLoading || submitting) && st.confirmBtnDisabled,
-            ]}
-            onPress={handleUnshield}
-            disabled={!selectedNote || isLoading || submitting}
-            activeOpacity={0.8}
+            onPress={doRefresh}
+            disabled={refreshing}
+            style={st.refreshBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh note statuses"
+            accessibilityState={{ disabled: refreshing, busy: refreshing }}
           >
-            {isLoading ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <ActivityIndicator size="small" color="#000" />
-                <Text style={st.confirmText}>
-                  {isProving ? t('shieldUnshield.generatingProof') : progress || t('shieldUnshield.unshielding')}
-                </Text>
-              </View>
-            ) : (
-              <>
-                <Ionicons name={emergencyToggle ? 'warning' : 'arrow-up-circle'} size={20} color="#000" />
-                <Text style={st.confirmText}>
-                  {selectedNote
-                    ? (emergencyToggle && selectedNote.status === 'pending'
-                      ? t('shieldUnshield.emergencyWithdraw', { amount: selectedNote.denomination, token: selectedNote.token })
-                      : t('shieldUnshield.withdraw', { amount: selectedNote.denomination, token: selectedNote.token }))
-                    : t('shieldUnshield.selectNoteFirst')}
-                </Text>
-              </>
-            )}
+            {refreshing
+              ? <ActivityIndicator size="small" color={Colors.primary} />
+              : <Ionicons name="refresh" size={16} color={Colors.primary} />}
+            <Text style={st.refreshBtnText}>{refreshing ? 'Checking' : 'Refresh'}</Text>
           </TouchableOpacity>
-          {isLoading && <OperationProgressBar progress={progress} variant="inline" />}
-        </Animated.View>
+        </View>
 
-        {/* ── Privacy Footer ── */}
-        <Animated.View entering={FadeInDown.delay(320).duration(250)}>
-          <View style={st.privacyFooter}>
-            <Ionicons name="lock-closed" size={13} color={Colors.textTertiary} />
-            <Text style={st.privacyText}>{t('shieldUnshield.starkOnDevice')}</Text>
-          </View>
-        </Animated.View>
-
-        {/* ── Error ── */}
-        {error && !isLoading && (
-          <View style={st.errorCard}>
-            <Ionicons name="alert-circle" size={16} color={Colors.error} />
-            <Text style={st.errorText}>{error}</Text>
+        {selectableNotes.length === 0 && notes.filter(n => n.status !== 'spent').length === 0 && (
+          <View style={st.empty}>
+            <Text style={st.emptyTitle}>{t('shieldUnshield.noNotesFound')}</Text>
+            <Button
+              variant="secondary"
+              size="md"
+              fullWidth
+              style={st.emptyAction}
+              onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
+              accessibilityLabel={t('shieldUnshield.goToShield')}
+            >
+              {t('shieldUnshield.goToShield')}
+            </Button>
           </View>
         )}
+
+        {!emergencyToggle && matureNotes.length === 0 && pendingNotes.length > 0 && (
+          <Text style={st.waitingNotice}>
+            {t('shieldUnshield.notesMaturing', { count: pendingNotes.length })}
+          </Text>
+        )}
+
+        <View style={st.noteList}>
+          {selectableNotes.map((note) => {
+            const isSelected = selectedNote?.id === note.id;
+            const tone = statusTone(note.status);
+            return (
+              <TouchableOpacity
+                key={note.id}
+                style={[st.noteCard, isSelected && st.noteCardSelected]}
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setSelectedNote(note); }}
+                disabled={isLoading}
+                activeOpacity={0.8}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: isSelected, disabled: isLoading }}
+                accessibilityLabel={`${note.denomination} ${note.token}, ${tone.label}`}
+              >
+                <View style={st.noteMain}>
+                  {/* Amount and state. Never an internal identifier. */}
+                  <Text style={st.noteAmount}>{note.denomination} {note.token}</Text>
+                  <Text style={st.noteSub}>
+                    {tone.label} · {new Date(note.shieldedAt).toLocaleDateString()}
+                  </Text>
+                </View>
+                {note.status === 'pending' && emergencyToggle && (
+                  <View style={st.immaturePill}>
+                    <Text style={st.immaturePillText}>{t('shieldUnshield.immature')}</Text>
+                  </View>
+                )}
+                <Ionicons
+                  name={isSelected ? 'radio-button-on' : 'radio-button-off'}
+                  size={22}
+                  color={isSelected ? Colors.primary : Colors.textTertiary}
+                />
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {usedNotes.length > 0 && (
+          <>
+            <Text style={st.sectionTitle}>Already used</Text>
+            <Text style={st.usedHint}>
+              {usedNotes.length} note{usedNotes.length === 1 ? '' : 's'} that cannot be spent again.
+            </Text>
+            {usedNotes.map((note) => (
+              <View key={note.id} style={st.usedNote}>
+                <Text style={st.usedNoteAmount}>{note.denomination} {note.token}</Text>
+                <Text style={st.usedNoteSub}>
+                  {note.status === 'spent' ? t('privacy.spent') : t('privacy.transferred')}
+                  {' · '}
+                  {new Date(note.shieldedAt).toLocaleDateString()}
+                </Text>
+              </View>
+            ))}
+          </>
+        )}
+
+        {/* ── Where it goes ── */}
+        <Text style={st.sectionTitle}>{t('shieldUnshield.recipientAddress')}</Text>
+
+        <View style={st.toggle}>
+          <ToggleBtn
+            label={t('shieldUnshield.myWallet')}
+            active={useOwnWallet}
+            color={Colors.primary}
+            onPress={() => setUseOwnWallet(true)}
+          />
+          <ToggleBtn
+            label={t('shieldUnshield.custom')}
+            active={!useOwnWallet}
+            color={Colors.primary}
+            onPress={() => { setUseOwnWallet(false); setRecipient(''); }}
+          />
+        </View>
+
+        {!useOwnWallet && (
+          <TextInput
+            style={st.addressInput}
+            value={recipient}
+            onChangeText={setRecipient}
+            placeholder={t('shieldUnshield.solanaAddress')}
+            placeholderTextColor={Colors.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            accessibilityLabel={t('shieldUnshield.recipientAddress')}
+          />
+        )}
+
+        {useOwnWallet && recipient ? (
+          <Text style={st.addressPreview} numberOfLines={1}>{recipient}</Text>
+        ) : null}
+
+        {/*
+          The one-time recipient is a relay, not a destination, and the screen
+          has to say so where the address is chosen. The pool pays a stealth
+          address, then this app forwards it to whatever is above after a
+          3-7s delay, automatically and without asking
+          (stores/denominatedPoolStore.ts:1566-1570; measured at ~8s on
+          devnet, :1424-1426). The delay was deliberately NOT grown, because
+          the link an analyst uses is algebraic rather than temporal: this
+          withdrawal republishes the note commitment the deposit published
+          (services/denominatedPool/index.ts:3192 → :3277 → :2941).
+        */}
+        <Text style={st.recipientNotice}>
+          {t('shieldUnshield.recipientRelayNotice')}
+        </Text>
+
+        {/* ── The one action ── */}
+        <Button
+          variant={emergencyToggle ? 'danger' : 'primary'}
+          size="lg"
+          fullWidth
+          style={st.confirm}
+          loading={isLoading}
+          disabled={!canSubmit}
+          onPress={handleUnshield}
+          accessibilityLabel={
+            selectedNote
+              ? t('shieldUnshield.withdraw', { amount: selectedNote.denomination, token: selectedNote.token })
+              : t('shieldUnshield.selectNoteFirst')
+          }
+        >
+          {/* ⚠️ A loading Button renders a spinner and drops its children, so
+              the running commentary belongs to the sticky banner at the top of
+              the screen and to the progress bar below — not in here, where it
+              would never be seen. */}
+          {selectedNote
+            ? (emergencyToggle && selectedNote.status === 'pending'
+              ? t('shieldUnshield.emergencyWithdraw', { amount: selectedNote.denomination, token: selectedNote.token })
+              : t('shieldUnshield.withdraw', { amount: selectedNote.denomination, token: selectedNote.token }))
+            : t('shieldUnshield.selectNoteFirst')}
+        </Button>
+        {isLoading && (
+          <>
+            <Text style={st.progressText} accessibilityLiveRegion="polite">
+              {isProving ? t('shieldUnshield.generatingProof') : progress || t('shieldUnshield.unshielding')}
+            </Text>
+            <OperationProgressBar progress={progress} variant="inline" />
+          </>
+        )}
+
+        {/* ── Error, next to the control that produced it ── */}
+        {error && !isLoading && (
+          <Text style={st.error} accessibilityRole="alert">{error}</Text>
+        )}
+
+        <Text style={st.footnote}>{t('shieldUnshield.starkOnDevice')}</Text>
       </ScrollView>
     </View>
   );
@@ -610,224 +604,179 @@ function ToggleBtn({ label, icon, active, color, onPress }: {
 }) {
   return (
     <TouchableOpacity
-      style={[st.toggleBtn, active && { backgroundColor: `${color}18`, borderColor: `${color}40` }]}
-      onPress={onPress} activeOpacity={0.7}
+      style={[st.toggleBtn, active && { borderColor: color }]}
+      onPress={onPress}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      accessibilityLabel={label}
     >
-      {icon && <Ionicons name={icon as any} size={14} color={active ? color : Colors.textTertiary} />}
+      {icon && <Ionicons name={icon as any} size={15} color={active ? color : Colors.textTertiary} />}
       <Text style={[st.toggleText, active && { color }]}>{label}</Text>
     </TouchableOpacity>
-  );
-}
-
-function Badge({ text, color }: { text: string; color: string }) {
-  return (
-    <View style={[st.badge, { backgroundColor: `${color}20` }]}>
-      <Text style={[st.badgeText, { color }]}>{text}</Text>
-    </View>
   );
 }
 
 // ─── Styles ─────────────────────────────────────────────────────────
 
 const st = StyleSheet.create({
+  // Transparent on purpose: the tab layout paints the ground once.
   container: { flex: 1, backgroundColor: 'transparent' },
 
-  // Header
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: Spacing.md, minHeight: 56,
   },
-  backBtn: {
-    width: 40, height: 40, borderRadius: BorderRadius.full,
-    backgroundColor: Colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center',
+  headerTitle: {
+    flex: 1, fontSize: FontSize.xl, fontFamily: FontFamily.displayMedium,
+    color: Colors.text, paddingHorizontal: Spacing.xs,
   },
-  headerTitle: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.text },
+  iconBtn: {
+    width: 44, height: 44, alignItems: 'center', justifyContent: 'center',
+  },
 
-  // Sticky progress (below header, always visible during long flow)
+  // Sticky progress (below the header, visible for the whole long flow)
   stickyProgress: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: Spacing.xl,
-    marginBottom: Spacing.md,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderRadius: 12,
-    backgroundColor: 'rgba(57, 197, 187, 0.15)',
-    borderWidth: 1,
-    borderColor: P01Colors.cyan,
-    gap: Spacing.sm,
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    marginHorizontal: Spacing.xl, marginBottom: Spacing.md,
+    paddingLeft: Spacing.lg, paddingRight: Spacing.xs, paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.primaryDim,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.primaryMuted,
   },
   stickyProgressText: {
-    flex: 1,
-    color: Colors.text,
-    fontSize: 13,
-    fontFamily: FontFamily.medium,
+    flex: 1, color: Colors.text,
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular,
   },
-  stickyCancel: {
-    width: 28,
-    height: 28,
-    borderRadius: 9999,
-    backgroundColor: Colors.surfaceSecondary,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: Spacing.xl },
 
   // Toggle
-  toggle: {
-    flexDirection: 'row', gap: 4, padding: 4,
-    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.lg, marginBottom: Spacing.lg,
-  },
+  toggle: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.lg },
   toggleBtn: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, paddingVertical: 10, borderRadius: BorderRadius.md,
-    borderWidth: 1, borderColor: 'transparent',
+    gap: Spacing.sm, minHeight: 44,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
   },
-  toggleText: { fontSize: 13, fontFamily: FontFamily.semibold, color: Colors.textSecondary },
+  toggleText: {
+    fontSize: FontSize.md, fontFamily: FontFamily.medium, color: Colors.textSecondary,
+  },
 
-  // Alert / Info cards
-  alertCard: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
-    padding: 14, backgroundColor: 'rgba(255,107,53,0.08)', borderRadius: BorderRadius.xl,
-    borderWidth: 1, borderColor: 'rgba(255,107,53,0.2)', marginBottom: Spacing.lg,
+  emergencyNotice: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular,
+    color: Colors.error, lineHeight: 19, marginBottom: Spacing.lg,
   },
-  alertText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: '#FF6B35', lineHeight: 19 },
-  infoCard: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
-    padding: 14, backgroundColor: `${P01Colors.yellow}10`, borderRadius: BorderRadius.xl,
-    borderWidth: 1, borderColor: `${P01Colors.yellow}30`, marginBottom: 12,
+  waitingNotice: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular,
+    color: Colors.yellow, lineHeight: 19, marginBottom: Spacing.lg,
   },
-  infoText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: P01Colors.yellow, lineHeight: 19 },
 
-  // Section
-  sectionLabel: {
-    fontSize: 12, fontFamily: FontFamily.semibold, color: Colors.textSecondary,
-    letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: Spacing.md, marginTop: Spacing.lg,
-  },
-  sectionLabelRow: {
+  // Sections
+  sectionRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginBottom: Spacing.md, marginTop: Spacing.lg,
+    marginTop: Spacing['2xl'], marginBottom: Spacing.md,
+  },
+  sectionTitle: {
+    fontSize: FontSize.lg, fontFamily: FontFamily.displayMedium, color: Colors.text,
+    marginTop: Spacing['2xl'], marginBottom: Spacing.md,
+  },
+  sectionTitleFlush: {
+    flex: 1, fontSize: FontSize.lg, fontFamily: FontFamily.displayMedium, color: Colors.text,
   },
   refreshBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
-    backgroundColor: `${P01Colors.cyan}14`,
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.xs,
+    minHeight: 44, paddingLeft: Spacing.md,
   },
   refreshBtnText: {
-    fontSize: 12, fontFamily: FontFamily.semibold, color: P01Colors.cyan,
+    fontSize: FontSize.sm, fontFamily: FontFamily.medium, color: Colors.primary,
   },
+
+  // Notes
+  noteList: { gap: Spacing.sm },
+  noteCard: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+    minHeight: 64, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  noteCardSelected: { borderColor: Colors.primary, backgroundColor: Colors.primaryDim },
+  noteMain: { flex: 1, minWidth: 0 },
+  noteAmount: {
+    fontSize: FontSize.lg, fontFamily: FontFamily.displayMedium,
+    color: Colors.text, fontVariant: ['tabular-nums'],
+  },
+  noteSub: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textTertiary, marginTop: 2,
+  },
+  immaturePill: {
+    paddingHorizontal: Spacing.sm, paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.error,
+    backgroundColor: Colors.errorDim,
+  },
+  immaturePillText: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.medium, color: Colors.error,
+  },
+
+  // Used notes
   usedHint: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 10, paddingVertical: 8, marginBottom: Spacing.sm,
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular,
+    color: Colors.textTertiary, marginBottom: Spacing.md,
   },
-  usedHintText: { flex: 1, fontSize: 11, color: Colors.textTertiary, fontFamily: FontFamily.regular },
-  recipientNotice: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
-    padding: 12, marginTop: Spacing.sm,
-    backgroundColor: '#0f0f12', borderRadius: 12,
-  },
-  recipientNoticeText: {
-    flex: 1, fontSize: 11, lineHeight: 16,
-    color: Colors.textTertiary, fontFamily: FontFamily.regular,
-  },
-  usedSectionLabel: {
-    fontSize: 10, fontFamily: FontFamily.semibold, color: Colors.textTertiary,
-    letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 4,
-  },
-  usedNoteCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 12, backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: BorderRadius.lg,
+  usedNote: {
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.borderSoft,
     opacity: 0.6,
   },
-  usedNoteAmount: { fontSize: 13, fontFamily: FontFamily.semibold, color: Colors.textSecondary },
-  usedNoteTime: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary, marginTop: 2 },
+  usedNoteAmount: {
+    fontSize: FontSize.md, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+  },
+  usedNoteSub: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textTertiary, marginTop: 2,
+  },
 
-  // Note cards
-  noteCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 14, backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.xl,
+  // Empty
+  empty: { alignItems: 'center', paddingVertical: Spacing['4xl'] },
+  emptyTitle: {
+    fontSize: FontSize.lg, fontFamily: FontFamily.display,
+    color: Colors.text, textAlign: 'center',
   },
-  noteCardSelected: { borderWidth: 1, borderColor: `${P01Colors.cyan}40` },
-  noteIcon: {
-    width: 42, height: 42, borderRadius: BorderRadius.md,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  noteAmount: { fontSize: 15, fontFamily: FontFamily.bold, color: Colors.text },
-  noteTime: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textTertiary, marginTop: 2 },
-
-  // Badge
-  badge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  badgeText: { fontSize: 9, fontFamily: FontFamily.semibold },
-
-  // Empty state
-  emptyCard: {
-    alignItems: 'center', gap: 12, padding: 32,
-    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.xl,
-  },
-  emptyIcon: {
-    width: 48, height: 48, borderRadius: 24,
-    backgroundColor: '#1a1a1f', alignItems: 'center', justifyContent: 'center',
-  },
-  emptyText: { fontSize: 14, fontFamily: FontFamily.regular, color: Colors.textSecondary, textAlign: 'center' },
-  emptyAction: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: BorderRadius.full, backgroundColor: P01Colors.cyanDim },
-  emptyActionText: { fontSize: 13, fontFamily: FontFamily.semibold, color: P01Colors.cyan },
+  emptyAction: { marginTop: Spacing.xl },
 
   // Recipient
   addressInput: {
-    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.lg,
-    paddingHorizontal: 16, paddingVertical: 14,
-    color: Colors.text, fontFamily: FontFamily.mono, fontSize: 13,
+    minHeight: 48,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
+    color: Colors.text, fontFamily: FontFamily.mono, fontSize: FontSize.sm,
   },
   addressPreview: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.lg,
-    paddingHorizontal: 14, paddingVertical: 12,
+    fontFamily: FontFamily.mono, fontSize: FontSize.sm, color: Colors.textSecondary,
   },
-  addressPreviewText: { flex: 1, fontFamily: FontFamily.mono, fontSize: 12, color: Colors.textSecondary },
-
-  // Confirm button
-  confirmBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    backgroundColor: P01Colors.cyan, borderRadius: BorderRadius.lg,
-    paddingVertical: 16, marginTop: Spacing.xl,
-  },
-  confirmBtnEmergency: { backgroundColor: '#FF6B35' },
-  confirmBtnDisabled: { opacity: 0.4 },
-  confirmText: { fontSize: 15, fontFamily: FontFamily.bold, color: '#000' },
-
-  // Progress bar (chunk upload)
-  progressWrap: { marginTop: 12, paddingHorizontal: 2 },
-  progressRow: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    marginBottom: 6,
-  },
-  progressLabel: {
-    flex: 1, fontSize: 11, fontFamily: FontFamily.mono,
-    color: Colors.textSecondary, letterSpacing: 0.3,
-  },
-  progressCount: {
-    fontSize: 11, fontFamily: FontFamily.bold,
-    color: P01Colors.cyan, marginLeft: 8,
-  },
-  progressTrack: {
-    height: 4, borderRadius: 2, overflow: 'hidden',
-    backgroundColor: 'rgba(0,224,255,0.12)',
-  },
-  progressFill: {
-    height: '100%', backgroundColor: P01Colors.cyan, borderRadius: 2,
+  recipientNotice: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textTertiary, lineHeight: 17, marginTop: Spacing.md,
   },
 
-  // Privacy footer
-  privacyFooter: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, marginTop: Spacing.lg,
+  confirm: { marginTop: Spacing['3xl'] },
+  progressText: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular,
+    color: Colors.textSecondary, textAlign: 'center', marginTop: Spacing.md,
   },
-  privacyText: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary },
 
-  // Error
-  errorCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: `${Colors.error}12`, borderRadius: BorderRadius.xl,
-    padding: 14, marginTop: Spacing.lg,
+  error: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular,
+    color: Colors.error, lineHeight: 19, marginTop: Spacing.md,
   },
-  errorText: { flex: 1, fontSize: 13, fontFamily: FontFamily.regular, color: Colors.error },
+  footnote: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textTertiary, textAlign: 'center', marginTop: Spacing.xl,
+  },
 });

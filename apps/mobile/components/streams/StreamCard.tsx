@@ -1,13 +1,36 @@
+/**
+ * StreamCard — one payment stream, as a card.
+ *
+ * 🎯 REBUILT IN StyleSheet ON THE REALIGNED THEME 2026-08-23.
+ *
+ * 🚨 THIS FILE WAS THE PINK MODULE IN MINIATURE. It declared its own accent at
+ * the top (`ACCENT_PINK`), its own three-colour status table with `rgba` fills,
+ * its own `P01_CYAN`/`P01_YELLOW`/`P01_RED` constants — a fourth copy of the
+ * palette — and painted the whole card, the progress bar, the icon disc, the
+ * private badge and the pause button in it. On top of that it laid a cyan
+ * drop shadow on the card, a second glow under the progress fill, a scale
+ * bounce on the amount every second and a pulsing dot beside the rate.
+ *
+ * It also mixed two styling systems: half utility classes (`text-white`,
+ * `text-p01-text-secondary`), half inline objects. This app styles in
+ * `StyleSheet.create`, so the classes were the half that could not be retuned
+ * by a theme change.
+ *
+ * What is left: a flat panel, one accent, tabular amounts, and a status pill
+ * that uses the shared `Badge` rather than a fourth private colour table.
+ *
+ * ⚠️ Props and the exported `StreamData` shape are unchanged.
+ */
+
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Animated, Easing } from 'react-native';
+import { View, Text, TouchableOpacity, Animated, Easing, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+
 import { Card } from '../ui/Card';
-import { Avatar } from '../ui/Avatar';
 import { Badge } from '../ui/Badge';
 import { StreamingIndicator } from './StreamingIndicator';
-
-const ACCENT_PINK = '#ff77a8';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
 
 type StreamStatus = 'active' | 'paused' | 'completed' | 'cancelled';
 
@@ -46,16 +69,12 @@ interface StreamCardProps {
   onCancel?: () => void;
 }
 
-// Protocol 01 colors
-const P01_CYAN = '#39c5bb';
-const P01_YELLOW = '#ffcc00';
-const P01_RED = '#ff3366';
-
-const statusConfig: Record<StreamStatus, { color: string; label: string; bgColor: string }> = {
-  active: { color: ACCENT_PINK, label: 'Active', bgColor: 'rgba(255, 119, 168, 0.2)' },
-  paused: { color: P01_YELLOW, label: 'Paused', bgColor: 'rgba(255, 204, 0, 0.2)' },
-  completed: { color: P01_CYAN, label: 'Completed', bgColor: 'rgba(57, 197, 187, 0.2)' },
-  cancelled: { color: P01_RED, label: 'Cancelled', bgColor: 'rgba(255, 51, 102, 0.2)' },
+/** Four states, four tones. No fifth colour, no fourth copy of the palette. */
+const STATUS: Record<StreamStatus, { tone: 'good' | 'warn' | 'neutral' | 'bad'; label: string }> = {
+  active: { tone: 'good', label: 'Active' },
+  paused: { tone: 'warn', label: 'Paused' },
+  completed: { tone: 'neutral', label: 'Completed' },
+  cancelled: { tone: 'bad', label: 'Stopped' },
 };
 
 export const StreamCard: React.FC<StreamCardProps> = ({
@@ -66,8 +85,6 @@ export const StreamCard: React.FC<StreamCardProps> = ({
 }) => {
   const router = useRouter();
   const progressAnim = useRef(new Animated.Value(0)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const tickAnim = useRef(new Animated.Value(1)).current;
   const [currentAmount, setCurrentAmount] = useState(stream.streamedAmount);
 
   const startDate = stream.startDate || stream.startTime;
@@ -77,14 +94,8 @@ export const StreamCard: React.FC<StreamCardProps> = ({
 
   const progress = Math.min((currentAmount / stream.totalAmount) * 100, 100);
   const remaining = stream.totalAmount - currentAmount;
-  const statusInfo = statusConfig[stream.status];
+  const statusInfo = STATUS[stream.status];
   const isActive = stream.status === 'active';
-
-  // Calculate time remaining
-  const now = new Date();
-  const msRemaining = new Date(endDate).getTime() - now.getTime();
-  const daysRemaining = Math.max(0, Math.floor(msRemaining / (1000 * 60 * 60 * 24)));
-  const hoursRemaining = Math.max(0, Math.floor((msRemaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)));
 
   const formatDuration = (start: Date, end: Date): string => {
     const diff = new Date(end).getTime() - new Date(start).getTime();
@@ -106,67 +117,26 @@ export const StreamCard: React.FC<StreamCardProps> = ({
     return `${minutes}m left`;
   };
 
-  const formatAddress = (address: string) => {
-    return `${address.slice(0, 4)}...${address.slice(-4)}`;
-  };
+  const formatAddress = (address: string) => `${address.slice(0, 4)}…${address.slice(-4)}`;
 
-  // Real-time counter animation
+  // The counter ticks. ⛔ It no longer bounces: a number that changes SIZE
+  // every second is unreadable, and the reader is trying to read a balance.
   useEffect(() => {
     if (!isActive) return;
-
     const interval = setInterval(() => {
-      setCurrentAmount((prev) => {
-        const newAmount = prev + ratePerSecond;
-        return Math.min(newAmount, stream.totalAmount);
-      });
-
-      // Tick animation
-      Animated.sequence([
-        Animated.timing(tickAnim, {
-          toValue: 1.05,
-          duration: 100,
-          useNativeDriver: true,
-        }),
-        Animated.timing(tickAnim, {
-          toValue: 1,
-          duration: 100,
-          useNativeDriver: true,
-        }),
-      ]).start();
+      setCurrentAmount((prev) => Math.min(prev + ratePerSecond, stream.totalAmount));
     }, 1000);
-
     return () => clearInterval(interval);
   }, [isActive, ratePerSecond, stream.totalAmount]);
 
   useEffect(() => {
     Animated.timing(progressAnim, {
       toValue: progress,
-      duration: 1000,
+      duration: 800,
       easing: Easing.out(Easing.ease),
       useNativeDriver: false,
     }).start();
-
-    if (isActive) {
-      const pulseAnimation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.2,
-            duration: 1000,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 1000,
-            easing: Easing.inOut(Easing.ease),
-            useNativeDriver: true,
-          }),
-        ])
-      );
-      pulseAnimation.start();
-      return () => pulseAnimation.stop();
-    }
-  }, [progress, isActive]);
+  }, [progress]);
 
   const progressWidth = progressAnim.interpolate({
     inputRange: [0, 100],
@@ -181,164 +151,110 @@ export const StreamCard: React.FC<StreamCardProps> = ({
     }
   };
 
-  const recipient = stream.recipient;
-  const sender = stream.sender;
-  const displayPerson = stream.direction === 'outgoing' ? recipient : sender;
+  const displayPerson = stream.direction === 'outgoing' ? stream.recipient : stream.sender;
+  const counterparty = displayPerson?.address ? formatAddress(displayPerson.address) : 'Unknown';
 
   return (
-    <TouchableOpacity onPress={handlePress} activeOpacity={0.8}>
-      <Card
-        variant="glass"
-        padding="md"
-        className="mb-3"
-        style={{
-          borderWidth: 1,
-          borderColor: isActive ? 'rgba(255, 119, 168, 0.3)' : 'rgba(42, 42, 48, 0.5)',
-          shadowColor: isActive ? ACCENT_PINK : '#000',
-          shadowOpacity: isActive ? 0.2 : 0.3,
-          shadowRadius: isActive ? 12 : 8,
-          shadowOffset: { width: 0, height: 4 },
-          elevation: 6,
-        }}
-      >
+    <TouchableOpacity
+      onPress={handlePress}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={`${stream.name}, ${statusInfo.label}`}
+    >
+      <Card variant="glass" padding="md" style={st.card}>
         {/* Header */}
-        <View className="flex-row items-center justify-between mb-4">
-          <View className="flex-row items-center">
-            <View
-              className="w-10 h-10 rounded-full items-center justify-center"
-              style={{ backgroundColor: 'rgba(255, 119, 168, 0.2)' }}
-            >
+        <View style={st.head}>
+          <View style={st.headLeft}>
+            <View style={st.icon}>
               <Ionicons
                 name={stream.direction === 'outgoing' ? 'arrow-up' : 'arrow-down'}
                 size={18}
-                color={ACCENT_PINK}
+                color={Colors.primary}
               />
             </View>
-            <View className="ml-3">
-              <Text className="text-white font-semibold">{stream.name}</Text>
-              <Text className="text-p01-text-secondary text-xs">
-                {stream.direction === 'outgoing'
-                  ? `To: ${displayPerson?.address ? formatAddress(displayPerson.address) : 'Unknown'}`
-                  : `From: ${displayPerson?.address ? formatAddress(displayPerson.address) : 'Unknown'}`}
+            <View style={st.headText}>
+              <Text style={st.name} numberOfLines={1}>{stream.name}</Text>
+              <Text style={st.counterparty} numberOfLines={1}>
+                {stream.direction === 'outgoing' ? `To ${counterparty}` : `From ${counterparty}`}
               </Text>
             </View>
           </View>
 
-          <View className="flex-row items-center gap-2">
-            {stream.isPrivate && (
-              <View
-                className="flex-row items-center px-2 py-1 rounded-md"
-                style={{ backgroundColor: 'rgba(255, 119, 168, 0.2)' }}
-              >
-                <Ionicons name="shield-checkmark" size={12} color={ACCENT_PINK} />
-                <Text className="text-xs ml-1" style={{ color: ACCENT_PINK }}>
-                  Private
-                </Text>
-              </View>
-            )}
+          <View style={st.headRight}>
+            {stream.isPrivate && <Badge variant="good" size="sm">Private</Badge>}
             {isActive && <StreamingIndicator size="sm" label="" />}
           </View>
         </View>
 
-        {/* Progress Bar */}
-        <View className="mb-4">
-          <View className="flex-row items-center justify-between mb-2">
-            <Text className="text-p01-text-secondary text-sm">Progress</Text>
-            <Text className="text-white text-sm font-medium">{progress.toFixed(1)}%</Text>
+        {/* Progress */}
+        <View style={st.progressBlock}>
+          <View style={st.rowBetween}>
+            <Text style={st.dim}>Progress</Text>
+            <Text style={st.mono}>{progress.toFixed(1)}%</Text>
           </View>
-
-          <View
-            className="h-2 rounded-full overflow-hidden"
-            style={{ backgroundColor: 'rgba(255, 119, 168, 0.2)' }}
-          >
-            <Animated.View
-              className="h-full rounded-full"
-              style={{
-                width: progressWidth,
-                backgroundColor: ACCENT_PINK,
-                shadowColor: ACCENT_PINK,
-                shadowOpacity: isActive ? 0.8 : 0.3,
-                shadowRadius: isActive ? 8 : 4,
-                shadowOffset: { width: 0, height: 0 },
-              }}
-            />
+          <View style={st.progressTrack}>
+            <Animated.View style={[st.progressFill, { width: progressWidth }]} />
           </View>
         </View>
 
-        {/* Amount Stats */}
-        <View className="flex-row items-center justify-between mb-4">
-          <View>
-            <Text className="text-p01-text-secondary text-xs">Streamed</Text>
-            <Animated.Text
-              style={{ color: ACCENT_PINK, transform: [{ scale: tickAnim }] }}
-              className="font-semibold font-mono"
-            >
+        {/* Amounts */}
+        <View style={st.amountsRow}>
+          <View style={st.amountCell}>
+            <Text style={st.dim}>Streamed</Text>
+            <Text style={st.amountAccent}>
               {currentAmount.toFixed(4)} {symbol}
-            </Animated.Text>
-          </View>
-          <View className="items-center">
-            {isActive && (
-              <Animated.View
-                style={{ transform: [{ scale: pulseAnim }], backgroundColor: ACCENT_PINK }}
-                className="w-2 h-2 rounded-full mb-1"
-              />
-            )}
-            <Text className="text-p01-text-secondary text-xs">
-              {ratePerSecond.toFixed(6)}/s
             </Text>
           </View>
-          <View className="items-end">
-            <Text className="text-p01-text-secondary text-xs">Remaining</Text>
-            <Text className="text-white font-semibold">
+          <View style={st.amountCellCenter}>
+            <Text style={st.dim}>Rate</Text>
+            <Text style={st.mono}>{ratePerSecond.toFixed(6)}/s</Text>
+          </View>
+          <View style={st.amountCellEnd}>
+            <Text style={st.dim}>Remaining</Text>
+            <Text style={st.mono}>
               {remaining.toFixed(4)} {symbol}
             </Text>
           </View>
         </View>
 
         {/* Footer */}
-        <View className="flex-row items-center justify-between pt-3 border-t border-p01-border">
-          <View className="flex-row items-center">
-            <Ionicons name="time-outline" size={14} color="#888892" />
-            <Text className="text-p01-text-secondary text-xs ml-1">
+        <View style={st.footer}>
+          <View style={st.footerLeft}>
+            <Ionicons name="time-outline" size={14} color={Colors.textSecondary} />
+            <Text style={st.dim}>
               {isActive || stream.status === 'paused'
                 ? formatTimeRemaining(endDate)
                 : formatDuration(startDate, endDate)}
             </Text>
           </View>
 
-          <View className="flex-row items-center gap-2">
-            {/* Status Badge */}
-            <View
-              className="px-2 py-1 rounded-md"
-              style={{ backgroundColor: statusInfo.bgColor }}
-            >
-              <Text className="text-xs" style={{ color: statusInfo.color }}>
-                {statusInfo.label}
-              </Text>
-            </View>
+          <View style={st.footerRight}>
+            <Badge variant={statusInfo.tone} size="sm">{statusInfo.label}</Badge>
 
-            {/* Action Buttons */}
             {(isActive || stream.status === 'paused') && (
-              <View className="flex-row gap-2">
+              <View style={st.footerActions}>
                 {onPause && (
                   <TouchableOpacity
                     onPress={onPause}
-                    className="px-3 py-1.5 rounded-lg"
-                    style={{ backgroundColor: 'rgba(255, 119, 168, 0.2)' }}
+                    style={st.footerBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel={isActive ? 'Pause this stream' : 'Resume this stream'}
                   >
                     <Ionicons
                       name={isActive ? 'pause' : 'play'}
                       size={16}
-                      color={ACCENT_PINK}
+                      color={Colors.primary}
                     />
                   </TouchableOpacity>
                 )}
                 {onCancel && (
                   <TouchableOpacity
                     onPress={onCancel}
-                    className="px-3 py-1.5 bg-red-500/20 rounded-lg"
+                    style={[st.footerBtn, st.footerBtnDanger]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Stop this stream"
                   >
-                    <Ionicons name="close" size={16} color="#ef4444" />
+                    <Ionicons name="close" size={16} color={Colors.error} />
                   </TouchableOpacity>
                 )}
               </View>
@@ -349,5 +265,105 @@ export const StreamCard: React.FC<StreamCardProps> = ({
     </TouchableOpacity>
   );
 };
+
+const st = StyleSheet.create({
+  card: { marginBottom: Spacing.md },
+
+  head: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+    marginBottom: Spacing.lg,
+  },
+  headLeft: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  headText: { flex: 1, minWidth: 0 },
+  icon: {
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primaryDim,
+  },
+  name: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.md,
+    color: Colors.text,
+  },
+  counterparty: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.xs,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  headRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+
+  progressBlock: { gap: Spacing.sm, marginBottom: Spacing.lg },
+  rowBetween: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  progressTrack: {
+    height: 4,
+    borderRadius: 2,
+    overflow: 'hidden',
+    backgroundColor: Colors.surfaceTertiary,
+  },
+  progressFill: { height: '100%', borderRadius: 2, backgroundColor: Colors.primary },
+
+  amountsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: Spacing.lg,
+  },
+  amountCell: { flex: 1, gap: 2 },
+  amountCellCenter: { flex: 1, alignItems: 'center', gap: 2 },
+  amountCellEnd: { flex: 1, alignItems: 'flex-end', gap: 2 },
+
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.md,
+    paddingTop: Spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.borderSoft,
+  },
+  footerLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
+  footerRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  footerActions: { flexDirection: 'row', gap: Spacing.sm },
+  footerBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: BorderRadius.sm,
+  },
+  footerBtnDanger: { backgroundColor: Colors.errorDim },
+
+  dim: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    color: Colors.textSecondary,
+  },
+  mono: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.sm,
+    color: Colors.text,
+  },
+  amountAccent: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.sm,
+    color: Colors.primary,
+  },
+});
 
 export default StreamCard;

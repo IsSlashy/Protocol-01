@@ -83,7 +83,7 @@ export const AgentAvatar: React.FC<AgentAvatarProps> = ({
           ]}
         >
           <LinearGradient
-            colors={['#39c5bb', '#ff77a8']}
+            colors={['#39c5bb', '#39c5bb']}
             style={{
               width: '100%',
               height: '100%',
@@ -106,7 +106,7 @@ export const AgentAvatar: React.FC<AgentAvatarProps> = ({
         ]}
       >
         <LinearGradient
-          colors={isActive ? ['#151518', '#0a0a0c'] : ['#151518', '#151518']}
+          colors={isActive ? ['#101014', '#070709'] : ['#101014', '#101014']}
           style={{
             width: '100%',
             height: '100%',
@@ -114,14 +114,14 @@ export const AgentAvatar: React.FC<AgentAvatarProps> = ({
             justifyContent: 'center',
             borderRadius: config.container / 2,
             borderWidth: config.ring,
-            borderColor: isActive ? '#39c5bb' : '#2a2a30',
+            borderColor: isActive ? '#39c5bb' : 'rgba(234, 231, 223, 0.14)',
           }}
         >
           {/* AI Icon */}
           <Ionicons
             name="aperture"
             size={config.icon}
-            color={isActive ? '#39c5bb' : '#555560'}
+            color={isActive ? '#39c5bb' : 'rgba(234, 231, 223, 0.40)'}
           />
         </LinearGradient>
       </Animated.View>
@@ -135,9 +135,9 @@ export const AgentAvatar: React.FC<AgentAvatarProps> = ({
           width: config.container * 0.28,
           height: config.container * 0.28,
           borderRadius: config.container * 0.14,
-          backgroundColor: isActive ? '#22c55e' : '#555560',
+          backgroundColor: isActive ? '#22c55e' : 'rgba(234, 231, 223, 0.40)',
           borderWidth: 2,
-          borderColor: '#0a0a0c',
+          borderColor: '#070709',
         }}
       />
     </View>

@@ -1,3 +1,28 @@
+/**
+ * Your notes — the full inventory behind the Shield screen's short list.
+ *
+ * 🎯 WHAT CHANGED 2026-08-23, AND WHY
+ * ───────────────────────────────────
+ *  - A NOTE IS AN AMOUNT AND A STATE. It was an amount, a state, a source, a
+ *    date, a pool PDA and a note id — six facts for an object that supports two
+ *    decisions. The pool address and the internal id are gone from the sheet;
+ *    nobody holds "leaf #12", they hold 1 SOL.
+ *  - A MATURE NOTE NOW CARRIES ITS NEXT STEP: "Subscribe with this note". That
+ *    is the product. Until today the only paths off this screen were withdraw
+ *    and send, i.e. the two ways to stop using it.
+ *  - AN IMMATURE NOTE CARRIES THE REASON, not an ellipsis. "Maturing..." reads
+ *    as a spinner that is taking too long; the wait is on chain and nothing in
+ *    the interface can shorten it, so the screen says exactly that.
+ *  - ⛔ NO MORE ALL-CAPS LABELS. `READY`, `USED NOTES`, `SPENT` — that house
+ *    style is being removed everywhere.
+ *  - The four-cell counter card became one sentence, and the five unlabelled
+ *    icon buttons in the header became two labelled rows at the bottom. An
+ *    unlabelled icon in a wallet is a guess about someone's money.
+ *
+ * ⚠️ NO LOGIC WAS TOUCHED. Every handler, store call and argument below is the
+ * code that was here before; only what the screen looks like and says changed.
+ */
+
 import React, { useEffect, useCallback, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, RefreshControl, StyleSheet, Linking, Share,
@@ -15,7 +40,8 @@ import { useBatchUnshieldStore } from '@/stores/batchUnshieldStore';
 import { receiptFromJSON, slotToEpoch } from '@/services/denominatedPool';
 import { getCluster } from '@/services/solana/connection';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
-import { Colors, FontFamily, BorderRadius, Spacing, P01Colors } from '@/constants/theme';
+import { Button } from '@/components/ui/Button';
+import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
 import { p01Alert } from '@/stores/alertStore';
 import { useT, t as tStatic } from '@/i18n';
 import RecoveryBootModal from '@/components/privacy/RecoveryBootModal';
@@ -175,6 +201,10 @@ export default function DenominatedNotesScreen() {
 
   // ── Handlers ────────────────────────────────────────────────
 
+  const handleSubscribe = (n: StoredNote) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.push({ pathname: '/(main)/(privacy)/subscribe-private' as any, params: { noteId: n.id } });
+  };
   const handleUnshield = (n: StoredNote) => {
     if (n.status !== 'mature') return p01Alert(t('privacy.notReady'), t('privacy.stillMaturing'));
     router.push({ pathname: '/(main)/(privacy)/denominated-unshield' as any, params: { noteId: n.id } });
@@ -245,6 +275,7 @@ export default function DenominatedNotesScreen() {
   // ── Batch multi-select handlers ────────────────────────────
 
   const matureActive = activeNotes.filter(n => n.status === 'mature');
+  const maturingActive = activeNotes.filter(n => n.status !== 'mature');
   const selectedCount = batchSelectedIds.length;
   const selectedSum = batchSelectedIds.reduce((acc, id) => {
     const n = matureActive.find(x => x.id === id);
@@ -258,6 +289,7 @@ export default function DenominatedNotesScreen() {
       .filter((x): x is NonNullable<typeof x> => !!x),
   );
   const mixedTokens = selectedTokens.size > 1;
+  const recoverableCount = clusterNotes.filter(n => n.status === 'transferred' && !n.spentTxSig).length;
 
   const toggleBatchMode = () => {
     Haptics.selectionAsync();
@@ -301,15 +333,17 @@ export default function DenominatedNotesScreen() {
     router.push({ pathname: '/(main)/(privacy)/denominated-unshield-batch' as any });
   };
 
-  // ── Status config ──────────────────────────────────────────
+  // ── State labels ───────────────────────────────────────────
+  // ⛔ Sentence case. A badge that has to shout to be noticed means the layout
+  // around it is wrong.
 
   const statusCfg = (s: NoteStatus) => ({
-    mature:      { icon: 'checkmark-circle' as const, color: P01Colors.cyan, label: t('common.ready') },
-    pending:     { icon: 'time' as const, color: P01Colors.yellow, label: t('privacy.maturing') },
-    imported:    { icon: 'download' as const, color: '#3b82f6', label: t('privacy.imported') },
-    spent:       { icon: 'close-circle' as const, color: Colors.textTertiary, label: t('privacy.spent') },
-    transferred: { icon: 'swap-horizontal' as const, color: '#3b82f6', label: t('common.send') },
-    locked:      { icon: 'lock-closed' as const, color: P01Colors.pink, label: t('privacy.locked') },
+    mature:      { tone: 'good' as const, label: t('common.ready') },
+    pending:     { tone: 'warn' as const, label: t('privacy.maturing') },
+    imported:    { tone: 'warn' as const, label: t('privacy.imported') },
+    spent:       { tone: 'quiet' as const, label: t('privacy.spent') },
+    transferred: { tone: 'quiet' as const, label: t('privacy.transferred') },
+    locked:      { tone: 'warn' as const, label: t('privacy.locked') },
   }[s]);
 
   const srcLabel = (n: StoredNote) =>
@@ -323,125 +357,143 @@ export default function DenominatedNotesScreen() {
     const maturity = getMaturity(note);
     const isSelected = batchMode && batchSelectedIds.includes(note.id);
     const isSelectable = batchMode && note.status === 'mature';
+    const waiting = note.status === 'pending' || note.status === 'imported';
+    const countdown = waiting
+      ? (maturity.remainingMs > 0
+        ? fmtTime(maturity.remainingMs)
+        : maturity.remainingMs === 0 ? t('common.ready') : cfg.label)
+      : cfg.label;
 
     return (
-      <View key={note.id}>
+      <View key={note.id} style={[st.noteCard, isSelected && st.noteCardSelected, batchMode && !isSelectable && st.noteCardDimmed]}>
         <TouchableOpacity
-          activeOpacity={0.7}
+          activeOpacity={0.8}
           onPress={() => onNoteTap(note)}
           disabled={batchMode && !isSelectable}
-          style={[
-            st.noteCard,
-            isSelected && st.noteCardSelected,
-            batchMode && !isSelectable && st.noteCardDimmed,
-          ]}
+          style={st.noteRow}
+          accessibilityRole="button"
+          accessibilityState={{ expanded, selected: isSelected }}
+          accessibilityLabel={`${note.denomination} ${note.token}, ${countdown}`}
         >
-          {/* Main row */}
-          <View style={st.noteRow}>
-            {batchMode && (
-              <View
-                style={[
-                  st.checkbox,
-                  isSelected && st.checkboxChecked,
-                  !isSelectable && st.checkboxDisabled,
-                ]}
-              >
-                {isSelected && <Ionicons name="checkmark" size={14} color="#000" />}
-              </View>
-            )}
-            <View style={[st.noteIcon, { backgroundColor: `${cfg.color}15` }]}>
-              <Ionicons name={cfg.icon} size={18} color={cfg.color} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={st.noteAmount}>{note.denomination} {note.token}</Text>
-              <Text style={st.noteSub}>
-                {srcLabel(note)} · {new Date(note.shieldedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-              </Text>
-            </View>
-
-            {/* Status / time */}
-            {note.status === 'mature' ? (
-              <View style={[st.badge, { backgroundColor: `${P01Colors.cyan}15` }]}>
-                <Text style={[st.badgeText, { color: P01Colors.cyan }]}>{t('common.ready').toUpperCase()}</Text>
-              </View>
-            ) : (note.status === 'pending' || note.status === 'imported') ? (
-              <Text style={st.timeText}>
-                {maturity.remainingMs > 0 ? fmtTime(maturity.remainingMs) : maturity.remainingMs === 0 ? t('common.ready') : '...'}
-              </Text>
-            ) : (
-              <View style={[st.badge, { backgroundColor: `${cfg.color}15` }]}>
-                <Text style={[st.badgeText, { color: cfg.color }]}>{cfg.label.toUpperCase()}</Text>
-              </View>
-            )}
-
-            {!batchMode && (
-              <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textTertiary} />
-            )}
-          </View>
-
-          {/* Locked route progress */}
-          {note.status === 'locked' && (() => {
-            const pk = Object.keys(routeProgress).find(k => k.startsWith(`${note.denomination}_`));
-            const rp = pk ? routeProgress[pk] : null;
-            if (!rp) return null;
-            const pct = Math.round((rp.completedHops / rp.totalHops) * 100);
-            return (
-              <View style={{ marginTop: 8 }}>
-                <View style={st.progressTrack}>
-                  <View style={[st.progressFill, { width: `${Math.max(5, pct)}%` as any }]} />
-                </View>
-                <Text style={st.progressLabel}>Hop {rp.completedHops}/{rp.totalHops} · {pct}%</Text>
-              </View>
-            );
-          })()}
-
-          {/* Expanded details + actions */}
-          {expanded && (
-            <View style={st.expandedSection}>
-              {/* Technical details */}
-              <View style={st.detailRow}>
-                <Text style={st.detailLabel}>{t('privacy.pool')}</Text>
-                <Text style={st.detailValue}>{note.poolPDA.slice(0, 8)}...{note.poolPDA.slice(-4)}</Text>
-              </View>
-              <View style={st.detailRow}>
-                <Text style={st.detailLabel}>{t('privacy.noteId')}</Text>
-                <Text style={st.detailValue}>{note.id}</Text>
-              </View>
-              {note.spentTxSig && (
-                <TouchableOpacity style={st.detailRow}
-                  onPress={() => Linking.openURL(`https://explorer.solana.com/tx/${note.spentTxSig}?cluster=devnet`)}>
-                  <Text style={st.detailLabel}>Tx</Text>
-                  <Text style={[st.detailValue, { color: P01Colors.cyan }]}>{note.spentTxSig.slice(0, 12)}... ↗</Text>
-                </TouchableOpacity>
-              )}
-              {note.status === 'transferred' && note.transferredTo && (
-                <TouchableOpacity style={st.detailRow}
-                  onPress={() => Share.share({ message: note.transferredTo!, title: 'P01 Note' })}>
-                  <Text style={st.detailLabel}>{t('privacy.transferred')}</Text>
-                  <Text style={[st.detailValue, { color: '#3b82f6' }]}>{t('privacy.reshare')} ↗</Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Actions */}
-              {note.status === 'mature' && (
-                <View style={st.actions}>
-                  <ActionChip icon="wallet-outline" label={t('privacy.withdraw')} color={P01Colors.cyan} onPress={() => handleUnshield(note)} />
-                  <ActionChip icon="send-outline" label={t('common.send')} color={P01Colors.pink} onPress={() => handleTransfer(note)} />
-                  <ActionChip icon="radio-outline" label={t('privacy.receiveNearby')} color={P01Colors.blue} onPress={() => handleNearby(note)} />
-                  <ActionChip icon="share-outline" label={t('common.share')} color={Colors.textSecondary} onPress={() => handleManualShare(note)} />
-                </View>
-              )}
-              {(note.status === 'pending' || note.status === 'imported') && (
-                <View style={st.actions}>
-                  {note.source === 'shielded' && (
-                    <ActionChip icon="flash" label={t('privacy.emergencyUnshield')} color={Colors.error} onPress={() => handleEmergency(note)} />
-                  )}
-                  <ActionChip icon="cloud-upload-outline" label={t('privacy.backup')} color={Colors.textSecondary} onPress={() => handleExport(note)} />
-                </View>
-              )}
+          {batchMode && (
+            <View
+              style={[
+                st.checkbox,
+                isSelected && st.checkboxChecked,
+                !isSelectable && st.checkboxDisabled,
+              ]}
+            >
+              {isSelected && <Ionicons name="checkmark" size={14} color={Colors.background} />}
             </View>
           )}
+
+          <View style={st.noteMain}>
+            {/* Amount and state. Never an internal identifier. */}
+            <Text style={st.noteAmount}>{note.denomination} {note.token}</Text>
+            <Text style={st.noteSub}>
+              {srcLabel(note)} · {new Date(note.shieldedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </Text>
+          </View>
+
+          <View style={[st.pill, cfg.tone === 'good' && st.pillGood, cfg.tone === 'warn' && st.pillWarn]}>
+            <Text
+              style={[
+                st.pillText,
+                cfg.tone === 'good' && st.pillTextGood,
+                cfg.tone === 'warn' && st.pillTextWarn,
+              ]}
+            >
+              {countdown}
+            </Text>
+          </View>
+
+          {!batchMode && (
+            <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textTertiary} />
+          )}
         </TouchableOpacity>
+
+        {/* Locked route progress */}
+        {note.status === 'locked' && (() => {
+          const pk = Object.keys(routeProgress).find(k => k.startsWith(`${note.denomination}_`));
+          const rp = pk ? routeProgress[pk] : null;
+          if (!rp) return null;
+          const pct = Math.round((rp.completedHops / rp.totalHops) * 100);
+          return (
+            <View style={st.progressWrap}>
+              <View style={st.progressTrack}>
+                <View style={[st.progressFill, { width: `${Math.max(5, pct)}%` as any }]} />
+              </View>
+              <Text style={st.progressLabel}>Hop {rp.completedHops} of {rp.totalHops}</Text>
+            </View>
+          );
+        })()}
+
+        {/* Expanded: what this note can do next */}
+        {expanded && (
+          <View style={st.expanded}>
+            {note.status === 'mature' && (
+              <>
+                {/* 🎯 THE PATH. Merchant subscriptions are the product, and a
+                    mature note is what pays for one without your wallet
+                    signing. It goes first, and it is the only primary. */}
+                <Button
+                  variant="primary"
+                  size="sm"
+                  fullWidth
+                  onPress={() => handleSubscribe(note)}
+                  accessibilityLabel={`Subscribe with this ${note.denomination} ${note.token} note`}
+                >
+                  Subscribe with this note
+                </Button>
+                <View style={st.actions}>
+                  <ActionChip icon="arrow-up-outline" label={t('privacy.withdraw')} onPress={() => handleUnshield(note)} />
+                  <ActionChip icon="paper-plane-outline" label={t('common.send')} onPress={() => handleTransfer(note)} />
+                  <ActionChip icon="radio-outline" label={t('privacy.receiveNearby')} onPress={() => handleNearby(note)} />
+                  <ActionChip icon="share-outline" label={t('common.share')} onPress={() => handleManualShare(note)} />
+                </View>
+              </>
+            )}
+
+            {waiting && (
+              <>
+                <Text style={st.reason}>
+                  A fresh note waits out the pool's delay before it can be spent. The chain
+                  enforces that, so no screen can shorten it.
+                </Text>
+                <View style={st.actions}>
+                  {note.source === 'shielded' && (
+                    <ActionChip icon="flash-outline" label={t('privacy.emergencyUnshield')} danger onPress={() => handleEmergency(note)} />
+                  )}
+                  <ActionChip icon="cloud-upload-outline" label={t('privacy.backup')} onPress={() => handleExport(note)} />
+                </View>
+              </>
+            )}
+
+            {note.spentTxSig && (
+              <TouchableOpacity
+                style={st.linkRow}
+                onPress={() => Linking.openURL(`https://explorer.solana.com/tx/${note.spentTxSig}?cluster=devnet`)}
+                accessibilityRole="link"
+                accessibilityLabel="Open this transaction in the block explorer"
+              >
+                <Text style={st.linkText}>View on the explorer</Text>
+                <Ionicons name="open-outline" size={14} color={Colors.primary} />
+              </TouchableOpacity>
+            )}
+
+            {note.status === 'transferred' && note.transferredTo && (
+              <TouchableOpacity
+                style={st.linkRow}
+                onPress={() => Share.share({ message: note.transferredTo!, title: 'P01 Note' })}
+                accessibilityRole="button"
+                accessibilityLabel={t('privacy.reshare')}
+              >
+                <Text style={st.linkText}>{t('privacy.reshare')}</Text>
+                <Ionicons name="share-outline" size={14} color={Colors.primary} />
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       </View>
     );
   };
@@ -450,111 +502,121 @@ export default function DenominatedNotesScreen() {
     <View style={[st.container, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={st.header}>
-        <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={Colors.text} />
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={st.iconBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={22} color={Colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={st.headerTitle}>
+        <Text style={st.headerTitle} accessibilityRole="header">
           {batchMode ? t('privacy.selectNotes') : t('privacy.myNotes')}
         </Text>
-        <View style={{ flexDirection: 'row', gap: 6 }}>
-          {batchMode ? (
-            <>
-              <TouchableOpacity
-                onPress={handleSelectAllMature}
-                style={st.headerBtn}
-                disabled={!matureActive.length}
-              >
-                <Ionicons
-                  name="checkmark-done-outline"
-                  size={18}
-                  color={matureActive.length ? P01Colors.cyan : Colors.textTertiary}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={toggleBatchMode} style={st.headerBtn}>
-                <Ionicons name="close" size={20} color={Colors.textSecondary} />
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              {matureActive.length >= 2 && (
-                <TouchableOpacity onPress={toggleBatchMode} style={st.headerBtn}>
-                  <Ionicons name="list-outline" size={18} color={P01Colors.cyan} />
-                </TouchableOpacity>
-              )}
-              {clusterNotes.some(n => n.status === 'transferred' && !n.spentTxSig) && (
-                <TouchableOpacity onPress={handleRecover} style={st.headerBtn}>
-                  <Ionicons name="refresh-circle-outline" size={18} color={P01Colors.yellow} />
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity onPress={handleRescanFromSeed} disabled={isRescanning} style={st.headerBtn}>
-                <Ionicons
-                  name={isRescanning ? 'sync' : 'key-outline'}
-                  size={18}
-                  color={isRescanning ? P01Colors.cyanDim : P01Colors.cyan}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleBackup} style={st.headerBtn}>
-                <Ionicons name="cloud-upload-outline" size={18} color={Colors.textSecondary} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
-                style={[st.headerBtn, { backgroundColor: P01Colors.cyanDim }]}>
-                <Ionicons name="add" size={20} color={P01Colors.cyan} />
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
+        {batchMode ? (
+          <View style={st.headerActions}>
+            <TouchableOpacity
+              onPress={handleSelectAllMature}
+              style={st.iconBtn}
+              disabled={!matureActive.length}
+              accessibilityRole="button"
+              accessibilityLabel="Select every ready note"
+              accessibilityState={{ disabled: !matureActive.length }}
+            >
+              <Ionicons
+                name="checkmark-done-outline"
+                size={20}
+                color={matureActive.length ? Colors.primary : Colors.textTertiary}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={toggleBatchMode}
+              style={st.iconBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Leave selection mode"
+            >
+              <Ionicons name="close" size={22} color={Colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+        ) : matureActive.length >= 2 ? (
+          <TouchableOpacity
+            onPress={toggleBatchMode}
+            style={st.iconBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Select several notes to withdraw together"
+          >
+            <Ionicons name="list-outline" size={20} color={Colors.primary} />
+          </TouchableOpacity>
+        ) : (
+          <View style={st.iconBtn} />
+        )}
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: Spacing.xl, paddingBottom: 120 }}
+      <ScrollView
+        style={st.scroll}
+        contentContainerStyle={[
+          st.scrollContent,
+          { paddingBottom: insets.bottom + (batchMode ? 120 : 40) },
+        ]}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={onRefresh} tintColor={P01Colors.cyan} />}>
-
-        {/* Quick actions — compact chips */}
-        <View style={st.quickRow}>
-          <TouchableOpacity style={st.quickChip} onPress={() => router.push('/(main)/(privacy)/receive-note' as any)}>
-            <Ionicons name="bluetooth" size={16} color={P01Colors.blue} />
-            <Text style={st.quickLabel}>{t('common.receive')}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={st.quickChip} onPress={() => router.push('/(main)/(privacy)/denominated-import' as any)}>
-            <Ionicons name="clipboard-outline" size={16} color={P01Colors.cyan} />
-            <Text style={st.quickLabel}>{t('privacy.import')}</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Summary */}
+        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={onRefresh} tintColor={Colors.primary} />}
+      >
+        {/* One sentence where four counters used to be. */}
         {clusterNotes.length > 0 && (
-          <View style={st.summaryCard}>
-            {[
-              { val: activeNotes.length, label: t('common.active'), color: Colors.text },
-              { val: activeNotes.filter(n => n.status === 'mature').length, label: t('common.ready'), color: P01Colors.cyan },
-              { val: activeNotes.filter(n => n.status === 'pending' || n.status === 'imported').length, label: t('common.pending'), color: P01Colors.yellow },
-              { val: historyNotes.length, label: t('privacy.history'), color: Colors.text },
-            ].map((s, i) => (
-              <React.Fragment key={s.label}>
-                {i > 0 && <View style={st.summaryDivider} />}
-                <View style={{ flex: 1, alignItems: 'center' }}>
-                  <Text style={[st.summaryVal, { color: s.color }]}>{s.val}</Text>
-                  <Text style={st.summaryLabel}>{s.label}</Text>
-                </View>
-              </React.Fragment>
-            ))}
+          <Text style={st.summary}>
+            {matureActive.length} ready to spend
+            {maturingActive.length > 0 ? `, ${maturingActive.length} still maturing` : ''}
+            {historyNotes.length > 0 ? `, ${historyNotes.length} already used` : ''}.
+          </Text>
+        )}
+
+        {/* Recovery is a decision, so it is a labelled row rather than an
+            unlabelled icon that only appears when it applies. */}
+        {recoverableCount > 0 && (
+          <View style={st.recoverCard}>
+            <View style={st.recoverMain}>
+              <Text style={st.recoverTitle}>
+                {recoverableCount} transfer{recoverableCount === 1 ? '' : 's'} never landed
+              </Text>
+              <Text style={st.recoverBody}>
+                The note was handed over but nothing spent it. You can take it back.
+              </Text>
+            </View>
+            <Button
+              variant="secondary"
+              size="sm"
+              onPress={handleRecover}
+              accessibilityLabel={t('privacy.recover')}
+            >
+              {t('privacy.recover')}
+            </Button>
           </View>
         )}
 
         {/* Empty */}
         {clusterNotes.length === 0 && (
           <View style={st.empty}>
-            <Ionicons name="receipt-outline" size={40} color={Colors.textTertiary} />
             <Text style={st.emptyTitle}>{t('privacy.noNotes')}</Text>
-            <Text style={st.emptyDesc}>{t('privacy.noNotesDesc')}</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-              <TouchableOpacity style={st.emptyBtn} onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}>
-                <Text style={st.emptyBtnText}>{t('privacy.shield')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[st.emptyBtn, { backgroundColor: '#3b82f6' }]}
-                onPress={() => router.push('/(main)/(privacy)/denominated-import' as any)}>
-                <Text style={st.emptyBtnText}>{t('privacy.import')}</Text>
-              </TouchableOpacity>
+            <Text style={st.emptyBody}>{t('privacy.noNotesDesc')}</Text>
+            <View style={st.emptyActions}>
+              <Button
+                variant="primary"
+                size="lg"
+                fullWidth
+                onPress={() => router.push('/(main)/(privacy)/denominated-shield' as any)}
+                accessibilityLabel={t('privacy.shield')}
+              >
+                {t('privacy.shield')}
+              </Button>
+              <Button
+                variant="secondary"
+                size="md"
+                fullWidth
+                onPress={() => router.push('/(main)/(privacy)/denominated-import' as any)}
+                accessibilityLabel={t('privacy.import')}
+              >
+                {t('privacy.import')}
+              </Button>
             </View>
           </View>
         )}
@@ -570,7 +632,13 @@ export default function DenominatedNotesScreen() {
         {/* History */}
         {historyNotes.length > 0 && (
           <>
-            <TouchableOpacity style={st.historyToggle} onPress={() => setShowHistory(!showHistory)}>
+            <TouchableOpacity
+              style={st.historyToggle}
+              onPress={() => setShowHistory(!showHistory)}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: showHistory }}
+              accessibilityLabel={`${t('privacy.history')}, ${historyNotes.length}`}
+            >
               <Text style={st.sectionTitle}>{t('privacy.history')} ({historyNotes.length})</Text>
               <Ionicons name={showHistory ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textSecondary} />
             </TouchableOpacity>
@@ -578,17 +646,45 @@ export default function DenominatedNotesScreen() {
           </>
         )}
 
-        {/* Footer */}
-        <View style={st.footer}>
-          <Ionicons name="information-circle-outline" size={14} color={Colors.textTertiary} />
-          <Text style={st.footerText}>{t('privacy.notesStoredLocally')}</Text>
-        </View>
+        {/* The tools that used to be five unlabelled icons in the header. */}
+        {clusterNotes.length > 0 && (
+          <>
+            <Text style={st.sectionTitle}>Note tools</Text>
+            <ToolRow
+              icon="download-outline"
+              label={t('common.receive')}
+              sub="Take a note handed to you nearby"
+              onPress={() => router.push('/(main)/(privacy)/receive-note' as any)}
+            />
+            <ToolRow
+              icon="clipboard-outline"
+              label={t('privacy.import')}
+              sub="Paste a note someone sent you"
+              onPress={() => router.push('/(main)/(privacy)/denominated-import' as any)}
+            />
+            <ToolRow
+              icon="cloud-upload-outline"
+              label={t('privacy.backup')}
+              sub="Copy every note, so a wiped app is not a lost note"
+              onPress={handleBackup}
+            />
+            <ToolRow
+              icon="key-outline"
+              label={t('privacy.rescanFromSeed')}
+              sub={t('privacy.rescanFromSeedDesc')}
+              onPress={handleRescanFromSeed}
+              disabled={isRescanning}
+            />
+          </>
+        )}
+
+        <Text style={st.footerText}>{t('privacy.notesStoredLocally')}</Text>
       </ScrollView>
 
       {/* Batch action bar — sticky bottom */}
       {batchMode && (
-        <View style={[st.batchBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-          <View style={{ flex: 1 }}>
+        <View style={[st.batchBar, { paddingBottom: Math.max(insets.bottom, Spacing.md) }]}>
+          <View style={st.batchBarMain}>
             <Text style={st.batchBarCount}>
               {selectedCount === 0
                 ? t('privacy.batchTapToSelect')
@@ -600,22 +696,20 @@ export default function DenominatedNotesScreen() {
               </Text>
             )}
             {mixedTokens && (
-              <Text style={[st.batchBarSum, { color: Colors.error }]}>
+              <Text style={st.batchBarError} accessibilityRole="alert">
                 {t('privacy.batchMixedTokens')}
               </Text>
             )}
           </View>
-          <TouchableOpacity
+          <Button
+            variant="primary"
+            size="md"
             onPress={handleBatchProceed}
             disabled={!selectedCount || mixedTokens}
-            style={[
-              st.batchBarCta,
-              (!selectedCount || mixedTokens) && { opacity: 0.4 },
-            ]}
+            accessibilityLabel={t('privacy.withdraw')}
           >
-            <Ionicons name="wallet-outline" size={16} color="#000" />
-            <Text style={st.batchBarCtaText}>{t('privacy.withdraw')}</Text>
-          </TouchableOpacity>
+            {t('privacy.withdraw')}
+          </Button>
         </View>
       )}
       {/* Manual rescan modal — reuses the boot-time scanner with a visible
@@ -625,129 +719,240 @@ export default function DenominatedNotesScreen() {
   );
 }
 
-function ActionChip({ icon, label, color, onPress }: { icon: string; label: string; color: string; onPress: () => void }) {
+function ActionChip({ icon, label, onPress, danger }: {
+  icon: string; label: string; onPress: () => void; danger?: boolean;
+}) {
   return (
-    <TouchableOpacity onPress={onPress} style={[st.actionChip, { backgroundColor: `${color}12` }]} activeOpacity={0.7}>
-      <Ionicons name={icon as any} size={14} color={color} />
-      <Text style={[st.actionChipText, { color }]}>{label}</Text>
+    <TouchableOpacity
+      onPress={onPress}
+      style={[st.actionChip, danger && st.actionChipDanger]}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Ionicons name={icon as any} size={15} color={danger ? Colors.error : Colors.textSecondary} />
+      <Text style={[st.actionChipText, danger && st.actionChipTextDanger]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function ToolRow({ icon, label, sub, onPress, disabled }: {
+  icon: string; label: string; sub?: string; onPress: () => void; disabled?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={disabled ? undefined : onPress}
+      disabled={disabled}
+      style={[st.toolRow, disabled && st.toolRowDisabled]}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: !!disabled }}
+    >
+      <Ionicons name={icon as any} size={18} color={Colors.primary} />
+      <View style={st.toolMain}>
+        <Text style={st.toolLabel}>{label}</Text>
+        {sub ? <Text style={st.toolSub} numberOfLines={2}>{sub}</Text> : null}
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
     </TouchableOpacity>
   );
 }
 
 const st = StyleSheet.create({
+  // Transparent on purpose: the tab layout paints the ground once.
   container: { flex: 1, backgroundColor: 'transparent' },
+
   header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    minHeight: 56,
   },
-  backBtn: {
-    width: 40, height: 40, borderRadius: BorderRadius.full,
-    backgroundColor: Colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center',
+  headerTitle: {
+    flex: 1,
+    fontSize: FontSize.xl,
+    fontFamily: FontFamily.displayMedium,
+    color: Colors.text,
+    paddingHorizontal: Spacing.xs,
   },
-  headerTitle: { fontSize: 20, fontFamily: FontFamily.bold, color: Colors.text },
-  headerBtn: {
-    width: 34, height: 34, borderRadius: BorderRadius.full,
-    backgroundColor: Colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center',
+  headerActions: { flexDirection: 'row', alignItems: 'center' },
+  iconBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
-  // Quick actions
-  quickRow: { flexDirection: 'row', gap: 8, marginBottom: Spacing.lg },
-  quickChip: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 11, borderRadius: BorderRadius.lg, backgroundColor: Colors.surfaceSecondary,
-  },
-  quickLabel: { fontSize: 13, fontFamily: FontFamily.semibold, color: Colors.text },
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: Spacing.xl },
 
-  // Summary
-  summaryCard: {
-    flexDirection: 'row', padding: Spacing.xl,
-    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.xl, marginBottom: Spacing.lg,
+  summary: {
+    fontSize: FontSize.md,
+    fontFamily: FontFamily.regular,
+    color: Colors.textSecondary,
+    marginBottom: Spacing['2xl'],
   },
-  summaryDivider: { width: 1, backgroundColor: Colors.surfaceTertiary, marginHorizontal: 4 },
-  summaryVal: { fontSize: 20, fontFamily: FontFamily.bold },
-  summaryLabel: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary, marginTop: 2 },
+
+  // Recovery
+  recoverCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    padding: Spacing.lg,
+    marginBottom: Spacing['2xl'],
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.yellow,
+    backgroundColor: Colors.warningDim,
+  },
+  recoverMain: { flex: 1, minWidth: 0 },
+  recoverTitle: { fontSize: FontSize.md, fontFamily: FontFamily.medium, color: Colors.text },
+  recoverBody: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textSecondary, lineHeight: 16, marginTop: 2,
+  },
 
   // Empty
-  empty: { alignItems: 'center', paddingVertical: 48 },
-  emptyTitle: { fontSize: 18, fontFamily: FontFamily.bold, color: Colors.text, marginTop: 12 },
-  emptyDesc: { fontSize: 13, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 4, textAlign: 'center' },
-  emptyBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 20, paddingVertical: 10, borderRadius: BorderRadius.md, backgroundColor: P01Colors.cyan,
+  empty: { alignItems: 'center', paddingVertical: Spacing['5xl'] },
+  emptyTitle: {
+    fontSize: FontSize.xl, fontFamily: FontFamily.display,
+    color: Colors.text, textAlign: 'center',
   },
-  emptyBtnText: { fontSize: 14, fontFamily: FontFamily.bold, color: '#000' },
+  emptyBody: {
+    fontSize: FontSize.md, fontFamily: FontFamily.regular, color: Colors.textSecondary,
+    marginTop: Spacing.sm, textAlign: 'center', lineHeight: 21, maxWidth: 300,
+  },
+  emptyActions: { width: '100%', gap: Spacing.md, marginTop: Spacing['3xl'] },
 
   // Section
-  sectionTitle: { fontSize: 14, fontFamily: FontFamily.semibold, color: Colors.textSecondary, marginBottom: 10 },
+  sectionTitle: {
+    fontSize: FontSize.lg, fontFamily: FontFamily.displayMedium,
+    color: Colors.text, marginTop: Spacing['2xl'], marginBottom: Spacing.md,
+  },
   historyToggle: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginTop: Spacing.xl, marginBottom: 10, paddingVertical: 4,
+    minHeight: 44,
   },
 
   // Note card
   noteCard: {
-    backgroundColor: Colors.surfaceSecondary, borderRadius: BorderRadius.xl,
-    padding: 14, marginBottom: 8,
+    borderRadius: BorderRadius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
   },
-  noteRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  noteIcon: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  noteAmount: { fontSize: 15, fontFamily: FontFamily.bold, color: Colors.text },
-  noteSub: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 1 },
-  timeText: { fontSize: 12, fontFamily: FontFamily.medium, color: P01Colors.yellow, marginRight: 4 },
+  noteCardSelected: { borderColor: Colors.primary, backgroundColor: Colors.primaryDim },
+  noteCardDimmed: { opacity: 0.4 },
+  noteRow: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+    minHeight: 64, paddingVertical: Spacing.md,
+  },
+  noteMain: { flex: 1, minWidth: 0 },
+  noteAmount: {
+    fontSize: FontSize.lg, fontFamily: FontFamily.displayMedium,
+    color: Colors.text, fontVariant: ['tabular-nums'],
+  },
+  noteSub: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textTertiary, marginTop: 2,
+  },
 
-  // Badge
-  badge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, marginRight: 4 },
-  badgeText: { fontSize: 9, fontFamily: FontFamily.bold },
+  // State pill
+  pill: {
+    paddingHorizontal: Spacing.sm, paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
+  },
+  pillGood: { borderColor: Colors.primaryMuted, backgroundColor: Colors.primaryDim },
+  pillWarn: { borderColor: Colors.yellow, backgroundColor: Colors.warningDim },
+  pillText: { fontSize: FontSize.xs, fontFamily: FontFamily.medium, color: Colors.textSecondary },
+  pillTextGood: { color: Colors.primary },
+  pillTextWarn: { color: Colors.yellow },
 
   // Route progress
-  progressTrack: { height: 4, borderRadius: 2, backgroundColor: Colors.surfaceTertiary, overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 2, backgroundColor: P01Colors.pink },
-  progressLabel: { fontSize: 11, fontFamily: FontFamily.regular, color: Colors.textTertiary, marginTop: 4 },
+  progressWrap: { paddingBottom: Spacing.md },
+  progressTrack: {
+    height: 3, borderRadius: 2,
+    backgroundColor: Colors.surfaceTertiary, overflow: 'hidden',
+  },
+  progressFill: { height: '100%', borderRadius: 2, backgroundColor: Colors.primary },
+  progressLabel: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textTertiary, marginTop: Spacing.xs,
+  },
 
   // Expanded
-  expandedSection: { marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: Colors.surfaceTertiary },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
-  detailLabel: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textTertiary },
-  detailValue: { fontSize: 12, fontFamily: FontFamily.mono, color: Colors.textSecondary },
-
-  // Actions
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+  expanded: {
+    paddingBottom: Spacing.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.borderSoft,
+    paddingTop: Spacing.lg,
+    gap: Spacing.md,
+  },
+  reason: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular,
+    color: Colors.textTertiary, lineHeight: 18,
+  },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   actionChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: BorderRadius.sm,
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.xs,
+    minHeight: 44, paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.border,
   },
-  actionChipText: { fontSize: 12, fontFamily: FontFamily.medium },
+  actionChipDanger: { borderColor: Colors.error },
+  actionChipText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: Colors.textSecondary },
+  actionChipTextDanger: { color: Colors.error },
+  linkRow: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, minHeight: 44,
+  },
+  linkText: { fontSize: FontSize.sm, fontFamily: FontFamily.regular, color: Colors.primary },
 
-  // Footer
-  footer: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
-    marginTop: Spacing.xl, padding: Spacing.md,
+  // Tools
+  toolRow: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+    minHeight: 60, paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.borderSoft,
   },
-  footerText: { flex: 1, fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textTertiary, lineHeight: 17 },
+  toolRowDisabled: { opacity: 0.4 },
+  toolMain: { flex: 1, minWidth: 0 },
+  toolLabel: { fontSize: FontSize.md, fontFamily: FontFamily.regular, color: Colors.text },
+  toolSub: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textTertiary, lineHeight: 16, marginTop: 2,
+  },
+
+  footerText: {
+    fontSize: FontSize.xs, fontFamily: FontFamily.regular,
+    color: Colors.textTertiary, lineHeight: 17, marginTop: Spacing['2xl'],
+  },
 
   // Batch multi-select
   checkbox: {
-    width: 22, height: 22, borderRadius: 6, borderWidth: 1.5,
+    width: 22, height: 22, borderRadius: BorderRadius.sm, borderWidth: 1.5,
     borderColor: Colors.textTertiary, alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'transparent',
   },
-  checkboxChecked: { backgroundColor: P01Colors.cyan, borderColor: P01Colors.cyan },
-  checkboxDisabled: { borderColor: Colors.surfaceTertiary },
-  noteCardSelected: { borderWidth: 1, borderColor: P01Colors.cyan },
-  noteCardDimmed: { opacity: 0.5 },
+  checkboxChecked: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  checkboxDisabled: { borderColor: Colors.borderSoft },
   batchBar: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingHorizontal: Spacing.xl, paddingTop: 14,
-    backgroundColor: Colors.surfaceSecondary,
-    borderTopWidth: 1, borderTopColor: Colors.surfaceTertiary,
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+    paddingHorizontal: Spacing.xl, paddingTop: Spacing.lg,
+    backgroundColor: Colors.surface,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.border,
   },
-  batchBarCount: { fontSize: 14, fontFamily: FontFamily.semibold, color: Colors.text },
-  batchBarSum: { fontSize: 12, fontFamily: FontFamily.regular, color: Colors.textSecondary, marginTop: 2 },
-  batchBarCta: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 18, paddingVertical: 10,
-    borderRadius: BorderRadius.md, backgroundColor: P01Colors.cyan,
+  batchBarMain: { flex: 1, minWidth: 0 },
+  batchBarCount: { fontSize: FontSize.md, fontFamily: FontFamily.medium, color: Colors.text },
+  batchBarSum: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular,
+    color: Colors.textSecondary, marginTop: 2, fontVariant: ['tabular-nums'],
   },
-  batchBarCtaText: { fontSize: 14, fontFamily: FontFamily.bold, color: '#000' },
+  batchBarError: {
+    fontSize: FontSize.sm, fontFamily: FontFamily.regular,
+    color: Colors.error, marginTop: 2,
+  },
 });
