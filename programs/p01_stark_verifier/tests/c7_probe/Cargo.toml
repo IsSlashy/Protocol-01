@@ -1,0 +1,33 @@
+[package]
+name = "c7-phase2-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Throwaway SBF program that reproduces the ARITHMETIC SHAPE of the proposed C7 phase-2 DEEP-ALI check so its compute-unit cost can be measured before the AIR exists (C7_SPEND_CIRCUIT_PLAN.md Step 0)."
+
+# Deliberately its own workspace root. This crate lives inside
+# `programs/p01_stark_verifier/tests/` so it is co-located with the harness
+# that loads it, but it must NOT become a member of the Protocol-01 workspace:
+# it is built with `cargo-build-sbf`, is never deployed, and its dependency
+# graph must not touch the workspace lockfile. An empty `[workspace]` table
+# detaches it. Cargo does not auto-discover it as an integration test either
+# (that requires `tests/<dir>/main.rs`, which this directory does not have).
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "c7_phase2_probe"
+
+# Mirrors the root workspace's `[profile.release]` (Cargo.toml:36-39) and
+# `.cargo/config.toml:15-19`. `overflow-checks = true` in particular changes
+# the emitted code for every `Felt` operation, so the probe must match the
+# real verifier here or the measurement is not comparable.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+overflow-checks = true
+
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 1

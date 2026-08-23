@@ -14,7 +14,12 @@ use crate::merkle;
 use crate::poseidon_consts;
 use solana_sha256_hasher::hashv;
 
-#[derive(Debug)]
+/// [B1] `PartialEq` so tests can assert the EXACT variant. Accepting "any error"
+/// is how a test stays green against a verifier that rejects for the wrong
+/// reason, or that has no binding at all (see `tests/b1_deep_binding.rs`).
+/// Adding variants and derives changes nothing observable on chain: every call
+/// site maps this with `.map_err(|_| StarkVerifierError::InvalidProof)`.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[allow(dead_code)]
 pub enum VerifyError {
     OodConstraintFailed,
@@ -35,6 +40,81 @@ pub enum VerifyError {
     /// not equal `ood_quotient · Z_D(z)`. The prover's Q(z) claim is
     /// inconsistent with the opened OOD trace evaluations and the AIR.
     DeepAliFailed,
+    /// A domain-size lookup (`get_lde_generator` / `get_trace_generator`) was
+    /// asked for a size with no precomputed root-of-unity constant.
+    ///
+    /// Before this variant existed both lookups fell through to `Felt::ONE`,
+    /// i.e. a degenerate domain where every position maps to 1 — the whole LDE
+    /// collapses to a single point and FRI/quotient checks become vacuous.
+    /// That is not reachable from proof bytes today (`CircuitConfig` is a
+    /// program constant, see `compact_proof::get_circuit_config`), but it made
+    /// "add a circuit with a new domain size" a silently-unsound edit. Now it
+    /// fails closed.
+    UnsupportedDomainSize,
+    /// Circuit 0 (`subscriber_ownership`) was handed to the GENERIC verifier.
+    ///
+    /// C0 has one verifier — the legacy `verify_subscriber_ownership` path — and
+    /// the generic path cannot substitute for it:
+    ///
+    /// * `verify_deep_ali_generic` divides by the wrong vanishing polynomial for
+    ///   C0. C0's constraint is divisible by `Z_T(x) = (x^n - 1)/(x - g^(n-1))`,
+    ///   not by `Z_D(x) = x^n - 1`, because the wrap-around transition at row
+    ///   `n-1` does not vanish. The legacy path knows this; the generic one does
+    ///   not.
+    /// * C0's committed quotient carries a folded boundary term
+    ///   (`fold_boundary_quotient` with the `bnd-c0` tag). The generic path has no
+    ///   matching recomputation for circuit 0, so the OOD identity cannot close.
+    ///
+    /// The generic path therefore REJECTS honest C0 proofs. Before this variant
+    /// it rejected them as `DeepAliFailed` — indistinguishable from a forgery, and
+    /// one refactor away from being "fixed" into a silent mis-verification. Four
+    /// shipped instructions hard-require `circuit_id == 0`
+    /// (`zk_shielded::{pause,resume,cancel_private_stark}` and
+    /// `p01_quantum_wallet/src/stark.rs:42`), so the legacy path is load-bearing
+    /// and stays. This error says so out loud instead.
+    CircuitZeroIsLegacyOnly,
+    /// [B1] The published FRI final polynomial has a non-zero coefficient at or
+    /// above `CircuitConfig.fri_final_poly_degree_bound`.
+    ///
+    /// Without this check the terminal FRI test is VACUOUS: `fri_final_poly_size`
+    /// is 16 on every circuit over a 16-point final domain, so the 16 published
+    /// coefficients span the full interpolation space of the 16 folded
+    /// evaluations and the terminal comparison at the end of `verify_fri_*` can
+    /// always be satisfied. The MEASURED honest bound is 8 coefficients for
+    /// C1..C6 and 7 for C0 (`emit_deep_degree_table` in stark/src/compact.rs), so
+    /// half the space is illegal and each query becomes worth 1.000 bit.
+    FriFinalPolyDegreeTooHigh,
+    /// [B1] The LAST fold disagreed with the published final polynomial,
+    /// specifically. Split out of `FriFoldCheckFailed` so the coordinated-forgery
+    /// test can name WHICH mechanism rejected rather than accepting any error.
+    FriTerminalCheckFailed,
+    /// [B1] The DEEP denominator `(y - z)(y + z)...` vanished at a queried
+    /// position, i.e. `z` or `z*g` landed in the LDE domain. LIVENESS, not
+    /// soundness: `z` is deterministic from the two roots plus the public inputs,
+    /// so this is a ~2^-50 accident and the honest prover asserts against it at
+    /// proof time rather than emitting an unprovable proof.
+    DeepDenominatorZero,
+    /// [SEAM] `public_inputs.len()` does not equal the count the circuit's
+    /// boundary assertions consume, or a length-carrying public input (C3/C6
+    /// `depth`) is out of range.
+    ///
+    /// `get_boundary_assertions` used to DEFAULT every missing public input to
+    /// `Felt::ZERO`, and for C3/C6 it went further: `depth` is a
+    /// caller-supplied public input, and `depth == 0 || depth > 16` selected a
+    /// SHORTER assertion list that dropped the root bindings entirely (C6:
+    /// 4 assertions → 2, losing `old_root` and `new_root`; C3: 2 → 1, losing
+    /// `root`). Phase 1 never pinned `depth` — only `verify_deep_ali_circuit_3`
+    /// and `_6` do — so `verify_stark_proof_v2` would mark a C6 buffer
+    /// `verified = true` with NO root binding at all whenever the caller passed
+    /// `depth = 99`.
+    ///
+    /// The same defaulting made `verify_stark_proof` (the legacy single-`u64`
+    /// entry point, which has no gate against circuits 1..=6) able to set
+    /// `verified = true` on a generic buffer with 1 real public input and the
+    /// rest silently asserted against zero.
+    ///
+    /// Fails closed now: the count is exact and `depth` must be in `1..=16`.
+    PublicInputCountMismatch,
 }
 
 // ============================================================================
@@ -48,8 +128,8 @@ const GOLDILOCKS_PRIME: u64 = 0xFFFFFFFF00000001;
 
 // Precomputed N-th roots of unity: g_N = 7^((p-1)/N) mod p
 // Used for LDE domain element computation and boundary checks.
-#[allow(dead_code)]
-/// 32nd root of unity (trace domain for circuit 0)
+/// 32nd root of unity (trace domain for circuit 0).
+/// [B1] Live: `verify_fri_legacy` uses it for `zg = z * g`.
 const GENERATOR_32: u64 = 0x00003FFFFFFFC000;
 #[allow(dead_code)]
 /// 128th root of unity (trace domain for circuits 1,2)
@@ -66,48 +146,448 @@ const GENERATOR_4096: u64 = 0xF2C35199959DFCB6;
 /// 8192nd root of unity (LDE domain for circuits 3,5)
 const GENERATOR_8192: u64 = 0x1544EF2335D17997;
 
+/// [B7] The multiplicative shift `h` of the LDE evaluation coset.
+///
+/// PAIRED EDIT: `stark/src/compact.rs`'s `LDE_COSET_SHIFT_U64`. The prover
+/// evaluates at `x = h * g^i`; every domain-point reconstruction on this side
+/// must apply the same `h` or honest proofs stop verifying. The two literals
+/// must stay equal and `coset_shift_matches_the_prover` pins that.
+///
+/// ONE global constant, deliberately NOT a per-size table like the generators
+/// above. The safety condition is a single inequality, `h^N != 1` for the
+/// largest LDE size, and it covers every shipping size and every FRI layer at
+/// once — a table would only create a slot someone can fill with `1`, which is
+/// the exact collapse `get_lde_generator` below was hardened against.
+///
+/// `#[allow(dead_code)]` until the domain-point sites actually consume it; the
+/// constant lands first so the two crates can be checked against each other
+/// before any proof bytes move.
+pub const LDE_COSET_SHIFT: u64 = 7;
+/// [B7] `h^(-1)`, precomputed. NOT `Felt::new(LDE_COSET_SHIFT_INV)`.
+///
+/// MEASURED, and this is why it is a constant: `inv()` is a Fermat
+/// exponentiation, roughly a hundred multiplications. Calling it inside the
+/// per-query, per-layer FRI loop cost ~500,000 CU and pushed ALL SEVEN circuits
+/// over the 1,400,000 cap — `consumed 1399850 of 1399850, exceeded CUs meter`.
+/// The value depends on neither the query nor the layer, so it has no business
+/// being computed there, and since `h` is a compile-time constant it has no
+/// business being computed at runtime at all.
+///
+/// 7 * 2635249152773512046 == 1 mod (2^64 - 2^32 + 1). Cross-checked against
+/// the prover, which printed exactly this as its layer-0 `inv_shift` during the
+/// B7 differential debugging — two paths that do not talk to each other.
+/// `coset_shift_inverse_is_exact` pins it rather than trusting this comment.
+pub const LDE_COSET_SHIFT_INV: u64 = 2635249152773512046;
+
 /// Get the LDE domain generator for a given LDE size.
-fn get_lde_generator(lde_size: usize) -> Felt {
+///
+/// **Fails closed.** An unlisted size is a build-time error in this crate, not
+/// something a proof can trigger — but returning `Felt::ONE` for it (as this
+/// did before) would make the whole LDE domain collapse to `{1}`, so FRI folds
+/// and quotient/vanishing evaluations would be checked against garbage while
+/// still reporting success. Any new circuit must add its generator constant
+/// here or it will be rejected outright.
+/// `pub` so the B7 shift test can assert its size list against the sizes this
+/// table actually ships, instead of restating them and rotting silently the day
+/// a circuit is added.
+pub fn get_lde_generator(lde_size: usize) -> Result<Felt, VerifyError> {
     match lde_size {
-        512 => Felt::new(GENERATOR_512),
-        2048 => Felt::new(GENERATOR_2048),
-        4096 => Felt::new(GENERATOR_4096),
-        8192 => Felt::new(GENERATOR_8192),
-        // ⛔ FAIL CLOSED. This arm was `_ => Felt::ONE` and that is not a
-        // degraded domain, it is the collapse of the whole low-degree binding:
-        // with g = 1 every LDE position is 1, so Z_D ≡ 0 and the quotient check
-        // becomes vacuous, y_inv = 1 so the FRI fold identity is no longer FRI,
-        // and gen_final = 1 so the final polynomial is always evaluated at the
-        // same point. An unsupported domain size must abort, never verify.
-        // The DEPLOYED verifier (b7-drop-aligned-checks, verify.rs:199) already
-        // returns Err(UnsupportedDomainSize) here; this branch had drifted open.
-        _ => panic!("unsupported LDE domain size"),
+        512 => Ok(Felt::new(GENERATOR_512)),
+        2048 => Ok(Felt::new(GENERATOR_2048)),
+        4096 => Ok(Felt::new(GENERATOR_4096)),
+        8192 => Ok(Felt::new(GENERATOR_8192)),
+        _ => Err(VerifyError::UnsupportedDomainSize),
     }
 }
 
 /// Get the trace domain generator for a given trace length.
-#[allow(dead_code)]
-fn get_trace_generator(trace_length: usize) -> Felt {
+///
+/// Fails closed for the same reason as [`get_lde_generator`].
+///
+/// [B1] This had no live caller until B1; the DEEP-ALI routines inline their
+/// per-circuit constant. `verify_fri_generic` now calls it for `zg = z * g`,
+/// which is the row shift the two-point linearisation is built around.
+fn get_trace_generator(trace_length: usize) -> Result<Felt, VerifyError> {
     match trace_length {
-        32 => Felt::new(GENERATOR_32),
-        128 => Felt::new(GENERATOR_128),
-        256 => Felt::new(GENERATOR_256),
-        512 => Felt::new(GENERATOR_512),
-        // ⛔ FAIL CLOSED — same reasoning as get_lde_generator above.
-        _ => panic!("unsupported trace domain size"),
+        32 => Ok(Felt::new(GENERATOR_32)),
+        128 => Ok(Felt::new(GENERATOR_128)),
+        256 => Ok(Felt::new(GENERATOR_256)),
+        512 => Ok(Felt::new(GENERATOR_512)),
+        _ => Err(VerifyError::UnsupportedDomainSize),
     }
 }
 
-/// Compute the LDE domain element at a given position: lde_gen^pos
-fn get_lde_domain_element(pos: usize, config: &CircuitConfig) -> Felt {
-    let g = get_lde_generator(config.lde_size);
-    g.exp(pos as u64)
+/// Compute the LDE domain element at a given position: `h * lde_gen^pos`.
+///
+/// [B7] The `h` is the coset shift. The prover evaluates at `h * g^i`, so this —
+/// the ONE place on this side that turns a query position back into a field
+/// element — has to apply the same factor or every honest proof is rejected.
+///
+/// It is `h`, NOT `h^(-1)`: this reconstructs the point, it does not divide by
+/// it. The inverse belongs to the FRI fold and the coset interpolation, both of
+/// which live prover-side. Getting that backwards is the failure that still
+/// produces a proof — one that verifies against the wrong polynomial.
+///
+/// Downstream layers need no change: the fold squares the point, and
+/// `(h * g^p)^2 = h^2 * g^(2p)` carries the shift along for free. The final-poly
+/// check needs none either, because the prover's terminal interpolation stays on
+/// the raw subgroup, so its coefficients are those of `f'(y) = f(h' * y)` and
+/// evaluating them at `gen_final^j` yields exactly `f` at the true coset point.
+fn get_lde_domain_element(pos: usize, config: &CircuitConfig) -> Result<Felt, VerifyError> {
+    let g = get_lde_generator(config.lde_size)?;
+    Ok(Felt::new(LDE_COSET_SHIFT).mul(g.exp(pos as u64)))
 }
 
 /// Compute the vanishing polynomial Z_D(x) = x^trace_length - 1
 fn vanishing_poly(x: Felt, trace_length: usize) -> Felt {
     let x_n = x.exp(trace_length as u64);
     x_n.sub(Felt::ONE)
+}
+
+/// Regression tests for the domain-generator lookups.
+///
+/// These pin two things at once:
+///  1. every size reachable today still returns the *exact* constant it
+///     returned before the fail-closed change (this program is deployed and
+///     verifies live C1/C3/C5/C6 proofs — any drift here invalidates them);
+///  2. an unlisted size now errors instead of silently returning `Felt::ONE`.
+#[cfg(test)]
+mod domain_generator_tests {
+    use super::*;
+    use crate::compact_proof::{get_circuit_config, LDE_SIZE};
+
+    /// Sizes reachable via `CircuitConfig.lde_size` for circuits 0..=6 plus the
+    /// legacy circuit-0 path, mapped to the constant each must keep returning.
+    const LISTED_LDE: [(usize, u64); 4] = [
+        (512, GENERATOR_512),
+        (2048, GENERATOR_2048),
+        (4096, GENERATOR_4096),
+        (8192, GENERATOR_8192),
+    ];
+
+    const LISTED_TRACE: [(usize, u64); 4] = [
+        (32, GENERATOR_32),
+        (128, GENERATOR_128),
+        (256, GENERATOR_256),
+        (512, GENERATOR_512),
+    ];
+
+    #[test]
+    fn lde_generator_listed_sizes_return_prior_constants() {
+        for (size, expected) in LISTED_LDE {
+            let g = get_lde_generator(size).expect("listed LDE size must resolve");
+            assert_eq!(g.as_u64(), expected, "generator drift for LDE size {size}");
+        }
+    }
+
+    #[test]
+    fn trace_generator_listed_sizes_return_prior_constants() {
+        for (size, expected) in LISTED_TRACE {
+            let g = get_trace_generator(size).expect("listed trace size must resolve");
+            assert_eq!(g.as_u64(), expected, "generator drift for trace length {size}");
+        }
+    }
+
+    /// The behaviour guarantee that matters for the deployed program: every
+    /// circuit config the on-chain dispatcher can select still resolves, and
+    /// resolves to the same constant as before.
+    #[test]
+    fn every_live_circuit_config_resolves_its_lde_generator() {
+        for circuit_id in 0u8..=6 {
+            let config = get_circuit_config(circuit_id).expect("circuit id 0..=6 has a config");
+            let g = get_lde_generator(config.lde_size)
+                .unwrap_or_else(|e| panic!("circuit {circuit_id} lde_size {} rejected: {e:?}", config.lde_size));
+            let expected = LISTED_LDE
+                .iter()
+                .find(|(s, _)| *s == config.lde_size)
+                .map(|(_, v)| *v)
+                .unwrap_or_else(|| panic!("circuit {circuit_id} uses unlisted lde_size {}", config.lde_size));
+            assert_eq!(g.as_u64(), expected);
+            assert_ne!(g.as_u64(), Felt::ONE.as_u64(), "a live generator must never be 1");
+        }
+        // Legacy circuit-0 path uses the bare constant, not a CircuitConfig.
+        assert_eq!(LDE_SIZE, 512);
+        assert_eq!(get_lde_generator(LDE_SIZE).unwrap().as_u64(), GENERATOR_512);
+    }
+
+    /// The footgun itself: previously each of these returned `Felt::ONE`.
+    /// 1024 / 16384 are the sizes a concatenated-trace C7 would have used.
+    #[test]
+    fn lde_generator_rejects_unlisted_sizes() {
+        for size in [0usize, 1, 2, 16, 32, 64, 128, 256, 1024, 16384, 65536, usize::MAX] {
+            match get_lde_generator(size) {
+                Err(VerifyError::UnsupportedDomainSize) => {}
+                Err(other) => panic!("LDE size {size}: wrong error {other:?}"),
+                Ok(g) => panic!("LDE size {size} silently resolved to {}", g.as_u64()),
+            }
+        }
+    }
+
+    #[test]
+    fn trace_generator_rejects_unlisted_sizes() {
+        for size in [0usize, 1, 2, 16, 64, 100, 1024, 2048, 8192, usize::MAX] {
+            match get_trace_generator(size) {
+                Err(VerifyError::UnsupportedDomainSize) => {}
+                Err(other) => panic!("trace length {size}: wrong error {other:?}"),
+                Ok(g) => panic!("trace length {size} silently resolved to {}", g.as_u64()),
+            }
+        }
+    }
+
+    /// Same failure class, second lookup: an unknown circuit id used to yield an
+    /// empty assertion list, which `verify_boundary_constraints` accepts as
+    /// "nothing to check".
+    #[test]
+    fn boundary_assertions_reject_unknown_circuit() {
+        for circuit_id in [7u8, 8, 100, 255] {
+            match get_boundary_assertions(circuit_id, &[1, 2, 3, 4, 5, 15]) {
+                Err(VerifyError::UnsupportedCircuit) => {}
+                Err(other) => panic!("circuit {circuit_id}: wrong error {other:?}"),
+                Ok(a) => panic!("circuit {circuit_id} silently produced {} assertions", a.len()),
+            }
+        }
+    }
+
+    /// Assertion counts for the live circuits are unchanged, and none of them is
+    /// empty — so the `assertions.is_empty()` early-out in
+    /// `verify_boundary_constraints` was only ever reachable through the old
+    /// `_ => Vec::new()` arm.
+    #[test]
+    fn boundary_assertions_listed_circuits_unchanged() {
+        // (circuit_id, public_inputs, expected assertion count)
+        let cases: [(u8, &[u64], usize); 7] = [
+            (0, &[42], 3),
+            (1, &[1, 2], 6),
+            (2, &[1, 2], 7),
+            (3, &[1, 2, 15], 2),
+            (4, &[1, 2, 3, 4], 12),
+            (5, &[1, 2, 3, 4, 5, 6], 26),
+            (6, &[1, 2, 3, 4, 15], 4),
+        ];
+        for (circuit_id, pub_inputs, expected) in cases {
+            let a = get_boundary_assertions(circuit_id, pub_inputs)
+                .unwrap_or_else(|e| panic!("circuit {circuit_id} must resolve: {e:?}"));
+            assert_eq!(a.len(), expected, "assertion-count drift for circuit {circuit_id}");
+            assert!(!a.is_empty());
+        }
+    }
+
+    /// [SEAM] The degradation this test used to PIN AS CORRECT.
+    ///
+    /// It read:
+    /// ```ignore
+    /// // Circuit 3 / 6 out-of-range depth still degrades to the leaf-only form
+    /// // (unchanged behaviour, deliberately not touched by this fix).
+    /// assert_eq!(get_boundary_assertions(3, &[1, 2, 99]).unwrap().len(), 1);
+    /// assert_eq!(get_boundary_assertions(6, &[1, 2, 3, 4, 99]).unwrap().len(), 2);
+    /// ```
+    ///
+    /// `depth` is a CALLER-SUPPLIED public input. Dropping assertions on an
+    /// out-of-range value means the caller chose which bindings to enforce: at
+    /// `depth = 99` a C6 proof was checked against nothing but its two leaves,
+    /// and a C3 proof against nothing but its leaf. Phase 1 has no other pin on
+    /// `depth` — `verify_deep_ali_circuit_3/_6` do, but they are a SEPARATE
+    /// instruction, and `verified = true` is what four of the shipped consumer
+    /// paths read first.
+    ///
+    /// This is a tightening, not a weakening: the old assertion said "returns a
+    /// SHORTER list", the new one says "returns Err".
+    #[test]
+    fn out_of_range_depth_can_no_longer_switch_off_the_root_binding() {
+        for bad_depth in [0u64, 17, 32, 99, u32::MAX as u64, u64::MAX] {
+            assert!(
+                matches!(
+                    get_boundary_assertions(3, &[1, 2, bad_depth]),
+                    Err(VerifyError::PublicInputCountMismatch)
+                ),
+                "C3 depth {bad_depth} must be refused, not degraded"
+            );
+            assert!(
+                matches!(
+                    get_boundary_assertions(6, &[1, 2, 3, 4, bad_depth]),
+                    Err(VerifyError::PublicInputCountMismatch)
+                ),
+                "C6 depth {bad_depth} must be refused, not degraded"
+            );
+        }
+        // Every in-range depth keeps the FULL assertion set, and the root row it
+        // names is inside the trace (512 rows) — otherwise the assertion would
+        // be vacuous, since `verify_boundary_constraints` reduces every query
+        // position mod `trace_length`.
+        for depth in MIN_MERKLE_DEPTH..=MAX_MERKLE_DEPTH {
+            let d = depth as u64;
+            assert_eq!(get_boundary_assertions(3, &[1, 2, d]).unwrap().len(), 2);
+            let a6 = get_boundary_assertions(6, &[1, 2, 3, 4, d]).unwrap();
+            assert_eq!(a6.len(), 4);
+            for a in &a6 {
+                assert!(a.row < 512, "depth {depth} names unreachable row {}", a.row);
+            }
+        }
+    }
+
+    /// [BIND-DEPTH 2026-08-03] The half of `61903e76` that was left behind.
+    ///
+    /// That commit closed the fail-open `depth` window in THIS file. The prover's
+    /// mirror of the same table, `boundary_assertions_for_circuit` in
+    /// `stark/src/compact.rs`, kept its own windows — `depth > 0 && depth <= 32`
+    /// for C3, `<= 16` for C6 — each with an `else` arm that dropped the root
+    /// assertions and folded a Q_bnd binding only the leaves. Nothing was
+    /// unsound, because the chain had become the stricter of the two, but a
+    /// prover would build a proof that no verifier on earth accepts and only find
+    /// out on chain.
+    ///
+    /// Two restatements of one window in two crates is the shape that let this
+    /// survive, so this test does not restate it a third time: it DRIVES both
+    /// sides and requires them to agree — same acceptance window, same assertion
+    /// count, same (col, row, value) triples in the same order, because the
+    /// `alpha_bnd^j` powers are positional.
+    ///
+    /// Mutation it goes red under: restore either `else` arm in
+    /// `boundary_assertions_for_circuit`, or widen its C3 window back to `<= 32`.
+    #[test]
+    fn prover_depth_window_matches_the_verifier() {
+        use p01_stark::compact::boundary_assertions_probe;
+
+        assert_eq!(p01_stark::compact::MIN_MERKLE_DEPTH, MIN_MERKLE_DEPTH);
+        assert_eq!(p01_stark::compact::MAX_MERKLE_DEPTH, MAX_MERKLE_DEPTH);
+
+        // Silence the panic spew from the refusal half; restored at the end.
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+
+        let cases: [(u8, &[u64], usize); 2] = [(3, &[1, 2, 0], 2), (6, &[1, 2, 3, 4, 0], 4)];
+        for (circuit_id, template, depth_idx) in cases {
+            for depth in [0u64, 1, 2, 15, 16, 17, 32, 33, 99, u32::MAX as u64, u64::MAX] {
+                let mut pi = template.to_vec();
+                pi[depth_idx] = depth;
+                let in_window = depth >= MIN_MERKLE_DEPTH as u64
+                    && depth <= MAX_MERKLE_DEPTH as u64;
+
+                let chain = get_boundary_assertions(circuit_id, &pi);
+                let prover = std::panic::catch_unwind(|| boundary_assertions_probe(circuit_id, &pi));
+
+                assert_eq!(
+                    chain.is_ok(),
+                    prover.is_ok(),
+                    "C{circuit_id} depth {depth}: chain accepts={} but prover accepts={} — the \
+                     two windows have diverged",
+                    chain.is_ok(),
+                    prover.is_ok(),
+                );
+                assert_eq!(
+                    chain.is_ok(),
+                    in_window,
+                    "C{circuit_id} depth {depth}: expected accept={in_window}",
+                );
+
+                if let (Ok(c), Ok(p)) = (chain, prover) {
+                    let c_triples: Vec<(usize, usize, u64)> =
+                        c.iter().map(|a| (a.col, a.row, a.value.as_u64())).collect();
+                    assert_eq!(
+                        c_triples, p,
+                        "C{circuit_id} depth {depth}: assertion tables differ. Order is \
+                         load-bearing — alpha_bnd^j is indexed by position.",
+                    );
+                }
+            }
+        }
+
+        // The same triple-for-triple parity on every circuit, not just the two
+        // that carry a depth: a value or ordering drift anywhere here silently
+        // changes which public input binds which trace cell.
+        let full: [(u8, &[u64]); 7] = [
+            (0, &[42]),
+            (1, &[11, 22]),
+            (2, &[33, 44]),
+            (3, &[55, 66, 15]),
+            (4, &[77, 88, 99, 111]),
+            (5, &[1, 2, 3, 4, 5, 6]),
+            (6, &[7, 8, 9, 10, 15]),
+        ];
+        for (circuit_id, pi) in full {
+            let c = get_boundary_assertions(circuit_id, pi)
+                .unwrap_or_else(|e| panic!("C{circuit_id} must resolve on chain: {e:?}"));
+            let p = boundary_assertions_probe(circuit_id, pi);
+            let c_triples: Vec<(usize, usize, u64)> =
+                c.iter().map(|a| (a.col, a.row, a.value.as_u64())).collect();
+            assert_eq!(
+                c_triples, p,
+                "C{circuit_id}: prover and verifier boundary tables differ",
+            );
+        }
+
+        std::panic::set_hook(hook);
+    }
+
+    /// [SEAM] Short public inputs used to be DEFAULTED to `Felt::ZERO`, one
+    /// `else` arm per missing element. That made `verify_stark_proof` — the
+    /// legacy single-`u64` entry point, which has NO gate against circuits
+    /// 1..=6, unlike `verify_stark_proof_v2`'s `[C0 GATE]` — able to set
+    /// `verified = true` on a generic buffer with one real public input and the
+    /// rest asserted against zero.
+    #[test]
+    fn short_or_long_public_inputs_are_refused_not_defaulted() {
+        let full: [(u8, &[u64]); 7] = [
+            (0, &[42]),
+            (1, &[1, 2]),
+            (2, &[1, 2]),
+            (3, &[1, 2, 15]),
+            (4, &[1, 2, 3, 4]),
+            (5, &[1, 2, 3, 4, 5, 6]),
+            (6, &[1, 2, 3, 4, 15]),
+        ];
+        for (circuit_id, inputs) in full {
+            assert_eq!(
+                expected_public_input_count(circuit_id).unwrap(),
+                inputs.len(),
+                "arity table disagrees with the honest input list for C{circuit_id}"
+            );
+            get_boundary_assertions(circuit_id, inputs)
+                .unwrap_or_else(|e| panic!("C{circuit_id} honest arity must resolve: {e:?}"));
+
+            // Every strict prefix — including the empty one — must be refused.
+            for short in 0..inputs.len() {
+                assert!(
+                    matches!(
+                        get_boundary_assertions(circuit_id, &inputs[..short]),
+                        Err(VerifyError::PublicInputCountMismatch)
+                    ),
+                    "C{circuit_id} accepted {short} of {} public inputs",
+                    inputs.len()
+                );
+            }
+            // And so must a surplus: the buffer's `public_inputs_hash` covers
+            // every element supplied, so an element the assertions never read
+            // is a value the caller can move freely under a fixed hash.
+            let mut long = inputs.to_vec();
+            long.push(0xDEAD_BEEF);
+            assert!(
+                matches!(
+                    get_boundary_assertions(circuit_id, &long),
+                    Err(VerifyError::PublicInputCountMismatch)
+                ),
+                "C{circuit_id} accepted a surplus public input"
+            );
+        }
+    }
+
+    /// An unknown circuit id must still be diagnosed as `UnsupportedCircuit`,
+    /// not as an arity error — the arity check runs after the id lookup.
+    #[test]
+    fn arity_check_does_not_mask_an_unknown_circuit() {
+        for circuit_id in [7u8, 8, 100, 255] {
+            for n in 0..8usize {
+                let inputs: Vec<u64> = (0..n as u64).collect();
+                assert!(
+                    matches!(
+                        get_boundary_assertions(circuit_id, &inputs),
+                        Err(VerifyError::UnsupportedCircuit)
+                    ),
+                    "circuit {circuit_id} with {n} inputs got the wrong diagnosis"
+                );
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -121,29 +601,77 @@ struct BoundaryAssertion {
     value: Felt,
 }
 
+/// [SEAM] How many `u64` public inputs each circuit's boundary assertions
+/// consume. This is the ONLY arity declaration in the verifier — every other
+/// site derives from it.
+///
+/// The counts match the prover (`stark/src/compact.rs`, which asserts
+/// `proof.public_inputs.len()` per circuit) and the consumers, all of which
+/// rebuild `sha256` over exactly this many little-endian `u64`s.
+///
+/// Unknown ids return `UnsupportedCircuit`, deliberately: an arity error for an
+/// id that does not exist would be the wrong diagnosis, and
+/// `boundary_assertions_reject_unknown_circuit` pins that ordering.
+pub fn expected_public_input_count(circuit_id: u8) -> Result<usize, VerifyError> {
+    match circuit_id {
+        0 => Ok(1), // [commitment]
+        1 => Ok(2), // [nullifier, commitment]
+        2 => Ok(2), // [commitment, token_mint]
+        3 => Ok(3), // [leaf, root, depth]
+        4 => Ok(4), // [old_commitment, new_commitment, amount_hash, token_mint]
+        5 => Ok(6), // [null_1, null_2, out_c1, out_c2, public_amount, token_mint]
+        6 => Ok(5), // [old_leaf, new_leaf, old_root, new_root, depth]
+        _ => Err(VerifyError::UnsupportedCircuit),
+    }
+}
+
+/// [SEAM] Legal range for the C3/C6 `depth` public input.
+///
+/// `depth` selects which trace row carries the root assertions
+/// (`output_row = (depth - 1) * 32 + 30`). Out of this range there IS no such
+/// row, and the old code responded by silently emitting a shorter assertion
+/// list — i.e. a caller-chosen public input could switch the root binding OFF.
+const MIN_MERKLE_DEPTH: usize = 1;
+const MAX_MERKLE_DEPTH: usize = 16;
+
 /// Get boundary assertions for a circuit given its public inputs.
 ///
 /// These bind the proof to public inputs by requiring specific trace values
 /// at specific rows.
-fn get_boundary_assertions(circuit_id: u8, public_inputs: &[u64]) -> Vec<BoundaryAssertion> {
+///
+/// **Fails closed on an unknown `circuit_id`.** This used to return an empty
+/// `Vec`, and `verify_boundary_constraints` treats an empty assertion list as
+/// "nothing to check" — so a circuit added to the step-4 dispatch but forgotten
+/// here would have verified with *zero* public-input binding. Same failure
+/// class as the generator lookups above. Unreachable today (`verify_generic`
+/// rejects unknown ids at step 4 before step 5 runs, and every DEEP-ALI caller
+/// passes a hardcoded id in 0..=6), but it is a trap for the next circuit.
+fn get_boundary_assertions(
+    circuit_id: u8,
+    public_inputs: &[u64],
+) -> Result<Vec<BoundaryAssertion>, VerifyError> {
     const HASH_CYCLE_LEN: usize = 32;
     const NUM_ROUNDS: usize = 30;
+    // [SEAM] Exact arity, checked BEFORE the arms so no arm can reach its
+    // `else { Felt::ZERO }` fallback. Unknown ids still fail as
+    // `UnsupportedCircuit`, not as an arity error — the ordering matters for
+    // `boundary_assertions_reject_unknown_circuit`.
+    let expected_len = expected_public_input_count(circuit_id)?;
+    if public_inputs.len() != expected_len {
+        return Err(VerifyError::PublicInputCountMismatch);
+    }
     // [#2 voie A] Circuit-5 row where the conservation accumulator (col 6)
     // holds its final value and is asserted == public_amount. Matches the
     // prover's `ROW_ACC_FINAL` = ROW_OUT_AMOUNT_2 + 1 = 12*32 + 1 = 385.
     const ROW_ACC_FINAL_C5: usize = 12 * HASH_CYCLE_LEN + 1;
 
-    match circuit_id {
+    let assertions = match circuit_id {
         // Circuit 0: subscriber_ownership
         // Public inputs: [commitment]
         // Assertions: state[1] at row 0 = 0, state[2] at row 0 = 0,
         //             state[0] at row 30 = commitment
         0 => {
-            let commitment = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
+            let commitment = Felt::new(public_inputs[0]);
             vec![
                 BoundaryAssertion { col: 1, row: 0, value: Felt::ZERO },
                 BoundaryAssertion { col: 2, row: 0, value: Felt::ZERO },
@@ -155,16 +683,8 @@ fn get_boundary_assertions(circuit_id: u8, public_inputs: &[u64]) -> Vec<Boundar
         // Assertions: nullifier at row 30 (col 0), commitment at row 94 (col 0),
         //             capacity=0 at row 0,32,64, chaining at row 64 (col 0) = nullifier
         1 => {
-            let nullifier = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
-            let commitment = if public_inputs.len() > 1 {
-                Felt::new(public_inputs[1])
-            } else {
-                Felt::ZERO
-            };
+            let nullifier = Felt::new(public_inputs[0]);
+            let commitment = Felt::new(public_inputs[1]);
             vec![
                 BoundaryAssertion { col: 0, row: NUM_ROUNDS, value: nullifier },
                 BoundaryAssertion { col: 0, row: 2 * HASH_CYCLE_LEN + NUM_ROUNDS, value: commitment },
@@ -179,16 +699,8 @@ fn get_boundary_assertions(circuit_id: u8, public_inputs: &[u64]) -> Vec<Boundar
         // Assertions: col1=0,col2=0 at row 0, col1=token_mint at row 32,
         //             capacity=0 at rows 32,64,96, commitment at row 126 (3*32+30)
         2 => {
-            let commitment = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
-            let token_mint = if public_inputs.len() > 1 {
-                Felt::new(public_inputs[1])
-            } else {
-                Felt::ZERO
-            };
+            let commitment = Felt::new(public_inputs[0]);
+            let token_mint = Felt::new(public_inputs[1]);
             vec![
                 BoundaryAssertion { col: 1, row: 0, value: Felt::ZERO },
                 BoundaryAssertion { col: 2, row: 0, value: Felt::ZERO },
@@ -204,59 +716,33 @@ fn get_boundary_assertions(circuit_id: u8, public_inputs: &[u64]) -> Vec<Boundar
         // Assertions: col5 at row 0 = leaf (carry), col0 at output_row = root
         // output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS
         3 => {
-            let leaf = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
-            let root = if public_inputs.len() > 1 {
-                Felt::new(public_inputs[1])
-            } else {
-                Felt::ZERO
-            };
-            let depth = if public_inputs.len() > 2 {
-                public_inputs[2] as usize
-            } else {
-                0
-            };
-            if depth > 0 && depth <= 32 {
-                let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS;
-                vec![
-                    BoundaryAssertion { col: 5, row: 0, value: leaf },
-                    BoundaryAssertion { col: 0, row: output_row, value: root },
-                ]
-            } else {
-                // depth missing or invalid — only check leaf
-                vec![
-                    BoundaryAssertion { col: 5, row: 0, value: leaf },
-                ]
+            let leaf = Felt::new(public_inputs[0]);
+            let root = Felt::new(public_inputs[1]);
+            let depth = public_inputs[2] as usize;
+            // [SEAM] Was `depth > 0 && depth <= 32`, with an `else` arm that
+            // dropped the root assertion. Two ways that lost the root binding:
+            // out-of-range `depth` took the else arm outright, and `depth` in
+            // 17..=32 produced `output_row >= 512 == trace_length`, a row
+            // `verify_boundary_constraints` can never match because it reduces
+            // every query mod `trace_length`. Both are now refused.
+            if !(MIN_MERKLE_DEPTH..=MAX_MERKLE_DEPTH).contains(&depth) {
+                return Err(VerifyError::PublicInputCountMismatch);
             }
+            let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS;
+            vec![
+                BoundaryAssertion { col: 5, row: 0, value: leaf },
+                BoundaryAssertion { col: 0, row: output_row, value: root },
+            ]
         }
         // Circuit 4: confidential_balance
         // Public inputs: [old_commitment, new_commitment, amount_hash, token_mint]
         // Assertions: col1=0,col2=0 at row 0, col1=token_mint at row 32,
         //             capacity=0 at cycle starts, output assertions for commitments
         4 => {
-            let old_commitment = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
-            let new_commitment = if public_inputs.len() > 1 {
-                Felt::new(public_inputs[1])
-            } else {
-                Felt::ZERO
-            };
-            let amount_hash = if public_inputs.len() > 2 {
-                Felt::new(public_inputs[2])
-            } else {
-                Felt::ZERO
-            };
-            let token_mint = if public_inputs.len() > 3 {
-                Felt::new(public_inputs[3])
-            } else {
-                Felt::ZERO
-            };
+            let old_commitment = Felt::new(public_inputs[0]);
+            let new_commitment = Felt::new(public_inputs[1]);
+            let amount_hash = Felt::new(public_inputs[2]);
+            let token_mint = Felt::new(public_inputs[3]);
             vec![
                 BoundaryAssertion { col: 1, row: 0, value: Felt::ZERO },
                 BoundaryAssertion { col: 2, row: 0, value: Felt::ZERO },
@@ -275,36 +761,12 @@ fn get_boundary_assertions(circuit_id: u8, public_inputs: &[u64]) -> Vec<Boundar
         // Circuit 5: transfer
         // Public inputs: [nullifier_1, nullifier_2, output_commitment_1, output_commitment_2, public_amount, token_mint]
         5 => {
-            let nullifier_1 = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
-            let nullifier_2 = if public_inputs.len() > 1 {
-                Felt::new(public_inputs[1])
-            } else {
-                Felt::ZERO
-            };
-            let output_commitment_1 = if public_inputs.len() > 2 {
-                Felt::new(public_inputs[2])
-            } else {
-                Felt::ZERO
-            };
-            let output_commitment_2 = if public_inputs.len() > 3 {
-                Felt::new(public_inputs[3])
-            } else {
-                Felt::ZERO
-            };
-            let public_amount = if public_inputs.len() > 4 {
-                Felt::new(public_inputs[4])
-            } else {
-                Felt::ZERO
-            };
-            let token_mint = if public_inputs.len() > 5 {
-                Felt::new(public_inputs[5])
-            } else {
-                Felt::ZERO
-            };
+            let nullifier_1 = Felt::new(public_inputs[0]);
+            let nullifier_2 = Felt::new(public_inputs[1]);
+            let output_commitment_1 = Felt::new(public_inputs[2]);
+            let output_commitment_2 = Felt::new(public_inputs[3]);
+            let public_amount = Felt::new(public_inputs[4]);
+            let token_mint = Felt::new(public_inputs[5]);
             let mut assertions = Vec::new();
             // Capacity = 0 at start of each of 16 cycles
             for cycle in 0..16usize {
@@ -350,62 +812,62 @@ fn get_boundary_assertions(circuit_id: u8, public_inputs: &[u64]) -> Vec<Boundar
         //             col0 at output_row = old_root, col3 at output_row = new_root
         // output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS
         6 => {
-            let old_leaf = if !public_inputs.is_empty() {
-                Felt::new(public_inputs[0])
-            } else {
-                Felt::ZERO
-            };
-            let new_leaf = if public_inputs.len() > 1 {
-                Felt::new(public_inputs[1])
-            } else {
-                Felt::ZERO
-            };
-            let old_root = if public_inputs.len() > 2 {
-                Felt::new(public_inputs[2])
-            } else {
-                Felt::ZERO
-            };
-            let new_root = if public_inputs.len() > 3 {
-                Felt::new(public_inputs[3])
-            } else {
-                Felt::ZERO
-            };
-            let depth = if public_inputs.len() > 4 {
-                public_inputs[4] as usize
-            } else {
-                0
-            };
-            if depth > 0 && depth <= 16 {
-                let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS;
-                vec![
-                    BoundaryAssertion { col: 8, row: 0, value: old_leaf },
-                    BoundaryAssertion { col: 9, row: 0, value: new_leaf },
-                    BoundaryAssertion { col: 0, row: output_row, value: old_root },
-                    BoundaryAssertion { col: 3, row: output_row, value: new_root },
-                ]
-            } else {
-                // depth missing or invalid — only check leaf carries
-                vec![
-                    BoundaryAssertion { col: 8, row: 0, value: old_leaf },
-                    BoundaryAssertion { col: 9, row: 0, value: new_leaf },
-                ]
+            let old_leaf = Felt::new(public_inputs[0]);
+            let new_leaf = Felt::new(public_inputs[1]);
+            let old_root = Felt::new(public_inputs[2]);
+            let new_root = Felt::new(public_inputs[3]);
+            let depth = public_inputs[4] as usize;
+            // [SEAM] Was an `else` arm that dropped `old_root` and `new_root`
+            // whenever the CALLER supplied an out-of-range depth. Phase 1 never
+            // pinned depth (only `verify_deep_ali_circuit_6` does), so
+            // `verify_stark_proof_v2` would mark a C6 buffer `verified = true`
+            // on a proof bound to nothing but its two leaves.
+            if !(MIN_MERKLE_DEPTH..=MAX_MERKLE_DEPTH).contains(&depth) {
+                return Err(VerifyError::PublicInputCountMismatch);
             }
+            let output_row = (depth - 1) * HASH_CYCLE_LEN + NUM_ROUNDS;
+            vec![
+                BoundaryAssertion { col: 8, row: 0, value: old_leaf },
+                BoundaryAssertion { col: 9, row: 0, value: new_leaf },
+                BoundaryAssertion { col: 0, row: output_row, value: old_root },
+                BoundaryAssertion { col: 3, row: output_row, value: new_root },
+            ]
         }
-        _ => Vec::new(),
-    }
+        _ => return Err(VerifyError::UnsupportedCircuit),
+    };
+    Ok(assertions)
 }
 
 // ============================================================================
 // Unified verification entry point
 // ============================================================================
 
-/// Verify a generic compact proof for any supported circuit.
+/// Verify a generic compact proof for any supported circuit **1..=6**.
+///
+/// # Circuit 0 is refused here, explicitly
+///
+/// `circuit_id == 0` returns [`VerifyError::CircuitZeroIsLegacyOnly`] before any
+/// work is done. C0 proofs are verified by [`verify_subscriber_ownership`], and
+/// only by it: the generic DEEP-ALI check uses the wrong vanishing polynomial for
+/// C0 and has no recomputation for C0's folded boundary term, so it cannot verify
+/// an honest C0 proof. A silent "it just fails" is the wrong shape for that — it
+/// reads as a forgery, and a future refactor could plausibly "fix" the failure
+/// into an acceptance. The refusal is the contract.
 pub fn verify_generic(
     proof: &GenericCompactProof,
     circuit_id: u8,
     public_inputs: &[u64],
     config: &CircuitConfig,
 ) -> Result<(), VerifyError> {
+    // Step 0: C0 hard gate. Must come before everything — the point is that the
+    // generic path never touches a C0 proof, not that it fails late.
+    if circuit_id == crate::CIRCUIT_SUBSCRIBER_OWNERSHIP {
+        anchor_lang::prelude::msg!(
+            "[verify] circuit 0 is legacy-only; use verify_stark_proof, not the generic path"
+        );
+        return Err(VerifyError::CircuitZeroIsLegacyOnly);
+    }
+
     // Step 1: Field range check on OOD values
     verify_ood_range(proof)?;
     anchor_lang::prelude::msg!("[verify] step1 ok");
@@ -429,12 +891,24 @@ pub fn verify_generic(
     let ood_next_u64: Vec<u64> = proof.ood_next_iter().map(|f| f.as_u64()).collect();
     let expected = derive_query_positions_generic(
         &proof.trace_root, &proof.quotient_root, &pub_bytes,
-        &ood_current_u64, &ood_next_u64, proof.ood_quotient.as_u64(),
+        &ood_current_u64, &ood_next_u64, proof.ood_quotient_bytes(),
         proof.fri_layer_roots_bytes(), proof.fri_final_poly_bytes(),
         proof.grinding_nonce,
         config.lde_size, config.num_queries,
     )?;
-    anchor_lang::prelude::msg!("[verify] step2a ok (expected={} proof={})", expected.len(), proof.queries.len());
+    // [L13 2026-08-03] This line used to print `(expected={} proof={})`.
+    // `expected.len()` is `config.num_queries`, a per-circuit constant, so the
+    // log read `expected=27` for C1 and `expected=22` for C3/C5/C6 — MEASURED
+    // in transaction metadata by
+    // `cu_budget.rs::l13_uniform_path_program_logs_are_identical_across_circuits`,
+    // which was red on exactly this line plus `verify_uniform`'s trailer. A
+    // program log is public metadata that every RPC serves and every indexer
+    // keeps, so printing a circuit-derived number here partitioned the anonymity
+    // set that `init_proof_buffer_v2` and the 145,000-byte padding exist to
+    // create. The step marker stays; the number does not. Nothing is lost for
+    // debugging: `verify_query_positions_generic` on the next line is what
+    // rejects a count mismatch, and it returns a named error.
+    anchor_lang::prelude::msg!("[verify] step2a ok");
     verify_query_positions_generic(proof, &expected)?;
     anchor_lang::prelude::msg!("[verify] step2 ok");
 
@@ -450,7 +924,11 @@ pub fn verify_generic(
 
     // Step 4: Circuit-specific transition constraint + quotient verification
     match circuit_id {
-        0 => verify_constraints_subscriber_ownership(proof, config, public_inputs),
+        // 0 is unreachable — the step-0 gate above returned already. Left as an
+        // explicit arm so the refusal is visible at the dispatch too, and so a
+        // future edit that deletes the gate does not silently re-enable a path
+        // that cannot verify honest C0 proofs.
+        0 => Err(VerifyError::CircuitZeroIsLegacyOnly),
         1 => verify_constraints_pool_commitment(proof, config, public_inputs),
         2 => verify_constraints_balance_proof(proof, config, public_inputs),
         3 => verify_constraints_merkle_path(proof, config, public_inputs),
@@ -483,8 +961,12 @@ pub fn verify_subscriber_ownership(
             return Err(VerifyError::OodConstraintFailed);
         }
     }
-    if proof.ood_quotient.as_u64() >= crate::goldilocks::MODULUS {
-        return Err(VerifyError::OodConstraintFailed);
+    // [B2] Every segment claim, not just one. (The parser already refuses
+    // non-canonical encodings; this is the same hole from the other side.)
+    for v in proof.ood_quotient_iter() {
+        if v.as_u64() >= crate::goldilocks::MODULUS {
+            return Err(VerifyError::OodConstraintFailed);
+        }
     }
 
     // [H10] Verify OOD point was correctly derived (binds quotient_root, P1.1)
@@ -499,7 +981,7 @@ pub fn verify_subscriber_ownership(
     let ood_next_u64: Vec<u64> = proof.ood_next.iter().map(|f| f.as_u64()).collect();
     let expected = derive_query_positions_legacy(
         &proof.trace_root, &proof.quotient_root, commitment, &ood_current_u64, &ood_next_u64,
-        proof.ood_quotient.as_u64(),
+        proof.ood_quotient_bytes(),
         proof.fri_layer_roots_bytes(), proof.fri_final_poly_bytes(),
         proof.grinding_nonce,
     )?;
@@ -535,8 +1017,11 @@ fn verify_ood_range(proof: &GenericCompactProof) -> Result<(), VerifyError> {
             return Err(VerifyError::OodConstraintFailed);
         }
     }
-    if proof.ood_quotient.as_u64() >= crate::goldilocks::MODULUS {
-        return Err(VerifyError::OodConstraintFailed);
+    // [B2] Every segment claim, not just one.
+    for v in proof.ood_quotient_iter() {
+        if v.as_u64() >= crate::goldilocks::MODULUS {
+            return Err(VerifyError::OodConstraintFailed);
+        }
     }
     Ok(())
 }
@@ -577,11 +1062,16 @@ fn build_base_seed(
     pub_bytes: &[u8],
     ood_current: &[u64],
     ood_next: &[u64],
-    ood_quotient: u64,
+    // [B2] RAW wire bytes of all `quotient_segments` Q_j(z) claims. Absorbing
+    // only the recombined Q(z) would let a prover pick the SPLIT after seeing
+    // gamma, and the split is precisely what the DEEP composition binds.
+    ood_quotient_bytes: &[u8],
 ) -> [u8; 32] {
     // Serialize OOD felts once into one small scratch buffer, then feed the
     // syscall a sliced &[&[u8]] — avoids a big concatenated transcript Vec.
-    let ood_total = ood_current.len() + ood_next.len() + 1;
+    // The quotient claims are already contiguous wire bytes, so they go in as
+    // their own segment rather than through the scratch buffer.
+    let ood_total = ood_current.len() + ood_next.len();
     let mut ood_buf: Vec<u8> = Vec::with_capacity(ood_total * 8);
     for val in ood_current {
         ood_buf.extend_from_slice(&val.to_le_bytes());
@@ -589,8 +1079,7 @@ fn build_base_seed(
     for val in ood_next {
         ood_buf.extend_from_slice(&val.to_le_bytes());
     }
-    ood_buf.extend_from_slice(&ood_quotient.to_le_bytes());
-    hashv(&[trace_root, quotient_root, pub_bytes, &ood_buf]).to_bytes()
+    hashv(&[trace_root, quotient_root, pub_bytes, &ood_buf, ood_quotient_bytes]).to_bytes()
 }
 
 fn leading_zero_bits(bytes: &[u8; 32]) -> u32 {
@@ -691,14 +1180,14 @@ fn derive_query_positions_generic(
     pub_bytes: &[u8],
     ood_current: &[u64],
     ood_next: &[u64],
-    ood_quotient: u64,
+    ood_quotient_bytes: &[u8],
     fri_layer_roots_bytes: &[u8],
     fri_final_poly_bytes: &[u8],
     grinding_nonce: u64,
     lde_size: usize,
     num_queries: usize,
 ) -> Result<Vec<u32>, VerifyError> {
-    let mut state = build_base_seed(trace_root, quotient_root, pub_bytes, ood_current, ood_next, ood_quotient);
+    let mut state = build_base_seed(trace_root, quotient_root, pub_bytes, ood_current, ood_next, ood_quotient_bytes);
     for layer_root in fri_layer_roots_bytes.chunks_exact(32) {
         state = extend_transcript(&state, layer_root);
     }
@@ -711,7 +1200,12 @@ fn verify_query_positions_generic(
     proof: &GenericCompactProof,
     expected: &[u32],
 ) -> Result<(), VerifyError> {
-    if proof.queries.len() < expected.len() {
+    // [B1] Was `<`. Free to tighten: an honest proof always emits exactly
+    // `config.num_queries`. `<` let a prover ship EXTRA queries, an
+    // attacker-chosen CU multiplier (the parser caps num_queries at 256) that the
+    // new per-query DEEP arithmetic amplifies. The legacy path already gates on
+    // the constant.
+    if proof.queries.len() != expected.len() {
         return Err(VerifyError::InsufficientQueries);
     }
     for (i, query) in proof.queries.iter().enumerate() {
@@ -720,6 +1214,22 @@ fn verify_query_positions_generic(
         }
     }
     Ok(())
+}
+
+/// [B1] Domain tag for the DEEP linearisation coefficient. Exact twin of the
+/// prover's `DEEP_COEFF_TAG` (stark/src/compact.rs).
+const DEEP_COEFF_TAG: &[u8; 8] = b"deep-v1\0";
+
+/// [B1] Derive the DEEP linearisation coefficient gamma. Exact twin of the
+/// prover's `derive_deep_coeff`; both callees already existed on both sides, so
+/// this is zero new hash code.
+///
+/// gamma is sampled strictly AFTER all three OOD arrays are absorbed
+/// (`build_base_seed` takes them) and off the FRI alpha chain (its own domain
+/// tag), so `alpha_0 = derive_fri_alpha(base_seed)` is unchanged and no existing
+/// transcript order is disturbed.
+fn derive_deep_coeff(base_seed: &[u8; 32]) -> Felt {
+    derive_fri_alpha(&extend_transcript(base_seed, DEEP_COEFF_TAG))
 }
 
 /// [P1.1 PR 3] Derive a single FRI fold challenge α_i from the transcript.
@@ -761,6 +1271,77 @@ fn evaluate_poly_horner_bytes(coeffs_bytes: &[u8], x: Felt) -> Felt {
     result
 }
 
+/// [B1] Reject a final polynomial whose degree exceeds the circuit's MEASURED
+/// bound.
+///
+/// Compares the REDUCED felt, not the raw bytes: `MODULUS` is a legal `u64` that
+/// reduces to zero, so the two checks are not the same check. (The parser also
+/// refuses non-canonical encodings, so this is belt and braces on the same hole
+/// from the other side.)
+fn check_final_poly_degree_bound(
+    final_poly_bytes: &[u8],
+    degree_bound: usize,
+) -> Result<(), VerifyError> {
+    for (i, chunk) in final_poly_bytes.chunks_exact(8).enumerate() {
+        if i < degree_bound {
+            continue;
+        }
+        let arr: [u8; 8] = chunk.try_into().unwrap();
+        if Felt::from_le_bytes(arr) != Felt::ZERO {
+            // [L13 2026-08-03] CONSIDERED AND DELIBERATELY LEFT. `degree_bound`
+            // is `config`-derived, so this is structurally the same class as the
+            // `step2a` line — but it is NOT a live leak: `emit_deep_degree_table`
+            // measures the bound at 1 on all seven circuits, so the number is
+            // constant across the anonymity set, and this is an error path an
+            // honest proof never reaches. Against that, ` non-zero, bound is `
+            // is one of the two `ELF_B1_MARKERS` in
+            // `packages/stark-prover/scripts/deployed-verifier-check.mjs`, the
+            // strings the deployed-verifier interlock classifies a chain
+            // deployment by, and `elfMarkerSourceProblem` hard-fails if a marker
+            // stops existing in this source. Deleting it would have bought zero
+            // privacy and cost half the B1 discriminator on a live gate. If the
+            // bound ever stops being 1 on every circuit, this becomes a real
+            // leak and the fix is a B2-only literal in `ELF_MARKERS_B2` first,
+            // then this line.
+            anchor_lang::prelude::msg!(
+                "[verify] final poly coeff {} non-zero, bound is {}",
+                i,
+                degree_bound
+            );
+            return Err(VerifyError::FriFinalPolyDegreeTooHigh);
+        }
+    }
+    Ok(())
+}
+
+/// [B4] Verify one **pair-leaf** Merkle opening.
+///
+/// The quotient LDE and every committed FRI layer are committed as
+/// `leaf[j] = SHA256(v[j].to_le_bytes() ‖ v[j + N/2].to_le_bytes())` over `N/2`
+/// leaves. A FRI fold at position `p` consumes exactly `v[j]` and `v[j + N/2]`
+/// with `j = p mod (N/2)` — both halves of one leaf — so a single depth-
+/// `(log2(N) - 1)` path authenticates both values. Pre-B4 this cost two
+/// depth-`log2(N)` paths plus two leaf hashes.
+///
+/// `lo` MUST be the low-half value and `hi` the high-half value: the leaf hash
+/// cannot depend on which side of the mirror the query landed on, or the tree
+/// would not be well defined. Any disagreement with the prover about the
+/// ordering or about `j` changes the leaf hash / the walked path and the root
+/// check fails — this function has no way to accept a mismatched indexing.
+#[inline]
+fn verify_pair_leaf(
+    root: &[u8; 32],
+    lo: Felt,
+    hi: Felt,
+    pair_index: usize,
+    path: &[u8],
+) -> bool {
+    let mut leaf = [0u8; 16];
+    leaf[..8].copy_from_slice(&lo.as_u64().to_le_bytes());
+    leaf[8..].copy_from_slice(&hi.as_u64().to_le_bytes());
+    merkle::verify_merkle_path(root, &leaf, pair_index, path)
+}
+
 /// [P1.1 PR 3] FRI query phase verification.
 ///
 /// For every query, walks the fold chain from the quotient LDE (f_0) through
@@ -784,27 +1365,46 @@ fn verify_fri_generic(
     config: &CircuitConfig,
     pub_bytes: &[u8],
 ) -> Result<(), VerifyError> {
-    // [P2.2] FRI_FINAL_POLY_SIZE is per-circuit (see CircuitConfig). Circuits 0-5
-    // use 16; circuit 6 uses 64 to fit the wider trace's verify cost under 1.4M CU.
+    // [P2.2] `fri_final_poly_size` is per-circuit (see CircuitConfig). It is 16 on
+    // ALL SEVEN circuits today — do not repeat the old comment here that said
+    // "circuit 6 uses 64", nor the one in compact_proof.rs that said 256. Both
+    // were wrong against the constant.
     let num_folds = (config.lde_size / config.fri_final_poly_size).trailing_zeros() as usize;
     let num_fri_layers = num_folds - 1;
     if proof.num_fri_layers() != num_fri_layers {
         return Err(VerifyError::FriFoldCheckFailed);
     }
 
+    // [B1] TERMINAL DEGREE BOUND, once per proof, before the query loop.
+    //
+    // Without this the terminal FRI test is worth ZERO bits: the 16 published
+    // coefficients span the full interpolation space of the 16 folded evaluations
+    // the query loop compares against, so a prover who folds his own function
+    // honestly and publishes its true interpolant always passes. Costs <= 8 u64
+    // comparisons. The parser pins `fri_final_poly_size` to the config value and
+    // range-checks every coefficient, so the field cannot be widened and a
+    // non-canonical `MODULUS` cannot masquerade as a zero here.
+    check_final_poly_degree_bound(
+        proof.fri_final_poly_bytes(),
+        config.fri_final_poly_degree_bound,
+    )?;
+
     // Re-derive α_0..α_{L-1} from the transcript. The initial state matches
     // the prover's `build_base_seed` output; each committed layer root is
     // absorbed in commit-phase order (layer i absorbed BEFORE α_{i+1} derived).
     let ood_current_u64: Vec<u64> = proof.ood_current_iter().map(|f| f.as_u64()).collect();
     let ood_next_u64: Vec<u64> = proof.ood_next_iter().map(|f| f.as_u64()).collect();
-    let mut state = build_base_seed(
+    let base_seed = build_base_seed(
         &proof.trace_root,
         &proof.quotient_root,
         pub_bytes,
         &ood_current_u64,
         &ood_next_u64,
-        proof.ood_quotient.as_u64(),
+        proof.ood_quotient_bytes(),
     );
+    // [B1] gamma from the PRE-layer-root seed, before the alpha loop mutates it.
+    let gamma = derive_deep_coeff(&base_seed);
+    let mut state = base_seed;
     let mut alphas = Vec::with_capacity(num_folds);
     for i in 0..num_folds {
         alphas.push(derive_fri_alpha(&state));
@@ -832,7 +1432,7 @@ fn verify_fri_generic(
     // Net saving: ~342K CU. Circuits 0-5 (half_lde ≤ 2048) still pay the same
     // extra mul but their setup shrinks too — small net win or neutral.
     const INV_GEN_BASE_SIZE: usize = 256;
-    let gen_0 = get_lde_generator(config.lde_size);
+    let gen_0 = get_lde_generator(config.lde_size)?;
     let inv_gen_0 = gen_0.inv();
     let half_lde = config.lde_size / 2;
     let base_size = half_lde.min(INV_GEN_BASE_SIZE);
@@ -872,19 +1472,174 @@ fn verify_fri_generic(
 
     let two_inv = Felt::new(2).inv();
 
+    // ========================================================================
+    // [B1] DEEP composition setup, once per proof (~3w + 3 muls).
+    //
+    // FRI folds D, not Q. See `deep_composition_lde` in stark/src/compact.rs for
+    // the full construction and the binding argument; this is its verifier twin
+    // and the two are written in the same shape so they can be diffed by eye.
+    //
+    //   S(x)   = SUM_c gamma^(c+1) * T_c(x)
+    //   A0     = SUM_c gamma^(c+1) * a_c ,  B0 = SUM_c gamma^(c+1) * b_c
+    //   num(x) = ( S(x) - A0 - x*B0 ) + ( Q(x) - q_z ) * (x - zg)
+    //   den(x) = (x - z)(x - zg)
+    //   D(x)   = num(x) / den(x)
+    //
+    // with `A0 = SV - z*B0` and `B0 = (SV' - SV)/(zg - z)`, so the per-column
+    // interpolants never have to be materialised.
+    // ========================================================================
+    let trace_g = get_trace_generator(config.trace_length)?;
+    let z = proof.ood_z;
+    let zg = z.mul(trace_g);
+    let deep_s = z.add(zg);
+    let deep_pz = z.mul(zg);
+    // [B2] gamma^1 ..= gamma^(width + k). Powers width+1 ..= width+k are the
+    // SEGMENT coefficients: one per segment, never shared and never collapsed
+    // into a single batched value, or the segments stop being independently
+    // bound and deg(D) reverts to deg(Q). Exact twin of `deep_composition_lde`.
+    let width = config.trace_width;
+    let ksegs = config.quotient_segments;
+    if proof.ood_quotient_len() != ksegs {
+        return Err(VerifyError::OodConstraintFailed);
+    }
+    let mut gamma_pows: Vec<Felt> = Vec::with_capacity(width + ksegs);
+    {
+        let mut g_pow = gamma;
+        for _ in 0..width + ksegs {
+            gamma_pows.push(g_pow);
+            g_pow = g_pow.mul(gamma);
+        }
+    }
+    let mut sv = Felt::ZERO;
+    let mut svp = Felt::ZERO;
+    for (c, gp) in gamma_pows.iter().take(width).enumerate() {
+        sv = sv.add(gp.mul(proof.ood_current(c)));
+        svp = svp.add(gp.mul(proof.ood_next(c)));
+    }
+
+    // PASS 1: per-query domain point and the two denominators, then ONE batched
+    // inversion for the whole proof.
+    //
+    // The batching is LOAD-BEARING, not an optimisation. Four independent Fermat
+    // inversions per query would be 4 * 127 = 508 muls/query — on C6 that is
+    // 11,176 muls, ~2.4M CU, over the 1.4M cap on the DEEP arithmetic alone.
+    let nq = proof.queries.len();
+    let mut deep_scratch: Vec<(Felt, Felt, Felt)> = Vec::with_capacity(nq); // (y, d_lo, d_hi)
+    let mut batch_in: Vec<Felt> = Vec::with_capacity(nq + 1);
+    for query in proof.queries.iter() {
+        let pos = query.position as usize;
+        let j = pos & (half_lde - 1);
+        // y = G^j, obtained WITHOUT a forward power table: G has order
+        // N = 2*half, so G^half = -1 and therefore G^j = -inv_G^(half - j). For
+        // j in [1, half-1] the index half-j lies in [1, half-1], inside the
+        // two-level table's coverage. j == 0 would need index `half`, which is
+        // OUT OF RANGE, hence the explicit special case — a BPF panic is not a
+        // clean VerifyError.
+        let y = if j == 0 {
+            // [B7] y at position 0 is h, not 1. On the raw subgroup it was g^0
+            // = 1; on the coset the domain starts at h. The else-branch below
+            // already carries the shift, so leaving this arm at ONE breaks
+            // exactly and only the queries that land on position 0 or its
+            // mirror — which is what `legacy_c0_honest_proofs_cover_the_j_zero
+            // _and_high_half_query_positions` exists to catch, and did.
+            Felt::new(LDE_COSET_SHIFT)
+        } else {
+            let k = half_lde - j;
+            let r = k & (INV_GEN_BASE_SIZE - 1);
+            let qi = k >> INV_GEN_BASE_SIZE.trailing_zeros();
+            // [B7] `t` is 1/x at this position. The table is a DECOMPOSED powers
+            // table -- inv_gen^k as inv_gen_0_powers[r] * inv_gen_step_table[qi]
+            // -- so the coset factor goes on the RESULT, never inside the table:
+            // 1/(h*g^k) = h^(-1) * g^(-k). Folding it into entry 0 would corrupt
+            // r = 0 and leave every other r unshifted, which is a subtler wrong
+            // than omitting it.
+            //
+            // h^(-1) and not h^(-2^k): this is the LAYER-0 inverse, and `y2 =
+            // y.mul(y)` below squares it for each subsequent layer, which is the
+            // same per-layer squaring `fri_commit_phase` does prover-side.
+            let t = (if qi == 0 {
+                inv_gen_0_powers[r]
+            } else {
+                inv_gen_0_powers[r].mul(inv_gen_step_table[qi])
+            })
+            .mul(Felt::new(LDE_COSET_SHIFT));
+            Felt::ZERO.sub(t)
+        };
+        let y2 = y.mul(y);
+        let sy = deep_s.mul(y);
+        // den(y) = y^2 - s*y + pz ; den(-y) = y^2 + s*y + pz — shares y^2 and s*y.
+        let d_lo = y2.sub(sy).add(deep_pz);
+        let d_hi = y2.add(sy).add(deep_pz);
+        batch_in.push(d_lo.mul(d_hi));
+        deep_scratch.push((y, d_lo, d_hi));
+    }
+    batch_in.push(zg.sub(z));
+    let mut batch_out = vec![Felt::ZERO; batch_in.len()];
+    if !batch_inverse(&batch_in, &mut batch_out) {
+        // LIVENESS, not soundness: z or z*g landed in the LDE domain, so D has a
+        // pole at a queried point. ~2^-50; the honest prover asserts against it.
+        return Err(VerifyError::DeepDenominatorZero);
+    }
+    let b0 = svp.sub(sv).mul(batch_out[nq]);
+    let a0 = sv.sub(z.mul(b0));
+
+    // PASS 2.
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
 
-        // Quotient mirror at `pos XOR (lde_size/2)`.
-        let quotient_mirror_pos = pos ^ (config.lde_size / 2);
-        if !merkle::verify_merkle_path(
-            &proof.quotient_root,
-            &query.quotient_mirror_value.as_u64().to_le_bytes(),
-            quotient_mirror_pos,
-            query.quotient_mirror_path(),
-        ) {
-            return Err(VerifyError::MerkleProofFailed);
+        // [B4] Layer 0 (the quotient LDE) pair, in canonical (lo, hi) order.
+        // The pair leaf itself was Merkle-checked in `verify_merkle_proofs_generic`
+        // — one opening there now binds both halves, so there is no separate
+        // mirror path to check here any more.
+        let half0 = config.lde_size / 2;
+
+        // [B1] Route C's payoff. The wire ships (row_at_pos, row_at_mirror); the
+        // fold wants (low-half, high-half). Getting this backwards verifies for
+        // pos < half and fails for pos >= half — a ~50% flake that looks like a
+        // prover bug. Same rule as `verify_merkle_proofs_generic` uses for the
+        // pair leaf, and the same rule the quotient swap above uses.
+        let (y, d_lo, d_hi) = deep_scratch[query_idx];
+        let inv_p = batch_out[query_idx];
+        let inv_lo = inv_p.mul(d_hi);
+        let inv_hi = inv_p.mul(d_lo);
+
+        let mut s_lo = Felt::ZERO;
+        let mut s_hi = Felt::ZERO;
+        for (c, gp) in gamma_pows.iter().take(width).enumerate() {
+            let (t_lo, t_hi) = if pos < half0 {
+                (query.trace_value(c), query.trace_mirror_value(c))
+            } else {
+                (query.trace_mirror_value(c), query.trace_value(c))
+            };
+            s_lo = s_lo.add(gp.mul(t_lo));
+            s_hi = s_hi.add(gp.mul(t_hi));
         }
+
+        // [B2] SUM_j gamma^(width+1+j) * (Q_j(x) - Q_j(z)), accumulated for both
+        // halves of the coset before the shared (x - zg) factor.
+        let mut sq_lo = Felt::ZERO;
+        let mut sq_hi = Felt::ZERO;
+        for (j, gp) in gamma_pows.iter().skip(width).enumerate() {
+            let q_at_pos = proof.quotient_value(query_idx, j, ksegs);
+            let q_mirror = query.quotient_mirror_value(j);
+            let (q_lo, q_hi) = if pos < half0 {
+                (q_at_pos, q_mirror)
+            } else {
+                (q_mirror, q_at_pos)
+            };
+            let q_z_j = proof.ood_quotient(j);
+            sq_lo = sq_lo.add(gp.mul(q_lo.sub(q_z_j)));
+            sq_hi = sq_hi.add(gp.mul(q_hi.sub(q_z_j)));
+        }
+
+        let y_b0 = y.mul(b0);
+        // At x = y the linear term is -y*B0; at x = -y it is +y*B0.
+        let brk_lo = s_lo.sub(a0).sub(y_b0);
+        let brk_hi = s_hi.sub(a0).add(y_b0);
+        let qt_lo = sq_lo.mul(y.sub(zg));
+        let qt_hi = sq_hi.mul(Felt::ZERO.sub(y).sub(zg));
+        let mut f_lo = brk_lo.add(qt_lo).mul(inv_lo);
+        let mut f_hi = brk_hi.add(qt_hi).mul(inv_hi);
 
         // **[P1.6 CU fix]** Single-pass Merkle + fold verification.
         // The old two-loop form called `query.fri_value(i)`/etc inside each loop;
@@ -892,84 +1647,93 @@ fn verify_fri_generic(
         // per query. With ~12 layers × 27 queries that blew past the 1.4M CU cap.
         // Here `fri_block_iter()` hops one layer at a time via a cursor (O(1) per
         // step), and we merge the two loops so layer data is consumed exactly once.
-        let mut f_at_pos = proof.quotient_value(query_idx);
-        let mut f_at_mirror = query.quotient_mirror_value;
         let mut fri_iter = query.fri_block_iter();
 
         for i in 0..num_folds {
-            // Committed layers: verify Merkle openings and capture (value, mirror).
-            let committed = if i < num_fri_layers {
-                let (v, p, mv, mp) = fri_iter.next().ok_or(VerifyError::FriFoldCheckFailed)?;
-                let size_next = config.lde_size >> (i + 1);
-                let pos_next = pos & (size_next - 1);
-                let mirror_next = pos_next ^ (size_next / 2);
-                if !merkle::verify_merkle_path(
-                    proof.fri_layer_root(i),
-                    &v.as_u64().to_le_bytes(),
-                    pos_next,
-                    p,
-                ) {
-                    return Err(VerifyError::MerkleProofFailed);
-                }
-                if !merkle::verify_merkle_path(
-                    proof.fri_layer_root(i),
-                    &mv.as_u64().to_le_bytes(),
-                    mirror_next,
-                    mp,
-                ) {
-                    return Err(VerifyError::MerkleProofFailed);
-                }
-                Some((v, mv))
-            } else {
-                None
-            };
+            // Fold consistency at layer i. `j` is simultaneously the pair index
+            // of this query in layer i AND the exponent of y in the fold
+            // identity: `pos mod size_i` and its mirror both reduce to it.
+            let half_i = config.lde_size >> (i + 1);
+            let j = pos & (half_i - 1);
 
-            // Fold consistency at layer i.
-            let size_i = config.lde_size >> i;
-            let half_i = size_i / 2;
-            let pos_in_layer = pos & (size_i - 1);
-
-            let (pos_low, f_y, f_neg_y) = if pos_in_layer < half_i {
-                (pos_in_layer, f_at_pos, f_at_mirror)
-            } else {
-                (pos_in_layer - half_i, f_at_mirror, f_at_pos)
-            };
-
-            // [P2.2] Two-level inv_gen^k lookup. k = pos_low << i, guaranteed
+            // [P2.2] Two-level inv_gen^k lookup. k = j << i, guaranteed
             // < half_lde. Decompose as k = base_size·q + r, then
             //   inv_gen_0^k = inv_gen_0^r · (inv_gen_0^base_size)^q
             //             = base_table[r] · step_table[q]
             // For circuit 6 (base_size=256), ~94% of folds take the step path.
-            let k = pos_low << i;
+            let k = j << i;
             let r = k & (INV_GEN_BASE_SIZE - 1);
             let q = k >> INV_GEN_BASE_SIZE.trailing_zeros();
-            let y_inv = if q == 0 {
+            // [B7] Coset factor, and it is NOT h^(-1) here.
+            //
+            // This path indexes the LAYER-0 table with `k = j << i`, i.e. it maps
+            // the layer-`i` position straight back to a layer-0 exponent instead
+            // of squaring a running value. So the table already supplies
+            // g^(-j*2^i), and what is missing is the shift raised to the SAME
+            // power: layer `i` lives on h^(2^i) * <g^(2^i)>, so the inverse point
+            // carries h^(-2^i).
+            //
+            // The generic path above needs only h^(-1) because it squares `y`
+            // per layer. Copying h^(-1) into here would be correct at layer 0 and
+            // silently wrong at every layer after it — the exact shape of bug
+            // that still yields a proof, just one that verifies against the wrong
+            // polynomial.
+            let mut shift_inv_layer = Felt::new(LDE_COSET_SHIFT_INV);
+            for _ in 0..i {
+                shift_inv_layer = shift_inv_layer.mul(shift_inv_layer);
+            }
+            let y_inv = (if q == 0 {
                 inv_gen_0_powers[r]
             } else {
                 inv_gen_0_powers[r].mul(inv_gen_step_table[q])
-            };
-            let sum = f_y.add(f_neg_y);
-            let diff = f_y.sub(f_neg_y);
+            })
+            .mul(shift_inv_layer);
+            // f_lo = f_i(y), f_hi = f_i(-y) — canonical pair ordering means no
+            // swap is needed here.
+            let sum = f_lo.add(f_hi);
+            let diff = f_lo.sub(f_hi);
             let even = sum.mul(two_inv);
             let odd = diff.mul(two_inv).mul(y_inv);
             let expected_next = even.add(alphas[i].mul(odd));
 
-            let actual_next = if let Some((v, _)) = committed {
+            let actual_next = if i < num_fri_layers {
+                // [B4] ONE pair opening per committed layer yields both halves
+                // of the next layer's coset.
+                let (lo, hi, path) = fri_iter.next().ok_or(VerifyError::FriFoldCheckFailed)?;
+                let half_next = half_i / 2;
+                if !verify_pair_leaf(
+                    proof.fri_layer_root(i),
+                    lo,
+                    hi,
+                    pos & (half_next - 1),
+                    path,
+                ) {
+                    return Err(VerifyError::MerkleProofFailed);
+                }
+                // f_{i+1} at index `pos mod size_{i+1}` — and size_{i+1} = half_i,
+                // so that index is exactly `j`. It sits in the low half of the
+                // next layer iff j < half_next.
+                let v = if j < half_next { lo } else { hi };
+                f_lo = lo;
+                f_hi = hi;
                 v
             } else {
-                // Final layer only (i == num_folds - 1), pos_low < FRI_FINAL_POLY_SIZE (=16).
-                let x = gen_final.exp(pos_low as u64);
+                // Final layer only (i == num_folds - 1), j < fri_final_poly_size.
+                let x = gen_final.exp(j as u64);
                 evaluate_poly_horner_bytes(proof.fri_final_poly_bytes(), x)
             };
 
             if expected_next.as_u64() != actual_next.as_u64() {
-                return Err(VerifyError::FriFoldCheckFailed);
-            }
-
-            // Advance state for next layer.
-            if let Some((v, mv)) = committed {
-                f_at_pos = v;
-                f_at_mirror = mv;
+                // [B1] Name WHICH mechanism rejected. Against an adversary who
+                // folds his own composition honestly, every intermediate check
+                // passes with probability 1 and ALL soundness lives in the
+                // terminal comparison — so a test that accepts "any error" would
+                // not distinguish a working binding from a broken one.
+                return Err(if i == num_fri_layers {
+                    VerifyError::FriTerminalCheckFailed
+                } else {
+                    VerifyError::FriFoldCheckFailed
+                });
             }
         }
     }
@@ -989,17 +1753,31 @@ fn verify_fri_legacy(
         return Err(VerifyError::FriFoldCheckFailed);
     }
 
+    // [B1] TERMINAL DEGREE BOUND — see verify_fri_generic. C0's bound is 7, not
+    // 8: its AIR carries ONE periodic factor where C1..C6 carry two.
+    check_final_poly_degree_bound(
+        proof.fri_final_poly_bytes(),
+        crate::compact_proof::LEGACY_FRI_FINAL_POLY_DEGREE_BOUND,
+    )?;
+
     let commitment_bytes = commitment.to_le_bytes();
     let ood_current_u64: Vec<u64> = proof.ood_current.iter().map(|f| f.as_u64()).collect();
     let ood_next_u64: Vec<u64> = proof.ood_next.iter().map(|f| f.as_u64()).collect();
-    let mut state = build_base_seed(
+    let base_seed = build_base_seed(
         &proof.trace_root,
         &proof.quotient_root,
         &commitment_bytes,
         &ood_current_u64,
         &ood_next_u64,
-        proof.ood_quotient.as_u64(),
+        proof.ood_quotient_bytes(),
     );
+    // [B1] gamma from the PRE-layer-root seed. Same derivation as the generic
+    // path; this is the SOLE verifier for four shipped instructions
+    // (zk_shielded::{pause,resume,cancel_private_stark} and
+    // p01_quantum_wallet), so a generic-only B1 would leave them exactly as
+    // forgeable as before.
+    let gamma = derive_deep_coeff(&base_seed);
+    let mut state = base_seed;
     let mut alphas = Vec::with_capacity(num_folds);
     for i in 0..num_folds {
         alphas.push(derive_fri_alpha(&state));
@@ -1009,10 +1787,15 @@ fn verify_fri_legacy(
     }
 
     // [P1.6] inv_gen_0 powers table — see generic version for derivation.
-    let gen_0 = get_lde_generator(LEGACY_LDE);
+    let gen_0 = get_lde_generator(LEGACY_LDE)?;
     let inv_gen_0 = gen_0.inv();
     let half_lde = LEGACY_LDE / 2;
     let mut inv_gen_0_powers: Vec<Felt> = Vec::with_capacity(half_lde);
+    // [B7] Entry 0 is 1/y at position 0. On the raw subgroup y_0 = g^0 = 1; on
+    // the coset y_0 = h, so this table starts at h^(-1). Same shape as the
+    // prover's `inv_y` in `fri_fold_layer` — the two must agree or the fold
+    // check disagrees on every query, which is exactly the FriFoldCheckFailed
+    // this replaces.
     inv_gen_0_powers.push(Felt::ONE);
     for _ in 1..half_lde {
         let prev = inv_gen_0_powers[inv_gen_0_powers.len() - 1];
@@ -1025,83 +1808,180 @@ fn verify_fri_legacy(
 
     let two_inv = Felt::new(2).inv();
 
+    // ========================================================================
+    // [B1] DEEP composition setup, legacy shape. Term for term identical to
+    // `verify_fri_generic`; the differences are all shape, not algebra:
+    //   * the inverse table is a FLAT 256-entry array over k < half = 256, so
+    //     `-inv_table[256 - j]` works with no two-level split (G has order 512,
+    //     so G^256 = -1);
+    //   * ood_current / ood_next are [Felt; 3];
+    //   * the trace generator is the GENERATOR_32 constant, so zg is one mul.
+    // ========================================================================
+    let trace_g = Felt::new(GENERATOR_32);
+    let z = proof.ood_z;
+    let zg = z.mul(trace_g);
+    let deep_s = z.add(zg);
+    let deep_pz = z.mul(zg);
+    // [B2] gamma^1 ..= gamma^(TRACE_WIDTH + LEGACY_QUOTIENT_SEGMENTS). Twin of
+    // the generic path: one power per trace column, then one per quotient
+    // segment, never shared.
+    const KSEGS: usize = crate::compact_proof::LEGACY_QUOTIENT_SEGMENTS;
+    let mut gamma_pows = [Felt::ZERO; TRACE_WIDTH + KSEGS];
+    {
+        let mut g_pow = gamma;
+        for slot in gamma_pows.iter_mut() {
+            *slot = g_pow;
+            g_pow = g_pow.mul(gamma);
+        }
+    }
+    let mut sv = Felt::ZERO;
+    let mut svp = Felt::ZERO;
+    for (c, gp) in gamma_pows.iter().take(TRACE_WIDTH).enumerate() {
+        sv = sv.add(gp.mul(proof.ood_current[c]));
+        svp = svp.add(gp.mul(proof.ood_next[c]));
+    }
+
+    // PASS 1 — see the generic twin for why the batching is load-bearing.
+    let nq = proof.queries.len();
+    let mut deep_scratch: Vec<(Felt, Felt, Felt)> = Vec::with_capacity(nq);
+    let mut batch_in: Vec<Felt> = Vec::with_capacity(nq + 1);
+    for query in proof.queries.iter() {
+        let pos = query.position as usize;
+        let j = pos & (half_lde - 1);
+        let y = if j == 0 {
+            // [B7] y at position 0 is h, not 1. On the raw subgroup it was g^0
+            // = 1; on the coset the domain starts at h. The else-branch below
+            // already carries the shift, so leaving this arm at ONE breaks
+            // exactly and only the queries that land on position 0 or its
+            // mirror — which is what `legacy_c0_honest_proofs_cover_the_j_zero
+            // _and_high_half_query_positions` exists to catch, and did.
+            Felt::new(LDE_COSET_SHIFT)
+        } else {
+            // [B7] h^(-1) on the RESULT. Layer 0; `y2 = y.mul(y)` squares it
+            // for later layers, matching the prover.
+            Felt::ZERO.sub(inv_gen_0_powers[half_lde - j].mul(Felt::new(LDE_COSET_SHIFT)))
+        };
+        let y2 = y.mul(y);
+        let sy = deep_s.mul(y);
+        let d_lo = y2.sub(sy).add(deep_pz);
+        let d_hi = y2.add(sy).add(deep_pz);
+        batch_in.push(d_lo.mul(d_hi));
+        deep_scratch.push((y, d_lo, d_hi));
+    }
+    batch_in.push(zg.sub(z));
+    let mut batch_out = vec![Felt::ZERO; batch_in.len()];
+    if !batch_inverse(&batch_in, &mut batch_out) {
+        return Err(VerifyError::DeepDenominatorZero);
+    }
+    let b0 = svp.sub(sv).mul(batch_out[nq]);
+    let a0 = sv.sub(z.mul(b0));
+
+    // PASS 2.
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
 
-        let quotient_mirror_pos = pos ^ (LEGACY_LDE / 2);
-        if !merkle::verify_merkle_path(
-            &proof.quotient_root,
-            &query.quotient_mirror_value.as_u64().to_le_bytes(),
-            quotient_mirror_pos,
-            query.quotient_mirror_path(),
-        ) {
-            return Err(VerifyError::MerkleProofFailed);
+        // [B4] Layer-0 pair in canonical (lo, hi) order. The quotient pair leaf
+        // is Merkle-checked in `verify_merkle_proofs_legacy`.
+        let half0 = LEGACY_LDE / 2;
+
+        // [B1] Route C's legacy mirror accessors had ZERO consumers before this.
+        // Same (lo, hi) rule as `verify_merkle_proofs_legacy` uses for the pair
+        // leaf — see the generic twin for why getting it backwards is the single
+        // most likely implementation bug here.
+        let (y, d_lo, d_hi) = deep_scratch[query_idx];
+        let inv_p = batch_out[query_idx];
+        let inv_lo = inv_p.mul(d_hi);
+        let inv_hi = inv_p.mul(d_lo);
+
+        let mut s_lo = Felt::ZERO;
+        let mut s_hi = Felt::ZERO;
+        for (c, gp) in gamma_pows.iter().take(TRACE_WIDTH).enumerate() {
+            let (t_lo, t_hi) = if pos < half0 {
+                (query.trace_value(c), query.trace_mirror_value(c))
+            } else {
+                (query.trace_mirror_value(c), query.trace_value(c))
+            };
+            s_lo = s_lo.add(gp.mul(t_lo));
+            s_hi = s_hi.add(gp.mul(t_hi));
         }
 
+        // [B2] SUM_j gamma^(TRACE_WIDTH+1+j) * (Q_j(x) - Q_j(z)).
+        let mut sq_lo = Felt::ZERO;
+        let mut sq_hi = Felt::ZERO;
+        for (j, gp) in gamma_pows.iter().skip(TRACE_WIDTH).enumerate() {
+            let q_at_pos = proof.quotient_value(query_idx, j);
+            let q_mirror = query.quotient_mirror_value(j);
+            let (q_lo, q_hi) = if pos < half0 {
+                (q_at_pos, q_mirror)
+            } else {
+                (q_mirror, q_at_pos)
+            };
+            let q_z_j = proof.ood_quotient(j);
+            sq_lo = sq_lo.add(gp.mul(q_lo.sub(q_z_j)));
+            sq_hi = sq_hi.add(gp.mul(q_hi.sub(q_z_j)));
+        }
+
+        let y_b0 = y.mul(b0);
+        let brk_lo = s_lo.sub(a0).sub(y_b0);
+        let brk_hi = s_hi.sub(a0).add(y_b0);
+        let qt_lo = sq_lo.mul(y.sub(zg));
+        let qt_hi = sq_hi.mul(Felt::ZERO.sub(y).sub(zg));
+        let mut f_lo = brk_lo.add(qt_lo).mul(inv_lo);
+        let mut f_hi = brk_hi.add(qt_hi).mul(inv_hi);
+
         // **[P1.6 CU fix]** Same single-pass pattern as `verify_fri_generic`.
-        let mut f_at_pos = proof.quotient_value(query_idx);
-        let mut f_at_mirror = query.quotient_mirror_value;
         let mut fri_iter = query.fri_block_iter();
 
         for i in 0..num_folds {
-            let committed = if i < num_fri_layers {
-                let (v, p, mv, mp) = fri_iter.next().ok_or(VerifyError::FriFoldCheckFailed)?;
-                let size_next = LEGACY_LDE >> (i + 1);
-                let pos_next = pos & (size_next - 1);
-                let mirror_next = pos_next ^ (size_next / 2);
-                if !merkle::verify_merkle_path(
-                    proof.fri_layer_root(i),
-                    &v.as_u64().to_le_bytes(),
-                    pos_next,
-                    p,
-                ) {
-                    return Err(VerifyError::MerkleProofFailed);
-                }
-                if !merkle::verify_merkle_path(
-                    proof.fri_layer_root(i),
-                    &mv.as_u64().to_le_bytes(),
-                    mirror_next,
-                    mp,
-                ) {
-                    return Err(VerifyError::MerkleProofFailed);
-                }
-                Some((v, mv))
-            } else {
-                None
-            };
+            let half_i = LEGACY_LDE >> (i + 1);
+            let j = pos & (half_i - 1);
 
-            let size_i = LEGACY_LDE >> i;
-            let half_i = size_i / 2;
-            let pos_in_layer = pos & (size_i - 1);
-
-            let (pos_low, f_y, f_neg_y) = if pos_in_layer < half_i {
-                (pos_in_layer, f_at_pos, f_at_mirror)
-            } else {
-                (pos_in_layer - half_i, f_at_mirror, f_at_pos)
-            };
-
-            // [P1.6] O(1) table lookup replaces inv_gen_per_layer[i].exp(pos_low).
-            let y_inv = inv_gen_0_powers[pos_low << i];
-            let sum = f_y.add(f_neg_y);
-            let diff = f_y.sub(f_neg_y);
+            // [P1.6] O(1) table lookup replaces inv_gen_per_layer[i].exp(j).
+            // [B7] Indexed by `j << i`, i.e. the layer-`i` position mapped back
+            // to a layer-0 exponent, so the table already gives g^(-j*2^i) and
+            // what is missing is the shift at the SAME power: layer `i` lives
+            // on h^(2^i) * <g^(2^i)>. Using h^(-1) here would be right at
+            // layer 0 and silently wrong at every layer after it.
+            let mut shift_inv_layer = Felt::new(LDE_COSET_SHIFT_INV);
+            for _ in 0..i {
+                shift_inv_layer = shift_inv_layer.mul(shift_inv_layer);
+            }
+            let y_inv = inv_gen_0_powers[j << i].mul(shift_inv_layer);
+            let sum = f_lo.add(f_hi);
+            let diff = f_lo.sub(f_hi);
             let even = sum.mul(two_inv);
             let odd = diff.mul(two_inv).mul(y_inv);
             let expected_next = even.add(alphas[i].mul(odd));
 
-            let actual_next = if let Some((v, _)) = committed {
+            let actual_next = if i < num_fri_layers {
+                let (lo, hi, path) = fri_iter.next().ok_or(VerifyError::FriFoldCheckFailed)?;
+                let half_next = half_i / 2;
+                if !verify_pair_leaf(
+                    proof.fri_layer_root(i),
+                    lo,
+                    hi,
+                    pos & (half_next - 1),
+                    path,
+                ) {
+                    return Err(VerifyError::MerkleProofFailed);
+                }
+                let v = if j < half_next { lo } else { hi };
+                f_lo = lo;
+                f_hi = hi;
                 v
             } else {
-                let x = gen_final.exp(pos_low as u64);
+                let x = gen_final.exp(j as u64);
                 evaluate_poly_horner_bytes(proof.fri_final_poly_bytes(), x)
             };
 
             if expected_next.as_u64() != actual_next.as_u64() {
-                return Err(VerifyError::FriFoldCheckFailed);
-            }
-
-            if let Some((v, mv)) = committed {
-                f_at_pos = v;
-                f_at_mirror = mv;
+                // [B1] See verify_fri_generic: the terminal comparison is the one
+                // that carries the soundness, so it gets its own variant.
+                return Err(if i == num_fri_layers {
+                    VerifyError::FriTerminalCheckFailed
+                } else {
+                    VerifyError::FriFoldCheckFailed
+                });
             }
         }
     }
@@ -1113,42 +1993,104 @@ fn verify_merkle_proofs_generic(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
 ) -> Result<(), VerifyError> {
+    let half = config.lde_size / 2;
     for (query_idx, query) in proof.queries.iter().enumerate() {
-        // [P1.6] Hash trace row directly from its LE bytes in the proof buffer —
-        // no copy into a `Vec<u8>`. The prover serializes the trace leaves as
-        // flat LE felts exactly matching `query.trace_values_bytes()`, so Blake3
-        // over that slice is the same leaf hash as the old `felt_vec_to_bytes`
-        // round-trip.
-        if !merkle::verify_merkle_path(
+        // [ROUTE C] The trace tree is committed as PAIR leaves, exactly as B4 did
+        // for the quotient tree and every FRI layer:
+        //
+        //     leaf[j] = H(0x00 ‖ row[j] ‖ row[j + lde_size/2])   over lde_size/2 leaves
+        //
+        // ONE depth-(merkle_depth - 1) opening therefore authenticates the row at
+        // `position` AND the row at `position ^ (lde_size/2)`. Pre-Route-C this was
+        // a depth-merkle_depth opening that bound the row at `position` only.
+        //
+        // This changes NO soundness property: the mirror row is authenticated and
+        // then not read. It is the coset partner a later DEEP-composition
+        // recomputation needs, made available without a second opening.
+        //
+        // WARNING, two parts, and the second is the one that gets forgotten:
+        // Route C is format-breaking (old proofs do not verify here, new proofs do
+        // not verify on an old verifier — both fail closed, see
+        // `tests/route_c_trace_pair.rs`), AND it DOUBLES raw witness exposure on a
+        // trace-aligned query. `blowup` divides `lde/2`, so an aligned position has
+        // an aligned mirror: an unlucky query now puts FOUR genuine trace rows on
+        // the wire instead of two, and the extra two are different trace rows
+        // (`r + trace_length/2`), not copies. COMPUTED: ~82% of C0/C1/C2/C4 proofs
+        // and ~76% of C3/C5/C6 proofs contain at least one aligned query. The LDE
+        // has no coset offset yet, so that is a 2x amplification of a LIVE leak —
+        // the coset fix is a hard predecessor for Route C reaching a deployed
+        // verifier. See `build_trace_pair_merkle_tree` in stark/src/compact.rs.
+        //
+        // [P1.6] The rows are hashed straight out of the proof buffer — no copy
+        // into a Vec. `hash_leaf_2seg` concatenates the two segments inside the
+        // syscall, so the digest is bit-identical to the prover's contiguous
+        // `sha256_leaf(row_lo ‖ row_hi)`.
+        //
+        // `lo` MUST be the low-half row and `hi` the high-half row: the leaf hash
+        // cannot depend on which side of the mirror the query landed on. The wire
+        // always ships (row_at_pos, row_at_mirror) in that order, so the verifier
+        // swaps when `pos >= half`. `position` is transcript-bound, so a prover
+        // cannot choose which side it lands on.
+        let pos = query.position as usize;
+        let (lo, hi) = if pos < half {
+            (query.trace_values_bytes(), query.trace_mirror_values_bytes())
+        } else {
+            (query.trace_mirror_values_bytes(), query.trace_values_bytes())
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.trace_root,
-            query.trace_values_bytes(),
-            query.position as usize,
+            lo,
+            hi,
+            pos & (half - 1),
             query.merkle_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
         }
 
-        let next_pos = (query.position as usize + config.blowup) % config.lde_size;
-        if !merkle::verify_merkle_path(
+        // [ROUTE C] Same for the next row. `next_pos = pos + blowup` is never the
+        // mirror of `pos` (the mirror is `pos + lde_size/2`, and
+        // `lde_size/2 >= 16 * blowup` on every shipping config), so this is a
+        // genuinely different pair leaf and both openings are needed. It is,
+        // however, the SAME leaf that holds `next(mirror(pos))`, because
+        // `mirror(next_pos) = pos + blowup + lde/2 = next(mirror(pos))`.
+        let next_pos = (pos + config.blowup) % config.lde_size;
+        let (nlo, nhi) = if next_pos < half {
+            (query.next_trace_values_bytes(), query.next_trace_mirror_values_bytes())
+        } else {
+            (query.next_trace_mirror_values_bytes(), query.next_trace_values_bytes())
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.trace_root,
-            query.next_trace_values_bytes(),
-            next_pos,
+            nlo,
+            nhi,
+            next_pos & (half - 1),
             query.next_merkle_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
         }
 
-        // [P1.1] Verify quotient LDE membership for the claimed `quotient_values[query_idx]`.
-        if query_idx >= proof.quotient_values_len() {
+        // [B2] `quotient_segments` felts per side instead of one. The leaf
+        // preimage widens from 16 bytes to 16k; the tree keeps `merkle_depth - 1`
+        // levels, which is why segmentation costs 8k bytes per query and not k
+        // Merkle paths. Both halves are already contiguous, wire-ordered blocks,
+        // so they hash in place with no copy.
+        let ksegs = config.quotient_segments;
+        if (query_idx + 1) * ksegs > proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        let q_leaf_bytes = quotient_value.as_u64().to_le_bytes();
-        if !merkle::verify_merkle_path(
+        let q_block = proof.quotient_values_block(query_idx, ksegs);
+        let q_mirror_block = query.quotient_mirror_bytes();
+        let (qlo, qhi) = if pos < half {
+            (q_block, q_mirror_block)
+        } else {
+            (q_mirror_block, q_block)
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.quotient_root,
-            &q_leaf_bytes,
-            query.position as usize,
-            query.quotient_merkle_path(),
+            qlo,
+            qhi,
+            pos & (half - 1),
+            query.quotient_pair_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
         }
@@ -1185,14 +2127,25 @@ fn verify_boundary_constraints(
     config: &CircuitConfig,
     public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
-    let assertions = get_boundary_assertions(circuit_id, public_inputs);
+    let assertions = get_boundary_assertions(circuit_id, public_inputs)?;
     if assertions.is_empty() {
         return Ok(());
     }
 
     for query in &proof.queries {
-        // Only check at trace-aligned positions
-        if query.position as usize % config.blowup != 0 {
+        // [B7] DISABLED. Same shape as the transition arms: it reads the
+        // opened value AS A RAW TRACE ROW at an aligned position, which only
+        // holds while the LDE sits on the raw subgroup. With x = h * g^i an
+        // aligned position is not a trace row, so the comparison is
+        // meaningless rather than merely useless.
+        //
+        // Nothing is lost: the boundary is enforced at the OOD point on
+        // EVERY proof by the boundary fold -- `fold_boundary_quotient`
+        // prover-side and `boundary_fold_at_ood` here -- which is exactly
+        // what the C2/C4 binding work wired and what was deployed to devnet
+        // on 2026-08-03. This per-query arm was the redundant half.
+        #[allow(unreachable_code)]
+        {
             continue;
         }
 
@@ -1216,7 +2169,16 @@ fn verify_boundary_constraints_legacy(
     commitment: Felt,
 ) -> Result<(), VerifyError> {
     for query in &proof.queries {
-        if query.position as usize % BLOWUP != 0 {
+        // [B7] DISABLED, legacy twin of the generic boundary arm. It reads
+        // the opened value as a RAW TRACE ROW at an aligned position, which
+        // only holds while the LDE sits on the raw subgroup.
+        //
+        // The boundary is enforced at the OOD point on EVERY proof by the
+        // boundary fold (`fold_boundary_quotient` prover-side, the `bnd-c0`
+        // tag here), which is what the C2/C4 binding work wired and what was
+        // deployed to devnet on 2026-08-03. This arm was the redundant half.
+        #[allow(unreachable_code)]
+        {
             continue;
         }
 
@@ -1251,8 +2213,10 @@ fn verify_boundary_constraints_legacy(
 /// method. Coefficients are in ascending order (`c[0]` is the constant term);
 /// values stored as `u64` and lifted to `Felt` at evaluation time.
 ///
-/// `#[inline(never)]` — called 7× from `verify_deep_ali_circuit_6` on 512-long
-/// slices; keeping a dedicated frame avoids inlining 7 copies into the caller.
+/// `#[inline(never)]` — kept out of line because several callers pass long
+/// slices; a dedicated frame avoids inlining a copy per call site. Circuits 3
+/// and 6 no longer use it (see `eval_periodic_ext_at_z`); C0/C1/C2/C4/C5 still
+/// do, for the columns that are neither stride-sparse nor cheaply Lagrangeable.
 #[inline(never)]
 fn eval_periodic_at_z(coeffs: &[u64], z: Felt) -> Felt {
     let mut acc = Felt::ZERO;
@@ -1288,6 +2252,52 @@ fn eval_periodic_at_z(coeffs: &[u64], z: Felt) -> Felt {
 /// Callers must pass a polynomial that is genuinely stride-16 sparse. The
 /// `debug_assert` below catches accidental use against dense arrays in
 /// tests; production builds skip the check.
+///
+/// (Its `#[inline(never)]` sits directly above its own `fn` below. Do not park
+/// an attribute here: A3 inserted `eval_periodic_stride_at_z` between this doc
+/// comment and its function, which silently re-attached the attribute to the
+/// wrong item and left this one with none. rustc reports that as an unused
+/// attribute that will become a hard error.)
+/// Evaluate a stride-`s` periodic column at `z`, for any power-of-two stride.
+///
+/// Same idea as `eval_periodic_stride16_at_z`, generalised: when only indices
+/// divisible by `s` are non-zero, the polynomial is `Σ c[k·s]·x^(k·s)`, i.e. a
+/// polynomial in `y = z^s` with `len/s` coefficients. One `exp` plus `len/s - 1`
+/// Horner steps replaces `len - 1` steps.
+///
+/// # Safety of the sparsity assumption
+/// This does NOT check sparsity at runtime — a scan would cost exactly what the
+/// routine saves. The tables are compile-time constants, so the assumption is
+/// pinned by `periodic_stride_parity` in `tests/periodic_stride.rs`, which runs
+/// in **release** mode and compares against the dense evaluator.
+///
+/// That test exists because of a real hazard: `eval_periodic_stride16_at_z`
+/// guards its sparsity with `#[cfg(debug_assertions)]` only, so a release build
+/// handed a dense array silently evaluates a *different polynomial* with no
+/// error. Never wire a new table here without extending that test.
+#[inline]
+fn eval_periodic_stride_at_z(coeffs: &[u64], z: Felt, stride: usize) -> Felt {
+    debug_assert!(stride > 0 && coeffs.len() % stride == 0);
+    #[cfg(debug_assertions)]
+    {
+        for (i, &c) in coeffs.iter().enumerate() {
+            if i % stride != 0 {
+                debug_assert_eq!(c, 0, "stride-{} violation at index {}", stride, i);
+            }
+        }
+    }
+
+    let y = z.exp(stride as u64);
+    let compressed = coeffs.len() / stride;
+    let mut acc = Felt::ZERO;
+    let mut k = compressed;
+    while k > 0 {
+        k -= 1;
+        acc = acc.mul(y).add(Felt::new(coeffs[k * stride]));
+    }
+    acc
+}
+
 #[inline(never)]
 fn eval_periodic_stride16_at_z(coeffs: &[u64; 512], z: Felt) -> Felt {
     // Paranoia in tests: non-stride positions must be zero.
@@ -1375,6 +2385,126 @@ fn eval_one_hot_lagrange(
     inv_n: Felt,
 ) -> Felt {
     g_k.mul(z_n_minus_one).mul(inv_z_minus_g_k).mul(inv_n)
+}
+
+// ============================================================================
+// [A4] Periodic-extension evaluation for circuits 3 and 6
+// ============================================================================
+//
+// Both merkle AIRs gate every periodic column on `active_rows = depth * 32 =
+// 480`, zero-filling trace cycle 15 (rows 480..=511). That truncation destroys
+// 32-periodicity, so the baked interpolants are 512/512 dense (coefficient-index
+// gcd 1) and neither stride evaluator applies: 7 columns × 512 muls per circuit
+// dominates DEEP-ALI phase 2.
+//
+// The 32-periodic *extension* of each column IS stride-16 sparse (32 non-zero
+// coefficients, gcd 16 — verified against every table in
+// `tests/periodic_stride.rs`), and differs from the real column on exactly the
+// 32 rows 480..=511, which are shared by all seven columns. Hence
+//
+//     P_actual(z) = P_periodic(z) − Σ_{j=0}^{31} TAIL[j] · L_{480+j}(z)
+//     L_r(z)      = g^r · (z^N − 1) / (N · (z − g^r)),  N = 512
+//
+// an algebraic identity on the same polynomial: no AIR change, no trace change,
+// no wire-format change, zero soundness cost. One `batch_inverse(32)` produces
+// the Lagrange weights for the whole circuit; each column then costs a 32-step
+// Horner in `z^16` plus one mul-add per non-zero tail entry.
+
+/// `1/512` in Goldilocks. Baked rather than computed: `Felt::inv` is a
+/// Fermat exponentiation (~96 muls) and this value is constant. Pinned by
+/// `a4_inv_512_is_correct` in `tests/periodic_stride.rs`.
+const INV_512: u64 = 18_410_715_272_404_008_961;
+
+/// First row of the truncated cycle. `depth * 32` for the canonical depth 15,
+/// which both circuits reject any other value of before reaching here.
+const CYCLE15_START: u64 = 480;
+
+/// [A4] Lagrange weights `L_{480+j}(z)` for the 32 truncated rows, shared by
+/// all seven periodic columns of a merkle circuit.
+///
+/// `y16` must be `z^16`; `z^512` is recovered from it with 5 squarings rather
+/// than a second `exp`.
+///
+/// Returns `None` if `z` coincides with one of those 32 trace rows. The caller
+/// rejects, matching the existing degenerate-OOD policy in
+/// `boundary_fold_at_ood` and `compute_c5_periodic_at_z`: it can only reject
+/// proofs (never accept a bad one), and a random OOD hits the set with
+/// probability 32/2^64.
+#[inline(never)]
+fn cycle15_lagrange_weights(z: Felt, y16: Felt) -> Option<[Felt; 32]> {
+    let g = Felt::new(GENERATOR_512);
+
+    // z^512 = (z^16)^32
+    let mut z_n = y16;
+    for _ in 0..5 {
+        z_n = z_n.mul(z_n);
+    }
+    // k = (z^512 − 1) / 512, the factor common to every L_r.
+    let k = z_n
+        .sub(Felt::ONE)
+        .mul(Felt::new(INV_512));
+
+    let mut g_pows = [Felt::ZERO; 32];
+    let mut diffs = [Felt::ZERO; 32];
+    let mut g_r = g.exp(CYCLE15_START);
+    for j in 0..32 {
+        g_pows[j] = g_r;
+        let d = z.sub(g_r);
+        if d == Felt::ZERO {
+            return None;
+        }
+        diffs[j] = d;
+        g_r = g_r.mul(g);
+    }
+
+    let mut inv_diffs = [Felt::ZERO; 32];
+    if !batch_inverse(&diffs, &mut inv_diffs) {
+        return None;
+    }
+
+    let mut out = [Felt::ZERO; 32];
+    for j in 0..32 {
+        out[j] = k.mul(g_pows[j]).mul(inv_diffs[j]);
+    }
+    Some(out)
+}
+
+/// [A4] Evaluate one truncated periodic column at `z` from its periodic
+/// extension plus the shared Lagrange correction.
+///
+/// `periodic16` holds the 32 stride-16 compressed coefficients of the
+/// extension; `tail` holds the extension's values on rows 480..=511, which the
+/// real column zeroes. Zero tail entries are skipped — `HASH_START` and
+/// `IS_BOUNDARY` deviate on a single row each, so the branch pays for itself.
+///
+/// Like `eval_periodic_stride_at_z`, this performs no runtime validation of the
+/// constants: both arrays are re-derived from the dense tables and the identity
+/// re-checked at random `z` by `tests/periodic_stride.rs`, in release mode.
+#[inline(always)]
+fn eval_periodic_ext_at_z(
+    periodic16: &[u64; 32],
+    tail: &[u64; 32],
+    y16: Felt,
+    lagrange: &[Felt; 32],
+) -> Felt {
+    // P_periodic(z) = Σ_k periodic16[k] · (z^16)^k, Horner in y16.
+    let mut acc = Felt::ZERO;
+    let mut k = 32;
+    while k > 0 {
+        k -= 1;
+        acc = acc.mul(y16).add(Felt::new(periodic16[k]));
+    }
+
+    // − Σ_j TAIL[j] · L_{480+j}(z)
+    let mut corr = Felt::ZERO;
+    for j in 0..32 {
+        let t = tail[j];
+        if t != 0 {
+            corr = corr.add(lagrange[j].mul(Felt::new(t)));
+        }
+    }
+
+    acc.sub(corr)
 }
 
 /// Vanishing polynomial `Z_D(z) = z^trace_length - 1` for the trace domain.
@@ -1527,7 +2657,7 @@ fn verify_deep_ali_legacy(proof: &CompactStarkProof, commitment: Felt) -> Result
     // what forces a tampered commitment (or capacity zeros) to be rejected at
     // the OOD point on every proof — the live exploit for circuit 0. The prover
     // (`generate_compact_proof`) folds the matching boundary quotient into Q.
-    let assertions = get_boundary_assertions(0, &[commitment.as_u64()]);
+    let assertions = get_boundary_assertions(0, &[commitment.as_u64()])?;
     let alpha_bnd =
         derive_rlc_alpha_with_tag(&proof.trace_root, &commitment.to_le_bytes(), b"bnd-c0\0\0");
     let ood_current: [Felt; 3] = [proof.ood_current[0], proof.ood_current[1], proof.ood_current[2]];
@@ -1535,7 +2665,9 @@ fn verify_deep_ali_legacy(proof: &CompactStarkProof, commitment: Felt) -> Result
         .ok_or(VerifyError::DeepAliFailed)?;
     let c_total = c_at_z.add(c_bnd);
 
-    let rhs = proof.ood_quotient.mul(z_t);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined().mul(z_t);
     if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -1585,7 +2717,9 @@ pub fn verify_deep_ali_circuit_0(proof: &GenericCompactProof) -> Result<(), Veri
         return Err(VerifyError::DeepAliFailed);
     }
 
-    let rhs = proof.ood_quotient.mul(z_d);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C0).mul(z_d);
     if c_at_z != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -1762,9 +2896,12 @@ pub fn verify_deep_ali_circuit_6(
     proof: &GenericCompactProof,
     public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
-    use crate::periodic_consts::{
-        C6_RC0_COEFFS, C6_RC1_COEFFS, C6_RC2_COEFFS, C6_ROUND_ACTIVE_COEFFS,
-        C6_HASH_START_COEFFS, C6_IS_BOUNDARY_COEFFS, C6_IS_INTERIOR_COEFFS,
+    use crate::periodic_ext_consts::{
+        C6_HASH_START_PERIODIC16, C6_HASH_START_TAIL, C6_IS_BOUNDARY_PERIODIC16,
+        C6_IS_BOUNDARY_TAIL, C6_IS_INTERIOR_PERIODIC16, C6_IS_INTERIOR_TAIL,
+        C6_RC0_PERIODIC16, C6_RC0_TAIL, C6_RC1_PERIODIC16, C6_RC1_TAIL,
+        C6_RC2_PERIODIC16, C6_RC2_TAIL, C6_ROUND_ACTIVE_PERIODIC16,
+        C6_ROUND_ACTIVE_TAIL,
     };
 
     // Periodic polynomials are depth-dependent (active_rows = depth*32). They
@@ -1777,15 +2914,31 @@ pub fn verify_deep_ali_circuit_6(
 
     let z = proof.ood_z;
 
-    // Evaluate the 7 periodic columns at z via Horner (~512 muls each).
+    // [A4] Evaluate the 7 periodic columns from their 32-periodic extension
+    // plus one shared Lagrange correction over the truncated rows 480..=511,
+    // instead of 7 dense 512-coefficient Horners.
+    let y16 = z.exp(16);
+    let lagrange = match cycle15_lagrange_weights(z, y16) {
+        Some(l) => l,
+        // OOD landed on a truncated row: degenerate sampling, reject.
+        None => return Err(VerifyError::DeepAliFailed),
+    };
     let periodic_at_z: [Felt; 7] = [
-        eval_periodic_at_z(&C6_RC0_COEFFS, z),
-        eval_periodic_at_z(&C6_RC1_COEFFS, z),
-        eval_periodic_at_z(&C6_RC2_COEFFS, z),
-        eval_periodic_at_z(&C6_ROUND_ACTIVE_COEFFS, z),
-        eval_periodic_at_z(&C6_HASH_START_COEFFS, z),
-        eval_periodic_at_z(&C6_IS_BOUNDARY_COEFFS, z),
-        eval_periodic_at_z(&C6_IS_INTERIOR_COEFFS, z),
+        eval_periodic_ext_at_z(&C6_RC0_PERIODIC16, &C6_RC0_TAIL, y16, &lagrange),
+        eval_periodic_ext_at_z(&C6_RC1_PERIODIC16, &C6_RC1_TAIL, y16, &lagrange),
+        eval_periodic_ext_at_z(&C6_RC2_PERIODIC16, &C6_RC2_TAIL, y16, &lagrange),
+        eval_periodic_ext_at_z(
+            &C6_ROUND_ACTIVE_PERIODIC16, &C6_ROUND_ACTIVE_TAIL, y16, &lagrange,
+        ),
+        eval_periodic_ext_at_z(
+            &C6_HASH_START_PERIODIC16, &C6_HASH_START_TAIL, y16, &lagrange,
+        ),
+        eval_periodic_ext_at_z(
+            &C6_IS_BOUNDARY_PERIODIC16, &C6_IS_BOUNDARY_TAIL, y16, &lagrange,
+        ),
+        eval_periodic_ext_at_z(
+            &C6_IS_INTERIOR_PERIODIC16, &C6_IS_INTERIOR_TAIL, y16, &lagrange,
+        ),
     ];
 
     // Collect OOD trace values. Circuit 6 is width-10.
@@ -1820,13 +2973,15 @@ pub fn verify_deep_ali_circuit_6(
     // [C2] Boundary public-input binding at z (old/new leaf carries @row0,
     // old/new root @output_row). Uses a fresh `bnd-c6` tag so its α is
     // independent of the transition RLC α (`rlc-v1`).
-    let assertions = get_boundary_assertions(6, public_inputs);
+    let assertions = get_boundary_assertions(6, public_inputs)?;
     let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c6\0\0");
     let c_bnd = boundary_fold_at_ood(&ood_current, &assertions, z, z_t, g, alpha_bnd)
         .ok_or(VerifyError::DeepAliFailed)?;
     let c_total = c_at_z.add(c_bnd);
 
-    let rhs = proof.ood_quotient.mul(z_t);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C6).mul(z_t);
     if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -1857,7 +3012,11 @@ pub fn verify_deep_ali_circuit_6(
 //       to cycle 1's output (epoch_hash) — was never enforced on-chain. A
 //       malicious prover could pick any epoch_hash' and solve a 1-variable
 //       Poseidon preimage to forge `Poseidon(nullifier', epoch_hash')` = target,
-//       reducing soundness to ~2^64 Goldilocks work.
+//       at a cost of ~2^64 Goldilocks operations for the preimage search.
+//       [B2-M2] This line used to say "reducing soundness to ~2^64", which reads
+//       as a security level and is not one: the construction's own ceiling is
+//       2^42-2^52 (see `B2_CONJECTURED_FORGERY_BITS`), so 2^64 is the cost of
+//       THIS forgery route, and it is the expensive one.
 //
 // This function closes both gaps by RLC-combining the AIR's four transition
 // constraints — evaluated on the OOD trace with the *real* multi-cycle
@@ -1998,13 +3157,15 @@ pub fn verify_deep_ali_circuit_1(
 
     // [C2] Boundary public-input binding at z (nullifier@row30, commitment@row94,
     // chain nullifier@row64, capacity zeros). Same domain generator as the AIR.
-    let assertions = get_boundary_assertions(1, public_inputs);
+    let assertions = get_boundary_assertions(1, public_inputs)?;
     let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c1\0\0");
     let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
         .ok_or(VerifyError::DeepAliFailed)?;
     let c_total = c_at_z.add(c_bnd);
 
-    let rhs = proof.ood_quotient.mul(z_t);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C1).mul(z_t);
     if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -2120,17 +3281,24 @@ pub fn verify_deep_ali_circuit_2(
 
     let z = proof.ood_z;
 
-    // Evaluate the 8 periodic columns at z via Horner (~128 muls each).
-    let periodic_at_z: [Felt; 8] = [
-        eval_periodic_at_z(&C2_RC0_COEFFS, z),
-        eval_periodic_at_z(&C2_RC1_COEFFS, z),
-        eval_periodic_at_z(&C2_RC2_COEFFS, z),
-        eval_periodic_at_z(&C2_ROUND_FLAG_COEFFS, z),
+    // Evaluate the 8 periodic columns at z.
+    let mut periodic_at_z: [Felt; 8] = [
+        // A3: RC0/RC1/RC2/ROUND_FLAG are stride-4 sparse (measured: 32 of 128
+        // coefficients non-zero). 128 Horner steps -> 32, four times over.
+        eval_periodic_stride_at_z(&C2_RC0_COEFFS, z, 4),
+        eval_periodic_stride_at_z(&C2_RC1_COEFFS, z, 4),
+        eval_periodic_stride_at_z(&C2_RC2_COEFFS, z, 4),
+        eval_periodic_stride_at_z(&C2_ROUND_FLAG_COEFFS, z, 4),
         eval_periodic_at_z(&C2_CHAIN_01_COEFFS, z),
         eval_periodic_at_z(&C2_CARRY_CAPTURE_COEFFS, z),
         eval_periodic_at_z(&C2_CHAIN_CARRY_COEFFS, z),
-        eval_periodic_at_z(&C2_IS_BOUNDARY_COEFFS, z),
+        // A3: IS_BOUNDARY is coefficient-wise exactly CHAIN_01 + CARRY_CAPTURE
+        // + CHAIN_CARRY (verified over all 128 coefficients), so evaluating it
+        // is two field adds instead of 128 Horner steps. Filled in below, once
+        // the three summands exist.
+        Felt::ZERO,
     ];
+    periodic_at_z[7] = periodic_at_z[4].add(periodic_at_z[5]).add(periodic_at_z[6]);
 
     // Collect OOD trace values. Circuit 2 is width-4.
     let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
@@ -2168,8 +3336,54 @@ pub fn verify_deep_ali_circuit_2(
     }
     let z_t = z_d.mul(z_minus_last.inv());
 
-    let rhs = proof.ood_quotient.mul(z_t);
-    if c_at_z != rhs {
+    // [BIND-C2C4 2026-08-03] Boundary public-input binding at z.
+    //
+    // This block did not exist. C2 was one of two circuits (with C4) whose
+    // phase-2 entry point never called `boundary_fold_at_ood`, so the ONLY thing
+    // in the whole verifier binding a C2 trace to `[commitment, token_mint]` was
+    // the trace-aligned per-query step-5 check — measured PRE-FIX by
+    // `c2_step5_public_input_binding_fires` to be able to fire on 7 of 300
+    // honest witnesses (2.33%). On the other ~97% the public inputs were bound
+    // by nothing: they feed the Fiat-Shamir RLC alpha, which binds the CLAIMED
+    // inputs to the transcript, not the trace to the inputs, and a prover who
+    // re-runs the pipeline under a different claim satisfies that trivially.
+    //
+    // POST-FIX, re-measured at `bd8be2b4`: C2's step-5 rate is UNCHANGED at
+    // 7/300 (2.33%). C4's fell to 4/300 (1.33%) from 3.00% — folding Q_bnd
+    // re-randomises the Fiat-Shamir draw that the query positions come from, so
+    // the per-query rate is redrawn for exactly the two circuits this fix
+    // touched. That is luck of the draw, not a step-5 regression, and it only
+    // does not matter because the fold below is unconditional on every proof.
+    //
+    // [B7 2026-08-04] Both rates are ZERO now: the coset LDE leaves no
+    // trace-aligned query positions and the step-5 arm is retired outright
+    // (see `step5_is_vacuous_post_b7`). This fold is the WHOLE public-input
+    // binding, measured at 100% by `c2_lying_public_input_is_rejected`.
+    //
+    // `boundary_spec_for_quotient` in `stark/src/compact.rs` folds the matching
+    // Q_bnd into the committed quotient with the SAME `bnd-c2` tag and the SAME
+    // assertion order, so this is not additive belt-and-braces: an honest proof
+    // built by that prover does NOT satisfy `c_at_z == rhs` any more. The two
+    // halves can only be reverted together. What pins THAT — naming tests that
+    // exist, checked with grep, because an earlier draft of this comment named
+    // one that never did:
+    //   * `c2_lying_public_input_is_rejected` (this file) goes red under the
+    //     coordinated revert — an honest trace published under a false
+    //     `commitment` or `token_mint` is accepted again.
+    //   * `balance_proof_satisfies_deep_ali_end_to_end` (stark/src/compact.rs)
+    //     goes red under the PROVER half alone: it asserts `c_bnd != 0` and that
+    //     `c_at_z != q_at_z * z_t`, so a prover that stops folding Q_bnd fails it
+    //     rather than quietly agreeing with a verifier that stopped too.
+    let assertions = get_boundary_assertions(2, public_inputs)?;
+    let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c2\0\0");
+    let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
+        .ok_or(VerifyError::DeepAliFailed)?;
+    let c_total = c_at_z.add(c_bnd);
+
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C2).mul(z_t);
+    if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
     Ok(())
@@ -2302,9 +3516,12 @@ pub fn verify_deep_ali_circuit_3(
     proof: &GenericCompactProof,
     public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
-    use crate::periodic_consts::{
-        C3_RC0_COEFFS, C3_RC1_COEFFS, C3_RC2_COEFFS, C3_ROUND_ACTIVE_COEFFS,
-        C3_HASH_START_COEFFS, C3_IS_BOUNDARY_COEFFS, C3_IS_INTERIOR_COEFFS,
+    use crate::periodic_ext_consts::{
+        C3_HASH_START_PERIODIC16, C3_HASH_START_TAIL, C3_IS_BOUNDARY_PERIODIC16,
+        C3_IS_BOUNDARY_TAIL, C3_IS_INTERIOR_PERIODIC16, C3_IS_INTERIOR_TAIL,
+        C3_RC0_PERIODIC16, C3_RC0_TAIL, C3_RC1_PERIODIC16, C3_RC1_TAIL,
+        C3_RC2_PERIODIC16, C3_RC2_TAIL, C3_ROUND_ACTIVE_PERIODIC16,
+        C3_ROUND_ACTIVE_TAIL,
     };
 
     // [C3 depth binding] Periodic polynomials are depth-dependent
@@ -2318,15 +3535,31 @@ pub fn verify_deep_ali_circuit_3(
 
     let z = proof.ood_z;
 
-    // Evaluate the 7 periodic columns at z via Horner (~512 muls each).
+    // [A4] Evaluate the 7 periodic columns from their 32-periodic extension
+    // plus one shared Lagrange correction over the truncated rows 480..=511,
+    // instead of 7 dense 512-coefficient Horners.
+    let y16 = z.exp(16);
+    let lagrange = match cycle15_lagrange_weights(z, y16) {
+        Some(l) => l,
+        // OOD landed on a truncated row: degenerate sampling, reject.
+        None => return Err(VerifyError::DeepAliFailed),
+    };
     let periodic_at_z: [Felt; 7] = [
-        eval_periodic_at_z(&C3_RC0_COEFFS, z),
-        eval_periodic_at_z(&C3_RC1_COEFFS, z),
-        eval_periodic_at_z(&C3_RC2_COEFFS, z),
-        eval_periodic_at_z(&C3_ROUND_ACTIVE_COEFFS, z),
-        eval_periodic_at_z(&C3_HASH_START_COEFFS, z),
-        eval_periodic_at_z(&C3_IS_BOUNDARY_COEFFS, z),
-        eval_periodic_at_z(&C3_IS_INTERIOR_COEFFS, z),
+        eval_periodic_ext_at_z(&C3_RC0_PERIODIC16, &C3_RC0_TAIL, y16, &lagrange),
+        eval_periodic_ext_at_z(&C3_RC1_PERIODIC16, &C3_RC1_TAIL, y16, &lagrange),
+        eval_periodic_ext_at_z(&C3_RC2_PERIODIC16, &C3_RC2_TAIL, y16, &lagrange),
+        eval_periodic_ext_at_z(
+            &C3_ROUND_ACTIVE_PERIODIC16, &C3_ROUND_ACTIVE_TAIL, y16, &lagrange,
+        ),
+        eval_periodic_ext_at_z(
+            &C3_HASH_START_PERIODIC16, &C3_HASH_START_TAIL, y16, &lagrange,
+        ),
+        eval_periodic_ext_at_z(
+            &C3_IS_BOUNDARY_PERIODIC16, &C3_IS_BOUNDARY_TAIL, y16, &lagrange,
+        ),
+        eval_periodic_ext_at_z(
+            &C3_IS_INTERIOR_PERIODIC16, &C3_IS_INTERIOR_TAIL, y16, &lagrange,
+        ),
     ];
 
     // Collect OOD trace values. Circuit 3 is width-6.
@@ -2366,13 +3599,15 @@ pub fn verify_deep_ali_circuit_3(
     let z_t = z_d.mul(z_minus_last.inv());
 
     // [C2] Boundary public-input binding at z (leaf@row0 col5, root@output_row col0).
-    let assertions = get_boundary_assertions(3, public_inputs);
+    let assertions = get_boundary_assertions(3, public_inputs)?;
     let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c3\0\0");
     let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
         .ok_or(VerifyError::DeepAliFailed)?;
     let c_total = c_at_z.add(c_bnd);
 
-    let rhs = proof.ood_quotient.mul(z_t);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C3).mul(z_t);
     if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -2487,7 +3722,9 @@ fn evaluate_transition_at_ood_circuit_4(
 /// salt, amount) with `Poseidon(amount, amount_salt)` folded into a public
 /// amount hash. Without DEEP-ALI on the chain edges, an attacker could swap
 /// cycles, inject rogue balances, or forge commitments that don't correspond
-/// to any real spending path — soundness drops to ~2^64. This check binds
+/// to any real spending path, at a cost of ~2^64 field operations. [B2-M2] That
+/// is the cost of that particular forgery route, NOT a soundness level: the
+/// construction's own ceiling is 2^42-2^52 per circuit. This check binds
 /// every chain edge and carry update to the opened OOD trace via
 /// Schwartz–Zippel.
 #[inline(never)]
@@ -2505,18 +3742,28 @@ pub fn verify_deep_ali_circuit_4(
     let z = proof.ood_z;
 
     // Evaluate the 11 periodic columns at z via Horner (~256 muls each).
+    // A3: CHAIN_34 and CHAIN_CARRY_4 are the SAME table, as are CHAIN_56 and
+    // CHAIN_CARRY_6 (verified coefficient-wise). Evaluate each once and reuse —
+    // 512 duplicate Horner steps removed for free.
+    let chain_34_z = eval_periodic_at_z(&C4_CHAIN_34_COEFFS, z);
+    let chain_56_z = eval_periodic_at_z(&C4_CHAIN_56_COEFFS, z);
+    debug_assert_eq!(C4_CHAIN_34_COEFFS[..], C4_CHAIN_CARRY_4_COEFFS[..]);
+    debug_assert_eq!(C4_CHAIN_56_COEFFS[..], C4_CHAIN_CARRY_6_COEFFS[..]);
+
     let periodic_at_z: [Felt; 11] = [
-        eval_periodic_at_z(&C4_RC0_COEFFS, z),
-        eval_periodic_at_z(&C4_RC1_COEFFS, z),
-        eval_periodic_at_z(&C4_RC2_COEFFS, z),
-        eval_periodic_at_z(&C4_ROUND_FLAG_COEFFS, z),
+        // A3: stride-8 sparse (measured: 32 of 256 coefficients non-zero).
+        // 256 Horner steps -> 32, four times over.
+        eval_periodic_stride_at_z(&C4_RC0_COEFFS, z, 8),
+        eval_periodic_stride_at_z(&C4_RC1_COEFFS, z, 8),
+        eval_periodic_stride_at_z(&C4_RC2_COEFFS, z, 8),
+        eval_periodic_stride_at_z(&C4_ROUND_FLAG_COEFFS, z, 8),
         eval_periodic_at_z(&C4_IS_BOUNDARY_COEFFS, z),
         eval_periodic_at_z(&C4_CHAIN_01_COEFFS, z),
-        eval_periodic_at_z(&C4_CHAIN_34_COEFFS, z),
-        eval_periodic_at_z(&C4_CHAIN_56_COEFFS, z),
+        chain_34_z,
+        chain_56_z,
         eval_periodic_at_z(&C4_CARRY_CAPTURE_COEFFS, z),
-        eval_periodic_at_z(&C4_CHAIN_CARRY_4_COEFFS, z),
-        eval_periodic_at_z(&C4_CHAIN_CARRY_6_COEFFS, z),
+        chain_34_z,
+        chain_56_z,
     ];
 
     // Collect OOD trace values. Circuit 4 is width-4.
@@ -2552,8 +3799,37 @@ pub fn verify_deep_ali_circuit_4(
     }
     let z_t = z_d.mul(z_minus_last.inv());
 
-    let rhs = proof.ood_quotient.mul(z_t);
-    if c_at_z != rhs {
+    // [BIND-C2C4 2026-08-03] Boundary public-input binding at z. Same wound as
+    // C2, same fix. Before this block the only binding of a C4 trace to
+    // `[old_commitment, new_commitment, amount_hash, token_mint]` was the
+    // trace-aligned step-5 check, measured PRE-FIX by
+    // `c4_step5_public_input_binding_fires`
+    // to be able to fire on 9 of 300 honest witnesses (3.00%). C4 carries twelve
+    // assertions — three of them the two commitments and the amount hash — so
+    // this is the circuit with the most public state and it had the least
+    // binding. The prover folds the matching Q_bnd under the `bnd-c4` tag.
+    //
+    // POST-FIX, re-measured at `bd8be2b4`: that same probe now fires on
+    // 4 of 300 (1.33%), DOWN from the 3.00% above. 3.00% is the PRE-fix figure
+    // and must not be quoted as current. Cause: the query positions are drawn
+    // from the Fiat-Shamir transcript and folding Q_bnd changes the committed
+    // quotient, so the draw is re-randomised. Step 5 itself was not touched.
+    // The per-query layer on C4 is therefore weaker than it was, which is only
+    // acceptable because the fold below runs on every proof unconditionally.
+    // [B7 2026-08-04] Weaker became GONE: the coset leaves no trace-aligned
+    // positions and the step-5 arm is retired (`step5_is_vacuous_post_b7`).
+    // 1.33% must not be quoted at all any more; the binding is this fold,
+    // measured at 100% by `c4_lying_public_input_is_rejected`.
+    let assertions = get_boundary_assertions(4, public_inputs)?;
+    let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c4\0\0");
+    let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
+        .ok_or(VerifyError::DeepAliFailed)?;
+    let c_total = c_at_z.add(c_bnd);
+
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C4).mul(z_t);
+    if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
     Ok(())
@@ -2936,13 +4212,15 @@ pub fn verify_deep_ali_circuit_5(
     // accumulator boundaries (acc@row0=0, acc@row385=public_amount). This binds
     // nullifier_1/2, output_commitment_1/2, token_mint, AND the conserved value
     // (public_amount) to the trace at the OOD point.
-    let assertions = get_boundary_assertions(5, public_inputs);
+    let assertions = get_boundary_assertions(5, public_inputs)?;
     let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c5\0\0");
     let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
         .ok_or(VerifyError::DeepAliFailed)?;
     let c_total = c_at_z.add(c_bnd);
 
-    let rhs = proof.ood_quotient.mul(z_t);
+    // [B2] Phase 2 constrains the RECOMBINED Q(z) = SUM_j z^(jn) Q_j(z), so
+    // the segment claims are reassembled before the AIR identity is applied.
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C5).mul(z_t);
     if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -2953,61 +4231,21 @@ pub fn verify_deep_ali_circuit_5(
 // [C4] + [C5] Quotient verification helper
 // ============================================================================
 
-/// [C4] Verify the quotient polynomial value at a query position.
-///
-/// Checks: Q(pos) * Z_D(pos) == C(pos) where C is the constraint evaluation.
-/// At trace-aligned positions this should be 0 == 0 (both sides vanish).
-/// At non-trace-aligned positions the quotient encodes the constraint polynomial.
-fn verify_quotient_at_query(
-    quotient_value: Felt,
-    _constraint_value: Felt,
-    pos: usize,
-    config: &CircuitConfig,
-    is_trace_aligned: bool,
-) -> Result<(), VerifyError> {
-    let x = get_lde_domain_element(pos, config);
-    let z_d = vanishing_poly(x, config.trace_length);
-
-    if is_trace_aligned {
-        // At trace-aligned positions: Z_D(x) = 0, so Q * Z_D = 0.
-        // The constraint value should also be 0 (verified separately by
-        // the direct transition constraint check).
-        // Q * 0 = 0 is trivially true, but verify Z_D is indeed 0.
-        if z_d != Felt::ZERO {
-            return Err(VerifyError::QuotientCheckFailed);
-        }
-    } else {
-        // At non-trace-aligned positions: verify Q(x) * Z_D(x) is consistent.
-        // Since trace values are Merkle-verified, and the quotient values are
-        // provided by the prover, we verify that Q * Z_D matches the constraint
-        // evaluation derived from the committed trace.
-        //
-        // The prover computes Q(x) = C(x) / Z_D(x) at LDE points.
-        // We verify Q(x) * Z_D(x) = C(x).
-        let q_times_zd = quotient_value.mul(z_d);
-
-        // For non-aligned positions, we need the actual constraint evaluation.
-        // Since the trace polynomial is committed, the quotient relationship
-        // Q * Z_D should produce a low-degree polynomial. We verify the
-        // prover's quotient is consistent by checking the product against
-        // the Fiat-Shamir bound (FRI would verify the degree bound).
-        //
-        // With the Merkle-committed trace values and the quotient, we trust
-        // that the FRI/DEEP composition verifies the degree bound of Q.
-        // The quotient value just needs to be a valid field element.
-        if q_times_zd.as_u64() >= crate::goldilocks::MODULUS {
-            return Err(VerifyError::QuotientCheckFailed);
-        }
-    }
-
-    Ok(())
-}
 
 // ============================================================================
 // Circuit 0: subscriber_ownership
 // ============================================================================
 
-fn verify_constraints_subscriber_ownership(
+/// [C0 GATE] Unreachable from `verify_generic` — both the step-0 gate and the
+/// step-4 dispatch arm refuse `circuit_id == 0` before this can run.
+///
+/// It is kept, and kept compiling, for one reason: it is the evidence for the
+/// refusal. `c0_generic_path_cannot_verify_an_honest_c0_proof` calls it directly
+/// on an honest C0 proof and records the failure, so the claim "the generic path
+/// rejects honest C0 proofs" is a measurement in the test suite rather than a
+/// comment. Delete it and the gate becomes an unargued assertion.
+#[allow(dead_code)]
+pub(crate) fn verify_constraints_subscriber_ownership(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
     _public_inputs: &[u64],
@@ -3020,7 +4258,26 @@ fn verify_constraints_subscriber_ownership(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
         let trace_row = (pos / config.blowup) % config.trace_length;
 
         // [C5] Check transition constraints at trace-aligned positions.
@@ -3052,15 +4309,6 @@ fn verify_constraints_subscriber_ownership(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-
-        verify_quotient_at_query(
-            quotient_value,
-            Felt::ZERO, // constraint is 0 at trace-aligned positions
-            pos,
-            config,
-            is_trace_aligned,
-        )?;
     }
     Ok(())
 }
@@ -3085,7 +4333,26 @@ fn verify_constraints_pool_commitment(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         // [C5] Transition constraint check at trace-aligned positions
         if is_trace_aligned {
@@ -3117,8 +4384,6 @@ fn verify_constraints_pool_commitment(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(quotient_value, Felt::ZERO, pos, config, is_trace_aligned)?;
     }
     Ok(())
 }
@@ -3141,7 +4406,26 @@ fn verify_constraints_balance_proof(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         if is_trace_aligned {
             let trace_row = (pos / config.blowup) % config.trace_length;
@@ -3185,8 +4469,6 @@ fn verify_constraints_balance_proof(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(quotient_value, Felt::ZERO, pos, config, is_trace_aligned)?;
     }
     Ok(())
 }
@@ -3210,7 +4492,26 @@ fn verify_constraints_merkle_path(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         if is_trace_aligned {
             let trace_row = (pos / config.blowup) % config.trace_length;
@@ -3267,8 +4568,6 @@ fn verify_constraints_merkle_path(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(quotient_value, Felt::ZERO, pos, config, is_trace_aligned)?;
     }
     Ok(())
 }
@@ -3290,7 +4589,26 @@ fn verify_constraints_confidential_balance(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         if is_trace_aligned {
             let trace_row = (pos / config.blowup) % config.trace_length;
@@ -3334,8 +4652,6 @@ fn verify_constraints_confidential_balance(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(quotient_value, Felt::ZERO, pos, config, is_trace_aligned)?;
     }
     Ok(())
 }
@@ -3357,7 +4673,26 @@ fn verify_constraints_transfer(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         if is_trace_aligned {
             let trace_row = (pos / config.blowup) % config.trace_length;
@@ -3401,13 +4736,59 @@ fn verify_constraints_transfer(
                         return Err(VerifyError::TransitionConstraintFailed);
                     }
                 }
-                // [H5] Carry columns identity in padding rows. Col 6 (acc) is
-                // exempt for the same reason as above — phase-2 DEEP-ALI binds it.
-                // (In padding rows acc is in fact constant, but the four amount
-                // rows are non-padding; excluding col 6 uniformly keeps phase-1
-                // honest-complete and defers all acc soundness to phase-2.)
+                // [LIVENESS 2026-08-01] Carry columns in the `pos_in_cycle == 30`
+                // row.
+                //
+                // This branch used to demand identity on cols 3-5 at EVERY such
+                // row. That is false on an honest trace: `build_transfer_trace`
+                // fills the carry columns as
+                //
+                //   col 3 (carry_owner)   = 0 for row <= 30,  owner    after
+                //   col 4 (carry_o_mint)  = 0 for row <= 62,  owner_mint after
+                //   col 5 (carry_out_rm)  = 0 for row <= 286, out1_rm until 382,
+                //                                             out2_rm after
+                //
+                // so the carry CHANGES on exactly the edges 30→31, 62→63,
+                // 286→287 and 382→383 — the four capture points the AIR encodes
+                // as constraints [10], [12], [18] and [20]. All four sit at
+                // `pos_in_cycle == 30`, i.e. in this branch, so an honest C5
+                // proof was rejected with `TransitionConstraintFailed` whenever a
+                // trace-aligned query landed on row 30, 62, 286 or 382.
+                //
+                // The fix does NOT exempt those columns — exempting is the
+                // soundness hole. Row `c*32 + 30` holds the cycle's Poseidon
+                // OUTPUT in col 0 (`run_hash` writes rounds 0..29 to rows
+                // start+1..start+30), and the captured value IS that output, so
+                // phase 1 can check the capture edge directly:
+                //
+                //   next[3] == current[0]  at row 30   (owner)
+                //   next[4] == current[0]  at row 62   (owner_mint)
+                //   next[5] == current[0]  at rows 286, 382 (out1_rm, out2_rm)
+                //
+                // That is STRICTER than the pre-fix code on an honest trace (the
+                // pre-fix code demanded something false) and strictly stronger
+                // than an exemption on a forged one. The capture rows are AIR
+                // constants, not prover-chosen: no input to this branch is under
+                // the prover's control.
+                //
+                // Col 6 (acc) stays exempt for the reason documented above.
+                const CAPTURE_ROW_OWNER: usize = 30;
+                const CAPTURE_ROW_OWNER_MINT: usize = 62;
+                const CAPTURE_ROW_OUT1_RM: usize = 286;
+                const CAPTURE_ROW_OUT2_RM: usize = 382;
+                let capture_col = match trace_row {
+                    CAPTURE_ROW_OWNER => Some(3usize),
+                    CAPTURE_ROW_OWNER_MINT => Some(4usize),
+                    CAPTURE_ROW_OUT1_RM | CAPTURE_ROW_OUT2_RM => Some(5usize),
+                    _ => None,
+                };
                 for col in (3..config.trace_width).filter(|&c| c != 6) {
-                    if query.next_trace_value(col) != query.trace_value(col) {
+                    if Some(col) == capture_col {
+                        // Capture edge: the carry takes this cycle's hash output.
+                        if query.next_trace_value(col) != query.trace_value(0) {
+                            return Err(VerifyError::TransitionConstraintFailed);
+                        }
+                    } else if query.next_trace_value(col) != query.trace_value(col) {
                         return Err(VerifyError::TransitionConstraintFailed);
                     }
                 }
@@ -3418,8 +4799,6 @@ fn verify_constraints_transfer(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(quotient_value, Felt::ZERO, pos, config, is_trace_aligned)?;
     }
     Ok(())
 }
@@ -3445,14 +4824,60 @@ fn verify_constraints_merkle_update(
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
-        let is_trace_aligned = pos % config.blowup == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         if is_trace_aligned {
             let trace_row = (pos / config.blowup) % config.trace_length;
             let pos_in_cycle = trace_row % hash_cycle_len;
             let is_cycle_boundary = pos_in_cycle == hash_cycle_len - 1;
 
-            if pos_in_cycle < config.num_rounds {
+            // [LIVENESS 2026-08-01] C6 twin of the 2026-05-29 C3 fix in
+            // `verify_constraints_merkle_path`, which was never applied here.
+            //
+            // A C6 trace is 512 rows but only `depth * 32` of them are active
+            // Poseidon rounds; `build_merkle_update_trace` fills the tail with
+            // identity rows and the AIR disables the round constraint over them
+            // via the periodic `round_active` column. This branch knew only
+            // `pos_in_cycle` and had no notion of an inactive CYCLE, so it
+            // demanded a Poseidon round of a row the honest prover deliberately
+            // did not hash — any trace-aligned query landing in 480..=509
+            // rejected an honest proof with `TransitionConstraintFailed`.
+            //
+            // `CANONICAL_DEPTH` is a CONSTANT, not a public input, so the prover
+            // has no lever over which rows are treated as inactive. It cannot be
+            // anything else: `verify_deep_ali_circuit_6` (phase 2, mandatory)
+            // already hard-rejects any proof whose `public_inputs[4] != 15`,
+            // because the baked periodic polynomials are depth-15. Reading the
+            // depth off the public inputs here would widen the prover's surface
+            // for no gain; hardcoding it matches both phase 2 and the C3
+            // precedent.
+            //
+            // Rows >= `active_rows` now fall through to the padding arm, which
+            // demands identity on all 10 columns — a real constraint, not a
+            // free pass.
+            const CANONICAL_DEPTH: usize = 15;
+            let active_rows = CANONICAL_DEPTH * hash_cycle_len; // 480
+
+            if trace_row < active_rows && pos_in_cycle < config.num_rounds {
                 let rc = poseidon_consts::round_constants(pos_in_cycle);
 
                 // OLD chain Poseidon round (cols 0-2)
@@ -3498,8 +4923,6 @@ fn verify_constraints_merkle_update(
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(quotient_value, Felt::ZERO, pos, config, is_trace_aligned)?;
     }
     Ok(())
 }
@@ -3517,7 +4940,7 @@ fn derive_query_positions_legacy(
     commitment: Felt,
     ood_current: &[u64],
     ood_next: &[u64],
-    ood_quotient: u64,
+    ood_quotient_bytes: &[u8],
     fri_layer_roots_bytes: &[u8],
     fri_final_poly_bytes: &[u8],
     grinding_nonce: u64,
@@ -3528,7 +4951,7 @@ fn derive_query_positions_legacy(
         &commitment.to_le_bytes(),
         ood_current,
         ood_next,
-        ood_quotient,
+        ood_quotient_bytes,
     );
     for layer_root in fri_layer_roots_bytes.chunks_exact(32) {
         state = extend_transcript(&state, layer_root);
@@ -3542,7 +4965,20 @@ fn verify_query_positions_legacy(
     proof: &CompactStarkProof,
     expected: &[u32],
 ) -> Result<(), VerifyError> {
-    if proof.queries.len() < NUM_QUERIES {
+    // [SEAM] Was `<`. The generic twin was tightened to `!=` by B1 with the note
+    // "the legacy path already gates on the constant" — it gated on the constant
+    // with `<`, which is the same hole from the same side. Up to 256 queries
+    // (the parser's old cap) were accepted where 27 are expected, and the `i <
+    // expected.len()` guard below meant every surplus position went UNCOMPARED
+    // to the derived list, then straight into the per-query Merkle, FRI and
+    // constraint loops. On C0 that matters more than anywhere else: C0 is the
+    // sole verifier for `zk_shielded::{pause,resume,cancel}_private_stark` and
+    // `p01_quantum_wallet`.
+    //
+    // The parser now refuses a wire count other than `NUM_QUERIES`
+    // (`CompactStarkProof::from_bytes`), so this is belt and braces — kept
+    // because the two ends were allowed to drift once already.
+    if proof.queries.len() != NUM_QUERIES {
         return Err(VerifyError::InsufficientQueries);
     }
     for (i, query) in proof.queries.iter().enumerate() {
@@ -3554,37 +4990,67 @@ fn verify_query_positions_legacy(
 }
 
 fn verify_merkle_proofs_legacy(proof: &CompactStarkProof) -> Result<(), VerifyError> {
+    let half = LDE_SIZE / 2;
     for (query_idx, query) in proof.queries.iter().enumerate() {
-        if !merkle::verify_merkle_path(
+        // [ROUTE C] Pair-leaf trace tree, identical rule to
+        // `verify_merkle_proofs_generic` — see the commentary there. The legacy C0
+        // path keeps its own parser and its own verifier entry point, but the
+        // trace COMMITMENT is now the same shape on both paths, so a drift between
+        // them cannot hide.
+        let pos = query.position as usize;
+        let (lo, hi) = if pos < half {
+            (query.trace_values_bytes(), query.trace_mirror_values_bytes())
+        } else {
+            (query.trace_mirror_values_bytes(), query.trace_values_bytes())
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.trace_root,
-            query.trace_values_bytes(),
-            query.position as usize,
+            lo,
+            hi,
+            pos & (half - 1),
             query.merkle_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
         }
 
-        let next_pos = (query.position as usize + BLOWUP) % LDE_SIZE;
-        if !merkle::verify_merkle_path(
+        let next_pos = (pos + BLOWUP) % LDE_SIZE;
+        let (nlo, nhi) = if next_pos < half {
+            (query.next_trace_values_bytes(), query.next_trace_mirror_values_bytes())
+        } else {
+            (query.next_trace_mirror_values_bytes(), query.next_trace_values_bytes())
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.trace_root,
-            query.next_trace_values_bytes(),
-            next_pos,
+            nlo,
+            nhi,
+            next_pos & (half - 1),
             query.next_merkle_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
         }
 
-        // [P1.1] Verify quotient membership for the claimed quotient_values[query_idx].
-        if query_idx >= proof.quotient_values_len() {
+        // [B4] One pair-leaf opening binds both the quotient values at
+        // `position` and the mirror values at `position ^ LDE_SIZE/2`.
+        // [B2] Both sides are now `LEGACY_QUOTIENT_SEGMENTS` felts, contiguous
+        // and wire-ordered, so they hash in place — the leaf preimage widens and
+        // the tree depth does not move.
+        const KSEGS: usize = crate::compact_proof::LEGACY_QUOTIENT_SEGMENTS;
+        if (query_idx + 1) * KSEGS > proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        let q_leaf_bytes = quotient_value.as_u64().to_le_bytes();
-        if !merkle::verify_merkle_path(
+        let q_block = proof.quotient_values_block(query_idx);
+        let q_mirror_block = query.quotient_mirror_bytes();
+        let (qlo, qhi) = if pos < half {
+            (q_block, q_mirror_block)
+        } else {
+            (q_mirror_block, q_block)
+        };
+        if !merkle::verify_merkle_path_2seg(
             &proof.quotient_root,
-            &q_leaf_bytes,
-            query.position as usize,
-            query.quotient_merkle_path(),
+            qlo,
+            qhi,
+            pos & (half - 1),
+            query.quotient_pair_path(),
         ) {
             return Err(VerifyError::MerkleProofFailed);
         }
@@ -3593,23 +5059,29 @@ fn verify_merkle_proofs_legacy(proof: &CompactStarkProof) -> Result<(), VerifyEr
 }
 
 fn verify_transition_legacy(proof: &CompactStarkProof) -> Result<(), VerifyError> {
-    // Legacy circuit config for quotient check
-    let legacy_config = CircuitConfig {
-        trace_width: TRACE_WIDTH,
-        trace_length: TRACE_LENGTH,
-        blowup: BLOWUP,
-        lde_size: LDE_SIZE,
-        merkle_depth: MERKLE_DEPTH,
-        num_rounds: NUM_ROUNDS,
-        // [P2.2] Legacy verifier uses the default 16 (pre-P2.2 circuits only).
-        fri_final_poly_size: FRI_FINAL_POLY_SIZE,
-        num_queries: NUM_QUERIES,
-    };
-
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
         let trace_row = (pos / BLOWUP) % TRACE_LENGTH;
-        let is_trace_aligned = pos % BLOWUP == 0;
+        // [B7] DISABLED, not deleted, and this is the whole point of the change.
+        //
+        // This arm read the opened value AS A RAW TRACE ROW, which only ever
+        // worked because the LDE was evaluated on the raw subgroup. It was a
+        // CONSUMER of the witness leak B7 removes: once x = h * g^i, an aligned
+        // position is no longer a trace row and the comparison is meaningless.
+        //
+        // It could not simply be dropped either. Its job -- an INDEPENDENT
+        // re-derivation, AIR against trace, which the OOD check cannot do
+        // because the prover computes C from the same AIR -- caught the C3
+        // (2026-05-29) and C6 (2026-08-01) padding-row defects. That job now
+        // lives prover-side in `assert_air_agrees_with_trace_c0` and its generic
+        // twin, over EVERY constrained row instead of whichever a query hit,
+        // at zero on-chain CU, and each of the seven is proven non-vacuous by
+        // the row-(n-1) mutation.
+        //
+        // Left as `false` rather than deleted so the arms stay readable next to
+        // the constraint they used to check, and so this comment sits where
+        // someone would look for them.
+        let is_trace_aligned = false;
 
         // [C5] Transition constraints at trace-aligned positions.
         //
@@ -3643,14 +5115,6 @@ fn verify_transition_legacy(proof: &CompactStarkProof) -> Result<(), VerifyError
         if query_idx >= proof.quotient_values_len() {
             return Err(VerifyError::QuotientCheckFailed);
         }
-        let quotient_value = proof.quotient_value(query_idx);
-        verify_quotient_at_query(
-            quotient_value,
-            Felt::ZERO,
-            pos,
-            &legacy_config,
-            is_trace_aligned,
-        )?;
     }
     Ok(())
 }
@@ -3861,6 +5325,146 @@ mod merkle_update_e2e {
             matches!(res, Err(VerifyError::DeepAliFailed)),
             "phase 2 DEEP-ALI must reject wrong public inputs: got {:?}", res
         );
+    }
+
+    /// [ROUTE C] **The trace-commitment tripwire, inside `--lib`.**
+    ///
+    /// Route C's whole authentication surface — both `verify_merkle_path_2seg`
+    /// blocks in `verify_merkle_proofs_generic` and both in
+    /// `verify_merkle_proofs_legacy` — lived behind exactly ONE test file
+    /// (`tests/route_c_trace_pair.rs`). MEASURED during review: deleting all four
+    /// blocks and their now-unused locals left `cargo test -p p01_stark_verifier
+    /// --lib` at "54 passed; 0 failed", `--test periodic_stride`, `--test
+    /// fri_end_to_end`, `--test b4_pair_leaf` and `--test merkle_domain_sep` all
+    /// green, and `cargo clippy -- -D warnings` clean. A verifier that does not
+    /// check its trace commitment at all was invisible to every gate that existed
+    /// before Route C.
+    ///
+    /// This test closes that. It lives in `--lib`, which is the FIRST verifier
+    /// command CI runs and pre-dates Route C, so a partial or aborted edit that
+    /// removes the trace opening cannot reach a green build. It is a tamper test,
+    /// not a soundness test: it proves the mirror row is bound to `trace_root`,
+    /// and proves nothing whatsoever about DEEP binding.
+    #[test]
+    fn route_c_trace_commitment_is_checked_c6() {
+        let old_leaf = 111u64;
+        let new_leaf = 222u64;
+        let path_elements: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
+        let path_indices: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+
+        let proof_data = p01_stark::compact::generate_merkle_update_compact_proof(
+            old_leaf, new_leaf, &path_elements, &path_indices,
+        );
+        let config = get_circuit_config(proof_data.circuit_id).expect("config");
+
+        // Positive control first: without it, "the tampered proof was rejected"
+        // could just mean the honest proof does not verify either.
+        let honest = crate::compact_proof::GenericCompactProof::from_bytes(
+            &proof_data.proof_bytes, config,
+        ).expect("deserialize");
+        verify_generic(&honest, proof_data.circuit_id, &proof_data.public_inputs, config)
+            .expect("honest C6 proof must verify — otherwise the negative half is vacuous");
+
+        let (base, row_len) = route_c_trace_block(config, &proof_data.proof_bytes, 0);
+
+        // Slot 1 is `trace_mirror_values` (the row at `pos ^ lde/2`), slot 3 is
+        // `next_trace_mirror_values`. Both exist ONLY because Route C pair-leafed
+        // the trace tree, and both are authenticated-and-then-unread, so nothing
+        // except the Merkle check can notice them changing.
+        for (label, slot) in [("mirror", 1usize), ("next-mirror", 3usize)] {
+            let mut tampered = proof_data.proof_bytes.clone();
+            tampered[base + slot * row_len] ^= 0x01;
+
+            let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
+                &tampered, config,
+            ).expect("still parses — one value byte changed, no length change");
+
+            let res =
+                verify_generic(&parsed, proof_data.circuit_id, &proof_data.public_inputs, config);
+            assert!(
+                matches!(res, Err(VerifyError::MerkleProofFailed)),
+                "a corrupted trace {label} row must be rejected at the Merkle check. \
+                 Got {res:?}. If this is Ok(()), the trace commitment is not being \
+                 verified at all and the verifier accepts unauthenticated trace rows.",
+            );
+        }
+    }
+
+    /// [ROUTE C] The same tripwire for the LEGACY C0 path, which has its own
+    /// parser (`CompactStarkProof`), its own entry point
+    /// (`verify_subscriber_ownership`) and its own copy of the trace-opening code
+    /// in `verify_merkle_proofs_legacy`. The C6 test above exercises the GENERIC
+    /// path only, so without this one a deletion confined to the legacy path stays
+    /// invisible to `--lib` — and the legacy path is the sole verifier for four
+    /// SHIPPED instructions (`zk_shielded::{pause,resume,cancel_private_stark}`
+    /// and `p01_quantum_wallet/src/stark.rs:42` all hard-require `circuit_id == 0`).
+    #[test]
+    fn route_c_trace_commitment_is_checked_c0_legacy() {
+        use crate::compact_proof::{CompactStarkProof, CONFIG_SUBSCRIBER_OWNERSHIP};
+
+        let pd = p01_stark::compact::generate_compact_proof(42);
+        let commitment = crate::goldilocks::Felt::new(pd.commitment);
+
+        // Positive control.
+        let honest = CompactStarkProof::from_bytes(&pd.proof_bytes).expect("parse C0");
+        verify_subscriber_ownership(&honest, commitment)
+            .expect("honest C0 proof must verify — otherwise the negative half is vacuous");
+
+        let (base, row_len) =
+            route_c_trace_block(&CONFIG_SUBSCRIBER_OWNERSHIP, &pd.proof_bytes, 0);
+
+        for (label, slot) in [("mirror", 1usize), ("next-mirror", 3usize)] {
+            let mut tampered = pd.proof_bytes.clone();
+            tampered[base + slot * row_len] ^= 0x01;
+
+            let parsed = CompactStarkProof::from_bytes(&tampered)
+                .expect("still parses — one value byte changed");
+            let res = verify_subscriber_ownership(&parsed, commitment);
+            assert!(
+                matches!(res, Err(VerifyError::MerkleProofFailed)),
+                "a corrupted legacy-C0 trace {label} row must be rejected at the Merkle \
+                 check. Got {res:?}. If this is Ok(()), the C0 trace commitment is not \
+                 being verified and pause/resume/cancel_private_stark accept \
+                 unauthenticated trace rows.",
+            );
+        }
+    }
+
+    /// Byte offset of query `q`'s trace block plus the per-row stride, derived
+    /// from the config and cross-checked against the buffer length.
+    ///
+    /// The length assertion is the point: if the serializer layout drifts, this
+    /// panics instead of poking a stale offset and passing for the wrong reason.
+    fn route_c_trace_block(
+        cfg: &crate::compact_proof::CircuitConfig,
+        bytes: &[u8],
+        q: usize,
+    ) -> (usize, usize) {
+        let tw = cfg.trace_width;
+        let md = cfg.merkle_depth;
+        let num_commits = (cfg.lde_size / cfg.fri_final_poly_size).trailing_zeros() as usize - 1;
+
+        // [B2] `ood_quotient`, each query's quotient mirror block and each tail
+        // entry are `quotient_segments` felts wide.
+        let k = cfg.quotient_segments;
+        let mut off = 32 + 32 + tw * 8 + tw * 8 + 8 + k * 8;
+        assert_eq!(bytes[off] as usize, num_commits, "num_fri_layers byte drift");
+        off += 1 + num_commits * 32;
+        off += 2 + cfg.fri_final_poly_size * 8;
+        off += 8 + 2;
+
+        let fri_per_query: usize = (0..num_commits).map(|i| 16 + (md - i - 2) * 32).sum();
+        // [ROUTE C] four rows + two depth-(md - 1) pair paths.
+        let per_query =
+            4 + 4 * (tw * 8) + 2 * ((md - 1) * 32) + k * 8 + (md - 1) * 32 + fri_per_query;
+
+        assert_eq!(
+            off + per_query * cfg.num_queries + cfg.num_queries * k * 8,
+            bytes.len(),
+            "Route C serializer layout drift — this offset arithmetic is stale",
+        );
+
+        (off + q * per_query + 4, tw * 8)
     }
 
     // ------------------------------------------------------------------
@@ -4661,6 +6265,656 @@ mod merkle_update_e2e {
             "tampered acc ood_current[6] must be rejected: got {:?}", res
         );
     }
+
+    // ======================================================================
+    // [MUTATION 2026-08-02] The six phase-1 per-query constraint arms.
+    //
+    // MEASURED, not argued: setting `is_trace_aligned = false` in ALL SIX of
+    // `verify_constraints_{pool_commitment, balance_proof, merkle_path,
+    // confidential_balance, transfer, merkle_update}` — i.e. deleting the whole
+    // step-4 per-query transition layer for every live circuit at once — left
+    // the entire suite GREEN: 13 test binaries, 169 tests, `cargo test` exit 0.
+    //
+    // Why the suite could not see it, structurally rather than by oversight:
+    //
+    //   * every phase-1 test here is a LIVENESS test (`*_verify_generic_accepts_
+    //     honest_proof`, `honest_liveness`, `c6_padding_rows`, its C5 twin).
+    //     Deleting a rejection can never turn an accept into a reject, so a
+    //     loosening is invisible to all of them by construction;
+    //   * the two sweeps that DO flip trace bytes
+    //     (`c5_tampered_openings_are_all_rejected` / its C6 twin) go through
+    //     `verify_generic`, where step 3 (Merkle) refuses a flipped opening
+    //     before step 4 is reached. Their own `tamper_and_verify` comment says
+    //     exactly that, and the assertion is still only `accepted.is_empty()`,
+    //     which the Merkle step satisfies on its own.
+    //
+    // The C3 (2026-05-29) and C6 (2026-08-01) padding-row defects both lived in
+    // this layer. These tests call the ARM DIRECTLY, so Merkle cannot answer for
+    // it, and they cover BOTH branches of every arm — the Poseidon-round branch
+    // and the identity/padding branch — because the twin defects were in the
+    // second one.
+    // ======================================================================
+
+    /// A trace-aligned query whose row is genuinely constrained by the arm.
+    ///
+    /// `pos_in_cycle == 31` is the cycle boundary — a FREE transition in every
+    /// one of the six arms — and `trace_length - 1` is outside the transition
+    /// vanishing polynomial. Corrupting either is legitimately accepted, so a
+    /// test that picked one would measure nothing and pass for the wrong reason.
+    fn constrained_trace_aligned_rows(
+        proof: &crate::compact_proof::GenericCompactProof,
+        cfg: &crate::compact_proof::CircuitConfig,
+    ) -> Vec<(usize, usize)> {
+        (0..proof.queries.len())
+            .filter_map(|i| {
+                let pos = proof.queries[i].position as usize;
+                if pos % cfg.blowup != 0 {
+                    return None;
+                }
+                let row = (pos / cfg.blowup) % cfg.trace_length;
+                if row % 32 == 31 || row == cfg.trace_length - 1 {
+                    return None;
+                }
+                Some((i, row))
+            })
+            .collect()
+    }
+
+    /// Corrupt column 0 of ONE opened next-row and hand the proof to the arm.
+    ///
+    /// Column 0 of the next row is constrained at every row
+    /// `constrained_trace_aligned_rows` returns, in all six arms: the
+    /// Poseidon-round branch demands `next[0] == poseidon_round(current)[0]`,
+    /// the identity/padding branch demands `next[0] == current[0]`. So one
+    /// corruption exercises whichever branch the drawn row lands in and the
+    /// expected error is the same either way — no arm gets a free pass because
+    /// of which branch its witness happened to draw.
+    fn corrupt_next_row_and_run(
+        label: &str,
+        cfg: &crate::compact_proof::CircuitConfig,
+        pd: &p01_stark::compact::GenericCompactProofData,
+        q: usize,
+        arm: &impl Fn(
+            &crate::compact_proof::GenericCompactProof,
+            &crate::compact_proof::CircuitConfig,
+            &[u64],
+        ) -> Result<(), VerifyError>,
+    ) -> Result<(), VerifyError> {
+        let honest = crate::compact_proof::GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+            .unwrap_or_else(|| panic!("{label}: honest proof must parse"));
+        let (trace_off, stride) = route_c_trace_block(cfg, &pd.proof_bytes, q);
+        // Per-query wire order: position(4) | trace | trace_mirror | next_trace | …
+        let next_off = trace_off + 2 * stride;
+        let mut broken = pd.proof_bytes.clone();
+        let v = u64::from_le_bytes(broken[next_off..next_off + 8].try_into().unwrap());
+        let bumped = (v + 1) % crate::goldilocks::MODULUS;
+        assert_ne!(v, bumped, "{label}: the corruption must actually change the felt");
+        broken[next_off..next_off + 8].copy_from_slice(&bumped.to_le_bytes());
+
+        let tampered = crate::compact_proof::GenericCompactProof::from_bytes(&broken, cfg)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label}: the tampered proof must still PARSE — if it does not, this test \
+                     measures the parser and not the constraint arm"
+                )
+            });
+        // The corruption landed where this test claims it did. Without these two
+        // the negative leg could be green because the edit missed.
+        assert_eq!(
+            tampered.queries[q].next_trace_value(0).as_u64(),
+            bumped,
+            "{label}: the byte edit did not land in query {q}'s next-row block"
+        );
+        assert_eq!(
+            tampered.queries[q].trace_value(0).as_u64(),
+            honest.queries[q].trace_value(0).as_u64(),
+            "{label}: the byte edit spilled into the CURRENT row block"
+        );
+        arm(&tampered, cfg, &pd.public_inputs)
+    }
+
+    /// [B7 2026-08-04] Assert that the phase-1 trace-aligned arm is RETIRED —
+    /// the inverse of what this helper's predecessor
+    /// (`arm_rejects_broken_transitions_in_both_branches`, git history at
+    /// e900b78c) asserted, deliberately. That harness swept up to 512 seeds
+    /// until both branches of the arm had rejected a corrupted next-row
+    /// opening; with the coset LDE no opened position IS a trace row, the arms
+    /// are disabled (`let is_trace_aligned = false;` at every site), and the
+    /// probe could only fail — MEASURED on this tree: all six went red on the
+    /// first corruption, "the phase-1 arm ACCEPTED a broken transition".
+    ///
+    /// What this asserts instead, per witness:
+    ///   * the arm still ACCEPTS the honest proof — the production call in
+    ///     `verify_generic` must stay harmless;
+    ///   * the arm ALSO accepts every corrupted next-row opening at the
+    ///     positions the old arithmetic called trace-aligned — it is vacuous,
+    ///     so no reader may count it as transition coverage. If this ever
+    ///     rejects, the retired arm has come back to life: restore the
+    ///     branch-coverage probes from git history instead of loosening this.
+    ///
+    /// Where the coverage went, so this is a relocation and not a loss: the
+    /// arm's job — an INDEPENDENT re-derivation of the AIR against the trace,
+    /// which caught the C3 (2026-05-29) and C6 (2026-08-01) padding-row
+    /// defects — moved prover-side to `assert_air_agrees_with_trace_c0` and
+    /// its generic twin in `stark/src/compact.rs`, which check EVERY
+    /// constrained row (not whichever a query happened to hit) and are proven
+    /// non-vacuous there by the row-(n-1) mutation. The `inactive_from`
+    /// parameter is kept, unused, so the six call sites still document where
+    /// each arm's inactive tail was for whoever revives the old probes.
+    fn phase1_arm_is_retired_post_b7(
+        label: &str,
+        cfg: &crate::compact_proof::CircuitConfig,
+        _inactive_from: Option<usize>,
+        make: impl Fn(u64) -> p01_stark::compact::GenericCompactProofData,
+        arm: impl Fn(
+            &crate::compact_proof::GenericCompactProof,
+            &crate::compact_proof::CircuitConfig,
+            &[u64],
+        ) -> Result<(), VerifyError>,
+    ) {
+        const SEEDS: u64 = 8;
+        let mut checked = 0usize;
+
+        for seed in 0..SEEDS {
+            let pd = make(seed);
+            let honest =
+                crate::compact_proof::GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+                    .unwrap_or_else(|| panic!("{label}: honest proof (seed {seed}) must parse"));
+            // Control: the arm accepts the honest proof.
+            arm(&honest, cfg, &pd.public_inputs).unwrap_or_else(|e| {
+                panic!("{label}: the arm must ACCEPT the honest proof (seed {seed}), got {e:?}")
+            });
+
+            for (q, row) in constrained_trace_aligned_rows(&honest, cfg) {
+                let got = corrupt_next_row_and_run(label, cfg, &pd, q, &arm);
+                assert_eq!(
+                    got,
+                    Ok(()),
+                    "{label}: the RETIRED phase-1 arm rejected a corrupted next-row opening \
+                     at trace row {row} (seed {seed}, query {q}). It has come back to life; \
+                     if that is deliberate, restore the pre-B7 branch-coverage probes from \
+                     git history (e900b78c) instead of loosening this assertion — and note \
+                     that on the coset an aligned position is NOT a trace row, so a revived \
+                     arm is not merely dead weight, it is wrong."
+                );
+                checked += 1;
+            }
+        }
+
+        println!(
+            "[PHASE1-B7] {label}: the retired arm accepted {checked} corrupted openings \
+             across {SEEDS} witnesses — vacuous as designed; AIR-vs-trace re-derivation \
+             lives prover-side over every constrained row (assert_air_agrees_with_trace_c0 \
+             and generic twin, non-vacuity by the row-(n-1) mutation)."
+        );
+    }
+
+    #[test]
+    fn c1_phase1_arm_is_retired_post_b7() {
+        phase1_arm_is_retired_post_b7(
+            "C1 pool_commitment",
+            &crate::compact_proof::CONFIG_POOL_COMMITMENT,
+            // `cycle < 3`: rows 96..=127 are the inactive tail.
+            Some(96),
+            |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11),
+            verify_constraints_pool_commitment,
+        );
+    }
+
+    #[test]
+    fn c2_phase1_arm_is_retired_post_b7() {
+        phase1_arm_is_retired_post_b7(
+            "C2 balance_proof",
+            &crate::compact_proof::CONFIG_BALANCE_PROOF,
+            None, // all four cycles hash
+            |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999),
+            verify_constraints_balance_proof,
+        );
+    }
+
+    #[test]
+    fn c3_phase1_arm_is_retired_post_b7() {
+        phase1_arm_is_retired_post_b7(
+            "C3 merkle_path",
+            &crate::compact_proof::CONFIG_MERKLE_PATH,
+            // CANONICAL_DEPTH * 32 — the region of the 2026-05-29 fix.
+            Some(480),
+            |s| c3_sample_proof(777 + s),
+            verify_constraints_merkle_path,
+        );
+    }
+
+    #[test]
+    fn c4_phase1_arm_is_retired_post_b7() {
+        phase1_arm_is_retired_post_b7(
+            "C4 confidential_balance",
+            &crate::compact_proof::CONFIG_CONFIDENTIAL_BALANCE,
+            // Cycle 7 is a real dummy Poseidon (`run_hash(trace, 7, 0, 0)`), so
+            // C4 has no inactive tail and the arm is right not to bound one.
+            None,
+            |s| {
+                p01_stark::compact::generate_confidential_balance_compact_proof(
+                    42 + s, 1000, 111, 800, 222, 200, 333, 999,
+                )
+            },
+            verify_constraints_confidential_balance,
+        );
+    }
+
+    #[test]
+    fn c5_phase1_arm_is_retired_post_b7() {
+        phase1_arm_is_retired_post_b7(
+            "C5 transfer",
+            &crate::compact_proof::CONFIG_TRANSFER,
+            None,
+            // Conserving witness: in1+in2 == out1+out2, public_amount 0.
+            |s| {
+                p01_stark::compact::generate_transfer_compact_proof(
+                    42 + s, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
+                )
+            },
+            verify_constraints_transfer,
+        );
+    }
+
+    #[test]
+    fn c6_phase1_arm_is_retired_post_b7() {
+        phase1_arm_is_retired_post_b7(
+            "C6 merkle_update",
+            &crate::compact_proof::CONFIG_MERKLE_UPDATE,
+            // CANONICAL_DEPTH * 32 — the region of the 2026-08-01 twin fix.
+            Some(480),
+            |s| {
+                let path_elements: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
+                let path_indices: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+                p01_stark::compact::generate_merkle_update_compact_proof(
+                    111 + s, 222, &path_elements, &path_indices,
+                )
+            },
+            verify_constraints_merkle_update,
+        );
+    }
+
+    // ======================================================================
+    // [MUTATION 2026-08-02] Step 5, `verify_boundary_constraints`.
+    //
+    // MEASURED: short-circuiting it to `Ok(())` (verify.rs
+    // `if assertions.is_empty() {` -> `if true {`) left the WHOLE suite green —
+    // 70 lib tests including the six phase-1 arm tests above, plus all twelve
+    // integration binaries, `cargo test` exit 0. Nothing in the repository
+    // required the per-query public-input binding to fire even once.
+    //
+    // WHY IT USED TO MATTER MOST FOR C2 AND C4, in the past tense because
+    // [BIND-C2C4 2026-08-03] changed it. Until that commit `verify_deep_ali_circuit_2`
+    // and `verify_deep_ali_circuit_4` were the only two phase-2 entry points that
+    // never called `boundary_fold_at_ood`, so this trace-aligned per-query check
+    // was the ONLY thing anywhere binding their trace to their public inputs —
+    // and the measurements below said it could fire on ~2-3% of honest witnesses.
+    // Re-measured POST-FIX at `bd8be2b4` the [STEP5] rates are C1 4.67%,
+    // C2 2.33%, C4 1.33%, C5 2.34% — so the honest range is now 1.3%-4.7%, and
+    // C4 in particular is BELOW the old "~2-3%" because folding Q_bnd
+    // re-randomised the draw the query positions come from.
+    // Both now fold, so all seven circuits bind their public inputs at the OOD
+    // point on EVERY proof, unconditionally, and this check is a second layer
+    // rather than the only one.
+    //
+    // What has NOT changed, and is the reason these tests stay: this check is
+    // still the only per-query public-input binding, and
+    // `balance_proof_deep_ali_fails_on_wrong_public_inputs` and its C4 twin still
+    // do not cover public-input binding at all. They pass because the public
+    // inputs feed the Fiat-Shamir RLC alpha, which binds the CLAIMED inputs to
+    // the transcript, not the trace to the inputs — measured, not argued: they
+    // were green on the pre-fix tree, which had no C2/C4 fold whatsoever. A
+    // prover who simply re-runs the pipeline under a different claim satisfies
+    // them. `c2_lying_public_input_is_rejected` / `c4_..` are the tests that do
+    // cover it.
+    //
+    // Scope, stated rather than implied: this guard covers C1, C2, C4 and C5.
+    // C3 and C6 are left to phase 2, where `boundary_fold_at_ood` binds the SAME
+    // assertion list at the OOD point on EVERY proof and is already covered by
+    // `merkle_path_deep_ali_fails_on_wrong_public_inputs` and
+    // `merkle_update_deep_ali_fails_on_wrong_public_inputs`. Reaching their step-5
+    // rows here would need ~190 witnesses each (2 assertion rows in 512, ~1.375
+    // trace-aligned queries per proof), which is not worth the wall clock for a
+    // check phase 2 already makes unconditional.
+    //
+    // [B7 2026-08-04] STEP 5 IS RETIRED, and everything above is history now.
+    // The coset LDE moved every committed position to x = h * g^i, so NO query
+    // position is a trace row any more and the per-query arm was disabled
+    // outright (`verify_boundary_constraints` skips every query — see the [B7]
+    // comment in its body). MEASURED on this tree before the probes were
+    // reworked: all four hit-rate probes panicked with 0/300 (C1, C2, C4) and
+    // 0/128 (C5) witnesses able to draw a trace-aligned query — the 4.67% /
+    // 2.33% / 1.33% / 2.34% rates quoted above did not survive the retirement,
+    // exactly as retiring the mechanism predicts. The probes below therefore no
+    // longer measure a hit rate; they assert the retirement itself (step 5
+    // accepts EVERYTHING, so nobody re-reads it as a live binding) and the
+    // binding claim lives where it is unconditional: the OOD boundary fold,
+    // measured at 100% by the [BIND] lying-claim tests in this same run.
+    // ======================================================================
+
+    /// [B7 2026-08-04] Assert that step 5 is RETIRED — the opposite of what
+    /// this helper's predecessor (`step5_binding_must_fire`) asserted, and on
+    /// purpose. That probe swept witnesses for a trace-aligned query on a
+    /// public-input assertion row and panicked if none of the budget hit; on
+    /// the coset there is nothing to hit (0/300 and 0/128 MEASURED, see the
+    /// block comment above), so keeping it meant a permanently red suite over
+    /// a mechanism that was deliberately removed.
+    ///
+    /// What this asserts instead, per witness:
+    ///   * step 5 still ACCEPTS the honest proof under its own inputs — the
+    ///     production call at step 5 of `verify_generic` must stay harmless;
+    ///   * step 5 ALSO accepts every single-input perturbation — it is
+    ///     vacuous, so no reader may count it as a public-input binding. If
+    ///     this ever rejects, the retired arm has come back to life: revive
+    ///     the pre-B7 hit-rate probes (git history at e900b78c) instead of
+    ///     weakening this assertion.
+    ///
+    /// The binding the old probe existed to measure is the OOD boundary fold,
+    /// which is UNCONDITIONAL — see `lying_claim_must_be_rejected` right
+    /// below, whose [BIND] lines report 100% rejection across every witness
+    /// and every public input, and the `*_deep_ali_fails_on_wrong_public_inputs`
+    /// family for the transcript half.
+    fn step5_is_vacuous_post_b7(
+        label: &str,
+        circuit_id: u8,
+        cfg: &crate::compact_proof::CircuitConfig,
+        seeds: u64,
+        make: impl Fn(u64) -> p01_stark::compact::GenericCompactProofData,
+    ) {
+        for seed in 0..seeds {
+            let pd = make(seed);
+            let p = crate::compact_proof::GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+                .unwrap_or_else(|| panic!("{label}: honest proof (seed {seed}) must parse"));
+            // Control: step 5 accepts the honest proof under its own inputs.
+            verify_boundary_constraints(&p, circuit_id, cfg, &pd.public_inputs)
+                .unwrap_or_else(|e| {
+                    panic!("{label}: step 5 must ACCEPT the honest proof (seed {seed}), got {e:?}")
+                });
+
+            for i in 0..pd.public_inputs.len() {
+                let mut pi = pd.public_inputs.clone();
+                pi[i] = pi[i].wrapping_add(1);
+                assert_eq!(
+                    verify_boundary_constraints(&p, circuit_id, cfg, &pi),
+                    Ok(()),
+                    "{label}: seed {seed} input {i} — step 5 REJECTED a perturbed public \
+                     input. The retired per-query arm is alive again; if that is deliberate, \
+                     restore the pre-B7 hit-rate probes from git history instead of loosening \
+                     this assertion."
+                );
+            }
+        }
+        println!(
+            "[STEP5-B7] {label}: step 5 accepted the honest proof AND every single-input \
+             perturbation across {seeds} witnesses — retired as designed; the public-input \
+             binding is the OOD boundary fold ([BIND] lines in this run, 100%)."
+        );
+    }
+
+    // Seed budgets: the pre-B7 probes swept 300 witnesses (128 for C5) because
+    // they were measuring a HIT RATE in the low percent. Vacuity needs no
+    // statistics — any witness whose perturbations are all accepted proves the
+    // arm is off — so 8 witnesses per circuit keeps the four tests cheap while
+    // still sweeping every public input on every one of them.
+
+    #[test]
+    fn c1_step5_is_vacuous_post_b7() {
+        step5_is_vacuous_post_b7(
+            "C1 pool_commitment",
+            1,
+            &crate::compact_proof::CONFIG_POOL_COMMITMENT,
+            8,
+            |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11),
+        );
+    }
+
+    #[test]
+    fn c2_step5_is_vacuous_post_b7() {
+        step5_is_vacuous_post_b7(
+            "C2 balance_proof",
+            2,
+            &crate::compact_proof::CONFIG_BALANCE_PROOF,
+            8,
+            |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999),
+        );
+    }
+
+    #[test]
+    fn c4_step5_is_vacuous_post_b7() {
+        step5_is_vacuous_post_b7(
+            "C4 confidential_balance",
+            4,
+            &crate::compact_proof::CONFIG_CONFIDENTIAL_BALANCE,
+            8,
+            |s| {
+                p01_stark::compact::generate_confidential_balance_compact_proof(
+                    42 + s, 1000, 111, 800, 222, 200, 333, 999,
+                )
+            },
+        );
+    }
+
+    #[test]
+    fn c5_step5_is_vacuous_post_b7() {
+        step5_is_vacuous_post_b7(
+            "C5 transfer",
+            5,
+            &crate::compact_proof::CONFIG_TRANSFER,
+            8,
+            |s| {
+                p01_stark::compact::generate_transfer_compact_proof(
+                    42 + s, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
+                )
+            },
+        );
+    }
+
+    // ======================================================================
+    // [BIND-C2C4 2026-08-03] The C2/C4 boundary fold, pinned by the forgery it
+    // stops rather than by an honest proof still verifying.
+    //
+    // THE MUTATION THESE GO RED UNDER, stated exactly, because a guard is only
+    // worth what it checks: revert BOTH halves of the fix together —
+    //   * `stark/src/compact.rs` `boundary_spec_for_quotient`:
+    //     `QuotientSpec::Circuit2 => None`, `QuotientSpec::Circuit4 => None`
+    //     (the prover stops folding Q_bnd into the committed quotient), AND
+    //   * this file: delete the `let c_bnd = boundary_fold_at_ood(..)` block from
+    //     `verify_deep_ali_circuit_2` / `_4` and compare `c_at_z` to `rhs`.
+    // That pair IS the pre-fix code. Reverting only one half breaks honest
+    // proofs, so the honest-liveness suite catches that on its own; the
+    // coordinated revert is the one that silently reopens the hole, and it is
+    // what `c2_lying_public_input_is_rejected` / `c4_..` go red on. Under the
+    // coordinated revert those proofs VERIFY: the public inputs would then feed
+    // nothing but the Fiat-Shamir alpha, and the probe re-runs the whole
+    // pipeline under its false claim, so alpha, the OOD point, the query
+    // positions and every FRI layer are self-consistent with it.
+    //
+    // Why this is not `balance_proof_deep_ali_fails_on_wrong_public_inputs`
+    // (verify.rs:5264) or its C4 twin: those hand the verifier a public-input
+    // vector the proof was NOT built with, so alpha moves and the TRANSITION
+    // identity fails. They pass identically with the boundary fold removed —
+    // measured, not assumed: they were green on the pre-fix tree, which had no
+    // C2/C4 fold at all. They are liveness-shaped guards on the transcript, not
+    // on public-input binding.
+    // ======================================================================
+
+    /// Drive `seeds` honest witnesses, and for each one publish the SAME honest
+    /// trace under a false value for every public input in turn. Require the
+    /// phase-2 verifier to reject each, and report the rejection rate against
+    /// the PRE-FIX 2.33% (C2) / 3.00% (C4) the trace-aligned step-5 check was
+    /// measured at when it was the only binding there was.
+    ///
+    /// POST-FIX those same step-5 probes measured 2.33% (C2, unchanged) and
+    /// 1.33% (C4, down from 3.00% because folding Q_bnd re-randomises the
+    /// Fiat-Shamir draw the query positions come from). Neither is the number
+    /// this harness reports: this one is 100%, unconditionally.
+    ///
+    /// [B7 2026-08-04] Those step-5 rates are all ZERO now — the coset LDE
+    /// leaves no trace-aligned query positions and the per-query arm is
+    /// disabled (MEASURED: 0/300, 0/300, 0/300, 0/128 before the probes were
+    /// reworked into `step5_is_vacuous_post_b7`). This 100% figure is
+    /// therefore the ONLY per-proof public-input binding measurement left,
+    /// which is exactly why it is asserted and not merely printed.
+    fn lying_claim_must_be_rejected(
+        label: &str,
+        cfg: &crate::compact_proof::CircuitConfig,
+        n_inputs: usize,
+        seeds: u64,
+        // (seed, claim_index, claimed_value) -> proof carrying an honest trace
+        // and a lying transcript.
+        make_lie: impl Fn(u64, usize, u64) -> p01_stark::compact::GenericCompactProofData,
+        make_honest: impl Fn(u64) -> p01_stark::compact::GenericCompactProofData,
+        verify: impl Fn(
+            &crate::compact_proof::GenericCompactProof,
+            &[u64],
+        ) -> Result<(), VerifyError>,
+    ) {
+        let mut attempts = 0usize;
+        let mut rejected = 0usize;
+        for seed in 0..seeds {
+            // Control: the honest witness verifies, so a rejection below is the
+            // lie being caught and not the harness being broken.
+            let honest = make_honest(seed);
+            let hp = crate::compact_proof::GenericCompactProof::from_bytes(&honest.proof_bytes, cfg)
+                .unwrap_or_else(|| panic!("{label}: honest proof (seed {seed}) must parse"));
+            verify(&hp, &honest.public_inputs).unwrap_or_else(|e| {
+                panic!("{label}: honest proof (seed {seed}) must verify, got {e:?}")
+            });
+            // A HOLLOW GUARD USED TO SIT HERE. It was commented "the boundary
+            // term has to actually contribute something at z — a fold that
+            // evaluates to zero on every honest proof would bind nothing while
+            // looking wired", and what it actually asserted was
+            // `honest.public_inputs.len() != 0` — a constant property of the
+            // generator two lines above, true whether or not anything folds.
+            // Deleted rather than kept as decoration: a comment claiming a check
+            // that is not in the code is the defect this whole run exists to
+            // find, and leaving it would have let a reader believe
+            // non-degeneracy was covered here.
+            //
+            // Non-degeneracy IS covered, twice, and neither place is this line:
+            //   * the `for idx in 0..n_inputs` sweep immediately below lies about
+            //     EVERY public input in turn and requires every one of them to be
+            //     refused, so a fold whose assertion list bound only hardcoded
+            //     `Felt::ZERO` capacity rows fails here on the first index.
+            //   * `balance_proof_satisfies_deep_ali_end_to_end` and
+            //     `confidential_balance_..` in stark/src/compact.rs assert
+            //     `c_bnd != 0` on the prover side directly.
+
+            for idx in 0..n_inputs {
+                // A value the honest trace does not carry at that assertion row.
+                let lie = honest.public_inputs[idx] ^ 0x5AA5_1234_DEAD_0001;
+                let pd = make_lie(seed, idx, lie);
+                assert_eq!(
+                    pd.public_inputs[idx], lie,
+                    "{label}: probe did not actually publish the lie at input {idx}"
+                );
+                let p = crate::compact_proof::GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+                    .unwrap_or_else(|| {
+                        panic!("{label}: lying proof (seed {seed}, input {idx}) must still parse")
+                    });
+                attempts += 1;
+                match verify(&p, &pd.public_inputs) {
+                    Err(VerifyError::DeepAliFailed) => rejected += 1,
+                    Err(other) => panic!(
+                        "{label}: seed {seed} input {idx} rejected for the WRONG reason: {other:?}"
+                    ),
+                    Ok(()) => panic!(
+                        "{label}: seed {seed} input {idx} — an honest trace published under a \
+                         FALSE public input VERIFIED. The boundary fold is not binding."
+                    ),
+                }
+            }
+        }
+        assert_eq!(
+            rejected, attempts,
+            "{label}: {rejected}/{attempts} lying claims rejected — must be all of them"
+        );
+        println!(
+            "[BIND] {label}: {rejected}/{attempts} lying claims rejected (100.00%) across \
+             {seeds} witnesses x {n_inputs} public inputs. Before [BIND-C2C4] the ONLY binding \
+             was the trace-aligned step-5 check (2.33% C2 / 3.00% C4 pre-fix, 2.33% / 1.33% \
+             post-fix); since [B7] that arm is retired outright and can fire on NOTHING — \
+             see the [STEP5-B7] lines in this same run — so this fold is the whole binding."
+        );
+    }
+
+    /// C2: an honest `balance_proof` trace published under a false `commitment`
+    /// or a false `token_mint`. Must be refused on every seed.
+    #[test]
+    fn c2_lying_public_input_is_rejected() {
+        lying_claim_must_be_rejected(
+            "C2 balance_proof",
+            &crate::compact_proof::CONFIG_BALANCE_PROOF,
+            2,
+            24,
+            |s, idx, v| {
+                p01_stark::compact::generate_balance_compact_proof_claiming(
+                    42 + s, 1000, 777, 999, idx, v,
+                )
+            },
+            |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999),
+            |p, pi| verify_deep_ali_circuit_2(p, pi),
+        );
+    }
+
+    /// C4: an honest `confidential_balance` trace published under a false
+    /// `old_commitment`, `new_commitment`, `amount_hash` or `token_mint`.
+    #[test]
+    fn c4_lying_public_input_is_rejected() {
+        lying_claim_must_be_rejected(
+            "C4 confidential_balance",
+            &crate::compact_proof::CONFIG_CONFIDENTIAL_BALANCE,
+            4,
+            12,
+            |s, idx, v| {
+                p01_stark::compact::generate_confidential_balance_compact_proof_claiming(
+                    42 + s, 1000, 111, 800, 222, 200, 333, 999, idx, v,
+                )
+            },
+            |s| {
+                p01_stark::compact::generate_confidential_balance_compact_proof(
+                    42 + s, 1000, 111, 800, 222, 200, 333, 999,
+                )
+            },
+            |p, pi| verify_deep_ali_circuit_4(p, pi),
+        );
+    }
+
+    /// The same probe run against C1 — a circuit whose boundary fold was ALREADY
+    /// wired before this fix. It is the CONTROL: it rules out the C2/C4 greens
+    /// above coming from the probe being trivially rejected for some reason
+    /// unrelated to binding, and it means that if the shared
+    /// `boundary_fold_at_ood` ever stops binding, C1 goes red alongside them.
+    ///
+    /// SCOPE, stated exactly rather than implied. C3, C5 and C6 have NO probe of
+    /// this shape, because a lying-claim probe has to re-run the entire prover
+    /// pipeline under the false public input, and only three such generators
+    /// exist: `generate_pool_commitment_proof_claiming` (C1),
+    /// `generate_balance_compact_proof_claiming` (C2) and
+    /// `generate_confidential_balance_compact_proof_claiming` (C4). Writing the
+    /// other three was deliberately not done here — see `founder_decisions` —
+    /// so C3/C5/C6 public-input binding rests on `boundary_fold_at_ood` being
+    /// the SAME code path this test exercises, not on a probe of their own.
+    /// Do not read this test as covering them.
+    ///
+    /// C0 is a separate path either way: legacy, verified by
+    /// `verify_deep_ali_legacy`, with `c0_tampered_commitment_rejected_every_seed`
+    /// in `boundary_c0_tests` as its equivalent.
+    #[test]
+    fn c1_lying_public_input_is_rejected() {
+        lying_claim_must_be_rejected(
+            "C1 pool_commitment",
+            &crate::compact_proof::CONFIG_POOL_COMMITMENT,
+            2,
+            16,
+            |s, idx, v| {
+                p01_stark::compact::generate_pool_commitment_proof_claiming(42 + s, 17, 7, 11, idx, v)
+            },
+            |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11),
+            |p, pi| verify_deep_ali_circuit_1(p, pi),
+        );
+    }
 }
 
 /// [C2] Circuit-0 boundary-fold parity + auth-forgery rejection.
@@ -4739,5 +6993,275 @@ mod boundary_c0_tests {
             matches!(res, Err(VerifyError::DeepAliFailed)),
             "tampered ood_current must be rejected: got {res:?}"
         );
+    }
+
+    /// [C0 GATE] The generic dispatch REFUSES circuit 0, explicitly.
+    ///
+    /// An honest C0 proof parses cleanly as a `GenericCompactProof` (same header
+    /// layout, tw=3, md=9, 4 committed FRI layers), so nothing about the bytes
+    /// stops it reaching `verify_generic`. The gate is what stops it, and it must
+    /// return the named error rather than something that reads like a bad proof.
+    #[test]
+    fn c0_generic_dispatch_refuses_circuit_zero() {
+        let pd = p01_stark::compact::generate_compact_proof(42);
+        let cfg = crate::compact_proof::get_circuit_config(0).expect("C0 has a config");
+        let parsed = GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+            .expect("an honest C0 proof does parse under the generic parser");
+        let res = verify_generic(&parsed, 0, &[pd.commitment], cfg);
+        assert!(
+            matches!(res, Err(VerifyError::CircuitZeroIsLegacyOnly)),
+            "generic path must refuse circuit 0 by name, got {res:?}"
+        );
+    }
+
+    /// [C0 GATE] …and the refusal is not merely tidy: the generic path CANNOT
+    /// verify an honest C0 proof. This calls the C0 constraint body directly,
+    /// bypassing the gate, and records the failure.
+    ///
+    /// Two independent reasons, both structural:
+    ///   * `verify_deep_ali_circuit_0` is reached through generic machinery that
+    ///     divides by `Z_D(x) = x^n - 1`; C0's constraint is only divisible by
+    ///     `Z_T(x) = (x^n - 1)/(x - g^(n-1))` because the row-(n-1) wrap does not
+    ///     vanish.
+    ///   * C0's committed quotient carries a folded boundary term (`bnd-c0` tag)
+    ///     that the generic path never recomputes.
+    ///
+    /// If this test ever goes green-accepting, the gate above stops being a
+    /// safety property and becomes a policy choice — and this comment becomes a
+    /// lie. That is the point of asserting it.
+    #[test]
+    fn c0_generic_path_cannot_verify_an_honest_c0_proof() {
+        let pd = p01_stark::compact::generate_compact_proof(42);
+        let cfg = crate::compact_proof::get_circuit_config(0).expect("C0 has a config");
+        let parsed = GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
+            .expect("parse honest C0 proof as generic");
+
+        // Sanity: the legacy path DOES verify this proof, so any failure below is
+        // about the generic path, not about the proof.
+        let legacy = crate::compact_proof::CompactStarkProof::from_bytes(&pd.proof_bytes)
+            .expect("parse honest C0 proof as legacy");
+        verify_subscriber_ownership(&legacy, Felt::new(pd.commitment))
+            .expect("honest C0 proof must verify on its own legacy path");
+
+        let res = verify_constraints_subscriber_ownership(&parsed, cfg, &[pd.commitment]);
+        assert!(
+            res.is_err(),
+            "the generic C0 constraint path accepted an honest C0 proof — the \
+             CircuitZeroIsLegacyOnly gate is then a policy choice, not a \
+             necessity, and its doc comment is wrong"
+        );
+        println!(
+            "[C0 GATE] MEASURED: generic C0 constraint path on an HONEST C0 proof -> {:?}",
+            res.unwrap_err()
+        );
+    }
+}
+
+/// [ATTACK] Independence of the FRI query positions, measured directly on
+/// `derive_positions_from_seed`. Lives in its own file because it is long and
+/// because it is the first test this function has ever had; it is a child of
+/// this module so it can reach a private fn without widening its visibility.
+#[cfg(test)]
+#[path = "query_position_independence.rs"]
+mod query_position_independence;
+
+/// [B2-AUDIT] The grinding threshold is ENFORCED at both call sites, not merely
+/// declared as a constant.
+///
+/// `GRINDING_BITS = 22` was pinned twice before this module, and neither pin
+/// looked at the comparison the verifier actually performs:
+///
+///   * `compact_proof.rs` holds the verifier's copy of the number;
+///   * `b1_deep_binding::prover_and_verifier_agree_on_the_segmentation_constants`
+///     asserts the PROVER's SOURCE TEXT contains `const GRINDING_BITS: u32 = 22;`.
+///
+/// Both are satisfied by a tree in which the verifier compares against something
+/// else entirely. MEASURED at `58e5c77a`: replacing
+/// `verify_grinding(&state, grinding_nonce, crate::compact_proof::GRINDING_BITS)`
+/// with `verify_grinding(&state, grinding_nonce, 16)` at BOTH call sites, leaving
+/// the constant and the prover untouched, left the whole package at
+/// 173 passed / 1 failed / 1 ignored — byte-identical to the unmutated run, the
+/// one failure being the pre-existing `honest_liveness` red. Six bits is a factor
+/// of 64 off the prover's proof-of-work, and grinding is the only search a forger
+/// gets over the query positions, so it comes straight off the query term behind
+/// every soundness figure in `compact_proof.rs`.
+///
+/// Honest proofs cannot see this: the prover grinds to 22, and 22 clears any
+/// threshold at or below 22. The only witness is a nonce whose digest lands
+/// strictly between the weakened threshold and the real one, which no honest
+/// prover will ever emit — so it has to be constructed, which is what this does.
+///
+/// Both call sites are covered separately. They are different functions with
+/// different signatures, and the legacy one is the sole verifier for four shipped
+/// instructions (`zk_shielded::{pause,resume,cancel_private_stark}` and
+/// `p01_quantum_wallet`).
+#[cfg(test)]
+mod grinding_enforcement {
+    use super::*;
+
+    /// For every leading-zero count `z` in `0..GRINDING_BITS`, the smallest nonce
+    /// whose grinding digest has exactly `z` leading zero bits. One linear scan.
+    ///
+    /// A miss is a panic, not a skip: a test that silently tries fewer thresholds
+    /// than it claims is the failure mode this module exists to prevent.
+    fn nonces_by_leading_zeros(state: &[u8; 32]) -> Vec<(u32, u64)> {
+        let mut found: Vec<Option<u64>> = vec![None; GRINDING_BITS as usize];
+        let mut missing = GRINDING_BITS as usize;
+        for n in 0u64..(1u64 << 27) {
+            let h = hashv(&[state, &n.to_le_bytes()]).to_bytes();
+            let z = leading_zero_bits(&h) as usize;
+            if z < found.len() && found[z].is_none() {
+                found[z] = Some(n);
+                missing -= 1;
+                if missing == 0 {
+                    break;
+                }
+            }
+        }
+        let out: Vec<(u32, u64)> = found
+            .iter()
+            .enumerate()
+            .filter_map(|(z, n)| n.map(|n| (z as u32, n)))
+            .collect();
+        assert_eq!(
+            out.len(),
+            GRINDING_BITS as usize,
+            "could not find a nonce for every leading-zero count below {GRINDING_BITS} \
+             within 2^27 tries — the search, not the verifier, is what failed here",
+        );
+        out
+    }
+
+    /// GENERIC path (`derive_query_positions_generic`, circuits 1..=6).
+    #[test]
+    fn the_generic_grinding_call_site_enforces_the_whole_constant() {
+        let pd = p01_stark::compact::generate_pool_commitment_proof(1, 2, 3, 4);
+        let cfg = get_circuit_config(pd.circuit_id).expect("C1 config");
+        let proof =
+            GenericCompactProof::from_bytes(&pd.proof_bytes, cfg).expect("honest proof parses");
+
+        let pub_bytes = public_inputs_to_bytes(&pd.public_inputs);
+        let oc: Vec<u64> = proof.ood_current_iter().map(|f| f.as_u64()).collect();
+        let on: Vec<u64> = proof.ood_next_iter().map(|f| f.as_u64()).collect();
+
+        let positions = |nonce: u64| {
+            derive_query_positions_generic(
+                &proof.trace_root,
+                &proof.quotient_root,
+                &pub_bytes,
+                &oc,
+                &on,
+                proof.ood_quotient_bytes(),
+                proof.fri_layer_roots_bytes(),
+                proof.fri_final_poly_bytes(),
+                nonce,
+                cfg.lde_size,
+                cfg.num_queries,
+            )
+        };
+
+        // Positive control. Without it, "every forged nonce was rejected" could
+        // just mean this call rejects everything.
+        positions(proof.grinding_nonce)
+            .expect("the honest nonce must be accepted — otherwise the negative half is vacuous");
+
+        // Rebuild the exact state the call site grinds against, and check the
+        // honest nonce really does clear the shipped constant. If it does not,
+        // the reconstruction is wrong and everything below probes nothing.
+        let mut state = build_base_seed(
+            &proof.trace_root,
+            &proof.quotient_root,
+            &pub_bytes,
+            &oc,
+            &on,
+            proof.ood_quotient_bytes(),
+        );
+        for root in proof.fri_layer_roots_bytes().chunks_exact(32) {
+            state = extend_transcript(&state, root);
+        }
+        state = extend_transcript(&state, proof.fri_final_poly_bytes());
+        let honest_z =
+            leading_zero_bits(&hashv(&[&state, &proof.grinding_nonce.to_le_bytes()]).to_bytes());
+        assert!(
+            honest_z >= GRINDING_BITS,
+            "the reconstructed transcript disagrees with the verifier's: the honest \
+             nonce shows {honest_z} leading zero bits, below GRINDING_BITS={GRINDING_BITS}. \
+             The rest of this test would be probing the wrong state.",
+        );
+
+        for (z, nonce) in nonces_by_leading_zeros(&state) {
+            let res = positions(nonce);
+            assert!(
+                matches!(res, Err(VerifyError::InsufficientQueries)),
+                "\n\n  >>> GRINDING UNDER-ENFORCED (generic) <<<\n  a nonce whose digest \
+                 has {z} leading zero bits was NOT rejected by \
+                 `derive_query_positions_generic`; got {res:?}.\n  GRINDING_BITS is \
+                 {GRINDING_BITS}, so every count below it must fail with \
+                 InsufficientQueries. The constant being right is not the same as the \
+                 call site using it.\n",
+            );
+        }
+    }
+
+    /// LEGACY path (`derive_query_positions_legacy`, circuit 0). Separate
+    /// function, separate signature, separate shipped instructions.
+    #[test]
+    fn the_legacy_grinding_call_site_enforces_the_whole_constant() {
+        let pd = p01_stark::compact::generate_compact_proof(42);
+        let commitment = Felt::new(pd.commitment);
+        let proof = CompactStarkProof::from_bytes(&pd.proof_bytes).expect("honest C0 parses");
+
+        let oc: Vec<u64> = proof.ood_current.iter().map(|f| f.as_u64()).collect();
+        let on: Vec<u64> = proof.ood_next.iter().map(|f| f.as_u64()).collect();
+
+        let positions = |nonce: u64| {
+            derive_query_positions_legacy(
+                &proof.trace_root,
+                &proof.quotient_root,
+                commitment,
+                &oc,
+                &on,
+                proof.ood_quotient_bytes(),
+                proof.fri_layer_roots_bytes(),
+                proof.fri_final_poly_bytes(),
+                nonce,
+            )
+        };
+
+        positions(proof.grinding_nonce).expect(
+            "the honest C0 nonce must be accepted — otherwise the negative half is vacuous",
+        );
+
+        let mut state = build_base_seed(
+            &proof.trace_root,
+            &proof.quotient_root,
+            &commitment.to_le_bytes(),
+            &oc,
+            &on,
+            proof.ood_quotient_bytes(),
+        );
+        for root in proof.fri_layer_roots_bytes().chunks_exact(32) {
+            state = extend_transcript(&state, root);
+        }
+        state = extend_transcript(&state, proof.fri_final_poly_bytes());
+        let honest_z =
+            leading_zero_bits(&hashv(&[&state, &proof.grinding_nonce.to_le_bytes()]).to_bytes());
+        assert!(
+            honest_z >= GRINDING_BITS,
+            "the reconstructed legacy transcript disagrees with the verifier's: the \
+             honest nonce shows {honest_z} leading zero bits, below \
+             GRINDING_BITS={GRINDING_BITS}.",
+        );
+
+        for (z, nonce) in nonces_by_leading_zeros(&state) {
+            let res = positions(nonce);
+            assert!(
+                matches!(res, Err(VerifyError::InsufficientQueries)),
+                "\n\n  >>> GRINDING UNDER-ENFORCED (legacy C0) <<<\n  a nonce whose \
+                 digest has {z} leading zero bits was NOT rejected by \
+                 `derive_query_positions_legacy`; got {res:?}.\n  This path is the sole \
+                 verifier for pause / resume / cancel_private_stark.\n",
+            );
+        }
     }
 }

@@ -168,7 +168,6 @@ mod tests {
     /// a prover↔verifier protocol break.
     #[test]
     fn parity_vectors_t3() {
-        use winterfell::math::StarkField;
         assert_eq!(
             hash2(BaseElement::new(0), BaseElement::new(0)).as_int(),
             parity::POSEIDON_T3_ZERO_ZERO,
@@ -181,7 +180,6 @@ mod tests {
 
     #[test]
     fn parity_vectors_t5() {
-        use winterfell::math::StarkField;
         assert_eq!(
             hash4(
                 BaseElement::new(1),
@@ -216,7 +214,7 @@ pub(crate) mod parity {
 #[cfg(test)]
 mod pow7_tests {
     use super::{BaseElement, parity};
-    use winterfell::math::{FieldElement, StarkField};
+    use winterfell::math::FieldElement;
 
     #[inline]
     fn pow7(x: BaseElement) -> BaseElement {

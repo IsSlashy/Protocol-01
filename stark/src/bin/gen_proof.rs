@@ -1,13 +1,13 @@
-/// Generate compact STARK proofs for all circuit types.
-///
-/// Usage:
-///   cargo run --bin gen_proof -p p01-stark -- <secret>
-///   cargo run --bin gen_proof -p p01-stark -- pool <np> <secret> <epoch> <mint>
-///   cargo run --bin gen_proof -p p01-stark -- balance <sk> <balance> <salt> <mint>
-///   cargo run --bin gen_proof -p p01-stark -- merkle <leaf> <elem1,elem2,...> <idx1,idx2,...>
-///   cargo run --bin gen_proof -p p01-stark -- merkle-update <old_leaf> <new_leaf> <elem1,elem2,...> <idx1,idx2,...>
-///   cargo run --bin gen_proof -p p01-stark -- confidential <sk> <old_bal> <old_salt> <new_bal> <new_salt> <amount> <amt_salt> <mint>
-///   cargo run --bin gen_proof -p p01-stark -- transfer <sk> <mint> <in1_amt> <in1_rand> <in2_amt> <in2_rand> <out1_amt> <out1_rcpt> <out1_rand> <out2_amt> <out2_rcpt> <out2_rand> <pub_amt>
+//! Generate compact STARK proofs for all circuit types.
+//!
+//! Usage:
+//!   cargo run --bin gen_proof -p p01-stark -- <secret>
+//!   cargo run --bin gen_proof -p p01-stark -- pool <np> <secret> <epoch> <mint>
+//!   cargo run --bin gen_proof -p p01-stark -- balance <sk> <balance> <salt> <mint>
+//!   cargo run --bin gen_proof -p p01-stark -- merkle <leaf> <elem1,elem2,...> <idx1,idx2,...>
+//!   cargo run --bin gen_proof -p p01-stark -- merkle-update <old_leaf> <new_leaf> <elem1,elem2,...> <idx1,idx2,...>
+//!   cargo run --bin gen_proof -p p01-stark -- confidential <sk> <old_bal> <old_salt> <new_bal> <new_salt> <amount> <amt_salt> <mint>
+//!   cargo run --bin gen_proof -p p01-stark -- transfer <sk> <mint> <in1_amt> <in1_rand> <in2_amt> <in2_rand> <out1_amt> <out1_rcpt> <out1_rand> <out2_amt> <out2_rcpt> <out2_rand> <pub_amt>
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

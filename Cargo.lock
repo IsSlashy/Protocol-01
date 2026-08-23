@@ -2007,8 +2007,18 @@ name = "p01_stark_verifier"
 version = "0.1.0"
 dependencies = [
  "anchor-lang",
+ "five8_core 0.1.2",
+ "litesvm",
  "p01-stark",
+ "solana-address 2.6.1",
+ "solana-instruction 3.4.0",
+ "solana-instruction-error",
+ "solana-keypair",
+ "solana-message 4.4.0",
  "solana-sha256-hasher 2.3.0",
+ "solana-signer 3.0.1",
+ "solana-transaction",
+ "solana-transaction-error 3.3.1",
 ]
 
 [[package]]

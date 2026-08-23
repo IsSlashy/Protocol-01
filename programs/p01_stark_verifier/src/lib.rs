@@ -25,8 +25,9 @@ use anchor_lang::prelude::*;
 
 pub mod compact_proof;
 pub mod goldilocks;
-mod merkle;
+pub mod merkle;
 pub mod periodic_consts;
+pub mod periodic_ext_consts;
 mod poseidon_consts;
 pub mod verify;
 
@@ -34,6 +35,33 @@ use compact_proof::{CompactStarkProof, GenericCompactProof, get_circuit_config};
 use goldilocks::Felt;
 
 declare_id!("DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs");
+
+/// [SEAM] The one encoder behind `ProofBuffer.public_inputs_hash`.
+///
+/// Phase 1 (`verify_stark_proof`, `verify_stark_proof_v2`, `verify_uniform`)
+/// STORES this; phase 2 (`verify_deep_ali_phase2`) RECOMPUTES it and refuses to
+/// advance `deep_ali_verified` unless the two agree. Every consumer in the tree
+/// rebuilds it a fourth time from its own instruction arguments. That was four
+/// hand-copied loops with nothing pinning them together; the two inside this
+/// program are now literally the same code.
+///
+/// Injectivity: every element is a fixed 8 bytes, so `Vec<u64> -> Vec<u8>` is
+/// injective and no length framing is needed — two different input lists cannot
+/// produce the same byte string, and a shorter list cannot be a valid encoding
+/// of a longer one because the total length would differ. This is exactly why
+/// changing the encoding to anything variable-width would silently break the
+/// phase binding, and why `public_inputs_hash_is_injective_over_length` exists.
+///
+/// What it does NOT cover: `circuit_id`. The hash binds the VALUES only. The
+/// circuit is carried in a separate byte and every consumer must pin it
+/// independently — see the consumer-contract test.
+pub fn hash_public_inputs(public_inputs: &[u64]) -> [u8; 32] {
+    let mut pub_buf: Vec<u8> = Vec::with_capacity(public_inputs.len() * 8);
+    for v in public_inputs {
+        pub_buf.extend_from_slice(&v.to_le_bytes());
+    }
+    solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes()
+}
 
 pub const CIRCUIT_SUBSCRIBER_OWNERSHIP: u8 = 0;
 pub const CIRCUIT_POOL_COMMITMENT: u8 = 1;
@@ -93,6 +121,18 @@ pub mod p01_stark_verifier {
         let mut account_data = info.data.borrow_mut();
         let start = ProofBuffer::PROOF_DATA_OFFSET + offset as usize;
         let end = start + data.len();
+        // [SEAM] The bound above is against `proof_size`, the DECLARED size.
+        // `init_proof_buffer` caps its allocation at `MAX_INIT_SIZE = 10_240`
+        // (`init_space`) whatever `proof_size` says, so until
+        // `resize_proof_buffer` has been called enough times the account is
+        // SHORTER than `proof_size` and this slice indexes past its end. That
+        // was an unhandled panic, not an error — same failure, worse
+        // diagnosis, and one that a client cannot distinguish from a bug in its
+        // own chunking.
+        require!(
+            end <= account_data.len(),
+            StarkVerifierError::ChunkOutOfBounds
+        );
         account_data[start..end].copy_from_slice(&data);
 
         Ok(())
@@ -153,8 +193,16 @@ pub mod p01_stark_verifier {
 
         // Compute hash of public inputs to bind them to the proof buffer.
         // Uses sol_sha256 syscall on BPF — always-active, ~85 CU/call.
-        let commitment_bytes = commitment.to_le_bytes();
-        let public_inputs_hash = solana_sha256_hasher::hashv(&[&commitment_bytes]).to_bytes();
+        // [SEAM] Same encoder as every other write site: `vec![commitment]` here
+        // is byte-identical to what `verify_stark_proof_v2` stores for a
+        // one-element `public_inputs`, so a buffer produced by either path is
+        // indistinguishable to phase 2 and to consumers. That is deliberate and
+        // harmless only because the generic branch above can no longer succeed:
+        // every circuit 1..=6 declares an arity of 2 or more
+        // (`verify::expected_public_input_count`), so `verify_generic` with one
+        // input now fails closed at the boundary check instead of asserting the
+        // missing inputs against zero.
+        let public_inputs_hash = hash_public_inputs(&[commitment]);
 
         // Mark verified and store public inputs hash
         drop(account_data);
@@ -162,6 +210,18 @@ pub mod p01_stark_verifier {
         buffer.verified = true;
         buffer.public_inputs_hash = public_inputs_hash;
 
+        // [L13 2026-08-03] CONSIDERED AND DELIBERATELY LEFT, twice over. It is
+        // not a live leak: this instruction only ever sees a v1 buffer, whose
+        // PDA seeds are `[b"stark_proof", authority, circuit_id]`, so the
+        // ADDRESS already discloses the circuit and the log adds nothing. And
+        // `STARK proof verified for circuit ` is one of the four `ELF_CONTROLS`
+        // in `packages/stark-prover/scripts/deployed-verifier-check.mjs` — the
+        // sibling literals that prove the deployed-ELF scan is reading a real
+        // verifier rather than silently matching nothing. `elfMarkerSourceProblem`
+        // hard-fails when a control stops existing in this source, and
+        // `classifyElf` refuses to classify at all when one is missing from the
+        // chain bytes. Dropping it would have bought zero privacy and blinded a
+        // live gate.
         msg!("STARK proof verified for circuit {}", circuit_id);
         Ok(())
     }
@@ -169,6 +229,16 @@ pub mod p01_stark_verifier {
     /// Verify a STARK proof with multiple public inputs.
     ///
     /// Used for circuits that need more than one public input value.
+    ///
+    /// **Circuits 1..=6 only.** `circuit_id == 0` is refused here, not routed:
+    /// C0 has exactly one verifier, the legacy `verify_stark_proof` path, and the
+    /// generic path cannot verify an honest C0 proof (wrong vanishing polynomial,
+    /// no recomputation of C0's folded boundary term). See
+    /// `verify::VerifyError::CircuitZeroIsLegacyOnly`. Four shipped instructions
+    /// hard-require `circuit_id == 0`
+    /// (`zk_shielded::{pause,resume,cancel_private_stark}`,
+    /// `p01_quantum_wallet/src/stark.rs:42`), so the legacy path stays and this
+    /// one says no.
     pub fn verify_stark_proof_v2(
         ctx: Context<VerifyStarkProof>,
         public_inputs: Vec<u64>,
@@ -185,6 +255,13 @@ pub mod p01_stark_verifier {
         );
 
         let circuit_id = buffer.circuit_id;
+        // [C0 GATE] Fail before touching the proof bytes. `verify::verify_generic`
+        // refuses circuit 0 as well; this is the same refusal surfaced as a named
+        // Anchor error instead of a generic `InvalidProof`.
+        require!(
+            circuit_id != CIRCUIT_SUBSCRIBER_OWNERSHIP,
+            StarkVerifierError::CircuitZeroIsLegacyOnly
+        );
         let config = get_circuit_config(circuit_id)
             .ok_or(StarkVerifierError::UnsupportedCircuit)?;
 
@@ -202,11 +279,7 @@ pub mod p01_stark_verifier {
             .map_err(|_| StarkVerifierError::InvalidProof)?;
 
         // Compute hash of all public inputs via one sol_sha256 syscall.
-        let mut pub_buf: Vec<u8> = Vec::with_capacity(public_inputs.len() * 8);
-        for v in &public_inputs {
-            pub_buf.extend_from_slice(&v.to_le_bytes());
-        }
-        let public_inputs_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
+        let public_inputs_hash = hash_public_inputs(&public_inputs);
 
         // Mark verified and store public inputs hash
         drop(account_data);
@@ -214,6 +287,11 @@ pub mod p01_stark_verifier {
         buffer.verified = true;
         buffer.public_inputs_hash = public_inputs_hash;
 
+        // [L13 2026-08-03] Left, same two reasons as the legacy path above (not
+        // a live leak; an `ELF_CONTROLS` literal). Not a live leak here either:
+        // a v2 nonce-seeded buffer carries `circuit_id == u8::MAX`, so
+        // `get_circuit_config` above rejects it and this instruction can only
+        // ever succeed on a v1 buffer whose seeds already name the circuit.
         msg!("STARK proof verified for circuit {}", circuit_id);
         Ok(())
     }
@@ -264,11 +342,7 @@ pub mod p01_stark_verifier {
         // Bind to the exact same public inputs as phase 1 via the hash stored
         // when phase 1 completed. Prevents a caller from changing public
         // inputs between phases (would otherwise change α silently).
-        let mut pub_buf: Vec<u8> = Vec::with_capacity(public_inputs.len() * 8);
-        for v in &public_inputs {
-            pub_buf.extend_from_slice(&v.to_le_bytes());
-        }
-        let public_inputs_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
+        let public_inputs_hash = hash_public_inputs(&public_inputs);
         require!(
             public_inputs_hash == buffer.public_inputs_hash,
             StarkVerifierError::InvalidProof
@@ -302,7 +376,14 @@ pub mod p01_stark_verifier {
         let buffer = &mut ctx.accounts.proof_buffer;
         buffer.deep_ali_verified = true;
 
-        msg!("DEEP-ALI phase 2 verified for circuit {}", circuit_id);
+        // [L13 2026-08-03] The circuit id is gone from this line. It was NOT in
+        // the brief's list and the sweep found it: on the uniform flow, phase 2
+        // is the transaction that immediately follows `verify_uniform`, so
+        // fixing only `verify_uniform`'s trailer would have re-published the id
+        // one transaction later. Guarded by the phase-2 half of
+        // `cu_budget.rs::l13_uniform_path_program_logs_are_identical_across_circuits`,
+        // which captures BOTH transactions of the flow.
+        msg!("DEEP-ALI phase 2 verified");
         Ok(())
     }
 
@@ -347,10 +428,40 @@ pub mod p01_stark_verifier {
     /// instead of `[circuit_id]`, and `circuit_id` is stored as a sentinel
     /// (u8::MAX = "unknown") until `verify_uniform` probes it.
     ///
-    /// Combined with `verify_uniform` and uniform-padding (mobile pads proofs
-    /// to a fixed N bytes regardless of circuit), an indexer cannot infer
-    /// which circuit the user is proving from the init/chunk/verify tx
-    /// envelopes. Closes leaks L13 (circuit_id) + L14 (proof_size variable).
+    /// Combined with `verify_uniform` and uniform padding (mobile pads proofs
+    /// to `UNIFORM_PROOF_SIZE = 145_000` bytes regardless of circuit), the
+    /// init/chunk **envelopes** carry no circuit id: the seeds do not, the
+    /// account length does not, and the chunk count does not — MEASURED at 162
+    /// chunks for every one of the four probed circuits in
+    /// `cu_budget.rs::l13_is_not_closed_by_deleting_logs_two_public_channels_survive`.
+    ///
+    /// # L13 is NOT closed, and this doc used to say it was
+    ///
+    /// What it said, verbatim: "an indexer cannot infer which circuit the user
+    /// is proving from the init/chunk/verify tx envelopes. Closes leaks L13
+    /// (circuit_id) + L14 (proof_size variable)." The first half is right about
+    /// init and chunk and wrong about verify. Measured on 2026-08-03 against
+    /// real transaction metadata, three channels disclosed the circuit and only
+    /// one of them was closable by editing this program's logs:
+    ///
+    /// 1. **Program logs.** `verify_uniform` ended with
+    ///    `msg!("verify_uniform: probed circuit {}")`, and `verify.rs`'s step-2a
+    ///    marker printed `expected=27` for C1 against `expected=22` for
+    ///    C3/C5/C6. `verify_deep_ali_phase2`, the very next transaction in this
+    ///    flow, printed the id again. **All three are now gone**, and
+    ///    `l13_uniform_path_program_logs_are_identical_across_circuits` plus its
+    ///    phase-2 sibling hold the four transcripts byte-identical.
+    /// 2. **Compute units.** The runtime — not this program — writes
+    ///    `Program <id> consumed N of 1400000 compute units`, and N was
+    ///    751,058 / 785,945 / 794,048 / 810,040 for C1 / C3 / C5 / C6. Distinct,
+    ///    deterministic, and unreachable from any `msg!` edit. **OPEN.**
+    /// 3. **Account data.** `verify_uniform` writes the circuit it probed into
+    ///    `ProofBuffer::circuit_id` because `verify_deep_ali_phase2` reads it
+    ///    back. Account data is public for as long as the buffer lives.
+    ///    **OPEN.**
+    ///
+    /// L14 (variable `proof_size`) IS closed by the padding, and that half is
+    /// measured rather than asserted — see the chunk column of the same test.
     pub fn init_proof_buffer_v2(
         ctx: Context<InitProofBufferV2>,
         proof_size: u32,
@@ -401,15 +512,80 @@ pub mod p01_stark_verifier {
         // Probe order: V3 active circuits only (1=pool_commitment, 3=merkle_path,
         // 5=transfer, 6=merkle_update). C0/C2/C4 are not used in V3 hot paths.
         //
-        // C6 MUST come before C3/C5: C3 and C5 share IDENTICAL config bytes
-        // (tw=6, len=512, queries=22, lde=8192, fri_final=16); C6 differs only
-        // by trace_width=10 (vs 6). A C6 proof fed to a C3/C5 parser would
-        // partial-parse — `from_bytes` reads tw*8=48 bytes for ood_current/next,
-        // leaving the C6's remaining 32 bytes per ood field as drift, then
-        // step-4 transition constraints fail with InvalidProof. Probing C6
-        // first means its strict tw=10 length checks (`data.len() < cursor +
-        // 80`) reject any C3/C5-shaped proof, so genuine C3/C5 proofs fall
-        // through to C3, while genuine C6 proofs match C6 cleanly.
+        // MEASURED consequence for a client that sends one anyway
+        // (`tests/wire_parity.rs::every_circuit_resolves_through_the_uniform_probe_or_is_named_as_unsupported`,
+        // on proofs padded to the real 145,000-byte envelope): C0, C2 and C4 are
+        // resolved by NO probe — `matched` is `None` and the instruction returns
+        // `DeserializationError`. They are not mis-probed into a wrong circuit,
+        // which is the safe half; the unsafe half is that the client has by then
+        // paid for ~145 chunk transactions and ~1.01 SOL of transient rent.
+        // `submitAndVerifyStarkProofUniform` accepts any `GenericStarkProof` and
+        // has no guard for this. Its live call sites use C1/C3/C6 only, so this
+        // is latent, not live.
+        //
+        // [C0 GATE] C0 must never appear in this list. It is not a "not needed
+        // yet" omission: `verify::verify_generic` refuses circuit 0 outright, so
+        // adding 0 here would only produce a probe that always errors. C0 goes
+        // through `verify_stark_proof`.
+        //
+        // [SEAM 2026-08-02] What this comment used to say was stale and its
+        // mechanism was wrong, so it is restated from measurement.
+        //
+        // Stale: "C3 and C5 share IDENTICAL config bytes (tw=6, …)". C5's trace
+        // width is **7**, not 6, since the value-conservation rebake added the
+        // signed-amount accumulator column. C3 and C5 have differed for a while.
+        //
+        // Wrong mechanism: "probing C6 first means its strict tw=10 length
+        // checks reject any C3/C5-shaped proof". Length rejects almost nothing
+        // here. `from_bytes` has no length equality — it accepts any buffer at
+        // least as long as the proof and ignores the tail — and the client pads
+        // EVERY proof to `UNIFORM_PROOF_SIZE = 145_000`, so all seven circuits
+        // present exactly 145,000 bytes to this probe. Length discriminates
+        // nothing.
+        //
+        // What DOES separate them, measured rather than asserted: two
+        // exact-value fields, `num_fri_layers == folds - 1` (1 byte) and
+        // `fri_final_poly_size == 16` (2 bytes), plus canonicity on `k + 16`
+        // felts — all read at offsets that `trace_width`, `merkle_depth` and
+        // `quotient_segments` determine. A foreign buffer reads them off bytes
+        // that mean something else (Merkle roots, OOD evaluations) and has to
+        // hit them by luck. `num_queries` was added to the parser by the seam
+        // pass and is NOT part of this: reverting it leaves both matrices
+        // diagonal (see `compact_proof.rs` for the measurement).
+        //
+        // The uncomfortable half, also measured
+        // (`no_two_configs_share_the_tuple_the_parser_can_observe`): for C1/C2
+        // and for C3/C5/C6 every wire-visible exact-value field is IDENTICAL and
+        // the pairs are separated by `trace_width` ALONE — a field that never
+        // travels on the wire. So the separation is ~5 exact bytes, i.e. roughly
+        // 2^40 proof regenerations to force a mis-probe. Not a practical attack,
+        // but probabilistic, not structural. Nothing binds circuit identity
+        // cryptographically: the Fiat-Shamir transcript carries no circuit id
+        // and there is no verifying-key hash in this program at all
+        // (`the_transcript_does_not_bind_the_circuit_only_the_step4_dispatch_does`).
+        //
+        // MEASURED, `tests/cross_circuit_confusion.rs`: across all 7×7 ordered
+        // pairs, under BOTH the exact-length and the 145,000-byte padded
+        // envelope, and under every prefix length, no genuine proof for one
+        // circuit parses under another circuit's config. The probe order is
+        // therefore not load-bearing for correctness on honest inputs. Do not add
+        // a circuit here without re-running that matrix.
+        //
+        // The same loop is measured independently from the wire side in
+        // `tests/wire_parity.rs`:
+        // `the_parser_does_not_check_length_this_test_does` (tails of
+        // 1..63,543 bytes of 0x00 and of 0xAB all parse — length rejects
+        // nothing under padding),
+        // `every_circuit_resolves_through_the_uniform_probe_or_is_named_as_unsupported`
+        // (C0/C2/C4 resolve to `None`, i.e. `DeserializationError`, never to a
+        // wrong circuit), and
+        // `the_probe_order_this_test_drives_is_the_one_the_program_implements`
+        // (reversing this constant to [1, 3, 5, 6] leaves every honest padded
+        // proof resolving to its own circuit — the C6-first ordering is a
+        // hardening choice about adversarial buffers, not something an honest
+        // proof exercises, so no behavioural test can pin it).
+        //
+        // [C0 GATE] 0 stays out of this list, see above.
         const PROBE_ORDER: [u8; 4] = [1, 6, 3, 5];
 
         let mut matched: Option<(u8, GenericCompactProof)> = None;
@@ -432,19 +608,28 @@ pub mod p01_stark_verifier {
             .map_err(|_| StarkVerifierError::InvalidProof)?;
 
         // Hash public inputs to bind them to the buffer for phase-2 use.
-        let mut pub_buf: Vec<u8> = Vec::with_capacity(public_inputs.len() * 8);
-        for v in &public_inputs {
-            pub_buf.extend_from_slice(&v.to_le_bytes());
-        }
-        let public_inputs_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
+        let public_inputs_hash = hash_public_inputs(&public_inputs);
 
         drop(account_data);
         let buffer = &mut ctx.accounts.proof_buffer;
+        // [L13 2026-08-03] This write is the leak that a log edit CANNOT close,
+        // and it is left in place because `verify_deep_ali_phase2` reads it.
+        // Account data is public: an indexer that fetches this buffer after the
+        // transaction reads the circuit off byte 8+32 with no logs at all.
+        // MEASURED, `cu_budget.rs::l13_is_not_closed_by_deleting_logs_two_public_channels_survive`
+        // (1 / 3 / 5 / 6, one per circuit). Closing it means giving phase 2
+        // another source for the id — passing it in instruction data would only
+        // move the disclosure, so it needs a real design, not a patch here.
         buffer.circuit_id = circuit_id; // post-hoc; was u8::MAX
         buffer.verified = true;
         buffer.public_inputs_hash = public_inputs_hash;
 
-        msg!("verify_uniform: probed circuit {}", circuit_id);
+        // [L13 2026-08-03] `msg!("verify_uniform: probed circuit {}", circuit_id)`
+        // used to stand here. It published, in plain text, the single fact this
+        // whole instruction exists to hide, into metadata every RPC serves.
+        // Nothing replaces it: the instruction's own Anchor log line
+        // (`Program log: Instruction: VerifyUniform`) already says what ran, and
+        // it is identical for all four probed circuits.
         Ok(())
     }
 }
@@ -590,4 +775,11 @@ pub enum StarkVerifierError {
     UnsupportedCircuit,
     #[msg("Proof has not been verified yet")]
     NotYetVerified,
+    /// [C0 GATE] `circuit_id == 0` reached a generic entry point.
+    ///
+    /// C0 is verified only by `verify_stark_proof` (the legacy single-instruction
+    /// path). The generic path cannot verify an honest C0 proof, so accepting the
+    /// call and failing inside would be indistinguishable from a bad proof.
+    #[msg("Circuit 0 is verified only by the legacy verify_stark_proof path")]
+    CircuitZeroIsLegacyOnly,
 }

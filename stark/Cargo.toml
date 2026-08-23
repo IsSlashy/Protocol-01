@@ -12,6 +12,18 @@ default = ["std"]
 std = ["winterfell/std"]
 wasm = ["wasm-bindgen", "serde", "serde_json", "getrandom"]
 
+# [B1 defect 1] Fails-closed probe knobs: the coordinated OOD forgery and its
+# `ood_quotient` re-solve, the `AliasedFold` terminal play, the pre-Route-C
+# `LegacyRowLeaf` trace layout and the non-canonical `PairIndexing` variants.
+# This is real attack code, so it is OFF in `default` and therefore absent from
+# `cargo build` and from `wasm-pack build stark --target web -- --features wasm`.
+# Tests need no extra flags: this crate's own unit tests get it through
+# `cfg(test)`, and the integration tests in `programs/p01_stark_verifier/tests`
+# get it from that crate's dev-dependency on `p01-stark`, which enables the
+# feature. `resolver = "2"` (workspace Cargo.toml) keeps dev-only features out
+# of the normal graph, so `cargo build-sbf` is unaffected.
+test-probes = []
+
 [dependencies]
 # Winterfell STARK library (re-exports air, prover, verifier, math, crypto)
 winterfell = { version = "0.10", default-features = false }

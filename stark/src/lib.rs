@@ -80,18 +80,6 @@ pub use air::transfer::{
     build_transfer_trace, compute_transfer, TransferAir, TransferPublicInputs,
     TransferInput, TransferOutput,
 };
-// C7 — spend (unlinkable denominated withdrawal). Purely additive; circuits
-// 0-6 above are frozen. NOTE `build_spend_trace` deliberately returns only
-// (trace, nullifier, root): the commitment is a private witness and must never
-// reach `pub_bytes`. Use `compute_spend_values` for tests/witness only.
-pub use air::spend::{
-    build_spend_periodic_columns, build_spend_trace, compute_spend_root,
-    compute_spend_values, evaluate_spend_transition, spend_boundary_assertions,
-    spend_constraint_degrees, SpendAir, SpendPublicInputs,
-    SPEND_BOUNDARY_SPEC, SPEND_COMMIT_ACTIVE_ROWS, SPEND_MERKLE_ACTIVE_ROWS,
-    SPEND_NUM_BOUNDARY_ASSERTIONS, SPEND_NUM_CONSTRAINTS, SPEND_NUM_PERIODIC,
-    SPEND_NUM_PUBLIC_INPUTS,
-};
 pub use prover::{prove_subscriber_ownership, StarkProofBytes};
 pub use compact::{
     generate_pool_commitment_proof, generate_balance_compact_proof,
