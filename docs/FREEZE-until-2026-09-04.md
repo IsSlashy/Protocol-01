@@ -1,141 +1,92 @@
-# Freeze: prover and verifier, until 2026-09-04
+# THAWED 2026-08-24 — this freeze is lifted
 
-Written 2026-08-16, after measuring the zero-knowledge route rather than
-estimating it. The demo on 4 September rests on two artefacts that currently
-agree with each other. Nothing in this repository needs to change for that to
-keep being true. Several things would break it.
+This file was a freeze written 2026-08-16. It is no longer in force. It is kept
+under its old name so existing links resolve, and because its measurements and
+warnings are still true and still useful; only its *conclusion* changed.
 
-## The two values the demo depends on
+## Why it is lifted
 
-Both re-measured 2026-08-16. Check them before travelling, and again on the
-morning of the 4th. Thirty seconds, read-only.
+Two things the freeze rested on are no longer the case.
 
-```bash
-sha256sum packages/stark-prover/wasm/p01_stark_bg.wasm
-# 51a947e304416077ad8c2dc11a11b389ee86e81ebdb92b0bfccadb94631af496
+1. **The 4 September demo is pre-recorded, and the 4th is a deck presentation.**
+   The founder confirmed this on 2026-08-24. The freeze existed to protect a
+   LIVE run whose prover and verifier had to agree on the day. There is no live
+   run, so that risk is gone.
 
-solana program show DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs \
-  --url https://api.devnet.solana.com
-# Last Deployed In Slot: 481214309
-# Data Length: 840168
-```
+2. **The prover WASM IS reproducible.** The freeze's central claim was "no
+   shipped blob is reproducible from any branch today." Re-measured 2026-08-24
+   and that is FALSE: it was true *from master*, which lacks the coset code. From
+   the `b7-drop-aligned-checks` worktree, the documented recipe
 
-The first is the prover blob the web ships. The second is the verifier that must
-accept it. They match the attestation in
-`packages/stark-prover/deployed-verifier.json` on `b7-drop-aligned-checks`.
+   ```bash
+   wasm-pack build stark --target web --out-dir wasm-out --release -- --features wasm
+   ```
 
-**If either has moved, the demo is dead and that is the only thing to work on
-that day.** Do not investigate anything else first.
+   reproduces the shipped blob **byte-identically** — `sha256` `51a947e3…`,
+   229,640 bytes, in ~41 s. `cmp` against
+   `packages/stark-prover/wasm/p01_stark_bg.wasm` reports identical. The keystone
+   blocker never existed on b7; it was a symptom of the master↔b7 divergence.
 
-## Do not, before 2026-09-04
+## The pipeline, measured end to end on 2026-08-24
 
-- **Do not rebuild the prover WASM.** No shipped blob is reproducible from any
-  branch today: a rebuild on 2026-08-16 produced `b7f6e830`, a different object
-  from the `51a947e3` the chain accepts, so a rebuild cannot be undone by
-  rebuilding again. `compact.rs` on this branch contains zero `LDE_COSET_SHIFT`
-  while the shipped binary is the coset build — the source and the artefact are
-  a generation apart, and only the freeze archive covers the blob.
+- **Algebraic prover → verifier:** 7 end-to-end DEEP-ALI tests green
+  (`stark/src/compact.rs` + `verifier.rs`, `cargo test -p p01-stark -- end_to_end`).
+- **WASM prover:** reproducible from b7, byte-identical to the deployed blob.
+- **Deployed-lineage verifier accepts a real proof:** b7
+  `cargo test -p p01_stark_verifier --test fri_end_to_end` → 5 green, including
+  tampered-proof rejection.
+- **Public verify harness:** `verify/p01-verify.mjs --self-test --replay` on all
+  three fixtures → exit 0, every probe as pinned. The `v3-subscribe` fixture
+  records the true current on-chain state: P6/P9/P11 FAIL, i.e. **the live v3
+  subscribe path is linkable**. A clean unlinkable spend exists only as the
+  `v4-synthetic` fixture — hand-built bytes, nothing on chain.
 
-  > ⚠️ CORRECTED 2026-08-21. This bullet used to add "the extension and mobile
-  > carry `4ace8913`". That was true when it was written and was fixed the same
-  > week by `33a50625`, which copied the web's accepted bytes across rather than
-  > reencoding them. **Re-measured 2026-08-21** by decoding the base64 in all
-  > three surfaces: web, extension and mobile each give `51a947e3`, 229,640
-  > bytes, magic `0061736d` — equal to `packages/stark-prover/wasm/p01_stark_bg.wasm`.
-  > The instruction did not change; its reason did, and a reason a reader can
-  > check and find false is how a correct instruction stops being obeyed.
-- **Do not redeploy any program.** The live verifier was built from
-  `b7-drop-aligned-checks`, which is an ancestor of neither `master` nor the
-  working tree. A deploy from here is a downgrade, not an upgrade.
-- **Do not merge `b7-drop-aligned-checks`.** It is the right thing to do
-  eventually and the wrong week to do it: it rewrites `stark/` and the verifier,
-  and every measurement above would have to be redone.
-- **Do not edit `stark/src/compact.rs`.**
-- **Do not run any `solana` command without `-k`.** See below.
+So the pipeline is wired and correct where it is exercised. What is NOT done:
+C7 is unwired (no `CONFIG_SPEND`, no circuit-7 arm), the withdrawal is still
+linkable on chain, and the prover is not zero-knowledge. Those are build items,
+not frozen ones.
 
-## The key
+## The real task the freeze was hiding: reconcile master ↔ b7
 
-`solana address` on this machine returns
-`7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU`, and that is the upgrade authority
-of the deployed verifier, of `zk_shielded` and of `liquidity`. It is the CLI
-default, it holds ~28.5 SOL, no multisig or timelock stands behind it, and it
-travels with the laptop.
+The correct, sound, reproducible code (coset LDE, dropped aligned checks, the
+verifier that ships) lives on `b7-drop-aligned-checks`. Day-to-day development
+lives on `master`. They meet nowhere, which is why master's CI hunts for
+soundness pins whose code is only on b7, and why master cannot rebuild the blob
+it ships. Unfreezing "for real" means choosing b7 as the source of truth for
+`stark/` and the verifier and merging it into master. The divergence was mapped
+in `head-b7-divergence-mapped-2026-08-21`: 98 files intersect, 50 conflict, 2 in
+Rust; take `verify.rs` from b7 verbatim; the danger is `spend.rs` merging cleanly
+and going silently wrong, so it must be diffed by hand, not trusted.
 
-So any `solana` invocation that omits `-k` is signed by the key that can replace
-the bytecode of every live program. Two consequences worth acting on, in this
-order:
+## Two rails that stay up regardless — these are NOT the freeze
 
-1. Back the keypair up somewhere that is not this laptop, before travelling.
-   A copy on `D:` protects against a corrupted file and not against a lost bag.
-2. After 4 September, move the upgrade authority off the CLI default, so that
-   replacing a program requires an explicit, unusual gesture.
+1. **No program redeploy without an explicit founder go-ahead, per deploy.** The
+   upgrade authority `7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU` is the CLI
+   default, holds ~28.5 SOL, has no multisig or timelock, and can replace the
+   bytecode of every live program. Any `solana` call without `-k` is signed by
+   it. Redeploy is hard to reverse, costs SOL, and 20.5 SOL is already stuck in
+   `ProofBuffer` accounts. Back this key up off the laptop before doing anything
+   that could brick a program.
 
-## Why the ZK route is not being attempted first
+2. **No mainnet while a fund-loss class is open.** Two are:
+   `pool-v3-64bit-leaf-collision-2026-08-23` (measured, ~0.5 core-hours) and
+   `unshield-c5-no-membership-proof-2026-08-16`. "Functional" without these
+   closed means "drainable."
 
-Measured 2026-08-16, and it corrects the plan of 2026-08-12 in both directions.
+## One precondition that survives from the old freeze
 
-**Against the plan.** `R`, the free coefficients per column, is **90, not 46**.
-The deployed wire publishes four rows per query, not two:
-`trace_values | trace_mirror_values | next_trace_values | next_trace_mirror_values`.
-The 46 was derived from the working tree's wire, which is not the one on chain.
-That pushes the masked quotient to 4718, which needs **ten** quotient segments
-rather than nine, and +720 wire bytes rather than +184. The CU cost of ten
-segments has never been measured, on a verifier already split across two phases
-under the 1.4M cap at eight segments with a 920,897 CU worst case. And it is a
-loop, not a knob: if ten segments overflow, you cut `num_queries`, which lowers
-`R`, which changes the geometry, which needs a new CU measurement.
+A note handed over off chain carries a Merkle path resolving to `stored`,
+`rebuilt` or `none` (`apps/web/lib/privacy/worker/poolHandlers.ts:1622-1652`).
+`rebuilt` only sees leaves the RPC still serves; a pruned history yields a root
+the pool never had, and a `none` note may be unspendable. Any note used in a
+demonstration must export with `merklePath: 'stored'`, checked beforehand.
 
-`stark/tests/masking_deep_degree_gate.rs:96` still hardcodes
-`MASK_COEFFS_R = 46`. That constant is the first thing to fix when this work
-resumes, before any other line.
+## Suggested order for the two weeks
 
-**For the plan.** Soundness is healthier than the notes claimed: the deployed
-verifier holds **47 bits conjectured and 42 unconditional**, capped by the
-base-field Fiat-Shamir floor, not the 22 to 27 that had been quoted. Masking
-would cost 0 conjectured bits and 2 unconditional ones, recoverable by raising
-grinding from 22 to 24. Masking does not destroy soundness. The schedule is what
-makes it infeasible, not the cryptography.
-
-**And it would not be enough anyway.** Masking hides the witness inside the
-proof. It does not touch the commitment republished in the clear as an
-instruction argument at both ends (`unshield_denominated_stark_v3.rs:77-82`).
-Closing that needs the C7 spend circuit, costed at 79 to 96 hours by this
-repository's own plan. So: 39 to 70 hours for masking, plus 79 to 96 for C7,
-against 64 hours before departure, ending in a redeployed verifier during a
-ten-day absence.
-
-## What is already private, today, at zero cost
-
-`apps/web/lib/privacy/noteTransfer.ts` hands a note over off chain. It builds no
-transaction and needs no signature, so there is no send for an observer to pair
-with a receive. That is unconditional, and it is the only leg of this protocol
-that is genuinely unlinkable right now.
-
-One precondition nobody had written down. The sealed blob carries a Merkle path
-that resolves to `stored`, `rebuilt` or `none`
-(`apps/web/lib/privacy/worker/poolHandlers.ts:1622-1652`). The `rebuilt` fallback
-only sees the leaves the RPC still serves, and a pruned history yields a root the
-pool never had. **A note handed over with `none` may be unspendable.** Any note
-used in a demonstration must export with `merklePath: 'stored'`, checked before
-the room, not during it.
-
-## Before spending an hour on ZK again
-
-In this order, and none of them is optional.
-
-1. The CU cost of a tenth segment on the real SBF bytecode.
-   `programs/p01_stark_verifier/tests/cu_budget.rs` on `b7`, never run.
-2. `R` obtained by execution, not by reading the parser. Count openings per
-   column on a real b7 proof.
-3. The masked quotient degree on the real prover. The `+7R` growth is
-   extrapolated from a measurement at n=32.
-4. A reproducible recipe for the prover WASM. Three different objects circulate
-   today and a fresh build reproduces none of them.
-5. `zk_feasibility.rs` running against `b7` at all. Its parser is built for the
-   two-row wire and panics on b7's four-row one, so b7's ZK status is currently
-   unknown in both directions.
-6. What the extension and mobile actually ship.
-7. That the demo note exports with `merklePath: 'stored'`.
-
-Two things do not need measuring again. The prover is not zero-knowledge, and the
-withdrawal is linkable. Both were re-measured on 2026-08-16.
+1. Reconcile master ↔ b7 (the item above). Everything else depends on it.
+2. Rebuild + re-attest the prover and verifier from the unified branch; confirm
+   the blob still hashes `51a947e3` and the verifier still accepts it.
+3. Re-point master's CI at code that exists on the unified branch.
+4. Wire C7 (Step 4/6/7 of `docs/C7_SPEND_CIRCUIT_PLAN.md`), on the unified
+   branch, then measure the real C7 CU and rodata.
+5. Close the two fund-loss bugs before any mainnet.
