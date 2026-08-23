@@ -25,7 +25,8 @@
 //! cycle 2  rows 64- 95  commitment = P(nullifier, blind_hash)       out col6@row94
 //! cycles 3-15           dummy Poseidons, P(0, 0), nothing reads them
 //!
-//! merkle levels 0-14    rows 0-479, root at col0@row478
+//! merkle levels 0-11    rows 0-383, subtree root at col0@row382
+//! rows 384-511          BLINDING REGION, no constraint of any kind
 //! merkle cycle 15       rows 480-511, dummy P(root, 0), dir = 0, sib = 0
 //! ```
 //!
@@ -36,15 +37,21 @@
 //! (commitment) or cycle 15 (Merkle), the shared periodic columns stop being
 //! 32-periodic, their interpolants stop being stride-16 sparse, and the
 //! on-chain verifier has to evaluate each of them with a dense 512-coefficient
-//! Horner (~48K CU and ~4 KB of rodata *each*) instead of
+//! Horner (a MEASURED 100,982 CU and 4,096 B of rodata *each*) instead of
 //! `eval_periodic_stride16_at_z` (36 muls). C6 (`merkle_update.rs:206-259`)
 //! bounds its periodic loops by `active_rows = depth * 32` and pays that price
 //! on all seven of its columns; C7 must not copy that idiom.
 //!
 //! Consequences that the on-chain side MUST honour (see the handoff note):
-//!   * there are **no padding rows**. Every row 0..511 is an active Poseidon
-//!     round on both pipelines, so the `active_rows = 15 * hash_cycle_len`
-//!     guard at `verify.rs:3220` is WRONG for C7 and must be absent.
+//!   * 🚨 REVERSED BY DEPTH 12. This used to read "there are no padding rows,
+//!     every row 0..511 is an active Poseidon round". That is now FALSE and a
+//!     reader who follows it builds the wrong verifier. The truth: rows
+//!     `0..=382` are transition-active; rows `384..511` are the blinding
+//!     region and take NO CHECK OF ANY KIND — not a Poseidon round, not an
+//!     identity check. No single `active_rows` number expresses that, so the
+//!     verifier must gate on `FIRST_FREE_ROW`, and C3's
+//!     `active_rows = 15 * hash_cycle_len` guard at `verify.rs:3220` is still
+//!     wrong for C7, now for the opposite reason.
 //!   * `is_boundary` is set at row 511 as well (unlike `transfer.rs:331`).
 //!     That transition is the wrap row: winterfell exempts it
 //!     (`num_transition_exemptions == 1`) and the compact prover multiplies by
@@ -81,22 +88,165 @@
 //! `hold_column_is_constant_which_publishes_the_commitment` test below, which
 //! pins the property so it cannot be quietly forgotten.
 //!
-//! Taking the commitment out of the instruction puts it into the proof. This
-//! AIR implements the plan's specified design ([15] ungated) because the
-//! geometry and the constraint list are frozen inputs to Step 3, but C7 is NOT
-//! zero-knowledge and must not be described as unlinkable until this is
-//! resolved. The cheapest additive mitigation, if it is taken, is to APPEND an
-//! 11th periodic column `hold_active` (1 on rows 0..93, 0 afterwards) at index
-//! 10 and gate [15] with it — that changes constraint [15]'s BODY but not its
-//! INDEX, and appends to the periodic vector rather than inserting into it, so
-//! it stays compatible with the frozen order as long as it happens before
-//! Step 4 bakes the coefficients. It reduces the leak to the ~25% of proofs
-//! with a trace-aligned query in rows 0-94; it does not remove it. Col 5 (the
-//! Merkle carry) also holds the commitment on rows 0-31 regardless.
+//! Taking the commitment out of the instruction puts it into the proof.
+//!
+//! ## ✅ TAKEN 2026-08-23 — the mitigation above is now implemented
+//!
+//! Constraint [15] was gated. The gate is built from periodics already in
+//! scope plus a one-hot link appended at index 10 (`hold_link_31`); an earlier
+//! attempt used a dense step column named `hold_active`, which no longer
+//! exists — it cost a measured 100,982 CU and 4,096 B of rodata for a property
+//! three muls buy. That changes
+//! [15]'s BODY but not its INDEX, and appends to the periodic vector rather
+//! than inserting into it, so the frozen order of 0-9 is untouched. It was
+//! done before Step 4 baked any coefficient, which was the deadline.
+//!
+//! `build_spend_trace` now fills rows 95..511 of col 9 with a Poseidon chain
+//! seeded from `secret`. NOT from `blinding`, which is the historical
+//! `deposit_epoch` slot and is brute-forceable on pre-blinding notes. Gating
+//! the constraint only PERMITS a non-constant
+//! column; the trace has to actually be non-constant or nothing changes.
+//!
+//! ## ✅ 2026-08-23, SECOND PASS — DEPTH 12 CLOSES IT
+//!
+//! The gate alone was NOT enough, and measuring that is what produced the fix.
+//! A gated col 9 is still piecewise constant over a PUBLIC segment structure,
+//! so at depth 15 there were 14 unknowns against roughly 90 published
+//! evaluations, and the commitment came straight back out of a 14 by 14 solve.
+//! Removing it from the instruction had only moved it into the proof.
+//!
+//! What closes it is a counting change, not an encoding change. The circuit now
+//! proves **twelve** Merkle levels instead of fifteen, which frees cycles 12-15,
+//! which is 128 rows on ALL TEN columns. Every transition constraint is gated
+//! off there by the `active` periodic column, so the prover writes independent
+//! uniform field elements into them, redrawn per proof.
+//!
+//!   unknowns per column   = witness segments + 128 mask values
+//!   published evaluations = 4 * 22 + 2 = 90 on the deployed wire
+//!
+//! 128 > 90, so the system is underdetermined.
+//! `measured_the_public_system_is_now_underdetermined` does not assert that in
+//! prose: it builds the attacker's best system, computes its rank, extracts a
+//! null-space vector, and checks the vector MOVES the commitment coordinate.
+//! For every published evaluation vector there is a whole line of commitments
+//! consistent with it.
+//!
+//! **The three levels do not disappear, they move on chain.** Public input 1 is
+//! a depth-12 subtree root and the spending instruction owes the remaining
+//! walk, roughly 45K CU for three `poseidon_round` loops against
+//! ⛔ NOT against `filled_subtrees` — that was the first design and it is
+//! WRONG. `filled_subtrees` is an INSERTION FRONTIER: it holds one value per
+//! level on the CURRENT insertion path, so it cannot supply the siblings of an
+//! arbitrary historical leaf. A spender of leaf 100 at 9,000 leaves needs
+//! `node(12, 1)`, completed at leaf 8,191 and overwritten since; it exists in
+//! no on-chain field. It is also unattested: `verify_c6_proof_buffer` hashes
+//! exactly 40 bytes, `[old_leaf, new_leaf, old_root, new_root, depth]`, and
+//! `new_subtrees` is not among them, so any depositor can write arbitrary
+//! bytes into it.
+//!
+//! ✅ The correct and cheaper design: the CALLER supplies the three top
+//! siblings and three orientation bits as untrusted instruction data, the
+//! program folds public input 1 up three levels, and binds the result with
+//! `is_valid_root` — the same discipline v3 already applies to `merkle_root`.
+//! `filled_subtrees` is never read.
+//!
+//! The pool's tree stays depth 15: no new PDA and no `tree_depth` migration.
+//! ⚠️ The anonymity set is not RESET, but it is now PARTITIONED — see the
+//! top-bit note below.
+//! ⛔ `the_on_chain_top_levels_are_an_obligation_not_an_option` exists because
+//! shipping without that leg makes C7 a fund-loss circuit.
+//!
+//! **Why the degree budget survived.** The `active` gate is folded INTO the
+//! outer periodic factor of the degree-7 Poseidon constraints
+//! (`not_boundary_active`, index 12) rather than added as a third factor. A
+//! third factor makes `ce_blowup_factor` 16 instead of 8, which changes
+//! `num_constraint_composition_columns` and the whole proof structure. Folded,
+//! the max evaluation degree is 4584 — exactly C5's shipped number.
+//!
+//! ## ⚠️ THE PRICE OF DEPTH 12, QUANTIFIED, AND THE TRAP INSIDE IT
+//!
+//! Moving three levels on chain makes the subtree index public, so a spend
+//! names one of 8 buckets of 4,096 leaves. The cost is NOT a flat 3 bits: it is
+//! `log2(ceil(N / 4096))`, capped at 3.
+//!
+//! ```text
+//!   N = 34..4096   1 bucket    0.000 bits    <- today, at ~47 leaves
+//!   N = 4097       2 buckets   0.001 bits
+//!   N = 10000      3 buckets   1.441 bits
+//!   N = 16384      4 buckets   2.000 bits
+//!   N = 32768      8 buckets   3.000 bits
+//! ```
+//!
+//! 🚨 **THE AGGREGATE IS THE WRONG NUMBER AND IT LIES IN THE FAMILIAR
+//! DIRECTION.** At N = 4,097 the newest bucket holds exactly ONE leaf, so that
+//! depositor's anonymity set is **1** — fully deanonymized — while the
+//! aggregate reports 0.001 bits because the other 4,096 people are fine. This
+//! is the shape of the P11 false green from 2026-08-18: when an aggregate
+//! contradicts an individual absence, the aggregate is what lies. There are 7
+//! such boundaries over a full tree (leaves 4097, 8193, ... 28673), and the
+//! exposed party is always the newest depositor, who is also the one most
+//! likely to spend soon. `spend_bucket_trajectory_and_the_frontier_hazard`
+//! pins this so it is not rediscovered.
+//!
+//! ⛔ No instruction-side trick buys any of it back. Checking against all 8
+//! roots, hiding the index, hiding the siblings, or a Merkle-set proof over the
+//! 8 roots all buy exactly zero, because the identifier is in the public inputs
+//! and the tree is public: `LeafInserted` publishes `leaf_index` and `leaf` on
+//! every insert, so any observer rebuilds the tree offline and reads the bucket
+//! off the root by equality.
+//!
+//! Depth 13 would leak one bit less and was considered and rejected: it frees
+//! 96 rows against R = 90, a margin of 6 against depth 12's 38, and one extra
+//! published opening would break it. ⚠️ The decision is not urgent on anonymity
+//! grounds — both leak nothing below 4,096 leaves — but it IS urgent on freeze
+//! grounds, because `CANONICAL_DEPTH` sets `FIRST_FREE_ROW`, `MASK_ROWS`,
+//! `ROW_MERKLE_ROOT_OUT` and the boundary spec, and a deployed C7 verifier pins
+//! that shape byte for byte. Decide before the verifier deploy, not before leaf
+//! 4,096.
+//!
+//! ## 🚨 THE COSET IS WHY THE COUNTING ARGUMENT IS THE WHOLE STORY
+//!
+//! Verified on the deployed branch, not inferred. `b7-drop-aligned-checks`
+//! carries `LDE_COSET_SHIFT_U64 = 7` (`compact.rs:4779`) and its verifier
+//! hardcodes `let is_trace_aligned = false;` at three sites
+//! (`verify.rs:4280`, `:4355`, `:4428`) — which is what the branch is NAMED
+//! after. The LDE domain is a coset disjoint from the trace domain, so **no
+//! query position ever coincides with a trace row** and no opening ever
+//! returns a raw witness value.
+//!
+//! That retires a whole family of worries on the deployed wire. Col 3 is the
+//! sibling verbatim and col 4 is a leaf-index bit, and on a NON-coset LDE a
+//! trace-aligned query would publish an internal tree node in the clear with
+//! probability 1-(15/16)^22 = 76%. On the coset that read does not exist. The
+//! same applies to the residual col 9 and col 5 channels an earlier pass of
+//! this file measured at ~23% and ~8%: those numbers describe MASTER, whose
+//! `compact.rs` has no coset shift and whose verifier still computes
+//! `is_trace_aligned = pos % blowup == 0` (`verify.rs:3023`).
+//!
+//! So on the lineage that ships, every published value is an evaluation at a
+//! point outside the trace domain, every one of them is a public linear
+//! equation, and the only defence is having more unknowns than equations. That
+//! is exactly what depth 12 buys.
+//!
+//! ⛔ **THEREFORE C7 MUST BE BUILT ON `b7-drop-aligned-checks`, NOT MASTER.**
+//! Three independent reasons now agree: b7 publishes four trace rows per query
+//! against master's two, its `CircuitConfig` has ten fields against eight, and
+//! only b7 has the coset. A C7 built on master emits a proof the deployed
+//! verifier cannot parse, and would reintroduce the direct-read channels on top.
+//!
+//! **What is still open, and it is not this column.** Masking the trace does
+//! not touch the quotient decomposition, the DEEP composition polynomial, or
+//! the vector commitment, and there is no FRI salt. Those are prover and
+//! commitment-layer channels with no simulation argument here, they are
+//! Winterfell PR #293's territory, and they change proof serialization.
+//! ⛔ Until they are addressed, C7 is **not** perfect zero-knowledge and must
+//! not be described as such. What is now true and measured is narrower and
+//! worth having: the note commitment is not recoverable from the published
+//! evaluations of the trace columns.
 //!
 //! Public inputs: `[nullifier, root, rh0, rh1, rh2, rh3]` — SIX felts. The
 //! recipient hash is the full 256 bits split into four u64s; one felt would be
-//! 64-bit binding. `depth` is NOT a public input — it is fixed at 15 by the
+//! 64-bit binding. `depth` is NOT a public input — it is fixed at 12 by the
 //! layout.
 
 use winterfell::{
@@ -119,8 +269,40 @@ pub const NUM_ROUNDS: usize = 30;
 /// of them; see the module docs.
 pub const NUM_HASH_CYCLES: usize = TRACE_LENGTH / HASH_CYCLE_LEN; // 16
 
-/// Merkle depth. Fixed by the layout, NOT a public input.
-pub const CANONICAL_DEPTH: usize = 15;
+/// Merkle levels proved INSIDE the circuit. Fixed by the layout, NOT a public
+/// input.
+///
+/// 🚨 CHANGED 15 -> 12 ON 2026-08-23, AND THE POOL'S TREE IS STILL DEPTH 15.
+/// The circuit proves membership of a leaf under a depth-12 SUBTREE root; the
+/// remaining three levels are verified on chain by the spending instruction,
+/// three `poseidon_round` loops ESTIMATED at roughly 45K CU (~1,350 field
+/// multiplications; NOT measured, and not measurable today because
+/// `zk_shielded` has no Goldilocks Poseidon at all), against
+/// caller-supplied siblings bound by `is_valid_root`. ⛔ NOT `filled_subtrees`:
+/// it is an insertion frontier and cannot supply an arbitrary leaf's siblings.
+/// No new pool and no `tree_depth` change. ⚠️ The anonymity set is not reset,
+/// but it is partitioned 8-way; see the top-bit note below.
+///
+/// ⛔ THE CIRCUIT IS NOT SOUND ON ITS OWN UNTIL THAT ON-CHAIN LEG EXISTS. A
+/// depth-12 subtree root proves membership of a subtree, not of the pool. See
+/// `the_on_chain_top_levels_are_an_obligation_not_an_option` below, which
+/// exists so this cannot be forgotten between here and Step 7.
+///
+/// Why 12: it frees cycles 12-15, which is 128 rows on all ten columns,
+/// against the R = 4*22+2 = 90 openings per column the deployed wire
+/// publishes. 13 would free 96, 14 would free 64, and neither clears 90 with
+/// margin. This is the only change that reaches zero-knowledge inside the C6
+/// envelope.
+pub const CANONICAL_DEPTH: usize = 12;
+
+/// First cycle whose rows carry no witness and exist only to be blinded.
+pub const FIRST_FREE_CYCLE: usize = CANONICAL_DEPTH; // 12
+
+/// First trace row that is free on every column.
+pub const FIRST_FREE_ROW: usize = FIRST_FREE_CYCLE * HASH_CYCLE_LEN; // 384
+
+/// Blinding positions this layout offers per column, against R = 4*22+2 = 90.
+pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 128
 
 /// Number of transition constraints. Indices 0..=17.
 ///   [0]-[10]  Merkle pipeline   (verbatim from `merkle_path.rs:260-283`)
@@ -133,7 +315,31 @@ pub const SPEND_NUM_CONSTRAINTS: usize = 18;
 /// `compute_c7_periodic_at_z` index it positionally.
 ///   0-6  stride-16 eligible, emitted at NATURAL LENGTH 32
 ///   7-9  one-hot, emitted at length 512
-pub const SPEND_NUM_PERIODIC: usize = 10;
+///   10   hold_link_31, one-hot @ row 31 — APPENDED 2026-08-23
+///   11   active, dense step, 1 on rows 0..=382 — APPENDED 2026-08-23
+///   12   not_boundary_active, dense, `active AND not_boundary` — APPENDED 2026-08-23
+///
+/// Index 10 was appended, never inserted, so indices 0-9 keep the order the
+/// module docs froze. It is the third term of the gate on constraint [15],
+/// which stops the hold column being a degree-0 polynomial; see the privacy
+/// note in the module docs for what that buys and what it does not.
+///
+/// 🚨 It is ONE-HOT on purpose. The first version of this gate used a length-512
+/// STEP column (1 on rows 0..=93), which is neither stride-16 nor one-hot and
+/// therefore goes through the verifier's dense path. That was measured at
+/// **100,982 CU** and 4,096 bytes of rodata, against roughly 6 KB of verifier
+/// rodata headroom left. The construction below buys the identical privacy
+/// property out of periodics that are already in scope, for 3 muls and zero
+/// rodata. Do not reintroduce a dense column here.
+pub const SPEND_NUM_PERIODIC: usize = 13;
+
+/// Rows `0..=HOLD_CONSTANT_LAST` of col 9 all carry the commitment.
+///
+/// [16] pins row 94 and [17] reads row 0, so every row between them must be
+/// equal. The gate below achieves that with cycle-local constancy plus two
+/// one-hot links across the cycle 0-1 and 1-2 boundaries, which pins rows
+/// `0..=95` — one row more than strictly needed, and free.
+pub const HOLD_CONSTANT_LAST: usize = 3 * HASH_CYCLE_LEN - 1; // 95
 
 pub const SPEND_NUM_PUBLIC_INPUTS: usize = 6;
 pub const SPEND_NUM_BOUNDARY_ASSERTIONS: usize = 6;
@@ -148,20 +354,23 @@ pub const ROW_CHAIN: usize = 2 * HASH_CYCLE_LEN - 1; // 63
 pub const ROW_COMMIT_IN: usize = 2 * HASH_CYCLE_LEN; // 64
 /// Row on which the commitment appears at col 6 (cycle 2 output).
 pub const ROW_COMMITMENT_OUT: usize = 2 * HASH_CYCLE_LEN + NUM_ROUNDS; // 94
-/// Row on which the Merkle root appears at col 0 (level 14 output).
-pub const ROW_MERKLE_ROOT_OUT: usize = (CANONICAL_DEPTH - 1) * HASH_CYCLE_LEN + NUM_ROUNDS; // 478
+/// Row on which the depth-12 SUBTREE root appears at col 0 (level 11 output).
+/// ⛔ NOT the pool root. See the on-chain obligation below.
+pub const ROW_MERKLE_ROOT_OUT: usize = (CANONICAL_DEPTH - 1) * HASH_CYCLE_LEN + NUM_ROUNDS; // 382
 
-/// 🚨 Rows on which the MERKLE pipeline (cols 0-2, 5) runs genuine Poseidon
-/// rounds: ALL of them. C7 has no padding rows — the 16th cycle at rows
-/// 480-511 is a real (dummy-input) hash. Copying C3's
-/// `active_rows = 15 * hash_cycle_len` guard into `verify_constraints_spend`
-/// would deterministically reject every honest proof with a trace-aligned
-/// query in rows 480-511.
+/// 🚨 STALE SINCE DEPTH 12. This used to say the Merkle pipeline runs genuine
+/// Poseidon rounds on ALL rows. Cycles 12-15 are now the blinding region and
+/// run nothing at all.
+/// ⛔ DO NOT USE FOR THE VERIFIER'S ROW GUARD. Kept only so existing
+/// call sites compile. The real contract cannot be expressed as one number:
+/// transition-active rows are `0..=382`, and rows `384..511` take NO CHECK OF
+/// ANY KIND — not a Poseidon round, not an identity check. Use
+/// `FIRST_FREE_ROW` and `MASK_ROWS`.
 pub const SPEND_MERKLE_ACTIVE_ROWS: usize = TRACE_LENGTH;
 /// 🚨 Same for the COMMITMENT pipeline (cols 6-8): all 512 rows are active.
 pub const SPEND_COMMIT_ACTIVE_ROWS: usize = TRACE_LENGTH;
 /// Merkle cycles whose output anybody reads (levels 0..14). Cycle 15 is dummy.
-pub const SPEND_MERKLE_MEANINGFUL_CYCLES: usize = CANONICAL_DEPTH; // 15
+pub const SPEND_MERKLE_MEANINGFUL_CYCLES: usize = CANONICAL_DEPTH; // 12
 /// Commitment cycles whose output anybody reads. Cycles 3..15 are dummy.
 pub const SPEND_COMMIT_MEANINGFUL_CYCLES: usize = 3;
 
@@ -299,7 +508,8 @@ impl Air for SpendAir {
 /// The declared cycle lengths must match the ACTUAL periodic column lengths
 /// emitted by `build_spend_periodic_columns`: 32 for the seven shared columns,
 /// 512 for the three one-hot flags. This is *tighter* than C5's
-/// `vec![HASH_CYCLE_LEN, TRACE_LENGTH]` (max evaluation degree 4569 vs 4584)
+/// `vec![HASH_CYCLE_LEN, TRACE_LENGTH]`. C7 now measures 4584 too, because the
+/// `active` gate is folded into the outer factor of the degree-7 constraints
 /// because C7's `is_boundary` is 32-periodic too.
 ///
 /// Nothing here may multiply a `pow7` term by another trace column: base
@@ -309,24 +519,28 @@ pub fn spend_constraint_degrees() -> Vec<TransitionConstraintDegree> {
     vec![
         // ── Merkle pipeline, cols 0-5 ──
         // [0-2] Poseidon round: gated by round_flag(32) and is_boundary(32)
-        TransitionConstraintDegree::with_cycles(7, vec![HASH_CYCLE_LEN, HASH_CYCLE_LEN]), // 0
-        TransitionConstraintDegree::with_cycles(7, vec![HASH_CYCLE_LEN, HASH_CYCLE_LEN]), // 1
-        TransitionConstraintDegree::with_cycles(7, vec![HASH_CYCLE_LEN, HASH_CYCLE_LEN]), // 2
-        TransitionConstraintDegree::with_cycles(2, vec![HASH_CYCLE_LEN]),                 // 3 mux s0
-        TransitionConstraintDegree::with_cycles(2, vec![HASH_CYCLE_LEN]),                 // 4 mux s1
-        TransitionConstraintDegree::with_cycles(1, vec![HASH_CYCLE_LEN]),                 // 5 capacity
-        TransitionConstraintDegree::with_cycles(1, vec![HASH_CYCLE_LEN]),                 // 6 carry update
-        TransitionConstraintDegree::with_cycles(1, vec![HASH_CYCLE_LEN]),                 // 7 carry cont.
-        TransitionConstraintDegree::with_cycles(1, vec![HASH_CYCLE_LEN]),                 // 8 sib cont.
-        TransitionConstraintDegree::with_cycles(1, vec![HASH_CYCLE_LEN]),                 // 9 dir cont.
-        TransitionConstraintDegree::with_cycles(2, vec![HASH_CYCLE_LEN]),                 // 10 dir binary
+        TransitionConstraintDegree::with_cycles(7, vec![TRACE_LENGTH, HASH_CYCLE_LEN]), // 0
+        TransitionConstraintDegree::with_cycles(7, vec![TRACE_LENGTH, HASH_CYCLE_LEN]), // 1
+        TransitionConstraintDegree::with_cycles(7, vec![TRACE_LENGTH, HASH_CYCLE_LEN]), // 2
+        TransitionConstraintDegree::with_cycles(2, vec![HASH_CYCLE_LEN, TRACE_LENGTH]),   // 3 mux s0
+        TransitionConstraintDegree::with_cycles(2, vec![HASH_CYCLE_LEN, TRACE_LENGTH]),   // 4 mux s1
+        TransitionConstraintDegree::with_cycles(1, vec![HASH_CYCLE_LEN, TRACE_LENGTH]),   // 5 capacity
+        TransitionConstraintDegree::with_cycles(1, vec![HASH_CYCLE_LEN, TRACE_LENGTH]),   // 6 carry update
+        TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),                   // 7 carry cont.
+        TransitionConstraintDegree::with_cycles(1, vec![HASH_CYCLE_LEN, TRACE_LENGTH]),   // 8 sib cont.
+        TransitionConstraintDegree::with_cycles(1, vec![HASH_CYCLE_LEN, TRACE_LENGTH]),   // 9 dir cont.
+        TransitionConstraintDegree::with_cycles(2, vec![HASH_CYCLE_LEN, TRACE_LENGTH]),   // 10 dir binary
         // ── Commitment pipeline, cols 6-8 ──
-        TransitionConstraintDegree::with_cycles(7, vec![HASH_CYCLE_LEN, HASH_CYCLE_LEN]), // 11
-        TransitionConstraintDegree::with_cycles(7, vec![HASH_CYCLE_LEN, HASH_CYCLE_LEN]), // 12
-        TransitionConstraintDegree::with_cycles(7, vec![HASH_CYCLE_LEN, HASH_CYCLE_LEN]), // 13
+        TransitionConstraintDegree::with_cycles(7, vec![TRACE_LENGTH, HASH_CYCLE_LEN]), // 11
+        TransitionConstraintDegree::with_cycles(7, vec![TRACE_LENGTH, HASH_CYCLE_LEN]), // 12
+        TransitionConstraintDegree::with_cycles(7, vec![TRACE_LENGTH, HASH_CYCLE_LEN]), // 13
         TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),                   // 14 chain
         // ── Hold column, col 9 ──
-        TransitionConstraintDegree::new(1),                                               // 15 (ungated)
+        // [15] is gated as of 2026-08-23 by (not_boundary + hold_link_31 +
+        // chain_flag), whose combined period is 512. Ungated it was the only
+        // degree-0 column in the crate, and a degree-0 column publishes its
+        // value in every OOD opening and every query.
+        TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH, TRACE_LENGTH]),     // 15
         TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),                   // 16
         TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),                   // 17
     ]
@@ -370,7 +584,7 @@ fn pow7<E: FieldElement>(x: E) -> E {
 // Periodic columns
 // ============================================================================
 
-/// Build the 10 periodic columns for circuit 7.
+/// Build the 13 periodic columns for circuit 7.
 ///
 /// Layout — FROZEN, indexed positionally by Step 4's emitter and Step 6's
 /// `compute_c7_periodic_at_z`:
@@ -395,7 +609,7 @@ fn pow7<E: FieldElement>(x: E) -> E {
 /// emission and a hand-tiled length-512 emission are byte-identical
 /// downstream, so the length-32 form is free safety.
 ///
-/// Takes NO arguments: depth is fixed at 15 and passing it invites the
+/// Takes NO arguments: depth is fixed at 12 and passing it invites the
 /// degrade shape that `boundary_assertions_for_circuit` arms 3 and 6 have.
 pub fn build_spend_periodic_columns() -> Vec<Vec<BaseElement>> {
     let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
@@ -438,6 +652,36 @@ pub fn build_spend_periodic_columns() -> Vec<Vec<BaseElement>> {
     let commit_out_flag = make_flag(ROW_COMMITMENT_OUT); // 94
     let row0_flag = make_flag(0);
 
+    // The third term of the [15] gate: one-hot at row 31, the cycle 0-1
+    // boundary. Row 63, the cycle 1-2 boundary, reuses `chain_flag` rather
+    // than costing a twelfth column.
+    let hold_link_31 = make_flag(HASH_CYCLE_LEN - 1); // 31
+
+    // ── period 512, dense ──
+    // `active` is 1 exactly on the rows that carry witness. Cycles 12-15 are
+    // the blinding region and every constraint is switched off there, so the
+    // prover may write independent uniform field elements into all ten columns.
+    // `not_boundary_active` is the same thing pre-multiplied with
+    // `not_boundary`, and it is a SEPARATE column rather than a product in the
+    // constraint body on purpose: the degree-7 Poseidon constraints may carry
+    // exactly TWO periodic factors. A third pushes `ce_blowup_factor` from 8 to
+    // 16, which changes `num_constraint_composition_columns` and therefore the
+    // proof's whole degree structure.
+    //
+    // 🚨 THE BOUND IS `FIRST_FREE_ROW - 1`, NOT `FIRST_FREE_ROW`. These are
+    // TRANSITION constraints: the one evaluated at row i reads row i+1. Left on
+    // at row 383 the carry-update constraint [6] would demand
+    // `mask[384] == state[383]`, which no honest prover can satisfy and which
+    // showed up as "constraint 6 at row 383" the first time this was built.
+    let mut active = vec![BaseElement::ZERO; TRACE_LENGTH];
+    let mut not_boundary_active = vec![BaseElement::ZERO; TRACE_LENGTH];
+    for row in 0..(FIRST_FREE_ROW - 1) {
+        active[row] = BaseElement::ONE;
+        if row % HASH_CYCLE_LEN != HASH_CYCLE_LEN - 1 {
+            not_boundary_active[row] = BaseElement::ONE;
+        }
+    }
+
     vec![
         rc0,             // 0
         rc1,             // 1
@@ -449,6 +693,9 @@ pub fn build_spend_periodic_columns() -> Vec<Vec<BaseElement>> {
         chain_flag,      // 7
         commit_out_flag, // 8
         row0_flag,       // 9
+        hold_link_31,    // 10
+        active,          // 11
+        not_boundary_active, // 12
     ]
 }
 
@@ -463,7 +710,7 @@ pub fn build_spend_periodic_columns() -> Vec<Vec<BaseElement>> {
 /// (`programs/p01_stark_verifier/src/verify.rs`). Constraint ORDER is
 /// load-bearing (the RLC uses `alpha^i`): append at index 18, never insert.
 ///
-/// `periodic[0..10]`:
+/// `periodic[0..13]`:
 ///   `[rc0, rc1, rc2, round_flag, is_boundary, hash_start, is_interior,
 ///     chain_flag, commit_out_flag, row0_flag]`
 ///
@@ -493,6 +740,9 @@ pub fn evaluate_spend_transition<E: FieldElement>(
     let chain_flag = periodic[7];
     let commit_out_flag = periodic[8];
     let row0_flag = periodic[9];
+    let hold_link_31 = periodic[10];
+    let active = periodic[11];
+    let nba = periodic[12];
 
     let three = E::from(3u32);
     let not_boundary = E::ONE - is_boundary;
@@ -514,28 +764,30 @@ pub fn evaluate_spend_transition<E: FieldElement>(
     let ro1 = s0_7 + three * s1_7 + s2_7;
     let ro2 = s0_7 + s1_7 + three * s2_7;
 
-    result[0] = not_boundary * (next[0] - current[0] - round_flag * (ro0 - current[0]));
-    result[1] = not_boundary * (next[1] - current[1] - round_flag * (ro1 - current[1]));
-    result[2] = not_boundary * (next[2] - current[2] - round_flag * (ro2 - current[2]));
+    result[0] = nba * (next[0] - current[0] - round_flag * (ro0 - current[0]));
+    result[1] = nba * (next[1] - current[1] - round_flag * (ro1 - current[1]));
+    result[2] = nba * (next[2] - current[2] - round_flag * (ro2 - current[2]));
 
     // Hash start: state = mux(direction, carry, sibling)
     let dir = current[4];
     let sib = current[3];
     let carry = current[5];
-    result[3] = hash_start * (current[0] - carry - dir * (sib - carry));
-    result[4] = hash_start * (current[1] - sib - dir * (carry - sib));
-    result[5] = hash_start * current[2];
+    let hash_start_a = hash_start * active;
+    result[3] = hash_start_a * (current[0] - carry - dir * (sib - carry));
+    result[4] = hash_start_a * (current[1] - sib - dir * (carry - sib));
+    result[5] = hash_start_a * current[2];
 
     // Carry update at boundary / carry continuity off-boundary
-    result[6] = is_boundary * (next[5] - current[0]);
-    result[7] = not_boundary * (next[5] - current[5]);
+    result[6] = is_boundary * active * (next[5] - current[0]);
+    result[7] = nba * (next[5] - current[5]);
 
     // Sibling/direction continuity within a cycle
-    result[8] = is_interior * (next[3] - current[3]);
-    result[9] = is_interior * (next[4] - current[4]);
+    let is_interior_a = is_interior * active;
+    result[8] = is_interior_a * (next[3] - current[3]);
+    result[9] = is_interior_a * (next[4] - current[4]);
 
     // Direction binary
-    result[10] = hash_start * dir * (E::ONE - dir);
+    result[10] = hash_start_a * dir * (E::ONE - dir);
 
     // ────────────────────────────────────────────────────────────────────
     // [11]-[14] Commitment pipeline (cols 6-8).
@@ -551,9 +803,9 @@ pub fn evaluate_spend_transition<E: FieldElement>(
     let co1 = t0_7 + three * t1_7 + t2_7;
     let co2 = t0_7 + t1_7 + three * t2_7;
 
-    result[11] = not_boundary * (next[6] - current[6] - round_flag * (co0 - current[6]));
-    result[12] = not_boundary * (next[7] - current[7] - round_flag * (co1 - current[7]));
-    result[13] = not_boundary * (next[8] - current[8] - round_flag * (co2 - current[8]));
+    result[11] = nba * (next[6] - current[6] - round_flag * (co0 - current[6]));
+    result[12] = nba * (next[7] - current[7] - round_flag * (co1 - current[7]));
+    result[13] = nba * (next[8] - current[8] - round_flag * (co2 - current[8]));
 
     // Chain: blind_hash (col 6 @ row 63) -> cycle 2's RIGHT input (col 7 @ 64).
     // Without this, blind_hash is a free prover choice and the commitment at
@@ -562,11 +814,27 @@ pub fn evaluate_spend_transition<E: FieldElement>(
     result[14] = chain_flag * (next[7] - current[6]);
 
     // ────────────────────────────────────────────────────────────────────
-    // [15]-[17] Hold column (col 9). See the module-level privacy note:
-    // [15] is the only ungated constraint in the crate and it makes col 9 a
-    // degree-0 polynomial, which the serializer publishes verbatim.
+    // [15]-[17] Hold column (col 9). See the module-level privacy note.
+    //
+    // [15] is GATED as of 2026-08-23. Ungated it forced col 9 constant on all
+    // 512 rows, making it a degree-0 polynomial whose value is the commitment
+    // at every LDE position — published verbatim in ood_current[9],
+    // ood_next[9] and every query.
+    //
+    // The gate is built from periodics already in scope. `not_boundary` is 0
+    // exactly at pos 31 of each cycle, so on its own it makes col 9 constant
+    // WITHIN a cycle and free to jump between cycles. The two one-hot links
+    // then stitch cycles 0, 1 and 2 back together:
+    //
+    //   not_boundary   1 everywhere except rows 31, 63, 95, 127, ...
+    //   hold_link_31   1 at row 31 only
+    //   chain_flag     1 at row 63 only   (reused from [14])
+    //
+    // The three are mutually exclusive, so the sum is 0 or 1 and never 2. Net
+    // effect: rows 0..=95 are forced equal, which covers [16] at row 94 and
+    // [17] at row 0, and cycles 3-15 are free.
     // ────────────────────────────────────────────────────────────────────
-    result[15] = next[9] - current[9];
+    result[15] = active * (not_boundary + hold_link_31 + chain_flag) * (next[9] - current[9]);
     result[16] = commit_out_flag * (current[9] - current[6]);
     result[17] = row0_flag * (current[5] - current[9]);
 }
@@ -640,6 +908,14 @@ pub fn compute_spend_root(
 ///
 /// Returns `(trace, nullifier, root)` — the two PUBLIC values, and nothing
 /// else. The commitment stays inside the trace on purpose.
+///
+/// `mask` is the blinding material for rows 384..511 of every column, laid out
+/// row-major as `MASK_ROWS * TRACE_WIDTH` elements. It is a REQUIRED argument
+/// and not an `Option` on purpose: a default would be a witness-derived or
+/// zero-filled mask, which is the failure this design exists to prevent, and a
+/// caller who has not thought about randomness should not compile.
+///
+/// ⛔ It MUST be fresh CSPRNG output, redrawn for every proof.
 pub fn build_spend_trace(
     nullifier_preimage: BaseElement,
     secret: BaseElement,
@@ -647,7 +923,14 @@ pub fn build_spend_trace(
     token_mint: BaseElement,
     path_elements: &[BaseElement],
     path_indices: &[u8],
+    mask: &[BaseElement],
 ) -> (Vec<Vec<BaseElement>>, BaseElement, BaseElement) {
+    assert_eq!(
+        mask.len(),
+        MASK_ROWS * TRACE_WIDTH,
+        "C7 needs {} blinding elements ({MASK_ROWS} rows x {TRACE_WIDTH} columns)",
+        MASK_ROWS * TRACE_WIDTH
+    );
     assert_eq!(
         path_elements.len(),
         CANONICAL_DEPTH,
@@ -715,9 +998,10 @@ pub fn build_spend_trace(
     let nullifier = run_hash(&mut trace, 6, 0, nullifier_preimage, secret);
     let blind_hash = run_hash(&mut trace, 6, 1, blinding, token_mint);
     let commitment = run_hash(&mut trace, 6, 2, nullifier, blind_hash);
-    // Cycles 3-15: dummy Poseidons on P(0, 0). Nothing reads them; they exist
-    // solely so the shared periodic columns stay 32-periodic.
-    for cycle in SPEND_COMMIT_MEANINGFUL_CYCLES..NUM_HASH_CYCLES {
+    // Cycles 3-11: dummy Poseidons on P(0, 0). Nothing reads them; they exist
+    // solely so the shared periodic columns stay 32-periodic. Cycles 12-15 are
+    // the blinding region and are written from `mask` below, not hashed.
+    for cycle in SPEND_COMMIT_MEANINGFUL_CYCLES..FIRST_FREE_CYCLE {
         let _ = run_hash(&mut trace, 6, cycle, BaseElement::ZERO, BaseElement::ZERO);
     }
 
@@ -757,25 +1041,65 @@ pub fn build_spend_trace(
     }
     let root = carry;
 
-    // Dummy 16th Merkle cycle at rows 480-511. It is NOT free: constraint [6]
-    // at row 479 forces carry@480 == root, and the hash-start mux then forces
-    // cols 0/1 from (carry, sibling, direction). With dir = 0 and sib = 0 the
-    // cycle hashes P(root, 0), the direction-binary constraint is satisfied
-    // and the capacity is 0. Do NOT identity-pad these rows the way
-    // `merkle_update.rs:469-494` and `merkle_path.rs:378-394` do — with a
-    // 32-periodic round_flag that fails the prover's own constraints.
-    write_witness(
-        &mut trace,
-        CANONICAL_DEPTH,
-        BaseElement::ZERO,
-        BaseElement::ZERO,
-        root,
-    );
-    let _ = run_hash(&mut trace, 0, CANONICAL_DEPTH, root, BaseElement::ZERO);
+    // ── Blinding region, rows 384-511, ALL TEN COLUMNS ────────────────
+    //
+    // 🚨 THIS IS THE ZERO-KNOWLEDGE ARGUMENT AND IT IS THE WHOLE POINT OF
+    // DEPTH 12. Every transition constraint is gated off here by `active`, so
+    // these 128 rows per column are unconstrained and the prover writes
+    // INDEPENDENT UNIFORM field elements into them, redrawn for every proof.
+    //
+    // The counting: the deployed wire publishes four trace rows per query plus
+    // two out-of-domain openings, so R = 4*22 + 2 = 90 evaluations per column.
+    // 128 independent uniform values exceed 90, so the published evaluations no
+    // longer determine the witness values. `measured_the_public_system_is_now_
+    // underdetermined` runs the recovery attack that succeeds at depth 15 and
+    // shows it failing here.
+    //
+    // ⛔ `mask` MUST be fresh CSPRNG output per proof. A chain, a counter or
+    // anything derived from the witness collapses these 128 values to one
+    // degree of freedom and the attack comes straight back — that is exactly
+    // what the first version of this file did with a Poseidon chain.
+    for (i, row) in (FIRST_FREE_ROW..TRACE_LENGTH).enumerate() {
+        for col in 0..TRACE_WIDTH {
+            trace[col][row] = mask[i * TRACE_WIDTH + col];
+        }
+    }
 
     // ── Hold column, col 9 ─────────────────────────────────────────────
-    for row in 0..TRACE_LENGTH {
+    //
+    // Rows 0..=95 carry the commitment, because [16] pins row 94 to the
+    // commitment output and [17] reads row 0 as the Merkle leaf, and [15]
+    // forces everything between them equal.
+    //
+    // Cycles 3-15 are FILLER, and filling them is the point. Left at the
+    // commitment the column is a degree-0 polynomial: its value is the
+    // commitment at all 8192 LDE positions, so `compact.rs` publishes it in
+    // ood_current[9], ood_next[9] and every query's trace values. Filler makes
+    // the interpolant a degree-<512 polynomial that equals the commitment only
+    // on the 96 trace-aligned positions of rows 0..=95, which removes the OOD
+    // leak entirely and leaves a per-query one.
+    //
+    // ⚠️ THIS IS NOT MASKING AND MUST NOT BE CALLED THAT. The gate leaves
+    // NINE free scalars, one per filler cycle 3..=11, because [15] still forces
+    // col 9 constant inside each cycle. Statistical zero-knowledge needs on the
+    // order of 242 INDEPENDENT UNIFORM elements per column, redrawn every
+    // proof. Thirteen values derived from one seed is one degree of freedom
+    // against ~46 query equations. It closes the free byte-copy and nothing
+    // more.
+    //
+    // 🚨 SEEDED FROM `secret`, NOT `blinding`. `blinding` is the historical
+    // `deposit_epoch` slot and carries a SMALL REAL EPOCH on pre-blinding
+    // notes, so it is brute-forceable — a filler derived from it would be
+    // recomputable from a candidate commitment, and col 9 would be a
+    // distinguisher again for exactly the oldest notes in the pool.
+    for row in 0..=HOLD_CONSTANT_LAST {
         trace[9][row] = commitment;
+    }
+    for cycle in 3..FIRST_FREE_CYCLE {
+        let filler = poseidon::hash2(secret, BaseElement::new(cycle as u64));
+        for row in (cycle * HASH_CYCLE_LEN)..((cycle + 1) * HASH_CYCLE_LEN) {
+            trace[9][row] = filler;
+        }
     }
 
     debug_assert_eq!(trace[6][ROW_NULLIFIER_OUT], nullifier);
@@ -813,6 +1137,16 @@ mod tests {
         (elems, idx)
     }
 
+    /// Deterministic stand-in for the CSPRNG mask. Determinism is fine here:
+    /// what the counting argument needs is 1280 INDEPENDENT unknowns, not
+    /// unpredictable ones, and a test that cannot reproduce its own trace
+    /// cannot pin anything.
+    fn test_mask() -> Vec<BaseElement> {
+        (0..MASK_ROWS * TRACE_WIDTH)
+            .map(|i| BaseElement::new(1_000_003u64 * (i as u64 + 1) + 7))
+            .collect()
+    }
+
     fn honest() -> (Vec<Vec<BaseElement>>, BaseElement, BaseElement, BaseElement) {
         let (elems, idx) = test_path();
         let (trace, nullifier, root) = build_spend_trace(
@@ -822,6 +1156,7 @@ mod tests {
             BaseElement::new(MINT),
             &elems,
             &idx,
+            &test_mask(),
         );
         let (_, _, commitment) = compute_spend_values(
             BaseElement::new(NP),
@@ -899,6 +1234,7 @@ mod tests {
             BaseElement::new(MINT),
             &elems,
             &idx,
+            &test_mask(),
         );
         let (_, _, commitment) = compute_spend_values(
             BaseElement::new(NP),
@@ -909,24 +1245,300 @@ mod tests {
         (trace, commitment)
     }
 
-    /// MEASUREMENT 1 — the delivered design hands the commitment over for free.
+    /// MEASUREMENT 1 — the OOD channel, before and after the 2026-08-23 gate.
     ///
-    /// Constraint [15] makes col 9 constant, so its interpolant IS the constant
-    /// polynomial and its value at ANY point equals the commitment. An observer
-    /// reads eight bytes at offset 136 of the blob and is done: no witness, no
-    /// query, no candidate list, no work at all.
+    /// BEFORE: constraint [15] was ungated, col 9 was constant, its interpolant
+    /// WAS the constant polynomial, and its value at ANY point equalled the
+    /// commitment. An observer read eight bytes at offset 136 of the blob and
+    /// was done: no witness, no query, no candidate list, no work at all. This
+    /// test asserted that equality, as a pin on a known defect.
+    ///
+    /// AFTER: [15] is gated by `hold_active`, rows 95..511 carry filler, and
+    /// the interpolant is a degree-<512 polynomial that agrees with the
+    /// commitment only on the trace-aligned positions of rows 0..=94. The OOD
+    /// point `z` is outside the domain by construction, so this channel is
+    /// CLOSED. Three unrelated points must all disagree with the commitment
+    /// and with each other.
     #[test]
-    fn measured_the_published_ood_of_col9_is_the_commitment_itself() {
+    fn measured_the_published_ood_of_col9_is_no_longer_the_commitment() {
         let (trace, commitment) = trace_for(SECRET);
-        // Three unrelated evaluation points. Anything other than a degree-0
-        // column would disagree between them.
+        let mut seen = Vec::new();
         for z_raw in [0xDEAD_BEEFu64, 0x0123_4567_89AB_CDEF, 3] {
             let z = BaseElement::new(z_raw);
-            assert_eq!(
-                eval_column_at(&trace[9], z),
-                commitment,
-                "ood_current[9] at z={z_raw} must be the commitment verbatim"
+            let ood = eval_column_at(&trace[9], z);
+            assert_ne!(
+                ood, commitment,
+                "ood_current[9] at z={z_raw} must NOT be the commitment"
             );
+            seen.push(ood);
+        }
+        // A degree-0 column would give the same value at every point. These
+        // must differ, which is what proves the column is no longer constant.
+        assert_ne!(seen[0], seen[1]);
+        assert_ne!(seen[1], seen[2]);
+    }
+
+    /// The top-bit leak, as arithmetic rather than prose.
+    ///
+    /// See the module docs. The point of this test is the FRONTIER HAZARD, not
+    /// the aggregate: the first depositor into each new bucket stands alone.
+    #[test]
+    fn spend_bucket_trajectory_and_the_frontier_hazard() {
+        const POOL_DEPTH: u32 = 15;
+        let bucket_size: usize = 1 << (POOL_DEPTH - CANONICAL_DEPTH as u32); // 8 buckets
+        assert_eq!(bucket_size, 8, "depth 12 under a depth-15 tree names 1 of 8");
+        let leaves_per_bucket: usize = 1 << CANONICAL_DEPTH; // 4096
+
+        // Today: one bucket occupied, so the index carries nothing.
+        for n in [34usize, 47, 74, 4096] {
+            let occupied = n.div_ceil(leaves_per_bucket);
+            assert_eq!(occupied, 1, "at {n} leaves every note is in bucket 0");
+        }
+
+        // The hazard: the first leaf of a new bucket is alone in it.
+        for boundary in 1..bucket_size {
+            let n = boundary * leaves_per_bucket + 1;
+            let newest_bucket_population = n - boundary * leaves_per_bucket;
+            assert_eq!(
+                newest_bucket_population, 1,
+                "leaf {} is the only member of bucket {boundary}", n - 1
+            );
+        }
+
+        // And the ceiling.
+        assert_eq!((1usize << POOL_DEPTH).div_ceil(leaves_per_bucket), bucket_size);
+    }
+
+    /// ⛔ THE ON-CHAIN TOP LEVELS ARE AN OBLIGATION, NOT AN OPTION.
+    ///
+    /// This test asserts nothing about the AIR. It exists because the AIR is
+    /// now UNSOUND ON ITS OWN and the failure is silent: public input 1 is a
+    /// depth-12 SUBTREE root, and a subtree root proves membership of a
+    /// subtree, not of the pool. Anyone holding a leaf in ANY subtree can
+    /// produce a proof this circuit accepts.
+    ///
+    /// What the spending instruction MUST do before it trusts a C7 proof:
+    ///   1. read `public_inputs[1]` as a depth-12 subtree root;
+    ///   2. walk the remaining `pool.tree_depth - 12` levels itself, with
+    ///      `poseidon_round`, against CALLER-SUPPLIED siblings and orientation
+    ///      bits — ⛔ NOT `filled_subtrees`, which is an insertion frontier,
+    ///      cannot supply an arbitrary leaf's siblings, and is not bound by any
+    ///      proof — then bind the result with `is_valid_root`; the subtree
+    ///      index — ESTIMATED at roughly 45K CU for three levels, about 1,350
+    ///      field multiplications. ⛔ NOT MEASURED: there is no Goldilocks
+    ///      Poseidon in `zk_shielded` to measure. Its only `hash_pair`
+    ///      panics and its commented-out body is BN254, the wrong field;
+    ///   3. require the resulting root to be one the pool has vouched for,
+    ///      exactly as `unshield_denominated_stark_v3` does today with
+    ///      `is_valid_root`.
+    ///
+    /// The pool's tree stays at depth 15. Nothing about the pool changes, no
+    /// new PDA, no `tree_depth` migration, and the anonymity set is not reset.
+    /// Only the split between circuit and instruction moves.
+    ///
+    /// 🚨 If Step 7 ships without leg 2, C7 is a fund-loss circuit, in the same
+    /// class as `unshield` C5 before 2026-08-18. That is why this is a test and
+    /// not a comment.
+    #[test]
+    fn the_on_chain_top_levels_are_an_obligation_not_an_option() {
+        assert_eq!(CANONICAL_DEPTH, 12, "the circuit proves twelve levels");
+        assert!(
+            CANONICAL_DEPTH < 15,
+            "public input 1 is a SUBTREE root; the instruction owns the rest"
+        );
+        // The boundary assertion binds public input 1 to the Merkle output row,
+        // and nothing in this crate can check what that root belongs to.
+        let (col, row, src) = SPEND_BOUNDARY_SPEC[5];
+        assert_eq!((col, row, src), (0, ROW_MERKLE_ROOT_OUT, Some(1)));
+        assert_eq!(15 - CANONICAL_DEPTH, 3, "three levels are owed on chain");
+    }
+
+    /// ✅ MEASUREMENT 1b — THE PUBLIC SYSTEM IS NOW UNDERDETERMINED.
+    ///
+    /// At depth 15 this test ran the other way and it PASSED: col 9 was
+    /// piecewise constant over 14 publicly-known segments, so an observer wrote
+    /// one linear equation per published evaluation, solved a 14 by 14 system,
+    /// and recovered the commitment exactly. Removing it from the instruction
+    /// had moved it into the proof, and the gate on [15] had only lowered the
+    /// cost from "read eight bytes" to "solve a small system".
+    ///
+    /// Depth 12 changes the counting rather than the encoding. Cycles 12-15 are
+    /// unconstrained on every column, so col 9's unknowns are
+    ///
+    ///     1  the value on rows 0..=95, which IS the commitment
+    ///   + 9  one per filler cycle 3..=11
+    ///   + 128 independent uniform mask values
+    ///   = 138
+    ///
+    /// against R = 4*22 + 2 = 90 evaluations the deployed wire publishes. More
+    /// unknowns than equations is not an argument, it is a rank statement, so
+    /// this test computes the rank. It builds the attacker's best system, finds
+    /// a null-space vector, and checks that the vector moves the COMMITMENT
+    /// coordinate. That is what makes the commitment specifically unrecoverable
+    /// rather than merely "some unknown is free": for every published
+    /// evaluation vector there is a whole line of commitments consistent with
+    /// it.
+    #[test]
+    fn measured_the_public_system_is_now_underdetermined() {
+        // The attacker's model: one unknown per segment the constraints pin,
+        // plus one per free mask row.
+        let mut segments: Vec<Vec<usize>> = vec![(0..=HOLD_CONSTANT_LAST).collect()];
+        for cycle in 3..FIRST_FREE_CYCLE {
+            segments.push((cycle * HASH_CYCLE_LEN..(cycle + 1) * HASH_CYCLE_LEN).collect());
+        }
+        for row in FIRST_FREE_ROW..TRACE_LENGTH {
+            segments.push(vec![row]);
+        }
+        let unknowns = segments.len();
+        assert_eq!(unknowns, 1 + 9 + MASK_ROWS, "138 unknowns");
+
+        // Every evaluation the deployed wire publishes for this column.
+        const R: usize = 4 * 22 + 2;
+        assert!(unknowns > R, "{unknowns} unknowns must exceed {R} equations");
+
+        let points: Vec<BaseElement> =
+            (0..R).map(|i| BaseElement::new(0x2000_0000 + i as u64 * 7919)).collect();
+
+        // m is R x unknowns. Row r, column c is the public basis B_c(z_r).
+        let mut m: Vec<Vec<BaseElement>> = Vec::with_capacity(R);
+        for &z in &points {
+            let mut row = Vec::with_capacity(unknowns);
+            for seg in &segments {
+                let mut indicator = vec![BaseElement::ZERO; TRACE_LENGTH];
+                for &i in seg {
+                    indicator[i] = BaseElement::ONE;
+                }
+                row.push(eval_column_at(&indicator, z));
+            }
+            m.push(row);
+        }
+
+        // Reduced row echelon form, tracking which columns are pivots.
+        let mut pivot_of_row: Vec<usize> = Vec::new();
+        let mut r = 0usize;
+        for c in 0..unknowns {
+            if r >= R {
+                break;
+            }
+            let Some(pr) = (r..R).find(|&i| m[i][c] != BaseElement::ZERO) else {
+                continue;
+            };
+            m.swap(r, pr);
+            let inv = m[r][c].inv();
+            for cc in c..unknowns {
+                m[r][cc] = m[r][cc] * inv;
+            }
+            for i in 0..R {
+                if i == r {
+                    continue;
+                }
+                let f = m[i][c];
+                if f != BaseElement::ZERO {
+                    for cc in c..unknowns {
+                        m[i][cc] = m[i][cc] - f * m[r][cc];
+                    }
+                }
+            }
+            pivot_of_row.push(c);
+            r += 1;
+        }
+        let rank = pivot_of_row.len();
+        assert!(rank <= R, "rank cannot exceed the equation count");
+        assert!(
+            rank < unknowns,
+            "rank {rank} must be below {unknowns} unknowns, or the system would be solvable"
+        );
+
+        // Column 0 is the commitment. If it is a pivot we can still ask whether
+        // it is DETERMINED: it is not, as long as some free column appears in
+        // its row with a non-zero coefficient. Build that null-space vector.
+        let pivot_cols: std::collections::BTreeSet<usize> = pivot_of_row.iter().copied().collect();
+        let free_col = (0..unknowns)
+            .find(|c| !pivot_cols.contains(c))
+            .expect("an underdetermined system has a free column");
+
+        let mut null = vec![BaseElement::ZERO; unknowns];
+        null[free_col] = BaseElement::ONE;
+        for (row_idx, &pc) in pivot_of_row.iter().enumerate() {
+            null[pc] = BaseElement::ZERO - m[row_idx][free_col];
+        }
+
+        // It really is in the null space: the published evaluations do not move.
+        for row in 0..R {
+            // Recompute against the ORIGINAL basis, not the reduced one.
+            let z = points[row];
+            let mut acc = BaseElement::ZERO;
+            for (c, seg) in segments.iter().enumerate() {
+                if null[c] == BaseElement::ZERO {
+                    continue;
+                }
+                let mut indicator = vec![BaseElement::ZERO; TRACE_LENGTH];
+                for &i in seg {
+                    indicator[i] = BaseElement::ONE;
+                }
+                acc += null[c] * eval_column_at(&indicator, z);
+            }
+            assert_eq!(acc, BaseElement::ZERO, "null vector must not change evaluation {row}");
+        }
+
+        assert_ne!(
+            null[0],
+            BaseElement::ZERO,
+            "the null direction must move the COMMITMENT coordinate; if it did not,              the commitment would still be pinned by the published evaluations"
+        );
+    }
+
+    /// The residue the gate does NOT remove, pinned so it cannot be forgotten.
+    ///
+    /// Col 9 still equals the commitment on rows 0..=94 and col 5 still equals
+    /// it on rows 0..=31, because the leaf has to enter the Merkle pipeline to
+    /// be hashed. A query landing on one of those TRACE-ALIGNED LDE positions
+    /// still reads it verbatim. With blowup 16 those are 95 and 32 positions
+    /// out of 8192, so with 22 queries a proof leaks with probability roughly
+    /// 23% via col 9 and 8% via col 5.
+    ///
+    /// ⛔ Closing that needs masking, not a periodic column. C7 must not be
+    /// described as zero-knowledge or unlinkable until it lands.
+    #[test]
+    fn measured_the_residual_query_channel_after_the_gate() {
+        let (trace, commitment) = trace_for(SECRET);
+
+        let col9_hits = (0..TRACE_LENGTH).filter(|r| trace[9][*r] == commitment).count();
+        assert_eq!(
+            col9_hits,
+            HOLD_CONSTANT_LAST + 1,
+            "col 9 must carry the commitment on exactly rows 0..={HOLD_CONSTANT_LAST}"
+        );
+
+        let col5_hits = (0..TRACE_LENGTH).filter(|r| trace[5][*r] == commitment).count();
+        assert!(
+            col5_hits >= HASH_CYCLE_LEN,
+            "col 5 holds the leaf across its first hash cycle; measured {col5_hits}"
+        );
+
+        // The filler is NINE scalars, one per cycle 3-11, because [15]
+        // still forces col 9 constant inside a cycle. Pinned as a number so
+        // nobody reads "filler" as "masking": statistical zero-knowledge wants
+        // on the order of 242 independent uniform elements per column.
+        let mut cycle_values = Vec::new();
+        for cycle in 3..FIRST_FREE_CYCLE {
+            let v = trace[9][cycle * HASH_CYCLE_LEN];
+            for row in (cycle * HASH_CYCLE_LEN)..((cycle + 1) * HASH_CYCLE_LEN) {
+                assert_eq!(trace[9][row], v, "col 9 must be constant inside cycle {cycle}");
+            }
+            cycle_values.push(v);
+        }
+        assert_eq!(cycle_values.len(), 9, "cycles 3..11 are one scalar each");
+        let masked: Vec<_> = (FIRST_FREE_ROW..TRACE_LENGTH).map(|r| trace[9][r]).collect();
+        for i in 0..masked.len() {
+            for j in (i + 1)..masked.len() {
+                assert_ne!(masked[i], masked[j], "mask rows {i} and {j} must be independent");
+            }
+        }
+        for i in 0..cycle_values.len() {
+            for j in (i + 1)..cycle_values.len() {
+                assert_ne!(cycle_values[i], cycle_values[j], "filler cycles {i} and {j} repeat");
+            }
         }
     }
 
@@ -1052,12 +1664,18 @@ mod tests {
         assert_eq!(TRACE_WIDTH, 10);
         assert_eq!(TRACE_LENGTH, 512);
         assert_eq!(SPEND_NUM_CONSTRAINTS, 18);
-        assert_eq!(SPEND_NUM_PERIODIC, 10);
+        assert_eq!(SPEND_NUM_PERIODIC, 13);
         assert_eq!(SPEND_NUM_PUBLIC_INPUTS, 6);
         assert_eq!(SPEND_NUM_BOUNDARY_ASSERTIONS, 6);
         assert_eq!(build_spend_periodic_columns().len(), SPEND_NUM_PERIODIC);
+        assert_eq!(HOLD_CONSTANT_LAST, 95);
+        assert!(HOLD_CONSTANT_LAST > ROW_COMMITMENT_OUT, "the gate must cover row 94");
         assert_eq!(ROW_COMMITMENT_OUT, 94);
-        assert_eq!(ROW_MERKLE_ROOT_OUT, 478);
+        assert_eq!(ROW_MERKLE_ROOT_OUT, 382);
+        assert_eq!(CANONICAL_DEPTH, 12, "depth 12 in-circuit; the top 3 levels are on chain");
+        assert_eq!(FIRST_FREE_ROW, 384);
+        assert_eq!(MASK_ROWS, 128);
+        assert!(MASK_ROWS > 4 * 22 + 2, "the blinding region must exceed R");
         assert_eq!(ROW_CHAIN, 63);
     }
 
@@ -1074,8 +1692,10 @@ mod tests {
             .map(|d| d.get_evaluation_degree(TRACE_LENGTH))
             .max()
             .unwrap();
-        // 7*511 + 16*31 + 16*31 = 3577 + 496 + 496
-        assert_eq!(max_eval, 4569, "C7 max transition evaluation degree drifted");
+        // 7*511 + 1*511 + 16*31 = 3577 + 511 + 496. Exactly C5's number: the
+        // `active` gate is folded INTO the outer periodic factor rather than
+        // added as a third, which keeps ce_blowup_factor at 8.
+        assert_eq!(max_eval, 4584, "C7 max transition evaluation degree drifted");
 
         let min_blowup = degrees.iter().map(|d| d.min_blowup_factor()).max().unwrap();
         assert_eq!(min_blowup, 8, "ce_blowup_factor drifted; blowup 16 is the ceiling");
@@ -1084,7 +1704,7 @@ mod tests {
         // divisor (degree n - 1), against the constraint-evaluation domain.
         let composition_degree = max_eval - (TRACE_LENGTH - 1);
         let ce_domain = TRACE_LENGTH * min_blowup;
-        assert_eq!(composition_degree, 4058);
+        assert_eq!(composition_degree, 4073);
         assert!(composition_degree < ce_domain, "composition degree exceeds the CE domain");
 
         // And the live AirContext agrees.
@@ -1114,7 +1734,7 @@ mod tests {
             assert_eq!(cols[i].len(), HASH_CYCLE_LEN, "periodic column {i} must be length 32");
         }
         // 7-9 one-hot at length 512.
-        for i in 7..SPEND_NUM_PERIODIC {
+        for i in 7..10 {
             assert_eq!(cols[i].len(), TRACE_LENGTH, "periodic column {i} must be length 512");
             let ones = cols[i].iter().filter(|v| **v == BaseElement::ONE).count();
             let zeros = cols[i].iter().filter(|v| **v == BaseElement::ZERO).count();
@@ -1124,6 +1744,26 @@ mod tests {
         assert_eq!(cols[7][ROW_CHAIN], BaseElement::ONE);
         assert_eq!(cols[8][ROW_COMMITMENT_OUT], BaseElement::ONE);
         assert_eq!(cols[9][0], BaseElement::ONE);
+
+        // 10 is ONE-HOT at row 31, the cycle 0-1 link. It must NOT be a dense
+        // step: a length-512 step goes through the verifier's dense Horner path
+        // at a measured 100,982 CU and 4,096 bytes of rodata, against roughly
+        // 6 KB of headroom left. One-hot costs 3 muls and zero rodata.
+        assert_eq!(cols[10].len(), TRACE_LENGTH, "hold_link_31 must be length 512");
+        let ones = cols[10].iter().filter(|v| **v == BaseElement::ONE).count();
+        assert_eq!(ones, 1, "hold_link_31 must be one-hot, never a dense step");
+        assert_eq!(cols[10][HASH_CYCLE_LEN - 1], BaseElement::ONE, "hold_link_31 sits at row 31");
+
+        // The gate's three terms must be mutually exclusive, or the sum would
+        // reach 2 and [15] would change degree.
+        let not_boundary = |row: usize| BaseElement::ONE - cols[4][row % HASH_CYCLE_LEN];
+        for row in 0..TRACE_LENGTH {
+            let sum = not_boundary(row) + cols[10][row] + cols[7][row];
+            assert!(
+                sum == BaseElement::ZERO || sum == BaseElement::ONE,
+                "gate terms overlap at row {row}"
+            );
+        }
     }
 
     #[test]
@@ -1190,7 +1830,7 @@ mod tests {
                 (8, 0, None),
                 (8, 32, None),
                 (8, 64, None),
-                (0, 478, Some(1)),
+                (0, 382, Some(1)),
             ]
         );
     }
@@ -1293,6 +1933,7 @@ mod tests {
                 BaseElement::new(MINT),
                 &elems,
                 &idx,
+                &test_mask(),
             );
             for (i, r) in eval_all(&trace).into_iter().enumerate() {
                 for (c, v) in r.iter().enumerate() {
@@ -1327,36 +1968,34 @@ mod tests {
     }
 
     #[test]
-    fn both_pipelines_run_all_sixteen_genuine_cycles() {
-        // If either pipeline stops hashing, the shared periodic columns stop
-        // being 32-periodic and every one of them goes dense on chain.
-        let (trace, _, root, _) = honest();
+    fn both_pipelines_hash_every_constrained_cycle_and_stop_at_the_mask() {
+        // Cycles 0..11 must be genuine on BOTH pipelines, or the shared
+        // periodic columns stop being 32-periodic and every one of them goes
+        // dense on chain. Cycles 12-15 must NOT be hashed: they are the
+        // blinding region and hashing them would put a Poseidon relation back
+        // between values that have to be independent.
+        let (trace, _, _, _) = honest();
 
-        // Commitment pipeline: every cycle start has capacity 0 and every
-        // cycle's output row is a real Poseidon of its own inputs.
-        for cycle in 0..NUM_HASH_CYCLES {
+        for cycle in 0..FIRST_FREE_CYCLE {
             let start = cycle * HASH_CYCLE_LEN;
-            assert_eq!(trace[8][start], BaseElement::ZERO, "cycle {cycle} capacity");
+            assert_eq!(trace[8][start], BaseElement::ZERO, "commit cycle {cycle} capacity");
             let out = poseidon::hash2(trace[6][start], trace[7][start]);
             assert_eq!(trace[6][start + NUM_ROUNDS], out, "commit cycle {cycle}");
-        }
 
-        // Merkle pipeline: same, including the 16th dummy level P(root, 0).
-        for cycle in 0..NUM_HASH_CYCLES {
-            let start = cycle * HASH_CYCLE_LEN;
             assert_eq!(trace[2][start], BaseElement::ZERO, "merkle cycle {cycle} capacity");
             let out = poseidon::hash2(trace[0][start], trace[1][start]);
             assert_eq!(trace[0][start + NUM_ROUNDS], out, "merkle cycle {cycle}");
         }
-        let dummy_start = CANONICAL_DEPTH * HASH_CYCLE_LEN; // 480
-        assert_eq!(trace[5][dummy_start], root, "carry@480 must be the root");
-        assert_eq!(trace[3][dummy_start], BaseElement::ZERO, "dummy sibling");
-        assert_eq!(trace[4][dummy_start], BaseElement::ZERO, "dummy direction");
-        assert_eq!(trace[0][dummy_start], root);
-        assert_eq!(trace[1][dummy_start], BaseElement::ZERO);
-    }
 
-    // ── the gate: honest trace satisfies every constraint ───────────────
+        // And the mask region is genuinely unrelated. If any column there
+        // happened to satisfy the Poseidon relation, the mask would not be
+        // uniform and the counting argument would be worth less than it says.
+        for cycle in FIRST_FREE_CYCLE..NUM_HASH_CYCLES {
+            let start = cycle * HASH_CYCLE_LEN;
+            let out = poseidon::hash2(trace[0][start], trace[1][start]);
+            assert_ne!(trace[0][start + NUM_ROUNDS], out, "mask cycle {cycle} must not hash");
+        }
+    }
 
     #[test]
     fn honest_trace_evaluates_every_constraint_to_zero() {
@@ -1388,19 +2027,28 @@ mod tests {
     // ── the leak, pinned ────────────────────────────────────────────────
 
     #[test]
-    fn hold_column_is_constant_which_publishes_the_commitment() {
-        // 🚨 This test does NOT assert a good property. It pins the fact that
-        // constraint [15] makes col 9 a degree-0 polynomial, so its LDE value
-        // is the commitment at all 8192 positions and the serializer emits it
-        // verbatim in ood_current[9], ood_next[9] and every query's trace
-        // values — ~46 plaintext copies in a blob uploaded as public
-        // instruction data. C7 is NOT zero-knowledge. See the module docs.
+    fn hold_column_carries_the_commitment_only_up_to_the_gate() {
+        // Was `hold_column_is_constant_which_publishes_the_commitment`, which
+        // pinned the defect: [15] ungated made col 9 degree 0, so the
+        // serializer emitted the commitment verbatim in ood_current[9],
+        // ood_next[9] and every query — ~46 plaintext copies in a blob
+        // uploaded as public instruction data.
+        //
+        // Now [15] is gated by `hold_active`. The commitment must still be
+        // there up to the gate, because [16] and [17] read it, and must NOT be
+        // there above it, because that is what stops the column being degree 0.
         let (trace, _, _, commitment) = honest();
-        assert!(
-            trace[9].iter().all(|v| *v == commitment),
-            "col 9 is constant by construction"
-        );
-        // Col 5 (the Merkle carry) additionally holds it on rows 0-31.
+        for row in 0..=HOLD_CONSTANT_LAST {
+            assert_eq!(trace[9][row], commitment, "col 9 must hold at row {row}");
+        }
+        for row in (HOLD_CONSTANT_LAST + 1)..TRACE_LENGTH {
+            assert_ne!(
+                trace[9][row], commitment,
+                "col 9 must NOT be the commitment at row {row}"
+            );
+        }
+        // Col 5 (the Merkle carry) still holds it on rows 0-31 regardless: the
+        // leaf has to enter the pipeline to be hashed. Only masking removes it.
         for row in 0..HASH_CYCLE_LEN {
             assert_eq!(trace[5][row], commitment);
         }
@@ -1443,12 +2091,38 @@ mod tests {
     }
 
     #[test]
-    fn a_non_constant_hold_column_violates_constraint_15() {
+    fn a_non_constant_hold_column_violates_constraint_15_inside_the_gate() {
         let (mut trace, _, _, _) = honest();
-        trace[9][200] = trace[9][200] + BaseElement::ONE;
+        // Row 50 is inside `hold_active`, so [15] still binds there.
+        trace[9][50] = trace[9][50] + BaseElement::ONE;
         let results = eval_all(&trace);
-        assert_ne!(results[199][15], BaseElement::ZERO);
-        assert_ne!(results[200][15], BaseElement::ZERO);
+        assert_ne!(results[49][15], BaseElement::ZERO);
+        assert_ne!(results[50][15], BaseElement::ZERO);
+    }
+
+    #[test]
+    fn the_tail_above_the_gate_is_genuinely_free() {
+        // The other half of the gate, and the reason it exists. Rows above
+        // HOLD_CONSTANT_LAST may hold anything at all without violating a single
+        // constraint. That is what lets the prover break the degree-0 shape
+        // today, and it is the room masking will need tomorrow.
+        let (mut trace, _, _, _) = honest();
+        for cycle in 3..NUM_HASH_CYCLES {
+            let v = BaseElement::new(cycle as u64 * 7 + 13);
+            for row in (cycle * HASH_CYCLE_LEN)..((cycle + 1) * HASH_CYCLE_LEN) {
+                trace[9][row] = v;
+            }
+        }
+        let results = eval_all(&trace);
+        for (row, r) in results.iter().enumerate() {
+            for (i, v) in r.iter().enumerate() {
+                assert_eq!(
+                    *v,
+                    BaseElement::ZERO,
+                    "constraint [{i}] must stay satisfied at row {row} with an arbitrary tail"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1619,46 +2293,13 @@ mod tests {
             trace[2][start + 31] = state[2];
             carry = state[0];
         }
-        // 16th dummy cycle over the forged root.
-        {
-            let start = CANONICAL_DEPTH * HASH_CYCLE_LEN;
-            for row in start..start + HASH_CYCLE_LEN {
-                trace[3][row] = BaseElement::ZERO;
-                trace[4][row] = BaseElement::ZERO;
-                trace[5][row] = carry;
-            }
-            let mut state = [carry, BaseElement::ZERO, BaseElement::ZERO];
-            trace[0][start] = state[0];
-            trace[1][start] = state[1];
-            trace[2][start] = state[2];
-            let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
-            let mds = &poseidon::constants::MDS_MATRIX_T3;
-            for round in 0..NUM_ROUNDS {
-                for i in 0..3 {
-                    state[i] = state[i] + rc[round * 3 + i];
-                }
-                for s in &mut state {
-                    let x = *s;
-                    let x2 = x * x;
-                    let x4 = x2 * x2;
-                    *s = x4 * x2 * x;
-                }
-                let mut res = [BaseElement::ZERO; 3];
-                for i in 0..3 {
-                    for j in 0..3 {
-                        res[i] = res[i] + mds[i][j] * state[j];
-                    }
-                }
-                state = res;
-                let row = start + round + 1;
-                trace[0][row] = state[0];
-                trace[1][row] = state[1];
-                trace[2][row] = state[2];
-            }
-            trace[0][start + 31] = state[0];
-            trace[1][start + 31] = state[1];
-            trace[2][start + 31] = state[2];
-        }
+        // ⛔ NO 16th CYCLE. `CANONICAL_DEPTH * HASH_CYCLE_LEN` is now
+        // FIRST_FREE_ROW, so hand-hashing one here would write a genuine
+        // Poseidon relation into the BLINDING region and overwrite 192 of the
+        // 1,280 mask cells — the exact relation
+        // `both_pipelines_hash_every_constrained_cycle_and_stop_at_the_mask`
+        // asserts must be absent. The forgery this test exercises is caught by
+        // [17] at row 0, which is nowhere near the mask.
 
         // The AIR must reject: [17] ties col5@row0 to the hold column, which
         // still carries the real commitment.
