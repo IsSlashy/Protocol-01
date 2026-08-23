@@ -1,7 +1,13 @@
 //! SECURITY PROBE: is the pool leaf really one 64-bit felt, and is
 //! a same-leaf / distinct-nullifier collision really ~2^32?
+//!
+//! Uses `compute_pool_values` — the POOL's own commitment derivation, which is
+//! what the leaf actually stores (merkle_tree_v3.rs:66, low 8 bytes). The
+//! earlier version used C7's `compute_spend_values`; C7 is now a cfg(test)
+//! module with no crate-root export (it would change the shipped prover blob),
+//! so this probes the pool path directly, which is where the fund-loss lives.
 use p01_stark::poseidon;
-use p01_stark::{compute_spend_values, BaseElement};
+use p01_stark::{compute_pool_values, BaseElement};
 use winterfell::math::FieldElement;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -17,10 +23,12 @@ fn measured_truncated_birthday_scales_as_sqrt() {
         let t0 = Instant::now();
         let mut found = None;
         for i in 0..(1u64 << (bits / 2 + 4)) {
-            // vary `blinding` only -> nullifier stays constant per family,
-            // so use two families (i even/odd) to force distinct nullifiers.
+            // vary `deposit_epoch` (i) -> commitment moves; two families
+            // (i even/odd change the nullifier_preimage) force DISTINCT
+            // nullifiers on the colliding pair. compute_pool_values returns
+            // (nullifier, commitment).
             let np = BaseElement::new(1 + (i & 1));
-            let (n, _bh, c) = compute_spend_values(
+            let (n, c) = compute_pool_values(
                 np,
                 BaseElement::new(7),
                 BaseElement::new(i),
