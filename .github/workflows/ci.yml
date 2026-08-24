@@ -196,8 +196,26 @@ jobs:
           # pair-leaf guard lives on b7 and master cannot run it" is worth more
           # than a green one that whispers it. To make this pass, land the b7
           # verifier work on master — not by deleting this loop.
+          # [C7 2026-08-24] Three targets appended. All three now carry C7
+          # coverage that exists NOWHERE ELSE in CI:
+          #   wire_parity              -- C7's ten CircuitConfig fields
+          #   honest_liveness          -- an honest C7 proof clears BOTH phases.
+          #                               Its dispatch used to fall through to
+          #                               `_ => Ok(())`, so a circuit added to
+          #                               the fixtures and forgotten there passed
+          #                               phase 2 VACUOUSLY.
+          #   cross_circuit_confusion  -- the 8x8 parse matrix. C7 shares C6's
+          #                               width, length, blowup, merkle depth and
+          #                               query count; only fri_final_poly_size
+          #                               separates them, and this is the only
+          #                               test that would notice if it stopped.
+          #
+          # ⛔ `cu_budget` stays OUT and that is deliberate, not an oversight: it
+          # needs `cargo-build-sbf`, which this job does not have. Its C7 ceiling
+          # row is a LOCAL acceptance check. Nobody should read the C7 CU number
+          # as a CI gate.
           missing=""
-          for pin in periodic_stride b4_pair_leaf; do
+          for pin in periodic_stride b4_pair_leaf wire_parity honest_liveness cross_circuit_confusion; do
             if printf '%s\n' "$targets" | grep -qx "$pin"; then
               echo "::group::pin $pin"
               cargo test -p p01_stark_verifier --release --test "$pin"
@@ -207,7 +225,7 @@ jobs:
             fi
           done
           if [ -n "$missing" ]; then
-            echo "::error title=Soundness pin absent::Les gardes suivantes ne sont exercees NULLE PART:$missing — elles vivent sur b7-drop-aligned-checks avec le code qu'elles gardent (periodic_ext_consts, PairIndexing, quotient_segments), absent de master. Voir head-b7-divergence-mapped-2026-08-21."
+            echo "::error title=Soundness pin absent::Les gardes suivantes ne sont exercees NULLE PART:$missing. Une porte absente est une ERREUR, pas un avertissement — ce fichier a imprime des ::warning:: dans un job VERT pendant des semaines pour exactement ca. Ne pas supprimer la boucle pour repasser au vert."
             exit 1
           fi
 

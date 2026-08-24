@@ -597,8 +597,19 @@ export async function uploadAndVerify(
   }
   let signature = await signSendConfirm(connection, phase1Tx, payer);
 
-  // Step 3b: phase 2 verify (DEEP-ALI). Mandatory for circuits 1-6.
-  if (circuitId >= 1 && circuitId <= 6) {
+  // Step 3b: phase 2 verify (DEEP-ALI). Mandatory for circuits 1-7.
+  // [C7 2026-08-24] INVERTED, on purpose. This used to read
+  // `circuitId >= 1 && circuitId <= 6`, which is an ALLOW-LIST: every
+  // circuit added after it was written silently skipped phase 2 and the
+  // upload reported success on a half-verified proof. C7 would have been
+  // the first victim and it is the circuit that can least afford it --
+  // phase 2 carries its entire public-input-to-trace binding.
+  //
+  // Now it is a DENY-list of one. Circuit 0 is the legacy single-phase
+  // path; everything else gets phase 2 by default, including circuits
+  // that do not exist yet.
+  const PHASE1_ONLY = new Set([0]);
+  if (!PHASE1_ONLY.has(circuitId)) {
     onProgress?.('Verifying STARK proof phase 2 (DEEP-ALI)...');
     const phase2Tx = new Transaction()
       .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
