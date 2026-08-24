@@ -2,6 +2,12 @@ pub mod pool;
 pub mod pool_v3;
 pub mod merkle_tree;
 pub mod merkle_tree_v3;
+/// [C7] Goldilocks Poseidon. Before this module the program could not hash
+/// in the field its own v3 tree is built in: `merkle_tree::hash_pair` panics
+/// and its commented-out body is BN254. C7's public input is a depth-12
+/// SUBTREE root, so the spending instruction must walk the remaining levels
+/// itself -- and that means hashing on chain.
+pub mod poseidon_gl;
 pub mod nullifier_set;
 pub mod subscription_vault;
 pub mod route;
