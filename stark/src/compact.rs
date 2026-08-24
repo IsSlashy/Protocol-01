@@ -5079,6 +5079,429 @@ mod tests {
              upload path: a proof that got bigger fails at the END of the upload, never early.",
         );
     }
+
+    // ========================================================================
+    // [C7] Step 5 -- the forgeries that decide whether the pool can be drained
+    // ========================================================================
+    //
+    // 🚨 WHAT THESE TESTS ARE, AND WHAT THEY ARE NOT.
+    //
+    // `assert_air_agrees_with_trace_generic` already refuses to BUILD a proof
+    // from a trace that violates a C7 constraint. That is worth having, and it
+    // is worth nothing here: it protects an honest user from shipping a broken
+    // proof, and an attacker simply deletes it. The honest prover refusing is
+    // not the same claim as the forged proof being rejected.
+    //
+    // So these tests skip the honest entry point and go at the algebra
+    // directly: take an honest trace, forge it the way an attacker would, run
+    // the REAL quotient builder over the result, and assert the DEEP-ALI
+    // identity FAILS at a random out-of-domain point. `divide_by_vanishing`
+    // drops its remainder silently (`compact.rs`), so a forged trace does not
+    // panic -- it produces a quotient that is quietly wrong, which is exactly
+    // the situation the identity has to catch.
+    //
+    // Forgeries 6-9 of the plan -- recipient malleability, public-input arity,
+    // padding-row queries, tampered proof bytes -- are NOT here. They are
+    // properties of serialisation and of Fiat-Shamir, not of the quotient, and
+    // they cannot be asserted against a verifier that does not exist yet. They
+    // belong to Step 6 and are listed there so they cannot be quietly dropped.
+
+
+    /// [C7] Which transition constraints a trace actually violates, and where.
+    ///
+    /// 🚨 THIS EXISTS BECAUSE `assert_ne!(c, q)` IS NOT A PRECISE CLAIM. The
+    /// DEEP-ALI identity fails if ANY of the eighteen constraints is non-zero,
+    /// so a forgery test that only checks the identity proves "something is
+    /// wrong" -- not "the guard I named is the one that fired". Every forgery
+    /// below deliberately disturbs more than one cell, and without this helper a
+    /// test could stay green after its own guard was deleted.
+    ///
+    /// MUTATION TESTED 2026-08-24, and the result justifies the whole helper:
+    /// neutralising constraint [16] (`result[16] = ZERO`) leaves [3] and [7]
+    /// firing on forgery 1's trace, so the DEEP-ALI identity still fails and
+    /// `assert_ne!(c, q)` alone STAYS GREEN with the hold-column guard deleted.
+    /// The precise assertion is the only thing that goes red.
+    ///
+    /// Returns `(constraint_index, row)` pairs, walking the honest trace domain.
+    fn spend_violated_constraints(trace: &[Vec<BaseElement>]) -> Vec<(usize, usize)> {
+        use crate::air::spend::{
+            build_spend_periodic_columns, evaluate_spend_transition, SPEND_NUM_CONSTRAINTS,
+            SPEND_NUM_PERIODIC, TRACE_LENGTH as SP_LEN, TRACE_WIDTH as SP_W,
+        };
+
+        let periodic = build_spend_periodic_columns();
+        let mut constraints = vec![BaseElement::ZERO; SPEND_NUM_CONSTRAINTS];
+        let mut out = Vec::new();
+        for row in 0..(SP_LEN - 1) {
+            let current: Vec<BaseElement> = (0..SP_W).map(|k| trace[k][row]).collect();
+            let next: Vec<BaseElement> = (0..SP_W).map(|k| trace[k][row + 1]).collect();
+            let prow: Vec<BaseElement> = (0..SPEND_NUM_PERIODIC)
+                .map(|k| periodic[k][row % periodic[k].len()])
+                .collect();
+            evaluate_spend_transition(&current, &next, &prow, &mut constraints);
+            for (k, v) in constraints.iter().enumerate() {
+                if *v != BaseElement::ZERO {
+                    out.push((k, row));
+                }
+            }
+        }
+        out
+    }
+
+    /// [C7] Assert the named guard is among the constraints that fired.
+    fn assert_guard_fired(trace: &[Vec<BaseElement>], guard: usize, what: &str) {
+        let violated = spend_violated_constraints(trace);
+        let indices: Vec<usize> = {
+            let mut v: Vec<usize> = violated.iter().map(|(k, _)| *k).collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+        assert!(
+            indices.contains(&guard),
+            "{what}: constraint [{guard}] did NOT fire. Constraints that did: {indices:?}. \
+             The identity would still have failed, so an assert_ne! on it alone would have \
+             stayed green with this guard deleted.",
+        );
+    }
+
+    /// [C7] Evaluate the transition-only DEEP-ALI identity at `z` for a trace.
+    ///
+    /// Returns `(c_at_z, q_at_z * z_t)`. For an honest trace the two are equal;
+    /// this is the same identity `spend_proof_satisfies_deep_ali_end_to_end`
+    /// checks on a serialised proof, minus the boundary fold, which the pipeline
+    /// adds after the quotient builder returns.
+    fn spend_deep_ali_at_z(
+        trace: &[Vec<BaseElement>],
+        alpha: BaseElement,
+        z: BaseElement,
+    ) -> (BaseElement, BaseElement) {
+        use crate::air::spend::{
+            build_spend_periodic_columns, evaluate_spend_transition, SPEND_NUM_CONSTRAINTS,
+            TRACE_LENGTH as SP_LEN, TRACE_WIDTH as SP_W,
+        };
+
+        let trace_g = get_domain_generator_generic(SP_LEN);
+        let lde = compute_lde_generic(trace, GENERIC_BLOWUP);
+        let q_poly = compute_quotient_lde_circuit_7(&lde, GENERIC_BLOWUP, SP_LEN, alpha);
+
+        let col_polys: Vec<Vec<BaseElement>> =
+            (0..SP_W).map(|k| inverse_ntt(&trace[k], trace_g)).collect();
+        let z_next = z * trace_g;
+        let current: Vec<BaseElement> =
+            col_polys.iter().map(|p| evaluate_poly(p, z)).collect();
+        let next: Vec<BaseElement> =
+            col_polys.iter().map(|p| evaluate_poly(p, z_next)).collect();
+
+        let materialise = |col: &Vec<BaseElement>| -> Vec<BaseElement> {
+            if col.len() == SP_LEN {
+                col.clone()
+            } else {
+                let mut full = vec![BaseElement::ZERO; SP_LEN];
+                for i in 0..SP_LEN {
+                    full[i] = col[i % col.len()];
+                }
+                full
+            }
+        };
+        let periodic_at_z: Vec<BaseElement> = build_spend_periodic_columns()
+            .iter()
+            .map(|col| evaluate_poly(&inverse_ntt(&materialise(col), trace_g), z))
+            .collect();
+
+        let mut constraints = [BaseElement::ZERO; SPEND_NUM_CONSTRAINTS];
+        evaluate_spend_transition(&current, &next, &periodic_at_z, &mut constraints);
+        let c_at_z = rlc_combine(&constraints, alpha);
+
+        let last_row_x = trace_g.exp((SP_LEN - 1) as u64);
+        let z_t = (z.exp(SP_LEN as u64) - BaseElement::ONE) * (z - last_row_x).inv();
+
+        (c_at_z, evaluate_poly(&q_poly, z) * z_t)
+    }
+
+    /// [C7] Build the honest trace the forgeries start from, plus its witness.
+    fn spend_honest_trace() -> (Vec<Vec<BaseElement>>, BaseElement, BaseElement, BaseElement) {
+        use crate::air::spend::{build_spend_trace, compute_spend_values};
+
+        let (np, sk, blind, mint, pe, pi, _rh, mask) = spend_test_witness();
+        let elems: Vec<BaseElement> = pe.iter().map(|&v| BaseElement::new(v)).collect();
+        let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+        let (trace, nullifier, root) = build_spend_trace(
+            BaseElement::new(np),
+            BaseElement::new(sk),
+            BaseElement::new(blind),
+            BaseElement::new(mint),
+            &elems,
+            &pi,
+            &mask_felts,
+        );
+        let (_, _, commitment) = compute_spend_values(
+            BaseElement::new(np),
+            BaseElement::new(sk),
+            BaseElement::new(blind),
+            BaseElement::new(mint),
+        );
+        (trace, nullifier, root, commitment)
+    }
+
+    /// [C7] Positive control. Everything below asserts a FORGED trace fails the
+    /// identity; if the honest one failed too, all of them would pass for the
+    /// wrong reason and the whole section would be decorative.
+    #[test]
+    fn spend_honest_trace_satisfies_the_identity_positive_control() {
+        let (trace, _, _, _) = spend_honest_trace();
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0001);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_eq!(c, q, "the HONEST C7 trace must satisfy DEEP-ALI");
+    }
+
+    /// [C7 forgery 1] UNTIED HOLD COLUMN -- the direct attack on the hold-column
+    /// trick, and the reason the trick needs constraint [16] at all.
+    ///
+    /// Both Poseidon pipelines run honestly, so the commitment at col 6 row 94
+    /// is real. The attacker pins col 9 to a DIFFERENT value and sets the Merkle
+    /// leaf to it: prove membership of a leaf you never computed. [17] is
+    /// satisfied (leaf == hold), [15] is satisfied (hold is constant), and only
+    /// [16] stands between this and a spend of someone else's note.
+    #[test]
+    fn spend_untied_hold_column_breaks_the_identity() {
+        use crate::air::spend::HOLD_CONSTANT_LAST;
+
+        let (mut trace, _, _, commitment) = spend_honest_trace();
+        let fake = commitment + BaseElement::ONE;
+        for row in 0..=HOLD_CONSTANT_LAST {
+            trace[9][row] = fake;
+        }
+        trace[5][0] = fake; // leaf == hold, so [17] still holds
+
+        assert_guard_fired(&trace, 16, "untied hold column");
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0002);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_ne!(
+            c, q,
+            "an untied hold column satisfied DEEP-ALI. That is a proof of membership \
+             for a leaf the prover never computed -- the pool is drainable.",
+        );
+    }
+
+    /// [C7 forgery 2] LEAF != COMMITMENT -- spend someone else's note with your
+    /// own nullifier. THE pool-drain.
+    ///
+    /// col 9 correctly carries the honest commitment, so [16] passes. The leaf
+    /// at col 5 row 0 is set to a different value that really is in the tree.
+    /// Only [17] refuses.
+    #[test]
+    fn spend_leaf_not_equal_commitment_breaks_the_identity() {
+        let (mut trace, _, _, _) = spend_honest_trace();
+        trace[5][0] = BaseElement::new(0xDEAD_BEEF_0000_0001);
+
+        assert_guard_fired(&trace, 17, "leaf != commitment");
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0003);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_ne!(
+            c, q,
+            "a leaf different from the in-circuit commitment satisfied DEEP-ALI. This is \
+             'spend someone else's note with your own nullifier' -- the pool drain.",
+        );
+    }
+
+    /// [C7 forgery 3] NULLIFIER / COMMITMENT DECOUPLING -- one nullifier spending
+    /// many commitments.
+    ///
+    /// Cycle 2's LEFT input (col 6, row 64) is supposed to be the same nullifier
+    /// the boundary assertion publishes. Untie it and a single published
+    /// nullifier can be paired with any commitment the prover likes, which
+    /// defeats double-spend detection entirely.
+    #[test]
+    fn spend_nullifier_decoupled_from_commitment_breaks_the_identity() {
+        use crate::air::spend::ROW_COMMIT_IN;
+
+        let (mut trace, _, _, _) = spend_honest_trace();
+        trace[6][ROW_COMMIT_IN] = trace[6][ROW_COMMIT_IN] + BaseElement::ONE;
+
+        // [11]-[13] are the commitment Poseidon rounds: untying row 64's left
+        // input breaks the round relation that carries it to row 94.
+        assert_guard_fired(&trace, 11, "nullifier decoupled from commitment");
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0004);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_ne!(
+            c, q,
+            "cycle 2's left input came loose from the published nullifier and DEEP-ALI \
+             still held -- one nullifier could then spend many commitments.",
+        );
+    }
+
+    /// [C7 forgery 4] NON-BINARY DIRECTION BIT.
+    ///
+    /// C3 carried seven historical under-constraints of exactly this class
+    /// (`compact.rs:756-780`). C7 inherits its Merkle pipeline verbatim from C3,
+    /// so it inherits every one of them and must inherit every fix. A direction
+    /// bit outside {0,1} lets the mux produce a hash input that is neither
+    /// `(carry, sibling)` nor `(sibling, carry)`.
+    #[test]
+    fn spend_non_binary_direction_bit_breaks_the_identity() {
+        use crate::air::spend::HASH_CYCLE_LEN;
+
+        let (mut trace, _, _, _) = spend_honest_trace();
+        trace[4][2 * HASH_CYCLE_LEN] = BaseElement::new(2);
+
+        assert_guard_fired(&trace, 10, "non-binary direction bit");
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0005);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_ne!(c, q, "a direction bit of 2 satisfied DEEP-ALI");
+    }
+
+    /// [C7 forgery 5] SIBLING MUTATED MID-CYCLE.
+    ///
+    /// The sibling must hold still for the whole 32-row hash cycle. If it can
+    /// change between the row that feeds the hash and the row that is checked,
+    /// the prover picks one sibling for the constraint and another for the
+    /// commitment.
+    #[test]
+    fn spend_sibling_mutated_mid_cycle_breaks_the_identity() {
+        let (mut trace, _, _, _) = spend_honest_trace();
+        trace[3][5] = trace[3][5] + BaseElement::ONE;
+
+        assert_guard_fired(&trace, 8, "sibling mutated mid-cycle");
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0006);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_ne!(c, q, "a sibling that moved inside a hash cycle satisfied DEEP-ALI");
+    }
+
+    /// [C7 forgery 6] A FORGED ROW INSIDE THE BLINDING REGION IS *NOT* A FORGERY.
+    ///
+    /// This one asserts the OPPOSITE of the five above, and it is here because
+    /// the blinding region is the part of this design most likely to be
+    /// "fixed" by someone who reads rows 384..511 as unconstrained by accident.
+    /// They are unconstrained ON PURPOSE: that is what lets the prover write
+    /// fresh uniform randomness there, and the randomness is what stops the
+    /// published OOD values from being a function of the witness.
+    ///
+    /// If this test ever fails, someone added a constraint that reaches into the
+    /// mask, and the privacy argument in `air/spend.rs` died with it.
+    #[test]
+    fn spend_mask_region_is_genuinely_free() {
+        use crate::air::spend::{FIRST_FREE_ROW, TRACE_LENGTH as SP_LEN, TRACE_WIDTH as SP_W};
+
+        let (mut trace, _, _, _) = spend_honest_trace();
+        for col in 0..SP_W {
+            for row in FIRST_FREE_ROW..SP_LEN {
+                trace[col][row] = trace[col][row] + BaseElement::new(7);
+            }
+        }
+
+        // The mask control asserts the opposite of every forgery above: NOTHING
+        // may fire. `assert_guard_fired` would be the wrong shape here, so the
+        // list itself is the assertion.
+        let violated = spend_violated_constraints(&trace);
+        assert!(
+            violated.is_empty(),
+            "a constraint reaches into the blinding region: {violated:?}",
+        );
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0007);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_eq!(
+            c, q,
+            "changing the blinding region broke DEEP-ALI. Rows {FIRST_FREE_ROW}..{SP_LEN} must \
+             take NO constraint of any kind, or the prover cannot put fresh randomness there \
+             and the counting argument in air/spend.rs is void.",
+        );
+    }
+
+    /// [C7 forgery 7] WRONG BLINDING is not caught by the circuit, and that is
+    /// correct -- it is caught by the ROOT.
+    ///
+    /// Recomputing the commitment with `b' != b` gives a value that is not in
+    /// the tree, so the honest prover produces a proof of membership in a
+    /// DIFFERENT tree. The circuit has nothing to object to; the pool does, when
+    /// it compares the published root against its own.
+    ///
+    /// 🚨 Written down because "the circuit accepts it" reads like a hole and is
+    /// not one -- and because the check that actually stops it lives in the pool
+    /// program, which means Step 7 must not drop it.
+    #[test]
+    fn spend_wrong_blinding_moves_the_root_not_the_circuit() {
+        use crate::air::spend::{compute_spend_root, compute_spend_values, CANONICAL_DEPTH};
+
+        let (np, sk, blind, mint, pe, pi, _rh, _mask) = spend_test_witness();
+        let elems: Vec<BaseElement> = pe.iter().map(|&v| BaseElement::new(v)).collect();
+        assert_eq!(elems.len(), CANONICAL_DEPTH);
+
+        let (_, _, honest) = compute_spend_values(
+            BaseElement::new(np), BaseElement::new(sk),
+            BaseElement::new(blind), BaseElement::new(mint),
+        );
+        let (_, _, forged) = compute_spend_values(
+            BaseElement::new(np), BaseElement::new(sk),
+            BaseElement::new(blind + 1), BaseElement::new(mint),
+        );
+        assert_ne!(honest, forged, "a different blinding must give a different commitment");
+        assert_ne!(
+            compute_spend_root(honest, &elems, &pi),
+            compute_spend_root(forged, &elems, &pi),
+            "a wrong blinding must surface as a DIFFERENT ROOT. Nothing inside the circuit \
+             rejects it, so the pool program comparing roots is the only thing that does.",
+        );
+    }
+
+    /// [C7 forgery 8] LEGACY NOTE POSITIVE CONTROL.
+    ///
+    /// 🔒 The `blinding` slot is the historical `deposit_epoch` position. Notes
+    /// shielded before commitment blinding carry a real small epoch there -- the
+    /// unspent leaf-30 note of the 0.1 SOL pool is one of them. Any range check,
+    /// bit decomposition or boundary assertion on that slot bricks it with no
+    /// recovery path.
+    ///
+    /// So: a small-integer blinding must still produce a proof that satisfies
+    /// the identity. If this test fails, someone constrained the slot.
+    #[test]
+    fn spend_legacy_small_blinding_still_proves() {
+        use crate::air::spend::{build_spend_trace, MASK_ROWS, TRACE_WIDTH as SP_W};
+
+        let (np, sk, _blind, mint, pe, pi, _rh, mask) = spend_test_witness();
+        let elems: Vec<BaseElement> = pe.iter().map(|&v| BaseElement::new(v)).collect();
+        let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+        assert_eq!(mask_felts.len(), MASK_ROWS * SP_W);
+
+        // 30 -- a plausible deposit epoch, not a field element.
+        let (trace, _, _) = build_spend_trace(
+            BaseElement::new(np),
+            BaseElement::new(sk),
+            BaseElement::new(30),
+            BaseElement::new(mint),
+            &elems,
+            &pi,
+            &mask_felts,
+        );
+
+        let violated = spend_violated_constraints(&trace);
+        assert!(
+            violated.is_empty(),
+            "a legacy small-integer blinding tripped a constraint: {violated:?}",
+        );
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0008);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_eq!(
+            c, q,
+            "a legacy note whose blinding is a small epoch stopped proving. Leaf 30 of the \
+             0.1 SOL pool is exactly that note and it has no recovery path.",
+        );
+    }
     /// [C7] A deterministic test witness.
     ///
     /// ⛔ The mask here is a fixed xorshift stream, NOT CSPRNG output. A test
