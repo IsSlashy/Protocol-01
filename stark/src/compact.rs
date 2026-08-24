@@ -4009,8 +4009,27 @@ mod tests {
     /// smallest faithful form:
     ///
     ///   * stride-16 sparse -> `[u64; 32]`, the compressed coefficients only
-    ///     (256 B instead of 4,096 B). Step 6 reads these with a compressed
-    ///     evaluator; the arithmetic is the same 32-step Horner either way.
+    ///     (256 B instead of 4,096 B).
+    ///
+    ///     🚨 MEASURED 2026-08-24, AND IT CHANGES THE ANSWER: all seven of
+    ///     these come out BYTE-IDENTICAL to `C3_*_PERIODIC16`, which the
+    ///     verifier already ships (`periodic_ext_consts.rs:36, 111, 186, 261,
+    ///     336, 411, 486`). All 32 values, all seven tables. Not a coincidence:
+    ///     C7's Merkle pipeline is copied verbatim out of `merkle_path.rs`, and
+    ///     the Poseidon round constants and cycle flags are the same 32-periodic
+    ///     pattern. So C7 should REUSE them and emit no stride table at all.
+    ///
+    ///     The catch is the evaluator, not the data. C3 reads those tables with
+    ///     `eval_periodic_ext_at_z(periodic16, tail, lagrange)` because C3
+    ///     truncates at `active_rows = 480` and destroys its own periodicity --
+    ///     the tail and the Lagrange correction exist to subtract the deviation
+    ///     back out. C7 has no deviation: both pipelines hash all sixteen
+    ///     cycles. It needs the `PERIODIC16` half and nothing else, read by a
+    ///     plain compressed stride evaluator. That evaluator DOES NOT EXIST yet
+    ///     -- `verify.rs`'s only stride function is
+    ///     `eval_periodic_stride16_at_z(&[u64; 512])` (`verify.rs:2302`), which
+    ///     reads 32 entries out of a 4,096-byte array. Writing it is Step 6 work
+    ///     and it is roughly twenty lines.
     ///   * one-hot          -> NO array at all, just the row index. The verifier
     ///     evaluates these with `eval_one_hot_lagrange`, which needs `g^k` and
     ///     three multiplications, not a polynomial.
@@ -4121,8 +4140,22 @@ mod tests {
 
         println!("// ── C7 periodic budget, MEASURED ──");
         println!("// stride-16: {n_stride}   one-hot: {n_onehot}   dense: {n_dense}");
-        println!("// rodata: {rodata_bytes} B");
+        println!("// rodata if C7 emits its own stride tables : {rodata_bytes} B");
+        println!(
+            "// rodata if C7 REUSES C3_*_PERIODIC16 (measured identical) : {} B",
+            n_dense * trace_length * 8,
+        );
+        println!(
+            "// rodata with NO compressed evaluator, all {} dense : {} B",
+            n_stride + n_dense,
+            (n_stride + n_dense) * trace_length * 8,
+        );
         println!("// (dumping all 13 densely, the C5 way, would be {} B)", 13 * trace_length * 8);
+        println!("//");
+        println!("// 🚨 So EVERY byte of C7's own periodic rodata is the two dense");
+        println!("// columns. Not 82% of it -- all of it. Removing them by moving the");
+        println!("// active gate into the DIVISOR would take C7's new periodic rodata");
+        println!("// to zero, and it is the only column class that cannot be shared.");
 
         // The shape the on-chain side is built against. If this moves, Step 6's
         // `compute_c7_periodic_at_z` is wrong before it is written.
@@ -5501,6 +5534,94 @@ mod tests {
             "a legacy note whose blinding is a small epoch stopped proving. Leaf 30 of the \
              0.1 SOL pool is exactly that note and it has no recovery path.",
         );
+    }
+
+    /// [C7] The periodic classification, PINNED -- not left inside an `#[ignore]`.
+    ///
+    /// 🚨 THIS TEST EXISTS BECAUSE OF A REVIEW FINDING AGAINST ME. The 7/4/2
+    /// split was asserted only inside `emit_circuit_7_periodic_coeffs`, which is
+    /// `#[ignore]`d and therefore runs nowhere -- not in `cargo test`, not in CI.
+    /// It had been measured once, by hand, and then reported as though it were
+    /// enforced. Those are different things, and this repo has been bitten by
+    /// the difference before: `ci.yml` printed a `::warning::` for two absent
+    /// soundness pins inside a GREEN job for weeks.
+    ///
+    /// What it pins, and why each half matters on chain:
+    ///   * the COUNTS decide the shape of the verifier's periodic array. The
+    ///     existing C7 CU probe was written against ten columns and prices a
+    ///     circuit that no longer exists.
+    ///   * the one-hot ROWS travel into `eval_one_hot_lagrange(g^k, ..)` as
+    ///     exponents. The same probe carries `[0, 30, 62, 94, 478]` -- the
+    ///     depth-15 set -- and 478 is inside the blinding region, where nothing
+    ///     may be constrained at all.
+    #[test]
+    fn spend_periodic_classification_is_pinned_not_merely_emitted() {
+        use crate::air::spend::{
+            build_spend_periodic_columns, HASH_CYCLE_LEN, ROW_CHAIN, ROW_COMMITMENT_OUT,
+            SPEND_NUM_PERIODIC, TRACE_LENGTH as SP_LEN,
+        };
+
+        let trace_g = get_domain_generator_generic(SP_LEN);
+        let raw = build_spend_periodic_columns();
+        assert_eq!(raw.len(), SPEND_NUM_PERIODIC, "13 periodic columns");
+
+        let materialise = |col: &Vec<BaseElement>| -> Vec<BaseElement> {
+            if col.len() == SP_LEN {
+                col.clone()
+            } else {
+                let mut full = vec![BaseElement::ZERO; SP_LEN];
+                for i in 0..SP_LEN {
+                    full[i] = col[i % col.len()];
+                }
+                full
+            }
+        };
+
+        let mut stride = Vec::new();
+        let mut one_hot = Vec::new();
+        let mut dense = Vec::new();
+
+        for (i, raw_col) in raw.iter().enumerate() {
+            let col = materialise(raw_col);
+            let nonzero: Vec<usize> = col
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| **v != BaseElement::ZERO)
+                .map(|(r, _)| r)
+                .collect();
+            if nonzero.len() == 1 && col[nonzero[0]] == BaseElement::ONE {
+                one_hot.push((i, nonzero[0]));
+                continue;
+            }
+            let poly = inverse_ntt(&col, trace_g);
+            if poly.iter().enumerate().all(|(k, cf)| k % 16 == 0 || *cf == BaseElement::ZERO) {
+                stride.push(i);
+            } else {
+                dense.push(i);
+            }
+        }
+
+        assert_eq!(stride, vec![0, 1, 2, 3, 4, 5, 6], "stride-16 columns are 0..=6");
+        assert_eq!(dense, vec![11, 12], "the only dense columns are active and not_boundary_active");
+
+        // Rows, not just count. These become exponents of g on chain.
+        assert_eq!(
+            one_hot,
+            vec![
+                (7, ROW_CHAIN),                  // 63
+                (8, ROW_COMMITMENT_OUT),         // 94
+                (9, 0),                          // row0_flag
+                (10, HASH_CYCLE_LEN - 1),        // 31, hold_link_31
+            ],
+            "one-hot columns and their rows. The C7 CU probe carries the depth-15 set \
+             [0, 30, 62, 94, 478]; 478 is in the blinding region and 382 is the real root row.",
+        );
+
+        // The rodata each class costs, so a reclassification cannot move the
+        // number silently. 7 stride are byte-identical to the verifier's
+        // C3_*_PERIODIC16 (measured 2026-08-24), so C7's OWN new rodata is the
+        // two dense columns and nothing else.
+        assert_eq!(dense.len() * SP_LEN * 8, 8_192, "C7's own new periodic rodata");
     }
     /// [C7] A deterministic test witness.
     ///
