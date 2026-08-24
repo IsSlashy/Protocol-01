@@ -29,4 +29,13 @@ pub mod transfer;
 // verifier that accepts circuit 7 is DEPLOYED (Plan steps 6, 8 and 11, in that
 // order). A rebuilt blob is not rejected early: it fails at the END of a ~150
 // transaction upload.
+//
+// ⚠ An earlier version of this note said the full C7 source "with its
+// exports" lived on branch `feat/c7-depth12-blinding-2026-08-23`. Checked
+// 2026-08-24: that branch does not exist on `origin` (`git ls-remote --heads`)
+// and does not exist locally. Either it landed through the b7 reconciliation --
+// this file's depth-12 + blinding-region work IS on master -- or it never left
+// the other machine. The exports it referred to were written fresh in
+// `compact.rs` (`generate_spend_compact_proof`) and `lib.rs`
+// (`generate_spend_stark_proof`) on 2026-08-24. Do not go looking for it.
 pub mod spend;
