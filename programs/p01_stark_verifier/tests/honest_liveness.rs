@@ -46,6 +46,7 @@ use p01_stark_verifier::goldilocks::Felt;
 use p01_stark_verifier::verify::{
     verify_deep_ali_circuit_1, verify_deep_ali_circuit_2, verify_deep_ali_circuit_3,
     verify_deep_ali_circuit_4, verify_deep_ali_circuit_5, verify_deep_ali_circuit_6,
+    verify_deep_ali_circuit_7,
     verify_generic, verify_subscriber_ownership, VerifyError,
 };
 
@@ -65,7 +66,11 @@ fn verify_phase2(
         4 => verify_deep_ali_circuit_4(proof, public_inputs),
         5 => verify_deep_ali_circuit_5(proof, public_inputs),
         6 => verify_deep_ali_circuit_6(proof, public_inputs),
-        _ => Ok(()),
+        7 => verify_deep_ali_circuit_7(proof, public_inputs),
+        // [C7 2026-08-24] Was `_ => Ok(())`. A circuit added to the fixture
+        // list but forgotten here passed phase 2 VACUOUSLY -- a false green in
+        // the one suite whose job is to prove honest proofs clear BOTH phases.
+        _ => Err(VerifyError::UnsupportedCircuit),
     }
 }
 

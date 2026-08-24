@@ -70,6 +70,10 @@ pub const CIRCUIT_MERKLE_PATH: u8 = 3;
 pub const CIRCUIT_CONFIDENTIAL_BALANCE: u8 = 4;
 pub const CIRCUIT_TRANSFER: u8 = 5;
 pub const CIRCUIT_MERKLE_UPDATE: u8 = 6;
+/// [C7] Spend: C1's commitment derivation merged with C3's Merkle membership,
+/// so the note commitment is never a public input. Mirrors the prover's
+/// `CIRCUIT_SPEND` in `stark/src/compact.rs`.
+pub const CIRCUIT_SPEND: u8 = 7;
 
 #[program]
 pub mod p01_stark_verifier {
@@ -335,7 +339,7 @@ pub mod p01_stark_verifier {
         // CU (their DEEP-ALI used to live inside `verify_constraints_*`).
         let circuit_id = buffer.circuit_id;
         require!(
-            matches!(circuit_id, 1 | 2 | 3 | 4 | 5 | 6),
+            matches!(circuit_id, 1 | 2 | 3 | 4 | 5 | 6 | 7),
             StarkVerifierError::UnsupportedCircuit
         );
 
@@ -368,7 +372,21 @@ pub mod p01_stark_verifier {
             4 => verify::verify_deep_ali_circuit_4(&proof, &public_inputs),
             5 => verify::verify_deep_ali_circuit_5(&proof, &public_inputs),
             6 => verify::verify_deep_ali_circuit_6(&proof, &public_inputs),
-            _ => unreachable!("circuit_id gated by matches! above"),
+            // [C7] Phase 2 is MANDATORY for circuit 7, more so than for any
+            // other. Its per-query arm is vacuous and step 5 is gone, so
+            // phase 1 alone would mark the buffer verified with C7's six
+            // boundary assertions never checked against the trace.
+            7 => verify::verify_deep_ali_circuit_7(&proof, &public_inputs),
+            // [C7 2026-08-24] Was `unreachable!()`. It was true -- the
+            // `matches!` gate above admits only 1..=6 -- and it is the only
+            // panicking catch-all on the whole circuit-dispatch surface; every
+            // other one returns (compact_proof.rs `_ => None`, and three in
+            // verify.rs). A panic inside an Anchor instruction aborts rather
+            // than returning a diagnosable error, and this arm sits directly
+            // under the gate that widening for a new circuit touches. Converted
+            // BEFORE the gate is widened, so the window where a wider gate meets
+            // a missing arm never exists at any commit.
+            _ => Err(verify::VerifyError::UnsupportedCircuit),
         }
         .map_err(|_| StarkVerifierError::InvalidProof)?;
 
@@ -586,6 +604,21 @@ pub mod p01_stark_verifier {
         // proof exercises, so no behavioural test can pin it).
         //
         // [C0 GATE] 0 stays out of this list, see above.
+        // [C7 2026-08-24] C7 is DELIBERATELY ABSENT from this list.
+        //
+        // `verify_uniform` is the anonymity path: it tries configs in order and
+        // takes the first that parses, so membership here is what makes a proof
+        // indistinguishable from the others on this path. Adding C7 is a
+        // separate decision from making the verifier accept it, and it carries
+        // its own question -- C7 is the only circuit whose
+        // `fri_final_poly_degree_bound` is not 1, and verify.rs's own L13 note
+        // justifies leaving the terminal error path in the clear on the grounds
+        // that the bound "is constant across the anonymity set". Putting C7 on
+        // this path makes that sentence false.
+        //
+        // Until that is settled, C7 reaches the verifier through
+        // `verify_stark_proof_v2`, whose PDA seed already names the circuit, so
+        // nothing is hidden that was not already public.
         const PROBE_ORDER: [u8; 4] = [1, 6, 3, 5];
 
         let mut matched: Option<(u8, GenericCompactProof)> = None;

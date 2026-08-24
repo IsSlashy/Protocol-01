@@ -77,6 +77,30 @@ fn fixture_c6() -> Vec<u8> {
     p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi).proof_bytes
 }
 
+fn fixture_c7() -> Vec<u8> {
+    use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+    const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+
+    let pe: Vec<u64> = (0..CANONICAL_DEPTH as u64).map(|i| 1000 + i * 37).collect();
+    let pi: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
+    // Deterministic: a wire-size pin needs the same bytes every run. ⛔ NOT the
+    // shape a spend uses -- that draws MASK_ROWS * TRACE_WIDTH fresh CSPRNG
+    // elements for every proof, and reusing a mask across two proofs of one
+    // note relates two traces that must be independent.
+    let mut st = 0x9E37_79B9_7F4A_7C15u64;
+    let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
+    for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+        st ^= st >> 12;
+        st ^= st << 25;
+        st ^= st >> 27;
+        mask.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
+    }
+    p01_stark::compact::generate_spend_compact_proof(
+        42, 999, 7, 555, &pe, &pi, &[11, 22, 33, 44], &mask,
+    )
+    .proof_bytes
+}
+
 /// `(circuit_id, label, build)`.
 type Circuit = (u8, &'static str, fn() -> Vec<u8>);
 
@@ -84,13 +108,19 @@ type Circuit = (u8, &'static str, fn() -> Vec<u8>);
 /// separately everywhere below, because it is a different function with a
 /// different signature — lumping the two is how a legacy-only defect gets a
 /// green from a generic-only sweep.
-const GENERIC: [Circuit; 6] = [
+const GENERIC: [Circuit; 7] = [
     (1, "C1 pool_commitment", fixture_c1),
     (2, "C2 balance_proof", fixture_c2),
     (3, "C3 merkle_path", fixture_c3),
     (4, "C4 confidential_balance", fixture_c4),
     (5, "C5 transfer", fixture_c5),
     (6, "C6 merkle_update", fixture_c6),
+    // [C7 2026-08-24] C7 is the circuit this file exists for. It shares C6's
+    // trace width, trace length, blowup, LDE size, merkle depth and query
+    // count; `fri_final_poly_size` (32 against 16) is the ONLY field that
+    // separates the two configs, and the parity sweep below is what would
+    // notice if it stopped.
+    (7, "C7 spend", fixture_c7),
 ];
 
 // ---------------------------------------------------------------------------
@@ -627,11 +657,29 @@ fn every_circuit_resolves_through_the_uniform_probe_or_is_named_as_unsupported()
                      uniform pipeline cannot verify it at all"
                 ));
             }
-        } else if got == Some(*cid) {
-            wrong.push(format!(
-                "{label} is NOT in PROBE_ORDER yet the probe resolved it to itself; either \
-                 the probe set grew or this test is reading a stale order"
-            ));
+        } else if let Some(other) = got {
+            // [C7 2026-08-24] WAS `else if got == Some(*cid)`, which only
+            // complained when the probe resolved a non-member to ITSELF. A
+            // non-member resolving to a DIFFERENT circuit produced no entry in
+            // `wrong` and this test went green.
+            //
+            // That is precisely the shape C7 creates: it is in GENERIC and
+            // deliberately out of PROBE_ORDER, and it shares every observable
+            // config field with C6 except `fri_final_poly_size`. A C7 proof
+            // resolving to C6 would be checked against C6's constraints, and
+            // nothing in this file would have said so.
+            if other == *cid {
+                wrong.push(format!(
+                    "{label} is NOT in PROBE_ORDER yet the probe resolved it to itself; \
+                     either the probe set grew or this test is reading a stale order"
+                ));
+            } else {
+                wrong.push(format!(
+                    "{label} is NOT in PROBE_ORDER yet the probe resolved it to C{other} \
+                     -- a MIS-PROBE, not an unsupported circuit. Its proof would be \
+                     checked against C{other}'s constraints."
+                ));
+            }
         }
     }
     assert!(

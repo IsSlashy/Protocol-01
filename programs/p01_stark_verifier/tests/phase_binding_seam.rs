@@ -213,7 +213,7 @@ fn the_verifier_arity_equals_what_every_consumer_rebuilds() {
 }
 
 /// Every live circuit needs at least two public inputs, which is what makes the
-/// legacy `verify_stark_proof` entry point harmless for circuits 1..=6.
+/// legacy `verify_stark_proof` entry point harmless for circuits 1..=7.
 ///
 /// That instruction has no gate against generic circuits — the mirror of
 /// `verify_stark_proof_v2`'s `[C0 GATE]` does not exist — and it calls
@@ -387,7 +387,8 @@ fn the_phase_two_flag_is_the_last_byte_before_the_proof_data() {
 /// An instruction that validates three buffers has three phase-1 requires and
 /// must have three phase-2 requires. The exemption is a file that pins
 /// `circuit_id == 0`: circuit 0 runs DEEP-ALI inside phase 1 and
-/// `verify_deep_ali_phase2` gates `circuit_id` to 1..=6, so `deep_ali_verified`
+/// `verify_deep_ali_phase2` gates `circuit_id` to 1..=7 (7 added 2026-08-24), so
+/// `deep_ali_verified`
 /// stays false forever for C0 and requiring it would reject every honest proof.
 #[test]
 fn no_consumer_requires_phase_one_without_phase_two() {

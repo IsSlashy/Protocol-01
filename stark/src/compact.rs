@@ -6056,6 +6056,31 @@ mod b7_coset_shift {
     }
 }
 
+/// [C7 drift pins] Polynomial helpers the VERIFIER crate's tests need to
+/// re-derive a periodic column independently.
+///
+/// Compiled only under `test-probes`, which the verifier's dev-dependency on
+/// this crate enables. They exist so a cross-crate pin can DRIVE BOTH SIDES
+/// from one source instead of restating the verifier's own arithmetic back at
+/// it -- a test that reimplements what it is checking proves nothing.
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn inverse_ntt_probe(values: &[BaseElement], omega: BaseElement) -> Vec<BaseElement> {
+    inverse_ntt(values, omega)
+}
+
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn evaluate_poly_probe(coeffs: &[BaseElement], x: BaseElement) -> BaseElement {
+    evaluate_poly(coeffs, x)
+}
+
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn domain_generator_probe(domain_size: usize) -> BaseElement {
+    get_domain_generator_generic(domain_size)
+}
+
 fn get_domain_generator_generic(domain_size: usize) -> BaseElement {
     assert!(domain_size.is_power_of_two());
     let k = domain_size.trailing_zeros(); // log2(domain_size)

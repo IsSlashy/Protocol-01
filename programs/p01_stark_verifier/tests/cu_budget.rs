@@ -3215,7 +3215,7 @@ fn measure_circuit(rig: &mut Rig, program: &Address, case: ProofCase) -> Circuit
 
     // --- phase 2 ------------------------------------------------------------
     let phase2 = match &shape {
-        // `verify_deep_ali_phase2` requires circuit_id in 1..=6 (lib.rs:259-262);
+        // `verify_deep_ali_phase2` requires circuit_id in 1..=7 (7 added 2026-08-24);
         // C0's DEEP-ALI is inside phase 1 (lib.rs:253-257). Not a gap in the
         // measurement — a structural absence.
         Shape::LegacySinglePhase { .. } => {

@@ -92,6 +92,12 @@ pub use compact::{
     CIRCUIT_MERKLE_UPDATE,
 };
 pub use winterfell::math::fields::f64::BaseElement;
+/// [C7 drift pins] `winterfell` is not a dependency of the verifier crate, so
+/// the traits that give `BaseElement` its `ZERO`, `ONE`, `exp` and `as_int`
+/// are not in scope there -- `tests/common/mod.rs` works around it with a
+/// hand-rolled `fn ZERO()`. Re-exported so a cross-crate pin can do field
+/// arithmetic without the verifier taking a winterfell dependency of its own.
+pub use winterfell::math::{FieldElement, StarkField};
 
 #[cfg(feature = "std")]
 pub use verifier::verify_subscriber_ownership;

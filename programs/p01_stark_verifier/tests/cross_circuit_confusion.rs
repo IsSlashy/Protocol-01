@@ -49,12 +49,13 @@ fn genuine_proof_bytes(circuit_id: u8) -> Vec<u8> {
         4 => common::prove4(&common::w4(0)).proof_bytes,
         5 => common::prove5(&common::w5(0)).proof_bytes,
         6 => common::prove6(&common::w6(0)).proof_bytes,
+        7 => common::prove7(&common::w7(0)).proof_bytes,
         _ => unreachable!(),
     }
 }
 
 fn all_genuine() -> Vec<Vec<u8>> {
-    (0u8..=6).map(genuine_proof_bytes).collect()
+    (0u8..=7).map(genuine_proof_bytes).collect()
 }
 
 /// Pad exactly as `padProofToUniformSize` does: a zero-filled buffer of
@@ -67,11 +68,11 @@ fn pad_uniform(bytes: &[u8]) -> Vec<u8> {
 }
 
 fn parses_as(bytes: &[u8], circuit_id: u8) -> bool {
-    let config = get_circuit_config(circuit_id).expect("0..=6 has a config");
+    let config = get_circuit_config(circuit_id).expect("0..=7 has a config");
     GenericCompactProof::from_bytes(bytes, config).is_some()
 }
 
-fn render_matrix(label: &str, m: &[[bool; 7]; 7]) -> String {
+fn render_matrix(label: &str, m: &[[bool; 8]; 8]) -> String {
     let mut s = format!("\n{label}\n      as C0 as C1 as C2 as C3 as C4 as C5 as C6\n");
     for (n, row) in m.iter().enumerate() {
         s.push_str(&format!("C{n} → "));
@@ -91,9 +92,13 @@ fn render_matrix(label: &str, m: &[[bool; 7]; 7]) -> String {
 fn recorded_proof_sizes_hold() {
     // Sizes carried in the brief. Re-measured here so a format change that
     // shifts a size cannot silently invalidate the size-based reasoning below.
-    const RECORDED: [usize; 7] = [47_641, 68_881, 69_761, 78_157, 81_457, 78_877, 81_037];
+    // [C7 2026-08-24] Eighth entry: 77,965 B, MEASURED. C7 is SMALLER than C6
+    // (81,037) despite identical width, length, blowup and query count, because
+    // `fri_final_poly_size = 32` drops one committed FRI layer.
+    const RECORDED: [usize; 8] =
+        [47_641, 68_881, 69_761, 78_157, 81_457, 78_877, 81_037, 77_965];
     let proofs = all_genuine();
-    let mut measured = [0usize; 7];
+    let mut measured = [0usize; 8];
     for (i, p) in proofs.iter().enumerate() {
         measured[i] = p.len();
     }
@@ -198,7 +203,7 @@ fn the_transcript_does_not_bind_the_circuit_only_the_step4_dispatch_does() {
 #[test]
 fn no_two_configs_share_the_tuple_the_parser_can_observe() {
     let mut tuples = Vec::new();
-    for cid in 0u8..=6 {
+    for cid in 0u8..=7 {
         let c = get_circuit_config(cid).unwrap();
         let nfl = (c.lde_size / c.fri_final_poly_size).trailing_zeros() as usize - 1;
         println!(
@@ -297,7 +302,7 @@ fn probe_order_matches_lib() {
 ///     nothing may key uniqueness or replay off proof bytes.
 #[test]
 fn parser_length_check_is_a_minimum_not_an_equality() {
-    for cid in 0u8..=6 {
+    for cid in 0u8..=7 {
         let bytes = genuine_proof_bytes(cid);
         assert!(parses_as(&bytes, cid), "C{cid}: exact-length genuine proof must parse");
 
@@ -342,7 +347,7 @@ fn legacy_parser_length_check_is_a_minimum_too() {
 /// fix for the tail cannot be written as "accept anything".
 #[test]
 fn parser_rejects_truncation() {
-    for cid in 0u8..=6 {
+    for cid in 0u8..=7 {
         let bytes = genuine_proof_bytes(cid);
         for cut in [1usize, 2, 33, 5_000] {
             let short = &bytes[..bytes.len() - cut];
@@ -359,7 +364,7 @@ fn parser_rejects_truncation() {
 #[test]
 fn cross_circuit_parse_matrix_exact_length() {
     let proofs = all_genuine();
-    let mut m = [[false; 7]; 7];
+    let mut m = [[false; 8]; 8];
     for n in 0..7usize {
         for k in 0..7usize {
             m[n][k] = parses_as(&proofs[n], k as u8);
@@ -400,7 +405,7 @@ fn cross_circuit_parse_matrix_exact_length() {
 fn cross_circuit_parse_matrix_uniform_padded() {
     let proofs = all_genuine();
     let padded: Vec<Vec<u8>> = proofs.iter().map(|p| pad_uniform(p)).collect();
-    let mut m = [[false; 7]; 7];
+    let mut m = [[false; 8]; 8];
     for n in 0..7usize {
         for k in 0..7usize {
             m[n][k] = parses_as(&padded[n], k as u8);
@@ -577,7 +582,7 @@ fn sentinel_and_every_unknown_id_have_no_config() {
     for cid in 7u8..=u8::MAX {
         assert!(get_circuit_config(cid).is_none(), "circuit {cid} resolved to a config");
     }
-    for cid in 0u8..=6 {
+    for cid in 0u8..=7 {
         assert!(get_circuit_config(cid).is_some(), "circuit {cid} lost its config");
     }
 }
@@ -703,7 +708,7 @@ fn layout(circuit_id: u8, proof_len: usize) -> Layout {
 /// that by brute force; this test shows why.
 #[test]
 fn wire_layout_is_a_config_constant_equal_to_the_emitted_proof_size() {
-    for cid in 0u8..=6 {
+    for cid in 0u8..=7 {
         let bytes = genuine_proof_bytes(cid);
 
         // [ADVERSARY 2026-08-03] CONTROL, and it is load-bearing rather than
@@ -965,7 +970,7 @@ fn generic_pipeline_refuses_surplus_queries() {
 #[test]
 fn surplus_query_splices_do_not_parse_as_another_circuit() {
     let mut hits = Vec::new();
-    for n in 0u8..=6 {
+    for n in 0u8..=7 {
         let bytes = genuine_proof_bytes(n);
         for extra in [1usize, 5, 17, 100] {
             let spliced = with_surplus_queries(&bytes, n, extra);
@@ -974,7 +979,7 @@ fn surplus_query_splices_do_not_parse_as_another_circuit() {
             // `padProofToUniform` anyway, so the exact-length case is the whole
             // question for those.
             let padded = (spliced.len() <= UNIFORM_PROOF_SIZE).then(|| pad_uniform(&spliced));
-            for k in 0u8..=6 {
+            for k in 0u8..=7 {
                 if k == n {
                     continue;
                 }
@@ -1006,7 +1011,7 @@ fn surplus_query_splices_do_not_parse_as_another_circuit() {
 /// `verify_query_positions_*` says no.
 #[test]
 fn a_wire_query_count_that_disagrees_with_the_config_does_not_parse() {
-    for n in 0u8..=6 {
+    for n in 0u8..=7 {
         let bytes = genuine_proof_bytes(n);
         for extra in [1usize, 5, 17, 100] {
             let spliced = with_surplus_queries(&bytes, n, extra);

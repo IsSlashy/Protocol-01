@@ -151,6 +151,24 @@ pub struct W6 {
     pub path_indices: Vec<u8>,
 }
 
+/// [C7] Spend witness. Twelve path elements, not fifteen -- C7's depth is fixed
+/// at `CANONICAL_DEPTH = 12` by the trace layout and is not a public input.
+///
+/// ⛔ `mask` is a DETERMINISTIC test stream, never CSPRNG output. A test needs
+/// reproducibility; a proof that moves money needs fresh randomness for every
+/// proof, and reusing a mask across two proofs of one note gives an observer a
+/// relation between traces that must be independent.
+pub struct W7 {
+    pub nullifier_preimage: u64,
+    pub secret: u64,
+    pub blinding: u64,
+    pub token_mint: u64,
+    pub path_elements: Vec<u64>,
+    pub path_indices: Vec<u8>,
+    pub recipient_hash: [u64; 4],
+    pub mask: Vec<u64>,
+}
+
 pub fn w0(i: usize) -> W0 {
     W0 { subscriber_secret: 42 + i as u64 * 7919 }
 }
@@ -211,6 +229,39 @@ pub fn w5(i: usize) -> W5 {
     }
 }
 
+pub fn w7(i: usize) -> W7 {
+    use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+    const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+
+    let s = i as u64;
+    // xorshift64*, spread across the field. Small integers would satisfy every
+    // constraint just as well -- there are none in the blinding region -- but
+    // they would not look like the distribution the counting argument in
+    // `air/spend.rs` assumes.
+    let mut st = 0x9E37_79B9_7F4A_7C15u64 ^ (s.wrapping_mul(0x1000_0000_0000_0001));
+    if st == 0 {
+        st = 0x9E37_79B9_7F4A_7C15;
+    }
+    let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
+    for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+        st ^= st >> 12;
+        st ^= st << 25;
+        st ^= st >> 27;
+        mask.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
+    }
+
+    W7 {
+        nullifier_preimage: 42 + s,
+        secret: 999 + s * 7,
+        blinding: 7 + s,
+        token_mint: 555,
+        path_elements: (0..CANONICAL_DEPTH as u64).map(|j| 1000 + j * 37 + s * 11).collect(),
+        path_indices: (0..CANONICAL_DEPTH).map(|j| ((j + i) % 2) as u8).collect(),
+        recipient_hash: [11 + s, 22, 33, 44],
+        mask,
+    }
+}
+
 pub fn w6(i: usize) -> W6 {
     let s = i as u64;
     W6 {
@@ -265,6 +316,13 @@ pub fn prove5(w: &W5) -> p01_stark::compact::GenericCompactProofData {
 pub fn prove6(w: &W6) -> p01_stark::compact::GenericCompactProofData {
     p01_stark::compact::generate_merkle_update_compact_proof(
         w.old_leaf, w.new_leaf, &w.path_elements, &w.path_indices,
+    )
+}
+
+pub fn prove7(w: &W7) -> p01_stark::compact::GenericCompactProofData {
+    p01_stark::compact::generate_spend_compact_proof(
+        w.nullifier_preimage, w.secret, w.blinding, w.token_mint,
+        &w.path_elements, &w.path_indices, &w.recipient_hash, &w.mask,
     )
 }
 
