@@ -8,6 +8,10 @@ pub mod merkle_tree_v3;
 /// SUBTREE root, so the spending instruction must walk the remaining levels
 /// itself -- and that means hashing on chain.
 pub mod poseidon_gl;
+/// [C7] Turning circuit 7's depth-12 SUBTREE root into the pool root. Without
+/// this walk a C7 proof means 'this leaf is in SOME subtree', which anyone can
+/// satisfy with a tree they built themselves.
+pub mod spend_root;
 pub mod nullifier_set;
 pub mod subscription_vault;
 pub mod route;
