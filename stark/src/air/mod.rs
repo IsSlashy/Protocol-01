@@ -12,14 +12,21 @@ pub mod confidential_balance;
 pub mod transfer;
 
 
-// C7 — the depth-12 spend circuit. Present so its 34 unit tests run on the
-// unified tree, but gated on `cfg(test)` DELIBERATELY: it is unwired into the
-// compact pipeline, and referencing it from a non-test build changes the
-// shipped prover blob (measured 2026-08-24 — `pub use` of it in lib.rs shifted
-// the wasm at byte 227819, breaking reproduction of the deployed 51a947e3).
-// ⛔ Do not promote this to `pub mod spend;` or re-export it from lib.rs until
-// C7 is actually wired (C7_SPEND_CIRCUIT_PLAN Step 4) and the verifier is
-// redeployed to accept circuit 7. The full C7 source with its exports lives on
-// branch feat/c7-depth12-blinding-2026-08-23.
-#[cfg(test)]
+// C7 — the depth-12 spend circuit. PROMOTED out of `cfg(test)` on 2026-08-24,
+// because Step 4 of C7_SPEND_CIRCUIT_PLAN wires it into the compact pipeline
+// and `compact.rs` cannot reference a test-only module.
+//
+// 🚨 THE REASON IT WAS GATED IS STILL TRUE, it has just moved. Measured
+// 2026-08-24: referencing this module from a non-test build changes the shipped
+// prover blob (a `pub use` in lib.rs shifted the wasm at byte 227819), and the
+// blob the three surfaces ship — web, extension, mobile — must keep hashing to
+// 51a947e3 for the DEPLOYED verifier to accept its proofs. The gate is no
+// longer what protects that; what protects it now is that nobody rebuilds the
+// blob. `packages/stark-prover/src/shippedBlob.test.ts` pins the artifact on
+// disk, so the current blob cannot change by accident.
+//
+// ⛔ DO NOT run `wasm-pack build stark ...` and ship the result until the
+// verifier that accepts circuit 7 is DEPLOYED (Plan steps 6, 8 and 11, in that
+// order). A rebuilt blob is not rejected early: it fails at the END of a ~150
+// transaction upload.
 pub mod spend;

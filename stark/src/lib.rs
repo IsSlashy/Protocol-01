@@ -105,6 +105,7 @@ mod wasm_api {
         generate_balance_compact_proof, generate_merkle_path_compact_proof,
         generate_merkle_update_compact_proof,
         generate_confidential_balance_compact_proof, generate_transfer_compact_proof,
+        generate_spend_compact_proof,
     };
 
     /// Generate a compact STARK proof for subscriber_ownership.
@@ -325,6 +326,120 @@ mod wasm_api {
 
         format!(
             r#"{{"circuit_id":{},"nullifier_1":"{}","nullifier_2":"{}","output_commitment_1":"{}","output_commitment_2":"{}","public_amount":"{}","token_mint":"{}","proof_hex":"{}","proof_size":{}}}"#,
+            proof_data.circuit_id,
+            proof_data.public_inputs[0],
+            proof_data.public_inputs[1],
+            proof_data.public_inputs[2],
+            proof_data.public_inputs[3],
+            proof_data.public_inputs[4],
+            proof_data.public_inputs[5],
+            proof_hex,
+            proof_data.proof_bytes.len()
+        )
+    }
+
+    /// [C7] Draw the C7 blinding mask from the platform CSPRNG.
+    ///
+    /// Rejection-samples into the Goldilocks field instead of reducing a u64.
+    /// Reducing biases the low ~2^32 of the field by a factor of two, and this
+    /// mask is the only thing standing between an observer and the rows the
+    /// counting argument in `air/spend.rs` assumes are uniform. The bias is
+    /// small; the cost of not having it is one extra draw per ~2^32 samples.
+    ///
+    /// Returns `Err` rather than falling back to anything. A weak mask is worse
+    /// than no proof: no proof fails loudly, a weak mask succeeds and leaks.
+    fn draw_spend_mask(n: usize) -> Result<Vec<u64>, getrandom::Error> {
+        const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+        let mut out = Vec::with_capacity(n);
+        let mut buf = [0u8; 8];
+        while out.len() < n {
+            getrandom::getrandom(&mut buf)?;
+            let v = u64::from_le_bytes(buf);
+            if v < GOLDILOCKS {
+                out.push(v);
+            }
+        }
+        Ok(out)
+    }
+
+    /// [C7] Generate a compact STARK proof for an unlinkable denominated spend.
+    ///
+    /// Returns JSON: { circuit_id: 7, nullifier, root, recipient_hash[4],
+    ///                 proof_hex, proof_size }
+    ///
+    /// 🚨 THE COMMITMENT IS NOT IN THAT LIST, AND MUST NEVER BE ADDED. C7 exists
+    /// so the withdrawal stops publishing it; a caller that wants it back has
+    /// misunderstood the circuit, and every other field here is safe to log.
+    ///
+    /// ⛔ DO NOT SHIP A BLOB BUILT FROM THIS UNTIL THE VERIFIER THAT ACCEPTS
+    /// CIRCUIT 7 IS DEPLOYED. Adding this export changes the wasm the three
+    /// surfaces carry, and a prover the deployed verifier does not recognise
+    /// fails at the END of a ~150 transaction upload, never early. See
+    /// `stark/src/air/mod.rs`.
+    #[wasm_bindgen]
+    pub fn generate_spend_stark_proof(
+        nullifier_preimage: u64,
+        secret: u64,
+        blinding: u64,
+        token_mint: u64,
+        path_elements_csv: &str,
+        path_indices_csv: &str,
+        recipient_hash_csv: &str,
+    ) -> String {
+        use crate::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+
+        let path_elements: Vec<u64> = path_elements_csv
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        let path_indices: Vec<u8> = path_indices_csv
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        let rh: Vec<u64> = recipient_hash_csv
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+
+        // `filter_map(.. .ok())` SILENTLY DROPS anything unparseable, which is
+        // how a 12-element path arrives as 11 and a truncated Merkle path
+        // becomes a proof of the wrong tree. Check the arity here rather than
+        // letting the assertion inside the generator report it as a panic with
+        // no JSON around it.
+        if path_elements.len() != CANONICAL_DEPTH || path_indices.len() != CANONICAL_DEPTH {
+            return format!(
+                r#"{{"error":"C7 needs exactly {} path elements and {} indices; parsed {} and {}"}}"#,
+                CANONICAL_DEPTH, CANONICAL_DEPTH, path_elements.len(), path_indices.len(),
+            );
+        }
+        if rh.len() != 4 {
+            return format!(
+                r#"{{"error":"recipient_hash must be 4 u64 limbs, parsed {}"}}"#,
+                rh.len(),
+            );
+        }
+
+        let mask = match draw_spend_mask(MASK_ROWS * TRACE_WIDTH) {
+            Ok(m) => m,
+            Err(e) => {
+                return format!(
+                    r#"{{"error":"no CSPRNG available, refusing to build a C7 proof: {}"}}"#,
+                    e,
+                );
+            }
+        };
+
+        let recipient_hash = [rh[0], rh[1], rh[2], rh[3]];
+        let proof_data = generate_spend_compact_proof(
+            nullifier_preimage, secret, blinding, token_mint,
+            &path_elements, &path_indices, &recipient_hash, &mask,
+        );
+        let proof_hex = proof_data.proof_bytes.iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
+
+        format!(
+            r#"{{"circuit_id":{},"nullifier":"{}","root":"{}","recipient_hash":["{}","{}","{}","{}"],"proof_hex":"{}","proof_size":{}}}"#,
             proof_data.circuit_id,
             proof_data.public_inputs[0],
             proof_data.public_inputs[1],
