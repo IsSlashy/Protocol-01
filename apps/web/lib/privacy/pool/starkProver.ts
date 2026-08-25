@@ -313,6 +313,38 @@ class StarkProverService {
   /** Circuit 3 (merkle_path) — proves `leaf` is at the position given by
    * pathElements/pathIndices, yielding the tree root. Used by unshield/transfer.
    * publicInputs layout: [leaf, root, depth]. depth is bound on-chain (=15). */
+  /**
+   * [C7] Generate the spend proof.
+   *
+   * ⛔ `recipientHash` means the proof CANNOT be built without knowing who is
+   * being paid. That is deliberate: sha256(recipient) is in the transcript, so
+   * a proof made for A cannot be replayed to pay B. It is also why the
+   * recipient has to be known at PREPARE time and not only at execution.
+   */
+  async generateSpendProof(
+    nullifierPreimage: string,
+    secret: string,
+    blinding: string,
+    tokenMint: string,
+    pathElements: string[],
+    pathIndices: number[],
+    recipientHash: string[],
+  ): Promise<GenericStarkProofResult> {
+    const msg = await this.sendRequest((id, worker) => {
+      worker.postMessage({
+        type: 'generateSpendProof', id,
+        nullifierPreimage, secret, blinding, tokenMint,
+        pathElements, pathIndices, recipientHash,
+      });
+    });
+    return {
+      circuitId: msg.circuitId ?? 7,
+      publicInputs: msg.publicInputs ?? [],
+      proofHex: msg.proofHex!,
+      proofSize: msg.proofSize!,
+      durationMs: msg.durationMs!,
+    };
+  }
   async generateMerklePathProof(
     leaf: string,
     pathElements: string[], pathIndices: number[],

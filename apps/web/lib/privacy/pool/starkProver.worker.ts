@@ -30,6 +30,19 @@ type WorkerInMessage =
   | { type: 'generateBalanceProof'; id: string; args: [string, string, string, string] }
   | { type: 'generateMerklePathProof'; id: string; leaf: string; pathElements: string[]; pathIndices: number[] }
   | {
+      type: 'generateSpendProof';
+      id: string;
+      nullifierPreimage: string;
+      secret: string;
+      blinding: string;
+      tokenMint: string;
+      /** EXACTLY 12 — C7's subtree depth, not the pool tree's 15. */
+      pathElements: string[];
+      pathIndices: number[];
+      /** EXACTLY 4 — sha256(recipient) as little-endian u64 limbs. */
+      recipientHash: string[];
+    }
+  | {
       type: 'generateConfidentialBalanceProof';
       id: string;
       spendingKey: string;
@@ -253,6 +266,82 @@ function generateMerklePathProof(id: string, leaf: string, pathElements: string[
   }
 }
 
+/**
+ * [C7] The spend proof: C1's pool commitment and C3's Merkle path in ONE trace.
+ *
+ * 🚨 THE COMMITMENT IS NOT AMONG THE PUBLIC INPUTS AND THAT IS THE POINT. v3
+ * spent on a C1 + C3 pair tied together by `stark_commitment`, published in the
+ * clear, so a withdrawal named the leaf it spent and anyone reading the tree
+ * walked back to the deposit that funded it.
+ *
+ * ⛔ THE SIX PUBLIC INPUTS ARE ORDER-SENSITIVE: [nullifier, root, rh0..rh3].
+ * They are serialised verbatim and `unshield_denominated_stark_v4` rebuilds the
+ * same 48 bytes to compare against the buffer's `public_inputs_hash`. Sorting
+ * or reordering them breaks that hash, and the failure lands after the whole
+ * ~78-chunk upload rather than early.
+ *
+ * ⛔ The mask is drawn inside the wasm from a real CSPRNG and the Rust refuses
+ * to build without one. There is deliberately no way to pass one in.
+ */
+function generateSpendProof(
+  id: string,
+  data: {
+    nullifierPreimage: string; secret: string; blinding: string; tokenMint: string;
+    pathElements: string[]; pathIndices: number[]; recipientHash: string[];
+  },
+) {
+  const exp = assertReady(id); if (!exp) return;
+  const spend = exp.generate_spend_stark_proof;
+  if (!spend) {
+    post({
+      type: 'error', id,
+      error: 'Circuit 7 (SPEND) is not exported by the bundled WASM. The pre-C7 blob '
+        + '(229,640 B / 51a947e3) has eight proof exports; the C7 build has nine.',
+    });
+    return;
+  }
+  // Checked here rather than left to the Rust: it parses with
+  // `filter_map(.. .ok())`, which SILENTLY DROPS unparseable entries, so a
+  // truncated path and a malformed one are indistinguishable by the time it
+  // sees them -- and an 11-deep proof is a valid proof of a tree nobody uses.
+  if (data.pathElements.length !== 12 || data.pathIndices.length !== 12) {
+    post({
+      type: 'error', id,
+      error: `Circuit 7 needs exactly 12 path elements and 12 indices (its subtree depth `
+        + `is 12, NOT the pool's 15). Got ${data.pathElements.length} and ${data.pathIndices.length}.`,
+    });
+    return;
+  }
+  if (data.recipientHash.length !== 4) {
+    post({ type: 'error', id, error: `Circuit 7 needs 4 recipientHash limbs, got ${data.recipientHash.length}.` });
+    return;
+  }
+  try {
+    const started = performance.now();
+    const jsonStr = spend(
+      BigInt(data.nullifierPreimage), BigInt(data.secret),
+      BigInt(data.blinding), BigInt(data.tokenMint),
+      data.pathElements.join(','), data.pathIndices.join(','), data.recipientHash.join(','),
+    );
+    const elapsed = Math.round(performance.now() - started);
+    const result = JSON.parse(jsonStr);
+    if (result.error) {
+      post({ type: 'error', id, error: `Circuit 7 prover refused: ${result.error}` });
+      return;
+    }
+    post({
+      type: 'proof', id,
+      circuitId: result.circuit_id,
+      publicInputs: [result.nullifier, result.root, ...result.recipient_hash],
+      proofHex: result.proof_hex,
+      proofSize: result.proof_size,
+      durationMs: elapsed,
+    });
+  } catch (err) {
+    post({ type: 'error', id, error: err instanceof Error ? err.message : 'Spend proof failed' });
+  }
+}
+
 function generateConfidentialBalanceProof(
   id: string,
   data: {
@@ -394,6 +483,9 @@ self.onmessage = (event: MessageEvent<WorkerInMessage>) => {
       break;
     case 'generateMerklePathProof':
       generateMerklePathProof(data.id, data.leaf, data.pathElements, data.pathIndices);
+      break;
+    case 'generateSpendProof':
+      generateSpendProof(data.id, data);
       break;
     case 'generateConfidentialBalanceProof':
       generateConfidentialBalanceProof(data.id, data);
