@@ -1520,7 +1520,20 @@ async function handlePoolShieldExecute(
  * two copies that drift. Both spend a note the same way, and the derivation
  * search below is the part that a copy would get subtly wrong.
  */
-async function locateOwnedNote(
+/**
+ * ⛔ EXPORTED FOR ONE CALLER: the live devnet v4 harness
+ * (`lib/privacy/pool/liveDevnetUnshieldV4.test.ts`). Not part of the worker
+ * protocol and not for app code, which must go through `handlePoolRequest`.
+ *
+ * The v4 spend needs a `ShieldReceipt` before it can prove anything, because
+ * circuit 7 binds sha256(recipient) into the transcript and the recipient is
+ * therefore a PREPARE input. The worker protocol still takes the recipient at
+ * EXECUTE, which is the v3 shape; until that moves, a harness that wants to
+ * exercise the real v4 path has to resolve the note itself rather than invent
+ * one. An invented receipt would prove nothing: its commitment would not be a
+ * leaf on chain.
+ */
+export async function locateOwnedNote(
   req: { meta: string; token: PoolToken; denomination: number; leafIndex: number; encryptedNotes?: string[] },
   onProgress?: (step: string) => void,
 ): Promise<{

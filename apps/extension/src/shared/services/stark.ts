@@ -39,6 +39,11 @@ const CIRCUIT_MERKLE_PATH = 3;
 const CIRCUIT_CONFIDENTIAL_BALANCE = 4;
 const CIRCUIT_TRANSFER = 5;
 const CIRCUIT_MERKLE_UPDATE = 6;
+/**
+ * [C7] The spend circuit: C1's pool commitment and C3's Merkle path proven in
+ * ONE trace, so the note commitment is never a public input.
+ */
+const CIRCUIT_SPEND = 7;
 
 const MAX_CHUNK_SIZE = 1000;
 const PROOF_DATA_OFFSET = 83;
@@ -590,4 +595,5 @@ export {
   CIRCUIT_CONFIDENTIAL_BALANCE,
   CIRCUIT_TRANSFER,
   CIRCUIT_MERKLE_UPDATE,
+  CIRCUIT_SPEND,
 };
