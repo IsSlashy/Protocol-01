@@ -17,6 +17,13 @@ pub mod init_denominated_pool_v3;
 pub mod shield_denominated;
 pub mod shield_denominated_v3;
 pub mod unshield_denominated_stark_v3;
+/// [C7] The single-proof spend. v3 needs C1 + C3 and PUBLISHES the note
+/// commitment to tie them together, which names the deposit that funded the
+/// spend. Circuit 7 proves both halves in one trace and publishes no
+/// commitment at all. v3 is deliberately left registered: it is the only path
+/// that works against the verifier currently deployed on devnet, and it stays
+/// until the C7-aware verifier is live.
+pub mod unshield_denominated_stark_v4;
 // P3.7 — REMOVED Groth16 denominated-pool instructions (replaced by STARK variants):
 //   unshield_denominated, emergency_unshield_denominated, transfer_denominated,
 //   split_note, subscribe_private, pause_private, resume_private, cancel_private,
@@ -95,6 +102,7 @@ pub use init_denominated_pool_v3::*;
 pub use shield_denominated::*;
 pub use shield_denominated_v3::*;
 pub use unshield_denominated_stark_v3::*;
+pub use unshield_denominated_stark_v4::*;
 pub use resize_denominated_pool::*;
 // === REMOVED: subscribe_normal (see the module block above). ===
 // === REMOVED: cancel_normal (see the module block above). ===

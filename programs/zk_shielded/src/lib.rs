@@ -373,6 +373,43 @@ pub mod zk_shielded {
         )
     }
 
+    /// [C7] Unshield from a V3 pool on ONE circuit-7 proof.
+    ///
+    /// v3 above stays registered and is still the only path that works against
+    /// the verifier deployed on devnet today. This one requires the C7-aware
+    /// verifier; until that binary is live, a proof built for it is rejected at
+    /// the END of a ~150-transaction upload.
+    ///
+    /// What it buys over v3:
+    ///   * The note commitment is never published. v3 has to publish it to tie
+    ///     C1 and C3 together, which points at the deposit that funded the
+    ///     spend — the linkage the circuit exists to remove.
+    ///   * The recipient is bound by the proof transcript
+    ///     (`sha256(recipient_pubkey)` is four of the six public inputs), not
+    ///     just by the payer signature.
+    ///   * One `ProofBuffer` rent instead of two, on a 77,965-byte wire
+    ///     instead of 258,958.
+    ///
+    /// ⛔ `subtree_root` is a DEPTH-12 root, not the pool root. The handler
+    /// walks the remaining `tree_depth - 12` levels against `siblings` /
+    /// `directions` and requires the result to equal `merkle_root`, which must
+    /// itself be a root the pool published. Skipping that walk makes this a
+    /// fund-loss instruction: anyone can build their own twelve levels over an
+    /// invented leaf.
+    pub fn unshield_denominated_stark_v4(
+        ctx: Context<UnshieldDenominatedStarkV4>,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        subtree_root: u64,
+        siblings: Vec<u64>,
+        directions: Vec<u8>,
+        recipient: [u8; 32],
+    ) -> Result<()> {
+        instructions::unshield_denominated_stark_v4::handler(
+            ctx, nullifier, merkle_root, subtree_root, siblings, directions, recipient,
+        )
+    }
+
     // -----------------------------------------------------------------------
     // Subscription Vault instructions
     //
