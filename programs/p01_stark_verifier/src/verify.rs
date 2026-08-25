@@ -1592,21 +1592,37 @@ fn check_final_poly_degree_bound(
         }
         let arr: [u8; 8] = chunk.try_into().unwrap();
         if Felt::from_le_bytes(arr) != Felt::ZERO {
-            // [L13 2026-08-03] CONSIDERED AND DELIBERATELY LEFT. `degree_bound`
-            // is `config`-derived, so this is structurally the same class as the
-            // `step2a` line — but it is NOT a live leak: `emit_deep_degree_table`
-            // measures the bound at 1 on all seven circuits, so the number is
-            // constant across the anonymity set, and this is an error path an
-            // honest proof never reaches. Against that, ` non-zero, bound is `
-            // is one of the two `ELF_B1_MARKERS` in
-            // `packages/stark-prover/scripts/deployed-verifier-check.mjs`, the
-            // strings the deployed-verifier interlock classifies a chain
-            // deployment by, and `elfMarkerSourceProblem` hard-fails if a marker
-            // stops existing in this source. Deleting it would have bought zero
-            // privacy and cost half the B1 discriminator on a live gate. If the
-            // bound ever stops being 1 on every circuit, this becomes a real
-            // leak and the fix is a B2-only literal in `ELF_MARKERS_B2` first,
-            // then this line.
+            // [L13 2026-08-03, CORRECTED 2026-08-25] CONSIDERED AND DELIBERATELY
+            // LEFT — but for one of the three reasons the original note gave,
+            // not all three. `degree_bound` is `config`-derived, so this is
+            // structurally the same class as the `step2a` line.
+            //
+            // 🚨 THE ORIGINAL NOTE SAID "the bound is 1 on all seven circuits,
+            // so the number is constant across the anonymity set". THAT IS NO
+            // LONGER TRUE, AND IT WAS ALREADY UNTRUE WHEN IT WAS LAST READ:
+            // `CONFIG_SPEND` sets the bound to 2, and the C7 paragraph THIRTY
+            // LINES ABOVE THIS ONE says C7 "is the first circuit in this crate's
+            // history to set the bound above 1". Two statements in one function
+            // contradicting each other, and the stale one was being quoted as
+            // the reason C7 could not join `PROBE_ORDER` (lib.rs).
+            //
+            // 🚨 The note also cited `ELF_B1_MARKERS` in
+            // `packages/stark-prover/scripts/deployed-verifier-check.mjs` as the
+            // cost of deleting this line. MEASURED 2026-08-25: that file does
+            // not exist on this branch, on master, or anywhere in this
+            // repository — it lives only on `b7-drop-aligned-checks` and
+            // `fix-adversary`. So that half of the justification is describing a
+            // gate this tree does not have, exactly like the CI-shape guards in
+            // `cu_budget.rs` that were reanchored the same day.
+            //
+            // WHAT ACTUALLY JUSTIFIES LEAVING IT, and it is sufficient on its
+            // own: this is an ERROR path. It runs only on the
+            // `FriFinalPolyDegreeTooHigh` return, and every write and every
+            // verify on a `ProofBuffer` is `has_one = authority` plus a
+            // `Signer`, so no third party can make another user's proof fail
+            // here. An honest proof never emits it, and the only observer who
+            // can trigger it is the one who already knows which circuit they
+            // were proving.
             anchor_lang::prelude::msg!(
                 "[verify] final poly coeff {} non-zero, bound is {}",
                 i,

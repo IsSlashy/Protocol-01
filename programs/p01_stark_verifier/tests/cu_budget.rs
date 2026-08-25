@@ -3968,7 +3968,7 @@ fn cu_budget_real_circuits() {
 // TEST 2 — `verify_uniform`, the mobile / uniform-padding phase-1 path
 // ---------------------------------------------------------------------------
 
-/// `verify_uniform` (`lib.rs:384-449`) probes `PROBE_ORDER = [1, 6, 3, 5]` and
+/// `verify_uniform` (`lib.rs:384-449`) probes `PROBE_ORDER = [1, 6, 3, 5, 7]` and
 /// runs `verify_generic` against the first config that parses. Its cost is
 /// therefore phase 1 **plus** the failed parses ahead of the match — which is
 /// exactly the quantity `C7_SPEND_CIRCUIT_PLAN.md:168` needs when deciding
@@ -4055,7 +4055,7 @@ fn cu_budget_verify_uniform_path() {
     let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
     let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
 
-    // Only the four circuits in PROBE_ORDER can go through this path.
+    // Only the five circuits in PROBE_ORDER can go through this path.
     let cases: Vec<(&str, u8, p01_stark::compact::GenericCompactProofData)> = vec![
         ("C1 pool_commitment", 1, p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11)),
         (
@@ -4078,7 +4078,7 @@ fn cu_budget_verify_uniform_path() {
     ];
 
     println!("\n{}", rule(104));
-    println!("verify_uniform PATH (PROBE_ORDER = [1, 6, 3, 5], lib.rs:413)");
+    println!("verify_uniform PATH (PROBE_ORDER = [1, 6, 3, 5, 7], lib.rs:413)");
     println!("{}", rule(104));
     println!(
         "binary   : {}  ({} bytes, sha256 {})",
@@ -4523,7 +4523,7 @@ fn uniform_leak_probe(
     UniformLeak { cu, logs, phase2_logs, circuit_id_in_account, chunks }
 }
 
-/// The four circuits `PROBE_ORDER` can resolve. C0/C2/C4 cannot reach this
+/// The five circuits `PROBE_ORDER` can resolve. C0/C2/C4 cannot reach this
 /// instruction at all (measured in `tests/wire_parity.rs`), so they are not in
 /// the anonymity set and including them would flatter the result.
 fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCompactProofData)> {
@@ -4557,6 +4557,36 @@ fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCom
             "C6 merkle_update",
             6,
             p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi),
+        ),
+        // [C7 2026-08-25] C7 joined PROBE_ORDER, so it joined the anonymity set
+        // and therefore this table. Leaving it out would flatter the result in
+        // the direction that matters: the L13 residual is about how well the
+        // members of the set hide among EACH OTHER, and a member measured
+        // nowhere cannot be seen to fail to.
+        //
+        // ⛔ The mask is a deterministic xorshift, as everywhere in this harness.
+        // Correct here, wrong in production — see `all_cases`.
+        (
+            "C7 spend",
+            7,
+            {
+                use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+                const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+                let spe: Vec<u64> =
+                    (0..CANONICAL_DEPTH as u64).map(|i| 1000 + i * 37).collect();
+                let spi: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
+                let mut st = 0x9E37_79B9_7F4A_7C15u64;
+                let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
+                for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+                    st ^= st >> 12;
+                    st ^= st << 25;
+                    st ^= st >> 27;
+                    mask.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
+                }
+                p01_stark::compact::generate_spend_compact_proof(
+                    42, 999, 7, 555, &spe, &spi, &[11, 22, 33, 44], &mask,
+                )
+            },
         ),
     ]
 }

@@ -55,7 +55,7 @@ const UNIFORM_PROOF_SIZE: usize = 145_000;
 
 /// `verify_uniform`'s probe order, copied from `lib.rs`. If that constant moves,
 /// this file must move with it — `probe_order_matches_lib` pins it.
-const PROBE_ORDER: [u8; 4] = [1, 6, 3, 5];
+const PROBE_ORDER: [u8; 5] = [1, 6, 3, 5, 7];
 
 // ============================================================================
 // One genuine proof per circuit
@@ -281,7 +281,7 @@ fn no_two_configs_share_the_tuple_the_parser_can_observe() {
 #[test]
 fn probe_order_matches_lib() {
     let src = include_str!("../src/lib.rs");
-    let needle = "const PROBE_ORDER: [u8; 4] = [";
+    let needle = "const PROBE_ORDER: [u8; 5] = [";
     let start = src.find(needle).expect("PROBE_ORDER not found in lib.rs") + needle.len();
     let end = start + src[start..].find(']').expect("unterminated PROBE_ORDER");
     let parsed: Vec<u8> = src[start..end]
