@@ -192,6 +192,16 @@ export class Connection {
 }
 
 export const SystemProgram = {
+  /**
+   * ⛔ THIS WAS MISSING UNTIL 2026-08-25 AND ITS ABSENCE WAS SILENT.
+   *
+   * Production code puts `SystemProgram.programId` straight into an
+   * instruction's key list. Under this mock that was `undefined`, so any test
+   * building such an instruction got a key list with a hole in it and only
+   * noticed if it happened to read that slot. Caught by the v4 spend test,
+   * which reads the last key and got `Cannot read properties of undefined`.
+   */
+  programId: new PublicKey('11111111111111111111111111111111'),
   transfer: (params: { fromPubkey: PublicKey; toPubkey: PublicKey; lamports: number }) => ({
     programId: new PublicKey('11111111111111111111111111111111'),
     keys: [

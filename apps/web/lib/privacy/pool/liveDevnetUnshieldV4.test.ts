@@ -79,13 +79,33 @@ class InProcessStarkWorker {
   onmessage: ((e: { data: unknown }) => void) | null = null;
   onerror: ((e: unknown) => void) | null = null;
   private inbox: unknown[] = [];
-  private shim: { onmessage: ((e: { data: unknown }) => void) | null; postMessage: (m: unknown) => void };
+  private shim: {
+    onmessage: ((e: { data: unknown }) => void) | null;
+    postMessage: (m: unknown) => void;
+    crypto: Crypto;
+  };
 
   constructor() {
     const outer = this;
     this.shim = {
       onmessage: null,
       postMessage(m: unknown) { outer.onmessage?.({ data: m }); },
+      // 🚨 `crypto` IS NOT OPTIONAL HERE, and leaving it out cost a live run.
+      //
+      // In a real Web Worker `self` IS the global, so `self.crypto` is the Web
+      // Crypto API. This shim REPLACES `self` with a bare two-property object,
+      // and the wasm-bindgen glue resolves the CSPRNG through `self.crypto`.
+      // Circuit 7 draws a 1,280-element mask from it and REFUSES to build
+      // without one, so the run died with:
+      //
+      //   Circuit 7 prover refused: no CSPRNG available, refusing to build a
+      //   C7 proof: Web Crypto API is unavailable
+      //
+      // The prover was right and the harness was wrong. Nothing caught it
+      // earlier because the existing shield harness only proves C6, which needs
+      // no randomness at all — the impoverished `self` was invisible until a
+      // masked circuit ran through it.
+      crypto: globalThis.crypto,
     };
     (globalThis as unknown as { self: unknown }).self = this.shim;
     void import('./starkProver.worker').then(() => {
@@ -146,7 +166,12 @@ describe.skipIf(!LIVE)('a v4 withdrawal that actually lands on devnet', () => {
     log(`wallet ${wallet.publicKey.toBase58()} — ${balance / 1e9} SOL`);
     expect(balance).toBeGreaterThan(1.8e9);
 
-    // ---------------------------------------------------------------- shield
+    // ------------------------------------------------------- find or shield
+    // ⛔ SHIELDING IS THE FALLBACK, NOT THE FIRST MOVE. The first version of
+    // this harness always deposited, and the first live run then died in the
+    // withdrawal pre-flight -- so the SOL was spent and the run had to start
+    // over from a deposit it did not need. Reuse whatever this identity already
+    // owns, and deposit only when it owns nothing.
     const message = buildDerivationMessage({
       walletPubkey: wallet.publicKey.toBase58(),
       origin: 'http://localhost:3000',
@@ -156,42 +181,76 @@ describe.skipIf(!LIVE)('a v4 withdrawal that actually lands on devnet', () => {
     const meta = 'live-devnet-unshield-v4';
     await handlePoolRequest({ kind: 'poolDeriveIdentity', meta, signature: Array.from(signature) });
 
-    const prep = await handlePoolRequest(
-      { kind: 'poolShieldPrepare', meta, token: 'SOL', denomination: DENOMINATION },
-      (s: string) => log('  shield-prepare:', s),
-    );
-    await sendAndConfirmTransaction(
-      connection,
-      new Transaction().add(SystemProgram.transfer({
-        fromPubkey: wallet.publicKey,
-        toPubkey: new PublicKey(prep.ephemeralPubkey),
-        lamports: prep.requiredLamports,
-      })),
-      [wallet],
-      { commitment: 'confirmed' },
-    );
-    const shielded = await handlePoolRequest(
-      {
-        kind: 'poolShieldExecute',
-        jobId: prep.jobId,
-        ownerPubkey: wallet.publicKey.toBase58(),
-        sweepTo: wallet.publicKey.toBase58(),
-      },
-      (s: string) => log('  shield-execute:', s),
-    );
-    log('  SHIELD LANDED:', shielded.txSig, 'leaf', shielded.leafIndex);
-    expect(shielded.leafIndex).toBeGreaterThanOrEqual(0);
+    let leafIndex: number | null = null;
+    let encryptedNote: string | undefined;
+
+    const forced = process.env.P01_LIVE_LEAF;
+    if (forced) {
+      leafIndex = Number(forced);
+      log(`  using leaf ${leafIndex} (P01_LIVE_LEAF)`);
+    } else {
+      const scan = await handlePoolRequest(
+        { kind: 'poolScan', meta, token: 'SOL', denomination: DENOMINATION },
+        (st: string) => log('  scan:', st),
+      );
+      // `spentChecked` matters: a note read from local storage cannot see a
+      // nullifier PDA, and spending an already-spent note wastes the whole
+      // upload on a transaction the chain refuses.
+      const usable = (scan.notes ?? []).find(
+        (n: { spent: boolean; spentChecked?: boolean; leafIndex: number }) =>
+          !n.spent && n.spentChecked !== false,
+      );
+      if (usable) {
+        leafIndex = usable.leafIndex;
+        log(`  reusing unspent note at leaf ${leafIndex}`);
+      }
+    }
+
+    if (leafIndex === null) {
+      log('  no unspent note for this identity — shielding one');
+      const prep = await handlePoolRequest(
+        { kind: 'poolShieldPrepare', meta, token: 'SOL', denomination: DENOMINATION },
+        (st: string) => log('  shield-prepare:', st),
+      );
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(SystemProgram.transfer({
+          fromPubkey: wallet.publicKey,
+          toPubkey: new PublicKey(prep.ephemeralPubkey),
+          lamports: prep.requiredLamports,
+        })),
+        [wallet],
+        { commitment: 'confirmed' },
+      );
+      const shielded = await handlePoolRequest(
+        {
+          kind: 'poolShieldExecute',
+          jobId: prep.jobId,
+          ownerPubkey: wallet.publicKey.toBase58(),
+          sweepTo: wallet.publicKey.toBase58(),
+        },
+        (st: string) => log('  shield-execute:', st),
+      );
+      log('  SHIELD LANDED:', shielded.txSig, '| leaf', shielded.leafIndex);
+      leafIndex = shielded.leafIndex;
+      encryptedNote = shielded.encryptedNote;
+      // The pool's root ring has to have caught up before the withdrawal
+      // rebuilds a path, and an RPC that has not indexed the deposit yet
+      // produces a root the pool has never published.
+      await new Promise((r) => setTimeout(r, 15_000));
+    }
+    expect(leafIndex).toBeGreaterThanOrEqual(0);
 
     // ------------------------------------------------------- resolve the note
     // The receipt has to come from the same derivation the app uses. An
     // invented one would prove nothing: its commitment is not a leaf on chain.
     const located = await locateOwnedNote({
       meta, token: 'SOL', denomination: DENOMINATION,
-      leafIndex: shielded.leafIndex,
-      encryptedNotes: [shielded.encryptedNote],
+      leafIndex: leafIndex!,
+      encryptedNotes: encryptedNote ? [encryptedNote] : undefined,
     });
     const receipt = located.note.receipt;
-    expect(receipt.commitment.toString()).toBe(String(shielded.commitment));
+    expect(receipt.leafIndex).toBe(leafIndex);
 
     // ------------------------------------------------------------ spend (v4)
     // An address unrelated to the wallet ON CHAIN, so the withdrawal does not
