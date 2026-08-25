@@ -1213,9 +1213,9 @@ struct CuCeiling {
 /// Re-record it whenever `src/` changes at all, comments included, or delete it;
 /// what must never happen is leaving a hash here that HEAD does not build.
 ///
-/// Every one of the 13 numbers below is a `compute_units_consumed` from that
-/// run, and a second run against the same artifact reproduces all 13: the
-/// `vs recorded` column prints `+0` on all 13 pins.
+/// Every one of the 15 numbers below is a `compute_units_consumed` from that
+/// run, and a second run against the same artifact reproduces all 15: the
+/// `vs recorded` column prints `+0` on all 15 pins.
 ///
 /// # Why they moved, and why the band was NOT widened
 ///
@@ -1241,10 +1241,10 @@ struct CuCeiling {
 /// been the other option and it is the wrong one: it would have left every
 /// future regression up to 10% invisible.
 ///
-/// Worst absolute is C4 at 920,897 of 1,400,000 (66%); worst phase1+phase2 is
-/// C4 at 1,128,502, still inside one instruction, leaving ~271,000 CU of margin.
+/// Worst absolute is C4 at 924,827 of 1,400,000 (66%); worst phase1+phase2 is
+/// C4 at 1,132,432, still inside one instruction, leaving ~267,000 CU of margin.
 /// Worst phase 2 alone is C4 at 207,605. The smallest phase-1 pin is C0 at
-/// 633,547. CU was never the binding constraint and it still is not.
+/// 633,531. CU was never the binding constraint and it still is not.
 ///
 /// [B7 2026-08-04] All thirteen pins moved with the LDE coset. The price is
 /// +34,874 to +79,303 CU per circuit, +6% to +9%, and it buys the end of the
@@ -1267,6 +1267,39 @@ struct CuCeiling {
 /// were reproduced could not be seen to have been. Both phases are tabulated
 /// now, and every number in this doc comment that also exists as a constant is
 /// checked against it by `cu_ceiling_prose_matches_the_constants`.
+///
+/// [C7 2026-08-25] C7 pinned for the first time, and the seven pins above
+/// re-anchored — by C7 itself, NOT by the toolchain.
+///
+/// This box carries `cargo-build-sbf 3.1.15`, not the 3.1.9 that
+/// `CU_MEASURED_WITH` names, so every number here was ambiguous: the caveat
+/// this file prints says in as many words that the difference between those two
+/// compilers has never been measured. It has now, and this is the control. The
+/// PRE-C7 verifier source (dc9dd515) built with 3.1.15 reproduces all thirteen
+/// of the previous pins EXACTLY, to the compute unit, phase 1 and phase 2
+/// alike. The same platform-tools v1.52 sits behind both compilers. So a 3.1.15
+/// measurement is comparable to the recorded ones, and the re-baseline this
+/// session set out to do turned out not to be needed.
+///
+/// What the control ALSO isolated is the finding, and it is why the seven pins
+/// moved: ADDING CIRCUIT 7 TO THE VERIFIER COSTS EVERY OTHER CIRCUIT. Against
+/// that same pre-C7 build, C1..C6 each gained between +3,232 and +3,930 CU of
+/// phase 1, C0 lost 16, and phase 2 moved by at most one unit in either
+/// direction. Phase 2 is flat because `verify_deep_ali_circuit_*` gained no
+/// work; phase 1 pays for a wider dispatch and more code in the same binary.
+/// Every row stays under its ceiling. It is RECORDED rather than absorbed
+/// because it is the first time a new circuit has been seen to move the ones
+/// already there, and the next circuit will do it again.
+///
+/// ⛔ Two variables moved between the previous pins and this run — the compiler
+/// AND the C7 code — and the drift is attributed to the second only because the
+/// first was held still and measured. Without that control the honest statement
+/// would have been "something moved by +0.4%", which is not a finding.
+///
+/// C7 itself lands at 878,756 phase 1 and 192,715 phase 2. It exists to replace
+/// C1 + C3, so the figure to compare against is their SUM: 1,681,540 CU of
+/// phase 1 over two proofs and two ProofBuffer rents, against one proof at
+/// 878,756.
 ///
 /// # There is no historical column here, on purpose
 ///
@@ -1304,9 +1337,9 @@ struct CuCeiling {
 /// attributed cause. That attribution is INFERENCE from the source, not a
 /// separate measurement.
 ///
-const CU_CEILINGS: [CuCeiling; 7] = [
-    CuCeiling { circuit_id: 0, phase1_measured: 633_547, phase1_max: 647_000, phase2_measured: None,           phase2_max: None },
-    CuCeiling { circuit_id: 1, phase1_measured: 810_012, phase1_max: 827_000, phase2_measured: Some(124_932), phase2_max: Some(128_000) },
+const CU_CEILINGS: [CuCeiling; 8] = [
+    CuCeiling { circuit_id: 0, phase1_measured: 633531, phase1_max: 647000, phase2_measured: None,           phase2_max: None },
+    CuCeiling { circuit_id: 1, phase1_measured: 813259, phase1_max: 830000, phase2_measured: Some(124932), phase2_max: Some(128000) },
     // [BIND-C2C4 2026-08-03] C2 and C4 phase-2 re-pinned UPWARD. The cause is the
     // public-input boundary fold: `verify_deep_ali_circuit_2` and `_4` now
     // reconstruct the boundary term of `Q` at `z` and fold it into the DEEP
@@ -1326,16 +1359,22 @@ const CU_CEILINGS: [CuCeiling; 7] = [
     // a step taken to make CI green. If a future change moves these again, the
     // question to answer first is what moved and why — never what number would
     // pass.
-    CuCeiling { circuit_id: 2, phase1_measured: 815_286, phase1_max: 832_000, phase2_measured: Some(112_043), phase2_max: Some(115_000) },
-    CuCeiling { circuit_id: 3, phase1_measured: 864_400, phase1_max: 882_000, phase2_measured: Some(115_905), phase2_max: Some(119_000) },
+    CuCeiling { circuit_id: 2, phase1_measured: 818518, phase1_max: 835000, phase2_measured: Some(112042), phase2_max: Some(115000) },
+    CuCeiling { circuit_id: 3, phase1_measured: 868281, phase1_max: 886000, phase2_measured: Some(115904), phase2_max: Some(119000) },
     // [BIND-C2C4 2026-08-03] see the note on C2 above — same cause, same band,
     // same recorded acceptance. C4 is the circuit that pays the most.
-    CuCeiling { circuit_id: 4, phase1_measured: 920_897, phase1_max: 940_000, phase2_measured: Some(207_605), phase2_max: Some(212_000) },
+    CuCeiling { circuit_id: 4, phase1_measured: 924827, phase1_max: 944000, phase2_measured: Some(207605), phase2_max: Some(212000) },
     // [LIVENESS 2026-08-01] phase1_measured re-recorded: C5 793_372 -> 793_355
     // (-17, the capture-edge compare) and C6 809_654 -> 809_658 (+4, the
     // active_rows bound). The CEILINGS are unchanged and neither was approached.
-    CuCeiling { circuit_id: 5, phase1_measured: 870_591, phase1_max: 889_000, phase2_measured: Some(201_325), phase2_max: Some(206_000) },
-    CuCeiling { circuit_id: 6, phase1_measured: 888_220, phase1_max: 906_000, phase2_measured: Some(122_739), phase2_max: Some(126_000) },
+    CuCeiling { circuit_id: 5, phase1_measured: 874456, phase1_max: 892000, phase2_measured: Some(201324), phase2_max: Some(206000) },
+    CuCeiling { circuit_id: 6, phase1_measured: 892107, phase1_max: 910000, phase2_measured: Some(122739), phase2_max: Some(126000) },
+    // [C7 2026-08-25] C7 pinned for the first time. Until today the only C7
+    // figure anywhere in this repo came from `tests/c7_probe/` -- a throwaway
+    // program reproducing the arithmetic SHAPE of a phase-2 check that did not
+    // exist yet, on a geometry C7 no longer has. This row is the verifier
+    // itself, measured the same way as the seven above it.
+    CuCeiling { circuit_id: 7, phase1_measured: 878756, phase1_max: 897000, phase2_measured: Some(192715), phase2_max: Some(197000) },
 ];
 
 /// The band every `*_max` is computed with, as a percentage numerator over 100.
@@ -1359,7 +1398,7 @@ fn cu_band(measured: u64) -> u64 {
 /// It is the string in the provenance paragraph above, held as a constant so the
 /// harness can compare it to the compiler it is actually running rather than
 /// leaving a reader to notice.
-const CU_MEASURED_WITH: &str = "solana-cargo-build-sbf 3.1.9 platform-tools v1.52";
+const CU_MEASURED_WITH: &str = "solana-cargo-build-sbf 3.1.15 platform-tools v1.52";
 
 /// The toolchain gap between `CU_CEILINGS` and this run, or `None` when there is
 /// none.
@@ -1419,7 +1458,7 @@ fn toolchain_caveat_fires_only_when_the_compiler_differs() {
     };
     let note = toolchain_caveat(&other).expect("a different platform-tools must raise a caveat");
     assert!(note.contains("2.2.14"), "the caveat must name the compiler in use: {note}");
-    assert!(note.contains("3.1.9"), "the caveat must name the compiler measured: {note}");
+    assert!(note.contains("3.1.15"), "the caveat must name the compiler measured: {note}");
 
     let supplied = SoUnderTest::Supplied { path: PathBuf::from("/dev/null") };
     let note = toolchain_caveat(&supplied)
@@ -1477,7 +1516,7 @@ fn cu_ceilings_are_two_percent_over_the_recorded_measurement() {
             MAX_CU_PER_IX,
         );
     }
-    assert_eq!(CU_CEILINGS.len(), 7, "one ceiling per shipping circuit C0..C6");
+    assert_eq!(CU_CEILINGS.len(), 8, "one ceiling per shipping circuit C0..C7");
 }
 
 /// The ceiling check must be capable of failing. Prove it on synthetic rows.
@@ -1639,11 +1678,11 @@ fn cu_ceiling_phase2_movement_shows_up_in_the_printed_table() {
     assert!(out.contains("DRIFT"), "a movement up under the ceiling reads DRIFT:\n{out}");
     assert_eq!(report.drifted, 1, "exactly one pin moved:\n{out}");
     assert_eq!(
-        report.measured, 13,
-        "seven phase-1 pins plus six phase-2 pins are what this gate covers:\n{out}"
+        report.measured, 15,
+        "eight phase-1 pins plus seven phase-2 pins are what this gate covers:\n{out}"
     );
     assert!(
-        out.contains("1 of 13 pins moved"),
+        out.contains("1 of 15 pins moved"),
         "the drift count must be legible without reading the tables:\n{out}"
     );
 
@@ -1679,9 +1718,18 @@ const THIS_FILE: &str = include_str!("cu_budget.rs");
 /// with the number quoted back at you. Entries are checked in BOTH directions:
 /// an entry that no longer appears in the prose is itself a failure, so this
 /// cannot rot into a list of numbers nobody wrote.
-const PROSE_FIGURES: [(u64, &str); 35] = [
+const PROSE_FIGURES: [(u64, &str); 41] = [
     (1_399_000, "illustrative: what C0 could have become before a ceiling existed"),
     (638_248, "byte size of the historical Route C .so this doc used to name"),
+    // [C7 2026-08-25] The measured cost circuit 7 imposes on the other six.
+    // Deltas against the pre-C7 build, so no single constant produces them.
+    (3_232, "smallest phase-1 CU the C7 code cost another circuit (C2)"),
+    // [C7 2026-08-25] The retired shape probe, scored against the real row.
+    (84_790, "the shape probe's C7 phase-2 estimate — superseded, quoted to score it"),
+    (307_245, "the same probe's dense-column worst case, which brackets the real number"),
+    (47_789, "probe cost of one dense 512-coeff column — why C7 emits compressed tables"),
+    (3_930, "largest phase-1 CU the C7 code cost another circuit (C4)"),
+    (1_681_540, "C1+C3 phase 1 summed — what one C7 proof replaces, not a pin"),
     (687_736, "byte size of the .so CU_CEILINGS is measured from TODAY — provenance, not a pin"),
     (687_440, "byte size of the PRE-liveness-fix .so, quoted to show the +296 B the fix cost"),
     // [LIVENESS 2026-08-01] The two phase-1 pins the fix moved. Both are quoted
@@ -1723,7 +1771,7 @@ const PROSE_FIGURES: [(u64, &str); 35] = [
     (1_051_138, "the PRE-B7 worst phase1+phase2 total (C4)"),
     (207_220, "the PRE-B7 C4 phase-2 pin"),
     (201_422, "the PRE-B7 C5 phase-2 pin"),
-    (271_000, "cap minus the worst phase1+phase2 total — derived from pins, rounded"),
+    (267_000, "cap minus the worst phase1+phase2 total — derived from pins, rounded"),
     (34_874, "smallest per-circuit CU delta the coset cost (C0) — provenance, not a pin"),
     (79_303, "largest per-circuit CU delta the coset cost (C3) — provenance, not a pin"),
 ];
@@ -3327,8 +3375,12 @@ fn generic_case(
     }
 }
 
-/// All seven circuits, with the argument sets already used by the in-crate
+/// All eight circuits, with the argument sets already used by the in-crate
 /// positive tests so the proofs are known-honest.
+///
+/// [C7 2026-08-25] C7 joined this list the day the verifier learned to accept
+/// it. Before that the only C7 figure in the repo came from the throwaway shape
+/// probe, which is not the verifier and is calibrated on a superseded geometry.
 fn all_cases() -> Vec<ProofCase> {
     let mut cases = Vec::new();
 
@@ -3390,6 +3442,47 @@ fn all_cases() -> Vec<ProofCase> {
     let (p6, ms) =
         timed(|| p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi));
     cases.push(generic_case(6, "C6 merkle_update", p6, ms));
+
+    // --- C7 spend -----------------------------------------------------------
+    // [C7 2026-08-25] The circuit this whole harness was built to cost, now
+    // measured for real instead of through the shape probe in `tests/c7_probe/`.
+    //
+    // That probe was written when C7 did not exist: it reproduces the ARITHMETIC
+    // SHAPE of a proposed phase-2 check using verbatim copies of verify.rs's
+    // private helpers. It is now superseded on two counts — the verifier
+    // implements circuit 7 (`verify_deep_ali_circuit_7`), and the probe is
+    // calibrated on a geometry C7 no longer has: ten periodic columns none of them
+    // dense, against the thirteen with two dense that C7 actually carries, and
+    // one-hot rows at positions the circuit no longer uses. ⛔ No figure printed
+    // by `cu_budget_c7_phase2_probe` describes this row.
+    //
+    // Witness mirrors `compact.rs::spend_test_witness`, the argument set the
+    // in-crate positive tests use, so the proof is known-honest.
+    //
+    // The mask is a deterministic xorshift, NOT a CSPRNG draw. That is correct
+    // HERE and wrong in production: a CU measurement has to be reproducible, and
+    // the blinding rows are 128 rows where no constraint fires, so their contents
+    // cannot move the compute cost. ⛔ Never copy this mask into a real proof —
+    // `generate_spend_compact_proof` documents why it takes no default.
+    let (pe7, pi7, rh7, mask7) = {
+        use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+        const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+        let pe: Vec<u64> = (0..CANONICAL_DEPTH as u64).map(|i| 1000 + i * 37).collect();
+        let pi: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
+        let mut st = 0x9E37_79B9_7F4A_7C15u64;
+        let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
+        for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+            st ^= st >> 12;
+            st ^= st << 25;
+            st ^= st >> 27;
+            mask.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
+        }
+        (pe, pi, [11u64, 22, 33, 44], mask)
+    };
+    let (p7, ms) = timed(|| {
+        p01_stark::compact::generate_spend_compact_proof(42, 999, 7, 555, &pe7, &pi7, &rh7, &mask7)
+    });
+    cases.push(generic_case(7, "C7 spend", p7, ms));
 
     cases
 }
@@ -3602,7 +3695,7 @@ fn cu_budget_real_circuits() {
         so.path().display(),
         bad.join(", ")
     );
-    assert_eq!(rows.len(), 7, "expected one row per circuit C0..C6");
+    assert_eq!(rows.len(), 8, "expected one row per circuit C0..C7");
     assert!(
         ceiling_violations.is_empty(),
         "CU CEILING EXCEEDED — this is the regression gate, not a formality:\n  {}",
@@ -3779,6 +3872,36 @@ fn cu_budget_verify_uniform_path() {
 
 // ---------------------------------------------------------------------------
 // TEST 3 — the C7 phase-2 shape probe
+//
+// 🚨 SUPERSEDED 2026-08-25, AND IT WAS OFF BY MORE THAN A FACTOR OF TWO.
+//
+// This probe exists because C7 did not. It prices the arithmetic SHAPE of a
+// proposed phase-2 check, in a throwaway program, so the design could be
+// gated before forty hours went into an AIR. The verifier now implements
+// circuit 7 and `cu_budget_real_circuits` measures it directly, so the
+// estimate can finally be scored against the thing it was estimating:
+//
+//     probe, `** C7 PHASE-2 FULL SHAPE **`   :  84,790 CU
+//     real `verify_deep_ali_phase2` on C7    : 192,715 CU
+//
+// The shape UNDER-counted by 2.3x. The gate verdict happens to be unchanged —
+// both are far under the 900K the plan asked for — but the margin quoted from
+// this probe was more than twice what exists. ⛔ Cite the real row, never this
+// table. Two further reasons the numbers below do not describe C7: the probe
+// is calibrated on ten periodic columns with none dense, against the thirteen
+// with two dense that C7 carries, and its one-hot rows sit where an earlier
+// geometry put them.
+//
+// 🧠 What it DID get right is the bracket. Its own pessimistic variant — every
+// periodic column dense — prices phase 2 at 307,245 CU, and the real number
+// falls between that and the optimistic one. An estimate that brackets is
+// worth more than one that lands, because only the bracket says which way it
+// can be wrong. The single figure was the part that misled.
+//
+// It is kept, not deleted: it is the only instrument in the repo that prices
+// ONE helper at a time (`1x eval_periodic_at_z` = 47,789 CU is why C7's
+// periodic tables are emitted compressed), and that decomposition is not
+// recoverable from a whole-circuit measurement.
 // ---------------------------------------------------------------------------
 
 const V_BASELINE: u8 = 0;
