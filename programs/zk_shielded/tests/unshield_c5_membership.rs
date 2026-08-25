@@ -773,6 +773,23 @@ fn every_still_registered_instruction_still_dispatches() {
         );
     }
 
+    // [C7] `unshield_denominated_stark_v4` is NOT production - it needs the
+    // C7-aware verifier, which is not deployed. It is named here anyway, and
+    // separately from the production list below, because it holds funds and
+    // because "the source registers it" and "the deployable binary answers to
+    // it" are different claims. The loop above covers whatever it PARSES; this
+    // line is what makes the coverage of THIS instruction a statement instead
+    // of an assumption.
+    assert!(
+        names.iter().any(|n| n == "unshield_denominated_stark_v4"),
+        "
+\n         `unshield_denominated_stark_v4` is not in the parsed set, so the
+\n         dispatch loop above proved NOTHING about the C7 spend path. Either the
+\n         registration was removed from `pub mod zk_shielded`, or the parse no
+\n         longer sees it.
+\n         Parsed: {names:?}",
+    );
+
     // The production path, named explicitly so a rename cannot quietly shrink
     // what this test covers.
     for must in [
