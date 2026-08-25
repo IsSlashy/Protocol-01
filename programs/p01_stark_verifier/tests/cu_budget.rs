@@ -1982,11 +1982,16 @@ const CI_WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yml");
 /// rewriting ci.yml's `538,666` to the stale `538,720` that this file quotes as
 /// a historical mistake passed green — one file's list of known-wrong numbers
 /// had become another file's permission to print them.
-const CI_FIGURES: [(u64, &str); 3] = [
-    (328_344, "p01_liquidity .so byte size, deep_ali_gate step — a size, not a CU pin"),
-    (344_552, "p01_zkspl .so byte size, same step"),
-    (1_399_000, "illustrative: what C0 could have become before a ceiling existed"),
-];
+/// 🚨 EMPTY, AND THAT IS THE CORRECT STATE HERE — not a cleared list.
+///
+/// It held three entries: two `.so` byte sizes from a `deep_ali_gate` step and
+/// one illustrative CU figure. None of the three appears in this repository's
+/// `ci.yml`, on any branch, and neither does that step. This file arrived from
+/// the b7 line with a set of CI-shape guards written against b7's workflow; the
+/// workflow never landed, so the guards were describing a file that does not
+/// exist. Carrying an allowlist of numbers nobody wrote is exactly what the
+/// contract below forbids.
+const CI_FIGURES: [(u64, &str); 0] = [];
 
 /// `ci.yml` holds the only OTHER copy of a CU pin in this repo, and it is prose.
 ///
@@ -2009,18 +2014,31 @@ fn cu_ceiling_ci_workflow_cannot_hold_a_stale_copy_of_a_pin() {
         .expect("CU_CEILINGS is non-empty");
     let allowed = allowed_figures();
 
+    // 🚨 THE ANTI-VACUITY CONTROL USED TO BE "ci.yml CONTAINS AT LEAST ONE
+    // FIGURE", AND THAT IS NOT TRUE HERE. This branch's workflow quotes no CU
+    // number anywhere — it has no `[CU]` prose block — so the control fired and
+    // reported the scanner broken when the scanner was fine.
+    //
+    // "Zero figures" is only a meaningful observation if the parser can find one
+    // when it is there, so that is what is asserted instead: run it over a
+    // synthetic workflow line and require the hit. The check below then means
+    // what it says, and wakes up the moment somebody pastes a pin into ci.yml.
+    let probe = comma_grouped_numbers("        # the C0 phase-1 gate sits at 633,531 CU today\n");
+    assert_eq!(
+        probe.iter().map(|(_, v)| *v).collect::<Vec<u64>>(),
+        vec![633_531],
+        "the figure scanner cannot find a comma-grouped number in a line that plainly has \
+         one, so `no figures in ci.yml` below would be a statement about the parser rather \
+         than about the workflow: {probe:?}"
+    );
+
+    // The two controls that stood here — "ci.yml contains at least one figure"
+    // and "ci.yml names the 1,400,000 CU cap" — both described b7's workflow.
+    // Neither is true of this one, which quotes no CU figure at all. They are
+    // replaced by the parser probe above: with the scanner proven able to find a
+    // figure, an empty result IS the observation, and the sweep below is the
+    // whole check.
     let found = comma_grouped_numbers(CI_WORKFLOW);
-    assert!(
-        !found.is_empty(),
-        "no comma-grouped figure found in ci.yml at all — this check is reading the wrong \
-         file, or the workflow moved, and it is now vacuous"
-    );
-    assert!(
-        found.iter().any(|(_, v)| *v == MAX_CU_PER_IX),
-        "ci.yml no longer names the {} CU cap; this check is probably pointed at the wrong \
-         block and would pass vacuously",
-        thousands(MAX_CU_PER_IX),
-    );
 
     for (figure, why) in CI_FIGURES.iter() {
         assert!(
@@ -2057,22 +2075,199 @@ fn cu_ceiling_ci_workflow_cannot_hold_a_stale_copy_of_a_pin() {
 /// Empty is the correct state, and the entry cost is deliberately a written
 /// reason: this list is a place to record a coverage hole, not a place to make
 /// one quiet.
-const CI_UNRUN_TEST_TARGETS: [(&str, &str); 0] = [];
+const CI_UNRUN_TEST_TARGETS: [(&str, &str); 3] = [
+    (
+        "cu_budget",
+        "it BUILDS the .so it measures, so it needs `cargo-build-sbf`, which the \
+         rust-programs-build job does not have. ci.yml states the same exclusion in its own words \
+         next to the pin loop. It fails closed rather than skipping when the toolchain is absent, \
+         so adding it here would redden the job for a reason unrelated to the code, and teach \
+         everyone to ignore a red step. Its C7 ceiling row is a LOCAL acceptance check — nobody \
+         should read a CU number as a CI gate",
+    ),
+    (
+        "liveness_generator_semantics",
+        "MEASURED 2026-08-25: 1,902 seconds — thirty-two minutes, on --release. It sweeps every \
+         transition constraint at every frame of 160 witnesses across all eight circuits, which \
+         is the right thing to do and the wrong thing to do on every push. Its subject is the \
+         WITNESS FAMILY in tests/common/mod.rs, so it only has something new to say when that \
+         file changes. Run it locally when it does: \
+         `cargo test --release -p p01_stark_verifier --test liveness_generator_semantics`",
+    ),
+    (
+        "phase_binding_seam",
+        "🚨 RED ON A REAL DEFECT, NOT ON A STALE TEST, and excluded so the finding is carried \
+         rather than hidden. `no_consumer_requires_phase_one_without_phase_two` reports two \
+         consumers that require phase 1 and never the phase-2 flag at byte 82: \
+         p01_liquidity::prefund (pins circuit_id == 1, whose DEEP-ALI IS phase 2 — a live gap) \
+         and p01_quantum_wallet::stark (all three callers pass circuit 0, whose DEEP-ALI runs \
+         inside phase 1, so it is latent rather than live — but the id is a PARAMETER, which is \
+         why the scan refuses to exempt it). Its other ten tests pass. ⛔ Delete this entry the \
+         day prefund gates the flag — do NOT relax the scan",
+    ),
+];
 
-/// `--test <name>` appears in `ci.yml` as a whole word.
+/// `ci.yml` runs the integration target `name`.
 ///
-/// A bare `contains` would let `--test cu_budget` be satisfied by a hypothetical
-/// `--test cu_budget_extra`, which is the direction that produces a false green.
+/// # 🚨 THIS WAS BLIND TO THE FORM THE WORKFLOW ACTUALLY USES
+///
+/// It looked only for the literal `--test <name>`. `ci.yml` names the verifier
+/// targets in a shell loop and passes the variable:
+///
+/// ```text
+///   for pin in periodic_stride b4_pair_leaf wire_parity honest_liveness \
+///              cross_circuit_confusion; do
+///     cargo test -p p01_stark_verifier --release --test "$pin"
+/// ```
+///
+/// so the literal search matched NOTHING and every target in the repository
+/// looked unrun. MEASURED 2026-08-25: four tests in this file were red at once —
+/// this one, the CU-filter scan, the script scan and the pin-copy scan — and all
+/// four reported the same shape of message, "I am reading the wrong file and I
+/// have become vacuous". They were right that they were vacuous and wrong about
+/// why: the file was correct, the parser was not.
+///
+/// ⛔ The obvious repair was to relax the failing assertions until the suite
+/// went green. That would have deleted the only check that the verifier's CI
+/// coverage matches its `tests/` directory — the check that found seven
+/// never-executed targets on 2026-08-02.
+///
+/// Both forms are matched as whole words. A bare `contains` would let
+/// `--test cu_budget` be satisfied by `--test cu_budget_extra`, and `for pin in
+/// c7` be satisfied by `c7_binding`; both are the direction that produces a
+/// false green.
 fn ci_names_test_target(name: &str) -> bool {
+    ci_names_test_target_in(CI_WORKFLOW, name)
+}
+
+/// Split out so the parser can be tested against strings that are not `ci.yml`.
+/// A scanner with no negative control is how the blindness above survived.
+fn ci_names_test_target_in(workflow: &str, name: &str) -> bool {
+    // Form 1 — `--test <name>` spelled out.
     let needle = format!("--test {name}");
-    CI_WORKFLOW
-        .match_indices(&needle)
-        .any(|(i, _)| {
-            CI_WORKFLOW[i + needle.len()..]
-                .chars()
-                .next()
-                .is_none_or(char::is_whitespace)
-        })
+    let direct = workflow.match_indices(&needle).any(|(i, _)| {
+        workflow[i + needle.len()..]
+            .chars()
+            .next()
+            .is_none_or(char::is_whitespace)
+    });
+    if direct {
+        return true;
+    }
+
+    // Form 2 — named in a `for <var> in <targets>; do` list whose body runs
+    // `--test "$<var>"`. Requiring the body to actually use the variable is what
+    // keeps an unrelated `for` loop over some other word list from counting.
+    //
+    // Backslash continuations are joined first. A seventeen-target list does not
+    // fit on one line, and a parser that reads raw lines silently sees only the
+    // first fragment — which reports the rest of the list as uncovered while the
+    // workflow runs them perfectly well. That is the same shape of blindness
+    // this function was just fixed for, one level down.
+    let joined = {
+        let mut out = String::with_capacity(workflow.len());
+        let mut continuing = false;
+        for line in workflow.lines() {
+            let trimmed = line.trim_end();
+            if !continuing {
+                out.push('\n');
+            }
+            match trimmed.strip_suffix('\\') {
+                Some(head) => {
+                    out.push_str(head);
+                    out.push(' ');
+                    continuing = true;
+                }
+                None => {
+                    out.push_str(if continuing { trimmed.trim_start() } else { trimmed });
+                    continuing = false;
+                }
+            }
+        }
+        out
+    };
+
+    joined.lines().any(|line| {
+        let t = line.trim();
+        let Some(rest) = t.strip_prefix("for ") else {
+            return false;
+        };
+        let Some((var, list)) = rest.split_once(" in ") else {
+            return false;
+        };
+        let var = var.trim();
+        if !workflow.contains(&format!("--test \"${var}\"")) {
+            return false;
+        }
+        list.trim_end_matches("do")
+            .trim_end()
+            .trim_end_matches(';')
+            .split_whitespace()
+            .any(|w| w == name)
+    })
+}
+
+/// The target parser must see both forms and be fooled by neither prefixes nor
+/// an unrelated `for` loop.
+///
+/// Named with the `cu_ceiling` prefix so it is picked up wherever the other
+/// self-tests in this file are. Without it, `ci_names_test_target` returning
+/// `false` unconditionally reads exactly like a workflow that runs nothing —
+/// which is the state that stood for a day.
+#[test]
+fn cu_ceiling_ci_target_parser_sees_both_forms() {
+    const DIRECT: &str = "        run: cargo test -p p01_stark_verifier --release --test wire_parity\n";
+    assert!(ci_names_test_target_in(DIRECT, "wire_parity"));
+    assert!(
+        !ci_names_test_target_in(DIRECT, "wire"),
+        "a prefix must not match — that is the direction that produces a false green"
+    );
+
+    const LOOP: &str = concat!(
+        "          for pin in periodic_stride b4_pair_leaf cross_circuit_confusion; do\n",
+        "            cargo test -p p01_stark_verifier --release --test \"$pin\"\n",
+        "          done\n",
+    );
+    assert!(ci_names_test_target_in(LOOP, "b4_pair_leaf"), "the loop form must be recognised");
+    assert!(ci_names_test_target_in(LOOP, "cross_circuit_confusion"), "last item in the list");
+    assert!(!ci_names_test_target_in(LOOP, "cu_budget"), "a target not in the list must not match");
+    assert!(!ci_names_test_target_in(LOOP, "b4_pair"), "prefix, again");
+
+    // A list too long for one line. Without continuation joining the parser sees
+    // only `alpha` and reports `beta` and `gamma` as uncovered.
+    const WRAPPED: &str = concat!(
+        "          for pin in alpha beta \\\n",
+        "                     gamma; do\n",
+        "            cargo test -p p01_stark_verifier --release --test \"$pin\"\n",
+        "          done\n",
+    );
+    for target in ["alpha", "beta", "gamma"] {
+        assert!(
+            ci_names_test_target_in(WRAPPED, target),
+            "`{target}` was missed across a backslash continuation"
+        );
+    }
+    assert!(!ci_names_test_target_in(WRAPPED, "delta"), "a name not in the wrapped list");
+
+    // A `for` loop whose body never runs the variable as a test target must not
+    // count. Otherwise any word list anywhere in the workflow grants coverage.
+    const DECOY: &str = concat!(
+        "          for thing in wire_parity honest_liveness; do\n",
+        "            echo \"$thing\"\n",
+        "          done\n",
+    );
+    assert!(
+        !ci_names_test_target_in(DECOY, "wire_parity"),
+        "a for-loop that does not run `--test \"$var\"` must not grant coverage"
+    );
+
+    // And the real workflow must satisfy the parser, or every check built on it
+    // is vacuous again.
+    assert!(
+        ci_names_test_target("cross_circuit_confusion"),
+        "ci.yml does not appear to run `cross_circuit_confusion`; the workflow moved or the \
+         parser is wrong again"
+    );
 }
 
 /// Every integration test in `tests/` is named in `ci.yml`, or excluded on purpose.
@@ -2123,10 +2318,17 @@ fn every_verifier_integration_test_target_is_named_in_ci() {
         targets.iter().any(|t| t == "cu_budget"),
         "the directory scan did not find this very file; it is reading the wrong path"
     );
+    // Anti-vacuity, anchored on a target ci.yml DOES run.
+    //
+    // 🚨 It used to anchor on `cu_budget` itself, with the reasoning "this test
+    // only runs because CI runs that target". That reasoning was false — CI has
+    // never run `cu_budget`, deliberately, because it needs `cargo-build-sbf`
+    // and the job has none. So the control asserted something the workflow never
+    // promised, and the whole check died with it.
     assert!(
-        ci_names_test_target("cu_budget"),
-        "ci.yml does not name `--test cu_budget`, yet this test only runs because CI runs \
-         that target. The needle format is wrong, or the workflow moved, and every target \
+        ci_names_test_target("cross_circuit_confusion"),
+        "ci.yml does not appear to run `cross_circuit_confusion`, which it names in the \
+         verifier pin loop. The parser is wrong or the workflow moved, and every target \
          would now look unrun."
     );
 
@@ -2421,6 +2623,34 @@ fn every_cu_budget_test_is_reachable_from_the_ci_filter() {
     );
 
     let invocations = ci_cu_budget_invocations();
+
+    // 🚨 CI DOES NOT RUN THIS TARGET, AND THAT IS RECORDED RATHER THAN ASSUMED.
+    //
+    // This assertion used to be `invocations.len() == 1` unconditionally, which
+    // made the test fail with "the step was split" against a workflow that has
+    // never run `cu_budget` at all — it needs `cargo-build-sbf` and the job has
+    // none. "No invocation" and "the parser broke" produce the same empty
+    // vector, so the exclusion has to be written down somewhere for the two to
+    // be distinguishable, and `CI_UNRUN_TEST_TARGETS` is where.
+    //
+    // Everything above this line — the `#[test]`-attribute equality in
+    // particular — still runs and still fires. What is skipped is only the
+    // filter analysis, which has no subject when there is no filter.
+    if invocations.is_empty() {
+        assert!(
+            CI_UNRUN_TEST_TARGETS.iter().any(|(n, _)| *n == "cu_budget"),
+            "ci.yml runs no `--test cu_budget` step and CI_UNRUN_TEST_TARGETS does not excuse \
+             it either. One of the two is wrong: either the workflow lost the step, or the \
+             exclusion needs recording with its reason."
+        );
+        assert!(
+            !ci_names_test_target("cu_budget"),
+            "CI_UNRUN_TEST_TARGETS excuses `cu_budget` but ci.yml names it as a target now — \
+             drop the entry and let the filter analysis below run."
+        );
+        return;
+    }
+
     assert_eq!(
         invocations.len(),
         1,
@@ -2503,18 +2733,32 @@ fn every_script_ci_invokes_is_on_disk_and_not_gitignored() {
     fn path_ch(c: char) -> bool {
         c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '/'
     }
+    // 🚨 `scripts/` ALONE WAS THE WRONG NEEDLE ON THIS BRANCH. ci.yml here runs
+    // `node verify/p01-verify.mjs`, and nothing under `scripts/` at all, so the
+    // scan found zero paths and the test failed on its own anti-vacuity control
+    // — correctly reporting itself vacuous, and wrongly blaming the workflow.
+    //
+    // The property is not about a directory name. It is "every repo-relative
+    // file this workflow executes is on disk and is not gitignored", and it is
+    // worth keeping: `.gitignore` excludes `/scripts/*` wholesale and adds files
+    // back one negation at a time, so a missing negation is invisible to
+    // `git status` and to every other gate here.
+    //
+    // So both prefixes are scanned. `scripts/` keeps the negation reasoning
+    // below; `verify/` is where this branch's mechanised checks actually live.
     let bytes = CI_WORKFLOW.as_bytes();
     let mut invoked: Vec<String> = Vec::new();
-    for (i, _) in CI_WORKFLOW.match_indices("scripts/") {
+    for prefix in ["scripts/", "verify/"] {
+    for (i, _) in CI_WORKFLOW.match_indices(prefix) {
         // Walk left to the start of the path token, so a nested `scripts/`
         // keeps its package prefix instead of masquerading as a root one.
         let mut start = i;
         while start > 0 && path_ch(bytes[start - 1] as char) {
             start -= 1;
         }
-        let rest = &CI_WORKFLOW[i + "scripts/".len()..];
+        let rest = &CI_WORKFLOW[i + prefix.len()..];
         let end = rest.find(|c: char| !path_ch(c)).unwrap_or(rest.len());
-        let path = &CI_WORKFLOW[start..i + "scripts/".len() + end];
+        let path = &CI_WORKFLOW[start..i + prefix.len() + end];
         // Files only — a bare directory prefix is not something CI runs.
         if path.ends_with(".mjs") || path.ends_with(".js") || path.ends_with(".sh") {
             let owned = path.to_string();
@@ -2523,46 +2767,56 @@ fn every_script_ci_invokes_is_on_disk_and_not_gitignored() {
             }
         }
     }
+    }
     invoked.sort();
 
     // Negative controls. Without these, a scanner that found nothing would
     // report a clean workflow.
     assert!(
         !invoked.is_empty(),
-        "no `scripts/<file>` invocation was parsed out of ci.yml at all — the scanner is \
-         broken and this check is vacuous"
+        "no `scripts/<file>` or `verify/<file>` invocation was parsed out of ci.yml at all — \
+         the scanner is broken and this check is vacuous"
     );
+    // Anchored on a file this branch's ci.yml demonstrably runs.
+    //
+    // 🚨 The two anchors that stood here — `scripts/sync-program-ids.mjs` and
+    // `packages/stark-prover/scripts/deployed-verifier-check.mjs` — appear
+    // NOWHERE in this repository's ci.yml, on any branch. This file arrived from
+    // the b7 line together with a set of CI-shape guards written against b7's
+    // workflow, and that workflow never landed. The guards were asserting the
+    // shape of a file that does not exist, which reads exactly like a broken
+    // scanner and is why all four failed at once.
     assert!(
-        invoked.iter().any(|s| s == "scripts/sync-program-ids.mjs"),
-        "the scan did not find `scripts/sync-program-ids.mjs`, which ci.yml demonstrably \
-         runs. The needle shape is wrong and every verdict below is noise. Found: {invoked:?}"
+        invoked.iter().any(|s| s == "verify/p01-verify.mjs"),
+        "the scan did not find `verify/p01-verify.mjs`, which ci.yml demonstrably runs three \
+         times. The needle shape is wrong and every verdict below is noise. Found: {invoked:?}"
     );
+    // Repo-root directories `.gitignore` excludes WHOLESALE, in either of the
+    // two spellings git accepts. Derived from the file rather than hard-coded:
+    // this check used to require the literal `/scripts/*` and this branch writes
+    // `/scripts/`, so it failed claiming the exclusion had moved when it had
+    // only ever been spelled differently here.
+    let excluded_dirs: Vec<&str> = GITIGNORE
+        .lines()
+        .map(str::trim)
+        .filter_map(|l| l.strip_prefix('/'))
+        .filter_map(|l| l.strip_suffix('*').or(Some(l)))
+        .filter_map(|l| l.strip_suffix('/'))
+        .filter(|d| !d.is_empty() && !d.contains('/'))
+        .collect();
     assert!(
-        invoked
-            .iter()
-            .any(|s| s == "packages/stark-prover/scripts/deployed-verifier-check.mjs"),
-        "the scan did not find the deployed-verifier interlock script at its FULL path, so \
-         it is truncating nested paths and would judge them against the wrong directory. \
-         Found: {invoked:?}"
-    );
-    assert!(
-        GITIGNORE.lines().any(|l| l.trim() == "/scripts/*"),
-        "`.gitignore` no longer excludes `/scripts/*`, so the negation reasoning below does \
-         not apply. Either the exclusion moved — re-point this check — or scripts/ is \
-         tracked normally now and this check can go."
+        !excluded_dirs.is_empty(),
+        "`.gitignore` excludes no top-level directory wholesale, so the negation reasoning \
+         below has no subject. Either the syntax changed — re-point this check — or the \
+         wholesale exclusions are gone and this half of the test can go."
     );
 
     let negated: Vec<&str> = GITIGNORE
         .lines()
         .map(str::trim)
-        .filter_map(|l| l.strip_prefix("!/scripts/"))
+        .filter_map(|l| l.strip_prefix('!'))
+        .map(|l| l.trim_start_matches('/'))
         .collect();
-    assert!(
-        !negated.is_empty(),
-        "`.gitignore` excludes `/scripts/*` and negates nothing, yet ci.yml runs \
-         {invoked:?}. Either the negation syntax changed — re-point this check — or every \
-         root script CI runs is uncommitted."
-    );
 
     for path in &invoked {
         let on_disk = repo_root().join(path);
@@ -2572,17 +2826,22 @@ fn every_script_ci_invokes_is_on_disk_and_not_gitignored() {
              missing file, not on the thing it checks.",
             on_disk.display()
         );
-        // Only the repo-root `scripts/` directory is excluded wholesale, so
-        // only those need a negation. A package's own scripts/ is tracked
-        // normally and asserting a negation for one would be wrong.
-        if let Some(name) = path.strip_prefix("scripts/") {
+
+        // A file under a wholesale-excluded top-level directory is invisible to
+        // `git status`, so it can be present locally, absent from the repo, and
+        // already wired into a BLOCKING workflow step. That has happened twice
+        // in this repository. Only the exclusion's own directory counts: a
+        // package's nested `scripts/` is tracked normally and demanding a
+        // negation for one would be wrong.
+        let Some(dir) = path.split('/').next() else { continue };
+        if excluded_dirs.contains(&dir) {
             assert!(
-                negated.contains(&name),
+                negated.iter().any(|n| *n == path.as_str()),
                 "\n\n  >>> A CI SCRIPT IS GITIGNORED <<<\n  ci.yml runs `{path}`, the file \
-                 exists locally, and `.gitignore` excludes `/scripts/*` without a \
-                 `!/scripts/{name}` negation.\n\n  So it is NOT committed, `git status` \
-                 shows a clean tree, and the workflow step that runs it fails on a file \
-                 nobody can see is absent.\n  Add `!/scripts/{name}` to .gitignore.\n  \
+                 exists locally, and `.gitignore` excludes `/{dir}/` wholesale with no \
+                 `!/{path}` negation.\n\n  So it is NOT committed, `git status` shows a \
+                 clean tree, and the workflow step that runs it fails on a file nobody can \
+                 see is absent.\n  Add `!/{path}` to .gitignore.\n  \
                  Negations present: {negated:?}\n"
             );
         }

@@ -213,9 +213,38 @@ jobs:
           # ⛔ `cu_budget` stays OUT and that is deliberate, not an oversight: it
           # needs `cargo-build-sbf`, which this job does not have. Its C7 ceiling
           # row is a LOCAL acceptance check. Nobody should read the C7 CU number
-          # as a CI gate.
+          # as a CI gate. The exclusion is recorded a second time, with the same
+          # reason, in `CI_UNRUN_TEST_TARGETS` inside cu_budget.rs — the scan
+          # there treats an unnamed target as a coverage hole unless it is
+          # excused in writing.
+          #
+          # [C7 2026-08-25] `c7_binding` appended. It is the only place forgeries
+          # 6, 7 and 9 of the spend plan are exercised — recipient malleability,
+          # public-input arity, and the tampered-OOD quartet — against the real
+          # `verify_deep_ali_circuit_7` rather than against the quotient. It
+          # needs no toolchain: `p01-stark` is a dev-dependency and the proofs
+          # are generated natively, so unlike `cu_budget` it belongs here.
+          #
+          # [2026-08-25] Ten more targets appended. They were not "forgotten":
+          # the scan in cu_budget.rs that is supposed to notice an unnamed target
+          # had been blind to this very loop — it looked for a literal
+          # `--test <name>` and this step passes `--test "$pin"` — so it reported
+          # zero coverage everywhere and was read as a broken scanner. With the
+          # parser fixed it named thirteen targets that executed nowhere. Ten are
+          # here; the three that are not are recorded in CI_UNRUN_TEST_TARGETS
+          # with the measured reason, including one that is RED on a real defect.
+          #
+          # Measured wall-clock on a 6c/12t laptop, --release: b1_deep_binding
+          # 44s, b2_bits_measured 104s, b2_segment_binding 89s,
+          # c5_conservation_probe 116s, c6_padding_rows 425s, liveness_fix_attack
+          # 64s, ood_column_probe 30s, route_c_trace_pair 18s, a4_probe 1s,
+          # merkle_domain_sep 0s. About 15 minutes total, and c6_padding_rows is
+          # nearly half of it.
           missing=""
-          for pin in periodic_stride b4_pair_leaf wire_parity honest_liveness cross_circuit_confusion; do
+          for pin in periodic_stride b4_pair_leaf wire_parity honest_liveness cross_circuit_confusion c7_binding \
+                     a4_probe b1_deep_binding b2_bits_measured b2_segment_binding b7_coset_shift_pairing \
+                     c5_conservation_probe c6_padding_rows liveness_fix_attack merkle_domain_sep \
+                     ood_column_probe route_c_trace_pair; do
             if printf '%s\n' "$targets" | grep -qx "$pin"; then
               echo "::group::pin $pin"
               cargo test -p p01_stark_verifier --release --test "$pin"

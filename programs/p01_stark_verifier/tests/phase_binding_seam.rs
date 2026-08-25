@@ -182,11 +182,16 @@ fn every_write_site_and_the_phase_two_recompute_agree() {
 #[test]
 fn the_verifier_arity_equals_what_every_consumer_rebuilds() {
     // (circuit_id, arity, who rebuilds it)
-    let consumers: [(u8, usize, &str); 7] = [
+    let consumers: [(u8, usize, &str); 8] = [
         (0, 1, "p01_quantum_wallet::state::commitment_public_input_bytes \
                 (8 bytes = 1 u64); zk_shielded pause/resume/cancel_private_stark"),
+        // [2026-08-25] `p01_liquidity::prefund` moved here from the C6 row. It
+        // was attributed to circuit 6 and it pins `circuit_id == 1`
+        // (`prefund.rs:28,121`) and rebuilds `sha256(nullifier_u64 ||
+        // commitment_u64)` — two felts, C1's arity, not five.
         (1, 2, "zk_shielded::{subscribe,split_note,unshield_denominated_v3,\
-                transfer_denominated_v3}_stark -> [nullifier, commitment]"),
+                transfer_denominated_v3}_stark, p01_liquidity::prefund \
+                -> [nullifier, commitment]"),
         (2, 2, "p01_zkspl::prove_balance -> [balance_commitment, token_mint]"),
         (3, 3, "zk_shielded::{subscribe,split_note,unshield_denominated_v3,\
                 transfer_denominated_v3}_stark -> [leaf, root, depth=15]"),
@@ -194,8 +199,13 @@ fn the_verifier_arity_equals_what_every_consumer_rebuilds() {
                 -> [old_commitment, new_commitment, amount_hash, token_mint]"),
         (5, 6, "zk_shielded::{transfer,unshield}_stark -> [n1, n2, oc1, oc2, \
                 public_amount, token_mint]"),
-        (6, 5, "zk_shielded::{shield_denominated_v3,transfer_denominated_v3}, \
-                p01_liquidity::prefund -> [old_leaf, new_leaf, old_root, new_root, depth=15]"),
+        (6, 5, "zk_shielded::{shield_denominated_v3,transfer_denominated_v3} \
+                -> [old_leaf, new_leaf, old_root, new_root, depth=15]"),
+        // [C7 2026-08-25] The spend circuit. Its six felts are rebuilt by
+        // `unshield_denominated_stark_v4::c7_pub_bytes`, and the last four of
+        // them ARE the sha256 digest of the recipient, carried raw.
+        (7, 6, "zk_shielded::unshield_denominated_stark_v4 \
+                -> [nullifier, subtree_root, rh0, rh1, rh2, rh3]"),
     ];
     for (circuit_id, arity, who) in consumers {
         assert_eq!(
@@ -204,7 +214,10 @@ fn the_verifier_arity_equals_what_every_consumer_rebuilds() {
             "C{circuit_id} arity drifted from what rebuilds the hash: {who}"
         );
     }
-    for unknown in [7u8, 8, 42, u8::MAX] {
+    // 8, not 7. Circuit 7 ships now, so demanding that it have no arity asserted
+    // the opposite of what the verifier does — the same half-update that left
+    // `cross_circuit_confusion` red from `3be88558`.
+    for unknown in [8u8, 42, u8::MAX] {
         assert!(
             expected_public_input_count(unknown).is_err(),
             "circuit {unknown} must have no arity"
