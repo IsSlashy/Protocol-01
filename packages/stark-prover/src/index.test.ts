@@ -233,19 +233,54 @@ describe('@protocol-01/stark-prover', () => {
     expect(outcome.publicInputs).toEqual([1n, 2n]);
   });
 
-  it('rejects MERKLE_UPDATE (circuit 6) with a clear error in current WASM build', async () => {
+  /**
+   * 🚨 THIS TEST ASSERTED NOTHING, AND SAID SO IN A COMMENT.
+   *
+   * It was `rejects MERKLE_UPDATE (circuit 6) with a clear error in current WASM
+   * build`, and it opened with:
+   *
+   *     if (exports.generate_merkle_update_stark_proof) {
+   *       // If a future WASM build adds the export, this test becomes a no-op.
+   *       return;
+   *     }
+   *
+   * MEASURED 2026-08-25 via `WebAssembly.Module.exports()`: BOTH blobs export it
+   * — the shipped 229,640 / 51a947e3 and the circuit-7 267,610 / 72a8c700. So
+   * the early return has been taken every run, for as long as the export has
+   * existed, and the green meant nothing.
+   *
+   * The premise was inverted, and three other files still carry it —
+   * `wasm-loader.ts` used to call the export optional, `index.ts` throws
+   * "not exported by the bundled WASM", and `README.md:51-54` repeats it.
+   *
+   * So it now asserts the true thing: C6 generates a real proof. A no-op that
+   * announces itself is still a no-op.
+   */
+  it('generates a real MERKLE_UPDATE (circuit 6) proof — the export exists', async () => {
     const exports = await initStarkWasm();
-    if (exports.generate_merkle_update_stark_proof) {
-      // If a future WASM build adds the export, this test becomes a no-op.
-      return;
-    }
-    expect(() => generateProofBytes(exports, STARK_CIRCUITS.MERKLE_UPDATE, {
-      oldLeaf: '1',
-      newLeaf: '2',
-      pathElements: ['0'],
-      pathIndices: ['0'],
-    })).toThrow(/MERKLE_UPDATE.*not exported by the bundled WASM/);
-  });
+    expect(
+      typeof exports.generate_merkle_update_stark_proof,
+      'circuit 6 is missing from the blob; index.ts and README still describe that as normal',
+    ).toBe('function');
+
+    const { proofBytes, publicInputs } = generateProofBytes(
+      exports,
+      STARK_CIRCUITS.MERKLE_UPDATE,
+      {
+        oldLeaf: '111',
+        newLeaf: '222',
+        pathElements: Array.from({ length: 15 }, (_, i) => String(100 + i * 13)),
+        pathIndices: Array.from({ length: 15 }, (_, i) => String(i % 2)),
+      },
+    );
+    // The length `wireFormat.test.ts` pins for C6, restated here so a failure
+    // says "circuit 6" rather than "some pin moved".
+    expect(proofBytes.length).toBe(81_037);
+    // [old_leaf, new_leaf, old_root, new_root, depth] — five, and depth is 15,
+    // the only value the deployed verifier accepts.
+    expect(publicInputs).toHaveLength(5);
+    expect(publicInputs[4]).toBe(15n);
+  }, 60_000);
 
   it('rejects unknown circuit IDs', async () => {
     const exports = await initStarkWasm();
