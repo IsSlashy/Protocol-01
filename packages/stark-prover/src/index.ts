@@ -46,8 +46,6 @@ import {
 
 import {
   initStarkWasm,
-  passStringToWasm,
-  readStringReturn,
   type WasmSource,
   type StarkExports,
 } from './wasm-loader';
@@ -229,7 +227,7 @@ export function generateProofBytes(
   switch (circuitId) {
     case STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP: {
       const secret = BigInt(asString(privateInputs.subscriberSecret ?? privateInputs.secret, 'subscriberSecret'));
-      const json = JSON.parse(readStringReturn(exports, exports.generate_stark_proof(secret))) as CompactProofJson;
+      const json = JSON.parse(exports.generate_stark_proof(secret)) as CompactProofJson;
       const commitment = BigInt(json.commitment);
       return {
         proofBytes: hexToBytes(json.proof_hex),
@@ -243,7 +241,7 @@ export function generateProofBytes(
       const epoch = BigInt(asString(privateInputs.depositEpoch ?? privateInputs.epoch, 'depositEpoch'));
       const mint = BigInt(asString(privateInputs.tokenMint, 'tokenMint'));
       const json = JSON.parse(
-        readStringReturn(exports, exports.generate_pool_commitment_stark_proof(np, secret, epoch, mint)),
+        exports.generate_pool_commitment_stark_proof(np, secret, epoch, mint),
       ) as PoolProofJson;
       return {
         proofBytes: hexToBytes(json.proof_hex),
@@ -256,7 +254,7 @@ export function generateProofBytes(
       const salt = BigInt(asString(privateInputs.salt, 'salt'));
       const mint = BigInt(asString(privateInputs.tokenMint, 'tokenMint'));
       const json = JSON.parse(
-        readStringReturn(exports, exports.generate_balance_stark_proof(sk, balance, salt, mint)),
+        exports.generate_balance_stark_proof(sk, balance, salt, mint),
       ) as BalanceProofJson;
       return {
         proofBytes: hexToBytes(json.proof_hex),
@@ -268,12 +266,9 @@ export function generateProofBytes(
       const elements = asStringArray(privateInputs.pathElements);
       const indices = asStringArray(privateInputs.pathIndices);
       if (elements.length === 0) throw new Error('pathElements must be non-empty for MERKLE_PATH');
-      const elemHandle = passStringToWasm(exports, elements.join(','));
-      const idxHandle = passStringToWasm(exports, indices.join(','));
-      const ret = exports.generate_merkle_path_stark_proof(
-        leaf, elemHandle.ptr, elemHandle.len, idxHandle.ptr, idxHandle.len,
-      );
-      const json = JSON.parse(readStringReturn(exports, ret)) as MerklePathProofJson;
+      const json = JSON.parse(
+        exports.generate_merkle_path_stark_proof(leaf, elements.join(','), indices.join(',')),
+      ) as MerklePathProofJson;
       // [C3 depth binding] depth is the 3rd public input. It is folded into the
       // prover's Fiat-Shamir transcript and bound on-chain (the verifier rejects
       // depth != 15). Older WASM that omits `depth` falls back to the path length.
@@ -295,7 +290,7 @@ export function generateProofBytes(
       const ret = exports.generate_confidential_balance_stark_proof(
         sk, oldBal, oldSalt, newBal, newSalt, amount, amountSalt, mint,
       );
-      const json = JSON.parse(readStringReturn(exports, ret)) as ConfBalanceProofJson;
+      const json = JSON.parse(ret) as ConfBalanceProofJson;
       return {
         proofBytes: hexToBytes(json.proof_hex),
         publicInputs: [
@@ -327,7 +322,7 @@ export function generateProofBytes(
         outAmt2, outRecip2, outRand2,
         publicAmt,
       );
-      const json = JSON.parse(readStringReturn(exports, ret)) as TransferProofJson;
+      const json = JSON.parse(ret) as TransferProofJson;
       return {
         proofBytes: hexToBytes(json.proof_hex),
         publicInputs: [
@@ -352,12 +347,11 @@ export function generateProofBytes(
       const newLeaf = BigInt(asString(privateInputs.newLeaf, 'newLeaf'));
       const elements = asStringArray(privateInputs.pathElements);
       const indices = asStringArray(privateInputs.pathIndices);
-      const elemHandle = passStringToWasm(exports, elements.join(','));
-      const idxHandle = passStringToWasm(exports, indices.join(','));
-      const ret = exports.generate_merkle_update_stark_proof(
-        oldLeaf, newLeaf, elemHandle.ptr, elemHandle.len, idxHandle.ptr, idxHandle.len,
-      );
-      const json = JSON.parse(readStringReturn(exports, ret)) as MerkleUpdateProofJson;
+      const json = JSON.parse(
+        exports.generate_merkle_update_stark_proof(
+          oldLeaf, newLeaf, elements.join(','), indices.join(','),
+        ),
+      ) as MerkleUpdateProofJson;
       return {
         proofBytes: hexToBytes(json.proof_hex),
         publicInputs: [

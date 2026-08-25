@@ -63,9 +63,48 @@ describe('@protocol-01/stark-prover', () => {
   it('loads the bundled WASM module', async () => {
     const exports = await initStarkWasm();
     expect(exports).toBeDefined();
-    expect(typeof exports.generate_stark_proof).toBe('function');
-    expect(typeof exports.compute_stark_commitment).toBe('function');
-    expect(exports.memory).toBeInstanceOf(WebAssembly.Memory);
+    // Every proof entry point the current blob carries. Checked as a set rather
+    // than two samples: a half-bound surface used to show up only when a caller
+    // reached for the missing one.
+    for (const fn of [
+      'compute_stark_commitment',
+      'generate_stark_proof',
+      'generate_pool_commitment_stark_proof',
+      'generate_balance_stark_proof',
+      'generate_merkle_path_stark_proof',
+      'generate_confidential_balance_stark_proof',
+      'generate_transfer_stark_proof',
+      'generate_merkle_update_stark_proof',
+    ] as const) {
+      expect(typeof exports[fn], `${fn} is not bound`).toBe('function');
+    }
+
+    // ⛔ `exports.memory` USED TO BE ASSERTED HERE AND CANNOT BE ANY MORE. The
+    // loader stopped hand-rolling the wasm-bindgen ABI on 2026-08-25 and now
+    // returns the generated glue's wrappers, which take and return real JS
+    // values; `memory`, `__wbindgen_malloc` and friends belong to the glue.
+    // Dropping the assertion is not a weakening — it checked that a raw
+    // instance existed, and the loop above checks something stronger, that
+    // every wrapper is bound.
+    expect((exports as unknown as { memory?: unknown }).memory).toBeUndefined();
+  });
+
+  /**
+   * 🚨 THE C7 TRIPWIRE. The shipped blob (229,640 B / 51a947e3) has EIGHT proof
+   * exports; the circuit-7 build has nine. This pins which one is loaded.
+   *
+   * It is meant to go RED on the day the C7 blob is reshipped — that is the
+   * signal to move it, re-pin `shippedBlob.test.ts`, and add a C7 row to
+   * `wireFormat.test.ts`. ⛔ Do not flip it to `toBe('function')` without doing
+   * those two, or the reship goes out with no digest behind it.
+   */
+  it('does not yet carry the circuit-7 prover', async () => {
+    const exports = await initStarkWasm();
+    expect(
+      typeof exports.generate_spend_stark_proof,
+      'generate_spend_stark_proof is bound — the C7 blob has shipped. Re-pin '
+        + 'shippedBlob.test.ts and add a C7 digest to wireFormat.test.ts, then move this.',
+    ).toBe('undefined');
   });
 
   it('caches the WASM module across calls', async () => {
