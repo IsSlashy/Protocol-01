@@ -18,16 +18,39 @@ const STARK_VERIFIER_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
 ]);
 
 /// Layout: 8 disc + 32 authority + 1 circuit_id + 4 proof_size + 4 bytes_written
-///       + 1 verified + 32 public_inputs_hash = 82
+///       + 1 verified + 32 public_inputs_hash + 1 deep_ali_verified = 83
+///
+/// # 🚨 THIS PARSE USED TO STOP AT 82, AND THAT BYTE IS THE WHOLE AIR CHECK
+///
+/// `verified` at offset 49 is phase 1: FRI folds, Merkle openings, query
+/// positions, the OOD point re-derivation. It is NOT a statement that the trace
+/// satisfies the constraint system. That statement is DEEP-ALI, it runs in
+/// `verify_deep_ali_phase2`, and its result is the byte at offset 82 — which
+/// this file declared out of range and never read.
+///
+/// So a circuit-1 proof whose trace does not satisfy C1's AIR cleared this
+/// handler. `verify_stark_proof_v2` would have written `verified = 1` for it and
+/// stopped there; nothing here asked for more.
+///
+/// Same defect class as `zk_shielded::unshield_stark` before 2026-08-18: a
+/// consumer that accepts a proof asserting less than the thing it grants. The
+/// difference is only that this one was found by a test rather than on a dump.
+///
+/// ⛔ `PROOF_BUF_INPUTS_HASH_END` exists so the hash slice stops at 82 while the
+/// length check demands 83. They used to be one constant, so widening the length
+/// check alone would have made `copy_from_slice` read 33 bytes into a `[u8; 32]`
+/// and panic on every call.
 const PROOF_BUF_AUTHORITY: usize = 8;
 const PROOF_BUF_CIRCUIT_ID: usize = 40;
 const PROOF_BUF_VERIFIED: usize = 49;
 const PROOF_BUF_INPUTS_HASH: usize = 50;
-const PROOF_BUF_MIN_LEN: usize = 82;
+const PROOF_BUF_INPUTS_HASH_END: usize = 82;
+const PROOF_BUF_DEEP_ALI_VERIFIED: usize = 82;
+const PROOF_BUF_MIN_LEN: usize = 83;
 
 const CIRCUIT_POOL_COMMITMENT: u8 = 1;
 
-fn parse_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])> {
+fn parse_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32], bool)> {
     require!(data.len() >= PROOF_BUF_MIN_LEN, LiquidityError::InvalidProofBuffer);
     require!(
         data[..8] == STARK_PROOF_BUFFER_DISCRIMINATOR,
@@ -37,8 +60,9 @@ fn parse_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32])> {
     let circuit_id = data[PROOF_BUF_CIRCUIT_ID];
     let verified = data[PROOF_BUF_VERIFIED] == 1;
     let mut inputs_hash = [0u8; 32];
-    inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_MIN_LEN]);
-    Ok((authority, circuit_id, verified, inputs_hash))
+    inputs_hash.copy_from_slice(&data[PROOF_BUF_INPUTS_HASH..PROOF_BUF_INPUTS_HASH_END]);
+    let deep_ali_verified = data[PROOF_BUF_DEEP_ALI_VERIFIED] == 1;
+    Ok((authority, circuit_id, verified, inputs_hash, deep_ali_verified))
 }
 
 // ---------------------------------------------------------------------------
@@ -116,9 +140,20 @@ pub fn handler(
         LiquidityError::InvalidProofOwner
     );
     let data = proof_info.try_borrow_data()?;
-    let (authority, circuit_id, verified, stored_hash) = parse_proof_buffer(&data)?;
+    let (authority, circuit_id, verified, stored_hash, deep_ali_verified) =
+        parse_proof_buffer(&data)?;
     require!(verified, LiquidityError::ProofNotVerified);
     require!(circuit_id == CIRCUIT_POOL_COMMITMENT, LiquidityError::WrongCircuit);
+    // Phase 2. Circuit 1's DEEP-ALI is a SEPARATE instruction, so `verified`
+    // above says only that the FRI and Merkle layers checked out. Without this
+    // line a proof whose trace violates the AIR buys a prefund record, and that
+    // record is admissible at settle time.
+    //
+    // ⛔ Do not weaken this to `circuit_id == 0 || deep_ali_verified`. C0 is the
+    // only circuit whose DEEP-ALI runs inside phase 1, and this handler pins
+    // circuit 1 four lines up — the disjunction would be dead code that reads
+    // like an exemption someone could later widen.
+    require!(deep_ali_verified, LiquidityError::ProofNotVerified);
     require!(
         authority == ctx.accounts.ephemeral_signer.key(),
         LiquidityError::AuthorityMismatch

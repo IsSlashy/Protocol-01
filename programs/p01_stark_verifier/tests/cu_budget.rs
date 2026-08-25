@@ -2075,7 +2075,14 @@ fn cu_ceiling_ci_workflow_cannot_hold_a_stale_copy_of_a_pin() {
 /// Empty is the correct state, and the entry cost is deliberately a written
 /// reason: this list is a place to record a coverage hole, not a place to make
 /// one quiet.
-const CI_UNRUN_TEST_TARGETS: [(&str, &str); 3] = [
+// [2026-08-25] `phase_binding_seam` was listed here for a few hours, red on a
+// real defect rather than a stale test, with the finding written into the
+// exclusion. Both consumers it named are fixed — `p01_liquidity::prefund` now
+// requires the phase-2 flag, `p01_quantum_wallet::stark` now pins circuit 0
+// inside the shared validator instead of trusting its callers — so the entry is
+// gone and the target runs in CI. That is the intended lifetime of an entry
+// here: written with the reason, deleted when the reason is.
+const CI_UNRUN_TEST_TARGETS: [(&str, &str); 2] = [
     (
         "cu_budget",
         "it BUILDS the .so it measures, so it needs `cargo-build-sbf`, which the \
@@ -2093,17 +2100,6 @@ const CI_UNRUN_TEST_TARGETS: [(&str, &str); 3] = [
          WITNESS FAMILY in tests/common/mod.rs, so it only has something new to say when that \
          file changes. Run it locally when it does: \
          `cargo test --release -p p01_stark_verifier --test liveness_generator_semantics`",
-    ),
-    (
-        "phase_binding_seam",
-        "🚨 RED ON A REAL DEFECT, NOT ON A STALE TEST, and excluded so the finding is carried \
-         rather than hidden. `no_consumer_requires_phase_one_without_phase_two` reports two \
-         consumers that require phase 1 and never the phase-2 flag at byte 82: \
-         p01_liquidity::prefund (pins circuit_id == 1, whose DEEP-ALI IS phase 2 — a live gap) \
-         and p01_quantum_wallet::stark (all three callers pass circuit 0, whose DEEP-ALI runs \
-         inside phase 1, so it is latent rather than live — but the id is a PARAMETER, which is \
-         why the scan refuses to exempt it). Its other ten tests pass. ⛔ Delete this entry the \
-         day prefund gates the flag — do NOT relax the scan",
     ),
 ];
 
