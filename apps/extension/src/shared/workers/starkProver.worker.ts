@@ -17,6 +17,7 @@
  */
 
 import { STARK_WASM_BASE64 } from '../services/starkWasmData';
+import { initStarkWasm, type StarkExports } from '@protocol-01/stark-prover/wasm-loader';
 
 // ---------------------------------------------------------------------------
 // Message types (shared with the service)
@@ -85,90 +86,33 @@ export type StarkWorkerOutMessage =
   | { type: 'log'; message: string };
 
 // ---------------------------------------------------------------------------
-// WASM bindings — minimal wasm-bindgen glue (mirrors mobile StarkProver)
+// WASM — loaded through @protocol-01/stark-prover
+//
+// 🚨 THIS FILE USED TO CARRY ITS OWN COPY OF THE wasm-bindgen ABI: a
+// `StarkExports` interface with (ptr,len) tuple returns, `passStringToWasm`,
+// `readStringReturn`, `getUint8Memory`, and a hand-built import object with
+// exactly ONE entry. It was one of FIVE such copies in this repository, and
+// none of them imported the package that exists to own this.
+//
+// One entry was enough for the pre-C7 blob: pure computation, no randomness, no
+// JS interop. MEASURED on the circuit-7 build, it needs TWENTY-FIVE — the spend
+// prover draws a 1,280-element CSPRNG mask and that pulls getrandom -> crypto ->
+// the whole wasm-bindgen shim surface. The copy could not load that blob:
+//
+//   LinkError: Import #0 "./p01_stark_bg.js"
+//   "__wbg_crypto_38df2bab126b63dc": function import requires a callable
+//
+// ⛔ And the names are CONTENT-HASHED, so hand-writing them is work redone on
+// every rebuild — five times over.
+//
+// `initStarkWasm` takes the same base64 constant this file already imported, so
+// nothing about WHERE the bytes come from changes: no fetch, no
+// web_accessible_resources, no URL. The package delegates instantiation to the
+// generated glue, whose wrappers return real JS strings — which is why the
+// handlers below dropped `readStringReturn` and pass CSV strings directly.
 // ---------------------------------------------------------------------------
 
-interface StarkExports {
-  memory: WebAssembly.Memory;
-  compute_stark_commitment(secret: bigint): [number, number];
-  generate_stark_proof(secret: bigint): [number, number];
-  generate_pool_commitment_stark_proof(a: bigint, b: bigint, c: bigint, d: bigint): [number, number];
-  generate_balance_stark_proof(a: bigint, b: bigint, c: bigint, d: bigint): [number, number];
-  generate_merkle_path_stark_proof(leaf: bigint, elemsPtr: number, elemsLen: number, idxPtr: number, idxLen: number): [number, number];
-  generate_confidential_balance_stark_proof(
-    a: bigint, b: bigint, c: bigint, d: bigint,
-    e: bigint, f: bigint, g: bigint, h: bigint,
-  ): [number, number];
-  generate_transfer_stark_proof(
-    a: bigint, b: bigint, c: bigint, d: bigint, e: bigint, f: bigint,
-    g: bigint, h: bigint, i: bigint, j: bigint, k: bigint, l: bigint, m: bigint,
-  ): [number, number];
-  generate_merkle_update_stark_proof(
-    oldLeaf: bigint, newLeaf: bigint,
-    elemsPtr: number, elemsLen: number, idxPtr: number, idxLen: number,
-  ): [number, number];
-  __wbindgen_externrefs: WebAssembly.Table;
-  __wbindgen_malloc(a: number, b: number): number;
-  __wbindgen_realloc(a: number, b: number, c: number, d: number): number;
-  __wbindgen_free(a: number, b: number, c: number): void;
-  __wbindgen_start(): void;
-}
-
 let wasmExports: StarkExports | null = null;
-let cachedUint8Mem: Uint8Array | null = null;
-let wasmVectorLen = 0;
-const decoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
-decoder.decode();
-const encoder = new TextEncoder();
-
-function getUint8Memory(): Uint8Array {
-  if (!wasmExports) throw new Error('WASM not initialized');
-  if (cachedUint8Mem === null || cachedUint8Mem.byteLength === 0) {
-    cachedUint8Mem = new Uint8Array(wasmExports.memory.buffer);
-  }
-  return cachedUint8Mem;
-}
-
-function getStringFromWasm(ptr: number, len: number): string {
-  const adjustedPtr = ptr >>> 0;
-  return decoder.decode(getUint8Memory().subarray(adjustedPtr, adjustedPtr + len));
-}
-
-function passStringToWasm(arg: string): number {
-  if (!wasmExports) throw new Error('WASM not initialized');
-  const malloc = wasmExports.__wbindgen_malloc;
-  const realloc = wasmExports.__wbindgen_realloc;
-  let len = arg.length;
-  let ptr = malloc(len, 1) >>> 0;
-  let mem = getUint8Memory();
-  let offset = 0;
-  for (; offset < len; offset++) {
-    const code = arg.charCodeAt(offset);
-    if (code > 0x7f) break;
-    mem[ptr + offset] = code;
-  }
-  if (offset !== len) {
-    let sliced = arg;
-    if (offset !== 0) sliced = arg.slice(offset);
-    const newLen = offset + sliced.length * 3;
-    ptr = realloc(ptr, len, newLen, 1) >>> 0;
-    len = newLen;
-    mem = getUint8Memory();
-    const view = mem.subarray(ptr + offset, ptr + len);
-    const { written } = encoder.encodeInto(sliced, view);
-    offset += written;
-    ptr = realloc(ptr, len, offset, 1) >>> 0;
-  }
-  wasmVectorLen = offset;
-  return ptr;
-}
-
-function readStringReturn(ret: [number, number]): string {
-  const [ptr, len] = ret;
-  const str = getStringFromWasm(ptr, len);
-  wasmExports!.__wbindgen_free(ptr, len, 1);
-  return str;
-}
 
 function base64ToBytes(b64: string): Uint8Array {
   const binary = atob(b64);
@@ -187,27 +131,7 @@ function post(msg: StarkWorkerOutMessage) {
 
 async function initWasm() {
   try {
-    const bytes = base64ToBytes(STARK_WASM_BASE64);
-    const imports = {
-      './p01_stark_bg.js': {
-        __wbindgen_init_externref_table: () => {
-          const table = wasmExports!.__wbindgen_externrefs;
-          const offset = table.grow(4);
-          table.set(0, undefined);
-          table.set(offset + 0, undefined);
-          table.set(offset + 1, null);
-          table.set(offset + 2, true);
-          table.set(offset + 3, false);
-        },
-      },
-    };
-    const result = (await WebAssembly.instantiate(
-      bytes as BufferSource,
-      imports,
-    )) as WebAssembly.WebAssemblyInstantiatedSource;
-    wasmExports = result.instance.exports as unknown as StarkExports;
-    cachedUint8Mem = null;
-    wasmExports.__wbindgen_start();
+    wasmExports = await initStarkWasm({ base64: STARK_WASM_BASE64 });
     post({ type: 'wasmLoaded' });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -231,7 +155,7 @@ function generateProof(id: string, secretStr: string) {
   const exp = assertReady(id); if (!exp) return;
   try {
     const started = performance.now();
-    const jsonStr = readStringReturn(exp.generate_stark_proof(BigInt(secretStr)));
+    const jsonStr = exp.generate_stark_proof(BigInt(secretStr));
     const elapsed = Math.round(performance.now() - started);
     const result = JSON.parse(jsonStr);
     post({
@@ -249,7 +173,7 @@ function generateProof(id: string, secretStr: string) {
 function computeCommitment(id: string, secretStr: string) {
   const exp = assertReady(id); if (!exp) return;
   try {
-    const commitment = readStringReturn(exp.compute_stark_commitment(BigInt(secretStr)));
+    const commitment = exp.compute_stark_commitment(BigInt(secretStr));
     post({ type: 'proof', id, commitment });
   } catch (err) {
     post({ type: 'error', id, error: err instanceof Error ? err.message : 'Commitment failed' });
@@ -260,11 +184,9 @@ function generatePoolProof(id: string, args: [string, string, string, string]) {
   const exp = assertReady(id); if (!exp) return;
   try {
     const started = performance.now();
-    const jsonStr = readStringReturn(
-      exp.generate_pool_commitment_stark_proof(
+    const jsonStr = exp.generate_pool_commitment_stark_proof(
         BigInt(args[0]), BigInt(args[1]), BigInt(args[2]), BigInt(args[3]),
-      ),
-    );
+      );
     const elapsed = Math.round(performance.now() - started);
     const result = JSON.parse(jsonStr);
     post({
@@ -286,11 +208,9 @@ function generateBalanceProof(id: string, args: [string, string, string, string]
   const exp = assertReady(id); if (!exp) return;
   try {
     const started = performance.now();
-    const jsonStr = readStringReturn(
-      exp.generate_balance_stark_proof(
+    const jsonStr = exp.generate_balance_stark_proof(
         BigInt(args[0]), BigInt(args[1]), BigInt(args[2]), BigInt(args[3]),
-      ),
-    );
+      );
     const elapsed = Math.round(performance.now() - started);
     const result = JSON.parse(jsonStr);
     post({
@@ -311,12 +231,8 @@ function generateMerklePathProof(id: string, leaf: string, pathElements: string[
   const exp = assertReady(id); if (!exp) return;
   try {
     const started = performance.now();
-    const elemsPtr = passStringToWasm(pathElements.join(','));
-    const elemsLen = wasmVectorLen;
-    const idxPtr = passStringToWasm(pathIndices.join(','));
-    const idxLen = wasmVectorLen;
-    const ret = exp.generate_merkle_path_stark_proof(BigInt(leaf), elemsPtr, elemsLen, idxPtr, idxLen);
-    const jsonStr = readStringReturn(ret);
+        const ret = exp.generate_merkle_path_stark_proof(BigInt(leaf), pathElements.join(','), pathIndices.join(','));
+    const jsonStr = ret;
     const elapsed = Math.round(performance.now() - started);
     const result = JSON.parse(jsonStr);
     // [C3 depth binding] depth is the 3rd public input, bound on-chain
@@ -357,7 +273,7 @@ function generateConfidentialBalanceProof(
       BigInt(data.amountSalt),
       BigInt(data.tokenMint),
     );
-    const jsonStr = readStringReturn(ret);
+    const jsonStr = ret;
     const elapsed = Math.round(performance.now() - started);
     const result = JSON.parse(jsonStr);
     post({
@@ -401,7 +317,7 @@ function generateTransferProof(
       BigInt(data.outRand2),
       BigInt(data.publicAmount),
     );
-    const jsonStr = readStringReturn(ret);
+    const jsonStr = ret;
     const elapsed = Math.round(performance.now() - started);
     const result = JSON.parse(jsonStr);
     post({
@@ -431,14 +347,8 @@ function generateMerkleUpdateProof(
   const exp = assertReady(id); if (!exp) return;
   try {
     const started = performance.now();
-    const elemsPtr = passStringToWasm(pathElements.join(','));
-    const elemsLen = wasmVectorLen;
-    const idxPtr = passStringToWasm(pathIndices.join(','));
-    const idxLen = wasmVectorLen;
-    const ret = exp.generate_merkle_update_stark_proof(
-      BigInt(oldLeaf), BigInt(newLeaf), elemsPtr, elemsLen, idxPtr, idxLen,
-    );
-    const jsonStr = readStringReturn(ret);
+        const ret = exp.generate_merkle_update_stark_proof(BigInt(oldLeaf), BigInt(newLeaf), pathElements.join(','), pathIndices.join(','));
+    const jsonStr = ret;
     const elapsed = Math.round(performance.now() - started);
     const result = JSON.parse(jsonStr);
     post({

@@ -11,6 +11,7 @@
     "test:pool": "vitest run --config vitest.pool.config.mts"
   },
   "dependencies": {
+    "@protocol-01/stark-prover": "workspace:*",
     "@noble/hashes": "^2.2.0",
     "@noble/post-quantum": "^0.6.1",
     "@protocol-01/pay-core": "workspace:*",
