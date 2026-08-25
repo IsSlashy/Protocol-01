@@ -90,21 +90,30 @@ describe('@protocol-01/stark-prover', () => {
   });
 
   /**
-   * 🚨 THE C7 TRIPWIRE. The shipped blob (229,640 B / 51a947e3) has EIGHT proof
-   * exports; the circuit-7 build has nine. This pins which one is loaded.
+   * THE C7 TRIPWIRE, FIRED AND TURNED AROUND (2026-08-25).
    *
-   * It is meant to go RED on the day the C7 blob is reshipped — that is the
-   * signal to move it, re-pin `shippedBlob.test.ts`, and add a C7 row to
-   * `wireFormat.test.ts`. ⛔ Do not flip it to `toBe('function')` without doing
-   * those two, or the reship goes out with no digest behind it.
+   * It used to assert `generate_spend_stark_proof` was UNBOUND, because the
+   * shipped blob (229,640 B / 51a947e3) had eight proof exports and the
+   * circuit-7 build has nine. It went red on the reship, exactly as designed,
+   * and named its own three conditions. All three were met before it was
+   * flipped:
+   *
+   *   verifier redeployed      DGY37k3J… byte-identical to the local artifact,
+   *                            confirmed on a DUMP, not deduced from a client
+   *   shippedBlob re-pinned    72a8c700c466, 267,610 B
+   *   wireFormat covers C7     length 77,965 + mask freshness — a DIGEST is
+   *                            impossible for C7 and the reason is recorded there
+   *
+   * It now guards the other direction: a build that LOSES the export would put
+   * the pool back on the v3 path, where the note commitment is a public input.
    */
-  it('does not yet carry the circuit-7 prover', async () => {
+  it('carries the circuit-7 prover', async () => {
     const exports = await initStarkWasm();
     expect(
       typeof exports.generate_spend_stark_proof,
-      'generate_spend_stark_proof is bound — the C7 blob has shipped. Re-pin '
-        + 'shippedBlob.test.ts and add a C7 digest to wireFormat.test.ts, then move this.',
-    ).toBe('undefined');
+      'generate_spend_stark_proof is gone — the pre-C7 blob (51a947e3) came back. '
+        + 'Every spend falls back to v3, which PUBLISHES the note commitment.',
+    ).toBe('function');
   });
 
   it('caches the WASM module across calls', async () => {
@@ -204,7 +213,7 @@ describe('@protocol-01/stark-prover', () => {
   // STARK_CIRCUITS enum sanity
   // -------------------------------------------------------------------------
 
-  it('exports the canonical circuit IDs (0-6)', () => {
+  it('exports the canonical circuit IDs (0-7)', () => {
     expect(STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP).toBe(0);
     expect(STARK_CIRCUITS.POOL_COMMITMENT).toBe(1);
     expect(STARK_CIRCUITS.BALANCE_PROOF).toBe(2);
@@ -212,6 +221,7 @@ describe('@protocol-01/stark-prover', () => {
     expect(STARK_CIRCUITS.CONFIDENTIAL_BALANCE).toBe(4);
     expect(STARK_CIRCUITS.TRANSFER).toBe(5);
     expect(STARK_CIRCUITS.MERKLE_UPDATE).toBe(6);
+    expect(STARK_CIRCUITS.SPEND).toBe(7);
   });
 
   // -------------------------------------------------------------------------

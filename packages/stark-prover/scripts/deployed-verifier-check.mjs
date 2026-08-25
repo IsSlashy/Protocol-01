@@ -1273,6 +1273,17 @@ if (wantMeasure) {
     `\n[deployed-verifier] --measure only READS the chain. Paste the block above into ${RECORD_REL}, ` +
       'and set accepts_client_blob_sha256 only after proving a blob against this deployment end to end.',
   );
+  console.error(
+    '\n[deployed-verifier] ⚠️ ONE FIELD IN THAT BLOCK IS NOT PASTE-READY: proof_format_generation.\n'
+    + '                    The scan prints `b1+` because B2 added no msg! literal to the verifier, so a\n'
+    + '                    byte scan cannot separate b1 from b2. `b1+` means "B1 or newer, cannot say\n'
+    + '                    which"; the record is meant to carry the PRECISE generation. Pasting `b1+` in\n'
+    + '                    verbatim makes the interlock read it as a mismatch against a b2 blob and\n'
+    + '                    report FriFoldCheckFailed for a deployment that is perfectly healthy.\n'
+    + '                    Write the generation you can EVIDENCE -- a proof from that blob accepted by\n'
+    + '                    that program is the only direct evidence there is -- and say so in\n'
+    + '                    generation_evidence.',
+  );
   if (LOCAL_MODE) {
     console.error(`[deployed-verifier] This block describes ${TARGET_CLUSTER}. Pasting it in makes the record describe a`);
     console.error('[deployed-verifier] local chain, and every shipping run of this gate will then fail on the cluster');
@@ -1666,7 +1677,12 @@ if (blobGen !== null && deployedGen !== blobGen) {
     'over many chunked transactions, and fails on the LAST instruction. To a user it looks like an',
     'unexplained transaction failure at the end of a slow upload.',
     '',
-    'SHIP THE PROGRAM FIRST. Deploy programs/p01_stark_verifier to the cluster above, then re-measure:',
+    'FIRST, CHECK THE RECORD IS NOT MISQUOTING ITSELF. If deployed.proof_format_generation reads',
+    '`b1+`, that is the ELF scan\'s ambiguous answer pasted in verbatim, NOT a real mismatch: `b1+`',
+    'means "B1 or newer" and is compatible with a b2 blob. Write the precise generation you can',
+    'evidence. This has cost one debugging session already.',
+    '',
+    'OTHERWISE, SHIP THE PROGRAM FIRST. Deploy programs/p01_stark_verifier to the cluster above, then re-measure:',
     `  node packages/stark-prover/scripts/deployed-verifier-check.mjs --measure --cluster ${TARGET_CLUSTER}`,
     `and update ${RECORD_REL}. Editing that file without redeploying satisfies the checks above and`,
     'changes nothing on chain. The --verify-onchain leg refetches the deployment and rejects that edit,',

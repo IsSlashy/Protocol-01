@@ -155,6 +155,13 @@ export const STARK_CIRCUITS = {
   CONFIDENTIAL_BALANCE: 4,
   TRANSFER: 5,
   MERKLE_UPDATE: 6,
+  /**
+   * [C7] The spend circuit: C1's pool commitment and C3's Merkle path proven in
+   * ONE trace, so the note commitment is never a public input. That is the
+   * entire point -- v3 published it, which named the leaf being spent and let
+   * anyone reading the tree walk back to the deposit that funded it.
+   */
+  SPEND: 7,
 } as const;
 
 export type StarkCircuitId = (typeof STARK_CIRCUITS)[keyof typeof STARK_CIRCUITS];

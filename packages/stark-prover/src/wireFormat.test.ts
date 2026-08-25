@@ -257,6 +257,10 @@ describe('checked-in WASM prover — Route C wire format', () => {
     // C6 was absent from an older build; `generateProofBytes` throws a specific
     // error for that case. A missing export is prover skew too, so name it.
     expect(typeof exports.generate_merkle_update_stark_proof).toBe('function');
+    // C7 joined the shipped blob on 2026-08-25. Its absence would not fail
+    // loudly -- spends would fall back to the v3 path, which publishes the
+    // note commitment -- so it is named here rather than left implicit.
+    expect(typeof exports.generate_spend_stark_proof).toBe('function');
   });
 
   for (const pin of PINS) {
@@ -347,6 +351,104 @@ describe('checked-in WASM prover — Route C wire format', () => {
     expect(proofBytes.length).toBe(68_881);
     expect(sha256Hex(proofBytes)).toBe(FIXTURE_C1_SHA256);
   }, 60_000);
+
+  // -------------------------------------------------------------------------
+  // C7 spend — the one circuit that CANNOT carry a digest pin
+  // -------------------------------------------------------------------------
+  //
+  // Every row in PINS above is pinned by sha256, and the file says why: a
+  // content digest is the only cross-language check that catches prover /
+  // verifier semantic skew at constant length.
+  //
+  // 🚨 C7 CANNOT HAVE ONE, AND THE REASON IS THE POINT OF THE CIRCUIT. Its
+  // prover draws a 1,280-element mask from a real CSPRNG
+  // (`stark/src/lib.rs` draw_spend_mask, MASK_ROWS * TRACE_WIDTH = 128 * 10)
+  // and REFUSES to build a proof without one. Two proofs of the same witness
+  // are different bytes by construction. A digest pin here could only be made
+  // to pass by removing the masking — which is the underdetermination the
+  // privacy argument rests on.
+  //
+  // So C7 is pinned by the two things that ARE invariant, plus the one thing
+  // the mask must keep doing.
+  describe('C7 spend', () => {
+    const witness = {
+      nullifierPreimage: 11n,
+      secret: 22n,
+      blinding: 33n,
+      tokenMint: 44n,
+      // ⛔ TWELVE, not fifteen. C7's subtree depth is CANONICAL_DEPTH = 12; the
+      // pool tree is 15 and the top three levels are walked ON CHAIN by
+      // `resolve_pool_root`. Feeding it a 15-element path is the single easiest
+      // way to prove membership of the wrong tree.
+      pathElements: Array.from({ length: 12 }, (_, i) => String(1000 + i * 7)).join(','),
+      pathIndices: Array.from({ length: 12 }, (_, i) => String(i % 2)).join(','),
+      recipientHash: ['111111111', '222222222', '333333333', '444444444'].join(','),
+    };
+
+    const prove = (): Record<string, unknown> => {
+      const spend = exports.generate_spend_stark_proof;
+      if (!spend) throw new Error('the shipped blob does not export generate_spend_stark_proof');
+      return JSON.parse(spend(
+        witness.nullifierPreimage, witness.secret, witness.blinding, witness.tokenMint,
+        witness.pathElements, witness.pathIndices, witness.recipientHash,
+      )) as Record<string, unknown>;
+    };
+
+    it('serializes to exactly 77,965 bytes — the Rust prover’s size', () => {
+      // The same literal `cross_circuit_confusion.rs` pins Rust-side, in the
+      // per-circuit length table. Masking changes the CONTENT of a proof, never
+      // its length, so this stays a real cross-language check.
+      const json = prove();
+      expect(json.error ?? null, 'the prover refused the witness').toBeNull();
+      expect(json.circuit_id).toBe(7);
+      expect(json.proof_size).toBe(77_965);
+      expect((json.proof_hex as string).length).toBe(77_965 * 2);
+    }, 120_000);
+
+    it('draws a fresh mask — the same witness twice gives DIFFERENT bytes', () => {
+      // The inverse of the determinism assertion below, and load-bearing for a
+      // different reason. If this ever passes as "equal", the CSPRNG stopped
+      // being consulted and every spend proof leaks the same masked columns.
+      const a = prove().proof_hex as string;
+      const b = prove().proof_hex as string;
+      expect(a.length).toBe(b.length);
+      expect(a, 'C7 produced identical bytes twice — the mask is not being drawn').not.toBe(b);
+    }, 180_000);
+
+    it('publishes six felts and NOT the note commitment', () => {
+      // 🚨 THE WHOLE REASON THE CIRCUIT EXISTS. v3 spent on a C1 + C3 pair tied
+      // together by the note commitment, published in the clear — so a spend
+      // named the leaf it spent, and anyone reading the tree walked back to the
+      // deposit that funded it. C7 proves both halves in one trace and the
+      // commitment never reaches the wire.
+      //
+      // Checked on the prover's OWN output rather than on an instruction we
+      // build later: if the commitment reappears here, every downstream check
+      // is inspecting a value that should not exist.
+      const json = prove();
+      expect(json).not.toHaveProperty('commitment');
+      expect(json).toHaveProperty('nullifier');
+      expect(json).toHaveProperty('root');
+      expect((json.recipient_hash as string[]).length).toBe(4);
+      // 1 + 1 + 4 = 6, the arity `expected_public_input_count(7)` enforces.
+      const publicInputs = [json.nullifier, json.root, ...(json.recipient_hash as string[])];
+      expect(publicInputs.length).toBe(6);
+      for (const felt of publicInputs) expect(String(felt)).toMatch(/^\d+$/);
+    }, 120_000);
+
+    it('refuses a path of the wrong depth instead of proving the wrong tree', () => {
+      // `filter_map(.. .ok())` on the Rust side SILENTLY DROPS unparseable
+      // entries, so a truncated path arrives as a shorter one. The arity check
+      // exists because a proof of an 11-deep subtree is a valid proof of a tree
+      // nobody uses.
+      const spend = exports.generate_spend_stark_proof!;
+      const short = Array.from({ length: 11 }, (_, i) => String(1000 + i)).join(',');
+      const json = JSON.parse(spend(
+        11n, 22n, 33n, 44n, short, short, witness.recipientHash,
+      )) as { error?: string };
+      expect(json.error ?? '').toContain('path elements');
+    }, 60_000);
+  });
 
   it('is deterministic — the same witness twice gives the same bytes', () => {
     const a = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {

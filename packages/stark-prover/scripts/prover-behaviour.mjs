@@ -118,12 +118,28 @@ const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
  * length never separated THOSE two, and that it separates them from B2 only by
  * accident of the field widths.
  */
+/**
+ * ⛔ THE `b2` COLUMN WAS RE-SYNCED 2026-08-25 AND THE OLD VALUES WERE NOT A
+ * DIFFERENT GENERATION -- THEY WERE A DIFFERENT BRANCH.
+ *
+ * This script was recovered from `b7-drop-aligned-checks`, and its seven `b2`
+ * digests came with it. They matched neither authority the doc comment below
+ * cites: `b1_deep_binding.rs` FIXTURE_C*_SHA256 and `wireFormat.test.ts`
+ * Pin.sha256 agree with each other on all seven, and disagreed with this table
+ * on all seven. The blob on disk produces the values those two pin.
+ *
+ * 🧠 SAME TRAP, SECOND FILE. `wireFormat.test.ts` was recovered from the same
+ * branch on the same day and went red 9 of 12 for exactly this reason. Both
+ * times the reflex is to suspect the artifact; both times the artifact was
+ * right and the recovered pins were stale. When a recovered pin disagrees with
+ * a pin that is still being generated, the recovered one is the suspect.
+ */
 const FIXTURES = [
   {
     label: 'C0 subscriber_ownership',
     bytes: 47_641,
     bytesPreB2: 45_001,
-    b2: '5ea292acb52a3f352fbe9280c3b59291b77e92a066a6fbce743dbf8db456c09b',
+    b2: '157f45be56f966afeaa0bbb43255e17e16e0de07a2817429c7d554923b30930e',
     b1: 'e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7',
     preB1: 'baf01d179f166d8f38729ac4e6dc1a766e089ba1e98665dea4b981fafd488986',
     entry: 'generate_stark_proof',
@@ -133,7 +149,7 @@ const FIXTURES = [
     label: 'C1 pool_commitment',
     bytes: 68_881,
     bytesPreB2: 65_801,
-    b2: '09e9476db988eef4950ed2ef64c57d0ab9569f7eeb40e27bb2ab2cf1e204a83d',
+    b2: 'b41897fa3cb7b1f091e33fa89961d94124f56b3f944454e0a3f6b139487302ed',
     b1: '935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b',
     preB1: 'df52ee3c7047442813b6d9b844cc8e4d260cff8ed70af603250e006b914d961c',
     entry: 'generate_pool_commitment_stark_proof',
@@ -152,7 +168,7 @@ const FIXTURES = [
     // bisect: 6541e57b85419fd87a4227bf08cfc2f151d0179870ba04d5011338843cd51ce8.
     // It is deliberately NOT given a column: a pre-fold blob must refuse to classify,
     // because this tree's verifier rejects every proof it emits.
-    b2: 'd21c888724a773f1e37598ac1f8a9ce9f784d5390b0314aa8d57503e64d25a7c',
+    b2: 'c3961423c1573f04e4c62ea4b0cf7e15c6146507fa2b015cc7a5f473cfbb8a7c',
     b1: '063d86a18071ae369132c12a69c5af0e3c2efbe82f6340e6d7ec910be80fd49f',
     preB1: '5171c80e65ba6ed63c0b5a58f58b0bad11a060a60445be483f797d4777cc7d33',
     entry: 'generate_balance_stark_proof',
@@ -162,7 +178,7 @@ const FIXTURES = [
     label: 'C3 merkle_path',
     bytes: 78_157,
     bytesPreB2: 75_637,
-    b2: 'abf0e733d82002ff74c45d2677fc213f893cb45b999578f84324c35f5907c5c0',
+    b2: '86a572a2dbe86446ac46457de930001d0aa620db8b70a42b2fdd6f8afb1f4aca',
     b1: '2d97f56ffc3157fe7c644679d2945130efed8ea39c890a24c6c16022e78d5d9c',
     preB1: '0db183b6a257d03b15bd6439ff0ea554b7006dd134a3ccd6f3f6433b971c6bf3',
     entry: 'generate_merkle_path_stark_proof',
@@ -176,7 +192,7 @@ const FIXTURES = [
     // reshipped-in-the-same-commit rule as C2 above. MEASURED off the freshly built
     // blob, equal to b1_deep_binding.rs FIXTURE_C4_SHA256. Superseded pre-fold B2
     // digest: f4918f36632e011049366c079489b8f70858113f45831bcd76e0cf630d92929a.
-    b2: '94fe0535645eef6feab54ec6fa72d2370299d27c4522474cf66d601c28002d42',
+    b2: '6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0',
     b1: 'f877836723d0711e7190c2fd5c8a5c6d0476f21794d39ffd47a075f57d53e3e7',
     preB1: 'fbb631a3146225798360fcf80defb748664b2848ae0e59c88e6c9ec6342b2818',
     entry: 'generate_confidential_balance_stark_proof',
@@ -186,7 +202,7 @@ const FIXTURES = [
     label: 'C5 transfer',
     bytes: 78_877,
     bytesPreB2: 76_357,
-    b2: '28ef7176795111da1df5714dbc11ad3c32892de266242d30dec1cd60e9c252bd',
+    b2: 'a9e3805e504ac0468632739d615ac7d90e34843f27442685f8b30efb7723b5ed',
     b1: '78afe9bbd533913771d5c2438e279934114fe4c6db934b67b43c0644376ea125',
     preB1: '373f74ccff5a6a1ff5cbbb284f670e1df66f6909ca5c7eb46d78aa872a5ff574',
     entry: 'generate_transfer_stark_proof',
@@ -196,7 +212,7 @@ const FIXTURES = [
     label: 'C6 merkle_update',
     bytes: 81_037,
     bytesPreB2: 78_517,
-    b2: 'b8dc81e070487ec827e488809f361fc982e0b9c435270855f1a0b95d658cb0be',
+    b2: '65497bd9d2b35feefb285101353d5b3485e27e00c2985bfbd3d20cb80196e47a',
     b1: '8e1166f5d08bd948bc70a407d9261d6b88c1de5b257c4545918d9c36d94524fc',
     preB1: '8f815c4c3c09fb141d6eb256a66e4fda612624c1af59971c0c28a40dd4c408a2',
     entry: 'generate_merkle_update_stark_proof',

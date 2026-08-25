@@ -200,6 +200,17 @@ interface TransferProofJson {
   proof_size: number;
 }
 
+interface SpendProofJson {
+  circuit_id: number;
+  nullifier: string;
+  root: string;
+  recipient_hash: [string, string, string, string];
+  proof_hex: string;
+  proof_size: number;
+  /** The Rust returns `{"error": ...}` instead of panicking on a bad witness. */
+  error?: string;
+}
+
 interface MerkleUpdateProofJson {
   circuit_id: 6;
   old_leaf: string;
@@ -363,8 +374,63 @@ export function generateProofBytes(
         ],
       };
     }
+    case STARK_CIRCUITS.SPEND: {
+      if (!exports.generate_spend_stark_proof) {
+        throw new Error(
+          'Circuit 7 (SPEND) is not exported by the bundled WASM. The pre-C7 blob '
+          + '(229,640 B / 51a947e3) has eight proof exports; the C7 build has nine. '
+          + 'See packages/stark-prover/README.md for the rebuild command.',
+        );
+      }
+      const nullifierPreimage = BigInt(asString(privateInputs.nullifierPreimage, 'nullifierPreimage'));
+      const secret = BigInt(asString(privateInputs.secret, 'secret'));
+      const blinding = BigInt(asString(privateInputs.blinding, 'blinding'));
+      const tokenMint = BigInt(asString(privateInputs.tokenMint, 'tokenMint'));
+      const elements = asStringArray(privateInputs.pathElements);
+      const indices = asStringArray(privateInputs.pathIndices);
+      const recipientHash = asStringArray(privateInputs.recipientHash);
+      // The Rust side checks these arities too and returns a JSON `error`
+      // rather than panicking, but it parses with `filter_map(.. .ok())`, which
+      // SILENTLY DROPS anything unparseable -- so an 11-element path and a
+      // 12-element path with one bad entry are indistinguishable by the time it
+      // sees them. Say which one is wrong here, where the caller's array still
+      // exists.
+      if (elements.length !== 12 || indices.length !== 12) {
+        throw new Error(
+          `Circuit 7 (SPEND) needs exactly 12 path elements and 12 indices — its subtree `
+          + `depth is 12, NOT the pool's 15. Got ${elements.length} and ${indices.length}.`,
+        );
+      }
+      if (recipientHash.length !== 4) {
+        throw new Error(
+          `Circuit 7 (SPEND) needs a 4-limb recipientHash, got ${recipientHash.length}.`,
+        );
+      }
+      const json = JSON.parse(
+        exports.generate_spend_stark_proof(
+          nullifierPreimage, secret, blinding, tokenMint,
+          elements.join(','), indices.join(','), recipientHash.join(','),
+        ),
+      ) as SpendProofJson;
+      if (json.error) throw new Error(`Circuit 7 (SPEND) prover refused: ${json.error}`);
+      return {
+        proofBytes: hexToBytes(json.proof_hex),
+        // ⛔ VERBATIM ORDER. These six felts are serialised as-is and the
+        // on-chain reconstruction in `unshield_denominated_stark_v4` hashes
+        // them in this sequence. Sorting or reordering silently breaks the
+        // public-inputs hash and the failure lands after the whole upload.
+        //
+        // 🚨 THE COMMITMENT IS ABSENT AND THAT IS THE PROPERTY. v3 published it
+        // here; anyone reading the tree could match it to a deposit leaf.
+        publicInputs: [
+          BigInt(json.nullifier),
+          BigInt(json.root),
+          ...json.recipient_hash.map((h) => BigInt(h)),
+        ],
+      };
+    }
     default:
-      throw new Error(`Unsupported STARK circuit_id: ${circuitId}. Valid range is 0-6.`);
+      throw new Error(`Unsupported STARK circuit_id: ${circuitId}. Valid range is 0-7.`);
   }
 }
 
