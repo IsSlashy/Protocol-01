@@ -7,7 +7,28 @@
 //! that no two configs accept the same byte string.
 //!
 //! That claim had never been tested. This file tests it, exhaustively, across
-//! all 7×7 ordered pairs — under BOTH envelopes:
+//! all 8×8 ordered pairs — under BOTH envelopes:
+//!
+//! 🚨 IT SWEPT 7×7 UNTIL 2026-08-25, AND C7 WAS THE ROW AND COLUMN IT SKIPPED.
+//!
+//! The storage was already `[[false; 8]; 8]`, `all_genuine()` already built the
+//! C7 proof, and `genuine_proof_bytes` already had a `7 =>` arm — but every
+//! sweep ran `0..7usize`, so the C7 proof was generated, padded, stored and
+//! never probed against a foreign config in either direction. The header and
+//! both section banners said "7×7" the whole time; the eight-wide storage is
+//! what made it read as covered.
+//!
+//! That mattered beyond tidiness. `ci.yml` justifies running this target by
+//! claiming it is "the 8x8 parse matrix ... the only test that would notice" if
+//! `fri_final_poly_size` stopped separating C6 from C7. It would not have
+//! noticed. And `verify_uniform` is a parse-only discriminator that takes the
+//! FIRST config that accepts the bytes, so an unmeasured C7 collision is a
+//! soundness question, not a cosmetic one — which is exactly what had to be
+//! settled before deciding whether C7 joins `PROBE_ORDER`.
+//!
+//! MEASURED once the sweep was widened: both matrices are perfectly diagonal.
+//! C7 parses only as C7, nothing else parses as C7, under exact-length AND
+//! under the 145,000-byte padded envelope.
 //!
 //!   * exact-length bytes (what `cargo test` naturally produces), and
 //!   * **the envelope the shipped client actually sends**: every proof padded
@@ -73,7 +94,7 @@ fn parses_as(bytes: &[u8], circuit_id: u8) -> bool {
 }
 
 fn render_matrix(label: &str, m: &[[bool; 8]; 8]) -> String {
-    let mut s = format!("\n{label}\n      as C0 as C1 as C2 as C3 as C4 as C5 as C6\n");
+    let mut s = format!("\n{label}\n      as C0 as C1 as C2 as C3 as C4 as C5 as C6 as C7\n");
     for (n, row) in m.iter().enumerate() {
         s.push_str(&format!("C{n} → "));
         for cell in row.iter() {
@@ -358,23 +379,23 @@ fn parser_rejects_truncation() {
 }
 
 // ============================================================================
-// 3. The 7×7 matrix, exact-length envelope
+// 3. The 8×8 matrix, exact-length envelope
 // ============================================================================
 
 #[test]
 fn cross_circuit_parse_matrix_exact_length() {
     let proofs = all_genuine();
     let mut m = [[false; 8]; 8];
-    for n in 0..7usize {
-        for k in 0..7usize {
+    for n in 0..8usize {
+        for k in 0..8usize {
             m[n][k] = parses_as(&proofs[n], k as u8);
         }
     }
     println!("{}", render_matrix("EXACT-LENGTH ENVELOPE", &m));
 
-    for n in 0..7usize {
+    for n in 0..8usize {
         assert!(m[n][n], "C{n} does not parse under its own config");
-        for k in 0..7usize {
+        for k in 0..8usize {
             if k == n {
                 continue;
             }
@@ -389,7 +410,7 @@ fn cross_circuit_parse_matrix_exact_length() {
 }
 
 // ============================================================================
-// 4. The 7×7 matrix under the envelope the client actually sends
+// 4. The 8×8 matrix under the envelope the client actually sends
 // ============================================================================
 
 /// **The envelope that ships.** `apps/mobile/services/stark/index.ts` pads every
@@ -406,15 +427,15 @@ fn cross_circuit_parse_matrix_uniform_padded() {
     let proofs = all_genuine();
     let padded: Vec<Vec<u8>> = proofs.iter().map(|p| pad_uniform(p)).collect();
     let mut m = [[false; 8]; 8];
-    for n in 0..7usize {
-        for k in 0..7usize {
+    for n in 0..8usize {
+        for k in 0..8usize {
             m[n][k] = parses_as(&padded[n], k as u8);
         }
     }
     println!("{}", render_matrix("UNIFORM 145,000-BYTE ENVELOPE", &m));
 
-    for n in 0..7usize {
-        for k in 0..7usize {
+    for n in 0..8usize {
+        for k in 0..8usize {
             if k == n {
                 continue;
             }
@@ -778,7 +799,7 @@ fn wire_layout_is_a_config_constant_equal_to_the_emitted_proof_size() {
 /// Brute force behind `wire_layout_is_a_config_constant…`: for EVERY ordered
 /// pair and EVERY prefix length, no foreign parse exists.
 ///
-/// This closes the one gap the 7×7 matrix leaves open. `proof_size` is chosen by
+/// This closes the one gap the 8×8 matrix leaves open. `proof_size` is chosen by
 /// the CALLER at `init_proof_buffer_v2`, and `verify_uniform` slices exactly
 /// `proof_size` bytes out of the account — so the attacker, not the prover,
 /// picks the length the probe sees. Truncation is free. The matrix only tested
@@ -800,8 +821,8 @@ fn truncation_cannot_manufacture_a_cross_circuit_parse() {
     // Every parse threshold in the set, so the sweep cannot step over one.
     let thresholds: Vec<usize> = proofs.iter().map(|p| p.len()).collect();
 
-    for n in 0..7usize {
-        for k in 0..7usize {
+    for n in 0..8usize {
+        for k in 0..8usize {
             if n == k {
                 continue;
             }
@@ -1026,7 +1047,7 @@ fn surplus_query_splices_do_not_parse_as_another_circuit() {
 /// queries` check, stated as the property it buys.
 ///
 /// MEASURED: reverting that check to the pre-seam `num_queries > 256` turns this
-/// test red on the very first case (`C0+1 parses as C0`) while the 7×7 matrices
+/// test red on the very first case (`C0+1 parses as C0`) while the 8×8 matrices
 /// stay diagonal — so the tightening is NOT what keeps genuine proofs apart, and
 /// the savepoint comment that called it "a third independent exact-value field"
 /// the probe rests on was overclaiming. What it actually buys is this: a
