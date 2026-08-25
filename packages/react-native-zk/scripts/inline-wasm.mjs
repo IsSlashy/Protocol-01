@@ -8,12 +8,27 @@
  * `src/ZKProver.tsx` so the WASM ships inside the package's JS bundle
  * (no runtime fetch, no `.wasm` asset registration in metro.config.js).
  *
+ * 🚨 RESOLUTION ORDER, AND IT WAS BACKWARDS UNTIL 2026-08-25.
+ *
+ * It tried `node_modules` FIRST and the workspace sibling second. node_modules
+ * holds whatever version was last PUBLISHED to npm; the sibling is the source of
+ * truth this repo builds. So a stale published tarball silently won, and this
+ * file generated `wasmData.ts` from it.
+ *
+ * MEASURED, and it is why this comment exists rather than a one-line swap: the
+ * generated `src/wasmData.ts` header records "Raw size: 124562 bytes" — a THIRD
+ * generation of the blob, against 229,640 for the coset build the deployed
+ * verifier accepts and 192,732 for the pre-coset build it rejects. React Native
+ * was shipping a prover no deployed verifier has ever accepted, and nothing said
+ * so: a rejected proof fails at the END of a ~150-transaction upload.
+ *
  * Resolution order (first hit wins):
- *   1. node_modules/@protocol-01/stark-prover/wasm/p01_stark_bg.wasm
- *      (works after `pnpm install` once devDeps are installed)
- *   2. ../stark-prover/wasm/p01_stark_bg.wasm
- *      (workspace-relative — works during local development before
- *      pnpm has linked node_modules)
+ *   1. ../stark-prover/wasm/p01_stark_bg.wasm
+ *      THE WORKSPACE SIBLING. What this repo builds, and what
+ *      `packages/stark-prover/src/shippedBlob.test.ts` pins.
+ *   2. node_modules/@protocol-01/stark-prover/wasm/p01_stark_bg.wasm
+ *      the published copy — a fallback for consumers building outside the
+ *      monorepo, never the preferred source inside it.
  *
  * Idempotent. Logs the input + base64 sizes.
  *
@@ -29,9 +44,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PKG_ROOT = resolve(__dirname, '..');
 
+// ⛔ The workspace sibling FIRST. See the header — the other order shipped a
+// third-generation blob to React Native for months.
 const CANDIDATES = [
-  resolve(PKG_ROOT, 'node_modules/@protocol-01/stark-prover/wasm/p01_stark_bg.wasm'),
   resolve(PKG_ROOT, '../stark-prover/wasm/p01_stark_bg.wasm'),
+  resolve(PKG_ROOT, 'node_modules/@protocol-01/stark-prover/wasm/p01_stark_bg.wasm'),
   resolve(PKG_ROOT, '../../node_modules/@protocol-01/stark-prover/wasm/p01_stark_bg.wasm'),
 ];
 
