@@ -63,6 +63,9 @@ import {
 
 // STARK WASM prover singleton.
 import { starkProver } from './starkProver';
+// [2026-08-25] The commitment's third input. Paired with `deriveNoteMaterial`
+// below — the two describe the same note and must take the same `counter`.
+import { deriveNoteBlinding } from './noteBlinding';
 
 // Post-quantum note encryption (hybrid X25519 + ML-KEM-768) for transfers.
 import { encryptNote, isNoteEncryptionAddress } from './noteCrypto';
@@ -910,9 +913,19 @@ export async function prepareShieldInsert(
   onProgress?.('Deriving note material...');
   const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolConfig.poolPDA, counter);
 
-  // 3. Get current epoch for depositEpoch.
-  const slot = await connection.getSlot('confirmed');
-  const depositEpoch = slotToEpoch(slot);
+  // 3. The commitment's third input — a SECRET, not an epoch.
+  //
+  // 🚨 It used to be `slotToEpoch(await connection.getSlot('confirmed'))`. A
+  // withdrawal must publish the nullifier, so with a real epoch there an
+  // observer enumerates a few thousand candidates, recomputes
+  // `createCommitmentV3(nullifierPreimage, secret, epoch, mint)` and matches the
+  // exact deposit leaf. Anonymity set: one — no matter what circuit 7 does about
+  // the commitment argument. See ./noteBlinding.ts.
+  //
+  // This is the adoption the two landmine comments further down this file
+  // predicted in the future tense. From here `depositEpoch` is 63 bits of
+  // secret, and `min_epoch` must stay pinned to `0n` on every spend path.
+  const depositEpoch = deriveNoteBlinding(walletSeed, poolConfig.poolPDA, counter);
 
   // 4. Compute Goldilocks commitment.
   const tokenMintField = pubkeyToField(poolConfig.tokenMint);

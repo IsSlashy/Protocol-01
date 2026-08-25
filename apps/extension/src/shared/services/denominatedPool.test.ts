@@ -43,6 +43,7 @@ import {
   type ShareableNote,
 } from './denominatedPool';
 import { GOLDILOCKS_MODULUS } from './goldilocks-poseidon';
+import { deriveNoteBlinding } from './noteBlinding';
 
 // ---------------------------------------------------------------------------
 // Fixed test vector
@@ -711,5 +712,111 @@ describe('buildTransferDenominatedStarkV3Ix — min_epoch@72 is always zero', ()
     const blinding = 0x3fff_ffff_ffff_ffffn; // ~2^62, the blinding domain
     expect(handlerAccepts(blinding, currentEpoch, worstDelay)).toBe(false);
     expect(handlerAccepts(ix.data.readBigUInt64LE(72), currentEpoch, worstDelay)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// noteBlinding — the cross-surface pin
+// ---------------------------------------------------------------------------
+
+/**
+ * 🚨 THE PROPERTY THAT DECIDES WHETHER A NOTE IS SPENDABLE ON A SECOND DEVICE.
+ *
+ * apps/web, apps/mobile and apps/extension each carry their own copy of
+ * `deriveNoteBlinding`. They must derive BYTE-IDENTICAL values: a note is
+ * deposited on one surface and may be recovered or spent on another, and the
+ * blinding is the commitment's third input. If two copies disagree, the second
+ * surface recomputes a DIFFERENT commitment, fails to match any on-chain leaf,
+ * and the note simply does not appear — funds on chain that no client can name.
+ *
+ * Nothing else catches that. There is no shared module, the three files are
+ * copies by necessity (different bundlers, different dependency trees), and a
+ * drift produces silence rather than an error.
+ *
+ * So the vectors below are pinned as literals rather than recomputed. A test
+ * that derives both sides from the same code proves only that the code is
+ * deterministic. These numbers came from running the derivation once, and the
+ * same four appear in the mobile suite.
+ *
+ * ⛔ If one of these ever fails, DO NOT update the literal. It means a copy of
+ * `deriveNoteBlinding` changed — most likely its `BLINDING_INFO` domain
+ * separator, which reads `p01:web:...` on all three surfaces ON PURPOSE. Find
+ * the copy that moved and put it back.
+ */
+describe('deriveNoteBlinding cross-surface vectors', () => {
+  const seed = new Uint8Array(32).fill(7);
+  const poolPDA = { toBytes: () => new Uint8Array(32).fill(3) } as unknown as PublicKey;
+
+  it('derives the pinned value for each leaf index', () => {
+    expect(deriveNoteBlinding(seed, poolPDA, 0)).toBe(6546772417966463827n);
+    expect(deriveNoteBlinding(seed, poolPDA, 1)).toBe(3195764871583076020n);
+    expect(deriveNoteBlinding(seed, poolPDA, 30)).toBe(3527696344230234619n);
+    expect(deriveNoteBlinding(seed, poolPDA, 4096)).toBe(119989142042849126n);
+  });
+
+  it('stays under 2^63 so the Goldilocks reduction is injective', () => {
+    // Above the prime, two different blindings alias onto one field element and
+    // the value the circuit uses stops being the value the client derived.
+    for (let leaf = 0; leaf < 64; leaf++) {
+      expect(deriveNoteBlinding(seed, poolPDA, leaf) < (1n << 63n)).toBe(true);
+    }
+  });
+
+  it('separates leaves, pools and seeds', () => {
+    const otherPool = { toBytes: () => new Uint8Array(32).fill(4) } as unknown as PublicKey;
+    const otherSeed = new Uint8Array(32).fill(8);
+    expect(deriveNoteBlinding(seed, poolPDA, 0)).not.toBe(deriveNoteBlinding(seed, poolPDA, 1));
+    expect(deriveNoteBlinding(seed, poolPDA, 0)).not.toBe(deriveNoteBlinding(seed, otherPool, 0));
+    expect(deriveNoteBlinding(seed, poolPDA, 0)).not.toBe(deriveNoteBlinding(otherSeed, poolPDA, 0));
+  });
+});
+
+/**
+ * 🚨 THE THREE COPIES MUST NOT DRIFT, AND ONLY THIS READS ALL THREE.
+ *
+ * The vectors above pin THIS surface's copy. They say nothing about the other
+ * two — apps/web and apps/mobile each carry their own file, and a drift there
+ * produces silence here. So this reads all three off disk and compares the
+ * executable code, comments stripped.
+ *
+ * Copies rather than a shared module is a deliberate constraint, not laziness:
+ * three bundlers, three dependency trees, and a React Native app that cannot
+ * import from a Next.js lib. The cost of that choice is exactly this test.
+ *
+ * ⛔ If it fails, do not "sync" by copying whichever version you are looking at.
+ * Work out WHICH file moved and why. A changed `BLINDING_INFO` in particular
+ * silently reassigns every note minted after it.
+ */
+describe('deriveNoteBlinding is byte-identical across the three surfaces', () => {
+  it('web, mobile and extension carry the same derivation', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const root = path.resolve(__dirname, '../../../../..');
+    const copies = {
+      web: 'apps/web/lib/privacy/pool/noteBlinding.ts',
+      mobile: 'apps/mobile/services/denominatedPool/noteBlinding.ts',
+      extension: 'apps/extension/src/shared/services/noteBlinding.ts',
+    };
+
+    const code = (rel: string) => {
+      const abs = path.join(root, rel);
+      expect(fs.existsSync(abs), `${rel} is missing — a surface lost its copy`).toBe(true);
+      return fs
+        .readFileSync(abs, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith('//') && !l.startsWith('*'))
+        .join('\n');
+    };
+
+    const web = code(copies.web);
+    // Anti-vacuity: if the stripper ate everything, every comparison below is
+    // trivially true and this test reports three files that agree about nothing.
+    expect(web).toContain('export function deriveNoteBlinding');
+    expect(web).toContain('p01:web:note-blinding:v1');
+
+    expect(code(copies.mobile), 'apps/mobile drifted from apps/web').toBe(web);
+    expect(code(copies.extension), 'apps/extension drifted from apps/web').toBe(web);
   });
 });

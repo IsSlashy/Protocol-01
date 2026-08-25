@@ -35,6 +35,12 @@ import { utf8ToBytes, concatBytes } from '@noble/hashes/utils.js';
 import { getConnection } from '../solana/connection';
 import { getKeypair } from '../solana/wallet';
 import * as SecureStore from 'expo-secure-store';
+// [2026-08-25] The commitment's third input. Re-exported so callers reach it
+// through the same barrel as `deriveNoteMaterial`, which it is always paired
+// with — the two describe the same note and drifting apart makes it
+// unrecoverable.
+import { deriveNoteBlinding } from './noteBlinding';
+export { deriveNoteBlinding } from './noteBlinding';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -412,6 +418,26 @@ export function rescanPoolFromSeedV3(params: {
   const mintFields = tokenMints.map(pubkeyToField);
   for (let counter = 0; counter <= maxCounter; counter++) {
     const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolPDA, counter);
+
+    // Current scheme: the commitment's third input is a seed-derived blinding,
+    // so the note is identified with ONE hash per mint and no epoch search.
+    const blinding = deriveNoteBlinding(walletSeed, poolPDA, counter);
+    let blindedHit = false;
+    for (const mintField of mintFields) {
+      const commitment = createCommitmentV3(nullifierPreimage, secret, blinding, mintField);
+      if (knownCommitments.has(commitment.toString())) {
+        matches.push({ counter, depositEpoch: blinding, secret, nullifierPreimage, commitment });
+        blindedHit = true;
+      }
+    }
+
+    // ⛔ DO NOT REMOVE THIS FALLBACK. Notes shielded from this app before
+    // 2026-08-25 put the REAL deposit epoch in that slot, so they are only
+    // findable by the search. Dropping it does not fail loudly — the note simply
+    // stops appearing, while its funds stay on chain and no client can name
+    // them. apps/web carries the same fallback for the same reason, and names
+    // an unspent legacy note at leaf 30 of the 0.1 SOL pool.
+    if (blindedHit) continue;
     for (const epoch of epochs) {
       for (const mintField of mintFields) {
         const commitment = createCommitmentV3(nullifierPreimage, secret, epoch, mintField);
