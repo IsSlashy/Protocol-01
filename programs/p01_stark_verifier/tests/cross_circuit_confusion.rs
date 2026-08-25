@@ -554,7 +554,9 @@ fn c0_bytes_parse_through_the_generic_parser_so_the_gate_is_load_bearing() {
 /// (`zk_shielded::{pause,resume,cancel_private_stark}`, `p01_quantum_wallet`).
 #[test]
 fn no_generic_proof_parses_through_the_legacy_c0_parser() {
-    for cid in 1u8..=6 {
+    // 7 included: C7 is a shipping circuit and the legacy C0 parser must refuse
+    // its proofs exactly as it refuses C1..C6's.
+    for cid in 1u8..=7 {
         let bytes = genuine_proof_bytes(cid);
         assert!(
             CompactStarkProof::from_bytes(&bytes).is_none(),
@@ -579,7 +581,12 @@ fn no_generic_proof_parses_through_the_legacy_c0_parser() {
 #[test]
 fn sentinel_and_every_unknown_id_have_no_config() {
     assert!(get_circuit_config(u8::MAX).is_none(), "the u8::MAX sentinel resolved to a config");
-    for cid in 7u8..=u8::MAX {
+    // 🚨 8, not 7. This loop and the `0..=7` one below were HALF updated when
+    // circuit 7 landed: the known-id sweep was widened and the unknown-id sweep
+    // was not, so the file asserted both that 7 has a config and that it has
+    // none. `ci.yml` runs this target, so CI was red from `3be88558` — the
+    // commit that taught the verifier circuit 7 — until 2026-08-25.
+    for cid in 8u8..=u8::MAX {
         assert!(get_circuit_config(cid).is_none(), "circuit {cid} resolved to a config");
     }
     for cid in 0u8..=7 {
@@ -615,7 +622,12 @@ fn every_circuit_id_dispatch_fails_closed_on_unknown_ids() {
     p01_stark_verifier::verify::verify_generic(&proof, 3, public_inputs, config3)
         .expect("genuine C3 proof with its own public inputs must verify");
 
-    for cid in [7u8, 8, 100, 254, u8::MAX] {
+    // 7 is no longer in this list: it is a SHIPPING circuit now, so demanding
+    // `UnsupportedCircuit` for it asserted the opposite of what the verifier is
+    // supposed to do. It moves to its own assertion below rather than being
+    // deleted, because "a C3 proof presented as circuit 7" is a real confusion
+    // and dropping the id would have removed the coverage along with the red.
+    for cid in [8u8, 100, 254, u8::MAX] {
         let err = p01_stark_verifier::verify::verify_generic(&proof, cid, public_inputs, config3)
             .unwrap_err();
         assert!(
@@ -625,6 +637,18 @@ fn every_circuit_id_dispatch_fails_closed_on_unknown_ids() {
              is not exercising the dispatch at all.",
         );
     }
+
+    // A genuine C3 proof, presented as circuit 7, with C3's own public inputs.
+    // C3 publishes three felts and C7 publishes six, so the arity guard is what
+    // stands between the two — and it is named here rather than accepted as
+    // "some error", because an arity guard that stopped firing would let a C3
+    // proof reach C7's boundary fold with three of six public inputs unbound.
+    let err = p01_stark_verifier::verify::verify_generic(&proof, 7, public_inputs, config3)
+        .expect_err("a C3 proof must not verify as circuit 7");
+    assert!(
+        matches!(err, p01_stark_verifier::verify::VerifyError::PublicInputCountMismatch),
+        "a C3 proof presented as circuit 7 was refused as {err:?}, not by the arity guard",
+    );
 
     // Circuit 0 must fail closed at get_boundary_assertions' CALLERS too — but
     // 0 itself is a listed id there, so the refusal lives in verify_generic.
@@ -656,7 +680,7 @@ struct Layout {
 }
 
 fn layout(circuit_id: u8, proof_len: usize) -> Layout {
-    let c = get_circuit_config(circuit_id).expect("0..=6 has a config");
+    let c = get_circuit_config(circuit_id).expect("0..=7 has a config");
     let k = c.quotient_segments;
     let nq = c.num_queries;
     let folds = (c.lde_size / c.fri_final_poly_size).trailing_zeros() as usize;
