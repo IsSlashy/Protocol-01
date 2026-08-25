@@ -262,7 +262,21 @@ const SPEND_KINDS = [
   // ⚠️ If v4 keeps a cleartext recipient argument, give it a real
   // `recipientOffset`. Leaving it null there would silence P10 on the very
   // version that is supposed to be the improvement.
-  { name: 'unshield_denominated_stark_v4', commitmentOffset: null, totalLen: null, recipientOffset: null },
+  // [2026-08-25] The recipient offset filled in, as the warning above demanded.
+  // v4 DOES keep a cleartext `recipient: [u8; 32]`, so leaving this null was
+  // about to silence P10 on the very version that is supposed to be the
+  // improvement — the third false-clean entry this table would have carried.
+  //
+  // 8 + 32 nullifier + 32 merkle_root + 8 subtree_root + (4 + 8*s) siblings
+  // + (4 + s) directions + 32 recipient, with s = tree_depth - 12.
+  //
+  // ⚠️ 115 AND 147 ARE ONLY RIGHT FOR s = 3, i.e. tree_depth 15. `tree_depth`
+  // is per-pool (`pool_v3.rs`), so `readPayee`'s `data.length < off + 32` guard
+  // is not enough on its own — a depth-16 pool shifts the recipient by 9 bytes
+  // and the read would still succeed, printing a syntactically valid address
+  // belonging to nobody. `totalLen` is what pins it: P10 must refuse any v4
+  // instruction whose length is not exactly 147.
+  { name: 'unshield_denominated_stark_v4', commitmentOffset: null, totalLen: 147, recipientOffset: 115 },
 ];
 
 // ---------------------------------------------------------------------------
@@ -2455,6 +2469,24 @@ const SPEND_LAYOUTS = {
     ['subscriber_commitment', 32], ['rate', 8], ['interval_slots', 8],
     ['vk_hash_subscriber', 32], ['stark_commitment', 8],
   ],
+  // [C7 2026-08-25] The first entry with NO `stark_commitment` field, and that
+  // absence is the whole feature: v4 spends on a single circuit-7 proof whose
+  // public inputs are `[nullifier, subtree_root, rh0..rh3]`, so there is no
+  // commitment to publish. P1 then passes because there is nothing to read.
+  //
+  // The two Borsh `Vec`s are written at their tree_depth-15 widths — a 4-byte
+  // LE length followed by `s` elements, `s = tree_depth - 12 = 3`. That is what
+  // makes the recipient land at 115 and the instruction 147 bytes long.
+  //
+  // ⛔ `directions` is 3 bytes that name which of 8 subtrees the note is in.
+  // Today every note is in bucket 0 so the bits carry nothing; from leaf 4,097
+  // they partition the anonymity set by 8. That is a bigger unlinkability
+  // question than anything this table measures, and no probe here asks it yet.
+  unshield_denominated_stark_v4: [
+    ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['subtree_root', 8],
+    ['siblings_len', 4], ['siblings', 24], ['directions_len', 4], ['directions', 3],
+    ['recipient', 32],
+  ],
 };
 
 /**
@@ -3089,7 +3121,11 @@ function selfTestOffsets() {
     if (!layout) continue;
     checked += 1;
 
-    let derived = 0;
+    // `null`, not 0. An instruction with NO `stark_commitment` field must
+    // derive `null` and agree with a `commitmentOffset: null` in the table —
+    // that is exactly v4, and a 0 default would have compared `null === 0` and
+    // reported the one instruction that publishes no commitment as broken.
+    let derived = null;
     let derivedRecipient = null;
     const total = layout.reduce((n, [, w]) => n + w, 0);
     const buf = Buffer.alloc(total);
@@ -3101,14 +3137,19 @@ function selfTestOffsets() {
       at += width;
     }
 
-    const read = buf.readBigUInt64LE(kind.commitmentOffset);
-    const ok = kind.commitmentOffset === derived && read === COMMITMENT;
+    const read = derived === null ? null : buf.readBigUInt64LE(derived);
+    const ok = kind.commitmentOffset === derived && (derived === null || read === COMMITMENT);
     if (!ok) {
       broken += 1;
       console.log(
         `   FAIL  ${kind.name}: table says ${kind.commitmentOffset}, the signature says ${derived}` +
           (read === MIN_EPOCH ? ' — it is reading min_epoch' : ''),
       );
+    } else if (derived === null) {
+      // Not a skip. "This instruction publishes no commitment" is a claim about
+      // the signature, checked here against the signature, and it is the claim
+      // C7 exists to make true.
+      console.log(`   ok    ${kind.name}: publishes NO commitment, and the signature agrees`);
     } else {
       console.log(`   ok    ${kind.name}: commitment at ${derived}, read back intact`);
     }
