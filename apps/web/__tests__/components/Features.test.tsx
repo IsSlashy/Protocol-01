@@ -32,7 +32,7 @@ const MODULES: ReadonlyArray<readonly [name: string, description: string]> = [
   ['Confidential Balances', 'Token balances sit behind Poseidon commitments instead of clear numbers. The zkspl program is not deployed on devnet today.'],
   ['Stealth Meta-Addresses', 'One shareable address spawns a fresh one-time address for every payment you receive. The receiving address is new each time; the sender is not hidden.'],
   ['Subscription Vaults', 'An on-chain account that pays a merchant a fixed amount over time. The vault is addressed by a commitment to a note secret, not by your wallet, so nobody can rederive its address to ask whether you subscribe. A merchant\'s vaults themselves are enumerable on-chain.'],
-  ['Multi-Hop Routing', 'Payments route through several shield and unshield hops with timing jitter. Each hop still republishes its deposit commitment today, so a patient observer can rebuild the path.'],
+  ['Multi-Hop Routing', 'Payments route through several shield and unshield hops with timing jitter. A hop republishes its deposit commitment wherever the old spend still runs — the phone, and any pre-blinding note — so a patient observer can rebuild the path there.'],
   ['Note Splitting', 'Split a private balance into smaller notes, so one withdrawal moves one denomination rather than your whole balance.'],
   ['Privacy Router', 'Automatically picks the best private path (relayer, hops, pool) for each transaction.'],
   ['Service Registry', 'Merchants register on-chain, so you can subscribe to real services with no account.'],
