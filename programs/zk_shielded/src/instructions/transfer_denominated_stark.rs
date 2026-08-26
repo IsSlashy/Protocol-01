@@ -184,6 +184,29 @@ pub fn handler(
     // non-canonical nullifier whose high 24 bytes are non-zero, else a single
     // proof could be spent under multiple distinct nullifier PDAs (double-spend).
     require!(nullifier[8..] == [0u8; 24], ZkShieldedError::InvalidProof);
+    // 🚨 AND the low 8 bytes must be a CANONICAL Goldilocks element. The line
+    // above bounds the ENCODING; this one bounds the VALUE, and without it the
+    // note is spendable TWICE.
+    //
+    // MEASURED 2026-08-26: the deployed verifier reduces public input 0 with
+    // `Felt::new(v) = Felt(v % p)` before asserting it against the trace, so n
+    // and n + p satisfy the SAME boundary assertion; but `hash_public_inputs`
+    // hashes the RAW u64, so the two are two distinct valid proof buffers; and
+    // this PDA is seeded on the raw bytes, so they are two distinct records.
+    // 2^64 - p = 2^32 - 1, so every nullifier below 2^32 - 1 has such an alias,
+    // grindable at DEPOSIT time in ~2^32 hashes.
+    //
+    // ⛔ THIS PAIR OPERATES ON `DenominatedPool`, THE V1 TYPE, AND IS LIVE:
+    // 46 such accounts hold 50.499 SOL on devnet today (measured). It is not
+    // legacy code and it was NOT covered when the other six spends were fixed.
+    //
+    // No honest client is affected: poseidon_gl reduces its inputs and its
+    // reducer returns `s - MODULUS` whenever `s >= MODULUS`, so a Poseidon-GL
+    // output is canonical by construction.
+    require!(
+        u64::from_le_bytes(nullifier[..8].try_into().unwrap()) < crate::state::poseidon_gl::MODULUS,
+        ZkShieldedError::SpendNonCanonicalFelt
+    );
 
     // Verify the proof binds to THIS nullifier + stark_commitment.
     // For pool_commitment (circuit 1), public inputs = [nullifier_u64, commitment_u64].
