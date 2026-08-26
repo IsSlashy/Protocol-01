@@ -420,12 +420,71 @@ mod tests {
         }
     }
 
+    /// ⛔ THE PREVIOUS VERSION OF THIS TEST WAS A TAUTOLOGY UNDER A NAME THAT
+    /// SAID OTHERWISE. It set `is_active: true` in the `vault()` fixture above
+    /// and asserted it back, while its comment claimed "`is_active = true` is
+    /// written by subscribe_private_stark" -- a statement it never checked, and
+    /// which now has to hold of TWO files.
+    ///
+    /// MEASURED 2026-08-26: deleting `vault.is_active = true;` from
+    /// `subscribe_private_stark_v4` left this test green, along with every other
+    /// gate, and minted a vault `claim_period` refuses with VaultNotActive
+    /// (6025). `claim_period` is the only instruction that can close a vault and
+    /// cancel and refund were deliberately removed, so that vault's whole
+    /// prepaid envelope and its rent are stranded permanently.
+    ///
+    /// So the claim is now checked where it lives: in the source of every
+    /// instruction that can open a vault. Comments stripped and the in-file test
+    /// modules cut off, because a guard satisfied by prose is not a guard.
     #[test]
-    fn is_active_is_true_on_every_vault_the_program_can_produce() {
-        // `is_active = true` is written by subscribe_private_stark. No
-        // instruction writes `false`; the one path that ends a vault
-        // (`claim_period`'s final claim) closes the account instead. So a vault
-        // that exists has `is_active == true`, and the flag answers no question.
+    fn every_opener_writes_is_active_true_and_no_instruction_writes_false() {
+        const OPENERS: [(&str, &str); 2] = [
+            (
+                "subscribe_private_stark",
+                include_str!("../instructions/subscribe_private_stark.rs"),
+            ),
+            (
+                "subscribe_private_stark_v4",
+                include_str!("../instructions/subscribe_private_stark_v4.rs"),
+            ),
+        ];
+        for (name, src) in OPENERS {
+            let cut = match src.find("#[cfg(test)]") {
+                Some(i) => &src[..i],
+                None => src,
+            };
+            let code: String = cut
+                .lines()
+                .map(|l| match l.find("//") {
+                    Some(at) => &l[..at],
+                    None => l,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                code.contains("pub fn handler("),
+                "{name}: the comment stripper ate the whole file",
+            );
+            assert!(
+                code.contains("vault.is_active = true;"),
+                "{name} mints a vault without setting is_active. claim_period refuses it \
+                 with VaultNotActive (6025), and claim_period is the only closer: the \
+                 envelope and the rent are stranded forever.",
+            );
+            assert!(
+                !code.contains("vault.is_active = false"),
+                "{name} can deactivate a vault. Nothing reactivates one and claim_period \
+                 is the only closer, so this is an unrecoverable freeze of someone else's \
+                 prepaid balance.",
+            );
+        }
+    }
+
+    /// What the old test actually measured, under a name that says so: the flag
+    /// stays true even on an exhausted vault, so it answers no question about
+    /// whether anything is still claimable. `claimable_periods` does.
+    #[test]
+    fn an_exhausted_vault_still_reads_active_so_the_flag_answers_no_question() {
         let mut v = vault();
         v.claimed_periods = 5; // every funded period collected, balance spent
         assert!(v.is_active);

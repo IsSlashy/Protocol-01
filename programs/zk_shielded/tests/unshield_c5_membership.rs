@@ -773,22 +773,35 @@ fn every_still_registered_instruction_still_dispatches() {
         );
     }
 
-    // [C7] `unshield_denominated_stark_v4` is NOT production - it needs the
-    // C7-aware verifier, which is not deployed. It is named here anyway, and
-    // separately from the production list below, because it holds funds and
-    // because "the source registers it" and "the deployable binary answers to
-    // it" are different claims. The loop above covers whatever it PARSES; this
-    // line is what makes the coverage of THIS instruction a statement instead
-    // of an assumption.
-    assert!(
-        names.iter().any(|n| n == "unshield_denominated_stark_v4"),
-        "
-\n         `unshield_denominated_stark_v4` is not in the parsed set, so the
-\n         dispatch loop above proved NOTHING about the C7 spend path. Either the
-\n         registration was removed from `pub mod zk_shielded`, or the parse no
-\n         longer sees it.
-\n         Parsed: {names:?}",
-    );
+    // [C7] The two circuit-7 spends are named here explicitly, and separately
+    // from the production list below, because they hold funds and because "the
+    // source registers it" and "the deployable binary answers to it" are
+    // different claims. The loop above covers whatever it PARSES; these lines
+    // are what make the coverage of THESE instructions a statement instead of
+    // an assumption.
+    //
+    // The comment here used to say the C7-aware verifier "is not deployed".
+    // That is stale: it landed on devnet 2026-08-25 and was confirmed by dump.
+    // What is still true, and is the reason neither of these is production, is
+    // that the zk_shielded side of the C7 subscribe has NOT been redeployed --
+    // `subscribe_private_stark_v4` exists only in this tree.
+    //
+    // Both entries below are load-bearing in the same way: the parse is a
+    // regex over lib.rs, so a registration that silently stopped being parsed
+    // would shrink this test's coverage without turning it red.
+    for c7 in [
+        "unshield_denominated_stark_v4",
+        "subscribe_private_stark_v4",
+    ] {
+        assert!(
+            names.iter().any(|n| n == c7),
+            "\n\
+             `{c7}` is not in the parsed set, so the dispatch loop above proved\n\
+             NOTHING about that C7 spend path. Either the registration was removed\n\
+             from `pub mod zk_shielded`, or the parse no longer sees it.\n\
+             Parsed: {names:?}",
+        );
+    }
 
     // The production path, named explicitly so a rename cannot quietly shrink
     // what this test covers.

@@ -320,6 +320,45 @@ pub fn handler(
     // high 24 bytes are non-zero, else one proof could be spent under several
     // distinct nullifier PDAs — a double-spend with no forgery in it.
     require!(nullifier[8..] == [0u8; 24], ZkShieldedError::InvalidProof);
+    // 🚨 AND the low 8 bytes must be a CANONICAL Goldilocks element. The line
+    // above bounds the ENCODING; this one bounds the VALUE, and those stopped
+    // being the same thing the moment a raw u64 became the wire format.
+    //
+    // MEASURED 2026-08-26 against the DEPLOYED verifier. Its boundary assertion
+    // is `Felt::new(public_inputs[0])` (p01_stark_verifier/src/verify.rs, arm 7)
+    // and `Felt::new(v) = Felt(v % p)` (goldilocks.rs) -- but
+    // `public_inputs_to_bytes` and `hash_public_inputs` hash the u64 RAW, and a
+    // grep over verify.rs finds no range check on any public input. Since
+    // 2^64 - p = 2^32 - 1 EXACTLY, every nullifier below 2^32 - 1 has a SECOND
+    // in-range encoding `n + p`: ONE field element, TWO 8-byte strings, TWO
+    // distinct `NullifierRecord` PDAs, both `init`-able, and both passing the
+    // check above. The attacker re-runs the prover on the SAME witness with
+    // public input 0 set to `n + p` -- the trace is byte-identical, only the
+    // Fiat-Shamir seed moves -- and gets a second fully HONEST proof. No
+    // forgery, no soundness break: the note simply pays out twice. Grinding a
+    // note secret until `n < 2^32 - 1` is ~2^32 Poseidon-GL evaluations, GPU
+    // hours, not a hardness assumption.
+    //
+    // This is the argument `spend_root::resolve_pool_root` already makes for
+    // `subtree_root` and for every sibling -- "a non-canonical u64 is a distinct
+    // value mod p, so accepting one would let two different byte strings name
+    // the same root". The nullifier, which is the actual double-spend key rather
+    // than a root, had nothing.
+    //
+    // Costs no honest client anything: a Poseidon-GL output is reduced by
+    // construction (`state/poseidon_gl.rs`), so an honest prover has only ever
+    // emitted the canonical value. `SpendNonCanonicalFelt` already exists, so
+    // the append-only error enum does not renumber.
+    //
+    // ⚠️ Belt and braces belongs one layer DOWN and is deliberately not shipped
+    // here: rejecting `public_inputs[i] >= GOLDILOCKS_PRIME` inside
+    // `p01_stark_verifier::verify_generic` would close this for every circuit at
+    // once instead of once per spend instruction. That is a verifier redeploy,
+    // and this crate is not it -- the consumer-side line is what ships first.
+    require!(
+        u64::from_le_bytes(nullifier[..8].try_into().unwrap()) < crate::state::poseidon_gl::MODULUS,
+        ZkShieldedError::SpendNonCanonicalFelt
+    );
 
     {
         let nullifier_u64 = u64::from_le_bytes(nullifier[..8].try_into().unwrap());
@@ -624,6 +663,18 @@ mod membership_guard {
         assert!(code().contains("pub fn handler("));
     }
 
+    /// EVERY occurrence, not the first. `code.find(payout)` checks only the
+    /// earliest one and would miss a second payout added below it.
+    fn every_index_of(code: &str, needle: &str) -> Vec<usize> {
+        let v: Vec<usize> = code.match_indices(needle).map(|(i, _)| i).collect();
+        assert!(!v.is_empty(), "`{needle}` not found");
+        v
+    }
+
+    /// The two ways pool value leaves this instruction. Both must sit behind
+    /// every check below.
+    const PAYOUTS: [&str; 2] = ["try_borrow_mut_lamports", "token::transfer("];
+
     /// 🚨 THE FUND-LOSS GUARD. C7 proves membership in a depth-12 subtree and
     /// says nothing about which subtree. If a lamport can move before
     /// `resolve_pool_root` has run, an attacker's self-built twelve levels pay
@@ -631,25 +682,67 @@ mod membership_guard {
     #[test]
     fn no_lamport_moves_before_the_pool_root_is_resolved() {
         let code = code();
-        let walk = code.find("resolve_pool_root").expect("the walk is gone");
-        for payout in ["try_borrow_mut_lamports", "token::transfer("] {
-            let at = code.find(payout).unwrap_or_else(|| panic!("{payout} not found"));
-            assert!(at > walk, "{payout} can run before resolve_pool_root");
+        let walk = code
+            .find("let derived = spend_root::resolve_pool_root(")
+            .expect("the walk is gone: a self-built twelve-level subtree now pays out");
+        for payout in PAYOUTS {
+            for at in every_index_of(&code, payout) {
+                assert!(at > walk, "{payout} can run before resolve_pool_root");
+            }
         }
     }
 
     /// The walk alone is not a membership check either: it turns a subtree root
-    /// into SOME root. Only `is_valid_root` says the pool ever published it.
+    /// into SOME root. Only `is_valid_root` says the pool ever published it, and
+    /// only `SpendRootMismatch` says the named root is the one the walk reached.
+    ///
+    /// 🚨 THESE NEEDLES WERE NAMES, AND A NAME IS SATISFIED BY A DISCARDED
+    /// READ. MEASURED 2026-08-26 on the sibling file, which carries the identical
+    /// three lines: replacing `require!(pool.is_valid_root(&merkle_root), ..)` with
+    /// `let _root_is_published = pool.is_valid_root(&merkle_root);` left every gate
+    /// GREEN -- all lib tests, all landed_invariants, and `clippy -D warnings` at
+    /// exit 0. That binary is a FULL POOL DRAIN, and THIS instruction is the one
+    /// that is live on devnet against the funded pools: with the ring gone the
+    /// surviving `SpendRootMismatch` check is a TAUTOLOGY, because the caller
+    /// supplies `merkle_root` and `derived` comes from their own siblings. Any
+    /// self-built twelve-level subtree over an invented leaf then pays a
+    /// denomination straight to a recipient, with no vault in the way, and a fresh
+    /// nullifier every round means the `init` on the record never collides.
+    ///
+    /// It is the exact hollow shape the guard below already diagnoses for the
+    /// PROOF checks. The lesson was applied there and not here -- to the three
+    /// needles that carry the only reason the walk exists. All are now matched as
+    /// the `require!` (or the whole statement) they have to be.
     #[test]
     fn no_lamport_moves_before_the_root_is_matched_against_the_pool() {
         let code = code();
-        let ring = code.find("is_valid_root").expect("is_valid_root is gone");
-        let mismatch = code.find("SpendRootMismatch").expect("named-root check is gone");
-        for payout in ["try_borrow_mut_lamports", "token::transfer("] {
-            let at = code.find(payout).unwrap();
-            assert!(at > ring, "{payout} can run before is_valid_root");
-            assert!(at > mismatch, "{payout} can run before the derived/named root check");
+        let ring = code
+            .find("require!(\n        pool.is_valid_root(&merkle_root),")
+            .expect(
+                "the ring check is no longer a require over `&merkle_root`: any \
+                 self-built subtree reaches a root of the caller's own choosing and \
+                 pays out",
+            );
+        let mismatch = code
+            .find("require!(\n        merkle_root[..8] == derived.to_le_bytes(),")
+            .expect("the derived/named root check is no longer a require");
+        for payout in PAYOUTS {
+            for at in every_index_of(&code, payout) {
+                assert!(at > ring, "{payout} can run before is_valid_root");
+                assert!(at > mismatch, "{payout} can run before the derived/named root check");
+            }
         }
+
+        // ⛔ And the two checks must constrain the SAME 32 bytes. The mismatch
+        // check alone is a tautology on a caller-supplied `merkle_root`; it only
+        // means something because `is_valid_root` is applied to that same value
+        // and to no other.
+        assert_eq!(
+            code.matches("is_valid_root").count(),
+            1,
+            "`is_valid_root` is consulted more than once here: the ring is being asked \
+             about some value other than the `merkle_root` the mismatch check pinned",
+        );
     }
 
     /// 🚨 THE SPL LEG MUST PAY THE ACCOUNT THE PROOF BINDS, NOT MERELY THE RIGHT
@@ -700,7 +793,19 @@ mod membership_guard {
             ("circuit id", "require!(c7_circuit_id == CIRCUIT_SPEND,"),
             ("buffer authority", "c7_authority == ctx.accounts.payer.key()"),
             ("public-inputs hash", "require!(c7_inputs_hash == expected_hash,"),
-            ("nullifier canonicalisation", "require!(nullifier[8..] == [0u8; 24],"),
+            ("nullifier encoding canonicalisation", "require!(nullifier[8..] == [0u8; 24],"),
+            // 🚨 The VALUE, not merely the encoding, matched as the whole
+            // statement. `n` and `n + p` are ONE Goldilocks element and TWO record
+            // PDAs; without this line the note pays out twice, and on THIS
+            // instruction the second payout goes straight to a recipient. The
+            // executed proof lives on the subscribe sibling
+            // (`one_field_element_cannot_be_spent_under_two_nullifier_encodings`,
+            // tests/subscribe_v4_adversarial.rs), which shares this handler shape.
+            (
+                "nullifier value canonicalisation",
+                "require!(\n        u64::from_le_bytes(nullifier[..8].try_into().unwrap()) \
+                 < crate::state::poseidon_gl::MODULUS,",
+            ),
         ];
         for (what, needle) in requires {
             let at = code
