@@ -50,16 +50,24 @@
  * below is conditional too, and it must STAY conditional rather than collapse
  * into either half:
  *
- *   from the extension or the phone   the withdrawal republishes the commitment
+ *   from the phone                  the withdrawal republishes the commitment
  *                                     the ORIGINAL deposit published, so the
  *                                     exit is publicly matchable to the
  *                                     sender's deposit; measured on devnet
  *                                     (leaf 16, commitment 8901821612542787864,
  *                                     present in both the deposit and the
- *                                     withdrawal). Still true today: both
- *                                     routers call `unshieldDenominatedStarkV3`
- *                                     and nothing else, pinned in both
- *                                     directions by `spendRouting.test.ts`.
+ *                                     withdrawal). Still true today: its router
+ *                                     calls `unshieldDenominatedStarkV3` and
+ *                                     nothing else, pinned in both directions
+ *                                     by `spendRouting.test.ts`.
+ *   from the extension                no commitment, and NO payer separation.
+ *                                     It was wired to circuit 7 on 2026-08-26,
+ *                                     so the commitment link is gone — but that
+ *                                     client has no derived ephemeral: the
+ *                                     user's own wallet signs the withdrawal
+ *                                     AND rents the proof buffer. Naming both
+ *                                     halves is the point; saying only the
+ *                                     first would read as anonymity.
  *   from this web app                 the spend is proved on ONE circuit-7
  *                                     trace and publishes NO commitment.
  *                                     `PrepareUnshieldV4Result` has no
@@ -899,11 +907,16 @@ export default function SendForm({
                     </p>
                     <p className="text-p01-yellow">
                       What it does not hide depends on the client they withdraw from, and
-                      handing a note over does not let you pick it. From the extension or the
-                      phone, the withdrawal publishes the same note commitment your deposit
-                      published, so that exit is publicly matchable to your deposit. Measured
-                      on devnet. Both still withdraw that way today, and so does any client
-                      for a note that cannot be proven on the newer circuit.
+                      handing a note over does not let you pick it. From the phone, the
+                      withdrawal publishes the same note commitment your deposit published, so
+                      that exit is publicly matchable to your deposit. Measured on devnet. So
+                      does any client, on any note that cannot be proven on the newer circuit.
+                    </p>
+                    <p className="text-p01-yellow">
+                      From the Protocol 01 extension, for a note deposited recently, the
+                      commitment stays off the wire — but nothing else does: there the
+                      recipient&apos;s own wallet signs the withdrawal and rents the proof
+                      buffer, so it names them directly whichever circuit proves it.
                     </p>
                     <p className="text-p01-yellow">
                       From this web app, for a note deposited recently, it no longer does: the

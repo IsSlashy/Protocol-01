@@ -91,8 +91,8 @@ describe('the send disclosure states BOTH halves of what a withdrawal publishes'
   it('keeps the matchable case, which two of three clients still produce', () => {
     expect(
       copyOf(SEND_FORM),
-      'the withdrawal→deposit link is still the measured truth on the extension, on ' +
-        'the phone, and on any note that cannot be proved on circuit 7',
+      'the withdrawal→deposit link is still the measured truth on the phone, and on ' +
+        'any note that cannot be proved on circuit 7',
     ).toMatch(/publicly matchable to your deposit/);
   });
 
@@ -100,7 +100,18 @@ describe('the send disclosure states BOTH halves of what a withdrawal publishes'
     const copy = copyOf(SEND_FORM);
     // Named, because the sender does not choose it — this screen hands the note
     // to somebody else, and their client is their decision.
-    expect(copy).toMatch(/From the extension or the phone/);
+    expect(copy).toMatch(/From the phone/);
+    // 🚨 THE EXTENSION MOVED CATEGORY ON 2026-08-26 AND MUST NOT BE DROPPED.
+    // It stopped publishing the commitment, so listing it with the phone became
+    // false — but it has no derived ephemeral either, so promoting it to the
+    // web app's paragraph would have been the worse error: the reader would
+    // infer a payer separation that client does not have. It gets its own
+    // sentence, and that sentence must keep BOTH halves.
+    expect(copy).toMatch(/From the Protocol 01 extension/);
+    expect(
+      copy,
+      'the extension paragraph dropped the half that says their own wallet signs',
+    ).toMatch(/own wallet signs the withdrawal and rents the proof buffer/);
     expect(copy).toMatch(/depends on the client they withdraw from/);
     expect(copy).toMatch(/does not let you pick it/);
   });
@@ -186,7 +197,7 @@ describe('the stale instruction in the file header is gone, not just obeyed', ()
   });
 });
 
-describe('⛔ the copy names two surfaces — this re-measures them', () => {
+describe('⛔ the copy names each surface — this re-measures them', () => {
   /**
    * The assertion that makes this file worth running. The disclosure asserts a
    * fact about OTHER applications; nothing in apps/web changes when those move,
@@ -198,12 +209,18 @@ describe('⛔ the copy names two surfaces — this re-measures them', () => {
    * IS TOLD the same thing. They fail together, and the second failure is the
    * one that names the screen to fix.
    */
+  /**
+   * 🚨 THIS LIST SHRANK ON 2026-08-26 AND THAT IS THE WHOLE VALUE OF THE FILE.
+   * The extension was wired to circuit 7, the copy still said "from the
+   * extension or the phone the withdrawal republishes the commitment", and this
+   * assertion went red inside the same test run that wired it. Nothing else in
+   * 585 pool tests noticed, because nothing else reads the sentence.
+   */
   const STILL_V3: Array<{ surface: string; rel: string }> = [
-    { surface: 'the extension', rel: 'apps/extension/src/shared/store/denominatedPool.ts' },
     { surface: 'the phone', rel: 'apps/mobile/stores/denominatedPoolStore.ts' },
   ];
 
-  it('both still route the v3 spend, which is what the copy tells the user', () => {
+  it('the surfaces named as v3 really are, which is what the copy tells the user', () => {
     for (const { surface, rel } of STILL_V3) {
       const code = rawOf(rel)
         .replace(/\/\*[\s\S]*?\*\//g, ' ')

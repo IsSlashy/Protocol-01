@@ -1,9 +1,27 @@
 name: CI
 
 on:
+  # ⛔ MASTER-ONLY IS HOW A BROKEN BUILD LIVED FOR A DAY.
+  #
+  # `6333aa00` (2026-08-25 20:56) made apps/web import
+  # @protocol-01/stark-prover/wasm-loader instead of carrying its own ABI copy.
+  # That package's dist/ is gitignored and apps/web's build script hand-lists
+  # the workspace packages it pre-builds — stark-prover was not on the list. The
+  # app stopped building. `pnpm turbo run build` below would have caught it on
+  # the first push, because turbo.json declares dependsOn: ["^build"] — but this
+  # workflow only ran on master, the work was on a feature branch, and nobody
+  # looked at Vercel. Five deployments went ERROR before it surfaced.
+  #
+  # Feature branches now run the TS job, which is the one that builds. The Rust
+  # and replay jobs stay master/PR-only: cargo check is 90 minutes and this
+  # repository has one developer, so paying it on every feature push buys
+  # nothing the pre-merge run does not already buy.
   push:
     branches:
       - master
+      - 'feat/**'
+      - 'fix/**'
+      - 'reconcile/**'
   pull_request:
     branches:
       - master
@@ -111,6 +129,8 @@ jobs:
   rust-programs-build:
     name: Rust — Programs cargo check
     runs-on: ubuntu-latest
+    # Master and pre-merge only — see the note on the triggers above.
+    if: github.ref == 'refs/heads/master' || github.event_name == 'pull_request'
     # 🚨 WAS 30, AND THE PIN LOOP BELOW COULD NOT FIT IN IT. MEASURED 2026-08-26
     # on a 6c/12t laptop, --release: `honest_liveness` alone is 2,208s — 37
     # minutes, over the whole old budget by itself — and the eighteen pins total
@@ -403,6 +423,8 @@ jobs:
   verify-unlinkability-controls:
     name: Verify — unlinkability probe controls (offline replay)
     runs-on: ubuntu-latest
+    # Master and pre-merge only — see the note on the triggers above.
+    if: github.ref == 'refs/heads/master' || github.event_name == 'pull_request'
     timeout-minutes: 5
 
     steps:
