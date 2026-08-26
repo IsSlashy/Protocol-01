@@ -19,7 +19,14 @@
  * are matchable to each other by anyone. Confirmed on devnet: leaf 16,
  * commitment 8901821612542787864, present in both the deposit and the
  * withdrawal transaction. Closing that needs the C7 spend circuit
- * (docs/C7_SPEND_CIRCUIT_PLAN.md), which is not built.
+ * (docs/C7_SPEND_CIRCUIT_PLAN.md).
+ *
+ * ⚠️ C7 IS BUILT AND DEPLOYED AS OF 2026-08-25 — the sentence above used to say
+ * it was not, and that reason is now wrong while the conclusion is unchanged.
+ * A real v4 withdrawal landed on devnet carrying no commitment. What keeps this
+ * screen linkable is that the extension still calls
+ * `unshieldDenominatedStarkV3`: the circuit exists, this surface does not route
+ * to it. See apps/web/lib/privacy/pool/spendRouting.test.ts.
  *
  * Proof generation (C6) takes 30-60s in the browser extension WASM.
  */

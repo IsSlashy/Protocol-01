@@ -30,7 +30,10 @@
  *     commitment (bytes 88-120), which the recipient's eventual withdrawal will
  *     republish in turn. So deposit -> transfer -> withdrawal is a chain any
  *     observer can follow. Only the C7 spend circuit breaks it
- *     (docs/C7_SPEND_CIRCUIT_PLAN.md); it is not built.
+ *     (docs/C7_SPEND_CIRCUIT_PLAN.md). ⚠️ C7 IS BUILT AND DEPLOYED as of
+ *     2026-08-25 and a real v4 withdrawal landed carrying no commitment — but
+ *     this surface still calls the v3 spend, so the chain above is unbroken
+ *     here. The reason changed; the warning did not.
  *   - The ephemeral payer is funded by the user's wallet in a plain SystemProgram
  *     transfer immediately beforehand (shared/services/denominatedPool.ts
  *     transferDenominatedStarkV3), so the payer is one public hop from the

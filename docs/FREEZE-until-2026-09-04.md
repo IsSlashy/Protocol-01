@@ -87,6 +87,9 @@ demonstration must export with `merklePath: 'stored'`, checked beforehand.
 2. Rebuild + re-attest the prover and verifier from the unified branch; confirm
    the blob still hashes `51a947e3` and the verifier still accepts it.
 3. Re-point master's CI at code that exists on the unified branch.
-4. Wire C7 (Step 4/6/7 of `docs/C7_SPEND_CIRCUIT_PLAN.md`), on the unified
-   branch, then measure the real C7 CU and rodata.
+4. ~~Wire C7 (Step 4/6/7 of `docs/C7_SPEND_CIRCUIT_PLAN.md`), then measure the
+   real C7 CU and rodata.~~ **DONE 2026-08-25**: wired, deployed, measured
+   (phase 1 878,756 CU / phase 2 192,715 CU), and a real withdrawal landed
+   (`22psv1tF…`). What is NOT done is client routing — web, extension and mobile
+   all still call `unshieldDenominatedStarkV3`.
 5. Close the two fund-loss bugs before any mainnet.

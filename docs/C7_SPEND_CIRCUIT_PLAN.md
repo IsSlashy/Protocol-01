@@ -419,9 +419,20 @@ solana-keygen pubkey target/deploy/zk_shielded-keypair.json   # returns 2w4WRvuj
   Blinded shield `5WSMqCcC…` (leaf 32) → recovered by seed-only scan →
   withdrawn `5eyKN3Lh…` with `min_epoch` published as 0. Legacy notes still
   withdraw (`nFLayV9h…`, leaf 30).
-- **Phase 2 — C7 + `unshield_denominated_stark_v4`: NOT STARTED.** Step 0 below
-  (the CU probe harness) is the gate. It is cheap, self-contained, and answers
-  the only question that can invalidate the whole design.
-- Phase 1 alone does NOT deliver unlinkability: the withdrawal still passes the
-  commitment as a public argument. Both phases are required. Do not describe the
-  pool as unlinkable until C7 ships and is verified on-chain.
+- **Phase 2 — C7 + `unshield_denominated_stark_v4`: SHIPPED, DEPLOYED, AND
+  PROVEN ON DEVNET** (2026-08-25). The verifier and the pool were redeployed and
+  checked by dump; a C7 proof was accepted (`4yKg4gGm…`, slot 487960436, phase 2
+  192,462 CU); and a real withdrawal landed on one proof (`22psv1tF…`, 130,637
+  CU, 0.995 SOL out of leaf 35). The v4 instruction is 147 bytes and carries no
+  commitment argument at all. Frozen as evidence at `verify/fixtures/v4-live`.
+- ⛔ **AND NO CLIENT ROUTES TO IT YET.** Every shipping withdrawal on web,
+  extension and mobile still calls `unshieldDenominatedStarkV3`, which publishes
+  the commitment. C7 is reachable from the service layer and from the live
+  harness, not from any screen. Pinned at
+  `apps/web/lib/privacy/pool/spendRouting.test.ts`, which is designed to fail
+  the day that changes.
+- Phase 1 alone does NOT deliver unlinkability, and neither does Phase 2 while
+  the clients route around it. Beyond routing, two edges remain open on the
+  spend that did land: the deposit was funded straight from the wallet, and the
+  fee payer was the upgrade authority — an address printed in `README.md`. Do
+  not describe the pool as unlinkable.
