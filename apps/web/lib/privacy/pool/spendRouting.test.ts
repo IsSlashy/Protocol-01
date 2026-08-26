@@ -122,8 +122,29 @@ describe('the withdrawal path each client routes to', () => {
    * blinding is unknown — unspent leaf 30 among them — can ONLY be spent on the
    * C1 + C3 pair, so `unshield_denominated_stark_v3` stays registered on chain
    * indefinitely. Any routing is a CHOICE per note, never a migration.
+   *
+   * 🚨 READ WHAT THIS MEASURES BEFORE CITING IT: v3 is DEFINED, not v3 is
+   * REACHED. The two came apart on 2026-08-26 and this assertion did not move.
+   *
+   * `unshieldEphemeral.ts` defines both pairs and names both instructions, so
+   * the regex below hits whatever any caller actually does. For apps/web the
+   * file that decides is no longer this one: `shieldClient.ts` types the payee
+   * and the wallet as REQUIRED and sends both on every withdrawal, so the worker
+   * takes the circuit-7 branch every time, and the only thing that still reaches
+   * the C1 + C3 pair is `handlePoolUnshieldPrepare`'s fallback when the circuit-7
+   * rebuild cannot place the note's root. For a few hours there was no such
+   * fallback — the v3 branch was dead code in production and a v3-only note was
+   * unwithdrawable from the web app — and this test stayed green throughout,
+   * along with the other 561 in the suite.
+   *
+   * Reachability is measured behaviourally in
+   * `lib/privacy/worker/poolHandlersUnshieldV4.test.ts`, under "a note circuit 7
+   * cannot prove still reaches the C1 + C3 pair": it makes the circuit-7 prepare
+   * fail and asserts the C1 + C3 prepare runs and the answer says `v3`. THAT is
+   * the assertion to point at. This one is a name check, and a name check is all
+   * a regex over a definitions file can ever be.
    */
-  it('keeps v3 reachable, because some notes can be spent nowhere else', () => {
+  it('keeps v3 DEFINED, which is weaker than reachable — see the note above', () => {
     for (const { surface, rel } of ROUTERS) {
       expect(codeOf(rel), `${surface} dropped the v3 path entirely`).toMatch(
         /unshieldDenominatedStarkV3/,

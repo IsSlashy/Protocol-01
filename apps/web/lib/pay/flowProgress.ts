@@ -99,7 +99,16 @@ export const SHIELD_PHASES: FlowPhase[] = [
 // blinding is unknown can only be spent there, so both vocabularies are live.
 export const WITHDRAW_PHASES: FlowPhase[] = [
   { id: 'locate', label: 'Finding your note', weight: 0.12, match: /locating|matching notes|scanning the|reading spent markers|pool for older notes|looking for funds left|fetching pool leaves|scanning events|root not in ring/i },
-  { id: 'path', label: 'Rebuilding its history', weight: 0.08, match: /merkle|pre-flight root|stored merkle root|checking the note/i },
+  // ⚠️ THE SIXTH MISS, caught by the sweep rather than on stage — and it is the
+  // one place the bar must NOT move forward. `handlePoolUnshieldPrepare` now
+  // falls back to the C1 + C3 pair when the circuit-7 rebuild cannot place the
+  // note's root in the pool's ring, which is the only route apps/web has left to
+  // a note circuit 7 cannot prove. At that moment the v4 attempt has already
+  // reached this phase (`pre-flight root verification`), and the v3 job is about
+  // to redo the same work: fold the sentence into `path` and the bar holds
+  // still, which is true. Give it a later phase and the bar jumps forward at the
+  // exact moment the run got LONGER.
+  { id: 'path', label: 'Rebuilding its history', weight: 0.08, match: /merkle|pre-flight root|stored merkle root|checking the note|falling back to the c1/i },
   // `proving ownership and membership in one trace` is C7's single-proof
   // sentence, and it is also the heartbeat: the same words come back every ten
   // seconds carrying an elapsed count, so the regex must match on the words and

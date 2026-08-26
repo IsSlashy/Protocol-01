@@ -413,6 +413,48 @@ export async function prepareUnshieldJobV4(
     );
   }
 
+  // 🚨 A PRE-BLINDING NOTE GAINS NOTHING FROM CIRCUIT 7, AND SAYING OTHERWISE IS
+  // THE LIE. Refuse it here so the claim on screen is true by construction
+  // rather than by promise.
+  //
+  // The commitment is `poseidon(nullifier, poseidon(blinding, token_mint))`
+  // (`createCommitmentV3`). Circuit 7 keeps the commitment off the wire, but the
+  // NULLIFIER is published — it is the double-spend guard and a PDA seed, it
+  // cannot be hidden — and `token_mint` is the pool's, public. So `blinding` is
+  // the only unknown, and for a note deposited before `noteBlinding` landed it
+  // is the deposit EPOCH: `slotToEpoch(slot)`, five digits today. An observer
+  // enumerates a few thousand candidates, rebuilds the commitment, matches the
+  // leaf, and reaches the deposit and its payer. `noteBlinding.ts` opens with
+  // exactly this attack and the words "Anonymity set: one".
+  //
+  // The circuit cannot close it: `blinding` is a private witness and
+  // `stark/src/air/spend.rs:908-913` forbids constraining it — a boundary
+  // assertion, a range check, a bit decomposition or promoting it to a public
+  // input all "brick that note with no recovery path". So it is a ROUTING
+  // decision, and this is where it belongs.
+  //
+  // MEASURED 2026-08-26: epoch = slot/7200 = 67,838, five digits. A blinding
+  // drawn by the PRF is 63 bits, up to 9.2e18. A threshold at 2**32 sits 63,000x
+  // above any real epoch, and a PRF value landing below it has probability
+  // 2**-31 — about one in 2.1 billion. The two populations do not overlap in
+  // practice.
+  //
+  // ⛔ IT MUST NOT BLOCK THE NOTE. The message carries the needle
+  // `circuit 7 needs at least` so `isV4RebuildFailure` in poolHandlers.ts routes
+  // it to the C1 + C3 pair, which publishes the commitment and is honest about
+  // it. One such note exists and is unspent: leaf 30 of the 0.1 SOL pool
+  // (`poolNotes.ts`, the legacy epoch search that must never be removed).
+  const LEGACY_BLINDING_CEILING = 2n ** 32n;
+  if (receipt.noteBlinding < LEGACY_BLINDING_CEILING) {
+    throw new Error(
+      'circuit 7 needs at least a randomised blinding, and this note carries its deposit ' +
+        `epoch (${receipt.noteBlinding}) instead — it predates commitment blinding. Proving ` +
+        'it on circuit 7 would hide the commitment while leaving the leaf recoverable from ' +
+        'the published nullifier by trying a few thousand epochs, which is worse than the ' +
+        'C1 + C3 pair only in that it looks private. Falling back to the pair.',
+    );
+  }
+
   onProgress?.('Checking the note is unspent...');
   const spent = await isNullifierSpent(
     connection,

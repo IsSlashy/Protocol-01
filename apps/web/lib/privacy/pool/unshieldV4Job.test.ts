@@ -82,6 +82,55 @@ describe('the circuit-7 withdrawal refuses its own funder', () => {
   });
 });
 
+describe('the v4 job refuses a note circuit 7 would only appear to protect', () => {
+  /**
+   * A note deposited before `noteBlinding` landed carries its deposit EPOCH as
+   * the commitment's third input. Circuit 7 keeps the commitment off the wire,
+   * but the nullifier is published by construction and `token_mint` is public,
+   * so the leaf is rebuildable by trying a few thousand epochs. Proving such a
+   * note on circuit 7 buys nothing and LOOKS like it bought everything, which
+   * is the worse of the two failures.
+   *
+   * MEASURED: epoch = slot/7200 = 67,838 today, five digits. A PRF blinding is
+   * 63 bits. The threshold sits 63,000x above any real epoch.
+   */
+  const EPOCH_LIKE = { ...RECEIPT, noteBlinding: 67_838n } as unknown as ShieldReceipt;
+  const PRF_LIKE = { ...RECEIPT, noteBlinding: 7_284_991_002_338_477_113n } as unknown as ShieldReceipt;
+
+  it('refuses an epoch-blinded note, before any RPC call', async () => {
+    await expect(
+      prepareUnshieldJobV4(EPOCH_LIKE, ELSEWHERE, WALLET, POOL, NO_CONNECTION, NO_SEED),
+    ).rejects.toThrow(/deposit\s+epoch|predates commitment blinding/i);
+  });
+
+  it('carries the needle the worker falls back on, so the note stays spendable', async () => {
+    // ⛔ THIS STRING IS LOAD-BEARING ACROSS TWO FILES. `V4_REBUILD_FAILURES` in
+    // poolHandlers.ts routes on `includes('circuit 7 needs at least')`. Reword
+    // the throw without rewording that list and the note stops falling back to
+    // the C1 + C3 pair — it becomes unwithdrawable from the web app instead,
+    // silently, because refusing looks like working.
+    await expect(
+      prepareUnshieldJobV4(EPOCH_LIKE, ELSEWHERE, WALLET, POOL, NO_CONNECTION, NO_SEED),
+    ).rejects.toThrow(/circuit 7 needs at least/);
+  });
+
+  it('lets a PRF-blinded note through the guard', async () => {
+    // Must fail LATER and for a different reason — with no connection it dies on
+    // the unspent-note read. A different error is the proof the guard passed it.
+    await expect(
+      prepareUnshieldJobV4(PRF_LIKE, ELSEWHERE, WALLET, POOL, NO_CONNECTION, NO_SEED),
+    ).rejects.not.toThrow(/predates commitment blinding/);
+  });
+
+  it('puts the threshold where the two populations actually are', () => {
+    // Not a magic number: an assertion about the gap it sits in.
+    const CEILING = 2n ** 32n;
+    expect(67_838n).toBeLessThan(CEILING);              // every real epoch
+    expect(CEILING).toBeLessThan(2n ** 63n);            // every PRF draw's range
+    expect(CEILING / 67_838n).toBeGreaterThan(60_000n); // and by a wide margin
+  });
+});
+
 describe('the v4 job is distinguishable from the v3 one', () => {
   /**
    * The job id is what a resumed or crashed run is keyed on. If v3 and v4 minted
