@@ -105,7 +105,19 @@ jobs:
         run: pnpm turbo run build
 
       - name: Test
-        run: pnpm turbo run test --continue
+        # ⛔ --concurrency=2 IS NOT TUNING, IT STOPS A GREEN RUN REPORTING RED.
+        #
+        # MEASURED 2026-08-26 on run 33008647213: stark-prover reported
+        # "Test Files 7 passed / Tests 67 passed" AND exited 1, on
+        #   Error: [vitest-worker]: Timeout calling "onTaskUpdate"
+        # — vitest's reporter RPC timing out, not an assertion. Nothing failed.
+        #
+        # That package spends 145s inside WASM proving. Unbounded turbo ran all
+        # 17 tasks at once on a 2-core runner, the worker could not answer the
+        # reporter in time, and the step went red with no failing test in it.
+        # A red that names no test teaches nothing and gets ignored, which is
+        # how this repository ends up not reading its own CI.
+        run: pnpm turbo run test --continue --concurrency=2
 
       # `turbo run test` calls each package's own `test` script. For apps/web
       # that is `vitest run` against vitest.config.ts, whose `include` covers
