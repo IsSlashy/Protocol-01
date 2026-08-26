@@ -70,6 +70,10 @@ pub const CIRCUIT_MERKLE_PATH: u8 = 3;
 pub const CIRCUIT_CONFIDENTIAL_BALANCE: u8 = 4;
 pub const CIRCUIT_TRANSFER: u8 = 5;
 pub const CIRCUIT_MERKLE_UPDATE: u8 = 6;
+/// [C7] Spend: C1's commitment derivation merged with C3's Merkle membership,
+/// so the note commitment is never a public input. Mirrors the prover's
+/// `CIRCUIT_SPEND` in `stark/src/compact.rs`.
+pub const CIRCUIT_SPEND: u8 = 7;
 
 #[program]
 pub mod p01_stark_verifier {
@@ -335,7 +339,7 @@ pub mod p01_stark_verifier {
         // CU (their DEEP-ALI used to live inside `verify_constraints_*`).
         let circuit_id = buffer.circuit_id;
         require!(
-            matches!(circuit_id, 1 | 2 | 3 | 4 | 5 | 6),
+            matches!(circuit_id, 1 | 2 | 3 | 4 | 5 | 6 | 7),
             StarkVerifierError::UnsupportedCircuit
         );
 
@@ -368,7 +372,21 @@ pub mod p01_stark_verifier {
             4 => verify::verify_deep_ali_circuit_4(&proof, &public_inputs),
             5 => verify::verify_deep_ali_circuit_5(&proof, &public_inputs),
             6 => verify::verify_deep_ali_circuit_6(&proof, &public_inputs),
-            _ => unreachable!("circuit_id gated by matches! above"),
+            // [C7] Phase 2 is MANDATORY for circuit 7, more so than for any
+            // other. Its per-query arm is vacuous and step 5 is gone, so
+            // phase 1 alone would mark the buffer verified with C7's six
+            // boundary assertions never checked against the trace.
+            7 => verify::verify_deep_ali_circuit_7(&proof, &public_inputs),
+            // [C7 2026-08-24] Was `unreachable!()`. It was true -- the
+            // `matches!` gate above admits only 1..=6 -- and it is the only
+            // panicking catch-all on the whole circuit-dispatch surface; every
+            // other one returns (compact_proof.rs `_ => None`, and three in
+            // verify.rs). A panic inside an Anchor instruction aborts rather
+            // than returning a diagnosable error, and this arm sits directly
+            // under the gate that widening for a new circuit touches. Converted
+            // BEFORE the gate is widened, so the window where a wider gate meets
+            // a missing arm never exists at any commit.
+            _ => Err(verify::VerifyError::UnsupportedCircuit),
         }
         .map_err(|_| StarkVerifierError::InvalidProof)?;
 
@@ -586,7 +604,66 @@ pub mod p01_stark_verifier {
         // proof exercises, so no behavioural test can pin it).
         //
         // [C0 GATE] 0 stays out of this list, see above.
-        const PROBE_ORDER: [u8; 4] = [1, 6, 3, 5];
+        //
+        // [C7 2026-08-25] C7 ADDED, settling the question the 2026-08-24 note
+        // left open. That note said C7 was "deliberately absent" because C7 is
+        // the only circuit whose `fri_final_poly_degree_bound` is not 1, and
+        // verify.rs's L13 note justifies leaving a terminal error path in the
+        // clear on the grounds that the bound "is constant across the anonymity
+        // set" -- so putting C7 here "makes that sentence false".
+        //
+        // Three things were measured, and all three cut the other way.
+        //
+        // 1. THE SENTENCE WAS ALREADY FALSE. `CONFIG_SPEND` sets the bound to 2
+        //    (compact_proof.rs), and the C7 note inside `check_final_poly_degree_bound`
+        //    itself says C7 "is the first circuit in this crate's history to set
+        //    the bound above 1" -- thirty lines above the sentence claiming it is
+        //    1 everywhere. Membership here was never what would falsify it. The
+        //    sentence is corrected in the same commit.
+        //
+        // 2. THE LEAK IT PROTECTS IS UNREACHABLE. That `msg!` fires only on the
+        //    `FriFinalPolyDegreeTooHigh` return, and every write and verify on a
+        //    `ProofBuffer` is `has_one = authority` + `Signer`, so no third party
+        //    can induce another user's proof to fail. On an honest path the line
+        //    is never emitted.
+        //
+        // 3. EXCLUSION COSTS MORE PRIVACY THAN IT BUYS. Off this list C7 goes
+        //    through `verify_stark_proof_v2`, whose buffer PDA is
+        //    `[b"stark_proof", authority, [circuit_id]]` -- so the circuit sits
+        //    in the ADDRESS named by the init transaction and by every chunk
+        //    transaction's account list, whether or not verification ever runs,
+        //    plus `msg!("STARK proof verified for circuit {}")` and an unpadded
+        //    `proof_size`. Here, `init_proof_buffer_v2` writes `u8::MAX` and
+        //    nothing names the circuit until the final verify tx. For an
+        //    ABANDONED upload the difference is total.
+        //
+        // ⚠️ THIS DOES NOT MAKE C7 ANONYMOUS. The three channels the L13 block
+        // above documents stay open -- distinct compute units, the post-hoc
+        // `buffer.circuit_id` write, and the public-input arity visible in this
+        // instruction's own data length. It removes the widest channel, not all
+        // of them.
+        //
+        // ⛔ PRECONDITION, AND IT WAS NOT MET UNTIL TODAY. The paragraph above
+        // says "do not add a circuit here without re-running that matrix". The
+        // matrix swept 7×7 inside 8×8 storage, so C7 was the row and column it
+        // skipped -- generated, padded, stored, never probed against a foreign
+        // config in either direction. Widened and re-run: both matrices are
+        // perfectly diagonal, C7 included, under exact-length AND under the
+        // 145,000-byte envelope.
+        //
+        // 🧠 C7 is also the BEST-separated member, not the weakest.
+        // `no_two_configs_share_the_tuple_the_parser_can_observe` measures four
+        // pairs separated by `trace_width` ALONE -- a field that never travels
+        // on the wire -- and they are C1/C2, C3/C5, C3/C6 and C5/C6. C7 is in
+        // none of them: it differs from C6 in `fri_final_poly_size`, which the
+        // parser actually reads.
+        //
+        // Appended LAST rather than placed next to C6 on purpose: the C6-first
+        // ordering is a documented hardening choice about adversarial buffers
+        // among the `trace_width`-separated group, and C7's separation does not
+        // depend on order at all, so it is put where it cannot perturb that
+        // reasoning.
+        const PROBE_ORDER: [u8; 5] = [1, 6, 3, 5, 7];
 
         let mut matched: Option<(u8, GenericCompactProof)> = None;
         for &cid in PROBE_ORDER.iter() {

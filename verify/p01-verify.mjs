@@ -126,8 +126,8 @@
  *                   the precise failure mode this tool exists to refuse.
  *
  * `--self-test --replay <dir>` asserts the outcome of EVERY probe matches the
- * manifest pin, in both directions. Three committed fixtures: a control pair,
- * plus one regression pin:
+ * manifest pin, in both directions. Four committed fixtures: a control pair,
+ * one regression pin, and one recording of the real thing:
  *
  *   fixtures/v3-subscribe  RECORDED from devnet. v3 leaks by design, so
  *                          P1/P2/P4 are pinned FAIL. If the tool stops seeing
@@ -147,11 +147,21 @@
  *                          stays PASS when errored entries are skipped. Both
  *                          controls have zero errored entries, so only this
  *                          one catches that regression. (regression pin)
+ *   fixtures/v4-live       RECORDED from devnet: the first circuit-7 spend that
+ *                          ever landed. P1/P2/P4 PASS -- the instruction carries
+ *                          no commitment argument at all -- and P11 FAILS,
+ *                          because the fee payer is the upgrade authority of the
+ *                          pool and the verifier and is printed in README.md.
+ *                          Pinning both halves is the point: a commitment-free
+ *                          instruction is not an anonymous transaction, and a
+ *                          fixture showing only the green half would teach the
+ *                          opposite. (reality pin -- see its README)
  *
  * USAGE
  *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v3-subscribe
  *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-synthetic
  *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-synthetic-errored
+ *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-live
  *   node verify/p01-verify.mjs --self-test [--rpc URL]
  *   node verify/p01-verify.mjs --spend <signature> [--rpc URL] [--record DIR]
  *   node verify/p01-verify.mjs --pool <poolPDA> [--limit N] [--rpc URL]
@@ -262,7 +272,21 @@ const SPEND_KINDS = [
   // ⚠️ If v4 keeps a cleartext recipient argument, give it a real
   // `recipientOffset`. Leaving it null there would silence P10 on the very
   // version that is supposed to be the improvement.
-  { name: 'unshield_denominated_stark_v4', commitmentOffset: null, totalLen: null, recipientOffset: null },
+  // [2026-08-25] The recipient offset filled in, as the warning above demanded.
+  // v4 DOES keep a cleartext `recipient: [u8; 32]`, so leaving this null was
+  // about to silence P10 on the very version that is supposed to be the
+  // improvement — the third false-clean entry this table would have carried.
+  //
+  // 8 + 32 nullifier + 32 merkle_root + 8 subtree_root + (4 + 8*s) siblings
+  // + (4 + s) directions + 32 recipient, with s = tree_depth - 12.
+  //
+  // ⚠️ 115 AND 147 ARE ONLY RIGHT FOR s = 3, i.e. tree_depth 15. `tree_depth`
+  // is per-pool (`pool_v3.rs`), so `readPayee`'s `data.length < off + 32` guard
+  // is not enough on its own — a depth-16 pool shifts the recipient by 9 bytes
+  // and the read would still succeed, printing a syntactically valid address
+  // belonging to nobody. `totalLen` is what pins it: P10 must refuse any v4
+  // instruction whose length is not exactly 147.
+  { name: 'unshield_denominated_stark_v4', commitmentOffset: null, totalLen: 147, recipientOffset: 115 },
 ];
 
 // ---------------------------------------------------------------------------
@@ -452,15 +476,37 @@ function trimForFixture(method, result) {
   return result;
 }
 
-/** Record wrapper: pass calls through to the live rpc, keep the trimmed pairs. */
+/**
+ * Record wrapper: pass calls through to the live rpc, keep the trimmed pairs.
+ *
+ * A REPEATED CALL IS ANSWERED FROM THE STORE, NOT FROM THE CHAIN, and that is
+ * the whole correctness argument for this function. It used to store the first
+ * response for a key and return the LIVE one every time, which is fine only
+ * while the chain holds still. It does not: the fee payer of a v4 spend is
+ * also a relayer node, and `p01_relayer` writes a `Heartbeat` from it once a
+ * minute, forever. So `getSignaturesForAddress(payer, {limit: 201})` answered
+ * one list at the start of a run and a list shifted by one heartbeat later in
+ * the same run. The walk followed the SECOND list and fetched its members; the
+ * fixture kept the FIRST. Replaying then asked for the one signature only the
+ * first list held and hard-stopped on a miss — a fixture that could not
+ * replay, written with no complaint, and only discovered on the next
+ * `--self-test`. MEASURED on the 2026-08-26 recording of the first real v4
+ * spend: 201 signatures pinned, 200 transactions fetched, the oldest of the
+ * frozen list never read.
+ *
+ * Serving repeats from the store makes the recording traverse exactly the data
+ * the replay will traverse, so a fixture that records is a fixture that
+ * replays, by construction rather than by luck. It also means a probe that
+ * needs a field `trimForFixture` drops now fails during the recording, where
+ * it is cheap to see, instead of surviving as a fixture nobody can rerun.
+ */
 function wrapRecorder(rpc, store) {
   const wrapped = async (method, params) => {
-    const trimmed = trimForFixture(method, await rpc(method, params));
     const key = callKey(method, params);
-    if (!store.seen.has(key)) {
-      store.seen.add(key);
-      store.calls.push({ method, params, result: trimmed });
-    }
+    if (store.seen.has(key)) return structuredClone(store.seen.get(key));
+    const trimmed = trimForFixture(method, await rpc(method, params));
+    store.seen.set(key, trimmed);
+    store.calls.push({ method, params, result: trimmed });
     return structuredClone(trimmed);
   };
   wrapped.calls = rpc.calls;
@@ -1408,27 +1454,48 @@ async function verifySpend(rpc, signature, opts = {}) {
   // P3 therefore passes on today's proofs — and that is NOT evidence the proof
   // hides the witness.
   //
-  // `stark/src/compact.rs:3460-3484` interpolates the trace and evaluates it on
-  // the LDE domain with no coset offset, no blinding polynomial and no random
-  // rows, then publishes the openings at 22 query positions plus the OOD
-  // evaluations of every column. Two agents independently recovered a circuit's
-  // secret from that by Lagrange interpolation, each with a positive control
-  // (see the B7 record). Recovery is polynomial, not a byte copy, so a byte scan
-  // is structurally blind to it.
+  // ⚠️ THE ORIGINAL REASON WRITTEN HERE IS NO LONGER TRUE, AND THE VERDICT DID
+  // NOT CHANGE. It said the prover evaluates on the LDE domain "with no coset
+  // offset, no blinding polynomial and no random rows". As of the circuit-7
+  // build all three of those clauses are false:
   //
-  // Reported INCONCLUSIVE forever, never PASS, until trace blinding ships and
-  // this tool grows a real interpolation attempt with its own positive control.
-  // Both committed fixtures pin this probe FAIL, so a well-meaning "fix" that
-  // makes it pass turns CI red before it turns a claim dishonest.
+  //   coset       LDE_COSET_SHIFT = 7, so the LDE domain is DISJOINT from the
+  //               trace domain — no query position is a trace row, and no
+  //               opening returns a raw witness value
+  //   mask rows   C7 carries MASK_ROWS = 128
+  //   randomness  the mask is drawn per proof from a real CSPRNG, and the Rust
+  //               REFUSES to build without one (draw_spend_mask)
+  //
+  // ⛔ THAT IS NOT SECRECY AND THE PROBE MUST NOT SOFTEN. What C7 buys is
+  // UNDERDETERMINATION: 90 published evaluations against ~138 unknowns in
+  // column 9, which is why depth 12 was chosen. Underdetermination has a
+  // MEASURED counterexample in this repository — four C1 witnesses, including
+  // the spend secret, were recovered in 5 ms by AIR-AWARE recovery on an
+  // underdetermined system, because the constraints supply the equations the
+  // openings do not. C7's argument has the same shape and has never been
+  // attacked. "More unknowns than equations" is not a security claim.
+  //
+  // ⛔ AND v3 IS STILL REGISTERED. Notes whose blinding is unknown spend on the
+  // C1 + C3 pair, which has no coset masking of its own to appeal to.
+  //
+  // Recovery is polynomial, not a byte copy, so a byte scan is structurally
+  // blind to it either way. Reported INCONCLUSIVE forever, never PASS, until
+  // this tool grows a real interpolation attempt against C7 with its own
+  // positive control. Every committed fixture pins this probe FAIL, so a
+  // well-meaning "fix" that makes it pass turns CI red before it turns a claim
+  // dishonest.
   results.push(
     probe(
       'P3b',
       'the proof does not reveal the witness by interpolation',
       false,
-      'INCONCLUSIVE BY CONSTRUCTION: this tool only detects a value present verbatim. ' +
-        'The prover applies no trace blinding, so the published openings determine the trace ' +
-        'polynomial and the witness is recoverable by interpolation. A PASS on P3 says the ' +
-        'commitment was not copied into the proof; it says nothing about whether the proof hides it.',
+      'INCONCLUSIVE BY CONSTRUCTION: this tool only detects a value present verbatim, and ' +
+        'recovery from a STARK proof is polynomial, not a byte copy. Circuit 7 does apply a coset ' +
+        'LDE and 128 CSPRNG-drawn mask rows — unlike the C1+C3 pair v3 still uses — but that buys ' +
+        'UNDERDETERMINATION (90 published evaluations against ~138 unknowns), not secrecy: four C1 ' +
+        'witnesses were recovered in 5 ms by AIR-aware recovery on an underdetermined system, and ' +
+        'C7 has never been attacked that way. A PASS on P3 says the commitment was not copied into ' +
+        'the proof; it says nothing about whether the proof hides it.',
     ),
   );
 
@@ -2455,6 +2522,24 @@ const SPEND_LAYOUTS = {
     ['subscriber_commitment', 32], ['rate', 8], ['interval_slots', 8],
     ['vk_hash_subscriber', 32], ['stark_commitment', 8],
   ],
+  // [C7 2026-08-25] The first entry with NO `stark_commitment` field, and that
+  // absence is the whole feature: v4 spends on a single circuit-7 proof whose
+  // public inputs are `[nullifier, subtree_root, rh0..rh3]`, so there is no
+  // commitment to publish. P1 then passes because there is nothing to read.
+  //
+  // The two Borsh `Vec`s are written at their tree_depth-15 widths — a 4-byte
+  // LE length followed by `s` elements, `s = tree_depth - 12 = 3`. That is what
+  // makes the recipient land at 115 and the instruction 147 bytes long.
+  //
+  // ⛔ `directions` is 3 bytes that name which of 8 subtrees the note is in.
+  // Today every note is in bucket 0 so the bits carry nothing; from leaf 4,097
+  // they partition the anonymity set by 8. That is a bigger unlinkability
+  // question than anything this table measures, and no probe here asks it yet.
+  unshield_denominated_stark_v4: [
+    ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['subtree_root', 8],
+    ['siblings_len', 4], ['siblings', 24], ['directions_len', 4], ['directions', 3],
+    ['recipient', 32],
+  ],
 };
 
 /**
@@ -3089,7 +3174,11 @@ function selfTestOffsets() {
     if (!layout) continue;
     checked += 1;
 
-    let derived = 0;
+    // `null`, not 0. An instruction with NO `stark_commitment` field must
+    // derive `null` and agree with a `commitmentOffset: null` in the table —
+    // that is exactly v4, and a 0 default would have compared `null === 0` and
+    // reported the one instruction that publishes no commitment as broken.
+    let derived = null;
     let derivedRecipient = null;
     const total = layout.reduce((n, [, w]) => n + w, 0);
     const buf = Buffer.alloc(total);
@@ -3101,14 +3190,19 @@ function selfTestOffsets() {
       at += width;
     }
 
-    const read = buf.readBigUInt64LE(kind.commitmentOffset);
-    const ok = kind.commitmentOffset === derived && read === COMMITMENT;
+    const read = derived === null ? null : buf.readBigUInt64LE(derived);
+    const ok = kind.commitmentOffset === derived && (derived === null || read === COMMITMENT);
     if (!ok) {
       broken += 1;
       console.log(
         `   FAIL  ${kind.name}: table says ${kind.commitmentOffset}, the signature says ${derived}` +
           (read === MIN_EPOCH ? ' — it is reading min_epoch' : ''),
       );
+    } else if (derived === null) {
+      // Not a skip. "This instruction publishes no commitment" is a claim about
+      // the signature, checked here against the signature, and it is the claim
+      // C7 exists to make true.
+      console.log(`   ok    ${kind.name}: publishes NO commitment, and the signature agrees`);
     } else {
       console.log(`   ok    ${kind.name}: commitment at ${derived}, read back intact`);
     }
@@ -3261,7 +3355,7 @@ async function main() {
   } else {
     rpc = makeRpc(arg('--rpc', DEFAULT_RPC));
     if (recordDir) {
-      store = { seen: new Set(), calls: [] };
+      store = { seen: new Map(), calls: [] };
       rpc = wrapRecorder(rpc, store);
     }
     const spendSig = arg('--spend', null);

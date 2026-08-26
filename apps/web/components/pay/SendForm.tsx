@@ -44,12 +44,63 @@
  * Claimed: the handoff itself creates no on-chain record. That is a property of
  * there being no transaction, not of a proof, so it needs no circuit and cannot
  * regress.
- * NOT claimed: that the note becomes untraceable. When the recipient withdraws,
- * that withdrawal republishes the commitment the ORIGINAL deposit published, so
- * the exit is publicly matchable to the sender's deposit; measured on devnet
- * (leaf 16, commitment 8901821612542787864, present in both the deposit and the
- * withdrawal). The disclosure fold below says exactly that. Do not soften it
- * before `docs/C7_SPEND_CIRCUIT_PLAN.md` ships.
+ *
+ * NOT claimed: that the note becomes untraceable. What the recipient's
+ * withdrawal publishes became CONDITIONAL on 2026-08-26, so the disclosure fold
+ * below is conditional too, and it must STAY conditional rather than collapse
+ * into either half:
+ *
+ *   from the phone                  the withdrawal republishes the commitment
+ *                                     the ORIGINAL deposit published, so the
+ *                                     exit is publicly matchable to the
+ *                                     sender's deposit; measured on devnet
+ *                                     (leaf 16, commitment 8901821612542787864,
+ *                                     present in both the deposit and the
+ *                                     withdrawal). Still true today: its router
+ *                                     calls `unshieldDenominatedStarkV3` and
+ *                                     nothing else, pinned in both directions
+ *                                     by `spendRouting.test.ts`.
+ *   from the extension                no commitment, and NO payer separation.
+ *                                     It was wired to circuit 7 on 2026-08-26,
+ *                                     so the commitment link is gone — but that
+ *                                     client has no derived ephemeral: the
+ *                                     user's own wallet signs the withdrawal
+ *                                     AND rents the proof buffer. Naming both
+ *                                     halves is the point; saying only the
+ *                                     first would read as anonymity.
+ *   from this web app                 the spend is proved on ONE circuit-7
+ *                                     trace and publishes NO commitment.
+ *                                     `PrepareUnshieldV4Result` has no
+ *                                     `starkCommitment` field at all; the
+ *                                     absence IS the property.
+ *   any client, for some notes        a note that cannot be proved on circuit 7
+ *                                     is spendable only on the C1 + C3 pair,
+ *                                     which publishes the commitment again. v3
+ *                                     is not legacy and is not going away, and
+ *                                     THIS WEB APP TAKES THAT ROUTE TOO: when
+ *                                     the circuit-7 rebuild cannot place the
+ *                                     note's Merkle root, the worker falls back
+ *                                     to C1 + C3 and reports `version: 'v3'`
+ *                                     (poolHandlers.ts, `handlePoolUnshieldPrepare`).
+ *                                     So "from this web app" above is the
+ *                                     ordinary case, not a guarantee — which is
+ *                                     exactly why the sentence below says "any
+ *                                     client" and not "the other two".
+ *
+ * ⛔ AND THE SENDER DOES NOT CHOOSE WHICH. This screen hands a note to somebody
+ * ELSE; which client they withdraw from is their decision. So the copy may not
+ * present the circuit-7 case as what is going to happen — it is the case the
+ * sender has the least control over.
+ *
+ * ⚠️ THE OLD INSTRUCTION HERE IS SUPERSEDED, NOT SATISFIED. It read "Do not
+ * soften it before `docs/C7_SPEND_CIRCUIT_PLAN.md` ships". That plan HAS
+ * shipped, and read literally afterwards it would license deleting the
+ * sentence — which would be false for two of the three routes above. The
+ * standing rule is the shape, not the deadline: state both halves, name which
+ * client each belongs to, and soften neither. `SendForm.test.tsx` pins the
+ * matchable half by rendering it; `sendFormDisclosureC7.test.ts` pins both
+ * halves AND re-measures the routing claim, so a surface gaining v4 turns this
+ * copy red instead of leaving it quietly stale.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -839,8 +890,9 @@ export default function SendForm({
                   <summary className="flex cursor-pointer select-none items-start gap-2 p-3 text-xs text-p01-cyan [&::-webkit-details-marker]:hidden">
                     <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
                     <span>
-                      Nothing goes on chain now. The note&apos;s later exit from the pool can
-                      still be linked to your deposit.
+                      Nothing goes on chain now. Whether the note&apos;s later exit can be
+                      linked to your deposit depends on where it is withdrawn from, and you
+                      do not choose that.
                     </span>
                   </summary>
                   <div className="space-y-2 px-3 pb-3 text-xs text-p01-cyan/90">
@@ -854,10 +906,28 @@ export default function SendForm({
                       no fee.
                     </p>
                     <p className="text-p01-yellow">
-                      What it does not hide: when they withdraw, the withdrawal publishes the
-                      same note commitment your deposit published, so that exit is publicly
-                      matchable to your deposit. Measured on devnet. The handoff is invisible;
-                      the note leaving the pool is not.
+                      What it does not hide depends on the client they withdraw from, and
+                      handing a note over does not let you pick it. From the phone, the
+                      withdrawal publishes the same note commitment your deposit published, so
+                      that exit is publicly matchable to your deposit. Measured on devnet. So
+                      does any client, on any note that cannot be proven on the newer circuit.
+                    </p>
+                    <p className="text-p01-yellow">
+                      From the Protocol 01 extension, for a note deposited recently, the
+                      commitment stays off the wire — but nothing else does: there the
+                      recipient&apos;s own wallet signs the withdrawal and rents the proof
+                      buffer, so it names them directly whichever circuit proves it.
+                    </p>
+                    <p className="text-p01-yellow">
+                      From this web app, for a note deposited recently, it no longer does: the
+                      spend is proven on a single circuit-7 proof and no commitment reaches the
+                      wire. A note deposited before we randomised the blinding is the exception
+                      — it carries its deposit epoch instead, which makes its leaf findable from
+                      the published nullifier by trying a few thousand epochs, so this app
+                      withdraws it the old way rather than pretend. Either way, what changes is
+                      only the tie to your deposit: the withdrawal still names the address being
+                      paid, and whoever funded it is still one hop behind the fee payer. The
+                      handoff is invisible in every case; the note leaving the pool is not.
                     </p>
                     <p className="text-p01-yellow">
                       You keep a spendable copy. The note is not consumed or locked by handing it

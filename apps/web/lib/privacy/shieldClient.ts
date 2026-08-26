@@ -275,6 +275,31 @@ export interface UnshieldOutcome {
   txSig: string;
   denomination: number;
   /**
+   * Which withdrawal circuit actually ran, as reported by the worker.
+   *
+   * A RESULT and not a request parameter, for the same reason `fundedBy` is one:
+   * this client ASKS for circuit 7 by sending a payee at prepare, and it may not
+   * get it — v3 stays reachable indefinitely, because a note whose blinding is
+   * unknown can be spent nowhere else.
+   *
+   * The two differ in what the transaction PUBLISHES, which is the only
+   * difference a user has any reason to care about:
+   *
+   *   'v3'  carries the note's `stark_commitment` at instruction byte 80 — the
+   *         same value the deposit's `LeafInserted` event emitted — so the exit
+   *         is publicly matchable to that exact deposit and the anonymity set is
+   *         ONE, whatever the pool holds.
+   *   'v4'  carries no commitment at all. `PrepareUnshieldV4Result` has no
+   *         `starkCommitment` field on purpose: the absence IS the property.
+   *
+   * ⛔ `'v4'` IS NOT "UNLINKABLE", AND NO SCREEN MAY RENDER IT AS THAT. The
+   * recipient is still in the instruction data and still sits at
+   * `remaining_accounts[0]`, and whoever pre-funded the ephemeral is still one
+   * hop behind the fee payer. It removes the deposit→withdrawal edge and nothing
+   * else.
+   */
+  version: 'v3' | 'v4';
+  /**
    * Who paid for the job, and therefore whether the user's wallet is on chain
    * for this withdrawal. A RESULT, never a request parameter — the caller asks
    * for a funder, it may not be there, and the user is entitled to know which
@@ -291,6 +316,35 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
   const { meta, token, denomination, leafIndex, recipient, owner, connection, signOne, onProgress } =
     params;
 
+  // ── PREPARE, AND WHY THE PAYEE IS SENT HERE NOW ─────────────────────
+  //
+  // Circuit 7 takes the payee as an INPUT: `sha256(recipient)` is four of its
+  // six public inputs, so the proof does not exist until the payee is known.
+  // The C1 + C3 pair names no payee at all, which is why this used to send the
+  // recipient only at execute. Sending it here is the whole handshake that lets
+  // a withdrawal route to circuit 7 and stop publishing the commitment.
+  //
+  // ⛔ BOTH FIELDS OR NEITHER, AND THE ROUTING IS PER CALLER.
+  // The worker routes on their presence: both present asks for a circuit-7 job,
+  // NEITHER present leaves the C1 + C3 job unchanged, and exactly one is
+  // REFUSED rather than quietly answered with C1 + C3 — a half-specified
+  // request means a caller that meant circuit 7 and dropped a field, and
+  // answering it republishes the note's commitment with nothing raised. That is
+  // what lets the
+  // SUBSCRIBE leg keep the shared v3 prepare — `programs/zk_shielded/src/lib.rs`
+  // exposes exactly one v4, the withdrawal, so there is no
+  // `subscribe_private_stark_v4` to spend a circuit-7 proof on, and a blanket
+  // switch would have broken the subscription silently in the flow the
+  // 2026-09-04 deck is about. `subscribeFromPool` below sends NEITHER field and
+  // must keep sending neither.
+  //
+  // ⚠️ `ownerPubkey` IS IDENTITY HERE, exactly as it is at execute — it means
+  // the user's wallet and nothing else. It is sent so the payee refusal
+  // (`recipient === ownerPubkey`, the line that regressed once and paid a
+  // withdrawal's whole value into the connected wallet) can run BEFORE ~5.5 s of
+  // proving and a 78-chunk upload, instead of after the pre-fund has already
+  // landed. It is not a funding instruction: `sweepTo` at execute is still the
+  // only field that says where money goes.
   const prep = await poolRequest(
     {
       kind: 'poolUnshieldPrepare',
@@ -299,6 +353,8 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
       denomination,
       leafIndex,
       encryptedNotes: params.encryptedNotes,
+      recipient: recipient.toBase58(),
+      ownerPubkey: owner.toBase58(),
     },
     onProgress,
   );
@@ -320,6 +376,30 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
     neverExposeWallet: params.neverExposeWallet,
   });
 
+  // 🚨 THE PAYEE IS SENT AT EXECUTE ON BOTH CIRCUITS, AND ON v4 IT IS A CHECK
+  // RATHER THAN AN INSTRUCTION.
+  //
+  // It was briefly omitted on v4 — `prep.version === 'v4' ? undefined : …` — on
+  // the reasoning that "a matching one is redundant and a differing one is a
+  // bug, so the only value that can never be wrong is none". That reasoning is
+  // circular, and it cost the one guard built for the worst case on this path:
+  //
+  //   v4  `sha256(recipient)` is four of circuit 7's six public inputs, so the
+  //       proof is bound to ONE payee and `executeUnshieldV4` takes no recipient
+  //       at all — it pays whoever the STORED job names. The worker refuses a
+  //       recipient that disagrees with that stored payee, but it can only
+  //       refuse one it was GIVEN: sending nothing is exactly what makes a
+  //       disagreement invisible. Preparing the same note twice for two payees
+  //       is what produces one (the worker now keys those jobs apart, and this
+  //       is the second, independent half of that fix — see
+  //       `poolHandlers.ts`'s note on `preparedUnshields`).
+  //   v3  the proof names no payee, so this is the only place it exists and it
+  //       has always been required. Unchanged.
+  //
+  // `prep.version` therefore no longer steers the execute message at all. It is
+  // reported to the caller and nothing else — a RESULT, like `fundedBy` — which
+  // is also why a prepare that declines v4 needs no special handling here: the
+  // same message is correct either way.
   const done = await poolRequest(
     {
       kind: 'poolUnshieldExecute',
@@ -335,6 +415,7 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
   return {
     txSig: done.txSig,
     denomination: done.denomination,
+    version: prep.version,
     fundedBy: funding.fundedBy,
     funderFallbackReason: funding.funderFallbackReason,
   };

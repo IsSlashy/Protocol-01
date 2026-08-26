@@ -114,7 +114,7 @@
   ],
   "scripts": {
     "build": "tsup --config tsup.config.ts",
-    "build:core": "tsup src/core.ts --format cjs,esm --dts --clean --out-dir dist",
+    "build:core": "tsup src/core.ts --format cjs,esm --dts --no-clean --out-dir dist",
     "dev": "tsup --config tsup.config.ts --watch",
     "test": "vitest run",
     "test:watch": "vitest",

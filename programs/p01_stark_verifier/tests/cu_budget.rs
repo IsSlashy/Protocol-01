@@ -1213,9 +1213,9 @@ struct CuCeiling {
 /// Re-record it whenever `src/` changes at all, comments included, or delete it;
 /// what must never happen is leaving a hash here that HEAD does not build.
 ///
-/// Every one of the 13 numbers below is a `compute_units_consumed` from that
-/// run, and a second run against the same artifact reproduces all 13: the
-/// `vs recorded` column prints `+0` on all 13 pins.
+/// Every one of the 15 numbers below is a `compute_units_consumed` from that
+/// run, and a second run against the same artifact reproduces all 15: the
+/// `vs recorded` column prints `+0` on all 15 pins.
 ///
 /// # Why they moved, and why the band was NOT widened
 ///
@@ -1241,10 +1241,10 @@ struct CuCeiling {
 /// been the other option and it is the wrong one: it would have left every
 /// future regression up to 10% invisible.
 ///
-/// Worst absolute is C4 at 920,897 of 1,400,000 (66%); worst phase1+phase2 is
-/// C4 at 1,128,502, still inside one instruction, leaving ~271,000 CU of margin.
+/// Worst absolute is C4 at 924,827 of 1,400,000 (66%); worst phase1+phase2 is
+/// C4 at 1,132,432, still inside one instruction, leaving ~267,000 CU of margin.
 /// Worst phase 2 alone is C4 at 207,605. The smallest phase-1 pin is C0 at
-/// 633,547. CU was never the binding constraint and it still is not.
+/// 633,531. CU was never the binding constraint and it still is not.
 ///
 /// [B7 2026-08-04] All thirteen pins moved with the LDE coset. The price is
 /// +34,874 to +79,303 CU per circuit, +6% to +9%, and it buys the end of the
@@ -1267,6 +1267,39 @@ struct CuCeiling {
 /// were reproduced could not be seen to have been. Both phases are tabulated
 /// now, and every number in this doc comment that also exists as a constant is
 /// checked against it by `cu_ceiling_prose_matches_the_constants`.
+///
+/// [C7 2026-08-25] C7 pinned for the first time, and the seven pins above
+/// re-anchored — by C7 itself, NOT by the toolchain.
+///
+/// This box carries `cargo-build-sbf 3.1.15`, not the 3.1.9 that
+/// `CU_MEASURED_WITH` names, so every number here was ambiguous: the caveat
+/// this file prints says in as many words that the difference between those two
+/// compilers has never been measured. It has now, and this is the control. The
+/// PRE-C7 verifier source (dc9dd515) built with 3.1.15 reproduces all thirteen
+/// of the previous pins EXACTLY, to the compute unit, phase 1 and phase 2
+/// alike. The same platform-tools v1.52 sits behind both compilers. So a 3.1.15
+/// measurement is comparable to the recorded ones, and the re-baseline this
+/// session set out to do turned out not to be needed.
+///
+/// What the control ALSO isolated is the finding, and it is why the seven pins
+/// moved: ADDING CIRCUIT 7 TO THE VERIFIER COSTS EVERY OTHER CIRCUIT. Against
+/// that same pre-C7 build, C1..C6 each gained between +3,232 and +3,930 CU of
+/// phase 1, C0 lost 16, and phase 2 moved by at most one unit in either
+/// direction. Phase 2 is flat because `verify_deep_ali_circuit_*` gained no
+/// work; phase 1 pays for a wider dispatch and more code in the same binary.
+/// Every row stays under its ceiling. It is RECORDED rather than absorbed
+/// because it is the first time a new circuit has been seen to move the ones
+/// already there, and the next circuit will do it again.
+///
+/// ⛔ Two variables moved between the previous pins and this run — the compiler
+/// AND the C7 code — and the drift is attributed to the second only because the
+/// first was held still and measured. Without that control the honest statement
+/// would have been "something moved by +0.4%", which is not a finding.
+///
+/// C7 itself lands at 878,756 phase 1 and 192,715 phase 2. It exists to replace
+/// C1 + C3, so the figure to compare against is their SUM: 1,681,540 CU of
+/// phase 1 over two proofs and two ProofBuffer rents, against one proof at
+/// 878,756.
 ///
 /// # There is no historical column here, on purpose
 ///
@@ -1304,9 +1337,9 @@ struct CuCeiling {
 /// attributed cause. That attribution is INFERENCE from the source, not a
 /// separate measurement.
 ///
-const CU_CEILINGS: [CuCeiling; 7] = [
-    CuCeiling { circuit_id: 0, phase1_measured: 633_547, phase1_max: 647_000, phase2_measured: None,           phase2_max: None },
-    CuCeiling { circuit_id: 1, phase1_measured: 810_012, phase1_max: 827_000, phase2_measured: Some(124_932), phase2_max: Some(128_000) },
+const CU_CEILINGS: [CuCeiling; 8] = [
+    CuCeiling { circuit_id: 0, phase1_measured: 633531, phase1_max: 647000, phase2_measured: None,           phase2_max: None },
+    CuCeiling { circuit_id: 1, phase1_measured: 813259, phase1_max: 830000, phase2_measured: Some(124932), phase2_max: Some(128000) },
     // [BIND-C2C4 2026-08-03] C2 and C4 phase-2 re-pinned UPWARD. The cause is the
     // public-input boundary fold: `verify_deep_ali_circuit_2` and `_4` now
     // reconstruct the boundary term of `Q` at `z` and fold it into the DEEP
@@ -1326,16 +1359,22 @@ const CU_CEILINGS: [CuCeiling; 7] = [
     // a step taken to make CI green. If a future change moves these again, the
     // question to answer first is what moved and why — never what number would
     // pass.
-    CuCeiling { circuit_id: 2, phase1_measured: 815_286, phase1_max: 832_000, phase2_measured: Some(112_043), phase2_max: Some(115_000) },
-    CuCeiling { circuit_id: 3, phase1_measured: 864_400, phase1_max: 882_000, phase2_measured: Some(115_905), phase2_max: Some(119_000) },
+    CuCeiling { circuit_id: 2, phase1_measured: 818518, phase1_max: 835000, phase2_measured: Some(112042), phase2_max: Some(115000) },
+    CuCeiling { circuit_id: 3, phase1_measured: 868281, phase1_max: 886000, phase2_measured: Some(115904), phase2_max: Some(119000) },
     // [BIND-C2C4 2026-08-03] see the note on C2 above — same cause, same band,
     // same recorded acceptance. C4 is the circuit that pays the most.
-    CuCeiling { circuit_id: 4, phase1_measured: 920_897, phase1_max: 940_000, phase2_measured: Some(207_605), phase2_max: Some(212_000) },
+    CuCeiling { circuit_id: 4, phase1_measured: 924827, phase1_max: 944000, phase2_measured: Some(207605), phase2_max: Some(212000) },
     // [LIVENESS 2026-08-01] phase1_measured re-recorded: C5 793_372 -> 793_355
     // (-17, the capture-edge compare) and C6 809_654 -> 809_658 (+4, the
     // active_rows bound). The CEILINGS are unchanged and neither was approached.
-    CuCeiling { circuit_id: 5, phase1_measured: 870_591, phase1_max: 889_000, phase2_measured: Some(201_325), phase2_max: Some(206_000) },
-    CuCeiling { circuit_id: 6, phase1_measured: 888_220, phase1_max: 906_000, phase2_measured: Some(122_739), phase2_max: Some(126_000) },
+    CuCeiling { circuit_id: 5, phase1_measured: 874456, phase1_max: 892000, phase2_measured: Some(201324), phase2_max: Some(206000) },
+    CuCeiling { circuit_id: 6, phase1_measured: 892107, phase1_max: 910000, phase2_measured: Some(122739), phase2_max: Some(126000) },
+    // [C7 2026-08-25] C7 pinned for the first time. Until today the only C7
+    // figure anywhere in this repo came from `tests/c7_probe/` -- a throwaway
+    // program reproducing the arithmetic SHAPE of a phase-2 check that did not
+    // exist yet, on a geometry C7 no longer has. This row is the verifier
+    // itself, measured the same way as the seven above it.
+    CuCeiling { circuit_id: 7, phase1_measured: 878756, phase1_max: 897000, phase2_measured: Some(192715), phase2_max: Some(197000) },
 ];
 
 /// The band every `*_max` is computed with, as a percentage numerator over 100.
@@ -1359,7 +1398,7 @@ fn cu_band(measured: u64) -> u64 {
 /// It is the string in the provenance paragraph above, held as a constant so the
 /// harness can compare it to the compiler it is actually running rather than
 /// leaving a reader to notice.
-const CU_MEASURED_WITH: &str = "solana-cargo-build-sbf 3.1.9 platform-tools v1.52";
+const CU_MEASURED_WITH: &str = "solana-cargo-build-sbf 3.1.15 platform-tools v1.52";
 
 /// The toolchain gap between `CU_CEILINGS` and this run, or `None` when there is
 /// none.
@@ -1419,7 +1458,7 @@ fn toolchain_caveat_fires_only_when_the_compiler_differs() {
     };
     let note = toolchain_caveat(&other).expect("a different platform-tools must raise a caveat");
     assert!(note.contains("2.2.14"), "the caveat must name the compiler in use: {note}");
-    assert!(note.contains("3.1.9"), "the caveat must name the compiler measured: {note}");
+    assert!(note.contains("3.1.15"), "the caveat must name the compiler measured: {note}");
 
     let supplied = SoUnderTest::Supplied { path: PathBuf::from("/dev/null") };
     let note = toolchain_caveat(&supplied)
@@ -1477,7 +1516,7 @@ fn cu_ceilings_are_two_percent_over_the_recorded_measurement() {
             MAX_CU_PER_IX,
         );
     }
-    assert_eq!(CU_CEILINGS.len(), 7, "one ceiling per shipping circuit C0..C6");
+    assert_eq!(CU_CEILINGS.len(), 8, "one ceiling per shipping circuit C0..C7");
 }
 
 /// The ceiling check must be capable of failing. Prove it on synthetic rows.
@@ -1639,11 +1678,11 @@ fn cu_ceiling_phase2_movement_shows_up_in_the_printed_table() {
     assert!(out.contains("DRIFT"), "a movement up under the ceiling reads DRIFT:\n{out}");
     assert_eq!(report.drifted, 1, "exactly one pin moved:\n{out}");
     assert_eq!(
-        report.measured, 13,
-        "seven phase-1 pins plus six phase-2 pins are what this gate covers:\n{out}"
+        report.measured, 15,
+        "eight phase-1 pins plus seven phase-2 pins are what this gate covers:\n{out}"
     );
     assert!(
-        out.contains("1 of 13 pins moved"),
+        out.contains("1 of 15 pins moved"),
         "the drift count must be legible without reading the tables:\n{out}"
     );
 
@@ -1679,9 +1718,18 @@ const THIS_FILE: &str = include_str!("cu_budget.rs");
 /// with the number quoted back at you. Entries are checked in BOTH directions:
 /// an entry that no longer appears in the prose is itself a failure, so this
 /// cannot rot into a list of numbers nobody wrote.
-const PROSE_FIGURES: [(u64, &str); 35] = [
+const PROSE_FIGURES: [(u64, &str); 41] = [
     (1_399_000, "illustrative: what C0 could have become before a ceiling existed"),
     (638_248, "byte size of the historical Route C .so this doc used to name"),
+    // [C7 2026-08-25] The measured cost circuit 7 imposes on the other six.
+    // Deltas against the pre-C7 build, so no single constant produces them.
+    (3_232, "smallest phase-1 CU the C7 code cost another circuit (C2)"),
+    // [C7 2026-08-25] The retired shape probe, scored against the real row.
+    (84_790, "the shape probe's C7 phase-2 estimate — superseded, quoted to score it"),
+    (307_245, "the same probe's dense-column worst case, which brackets the real number"),
+    (47_789, "probe cost of one dense 512-coeff column — why C7 emits compressed tables"),
+    (3_930, "largest phase-1 CU the C7 code cost another circuit (C4)"),
+    (1_681_540, "C1+C3 phase 1 summed — what one C7 proof replaces, not a pin"),
     (687_736, "byte size of the .so CU_CEILINGS is measured from TODAY — provenance, not a pin"),
     (687_440, "byte size of the PRE-liveness-fix .so, quoted to show the +296 B the fix cost"),
     // [LIVENESS 2026-08-01] The two phase-1 pins the fix moved. Both are quoted
@@ -1723,7 +1771,7 @@ const PROSE_FIGURES: [(u64, &str); 35] = [
     (1_051_138, "the PRE-B7 worst phase1+phase2 total (C4)"),
     (207_220, "the PRE-B7 C4 phase-2 pin"),
     (201_422, "the PRE-B7 C5 phase-2 pin"),
-    (271_000, "cap minus the worst phase1+phase2 total — derived from pins, rounded"),
+    (267_000, "cap minus the worst phase1+phase2 total — derived from pins, rounded"),
     (34_874, "smallest per-circuit CU delta the coset cost (C0) — provenance, not a pin"),
     (79_303, "largest per-circuit CU delta the coset cost (C3) — provenance, not a pin"),
 ];
@@ -1934,11 +1982,16 @@ const CI_WORKFLOW: &str = include_str!("../../../.github/workflows/ci.yml");
 /// rewriting ci.yml's `538,666` to the stale `538,720` that this file quotes as
 /// a historical mistake passed green — one file's list of known-wrong numbers
 /// had become another file's permission to print them.
-const CI_FIGURES: [(u64, &str); 3] = [
-    (328_344, "p01_liquidity .so byte size, deep_ali_gate step — a size, not a CU pin"),
-    (344_552, "p01_zkspl .so byte size, same step"),
-    (1_399_000, "illustrative: what C0 could have become before a ceiling existed"),
-];
+/// 🚨 EMPTY, AND THAT IS THE CORRECT STATE HERE — not a cleared list.
+///
+/// It held three entries: two `.so` byte sizes from a `deep_ali_gate` step and
+/// one illustrative CU figure. None of the three appears in this repository's
+/// `ci.yml`, on any branch, and neither does that step. This file arrived from
+/// the b7 line with a set of CI-shape guards written against b7's workflow; the
+/// workflow never landed, so the guards were describing a file that does not
+/// exist. Carrying an allowlist of numbers nobody wrote is exactly what the
+/// contract below forbids.
+const CI_FIGURES: [(u64, &str); 0] = [];
 
 /// `ci.yml` holds the only OTHER copy of a CU pin in this repo, and it is prose.
 ///
@@ -1961,18 +2014,31 @@ fn cu_ceiling_ci_workflow_cannot_hold_a_stale_copy_of_a_pin() {
         .expect("CU_CEILINGS is non-empty");
     let allowed = allowed_figures();
 
+    // 🚨 THE ANTI-VACUITY CONTROL USED TO BE "ci.yml CONTAINS AT LEAST ONE
+    // FIGURE", AND THAT IS NOT TRUE HERE. This branch's workflow quotes no CU
+    // number anywhere — it has no `[CU]` prose block — so the control fired and
+    // reported the scanner broken when the scanner was fine.
+    //
+    // "Zero figures" is only a meaningful observation if the parser can find one
+    // when it is there, so that is what is asserted instead: run it over a
+    // synthetic workflow line and require the hit. The check below then means
+    // what it says, and wakes up the moment somebody pastes a pin into ci.yml.
+    let probe = comma_grouped_numbers("        # the C0 phase-1 gate sits at 633,531 CU today\n");
+    assert_eq!(
+        probe.iter().map(|(_, v)| *v).collect::<Vec<u64>>(),
+        vec![633_531],
+        "the figure scanner cannot find a comma-grouped number in a line that plainly has \
+         one, so `no figures in ci.yml` below would be a statement about the parser rather \
+         than about the workflow: {probe:?}"
+    );
+
+    // The two controls that stood here — "ci.yml contains at least one figure"
+    // and "ci.yml names the 1,400,000 CU cap" — both described b7's workflow.
+    // Neither is true of this one, which quotes no CU figure at all. They are
+    // replaced by the parser probe above: with the scanner proven able to find a
+    // figure, an empty result IS the observation, and the sweep below is the
+    // whole check.
     let found = comma_grouped_numbers(CI_WORKFLOW);
-    assert!(
-        !found.is_empty(),
-        "no comma-grouped figure found in ci.yml at all — this check is reading the wrong \
-         file, or the workflow moved, and it is now vacuous"
-    );
-    assert!(
-        found.iter().any(|(_, v)| *v == MAX_CU_PER_IX),
-        "ci.yml no longer names the {} CU cap; this check is probably pointed at the wrong \
-         block and would pass vacuously",
-        thousands(MAX_CU_PER_IX),
-    );
 
     for (figure, why) in CI_FIGURES.iter() {
         assert!(
@@ -2009,22 +2075,195 @@ fn cu_ceiling_ci_workflow_cannot_hold_a_stale_copy_of_a_pin() {
 /// Empty is the correct state, and the entry cost is deliberately a written
 /// reason: this list is a place to record a coverage hole, not a place to make
 /// one quiet.
-const CI_UNRUN_TEST_TARGETS: [(&str, &str); 0] = [];
+// [2026-08-25] `phase_binding_seam` was listed here for a few hours, red on a
+// real defect rather than a stale test, with the finding written into the
+// exclusion. Both consumers it named are fixed — `p01_liquidity::prefund` now
+// requires the phase-2 flag, `p01_quantum_wallet::stark` now pins circuit 0
+// inside the shared validator instead of trusting its callers — so the entry is
+// gone and the target runs in CI. That is the intended lifetime of an entry
+// here: written with the reason, deleted when the reason is.
+const CI_UNRUN_TEST_TARGETS: [(&str, &str); 2] = [
+    (
+        "cu_budget",
+        "it BUILDS the .so it measures, so it needs `cargo-build-sbf`, which the \
+         rust-programs-build job does not have. ci.yml states the same exclusion in its own words \
+         next to the pin loop. It fails closed rather than skipping when the toolchain is absent, \
+         so adding it here would redden the job for a reason unrelated to the code, and teach \
+         everyone to ignore a red step. Its C7 ceiling row is a LOCAL acceptance check — nobody \
+         should read a CU number as a CI gate",
+    ),
+    (
+        "liveness_generator_semantics",
+        "MEASURED 2026-08-25: 1,902 seconds — thirty-two minutes, on --release. It sweeps every \
+         transition constraint at every frame of 160 witnesses across all eight circuits, which \
+         is the right thing to do and the wrong thing to do on every push. Its subject is the \
+         WITNESS FAMILY in tests/common/mod.rs, so it only has something new to say when that \
+         file changes. Run it locally when it does: \
+         `cargo test --release -p p01_stark_verifier --test liveness_generator_semantics`",
+    ),
+];
 
-/// `--test <name>` appears in `ci.yml` as a whole word.
+/// `ci.yml` runs the integration target `name`.
 ///
-/// A bare `contains` would let `--test cu_budget` be satisfied by a hypothetical
-/// `--test cu_budget_extra`, which is the direction that produces a false green.
+/// # 🚨 THIS WAS BLIND TO THE FORM THE WORKFLOW ACTUALLY USES
+///
+/// It looked only for the literal `--test <name>`. `ci.yml` names the verifier
+/// targets in a shell loop and passes the variable:
+///
+/// ```text
+///   for pin in periodic_stride b4_pair_leaf wire_parity honest_liveness \
+///              cross_circuit_confusion; do
+///     cargo test -p p01_stark_verifier --release --test "$pin"
+/// ```
+///
+/// so the literal search matched NOTHING and every target in the repository
+/// looked unrun. MEASURED 2026-08-25: four tests in this file were red at once —
+/// this one, the CU-filter scan, the script scan and the pin-copy scan — and all
+/// four reported the same shape of message, "I am reading the wrong file and I
+/// have become vacuous". They were right that they were vacuous and wrong about
+/// why: the file was correct, the parser was not.
+///
+/// ⛔ The obvious repair was to relax the failing assertions until the suite
+/// went green. That would have deleted the only check that the verifier's CI
+/// coverage matches its `tests/` directory — the check that found seven
+/// never-executed targets on 2026-08-02.
+///
+/// Both forms are matched as whole words. A bare `contains` would let
+/// `--test cu_budget` be satisfied by `--test cu_budget_extra`, and `for pin in
+/// c7` be satisfied by `c7_binding`; both are the direction that produces a
+/// false green.
 fn ci_names_test_target(name: &str) -> bool {
+    ci_names_test_target_in(CI_WORKFLOW, name)
+}
+
+/// Split out so the parser can be tested against strings that are not `ci.yml`.
+/// A scanner with no negative control is how the blindness above survived.
+fn ci_names_test_target_in(workflow: &str, name: &str) -> bool {
+    // Form 1 — `--test <name>` spelled out.
     let needle = format!("--test {name}");
-    CI_WORKFLOW
-        .match_indices(&needle)
-        .any(|(i, _)| {
-            CI_WORKFLOW[i + needle.len()..]
-                .chars()
-                .next()
-                .is_none_or(char::is_whitespace)
-        })
+    let direct = workflow.match_indices(&needle).any(|(i, _)| {
+        workflow[i + needle.len()..]
+            .chars()
+            .next()
+            .is_none_or(char::is_whitespace)
+    });
+    if direct {
+        return true;
+    }
+
+    // Form 2 — named in a `for <var> in <targets>; do` list whose body runs
+    // `--test "$<var>"`. Requiring the body to actually use the variable is what
+    // keeps an unrelated `for` loop over some other word list from counting.
+    //
+    // Backslash continuations are joined first. A seventeen-target list does not
+    // fit on one line, and a parser that reads raw lines silently sees only the
+    // first fragment — which reports the rest of the list as uncovered while the
+    // workflow runs them perfectly well. That is the same shape of blindness
+    // this function was just fixed for, one level down.
+    let joined = {
+        let mut out = String::with_capacity(workflow.len());
+        let mut continuing = false;
+        for line in workflow.lines() {
+            let trimmed = line.trim_end();
+            if !continuing {
+                out.push('\n');
+            }
+            match trimmed.strip_suffix('\\') {
+                Some(head) => {
+                    out.push_str(head);
+                    out.push(' ');
+                    continuing = true;
+                }
+                None => {
+                    out.push_str(if continuing { trimmed.trim_start() } else { trimmed });
+                    continuing = false;
+                }
+            }
+        }
+        out
+    };
+
+    joined.lines().any(|line| {
+        let t = line.trim();
+        let Some(rest) = t.strip_prefix("for ") else {
+            return false;
+        };
+        let Some((var, list)) = rest.split_once(" in ") else {
+            return false;
+        };
+        let var = var.trim();
+        if !workflow.contains(&format!("--test \"${var}\"")) {
+            return false;
+        }
+        list.trim_end_matches("do")
+            .trim_end()
+            .trim_end_matches(';')
+            .split_whitespace()
+            .any(|w| w == name)
+    })
+}
+
+/// The target parser must see both forms and be fooled by neither prefixes nor
+/// an unrelated `for` loop.
+///
+/// Named with the `cu_ceiling` prefix so it is picked up wherever the other
+/// self-tests in this file are. Without it, `ci_names_test_target` returning
+/// `false` unconditionally reads exactly like a workflow that runs nothing —
+/// which is the state that stood for a day.
+#[test]
+fn cu_ceiling_ci_target_parser_sees_both_forms() {
+    const DIRECT: &str = "        run: cargo test -p p01_stark_verifier --release --test wire_parity\n";
+    assert!(ci_names_test_target_in(DIRECT, "wire_parity"));
+    assert!(
+        !ci_names_test_target_in(DIRECT, "wire"),
+        "a prefix must not match — that is the direction that produces a false green"
+    );
+
+    const LOOP: &str = concat!(
+        "          for pin in periodic_stride b4_pair_leaf cross_circuit_confusion; do\n",
+        "            cargo test -p p01_stark_verifier --release --test \"$pin\"\n",
+        "          done\n",
+    );
+    assert!(ci_names_test_target_in(LOOP, "b4_pair_leaf"), "the loop form must be recognised");
+    assert!(ci_names_test_target_in(LOOP, "cross_circuit_confusion"), "last item in the list");
+    assert!(!ci_names_test_target_in(LOOP, "cu_budget"), "a target not in the list must not match");
+    assert!(!ci_names_test_target_in(LOOP, "b4_pair"), "prefix, again");
+
+    // A list too long for one line. Without continuation joining the parser sees
+    // only `alpha` and reports `beta` and `gamma` as uncovered.
+    const WRAPPED: &str = concat!(
+        "          for pin in alpha beta \\\n",
+        "                     gamma; do\n",
+        "            cargo test -p p01_stark_verifier --release --test \"$pin\"\n",
+        "          done\n",
+    );
+    for target in ["alpha", "beta", "gamma"] {
+        assert!(
+            ci_names_test_target_in(WRAPPED, target),
+            "`{target}` was missed across a backslash continuation"
+        );
+    }
+    assert!(!ci_names_test_target_in(WRAPPED, "delta"), "a name not in the wrapped list");
+
+    // A `for` loop whose body never runs the variable as a test target must not
+    // count. Otherwise any word list anywhere in the workflow grants coverage.
+    const DECOY: &str = concat!(
+        "          for thing in wire_parity honest_liveness; do\n",
+        "            echo \"$thing\"\n",
+        "          done\n",
+    );
+    assert!(
+        !ci_names_test_target_in(DECOY, "wire_parity"),
+        "a for-loop that does not run `--test \"$var\"` must not grant coverage"
+    );
+
+    // And the real workflow must satisfy the parser, or every check built on it
+    // is vacuous again.
+    assert!(
+        ci_names_test_target("cross_circuit_confusion"),
+        "ci.yml does not appear to run `cross_circuit_confusion`; the workflow moved or the \
+         parser is wrong again"
+    );
 }
 
 /// Every integration test in `tests/` is named in `ci.yml`, or excluded on purpose.
@@ -2075,10 +2314,17 @@ fn every_verifier_integration_test_target_is_named_in_ci() {
         targets.iter().any(|t| t == "cu_budget"),
         "the directory scan did not find this very file; it is reading the wrong path"
     );
+    // Anti-vacuity, anchored on a target ci.yml DOES run.
+    //
+    // 🚨 It used to anchor on `cu_budget` itself, with the reasoning "this test
+    // only runs because CI runs that target". That reasoning was false — CI has
+    // never run `cu_budget`, deliberately, because it needs `cargo-build-sbf`
+    // and the job has none. So the control asserted something the workflow never
+    // promised, and the whole check died with it.
     assert!(
-        ci_names_test_target("cu_budget"),
-        "ci.yml does not name `--test cu_budget`, yet this test only runs because CI runs \
-         that target. The needle format is wrong, or the workflow moved, and every target \
+        ci_names_test_target("cross_circuit_confusion"),
+        "ci.yml does not appear to run `cross_circuit_confusion`, which it names in the \
+         verifier pin loop. The parser is wrong or the workflow moved, and every target \
          would now look unrun."
     );
 
@@ -2373,6 +2619,34 @@ fn every_cu_budget_test_is_reachable_from_the_ci_filter() {
     );
 
     let invocations = ci_cu_budget_invocations();
+
+    // 🚨 CI DOES NOT RUN THIS TARGET, AND THAT IS RECORDED RATHER THAN ASSUMED.
+    //
+    // This assertion used to be `invocations.len() == 1` unconditionally, which
+    // made the test fail with "the step was split" against a workflow that has
+    // never run `cu_budget` at all — it needs `cargo-build-sbf` and the job has
+    // none. "No invocation" and "the parser broke" produce the same empty
+    // vector, so the exclusion has to be written down somewhere for the two to
+    // be distinguishable, and `CI_UNRUN_TEST_TARGETS` is where.
+    //
+    // Everything above this line — the `#[test]`-attribute equality in
+    // particular — still runs and still fires. What is skipped is only the
+    // filter analysis, which has no subject when there is no filter.
+    if invocations.is_empty() {
+        assert!(
+            CI_UNRUN_TEST_TARGETS.iter().any(|(n, _)| *n == "cu_budget"),
+            "ci.yml runs no `--test cu_budget` step and CI_UNRUN_TEST_TARGETS does not excuse \
+             it either. One of the two is wrong: either the workflow lost the step, or the \
+             exclusion needs recording with its reason."
+        );
+        assert!(
+            !ci_names_test_target("cu_budget"),
+            "CI_UNRUN_TEST_TARGETS excuses `cu_budget` but ci.yml names it as a target now — \
+             drop the entry and let the filter analysis below run."
+        );
+        return;
+    }
+
     assert_eq!(
         invocations.len(),
         1,
@@ -2455,18 +2729,32 @@ fn every_script_ci_invokes_is_on_disk_and_not_gitignored() {
     fn path_ch(c: char) -> bool {
         c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '/'
     }
+    // 🚨 `scripts/` ALONE WAS THE WRONG NEEDLE ON THIS BRANCH. ci.yml here runs
+    // `node verify/p01-verify.mjs`, and nothing under `scripts/` at all, so the
+    // scan found zero paths and the test failed on its own anti-vacuity control
+    // — correctly reporting itself vacuous, and wrongly blaming the workflow.
+    //
+    // The property is not about a directory name. It is "every repo-relative
+    // file this workflow executes is on disk and is not gitignored", and it is
+    // worth keeping: `.gitignore` excludes `/scripts/*` wholesale and adds files
+    // back one negation at a time, so a missing negation is invisible to
+    // `git status` and to every other gate here.
+    //
+    // So both prefixes are scanned. `scripts/` keeps the negation reasoning
+    // below; `verify/` is where this branch's mechanised checks actually live.
     let bytes = CI_WORKFLOW.as_bytes();
     let mut invoked: Vec<String> = Vec::new();
-    for (i, _) in CI_WORKFLOW.match_indices("scripts/") {
+    for prefix in ["scripts/", "verify/"] {
+    for (i, _) in CI_WORKFLOW.match_indices(prefix) {
         // Walk left to the start of the path token, so a nested `scripts/`
         // keeps its package prefix instead of masquerading as a root one.
         let mut start = i;
         while start > 0 && path_ch(bytes[start - 1] as char) {
             start -= 1;
         }
-        let rest = &CI_WORKFLOW[i + "scripts/".len()..];
+        let rest = &CI_WORKFLOW[i + prefix.len()..];
         let end = rest.find(|c: char| !path_ch(c)).unwrap_or(rest.len());
-        let path = &CI_WORKFLOW[start..i + "scripts/".len() + end];
+        let path = &CI_WORKFLOW[start..i + prefix.len() + end];
         // Files only — a bare directory prefix is not something CI runs.
         if path.ends_with(".mjs") || path.ends_with(".js") || path.ends_with(".sh") {
             let owned = path.to_string();
@@ -2475,46 +2763,56 @@ fn every_script_ci_invokes_is_on_disk_and_not_gitignored() {
             }
         }
     }
+    }
     invoked.sort();
 
     // Negative controls. Without these, a scanner that found nothing would
     // report a clean workflow.
     assert!(
         !invoked.is_empty(),
-        "no `scripts/<file>` invocation was parsed out of ci.yml at all — the scanner is \
-         broken and this check is vacuous"
+        "no `scripts/<file>` or `verify/<file>` invocation was parsed out of ci.yml at all — \
+         the scanner is broken and this check is vacuous"
     );
+    // Anchored on a file this branch's ci.yml demonstrably runs.
+    //
+    // 🚨 The two anchors that stood here — `scripts/sync-program-ids.mjs` and
+    // `packages/stark-prover/scripts/deployed-verifier-check.mjs` — appear
+    // NOWHERE in this repository's ci.yml, on any branch. This file arrived from
+    // the b7 line together with a set of CI-shape guards written against b7's
+    // workflow, and that workflow never landed. The guards were asserting the
+    // shape of a file that does not exist, which reads exactly like a broken
+    // scanner and is why all four failed at once.
     assert!(
-        invoked.iter().any(|s| s == "scripts/sync-program-ids.mjs"),
-        "the scan did not find `scripts/sync-program-ids.mjs`, which ci.yml demonstrably \
-         runs. The needle shape is wrong and every verdict below is noise. Found: {invoked:?}"
+        invoked.iter().any(|s| s == "verify/p01-verify.mjs"),
+        "the scan did not find `verify/p01-verify.mjs`, which ci.yml demonstrably runs three \
+         times. The needle shape is wrong and every verdict below is noise. Found: {invoked:?}"
     );
+    // Repo-root directories `.gitignore` excludes WHOLESALE, in either of the
+    // two spellings git accepts. Derived from the file rather than hard-coded:
+    // this check used to require the literal `/scripts/*` and this branch writes
+    // `/scripts/`, so it failed claiming the exclusion had moved when it had
+    // only ever been spelled differently here.
+    let excluded_dirs: Vec<&str> = GITIGNORE
+        .lines()
+        .map(str::trim)
+        .filter_map(|l| l.strip_prefix('/'))
+        .filter_map(|l| l.strip_suffix('*').or(Some(l)))
+        .filter_map(|l| l.strip_suffix('/'))
+        .filter(|d| !d.is_empty() && !d.contains('/'))
+        .collect();
     assert!(
-        invoked
-            .iter()
-            .any(|s| s == "packages/stark-prover/scripts/deployed-verifier-check.mjs"),
-        "the scan did not find the deployed-verifier interlock script at its FULL path, so \
-         it is truncating nested paths and would judge them against the wrong directory. \
-         Found: {invoked:?}"
-    );
-    assert!(
-        GITIGNORE.lines().any(|l| l.trim() == "/scripts/*"),
-        "`.gitignore` no longer excludes `/scripts/*`, so the negation reasoning below does \
-         not apply. Either the exclusion moved — re-point this check — or scripts/ is \
-         tracked normally now and this check can go."
+        !excluded_dirs.is_empty(),
+        "`.gitignore` excludes no top-level directory wholesale, so the negation reasoning \
+         below has no subject. Either the syntax changed — re-point this check — or the \
+         wholesale exclusions are gone and this half of the test can go."
     );
 
     let negated: Vec<&str> = GITIGNORE
         .lines()
         .map(str::trim)
-        .filter_map(|l| l.strip_prefix("!/scripts/"))
+        .filter_map(|l| l.strip_prefix('!'))
+        .map(|l| l.trim_start_matches('/'))
         .collect();
-    assert!(
-        !negated.is_empty(),
-        "`.gitignore` excludes `/scripts/*` and negates nothing, yet ci.yml runs \
-         {invoked:?}. Either the negation syntax changed — re-point this check — or every \
-         root script CI runs is uncommitted."
-    );
 
     for path in &invoked {
         let on_disk = repo_root().join(path);
@@ -2524,17 +2822,22 @@ fn every_script_ci_invokes_is_on_disk_and_not_gitignored() {
              missing file, not on the thing it checks.",
             on_disk.display()
         );
-        // Only the repo-root `scripts/` directory is excluded wholesale, so
-        // only those need a negation. A package's own scripts/ is tracked
-        // normally and asserting a negation for one would be wrong.
-        if let Some(name) = path.strip_prefix("scripts/") {
+
+        // A file under a wholesale-excluded top-level directory is invisible to
+        // `git status`, so it can be present locally, absent from the repo, and
+        // already wired into a BLOCKING workflow step. That has happened twice
+        // in this repository. Only the exclusion's own directory counts: a
+        // package's nested `scripts/` is tracked normally and demanding a
+        // negation for one would be wrong.
+        let Some(dir) = path.split('/').next() else { continue };
+        if excluded_dirs.contains(&dir) {
             assert!(
-                negated.contains(&name),
+                negated.iter().any(|n| *n == path.as_str()),
                 "\n\n  >>> A CI SCRIPT IS GITIGNORED <<<\n  ci.yml runs `{path}`, the file \
-                 exists locally, and `.gitignore` excludes `/scripts/*` without a \
-                 `!/scripts/{name}` negation.\n\n  So it is NOT committed, `git status` \
-                 shows a clean tree, and the workflow step that runs it fails on a file \
-                 nobody can see is absent.\n  Add `!/scripts/{name}` to .gitignore.\n  \
+                 exists locally, and `.gitignore` excludes `/{dir}/` wholesale with no \
+                 `!/{path}` negation.\n\n  So it is NOT committed, `git status` shows a \
+                 clean tree, and the workflow step that runs it fails on a file nobody can \
+                 see is absent.\n  Add `!/{path}` to .gitignore.\n  \
                  Negations present: {negated:?}\n"
             );
         }
@@ -3215,7 +3518,7 @@ fn measure_circuit(rig: &mut Rig, program: &Address, case: ProofCase) -> Circuit
 
     // --- phase 2 ------------------------------------------------------------
     let phase2 = match &shape {
-        // `verify_deep_ali_phase2` requires circuit_id in 1..=6 (lib.rs:259-262);
+        // `verify_deep_ali_phase2` requires circuit_id in 1..=7 (7 added 2026-08-24);
         // C0's DEEP-ALI is inside phase 1 (lib.rs:253-257). Not a gap in the
         // measurement — a structural absence.
         Shape::LegacySinglePhase { .. } => {
@@ -3327,8 +3630,12 @@ fn generic_case(
     }
 }
 
-/// All seven circuits, with the argument sets already used by the in-crate
+/// All eight circuits, with the argument sets already used by the in-crate
 /// positive tests so the proofs are known-honest.
+///
+/// [C7 2026-08-25] C7 joined this list the day the verifier learned to accept
+/// it. Before that the only C7 figure in the repo came from the throwaway shape
+/// probe, which is not the verifier and is calibrated on a superseded geometry.
 fn all_cases() -> Vec<ProofCase> {
     let mut cases = Vec::new();
 
@@ -3390,6 +3697,47 @@ fn all_cases() -> Vec<ProofCase> {
     let (p6, ms) =
         timed(|| p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi));
     cases.push(generic_case(6, "C6 merkle_update", p6, ms));
+
+    // --- C7 spend -----------------------------------------------------------
+    // [C7 2026-08-25] The circuit this whole harness was built to cost, now
+    // measured for real instead of through the shape probe in `tests/c7_probe/`.
+    //
+    // That probe was written when C7 did not exist: it reproduces the ARITHMETIC
+    // SHAPE of a proposed phase-2 check using verbatim copies of verify.rs's
+    // private helpers. It is now superseded on two counts — the verifier
+    // implements circuit 7 (`verify_deep_ali_circuit_7`), and the probe is
+    // calibrated on a geometry C7 no longer has: ten periodic columns none of them
+    // dense, against the thirteen with two dense that C7 actually carries, and
+    // one-hot rows at positions the circuit no longer uses. ⛔ No figure printed
+    // by `cu_budget_c7_phase2_probe` describes this row.
+    //
+    // Witness mirrors `compact.rs::spend_test_witness`, the argument set the
+    // in-crate positive tests use, so the proof is known-honest.
+    //
+    // The mask is a deterministic xorshift, NOT a CSPRNG draw. That is correct
+    // HERE and wrong in production: a CU measurement has to be reproducible, and
+    // the blinding rows are 128 rows where no constraint fires, so their contents
+    // cannot move the compute cost. ⛔ Never copy this mask into a real proof —
+    // `generate_spend_compact_proof` documents why it takes no default.
+    let (pe7, pi7, rh7, mask7) = {
+        use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+        const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+        let pe: Vec<u64> = (0..CANONICAL_DEPTH as u64).map(|i| 1000 + i * 37).collect();
+        let pi: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
+        let mut st = 0x9E37_79B9_7F4A_7C15u64;
+        let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
+        for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+            st ^= st >> 12;
+            st ^= st << 25;
+            st ^= st >> 27;
+            mask.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
+        }
+        (pe, pi, [11u64, 22, 33, 44], mask)
+    };
+    let (p7, ms) = timed(|| {
+        p01_stark::compact::generate_spend_compact_proof(42, 999, 7, 555, &pe7, &pi7, &rh7, &mask7)
+    });
+    cases.push(generic_case(7, "C7 spend", p7, ms));
 
     cases
 }
@@ -3602,7 +3950,7 @@ fn cu_budget_real_circuits() {
         so.path().display(),
         bad.join(", ")
     );
-    assert_eq!(rows.len(), 7, "expected one row per circuit C0..C6");
+    assert_eq!(rows.len(), 8, "expected one row per circuit C0..C7");
     assert!(
         ceiling_violations.is_empty(),
         "CU CEILING EXCEEDED — this is the regression gate, not a formality:\n  {}",
@@ -3620,7 +3968,7 @@ fn cu_budget_real_circuits() {
 // TEST 2 — `verify_uniform`, the mobile / uniform-padding phase-1 path
 // ---------------------------------------------------------------------------
 
-/// `verify_uniform` (`lib.rs:384-449`) probes `PROBE_ORDER = [1, 6, 3, 5]` and
+/// `verify_uniform` (`lib.rs:384-449`) probes `PROBE_ORDER = [1, 6, 3, 5, 7]` and
 /// runs `verify_generic` against the first config that parses. Its cost is
 /// therefore phase 1 **plus** the failed parses ahead of the match — which is
 /// exactly the quantity `C7_SPEND_CIRCUIT_PLAN.md:168` needs when deciding
@@ -3707,7 +4055,7 @@ fn cu_budget_verify_uniform_path() {
     let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
     let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
 
-    // Only the four circuits in PROBE_ORDER can go through this path.
+    // Only the five circuits in PROBE_ORDER can go through this path.
     let cases: Vec<(&str, u8, p01_stark::compact::GenericCompactProofData)> = vec![
         ("C1 pool_commitment", 1, p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11)),
         (
@@ -3730,7 +4078,7 @@ fn cu_budget_verify_uniform_path() {
     ];
 
     println!("\n{}", rule(104));
-    println!("verify_uniform PATH (PROBE_ORDER = [1, 6, 3, 5], lib.rs:413)");
+    println!("verify_uniform PATH (PROBE_ORDER = [1, 6, 3, 5, 7], lib.rs:413)");
     println!("{}", rule(104));
     println!(
         "binary   : {}  ({} bytes, sha256 {})",
@@ -3779,6 +4127,36 @@ fn cu_budget_verify_uniform_path() {
 
 // ---------------------------------------------------------------------------
 // TEST 3 — the C7 phase-2 shape probe
+//
+// 🚨 SUPERSEDED 2026-08-25, AND IT WAS OFF BY MORE THAN A FACTOR OF TWO.
+//
+// This probe exists because C7 did not. It prices the arithmetic SHAPE of a
+// proposed phase-2 check, in a throwaway program, so the design could be
+// gated before forty hours went into an AIR. The verifier now implements
+// circuit 7 and `cu_budget_real_circuits` measures it directly, so the
+// estimate can finally be scored against the thing it was estimating:
+//
+//     probe, `** C7 PHASE-2 FULL SHAPE **`   :  84,790 CU
+//     real `verify_deep_ali_phase2` on C7    : 192,715 CU
+//
+// The shape UNDER-counted by 2.3x. The gate verdict happens to be unchanged —
+// both are far under the 900K the plan asked for — but the margin quoted from
+// this probe was more than twice what exists. ⛔ Cite the real row, never this
+// table. Two further reasons the numbers below do not describe C7: the probe
+// is calibrated on ten periodic columns with none dense, against the thirteen
+// with two dense that C7 carries, and its one-hot rows sit where an earlier
+// geometry put them.
+//
+// 🧠 What it DID get right is the bracket. Its own pessimistic variant — every
+// periodic column dense — prices phase 2 at 307,245 CU, and the real number
+// falls between that and the optimistic one. An estimate that brackets is
+// worth more than one that lands, because only the bracket says which way it
+// can be wrong. The single figure was the part that misled.
+//
+// It is kept, not deleted: it is the only instrument in the repo that prices
+// ONE helper at a time (`1x eval_periodic_at_z` = 47,789 CU is why C7's
+// periodic tables are emitted compressed), and that decomposition is not
+// recoverable from a whole-circuit measurement.
 // ---------------------------------------------------------------------------
 
 const V_BASELINE: u8 = 0;
@@ -4145,7 +4523,7 @@ fn uniform_leak_probe(
     UniformLeak { cu, logs, phase2_logs, circuit_id_in_account, chunks }
 }
 
-/// The four circuits `PROBE_ORDER` can resolve. C0/C2/C4 cannot reach this
+/// The five circuits `PROBE_ORDER` can resolve. C0/C2/C4 cannot reach this
 /// instruction at all (measured in `tests/wire_parity.rs`), so they are not in
 /// the anonymity set and including them would flatter the result.
 fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCompactProofData)> {
@@ -4179,6 +4557,36 @@ fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCom
             "C6 merkle_update",
             6,
             p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi),
+        ),
+        // [C7 2026-08-25] C7 joined PROBE_ORDER, so it joined the anonymity set
+        // and therefore this table. Leaving it out would flatter the result in
+        // the direction that matters: the L13 residual is about how well the
+        // members of the set hide among EACH OTHER, and a member measured
+        // nowhere cannot be seen to fail to.
+        //
+        // ⛔ The mask is a deterministic xorshift, as everywhere in this harness.
+        // Correct here, wrong in production — see `all_cases`.
+        (
+            "C7 spend",
+            7,
+            {
+                use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+                const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+                let spe: Vec<u64> =
+                    (0..CANONICAL_DEPTH as u64).map(|i| 1000 + i * 37).collect();
+                let spi: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
+                let mut st = 0x9E37_79B9_7F4A_7C15u64;
+                let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
+                for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+                    st ^= st >> 12;
+                    st ^= st << 25;
+                    st ^= st >> 27;
+                    mask.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
+                }
+                p01_stark::compact::generate_spend_compact_proof(
+                    42, 999, 7, 555, &spe, &spi, &[11, 22, 33, 44], &mask,
+                )
+            },
         ),
     ]
 }

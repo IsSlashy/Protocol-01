@@ -80,13 +80,46 @@ export const SHIELD_PHASES: FlowPhase[] = [
   { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|closing|submitting c6|sending v3 shield|v3 shield confirmed/i },
 ];
 
+// ⚠️ THE FIFTH MISS, AND THE ONE THAT WOULD HAVE GONE ON STAGE.
+//
+// Circuit 7 replaced the C1 + C3 proof pair with a single trace, and the web
+// client's v4 spend speaks a new vocabulary for it: "one trace" instead of
+// "c1"/"c3", "circuit-7", and V4 rather than V3. Every regex below knew only
+// the old words. `91207b23` added the six sentences to `denominatedPool.ts` and
+// did not touch this file, so `progressFor` returned `{ index: -1 }` for all
+// six — and an unmatched sentence leaves the previous label standing.
+//
+// The practical effect: on the v4 path, which is the whole point of C7, the bar
+// went silent from the moment proving started, through the upload, through the
+// submit, through confirmation. Every second the user most needs to be told
+// something is happening. That is the same failure this file has now recorded
+// four times above; the seam it describes caught it a fifth time.
+//
+// The three v3 spellings stay. v3 remains registered on-chain and notes whose
+// blinding is unknown can only be spent there, so both vocabularies are live.
 export const WITHDRAW_PHASES: FlowPhase[] = [
   { id: 'locate', label: 'Finding your note', weight: 0.12, match: /locating|matching notes|scanning the|reading spent markers|pool for older notes|looking for funds left|fetching pool leaves|scanning events|root not in ring/i },
-  { id: 'path', label: 'Rebuilding its history', weight: 0.08, match: /merkle|pre-flight root|stored merkle root|checking the note/i },
-  { id: 'prove', label: 'Proving you own it', weight: 0.3, match: /generating c1|generating c3|proving you own the note|proving the note is in the pool|generating[^.]*stark proof/i },
+  // ⚠️ THE SIXTH MISS, caught by the sweep rather than on stage — and it is the
+  // one place the bar must NOT move forward. `handlePoolUnshieldPrepare` now
+  // falls back to the C1 + C3 pair when the circuit-7 rebuild cannot place the
+  // note's root in the pool's ring, which is the only route apps/web has left to
+  // a note circuit 7 cannot prove. At that moment the v4 attempt has already
+  // reached this phase (`pre-flight root verification`), and the v3 job is about
+  // to redo the same work: fold the sentence into `path` and the bar holds
+  // still, which is true. Give it a later phase and the bar jumps forward at the
+  // exact moment the run got LONGER.
+  { id: 'path', label: 'Rebuilding its history', weight: 0.08, match: /merkle|pre-flight root|stored merkle root|checking the note|falling back to the c1/i },
+  // `proving ownership and membership in one trace` is C7's single-proof
+  // sentence, and it is also the heartbeat: the same words come back every ten
+  // seconds carrying an elapsed count, so the regex must match on the words and
+  // never on the number.
+  { id: 'prove', label: 'Proving you own it', weight: 0.3, match: /generating c1|generating c3|proving you own the note|proving the note is in the pool|proving ownership and membership in one trace|generating[^.]*stark proof/i },
   { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz|pricing/i },
-  { id: 'upload', label: 'Uploading the proof', weight: 0.35, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
-  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|building v3 unshield|sending v3 unshield|v3 unshield confirmed|submitting c1|closing/i },
+  // `submitting the circuit-7 spend proof on-chain` announces the upload rather
+  // than the verification: it is emitted immediately before
+  // `submitAndVerifyStarkProof`, whose own per-chunk sentences land here too.
+  { id: 'upload', label: 'Uploading the proof', weight: 0.35, match: /uploading|confirming chunk|resending|readback|checking uploaded|submitting the circuit-7 spend proof/i },
+  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|building v3 unshield|sending v3 unshield|v3 unshield confirmed|building v4 unshield|sending v4 unshield|v4 unshield confirmed|submitting c1|closing/i },
 ];
 
 export const SUBSCRIBE_PHASES: FlowPhase[] = [

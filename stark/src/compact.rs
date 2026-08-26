@@ -911,6 +911,26 @@ fn assert_air_agrees_with_trace_generic(trace: &[Vec<BaseElement>], spec: Quotie
                 }
             }
         }
+        QuotientSpec::Circuit7 => {
+            use crate::air::spend::{build_spend_periodic_columns, evaluate_spend_transition, SPEND_NUM_CONSTRAINTS, SPEND_NUM_PERIODIC};
+            let periodic = build_spend_periodic_columns();
+            let mut constraints = vec![BaseElement::ZERO; SPEND_NUM_CONSTRAINTS];
+            // Rows 384..=510 are the blinding region and carry uniform random
+            // field elements. This loop still walks them, and it must: every C7
+            // constraint is gated by `active`, `nba` or a one-hot flag, all of
+            // which are ZERO there, so an honest trace evaluates to zero on the
+            // mask rows too. If a constraint is ever added ungated, this is the
+            // assertion that catches it -- here, rather than on chain.
+            for row in 0..(trace_length - 1) {
+                let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
+                let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
+                let prow: Vec<BaseElement> = (0..SPEND_NUM_PERIODIC).map(|k| periodic[k][row % periodic[k].len()]).collect();
+                evaluate_spend_transition(&current, &next, &prow, &mut constraints);
+                for (k, c) in constraints.iter().enumerate() {
+                    assert_eq!(*c, BaseElement::ZERO, "C7 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
+                }
+            }
+        }
         QuotientSpec::LegacyGeneric => {}
     }
 }
@@ -1696,6 +1716,116 @@ fn compute_quotient_lde_circuit_5(
     q_poly
 }
 
+
+/// [C7] Quotient LDE for the spend circuit.
+///
+/// Cloned from `compute_quotient_lde_circuit_5`, and from that one specifically:
+/// C5 is the only other circuit whose periodic builder returns MIXED lengths
+/// (32 for the shared Poseidon columns, 512 for the one-hot and gate columns),
+/// and `materialise` below is what reconciles them onto one trace-domain
+/// polynomial per column. Cloning C1's or C6's version instead would silently
+/// index a length-32 column with a length-512 stride.
+///
+/// Everything else is C7's own: width 10, 18 constraints, 13 periodic columns.
+fn compute_quotient_lde_circuit_7(
+    trace_lde: &[Vec<BaseElement>],
+    blowup: usize,
+    trace_length: usize,
+    alpha: BaseElement,
+) -> Vec<BaseElement> {
+    use crate::air::spend::{
+        build_spend_periodic_columns, evaluate_spend_transition, SPEND_NUM_CONSTRAINTS,
+        SPEND_NUM_PERIODIC, TRACE_LENGTH as SPEND_TRACE_LENGTH,
+        TRACE_WIDTH as SPEND_TRACE_WIDTH,
+    };
+
+    let trace_width = trace_lde.len();
+    assert_eq!(trace_width, SPEND_TRACE_WIDTH, "circuit 7 trace width is 10");
+    // C7's periodic builder takes no length argument -- it materialises at its
+    // own fixed TRACE_LENGTH. Same trap C4 documents at the OOD solve: if the
+    // two ever diverge the solve interpolates a domain the quotient was never
+    // built on, and the failure surfaces as a wrong OOD value, not as a panic.
+    assert_eq!(
+        trace_length, SPEND_TRACE_LENGTH,
+        "circuit 7 is fixed at {SPEND_TRACE_LENGTH} rows; got {trace_length}",
+    );
+    let lde_size = trace_length * blowup;
+    assert_eq!(trace_lde[0].len(), lde_size);
+
+    let trace_g = get_domain_generator_generic(trace_length);
+    let lde_g = get_domain_generator_generic(lde_size);
+
+    // 1. Interpolate periodic columns and evaluate on the LDE domain.
+    let periodic_trace_raw = build_spend_periodic_columns();
+    assert_eq!(periodic_trace_raw.len(), SPEND_NUM_PERIODIC);
+
+    let materialise = |col: &Vec<BaseElement>| -> Vec<BaseElement> {
+        if col.len() == trace_length {
+            col.clone()
+        } else {
+            // Period-32 columns get tiled across the full trace length.
+            let mut full = vec![BaseElement::ZERO; trace_length];
+            for i in 0..trace_length {
+                full[i] = col[i % col.len()];
+            }
+            full
+        }
+    };
+
+    let periodic_trace: Vec<Vec<BaseElement>> =
+        periodic_trace_raw.iter().map(materialise).collect();
+
+    let mut periodic_lde: Vec<Vec<BaseElement>> =
+        vec![vec![BaseElement::ZERO; lde_size]; SPEND_NUM_PERIODIC];
+    for (k, col) in periodic_trace.iter().enumerate() {
+        let poly = inverse_ntt(col, trace_g);
+        for i in 0..lde_size {
+            // [B7] x = h * g^i, on the coset, exactly like the trace.
+            let x = lde_coset_shift() * lde_g.exp(i as u64);
+            periodic_lde[k][i] = evaluate_poly(&poly, x);
+        }
+    }
+
+    // 2. Evaluate the 18 constraints at every LDE position and RLC-combine.
+    let mut c_lde = vec![BaseElement::ZERO; lde_size];
+    let mut constraints = vec![BaseElement::ZERO; SPEND_NUM_CONSTRAINTS];
+    let mut current = vec![BaseElement::ZERO; trace_width];
+    let mut next = vec![BaseElement::ZERO; trace_width];
+    let mut periodic_row = vec![BaseElement::ZERO; SPEND_NUM_PERIODIC];
+
+    for pos in 0..lde_size {
+        let next_pos = (pos + blowup) % lde_size;
+        for col in 0..trace_width {
+            current[col] = trace_lde[col][pos];
+            next[col] = trace_lde[col][next_pos];
+        }
+        for k in 0..SPEND_NUM_PERIODIC {
+            periodic_row[k] = periodic_lde[k][pos];
+        }
+        evaluate_spend_transition(&current, &next, &periodic_row, &mut constraints);
+        c_lde[pos] = rlc_combine(&constraints, alpha);
+    }
+
+    // 3. INTT -> coefficients on the LDE domain.
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, lde_coset_shift_inv());
+
+    // 4. Multiply by (x - g^{n-1}) to kill the wrap row.
+    let g_nm1 = trace_g.exp((trace_length - 1) as u64);
+    let c_poly_ext = multiply_by_x_minus_a(&c_poly, g_nm1);
+
+    // 5. Synthetic-divide by x^n - 1 (exact, no remainder).
+    assert!(c_poly_ext.len() > trace_length);
+    let q_poly = divide_by_vanishing(&c_poly_ext, trace_length);
+
+    assert!(
+        q_poly.len() <= lde_size,
+        "C7 quotient polynomial has {} coefficients, LDE is {}",
+        q_poly.len(),
+        lde_size,
+    );
+    q_poly
+}
+
 /// Compute LDE by evaluating trace polynomials at BLOWUP * TRACE_LENGTH points.
 /// Uses FFT interpolation + evaluation.
 fn compute_lde(trace: &[Vec<BaseElement>]) -> Vec<Vec<BaseElement>> {
@@ -1958,6 +2088,36 @@ fn boundary_assertions_for_circuit(
                 (0, output_row, old_root),
                 (3, output_row, new_root),
             ]
+        }
+        // [C7] Read STRAIGHT out of `SPEND_BOUNDARY_SPEC` instead of retyping
+        // it. The AIR's `spend_boundary_assertions`, this arm and the verifier's
+        // `get_boundary_assertions(7, ..)` are three copies of ONE table whose
+        // order sets the `alpha_bnd^j` exponents. Two of the three now read the
+        // same const; nothing can drift between them.
+        //
+        // 🚨 The `pi()` closure above zero-fills an out-of-range index, and the
+        // `_ => Vec::new()` arm below returns NO assertions at all. Both fail
+        // OPEN. C7 refuses instead: an arity slip here would bind col 0 at row
+        // 382 -- the Merkle root -- to ZERO and still hand back a proof.
+        7 => {
+            use crate::air::spend::{SPEND_BOUNDARY_SPEC, SPEND_NUM_PUBLIC_INPUTS};
+            assert_eq!(
+                public_inputs.len(),
+                SPEND_NUM_PUBLIC_INPUTS,
+                "C7 needs exactly {} public inputs, got {}",
+                SPEND_NUM_PUBLIC_INPUTS,
+                public_inputs.len(),
+            );
+            SPEND_BOUNDARY_SPEC
+                .iter()
+                .map(|&(col, row, source)| {
+                    let value = match source {
+                        Some(i) => BaseElement::new(public_inputs[i]),
+                        None => BaseElement::ZERO,
+                    };
+                    (col, row, value)
+                })
+                .collect()
         }
         _ => Vec::new(),
     }
@@ -2621,6 +2781,30 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn test_wire_size_spend_circuit_7() {
+        // Circuit 7: tw=10, trace=512, blowup=16, md=13 (LDE=8192), 22 queries.
+        // Same envelope as C6 in every field but `fri_final_poly_size`, which is
+        // 32 -- one fewer committed FRI layer, and the only thing that keeps a
+        // C7 proof from parsing as a C6 proof.
+        //
+        // This is the SECOND, independent derivation of the wire size:
+        // `spend_terminal_degree_bound_is_measured_not_assumed` pins the
+        // measured byte count, this one pins the geometry it should follow from.
+        // Agreement between the two is worth more than either alone -- one
+        // catches a serialisation change, the other catches a geometry change,
+        // and a single pin cannot tell them apart.
+        let (np, sk, blind, mint, pe, pi, rh, mask) = spend_test_witness();
+        let proof = generate_spend_compact_proof(np, sk, blind, mint, &pe, &pi, &rh, &mask);
+        assert_eq!(
+            proof.proof_bytes.len(),
+            expected_wire_size(
+                10, 13, 22, 8192, SPEND_FRI_FINAL_POLY_SIZE, SPEND_QUOTIENT_SEGMENTS,
+            ),
+            "spend wire size drift",
+        );
+    }
     #[test]
     fn test_wire_size_transfer_circuit_5() {
         // Circuit 5: tw=7, trace=512, blowup=16, md=13 (LDE=8192), num_queries=22
@@ -3807,6 +3991,178 @@ mod tests {
         }
     }
 
+
+    /// [C7] Emit the periodic-column constants for the on-chain verifier.
+    ///
+    /// `cargo test -p p01-stark --lib emit_circuit_7_periodic_coeffs -- --ignored --nocapture`
+    ///
+    /// 🚨 THIS EMITTER IS SHAPED DIFFERENTLY FROM `emit_circuit_5_periodic_coeffs`,
+    /// ON PURPOSE, AND THE DIFFERENCE IS WORTH ~26 KB OF PROGRAM BINARY.
+    ///
+    /// C5's emitter dumps every column as a dense `[u64; 512]`. That is correct
+    /// but wasteful: `eval_periodic_stride16_at_z` (`verify.rs:2302`) takes a
+    /// `&[u64; 512]` and reads exactly 32 of its entries -- indices 0, 16, 32,
+    /// ..., 496. The other 480 are provably zero and still occupy 3,840 bytes of
+    /// rodata per column. C7 has SEVEN such columns.
+    ///
+    /// So this emitter classifies each column BY MEASURING IT, and emits the
+    /// smallest faithful form:
+    ///
+    ///   * stride-16 sparse -> `[u64; 32]`, the compressed coefficients only
+    ///     (256 B instead of 4,096 B).
+    ///
+    ///     🚨 MEASURED 2026-08-24, AND IT CHANGES THE ANSWER: all seven of
+    ///     these come out BYTE-IDENTICAL to `C3_*_PERIODIC16`, which the
+    ///     verifier already ships (`periodic_ext_consts.rs:36, 111, 186, 261,
+    ///     336, 411, 486`). All 32 values, all seven tables. Not a coincidence:
+    ///     C7's Merkle pipeline is copied verbatim out of `merkle_path.rs`, and
+    ///     the Poseidon round constants and cycle flags are the same 32-periodic
+    ///     pattern. So C7 should REUSE them and emit no stride table at all.
+    ///
+    ///     The catch is the evaluator, not the data. C3 reads those tables with
+    ///     `eval_periodic_ext_at_z(periodic16, tail, lagrange)` because C3
+    ///     truncates at `active_rows = 480` and destroys its own periodicity --
+    ///     the tail and the Lagrange correction exist to subtract the deviation
+    ///     back out. C7 has no deviation: both pipelines hash all sixteen
+    ///     cycles. It needs the `PERIODIC16` half and nothing else, read by a
+    ///     plain compressed stride evaluator. That evaluator DOES NOT EXIST yet
+    ///     -- `verify.rs`'s only stride function is
+    ///     `eval_periodic_stride16_at_z(&[u64; 512])` (`verify.rs:2302`), which
+    ///     reads 32 entries out of a 4,096-byte array. Writing it is Step 6 work
+    ///     and it is roughly twenty lines.
+    ///   * one-hot          -> NO array at all, just the row index. The verifier
+    ///     evaluates these with `eval_one_hot_lagrange`, which needs `g^k` and
+    ///     three multiplications, not a polynomial.
+    ///   * dense            -> `[u64; 512]`, the full interpolant. Two columns
+    ///     land here: `active` and `not_boundary_active`. They are the entire
+    ///     rodata cost of C7 and the only ones on the verifier's expensive path.
+    ///
+    /// ⛔ The classification is ASSERTED, not read off the doc comment above
+    /// `SPEND_NUM_PERIODIC`. A column that stopped being stride-16 while its
+    /// comment still said it was would otherwise be emitted in a shape the
+    /// verifier evaluates wrongly -- and a wrong periodic value does not crash,
+    /// it produces a verifier that rejects every honest proof.
+    #[test]
+    #[ignore]
+    fn emit_circuit_7_periodic_coeffs() {
+        use crate::air::spend::{build_spend_periodic_columns, TRACE_LENGTH as SP_TRACE_LENGTH};
+
+        let trace_length = SP_TRACE_LENGTH; // 512
+        let trace_g = get_domain_generator_generic(trace_length);
+        let periodic_raw = build_spend_periodic_columns();
+
+        let names = [
+            "C7_RC0_COEFFS",
+            "C7_RC1_COEFFS",
+            "C7_RC2_COEFFS",
+            "C7_ROUND_FLAG_COEFFS",
+            "C7_IS_BOUNDARY_COEFFS",
+            "C7_HASH_START_COEFFS",
+            "C7_IS_INTERIOR_COEFFS",
+            "C7_CHAIN_FLAG",
+            "C7_COMMIT_OUT_FLAG",
+            "C7_ROW0_FLAG",
+            "C7_HOLD_LINK_31",
+            "C7_ACTIVE_COEFFS",
+            "C7_NOT_BOUNDARY_ACTIVE_COEFFS",
+        ];
+        assert_eq!(names.len(), periodic_raw.len());
+
+        let materialise = |col: &Vec<BaseElement>| -> Vec<BaseElement> {
+            if col.len() == trace_length {
+                col.clone()
+            } else {
+                let mut full = vec![BaseElement::ZERO; trace_length];
+                for i in 0..trace_length {
+                    full[i] = col[i % col.len()];
+                }
+                full
+            }
+        };
+
+        let mut rodata_bytes = 0usize;
+        let mut n_stride = 0usize;
+        let mut n_onehot = 0usize;
+        let mut n_dense = 0usize;
+
+        for (i, col_raw) in periodic_raw.iter().enumerate() {
+            let col = materialise(col_raw);
+            let poly = inverse_ntt(&col, trace_g);
+
+            // One-hot is a property of the COLUMN, not of its interpolant: the
+            // interpolant of a one-hot column is dense, which is exactly why it
+            // must never be emitted as coefficients.
+            let ones: Vec<usize> = col
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| **v == BaseElement::ONE)
+                .map(|(r, _)| r)
+                .collect();
+            let is_one_hot = ones.len() == 1
+                && col.iter().filter(|v| **v != BaseElement::ZERO).count() == 1;
+
+            let stride16 = poly
+                .iter()
+                .enumerate()
+                .all(|(k, c)| k % 16 == 0 || *c == BaseElement::ZERO);
+
+            if is_one_hot {
+                n_onehot += 1;
+                println!("// [{i}] {} -- ONE-HOT at row {}", names[i], ones[0]);
+                println!("pub const {}_ROW: usize = {};", names[i], ones[0]);
+                println!("// no coefficient array: eval_one_hot_lagrange(g^{}, ..)", ones[0]);
+                println!();
+            } else if stride16 {
+                n_stride += 1;
+                rodata_bytes += 32 * 8;
+                println!("// [{i}] {} -- STRIDE-16, compressed 512 -> 32", names[i]);
+                println!("pub const {}: [u64; 32] = [", names[i]);
+                for k in 0..32 {
+                    println!("    0x{:016X},", poly[k * 16].as_int());
+                }
+                println!("];");
+                println!();
+            } else {
+                n_dense += 1;
+                rodata_bytes += trace_length * 8;
+                println!("// [{i}] {} -- DENSE. 4,096 B of rodata and a 512-step", names[i]);
+                println!("// Horner on chain. If the verifier ever runs out of program account,");
+                println!("// THIS is the column to attack: gating by DIVISOR instead of by");
+                println!("// periodic column removes it, at the cost of a 129-term product.");
+                println!("pub const {}: [u64; {}] = [", names[i], trace_length);
+                for cf in &poly {
+                    println!("    0x{:016X},", cf.as_int());
+                }
+                println!("];");
+                println!();
+            }
+        }
+
+        println!("// ── C7 periodic budget, MEASURED ──");
+        println!("// stride-16: {n_stride}   one-hot: {n_onehot}   dense: {n_dense}");
+        println!("// rodata if C7 emits its own stride tables : {rodata_bytes} B");
+        println!(
+            "// rodata if C7 REUSES C3_*_PERIODIC16 (measured identical) : {} B",
+            n_dense * trace_length * 8,
+        );
+        println!(
+            "// rodata with NO compressed evaluator, all {} dense : {} B",
+            n_stride + n_dense,
+            (n_stride + n_dense) * trace_length * 8,
+        );
+        println!("// (dumping all 13 densely, the C5 way, would be {} B)", 13 * trace_length * 8);
+        println!("//");
+        println!("// 🚨 So EVERY byte of C7's own periodic rodata is the two dense");
+        println!("// columns. Not 82% of it -- all of it. Removing them by moving the");
+        println!("// active gate into the DIVISOR would take C7's new periodic rodata");
+        println!("// to zero, and it is the only column class that cannot be shared.");
+
+        // The shape the on-chain side is built against. If this moves, Step 6's
+        // `compute_c7_periodic_at_z` is wrong before it is written.
+        assert_eq!(n_stride, 7, "C7 expects 7 stride-16 columns (indices 0-6)");
+        assert_eq!(n_onehot, 4, "C7 expects 4 one-hot columns (indices 7-10)");
+        assert_eq!(n_dense, 2, "C7 expects 2 dense columns (indices 11-12)");
+    }
     /// [P2.2d-C4] Emit periodic column coefficients for circuit 4
     /// [P2.2d-C5] Emit `C5_*_COEFFS` arrays for circuit 5 (transfer), fixed
     /// trace_length=512. Run with:
@@ -4694,6 +5050,800 @@ mod tests {
             "end-to-end DEEP-ALI on generated circuit-5 proof failed"
         );
     }
+
+    /// [C7] The two Fiat-Shamir domain tags, in ONE place. Fresh tags: reusing
+    /// another circuit's would make two different folds derive the same
+    /// challenge, which is what `cross_circuit_confusion.rs` refuses.
+    const RLC_TAG_C7: &[u8; 8] = b"rlc-c7\0\0";
+    const BND_TAG_C7: &[u8; 8] = b"bnd-c7\0\0";
+
+    // ========================================================================
+    // [C7] Spend circuit -- Step 4 pipeline tests
+    // ========================================================================
+
+
+    /// [C7] Re-derives the terminal degree bound and the wire size FROM THE
+    /// WIRE, rather than restating the constants.
+    ///
+    /// Both numbers are measured quantities that also have to be carried, by
+    /// hand, in the on-chain verifier's `CircuitConfig`. Two independently
+    /// maintained copies of one measurement is the exact shape that produced
+    /// the C3/C6 depth-window divergence, where the prover happily built proofs
+    /// the deployed verifier had already stopped accepting.
+    #[test]
+    fn spend_terminal_degree_bound_is_measured_not_assumed() {
+        use crate::air::spend::TRACE_WIDTH as SP_W;
+
+        let (np, sk, blind, mint, pe, pi, rh, mask) = spend_test_witness();
+        let proof = generate_spend_compact_proof(np, sk, blind, mint, &pe, &pi, &rh, &mask);
+        let b = &proof.proof_bytes;
+
+        // trace_root 32 | quotient_root 32 | ood_current 8w | ood_next 8w |
+        // ood_z 8 | ood_quotient 8*segments | num_fri_layers 1 | roots 32L |
+        // fps u16 | poly 8*fps
+        let mut off = 32 + 32 + 8 * SP_W + 8 * SP_W + 8 + 8 * SPEND_QUOTIENT_SEGMENTS;
+        let layers = b[off] as usize;
+        off += 1 + 32 * layers;
+        let fps = u16::from_le_bytes(b[off..off + 2].try_into().unwrap()) as usize;
+        off += 2;
+        let poly: Vec<u64> = (0..fps)
+            .map(|j| u64::from_le_bytes(b[off + j * 8..off + j * 8 + 8].try_into().unwrap()))
+            .collect();
+
+        assert_eq!(fps, SPEND_FRI_FINAL_POLY_SIZE, "C7 commits 32 terminal coefficients");
+        assert_eq!(layers, 7, "C7 folds 7 FRI layers; a change here moves the wire size");
+
+        let needed = poly.iter().rposition(|&v| v != 0).map(|i| i + 1).unwrap_or(1);
+        assert_eq!(
+            needed, SPEND_FRI_FINAL_POLY_DEGREE_BOUND,
+            "C7 terminal poly needs a bound of {needed}, constant says \
+             {SPEND_FRI_FINAL_POLY_DEGREE_BOUND}. Do NOT raise the constant to make this pass \
+             without understanding why deg(D) moved -- the bound is what FRI is enforcing.",
+        );
+
+        // The wire size, measured 2026-08-24. C1 + C3 -- the two proofs C7
+        // replaces -- are 147,038 B together, so this is 1.9x less to upload and
+        // one whole ProofBuffer rent that is never paid. That 147,038 is
+        // MEASURED, not derived: a live scan of a real C1+C3 upload read 148
+        // chunks / 147,038 bytes (verify/p01-verify.mjs, probe P3/P3b; the same
+        // run is frozen in verify/README.md). This comment used to say 258,958
+        // and 3.3x -- 258,958 is the PRE-B4 pair-leaf figure and overstates the
+        // gain. A regression here is either a geometry change or a
+        // serialisation change; both matter.
+        assert_eq!(
+            b.len(), 77_965,
+            "C7 wire size moved. Measured 77,965 B on 2026-08-24 at ffps 32 / 22 queries / \
+             8 quotient segments. Re-measure before re-pinning, and re-check the ~150 tx \
+             upload path: a proof that got bigger fails at the END of the upload, never early.",
+        );
+    }
+
+    // ========================================================================
+    // [C7] Step 5 -- the forgeries that decide whether the pool can be drained
+    // ========================================================================
+    //
+    // 🚨 WHAT THESE TESTS ARE, AND WHAT THEY ARE NOT.
+    //
+    // `assert_air_agrees_with_trace_generic` already refuses to BUILD a proof
+    // from a trace that violates a C7 constraint. That is worth having, and it
+    // is worth nothing here: it protects an honest user from shipping a broken
+    // proof, and an attacker simply deletes it. The honest prover refusing is
+    // not the same claim as the forged proof being rejected.
+    //
+    // So these tests skip the honest entry point and go at the algebra
+    // directly: take an honest trace, forge it the way an attacker would, run
+    // the REAL quotient builder over the result, and assert the DEEP-ALI
+    // identity FAILS at a random out-of-domain point. `divide_by_vanishing`
+    // drops its remainder silently (`compact.rs`), so a forged trace does not
+    // panic -- it produces a quotient that is quietly wrong, which is exactly
+    // the situation the identity has to catch.
+    //
+    // Forgeries 6-9 of the plan -- recipient malleability, public-input arity,
+    // padding-row queries, tampered proof bytes -- are NOT here. They are
+    // properties of serialisation and of Fiat-Shamir, not of the quotient, and
+    // they cannot be asserted against a verifier that does not exist yet. They
+    // belong to Step 6 and are listed there so they cannot be quietly dropped.
+
+
+    /// [C7] Which transition constraints a trace actually violates, and where.
+    ///
+    /// 🚨 THIS EXISTS BECAUSE `assert_ne!(c, q)` IS NOT A PRECISE CLAIM. The
+    /// DEEP-ALI identity fails if ANY of the eighteen constraints is non-zero,
+    /// so a forgery test that only checks the identity proves "something is
+    /// wrong" -- not "the guard I named is the one that fired". Every forgery
+    /// below deliberately disturbs more than one cell, and without this helper a
+    /// test could stay green after its own guard was deleted.
+    ///
+    /// MUTATION TESTED 2026-08-24, and the result justifies the whole helper:
+    /// neutralising constraint [16] (`result[16] = ZERO`) leaves [3] and [7]
+    /// firing on forgery 1's trace, so the DEEP-ALI identity still fails and
+    /// `assert_ne!(c, q)` alone STAYS GREEN with the hold-column guard deleted.
+    /// The precise assertion is the only thing that goes red.
+    ///
+    /// Returns `(constraint_index, row)` pairs, walking the honest trace domain.
+    fn spend_violated_constraints(trace: &[Vec<BaseElement>]) -> Vec<(usize, usize)> {
+        use crate::air::spend::{
+            build_spend_periodic_columns, evaluate_spend_transition, SPEND_NUM_CONSTRAINTS,
+            SPEND_NUM_PERIODIC, TRACE_LENGTH as SP_LEN, TRACE_WIDTH as SP_W,
+        };
+
+        let periodic = build_spend_periodic_columns();
+        let mut constraints = vec![BaseElement::ZERO; SPEND_NUM_CONSTRAINTS];
+        let mut out = Vec::new();
+        for row in 0..(SP_LEN - 1) {
+            let current: Vec<BaseElement> = (0..SP_W).map(|k| trace[k][row]).collect();
+            let next: Vec<BaseElement> = (0..SP_W).map(|k| trace[k][row + 1]).collect();
+            let prow: Vec<BaseElement> = (0..SPEND_NUM_PERIODIC)
+                .map(|k| periodic[k][row % periodic[k].len()])
+                .collect();
+            evaluate_spend_transition(&current, &next, &prow, &mut constraints);
+            for (k, v) in constraints.iter().enumerate() {
+                if *v != BaseElement::ZERO {
+                    out.push((k, row));
+                }
+            }
+        }
+        out
+    }
+
+    /// [C7] Assert the named guard is among the constraints that fired.
+    fn assert_guard_fired(trace: &[Vec<BaseElement>], guard: usize, what: &str) {
+        let violated = spend_violated_constraints(trace);
+        let indices: Vec<usize> = {
+            let mut v: Vec<usize> = violated.iter().map(|(k, _)| *k).collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+        assert!(
+            indices.contains(&guard),
+            "{what}: constraint [{guard}] did NOT fire. Constraints that did: {indices:?}. \
+             The identity would still have failed, so an assert_ne! on it alone would have \
+             stayed green with this guard deleted.",
+        );
+    }
+
+    /// [C7] Evaluate the transition-only DEEP-ALI identity at `z` for a trace.
+    ///
+    /// Returns `(c_at_z, q_at_z * z_t)`. For an honest trace the two are equal;
+    /// this is the same identity `spend_proof_satisfies_deep_ali_end_to_end`
+    /// checks on a serialised proof, minus the boundary fold, which the pipeline
+    /// adds after the quotient builder returns.
+    fn spend_deep_ali_at_z(
+        trace: &[Vec<BaseElement>],
+        alpha: BaseElement,
+        z: BaseElement,
+    ) -> (BaseElement, BaseElement) {
+        use crate::air::spend::{
+            build_spend_periodic_columns, evaluate_spend_transition, SPEND_NUM_CONSTRAINTS,
+            TRACE_LENGTH as SP_LEN, TRACE_WIDTH as SP_W,
+        };
+
+        let trace_g = get_domain_generator_generic(SP_LEN);
+        let lde = compute_lde_generic(trace, GENERIC_BLOWUP);
+        let q_poly = compute_quotient_lde_circuit_7(&lde, GENERIC_BLOWUP, SP_LEN, alpha);
+
+        let col_polys: Vec<Vec<BaseElement>> =
+            (0..SP_W).map(|k| inverse_ntt(&trace[k], trace_g)).collect();
+        let z_next = z * trace_g;
+        let current: Vec<BaseElement> =
+            col_polys.iter().map(|p| evaluate_poly(p, z)).collect();
+        let next: Vec<BaseElement> =
+            col_polys.iter().map(|p| evaluate_poly(p, z_next)).collect();
+
+        let materialise = |col: &Vec<BaseElement>| -> Vec<BaseElement> {
+            if col.len() == SP_LEN {
+                col.clone()
+            } else {
+                let mut full = vec![BaseElement::ZERO; SP_LEN];
+                for i in 0..SP_LEN {
+                    full[i] = col[i % col.len()];
+                }
+                full
+            }
+        };
+        let periodic_at_z: Vec<BaseElement> = build_spend_periodic_columns()
+            .iter()
+            .map(|col| evaluate_poly(&inverse_ntt(&materialise(col), trace_g), z))
+            .collect();
+
+        let mut constraints = [BaseElement::ZERO; SPEND_NUM_CONSTRAINTS];
+        evaluate_spend_transition(&current, &next, &periodic_at_z, &mut constraints);
+        let c_at_z = rlc_combine(&constraints, alpha);
+
+        let last_row_x = trace_g.exp((SP_LEN - 1) as u64);
+        let z_t = (z.exp(SP_LEN as u64) - BaseElement::ONE) * (z - last_row_x).inv();
+
+        (c_at_z, evaluate_poly(&q_poly, z) * z_t)
+    }
+
+    /// [C7] Build the honest trace the forgeries start from, plus its witness.
+    fn spend_honest_trace() -> (Vec<Vec<BaseElement>>, BaseElement, BaseElement, BaseElement) {
+        use crate::air::spend::{build_spend_trace, compute_spend_values};
+
+        let (np, sk, blind, mint, pe, pi, _rh, mask) = spend_test_witness();
+        let elems: Vec<BaseElement> = pe.iter().map(|&v| BaseElement::new(v)).collect();
+        let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+        let (trace, nullifier, root) = build_spend_trace(
+            BaseElement::new(np),
+            BaseElement::new(sk),
+            BaseElement::new(blind),
+            BaseElement::new(mint),
+            &elems,
+            &pi,
+            &mask_felts,
+        );
+        let (_, _, commitment) = compute_spend_values(
+            BaseElement::new(np),
+            BaseElement::new(sk),
+            BaseElement::new(blind),
+            BaseElement::new(mint),
+        );
+        (trace, nullifier, root, commitment)
+    }
+
+    /// [C7] Positive control. Everything below asserts a FORGED trace fails the
+    /// identity; if the honest one failed too, all of them would pass for the
+    /// wrong reason and the whole section would be decorative.
+    #[test]
+    fn spend_honest_trace_satisfies_the_identity_positive_control() {
+        let (trace, _, _, _) = spend_honest_trace();
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0001);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_eq!(c, q, "the HONEST C7 trace must satisfy DEEP-ALI");
+    }
+
+    /// [C7 forgery 1] UNTIED HOLD COLUMN -- the direct attack on the hold-column
+    /// trick, and the reason the trick needs constraint [16] at all.
+    ///
+    /// Both Poseidon pipelines run honestly, so the commitment at col 6 row 94
+    /// is real. The attacker pins col 9 to a DIFFERENT value and sets the Merkle
+    /// leaf to it: prove membership of a leaf you never computed. [17] is
+    /// satisfied (leaf == hold), [15] is satisfied (hold is constant), and only
+    /// [16] stands between this and a spend of someone else's note.
+    #[test]
+    fn spend_untied_hold_column_breaks_the_identity() {
+        use crate::air::spend::HOLD_CONSTANT_LAST;
+
+        let (mut trace, _, _, commitment) = spend_honest_trace();
+        let fake = commitment + BaseElement::ONE;
+        for row in 0..=HOLD_CONSTANT_LAST {
+            trace[9][row] = fake;
+        }
+        trace[5][0] = fake; // leaf == hold, so [17] still holds
+
+        assert_guard_fired(&trace, 16, "untied hold column");
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0002);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_ne!(
+            c, q,
+            "an untied hold column satisfied DEEP-ALI. That is a proof of membership \
+             for a leaf the prover never computed -- the pool is drainable.",
+        );
+    }
+
+    /// [C7 forgery 2] LEAF != COMMITMENT -- spend someone else's note with your
+    /// own nullifier. THE pool-drain.
+    ///
+    /// col 9 correctly carries the honest commitment, so [16] passes. The leaf
+    /// at col 5 row 0 is set to a different value that really is in the tree.
+    /// Only [17] refuses.
+    #[test]
+    fn spend_leaf_not_equal_commitment_breaks_the_identity() {
+        let (mut trace, _, _, _) = spend_honest_trace();
+        trace[5][0] = BaseElement::new(0xDEAD_BEEF_0000_0001);
+
+        assert_guard_fired(&trace, 17, "leaf != commitment");
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0003);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_ne!(
+            c, q,
+            "a leaf different from the in-circuit commitment satisfied DEEP-ALI. This is \
+             'spend someone else's note with your own nullifier' -- the pool drain.",
+        );
+    }
+
+    /// [C7 forgery 3] NULLIFIER / COMMITMENT DECOUPLING -- one nullifier spending
+    /// many commitments.
+    ///
+    /// Cycle 2's LEFT input (col 6, row 64) is supposed to be the same nullifier
+    /// the boundary assertion publishes. Untie it and a single published
+    /// nullifier can be paired with any commitment the prover likes, which
+    /// defeats double-spend detection entirely.
+    #[test]
+    fn spend_nullifier_decoupled_from_commitment_breaks_the_identity() {
+        use crate::air::spend::ROW_COMMIT_IN;
+
+        let (mut trace, _, _, _) = spend_honest_trace();
+        trace[6][ROW_COMMIT_IN] = trace[6][ROW_COMMIT_IN] + BaseElement::ONE;
+
+        // [11]-[13] are the commitment Poseidon rounds: untying row 64's left
+        // input breaks the round relation that carries it to row 94.
+        assert_guard_fired(&trace, 11, "nullifier decoupled from commitment");
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0004);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_ne!(
+            c, q,
+            "cycle 2's left input came loose from the published nullifier and DEEP-ALI \
+             still held -- one nullifier could then spend many commitments.",
+        );
+    }
+
+    /// [C7 forgery 4] NON-BINARY DIRECTION BIT.
+    ///
+    /// C3 carried seven historical under-constraints of exactly this class
+    /// (`compact.rs:756-780`). C7 inherits its Merkle pipeline verbatim from C3,
+    /// so it inherits every one of them and must inherit every fix. A direction
+    /// bit outside {0,1} lets the mux produce a hash input that is neither
+    /// `(carry, sibling)` nor `(sibling, carry)`.
+    #[test]
+    fn spend_non_binary_direction_bit_breaks_the_identity() {
+        use crate::air::spend::HASH_CYCLE_LEN;
+
+        let (mut trace, _, _, _) = spend_honest_trace();
+        trace[4][2 * HASH_CYCLE_LEN] = BaseElement::new(2);
+
+        assert_guard_fired(&trace, 10, "non-binary direction bit");
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0005);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_ne!(c, q, "a direction bit of 2 satisfied DEEP-ALI");
+    }
+
+    /// [C7 forgery 5] SIBLING MUTATED MID-CYCLE.
+    ///
+    /// The sibling must hold still for the whole 32-row hash cycle. If it can
+    /// change between the row that feeds the hash and the row that is checked,
+    /// the prover picks one sibling for the constraint and another for the
+    /// commitment.
+    #[test]
+    fn spend_sibling_mutated_mid_cycle_breaks_the_identity() {
+        let (mut trace, _, _, _) = spend_honest_trace();
+        trace[3][5] = trace[3][5] + BaseElement::ONE;
+
+        assert_guard_fired(&trace, 8, "sibling mutated mid-cycle");
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0006);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_ne!(c, q, "a sibling that moved inside a hash cycle satisfied DEEP-ALI");
+    }
+
+    /// [C7 forgery 6] A FORGED ROW INSIDE THE BLINDING REGION IS *NOT* A FORGERY.
+    ///
+    /// This one asserts the OPPOSITE of the five above, and it is here because
+    /// the blinding region is the part of this design most likely to be
+    /// "fixed" by someone who reads rows 384..511 as unconstrained by accident.
+    /// They are unconstrained ON PURPOSE: that is what lets the prover write
+    /// fresh uniform randomness there, and the randomness is what stops the
+    /// published OOD values from being a function of the witness.
+    ///
+    /// If this test ever fails, someone added a constraint that reaches into the
+    /// mask, and the privacy argument in `air/spend.rs` died with it.
+    #[test]
+    fn spend_mask_region_is_genuinely_free() {
+        use crate::air::spend::{FIRST_FREE_ROW, TRACE_LENGTH as SP_LEN, TRACE_WIDTH as SP_W};
+
+        let (mut trace, _, _, _) = spend_honest_trace();
+        for col in 0..SP_W {
+            for row in FIRST_FREE_ROW..SP_LEN {
+                trace[col][row] = trace[col][row] + BaseElement::new(7);
+            }
+        }
+
+        // The mask control asserts the opposite of every forgery above: NOTHING
+        // may fire. `assert_guard_fired` would be the wrong shape here, so the
+        // list itself is the assertion.
+        let violated = spend_violated_constraints(&trace);
+        assert!(
+            violated.is_empty(),
+            "a constraint reaches into the blinding region: {violated:?}",
+        );
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0007);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_eq!(
+            c, q,
+            "changing the blinding region broke DEEP-ALI. Rows {FIRST_FREE_ROW}..{SP_LEN} must \
+             take NO constraint of any kind, or the prover cannot put fresh randomness there \
+             and the counting argument in air/spend.rs is void.",
+        );
+    }
+
+    /// [C7 forgery 7] WRONG BLINDING is not caught by the circuit, and that is
+    /// correct -- it is caught by the ROOT.
+    ///
+    /// Recomputing the commitment with `b' != b` gives a value that is not in
+    /// the tree, so the honest prover produces a proof of membership in a
+    /// DIFFERENT tree. The circuit has nothing to object to; the pool does, when
+    /// it compares the published root against its own.
+    ///
+    /// 🚨 Written down because "the circuit accepts it" reads like a hole and is
+    /// not one -- and because the check that actually stops it lives in the pool
+    /// program, which means Step 7 must not drop it.
+    #[test]
+    fn spend_wrong_blinding_moves_the_root_not_the_circuit() {
+        use crate::air::spend::{compute_spend_root, compute_spend_values, CANONICAL_DEPTH};
+
+        let (np, sk, blind, mint, pe, pi, _rh, _mask) = spend_test_witness();
+        let elems: Vec<BaseElement> = pe.iter().map(|&v| BaseElement::new(v)).collect();
+        assert_eq!(elems.len(), CANONICAL_DEPTH);
+
+        let (_, _, honest) = compute_spend_values(
+            BaseElement::new(np), BaseElement::new(sk),
+            BaseElement::new(blind), BaseElement::new(mint),
+        );
+        let (_, _, forged) = compute_spend_values(
+            BaseElement::new(np), BaseElement::new(sk),
+            BaseElement::new(blind + 1), BaseElement::new(mint),
+        );
+        assert_ne!(honest, forged, "a different blinding must give a different commitment");
+        assert_ne!(
+            compute_spend_root(honest, &elems, &pi),
+            compute_spend_root(forged, &elems, &pi),
+            "a wrong blinding must surface as a DIFFERENT ROOT. Nothing inside the circuit \
+             rejects it, so the pool program comparing roots is the only thing that does.",
+        );
+    }
+
+    /// [C7 forgery 8] LEGACY NOTE POSITIVE CONTROL.
+    ///
+    /// 🔒 The `blinding` slot is the historical `deposit_epoch` position. Notes
+    /// shielded before commitment blinding carry a real small epoch there -- the
+    /// unspent leaf-30 note of the 0.1 SOL pool is one of them. Any range check,
+    /// bit decomposition or boundary assertion on that slot bricks it with no
+    /// recovery path.
+    ///
+    /// So: a small-integer blinding must still produce a proof that satisfies
+    /// the identity. If this test fails, someone constrained the slot.
+    #[test]
+    fn spend_legacy_small_blinding_still_proves() {
+        use crate::air::spend::{build_spend_trace, MASK_ROWS, TRACE_WIDTH as SP_W};
+
+        let (np, sk, _blind, mint, pe, pi, _rh, mask) = spend_test_witness();
+        let elems: Vec<BaseElement> = pe.iter().map(|&v| BaseElement::new(v)).collect();
+        let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+        assert_eq!(mask_felts.len(), MASK_ROWS * SP_W);
+
+        // 30 -- a plausible deposit epoch, not a field element.
+        let (trace, _, _) = build_spend_trace(
+            BaseElement::new(np),
+            BaseElement::new(sk),
+            BaseElement::new(30),
+            BaseElement::new(mint),
+            &elems,
+            &pi,
+            &mask_felts,
+        );
+
+        let violated = spend_violated_constraints(&trace);
+        assert!(
+            violated.is_empty(),
+            "a legacy small-integer blinding tripped a constraint: {violated:?}",
+        );
+
+        let alpha = BaseElement::new(0x5EED_1234_ABCD_0008);
+        let z = BaseElement::new(0x0BAD_BEEF_1337_CAFE);
+        let (c, q) = spend_deep_ali_at_z(&trace, alpha, z);
+        assert_eq!(
+            c, q,
+            "a legacy note whose blinding is a small epoch stopped proving. Leaf 30 of the \
+             0.1 SOL pool is exactly that note and it has no recovery path.",
+        );
+    }
+
+    /// [C7] The periodic classification, PINNED -- not left inside an `#[ignore]`.
+    ///
+    /// 🚨 THIS TEST EXISTS BECAUSE OF A REVIEW FINDING AGAINST ME. The 7/4/2
+    /// split was asserted only inside `emit_circuit_7_periodic_coeffs`, which is
+    /// `#[ignore]`d and therefore runs nowhere -- not in `cargo test`, not in CI.
+    /// It had been measured once, by hand, and then reported as though it were
+    /// enforced. Those are different things, and this repo has been bitten by
+    /// the difference before: `ci.yml` printed a `::warning::` for two absent
+    /// soundness pins inside a GREEN job for weeks.
+    ///
+    /// What it pins, and why each half matters on chain:
+    ///   * the COUNTS decide the shape of the verifier's periodic array. The
+    ///     existing C7 CU probe was written against ten columns and prices a
+    ///     circuit that no longer exists.
+    ///   * the one-hot ROWS travel into `eval_one_hot_lagrange(g^k, ..)` as
+    ///     exponents. The same probe carries `[0, 30, 62, 94, 478]` -- the
+    ///     depth-15 set -- and 478 is inside the blinding region, where nothing
+    ///     may be constrained at all.
+    #[test]
+    fn spend_periodic_classification_is_pinned_not_merely_emitted() {
+        use crate::air::spend::{
+            build_spend_periodic_columns, HASH_CYCLE_LEN, ROW_CHAIN, ROW_COMMITMENT_OUT,
+            SPEND_NUM_PERIODIC, TRACE_LENGTH as SP_LEN,
+        };
+
+        let trace_g = get_domain_generator_generic(SP_LEN);
+        let raw = build_spend_periodic_columns();
+        assert_eq!(raw.len(), SPEND_NUM_PERIODIC, "13 periodic columns");
+
+        let materialise = |col: &Vec<BaseElement>| -> Vec<BaseElement> {
+            if col.len() == SP_LEN {
+                col.clone()
+            } else {
+                let mut full = vec![BaseElement::ZERO; SP_LEN];
+                for i in 0..SP_LEN {
+                    full[i] = col[i % col.len()];
+                }
+                full
+            }
+        };
+
+        let mut stride = Vec::new();
+        let mut one_hot = Vec::new();
+        let mut dense = Vec::new();
+
+        for (i, raw_col) in raw.iter().enumerate() {
+            let col = materialise(raw_col);
+            let nonzero: Vec<usize> = col
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| **v != BaseElement::ZERO)
+                .map(|(r, _)| r)
+                .collect();
+            if nonzero.len() == 1 && col[nonzero[0]] == BaseElement::ONE {
+                one_hot.push((i, nonzero[0]));
+                continue;
+            }
+            let poly = inverse_ntt(&col, trace_g);
+            if poly.iter().enumerate().all(|(k, cf)| k % 16 == 0 || *cf == BaseElement::ZERO) {
+                stride.push(i);
+            } else {
+                dense.push(i);
+            }
+        }
+
+        assert_eq!(stride, vec![0, 1, 2, 3, 4, 5, 6], "stride-16 columns are 0..=6");
+        assert_eq!(dense, vec![11, 12], "the only dense columns are active and not_boundary_active");
+
+        // Rows, not just count. These become exponents of g on chain.
+        assert_eq!(
+            one_hot,
+            vec![
+                (7, ROW_CHAIN),                  // 63
+                (8, ROW_COMMITMENT_OUT),         // 94
+                (9, 0),                          // row0_flag
+                (10, HASH_CYCLE_LEN - 1),        // 31, hold_link_31
+            ],
+            "one-hot columns and their rows. The C7 CU probe carries the depth-15 set \
+             [0, 30, 62, 94, 478]; 478 is in the blinding region and 382 is the real root row.",
+        );
+
+        // The rodata each class costs, so a reclassification cannot move the
+        // number silently. 7 stride are byte-identical to the verifier's
+        // C3_*_PERIODIC16 (measured 2026-08-24), so C7's OWN new rodata is the
+        // two dense columns and nothing else.
+        assert_eq!(dense.len() * SP_LEN * 8, 8_192, "C7's own new periodic rodata");
+    }
+    /// [C7] A deterministic test witness.
+    ///
+    /// ⛔ The mask here is a fixed xorshift stream, NOT CSPRNG output. A test
+    /// needs reproducibility and a proof that moves money needs fresh
+    /// randomness; the two requirements are incompatible, which is why
+    /// `generate_spend_compact_proof` takes the mask as a required argument
+    /// instead of drawing it itself.
+    ///
+    /// The stream is spread across the whole field rather than being 1280 small
+    /// integers. Small integers would satisfy every constraint just as well
+    /// (there are none in the blinding region), but they would not look like
+    /// the distribution the counting argument in `air/spend.rs` assumes.
+    fn spend_test_witness() -> (u64, u64, u64, u64, Vec<u64>, Vec<u8>, [u64; 4], Vec<u64>) {
+        use crate::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH as SPEND_W};
+        const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+
+        let path_elements: Vec<u64> = (0..CANONICAL_DEPTH as u64).map(|i| 1000 + i * 37).collect();
+        let path_indices: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
+
+        let mut s = 0x9E37_79B9_7F4A_7C15u64;
+        let mut mask = Vec::with_capacity(MASK_ROWS * SPEND_W);
+        for _ in 0..(MASK_ROWS * SPEND_W) {
+            s ^= s >> 12;
+            s ^= s << 25;
+            s ^= s >> 27;
+            mask.push(s.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
+        }
+
+        (42, 999, 7, 555, path_elements, path_indices, [11, 22, 33, 44], mask)
+    }
+
+    /// [C7] The property the whole circuit exists for, asserted on the OUTPUT of
+    /// the pipeline rather than on the AIR.
+    ///
+    /// `air/spend.rs` already pins that the trace keeps the commitment private.
+    /// That is a different claim from this one: the AIR could be perfect and
+    /// `generate_spend_compact_proof` could still put the commitment into
+    /// `public_inputs` or `pub_bytes` by a one-line slip -- which is exactly why
+    /// `build_spend_trace` refuses to return it.
+    #[test]
+    fn the_generated_spend_proof_never_publishes_the_commitment() {
+        use crate::air::spend::compute_spend_values;
+
+        let (np, sk, blind, mint, pe, pi, rh, mask) = spend_test_witness();
+        let (nullifier, blind_hash, commitment) = compute_spend_values(
+            BaseElement::new(np),
+            BaseElement::new(sk),
+            BaseElement::new(blind),
+            BaseElement::new(mint),
+        );
+
+        let proof = generate_spend_compact_proof(np, sk, blind, mint, &pe, &pi, &rh, &mask);
+
+        assert_eq!(proof.circuit_id, CIRCUIT_SPEND);
+        assert_eq!(proof.public_inputs.len(), 6, "C7 publishes exactly six felts");
+        assert_eq!(proof.public_inputs[0], nullifier.as_int(), "public input 0 is the nullifier");
+        assert_eq!(proof.public_inputs[2..6], rh, "public inputs 2..6 are the recipient hash");
+
+        // Neither the commitment nor the two values it is built from.
+        for (name, secret) in [
+            ("the commitment", commitment.as_int()),
+            ("blind_hash", blind_hash.as_int()),
+            ("the spend secret", sk),
+            ("the blinding", blind),
+        ] {
+            assert!(
+                !proof.public_inputs.contains(&secret),
+                "C7 published {name} as a public input -- that is the leak the circuit exists to close",
+            );
+        }
+    }
+
+    /// [C7] The end-to-end DEEP-ALI identity on a REAL generated proof.
+    ///
+    /// Cloned from `transfer_proof_satisfies_deep_ali_end_to_end`. It rebuilds
+    /// the verifier's identity in-crate, so it catches an alpha / periodic /
+    /// quotient / boundary-order mismatch without needing the verifier crate to
+    /// exist yet. That is the whole value of running it at Step 4 instead of
+    /// waiting for Step 6: a disagreement found here costs an edit, the same
+    /// disagreement found on chain costs a redeploy.
+    #[test]
+    fn spend_proof_satisfies_deep_ali_end_to_end() {
+        use crate::air::spend::{
+            build_spend_periodic_columns, evaluate_spend_transition, SPEND_NUM_CONSTRAINTS,
+            SPEND_NUM_PERIODIC, TRACE_LENGTH as SP_TRACE_LENGTH, TRACE_WIDTH as SP_TRACE_WIDTH,
+        };
+
+        let (np, sk, blind, mint, pe, pi, rh, mask) = spend_test_witness();
+        let proof = generate_spend_compact_proof(np, sk, blind, mint, &pe, &pi, &rh, &mask);
+        assert_eq!(proof.circuit_id, CIRCUIT_SPEND);
+
+        let bytes = &proof.proof_bytes;
+        let mut off = 0usize;
+
+        let mut trace_root = [0u8; 32];
+        trace_root.copy_from_slice(&bytes[off..off + 32]);
+        off += 32;
+        let _quotient_root = &bytes[off..off + 32];
+        off += 32;
+
+        let mut ood_current = Vec::with_capacity(SP_TRACE_WIDTH);
+        for _ in 0..SP_TRACE_WIDTH {
+            ood_current.push(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
+            off += 8;
+        }
+        let mut ood_next = Vec::with_capacity(SP_TRACE_WIDTH);
+        for _ in 0..SP_TRACE_WIDTH {
+            ood_next.push(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
+            off += 8;
+        }
+        let ood_z = u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+        off += 8;
+        let ood_quotient_segments: Vec<u64> = (0..SPEND_QUOTIENT_SEGMENTS)
+            .map(|j| u64::from_le_bytes(bytes[off + j * 8..off + j * 8 + 8].try_into().unwrap()))
+            .collect();
+
+        let mut pub_bytes = Vec::new();
+        for v in &proof.public_inputs {
+            pub_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+
+        let alpha = derive_rlc_alpha_with_tag(&trace_root, &pub_bytes, RLC_TAG_C7);
+
+        let trace_length = SP_TRACE_LENGTH;
+        let trace_g = get_domain_generator_generic(trace_length);
+        let z = BaseElement::new(ood_z);
+        let periodic_raw = build_spend_periodic_columns();
+        assert_eq!(periodic_raw.len(), SPEND_NUM_PERIODIC);
+
+        let materialise = |col: &Vec<BaseElement>| -> Vec<BaseElement> {
+            if col.len() == trace_length {
+                col.clone()
+            } else {
+                let mut full = vec![BaseElement::ZERO; trace_length];
+                for i in 0..trace_length {
+                    full[i] = col[i % col.len()];
+                }
+                full
+            }
+        };
+
+        let periodic_at_z: Vec<BaseElement> = periodic_raw
+            .iter()
+            .map(|col| evaluate_poly(&inverse_ntt(&materialise(col), trace_g), z))
+            .collect();
+
+        let current: Vec<BaseElement> = ood_current.iter().map(|&v| BaseElement::new(v)).collect();
+        let next: Vec<BaseElement> = ood_next.iter().map(|&v| BaseElement::new(v)).collect();
+        let mut constraints = [BaseElement::ZERO; SPEND_NUM_CONSTRAINTS];
+        evaluate_spend_transition(&current, &next, &periodic_at_z, &mut constraints);
+        let c_at_z = rlc_combine(&constraints, alpha);
+
+        let last_row_x = trace_g.exp((trace_length - 1) as u64);
+        let z_d = z.exp(trace_length as u64) - BaseElement::ONE;
+        let z_t = z_d * (z - last_row_x).inv();
+
+        let c_bnd = boundary_c_at_ood(
+            CIRCUIT_SPEND, &proof.public_inputs, &trace_root, &pub_bytes,
+            BND_TAG_C7, &ood_current, z, z_t, trace_g,
+        );
+        let c_total = c_at_z + c_bnd;
+
+        let q_at_z = recombine_ood_quotient(&ood_quotient_segments, z, trace_length);
+        assert_eq!(
+            c_total,
+            q_at_z * z_t,
+            "end-to-end DEEP-ALI on generated circuit-7 proof failed",
+        );
+    }
+
+    /// [C7] `SPEND_QUOTIENT_SEGMENTS` re-derived from the polynomial instead of
+    /// restated. `segment_quotient_poly` already asserts the split in both
+    /// directions, so this test's job is to make the NUMBER visible when it
+    /// changes, rather than letting a passing suite hide a silent re-tuning.
+    ///
+    /// It is also the number the verifier's `CircuitConfig.quotient_segments`
+    /// must carry for C7. Two independently maintained copies of one measured
+    /// quantity is the shape that produced the C3/C6 depth-window divergence.
+    #[test]
+    fn spend_quotient_segments_is_measured_not_assumed() {
+        use crate::air::spend::{
+            build_spend_trace, CANONICAL_DEPTH, TRACE_LENGTH as SP_TRACE_LENGTH,
+        };
+
+        let (np, sk, blind, mint, pe, pi, _rh, mask) = spend_test_witness();
+        assert_eq!(pe.len(), CANONICAL_DEPTH);
+
+        let elems: Vec<BaseElement> = pe.iter().map(|&v| BaseElement::new(v)).collect();
+        let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+        let (trace, _, _) = build_spend_trace(
+            BaseElement::new(np),
+            BaseElement::new(sk),
+            BaseElement::new(blind),
+            BaseElement::new(mint),
+            &elems,
+            &pi,
+            &mask_felts,
+        );
+
+        let lde = compute_lde_generic(&trace, GENERIC_BLOWUP);
+        let q_poly = compute_quotient_lde_circuit_7(
+            &lde,
+            GENERIC_BLOWUP,
+            SP_TRACE_LENGTH,
+            BaseElement::new(0x1234_5678),
+        );
+
+        let degree = q_poly.iter().rposition(|v| *v != BaseElement::ZERO).unwrap();
+        let measured = (degree + 1).div_ceil(SP_TRACE_LENGTH);
+        assert_eq!(
+            measured, SPEND_QUOTIENT_SEGMENTS,
+            "C7 deg(Q) = {degree} needs {measured} segments of {SP_TRACE_LENGTH}, but \
+             SPEND_QUOTIENT_SEGMENTS says {SPEND_QUOTIENT_SEGMENTS}. Fix the constant AND the \
+             verifier's CircuitConfig together, never one alone.",
+        );
+    }
 }
 
 /// RLC-combine constraint values: Σ α^i · c_i.
@@ -4724,6 +5874,17 @@ pub const CIRCUIT_MERKLE_PATH: u8 = 3;
 pub const CIRCUIT_CONFIDENTIAL_BALANCE: u8 = 4;
 pub const CIRCUIT_TRANSFER: u8 = 5;
 pub const CIRCUIT_MERKLE_UPDATE: u8 = 6;
+
+/// [C7] The spend circuit. Merges C1's commitment derivation with C3's
+/// membership proof into one width-10 / 512-row trace, so the note commitment
+/// never has to leave the circuit as a public input.
+///
+/// 7 is what the on-chain verifier's `verify_deep_ali_circuit_7` answers to. It
+/// is NOT what tells a C7 proof apart on the wire: `GenericCompactProof::from_bytes`
+/// matches on the config bytes, and C7 shares C6's width, length, blowup and
+/// query count exactly. `SPEND_FRI_FINAL_POLY_SIZE = 32` against C6's 16 is the
+/// one field that separates them, which is why it is not a free tuning knob.
+pub const CIRCUIT_SPEND: u8 = 7;
 
 /// Generic compact proof data for any circuit.
 #[derive(Clone, Debug)]
@@ -4898,6 +6059,31 @@ mod b7_coset_shift {
             "coset interpolation did not recover the polynomial it was sampled from",
         );
     }
+}
+
+/// [C7 drift pins] Polynomial helpers the VERIFIER crate's tests need to
+/// re-derive a periodic column independently.
+///
+/// Compiled only under `test-probes`, which the verifier's dev-dependency on
+/// this crate enables. They exist so a cross-crate pin can DRIVE BOTH SIDES
+/// from one source instead of restating the verifier's own arithmetic back at
+/// it -- a test that reimplements what it is checking proves nothing.
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn inverse_ntt_probe(values: &[BaseElement], omega: BaseElement) -> Vec<BaseElement> {
+    inverse_ntt(values, omega)
+}
+
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn evaluate_poly_probe(coeffs: &[BaseElement], x: BaseElement) -> BaseElement {
+    evaluate_poly(coeffs, x)
+}
+
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn domain_generator_probe(domain_size: usize) -> BaseElement {
+    get_domain_generator_generic(domain_size)
 }
 
 fn get_domain_generator_generic(domain_size: usize) -> BaseElement {
@@ -5574,6 +6760,17 @@ fn solve_ood_quotient_for_spec(
             evaluate_transfer_transition(&current, &next, &p, &mut constraints);
             (rlc_combine(&constraints, alpha), CIRCUIT_TRANSFER, b"bnd-c5\0\0")
         }
+        QuotientSpec::Circuit7 => {
+            use crate::air::spend::{
+                build_spend_periodic_columns, evaluate_spend_transition,
+                SPEND_NUM_CONSTRAINTS,
+            };
+            let alpha = derive_rlc_alpha_with_tag(trace_root, pub_bytes, b"rlc-c7\0\0");
+            let p = periodic_at_z(&build_spend_periodic_columns());
+            let mut constraints = [BaseElement::ZERO; SPEND_NUM_CONSTRAINTS];
+            evaluate_spend_transition(&current, &next, &p, &mut constraints);
+            (rlc_combine(&constraints, alpha), CIRCUIT_SPEND, b"bnd-c7\0\0")
+        }
         // Only C0's pipeline uses `LegacyGeneric`, and it re-solves inline.
         QuotientSpec::LegacyGeneric => return None,
     };
@@ -6174,6 +7371,23 @@ pub(crate) const FRI_FINAL_POLY_SIZE: usize = 16;
 /// per Goldilocks mul on BPF) swamped the 4 saved layers' ~175K merkle cost.
 /// Must stay in sync with `CONFIG_MERKLE_UPDATE.fri_final_poly_size`.
 pub(crate) const MERKLE_UPDATE_FRI_FINAL_POLY_SIZE: usize = 16;
+
+/// [C7] The spend circuit commits 32 final-FRI coefficients where every other
+/// circuit commits 16. This is NOT a tuning knob.
+///
+/// C7 shares C6's trace width (10), trace length (512), blowup (16), LDE size
+/// (8192), merkle depth (13) and query count (22) -- deliberately, so it fits
+/// the envelope C6 is already measured inside. That leaves the two configs
+/// byte-identical in every field but this one. `GenericCompactProof::from_bytes`
+/// validates a proof's `fri_final_poly_size` against the program's
+/// `CircuitConfig` and returns `None` on a mismatch, and `verify_uniform`'s
+/// PROBE_ORDER takes the FIRST config that parses without falling through on
+/// failure -- so with 16 here, a C7 proof would parse as a C6 proof and be
+/// checked against C6's constraints.
+///
+/// It also drops one committed FRI layer, which is roughly 7 KB less to upload.
+/// Must stay in sync with `CONFIG_SPEND.fri_final_poly_size` in the verifier.
+pub(crate) const SPEND_FRI_FINAL_POLY_SIZE: usize = 32;
 
 pub(crate) struct FriCommitData {
     /// Merkle roots for layers 1..=L-1 (layer 0 is committed via `quotient_root`;
@@ -6808,6 +8022,11 @@ pub(crate) enum QuotientSpec {
     Circuit5,
     /// Circuit 6 (merkle update), trace width 10, variable depth.
     Circuit6 { depth: usize },
+    /// Circuit 7 (spend), trace width 10, length 512. Depth is NOT a field:
+    /// it is fixed at `CANONICAL_DEPTH` by the trace layout. A depth that
+    /// travelled would be one more number the verifier has to trust, and both
+    /// C3 and C6 had to be patched for exactly that (see `[BIND-DEPTH]`).
+    Circuit7,
 }
 
 /// [C2] Map a `QuotientSpec` to its boundary-fold parameters
@@ -6831,6 +8050,11 @@ fn boundary_spec_for_quotient(spec: &QuotientSpec) -> Option<(u8, [u8; 8])> {
         QuotientSpec::Circuit4 => Some((4, *b"bnd-c4\0\0")),
         QuotientSpec::Circuit5 => Some((5, *b"bnd-c5\0\0")),
         QuotientSpec::Circuit6 { .. } => Some((6, *b"bnd-c6\0\0")),
+        // [C7] `bnd-c7` is a FRESH tag. Reusing another circuit's tag would
+        // make two different boundary folds derive the same alpha_bnd, which
+        // is the cross-circuit confusion `cross_circuit_confusion.rs` exists
+        // to refuse.
+        QuotientSpec::Circuit7 => Some((7, *b"bnd-c7\0\0")),
         // LegacyGeneric (C0) folds in the dedicated legacy path, not here.
         QuotientSpec::LegacyGeneric => None,
     }
@@ -6927,6 +8151,10 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
         QuotientSpec::Circuit5 => {
             let alpha = derive_rlc_alpha_with_tag(&root, pub_input_bytes, b"rlc-c5\0\0");
             compute_quotient_lde_circuit_5(&lde, blowup, trace_length, alpha)
+        }
+        QuotientSpec::Circuit7 => {
+            let alpha = derive_rlc_alpha_with_tag(&root, pub_input_bytes, b"rlc-c7\0\0");
+            compute_quotient_lde_circuit_7(&lde, blowup, trace_length, alpha)
         }
         QuotientSpec::LegacyGeneric => {
             // This spec builds Q pointwise on the LDE, so it is the one path
@@ -7328,6 +8556,35 @@ const MERKLE_UPDATE_NUM_QUERIES: usize = 22;
 ///
 /// [B2] Soundness identical to C6: 47 conjectured / 42 unconditional, floor-bound.
 const HEAVY_GENERIC_NUM_QUERIES: usize = 22;
+
+/// [C7] The spend circuit runs at 22 queries, the same as C3, C5 and C6, for
+/// the same reason: it is what keeps phase-1 FRI plus the per-query checks
+/// inside 1.4M CU at width 10 / LDE 8192.
+const SPEND_NUM_QUERIES: usize = 22;
+
+/// [C7] MEASURED, never chosen -- `ceil((deg(Q) + 1) / trace_length)` for the
+/// spend composition polynomial. `segment_quotient_poly` asserts this in BOTH
+/// directions, so a wrong value fails in this crate's tests rather than on
+/// chain, and `spend_quotient_segments_is_measured_not_assumed` re-derives it
+/// from the polynomial rather than restating the constant.
+///
+/// It must equal the verifier's `CircuitConfig.quotient_segments` for C7.
+const SPEND_QUOTIENT_SEGMENTS: usize = 8;
+
+/// [C7] MEASURED 2026-08-24, not chosen: the terminal polynomial's last
+/// non-zero coefficient sits at index 1, so the honest bound is 2.
+///
+/// It is 2 rather than C1-C6's 1 for one reason, and it is the same reason C7
+/// uploads 78 KB instead of 132: `SPEND_FRI_FINAL_POLY_SIZE = 32` stops the FRI
+/// fold one layer earlier than ffps 16 does, and one fewer fold leaves one more
+/// degree. Seven layers, terminal degree 1.
+///
+/// ⛔ This is a SOUNDNESS parameter, not a size knob. Raising it lets a prover
+/// commit a higher-degree terminal polynomial, which is precisely the freedom
+/// FRI exists to remove. `spend_terminal_degree_bound_is_measured_not_assumed`
+/// re-derives it off the wire, so raising it to silence a failure turns that
+/// test red instead of hiding the regression.
+const SPEND_FRI_FINAL_POLY_DEGREE_BOUND: usize = 2;
 
 /// Generate compact proof for denominated pool commitment.
 ///
@@ -8191,6 +9448,171 @@ fn generate_merkle_update_compact_proof_inner(
         proof_bytes,
         circuit_id: CIRCUIT_MERKLE_UPDATE,
         public_inputs: vec![old_leaf, new_leaf, old_root_u64, new_root_u64, depth],
+        root: merkle_root,
+    }
+}
+
+// ============================================================================
+// [C7] Spend -- the unlinkable denominated withdrawal
+// ============================================================================
+
+/// Generate a compact proof for the C7 spend circuit.
+///
+/// Proves, in ONE proof, both halves of what C1 + C3 used to prove in two:
+///   * the commitment `P(P(nullifier_preimage, secret), P(blinding, token_mint))`
+///     is well formed, and
+///   * that commitment is a leaf of the pool tree under `root`.
+///
+/// # What is NOT in the output
+///
+/// The commitment. That is the entire point of the circuit, and it is why this
+/// function returns `GenericCompactProofData` whose `public_inputs` are
+/// `[nullifier, root, rh0, rh1, rh2, rh3]` and nothing else. `build_spend_trace`
+/// deliberately does not return the commitment either, so it cannot be sitting
+/// in a local one keystroke away from `pub_bytes`.
+///
+/// # `recipient_hash` is four felts, not one
+///
+/// `sha256(recipient_pubkey)` split into four LE u64s. A single felt would give
+/// 64-bit binding, and the attack is grinding a keypair whose sha256 truncates
+/// to the same 64 bits -- roughly 2^64 hashes on a path that moves money. Four
+/// felts cost 32 bytes inside one existing `sol_sha256` call, zero trace
+/// columns and zero constraints: the binding is Fiat-Shamir-transcript-only,
+/// exactly as C3's `depth` is. Changing any of the four moves the OOD point,
+/// the query positions and both alphas, so the proof stops verifying.
+///
+/// # `mask` is required, and it must be fresh
+///
+/// ⛔ `MASK_ROWS * TRACE_WIDTH` = 1280 elements of FRESH CSPRNG output, redrawn
+/// for every proof. It fills rows 384..511 of all ten columns -- the blinding
+/// region, where no constraint of any kind fires. Reusing a mask across two
+/// proofs of the same note, or deriving it from the witness, gives an observer
+/// a relation between two traces that are supposed to be independent. There is
+/// no default and no `Option` on purpose: a caller who has not thought about
+/// randomness should not compile.
+pub fn generate_spend_compact_proof(
+    nullifier_preimage: u64,
+    secret: u64,
+    blinding: u64,
+    token_mint: u64,
+    path_elements: &[u64],
+    path_indices: &[u8],
+    recipient_hash: &[u64; 4],
+    mask: &[u64],
+) -> GenericCompactProofData {
+    generate_spend_compact_proof_inner(
+        nullifier_preimage, secret, blinding, token_mint, path_elements, path_indices,
+        recipient_hash, mask, DeepProbe::HONEST,
+    )
+}
+
+/// [B1 fails-closed probe] `generate_spend_compact_proof` with the
+/// coordinated-OOD-forgery and terminal-poly knobs exposed.
+///
+/// C7 is the circuit that decides whether the pool can be drained, and it is
+/// the only one whose boundary fold binds a root the prover also controls the
+/// path to. Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn generate_spend_compact_proof_with_forgery(
+    nullifier_preimage: u64,
+    secret: u64,
+    blinding: u64,
+    token_mint: u64,
+    path_elements: &[u64],
+    path_indices: &[u8],
+    recipient_hash: &[u64; 4],
+    mask: &[u64],
+    ood_forgery: OodForgery,
+    terminal_poly: TerminalPoly,
+) -> GenericCompactProofData {
+    generate_spend_compact_proof_inner(
+        nullifier_preimage, secret, blinding, token_mint, path_elements, path_indices,
+        recipient_hash, mask, DeepProbe { ood_forgery, terminal_poly },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_spend_compact_proof_inner(
+    nullifier_preimage: u64,
+    secret: u64,
+    blinding: u64,
+    token_mint: u64,
+    path_elements: &[u64],
+    path_indices: &[u8],
+    recipient_hash: &[u64; 4],
+    mask: &[u64],
+    probe: DeepProbe,
+) -> GenericCompactProofData {
+    use crate::air::spend::{build_spend_trace, CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+
+    assert_eq!(
+        path_elements.len(),
+        CANONICAL_DEPTH,
+        "C7 takes exactly {CANONICAL_DEPTH} path elements -- the depth is fixed by the trace \
+         layout, not carried as a public input",
+    );
+    assert_eq!(path_indices.len(), CANONICAL_DEPTH, "path_indices must match path_elements");
+    assert_eq!(
+        mask.len(),
+        MASK_ROWS * TRACE_WIDTH,
+        "C7 needs {} fresh CSPRNG elements for the blinding region",
+        MASK_ROWS * TRACE_WIDTH,
+    );
+
+    let elems: Vec<BaseElement> = path_elements.iter().map(|&v| BaseElement::new(v)).collect();
+    let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+
+    // Returns (trace, nullifier, root) -- and NOT the commitment.
+    let (trace, nullifier, root) = build_spend_trace(
+        BaseElement::new(nullifier_preimage),
+        BaseElement::new(secret),
+        BaseElement::new(blinding),
+        BaseElement::new(token_mint),
+        &elems,
+        path_indices,
+        &mask_felts,
+    );
+
+    let nullifier_u64 = nullifier.as_int();
+    let root_u64 = root.as_int();
+
+    // pub_bytes = nullifier || root || rh0 || rh1 || rh2 || rh3.
+    // The ORDER is load-bearing twice over: it feeds the Fiat-Shamir transcript,
+    // and `boundary_assertions_for_circuit(7, ..)` indexes the same slice.
+    let mut pub_bytes = Vec::new();
+    pub_bytes.extend_from_slice(&nullifier_u64.to_le_bytes());
+    pub_bytes.extend_from_slice(&root_u64.to_le_bytes());
+    for rh in recipient_hash.iter() {
+        pub_bytes.extend_from_slice(&rh.to_le_bytes());
+    }
+
+    let (proof_bytes, merkle_root) = generate_compact_proof_from_trace_with_pair_indexing(
+        &trace,
+        &pub_bytes,
+        GENERIC_BLOWUP,
+        SPEND_NUM_QUERIES,
+        SPEND_FRI_FINAL_POLY_SIZE,
+        SPEND_FRI_FINAL_POLY_DEGREE_BOUND,
+        SPEND_QUOTIENT_SEGMENTS,
+        QuotientSpec::Circuit7,
+        PairIndexing::Canonical,
+        TraceLeaf::Canonical,
+        probe,
+    );
+
+    GenericCompactProofData {
+        proof_bytes,
+        circuit_id: CIRCUIT_SPEND,
+        public_inputs: vec![
+            nullifier_u64,
+            root_u64,
+            recipient_hash[0],
+            recipient_hash[1],
+            recipient_hash[2],
+            recipient_hash[3],
+        ],
         root: merkle_root,
     }
 }

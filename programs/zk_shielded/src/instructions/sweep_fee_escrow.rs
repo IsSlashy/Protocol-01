@@ -114,8 +114,47 @@ pub fn handler(ctx: Context<SweepFeeEscrow>, amount: u64, slot: u64) -> Result<(
         ZkShieldedError::InsufficientPoolBalance
     );
 
-    **escrow.try_borrow_mut_lamports()? -= amount;
-    **ctx.accounts.destination.try_borrow_mut_lamports()? += amount;
+    // 🚨 A CPI, NOT A DIRECT DEBIT, AND THE DIRECT DEBIT NEVER WORKED.
+    //
+    // This was `**escrow.try_borrow_mut_lamports()? -= amount;` and it failed on
+    // chain every single time with "instruction spent from the balance of an
+    // account it does not own". `fee_escrow` is declared `SystemAccount` above,
+    // so the System Program owns it — and the runtime lets a program CREDIT an
+    // account it does not own but never DEBIT one. Crediting is why
+    // `shield_denominated_v3` and the two unshields could pay into this escrow
+    // with a direct `+=` and look correct: the deposit half of the pattern is
+    // legal and the withdrawal half is not.
+    //
+    // So the escrow has been a ONE-WAY SINK for as long as it has existed.
+    // MEASURED 2026-08-26 on devnet: 0.268 SOL in the 1 SOL pool's escrow,
+    // 0.0326 in the 0.1 pool's, and `scripts/sweep-fee-escrow.mjs` could not
+    // recover a lamport of it. That is 0.5% of every withdrawal ever made,
+    // permanently sunk, which turns the running cost of the whole system
+    // negative in a way nobody had noticed because nothing ever tried to sweep.
+    //
+    // The escrow is a PDA of THIS program, so the program can sign for it: a
+    // System Program transfer under `invoke_signed` moves the lamports and the
+    // runtime is satisfied because the System Program owns the account it is
+    // debiting. The rent floor above still applies — the transfer would fail on
+    // its own rent check anyway, but failing our explicit `require!` first says
+    // WHY.
+    let pool_key = ctx.accounts.denominated_pool.key();
+    let escrow_seeds: &[&[u8]] = &[
+        FEE_ESCROW_SEED_PREFIX,
+        pool_key.as_ref(),
+        &[ctx.bumps.fee_escrow],
+    ];
+    anchor_lang::system_program::transfer(
+        CpiContext::new_with_signer(
+            ctx.accounts.system_program.to_account_info(),
+            anchor_lang::system_program::Transfer {
+                from: escrow.clone(),
+                to: ctx.accounts.destination.to_account_info(),
+            },
+            &[escrow_seeds],
+        ),
+        amount,
+    )?;
 
     let dest_key = ctx.accounts.destination.key();
     let mut dest_prefix = [0u8; 16];

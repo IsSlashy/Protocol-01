@@ -15,6 +15,7 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
+    "@protocol-01/stark-prover": "workspace:*",
     "@coral-xyz/anchor": "^0.32.1",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",

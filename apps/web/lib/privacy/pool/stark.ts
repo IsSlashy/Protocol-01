@@ -39,6 +39,11 @@ const CIRCUIT_MERKLE_PATH = 3;
 const CIRCUIT_CONFIDENTIAL_BALANCE = 4;
 const CIRCUIT_TRANSFER = 5;
 const CIRCUIT_MERKLE_UPDATE = 6;
+/**
+ * [C7] The spend circuit: C1's pool commitment and C3's Merkle path proven in
+ * ONE trace, so the note commitment is never a public input.
+ */
+const CIRCUIT_SPEND = 7;
 
 const MAX_CHUNK_SIZE = 1000;
 const PROOF_DATA_OFFSET = 83;
@@ -734,7 +739,12 @@ export async function submitAndVerifyStarkProof(
   // Phase 2 (DEEP-ALI at OOD) — mandatory for circuits 1–6. Circuit 0 runs
   // DEEP-ALI inline in phase 1. Combined phase 1+2 exceeds the 1.4M CU per-ix
   // budget, so we split across two transactions.
-  if (proof.circuitId >= 1 && proof.circuitId <= 6) {
+  // [C7 2026-08-24] <= 7. Circuit 7 (spend) splits phase 1 / phase 2 like
+  // 1..6, and phase 2 is where ALL of its binding lives -- its per-query
+  // arm is vacuous and step 5 is gone. Left at <= 6 this branch skips
+  // phase 2 silently and the client reports SUCCESS on a proof whose six
+  // boundary assertions were never checked against the trace.
+  if (proof.circuitId >= 1 && proof.circuitId <= 7) {
     onProgress?.('Verifying STARK proof phase 2 (DEEP-ALI)...');
     const deepAliTx = new Transaction()
       .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
@@ -780,4 +790,5 @@ export {
   CIRCUIT_CONFIDENTIAL_BALANCE,
   CIRCUIT_TRANSFER,
   CIRCUIT_MERKLE_UPDATE,
+  CIRCUIT_SPEND,
 };

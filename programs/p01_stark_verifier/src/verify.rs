@@ -337,9 +337,235 @@ mod domain_generator_tests {
     /// Same failure class, second lookup: an unknown circuit id used to yield an
     /// empty assertion list, which `verify_boundary_constraints` accepts as
     /// "nothing to check".
+
+    // ========================================================================
+    // [C7] DRIFT PINS -- the prover and the verifier must not diverge
+    // ========================================================================
+    //
+    // C7's shape is six measured quantities that now exist in two crates: the
+    // boundary table, the eighteen constraints, the thirteen periodic columns
+    // and their classification, the row 382, and the two FRI constants. The
+    // verifier crate dev-depends on `p01-stark`, so these tests DRIVE BOTH
+    // SIDES from one source instead of restating either.
+    //
+    // That is the whole point. The C3/C6 depth window was maintained as two
+    // independent restatements of one rule, and the prover went on building
+    // proofs the deployed verifier had already stopped accepting -- silently,
+    // for weeks, because nothing compared the two.
+
+    /// Deterministic pseudo-random Goldilocks elements. Not security-relevant;
+    /// reproducibility is what a drift pin needs.
+    fn c7_stream(seed: u64, n: usize) -> Vec<u64> {
+        const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+        let mut st = 0x9E37_79B9_7F4A_7C15u64 ^ seed.wrapping_mul(0x1000_0000_0000_0001);
+        if st == 0 {
+            st = 0xD1B5_4A32_D192_ED03;
+        }
+        let mut out = Vec::with_capacity(n);
+        while out.len() < n {
+            st ^= st >> 12;
+            st ^= st << 25;
+            st ^= st >> 27;
+            out.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
+        }
+        out
+    }
+
+    /// [W16] The boundary arm mirrors the prover's table, IN ORDER.
+    ///
+    /// The index `j` IS the `alpha_bnd^j` exponent, so order is not cosmetic:
+    /// two swapped lines produce a different polynomial and every honest proof
+    /// fails with `DeepAliFailed` pointing nowhere.
+    #[test]
+    fn c7_boundary_arm_mirrors_the_prover_spec_in_order() {
+        use p01_stark::air::spend::{
+            CANONICAL_DEPTH, ROW_MERKLE_ROOT_OUT, SPEND_BOUNDARY_SPEC,
+            SPEND_NUM_PUBLIC_INPUTS,
+        };
+
+        let pi: Vec<u64> = (1..=SPEND_NUM_PUBLIC_INPUTS as u64).map(|i| i * 1_000).collect();
+        let got = get_boundary_assertions(7, &pi).expect("C7 arm must exist");
+
+        assert_eq!(got.len(), SPEND_BOUNDARY_SPEC.len(), "assertion COUNT drifted");
+        for (j, (col, row, source)) in SPEND_BOUNDARY_SPEC.iter().enumerate() {
+            assert_eq!(got[j].col, *col, "col drift at alpha_bnd^{j}");
+            assert_eq!(got[j].row, *row, "row drift at alpha_bnd^{j}");
+            let want = match source {
+                Some(i) => Felt::new(pi[*i]),
+                None => Felt::ZERO,
+            };
+            assert_eq!(got[j].value, want, "value drift at alpha_bnd^{j}");
+        }
+
+        // The row that the CANONICAL_DEPTH name collision gets wrong. 12, not
+        // 15; 382, not 478. 478 is inside the blinding region.
+        assert_eq!(CANONICAL_DEPTH, 12, "C7 is depth 12");
+        assert_eq!(ROW_MERKLE_ROOT_OUT, 382, "(12-1)*32+30");
+        assert_eq!(got[5].row, ROW_MERKLE_ROOT_OUT, "root row drifted");
+        assert_ne!(got[5].value, Felt::ZERO, "the root was bound to ZERO");
+
+        assert_eq!(expected_public_input_count(7), Ok(SPEND_NUM_PUBLIC_INPUTS));
+    }
+
+    /// [W17] The OOD evaluator agrees with the AIR on random frames.
+    ///
+    /// A differential test, not a restatement: it feeds the SAME random frame
+    /// to `evaluate_spend_transition` (prover) and
+    /// `evaluate_transition_at_ood_circuit_7` (verifier) and compares the
+    /// RLC-combined result.
+    ///
+    /// 🚨 This is what catches the copy that would otherwise pass review:
+    /// gating C7's Poseidon rows with `1 - is_boundary`, as C6 does, instead of
+    /// with `not_boundary_active`. The two agree everywhere except the blinding
+    /// region -- so an honest proof would still verify, and only the privacy
+    /// property would be gone. A random frame with a nonzero `is_boundary` and
+    /// a zero `nba` separates them.
+    #[test]
+    fn c7_ood_evaluator_matches_the_air_on_random_frames() {
+        use p01_stark::air::spend::{
+            evaluate_spend_transition, SPEND_NUM_CONSTRAINTS, SPEND_NUM_PERIODIC,
+            TRACE_WIDTH,
+        };
+        use p01_stark::{BaseElement, FieldElement, StarkField};
+
+        assert_eq!(SPEND_NUM_CONSTRAINTS, 18);
+        assert_eq!(SPEND_NUM_PERIODIC, 13);
+        assert_eq!(TRACE_WIDTH, 10);
+
+        for seed in 0..64u64 {
+            let raw = c7_stream(seed, 10 + 10 + 13 + 1);
+            let cur_air: Vec<BaseElement> =
+                raw[0..10].iter().map(|&v| BaseElement::new(v)).collect();
+            let nxt_air: Vec<BaseElement> =
+                raw[10..20].iter().map(|&v| BaseElement::new(v)).collect();
+            let per_air: Vec<BaseElement> =
+                raw[20..33].iter().map(|&v| BaseElement::new(v)).collect();
+            let alpha_air = BaseElement::new(raw[33]);
+
+            let mut air_out = vec![BaseElement::ZERO; SPEND_NUM_CONSTRAINTS];
+            evaluate_spend_transition(&cur_air, &nxt_air, &per_air, &mut air_out);
+            let mut want = BaseElement::ZERO;
+            let mut p = BaseElement::ONE;
+            for v in air_out.iter() {
+                want += p * *v;
+                p *= alpha_air;
+            }
+
+            let mut cur_v = [Felt::ZERO; 10];
+            let mut nxt_v = [Felt::ZERO; 10];
+            let mut per_v = [Felt::ZERO; 13];
+            for i in 0..10 {
+                cur_v[i] = Felt::new(raw[i]);
+                nxt_v[i] = Felt::new(raw[10 + i]);
+            }
+            for i in 0..13 {
+                per_v[i] = Felt::new(raw[20 + i]);
+            }
+            let got = evaluate_transition_at_ood_circuit_7(
+                &cur_v, &nxt_v, &per_v, Felt::new(raw[33]),
+            );
+
+            assert_eq!(
+                got.as_u64(),
+                want.as_int(),
+                "C7 transition drift at seed {seed}: the verifier and the AIR disagree",
+            );
+        }
+    }
+
+    /// [W18a] `compute_c7_periodic_at_z` agrees with the prover's columns.
+    ///
+    /// Also pins the API contract the AIR states: columns 0-6 come back at
+    /// their NATURAL length 32 and 7-12 at 512. A length-32 emission and a
+    /// hand-tiled 512 one are byte-identical downstream, so the short form is
+    /// free safety -- but only while the verifier's evaluator expects it.
+    #[test]
+    fn c7_periodic_at_z_matches_the_prover_columns() {
+        use p01_stark::air::spend::build_spend_periodic_columns;
+        use p01_stark::{BaseElement, FieldElement, StarkField};
+
+        let cols = build_spend_periodic_columns();
+        assert_eq!(cols.len(), 13, "thirteen periodic columns");
+        for (i, col) in cols.iter().enumerate() {
+            let want = if i < 7 { 32 } else { 512 };
+            assert_eq!(col.len(), want, "periodic column {i} changed length");
+        }
+
+        // Materialise every column onto 512 points so one polynomial suffices,
+        // exactly as `compute_quotient_lde_circuit_7` does.
+        let full: Vec<Vec<BaseElement>> = cols
+            .iter()
+            .map(|col| (0..512).map(|i| col[i % col.len()]).collect())
+            .collect();
+
+        for z_seed in 0..8u64 {
+            let z_u = c7_stream(0xC7 ^ z_seed, 1)[0];
+            let z = Felt::new(z_u);
+            let z_air = BaseElement::new(z_u);
+
+            let got = match compute_c7_periodic_at_z(z) {
+                Ok(v) => v,
+                // z landed on one of the four one-hot rows: fails closed, and
+                // that IS the contract. Skip rather than assert on it.
+                Err(_) => continue,
+            };
+
+            for i in 0..13 {
+                let poly = p01_stark::compact::inverse_ntt_probe(
+                    &full[i],
+                    p01_stark::compact::domain_generator_probe(512),
+                );
+                let want = p01_stark::compact::evaluate_poly_probe(&poly, z_air);
+                assert_eq!(
+                    got[i].as_u64(),
+                    want.as_int(),
+                    "periodic slot {i} disagrees with the prover at z_seed {z_seed}",
+                );
+            }
+        }
+    }
+
+    /// [W18b] C7's seven compressed tables ARE the extension tables C3 and C6
+    /// already ship. MEASURED 2026-08-24, all 32 values, all seven.
+    ///
+    /// They are emitted separately rather than aliased, so C7 does not silently
+    /// move when C3 is rebaked -- and this test is what turns that independence
+    /// into a signal instead of a coincidence.
+    #[test]
+    fn c7_stride_tables_equal_the_c3_and_c6_periodic_extensions() {
+        use crate::periodic_consts::{
+            C7_HASH_START_COEFFS, C7_IS_BOUNDARY_COEFFS, C7_IS_INTERIOR_COEFFS,
+            C7_RC0_COEFFS, C7_RC1_COEFFS, C7_RC2_COEFFS, C7_ROUND_FLAG_COEFFS,
+        };
+        use crate::periodic_ext_consts::{
+            C3_HASH_START_PERIODIC16, C3_IS_BOUNDARY_PERIODIC16,
+            C3_IS_INTERIOR_PERIODIC16, C3_RC0_PERIODIC16, C3_RC1_PERIODIC16,
+            C3_RC2_PERIODIC16, C3_ROUND_ACTIVE_PERIODIC16, C6_HASH_START_PERIODIC16,
+            C6_IS_BOUNDARY_PERIODIC16, C6_IS_INTERIOR_PERIODIC16, C6_RC0_PERIODIC16,
+            C6_RC1_PERIODIC16, C6_RC2_PERIODIC16, C6_ROUND_ACTIVE_PERIODIC16,
+        };
+
+        let pairs: [(&str, &[u64; 32], &[u64; 32], &[u64; 32]); 7] = [
+            ("rc0", &C7_RC0_COEFFS, &C3_RC0_PERIODIC16, &C6_RC0_PERIODIC16),
+            ("rc1", &C7_RC1_COEFFS, &C3_RC1_PERIODIC16, &C6_RC1_PERIODIC16),
+            ("rc2", &C7_RC2_COEFFS, &C3_RC2_PERIODIC16, &C6_RC2_PERIODIC16),
+            ("round_flag", &C7_ROUND_FLAG_COEFFS, &C3_ROUND_ACTIVE_PERIODIC16, &C6_ROUND_ACTIVE_PERIODIC16),
+            ("is_boundary", &C7_IS_BOUNDARY_COEFFS, &C3_IS_BOUNDARY_PERIODIC16, &C6_IS_BOUNDARY_PERIODIC16),
+            ("hash_start", &C7_HASH_START_COEFFS, &C3_HASH_START_PERIODIC16, &C6_HASH_START_PERIODIC16),
+            ("is_interior", &C7_IS_INTERIOR_COEFFS, &C3_IS_INTERIOR_PERIODIC16, &C6_IS_INTERIOR_PERIODIC16),
+        ];
+        for (name, c7, c3, c6) in pairs.iter() {
+            assert_eq!(c7, c3, "C7 {name} diverged from C3's periodic extension");
+            assert_eq!(c3, c6, "C3 and C6 {name} diverged from each other");
+        }
+    }
+
     #[test]
     fn boundary_assertions_reject_unknown_circuit() {
-        for circuit_id in [7u8, 8, 100, 255] {
+        // [C7 2026-08-24] 7 dropped: it is a real circuit now. 8, 100 and 255
+        // must still answer UnsupportedCircuit, and the assertions below are
+        // unchanged -- this list is the tripwire, not the assertion.
+        for circuit_id in [8u8, 100, 255] {
             match get_boundary_assertions(circuit_id, &[1, 2, 3, 4, 5, 15]) {
                 Err(VerifyError::UnsupportedCircuit) => {}
                 Err(other) => panic!("circuit {circuit_id}: wrong error {other:?}"),
@@ -575,7 +801,10 @@ mod domain_generator_tests {
     /// not as an arity error — the arity check runs after the id lookup.
     #[test]
     fn arity_check_does_not_mask_an_unknown_circuit() {
-        for circuit_id in [7u8, 8, 100, 255] {
+        // [C7 2026-08-24] 7 dropped: it is a real circuit now. 8, 100 and 255
+        // must still answer UnsupportedCircuit, and the assertions below are
+        // unchanged -- this list is the tripwire, not the assertion.
+        for circuit_id in [8u8, 100, 255] {
             for n in 0..8usize {
                 let inputs: Vec<u64> = (0..n as u64).collect();
                 assert!(
@@ -621,6 +850,11 @@ pub fn expected_public_input_count(circuit_id: u8) -> Result<usize, VerifyError>
         4 => Ok(4), // [old_commitment, new_commitment, amount_hash, token_mint]
         5 => Ok(6), // [null_1, null_2, out_c1, out_c2, public_amount, token_mint]
         6 => Ok(5), // [old_leaf, new_leaf, old_root, new_root, depth]
+        // [C7] Six, and NO `depth` slot -- unlike C3 (3) and C6 (5). C7's depth
+        // is fixed at 12 by the trace layout, so there is no caller-chosen
+        // number here and `MIN/MAX_MERKLE_DEPTH` do not apply. That window is
+        // the C3/C6 seam that had to be patched twice; C7 does not have it.
+        7 => Ok(6), // [nullifier, root, rh0, rh1, rh2, rh3]
         _ => Err(VerifyError::UnsupportedCircuit),
     }
 }
@@ -833,6 +1067,51 @@ fn get_boundary_assertions(
                 BoundaryAssertion { col: 3, row: output_row, value: new_root },
             ]
         }
+        // Circuit 7: spend. Public inputs
+        // [nullifier, root, rh0, rh1, rh2, rh3].
+        //
+        // ORDER IS LOAD-BEARING. It is the `alpha_bnd^j` exponent order in
+        // `boundary_fold_at_ood`, and it mirrors the prover's
+        // `SPEND_BOUNDARY_SPEC` (stark/src/air/spend.rs) element for element.
+        // Reordering these six lines silently produces a different polynomial
+        // and every honest proof fails with `DeepAliFailed`.
+        //
+        // `rh0..rh3` take NO column and NO assertion. Their binding is
+        // Fiat-Shamir-transcript-only, exactly as C3's `depth` is: they enter
+        // `pub_bytes`, which moves the OOD point, the query positions and both
+        // alphas, so changing one invalidates the proof without ever being
+        // constrained inside the circuit.
+        7 => {
+            // 🚨 DO NOT WRITE `CANONICAL_DEPTH` HERE. That name exists three
+            // times in this file and means 15 every time; C7's is 12, and the
+            // difference is (15-1)*32+30 = 478 versus (12-1)*32+30 = 382. Row
+            // 478 is inside C7's blinding region, where nothing is constrained
+            // at all. That exact slip is what `tests/c7_probe` is built on.
+            const ROW_MERKLE_ROOT_OUT_C7: usize = 11 * HASH_CYCLE_LEN + NUM_ROUNDS; // 382
+            //
+            // ⛔ AND THIS ROOT IS A DEPTH-12 SUBTREE ROOT, NOT THE POOL ROOT.
+            // Binding it here proves membership of a subtree. Anyone holding a
+            // leaf in ANY subtree satisfies this assertion. The spending
+            // instruction MUST hash the three remaining levels itself against
+            // caller-supplied siblings and bind the result with `is_valid_root`
+            // before it trusts a C7 proof. Without that leg C7 is a fund-loss
+            // circuit, in the class `unshield` C5 was in before 2026-08-18.
+            let nullifier = Felt::new(public_inputs[0]);
+            let root = Felt::new(public_inputs[1]);
+            vec![
+                // cycle-0 Poseidon output: the published nullifier.
+                BoundaryAssertion { col: 6, row: NUM_ROUNDS, value: nullifier },
+                // cycle-2 LEFT input is the SAME nullifier. Without this, one
+                // published nullifier could be paired with any commitment.
+                BoundaryAssertion { col: 6, row: 2 * HASH_CYCLE_LEN, value: nullifier },
+                // Poseidon capacity zeroed at the start of cycles 0, 1, 2.
+                BoundaryAssertion { col: 8, row: 0, value: Felt::ZERO },
+                BoundaryAssertion { col: 8, row: HASH_CYCLE_LEN, value: Felt::ZERO },
+                BoundaryAssertion { col: 8, row: 2 * HASH_CYCLE_LEN, value: Felt::ZERO },
+                // the depth-12 subtree root -- see the ⛔ above.
+                BoundaryAssertion { col: 0, row: ROW_MERKLE_ROOT_OUT_C7, value: root },
+            ]
+        }
         _ => return Err(VerifyError::UnsupportedCircuit),
     };
     Ok(assertions)
@@ -935,6 +1214,7 @@ pub fn verify_generic(
         4 => verify_constraints_confidential_balance(proof, config, public_inputs),
         5 => verify_constraints_transfer(proof, config, public_inputs),
         6 => verify_constraints_merkle_update(proof, config, public_inputs),
+        7 => verify_constraints_spend(proof, config, public_inputs),
         _ => Err(VerifyError::UnsupportedCircuit),
     }?;
     anchor_lang::prelude::msg!("[verify] step4 ok");
@@ -1282,27 +1562,76 @@ fn check_final_poly_degree_bound(
     final_poly_bytes: &[u8],
     degree_bound: usize,
 ) -> Result<(), VerifyError> {
+    // [C7 2026-08-24] FAIL CLOSED WHEN THE BOUND SWALLOWS THE WHOLE POLYNOMIAL.
+    //
+    // The loop below skips coefficients `0..degree_bound` and checks the rest
+    // are zero. With `degree_bound >= n_coeffs` it skips EVERY coefficient and
+    // returns Ok(()) unconditionally: no error, no log, no test. The FRI rate
+    // rho is `bound / fri_final_poly_size`, so that state is rho = 1 and this
+    // terminal test is worth exactly zero bits.
+    //
+    // Nothing else covers it. `GenericCompactProof::from_bytes` validates
+    // `fri_final_poly_size` and never reads this field, so the parser cannot
+    // catch a bad value. The observable tuple in
+    // `no_two_configs_share_the_tuple_the_parser_can_observe` does not include
+    // it either, so no existing test goes red.
+    //
+    // Unreachable while every config is sane; it exists because C7 is the first
+    // circuit in this crate's history to set the bound above 1, and the
+    // realistic drift path is an honest rebake that fails with
+    // `FriFinalPolyDegreeTooHigh` on every proof and whose obvious-looking fix
+    // is to raise this literal until it stops complaining.
+    let n_coeffs = final_poly_bytes.len() / 8;
+    if degree_bound >= n_coeffs {
+        return Err(VerifyError::FriFinalPolyDegreeTooHigh);
+    }
+
     for (i, chunk) in final_poly_bytes.chunks_exact(8).enumerate() {
         if i < degree_bound {
             continue;
         }
         let arr: [u8; 8] = chunk.try_into().unwrap();
         if Felt::from_le_bytes(arr) != Felt::ZERO {
-            // [L13 2026-08-03] CONSIDERED AND DELIBERATELY LEFT. `degree_bound`
-            // is `config`-derived, so this is structurally the same class as the
-            // `step2a` line — but it is NOT a live leak: `emit_deep_degree_table`
-            // measures the bound at 1 on all seven circuits, so the number is
-            // constant across the anonymity set, and this is an error path an
-            // honest proof never reaches. Against that, ` non-zero, bound is `
-            // is one of the two `ELF_B1_MARKERS` in
-            // `packages/stark-prover/scripts/deployed-verifier-check.mjs`, the
-            // strings the deployed-verifier interlock classifies a chain
-            // deployment by, and `elfMarkerSourceProblem` hard-fails if a marker
-            // stops existing in this source. Deleting it would have bought zero
-            // privacy and cost half the B1 discriminator on a live gate. If the
-            // bound ever stops being 1 on every circuit, this becomes a real
-            // leak and the fix is a B2-only literal in `ELF_MARKERS_B2` first,
-            // then this line.
+            // [L13 2026-08-03, CORRECTED 2026-08-25] CONSIDERED AND DELIBERATELY
+            // LEFT — but for one of the three reasons the original note gave,
+            // not all three. `degree_bound` is `config`-derived, so this is
+            // structurally the same class as the `step2a` line.
+            //
+            // 🚨 THE ORIGINAL NOTE SAID "the bound is 1 on all seven circuits,
+            // so the number is constant across the anonymity set". THAT IS NO
+            // LONGER TRUE, AND IT WAS ALREADY UNTRUE WHEN IT WAS LAST READ:
+            // `CONFIG_SPEND` sets the bound to 2, and the C7 paragraph THIRTY
+            // LINES ABOVE THIS ONE says C7 "is the first circuit in this crate's
+            // history to set the bound above 1". Two statements in one function
+            // contradicting each other, and the stale one was being quoted as
+            // the reason C7 could not join `PROBE_ORDER` (lib.rs).
+            //
+            // 🚨 The note also cited `ELF_B1_MARKERS` in
+            // `packages/stark-prover/scripts/deployed-verifier-check.mjs` as the
+            // cost of deleting this line, and a 2026-08-25 measurement recorded
+            // here that the file did not exist on this branch, on master, or
+            // anywhere in this repository. THAT MEASUREMENT IS NOW STALE:
+            // commit `ce45f47d` recovered the script from
+            // `b7-drop-aligned-checks`, and it is present in this tree today.
+            // `ELF_B1_MARKERS` is defined in it (~line 353) as exactly two
+            // literals — `"[verify] final poly coeff "` and
+            // `" non-zero, bound is "` — which are the two halves of the `msg!`
+            // at the bottom of this block. The script scans the DEPLOYED
+            // verifier's ELF for them, and finding both is the only signal it
+            // has that the deployment is `b1+` rather than `pre-b1`. So this
+            // half of the justification is live again, not describing an absent
+            // gate: deleting this `msg!` blinds that cross-language interlock,
+            // and the script's own header says not to widen the marker list to
+            // clear a red there.
+            //
+            // WHAT ACTUALLY JUSTIFIES LEAVING IT, and it is sufficient on its
+            // own: this is an ERROR path. It runs only on the
+            // `FriFinalPolyDegreeTooHigh` return, and every write and every
+            // verify on a `ProofBuffer` is `has_one = authority` plus a
+            // `Signer`, so no third party can make another user's proof fail
+            // here. An honest proof never emits it, and the only observer who
+            // can trigger it is the one who already knows which circuit they
+            // were proving.
             anchor_lang::prelude::msg!(
                 "[verify] final poly coeff {} non-zero, bound is {}",
                 i,
@@ -2121,6 +2450,19 @@ fn poseidon_round(state: &[Felt; 3], rc: &[Felt; 3]) -> [Felt; 3] {
 /// For each query that lands on a trace-aligned position corresponding to
 /// a boundary assertion row, verify the trace value matches the expected
 /// public input value.
+/// ⚠️ THE WHOLE BODY IS DEAD, AND THE ALLOWS BELONG ON THE FUNCTION.
+///
+/// The `#[allow(unreachable_code)]` inside the body scopes to the inner block
+/// only, so rustc still warned about the statement AND about every parameter
+/// the disabled body stopped reading. `cargo clippy -p p01_stark_verifier --
+/// -D warnings` is a CI gate (.github/workflows/ci.yml), and MEASURED
+/// 2026-08-26 it failed with exit 101 on six errors from exactly these two
+/// functions -- two `unreachable statement`, four `unused variable`.
+///
+/// The parameters are kept rather than underscored on purpose: this arm is
+/// disabled, not deleted, and re-enabling it means restoring the body, not
+/// rediscovering what it took.
+#[allow(unreachable_code, unused_variables)]
 fn verify_boundary_constraints(
     proof: &GenericCompactProof,
     circuit_id: u8,
@@ -2164,6 +2506,19 @@ fn verify_boundary_constraints(
 }
 
 /// [C6] Legacy boundary constraint verification for circuit 0.
+/// ⚠️ THE WHOLE BODY IS DEAD, AND THE ALLOWS BELONG ON THE FUNCTION.
+///
+/// The `#[allow(unreachable_code)]` inside the body scopes to the inner block
+/// only, so rustc still warned about the statement AND about every parameter
+/// the disabled body stopped reading. `cargo clippy -p p01_stark_verifier --
+/// -D warnings` is a CI gate (.github/workflows/ci.yml), and MEASURED
+/// 2026-08-26 it failed with exit 101 on six errors from exactly these two
+/// functions -- two `unreachable statement`, four `unused variable`.
+///
+/// The parameters are kept rather than underscored on purpose: this arm is
+/// disabled, not deleted, and re-enabling it means restoring the body, not
+/// rediscovering what it took.
+#[allow(unreachable_code, unused_variables)]
 fn verify_boundary_constraints_legacy(
     proof: &CompactStarkProof,
     commitment: Felt,
@@ -2507,6 +2862,107 @@ fn eval_periodic_ext_at_z(
     acc.sub(corr)
 }
 
+/// [C7] The thirteen periodic columns at the OOD point `z`.
+///
+/// THREE EVALUATOR CLASSES, MEASURED not assumed -- the split is pinned by
+/// `spend_periodic_classification_is_pinned_not_merely_emitted` in the prover
+/// crate, which asserts the counts AND the one-hot rows.
+///
+///   0-6   stride-16, COMPRESSED `[u64; 32]`. `y16 = z^16` is computed once
+///         here and shared by all seven, so the four squarings are paid once.
+///   7-10  one-hot. No table at all: `eval_one_hot_lagrange` needs `g^k` and
+///         three multiplications.
+///   11-12 genuinely dense `[u64; 512]`. These two are 8,192 of C7's 9,984
+///         bytes of rodata and the only columns on the expensive path. They
+///         are the gates that switch every constraint off on rows 384..511.
+///
+/// ⛔ RETURNING FEWER THAN THIRTEEN IS THE FAILURE THAT HAS ALREADY HAPPENED
+/// ONCE. `tests/c7_probe/src/lib.rs` models this as `[Felt; 10]` -- five
+/// stride, five one-hot, ZERO dense -- because two doc blocks in the AIR
+/// announced `periodic[0..13]` and then listed ten names. Dropping columns 11
+/// and 12 removes the row gates, and every honest proof is rejected with the
+/// failure pointing nowhere near the cause.
+#[inline(never)]
+fn compute_c7_periodic_at_z(z: Felt) -> Result<[Felt; 13], VerifyError> {
+    use crate::periodic_consts::{
+        C7_ACTIVE_COEFFS, C7_HASH_START_COEFFS, C7_IS_BOUNDARY_COEFFS,
+        C7_IS_INTERIOR_COEFFS, C7_NOT_BOUNDARY_ACTIVE_COEFFS, C7_RC0_COEFFS,
+        C7_RC1_COEFFS, C7_RC2_COEFFS, C7_ROUND_FLAG_COEFFS,
+    };
+
+    let g_512 = Felt::new(GENERATOR_512);
+    // Baked, not `Felt::new(512).inv()`. C5 pays a Fermat exponentiation for a
+    // value this file already holds as a constant.
+    let inv_n = Felt::new(INV_512);
+
+    // y16 = z^16, hoisted once for all seven compressed columns.
+    let y16 = z.exp(16);
+    // z^512 = (z^16)^32, five squarings.
+    let mut z_n = y16;
+    for _ in 0..5 {
+        z_n = z_n.mul(z_n);
+    }
+    let z_n_minus_one = z_n.add(Felt::new(crate::goldilocks::MODULUS - 1));
+
+    // One-hot rows in PERIODIC-INDEX order 7, 8, 9, 10 -- chain_flag,
+    // commit_out_flag, row0_flag, hold_link_31. NOT the depth-15 set
+    // [0, 30, 62, 94, 478] the CU probe carries.
+    const FLAG_ROWS: [u64; 4] = [63, 94, 0, 31];
+    let mut g_pows = [Felt::ZERO; 4];
+    let mut diffs = [Felt::ZERO; 4];
+    for i in 0..4 {
+        let g_k = g_512.exp(FLAG_ROWS[i]);
+        g_pows[i] = g_k;
+        diffs[i] = z.add(Felt::new(crate::goldilocks::MODULUS - g_k.as_u64()));
+    }
+    let mut inv_diffs = [Felt::ZERO; 4];
+    if !batch_inverse(&diffs, &mut inv_diffs) {
+        // z landed on one of the four flag rows. Fails closed.
+        return Err(VerifyError::DeepAliFailed);
+    }
+
+    Ok([
+        eval_periodic_compressed32_at_z(&C7_RC0_COEFFS, y16),         //  0 rc0
+        eval_periodic_compressed32_at_z(&C7_RC1_COEFFS, y16),         //  1 rc1
+        eval_periodic_compressed32_at_z(&C7_RC2_COEFFS, y16),         //  2 rc2
+        eval_periodic_compressed32_at_z(&C7_ROUND_FLAG_COEFFS, y16),  //  3 round_flag
+        eval_periodic_compressed32_at_z(&C7_IS_BOUNDARY_COEFFS, y16), //  4 is_boundary
+        eval_periodic_compressed32_at_z(&C7_HASH_START_COEFFS, y16),  //  5 hash_start
+        eval_periodic_compressed32_at_z(&C7_IS_INTERIOR_COEFFS, y16), //  6 is_interior
+        eval_one_hot_lagrange(g_pows[0], z_n_minus_one, inv_diffs[0], inv_n), //  7 chain_flag @63
+        eval_one_hot_lagrange(g_pows[1], z_n_minus_one, inv_diffs[1], inv_n), //  8 commit_out @94
+        eval_one_hot_lagrange(g_pows[2], z_n_minus_one, inv_diffs[2], inv_n), //  9 row0 @0
+        eval_one_hot_lagrange(g_pows[3], z_n_minus_one, inv_diffs[3], inv_n), // 10 hold_link @31
+        eval_periodic_at_z(&C7_ACTIVE_COEFFS, z),                     // 11 active (DENSE)
+        eval_periodic_at_z(&C7_NOT_BOUNDARY_ACTIVE_COEFFS, z),        // 12 nba    (DENSE)
+    ])
+}
+
+/// [C7] Stride-16 periodic evaluation from COMPRESSED coefficients.
+///
+/// `eval_periodic_stride16_at_z` takes `&[u64; 512]` and reads exactly 32 of
+/// its entries -- indices 0, 16, 32, ..., 496. The other 480 are provably zero
+/// and still occupy 3,840 bytes of rodata per column. C7 has seven such
+/// columns, so the dense form would cost 26,880 bytes to say nothing.
+///
+/// Same arithmetic as the 512 form: a 32-step Horner in `y16 = z^16`. `y16` is
+/// taken as an argument rather than computed, so a caller evaluating seven
+/// columns pays the four squarings once instead of seven times.
+///
+/// ⛔ ADDITIVE ONLY. Do not "simplify" `eval_periodic_stride16_at_z` into this
+/// one: its four C5 call sites are baked against shipped `[u64; 512]` tables,
+/// and rebaking those is a redeploy.
+#[inline(always)]
+fn eval_periodic_compressed32_at_z(coeffs: &[u64; 32], y16: Felt) -> Felt {
+    let mut acc = Felt::ZERO;
+    let mut k = 32;
+    while k > 0 {
+        k -= 1;
+        acc = acc.mul(y16).add(Felt::new(coeffs[k]));
+    }
+    acc
+}
+
 /// Vanishing polynomial `Z_D(z) = z^trace_length - 1` for the trace domain.
 fn vanishing_poly_trace_length(z: Felt, trace_length: usize) -> Felt {
     let zn = z.exp(trace_length as u64);
@@ -2551,8 +3007,22 @@ fn boundary_fold_at_ood(
     alpha_bnd: Felt,
 ) -> Option<Felt> {
     let k = assertions.len();
+    // [C7 2026-08-24] Was `Some(Felt::ZERO)`. An empty assertion list is not a
+    // neutral element, it is a missing binding, and the caller cannot tell the
+    // two apart through an `Option`.
+    //
+    // It matters more for C7 than for anything before it: the per-query
+    // transition layer is dead on this lineage (`is_trace_aligned` is hardcoded
+    // false at eight sites) and step 5 is gone, so for circuit 7 THIS FOLD
+    // CARRIES THE ENTIRE PUBLIC-INPUT-TO-TRACE BINDING. Returning zero here
+    // degenerates the DEEP-ALI identity to transition-only, and a proof whose
+    // col 6 row 30 is not the declared nullifier and whose col 0 row 382 is not
+    // the declared root would verify -- nullifier forgery plus fake subtree
+    // membership, returning Ok with nothing logged.
+    //
+    // Behaviour-preserving today: every live arm builds a non-empty list.
     if k == 0 {
-        return Some(Felt::ZERO);
+        return None;
     }
     // denoms[j] = z − g^{r_j}
     let mut denoms = [Felt::ZERO; 32]; // max assertions across circuits ≤ 24
@@ -4223,6 +4693,261 @@ pub fn verify_deep_ali_circuit_5(
     let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C5).mul(z_t);
     if c_total != rhs {
         return Err(VerifyError::DeepAliFailed);
+    }
+    Ok(())
+}
+
+
+// ============================================================================
+// [C7] Spend circuit -- the unlinkable denominated withdrawal
+// ============================================================================
+
+/// [C7] The eighteen transition constraints at the OOD point, RLC-combined
+/// with `alpha^i`.
+///
+/// Mirrors `evaluate_spend_transition` (stark/src/air/spend.rs) constraint for
+/// constraint. The ORDER is load-bearing: the RLC weights are `alpha^i` over
+/// this exact sequence, so swapping two lines produces a different polynomial
+/// and every honest proof fails.
+///
+/// 🚨 THE ONE PLACE C6 MUST NOT BE COPIED. `evaluate_transition_at_ood_circuit_6`
+/// gates its Poseidon rounds with `not_boundary = 1 - is_boundary`. C7 gates
+/// them with `nba` = `periodic[12]` = `not_boundary_active`, which is ALSO zero
+/// on rows 383..511. Using C6's gate here would switch the Poseidon constraints
+/// back ON across C7's blinding region: 128 rows per column that must carry
+/// free randomness would become constrained, the counting argument in
+/// `air/spend.rs` would collapse, and the note commitment would be solvable
+/// from the published evaluations again. The whole depth-12 redesign exists to
+/// escape that state.
+///
+/// `periodic_at_z` indices, all thirteen:
+///   0 rc0 · 1 rc1 · 2 rc2 · 3 round_flag · 4 is_boundary · 5 hash_start
+///   6 is_interior · 7 chain_flag · 8 commit_out_flag · 9 row0_flag
+///   10 hold_link_31 · 11 active · 12 not_boundary_active
+#[inline(never)]
+fn evaluate_transition_at_ood_circuit_7(
+    ood_current: &[Felt; 10],
+    ood_next: &[Felt; 10],
+    periodic_at_z: &[Felt; 13],
+    alpha: Felt,
+) -> Felt {
+    let rc0 = periodic_at_z[0];
+    let rc1 = periodic_at_z[1];
+    let rc2 = periodic_at_z[2];
+    let round_flag = periodic_at_z[3];
+    let is_boundary = periodic_at_z[4];
+    let hash_start = periodic_at_z[5];
+    let is_interior = periodic_at_z[6];
+    let chain_flag = periodic_at_z[7];
+    let commit_out_flag = periodic_at_z[8];
+    let row0_flag = periodic_at_z[9];
+    let hold_link_31 = periodic_at_z[10];
+    let active = periodic_at_z[11];
+    let nba = periodic_at_z[12];
+
+    let one = Felt::ONE;
+    let three = Felt::new(3);
+    let not_boundary = one.sub(is_boundary);
+
+    let mut cs = [Felt::ZERO; 18];
+
+    // ── [0]-[2] Merkle Poseidon round (cols 0-2), gated by `nba` ──
+    let s0 = ood_current[0].add(rc0);
+    let s1 = ood_current[1].add(rc1);
+    let s2 = ood_current[2].add(rc2);
+    let s0_7 = s0.pow7();
+    let s1_7 = s1.pow7();
+    let s2_7 = s2.pow7();
+    let ro0 = three.mul(s0_7).add(s1_7).add(s2_7);
+    let ro1 = s0_7.add(three.mul(s1_7)).add(s2_7);
+    let ro2 = s0_7.add(s1_7).add(three.mul(s2_7));
+    cs[0] = nba.mul(
+        ood_next[0].sub(ood_current[0]).sub(round_flag.mul(ro0.sub(ood_current[0])))
+    );
+    cs[1] = nba.mul(
+        ood_next[1].sub(ood_current[1]).sub(round_flag.mul(ro1.sub(ood_current[1])))
+    );
+    cs[2] = nba.mul(
+        ood_next[2].sub(ood_current[2]).sub(round_flag.mul(ro2.sub(ood_current[2])))
+    );
+
+    // ── [3]-[5] Hash start mux: state = mux(direction, carry, sibling) ──
+    let dir = ood_current[4];
+    let sib = ood_current[3];
+    let carry = ood_current[5];
+    let hash_start_a = hash_start.mul(active);
+    cs[3] = hash_start_a.mul(ood_current[0].sub(carry).sub(dir.mul(sib.sub(carry))));
+    cs[4] = hash_start_a.mul(ood_current[1].sub(sib).sub(dir.mul(carry.sub(sib))));
+    cs[5] = hash_start_a.mul(ood_current[2]);
+
+    // ── [6]-[7] Carry update at boundary, continuity off it ──
+    cs[6] = is_boundary.mul(active).mul(ood_next[5].sub(ood_current[0]));
+    cs[7] = nba.mul(ood_next[5].sub(ood_current[5]));
+
+    // ── [8]-[10] Sibling / direction continuity, direction binary ──
+    let is_interior_a = is_interior.mul(active);
+    cs[8] = is_interior_a.mul(ood_next[3].sub(ood_current[3]));
+    cs[9] = is_interior_a.mul(ood_next[4].sub(ood_current[4]));
+    cs[10] = hash_start_a.mul(dir).mul(one.sub(dir));
+
+    // ── [11]-[13] Commitment Poseidon round (cols 6-8), gated by `nba` ──
+    let t0 = ood_current[6].add(rc0);
+    let t1 = ood_current[7].add(rc1);
+    let t2 = ood_current[8].add(rc2);
+    let t0_7 = t0.pow7();
+    let t1_7 = t1.pow7();
+    let t2_7 = t2.pow7();
+    let co0 = three.mul(t0_7).add(t1_7).add(t2_7);
+    let co1 = t0_7.add(three.mul(t1_7)).add(t2_7);
+    let co2 = t0_7.add(t1_7).add(three.mul(t2_7));
+    cs[11] = nba.mul(
+        ood_next[6].sub(ood_current[6]).sub(round_flag.mul(co0.sub(ood_current[6])))
+    );
+    cs[12] = nba.mul(
+        ood_next[7].sub(ood_current[7]).sub(round_flag.mul(co1.sub(ood_current[7])))
+    );
+    cs[13] = nba.mul(
+        ood_next[8].sub(ood_current[8]).sub(round_flag.mul(co2.sub(ood_current[8])))
+    );
+
+    // ── [14] Chain: blind_hash (col 6 @ row 63) -> cycle 2's RIGHT input ──
+    // Without it, blind_hash is a free prover choice and the commitment at row
+    // 94 is whatever the prover wants -- [16]/[17] would bind a value the
+    // prover controls end to end.
+    cs[14] = chain_flag.mul(ood_next[7].sub(ood_current[6]));
+
+    // ── [15]-[17] Hold column (col 9) ──
+    // [15] is GATED. Ungated it forces col 9 constant on all 512 rows, making
+    // it a degree-0 polynomial whose value IS the commitment at every published
+    // evaluation. The three gate terms are mutually exclusive, so the sum is
+    // 0 or 1 and never 2.
+    cs[15] = active
+        .mul(not_boundary.add(hold_link_31).add(chain_flag))
+        .mul(ood_next[9].sub(ood_current[9]));
+    cs[16] = commit_out_flag.mul(ood_current[9].sub(ood_current[6]));
+    cs[17] = row0_flag.mul(ood_current[5].sub(ood_current[9]));
+
+    let mut acc = Felt::ZERO;
+    let mut alpha_power = Felt::ONE;
+    for c in cs.iter() {
+        acc = acc.add(alpha_power.mul(*c));
+        alpha_power = alpha_power.mul(alpha);
+    }
+    acc
+}
+
+/// [C7] Phase-2 DEEP-ALI for the spend circuit.
+///
+/// Skeleton is `verify_deep_ali_circuit_5`'s, with width 10 and C7's tags.
+///
+/// ⛔ NO DEPTH PREAMBLE, deliberately. C6 pins `public_inputs[4] ==
+/// CANONICAL_DEPTH` before anything else because its periodic columns are
+/// depth-dependent. C7 has no depth public input at all: the depth is baked
+/// into the AIR and into the row-382 boundary assertion, so there is no
+/// caller-chosen number to pin and no window to get wrong.
+///
+/// 🚨 FOR C7 THIS FUNCTION IS THE WHOLE BINDING. The per-query transition layer
+/// is dead on this lineage (`is_trace_aligned` hardcoded false at every site)
+/// and step 5 is gone, so nothing else ties the published public inputs to the
+/// trace. If this returns Ok on a proof it should have rejected, there is no
+/// second line of defence.
+#[inline(never)]
+pub fn verify_deep_ali_circuit_7(
+    proof: &GenericCompactProof,
+    public_inputs: &[u64],
+) -> Result<(), VerifyError> {
+    let z = proof.ood_z;
+
+    // Own `#[inline(never)]` frame: thirteen periodic values plus the Lagrange
+    // scratch would not fit alongside the OOD arrays in one 4KB SBF frame.
+    let periodic_at_z = compute_c7_periodic_at_z(z)?;
+
+    let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
+    let ood_next_vec: Vec<Felt> = proof.ood_next_iter().collect();
+    if ood_current_vec.len() != 10 || ood_next_vec.len() != 10 {
+        return Err(VerifyError::DeepAliFailed);
+    }
+    let ood_current = [
+        ood_current_vec[0], ood_current_vec[1], ood_current_vec[2],
+        ood_current_vec[3], ood_current_vec[4], ood_current_vec[5],
+        ood_current_vec[6], ood_current_vec[7], ood_current_vec[8],
+        ood_current_vec[9],
+    ];
+    let ood_next = [
+        ood_next_vec[0], ood_next_vec[1], ood_next_vec[2],
+        ood_next_vec[3], ood_next_vec[4], ood_next_vec[5],
+        ood_next_vec[6], ood_next_vec[7], ood_next_vec[8],
+        ood_next_vec[9],
+    ];
+
+    // A FRESH tag. `derive_rlc_alpha` (untagged) is hardwired to `rlc-v1`,
+    // which C6 uses; reusing any existing tag would let two different folds
+    // derive the same challenge.
+    let pub_bytes = public_inputs_to_bytes(public_inputs);
+    let alpha = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"rlc-c7\0\0");
+
+    let c_at_z = evaluate_transition_at_ood_circuit_7(
+        &ood_current, &ood_next, &periodic_at_z, alpha,
+    );
+
+    // Z_T(z) = (z^n - 1) / (z - g^(n-1)), n = 512.
+    const TRACE_LENGTH_C7: usize = 512;
+    let z_d = vanishing_poly(z, TRACE_LENGTH_C7);
+    let g = Felt::new(GENERATOR_512);
+    let last_row_x = g.exp((TRACE_LENGTH_C7 - 1) as u64);
+    let neg_last = Felt::new(crate::goldilocks::MODULUS - last_row_x.as_u64());
+    let z_minus_last = z.add(neg_last);
+    if z_minus_last == Felt::ZERO {
+        return Err(VerifyError::DeepAliFailed);
+    }
+    let z_t = z_d.mul(z_minus_last.inv());
+
+    // [C2] Boundary public-input binding at z. Six assertions, in
+    // `SPEND_BOUNDARY_SPEC` order.
+    let assertions = get_boundary_assertions(7, public_inputs)?;
+    // Explicit count check. `boundary_fold_at_ood` used to return
+    // `Some(Felt::ZERO)` for an empty list, so `.ok_or(..)` could not tell
+    // "rejected" from "nothing to fold". That path now returns `None`, and this
+    // is the belt to its braces: for C7 an unbound public input means a forged
+    // nullifier and a chosen subtree root both verify.
+    if assertions.len() != 6 {
+        return Err(VerifyError::DeepAliFailed);
+    }
+    let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c7\0\0");
+    let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
+        .ok_or(VerifyError::DeepAliFailed)?;
+    let c_total = c_at_z.add(c_bnd);
+
+    // [B2] The recombined Q(z) = SUM_j z^(jn) Q_j(z).
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C7).mul(z_t);
+    if c_total != rhs {
+        return Err(VerifyError::DeepAliFailed);
+    }
+    Ok(())
+}
+
+/// [C7] Phase-1 per-query arm.
+///
+/// Vacuous, exactly like its eight siblings, and that is not an oversight: the
+/// coset LDE (`LDE_COSET_SHIFT = 7`) means `x = h * g^i`, so an "aligned"
+/// position is not a trace row and the comparison it used to make is
+/// meaningless. Every circuit's arm has been dead since B7.
+///
+/// ⛔ AND C7 MUST NEVER GROW ONE. C3's padding branch and C6's both demand
+/// `next == current` on all columns past their active range. Applied to C7 that
+/// fires on rows 384..=510 and collapses 128 independent mask values per column
+/// to a single repeated one -- which is precisely the underdetermination the
+/// depth-12 layout was adopted to buy. A per-query check here does not weaken
+/// C7's privacy, it deletes it.
+fn verify_constraints_spend(
+    proof: &GenericCompactProof,
+    _config: &CircuitConfig,
+    _public_inputs: &[u64],
+) -> Result<(), VerifyError> {
+    for (query_idx, _query) in proof.queries.iter().enumerate() {
+        if query_idx >= proof.quotient_values_len() {
+            return Err(VerifyError::QuotientCheckFailed);
+        }
     }
     Ok(())
 }
@@ -6514,6 +7239,64 @@ mod merkle_update_e2e {
                 )
             },
             verify_constraints_transfer,
+        );
+    }
+
+
+    /// [C7] The seventh retired-arm pin. Six existed; C7 had none.
+    ///
+    /// 🚨 AND C7 IS THE ONE CIRCUIT FOR WHICH REVIVING THIS ARM IS DESTRUCTIVE
+    /// RATHER THAN MERELY USELESS. For C1..C6 a revived per-query check would
+    /// be dead weight -- under the coset an "aligned" position is not a trace
+    /// row, so the comparison means nothing. For C7 it is worse than nothing.
+    ///
+    /// Flip `is_trace_aligned` back to `pos % blowup == 0` and the prover is
+    /// forced to write a CONSTANT across rows 384..510 of every column. Col 9's
+    /// unknown count drops from 138 -- one commitment segment, nine filler
+    /// cycles, 128 independent mask values -- to about twelve, against the
+    /// R = 4*22 + 2 = 90 evaluations the wire publishes. More equations than
+    /// unknowns is exactly the state depth 12 was adopted to escape: at depth 15
+    /// an observer solved a 14x14 system and recovered the commitment exactly.
+    ///
+    /// So this pin is not hygiene. It is the test that stands between a
+    /// plausible-looking "let's re-enable the per-query checks" and the return
+    /// of a solvable commitment.
+    #[test]
+    fn c7_phase1_arm_is_retired_post_b7() {
+        use p01_stark::air::spend::{CANONICAL_DEPTH, FIRST_FREE_ROW, MASK_ROWS, TRACE_WIDTH};
+        const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+
+        phase1_arm_is_retired_post_b7(
+            "C7 spend",
+            &crate::compact_proof::CONFIG_SPEND,
+            // Documentary only: rows 384..511 take NO check of any kind. C7's
+            // contract cannot be expressed as one `active_rows` number, which is
+            // why the helper ignores this argument.
+            Some(FIRST_FREE_ROW),
+            |s| {
+                let path_elements: Vec<u64> =
+                    (0..CANONICAL_DEPTH as u64).map(|i| 1000 + i * 37 + s * 11).collect();
+                let path_indices: Vec<u8> =
+                    (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
+                // Deterministic, and deliberately so: a pin needs the same proof
+                // every run. ⛔ NOT the shape a real spend uses -- that one draws
+                // MASK_ROWS * TRACE_WIDTH fresh CSPRNG elements per proof.
+                let mut st = 0x9E37_79B9_7F4A_7C15u64 ^ s.wrapping_mul(0x1000_0000_0000_0001);
+                if st == 0 {
+                    st = 0xD1B5_4A32_D192_ED03;
+                }
+                let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
+                for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+                    st ^= st >> 12;
+                    st ^= st << 25;
+                    st ^= st >> 27;
+                    mask.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
+                }
+                p01_stark::compact::generate_spend_compact_proof(
+                    42 + s, 999, 7, 555, &path_elements, &path_indices, &[11, 22, 33, 44], &mask,
+                )
+            },
+            verify_constraints_spend,
         );
     }
 

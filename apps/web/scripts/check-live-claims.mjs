@@ -60,9 +60,13 @@ const ROUTES = [
 const RULES = [
   {
     id: "zero-knowledge",
-    // The prover applies no trace blinding. stark/tests/zk_feasibility.rs
-    // recovers a private witness from the published proof bytes by Lagrange
-    // interpolation in under a second.
+    // Seven of the eight circuits apply no trace blinding at all; `spend`
+    // applies a coset LDE and 128 mask rows and is still not zero-knowledge,
+    // because that buys underdetermination rather than secrecy.
+    // Probe P3b of verify/p01-verify.mjs
+    // carries the measurement: four C1 witnesses, the spend secret among them,
+    // recovered from the published proof bytes in 5 ms. (This used to cite
+    // stark/tests/zk_feasibility.rs, deleted in dc9dd515.)
     patterns: [/zero[-\s]?knowledge/gi, /divulgation nulle/gi],
     allow: [
       // Saying the property is NOT held is the whole point of the honesty pass.

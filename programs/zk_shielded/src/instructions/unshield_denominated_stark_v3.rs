@@ -232,6 +232,21 @@ pub fn handler(
     // non-canonical nullifier whose high 24 bytes are non-zero, else a single
     // proof could be spent under multiple distinct nullifier PDAs (double-spend).
     require!(nullifier[8..] == [0u8; 24], ZkShieldedError::InvalidProof);
+    // 🚨 AND the low 8 bytes must be a CANONICAL Goldilocks element. The line
+    // above bounds the ENCODING; this one bounds the VALUE.
+    //
+    // MEASURED 2026-08-26: the deployed verifier pins `Felt::new(pub[0])` with
+    // `Felt::new(v) = Felt(v % p)`, but hashes the u64 RAW and range-checks no
+    // public input. 2^64 - p = 2^32 - 1, so every nullifier below 2^32 - 1 has a
+    // second in-range encoding `n + p`: one field element, TWO record PDAs, two
+    // honest proofs off one witness, and the note pays out TWICE. The full
+    // measurement is written out at the same require in
+    // `unshield_denominated_stark_v4.rs`. No honest client is affected -- a
+    // Poseidon-GL output is reduced by construction.
+    require!(
+        u64::from_le_bytes(nullifier[..8].try_into().unwrap()) < crate::state::poseidon_gl::MODULUS,
+        ZkShieldedError::SpendNonCanonicalFelt
+    );
 
     // Reconstruct C1 expected hash: sha256(nullifier_u64_le || commitment_u64_le)
     {

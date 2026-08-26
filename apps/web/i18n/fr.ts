@@ -144,7 +144,7 @@ const fr: Translations = {
     step3Title: 'TRANSF\u00c9RER',
     step3Desc: 'Envoyez en priv\u00e9 via preuves STARK post-quantiques',
     step4Title: 'RECEVOIR',
-    step4Desc: 'Retirez vers n\u2019importe quel portefeuille. Le retrait republie encore aujourd\u2019hui l\u2019engagement de son d\u00e9p\u00f4t.',
+    step4Desc: 'Retirez vers n’importe quel portefeuille. Depuis cette application, une note déposée récemment est dépensée sur une seule preuve du circuit 7, qui ne publie aucun engagement ; le téléphone, et toute note antérieure au tirage aléatoire du masque, le republient encore.',
     instantOps: 'Op\u00e9rations instantan\u00e9es',
     shieldTime: '~5s blindage \u00b7 ~30s d\u00e9blindage STARK',
     zeroTraces: 'Notes \u00e0 d\u00e9nomination fixe',
@@ -181,7 +181,7 @@ const fr: Translations = {
       confidentialBalances: 'Les soldes de tokens vivent derri\u00e8re des engagements Poseidon plut\u00f4t qu\u2019en clair. Le programme zkspl n\u2019est pas d\u00e9ploy\u00e9 sur devnet aujourd\u2019hui.',
       stealthMetaAddresses: 'Une seule adresse partageable g\u00e9n\u00e8re une adresse \u00e0 usage unique pour chaque paiement re\u00e7u. L\u2019adresse de r\u00e9ception est neuve \u00e0 chaque fois ; l\u2019exp\u00e9diteur n\u2019est pas masqu\u00e9.',
       subscriptionVaults: 'Un compte on-chain qui verse un montant fixe \u00e0 un marchand dans le temps. Le coffre est adress\u00e9 par un engagement sur un secret de note, pas par votre portefeuille : personne ne peut red\u00e9river son adresse pour demander si vous \u00eates abonn\u00e9. Les coffres d\u2019un marchand restent \u00e9num\u00e9rables on-chain.',
-      multiHopRouting: 'Les paiements passent par plusieurs sauts de blindage et d\u00e9blindage avec de la gigue temporelle. Chaque saut republie encore aujourd\u2019hui l\u2019engagement de son d\u00e9p\u00f4t : un observateur patient peut reconstruire le chemin.',
+      multiHopRouting: 'Les paiements passent par plusieurs sauts de blindage et déblindage avec de la gigue temporelle. Un saut republie l’engagement de son dépôt partout où l’ancienne dépense tourne encore — le téléphone, et toute note antérieure au masque aléatoire — et là, un observateur patient peut reconstituer le chemin.',
       noteSplitting: 'Divisez un solde priv\u00e9 en notes plus petites : un retrait d\u00e9place une d\u00e9nomination plut\u00f4t que tout votre solde.',
       privacyRouter: 'Choisit automatiquement le meilleur chemin priv\u00e9 (relayeur, sauts, pool) pour chaque transaction.',
       serviceRegistry: 'Les marchands s\u2019enregistrent on-chain, vous pouvez donc vous abonner \u00e0 de vrais services sans compte.',
@@ -423,10 +423,10 @@ const fr: Translations = {
     projectNoteInterest: 'Choisir un centre d’intérêt étiquette l’enregistrement, cela ne réserve aucune version. Les téléchargements bêta de l’extension sont en pause, et un retrait complet ne peut pas aboutir sur un téléphone aujourd’hui : la version installée embarque un prouveur plus ancien que le vérifieur déployé.',
     roadmapLink: 'Les deux sont sur la feuille de route, et aucun n’a de date.',
     admissionTitle: 'À lire avant de vous inscrire',
-    admissionBody: 'Styx est un logiciel de devnet et n’a pas été audité. Il n’existe aucun déploiement sur le mainnet. Le pool protégé ne masque pas encore le lien entre un dépôt et le retrait qui le suit : le retrait republie l’engagement du dépôt, donc n’importe qui lisant la chaîne peut apparier les deux. Le circuit de dépense qui referme cela est en développement. Rejoindre cette liste, c’est rejoindre un projet en réparation, pas un produit fini.',
+    admissionBody: 'Styx est un logiciel de devnet et n’a pas été audité. Il n’existe aucun déploiement sur le mainnet. Le circuit de dépense qui referme le lien avec le dépôt est livré : depuis cette application web, une note déposée récemment est retirée sur une seule preuve qui ne publie aucun engagement, mesuré sur devnet. Ce n’est pas de l’anonymat. Le retrait nomme toujours l’adresse payée, et le portefeuille qui a financé le payeur des frais est à un saut derrière. Le téléphone republie encore l’engagement, et toute note antérieure au masque aléatoire aussi. Rejoindre cette liste, c’est rejoindre un projet en réparation, pas un produit fini.',
   },
 
-  // ── Footer ─────────────────────────────────────────────────
+  // \u2500\u2500 Footer \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   footer: {
     brandDesc1: 'Portefeuille Solana avec adresses furtives : l\u2019adresse o\u00f9 l\u2019on vous paie ne nomme personne.',
     brandDesc2: 'La confidentialit\u00e9 financi\u00e8re, construite au grand jour.',
@@ -452,7 +452,7 @@ const fr: Translations = {
     ctaSubtitle: 'Lancez-le sur devnet et dites-nous ce qui casse.',
   },
 
-  // ── 404 ────────────────────────────────────────────────────
+  // \u2500\u2500 404 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   notFound: {
     status: '[ PAGE NON TROUV\u00c9E ]',
     desc1: 'Cette route n\u2019existe pas dans le protocole.',
@@ -461,10 +461,10 @@ const fr: Translations = {
     documentation: 'Documentation',
   },
 
-  // ── Roadmap ────────────────────────────────────────────────
+  // \u2500\u2500 Roadmap \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   roadmap: {
     title: 'FEUILLE DE ROUTE',
-    heroSubtitle: 'STYX PROTOCOL // FEUILLE DE ROUTE DE DÉVELOPPEMENT',
+    heroSubtitle: 'STYX PROTOCOL // FEUILLE DE ROUTE DE D\u00c9VELOPPEMENT',
     heroTitle: 'Construire la finance priv\u00e9e',
     heroDesc: 'Notre chemin des adresses furtives et preuves ZK vers une confidentialit\u00e9 enti\u00e8rement on-chain sans backend.',
     shipped: 'LIVR\u00c9',
@@ -506,11 +506,11 @@ const fr: Translations = {
       },
       zkShieldedPool: {
         title: 'Pool ZK blind\u00e9 (STARK)',
-        desc: 'Preuves STARK fondées sur le hachage, sur le corps Goldilocks, vérifiées par un vérificateur FRI on-chain développé en interne : aucune courbe elliptique dans la preuve et aucun setup de confiance. Couvre le shield, l’unshield, le solde, le merkle, l’abonnement, la propriété du pool et la mise à jour du merkle, sur devnet uniquement, et le vérificateur n’a pas été audité.',
+        desc: 'Preuves STARK fond\u00e9es sur le hachage, sur le corps Goldilocks, v\u00e9rifi\u00e9es par un v\u00e9rificateur FRI on-chain d\u00e9velopp\u00e9 en interne : aucune courbe elliptique dans la preuve et aucun setup de confiance. Couvre le shield, l\u2019unshield, le solde, le merkle, l\u2019abonnement, la propri\u00e9t\u00e9 du pool et la mise \u00e0 jour du merkle, sur devnet uniquement, et le v\u00e9rificateur n\u2019a pas \u00e9t\u00e9 audit\u00e9.',
       },
       onChainRelayer: {
         title: 'Relayeur on-chain + Coffre quantique',
-        desc: 'Programme de relais on-chain avec coffre quantique : signatures WOTS+, verrouillage temporel par hachage et retraits en commit-then-reveal. Deux relayeurs hébergés servent de nœuds de soumission : la transaction atteint le RPC depuis un relayeur et non depuis l’appareil de l’utilisateur.',
+        desc: 'Programme de relais on-chain avec coffre quantique : signatures WOTS+, verrouillage temporel par hachage et retraits en commit-then-reveal. Deux relayeurs h\u00e9berg\u00e9s servent de n\u0153uds de soumission : la transaction atteint le RPC depuis un relayeur et non depuis l\u2019appareil de l\u2019utilisateur.',
       },
       paymentStreams: {
         title: 'Flux de paiement',
@@ -529,16 +529,16 @@ const fr: Translations = {
         desc: 'Agent IA embarqu\u00e9 qui g\u00e8re vos finances priv\u00e9es en langage naturel. Blindez, transf\u00e9rez et g\u00e9rez vos abonnements en discutant, aucune donn\u00e9e ne quitte votre t\u00e9l\u00e9phone.',
       },
       instantZk: {
-        title: 'Preuves ZK calculées localement',
-        desc: 'La preuve est calculée sur l’appareil et la clé de dépense ne le quitte jamais. Aucun délai n’est annoncé ici : la génération de preuve sur appareil a été mesurée au-delà de 180 secondes, et un déblindage complet ne peut pas aboutir sur téléphone avec la version installée, dont le prouveur est plus ancien que le vérificateur déployé.',
+        title: 'Preuves ZK calcul\u00e9es localement',
+        desc: 'La preuve est calcul\u00e9e sur l\u2019appareil et la cl\u00e9 de d\u00e9pense ne le quitte jamais. Aucun d\u00e9lai n\u2019est annonc\u00e9 ici : la g\u00e9n\u00e9ration de preuve sur appareil a \u00e9t\u00e9 mesur\u00e9e au-del\u00e0 de 180 secondes, et un d\u00e9blindage complet ne peut pas aboutir sur t\u00e9l\u00e9phone avec la version install\u00e9e, dont le prouveur est plus ancien que le v\u00e9rificateur d\u00e9ploy\u00e9.',
       },
       onChainContracts: {
         title: 'Smart contracts on-chain',
-        desc: 'Programmes Anchor déployés sur le devnet Solana, non audités et absents du mainnet. Confidentialité sans permission et sans tiers de confiance sur le chemin principal : n’importe qui peut soumettre les instructions directement, et les deux relayeurs hébergés sont un saut optionnel, pas une dépendance.',
+        desc: 'Programmes Anchor d\u00e9ploy\u00e9s sur le devnet Solana, non audit\u00e9s et absents du mainnet. Confidentialit\u00e9 sans permission et sans tiers de confiance sur le chemin principal : n\u2019importe qui peut soumettre les instructions directement, et les deux relayeurs h\u00e9berg\u00e9s sont un saut optionnel, pas une d\u00e9pendance.',
       },
       advancedPrivacy: {
         title: 'Bruit sur les montants et bruit temporel',
-        desc: 'Variation optionnelle du montant (jusqu’à 20 %) et délai pouvant atteindre 24 heures avant l’envoi d’un transfert, au choix selon le niveau de confidentialité. Les transactions leurres n’en font pas partie : elles figurent dans la phase prévue, sous l’intitulé cover traffic.',
+        desc: 'Variation optionnelle du montant (jusqu\u2019\u00e0 20 %) et d\u00e9lai pouvant atteindre 24 heures avant l\u2019envoi d\u2019un transfert, au choix selon le niveau de confidentialit\u00e9. Les transactions leurres n\u2019en font pas partie : elles figurent dans la phase pr\u00e9vue, sous l\u2019intitul\u00e9 cover traffic.',
       },
       denominatedPools: {
         title: 'Pools \u00e0 d\u00e9nomination',
@@ -558,7 +558,7 @@ const fr: Translations = {
       },
       starkMigration: {
         title: 'Migration STARK : Groth16 retir\u00e9',
-        desc: 'Migration complète de Groth16/BN254 (classique, vulnérable à Shor) vers des STARKs fondés sur le hachage sur le corps Goldilocks, avec un vérificateur FRI on-chain développé en interne et sans cérémonie de setup de confiance. Les chemins historiques snarkjs et circomlib ont été retirés du mobile et de l’extension. Taille de preuve, coût en compute et marge de solidité ne sont pas cités ici : aucun benchmark ni audit publié ne permet de les vérifier.',
+        desc: 'Migration compl\u00e8te de Groth16/BN254 (classique, vuln\u00e9rable \u00e0 Shor) vers des STARKs fond\u00e9s sur le hachage sur le corps Goldilocks, avec un v\u00e9rificateur FRI on-chain d\u00e9velopp\u00e9 en interne et sans c\u00e9r\u00e9monie de setup de confiance. Les chemins historiques snarkjs et circomlib ont \u00e9t\u00e9 retir\u00e9s du mobile et de l\u2019extension. Taille de preuve, co\u00fbt en compute et marge de solidit\u00e9 ne sont pas cit\u00e9s ici : aucun benchmark ni audit publi\u00e9 ne permet de les v\u00e9rifier.',
       },
       onChainRegistry: {
         title: 'Registre on-chain (EIP-5564)',
@@ -581,8 +581,8 @@ const fr: Translations = {
         desc: 'Adresses furtives \u00e0 usage unique sur l\u2019\u00e9cran de r\u00e9ception. Fonds entrants d\u00e9tect\u00e9s automatiquement et blind\u00e9s dans le pool. Le portefeuille principal n\u2019est jamais expos\u00e9 aux exp\u00e9diteurs.',
       },
       stealthMetaAddresses: {
-        title: 'Méta-adresses furtives',
-        desc: 'Méta-adresses persistantes st:01/st:02 pour les transferts furtifs entre portefeuilles Styx. L’expéditeur dérive automatiquement une destination furtive à usage unique. L’adresse du destinataire est neuve ; l’expéditeur n’est pas masqué.',
+        title: 'M\u00e9ta-adresses furtives',
+        desc: 'M\u00e9ta-adresses persistantes st:01/st:02 pour les transferts furtifs entre portefeuilles Styx. L\u2019exp\u00e9diteur d\u00e9rive automatiquement une destination furtive \u00e0 usage unique. L\u2019adresse du destinataire est neuve ; l\u2019exp\u00e9diteur n\u2019est pas masqu\u00e9.',
       },
       multiHopRouter: {
         title: 'Routeur de confidentialit\u00e9 multi-sauts',
@@ -606,39 +606,39 @@ const fr: Translations = {
       },
       i18n: {
         title: 'i18n (EN/FR)',
-        desc: 'Internationalisation complète sur tous les écrans mobiles et toutes les pages web. Anglais et français, choisis selon le pays du visiteur. Le japonais a été retiré le 11 août 2026.',
+        desc: 'Internationalisation compl\u00e8te sur tous les \u00e9crans mobiles et toutes les pages web. Anglais et fran\u00e7ais, choisis selon le pays du visiteur. Le japonais a \u00e9t\u00e9 retir\u00e9 le 11 ao\u00fbt 2026.',
       },
       stealthAirdrops: {
         title: 'Airdrops furtifs',
-        desc: 'Distribution privée de tokens basée sur Merkle. Création de campagnes avec tokens SPL en escrow, les destinataires claim via preuves Merkle SHA-256. Aucune donnée de destinataire stockée on-chain.',
+        desc: 'Distribution priv\u00e9e de tokens bas\u00e9e sur Merkle. Cr\u00e9ation de campagnes avec tokens SPL en escrow, les destinataires claim via preuves Merkle SHA-256. Aucune donn\u00e9e de destinataire stock\u00e9e on-chain.',
       },
       complianceZk: {
-        title: 'Module de conformité ZK',
-        desc: 'Attestations de conformité vérifiées par STARK. Preuves de plage (min <= solde <= max) et preuves d\u2019innocence sanctions (absence dans un Merkle de blocklist). Attestations on-chain avec expiration et révocation.',
+        title: 'Module de conformit\u00e9 ZK',
+        desc: 'Attestations de conformit\u00e9 v\u00e9rifi\u00e9es par STARK. Preuves de plage (min <= solde <= max) et preuves d\u2019innocence sanctions (absence dans un Merkle de blocklist). Attestations on-chain avec expiration et r\u00e9vocation.',
       },
       privacySdkNpm: {
         title: 'Privacy SDK (npm)',
-        desc: '@protocol-01/privacy-sdk publié sur npm. 13 modules : shield, stealth, confidential, streams, subscriptions, vault, registry, relay, compliance, airdrop, OTC, payroll, treasury. Hooks React inclus.',
+        desc: '@protocol-01/privacy-sdk publi\u00e9 sur npm. 13 modules : shield, stealth, confidential, streams, subscriptions, vault, registry, relay, compliance, airdrop, OTC, payroll, treasury. Hooks React inclus.',
       },
       instantUnshield: {
-        title: 'Unshield instantané (p01_liquidity)',
-        desc: 'Nouveau programme de liquidité on-chain qui permet d’unshielder sans avancer les ~0.85 SOL de rent du proof buffer. Flux prefund/settle avec un réseau de keepers (GitHub Actions cron toutes les 10 min). Live devnet (6PfFkvj…), câblé dans le flow STARK unshield mobile via un flag `instant`.',
+        title: 'Unshield instantan\u00e9 (p01_liquidity)',
+        desc: 'Nouveau programme de liquidit\u00e9 on-chain qui permet d\u2019unshielder sans avancer les ~0.85 SOL de rent du proof buffer. Flux prefund/settle avec un r\u00e9seau de keepers (GitHub Actions cron toutes les 10 min). Live devnet (6PfFkvj\u2026), c\u00e2bl\u00e9 dans le flow STARK unshield mobile via un flag `instant`.',
       },
       perWalletNotes: {
         title: 'Isolation des notes par wallet',
-        desc: 'Notes dérivées de manière déterministe via HKDF(walletSeed, poolPDA, counter), recovery cross-device depuis le seed uniquement. StoredNote porte ownerPubkey pour que les sessions multi-wallet ne mélangent jamais les notes visibles. Un rescan seed-only reconstruit chaque note sur n’importe quel appareil.',
+        desc: 'Notes d\u00e9riv\u00e9es de mani\u00e8re d\u00e9terministe via HKDF(walletSeed, poolPDA, counter), recovery cross-device depuis le seed uniquement. StoredNote porte ownerPubkey pour que les sessions multi-wallet ne m\u00e9langent jamais les notes visibles. Un rescan seed-only reconstruit chaque note sur n\u2019importe quel appareil.',
       },
       deterministicStealth: {
-        title: 'Signer furtif déterministe + crash-sweep',
-        desc: 'Les signers éphémères sont désormais dérivés de (walletSeed, noteId) au lieu de Date.now(), toute opération STARK échouée peut reprendre ou rapatrier les SOL déjà prefundés vers l’utilisateur. Plus jamais 0.85 SOL piégés sur une pubkey éphémère irrécupérable.',
+        title: 'Signer furtif d\u00e9terministe + crash-sweep',
+        desc: 'Les signers \u00e9ph\u00e9m\u00e8res sont d\u00e9sormais d\u00e9riv\u00e9s de (walletSeed, noteId) au lieu de Date.now(), toute op\u00e9ration STARK \u00e9chou\u00e9e peut reprendre ou rapatrier les SOL d\u00e9j\u00e0 prefund\u00e9s vers l\u2019utilisateur. Plus jamais 0.85 SOL pi\u00e9g\u00e9s sur une pubkey \u00e9ph\u00e9m\u00e8re irr\u00e9cup\u00e9rable.',
       },
       poolV2Migration: {
         title: 'Migration Denominated Pool v2',
-        desc: 'Upgrade programme avec bump de SEED_PREFIX vers `denominated_pool_v2` + 13 nouvelles PDAs de pools (6 SOL + 7 USDC). Chaque insertion de leaf émet désormais l’event canonique MerkleRootChanged, garantit un historique d’arbre 100 % décodable côté client.',
+        desc: 'Upgrade programme avec bump de SEED_PREFIX vers `denominated_pool_v2` + 13 nouvelles PDAs de pools (6 SOL + 7 USDC). Chaque insertion de leaf \u00e9met d\u00e9sormais l\u2019event canonique MerkleRootChanged, garantit un historique d\u2019arbre 100 % d\u00e9codable c\u00f4t\u00e9 client.',
       },
       multiLayoutDecoder: {
-        title: 'Décodeur d’événements universel',
-        desc: 'La reconstruction Merkle côté client parcourt maintenant un registre de 6 layouts d’events (MerkleRootChanged + V1/V2 ShieldDenominated + ShieldStark + TransferDenominatedStark + EscrowRelease) + pagination signatures. Neutralise la dérive de décodeur qui rendait les pools pre-hardening irrécupérables.',
+        title: 'D\u00e9codeur d\u2019\u00e9v\u00e9nements universel',
+        desc: 'La reconstruction Merkle c\u00f4t\u00e9 client parcourt maintenant un registre de 6 layouts d\u2019events (MerkleRootChanged + V1/V2 ShieldDenominated + ShieldStark + TransferDenominatedStark + EscrowRelease) + pagination signatures. Neutralise la d\u00e9rive de d\u00e9codeur qui rendait les pools pre-hardening irr\u00e9cup\u00e9rables.',
       },
       v3StarkE2E: {
         title: 'STARK V3 valide bout en bout',
@@ -674,7 +674,7 @@ const fr: Translations = {
       },
       extensionParity: {
         title: 'Extension navigateur a parite mobile',
-        desc: 'L\'extension Chrome a rattrape l\'app mobile : transfert note-a-note denomine (C1+C3+C6 → transfer_denominated_stark_v3 avec handoff de note chiffree), unshield prive route par relayer, license keys sans adresse de portefeuille, modes subscribe Standard/ZK, pairing d\'appareil scan-import, et connexion telephone-vers-extension via relais chiffre.',
+        desc: 'L\'extension Chrome a rattrape l\'app mobile : transfert note-a-note denomine (C1+C3+C6 \u2192 transfer_denominated_stark_v3 avec handoff de note chiffree), unshield prive route par relayer, license keys sans adresse de portefeuille, modes subscribe Standard/ZK, pairing d\'appareil scan-import, et connexion telephone-vers-extension via relais chiffre.',
       },
       licenseKeys: {
         title: 'License Keys marchand sans le portefeuille',
@@ -702,11 +702,11 @@ const fr: Translations = {
       },
       colosseumFrontier: {
         title: 'Colosseum Frontier 2026',
-        desc: 'Soumis le 23/04/2026 dans la région Irlande (affiliation Superteam IE). Track accelerator activé. Tagged publiquement par Superteam Ireland comme une des 5 équipes irlandaises de la cohorte.',
+        desc: 'Soumis le 23/04/2026 dans la r\u00e9gion Irlande (affiliation Superteam IE). Track accelerator activ\u00e9. Tagged publiquement par Superteam Ireland comme une des 5 \u00e9quipes irlandaises de la cohorte.',
       },
       networkMapping: {
-        title: 'Cartographie du réseau interne',
-        desc: 'Cartographier les flux de transactions internes pour améliorer le routage de confidentialité et réduire l’empreinte on-chain à l’échelle du protocole.',
+        title: 'Cartographie du r\u00e9seau interne',
+        desc: 'Cartographier les flux de transactions internes pour am\u00e9liorer le routage de confidentialit\u00e9 et r\u00e9duire l\u2019empreinte on-chain \u00e0 l\u2019\u00e9chelle du protocole.',
       },
       fiatOnRamp: {
         title: 'Rampe fiat (Cartes + MoonPay)',
@@ -738,17 +738,17 @@ const fr: Translations = {
       },
       cliTool: {
         title: 'Outil CLI',
-        desc: 'Interface en ligne de commande pour les développeurs et utilisateurs avancés. Scriptez des transactions, automatisez des flux et intégrez Styx dans vos workflows existants.',
+        desc: 'Interface en ligne de commande pour les d\u00e9veloppeurs et utilisateurs avanc\u00e9s. Scriptez des transactions, automatisez des flux et int\u00e9grez Styx dans vos workflows existants.',
       },
     },
   },
 
-  // ── SDK Demo ──────────────────────────────────────────────
+  // \u2500\u2500 SDK Demo \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   sdkDemo: {
     // Header
     headerTitle: 'D\u00e9mo SDK',
     heroKicker: 'Aper\u00e7u d\u00e9veloppeur',
-    heroSubtitle: 'Des briques de confidentialité pour n’importe quelle app Solana : adresses furtives, preuves STARK, soldes confidentiels et paiements récurrents, vérifiés on-chain. Devnet uniquement, et non audité.',
+    heroSubtitle: 'Des briques de confidentialit\u00e9 pour n\u2019importe quelle app Solana : adresses furtives, preuves STARK, soldes confidentiels et paiements r\u00e9currents, v\u00e9rifi\u00e9s on-chain. Devnet uniquement, et non audit\u00e9.',
     onChainVerification: 'V\u00e9rification on-chain',
     // Tabs
     tabDevnet: 'Devnet',
@@ -809,7 +809,7 @@ const fr: Translations = {
     rpcLabel: 'RPC : api.devnet.solana.com',
     // Stream SDK Section
     streamTitle: 'SDK de paiements en flux',
-    streamDesc: 'Créez des paiements par abonnement pour votre application. Chaque prélèvement va du portefeuille au programme sur le devnet Solana, et l’accès développeur est accordé via l’API de liste blanche ci-dessous.',
+    streamDesc: 'Cr\u00e9ez des paiements par abonnement pour votre application. Chaque pr\u00e9l\u00e8vement va du portefeuille au programme sur le devnet Solana, et l\u2019acc\u00e8s d\u00e9veloppeur est accord\u00e9 via l\u2019API de liste blanche ci-dessous.',
     simpleTermsTitle: "Qu'est-ce que c'est en termes simples ?",
     simpleTermsIntro: 'Pensez \u00e0 Netflix ou Spotify',
     simpleTermsIntroSuffix: " - vous payez automatiquement chaque mois. Notre SDK permet aux d\u00e9veloppeurs de cr\u00e9er ces paiements r\u00e9currents, avec une diff\u00e9rence majeure :",
@@ -880,8 +880,8 @@ const fr: Translations = {
     walletLabel: 'Portefeuille :',
     // SDK Integration
     sdkIntegrationTitle: '2. Int\u00e9gration SDK',
-    sdkIntegrationDesc: 'Le SDK se connecte directement aux programmes on-chain et il n’y a aucune clé API à provisionner : le portefeuille fait office d’identité. L’éligibilité développeur est une vérification distincte, assurée par l’API de liste blanche de cette page.',
-    sdkIntegrationCodeTitle: 'Initialiser le SDK (sans clé API)',
+    sdkIntegrationDesc: 'Le SDK se connecte directement aux programmes on-chain et il n\u2019y a aucune cl\u00e9 API \u00e0 provisionner : le portefeuille fait office d\u2019identit\u00e9. L\u2019\u00e9ligibilit\u00e9 d\u00e9veloppeur est une v\u00e9rification distincte, assur\u00e9e par l\u2019API de liste blanche de cette page.',
+    sdkIntegrationCodeTitle: 'Initialiser le SDK (sans cl\u00e9 API)',
     // Create Stream
     createStreamTitle: '3. Cr\u00e9er un flux de paiement',
     createStreamDesc: 'Cr\u00e9ez des flux d\u2019abonnement pour vos utilisateurs. ',
@@ -891,16 +891,16 @@ const fr: Translations = {
     createStreamCodeTitle: "Cr\u00e9er un flux d'abonnement",
     // On-chain verification
     onChainVerifTitle: '4. V\u00e9rification on-chain',
-    onChainVerifDesc: 'L’état de l’abonnement vit dans le compte du programme : les lectures et les mises à jour passent par un nœud RPC Solana plutôt que par un service que nous exploitons.',
+    onChainVerifDesc: 'L\u2019\u00e9tat de l\u2019abonnement vit dans le compte du programme : les lectures et les mises \u00e0 jour passent par un n\u0153ud RPC Solana plut\u00f4t que par un service que nous exploitons.',
     onChainVerifCodeTitle: 'Interroger les flux (On-Chain)',
     // Architecture
-    archNoServerTitle: 'Architecture : de la dApp à la chaîne',
+    archNoServerTitle: 'Architecture : de la dApp \u00e0 la cha\u00eene',
     archYourDapp: 'Votre dApp',
     archSmartContract: 'Smart Contract',
     archSolana: 'Solana',
-    archNoServerDesc: 'Du portefeuille au smart contract, puis au devnet Solana. Un nœud RPC Solana transporte chaque appel, et cette page ajoute sa propre API de liste blanche pour l’accès développeur.',
+    archNoServerDesc: 'Du portefeuille au smart contract, puis au devnet Solana. Un n\u0153ud RPC Solana transporte chaque appel, et cette page ajoute sa propre API de liste blanche pour l\u2019acc\u00e8s d\u00e9veloppeur.',
     // Security
-    securityTitle: 'Ce que le programme autorise et ce qu’il n’autorise pas',
+    securityTitle: 'Ce que le programme autorise et ce qu\u2019il n\u2019autorise pas',
     whatYouCanDo: 'Ce que VOUS pouvez faire',
     cancelOneClick: 'Mettre en pause et reprendre en un clic, directement depuis votre portefeuille',
     noModifyWithoutPermission: 'Personne ne peut modifier sans votre permission',
@@ -916,7 +916,7 @@ const fr: Translations = {
     widgetsDescHighlight: 'N\u00e9cessite le portefeuille Protocol 01.',
     priceLocked: 'Prix verrouill\u00e9 on-chain',
     priceLockedDesc: 'Une fois abonn\u00e9, le prix ne peut jamais \u00eatre modifi\u00e9. Mettez en pause et reprenez \u00e0 tout moment depuis votre portefeuille. Les abonnements ne peuvent pas \u00eatre annul\u00e9s et le protocole ne peut pas rembourser ; un commer\u00e7ant peut toujours vous rembourser hors protocole depuis son propre portefeuille.',
-    widgetCodeTitle: 'Utilisation (sans clé API)',
+    widgetCodeTitle: 'Utilisation (sans cl\u00e9 API)',
     // Subscription widget
     choosePlan: 'Choisissez votre plan',
     freeTrial: 'Commencez avec un essai gratuit de 14 jours. Aucune carte de cr\u00e9dit requise.',
@@ -962,30 +962,30 @@ const fr: Translations = {
     copied: 'Copi\u00e9 !',
     copy: 'Copier',
     // Alert messages
-    alertWalletNotInstalled: "Le portefeuille Styx n'est pas installé. Veuillez installer l'extension Styx.",
+    alertWalletNotInstalled: "Le portefeuille Styx n'est pas install\u00e9. Veuillez installer l'extension Styx.",
     alertWalletNotConnected: 'Portefeuille non connect\u00e9 correctement.',
     alertMissingPermission: "Permission d'abonnement manquante. Veuillez reconnecter votre portefeuille et approuver la permission d'abonnement.",
     alertSubmitFailed: 'La soumission a \u00e9chou\u00e9. Veuillez r\u00e9essayer ou nous contacter sur Discord.',
   },
 
-  // ── Docs Page ─────────────────────────────────────────────
+  // \u2500\u2500 Docs Page \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
   docs: {
     badge: 'Documentation technique',
     // Sidebar / shell chrome
-    navGettingStarted: 'Démarrage',
-    navPrivacy: 'Primitives de confidentialité',
+    navGettingStarted: 'D\u00e9marrage',
+    navPrivacy: 'Primitives de confidentialit\u00e9',
     navPools: 'Pools & soldes',
     navPayments: 'Paiements',
-    navNetwork: 'Réseau & Relais',
+    navNetwork: 'R\u00e9seau & Relais',
     navWallet: 'Portefeuille & outils',
-    navSecurityRef: 'Sécurité & référence',
-    searchPlaceholder: 'Rechercher dans la doc…',
+    navSecurityRef: 'S\u00e9curit\u00e9 & r\u00e9f\u00e9rence',
+    searchPlaceholder: 'Rechercher dans la doc\u2026',
     searchHint: 'Ctrl K',
     searchEmpty: 'Aucun sujet correspondant',
     onThisPage: 'Sur cette page',
-    overview: 'Aperçu',
+    overview: 'Aper\u00e7u',
     next: 'Suivant',
-    previous: 'Précédent',
+    previous: 'Pr\u00e9c\u00e9dent',
     menu: 'Menu',
     heroTitle1: 'Technologies',
     heroTitle2: 'de confidentialit\u00e9',
@@ -1020,19 +1020,19 @@ const fr: Translations = {
     nodePrivacyRouter: 'ROUTEUR CONFIDENTIALIT\u00c9',
     nodePrivacyRouterSub: 'Multi-sauts / 5 niveaux',
     nodeMetaAddr: 'M\u00c9TA-ADRESSES',
-    nodeMetaAddrSub: 'st:01 / st:02 méta-adresses furtives',
+    nodeMetaAddrSub: 'st:01 / st:02 m\u00e9ta-adresses furtives',
     nodePrivacySdk: '@protocol-01/privacy-sdk',
-    nodePrivacySdkSub: 'API de confidentialité unifiée',
+    nodePrivacySdkSub: 'API de confidentialit\u00e9 unifi\u00e9e',
     nodeSpecterSdk: '@protocol-01/specter-sdk',
     nodeSpecterSub: 'Furtif & Portefeuilles',
     nodeZkSdk: '@protocol-01/zk-sdk',
-    nodeZkSub: 'Transactions blindées',
+    nodeZkSub: 'Transactions blind\u00e9es',
     nodeStarkProver: '@protocol-01/stark-prover',
     nodeStarkProverSub: 'Prouveur STARK WASM',
     nodeZksplSdk: '@protocol-01/zkspl-sdk',
     nodeZksplSub: 'Soldes confidentiels',
     nodeMerchantSdk: '@protocol-01/merchant-sdk',
-    nodeMerchantSdkSub: 'Abonnements côté serveur',
+    nodeMerchantSdkSub: 'Abonnements c\u00f4t\u00e9 serveur',
     nodeP01Js: '@protocol-01/p01-js',
     nodeP01JsSub: 'Bouton de paiement & widgets',
     nodePrivacyToolkit: '@protocol-01/privacy-toolkit',
@@ -1090,12 +1090,12 @@ const fr: Translations = {
       },
       zkProofs: {
         title: 'Preuves STARK (Goldilocks)',
-        desc: 'Syst\u00e8me de preuves STARK post-quantique sur le corps de Goldilocks, propuls\u00e9 par Winterfell. Bas\u00e9 sur le hachage, sans hypoth\u00e8ses de courbe elliptique, donc l\u2019algorithme de Shor ne s\u2019applique pas, et seul syst\u00e8me de preuves utilis\u00e9 dans le mobile, l\u2019extension et le v\u00e9rificateur on-chain. Groth16/BN254 a \u00e9t\u00e9 retir\u00e9 en avril 2026 (voir \u00ab Legacy / Historique de migration \u00bb ci-dessous). Ces preuves ne sont pas \u00e0 divulgation nulle aujourd\u2019hui : les valeurs de trace peuvent \u00eatre r\u00e9cup\u00e9r\u00e9es depuis les octets de preuve publi\u00e9s par interpolation de Lagrange, et le masquage additif qui referme cela est en d\u00e9veloppement.',
-        detail1: '7 AIRs STARK, un par identifiant de circuit accepté par le vérificateur : subscriber_ownership, pool_commitment, balance_proof, merkle_path, confidential_balance, transfer, merkle_update',
+        desc: 'Syst\u00e8me de preuves STARK post-quantique sur le corps de Goldilocks, propuls\u00e9 par Winterfell. Bas\u00e9 sur le hachage, sans hypoth\u00e8ses de courbe elliptique, donc l\u2019algorithme de Shor ne s\u2019applique pas, et seul syst\u00e8me de preuves utilis\u00e9 dans le mobile, l\u2019extension et le v\u00e9rificateur on-chain. Groth16/BN254 a \u00e9t\u00e9 retir\u00e9 en avril 2026 (voir \u00ab Legacy / Historique de migration \u00bb ci-dessous). Ces preuves ne sont pas \u00e0 divulgation nulle aujourd\u2019hui : les valeurs de trace peuvent \u00eatre r\u00e9cup\u00e9r\u00e9es depuis les octets de preuve publi\u00e9s par interpolation de Lagrange. Le circuit de d\u00e9pense applique bien une LDE sur coset et 128 rang\u00e9es de masque tir\u00e9es d\u2019un CSPRNG, contrairement aux sept autres, mais cela ach\u00e8te de la sous-d\u00e9termination \u2014 90 \u00e9valuations publi\u00e9es contre ~138 inconnues \u2014 pas du secret, et la sous-d\u00e9termination a ici un contre-exemple mesur\u00e9 : quatre t\u00e9moins d\u2019un autre circuit, dont le secret de d\u00e9pense, r\u00e9cup\u00e9r\u00e9s en 5 ms.',
+        detail1: '8 AIRs STARK, un par identifiant de circuit accepté par le vérificateur : subscriber_ownership, pool_commitment, balance_proof, merkle_path, confidential_balance, transfer, merkle_update, spend',
         detail2: 'Prouveur Winterfell, corps de Goldilocks (2^64 - 2^32 + 1), Poseidon AIR (S-box x^7, 30 tours)',
-        detail3: 'Preuves compactes (9-15 Ko) avec arbres de Merkle Blake3, DEEP-ALI sur chaque circuit, 27 requ\u00eates FRI (22 pour merkle_update), facteur de blowup 16 et 16 bits de grinding',
+        detail3: 'Preuves compactes (9-15 Ko) avec arbres de Merkle SHA-256 (Blake3 a été abandonné : sol_blake3 est désactivé sur devnet et mainnet, donc il retombait sur un Blake3 logiciel qui dépassait le plafond de CU), DEEP-ALI sur chaque circuit, 27 requ\u00eates FRI (22 pour merkle_path, transfer, merkle_update et spend), facteur de blowup 16 et 16 bits de grinding',
         detail4: 'V\u00e9rificateur FRI on-chain personnalis\u00e9 (sans d\u00e9pendance Winterfell, tient dans la pile 4 Ko). Mesur\u00e9 sur devnet : une preuve honn\u00eate accept\u00e9e \u00e0 809 812 CU face au budget de 1,4 M',
-        detail5: 'Prouveur WASM, 229 640 octets, les 7 circuits. Fonctionne dans le navigateur ; sur un vrai t\u00e9l\u00e9phone, la paire de retrait (C1 + C3) a \u00e9t\u00e9 mesur\u00e9e au-del\u00e0 du timeout de 180 s du worker, donc le retrait sur appareil n\u2019aboutit pas aujourd\u2019hui',
+        detail5: 'Prouveur WASM, 267 610 octets, les 8 circuits (C0-C7). Fonctionne dans le navigateur ; sur un vrai t\u00e9l\u00e9phone, la paire de retrait (C1 + C3) a \u00e9t\u00e9 mesur\u00e9e au-del\u00e0 du timeout de 180 s du worker, donc le retrait sur appareil n\u2019aboutit pas aujourd\u2019hui',
         detail6: 'Aucun setup de confiance requis, les STARKs sont transparents (contrairement \u00e0 la c\u00e9r\u00e9monie.ptau de Groth16)',
         detail7: 'Post-quantique : construction par hachage non affect\u00e9e par Shor ; Grover n\u2019offre qu\u2019une acc\u00e9l\u00e9ration quadratique, att\u00e9nu\u00e9e par la taille du condens\u00e9',
         detail8: 'V\u00e9rificateur multi-circuits avec routage par circuit_id (subscribe, pause, resume, unshield, split)',
@@ -1316,7 +1316,7 @@ const fr: Translations = {
     },
     securityTitle: 'Mod\u00e8le de s\u00e9curit\u00e9',
     threatModel: 'Mod\u00e8le de menace',
-    threatObservers: 'Un observateur peut aujourd\u2019hui apparier un d\u00e9p\u00f4t et son retrait, parce que le retrait republie l\u2019engagement du d\u00e9p\u00f4t. Ce que les adresses seules ne donnent pas : relier deux paiements furtifs \u00e0 un m\u00eame destinataire',
+    threatObservers: 'Un observateur apparie un dépôt et son retrait dès que le retrait republie l’engagement du dépôt — ce qui reste le cas depuis le téléphone, et pour toute note antérieure au masque aléatoire. Depuis cette application web, une note récente est dépensée sur une seule preuve du circuit 7 et aucun engagement n’atteint le fil : cet appariement-là a disparu. Restent l’adresse payée, et le portefeuille à un saut derrière celui qui a payé les frais. Ce que les adresses seules ne donnent pas : relier deux paiements furtifs à un même destinataire',
     threatAmounts: 'Les montants sont publics par conception, pas par oubli : un pool ne porte qu\u2019une d\u00e9nomination, donc toutes ses notes ont exactement la m\u00eame taille et le montant ne d\u00e9signe personne. Ce qu\u2019il r\u00e9v\u00e8le, c\u2019est quel pool vous avez utilis\u00e9, et la couverture que cela donne d\u00e9pend du nombre de notes non d\u00e9pens\u00e9es qui le partagent. Aujourd\u2019hui elle est nulle, parce que le retrait republie l\u2019engagement du d\u00e9p\u00f4t et nomme donc son propre d\u00e9p\u00f4t',
     threatPatterns: 'Les sch\u00e9mas de d\u00e9pense sont analysables aujourd\u2019hui, parce que chaque retrait peut \u00eatre rapproch\u00e9 de son d\u00e9p\u00f4t. La remise de note chiffr\u00e9e hors cha\u00eene est l\u2019exception : elle n\u2019a aucune transaction \u00e0 analyser',
     threatBalance: 'Le suivi des soldes n\u2019est pas emp\u00each\u00e9 : qui suit un portefeuille peut compter ses notes par appariement d\u00e9p\u00f4t-retrait. Le solde prot\u00e9g\u00e9 est un ensemble de notes, pas un nombre stock\u00e9 dans un seul compte',

@@ -308,8 +308,11 @@ apps/web/campaign-progress.jsonl
 # `wasm-pack` writes here. On 2026-08-22 this directory held — tracked in git —
 # p01_stark_bg.wasm at 192,732 bytes (sha 4ace8913), the PRE-COSET build of
 # 2026-05-06 that the DEPLOYED verifier rejects. The prover actually shipped is
-# 229,640 bytes (sha 51a947e3) and lives in packages/stark-prover/wasm, which
-# IS tracked on purpose.
+# 267,610 bytes (sha 72a8c700) and lives in packages/stark-prover/wasm, which
+# IS tracked on purpose. Both figures are pinned in
+# packages/stark-prover/src/shippedBlob.test.ts: SHIPPED_BYTES = 267_610 /
+# 72a8c700c466 is the circuit-7 build shipped now, and 229,640 / 51a947e3 is
+# kept there as PRE_C7_BYTES, the pre-C7 coset build the tests refuse.
 #
 # The failure this caused before is measured and nasty: a rejected proof surfaces
 # only at the END of a ~150-transaction buffer upload, never early. A directory
@@ -317,3 +320,9 @@ apps/web/campaign-progress.jsonl
 #
 # `stark/pkg/` was already ignored; this one was not. Kept on disk, out of git.
 stark/wasm-out/
+
+# Derive: regenere par docs/deck/src/make-head.py, porte la police inlinee (86 Ko)
+docs/deck/src/deck-head.html
+
+# Python bytecode from the deck build (docs/deck/src/*.py)
+__pycache__/

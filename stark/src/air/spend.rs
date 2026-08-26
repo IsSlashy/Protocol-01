@@ -50,17 +50,33 @@
 //!     region and take NO CHECK OF ANY KIND — not a Poseidon round, not an
 //!     identity check. No single `active_rows` number expresses that, so the
 //!     verifier must gate on `FIRST_FREE_ROW`, and C3's
-//!     `active_rows = 15 * hash_cycle_len` guard at `verify.rs:3220` is still
-//!     wrong for C7, now for the opposite reason.
+//!     `active_rows = 15 * hash_cycle_len` guard — at `verify.rs:4530`, NOT
+//!     `:3220`, which is inside C2's OOD evaluator and holds no `active_rows`
+//!     at all — is still wrong for C7, now for the opposite reason.
 //!   * `is_boundary` is set at row 511 as well (unlike `transfer.rs:331`).
 //!     That transition is the wrap row: winterfell exempts it
 //!     (`num_transition_exemptions == 1`) and the compact prover multiplies by
 //!     `(x - g^{n-1})` before dividing by the vanishing polynomial, so nothing
 //!     reads the value. Including it is what keeps the column 32-periodic.
-//!   * the per-query step-4 check cannot be cloned from C3 (`for col in
-//!     3..trace_width { next == current }` would freeze the live commitment
-//!     pipeline at cols 6-8) nor from C6 (`for col in 6..` would demand cols
-//!     3-5 round-advance). It has to be written from this layout.
+//!   * 🚨 REVERSED 2026-08-24, AND THE OLD TEXT WAS AN INSTRUCTION TO DESTROY
+//!     THIS CIRCUIT'S PRIVACY PROPERTY. It used to read: the per-query step-4
+//!     check cannot be cloned from C3 (`for col in 3..trace_width { next ==
+//!     current }` would freeze the live commitment pipeline at cols 6-8) nor
+//!     from C6 (`for col in 6..` would demand cols 3-5 round-advance), so "it
+//!     has to be written from this layout".
+//!
+//!     MEASURED: there is nothing to write. The per-query transition layer is
+//!     DEAD on this lineage for every circuit — `is_trace_aligned` is
+//!     hardcoded `false` at EIGHT sites (`verify.rs:4280, 4355, 4428, 4514,
+//!     4611, 4695, 4846, 5084`) and the guarded bodies never execute. C7 is
+//!     not special here; the coset retired the whole layer.
+//!
+//!     ⛔ So do NOT write a C7 per-query arm. Every such check walks trace rows
+//!     at query positions, and C7's rows 384..511 are the blinding region. A
+//!     check that reaches them turns 128 free rows into 128 constrained ones,
+//!     collapses the counting argument in this file, and makes the commitment
+//!     solvable again — the exact regression depth 12 was built to escape.
+//!     The binding C7 needs lives entirely in the boundary fold and phase 2.
 //!
 //! # The hold column
 //!
@@ -208,8 +224,11 @@
 //!
 //! Verified on the deployed branch, not inferred. `b7-drop-aligned-checks`
 //! carries `LDE_COSET_SHIFT_U64 = 7` (`compact.rs:4779`) and its verifier
-//! hardcodes `let is_trace_aligned = false;` at three sites
-//! (`verify.rs:4280`, `:4355`, `:4428`) — which is what the branch is NAMED
+//! hardcodes `let is_trace_aligned = false;` at EIGHT sites, not three
+//! (`verify.rs:4280, 4355, 4428, 4514, 4611, 4695, 4846, 5084`; the old text
+//! named only the first three, which reads as though C3 through C6 still had
+//! live arms — the opposite of the truth, and the wrong premise for exactly
+//! the per-query question above) — which is what the branch is NAMED
 //! after. The LDE domain is a coset disjoint from the trace domain, so **no
 //! query position ever coincides with a trace row** and no opening ever
 //! returns a raw witness value.
@@ -219,16 +238,23 @@
 //! trace-aligned query would publish an internal tree node in the clear with
 //! probability 1-(15/16)^22 = 76%. On the coset that read does not exist. The
 //! same applies to the residual col 9 and col 5 channels an earlier pass of
-//! this file measured at ~23% and ~8%: those numbers describe MASTER, whose
-//! `compact.rs` has no coset shift and whose verifier still computes
-//! `is_trace_aligned = pos % blowup == 0` (`verify.rs:3023`).
+//! this file measured at ~23% and ~8%: those numbers describe the PRE-b7
+//! master. ⚠️ Re-checked 2026-08-24 and that description no longer fits this
+//! tree: `verify.rs` contains no `is_trace_aligned = pos % blowup == 0` at any
+//! line (`:3023` is a comment block in C1's DEEP-ALI preamble), and it does
+//! carry `pub const LDE_COSET_SHIFT: u64 = 7;` at `verify.rs:165`. The
+//! reconciliation `140dcb3e` brought b7 onto master.
 //!
 //! So on the lineage that ships, every published value is an evaluation at a
 //! point outside the trace domain, every one of them is a public linear
 //! equation, and the only defence is having more unknowns than equations. That
 //! is exactly what depth 12 buys.
 //!
-//! ⛔ **THEREFORE C7 MUST BE BUILT ON `b7-drop-aligned-checks`, NOT MASTER.**
+//! ⚠️ **THIS USED TO SAY: C7 MUST BE BUILT ON `b7-drop-aligned-checks`, NOT
+//! MASTER. That is over — master IS the b7 lineage since `140dcb3e`, the
+//! branch is 0 commits ahead, and the shipped blob is byte-identical.** The
+//! three reasons below are all true of master today; they are kept because
+//! they are the reasons, not because the branch still matters.
 //! Three independent reasons now agree: b7 publishes four trace rows per query
 //! against master's two, its `CircuitConfig` has ten fields against eight, and
 //! only b7 has the coset. A C7 built on master emits a proof the deployed
@@ -356,6 +382,19 @@ pub const ROW_COMMIT_IN: usize = 2 * HASH_CYCLE_LEN; // 64
 pub const ROW_COMMITMENT_OUT: usize = 2 * HASH_CYCLE_LEN + NUM_ROUNDS; // 94
 /// Row on which the depth-12 SUBTREE root appears at col 0 (level 11 output).
 /// ⛔ NOT the pool root. See the on-chain obligation below.
+///
+/// 🚨 NAME COLLISION, MEASURED 2026-08-24, AND IT HAS ALREADY MISFIRED ONCE.
+/// `CANONICAL_DEPTH` is **12** here and **15** in four other places the C7 work
+/// touches: `verify.rs:2910`, `verify.rs:3531`, `verify.rs:4877` and
+/// `air/merkle_path.rs:40`. Reaching for the name inside the verifier crate
+/// silently yields 15, and `(15 - 1) * 32 + 30 = 478` instead of 382.
+///
+/// 478 is exactly the root row `tests/c7_probe/src/lib.rs:562` uses, and it
+/// sits INSIDE the blinding region, where nothing may be constrained at all.
+/// So this is not a hypothetical: it is the mechanism that produced the wrong
+/// probe geometry. Any C7 constant crossing into the verifier must be written
+/// as an explicit literal with this row's derivation beside it, never as a
+/// bare `CANONICAL_DEPTH`.
 pub const ROW_MERKLE_ROOT_OUT: usize = (CANONICAL_DEPTH - 1) * HASH_CYCLE_LEN + NUM_ROUNDS; // 382
 
 /// 🚨 STALE SINCE DEPTH 12. This used to say the Merkle pipeline runs genuine
@@ -600,7 +639,18 @@ fn pow7<E: FieldElement>(x: E) -> E {
 ///  7 chain_flag      len 512   one-hot @ row 63
 ///  8 commit_out_flag len 512   one-hot @ row 94
 ///  9 row0_flag       len 512   one-hot @ row 0
+/// 10 hold_link_31    len 512   one-hot @ row 31   APPENDED 2026-08-23
+/// 11 active          len 512   DENSE, 1 on rows 0..=382
+/// 12 not_boundary_a. len 512   DENSE, active AND not_boundary
 /// ```
+///
+/// 🚨 ENTRIES 10-12 WERE MISSING FROM THIS LIST UNTIL 2026-08-24, AND THAT
+/// OMISSION HAS ALREADY COST A WRONG ARTIFACT. `tests/c7_probe/src/lib.rs`
+/// models C7 with a `[Felt; 10]` periodic array and prices a circuit that does
+/// not exist. Anyone building the on-chain evaluator from a ten-name list
+/// drops `active` and `not_boundary_active` — the two gates that switch off
+/// rows 384..511 — and every honest proof is then rejected, with the failure
+/// pointing nowhere near the cause.
 ///
 /// THE API CONTRACT IS THE VECTOR LENGTH. Columns 0-6 are returned at their
 /// natural period 32 so that 32-periodicity cannot be broken by editing one
@@ -710,9 +760,13 @@ pub fn build_spend_periodic_columns() -> Vec<Vec<BaseElement>> {
 /// (`programs/p01_stark_verifier/src/verify.rs`). Constraint ORDER is
 /// load-bearing (the RLC uses `alpha^i`): append at index 18, never insert.
 ///
-/// `periodic[0..13]`:
+/// `periodic[0..13]` — THIRTEEN names, and the body reads all thirteen:
 ///   `[rc0, rc1, rc2, round_flag, is_boundary, hash_start, is_interior,
-///     chain_flag, commit_out_flag, row0_flag]`
+///     chain_flag, commit_out_flag, row0_flag,
+///     hold_link_31, active, not_boundary_active]`
+///
+/// ⛔ This list said `periodic[0..13]` and then named TEN until 2026-08-24. See
+/// the warning on `build_spend_periodic_columns`.
 ///
 /// `result[0..18]`:
 ///   `[m_pos_s0, m_pos_s1, m_pos_s2, m_mux_s0, m_mux_s1, m_capacity,

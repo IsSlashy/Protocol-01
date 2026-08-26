@@ -69,9 +69,12 @@ import { jitterPrefund } from './prefundAmount';
 import {
   isNullifierSpent,
   prepareUnshield,
+  prepareUnshieldV4,
   unshieldDenominatedStarkV3,
+  unshieldDenominatedStarkV4,
   type PoolConfig,
   type PrepareUnshieldResult,
+  type PrepareUnshieldV4Result,
   type ShieldReceipt,
   type WalletSigner,
 } from './denominatedPool';
@@ -325,6 +328,274 @@ export async function executeUnshield(
     } catch (sweepErr: unknown) {
       console.warn(
         '[pool/unshield] ephemeral sweep failed; the key is re-derivable, funds recoverable:',
+        sweepErr instanceof Error ? sweepErr.message : String(sweepErr),
+      );
+    }
+  }
+}
+
+// ===========================================================================
+// CIRCUIT 7 — the same job, on one proof, publishing no commitment
+// ===========================================================================
+
+/**
+ * The v4 twin of `PreparedUnshield`.
+ *
+ * ⛔ IT CARRIES THE RECIPIENT AND THE v3 ONE DOES NOT. That is not tidiness,
+ * it is the whole difference between the two circuits. `sha256(recipient)` is
+ * four of circuit 7's six public inputs, so a v4 proof is bound to ONE payee
+ * before it is built. `unshieldDenominatedStarkV4` refuses a prepared-for-A /
+ * executed-for-B mismatch, and carrying the payee in the context means
+ * `executeUnshieldV4` cannot be handed a different one at all.
+ */
+export interface PreparedUnshieldV4 {
+  jobId: string;
+  poolConfig: PoolConfig;
+  receipt: ShieldReceipt;
+  ephemeral: Keypair;
+  /** The payee circuit 7 is bound to. Fixed at prove time, not at send time. */
+  recipient: PublicKey;
+  requiredLamports: number;
+  rawRequiredLamports: number;
+  prepared: PrepareUnshieldV4Result;
+}
+
+/**
+ * Prove the spend on ONE circuit-7 trace instead of the C1 + C3 pair.
+ *
+ * ⛔ THIS IS A SIBLING, NOT A REPLACEMENT, AND THAT IS DELIBERATE.
+ * `prepareUnshieldJob` is reused VERBATIM by `subscribeEphemeral.ts:115` and by
+ * `subscribePrivateStark.ts`. There is no `subscribe_private_stark_v4` on chain
+ * — `programs/zk_shielded/src/lib.rs` exposes exactly one v4, the withdrawal —
+ * so switching the shared function to circuit 7 would have broken the
+ * subscription silently, in the flow the 2026-09-04 deck is entirely about.
+ * Routing is per CALLER. It is not a migration.
+ *
+ * Three real differences from the v3 job, all consequences of the circuit
+ * rather than choices:
+ *
+ *   the payee is an INPUT      it is bound into the transcript, so it must be
+ *                              known before proving. The v3 job only needed it
+ *                              at send time.
+ *   ONE buffer, not two        C1 and C3 are held open together, so the v3
+ *                              float is their sum. C7 is a single proof, so the
+ *                              pre-fund is materially smaller — priced here
+ *                              rather than assumed.
+ *   no stored-path shortcut    `prepareUnshieldV4` rebuilds from history and
+ *                              has no `storedPath` fast path. A note whose root
+ *                              aged out of the ring cannot take the shortcut the
+ *                              v3 job takes, so this is slower and needs an RPC
+ *                              that still serves the history.
+ *
+ * The payee refusal moved EARLIER on purpose. In v3 it lives inside `execute`,
+ * because that is the first moment the recipient is known. Here it is known
+ * before we prove, and proving costs about 5.5 seconds and a real upload — so
+ * refusing at prove time returns the same answer for free.
+ */
+export async function prepareUnshieldJobV4(
+  receipt: ShieldReceipt,
+  recipient: PublicKey,
+  ownerPubkey: PublicKey,
+  poolConfig: PoolConfig,
+  connection: Connection,
+  walletSeed: Uint8Array,
+  onProgress?: (step: string) => void,
+): Promise<PreparedUnshieldV4> {
+  // Same refusal as `executeUnshield`, same reason, moved to the first moment it
+  // can be made. See the long note at that call site: paying the withdrawal back
+  // to the wallet that pre-funded it writes that wallet into the withdrawal
+  // transaction, which is what /pay shipped until 2026-08-04.
+  if (recipient.equals(ownerPubkey)) {
+    throw new Error(
+      'Refusing to withdraw to the wallet that funded this withdrawal — that names it ' +
+        'on-chain as the pool payee. Pass a derived payout address as the recipient and ' +
+        'move the funds on separately.',
+    );
+  }
+
+  // 🚨 A PRE-BLINDING NOTE GAINS NOTHING FROM CIRCUIT 7, AND SAYING OTHERWISE IS
+  // THE LIE. Refuse it here so the claim on screen is true by construction
+  // rather than by promise.
+  //
+  // The commitment is `poseidon(nullifier, poseidon(blinding, token_mint))`
+  // (`createCommitmentV3`). Circuit 7 keeps the commitment off the wire, but the
+  // NULLIFIER is published — it is the double-spend guard and a PDA seed, it
+  // cannot be hidden — and `token_mint` is the pool's, public. So `blinding` is
+  // the only unknown, and for a note deposited before `noteBlinding` landed it
+  // is the deposit EPOCH: `slotToEpoch(slot)`, five digits today. An observer
+  // enumerates a few thousand candidates, rebuilds the commitment, matches the
+  // leaf, and reaches the deposit and its payer. `noteBlinding.ts` opens with
+  // exactly this attack and the words "Anonymity set: one".
+  //
+  // The circuit cannot close it: `blinding` is a private witness and
+  // `stark/src/air/spend.rs:908-913` forbids constraining it — a boundary
+  // assertion, a range check, a bit decomposition or promoting it to a public
+  // input all "brick that note with no recovery path". So it is a ROUTING
+  // decision, and this is where it belongs.
+  //
+  // MEASURED 2026-08-26: epoch = slot/7200 = 67,838, five digits. A blinding
+  // drawn by the PRF is 63 bits, up to 9.2e18. A threshold at 2**32 sits 63,000x
+  // above any real epoch, and a PRF value landing below it has probability
+  // 2**-31 — about one in 2.1 billion. The two populations do not overlap in
+  // practice.
+  //
+  // ⛔ IT MUST NOT BLOCK THE NOTE. The message carries the needle
+  // `circuit 7 needs at least` so `isV4RebuildFailure` in poolHandlers.ts routes
+  // it to the C1 + C3 pair, which publishes the commitment and is honest about
+  // it. One such note exists and is unspent: leaf 30 of the 0.1 SOL pool
+  // (`poolNotes.ts`, the legacy epoch search that must never be removed).
+  const LEGACY_BLINDING_CEILING = 2n ** 32n;
+  if (receipt.noteBlinding < LEGACY_BLINDING_CEILING) {
+    throw new Error(
+      'circuit 7 needs at least a randomised blinding, and this note carries its deposit ' +
+        `epoch (${receipt.noteBlinding}) instead — it predates commitment blinding. Proving ` +
+        'it on circuit 7 would hide the commitment while leaving the leaf recoverable from ' +
+        'the published nullifier by trying a few thousand epochs, which is worse than the ' +
+        'C1 + C3 pair only in that it looks private. Falling back to the pair.',
+    );
+  }
+
+  onProgress?.('Checking the note is unspent...');
+  const spent = await isNullifierSpent(
+    connection,
+    poolConfig.poolPDA,
+    receipt.nullifierPreimage,
+    receipt.secret,
+  );
+  if (spent) {
+    throw new Error('This note has already been withdrawn.');
+  }
+
+  const prepared = await prepareUnshieldV4(receipt, recipient, poolConfig, connection, onProgress);
+
+  onProgress?.('Pricing the withdrawal...');
+  // ONE buffer. The v3 job adds two rent figures here because the handler reads
+  // both proofs in one transaction and they are open at the same time; circuit 7
+  // has nothing to pair with.
+  const r7 = await connection.getMinimumBalanceForRentExemption(
+    83 + prepared.c7ProofResult.proofSize,
+  );
+  const rawRequiredLamports = r7 + NULLIFIER_RENT + E_TX_FEE_BUDGET;
+  // Jittered for the same reason as the v3 job, and it matters MORE here: a
+  // single-buffer float is an even cleaner fingerprint than the pair's sum,
+  // because the proof size is a pure function of the circuit and does not move.
+  const requiredLamports = jitterPrefund(rawRequiredLamports);
+
+  const ephemeral = deriveUnshieldEphemeral(walletSeed, poolConfig.poolPDA, receipt.leafIndex);
+
+  return {
+    jobId: `unshield-v4:${poolConfig.poolPDA.toBase58()}:${receipt.leafIndex}`,
+    poolConfig,
+    receipt,
+    ephemeral,
+    recipient,
+    requiredLamports,
+    rawRequiredLamports,
+    prepared,
+  };
+}
+
+/**
+ * Send the v4 withdrawal from the pre-funded ephemeral, then sweep the residue.
+ *
+ * Takes no `recipient`: it is already in `ctx`, bound into the proof, and
+ * checked again inside `unshieldDenominatedStarkV4` before a lamport moves. The
+ * v3 twin takes one because its proof does not name a payee.
+ */
+export async function executeUnshieldV4(
+  ctx: PreparedUnshieldV4,
+  connection: Connection,
+  ownerPubkey: PublicKey,
+  onProgress?: (step: string) => void,
+  sweepTo?: PublicKey,
+): Promise<{ txSig: string }> {
+  const { ephemeral, poolConfig, prepared, recipient } = ctx;
+
+  const eSigner: WalletSigner = {
+    publicKey: ephemeral.publicKey,
+    signTransaction: async (t: Transaction) => {
+      if (!t.recentBlockhash) {
+        const { blockhash } = await connection.getLatestBlockhash('finalized');
+        t.recentBlockhash = blockhash;
+      }
+      if (!t.feePayer) t.feePayer = ephemeral.publicKey;
+      t.sign(ephemeral);
+      return t;
+    },
+  };
+
+  try {
+    // The payee refusal already ran in `prepareUnshieldJobV4`, before the proof
+    // was built. Restated here because this function is exported and a future
+    // caller may hold a context it did not prepare — and because the check is
+    // one comparison standing against a defect that has shipped once.
+    if (recipient.equals(ownerPubkey)) {
+      throw new Error(
+        'Refusing to withdraw to the wallet that funded this withdrawal — that names it ' +
+          'on-chain as the pool payee.',
+      );
+    }
+
+    // INSIDE the try, like the v3 twin: the pre-fund has already landed by now,
+    // so throwing before the `finally` would strand it on the ephemeral.
+    const funded = await connection.getBalance(ephemeral.publicKey, 'confirmed');
+    if (funded < ctx.requiredLamports) {
+      throw new Error(
+        `The withdrawal signer is underfunded (${funded} of ${ctx.requiredLamports} lamports). ` +
+          'The pre-fund transaction may not have confirmed yet — retry in a moment.',
+      );
+    }
+
+    const txSig = await unshieldDenominatedStarkV4(
+      poolConfig,
+      recipient,
+      prepared,
+      eSigner,
+      connection,
+      onProgress,
+    );
+    return { txSig };
+  } finally {
+    try {
+      const eBal = await connection.getBalance(ephemeral.publicKey, 'confirmed');
+      const sweepable = eBal - SWEEP_FEE;
+      if (sweepable > 0) {
+        // Say which of the two happened, for the same reason the v3 twin does:
+        // a user told "returning rent to your wallet" when it went elsewhere has
+        // been handed a false receipt, and this is the only line about it.
+        const target = sweepTo ?? ownerPubkey;
+        onProgress?.(
+          target.equals(ownerPubkey)
+            ? 'Returning recovered rent to your wallet...'
+            : 'Returning recovered rent to the funder that paid for this job...',
+        );
+        const sweepTx = new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: ephemeral.publicKey,
+            toPubkey: target,
+            lamports: sweepable,
+          }),
+        );
+        const { signature: sig, blockhash, lastValidBlockHeight } = await sendWithFreshBlockhash(
+          connection,
+          sweepTx,
+          (t) => {
+            t.sign(ephemeral);
+            return t;
+          },
+          ephemeral.publicKey,
+        );
+        await connection.confirmTransaction(
+          { signature: sig, blockhash, lastValidBlockHeight },
+          'confirmed',
+        );
+      }
+    } catch (sweepErr: unknown) {
+      // A failed sweep must never mask the withdrawal's own outcome, and it must
+      // never be silent either — the key is derived, so saying so is what makes
+      // the residue recoverable rather than lost.
+      console.warn(
+        '[pool/unshield-v4] ephemeral sweep failed; the key is re-derivable, funds recoverable:',
         sweepErr instanceof Error ? sweepErr.message : String(sweepErr),
       );
     }

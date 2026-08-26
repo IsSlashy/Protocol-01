@@ -54,14 +54,26 @@ export const metadata: Metadata = {
    *    and app/opengraph-image.tsx generate both, in the Styx palette.
    *
    * 🚨 "zero-knowledge" was removed from `keywords` on 2026-08-13, and must not
-   * come back while `stark/tests/zk_feasibility.rs` passes. That test recovers a
-   * private witness from published proof bytes by interpolation, in under half a
-   * second — the prover applies no trace blinding, so the proofs are succinct
-   * and verified on chain but they are NOT zero-knowledge. The word was sitting
-   * in the head of every page, which is the one place a claim reaches someone
-   * who never opened the app. "STARK" below is the accurate term and stays.
-   * When a blinded prover ships, that test starts failing; put the word back
-   * then, not before.
+   * come back while probe `P3b` of `verify/p01-verify.mjs` stands. That probe
+   * carries the recovery measurement — four C1 witnesses, the spend secret
+   * among them, out of published proof bytes in 5 ms — and it is pinned FAIL by
+   * construction. Seven of the eight circuits apply no trace blinding at all.
+   * The eighth, `spend`, does apply a coset LDE and 128 CSPRNG-drawn mask rows
+   * — and that still is not secrecy: it buys UNDERDETERMINATION, 90 published
+   * evaluations against ~138 unknowns, and the recovery above was itself
+   * performed on an underdetermined system because the AIR constraints supply
+   * the equations the openings do not. So the proofs are succinct and verified
+   * on chain but they are NOT zero-knowledge. The word
+   * was sitting in the head of every page, which is the one place a claim
+   * reaches someone who never opened the app. "STARK" below is the accurate
+   * term and stays. When a blinded prover ships AND a positive control shows
+   * the recovery failing, put the word back; not before.
+   *
+   * ⚠️ The pointer here used to be `stark/tests/zk_feasibility.rs`, and the
+   * trigger used to be "that test starts failing". That file was deleted in
+   * `dc9dd515` (calibrated to a superseded two-row wire) and NOTHING executable
+   * replaced it, so there is no test anyone can run today to flip this. The
+   * gate is unchanged and the word stays out; only the evidence pointer moved.
    */
   title: "Styx Protocol",
   description:

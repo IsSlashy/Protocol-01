@@ -1,0 +1,46 @@
+
+  /* ------------------------------------------------------------------
+     Additions for the three minute cut. The deck is built to a clock,
+     so it wears the clock: every plate that is presented carries its own
+     time budget next to its number. Appendix plates carry no clock,
+     because they are never spoken, only opened when a judge asks.
+     ------------------------------------------------------------------ */
+
+  .plate-no .t { color: var(--seal); }
+  .plate-no .t::before { content: " / "; color: var(--faint); }
+
+  .plate.appx .eyebrow { color: var(--admission); }
+  .plate.appx .plate-no .t { color: var(--admission); }
+  .plate.appx { min-height: auto; padding-top: clamp(3rem, 6vw, 5rem); padding-bottom: clamp(3rem, 6vw, 5rem); }
+  .plate.appx h2 { font-size: clamp(1.5rem, 3vw, 2.3rem); }
+
+  .divider { text-align: left; }
+  .divider h2 { color: var(--admission); }
+
+  /* A terminal transcript is the one place the mono face is the content
+     and not a label, so it gets a box instead of a colour. */
+  .term {
+    font-family: var(--mono);
+    font-size: clamp(0.72rem, 0.95vw, 0.86rem);
+    line-height: 1.7;
+    color: var(--paper);
+    background: rgba(234, 231, 223, 0.035);
+    border-left: 2px solid var(--seal);
+    padding: 1rem 1.2rem;
+    margin: 0;
+    max-width: 62rem;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .term .c { color: var(--faint); }
+  .term .ok { color: var(--seal); }
+  .term .no { color: var(--admission); }
+
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 0.4rem 1.4rem; max-width: 62rem; }
+  .kv dt { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); padding-top: 0.25rem; }
+  .kv dd { margin: 0; color: var(--muted); font-size: 0.95rem; line-height: 1.55; }
+  .kv dd strong { color: var(--paper); font-weight: 500; }
+
+  /* A short hash inside a table cell must not break mid token: the first
+     render split 047cd9b2 across two lines and it read as two numbers. */
+  td .hash, dd .hash { word-break: normal; white-space: nowrap; }

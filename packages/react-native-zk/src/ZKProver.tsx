@@ -31,6 +31,7 @@ import { View, StyleSheet } from 'react-native';
 import WebView, { type WebViewMessageEvent } from 'react-native-webview';
 
 import { STARK_WASM_BASE64 } from './wasmData';
+import { STARK_GLUE_IIFE } from './glueIife';
 import type { ProofResult, ProverOptions, ZKProverRef } from './types';
 
 // ---------------------------------------------------------------------------
@@ -40,65 +41,39 @@ import type { ProofResult, ProverOptions, ZKProverRef } from './types';
 const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-</head><body><script>
+</head><body>
+<script>${STARK_GLUE_IIFE}</script>
+<script>
 (function() {
-  var wasm = null;
-  var cachedMem = null;
-  var wasmVectorLen = 0;
-  var decoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
-  decoder.decode();
-  var encoder = new TextEncoder();
+  var glue = null;
 
   function post(msg) { window.ReactNativeWebView.postMessage(JSON.stringify(msg)); }
 
-  function getMem() {
-    if (!wasm) throw new Error('WASM not initialized');
-    if (cachedMem === null || cachedMem.byteLength === 0) {
-      cachedMem = new Uint8Array(wasm.memory.buffer);
-    }
-    return cachedMem;
-  }
-
-  function getStringFromWasm(ptr, len) {
-    var adjustedPtr = ptr >>> 0;
-    return decoder.decode(getMem().subarray(adjustedPtr, adjustedPtr + len));
-  }
-
-  function passStringToWasm(arg) {
-    var malloc = wasm.__wbindgen_malloc;
-    var realloc = wasm.__wbindgen_realloc;
-    var len = arg.length;
-    var ptr = malloc(len, 1) >>> 0;
-    var mem = getMem();
-    var offset = 0;
-    for (; offset < len; offset++) {
-      var code = arg.charCodeAt(offset);
-      if (code > 0x7f) break;
-      mem[ptr + offset] = code;
-    }
-    if (offset !== len) {
-      var sliced = arg;
-      if (offset !== 0) sliced = arg.slice(offset);
-      var newLen = offset + sliced.length * 3;
-      ptr = realloc(ptr, len, newLen, 1) >>> 0;
-      len = newLen;
-      mem = getMem();
-      var view = mem.subarray(ptr + offset, ptr + len);
-      var written = encoder.encodeInto(sliced, view).written;
-      offset += written;
-      ptr = realloc(ptr, len, offset, 1) >>> 0;
-    }
-    wasmVectorLen = offset;
-    return ptr;
-  }
-
-  function readStringReturn(ret) {
-    var ptr = ret[0];
-    var len = ret[1];
-    var s = getStringFromWasm(ptr, len);
-    wasm.__wbindgen_free(ptr, len, 1);
-    return s;
-  }
+  // ---- WASM, through the bundled wasm-bindgen glue ----
+  //
+  // THIS BLOCK USED TO BE A HAND-ROLLED COPY OF THE wasm-bindgen ABI: getMem /
+  // getStringFromWasm / passStringToWasm / readStringReturn over
+  // wasm.memory, plus an import object with exactly ONE entry. It was one of
+  // FIVE such copies in this repository.
+  //
+  // One entry was enough for the pre-C7 blob: pure computation, no randomness,
+  // no JS interop. MEASURED on the circuit-7 build, it needs TWENTY-FIVE -- the
+  // spend prover draws a 1,280-element CSPRNG mask and that pulls
+  // getrandom -> crypto -> the whole wasm-bindgen shim surface. This copy could
+  // not have loaded that blob at all.
+  //
+  // And the import names are CONTENT-HASHED
+  // (__wbg_crypto_38df2bab126b63dc), so hand-writing them is work redone on
+  // every rebuild, five times over.
+  //
+  // apps/web and apps/extension just import the package. This surface cannot:
+  // it runs as an ES5 template string inside a WebView <script>, with no
+  // module system at all. So the generated glue is bundled to an IIFE assigning
+  // one global and injected above -- see
+  // packages/stark-prover/scripts/stark-glue-iife.mjs.
+  //
+  // The glue's wrappers take and return real JS values, which is why the
+  // handlers below pass CSV strings directly and no longer decode (ptr,len).
 
   function base64ToBytes(b64) {
     var binary = atob(b64);
@@ -109,35 +84,19 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
 
   function initWasm(b64) {
     try {
-      var bytes = base64ToBytes(b64);
-      var imports = {
-        './p01_stark_bg.js': {
-          __wbindgen_init_externref_table: function() {
-            var table = wasm.__wbindgen_externrefs;
-            var offset = table.grow(4);
-            table.set(0, undefined);
-            table.set(offset + 0, undefined);
-            table.set(offset + 1, null);
-            table.set(offset + 2, true);
-            table.set(offset + 3, false);
-          }
-        }
-      };
-      WebAssembly.instantiate(bytes, imports).then(function(result) {
-        wasm = result.instance.exports;
-        cachedMem = null;
-        wasm.__wbindgen_start();
-        post({ type: 'wasmLoaded' });
-      }).catch(function(err) {
-        post({ type: 'wasmError', error: 'WASM init failed: ' + (err && err.message || String(err)) });
-      });
+      // Synchronous compile: the glue's initSync wants a Module, not raw bytes.
+      // The blocking cost lands once, on a hidden WebView.
+      glue = P01StarkGlue;
+      glue.initSync({ module: new WebAssembly.Module(base64ToBytes(b64)) });
+      post({ type: 'wasmLoaded' });
     } catch (err) {
+      glue = null;
       post({ type: 'wasmError', error: 'WASM init failed: ' + (err && err.message || String(err)) });
     }
   }
 
   function ensureReady(id) {
-    if (!wasm) {
+    if (!glue) {
       post({ type: 'error', id: id, error: 'WASM not initialized' });
       return false;
     }
@@ -150,7 +109,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
     if (!ensureReady(id)) return;
     try {
       var t0 = performance.now();
-      var json = readStringReturn(wasm.generate_stark_proof(BigInt(secret)));
+      var json = glue.generate_stark_proof(BigInt(secret));
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
       post({
@@ -170,7 +129,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
   function computeCommitment(id, secret) {
     if (!ensureReady(id)) return;
     try {
-      var commitment = readStringReturn(wasm.compute_stark_commitment(BigInt(secret)));
+      var commitment = glue.compute_stark_commitment(BigInt(secret));
       post({
         type: 'proof', id: id,
         circuitId: 0,
@@ -188,9 +147,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
     if (!ensureReady(id)) return;
     try {
       var t0 = performance.now();
-      var json = readStringReturn(
-        wasm.generate_pool_commitment_stark_proof(BigInt(np), BigInt(secret), BigInt(epoch), BigInt(mint))
-      );
+      var json = glue.generate_pool_commitment_stark_proof(BigInt(np), BigInt(secret), BigInt(epoch), BigInt(mint));
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
       post({
@@ -212,9 +169,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
     if (!ensureReady(id)) return;
     try {
       var t0 = performance.now();
-      var json = readStringReturn(
-        wasm.generate_balance_stark_proof(BigInt(sk), BigInt(balance), BigInt(salt), BigInt(mint))
-      );
+      var json = glue.generate_balance_stark_proof(BigInt(sk), BigInt(balance), BigInt(salt), BigInt(mint));
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
       post({
@@ -235,12 +190,9 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
     if (!ensureReady(id)) return;
     try {
       var t0 = performance.now();
-      var elemsPtr = passStringToWasm(elements.join(','));
-      var elemsLen = wasmVectorLen;
-      var idxPtr = passStringToWasm(indices.join(','));
-      var idxLen = wasmVectorLen;
-      var ret = wasm.generate_merkle_path_stark_proof(BigInt(leaf), elemsPtr, elemsLen, idxPtr, idxLen);
-      var json = readStringReturn(ret);
+      var json = glue.generate_merkle_path_stark_proof(
+        BigInt(leaf), elements.join(','), indices.join(',')
+      );
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
       post({
@@ -260,12 +212,11 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
     if (!ensureReady(id)) return;
     try {
       var t0 = performance.now();
-      var ret = wasm.generate_confidential_balance_stark_proof(
+      var json = glue.generate_confidential_balance_stark_proof(
         BigInt(sk), BigInt(oldBal), BigInt(oldSalt),
         BigInt(newBal), BigInt(newSalt),
         BigInt(amount), BigInt(amountSalt), BigInt(mint)
       );
-      var json = readStringReturn(ret);
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
       post({
@@ -285,7 +236,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
     if (!ensureReady(id)) return;
     try {
       var t0 = performance.now();
-      var ret = wasm.generate_transfer_stark_proof(
+      var json = glue.generate_transfer_stark_proof(
         BigInt(a.spendingKey), BigInt(a.tokenMint),
         BigInt(a.inAmount1), BigInt(a.inRand1),
         BigInt(a.inAmount2), BigInt(a.inRand2),
@@ -293,7 +244,6 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
         BigInt(a.outAmount2), BigInt(a.outRecipient2), BigInt(a.outRand2),
         BigInt(a.publicAmount)
       );
-      var json = readStringReturn(ret);
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
       post({
@@ -315,7 +265,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
 
   function generateMerkleUpdateProof(id, oldLeaf, newLeaf, elements, indices) {
     if (!ensureReady(id)) return;
-    if (!wasm.generate_merkle_update_stark_proof) {
+    if (!glue.generate_merkle_update_stark_proof) {
       post({
         type: 'error', id: id,
         error: 'Circuit 6 (MERKLE_UPDATE) is not exported by the bundled WASM. Ship a custom WASM build via loadFromExpoAsset/loadFromApkAssets — see packages/stark-prover/README.md for the rebuild command.'
@@ -324,14 +274,9 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
     }
     try {
       var t0 = performance.now();
-      var elemsPtr = passStringToWasm(elements.join(','));
-      var elemsLen = wasmVectorLen;
-      var idxPtr = passStringToWasm(indices.join(','));
-      var idxLen = wasmVectorLen;
-      var ret = wasm.generate_merkle_update_stark_proof(
-        BigInt(oldLeaf), BigInt(newLeaf), elemsPtr, elemsLen, idxPtr, idxLen
+      var json = glue.generate_merkle_update_stark_proof(
+        BigInt(oldLeaf), BigInt(newLeaf), elements.join(','), indices.join(',')
       );
-      var json = readStringReturn(ret);
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
       post({

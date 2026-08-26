@@ -77,20 +77,54 @@ fn fixture_c6() -> Vec<u8> {
     p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi).proof_bytes
 }
 
+fn fixture_c7() -> Vec<u8> {
+    use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+    const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+
+    let pe: Vec<u64> = (0..CANONICAL_DEPTH as u64).map(|i| 1000 + i * 37).collect();
+    let pi: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
+    // Deterministic: a wire-size pin needs the same bytes every run. ⛔ NOT the
+    // shape a spend uses -- that draws MASK_ROWS * TRACE_WIDTH fresh CSPRNG
+    // elements for every proof, and reusing a mask across two proofs of one
+    // note relates two traces that must be independent.
+    let mut st = 0x9E37_79B9_7F4A_7C15u64;
+    let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
+    for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+        st ^= st >> 12;
+        st ^= st << 25;
+        st ^= st >> 27;
+        mask.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
+    }
+    p01_stark::compact::generate_spend_compact_proof(
+        42, 999, 7, 555, &pe, &pi, &[11, 22, 33, 44], &mask,
+    )
+    .proof_bytes
+}
+
 /// `(circuit_id, label, build)`.
 type Circuit = (u8, &'static str, fn() -> Vec<u8>);
 
-/// The six GENERIC circuits. C0 is on the legacy parser and is handled
-/// separately everywhere below, because it is a different function with a
-/// different signature — lumping the two is how a legacy-only defect gets a
+/// The seven GENERIC circuits, C1 through C7. C0 is on the legacy parser and is
+/// handled separately everywhere below, because it is a different function with
+/// a different signature — lumping the two is how a legacy-only defect gets a
 /// green from a generic-only sweep.
-const GENERIC: [Circuit; 6] = [
+///
+/// (Said "six" until 2026-08-26. The array grew to seven when C7 landed and the
+/// sentence above it did not, which is the smallest possible version of the
+/// thing `c7_pin_coverage.rs` exists to catch.)
+const GENERIC: [Circuit; 7] = [
     (1, "C1 pool_commitment", fixture_c1),
     (2, "C2 balance_proof", fixture_c2),
     (3, "C3 merkle_path", fixture_c3),
     (4, "C4 confidential_balance", fixture_c4),
     (5, "C5 transfer", fixture_c5),
     (6, "C6 merkle_update", fixture_c6),
+    // [C7 2026-08-24] C7 is the circuit this file exists for. It shares C6's
+    // trace width, trace length, blowup, LDE size, merkle depth and query
+    // count; `fri_final_poly_size` (32 against 16) is the ONLY field that
+    // separates the two configs, and the parity sweep below is what would
+    // notice if it stopped.
+    (7, "C7 spend", fixture_c7),
 ];
 
 // ---------------------------------------------------------------------------
@@ -194,32 +228,72 @@ fn expected_wire_size(config: &CircuitConfig) -> usize {
 /// 16 (largest shipped is 10), depths to 20 (largest is 13), segments to 16
 /// (largest is 8). A recovery that is unique only because the sweep was narrow
 /// would be a measurement of the sweep.
+/// Every `fri_final_poly_size` any shipping config declares.
+///
+/// 🚨 THIS SWEEP HARD-CODED 16 UNTIL 2026-08-25, AND C7 IS THE ONLY CIRCUIT
+/// THAT IS NOT 16 — it is 32. So no candidate this function built could ever
+/// have the right wire size for a C7 proof, `recover_geometry` returned an EMPTY
+/// set for it, and `every_wire_field_agrees_with_the_config_that_declares_it`
+/// failed with "the bytes are consistent with the geometries [] and the config's
+/// (10, 13, 8) is NOT among them — the two crates disagree about the circuit's
+/// shape". They do not disagree. The recovery could not see C7's shape at all.
+///
+/// `ci.yml` runs this target, so that red predates and is independent of the
+/// PROBE_ORDER change: it has been failing since C7 gained a wire fixture.
+///
+/// Derived from the configs rather than listed, so a circuit with a new
+/// `fri_final_poly_size` is swept the day it lands instead of silently
+/// recovering nothing. That is mildly circular — the configs are also what the
+/// sweep is checking — but strictly less so than a literal that matches six
+/// circuits and no seventh, and the ambiguity SET it produces is still recovered
+/// from the bytes.
+fn declared_fri_final_poly_sizes() -> Vec<usize> {
+    let mut sizes: Vec<usize> = (0u8..=7)
+        .filter_map(get_circuit_config)
+        .map(|c| c.fri_final_poly_size)
+        .collect();
+    sizes.sort_unstable();
+    sizes.dedup();
+    assert!(
+        sizes.len() >= 2,
+        "every shipping circuit declares the same fri_final_poly_size ({sizes:?}); this sweep \
+         is back to a single literal and the next circuit that differs will recover nothing"
+    );
+    sizes
+}
+
 fn recover_geometry(bytes: &[u8], num_queries: usize) -> Vec<(usize, usize, usize)> {
     let mut found = Vec::new();
-    for tw in 1..=16usize {
-        for md in 2..=20usize {
-            for k in 1..=16usize {
-                let candidate = CircuitConfig {
-                    trace_width: tw,
-                    trace_length: (1usize << md) / 16,
-                    blowup: 16,
-                    lde_size: 1usize << md,
-                    merkle_depth: md,
-                    num_rounds: 30,
-                    fri_final_poly_size: 16,
-                    fri_final_poly_degree_bound: 1,
-                    quotient_segments: k,
-                    num_queries,
-                };
-                if expected_wire_size(&candidate) != bytes.len() {
-                    continue;
-                }
-                if GenericCompactProof::from_bytes(bytes, &candidate).is_some() {
-                    found.push((tw, md, k));
+    for ffps in declared_fri_final_poly_sizes() {
+        for tw in 1..=16usize {
+            for md in 2..=20usize {
+                for k in 1..=16usize {
+                    let candidate = CircuitConfig {
+                        trace_width: tw,
+                        trace_length: (1usize << md) / 16,
+                        blowup: 16,
+                        lde_size: 1usize << md,
+                        merkle_depth: md,
+                        num_rounds: 30,
+                        fri_final_poly_size: ffps,
+                        // Never read by `from_bytes` and never part of the wire
+                        // size, so it cannot widen or narrow this set.
+                        fri_final_poly_degree_bound: 1,
+                        quotient_segments: k,
+                        num_queries,
+                    };
+                    if expected_wire_size(&candidate) != bytes.len() {
+                        continue;
+                    }
+                    if GenericCompactProof::from_bytes(bytes, &candidate).is_some() {
+                        found.push((tw, md, k));
+                    }
                 }
             }
         }
     }
+    found.sort_unstable();
+    found.dedup();
     found
 }
 
@@ -508,7 +582,7 @@ fn the_parser_does_not_check_length_this_test_does() {
 /// `the_probe_order_this_test_drives_is_the_one_the_program_implements`, because
 /// a behavioural test of the wrong order is worse than no test: it would report
 /// a resolution nothing on chain performs.
-const PROBE_ORDER: [u8; 4] = [1, 6, 3, 5];
+const PROBE_ORDER: [u8; 5] = [1, 6, 3, 5, 7];
 
 /// `apps/mobile/services/stark/index.ts`, embedded at COMPILE time so moving the
 /// file is a build failure rather than a skipped check.
@@ -627,11 +701,29 @@ fn every_circuit_resolves_through_the_uniform_probe_or_is_named_as_unsupported()
                      uniform pipeline cannot verify it at all"
                 ));
             }
-        } else if got == Some(*cid) {
-            wrong.push(format!(
-                "{label} is NOT in PROBE_ORDER yet the probe resolved it to itself; either \
-                 the probe set grew or this test is reading a stale order"
-            ));
+        } else if let Some(other) = got {
+            // [C7 2026-08-24] WAS `else if got == Some(*cid)`, which only
+            // complained when the probe resolved a non-member to ITSELF. A
+            // non-member resolving to a DIFFERENT circuit produced no entry in
+            // `wrong` and this test went green.
+            //
+            // That is precisely the shape C7 creates: it is in GENERIC and
+            // deliberately out of PROBE_ORDER, and it shares every observable
+            // config field with C6 except `fri_final_poly_size`. A C7 proof
+            // resolving to C6 would be checked against C6's constraints, and
+            // nothing in this file would have said so.
+            if other == *cid {
+                wrong.push(format!(
+                    "{label} is NOT in PROBE_ORDER yet the probe resolved it to itself; \
+                     either the probe set grew or this test is reading a stale order"
+                ));
+            } else {
+                wrong.push(format!(
+                    "{label} is NOT in PROBE_ORDER yet the probe resolved it to C{other} \
+                     -- a MIS-PROBE, not an unsupported circuit. Its proof would be \
+                     checked against C{other}'s constraints."
+                ));
+            }
         }
     }
     assert!(

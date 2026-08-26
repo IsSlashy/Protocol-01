@@ -17,6 +17,13 @@ pub mod init_denominated_pool_v3;
 pub mod shield_denominated;
 pub mod shield_denominated_v3;
 pub mod unshield_denominated_stark_v3;
+/// [C7] The single-proof spend. v3 needs C1 + C3 and PUBLISHES the note
+/// commitment to tie them together, which names the deposit that funded the
+/// spend. Circuit 7 proves both halves in one trace and publishes no
+/// commitment at all. v3 is deliberately left registered: it is the only path
+/// that works against the verifier currently deployed on devnet, and it stays
+/// until the C7-aware verifier is live.
+pub mod unshield_denominated_stark_v4;
 // P3.7 — REMOVED Groth16 denominated-pool instructions (replaced by STARK variants):
 //   unshield_denominated, emergency_unshield_denominated, transfer_denominated,
 //   split_note, subscribe_private, pause_private, resume_private, cancel_private,
@@ -68,6 +75,15 @@ pub mod resume_normal;
 // === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
 // pub mod unshield_denominated_stark;
 pub mod subscribe_private_stark;
+/// [C7] The single-proof subscribe. v3 above needs C1 + C3 and PUBLISHES the
+/// note commitment to tie them together, which names the deposit that funded
+/// the subscription. Circuit 7 proves both halves in one trace and publishes no
+/// commitment at all.
+///
+/// v3 is deliberately left registered and untouched: apps/mobile still spends on
+/// the C1+C3 pair, and a note whose blinding is unknown can be spent NOWHERE
+/// ELSE. Removing it strands those notes.
+pub mod subscribe_private_stark_v4;
 pub mod pause_private_stark;
 pub mod resume_private_stark;
 // === Deprecated v2 (circuit-1 only, no C3 membership proof = unshield-undeposited risk). Production is v3-only. ===
@@ -95,6 +111,7 @@ pub use init_denominated_pool_v3::*;
 pub use shield_denominated::*;
 pub use shield_denominated_v3::*;
 pub use unshield_denominated_stark_v3::*;
+pub use unshield_denominated_stark_v4::*;
 pub use resize_denominated_pool::*;
 // === REMOVED: subscribe_normal (see the module block above). ===
 // === REMOVED: cancel_normal (see the module block above). ===
@@ -105,6 +122,7 @@ pub use resume_normal::*;
 // pub use unshield_denominated_stark::*;
 // === REMOVED: cancel_private_stark (see the module block above). ===
 pub use subscribe_private_stark::*;
+pub use subscribe_private_stark_v4::*;
 pub use pause_private_stark::*;
 pub use resume_private_stark::*;
 // === Deprecated v2 (circuit-1 only, no C3 membership proof). Production is v3-only. ===

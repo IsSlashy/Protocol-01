@@ -7,7 +7,28 @@
 //! that no two configs accept the same byte string.
 //!
 //! That claim had never been tested. This file tests it, exhaustively, across
-//! all 7×7 ordered pairs — under BOTH envelopes:
+//! all 8×8 ordered pairs — under BOTH envelopes:
+//!
+//! 🚨 IT SWEPT 7×7 UNTIL 2026-08-25, AND C7 WAS THE ROW AND COLUMN IT SKIPPED.
+//!
+//! The storage was already `[[false; 8]; 8]`, `all_genuine()` already built the
+//! C7 proof, and `genuine_proof_bytes` already had a `7 =>` arm — but every
+//! sweep ran `0..7usize`, so the C7 proof was generated, padded, stored and
+//! never probed against a foreign config in either direction. The header and
+//! both section banners said "7×7" the whole time; the eight-wide storage is
+//! what made it read as covered.
+//!
+//! That mattered beyond tidiness. `ci.yml` justifies running this target by
+//! claiming it is "the 8x8 parse matrix ... the only test that would notice" if
+//! `fri_final_poly_size` stopped separating C6 from C7. It would not have
+//! noticed. And `verify_uniform` is a parse-only discriminator that takes the
+//! FIRST config that accepts the bytes, so an unmeasured C7 collision is a
+//! soundness question, not a cosmetic one — which is exactly what had to be
+//! settled before deciding whether C7 joins `PROBE_ORDER`.
+//!
+//! MEASURED once the sweep was widened: both matrices are perfectly diagonal.
+//! C7 parses only as C7, nothing else parses as C7, under exact-length AND
+//! under the 145,000-byte padded envelope.
 //!
 //!   * exact-length bytes (what `cargo test` naturally produces), and
 //!   * **the envelope the shipped client actually sends**: every proof padded
@@ -34,7 +55,7 @@ const UNIFORM_PROOF_SIZE: usize = 145_000;
 
 /// `verify_uniform`'s probe order, copied from `lib.rs`. If that constant moves,
 /// this file must move with it — `probe_order_matches_lib` pins it.
-const PROBE_ORDER: [u8; 4] = [1, 6, 3, 5];
+const PROBE_ORDER: [u8; 5] = [1, 6, 3, 5, 7];
 
 // ============================================================================
 // One genuine proof per circuit
@@ -49,12 +70,13 @@ fn genuine_proof_bytes(circuit_id: u8) -> Vec<u8> {
         4 => common::prove4(&common::w4(0)).proof_bytes,
         5 => common::prove5(&common::w5(0)).proof_bytes,
         6 => common::prove6(&common::w6(0)).proof_bytes,
+        7 => common::prove7(&common::w7(0)).proof_bytes,
         _ => unreachable!(),
     }
 }
 
 fn all_genuine() -> Vec<Vec<u8>> {
-    (0u8..=6).map(genuine_proof_bytes).collect()
+    (0u8..=7).map(genuine_proof_bytes).collect()
 }
 
 /// Pad exactly as `padProofToUniformSize` does: a zero-filled buffer of
@@ -67,12 +89,12 @@ fn pad_uniform(bytes: &[u8]) -> Vec<u8> {
 }
 
 fn parses_as(bytes: &[u8], circuit_id: u8) -> bool {
-    let config = get_circuit_config(circuit_id).expect("0..=6 has a config");
+    let config = get_circuit_config(circuit_id).expect("0..=7 has a config");
     GenericCompactProof::from_bytes(bytes, config).is_some()
 }
 
-fn render_matrix(label: &str, m: &[[bool; 7]; 7]) -> String {
-    let mut s = format!("\n{label}\n      as C0 as C1 as C2 as C3 as C4 as C5 as C6\n");
+fn render_matrix(label: &str, m: &[[bool; 8]; 8]) -> String {
+    let mut s = format!("\n{label}\n      as C0 as C1 as C2 as C3 as C4 as C5 as C6 as C7\n");
     for (n, row) in m.iter().enumerate() {
         s.push_str(&format!("C{n} → "));
         for cell in row.iter() {
@@ -91,9 +113,13 @@ fn render_matrix(label: &str, m: &[[bool; 7]; 7]) -> String {
 fn recorded_proof_sizes_hold() {
     // Sizes carried in the brief. Re-measured here so a format change that
     // shifts a size cannot silently invalidate the size-based reasoning below.
-    const RECORDED: [usize; 7] = [47_641, 68_881, 69_761, 78_157, 81_457, 78_877, 81_037];
+    // [C7 2026-08-24] Eighth entry: 77,965 B, MEASURED. C7 is SMALLER than C6
+    // (81,037) despite identical width, length, blowup and query count, because
+    // `fri_final_poly_size = 32` drops one committed FRI layer.
+    const RECORDED: [usize; 8] =
+        [47_641, 68_881, 69_761, 78_157, 81_457, 78_877, 81_037, 77_965];
     let proofs = all_genuine();
-    let mut measured = [0usize; 7];
+    let mut measured = [0usize; 8];
     for (i, p) in proofs.iter().enumerate() {
         measured[i] = p.len();
     }
@@ -102,8 +128,21 @@ fn recorded_proof_sizes_hold() {
 
     // Pairwise distinct — a necessary condition for length to discriminate at
     // all. (It is NOT sufficient: see `parser_length_check_is_a_minimum`.)
-    for i in 0..7 {
-        for j in (i + 1)..7 {
+    //
+    // 🚨 8, NOT 7, AND THIS LOOP WAS THE ONE C7 SLIPPED THROUGH. `0b7d12c0` was
+    // titled "the parse matrix swept 7x7 — C7 was the row and column it
+    // skipped" and widened every other sweep in this file (79, 227, 326, 371,
+    // 613, 756, 1018, 1027, 1059). This one kept `0..7`, so `measured[7]` was
+    // asserted equal to `RECORDED[7]` two lines above and then compared against
+    // nothing. The file warns about exactly this shape at the `0..=7` loop
+    // below — "this loop and the one below were HALF updated" — which is how a
+    // second half-update went unnoticed in the same file, in the same commit.
+    //
+    // Widening is safe and was checked before it was written: 77,965 is
+    // distinct from all seven others, and `assert_eq!(measured, RECORDED)`
+    // above proves 77,965 is what the real C7 proof measures.
+    for i in 0..8 {
+        for j in (i + 1)..8 {
             assert_ne!(measured[i], measured[j], "C{i} and C{j} have the same length");
         }
     }
@@ -198,7 +237,7 @@ fn the_transcript_does_not_bind_the_circuit_only_the_step4_dispatch_does() {
 #[test]
 fn no_two_configs_share_the_tuple_the_parser_can_observe() {
     let mut tuples = Vec::new();
-    for cid in 0u8..=6 {
+    for cid in 0u8..=7 {
         let c = get_circuit_config(cid).unwrap();
         let nfl = (c.lde_size / c.fri_final_poly_size).trailing_zeros() as usize - 1;
         println!(
@@ -255,7 +294,7 @@ fn no_two_configs_share_the_tuple_the_parser_can_observe() {
 #[test]
 fn probe_order_matches_lib() {
     let src = include_str!("../src/lib.rs");
-    let needle = "const PROBE_ORDER: [u8; 4] = [";
+    let needle = "const PROBE_ORDER: [u8; 5] = [";
     let start = src.find(needle).expect("PROBE_ORDER not found in lib.rs") + needle.len();
     let end = start + src[start..].find(']').expect("unterminated PROBE_ORDER");
     let parsed: Vec<u8> = src[start..end]
@@ -297,7 +336,7 @@ fn probe_order_matches_lib() {
 ///     nothing may key uniqueness or replay off proof bytes.
 #[test]
 fn parser_length_check_is_a_minimum_not_an_equality() {
-    for cid in 0u8..=6 {
+    for cid in 0u8..=7 {
         let bytes = genuine_proof_bytes(cid);
         assert!(parses_as(&bytes, cid), "C{cid}: exact-length genuine proof must parse");
 
@@ -342,7 +381,7 @@ fn legacy_parser_length_check_is_a_minimum_too() {
 /// fix for the tail cannot be written as "accept anything".
 #[test]
 fn parser_rejects_truncation() {
-    for cid in 0u8..=6 {
+    for cid in 0u8..=7 {
         let bytes = genuine_proof_bytes(cid);
         for cut in [1usize, 2, 33, 5_000] {
             let short = &bytes[..bytes.len() - cut];
@@ -353,23 +392,23 @@ fn parser_rejects_truncation() {
 }
 
 // ============================================================================
-// 3. The 7×7 matrix, exact-length envelope
+// 3. The 8×8 matrix, exact-length envelope
 // ============================================================================
 
 #[test]
 fn cross_circuit_parse_matrix_exact_length() {
     let proofs = all_genuine();
-    let mut m = [[false; 7]; 7];
-    for n in 0..7usize {
-        for k in 0..7usize {
+    let mut m = [[false; 8]; 8];
+    for n in 0..8usize {
+        for k in 0..8usize {
             m[n][k] = parses_as(&proofs[n], k as u8);
         }
     }
     println!("{}", render_matrix("EXACT-LENGTH ENVELOPE", &m));
 
-    for n in 0..7usize {
+    for n in 0..8usize {
         assert!(m[n][n], "C{n} does not parse under its own config");
-        for k in 0..7usize {
+        for k in 0..8usize {
             if k == n {
                 continue;
             }
@@ -384,7 +423,7 @@ fn cross_circuit_parse_matrix_exact_length() {
 }
 
 // ============================================================================
-// 4. The 7×7 matrix under the envelope the client actually sends
+// 4. The 8×8 matrix under the envelope the client actually sends
 // ============================================================================
 
 /// **The envelope that ships.** `apps/mobile/services/stark/index.ts` pads every
@@ -400,16 +439,16 @@ fn cross_circuit_parse_matrix_exact_length() {
 fn cross_circuit_parse_matrix_uniform_padded() {
     let proofs = all_genuine();
     let padded: Vec<Vec<u8>> = proofs.iter().map(|p| pad_uniform(p)).collect();
-    let mut m = [[false; 7]; 7];
-    for n in 0..7usize {
-        for k in 0..7usize {
+    let mut m = [[false; 8]; 8];
+    for n in 0..8usize {
+        for k in 0..8usize {
             m[n][k] = parses_as(&padded[n], k as u8);
         }
     }
     println!("{}", render_matrix("UNIFORM 145,000-BYTE ENVELOPE", &m));
 
-    for n in 0..7usize {
-        for k in 0..7usize {
+    for n in 0..8usize {
+        for k in 0..8usize {
             if k == n {
                 continue;
             }
@@ -549,7 +588,9 @@ fn c0_bytes_parse_through_the_generic_parser_so_the_gate_is_load_bearing() {
 /// (`zk_shielded::{pause,resume,cancel_private_stark}`, `p01_quantum_wallet`).
 #[test]
 fn no_generic_proof_parses_through_the_legacy_c0_parser() {
-    for cid in 1u8..=6 {
+    // 7 included: C7 is a shipping circuit and the legacy C0 parser must refuse
+    // its proofs exactly as it refuses C1..C6's.
+    for cid in 1u8..=7 {
         let bytes = genuine_proof_bytes(cid);
         assert!(
             CompactStarkProof::from_bytes(&bytes).is_none(),
@@ -574,10 +615,15 @@ fn no_generic_proof_parses_through_the_legacy_c0_parser() {
 #[test]
 fn sentinel_and_every_unknown_id_have_no_config() {
     assert!(get_circuit_config(u8::MAX).is_none(), "the u8::MAX sentinel resolved to a config");
-    for cid in 7u8..=u8::MAX {
+    // 🚨 8, not 7. This loop and the `0..=7` one below were HALF updated when
+    // circuit 7 landed: the known-id sweep was widened and the unknown-id sweep
+    // was not, so the file asserted both that 7 has a config and that it has
+    // none. `ci.yml` runs this target, so CI was red from `3be88558` — the
+    // commit that taught the verifier circuit 7 — until 2026-08-25.
+    for cid in 8u8..=u8::MAX {
         assert!(get_circuit_config(cid).is_none(), "circuit {cid} resolved to a config");
     }
-    for cid in 0u8..=6 {
+    for cid in 0u8..=7 {
         assert!(get_circuit_config(cid).is_some(), "circuit {cid} lost its config");
     }
 }
@@ -610,7 +656,12 @@ fn every_circuit_id_dispatch_fails_closed_on_unknown_ids() {
     p01_stark_verifier::verify::verify_generic(&proof, 3, public_inputs, config3)
         .expect("genuine C3 proof with its own public inputs must verify");
 
-    for cid in [7u8, 8, 100, 254, u8::MAX] {
+    // 7 is no longer in this list: it is a SHIPPING circuit now, so demanding
+    // `UnsupportedCircuit` for it asserted the opposite of what the verifier is
+    // supposed to do. It moves to its own assertion below rather than being
+    // deleted, because "a C3 proof presented as circuit 7" is a real confusion
+    // and dropping the id would have removed the coverage along with the red.
+    for cid in [8u8, 100, 254, u8::MAX] {
         let err = p01_stark_verifier::verify::verify_generic(&proof, cid, public_inputs, config3)
             .unwrap_err();
         assert!(
@@ -620,6 +671,18 @@ fn every_circuit_id_dispatch_fails_closed_on_unknown_ids() {
              is not exercising the dispatch at all.",
         );
     }
+
+    // A genuine C3 proof, presented as circuit 7, with C3's own public inputs.
+    // C3 publishes three felts and C7 publishes six, so the arity guard is what
+    // stands between the two — and it is named here rather than accepted as
+    // "some error", because an arity guard that stopped firing would let a C3
+    // proof reach C7's boundary fold with three of six public inputs unbound.
+    let err = p01_stark_verifier::verify::verify_generic(&proof, 7, public_inputs, config3)
+        .expect_err("a C3 proof must not verify as circuit 7");
+    assert!(
+        matches!(err, p01_stark_verifier::verify::VerifyError::PublicInputCountMismatch),
+        "a C3 proof presented as circuit 7 was refused as {err:?}, not by the arity guard",
+    );
 
     // Circuit 0 must fail closed at get_boundary_assertions' CALLERS too — but
     // 0 itself is a listed id there, so the refusal lives in verify_generic.
@@ -651,7 +714,7 @@ struct Layout {
 }
 
 fn layout(circuit_id: u8, proof_len: usize) -> Layout {
-    let c = get_circuit_config(circuit_id).expect("0..=6 has a config");
+    let c = get_circuit_config(circuit_id).expect("0..=7 has a config");
     let k = c.quotient_segments;
     let nq = c.num_queries;
     let folds = (c.lde_size / c.fri_final_poly_size).trailing_zeros() as usize;
@@ -703,7 +766,7 @@ fn layout(circuit_id: u8, proof_len: usize) -> Layout {
 /// that by brute force; this test shows why.
 #[test]
 fn wire_layout_is_a_config_constant_equal_to_the_emitted_proof_size() {
-    for cid in 0u8..=6 {
+    for cid in 0u8..=7 {
         let bytes = genuine_proof_bytes(cid);
 
         // [ADVERSARY 2026-08-03] CONTROL, and it is load-bearing rather than
@@ -749,7 +812,7 @@ fn wire_layout_is_a_config_constant_equal_to_the_emitted_proof_size() {
 /// Brute force behind `wire_layout_is_a_config_constant…`: for EVERY ordered
 /// pair and EVERY prefix length, no foreign parse exists.
 ///
-/// This closes the one gap the 7×7 matrix leaves open. `proof_size` is chosen by
+/// This closes the one gap the 8×8 matrix leaves open. `proof_size` is chosen by
 /// the CALLER at `init_proof_buffer_v2`, and `verify_uniform` slices exactly
 /// `proof_size` bytes out of the account — so the attacker, not the prover,
 /// picks the length the probe sees. Truncation is free. The matrix only tested
@@ -771,8 +834,8 @@ fn truncation_cannot_manufacture_a_cross_circuit_parse() {
     // Every parse threshold in the set, so the sweep cannot step over one.
     let thresholds: Vec<usize> = proofs.iter().map(|p| p.len()).collect();
 
-    for n in 0..7usize {
-        for k in 0..7usize {
+    for n in 0..8usize {
+        for k in 0..8usize {
             if n == k {
                 continue;
             }
@@ -965,7 +1028,7 @@ fn generic_pipeline_refuses_surplus_queries() {
 #[test]
 fn surplus_query_splices_do_not_parse_as_another_circuit() {
     let mut hits = Vec::new();
-    for n in 0u8..=6 {
+    for n in 0u8..=7 {
         let bytes = genuine_proof_bytes(n);
         for extra in [1usize, 5, 17, 100] {
             let spliced = with_surplus_queries(&bytes, n, extra);
@@ -974,7 +1037,7 @@ fn surplus_query_splices_do_not_parse_as_another_circuit() {
             // `padProofToUniform` anyway, so the exact-length case is the whole
             // question for those.
             let padded = (spliced.len() <= UNIFORM_PROOF_SIZE).then(|| pad_uniform(&spliced));
-            for k in 0u8..=6 {
+            for k in 0u8..=7 {
                 if k == n {
                     continue;
                 }
@@ -997,7 +1060,7 @@ fn surplus_query_splices_do_not_parse_as_another_circuit() {
 /// queries` check, stated as the property it buys.
 ///
 /// MEASURED: reverting that check to the pre-seam `num_queries > 256` turns this
-/// test red on the very first case (`C0+1 parses as C0`) while the 7×7 matrices
+/// test red on the very first case (`C0+1 parses as C0`) while the 8×8 matrices
 /// stay diagonal — so the tightening is NOT what keeps genuine proofs apart, and
 /// the savepoint comment that called it "a third independent exact-value field"
 /// the probe rests on was overclaiming. What it actually buys is this: a
@@ -1006,7 +1069,7 @@ fn surplus_query_splices_do_not_parse_as_another_circuit() {
 /// `verify_query_positions_*` says no.
 #[test]
 fn a_wire_query_count_that_disagrees_with_the_config_does_not_parse() {
-    for n in 0u8..=6 {
+    for n in 0u8..=7 {
         let bytes = genuine_proof_bytes(n);
         for extra in [1usize, 5, 17, 100] {
             let spliced = with_surplus_queries(&bytes, n, extra);

@@ -4,13 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "pnpm --filter @protocol-01/rpc-config build && pnpm --filter @protocol-01/specter-sdk build:core && next build",
+    "build": "pnpm --filter @protocol-01/rpc-config build && pnpm --filter @protocol-01/specter-sdk build:core && pnpm --filter @protocol-01/stark-prover build && next build",
     "start": "next start",
     "test": "vitest run",
     "test:ui": "vitest run --config vitest.ui.config.ts",
     "test:pool": "vitest run --config vitest.pool.config.mts"
   },
   "dependencies": {
+    "@protocol-01/stark-prover": "workspace:*",
     "@noble/hashes": "^2.2.0",
     "@noble/post-quantum": "^0.6.1",
     "@protocol-01/pay-core": "workspace:*",

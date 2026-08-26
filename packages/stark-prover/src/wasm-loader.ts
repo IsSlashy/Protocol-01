@@ -21,46 +21,88 @@
  * area used by `apps/extension/src/shared/workers/starkProver.worker.ts`.
  */
 
+// The wasm-bindgen glue, generated alongside the blob by `wasm-pack` and
+// shipped verbatim under this package's `files`. It owns the 25 imports the
+// circuit-7 blob requires and the (ptr,len) marshalling this file used to
+// hand-roll. `scripts/wasm-artifacts.mjs` tracks it as GLUE precisely because
+// its API surface has to match the blob it was generated with.
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-expect-error — the generated glue ships as untyped JS. `wasm-pack` emits a
+// `p01_stark.d.ts` beside it, but `.gitignore:197` ignores `**/*.d.ts` (a rule
+// meant for EMITTED declarations), so that file cannot be tracked and the shape
+// is declared below instead. Keep `GlueModule` in step with the blob: a wrong
+// signature here is a silent argument mismatch at the ABI boundary.
+import * as glueUntyped from '../wasm/p01_stark.js';
+
+/**
+ * The subset of the generated glue this loader uses.
+ *
+ * ⛔ `generate_spend_stark_proof` is absent ON PURPOSE — the shipped blob
+ * (229,640 B / 51a947e3) does not export it. `initStarkWasm` reads it off the
+ * module defensively so the loader works against both blobs, and
+ * `index.test.ts` pins that it is currently unbound.
+ */
+interface GlueModule {
+  initSync(module: { module: WebAssembly.Module }): unknown;
+  compute_stark_commitment(secret: bigint): string;
+  generate_stark_proof(secret: bigint): string;
+  generate_pool_commitment_stark_proof(a: bigint, b: bigint, c: bigint, d: bigint): string;
+  generate_balance_stark_proof(a: bigint, b: bigint, c: bigint, d: bigint): string;
+  generate_merkle_path_stark_proof(leaf: bigint, elemsCsv: string, idxCsv: string): string;
+  generate_confidential_balance_stark_proof(
+    a: bigint, b: bigint, c: bigint, d: bigint, e: bigint, f: bigint, g: bigint, h: bigint,
+  ): string;
+  generate_transfer_stark_proof(
+    a: bigint, b: bigint, c: bigint, d: bigint, e: bigint, f: bigint, g: bigint,
+    h: bigint, i: bigint, j: bigint, k: bigint, l: bigint, m: bigint,
+  ): string;
+  generate_merkle_update_stark_proof(
+    oldLeaf: bigint, newLeaf: bigint, elemsCsv: string, idxCsv: string,
+  ): string;
+}
+
+const glue = glueUntyped as unknown as GlueModule;
+
 // ---------------------------------------------------------------------------
 // wasm-bindgen exports (subset we actually call)
 // ---------------------------------------------------------------------------
 
 export interface StarkExports {
-  memory: WebAssembly.Memory;
-  compute_stark_commitment(secret: bigint): [number, number];
-  generate_stark_proof(secret: bigint): [number, number];
+  compute_stark_commitment(secret: bigint): string;
+  generate_stark_proof(secret: bigint): string;
   generate_pool_commitment_stark_proof(
-    a: bigint, b: bigint, c: bigint, d: bigint,
-  ): [number, number];
+    nullifierPreimage: bigint, secret: bigint, depositEpoch: bigint, tokenMint: bigint,
+  ): string;
   generate_balance_stark_proof(
-    a: bigint, b: bigint, c: bigint, d: bigint,
-  ): [number, number];
+    spendingKey: bigint, balance: bigint, salt: bigint, tokenMint: bigint,
+  ): string;
   generate_merkle_path_stark_proof(
-    leaf: bigint,
-    elemsPtr: number, elemsLen: number,
-    idxPtr: number, idxLen: number,
-  ): [number, number];
+    leaf: bigint, pathElementsCsv: string, pathIndicesCsv: string,
+  ): string;
   generate_confidential_balance_stark_proof(
     a: bigint, b: bigint, c: bigint, d: bigint,
     e: bigint, f: bigint, g: bigint, h: bigint,
-  ): [number, number];
+  ): string;
   generate_transfer_stark_proof(
     a: bigint, b: bigint, c: bigint, d: bigint, e: bigint, f: bigint,
     g: bigint, h: bigint, i: bigint, j: bigint, k: bigint, l: bigint, m: bigint,
-  ): [number, number];
-  // The current `wasm-out/p01_stark.js` build does NOT yet expose
-  // `generate_merkle_update_stark_proof`. Listed optional so the loader can
-  // be reused once the next WASM rebuild ships circuit 6. See README.
-  generate_merkle_update_stark_proof?: (
-    oldLeaf: bigint, newLeaf: bigint,
-    elemsPtr: number, elemsLen: number,
-    idxPtr: number, idxLen: number,
-  ) => [number, number];
-  __wbindgen_externrefs: WebAssembly.Table;
-  __wbindgen_malloc(a: number, b: number): number;
-  __wbindgen_realloc(a: number, b: number, c: number, d: number): number;
-  __wbindgen_free(a: number, b: number, c: number): void;
-  __wbindgen_start(): void;
+  ): string;
+  generate_merkle_update_stark_proof(
+    oldLeaf: bigint, newLeaf: bigint, pathElementsCsv: string, pathIndicesCsv: string,
+  ): string;
+  /**
+   * [C7] Present only once the circuit-7 blob ships. Optional on purpose: the
+   * loader must work against both blobs, and a caller reaching for it too early
+   * should get `undefined` rather than a LinkError from a half-loaded module.
+   *
+   * ⛔ The mask is drawn INSIDE the wasm from a real CSPRNG and the Rust refuses
+   * to build a proof without one. Do not add a parameter that lets a caller
+   * supply it.
+   */
+  generate_spend_stark_proof?: (
+    nullifierPreimage: bigint, secret: bigint, blinding: bigint, tokenMint: bigint,
+    pathElementsCsv: string, pathIndicesCsv: string, recipientHashCsv: string,
+  ) => string;
 }
 
 /**
@@ -266,29 +308,65 @@ export async function initStarkWasm(source?: WasmSource): Promise<StarkExports> 
 
   pendingInit = (async () => {
     const bytes = await resolveWasmBytes(source);
-    let exports: StarkExports | null = null;
-    const imports = {
-      './p01_stark_bg.js': {
-        __wbindgen_init_externref_table: () => {
-          if (!exports) throw new Error('WASM exports not yet bound');
-          const table = exports.__wbindgen_externrefs;
-          const offset = table.grow(4);
-          table.set(0, undefined);
-          table.set(offset + 0, undefined);
-          table.set(offset + 1, null);
-          table.set(offset + 2, true);
-          table.set(offset + 3, false);
-        },
-      },
-    };
-    const result = await WebAssembly.instantiate(bytes as BufferSource, imports);
-    // `WebAssembly.instantiate` returns either an `Instance` (when given a
-    // compiled `Module`) or a `{ instance, module }` source (when given raw
-    // bytes — our path). Narrow via the discriminating `instance` field.
-    const instance: WebAssembly.Instance =
-      'instance' in result ? result.instance : (result as WebAssembly.Instance);
-    exports = instance.exports as unknown as StarkExports;
-    exports.__wbindgen_start();
+
+    // 🚨 THE HAND-BUILT IMPORT OBJECT IS GONE, AND IT HAD TO GO.
+    //
+    // It supplied exactly ONE import, `__wbindgen_init_externref_table`, which
+    // was all the pre-C7 blob needed: pure computation, no randomness, no JS
+    // interop. MEASURED 2026-08-25 on the circuit-7 build: the blob now needs
+    // TWENTY-FIVE, because `generate_spend_stark_proof` draws a 1,280-element
+    // CSPRNG mask (`stark/src/lib.rs` draw_spend_mask) and that pulls in
+    // getrandom -> crypto -> the whole wasm-bindgen shim surface. Loading it
+    // here failed with:
+    //
+    //   LinkError: Import #0 "./p01_stark_bg.js"
+    //   "__wbg_crypto_38df2bab126b63dc": function import requires a callable
+    //
+    // ⛔ AND THE NAMES ARE CONTENT-HASHED, so hand-writing them is work that has
+    // to be redone on every rebuild. The generated glue owns them instead.
+    //
+    // ⛔ WHY NOT BORROW ONLY `__wbg_get_imports()`: MEASURED, it does not work.
+    // It is module-private (the glue's whole export surface is
+    // `export { initSync, __wbg_init as default }`), and hoisting it still
+    // fails — every closure it returns reads the glue's own `wasm` binding,
+    // which only `__wbg_finalize_init` assigns. Borrowing it dies on
+    // `TypeError: Cannot read properties of undefined (reading
+    // '__wbindgen_externrefs')`.
+    //
+    // ⚠️ `initSync` sniffs its argument with
+    // `Object.getPrototypeOf(module) === Object.prototype`. Across a realm
+    // boundary that comparison fails and the glue does NOT throw — it warns and
+    // silently takes the deprecated branch. The options object is therefore
+    // built HERE, in the glue's own realm. Never forward one through
+    // postMessage or structuredClone.
+    //
+    // What this file still owns, and the reason it exists at all, is WHERE the
+    // bytes come from: base64 for MV3 and the RN WebView, raw bytes, a URL, or
+    // Node's filesystem. None of that changes.
+    glue.initSync({ module: new WebAssembly.Module(bytes as unknown as BufferSource) });
+
+    // The callable wrappers live on the GLUE MODULE, not on the object
+    // `initSync` returns — that one is the raw instance exports. The wrappers
+    // are what do the (ptr,len) marshalling this file used to do by hand, which
+    // is why `StarkExports` now describes functions that take and return real
+    // JS values.
+    const exports = {
+      compute_stark_commitment: glue.compute_stark_commitment,
+      generate_stark_proof: glue.generate_stark_proof,
+      generate_pool_commitment_stark_proof: glue.generate_pool_commitment_stark_proof,
+      generate_balance_stark_proof: glue.generate_balance_stark_proof,
+      generate_merkle_path_stark_proof: glue.generate_merkle_path_stark_proof,
+      generate_confidential_balance_stark_proof: glue.generate_confidential_balance_stark_proof,
+      generate_transfer_stark_proof: glue.generate_transfer_stark_proof,
+      generate_merkle_update_stark_proof: glue.generate_merkle_update_stark_proof,
+      // Present only once the circuit-7 blob ships; optional so this loader
+      // works against both, and so a caller that reaches for it before the
+      // reship gets `undefined` rather than a confusing LinkError.
+      generate_spend_stark_proof: (
+        glue as unknown as { generate_spend_stark_proof?: StarkExports['generate_spend_stark_proof'] }
+      ).generate_spend_stark_proof,
+    } as StarkExports;
+
     cachedExports = exports;
     return exports;
   })();
@@ -303,90 +381,49 @@ export async function initStarkWasm(source?: WasmSource): Promise<StarkExports> 
 /**
  * Drop the cached WASM instance. Useful for tests; production callers should
  * never need this — proofs are stateless and one instance per process is fine.
+ *
+ * ⚠️ It clears THIS module's cache, not the glue's. `initSync` is idempotent
+ * (`if (wasm !== undefined) return wasm;`), so a reset followed by a fresh
+ * `initStarkWasm()` re-wraps the SAME instance rather than building a new one.
+ * That is fine for the stateless prover and it is why `wireFormat.test.ts`
+ * warns against a second `beforeAll` calling this — MEASURED there as a JSON
+ * parse starting partway into a proof_hex value.
  */
 export function resetStarkWasm(): void {
   cachedExports = null;
   pendingInit = null;
 }
 
-// ---------------------------------------------------------------------------
-// String marshalling helpers (mirror the worker's `passStringToWasm`)
-// ---------------------------------------------------------------------------
-
-const decoder = (() => {
-  const d = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
-  d.decode();
-  return d;
-})();
-
-const encoder = new TextEncoder();
-
-let cachedMem: Uint8Array | null = null;
-
-function getMem(exports: StarkExports): Uint8Array {
-  if (cachedMem === null || cachedMem.byteLength === 0) {
-    cachedMem = new Uint8Array(exports.memory.buffer);
-  }
-  return cachedMem;
-}
-
 /**
- * Read a wasm-bindgen `(ptr, len)` return tuple, decode UTF-8, free the
- * buffer. Mirrors the pattern emitted by wasm-bindgen.
+ * ⛔ THE HAND-ROLLED wasm-bindgen ABI USED TO LIVE HERE AND IS GONE.
+ *
+ * `readStringReturn`, `passStringToWasm`, `WasmStringHandle`, `getMem` and the
+ * module-level `cachedMem` re-implemented, by hand, what the generated glue
+ * already does: (ptr,len) decoding over `exports.memory`, UTF-8 encoding into
+ * `__wbindgen_malloc` space, and `__wbindgen_free`.
+ *
+ * They were removed with the import object, for the same reason. `StarkExports`
+ * now describes the GLUE's wrappers, which take and return real JS values, so
+ * `exports.memory`, `__wbindgen_malloc`, `__wbindgen_realloc` and
+ * `__wbindgen_free` are no longer part of this package's surface -- and code
+ * that reached for them would be reading a module the glue owns.
+ *
+ * ⚠️ They were EXPORTED, so this is a breaking change for any outside consumer
+ * that imported them. Nothing in this repository did: the five client copies of
+ * the ABI (apps/web, apps/extension, apps/mobile, packages/react-native-zk and
+ * this file) are each self-contained, which is the deeper problem and is not
+ * fixed here.
  */
-export function readStringReturn(exports: StarkExports, ret: [number, number]): string {
-  const [ptr, len] = ret;
-  const adjusted = ptr >>> 0;
-  const str = decoder.decode(getMem(exports).subarray(adjusted, adjusted + len));
-  exports.__wbindgen_free(ptr, len, 1);
-  return str;
-}
-
-/** State carried alongside `passStringToWasm` calls — wasm-bindgen quirk. */
-export interface WasmStringHandle {
-  ptr: number;
-  len: number;
-}
 
 /**
- * Push a JS string into the WASM heap. Returns `{ ptr, len }`. Call sites
- * must NOT free explicitly — the WASM function takes ownership.
- */
-export function passStringToWasm(exports: StarkExports, arg: string): WasmStringHandle {
-  const malloc = exports.__wbindgen_malloc;
-  const realloc = exports.__wbindgen_realloc;
-  let len = arg.length;
-  let ptr = malloc(len, 1) >>> 0;
-  let mem = getMem(exports);
-  let offset = 0;
-  for (; offset < len; offset++) {
-    const code = arg.charCodeAt(offset);
-    if (code > 0x7f) break;
-    mem[ptr + offset] = code;
-  }
-  if (offset !== len) {
-    let sliced = arg;
-    if (offset !== 0) sliced = arg.slice(offset);
-    const newLen = offset + sliced.length * 3;
-    ptr = realloc(ptr, len, newLen, 1) >>> 0;
-    len = newLen;
-    mem = getMem(exports);
-    const view = mem.subarray(ptr + offset, ptr + len);
-    const { written } = encoder.encodeInto(sliced, view);
-    offset += written;
-    ptr = realloc(ptr, len, offset, 1) >>> 0;
-  }
-  // Memory may have grown — invalidate the cached view defensively.
-  cachedMem = null;
-  return { ptr, len: offset };
-}
-
-/**
- * Reset the cached memory view. The wasm-bindgen heap can be re-allocated by
- * `__wbindgen_realloc` calls; our local cache must be invalidated whenever
- * the caller suspects growth (we already do this internally on every
- * `passStringToWasm`, but expose it for safety).
+ * Kept as a no-op for API compatibility.
+ *
+ * It used to null a local `cachedMem` view of `exports.memory`, invalidated on
+ * every `passStringToWasm` because `__wbindgen_realloc` can move the heap. The
+ * glue owns that cache now (`cachedUint8ArrayMemory0`) and invalidates it
+ * itself, so there is nothing here to reset — but the function was EXPORTED, so
+ * removing it would break a consumer for no gain. It does nothing, and says so.
  */
 export function invalidateMemoryCache(): void {
-  cachedMem = null;
+  /* the glue owns the memory view; see the note above */
 }

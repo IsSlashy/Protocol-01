@@ -64,7 +64,7 @@ import {
   createCommitmentV3,
   goldilocksToLeBytes32,
   deriveNoteMaterial,
-  slotToEpoch,
+  deriveNoteBlinding,
   pubkeyToField,
 } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
@@ -240,8 +240,19 @@ export default function DenominatedShieldScreen() {
           const counter = await findSafeShieldCounter(connection, walletSeed, selectedPool.poolPDA, startCounter);
           const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, selectedPool.poolPDA, counter);
 
-          const slot = await connection.getSlot('confirmed');
-          const depositEpoch = slotToEpoch(slot);
+          // 🚨 THE COMMITMENT'S THIRD INPUT IS A SECRET, NOT AN EPOCH.
+          //
+          // It used to be `slotToEpoch(await connection.getSlot('confirmed'))`.
+          // A withdrawal must publish the nullifier, so with a real epoch there
+          // an observer enumerates a few thousand candidates, recomputes
+          // `createCommitmentV3(nullifierPreimage, secret, epoch, mint)` and
+          // matches the exact deposit leaf. Anonymity set: one — no matter what
+          // circuit 7 does about the commitment argument. See
+          // services/denominatedPool/noteBlinding.ts.
+          //
+          // Derived from the seed and `counter`, the same pair `deriveNoteMaterial`
+          // uses above, so recovery still needs no stored state.
+          const depositEpoch = deriveNoteBlinding(walletSeed, selectedPool.poolPDA, counter);
           const tokenMintField = pubkeyToField(selectedPool.tokenMint);
 
           // 3. Compute commitment + new merkle state via Goldilocks helpers.

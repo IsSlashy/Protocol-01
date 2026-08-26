@@ -1,9 +1,27 @@
 name: CI
 
 on:
+  # ⛔ MASTER-ONLY IS HOW A BROKEN BUILD LIVED FOR A DAY.
+  #
+  # `6333aa00` (2026-08-25 20:56) made apps/web import
+  # @protocol-01/stark-prover/wasm-loader instead of carrying its own ABI copy.
+  # That package's dist/ is gitignored and apps/web's build script hand-lists
+  # the workspace packages it pre-builds — stark-prover was not on the list. The
+  # app stopped building. `pnpm turbo run build` below would have caught it on
+  # the first push, because turbo.json declares dependsOn: ["^build"] — but this
+  # workflow only ran on master, the work was on a feature branch, and nobody
+  # looked at Vercel. Five deployments went ERROR before it surfaced.
+  #
+  # Feature branches now run the TS job, which is the one that builds. The Rust
+  # and replay jobs stay master/PR-only: cargo check is 90 minutes and this
+  # repository has one developer, so paying it on every feature push buys
+  # nothing the pre-merge run does not already buy.
   push:
     branches:
       - master
+      - 'feat/**'
+      - 'fix/**'
+      - 'reconcile/**'
   pull_request:
     branches:
       - master
@@ -29,12 +47,31 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v2
         with:
-          version: 10.34.0
+          # Match `packageManager` in package.json exactly. CI was on 10.34.0
+          # while the field, the lockfile target and every developer are on
+          # 9.15.9 -- a MAJOR apart. pnpm 10 changed a default that matters:
+          # dependency lifecycle scripts no longer run unless explicitly
+          # allowed, so a package that needs a postinstall behaves differently
+          # in CI than it does on a laptop, and the difference is silent.
+          #
+          # If this needs to move to 10, move `packageManager` first and let
+          # everyone's `pnpm install` follow. The declaration leads; CI does not.
+          version: 9.15.9
 
       - name: Setup Node.js
+        # Read from .node-version rather than pinned here. The hardcoded 22 was
+        # set in a778d7d0 (2026-03-03) and never moved; .node-version says 24 and
+        # package.json declares `engines.node: "24.x"`, so CI has been testing on
+        # a runtime this repository says it does not support.
+        #
+        # The drift is not cosmetic. Node 25 ships a global `localStorage` stub
+        # that shadows jsdom's, and running the web suite under it produces 67
+        # failures that are entirely the shadowing -- MEASURED 2026-08-26, 73 red
+        # under Node 25 against 6 under Node 24. A runtime this suite is sensitive
+        # to is one CI should be reading from the same file developers do.
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: pnpm
 
       - name: Get pnpm store directory
@@ -68,7 +105,19 @@ jobs:
         run: pnpm turbo run build
 
       - name: Test
-        run: pnpm turbo run test --continue
+        # ⛔ --concurrency=2 IS NOT TUNING, IT STOPS A GREEN RUN REPORTING RED.
+        #
+        # MEASURED 2026-08-26 on run 33008647213: stark-prover reported
+        # "Test Files 7 passed / Tests 67 passed" AND exited 1, on
+        #   Error: [vitest-worker]: Timeout calling "onTaskUpdate"
+        # — vitest's reporter RPC timing out, not an assertion. Nothing failed.
+        #
+        # That package spends 145s inside WASM proving. Unbounded turbo ran all
+        # 17 tasks at once on a 2-core runner, the worker could not answer the
+        # reporter in time, and the step went red with no failing test in it.
+        # A red that names no test teaches nothing and gets ignored, which is
+        # how this repository ends up not reading its own CI.
+        run: pnpm turbo run test --continue --concurrency=2
 
       # `turbo run test` calls each package's own `test` script. For apps/web
       # that is `vitest run` against vitest.config.ts, whose `include` covers
@@ -92,7 +141,23 @@ jobs:
   rust-programs-build:
     name: Rust — Programs cargo check
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Master and pre-merge only — see the note on the triggers above.
+    if: github.ref == 'refs/heads/master' || github.event_name == 'pull_request'
+    # 🚨 WAS 30, AND THE PIN LOOP BELOW COULD NOT FIT IN IT. MEASURED 2026-08-26
+    # on a 6c/12t laptop, --release: `honest_liveness` alone is 2,208s — 37
+    # minutes, over the whole old budget by itself — and the eighteen pins total
+    # ~51 minutes. A hosted runner has fewer cores, so it is slower, not faster.
+    # This job was being killed by its own timeout, which reads in the UI as a
+    # flaky infrastructure failure rather than as "the gate never ran".
+    #
+    # 90 rather than 60: the cache can miss, and a gate that is sometimes killed
+    # teaches people to re-run it rather than read it.
+    #
+    # If this becomes painful, the fix is to SPLIT — fast pins on push, the two
+    # slow ones (`honest_liveness` 2,208s, `c6_padding_rows` 308s) in their own
+    # job — not to drop a pin. `CI_UNRUN_TEST_TARGETS` in cu_budget.rs is where
+    # a dropped one would have to be written down, with its reason.
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
@@ -196,8 +261,76 @@ jobs:
           # pair-leaf guard lives on b7 and master cannot run it" is worth more
           # than a green one that whispers it. To make this pass, land the b7
           # verifier work on master — not by deleting this loop.
+          # [C7 2026-08-24] Three targets appended. All three now carry C7
+          # coverage that exists NOWHERE ELSE in CI:
+          #   wire_parity              -- C7's ten CircuitConfig fields
+          #   honest_liveness          -- an honest C7 proof clears BOTH phases.
+          #                               Its dispatch used to fall through to
+          #                               `_ => Ok(())`, so a circuit added to
+          #                               the fixtures and forgotten there passed
+          #                               phase 2 VACUOUSLY.
+          #   cross_circuit_confusion  -- the 8x8 parse matrix. C7 shares C6's
+          #                               width, length, blowup, merkle depth and
+          #                               query count; only fri_final_poly_size
+          #                               separates them, and this is the only
+          #                               test that would notice if it stopped.
+          #
+          # ⛔ `cu_budget` stays OUT and that is deliberate, not an oversight: it
+          # needs `cargo-build-sbf`, which this job does not have. Its C7 ceiling
+          # row is a LOCAL acceptance check. Nobody should read the C7 CU number
+          # as a CI gate. The exclusion is recorded a second time, with the same
+          # reason, in `CI_UNRUN_TEST_TARGETS` inside cu_budget.rs — the scan
+          # there treats an unnamed target as a coverage hole unless it is
+          # excused in writing.
+          #
+          # [C7 2026-08-25] `c7_binding` appended. It is the only place forgeries
+          # 6, 7 and 9 of the spend plan are exercised — recipient malleability,
+          # public-input arity, and the tampered-OOD quartet — against the real
+          # `verify_deep_ali_circuit_7` rather than against the quotient. It
+          # needs no toolchain: `p01-stark` is a dev-dependency and the proofs
+          # are generated natively, so unlike `cu_budget` it belongs here.
+          #
+          # [2026-08-25] Ten more targets appended. They were not "forgotten":
+          # the scan in cu_budget.rs that is supposed to notice an unnamed target
+          # had been blind to this very loop — it looked for a literal
+          # `--test <name>` and this step passes `--test "$pin"` — so it reported
+          # zero coverage everywhere and was read as a broken scanner. With the
+          # parser fixed it named thirteen targets that executed nowhere. Ten are
+          # here; the three that are not are recorded in CI_UNRUN_TEST_TARGETS
+          # with the measured reason, including one that is RED on a real defect.
+          #
+          # ⚠️ THE OLD ESTIMATE HERE SAID "about 15 minutes total" AND WAS WRONG BY
+          # 3.4x, because it timed ten of the eighteen pins and `honest_liveness`
+          # was not among them. Re-measured 2026-08-26, whole loop, 6c/12t
+          # laptop, --release:
+          #
+          #   honest_liveness       2208s   <- 37 min, ALONE over the old 30-min
+          #                                    job timeout, which is why that
+          #                                    timeout is now 90
+          #   c6_padding_rows        308s
+          #   b2_bits_measured       106s
+          #   c5_conservation_probe   98s
+          #   b2_segment_binding      87s
+          #   liveness_fix_attack     62s
+          #   cross_circuit_confusion 50s
+          #   b1_deep_binding         49s
+          #   ood_column_probe        34s
+          #   route_c_trace_pair      26s
+          #   wire_parity 15s · c7_binding 15s · b4_pair_leaf 14s
+          #   periodic_stride 1s · a4_probe 2s · phase_binding_seam 2s
+          #   merkle_domain_sep 0s · b7_coset_shift_pairing 0s
+          #   c7_pin_coverage 0s
+          #   ------------------------------------------------------------
+          #   ~3,080s = 51 minutes, plus `--lib` (207s) and the build.
+          #
+          # `honest_liveness` is 72% of it on its own. A stale time estimate is
+          # not cosmetic: this one said the job was cheap while the job was
+          # being killed for running long.
           missing=""
-          for pin in periodic_stride b4_pair_leaf; do
+          for pin in periodic_stride b4_pair_leaf wire_parity honest_liveness cross_circuit_confusion c7_binding \
+                     a4_probe b1_deep_binding b2_bits_measured b2_segment_binding b7_coset_shift_pairing \
+                     c5_conservation_probe c6_padding_rows liveness_fix_attack merkle_domain_sep \
+                     ood_column_probe route_c_trace_pair phase_binding_seam c7_pin_coverage; do
             if printf '%s\n' "$targets" | grep -qx "$pin"; then
               echo "::group::pin $pin"
               cargo test -p p01_stark_verifier --release --test "$pin"
@@ -207,7 +340,7 @@ jobs:
             fi
           done
           if [ -n "$missing" ]; then
-            echo "::error title=Soundness pin absent::Les gardes suivantes ne sont exercees NULLE PART:$missing — elles vivent sur b7-drop-aligned-checks avec le code qu'elles gardent (periodic_ext_consts, PairIndexing, quotient_segments), absent de master. Voir head-b7-divergence-mapped-2026-08-21."
+            echo "::error title=Soundness pin absent::Les gardes suivantes ne sont exercees NULLE PART:$missing. Une porte absente est une ERREUR, pas un avertissement — ce fichier a imprime des ::warning:: dans un job VERT pendant des semaines pour exactement ca. Ne pas supprimer la boucle pour repasser au vert."
             exit 1
           fi
 
@@ -245,6 +378,14 @@ jobs:
         run: |
           cargo test -p zk_shielded --lib
           cargo test -p zk_shielded --test landed_invariants
+          # 🚨 ADDED 2026-08-26, and it must never be dropped for being cheap.
+          # It pins the canonical VALUE bound on the nullifier across every
+          # live STARK-backed spend. Without that bound n and n + p are two
+          # nullifier PDAs for one field element — one witness, two honest
+          # proofs, the note paid twice, grindable at deposit in ~2^32 hashes.
+          # The bound shipped in QvJqCsnw…; this is what stops it being
+          # deleted by a refactor that reads as tidying.
+          cargo test -p zk_shielded --test nullifier_canonical_bound
           # 🚨 ADDED 2026-08-22. Ten assertions guarding the drain that was LIVE
           # on devnet on 2026-08-18 — the deployed binary still routed
           # `unshield`, class FUND LOSS, measured on the program dump rather
@@ -267,6 +408,27 @@ jobs:
           cargo test -p zk_shielded --test unshield_c5_membership -- \
             --skip the_built_program_cannot_dispatch
 
+      # 🚨 THE PROVER'S OWN TESTS EXECUTED NOWHERE. `cargo check --workspace
+      # --all-targets` above COMPILES `p01-stark` and never runs it, and no step
+      # in this file names the package — the only mention of `p01-stark` in the
+      # whole workflow is a comment saying it is a dev-dependency.
+      #
+      # MEASURED 2026-08-26: 171 tests, all green, none of them ever run here.
+      # 166 are unit tests inside the crate, 67 in `compact.rs` alone, which is
+      # the prover. So the artifact every client ships was checked by nothing on
+      # any push, while the VERIFIER next to it had eighteen pins.
+      #
+      # `cu_budget.rs`'s coverage scanner did not catch this: it reads
+      # `programs/p01_stark_verifier/tests/` and has no opinion about other
+      # crates. A scanner is only as wide as its directory.
+      #
+      # Three expensive probes carry `#[ignore]` with their measured runtimes
+      # written into the attribute (~5s, ~25s, ~25s) and stay skipped by
+      # default, which is why this costs ~35s of test time rather than minutes.
+      # Run them locally with `-- --ignored` when touching depth or leaf width.
+      - name: cargo test (prover — 171 tests that ran in no CI job at all)
+        run: cargo test --release -p p01-stark
+
       # `continue-on-error: true` was on this step, which made it advisory: a real
       # failure still passed the job, so `-D warnings` pinned nothing. Removed.
       # zk_shielded's three warnings (an unused import and two constants orphaned
@@ -281,6 +443,8 @@ jobs:
   verify-unlinkability-controls:
     name: Verify — unlinkability probe controls (offline replay)
     runs-on: ubuntu-latest
+    # Master and pre-merge only — see the note on the triggers above.
+    if: github.ref == 'refs/heads/master' || github.event_name == 'pull_request'
     timeout-minutes: 5
 
     steps:
@@ -288,9 +452,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Node.js
+        # Same as the job above: read the version from .node-version so CI and
+        # developers cannot drift apart.
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
 
       # verify/p01-verify.mjs is the only mechanised check that a pool spend
       # cannot be walked back to its deposit from PUBLIC chain data (the vitest
@@ -343,3 +509,56 @@ jobs:
       # regression; this step is the only one that catches it.
       - name: Regression pin — errored payer history must not break P3 completeness
         run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-synthetic-errored
+
+      # The three above are constructed: two hand-built and one chosen because
+      # it leaks. This one is the first circuit-7 spend that ever landed, frozen
+      # as it measured. It pins BOTH halves of the real result — P1/P2/P4 PASS
+      # because the v4 instruction carries no commitment argument at all, and
+      # P11 FAILS because the fee payer is the upgrade authority of the pool and
+      # the verifier and is printed in README.md. A fixture that pinned only the
+      # green half would teach a future reader the opposite of what was
+      # measured. See verify/fixtures/v4-live/README.md.
+      - name: Reality pin — the first real v4 spend, green and red exactly as measured
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-live
+
+      # v4-live froze the first C7 spend that ever landed — made by calling the
+      # service directly, past everything an application goes through. This one
+      # went through the worker protocol, so it is the first spend that exercised
+      # prepareUnshieldJobV4, the routing branch, the XOR guard, the pre-blinding
+      # refusal and the job store's version tag. All written 2026-08-26; none had
+      # met a real transaction before it.
+      #
+      # It pins the improvement AND its limit. P6's report ends "7gWpzSZA… is NOT
+      # among the spend payer's 11 counterparty edges" — the operator is not on
+      # this withdrawal at all, which v4-live cannot say. P11 still reaches it in
+      # TWO hops, through the fresh payer's own funding history, because devnet
+      # had no third party to fund that key.
+      #
+      # And P10 is pinned FAIL here where v4-live pins it PASS. Nothing regressed:
+      # the payee's 0.995 SOL was swept home, which gave it an outbound edge.
+      # Recovering the money re-links the address. Both fixtures together say that
+      # better than either says alone.
+      - name: Reality pin — the first v4 spend through the app, not past it
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-wired
+
+      # NOT about unlinkability, and it lives here for a mechanical reason: it
+      # imports only node: builtins and two sibling .mjs files, so this is the
+      # one job that can run it without an install.
+      #
+      # What it gates: the checked-in prover blob against the RECORDED devnet
+      # deployment, all four inlined base64 twins against the canonical blob,
+      # and the behavioural fixture table against its two authorities
+      # (b1_deep_binding.rs and wireFormat.test.ts) — the cross-check that
+      # catches a pin recovered from an old branch disagreeing with a pin still
+      # being generated.
+      #
+      # MEASURED 2026-08-26: NOTHING ran this script. No npm script, no CI job,
+      # while its own failure text claimed "every build and publish step that
+      # runs this script runs it with --verify-onchain". ~25s offline.
+      #
+      # The on-chain leg (--verify-onchain) stays manual: it needs a devnet RPC,
+      # and the public endpoint rate-limits hard enough that a gate depending on
+      # it is a gate that sometimes cannot run. Offline proves the record is
+      # self-consistent; it does not ask the chain, and it says so when it passes.
+      - name: Prover artifact — blob, four twins, and the fixture table agree
+        run: node packages/stark-prover/scripts/deployed-verifier-check.mjs

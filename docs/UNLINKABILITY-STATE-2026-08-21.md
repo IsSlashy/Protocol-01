@@ -374,10 +374,21 @@ Une seule expérience, dans cet ordre, et elle n'exige **aucun** redesign de C7 
 4. Le delta contre `888 220` / `122 739` **est** le coût du masquage. `(c)` dit si un
    redéploiement fait partie du prix.
 
-Un **contrôle positif** est obligatoire, comme pour
-`zk_feasibility.rs` (mémoire `zk-feasibility-measured-2026-08-12`) : le test **doit
-échouer** quand le prouveur devient réellement ZK. Sans contrôle positif, un vert ne
-prouve rien — cette exacte erreur a déjà été payée quatre fois sur ce projet.
+Un **contrôle positif** est obligatoire, comme pour l'ancien
+`stark/tests/zk_feasibility.rs` (mémoire `zk-feasibility-measured-2026-08-12`) : le
+test **doit échouer** quand le prouveur devient réellement ZK. Sans contrôle positif,
+un vert ne prouve rien — cette exacte erreur a déjà été payée quatre fois sur ce projet.
+
+⚠️ **Ce fichier n'existe plus** : supprimé le 2026-08-24 (`dc9dd515`), parce qu'il était
+calibré sur le fil **deux rangées par requête** de master et que ses deux assertions
+échouent sur le fil coset **quatre rangées**. Ses successeurs documentés sont dans le
+crate du **vérifieur** — `programs/p01_stark_verifier/tests/wire_parity.rs` et
+`programs/p01_stark_verifier/tests/ood_column_probe.rs` — mais **aucun des deux ne
+récupère de témoin**, donc il n'existe aujourd'hui **aucun contrôle positif exécutable**.
+C'est exactement le piège que ce paragraphe décrit, déplacé d'un cran : l'exigence reste
+entière et plus rien ne la tient. La sonde `P3b` de `verify/p01-verify.mjs` porte la
+mesure de référence (quatre témoins C1, dont le secret de dépense, récupérés en 5 ms) et
+est épinglée **FAIL** par construction.
 
 ---
 

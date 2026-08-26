@@ -108,6 +108,26 @@ pub fn validate_wallet_proof(
         parsed.authority == expected_authority,
         QWalletError::ProofAuthorityMismatch
     );
+
+    // 🚨 `verified` ABOVE IS PHASE 1 ONLY, AND THIS FUNCTION NEVER LOOKS AT THE
+    // PHASE-2 FLAG. That is correct for exactly one circuit and unsafe for the
+    // other seven.
+    //
+    // Circuit 0 is the only one whose DEEP-ALI runs INSIDE phase 1 —
+    // `verify_deep_ali_phase2` refuses circuit 0 by name, so byte 82 is never
+    // set for it and requiring it here would brick every wallet instruction.
+    // For circuits 1..7 phase 2 is a separate instruction, and phase 1 alone is
+    // not an AIR check.
+    //
+    // So the C0-ness is pinned HERE rather than left to the callers. All three
+    // of them (rotate, transfer, withdraw) pass `WALLET_AUTH_CIRCUIT_ID`, which
+    // is 0 — but that is a fact about today's call sites, not a property of this
+    // function, and a fourth caller passing anything else would silently get a
+    // half-verified proof accepted. `phase_binding_seam` flagged this file for
+    // that reason and deliberately would not accept a constant reached through a
+    // parameter as the pin.
+    let circuit_id = expected_circuit_id;
+    require!(circuit_id == 0, QWalletError::ProofCircuitMismatch);
     require!(
         parsed.circuit_id == expected_circuit_id,
         QWalletError::ProofCircuitMismatch

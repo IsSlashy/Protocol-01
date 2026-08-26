@@ -35,6 +35,12 @@ import { utf8ToBytes, concatBytes } from '@noble/hashes/utils.js';
 import { getConnection } from '../solana/connection';
 import { getKeypair } from '../solana/wallet';
 import * as SecureStore from 'expo-secure-store';
+// [2026-08-25] The commitment's third input. Re-exported so callers reach it
+// through the same barrel as `deriveNoteMaterial`, which it is always paired
+// with — the two describe the same note and drifting apart makes it
+// unrecoverable.
+import { deriveNoteBlinding } from './noteBlinding';
+export { deriveNoteBlinding } from './noteBlinding';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -412,6 +418,26 @@ export function rescanPoolFromSeedV3(params: {
   const mintFields = tokenMints.map(pubkeyToField);
   for (let counter = 0; counter <= maxCounter; counter++) {
     const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolPDA, counter);
+
+    // Current scheme: the commitment's third input is a seed-derived blinding,
+    // so the note is identified with ONE hash per mint and no epoch search.
+    const blinding = deriveNoteBlinding(walletSeed, poolPDA, counter);
+    let blindedHit = false;
+    for (const mintField of mintFields) {
+      const commitment = createCommitmentV3(nullifierPreimage, secret, blinding, mintField);
+      if (knownCommitments.has(commitment.toString())) {
+        matches.push({ counter, depositEpoch: blinding, secret, nullifierPreimage, commitment });
+        blindedHit = true;
+      }
+    }
+
+    // ⛔ DO NOT REMOVE THIS FALLBACK. Notes shielded from this app before
+    // 2026-08-25 put the REAL deposit epoch in that slot, so they are only
+    // findable by the search. Dropping it does not fail loudly — the note simply
+    // stops appearing, while its funds stay on chain and no client can name
+    // them. apps/web carries the same fallback for the same reason, and names
+    // an unspent legacy note at leaf 30 of the 0.1 SOL pool.
+    if (blindedHit) continue;
     for (const epoch of epochs) {
       for (const mintField of mintFields) {
         const commitment = createCommitmentV3(nullifierPreimage, secret, epoch, mintField);
@@ -2914,6 +2940,128 @@ function buildShieldDenominatedV3Ix(
  * Anchor's token constraints validate mint/owner — moving it to remaining_accounts
  * would require manual deserialization for marginal privacy gain.
  */
+// ===========================================================================
+// V4 SPEND — the instruction, and nothing that drives it
+// ===========================================================================
+//
+// v3 spends on a C1 + C3 pair tied together by `stark_commitment`, PUBLISHED IN
+// THE CLEAR. A withdrawal therefore names the leaf it spends, and anyone with
+// the deposit events walks back to the deposit that funded it. C7 proves both
+// halves in one trace and the commitment never reaches the instruction.
+//
+// ⛔ ONLY THE PURE PIECES ARE HERE. `prepareUnshieldV4` / `unshieldDenominatedStarkV4`
+// exist on apps/web and apps/extension and are NOT ported, on purpose:
+//
+//   - mobile's spend is driven by `stores/denominatedPoolStore.ts`, which proves
+//     C1 and C3 itself and passes the results down. Cutting that over puts
+//     unexercised code on a fund path in a shipping app.
+//
+//   - and it is blocked on a measurement nobody has taken. On-device proving
+//     already exceeds 180 s for the LIGHTER v3 pair (C1 68,881 B + C3 78,157 B,
+//     two traces). C7 is ONE trace of 77,965 B, so it may well be faster —
+//     "may well be" is not a measurement, and the whole point of this file is
+//     not to ship claims of that shape.
+//
+// 🚨 SO MOBILE STILL SPENDS ON v3 AND STILL PUBLISHES THE COMMITMENT. That is
+// the current state, not an oversight. Measure C7 on a device, then cut the
+// store over.
+// ---------------------------------------------------------------------------
+
+/** C7's subtree depth. NOT the pool tree's 15. See `air/spend.rs`. */
+export const C7_SUBTREE_DEPTH = 12;
+
+/**
+ * sha256(recipient) as the four little-endian u64 limbs circuit 7 takes.
+ *
+ * ⛔ THE LIMBS ARE CARRIED RAW — NOT REDUCED MOD THE GOLDILOCKS PRIME. They
+ * occupy no trace column and no constraint (the binding is transcript-only,
+ * exactly as C3's `depth` is), so nothing reduces them and the concatenation of
+ * the four IS the digest byte for byte. `unshield_denominated_stark_v4.rs`
+ * relies on that identity to rebuild the 48 hashed bytes with a single copy.
+ * A future change that publishes reduced felts would silently break it for any
+ * digest limb >= the modulus.
+ */
+export function recipientHashLimbs(recipient: PublicKey): bigint[] {
+  const digest = sha256(recipient.toBytes());
+  const limbs: bigint[] = [];
+  for (let i = 0; i < 4; i++) {
+    let v = 0n;
+    for (let b = 7; b >= 0; b--) v = (v << 8n) | BigInt(digest[i * 8 + b]);
+    limbs.push(v);
+  }
+  return limbs;
+}
+
+/**
+ * Args: nullifier[32] | merkle_root[32] | subtree_root u64 | siblings Vec<u64>
+ *       | directions Vec<u8> | recipient[32]
+ *
+ * 🚨 THERE IS NO `stark_commitment` FIELD AND NO `min_epoch` FIELD. The first
+ * is the linkage C7 removes. The second was pinned to 0 on every v3 path
+ * because `ShieldReceipt.depositEpoch` became a 63-bit secret once commitments
+ * gained a PRF blinding; v4 drops the field entirely, so it cannot be set wrong.
+ */
+export function buildUnshieldDenominatedStarkV4Ix(
+  payer: PublicKey,
+  recipient: PublicKey,
+  poolPDA: PublicKey,
+  treePDA: PublicKey,
+  nullifierPDA: PublicKey,
+  c7ProofBuffer: PublicKey,
+  nullifierBytes: number[],
+  merkleRootBytes: number[],
+  subtreeRoot: bigint,
+  siblings: bigint[],
+  directions: number[],
+  tokenProgram?: PublicKey,
+  poolVault?: PublicKey,
+  recipientTokenAccount?: PublicKey,
+): TransactionInstruction {
+  if (siblings.length !== directions.length) {
+    throw new Error(
+      `siblings (${siblings.length}) and directions (${directions.length}) must be the same length`,
+    );
+  }
+  const disc = getDiscriminator('unshield_denominated_stark_v4');
+  const data = Buffer.alloc(
+    8 + 32 + 32 + 8 + (4 + siblings.length * 8) + (4 + directions.length) + 32,
+  );
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
+  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(subtreeRoot, offset); offset += 8;
+  // Borsh Vec<T>: u32 length prefix, then the elements.
+  data.writeUInt32LE(siblings.length, offset); offset += 4;
+  for (const sib of siblings) { data.writeBigUInt64LE(sib, offset); offset += 8; }
+  data.writeUInt32LE(directions.length, offset); offset += 4;
+  for (const dir of directions) { data.writeUInt8(dir, offset); offset += 1; }
+  Buffer.from(recipient.toBytes()).copy(data, offset);
+
+  const [feeEscrowPDA] = deriveFeeEscrowPDA(poolPDA);
+
+  const keys = [
+    { pubkey: payer,                                    isSigner: true,  isWritable: true  },
+    { pubkey: poolPDA,                                  isSigner: false, isWritable: true  },
+    { pubkey: treePDA,                                  isSigner: false, isWritable: false },
+    { pubkey: nullifierPDA,                             isSigner: false, isWritable: true  },
+    // ONE buffer. v3 named two here.
+    { pubkey: c7ProofBuffer,                            isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId,                  isSigner: false, isWritable: false },
+    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID,   isSigner: false, isWritable: false },
+    { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID,      isSigner: false, isWritable: !!poolVault },
+    { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
+    { pubkey: feeEscrowPDA,                             isSigner: false, isWritable: true  },
+    // remaining_accounts[0]: recipient — anonymous AccountInfo, NOT a named
+    // field, so a naive IDL-driven indexer cannot resolve "recipient: ABC".
+    // Unlike v3 the binding no longer rests on the payer signature alone:
+    // sha256(recipient) is inside the proof transcript.
+    { pubkey: recipient,                                isSigner: false, isWritable: true  },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
 export function buildUnshieldDenominatedStarkV3Ix(
   payer: PublicKey,
   recipient: PublicKey,

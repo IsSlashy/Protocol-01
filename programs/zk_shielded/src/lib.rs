@@ -8,6 +8,15 @@
     clippy::doc_lazy_continuation,
     clippy::doc_overindented_list_items,
     clippy::empty_line_after_doc_comments,
+    // Its sibling, and it fires where the other one does not: a `///` block
+    // left standing above a DISABLED instruction (the v2 shield and unshield
+    // registrations, kept commented rather than deleted) documents nothing, and
+    // rust 1.95 reports that as an outer-attribute problem rather than a doc one.
+    // MEASURED 2026-08-26: without this, `cargo clippy -p zk_shielded -- -D
+    // warnings` -- a CI gate -- exits 101. The doc lines stay as they are: the
+    // block is disabled, not deleted, and re-enabling it should restore what it
+    // said about itself.
+    clippy::empty_line_after_outer_attr,
     clippy::get_first,
     clippy::if_same_then_else,
     clippy::int_plus_one,
@@ -373,6 +382,46 @@ pub mod zk_shielded {
         )
     }
 
+    /// [C7] Unshield from a V3 pool on ONE circuit-7 proof.
+    ///
+    /// v3 above stays registered and is still the only path that works against
+    /// the verifier deployed on devnet today. This one requires the C7-aware
+    /// verifier; until that binary is live, a proof built for it is rejected at
+    /// the END of a ~150-transaction upload.
+    ///
+    /// What it buys over v3:
+    ///   * The note commitment is never published. v3 has to publish it to tie
+    ///     C1 and C3 together, which points at the deposit that funded the
+    ///     spend — the linkage the circuit exists to remove.
+    ///   * The recipient is bound by the proof transcript
+    ///     (`sha256(recipient_pubkey)` is four of the six public inputs), not
+    ///     just by the payer signature.
+    ///   * One `ProofBuffer` rent instead of two, on a 77,965-byte wire
+    ///     instead of 147,038 — a 1.9x cut, not the 3.3x this comment used to
+    ///     claim. 147,038 is MEASURED, not derived: a live scan of a real
+    ///     C1+C3 upload read 148 chunks / 147,038 bytes (verify/p01-verify.mjs,
+    ///     probe P3/P3b). 258,958 is the pre-B4 pair-leaf figure.
+    ///
+    /// ⛔ `subtree_root` is a DEPTH-12 root, not the pool root. The handler
+    /// walks the remaining `tree_depth - 12` levels against `siblings` /
+    /// `directions` and requires the result to equal `merkle_root`, which must
+    /// itself be a root the pool published. Skipping that walk makes this a
+    /// fund-loss instruction: anyone can build their own twelve levels over an
+    /// invented leaf.
+    pub fn unshield_denominated_stark_v4(
+        ctx: Context<UnshieldDenominatedStarkV4>,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        subtree_root: u64,
+        siblings: Vec<u64>,
+        directions: Vec<u8>,
+        recipient: [u8; 32],
+    ) -> Result<()> {
+        instructions::unshield_denominated_stark_v4::handler(
+            ctx, nullifier, merkle_root, subtree_root, siblings, directions, recipient,
+        )
+    }
+
     // -----------------------------------------------------------------------
     // Subscription Vault instructions
     //
@@ -444,6 +493,85 @@ pub mod zk_shielded {
         license_commitment: Option<[u8; 32]>,
     ) -> Result<()> {
         instructions::subscribe_private_stark::handler(ctx, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber, stark_commitment, license_commitment)
+    }
+
+    /// [C7] Open a private subscription vault on ONE circuit-7 proof.
+    ///
+    /// v3 above stays registered and UNTOUCHED. It is the only path a note whose
+    /// blinding is unknown can be spent on, and apps/mobile still spends on the
+    /// C1+C3 pair; removing it strands those notes.
+    ///
+    /// What it buys over v3:
+    ///   * The note commitment is never published. v3 has to publish it to tie
+    ///     C1 and C3 together, which points at the deposit that funded the
+    ///     subscription — the linkage the circuit exists to remove.
+    ///   * `min_epoch` is gone, removed rather than ignored: every shipped
+    ///     surface already sends 0, because since commitment blinding shipped
+    ///     the `deposit_epoch` slot carries a 63-bit PRF secret and passing the
+    ///     real value would publish the blinding in the clear AND make the note
+    ///     permanently un-subscribable. An ignored parameter still puts its
+    ///     bytes on the wire.
+    ///   * One `ProofBuffer` rent instead of two.
+    ///
+    /// 🚨 THE PROOF BINDS A DOMAIN-TAGGED COMPOSITE, NOT A PUBKEY. Four of the
+    /// six public inputs are
+    /// `sha256("P01:C7:SUBSCRIBE:v1" || vault || rate || interval_slots ||
+    /// vk_hash_subscriber || license)`. Binding the vault alone is NOT enough
+    /// here, and that is the one place this instruction departs from
+    /// `unshield_denominated_stark_v4`: in an unshield the destination is the
+    /// whole economic statement, but in a subscribe `rate` and `interval_slots`
+    /// decide how fast the retailer empties the vault. `claim_period` is
+    /// permissionless and there is no cancel and no refund, so a relayer holding
+    /// the buffer who could choose the terms would set `rate = denomination`,
+    /// `interval_slots = 1` and hand the retailer the subscriber's whole prepaid
+    /// envelope one slot after subscribe. The domain tag is the other half: it
+    /// is what stops a buffer minted for an unshield being spent here.
+    ///
+    /// ⛔ `subtree_root` is a DEPTH-12 root, not the pool root. The handler walks
+    /// the remaining `tree_depth - 12` levels against `siblings` / `directions`
+    /// and requires the result to equal `merkle_root`, which must itself be a
+    /// root the pool published. Skipping that walk makes this a fund-loss
+    /// instruction: anyone can build their own twelve levels over an invented
+    /// leaf. v3 subscribe needs no walk because C3 proves the full-depth path.
+    ///
+    /// ⛔ NO PROTOCOL FEE, deliberately. `vault.total_deposited` is what
+    /// `funded_periods()` divides; netting a fee out of it makes the final
+    /// `claim_period` revert on its rent-floor require, and `claim_period` is the
+    /// only instruction that can close a vault. Charging one is a MONEY DECISION
+    /// and it arrives together with `total_deposited = recipient_amount`.
+    ///
+    /// ARGUMENTS NOT ADDED — `vault_bump: u8` and `nullifier_record_bump: u8`.
+    /// Same measurement as v3: on an `init` account anchor-syn 0.32.1 runs
+    /// `find_program_address` either way, so a bump target buys zero compute
+    /// units, and dropping `init` to reach the constant-cost form would hand the
+    /// caller ~128 valid record addresses for one nullifier. Pinned by
+    /// `pda_bump_guard` in the instruction file.
+    pub fn subscribe_private_stark_v4(
+        ctx: Context<SubscribePrivateStarkV4>,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        subtree_root: u64,
+        siblings: Vec<u64>,
+        directions: Vec<u8>,
+        subscriber_commitment: [u8; 32],
+        rate: u64,
+        interval_slots: u64,
+        vk_hash_subscriber: [u8; 32],
+        license_commitment: Option<[u8; 32]>,
+    ) -> Result<()> {
+        instructions::subscribe_private_stark_v4::handler(
+            ctx,
+            nullifier,
+            merkle_root,
+            subtree_root,
+            siblings,
+            directions,
+            subscriber_commitment,
+            rate,
+            interval_slots,
+            vk_hash_subscriber,
+            license_commitment,
+        )
     }
 
     /// Pause a private subscription vault using STARK proof (quantum-resistant)

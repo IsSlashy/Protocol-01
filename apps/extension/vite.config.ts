@@ -36,6 +36,25 @@ export default defineConfig({
     react(),
     crx({ manifest }),
   ],
+  // ⛔ THE WORKER FORMAT MUST MATCH HOW THE WORKER IS ACTUALLY CREATED.
+  //
+  // services/starkProver.ts builds it as new Worker(url, { type: 'module' }) —
+  // a module worker — and has since it was written. Vite's default
+  // worker.format is 'iife', which contradicts that. Nothing noticed for as
+  // long as the worker's graph had no dynamic import to split.
+  //
+  // 6333aa00 (2026-08-25 20:56) gave it one: it replaced this worker's
+  // hand-written wasm ABI with @protocol-01/stark-prover, whose loader does
+  // await import('node:fs/promises') on its Node path. Rollup then needs code
+  // splitting, iife cannot code-split, and the build died on
+  // "Invalid value iife for option output.format". The SAME commit broke
+  // apps/web's build the same evening for a different reason, and neither was
+  // seen for a day: CI ran on master only and this work is on a feature branch.
+  //
+  // 'es' is not a workaround. It is the format this worker already runs in.
+  worker: {
+    format: 'es',
+  },
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),

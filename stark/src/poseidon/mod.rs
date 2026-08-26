@@ -233,3 +233,79 @@ mod pow7_tests {
         assert_eq!(pow7(BaseElement::ONE).as_int(), 1);
     }
 }
+
+#[cfg(test)]
+mod emit_for_zk_shielded {
+    use super::*;
+    use winterfell::math::StarkField;
+
+    /// [C7 / step 7] Emit the t=3 Goldilocks Poseidon constants as RAW u64,
+    /// plus parity vectors, for the on-chain pool program.
+    ///
+    /// `cargo test -p p01-stark --lib emit_poseidon_gl_for_zk_shielded -- --ignored --nocapture`
+    ///
+    /// WHY THIS EXISTS. `programs/zk_shielded` has NO Goldilocks Poseidon at
+    /// all: `merkle_tree.rs::hash_pair` panics and its commented-out body is
+    /// BN254, the wrong field. The v3 denominated tree works only because the
+    /// client supplies the root (`insert_with_root`). C7 changes that: its
+    /// public input 1 is a depth-12 SUBTREE root, so the spending instruction
+    /// has to hash the remaining levels ITSELF before it can trust the proof.
+    ///
+    /// ⛔ The pool program cannot depend on this crate -- winterfell is a host
+    /// dependency and will not go into a BPF program -- so it must carry its
+    /// own copy. A hand-transcribed copy of ninety field constants is exactly
+    /// the kind of silent divergence this repo has been bitten by, so the copy
+    /// is GENERATED here and its agreement is pinned by the vectors below.
+    #[test]
+    #[ignore]
+    fn emit_poseidon_gl_for_zk_shielded() {
+        let rc = &constants::ROUND_CONSTANTS_T3;
+        println!("pub const RC_T3: [u64; 90] = [");
+        for (i, v) in rc.iter().enumerate() {
+            let end = if i % 3 == 2 { "  // round " } else { "" };
+            if end.is_empty() {
+                println!("    0x{:016X},", v.as_int());
+            } else {
+                println!("    0x{:016X},{end}{}", v.as_int(), i / 3);
+            }
+        }
+        println!("];");
+        println!();
+
+        // MDS is the circulant [[3,1,1],[1,3,1],[1,1,3]] -- three constants, no
+        // table needed on chain: the product is s0*3 + s1 + s2 and rotations.
+        let mds = &constants::MDS_MATRIX_T3;
+        println!("// MDS_MATRIX_T3 (asserted circulant 3/1/1 so the on-chain form");
+        println!("// can be three adds and one mul-by-3 instead of nine muls):");
+        for row in mds.iter() {
+            println!(
+                "//   [{}, {}, {}]",
+                row[0].as_int(),
+                row[1].as_int(),
+                row[2].as_int()
+            );
+        }
+        assert_eq!(mds[0][0].as_int(), 3);
+        assert_eq!(mds[0][1].as_int(), 1);
+        assert_eq!(mds[0][2].as_int(), 1);
+        println!();
+
+        // Parity vectors. These are what pins the on-chain copy to this one.
+        println!("pub const PARITY_HASH2: [(u64, u64, u64); 8] = [");
+        let cases: [(u64, u64); 8] = [
+            (0, 0),
+            (1, 0),
+            (0, 1),
+            (1, 2),
+            (0xFFFF_FFFF_0000_0000, 1),
+            (42, 999),
+            (0x0123_4567_89AB_CDEF, 0xFEDC_BA98_7654_3210),
+            (0xFFFF_FFFF_0000_0000, 0xFFFF_FFFF_0000_0000),
+        ];
+        for (a, b) in cases.iter() {
+            let out = hash2(BaseElement::new(*a), BaseElement::new(*b));
+            println!("    (0x{:016X}, 0x{:016X}, 0x{:016X}),", a, b, out.as_int());
+        }
+        println!("];");
+    }
+}

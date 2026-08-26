@@ -69,9 +69,34 @@ export class PublicKey {
  * Minimal TransactionInstruction stub — a plain data carrier.
  *
  * Enough for tests that assert the serialized `data` buffer of an instruction
- * builder. `keys` is stored verbatim and NOT validated; entries referencing
- * mock globals this file does not implement (e.g. `SystemProgram.programId`)
- * will be `undefined`, so account-order assertions do not belong here.
+ * builder. `keys` is stored verbatim and NOT validated — but "not validated"
+ * does NOT mean "not assertable".
+ *
+ * ⛔ ACCOUNT-ORDER ASSERTIONS DO BELONG HERE, AND ONE DEPENDS ON THIS FILE.
+ *
+ * This comment said the opposite until 2026-08-26, on the grounds that entries
+ * referencing mock globals this file does not implement (it named
+ * `SystemProgram.programId`) come out `undefined`. That was true when it was
+ * written and is false now: `SystemProgram.programId` is implemented below, for
+ * precisely this reason, and the hole it used to leave in a key list is gone.
+ *
+ * The guard that rests on it is in
+ * `apps/mobile/services/denominatedPool/unshieldV4.test.ts`:
+ *
+ *   "names ONE proof buffer, where v3 named two"
+ *
+ * which asserts the v4 spend names 11 accounts, that the payer signs, and that
+ * the recipient is the LAST key and unsigned — the whole point of v4 being that
+ * the recipient has no NAMED slot for an IDL-driven indexer to resolve. One more
+ * test in that file, "separates two different recipients", uses
+ * `SystemProgram.programId` as its second sample key.
+ *
+ * MEASURED 2026-08-26 by deleting the `programId` line below: 2 of that file's
+ * 12 tests fail, both with `Cannot read properties of undefined`. Restored, 12
+ * of 12 pass.
+ *
+ * So: do not delete that guard as "misplaced", and do not thin this mock on the
+ * theory that nothing reads the key list. Something does.
  */
 export class TransactionInstruction {
   programId: PublicKey;
@@ -192,6 +217,16 @@ export class Connection {
 }
 
 export const SystemProgram = {
+  /**
+   * ⛔ THIS WAS MISSING UNTIL 2026-08-25 AND ITS ABSENCE WAS SILENT.
+   *
+   * Production code puts `SystemProgram.programId` straight into an
+   * instruction's key list. Under this mock that was `undefined`, so any test
+   * building such an instruction got a key list with a hole in it and only
+   * noticed if it happened to read that slot. Caught by the v4 spend test,
+   * which reads the last key and got `Cannot read properties of undefined`.
+   */
+  programId: new PublicKey('11111111111111111111111111111111'),
   transfer: (params: { fromPubkey: PublicKey; toPubkey: PublicKey; lamports: number }) => ({
     programId: new PublicKey('11111111111111111111111111111111'),
     keys: [

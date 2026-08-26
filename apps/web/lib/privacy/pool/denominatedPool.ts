@@ -61,6 +61,7 @@ import {
   closeStarkProofBuffer,
   CIRCUIT_MERKLE_UPDATE,
   CIRCUIT_POOL_COMMITMENT,
+  CIRCUIT_SPEND,
   CIRCUIT_MERKLE_PATH,
   type GenericStarkProof,
   type WalletSigner,
@@ -78,7 +79,7 @@ import { starkProver } from './starkProver';
 // ---------------------------------------------------------------------------
 // Re-export circuit IDs and signer type so consumers can import from here.
 // ---------------------------------------------------------------------------
-export { CIRCUIT_POOL_COMMITMENT, CIRCUIT_MERKLE_PATH, CIRCUIT_MERKLE_UPDATE, type WalletSigner };
+export { CIRCUIT_POOL_COMMITMENT, CIRCUIT_MERKLE_PATH, CIRCUIT_MERKLE_UPDATE, CIRCUIT_SPEND, type WalletSigner };
 
 // ---------------------------------------------------------------------------
 // Constants (mirror mobile lines 43-108)
@@ -2330,6 +2331,386 @@ export async function unshieldDenominatedStarkV3(
       } catch (closeErr: unknown) {
         console.warn(
           '[DenomPool/ext] closeStarkProofBuffer (unshield) failed:',
+          closeErr instanceof Error ? closeErr.message : String(closeErr),
+        );
+      }
+    }
+  }
+}
+
+// ===========================================================================
+// V4 UNSHIELD — ONE CIRCUIT-7 PROOF, NO PUBLISHED COMMITMENT
+// ===========================================================================
+//
+// 🚨 WHAT v3 LEAKS, AND WHY THIS EXISTS
+// ─────────────────────────────────────
+// v3 spends on a C1 + C3 pair. The two proofs are independent, so something has
+// to tie them together, and that something is `stark_commitment` — the note
+// commitment, PUBLISHED IN THE CLEAR as an instruction argument. A withdrawal
+// therefore NAMES the leaf it spends. Anyone with the deposit events can match
+// that value to a `LeafInserted` and walk straight back to the deposit that
+// funded it. No cryptography is broken; the linkage is printed on the wire.
+//
+// C7 proves both halves in one trace. The commitment becomes an internal wire
+// and never reaches the instruction at all.
+//
+// THREE THINGS THAT ARE NOT MECHANICAL
+// ────────────────────────────────────
+// 1. THE RECIPIENT MOVES TO PREPARE. C7 binds sha256(recipient) into the
+//    transcript, so the PROOF CANNOT BE BUILT WITHOUT KNOWING WHO IS PAID.
+//    In v3 the recipient only had to exist at execution. Getting this wrong
+//    does not fail loudly — it produces a proof bound to the wrong payee, and
+//    the on-chain public-inputs hash rejects it after the whole upload.
+//
+// 2. THE PATH IS SPLIT 12 / 3. C7's subtree depth is CANONICAL_DEPTH = 12; the
+//    pool tree is 15. `buildMerkleProofFromLeavesV3` already returns depth 15,
+//    so [0..12] goes to the circuit and [12..15] goes to the instruction as
+//    `siblings` / `directions`, which the handler walks with Poseidon to derive
+//    the pool root. Nothing new is computed here.
+//    ⛔ Do NOT hardcode directions = [0,0,0] because everything is in bucket 0
+//    today. It goes wrong at leaf 4,097 and not before.
+//
+// 3. ONE BUFFER, NOT TWO. Half the upload cost, and half the orphaned-rent
+//    exposure.
+//
+// ⛔ v3 STAYS. Notes whose blinding is unknown — the unspent leaf 30 among them
+// — can only be spent there, indefinitely.
+// ---------------------------------------------------------------------------
+
+/** C7's subtree depth. NOT the pool tree's 15. See `air/spend.rs`. */
+export const C7_SUBTREE_DEPTH = 12;
+
+/**
+ * sha256(recipient) as the four little-endian u64 limbs circuit 7 takes.
+ *
+ * ⛔ THE LIMBS ARE CARRIED RAW — NOT REDUCED MOD THE GOLDILOCKS PRIME. They
+ * occupy no trace column and no constraint (the binding is transcript-only,
+ * exactly as C3's `depth` is), so nothing reduces them and the concatenation of
+ * the four IS the digest byte for byte. `unshield_denominated_stark_v4.rs`
+ * relies on that identity to rebuild the 48 hashed bytes with a single copy.
+ * A future change that publishes reduced felts would silently break it for any
+ * digest limb >= the modulus.
+ */
+export function recipientHashLimbs(recipient: PublicKey): bigint[] {
+  const digest = sha256(recipient.toBytes());
+  const limbs: bigint[] = [];
+  for (let i = 0; i < 4; i++) {
+    let v = 0n;
+    for (let b = 7; b >= 0; b--) v = (v << 8n) | BigInt(digest[i * 8 + b]);
+    limbs.push(v);
+  }
+  return limbs;
+}
+
+/**
+ * Args: nullifier[32] | merkle_root[32] | subtree_root u64 | siblings Vec<u64>
+ *       | directions Vec<u8> | recipient[32]
+ *
+ * 🚨 THERE IS NO `stark_commitment` FIELD AND NO `min_epoch` FIELD. The first
+ * is the linkage C7 removes. The second was pinned to 0 on every v3 path
+ * because `ShieldReceipt.depositEpoch` became a 63-bit secret once commitments
+ * gained a PRF blinding; v4 drops the field entirely, so it cannot be set wrong.
+ */
+export function buildUnshieldDenominatedStarkV4Ix(
+  payer: PublicKey,
+  recipient: PublicKey,
+  poolPDA: PublicKey,
+  treePDA: PublicKey,
+  nullifierPDA: PublicKey,
+  c7ProofBuffer: PublicKey,
+  nullifierBytes: number[],
+  merkleRootBytes: number[],
+  subtreeRoot: bigint,
+  siblings: bigint[],
+  directions: number[],
+  tokenProgram?: PublicKey,
+  poolVault?: PublicKey,
+  recipientTokenAccount?: PublicKey,
+): TransactionInstruction {
+  if (siblings.length !== directions.length) {
+    throw new Error(
+      `siblings (${siblings.length}) and directions (${directions.length}) must be the same length`,
+    );
+  }
+  const disc = getDiscriminator('unshield_denominated_stark_v4');
+  const data = Buffer.alloc(
+    8 + 32 + 32 + 8 + (4 + siblings.length * 8) + (4 + directions.length) + 32,
+  );
+  let offset = 0;
+  disc.copy(data, offset); offset += 8;
+  Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
+  Buffer.from(merkleRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(subtreeRoot, offset); offset += 8;
+  // Borsh Vec<T>: u32 length prefix, then the elements.
+  data.writeUInt32LE(siblings.length, offset); offset += 4;
+  for (const sib of siblings) { data.writeBigUInt64LE(sib, offset); offset += 8; }
+  data.writeUInt32LE(directions.length, offset); offset += 4;
+  for (const dir of directions) { data.writeUInt8(dir, offset); offset += 1; }
+  Buffer.from(recipient.toBytes()).copy(data, offset);
+
+  const [feeEscrowPDA] = deriveFeeEscrowPDA(poolPDA);
+
+  const keys = [
+    { pubkey: payer,                                    isSigner: true,  isWritable: true  },
+    { pubkey: poolPDA,                                  isSigner: false, isWritable: true  },
+    { pubkey: treePDA,                                  isSigner: false, isWritable: false },
+    { pubkey: nullifierPDA,                             isSigner: false, isWritable: true  },
+    // ONE buffer. v3 named two here.
+    { pubkey: c7ProofBuffer,                            isSigner: false, isWritable: false },
+    { pubkey: SystemProgram.programId,                  isSigner: false, isWritable: false },
+    { pubkey: tokenProgram || ZK_SHIELDED_PROGRAM_ID,   isSigner: false, isWritable: false },
+    { pubkey: poolVault || ZK_SHIELDED_PROGRAM_ID,      isSigner: false, isWritable: !!poolVault },
+    { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
+    { pubkey: feeEscrowPDA,                             isSigner: false, isWritable: true  },
+    // remaining_accounts[0]: recipient — anonymous AccountInfo, NOT a named
+    // field, so a naive IDL-driven indexer cannot resolve "recipient: ABC".
+    // Unlike v3 the binding no longer rests on the payer signature alone:
+    // sha256(recipient) is inside the proof transcript.
+    { pubkey: recipient,                                isSigner: false, isWritable: true  },
+  ];
+
+  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
+export interface PrepareUnshieldV4Result {
+  c7ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number };
+  /** The pool root the instruction NAMES. */
+  merkleRoot: bigint;
+  /** The depth-12 root the proof REACHES. The handler walks from here to the above. */
+  subtreeRoot: bigint;
+  nullifierGoldilocks: bigint;
+  /** Levels 12..15 of the path — walked on chain, not in the circuit. */
+  siblings: bigint[];
+  directions: number[];
+  /**
+   * The payee this proof is bound to. Carried so `unshieldDenominatedStarkV4`
+   * can refuse a prepared-for-A / executed-for-B mismatch BEFORE spending an
+   * upload on a proof the chain will reject.
+   *
+   * 🚨 There is deliberately NO `starkCommitment` field. Its absence is the
+   * property, and leaving it in the type would let a caller keep publishing it.
+   */
+  recipient: PublicKey;
+}
+
+/**
+ * Fetch leaves, build the Merkle path, pre-flight the root, and generate ONE
+ * circuit-7 proof.
+ *
+ * ⛔ `recipient` is a parameter HERE, unlike `prepareUnshield`. C7 binds
+ * sha256(recipient) into its transcript; the proof does not exist without it.
+ */
+export async function prepareUnshieldV4(
+  receipt: ShieldReceipt,
+  recipient: PublicKey,
+  poolConfig: PoolConfig,
+  connection: Connection,
+  onProgress?: (step: string) => void,
+): Promise<PrepareUnshieldV4Result> {
+  const { starkProver: prover } = await import('./starkProver');
+
+  onProgress?.('Fetching pool leaves from on-chain events...');
+  const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
+    connection,
+    poolConfig.poolPDA,
+    { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
+  );
+  if (missing.length > 0) {
+    console.warn(`[DenomPool/v4] prepareUnshieldV4: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`);
+  }
+
+  onProgress?.('Building Merkle proof from leaf history...');
+  let merkleResult = buildMerkleProofFromLeavesV3({
+    leavesByIndex,
+    targetLeafIndex: receipt.leafIndex,
+  });
+
+  // Root pre-flight. A rebuilt root the pool has never published means the
+  // proof would be refused at the END of a ~78-chunk upload, so this check
+  // is worth its two RPC calls.
+  onProgress?.('Pre-flight root verification...');
+  const poolAcct = await connection.getAccountInfo(poolConfig.poolPDA, 'confirmed');
+  if (poolAcct) {
+    const parsed = parsePoolV3Account(new Uint8Array(poolAcct.data));
+    if (parsed) {
+      const known = (root: bigint): boolean => {
+        const b = new Uint8Array(goldilocksToLeBytes32(root));
+        return bytesEqual(b, parsed.currentRoot) || parsed.historicalRoots.some((r) => bytesEqual(b, r));
+      };
+      if (!known(merkleResult.root)) {
+        onProgress?.('Root not in ring — retrying event scan with extended limit...');
+        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: 3000 });
+        merkleResult = buildMerkleProofFromLeavesV3({
+          leavesByIndex: retry.leavesByIndex,
+          targetLeafIndex: receipt.leafIndex,
+        });
+        if (!known(merkleResult.root)) {
+          throw new Error(
+            `PRE-FLIGHT FAIL: the rebuilt Merkle root is not among the pool's known roots ` +
+            `(current + ${parsed.historicalRoots.length} historical). Aborting before proof rent is spent. ` +
+            `Wait ~10s for the RPC to index recent transactions, then retry.`,
+          );
+        }
+      }
+    }
+  }
+
+  // 12 / 3 split. `buildMerkleProofFromLeavesV3` returns the full depth-15 path
+  // and the two halves go to different verifiers: the first twelve levels are
+  // proven in the circuit, the last three are walked on chain.
+  if (merkleResult.pathElements.length < C7_SUBTREE_DEPTH) {
+    throw new Error(
+      `Merkle path is ${merkleResult.pathElements.length} deep; circuit 7 needs at least ${C7_SUBTREE_DEPTH}.`,
+    );
+  }
+  const circuitElements = merkleResult.pathElements.slice(0, C7_SUBTREE_DEPTH);
+  const circuitIndices = merkleResult.pathIndices.slice(0, C7_SUBTREE_DEPTH);
+  const siblings = merkleResult.pathElements.slice(C7_SUBTREE_DEPTH);
+  const directions = merkleResult.pathIndices.slice(C7_SUBTREE_DEPTH);
+
+  const rhLimbs = recipientHashLimbs(recipient);
+
+  const proofStartedAt = Date.now();
+  const heartbeat = setInterval(() => {
+    const seconds = Math.round((Date.now() - proofStartedAt) / 1000);
+    onProgress?.(`Proving ownership and membership in one trace (${seconds}s)...`);
+  }, 10_000);
+  let raw;
+  try {
+    onProgress?.('Proving ownership and membership in one trace...');
+    await prover.start();
+    raw = await prover.generateSpendProof(
+      receipt.nullifierPreimage.toString(),
+      receipt.secret.toString(),
+      receipt.noteBlinding.toString(),
+      receipt.tokenMint.toString(),
+      circuitElements.map((e) => e.toString()),
+      circuitIndices,
+      rhLimbs.map((l) => l.toString()),
+    );
+  } finally {
+    clearInterval(heartbeat);
+  }
+
+  const publicInputs = raw.publicInputs.map((v) => BigInt(v));
+  if (publicInputs.length !== 6) {
+    throw new Error(`Circuit 7 must publish exactly 6 felts, got ${publicInputs.length}.`);
+  }
+  // Fail here rather than on chain: a transcript bound to a different payee is
+  // otherwise only discovered by the public-inputs hash, after the upload.
+  for (let i = 0; i < 4; i++) {
+    if (publicInputs[2 + i] !== rhLimbs[i]) {
+      throw new Error(
+        `Circuit 7 published a recipient hash that does not match ${recipient.toBase58()} at limb ${i}.`,
+      );
+    }
+  }
+
+  return {
+    c7ProofResult: { proofBytes: hexToBytes(raw.proofHex), publicInputs, proofSize: raw.proofSize },
+    merkleRoot: merkleResult.root,
+    subtreeRoot: publicInputs[1],
+    nullifierGoldilocks: publicInputs[0],
+    siblings,
+    directions,
+    recipient,
+  };
+}
+
+/**
+ * Submit the one proof, then spend.
+ *
+ * ⛔ `recipient` is passed again and CHECKED against the prepared one. It is not
+ * redundant: the proof is bound to a payee, and executing for a different one
+ * builds a transaction the chain refuses after the whole upload has been paid
+ * for.
+ */
+export async function unshieldDenominatedStarkV4(
+  poolConfig: PoolConfig,
+  recipient: PublicKey,
+  prepared: PrepareUnshieldV4Result,
+  signer: WalletSigner,
+  connection: Connection,
+  onProgress?: (step: string) => void,
+): Promise<string> {
+  if (!prepared.recipient.equals(recipient)) {
+    throw new Error(
+      `This proof was prepared for ${prepared.recipient.toBase58()} and cannot pay ` +
+      `${recipient.toBase58()}. Circuit 7 binds sha256(recipient) into its transcript; ` +
+      `re-run prepareUnshieldV4 for the new payee.`,
+    );
+  }
+
+  let c7ProofBuffer: PublicKey | undefined;
+  try {
+    onProgress?.('Submitting the circuit-7 spend proof on-chain...');
+    const proof: GenericStarkProof = {
+      proofBytes: prepared.c7ProofResult.proofBytes,
+      circuitId: CIRCUIT_SPEND,
+      publicInputs: prepared.c7ProofResult.publicInputs,
+      proofSize: prepared.c7ProofResult.proofSize,
+    };
+    const result = await submitAndVerifyStarkProof(proof, signer, connection, onProgress);
+    c7ProofBuffer = result.proofBuffer;
+
+    onProgress?.('Building V4 unshield transaction...');
+    const nullifierBytes = goldilocksToLeBytes32(prepared.nullifierGoldilocks);
+    const merkleRootBytes = goldilocksToLeBytes32(prepared.merkleRoot);
+    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+    const isNativeSOL = poolConfig.tokenMint.equals(SystemProgram.programId);
+    let tokenProgram: PublicKey | undefined;
+    let recipientTokenAccount: PublicKey | undefined;
+    let poolVault: PublicKey | undefined;
+    if (!isNativeSOL) {
+      tokenProgram = TOKEN_PROGRAM_ID;
+      recipientTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, recipient);
+      poolVault = poolConfig.vaultATA
+        ?? await getAssociatedTokenAddress(poolConfig.tokenMint, poolConfig.poolPDA, true);
+    }
+
+    const ix = buildUnshieldDenominatedStarkV4Ix(
+      signer.publicKey,
+      recipient,
+      poolConfig.poolPDA,
+      poolConfig.treePDA,
+      nullifierPDA,
+      c7ProofBuffer,
+      nullifierBytes,
+      merkleRootBytes,
+      prepared.subtreeRoot,
+      prepared.siblings,
+      prepared.directions,
+      tokenProgram,
+      poolVault,
+      recipientTokenAccount,
+    );
+
+    const tx = new Transaction();
+    // The handler walks three Poseidon levels on top of the v3 work; measured
+    // headroom, not a guess carried over.
+    tx.add(...buildComputeBudgetIxs(400_000));
+    if (!isNativeSOL && recipientTokenAccount) {
+      tx.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          signer.publicKey, recipientTokenAccount, recipient, poolConfig.tokenMint,
+        ),
+      );
+    }
+    tx.add(ix);
+
+    onProgress?.('Sending V4 unshield transaction...');
+    const sig = await signSendV3(connection, tx, signer, onProgress);
+    onProgress?.('V4 unshield confirmed!');
+    return sig;
+  } finally {
+    if (c7ProofBuffer) {
+      try {
+        onProgress?.('Closing proof buffer (rent recovery)...');
+        await closeStarkProofBuffer(c7ProofBuffer, signer, connection);
+      } catch (closeErr: unknown) {
+        console.warn(
+          '[DenomPool/v4] closeStarkProofBuffer failed:',
           closeErr instanceof Error ? closeErr.message : String(closeErr),
         );
       }

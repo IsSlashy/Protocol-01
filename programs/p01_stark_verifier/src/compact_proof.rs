@@ -249,6 +249,55 @@ pub const CONFIG_MERKLE_UPDATE: CircuitConfig = CircuitConfig {
     num_queries: 22,
 };
 
+/// [C7] The spend circuit. Byte-for-byte `CONFIG_MERKLE_UPDATE` in eight of ten
+/// fields -- deliberately, so C7 fits an envelope C6 is already measured
+/// inside. The two that differ are the two that matter.
+///
+/// 🚨 `fri_final_poly_size: 32`, NOT 16, AND IT IS NOT A TUNING KNOB. C7 shares
+/// C6's trace width, trace length, blowup, LDE size, merkle depth and query
+/// count. With 16 here the two configs would be indistinguishable to
+/// `GenericCompactProof::from_bytes`, and a C7 proof would parse as a C6 proof
+/// and be checked against C6's constraints. 32 separates them twice over: the
+/// field itself, and `num_fri_layers`, which is `log2(8192/32) - 1 = 7` against
+/// C6's 8. It also drops one committed FRI layer, which is why a C7 proof is
+/// 77,965 bytes against the 147,038 of the C1 + C3 pair it replaces -- a 1.9x
+/// cut, and 147,038 is MEASURED, not derived: a live scan of a real C1+C3
+/// upload read 148 chunks / 147,038 bytes (verify/p01-verify.mjs, probe
+/// P3/P3b). The 258,958 once quoted here is the PRE-B4 pair-leaf figure, which
+/// inflates the cut to a 3.3x that was never true of the shipped pair.
+///
+/// 🚨 `fri_final_poly_degree_bound: 2`, NOT 1. MEASURED, not chosen: the
+/// terminal polynomial's last non-zero coefficient sits at index 1, because
+/// ffps 32 stops the FRI fold one layer earlier than ffps 16 does and one fewer
+/// fold leaves one more degree. This is the FIRST value above 1 in this crate's
+/// history, and `check_final_poly_degree_bound` (verify.rs) becomes VACUOUS if
+/// it ever reaches `fri_final_poly_size` -- the const assert below is what
+/// stops that, because the parser never reads this field and no wire check
+/// covers it.
+pub const CONFIG_SPEND: CircuitConfig = CircuitConfig {
+    trace_width: 10,
+    trace_length: 512,
+    blowup: 16,
+    lde_size: 8192,
+    merkle_depth: 13,  // log2(8192) = 13
+    num_rounds: 30,
+    fri_final_poly_size: 32,        // [C7] NOT 16 -- see above
+    fri_final_poly_degree_bound: 2, // [C7] MEASURED at stark/src/compact.rs
+    quotient_segments: 8,           // [C7] MEASURED, re-derived from deg(Q)
+    num_queries: 22,
+};
+
+/// [C7] The bound must leave at least one coefficient for the terminal test to
+/// look at. At `bound >= fri_final_poly_size` the check skips every coefficient
+/// and returns Ok unconditionally -- rho becomes 1 and the terminal FRI test is
+/// worth zero bits. Nothing else catches this: `from_bytes` does not read the
+/// field, and the observable tuple the confusion matrix compares does not
+/// include it.
+const _: () = assert!(
+    CONFIG_SPEND.fri_final_poly_degree_bound < CONFIG_SPEND.fri_final_poly_size,
+    "C7 degree bound must stay below the final poly size or the terminal check is vacuous",
+);
+
 pub fn get_circuit_config(circuit_id: u8) -> Option<&'static CircuitConfig> {
     match circuit_id {
         0 => Some(&CONFIG_SUBSCRIBER_OWNERSHIP),
@@ -258,6 +307,7 @@ pub fn get_circuit_config(circuit_id: u8) -> Option<&'static CircuitConfig> {
         4 => Some(&CONFIG_CONFIDENTIAL_BALANCE),
         5 => Some(&CONFIG_TRANSFER),
         6 => Some(&CONFIG_MERKLE_UPDATE),
+        7 => Some(&CONFIG_SPEND),
         _ => None,
     }
 }

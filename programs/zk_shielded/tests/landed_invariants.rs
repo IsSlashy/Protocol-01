@@ -261,27 +261,82 @@ fn the_note_secret_reuse_invariant_is_still_written_down() {
     }
 }
 
-/// The seed this invariant is about must still be the one the program uses.
+/// The seed this invariant is about must still be the one the program uses --
+/// in EVERY instruction that can open a vault.
 ///
 /// The comment above is only true while the vault PDA is derived from
 /// `subscriber_id_bytes()`. If a future change seeds the vault on something
-/// else — the nullifier is the tempting one — the warning becomes wrong in a
+/// else - the nullifier is the tempting one - the warning becomes wrong in a
 /// way that reads as reassuring.
+///
+/// This read ONE file BY PATH until 2026-08-26, when `subscribe_private_stark_v4`
+/// was added beside it. A second opener is invisible to a hardcoded
+/// `include_str!`, so this invariant would have gone on passing while the new
+/// path - the one clients are being moved to - sat unguarded. Both are listed
+/// below.
+///
+/// The ORDER of the seed triple is pinned too. `sharing_a_note_secret_collides_
+/// the_vault_address` below hardcodes [prefix, retailer, commitment, mint] as a
+/// pure function, so a file that reordered its own seeds would leave that test
+/// describing an address the program never derives - and claim_period, pause and
+/// resume all re-derive the live order with `bump = vault.bump`, so a reorder
+/// bricks every vault the instruction creates.
 #[test]
 fn the_vault_is_still_seeded_on_the_subscriber_id() {
-    let src = include_str!("../src/instructions/subscribe_private_stark.rs");
-    let c = strip_comments(&src[..src.find("#[cfg(test)]").unwrap_or(src.len())]);
-    assert!(
-        c.contains("subscriber_commitment.as_ref()"),
-        "{}",
-        explain(
-            "the vault PDA is no longer seeded on the subscriber commitment",
-            "Re-derive the invariant on subscriber_id_bytes() before changing this. In particular\n\
-             the nullifier is NOT a safe substitute: it is also f(secret), so it buys nothing\n\
-             against leaf enumeration, and it is PUBLISHED in SubscribePrivateStarkEvent — which\n\
-             would make the vault address computable from a public log.",
-        )
-    );
+    const OPENERS: [(&str, &str); 2] = [
+        (
+            "subscribe_private_stark",
+            include_str!("../src/instructions/subscribe_private_stark.rs"),
+        ),
+        (
+            "subscribe_private_stark_v4",
+            include_str!("../src/instructions/subscribe_private_stark_v4.rs"),
+        ),
+    ];
+
+    for (name, src) in OPENERS {
+        let c = strip_comments(&src[..src.find("#[cfg(test)]").unwrap_or(src.len())]);
+        assert!(
+            c.contains("subscriber_commitment.as_ref()"),
+            "{}",
+            explain(
+                &format!("{name}: the vault PDA is no longer seeded on the subscriber commitment"),
+                "Re-derive the invariant on subscriber_id_bytes() before changing this. In\n\
+                 particular the nullifier is NOT a safe substitute: it is also f(secret), so it\n\
+                 buys nothing against leaf enumeration, and in v3 it is PUBLISHED in\n\
+                 SubscribePrivateStarkEvent - which would make the vault address computable\n\
+                 from a public log.",
+            )
+        );
+
+        let prefix = c
+            .find("SubscriptionVault::SEED_PREFIX,")
+            .unwrap_or_else(|| panic!("{name}: the vault seeds no longer start at SEED_PREFIX"));
+        let tail = &c[prefix..];
+        let mut at = 0usize;
+        for seed in [
+            "retailer.key().as_ref()",
+            "subscriber_commitment.as_ref()",
+            "token_mint.as_ref()",
+        ] {
+            let found = tail
+                .find(seed)
+                .unwrap_or_else(|| panic!("{name}: `{seed}` is no longer a vault seed"));
+            assert!(
+                found > at,
+                "{}",
+                explain(
+                    &format!("{name}: the vault seed order changed at `{seed}`"),
+                    "The seed order IS the address. The derivation test below hardcodes\n\
+                     [prefix, retailer, commitment, mint] and would go on passing against an\n\
+                     address this program never derives; and claim_period, pause and resume all\n\
+                     re-derive the live order with bump = vault.bump, so a reorder bricks every\n\
+                     vault this instruction creates.",
+                )
+            );
+            at = found;
+        }
+    }
 }
 
 /// The mechanism itself, executed rather than described.
@@ -334,5 +389,120 @@ fn sharing_a_note_secret_collides_the_vault_address() {
     assert_eq!(
         renewal_reusing_the_secret, first_subscription,
         "reuse produces one address for two operations - that is the linkage"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 🚨 THE NULLIFIER IS THE DOUBLE-SPEND KEY, AND NOTHING BOUNDED ITS VALUE.
+//
+// Every STARK spend checks `nullifier[8..] == [0u8; 24]` and has since the
+// beginning. That bounds the ENCODING of the high 24 bytes. It says nothing
+// about the low 8, and the low 8 are a Goldilocks felt.
+//
+// MEASURED 2026-08-26 against the deployed verifier: the boundary assertion is
+// `Felt::new(public_inputs[0])`, `Felt::new(v) = Felt(v % p)`, and both
+// `public_inputs_to_bytes` and `hash_public_inputs` hash the u64 RAW with no
+// range check anywhere. 2^64 - p = 2^32 - 1 exactly, so every nullifier below
+// 2^32 - 1 has a second in-range encoding `n + p`: ONE field element, TWO
+// `NullifierRecord` addresses, both `init`-able, and two fully honest proofs off
+// one witness. Executed end to end in
+// `tests/subscribe_v4_adversarial.rs::one_field_element_cannot_be_spent_under_two_nullifier_encodings`:
+// with the require removed the alias spend LANDS and the pool pays a second
+// denomination for one note.
+//
+// The fix is one require per spend, and the failure mode of a fix repeated six
+// times is that the seventh site forgets it. So this guard reads the DIRECTORY
+// rather than a hand-written list: a new spend instruction is covered the day it
+// lands, not the day someone remembers this file.
+// ---------------------------------------------------------------------------
+
+/// Files whose LIVE code seeds a `NullifierRecord` but which are not
+/// single-nullifier STARK spends, with the reason each is out of scope. Named
+/// rather than skipped silently, so a new file cannot join this set without an
+/// edit here.
+///
+/// Both entries below are live CODE that no live REGISTRATION reaches: MEASURED
+/// 2026-08-26 by stripping comments from `lib.rs`, `pub fn transfer(` and
+/// `pub fn unshield(` are inside a block comment, and only 24 of the 35 `pub fn`
+/// matches in that file survive the strip. They are excused for their SHAPE --
+/// two nullifiers, not one -- and not for being unroutable, so that re-enabling
+/// them does not silently re-enable an unchecked nullifier.
+///
+/// ⛔ `escrow_shield.rs`, `transfer_denominated_stark.rs` and
+/// `unshield_denominated_stark.rs` are deliberately ABSENT from this list. All
+/// three bodies are wholly inside a block comment, and so are their `lib.rs`
+/// registrations, so nothing in them can execute and the scan below -- which
+/// reads CODE, comments stripped -- cannot see them. If any is ever uncommented
+/// it becomes a live record seeder, the count assertion goes red, and the require
+/// has to be added. That is the behaviour we want, and it is why excusal is
+/// decided by the code scan rather than by membership of this list.
+const NOT_SINGLE_NULLIFIER_STARK_SPENDS: [(&str, &str); 2] = [
+    ("transfer_stark.rs", "C5: takes nullifier_1/nullifier_2, and is unroutable since 2026-08-18"),
+    ("unshield_stark.rs", "C5: takes nullifier_1/nullifier_2, and is unroutable since 2026-08-18"),
+];
+
+#[test]
+fn every_stark_spend_canonicalises_the_nullifier_it_seeds_a_record_on() {
+    const ENCODING: &str = "require!(nullifier[8..] == [0u8; 24], ZkShieldedError::InvalidProof);";
+    const VALUE: &str = "u64::from_le_bytes(nullifier[..8].try_into().unwrap()) \
+                         < crate::state::poseidon_gl::MODULUS,";
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/instructions");
+    let mut checked: Vec<String> = Vec::new();
+    let mut excused: Vec<String> = Vec::new();
+
+    for entry in std::fs::read_dir(&dir).expect("src/instructions must be readable") {
+        let path = entry.expect("directory entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let src = std::fs::read_to_string(&path).expect("read instruction file");
+        // Production code only, comments stripped: a sentence about a check must
+        // never be what satisfies an assertion about the check.
+        let cut = match src.find("#[cfg(test)]") {
+            Some(i) => &src[..i],
+            None => &src[..],
+        };
+        let code = strip_comments(cut);
+        if !code.contains("NullifierRecord::SEED_PREFIX") {
+            continue;
+        }
+        if NOT_SINGLE_NULLIFIER_STARK_SPENDS.iter().any(|(f, _)| *f == name) {
+            excused.push(name);
+            continue;
+        }
+
+        assert!(
+            code.contains(ENCODING),
+            "{name} seeds a NullifierRecord on a `nullifier` argument and does not \
+             canonicalise its ENCODING. Two byte strings, two record addresses, one note.",
+        );
+        assert!(
+            code.contains(VALUE),
+            "{name} seeds a NullifierRecord on a `nullifier` argument and does not bound \
+             its VALUE against the Goldilocks modulus. `n` and `n + p` are ONE field \
+             element and TWO record addresses, so one deposit pays out twice off two \
+             fully honest proofs. The require to add, immediately after the encoding \
+             check, is written out at the same place in unshield_denominated_stark_v4.rs.",
+        );
+        checked.push(name);
+    }
+
+    checked.sort();
+    excused.sort();
+    assert_eq!(
+        checked.len(),
+        6,
+        "expected the six LIVE single-nullifier STARK spends, found {}: {checked:?}. A new \
+         spend is covered automatically and moves this number -- add the require, then move \
+         it. One VANISHING means the scan stopped looking at a path that still routes.",
+        checked.len(),
+    );
+    assert_eq!(
+        excused.len(),
+        NOT_SINGLE_NULLIFIER_STARK_SPENDS.len(),
+        "an excused file was renamed or deleted, so it is no longer being excused for the \
+         reason recorded above -- it is simply not being scanned: {excused:?}",
     );
 }

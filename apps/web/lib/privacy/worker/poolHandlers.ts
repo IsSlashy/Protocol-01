@@ -68,8 +68,11 @@ import { createPacedFetch } from './pacedFetch';
 import { usePollingConfirmation } from './pollingConfirm';
 import {
   executeUnshield,
+  executeUnshieldV4,
   prepareUnshieldJob,
+  prepareUnshieldJobV4,
   type PreparedUnshield,
+  type PreparedUnshieldV4,
 } from '../pool/unshieldEphemeral';
 import {
   executeShield,
@@ -186,13 +189,62 @@ export interface PoolUnshieldPrepareRequest {
    *  decryption under this identity's own seeds, the commitment is recomputed
    *  from the secrets, and anything that fails is ignored. */
   encryptedNotes?: string[];
+  /**
+   * THE TWO FIELDS THAT PICK THE CIRCUIT. BOTH present routes this note through
+   * circuit 7 (`prepareUnshieldJobV4`); NEITHER present is the unchanged C1+C3
+   * path. There is no `version` field on the way IN on purpose — the router is
+   * the DATA the circuit needs, so a caller cannot ask for v4 and then fail to
+   * supply what v4 requires.
+   *
+   * Why the payee is an input here and not at execute time: `sha256(recipient)`
+   * is four of circuit 7's six public inputs, so the proof is bound to ONE payee
+   * before it is built. The v3 job does not know the payee at prepare time and
+   * must not — its proof does not name one.
+   *
+   * ⛔ THE SUBSCRIBE PATH SENDS NEITHER, and that is load-bearing rather than
+   * incidental: `poolSubscribePrepare` is a different request kind entirely, and
+   * `handlePoolSubscribePrepare` calls `prepareSubscribeJob`, which reuses
+   * `prepareUnshieldJob` verbatim (subscribeEphemeral.ts:115). There is no
+   * `subscribe_private_stark_v4` on chain, so a subscription that reached the
+   * branch below would prove on a circuit the program cannot verify.
+   *
+   * 🚨 EXACTLY ONE OF THE TWO IS REFUSED, and it did NOT used to be. It fell
+   * through to the C1 + C3 pair silently, which republishes this note's
+   * commitment in cleartext with nothing raised anywhere: the withdrawal still
+   * lands, and the only symptom is a privacy claim that has stopped being true.
+   * No caller legitimately holds one and not the other — the payee is a circuit
+   * input and the wallet arms the payee refusal — so a request carrying one is a
+   * programming error, and a programming error must not succeed by publishing
+   * MORE than it was asked to. NEITHER field is still the v3 path, untouched,
+   * and neither is what the subscribe path sends.
+   */
+  recipient?: string;
+  /** The user's WALLET, base58. Identity only. Present with `recipient` it both
+   *  selects circuit 7 and arms the payee refusal at PROVE time — ~5.5s and a
+   *  real upload earlier than the v3 path can refuse it. */
+  ownerPubkey?: string;
 }
 
 export interface PoolUnshieldExecuteRequest {
   kind: 'poolUnshieldExecute';
   jobId: string;
-  /** Address that receives the withdrawn funds. */
-  recipient: string;
+  /**
+   * Address that receives the withdrawn funds.
+   *
+   * REQUIRED for a v3 job, which is why it is still sent by every caller today:
+   * a C1+C3 proof names no payee, so this is the only place the payee exists.
+   *
+   * OPTIONAL for a v4 job, where the stored recipient wins because the proof is
+   * bound to it. Passing one that DIFFERS throws — see `handlePoolUnshieldExecute`.
+   *
+   * 🚨 SEND IT ANYWAY ON v4, and `unshieldFromPool` does. It was briefly omitted
+   * on the reasoning that "a matching one is redundant and a differing one is a
+   * bug, so the only value that can never be wrong is none" — which is circular:
+   * sending nothing is exactly what makes a differing payee invisible. It costs
+   * nothing, it is checked against the job the worker actually stored, and it is
+   * the only caller-side signal that a prepare was replaced in between.
+   */
+  recipient?: string;
   /** The user's WALLET. Identity only — see `sweepTo` for where money goes.
    *  `executeUnshield` refuses `recipient === ownerPubkey`, and that refusal is
    *  justified by this field meaning the wallet and nothing else. */
@@ -910,6 +962,21 @@ export interface PoolUnshieldPrepareResponse {
   denomination: number;
   /** Seed derivation the note was found under, resolved in the worker. */
   derivation: DerivationVersion;
+  /**
+   * WHICH CIRCUIT ACTUALLY PROVED THIS JOB — told, never guessed.
+   *
+   * The caller could infer it from the `jobId` prefix (`unshield:` vs
+   * `unshield-v4:`), and that is exactly why this field exists: an inference off
+   * a string is one rename away from silently reporting v4 for a v3 spend, and
+   * the two differ in whether the note's commitment is published in cleartext.
+   * A page that shows the user a privacy claim must read this, not the id.
+   *
+   * ⛔ `'v4'` means the COMMITMENT is off the wire. It does NOT mean unlinkable:
+   * the pre-fund transfer still names the wallet, and so do the RPC routes
+   * recorded in the 2026-08-25 session note. Do not upgrade the disclosure copy
+   * on the strength of this field alone.
+   */
+  version: 'v3' | 'v4';
 }
 
 export interface PoolSetPassphraseResponse {
@@ -1092,8 +1159,44 @@ let armedPassphrase: string | null = null;
 /** In-flight shields, awaiting their pre-fund. */
 const prepared = new Map<string, { ctx: PreparedShield; meta: string; counter: number }>();
 
-/** In-flight withdrawals, awaiting their pre-fund. */
-const preparedUnshields = new Map<string, { ctx: PreparedUnshield; meta: string }>();
+/**
+ * In-flight withdrawals, awaiting their pre-fund.
+ *
+ * A DISCRIMINATED UNION, not a widened record. The two contexts are not
+ * interchangeable — a `PreparedUnshieldV4` carries the payee that circuit 7 was
+ * proved against and a `PreparedUnshield` has no payee at all — so the execute
+ * handler must know which it holds before it can decide whether the caller is
+ * even allowed to name one. Tagging it here rather than sniffing `'recipient' in
+ * ctx` at execute time is deliberate: a structural test would answer "v4" for
+ * any future v3 context that happens to grow the field.
+ *
+ * ⛔ SAME LIFETIME, SAME SCOPE AS BEFORE. Still one map, still keyed by job id,
+ * still cleared by `clearPoolState` and deleted in the execute handler's
+ * `finally`. The jobIds cannot collide across VERSIONS — `prepareUnshieldJobV4`
+ * prefixes `unshield-v4:` where `prepareUnshieldJob` prefixes `unshield:` — but
+ * nothing here depends on that, because the tag is stored, not parsed.
+ *
+ * 💰 THEY COULD COLLIDE WITHIN v4, AND THAT WAS A FUND-LOSS BUG. The id
+ * `prepareUnshieldJobV4` returns is `unshield-v4:<pool>:<leaf>`
+ * (unshieldEphemeral.ts:445) — it names no payee — while the job it identifies
+ * is BOUND to one. Two prepares of the same note for two payees therefore landed
+ * on one key and the second replaced the first: proof, context and payee
+ * together. The ephemeral does not vary with the payee either (it is
+ * deterministic in pool seed, pool and leaf), so the first caller's pre-fund sat
+ * on exactly the signer the second caller's proof would spend from, and
+ * executing the FIRST job id paid the SECOND payee with no error anywhere. The
+ * v3 path was never exposed to this: its payee travels on the execute message,
+ * so an overwritten v3 context still pays the address the caller named.
+ *
+ * So `handlePoolUnshieldPrepare` QUALIFIES the v4 key with the payee. The v3 key
+ * is left alone — a v3 prepare does not know a payee, and qualifying it would
+ * key the map on `undefined` and make every v3 job collide with every other.
+ */
+type PreparedUnshieldJob =
+  | { version: 'v3'; ctx: PreparedUnshield; meta: string }
+  | { version: 'v4'; ctx: PreparedUnshieldV4; meta: string };
+
+const preparedUnshields = new Map<string, PreparedUnshieldJob>();
 
 /**
  * In-flight subscriptions, awaiting their pre-fund.
@@ -1520,7 +1623,20 @@ async function handlePoolShieldExecute(
  * two copies that drift. Both spend a note the same way, and the derivation
  * search below is the part that a copy would get subtly wrong.
  */
-async function locateOwnedNote(
+/**
+ * ⛔ EXPORTED FOR ONE CALLER: the live devnet v4 harness
+ * (`lib/privacy/pool/liveDevnetUnshieldV4.test.ts`). Not part of the worker
+ * protocol and not for app code, which must go through `handlePoolRequest`.
+ *
+ * The v4 spend needs a `ShieldReceipt` before it can prove anything, because
+ * circuit 7 binds sha256(recipient) into the transcript and the recipient is
+ * therefore a PREPARE input. The worker protocol still takes the recipient at
+ * EXECUTE, which is the v3 shape; until that moves, a harness that wants to
+ * exercise the real v4 path has to resolve the note itself rather than invent
+ * one. An invented receipt would prove nothing: its commitment would not be a
+ * leaf on chain.
+ */
+export async function locateOwnedNote(
   req: { meta: string; token: PoolToken; denomination: number; leafIndex: number; encryptedNotes?: string[] },
   onProgress?: (step: string) => void,
 ): Promise<{
@@ -1707,16 +1823,190 @@ async function locateOwnedNote(
   }
 }
 
+/**
+ * Failures of the circuit-7 REBUILD that the C1 + C3 prepare can still answer,
+ * and therefore the only ones `handlePoolUnshieldPrepare` routes around.
+ *
+ * ⛔ AN ALLOW-LIST, NOT A DENY-LIST, and that is the whole safety property.
+ * Anything unrecognised is rethrown, so a new failure mode fails CLOSED —
+ * loudly, on circuit 7 — rather than quietly finding its way onto the path
+ * that republishes the note's commitment. A prover that cannot produce a
+ * circuit-7 trace is a bug to surface, not to route around; a Merkle path the
+ * rebuild could not place in the pool's root ring is a note the stored path may
+ * still spend.
+ *
+ * Both strings are produced by `prepareUnshieldV4` in denominatedPool.ts and are
+ * pinned there by an anti-vacuity assertion in `poolHandlersUnshieldV4.test.ts`:
+ * reword one and the fallback silently stops firing, and every behavioural test
+ * would still pass, because they inject the message themselves.
+ */
+const V4_REBUILD_FAILURES = ['PRE-FLIGHT FAIL', 'circuit 7 needs at least'] as const;
+
+function isV4RebuildFailure(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return V4_REBUILD_FAILURES.some((needle) => msg.includes(needle));
+}
+
+/**
+ * Prove and price ONE withdrawal, on whichever circuit the request supplies the
+ * inputs for.
+ *
+ * THE ROUTE IS PER REQUEST, NOT A MIGRATION. `unshield_denominated_stark_v3`
+ * stays registered on chain indefinitely: a note whose blinding is unknown can
+ * be spent nowhere else, and `prepareUnshieldV4` has no stored-path fast path,
+ * so a note whose root has aged out of the pool's 100-root ring still needs the
+ * v3 rebuild. Neither is legacy.
+ *
+ * ⛔ THE SUBSCRIBE PATH CANNOT REACH THE v4 BRANCH, and here is the proof rather
+ * than the assurance. TWO independent facts, each checkable without running
+ * anything:
+ *
+ *   1. It is a DIFFERENT REQUEST KIND. `subscribeEphemeral.ts` and
+ *      `subscribePrivateStark.ts` are reached only from
+ *      `handlePoolSubscribePrepare`, dispatched on `'poolSubscribePrepare'`.
+ *      This function is dispatched on `'poolUnshieldPrepare'`. The `switch` in
+ *      `handlePoolRequest` is exhaustive (`const _exhaustive: never`), so the
+ *      two cases cannot both run for one message. MEASURED, not assumed:
+ *      rerouting the subscribe case into this handler turns the smuggle test in
+ *      `poolHandlersUnshieldV4.test.ts` red.
+ *   2. `prepareSubscribeJob` calls `prepareUnshieldJob` ITSELF
+ *      (subscribeEphemeral.ts:52,115); it never calls this handler. Nothing in
+ *      this file is on its path.
+ *
+ * 🚨 RETRACTED, 2026-08-26. A third fact was written here: that
+ * `PoolSubscribePrepareRequest` has no `recipient` and no `ownerPubkey` field,
+ * so `tsc` refuses a subscribe request carrying either. IT DOES NOT. Measured in a scratch
+ * file inside this package's tsconfig: a FRESH OBJECT LITERAL of kind
+ * `poolSubscribePrepare` carrying both fields, passed to `handlePoolRequest`,
+ * raised nothing — while a deliberate type error in the same file DID raise,
+ * proving tsc had the file in the program. The cause is that `handlePoolRequest`
+ * is `<R extends PoolRequest>(req: R, …)`: excess-property checking does not
+ * apply when the contextual type is a bare type parameter, and the constraint
+ * check is plain assignability, which two extra string fields satisfy. The
+ * subscription is still safe — 1 and 2 both hold, and 1 is measured by mutation
+ * — but it is safe for two reasons, not three, and a decorative guard is worse
+ * than no guard when the next reader leans on it.
+ *
+ * That matters because there is no `subscribe_private_stark_v4` on chain —
+ * `programs/zk_shielded/src/lib.rs` exposes exactly one v4, the withdrawal — so
+ * a subscription proved on circuit 7 would fail at the very end of a ~150-tx
+ * upload, in the flow the 2026-09-04 demo is entirely about.
+ */
 async function handlePoolUnshieldPrepare(
   req: PoolUnshieldPrepareRequest,
   onProgress?: (step: string) => void,
 ): Promise<PoolUnshieldPrepareResponse> {
+  // BOTH, OR NEITHER — checked BEFORE the note is located, because a
+  // malformed request should not cost an event scan first. The payee is a
+  // circuit-7 input and the wallet arms the payee refusal, so one without the
+  // other is not a smaller request: it is a caller that meant circuit 7 and
+  // dropped a field. Answering it with the C1 + C3 pair republishes this note's
+  // commitment in cleartext and reports nothing, which is the exact failure the
+  // pair exists to remove. See the hazard note on
+  // `PoolUnshieldPrepareRequest.recipient`.
+  if ((req.recipient === undefined) !== (req.ownerPubkey === undefined)) {
+    const missing = req.recipient === undefined ? 'recipient' : 'ownerPubkey';
+    throw new Error(
+      'A circuit-7 withdrawal needs both `recipient` and `ownerPubkey` on the prepare, and ' +
+        `this request is missing \`${missing}\`. Send both to prove on circuit 7, or neither ` +
+        'to prove on the C1 + C3 pair. The half-specified request used to fall through to ' +
+        "C1 + C3 silently, which republishes this note's commitment in cleartext.",
+    );
+  }
+
   const { conn, pool, candidate, note, storedPath } = await locateOwnedNote(req, onProgress);
 
+  if (req.recipient !== undefined && req.ownerPubkey !== undefined) {
+    // `prepareUnshieldJobV4` is referenced ONLY inside this branch, and the
+    // reason is smaller than it first looked — recorded because the bigger
+    // reason was written here first and then MEASURED FALSE.
+    //
+    // Five suites mock `../pool/unshieldEphemeral` with a factory returning the
+    // v3 pair alone (poolHandlersDerivation, poolImportNote, poolExportNote,
+    // poolDepositsClosed, poolScanProgressive). vitest's factory mocks throw on
+    // reading an export the factory omitted, so hoisting this to a `const fn =
+    // cond ? a : b` looked like it would take all five red for a branch they
+    // never enter. Probed 2026-08-26 by adding an unconditional
+    // `void prepareUnshieldJobV4;` at the top of this function and running those
+    // five files: 66 passed, 0 failed. It does not fire. Whatever vite's SSR
+    // transform emits for that read, the proxy does not see it as a miss.
+    //
+    // So this is shape, not necessity: the call that needs the export sits in
+    // the branch that needs the export. Do not restore the stronger claim.
+    let v4: PreparedUnshieldV4 | null = null;
+    try {
+      v4 = await prepareUnshieldJobV4(
+        note.receipt,
+        new PublicKey(req.recipient),
+        new PublicKey(req.ownerPubkey),
+        pool,
+        conn,
+        candidate.seed,
+        onProgress,
+      );
+    } catch (err) {
+      // ⛔ FALL BACK, OR THIS NOTE CANNOT BE WITHDRAWN FROM THE WEB APP AT ALL.
+      // `unshieldFromPool` types both fields as required and sends them on every
+      // withdrawal, so this branch is the ONLY route apps/web still has to the
+      // C1 + C3 pair. Without the fallback, the v3 branch below is dead code in
+      // production and a note circuit 7 cannot prove stops being spendable from
+      // this client — while `spendRouting.test.ts` and four comments in this
+      // tree state that v3 stays reachable indefinitely.
+      //
+      // The asymmetry between the two prepares is real and runs one way:
+      // `prepareUnshieldJob` tries the Merkle path captured when the note was
+      // shielded and rebuilds from history only if that path has aged out
+      // (unshieldEphemeral.ts:163-172); `prepareUnshieldV4` has no stored-path
+      // route at all and always rebuilds.
+      //
+      // Nothing has been spent at this point, which is what makes the retry
+      // free: `prepareUnshieldV4` refuses before it proves and long before it
+      // uploads — its own message says "Aborting before proof rent is spent" —
+      // so the second attempt costs one event scan and no rent. The v3 rebuild
+      // pre-flights the root too (denominatedPool.ts:2132), so a note neither
+      // can place gets the same refusal from the other side rather than a doomed
+      // upload.
+      if (!isV4RebuildFailure(err)) throw err;
+      console.warn(
+        '[pool/unshield] circuit 7 could not prove this note; falling back to the C1 + C3 ' +
+          'pair, which publishes the note commitment:',
+        err instanceof Error ? err.message : String(err),
+      );
+      onProgress?.('Circuit 7 cannot prove this note — falling back to the C1 + C3 pair...');
+    }
+
+    if (v4) {
+      // 💰 KEYED BY (JOB, PAYEE), NOT BY JOB. `v4.jobId` is
+      // `unshield-v4:<pool>:<leaf>` and names no payee, while the job is bound
+      // to one — see the note on `preparedUnshields` for the fund-loss that
+      // caused. The prefix survives so job ids stay readable by eye in logs.
+      const jobId = `${v4.jobId}:${v4.recipient.toBase58()}`;
+      preparedUnshields.set(jobId, { version: 'v4', ctx: v4, meta: req.meta });
+
+      return {
+        kind: 'poolUnshieldPrepare',
+        jobId,
+        ephemeralPubkey: v4.ephemeral.publicKey.toBase58(),
+        // Materially smaller than the v3 figure and that is the circuit, not a
+        // saving: C1 and C3 are held open together so the v3 float is their sum,
+        // and circuit 7 has nothing to pair with. Reported, never assumed —
+        // `prepareUnshieldJobV4` prices its one buffer against the RPC.
+        requiredLamports: v4.requiredLamports,
+        denomination: pool.denomination,
+        derivation: candidate.derivation,
+        version: 'v4',
+      };
+    }
+  }
+
+  // ── The v3 path. Byte for byte what it was before circuit 7 existed, except
+  // for the `version` tag the caller is now told instead of guessing — and it is
+  // reached two ways now: a request that named no payee at all, and a circuit-7
+  // request whose rebuild could not produce a usable Merkle path.
   const ctx = await prepareUnshieldJob(
     note.receipt, pool, conn, candidate.seed, onProgress, storedPath,
   );
-  preparedUnshields.set(ctx.jobId, { ctx, meta: req.meta });
+  preparedUnshields.set(ctx.jobId, { version: 'v3', ctx, meta: req.meta });
 
   return {
     kind: 'poolUnshieldPrepare',
@@ -1725,6 +2015,7 @@ async function handlePoolUnshieldPrepare(
     requiredLamports: ctx.requiredLamports,
     denomination: pool.denomination,
     derivation: candidate.derivation,
+    version: 'v3',
   };
 }
 
@@ -1830,6 +2121,33 @@ async function receivedNoteFromBlobs(
   return null;
 }
 
+/**
+ * Finish a prepared withdrawal.
+ *
+ * WHO OWNS THE PAYEE DIFFERS BY CIRCUIT, and that is the whole reason this
+ * handler branches:
+ *
+ *   v3   the proof names no payee, so the payee arrives HERE and is required.
+ *   v4   `sha256(recipient)` is four of circuit 7's six public inputs. The payee
+ *        was fixed at prove time; the stored one wins.
+ *
+ * A v4 job handed a DIFFERENT recipient throws instead of quietly preferring
+ * one. Both choices "work" on chain — `unshieldDenominatedStarkV4` would refuse
+ * the mismatch itself, at the end of the upload — but a caller that names payee
+ * B for a proof bound to payee A is confused about who it is paying, and the two
+ * silent options are a wrong receipt shown to the user or ~150 transactions of
+ * rent burned to reach the same answer. Refusing here costs nothing and says so.
+ *
+ * ⚠️ WHAT A REFUSAL COSTS, SAID OUT LOUD. Every throw in here happens AFTER the
+ * wallet's pre-fund has landed on the ephemeral, and the `finally` drops the job
+ * — the same rule the v3 handler has always had: an execute attempt consumes its
+ * job. So a refused execute leaves the pre-fund sitting on the ephemeral with no
+ * sweep. That float is NOT lost: the ephemeral is deterministic in (pool seed,
+ * pool, leaf) and `poolRecover` sweeps exactly this, which is also why the throw
+ * stays inside the `try` rather than keeping the job alive — a retained job makes
+ * `handlePoolRecover` refuse ("still in progress") and locks the user out of the
+ * one path that returns the money.
+ */
 async function handlePoolUnshieldExecute(
   req: PoolUnshieldExecuteRequest,
   onProgress?: (step: string) => void,
@@ -1841,6 +2159,45 @@ async function handlePoolUnshieldExecute(
   }
 
   try {
+    if (job.version === 'v4') {
+      // Compare BASE58, not PublicKey identity: `new PublicKey(x).equals(y)` is
+      // the same comparison but throws on a malformed string before it can be
+      // reported as a mismatch, and a caller sending garbage should hear that it
+      // sent garbage. Skipped entirely when no recipient is passed — that is the
+      // normal v4 call, not an omission to warn about.
+      if (req.recipient !== undefined && req.recipient !== job.ctx.recipient.toBase58()) {
+        throw new Error(
+          `This withdrawal was proved for ${job.ctx.recipient.toBase58()} and cannot pay ` +
+            `${req.recipient}. Circuit 7 binds the payee into the proof, so the payee cannot ` +
+            'be changed after preparing — prepare the withdrawal again for the payee you want. ' +
+            'Nothing was sent; the pre-fund is still on the withdrawal signer and Recover funds ' +
+            'returns it.',
+        );
+      }
+      const { txSig } = await executeUnshieldV4(
+        job.ctx,
+        conn,
+        new PublicKey(req.ownerPubkey),
+        onProgress,
+        req.sweepTo ? new PublicKey(req.sweepTo) : undefined,
+      );
+      return {
+        kind: 'poolUnshieldExecute',
+        txSig,
+        denomination: job.ctx.poolConfig.denomination,
+      };
+    }
+
+    // v3, unchanged: the payee exists nowhere but this message, so its absence
+    // is a caller bug and not a default to invent. Guessing one — the wallet, a
+    // derived address — is how `owner` reached `recipient` in PoolPanel.tsx:125
+    // and shipped the wallet as the pool payee until 2026-08-04.
+    if (req.recipient === undefined) {
+      throw new Error(
+        'This withdrawal was proved on the C1 + C3 pair, which names no payee, so a recipient ' +
+          'must be supplied to send it.',
+      );
+    }
     const { txSig } = await executeUnshield(
       job.ctx,
       conn,

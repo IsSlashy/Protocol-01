@@ -182,4 +182,32 @@ pub enum ZkShieldedError {
 
     #[msg("Slot mismatch — caller-supplied slot must match current clock within drift window")]
     SlotMismatch,
+
+    // === [C7] `unshield_denominated_stark_v4`. APPENDED, never inserted:
+    // `#[error_code]` numbers variants by position, so a new code anywhere
+    // above would renumber `SlotMismatch` and every already-deployed client
+    // error catalogue would decode it wrong.
+    //
+    // These five are kept DISTINCT from `InvalidProof` on purpose. Four of them
+    // are the CALLER's fault — a badly-shaped Merkle walk — and telling that
+    // caller their PROOF is bad sends them off to spend three minutes
+    // regenerating a proof that was fine.
+    #[msg("Pool tree is not deeper than the depth-12 subtree circuit 7 proves")]
+    SpendPoolShallowerThanCircuit,
+
+    #[msg("Sibling/direction count must equal tree_depth - 12")]
+    SpendWrongSiblingCount,
+
+    #[msg("A Merkle direction bit was neither 0 nor 1")]
+    SpendNonBinaryDirection,
+
+    #[msg("A supplied value is not a canonical Goldilocks element")]
+    SpendNonCanonicalFelt,
+
+    // This one is NOT a shape error. It means the walk reached a root that is
+    // not the one the caller named — i.e. the proof and the claimed root
+    // disagree. Distinct from `InvalidMerkleRoot`, which means the named root
+    // is well-formed but the pool never published it.
+    #[msg("Derived pool root does not match the named merkle_root")]
+    SpendRootMismatch,
 }
