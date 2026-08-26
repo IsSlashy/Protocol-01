@@ -317,3 +317,9 @@ apps/web/campaign-progress.jsonl
 #
 # `stark/pkg/` was already ignored; this one was not. Kept on disk, out of git.
 stark/wasm-out/
+
+# Derive: regenere par docs/deck/src/make-head.py, porte la police inlinee (86 Ko)
+docs/deck/src/deck-head.html
+
+# Python bytecode from the deck build (docs/deck/src/*.py)
+__pycache__/
