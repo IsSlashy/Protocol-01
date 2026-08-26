@@ -479,6 +479,26 @@ jobs:
       - name: Reality pin — the first real v4 spend, green and red exactly as measured
         run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-live
 
+      # v4-live froze the first C7 spend that ever landed — made by calling the
+      # service directly, past everything an application goes through. This one
+      # went through the worker protocol, so it is the first spend that exercised
+      # prepareUnshieldJobV4, the routing branch, the XOR guard, the pre-blinding
+      # refusal and the job store's version tag. All written 2026-08-26; none had
+      # met a real transaction before it.
+      #
+      # It pins the improvement AND its limit. P6's report ends "7gWpzSZA… is NOT
+      # among the spend payer's 11 counterparty edges" — the operator is not on
+      # this withdrawal at all, which v4-live cannot say. P11 still reaches it in
+      # TWO hops, through the fresh payer's own funding history, because devnet
+      # had no third party to fund that key.
+      #
+      # And P10 is pinned FAIL here where v4-live pins it PASS. Nothing regressed:
+      # the payee's 0.995 SOL was swept home, which gave it an outbound edge.
+      # Recovering the money re-links the address. Both fixtures together say that
+      # better than either says alone.
+      - name: Reality pin — the first v4 spend through the app, not past it
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-wired
+
       # NOT about unlinkability, and it lives here for a mechanical reason: it
       # imports only node: builtins and two sibling .mjs files, so this is the
       # one job that can run it without an install.

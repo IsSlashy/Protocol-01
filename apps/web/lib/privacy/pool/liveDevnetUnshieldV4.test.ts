@@ -21,11 +21,21 @@
  *
  * WHAT IT MEASURES
  * ────────────────
- * Shield a fresh note, then spend it through `prepareUnshieldV4` +
- * `unshieldDenominatedStarkV4`, then read the withdrawal transaction back OFF
- * THE CHAIN and require that no field of the deposit appears in it — not the
- * commitment, not the blinding, not the epoch. That last assertion is the whole
- * point of the circuit; the rest is what makes it reachable.
+ * Shield a fresh note, then spend it THROUGH THE WORKER PROTOCOL —
+ * `poolUnshieldPrepare` carrying the payee, then `poolUnshieldExecute` — and
+ * read the withdrawal transaction back OFF THE CHAIN, requiring that no field
+ * of the deposit appears in it: not the commitment, not the blinding, not the
+ * epoch. That last assertion is the whole point of the circuit; the rest is
+ * what makes it reachable.
+ *
+ * ⚠️ IT WENT THROUGH THE SERVICE DIRECTLY UNTIL 2026-08-26, and the difference
+ * is the difference between proving the prover works and proving the APP does.
+ * `prepareUnshieldJobV4`, the routing branch, the XOR guard on a half-specified
+ * request, the pre-blinding refusal and the job store's version tag all sit
+ * between the button and the money, and none of them had ever met a real
+ * transaction. `expect(prep.version).toBe('v4')` is the assertion that was
+ * missing: a withdrawal lands on either circuit, so everything else here passed
+ * whichever route was taken.
  *
  * WHAT IT DOES NOT COVER, STATED SO NOBODY READS MORE INTO A GREEN RUN
  * ────────────────────────────────────────────────────────────────────
@@ -74,7 +84,6 @@ import {
   handlePoolRequest,
   locateOwnedNote,
 } from '../worker/poolHandlers';
-import { prepareUnshieldV4, unshieldDenominatedStarkV4 } from './denominatedPool';
 import type { WalletSigner } from './stark';
 
 /**
@@ -166,17 +175,6 @@ function loadKeypair(): Keypair {
   return kp;
 }
 
-/** A `WalletSigner` over a raw Keypair — the harness has no browser wallet. */
-function signerFor(kp: Keypair): WalletSigner {
-  return {
-    publicKey: kp.publicKey,
-    signTransaction: async (tx: Transaction) => { tx.partialSign(kp); return tx; },
-    signAllTransactions: async (txs: Transaction[]) => {
-      for (const tx of txs) tx.partialSign(kp);
-      return txs;
-    },
-  } as WalletSigner;
-}
 
 const log = (...a: unknown[]) => { /* eslint-disable-next-line no-console */ console.log(...a); };
 
@@ -294,22 +292,75 @@ describe.skipIf(!LIVE)('a v4 withdrawal that actually lands on devnet', () => {
     const payee = payeeKp.publicKey;
     log(`  payee ${payee.toBase58()} (re-derivable — sweep it back when done)`);
 
-    const prepared = await prepareUnshieldV4(
-      receipt, payee, located.pool, connection,
-      (s: string) => log('  v4-prepare:', s),
+    // 🚨 THROUGH THE WORKER PROTOCOL, NOT THE SERVICE. This is the whole point of
+    // the change on 2026-08-26 and the reason the old shape gave a green that
+    // measured less than it looked.
+    //
+    // Until now this block called `prepareUnshieldV4` and
+    // `unshieldDenominatedStarkV4` directly. That proves the SERVICE works
+    // against the chain — and says nothing about `prepareUnshieldJobV4`, the
+    // routing branch in `handlePoolUnshieldPrepare`, the XOR guard on a
+    // half-specified request, the pre-blinding refusal, the job store's version
+    // tag, or the execute-side payee comparison. Every one of those is new, sits
+    // between the app and the money, and had never met a real transaction.
+    //
+    // The deposit half of this file has always gone through `handlePoolRequest`
+    // (`poolDeriveIdentity`, `poolScan`, `poolShieldPrepare`, `poolShieldExecute`
+    // above). The spend half was the one that reached past it.
+    //
+    // ⚠️ WHAT THIS STILL DOES NOT EXERCISE, stated so nobody reads more into a
+    // green run: the postMessage boundary. `handlePoolRequest` is the worker's
+    // entry point, called here in-process. Structured-clone of these payloads is
+    // not under test — they are plain JSON-shaped objects, which is why that is
+    // an acceptable gap and not an ignored one.
+    const prep = await handlePoolRequest({
+      kind: 'poolUnshieldPrepare',
+      meta,
+      token: 'SOL',
+      denomination: DENOMINATION,
+      leafIndex: leafIndex!,
+      encryptedNotes: encryptedNote ? [encryptedNote] : undefined,
+      // THE TWO FIELDS THAT PICK THE CIRCUIT. Sending both is what asks for
+      // circuit 7; sending neither would silently be the C1 + C3 pair, and
+      // sending one is refused before the event scan.
+      recipient: payee.toBase58(),
+      ownerPubkey: wallet.publicKey.toBase58(),
+    });
+
+    // ⛔ THE ASSERTION THAT WAS MISSING. Everything below would pass on the v3
+    // pair too — a withdrawal lands either way. This is the line that says the
+    // route actually taken was circuit 7, and it is the one that would have
+    // caught the note falling back without anybody noticing.
+    expect(prep.version).toBe('v4');
+    log(`  route: ${prep.version} | job ${prep.jobId} | float ${prep.requiredLamports}`);
+    expect(prep.jobId.startsWith('unshield-v4:')).toBe(true);
+
+    // Fund the ephemeral the worker derived. The wallet does it directly here
+    // rather than through `fundEphemeralForJob`, because the funder machinery is
+    // a separate concern with its own harness — what is under test is the
+    // circuit route, not who paid for it.
+    const eph = new PublicKey(prep.ephemeralPubkey);
+    const fundTx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: wallet.publicKey,
+        toPubkey: eph,
+        lamports: prep.requiredLamports,
+      }),
     );
-    expect(prepared.c7ProofResult.proofSize).toBe(77_965);
-    expect(prepared.c7ProofResult.publicInputs).toHaveLength(6);
-    // 12 in the circuit, 3 on chain. If the pool tree depth ever changes this
-    // is where it shows, not in a rejected transaction.
-    expect(prepared.siblings).toHaveLength(3);
-    expect(prepared.directions).toHaveLength(3);
+    await sendAndConfirmTransaction(connection, fundTx, [wallet], { commitment: 'confirmed' });
+    log(`  funded ${prep.ephemeralPubkey} with ${prep.requiredLamports}`);
 
     const before = await connection.getBalance(payee);
-    const sig = await unshieldDenominatedStarkV4(
-      located.pool, payee, prepared, signerFor(wallet), connection,
-      (s: string) => log('  v4-execute:', s),
-    );
+    const done = await handlePoolRequest({
+      kind: 'poolUnshieldExecute',
+      jobId: prep.jobId,
+      // Deliberately NOT sending `recipient`. The v4 job carries the payee it
+      // was proved for, and the handler throws on a differing one — omitting it
+      // is what a caller that trusts the proof does.
+      ownerPubkey: wallet.publicKey.toBase58(),
+      sweepTo: wallet.publicKey.toBase58(),
+    });
+    const sig = done.txSig;
     log('  V4 WITHDRAWAL LANDED:', sig);
 
     // -------------------------------------------------- read it off the chain
