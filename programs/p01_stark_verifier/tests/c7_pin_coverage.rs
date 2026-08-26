@@ -63,6 +63,27 @@ fn enumerates_circuits(src: &str) -> bool {
         || src.contains("; 6]")
         || src.contains("; 7]")
         || src.contains("; 8]")
+        || distinct_circuit_labels(src) >= 3
+}
+
+/// How many distinct `"C0"`..`"C7"` labels the file uses as VALUES.
+///
+/// 🚨 THE SHAPE THIS FILE MISSED ON ITS FIRST DAY. `honest_liveness.rs`
+/// enumerates every circuit and stops at C6, and it does so with a hand-written
+/// sequence of `run_generic("C1", ...)` calls — no range, no table. The two
+/// predicates above saw nothing to check and waved it through, and it is the
+/// single worst place to have missed: that suite's whole job is to prove the
+/// verifier accepts EVERY honest proof, and it never generates a C7 witness.
+///
+/// Three is the threshold because two named circuits is a representative pair
+/// (`b4_pair_leaf`, `fri_end_to_end`), while three or more is somebody walking
+/// the list.
+fn distinct_circuit_labels(src: &str) -> usize {
+    let mut seen = [false; 8];
+    for (i, flag) in seen.iter_mut().enumerate() {
+        *flag = src.contains(&format!("\"C{i}\""));
+    }
+    seen.iter().filter(|f| **f).count()
 }
 
 /// Does it reach C7?
@@ -84,12 +105,20 @@ fn reaches_c7(src: &str) -> bool {
         || src.contains("0..8")
         || src.contains("CONFIG_SPEND")
         || src.contains("CIRCUIT_SPEND")
+        // A QUOTED label is a value, not prose: `run_generic("C7", ...)` is the
+        // way the hand-written shape declares a circuit. Unquoted `C7` in a
+        // comment still does not count, and a test below pins that.
+        || src.contains("\"C7\"")
 }
 
 /// Pins that enumerate circuits and stop before C7, each with the reason.
 ///
 /// Deleting an entry is the goal. Adding one costs a written reason on purpose.
-const PINS_THAT_DO_NOT_REACH_C7: [(&str, &str); 5] = [
+const PINS_THAT_DO_NOT_REACH_C7: [(&str, &str); 6] = [
+    (
+        "honest_liveness",
+        "🚨 THE WORST ONE, AND THE REASON THIS FILE'S DETECTOR GREW A THIRD SHAPE. It runs C0          through C6 with hand-written `run_generic(\"C1\", ..)` calls and never generates a C7          witness — its own summary prints `WITNESSES * 7`. Its dispatcher WAS taught C7          (`7 => verify_deep_ali_circuit_7`, added 2026-08-24 so a C7 proof could not clear          phase 2 vacuously), which makes the omission look deliberate and is not the same thing:          the arm exists and nothing ever calls it. So the one suite whose entire job is 'does          the verifier accept EVERY honest proof' says nothing about the circuit the product is          for, and the only evidence C7 liveness holds is the single proof that landed on devnet.          Closing this needs a C7 witness family in tests/common/mod.rs, measured, not adapted",
+    ),
     (
         "b2_bits_measured",
         "six sweeps at `0u8..=6` and five `[_; 7]` tables (B2_CONJECTURED, B2_UNCONDITIONAL, \
@@ -235,10 +264,25 @@ fn the_detectors_are_not_broken() {
         !enumerates_circuits("let c = &CONFIG_POOL_COMMITMENT; let d = &CONFIG_SUBSCRIBER_OWNERSHIP;"),
         "naming two configs is a representative sample, not an enumeration"
     );
+    // The shape this file missed on its first day: no range, no table, just a
+    // hand-written walk down the list. Two labels is a pair; three is a walk.
+    assert!(
+        enumerates_circuits(r#"run("C1", a); run("C2", b); run("C3", c);"#),
+        "a hand-written per-circuit sequence must register as an enumeration"
+    );
+    assert!(
+        !enumerates_circuits(r#"run("C1", a); run("C2", b);"#),
+        "two labels is a representative pair, not a walk down the list"
+    );
+    assert_eq!(
+        distinct_circuit_labels(r#""C0" "C1" "C1" "C6""#),
+        3,
+        "distinct_circuit_labels must count DISTINCT labels, not occurrences"
+    );
 
     assert_eq!(
         PINS_THAT_DO_NOT_REACH_C7.len(),
-        5,
+        6,
         "the exclusion count changed — if a hole was closed, good, update this number \
          deliberately rather than letting the list drift"
     );
