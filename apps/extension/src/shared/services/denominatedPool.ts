@@ -1803,6 +1803,42 @@ export async function unshieldDenominatedStarkV3(
 export const C7_SUBTREE_DEPTH = 12;
 
 /**
+ * "Circuit 7 cannot prove THIS NOTE" — as a type, not as a string to match on.
+ *
+ * ⛔ IT IS AN ALLOW-LIST, AND THAT IS THE WHOLE SAFETY PROPERTY. Only a failure
+ * thrown as this class routes to the C1 + C3 pair. Anything else fails CLOSED,
+ * on circuit 7, loudly. A prover that cannot produce a C7 trace is a defect to
+ * surface, not to route around: the pair republishes the note's commitment in
+ * cleartext, so quietly falling back to it turns a visible bug into a silent
+ * leak that reports success.
+ *
+ * WHY A CLASS HERE AND A STRING NEEDLE ON THE WEB TWIN. `poolHandlers.ts`
+ * routes on `msg.includes('circuit 7 needs at least')` because its error
+ * crosses a worker `postMessage` boundary, which keeps the message and throws
+ * the prototype away — `instanceof` cannot survive it. THAT BOUNDARY DOES NOT
+ * EXIST ON THIS SURFACE: `store/denominatedPool.ts` imports this module and
+ * calls it in the same realm (the extension has no worker request/response
+ * protocol for the pool at all), so the class arrives intact. The needle is
+ * web's workaround, not its design, and web's own comment names the hazard —
+ * "reword one and the fallback silently stops firing, and every behavioural
+ * test would still pass".
+ *
+ * ⚠️ The MESSAGES below still carry web's wording, `circuit 7 needs at least`
+ * included, so a reader diffing the two surfaces sees one design. Nothing here
+ * ROUTES on that wording. Check `instanceof`, never the text.
+ */
+export class V4Unprovable extends Error {
+  constructor(message: string) {
+    super(message);
+    // `target` is ES2020 in this package's tsconfig, so the prototype chain is
+    // native and `instanceof` holds without the ES5 `setPrototypeOf` dance.
+    // `name` is set anyway: without it every log line says "Error", which is
+    // the one thing a reader chasing this fallback needs to see.
+    this.name = 'V4Unprovable';
+  }
+}
+
+/**
  * sha256(recipient) as the four little-endian u64 limbs circuit 7 takes.
  *
  * ⛔ THE LIMBS ARE CARRIED RAW — NOT REDUCED MOD THE GOLDILOCKS PRIME. They
@@ -1969,7 +2005,12 @@ export async function prepareUnshieldV4(
           targetLeafIndex: receipt.leafIndex,
         });
         if (!known(merkleResult.root)) {
-          throw new Error(
+          // V4Unprovable, not Error: the note is fine and the prover is fine —
+          // this rebuild could not place the note's root in the pool's ring, and
+          // the C1 + C3 prepare pre-flights the root from the other side, so the
+          // caller may retry there. Nothing has been spent at this point; the
+          // message below says so itself.
+          throw new V4Unprovable(
             `PRE-FLIGHT FAIL: the rebuilt Merkle root is not among the pool's known roots ` +
             `(current + ${parsed.historicalRoots.length} historical). Aborting before proof rent is spent. ` +
             `Wait ~10s for the RPC to index recent transactions, then retry.`,
@@ -1983,7 +2024,25 @@ export async function prepareUnshieldV4(
   // and the two halves go to different verifiers: the first twelve levels are
   // proven in the circuit, the last three are walked on chain.
   if (merkleResult.pathElements.length < C7_SUBTREE_DEPTH) {
-    throw new Error(
+    // V4Unprovable for the same reason as the root pre-flight above: a path this
+    // circuit cannot consume is a fact about the note, and the depth-15 pair can
+    // still spend it.
+    //
+    // 🚨 MEASURED 2026-08-26, AND THE READER MUST NOT MISTAKE THIS FOR THE LIVE
+    // DOOR TO THE PAIR. `buildMerkleProofFromLeavesV3` (line 1363) pushes one
+    // element per level inside `for (level = 0; level < MERKLE_DEPTH; level++)`
+    // with no early exit and no conditional push, so `pathElements.length` is
+    // ALWAYS `MERKLE_DEPTH` = 15, and 15 < 12 is unreachable. This branch cannot
+    // fire against today's builder. It stays as defence in depth against a
+    // future builder that returns a variable-depth path — and if that lands,
+    // `unshieldRouting.test.ts` ("the depth throw is defence in depth") goes red
+    // and says so, because it measures the builder rather than reading it.
+    //
+    // The door that DOES open in production is the root pre-flight above: a note
+    // whose rebuilt root is not in the pool's ring — the aged-out case the v3
+    // rebuild exists for. Anything reasoning about "how a PRF-blinded note still
+    // reaches v3" must point at that throw, not this one.
+    throw new V4Unprovable(
       `Merkle path is ${merkleResult.pathElements.length} deep; circuit 7 needs at least ${C7_SUBTREE_DEPTH}.`,
     );
   }
@@ -2021,6 +2080,13 @@ export async function prepareUnshieldV4(
   }
 
   const publicInputs = raw.publicInputs.map((v) => BigInt(v));
+  // ⛔ THE TWO THROWS BELOW ARE PLAIN `Error` ON PURPOSE AND MUST STAY THAT WAY.
+  // Everything above says "this note cannot go through this circuit"; these two
+  // say "the prover produced something circuit 7 does not produce" — a wrong
+  // felt count, or a transcript bound to a payee nobody asked for. Routing those
+  // to the C1 + C3 pair would answer a broken prover by republishing the
+  // commitment and reporting a successful withdrawal, which is the exact failure
+  // the pair exists to remove. They fail closed.
   if (publicInputs.length !== 6) {
     throw new Error(`Circuit 7 must publish exactly 6 felts, got ${publicInputs.length}.`);
   }

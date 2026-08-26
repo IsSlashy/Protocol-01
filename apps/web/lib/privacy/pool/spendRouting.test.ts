@@ -53,7 +53,15 @@ const ROUTERS: Array<{ surface: string; rel: string; routesV4: boolean }> = [
   // exactly one v4 — the withdrawal. Switching the shared function would have
   // broken the subscription silently.
   { surface: 'apps/web', rel: 'apps/web/lib/privacy/pool/unshieldEphemeral.ts', routesV4: true },
-  { surface: 'apps/extension', rel: 'apps/extension/src/shared/store/denominatedPool.ts', routesV4: false },
+  // Wired 2026-08-26, and its fallback is proven differently from web's. The
+  // extension has no worker boundary on this path, so it does not route on a
+  // string inside an error message — `prepareUnshieldV4` throws a typed
+  // `V4Unprovable` and the store catches THAT. Reworded messages cannot break
+  // it. Reachability is measured behaviourally in
+  // `apps/extension/src/shared/store/unshieldRouting.test.ts`, through both
+  // doors: an epoch-blinded note, and a `V4Unprovable` from prepare. Both SPEND
+  // on the C1 + C3 pair — they do not merely throw.
+  { surface: 'apps/extension', rel: 'apps/extension/src/shared/store/denominatedPool.ts', routesV4: true },
   { surface: 'apps/mobile', rel: 'apps/mobile/stores/denominatedPoolStore.ts', routesV4: false },
 ];
 
