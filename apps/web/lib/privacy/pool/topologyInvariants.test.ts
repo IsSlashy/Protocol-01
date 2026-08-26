@@ -189,6 +189,16 @@ describe('the till key is online, and confined', () => {
     return out;
   }
 
+  // ⏱️ 30s, deliberately, and this is not a slow test being excused. It reads
+  // every .ts/.tsx under apps/web -- 285 files at the time of writing -- so its
+  // wall-clock is disk contention, not work. MEASURED 2026-08-26: 708ms alone,
+  // 9,313ms when the pool suite ran straight after the 856-test default suite
+  // with a build in the same repo, against vitest's 5s default. It went red,
+  // then passed 3/3 in isolation.
+  //
+  // A guard that fails on machine load teaches people to re-run until green,
+  // and the next real failure gets re-run too. The right ceiling is one this
+  // cannot plausibly hit while still catching a genuine hang.
   it('P01_TILL_SECRET_KEY is read in the settler and nowhere else', () => {
     // ⛔ THE WHOLE ARGUMENT IN ONE ASSERTION. The claim is not "we would never
     // fund an ephemeral from the till"; it is "there is exactly one function
@@ -218,7 +228,7 @@ describe('the till key is online, and confined', () => {
         `which is the 2026-08-18 two-hop walk with the middle step relabelled.`,
     ).toEqual([]);
     expect(hits).toContain('/app/api/settle-till/route.ts');
-  });
+  }, 30_000);
 
   it('the settler has exactly one destination, and it is the float keypair', () => {
     const code = codeOnly(settlerSource());

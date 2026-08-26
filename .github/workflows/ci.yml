@@ -29,12 +29,31 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v2
         with:
-          version: 10.34.0
+          # Match `packageManager` in package.json exactly. CI was on 10.34.0
+          # while the field, the lockfile target and every developer are on
+          # 9.15.9 -- a MAJOR apart. pnpm 10 changed a default that matters:
+          # dependency lifecycle scripts no longer run unless explicitly
+          # allowed, so a package that needs a postinstall behaves differently
+          # in CI than it does on a laptop, and the difference is silent.
+          #
+          # If this needs to move to 10, move `packageManager` first and let
+          # everyone's `pnpm install` follow. The declaration leads; CI does not.
+          version: 9.15.9
 
       - name: Setup Node.js
+        # Read from .node-version rather than pinned here. The hardcoded 22 was
+        # set in a778d7d0 (2026-03-03) and never moved; .node-version says 24 and
+        # package.json declares `engines.node: "24.x"`, so CI has been testing on
+        # a runtime this repository says it does not support.
+        #
+        # The drift is not cosmetic. Node 25 ships a global `localStorage` stub
+        # that shadows jsdom's, and running the web suite under it produces 67
+        # failures that are entirely the shadowing -- MEASURED 2026-08-26, 73 red
+        # under Node 25 against 6 under Node 24. A runtime this suite is sensitive
+        # to is one CI should be reading from the same file developers do.
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: pnpm
 
       - name: Get pnpm store directory
@@ -335,9 +354,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Node.js
+        # Same as the job above: read the version from .node-version so CI and
+        # developers cannot drift apart.
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .node-version
 
       # verify/p01-verify.mjs is the only mechanised check that a pool spend
       # cannot be walked back to its deposit from PUBLIC chain data (the vitest
