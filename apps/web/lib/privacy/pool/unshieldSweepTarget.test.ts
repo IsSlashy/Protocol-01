@@ -164,5 +164,14 @@ describe('the withdrawal leg carries the wallet-exposure guard too', () => {
     type Params = Parameters<typeof unshieldFromPool>[0];
     const probe: Pick<Params, 'neverExposeWallet'> = { neverExposeWallet: true };
     expect(probe.neverExposeWallet).toBe(true);
-  });
+    // ⏱️ 30s, and the work is not in this test. `await import('../shieldClient')`
+    // pulls a large module graph, so the wall-clock is whatever else the runner
+    // is loading at that moment. MEASURED 2026-08-26: 914-1161ms in isolation
+    // across three runs, 5153ms inside the full pool suite, against vitest's 5s
+    // default. It went red once and passed 3/3 alone.
+    //
+    // A guard that fails on machine load teaches people to re-run until green,
+    // and the next real failure gets re-run too. Same reason and same ceiling as
+    // the till-key guard in topologyInvariants.test.ts.
+  }, 30_000);
 });
