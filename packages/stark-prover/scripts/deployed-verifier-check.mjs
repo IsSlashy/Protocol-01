@@ -1749,7 +1749,11 @@ if (blobGen !== null && deployedGen !== blobGen) {
     `  node packages/stark-prover/scripts/deployed-verifier-check.mjs --measure --cluster ${TARGET_CLUSTER}`,
     `and update ${RECORD_REL}. Editing that file without redeploying satisfies the checks above and`,
     'changes nothing on chain. The --verify-onchain leg refetches the deployment and rejects that edit,',
-    'and every build and publish step that runs this script runs it with --verify-onchain.',
+    'Run it with --verify-onchain before shipping. NOTE: this sentence used to claim that every',
+    'build and publish step runs this script with --verify-onchain. MEASURED 2026-08-26: nothing',
+    'ran this script at all -- no npm script, no CI job. It is now `pnpm --filter @protocol-01/',
+    'stark-prover check:deployed` (offline, ~25s) and CI runs that leg; the on-chain leg stays',
+    'manual because CI has no reliable devnet RPC.',
   ]);
 } else if (deployed.accepts_client_blob_sha256 !== blobSha) {
   // Same generation, but this exact artifact has never been proven against the

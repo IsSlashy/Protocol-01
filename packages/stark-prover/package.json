@@ -38,6 +38,8 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest run",
+    "check:deployed": "node scripts/deployed-verifier-check.mjs",
+    "check:deployed:onchain": "node scripts/deployed-verifier-check.mjs --verify-onchain",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"

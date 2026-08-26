@@ -401,3 +401,25 @@ jobs:
       # measured. See verify/fixtures/v4-live/README.md.
       - name: Reality pin — the first real v4 spend, green and red exactly as measured
         run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-live
+
+      # NOT about unlinkability, and it lives here for a mechanical reason: it
+      # imports only node: builtins and two sibling .mjs files, so this is the
+      # one job that can run it without an install.
+      #
+      # What it gates: the checked-in prover blob against the RECORDED devnet
+      # deployment, all four inlined base64 twins against the canonical blob,
+      # and the behavioural fixture table against its two authorities
+      # (b1_deep_binding.rs and wireFormat.test.ts) — the cross-check that
+      # catches a pin recovered from an old branch disagreeing with a pin still
+      # being generated.
+      #
+      # MEASURED 2026-08-26: NOTHING ran this script. No npm script, no CI job,
+      # while its own failure text claimed "every build and publish step that
+      # runs this script runs it with --verify-onchain". ~25s offline.
+      #
+      # The on-chain leg (--verify-onchain) stays manual: it needs a devnet RPC,
+      # and the public endpoint rate-limits hard enough that a gate depending on
+      # it is a gate that sometimes cannot run. Offline proves the record is
+      # self-consistent; it does not ask the chain, and it says so when it passes.
+      - name: Prover artifact — blob, four twins, and the fixture table agree
+        run: node packages/stark-prover/scripts/deployed-verifier-check.mjs
