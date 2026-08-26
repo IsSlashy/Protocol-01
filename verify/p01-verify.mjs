@@ -1422,27 +1422,48 @@ async function verifySpend(rpc, signature, opts = {}) {
   // P3 therefore passes on today's proofs — and that is NOT evidence the proof
   // hides the witness.
   //
-  // `stark/src/compact.rs:3460-3484` interpolates the trace and evaluates it on
-  // the LDE domain with no coset offset, no blinding polynomial and no random
-  // rows, then publishes the openings at 22 query positions plus the OOD
-  // evaluations of every column. Two agents independently recovered a circuit's
-  // secret from that by Lagrange interpolation, each with a positive control
-  // (see the B7 record). Recovery is polynomial, not a byte copy, so a byte scan
-  // is structurally blind to it.
+  // ⚠️ THE ORIGINAL REASON WRITTEN HERE IS NO LONGER TRUE, AND THE VERDICT DID
+  // NOT CHANGE. It said the prover evaluates on the LDE domain "with no coset
+  // offset, no blinding polynomial and no random rows". As of the circuit-7
+  // build all three of those clauses are false:
   //
-  // Reported INCONCLUSIVE forever, never PASS, until trace blinding ships and
-  // this tool grows a real interpolation attempt with its own positive control.
-  // Both committed fixtures pin this probe FAIL, so a well-meaning "fix" that
-  // makes it pass turns CI red before it turns a claim dishonest.
+  //   coset       LDE_COSET_SHIFT = 7, so the LDE domain is DISJOINT from the
+  //               trace domain — no query position is a trace row, and no
+  //               opening returns a raw witness value
+  //   mask rows   C7 carries MASK_ROWS = 128
+  //   randomness  the mask is drawn per proof from a real CSPRNG, and the Rust
+  //               REFUSES to build without one (draw_spend_mask)
+  //
+  // ⛔ THAT IS NOT SECRECY AND THE PROBE MUST NOT SOFTEN. What C7 buys is
+  // UNDERDETERMINATION: 90 published evaluations against ~138 unknowns in
+  // column 9, which is why depth 12 was chosen. Underdetermination has a
+  // MEASURED counterexample in this repository — four C1 witnesses, including
+  // the spend secret, were recovered in 5 ms by AIR-AWARE recovery on an
+  // underdetermined system, because the constraints supply the equations the
+  // openings do not. C7's argument has the same shape and has never been
+  // attacked. "More unknowns than equations" is not a security claim.
+  //
+  // ⛔ AND v3 IS STILL REGISTERED. Notes whose blinding is unknown spend on the
+  // C1 + C3 pair, which has no coset masking of its own to appeal to.
+  //
+  // Recovery is polynomial, not a byte copy, so a byte scan is structurally
+  // blind to it either way. Reported INCONCLUSIVE forever, never PASS, until
+  // this tool grows a real interpolation attempt against C7 with its own
+  // positive control. Every committed fixture pins this probe FAIL, so a
+  // well-meaning "fix" that makes it pass turns CI red before it turns a claim
+  // dishonest.
   results.push(
     probe(
       'P3b',
       'the proof does not reveal the witness by interpolation',
       false,
-      'INCONCLUSIVE BY CONSTRUCTION: this tool only detects a value present verbatim. ' +
-        'The prover applies no trace blinding, so the published openings determine the trace ' +
-        'polynomial and the witness is recoverable by interpolation. A PASS on P3 says the ' +
-        'commitment was not copied into the proof; it says nothing about whether the proof hides it.',
+      'INCONCLUSIVE BY CONSTRUCTION: this tool only detects a value present verbatim, and ' +
+        'recovery from a STARK proof is polynomial, not a byte copy. Circuit 7 does apply a coset ' +
+        'LDE and 128 CSPRNG-drawn mask rows — unlike the C1+C3 pair v3 still uses — but that buys ' +
+        'UNDERDETERMINATION (90 published evaluations against ~138 unknowns), not secrecy: four C1 ' +
+        'witnesses were recovered in 5 ms by AIR-aware recovery on an underdetermined system, and ' +
+        'C7 has never been attacked that way. A PASS on P3 says the commitment was not copied into ' +
+        'the proof; it says nothing about whether the proof hides it.',
     ),
   );
 
