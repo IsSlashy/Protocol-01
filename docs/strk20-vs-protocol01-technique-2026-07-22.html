@@ -1,0 +1,1819 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Protocol 01 — STRK20 vs Protocol 01 · Document technique</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  @page { size: A4; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --void: #0a0a0c;
+    --dark: #0f0f12;
+    --surface: #151518;
+    --surface2: #1a1a1e;
+    --border: #2a2a30;
+    --cyan: #39c5bb;
+    --cyan-bright: #00ffe5;
+    --cyan-dim: rgba(57, 197, 187, 0.15);
+    --pink: #ff77a8;
+    --pink-hot: #ff2d7a;
+    --yellow: #ffcc00;
+    --red: #ff3366;
+    --text: #ffffff;
+    --text-muted: #888892;
+    --text-dim: #555560;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--void);
+    color: var(--text);
+    font-size: 9.5pt;
+    line-height: 1.55;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .page {
+    width: 210mm;
+    height: 297mm;
+    max-height: 297mm;
+    padding: 16mm 18mm;
+    margin: 0 auto;
+    position: relative;
+    page-break-after: always;
+    background: var(--void);
+    overflow: hidden;
+  }
+  .page:last-child { page-break-after: avoid; }
+  .page > * { position: relative; z-index: 1; }
+
+  .page-footer {
+    position: absolute;
+    bottom: 9mm;
+    left: 18mm;
+    right: 18mm;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+    padding-top: 7px;
+  }
+
+  h1 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900; font-size: 26pt;
+    letter-spacing: 0.05em; line-height: 1.1; margin-bottom: 12px;
+  }
+  h2 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700; font-size: 14pt;
+    letter-spacing: 0.03em; color: var(--cyan);
+    margin-bottom: 9px; margin-top: 16px;
+    border-bottom: 1px solid var(--border); padding-bottom: 5px;
+  }
+  h3 {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 600; font-size: 10.5pt;
+    letter-spacing: 0.02em; color: var(--pink);
+    margin-bottom: 5px; margin-top: 12px;
+  }
+  h4 { font-weight: 700; font-size: 9.5pt; color: var(--cyan); margin-bottom: 3px; margin-top: 9px; }
+
+  p { margin-bottom: 7px; }
+  .lead { font-size: 11pt; color: var(--text-muted); line-height: 1.5; margin-bottom: 14px; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .small { font-size: 8pt; }
+  .xs { font-size: 7.5pt; }
+  .muted { color: var(--text-muted); }
+  .dim { color: var(--text-dim); }
+  .cyan { color: var(--cyan); }
+  .pink { color: var(--pink); }
+  .yellow { color: var(--yellow); }
+  .red { color: var(--red); }
+  .bold { font-weight: 700; }
+  .center { text-align: center; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 13px;
+    margin-bottom: 9px;
+  }
+  .card-cyan { border-color: rgba(57,197,187,0.3); background: #12211e; }
+  .card-pink { border-color: rgba(255,119,168,0.3); background: #1f141a; }
+  .card-yellow { border-color: rgba(255,204,0,0.3); background: #1c1a0e; }
+  .card-red { border-color: rgba(255,51,102,0.35); background: #1f0f13; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 9px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
+
+  table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 8pt; }
+  th {
+    background: var(--surface); color: var(--cyan);
+    font-family: 'JetBrains Mono', monospace; font-size: 7pt;
+    text-align: left; padding: 5px 7px;
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  td { padding: 4px 7px; border-bottom: 1px solid rgba(42,42,48,0.5); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  table.tight td, table.tight th { padding: 3px 6px; }
+
+  .code-block {
+    background: var(--dark);
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--cyan);
+    border-radius: 6px;
+    padding: 9px 11px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7.5pt; line-height: 1.45;
+    margin-bottom: 9px;
+    white-space: pre-wrap; word-break: break-word;
+    color: #d8d8e0;
+  }
+  .src {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 6.8pt; color: var(--text-dim);
+    margin-top: -6px; margin-bottom: 9px; display: block;
+  }
+
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 20px;
+    font-family: 'JetBrains Mono', monospace; font-size: 6.8pt;
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .badge-cyan { background: rgba(57,197,187,0.15); color: var(--cyan); border: 1px solid rgba(57,197,187,0.3); }
+  .badge-pink { background: rgba(255,119,168,0.15); color: var(--pink); border: 1px solid rgba(255,119,168,0.3); }
+  .badge-yellow { background: rgba(255,204,0,0.15); color: var(--yellow); border: 1px solid rgba(255,204,0,0.3); }
+  .badge-red { background: rgba(255,51,102,0.15); color: var(--red); border: 1px solid rgba(255,51,102,0.35); }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 13px 0; }
+  ul, ol { padding-left: 16px; margin-bottom: 7px; }
+  li { margin-bottom: 3px; }
+
+  .cover-logo {
+    font-family: 'Orbitron', sans-serif; font-weight: 900;
+    font-size: 120pt; letter-spacing: 0.08em;
+    background: linear-gradient(135deg, var(--cyan), var(--pink), var(--cyan-bright));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text; line-height: 1;
+  }
+  .cover-subtitle {
+    font-family: 'JetBrains Mono', monospace; font-size: 10pt;
+    color: var(--text-muted); letter-spacing: 0.15em; text-transform: uppercase;
+  }
+
+  .stat-box { text-align: center; padding: 10px; }
+  .stat-number { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 22pt; color: var(--cyan); line-height: 1; }
+  .stat-label { font-size: 7.5pt; color: var(--text-muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .secnum {
+    font-family: 'Orbitron', sans-serif; font-weight: 900;
+    font-size: 34pt; color: rgba(57,197,187,0.18);
+    line-height: 1; float: right; margin-top: -6px;
+  }
+  .kv { display: grid; grid-template-columns: 34% 1fr; gap: 4px 10px; font-size: 8.5pt; }
+  .kv .k { color: var(--text-muted); font-family: 'JetBrains Mono', monospace; font-size: 7.5pt; }
+  .no-break { page-break-inside: avoid; }
+  .quote {
+    border-left: 2px solid var(--pink);
+    padding: 6px 0 6px 11px; margin-bottom: 9px;
+    color: var(--text-muted); font-style: italic; font-size: 9pt;
+  }
+</style>
+</head>
+<body>
+
+<!-- ==================== 1 : COUVERTURE ==================== -->
+<div class="page" style="display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;">
+  <div style="margin-bottom: 24px;">
+    <div class="cover-logo">01</div>
+    <div style="font-family:'Orbitron',sans-serif; font-weight:900; font-size:24pt; letter-spacing:0.12em; margin-top:-10px;">PROTOCOL</div>
+  </div>
+
+  <div style="width:60px; height:2px; background:linear-gradient(90deg,var(--cyan),var(--pink)); margin:18px auto;"></div>
+
+  <div style="font-family:'Orbitron',sans-serif; font-weight:700; font-size:17pt; letter-spacing:0.04em; margin-bottom:10px;">
+    STRK20 <span class="dim" style="font-weight:400;">vs</span> PROTOCOL 01
+  </div>
+  <div class="cover-subtitle" style="margin-bottom:10px;">Document technique &middot; Diff exact</div>
+  <p class="muted" style="max-width:400px; font-size:9pt; line-height:1.6;">
+    Mécanique complète du framework STRK20, établie sur le code source ouvert
+    <span class="mono cyan">starkware-libs/starknet-privacy</span>, et comparaison
+    axe par axe avec la stack Protocol 01, établie sur le dépôt.
+  </p>
+
+  <div style="margin-top:38px; display:grid; grid-template-columns:repeat(4,1fr); gap:16px;">
+    <div class="stat-box">
+      <div class="stat-number">12</div>
+      <div class="stat-label">Axes de diff</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-number" style="color:var(--pink);">3</div>
+      <div class="stat-label">Constats bloquants</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-number" style="color:var(--yellow);">9</div>
+      <div class="stat-label">Corrections fiche</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-number" style="color:var(--red);">2</div>
+      <div class="stat-label">Cibles PQ</div>
+    </div>
+  </div>
+
+  <div class="card card-yellow" style="margin-top:34px; max-width:430px; text-align:left;">
+    <div class="mono xs yellow" style="letter-spacing:0.08em;">RÈGLE DE LECTURE</div>
+    <p class="small muted" style="margin:5px 0 0;">
+      Chaque affirmation porte sa source : fichier Cairo / Rust / TypeScript pour STRK20,
+      <span class="mono">file:line</span> du dépôt pour Protocol 01. Là où le code contredit
+      le brief du 22 juillet, c'est signalé en clair.
+    </p>
+  </div>
+
+  <div style="margin-top:30px;">
+    <div class="mono small dim">DOCUMENT TECHNIQUE &middot; BUILDATHON STRK20 PARIS</div>
+    <div class="mono small dim" style="margin-top:4px;">22 juillet 2026</div>
+    <div class="mono small dim" style="margin-top:4px;">Volta Team &middot; Developed by Slashy Fx</div>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>1 / 24</span></div>
+</div>
+
+<!-- ==================== 2 : SOMMAIRE ==================== -->
+<div class="page">
+  <h2 style="margin-top:0;">SOMMAIRE</h2>
+
+  <div class="grid-2" style="margin-top:14px;">
+    <div>
+      <div class="card card-red">
+        <div class="mono xs red" style="letter-spacing:0.08em;">SECTION 0 &middot; P.3</div>
+        <h4 style="margin-top:5px; color:var(--red);">À lire en premier</h4>
+        <p class="small muted" style="margin:0;">Trois constats qui changent le plan de la journée.</p>
+      </div>
+
+      <div class="card">
+        <div class="mono xs cyan" style="letter-spacing:0.08em;">SECTION 1 &middot; P.4&ndash;11</div>
+        <h4 style="margin-top:5px;">Comment STRK20 marche</h4>
+        <ul class="small muted" style="margin:4px 0 0; padding-left:14px;">
+          <li>Modèle : pas de Merkle, pas de commitment</li>
+          <li>Chiffrement : ECDH courbe STARK, hash-and-add</li>
+          <li>Adressage du destinataire, discovery</li>
+          <li>Transaction en 8 phases</li>
+          <li>Où la preuve est vérifiée (SNIP-36)</li>
+          <li>Stwo, Circle STARK, AIR de CPU fixe</li>
+          <li>Compliance et constats de confiance</li>
+          <li>Surface développeur</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="mono xs cyan" style="letter-spacing:0.08em;">SECTION 2 &middot; P.12&ndash;15</div>
+        <h4 style="margin-top:5px;">Protocol 01, vérité terrain</h4>
+        <ul class="small muted" style="margin:4px 0 0; padding-left:14px;">
+          <li>Corrections à la fiche technique</li>
+          <li>Les 7 circuits, table exacte</li>
+          <li>Compute units : ce qu'on peut affirmer</li>
+          <li>Pool, Specter, et faiblesses connues</li>
+        </ul>
+      </div>
+    </div>
+
+    <div>
+      <div class="card card-cyan">
+        <div class="mono xs cyan" style="letter-spacing:0.08em;">SECTION 3 &middot; P.16&ndash;20</div>
+        <h4 style="margin-top:5px;">Le diff, axe par axe</h4>
+        <ol class="small muted" style="margin:4px 0 0; padding-left:16px;">
+          <li>Système de preuve et corps</li>
+          <li>Modèle d'écriture des contraintes</li>
+          <li>Lieu et coût de vérification</li>
+          <li>Transport de la preuve</li>
+          <li>Modèle de note</li>
+          <li>Accumulateur</li>
+          <li>Nullifiers</li>
+          <li>Découverte du destinataire</li>
+          <li>Chiffrement des notes</li>
+          <li>Viewing keys et compliance</li>
+          <li>Modèle de compte</li>
+          <li>Composabilité et maturité</li>
+        </ol>
+      </div>
+
+      <div class="card card-pink">
+        <div class="mono xs pink" style="letter-spacing:0.08em;">SECTION 4&ndash;5 &middot; P.21&ndash;22</div>
+        <h4 style="margin-top:5px; color:var(--pink);">Le trou PQ &amp; le branchement</h4>
+        <p class="small muted" style="margin:0;">
+          Formulation exacte à employer, les deux cibles concrètes,
+          et le point de branchement Specter révisé.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="mono xs cyan" style="letter-spacing:0.08em;">SECTION 6&ndash;8 &middot; P.23&ndash;24</div>
+        <h4 style="margin-top:5px;">Questions, retraits, sources</h4>
+        <p class="small muted" style="margin:0;">
+          Questions révisées à poser sur place, formulations à retirer
+          avant de parler, et l'appareil de sources avec ses réserves.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:6px;">
+    <h4 style="margin-top:0;">Provenance</h4>
+    <p class="small muted" style="margin:0;">
+      STRK20 a été ouvert en Apache 2.0 le 8 juillet 2026. Tout ce qui le concerne ici vient du dépôt
+      <span class="mono cyan">starkware-libs/starknet-privacy</span> (contrat Cairo, service de discovery Rust,
+      SDK TypeScript, preuves Lean 4), de SNIP-36, des types <span class="mono">@starknet-io/types-js@0.10.3</span>,
+      et de la roadmap post-quantique StarkWare du 30 juin 2026. Aucune affirmation ne repose sur les pages marketing.
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>2 / 24</span></div>
+</div>
+
+<!-- ==================== 3 : À LIRE EN PREMIER ==================== -->
+<div class="page">
+  <span class="secnum">00</span>
+  <h2 style="margin-top:0;">À LIRE EN PREMIER</h2>
+  <p class="lead">Trois constats issus du code, chacun invalidant une hypothèse de la roadmap du buildathon.</p>
+
+  <div class="card card-cyan no-break">
+    <span class="badge badge-cyan">Constat 1</span>
+    <h3 style="margin-top:6px; color:var(--cyan);">STRK20 est open source</h3>
+    <p class="small" style="margin-bottom:6px;">
+      <span class="mono cyan">github.com/starkware-libs/starknet-privacy</span> &mdash; Apache 2.0, ouvert le 8 juillet 2026.
+      Contient le contrat Cairo du pool, le service de discovery en Rust, le SDK TypeScript, les preuves formelles Lean 4
+      et les contrats anonymizer. Pool mainnet déployé à
+      <span class="mono xs">0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a</span>.
+    </p>
+    <p class="small muted" style="margin:0;">
+      Le risque « SDK gated » du plan initial n'existe plus. Ce qui est réellement gated :
+      l'URL du <span class="cyan bold">proving service</span>, celle de l'<span class="cyan bold">indexer</span>
+      (variables d'environnement sans valeur par défaut publiée nulle part), l'<span class="cyan bold">adresse du pool Sepolia</span>,
+      et le paquet npm qui vit sur GitHub Packages, pas sur npm public.
+    </p>
+  </div>
+
+  <div class="card card-red no-break">
+    <span class="badge badge-red">Constat 2</span>
+    <h3 style="margin-top:6px; color:var(--red);">Le projet prévu ne peut pas marcher</h3>
+    <p class="small" style="margin-bottom:6px;">
+      Le plan était : Specter dérive une adresse furtive, STRK20 transfère en privé vers elle.
+      <span class="red bold">Impossible.</span> Il n'existe aucune adresse furtive dans STRK20, et le destinataire
+      doit être un compte Starknet déployé <span class="bold">et enregistré</span> avec une clé de vue publique on-chain.
+    </p>
+    <div class="code-block" style="border-left-color:var(--red); margin-bottom:4px;">// open_channel
+let sender_public_key = self.public_key.read(sender_addr);
+assert(sender_public_key.is_non_zero(), errors::SENDER_NOT_REGISTERED);
+let recipient_public_key = self.public_key.read(recipient_addr);
+assert(recipient_public_key.is_non_zero(), errors::RECIPIENT_NOT_REGISTERED);</div>
+    <span class="src">packages/privacy/src/privacy.cairo:368-379</span>
+    <p class="small muted" style="margin:0;">
+      Leur contournement documenté est un contrat d'escrow avec lien de claim off-chain, pas de la découverte de destinataire.
+      Le point de branchement doit bouger &mdash; voir section 5.
+    </p>
+  </div>
+
+  <div class="card card-pink no-break">
+    <span class="badge badge-pink">Constat 3</span>
+    <h3 style="margin-top:6px;">Le vrai trou est meilleur que celui prévu</h3>
+    <p class="small" style="margin-bottom:6px;">
+      À l'enregistrement, le contrat chiffre lui-même la clé de vue <span class="bold">privée</span> de l'utilisateur
+      vers la clé publique de l'auditeur, et la stocke on-chain de façon immuable.
+    </p>
+    <div class="code-block" style="border-left-color:var(--pink); margin-bottom:4px;">pub(crate) struct EncPrivateKey {
+    pub auditor_public_key: felt252,
+    pub ephemeral_pubkey: felt252,
+    /// `enc_private_key = h(ENC_PRIVATE_KEY_TAG, rK.x) + private_key`
+    pub enc_private_key: felt252,
+}</div>
+    <span class="src">packages/privacy/src/objects.cairo:42-53</span>
+    <p class="small muted" style="margin:0;">
+      Une clé qui déchiffre l'historique bidirectionnel complet d'un utilisateur, chiffrée par ECDH sur la courbe STARK,
+      publiée on-chain, immuable (WriteOnce), permanente. C'est la surface harvest-now-decrypt-later la plus dense du système.
+      La Q3 du brief visait juste ; le code la confirme mot pour mot.
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>3 / 24</span></div>
+</div>
+
+<!-- ==================== 4 : STRK20 — LE MODÈLE ==================== -->
+<div class="page">
+  <span class="secnum">01</span>
+  <h2 style="margin-top:0;">STRK20 &middot; LE MODÈLE</h2>
+  <p class="lead">La surprise architecturale principale : elle inverse l'intuition de quiconque vient de Tornado, Zcash, ou de tes propres pools dénommés.</p>
+
+  <div class="card card-yellow no-break">
+    <h3 style="margin-top:0; color:var(--yellow);">Il n'y a pas d'arbre de Merkle</h3>
+    <p class="small" style="margin-bottom:6px;">
+      Pas d'accumulateur, pas de racine, pas de fenêtre de racines historiques. Un <span class="mono">grep -ril merkle</span>
+      sur tout le dépôt ne renvoie qu'un seul fichier, et le hit parle du trie d'état de Juno, pas du protocole.
+      Les notes vivent directement dans des maps de stockage Cairo.
+    </p>
+    <div class="code-block" style="border-left-color:var(--yellow); margin-bottom:4px;">notes: Map&lt;felt252, Note&gt;,
+nullifiers: Map&lt;felt252, bool&gt;,
+recipient_channels: Map&lt;ContractAddress, Vec&lt;EncChannelInfo&gt;&gt;,</div>
+    <span class="src">packages/privacy/src/privacy.cairo:88-99</span>
+  </div>
+
+  <h3>Une note n'est pas un hash-commitment</h3>
+  <div class="code-block">pub struct Note {
+    /// The packed value of the note `(salt, amount)`
+    pub packed_value: felt252,
+    /// The token address of the note (zero for encrypted notes).
+    pub token: ContractAddress,
+}</div>
+  <span class="src">packages/privacy/src/objects.cairo:89-100</span>
+
+  <p class="small">
+    Le propriétaire, le token et l'index ne sont pas dans un préimage de commitment : ils sont liés
+    <span class="cyan bold">implicitement par la clé de stockage</span>.
+  </p>
+
+  <div class="code-block">note_id   = Poseidon(NOTE_ID_TAG, channel_key, token, index, 0)
+nullifier = Poseidon(NULLIFIER_TAG, channel_key, token, index, 0, owner_private_key)</div>
+  <span class="src">packages/privacy/src/hashes.cairo:200-236</span>
+
+  <div class="card card-cyan no-break">
+    <h4 style="margin-top:0;">La conséquence à retenir</h4>
+    <p class="small" style="margin:0;">
+      Comme <span class="mono">channel_key</span> est un secret partagé uniquement entre l'émetteur et le destinataire,
+      les slots de stockage sont pseudo-aléatoires pour tout observateur.
+      <span class="cyan bold">Le pseudo-aléatoire de l'adresse de stockage remplace l'anonymat d'ensemble d'un arbre de Merkle.</span>
+      C'est une hypothèse de sécurité différente, et c'est exactement là que l'argument post-quantique mord le plus fort.
+    </p>
+  </div>
+
+  <h3>Dépenser : lecture de stockage, pas preuve d'appartenance</h3>
+  <div class="code-block">let subchannel_marker = compute_subchannel_marker(...);
+assert(self.subchannel_exists.read(subchannel_marker), errors::SUBCHANNEL_NOT_FOUND);
+let packed_value = self.notes.entry(note_id).packed_value.read();
+assert(packed_value.is_non_zero(), errors::NOTE_NOT_FOUND);</div>
+  <span class="src">packages/privacy/src/privacy.cairo:585-629</span>
+
+  <div class="card">
+    <h4 style="margin-top:0;">Asymétrie du nullifier &mdash; un point où ils sont devant</h4>
+    <p class="small muted" style="margin:0;">
+      Le nullifier contient la clé privée du <span class="bold">propriétaire</span>. L'émetteur d'une note ne peut donc pas
+      calculer son nullifier, et ne peut pas observer quand son paiement est dépensé. Protocol 01 n'a pas cette propriété.
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>4 / 24</span></div>
+</div>
+
+<!-- ==================== 5 : STRK20 — CHIFFREMENT ==================== -->
+<div class="page">
+  <span class="secnum">01</span>
+  <h2 style="margin-top:0;">STRK20 &middot; LE CHIFFREMENT</h2>
+  <p class="lead">Pas de KEM au sens moderne, pas de chiffrement symétrique authentifié. Deux couches : ECDH sur la courbe STARK, puis masquage additif.</p>
+
+  <h3>Couche 1 &mdash; ouverture de canal (asymétrique)</h3>
+  <p class="small">
+    ECDH sur la courbe STARK avec un scalaire éphémère <span class="mono">r</span> par canal. Seule l'abscisse du point
+    est utilisée. La KDF est un simple Poseidon domain-séparé, et le « chiffrement » est une addition dans le corps de base.
+  </p>
+  <div class="code-block">fn _compute_shared_x(ephemeral_secret: felt252, public_key: felt252) -&gt; (felt252, felt252) {
+    let ephemeral_pub_point = GEN_P().mul(scalar: ephemeral_secret);
+    let public_point = EcPointTrait::new_from_x(x: public_key)...;
+    let shared_point = public_point.mul(scalar: ephemeral_secret);
+    let shared_x = ...x();
+}</div>
+  <span class="src">packages/privacy/src/utils.cairo:123-145</span>
+
+  <div class="code-block">enc_channel_key = h(CHANNEL_KEY_TAG, rK.x) + channel_key
+enc_sender_addr = h(SENDER_ADDR_TAG, rK.x) + sender_addr</div>
+
+  <h3>Couche 2 &mdash; données dans le canal (symétrique)</h3>
+  <div class="code-block">enc_amount   = (Poseidon(ENC_AMOUNT_TAG, channel_key, token, index, 0, salt) + amount) mod 2^128
+enc_token    =  Poseidon(ENC_TOKEN_TAG, channel_key, index, 0, salt) + token
+packed_value =  salt * 2^128 + enc_amount     // salt 120 bits, choisi par l'émetteur</div>
+  <span class="src">packages/privacy/src/hashes.cairo:212-222</span>
+
+  <h3>Dérivation de la clé de canal</h3>
+  <div class="code-block">channel_key = Poseidon(CHANNEL_KEY_TAG, sender_addr, sender_private_key,
+                       recipient_addr, recipient_public_key)</div>
+  <p class="small">
+    Les canaux sont strictement <span class="bold">directionnels</span> : Alice&rarr;Bob et Bob&rarr;Alice sont deux canaux distincts.
+    Un dépôt est un canal de soi vers soi.
+  </p>
+
+  <div class="grid-2">
+    <div class="card card-yellow">
+      <h4 style="margin-top:0; color:var(--yellow);">Contrainte de clé canonique</h4>
+      <p class="xs muted" style="margin:0;">
+        Comme seules les abscisses servent à l'ECDH, <span class="mono">k</span> et <span class="mono">ORDER&minus;k</span>
+        seraient indistinguables. Le contrat impose donc <span class="mono">is_canonical_key(key) = key &lt; HALF_ORDER</span>.
+        Une clé hors borne compile mais dérive silencieusement de mauvaises clés de canal : les notes ne se déchiffrent jamais.
+      </p>
+    </div>
+    <div class="card card-red">
+      <h4 style="margin-top:0; color:var(--red);">Le schéma est figé dans le contrat</h4>
+      <p class="xs muted" style="margin:0;">
+        Aucun champ de version ou d'algorithme sur <span class="mono">Note</span> ni sur <span class="mono">EncChannelInfo</span>.
+        Le seul versionnage est le suffixe <span class="mono">:V1</span> dans les 17 tags Poseidon. Changer de schéma exige
+        un upgrade de contrat via <span class="mono">ReplaceabilityComponent</span>. <span class="red bold">Réponse à la Q2 : non, pas extensible.</span>
+      </p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4 style="margin-top:0;">Audit OpenZeppelin &mdash; le <span class="mono">r</span> éphémère</h4>
+    <p class="xs muted" style="margin:0;">
+      Le scalaire éphémère est fourni par le client et seulement validé non nul. Le contrat « n'impose pas l'unicité ni
+      n'empêche la réutilisation de <span class="mono">r</span> », d'où un risque de réutilisation déterministe de ciphertext.
+      Second constat : une <span class="mono">auditor_public_key</span> invalide déclenche des panics
+      <span class="mono">EcPointTrait::new_from_x(...).unwrap()</span> capables de bloquer enregistrements et retraits
+      à l'échelle du système. Commit audité <span class="mono">c5e2fb53…</span>
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>5 / 24</span></div>
+</div>
+
+<!-- ==================== 6 : STRK20 — ADRESSAGE ==================== -->
+<div class="page">
+  <span class="secnum">01</span>
+  <h2 style="margin-top:0;">STRK20 &middot; ADRESSAGE DU DESTINATAIRE</h2>
+  <p class="lead">Réponse à la question n&deg;1 du brief. Elle est nette, et elle est structurante.</p>
+
+  <div class="card card-cyan no-break">
+    <p class="small" style="margin-bottom:6px;">
+      Il n'y a <span class="bold">ni tag de détection, ni view tag, ni scan de tout le pool</span>.
+      Le contrat stocke un seau par destinataire, indexé par son adresse Starknet <span class="cyan bold">en clair</span>.
+    </p>
+    <div class="code-block" style="margin-bottom:4px;">/// Map of recipient_addr to a list of their encrypted channels.
+recipient_channels: Map&lt;ContractAddress, Vec&lt;EncChannelInfo&gt;&gt;,</div>
+    <span class="src">packages/privacy/src/privacy.cairo:88-89</span>
+    <p class="small muted" style="margin:0;">
+      L'émetteur ajoute un <span class="mono">EncChannelInfo</span> dans le seau du destinataire via l'action serveur
+      <span class="mono">Append</span>. Le destinataire ne lit que son propre seau et déchiffre par essai chaque entrée.
+    </p>
+  </div>
+
+  <div class="card card-red no-break">
+    <h3 style="margin-top:0; color:var(--red);">La fuite qui en découle</h3>
+    <p class="small" style="margin-bottom:5px;">
+      Le slot de stockage est dérivé déterministiquement de l'adresse en clair via
+      <span class="mono xs">get_storage_var_address("recipient_channels", [recipient_address])</span>.
+      Tout observateur des state diffs voit donc qu'une adresse précise vient de recevoir un nouveau canal.
+    </p>
+    <p class="small muted" style="margin:0;">
+      Seul le <span class="bold">premier</span> transfert d'une paire (émetteur, destinataire) fait cela ; les notes suivantes
+      vont dans des slots dérivés du <span class="mono">channel_key</span> secret. Le SDK émet d'ailleurs un warning
+      <span class="mono">WarningCode.USER_LINKAGE</span> quand plusieurs <span class="mono">OpenChannel</span> apparaissent
+      dans une même transaction. Leurs propres docs listent la « channel-open linkability » comme limite connue.
+    </p>
+  </div>
+
+  <h3>La discovery : balayage d'index dense à 3 niveaux</h3>
+  <table class="tight">
+    <tr><th style="width:18%;">Niveau</th><th>Opération</th></tr>
+    <tr><td class="mono cyan">1</td><td>Lire son propre <span class="mono">recipient_channels</span> et déchiffrer par essai ECDH chaque entrée</td></tr>
+    <tr><td class="mono cyan">2</td><td>Parcourir les index de sous-canal 0, 1, 2… par canal, en démasquant le token</td></tr>
+    <tr><td class="mono cyan">3</td><td>Parcourir les index de note 0, 1, 2… par (canal, token), démasquer les montants, tester chaque nullifier dérivé contre l'état on-chain</td></tr>
+  </table>
+  <p class="small muted">
+    Le balayage s'arrête au premier slot vide. Tous les slots sont WriteOnce et les index doivent être séquentiels
+    (<span class="mono">INDEX_NOT_SEQUENTIAL</span>) : c'est la densité qui garantit la terminaison.
+  </p>
+
+  <div class="card card-yellow">
+    <h4 style="margin-top:0; color:var(--yellow);">Le point où ils sont architecturalement devant</h4>
+    <p class="small" style="margin:0;">
+      <span class="yellow bold">Le coût de scan est proportionnel à ton activité, pas au volume du pool.</span>
+      « A pool with millions of transfers costs you no more to scan than a quiet one. »
+      La discovery est en outre une lecture gratuite : pas de preuve, pas de frais, pas de soumission.
+      Les notes ne sont dépensables que 10 blocs après création.
+    </p>
+  </div>
+
+  <div class="card">
+    <h4 style="margin-top:0;">Ce qui reste public à chaque bord</h4>
+    <p class="xs muted" style="margin:0;">
+      L'événement <span class="mono">Deposit</span> porte <span class="mono">user_addr</span>, <span class="mono">token</span>,
+      <span class="mono">amount</span> en clair. <span class="mono">Withdrawal</span> porte <span class="mono">to_addr</span>,
+      <span class="mono">token</span>, <span class="mono">amount</span> en clair plus un <span class="mono">enc_user_addr</span>
+      chiffré pour l'auditeur. <span class="mono">ViewingKeySet</span> lie publiquement une adresse à sa clé de vue publique.
+      Leurs docs le résument ainsi : « edges are public by design ».
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>6 / 24</span></div>
+</div>
+
+<!-- ==================== 7 : STRK20 — TRANSACTION ==================== -->
+<div class="page">
+  <span class="secnum">01</span>
+  <h2 style="margin-top:0;">STRK20 &middot; MODÈLE DE TRANSACTION</h2>
+  <p class="lead">Pas de triplet shield / transfer / unshield. Une liste d'actions groupées en 8 phases strictement ordonnées.</p>
+
+  <table>
+    <tr><th style="width:10%;">Phase</th><th style="width:32%;">Action</th><th>Rôle</th></tr>
+    <tr><td class="mono cyan">0</td><td class="mono">SetViewingKey</td><td>Enregistrement. Immuable une fois posé (WriteOnce)</td></tr>
+    <tr><td class="mono cyan">1</td><td class="mono">OpenChannel</td><td>Crée le canal directionnel émetteur &rarr; destinataire</td></tr>
+    <tr><td class="mono cyan">2</td><td class="mono">OpenSubchannel</td><td>Un sous-canal par token dans le canal</td></tr>
+    <tr><td class="mono cyan">3</td><td class="mono">Deposit</td><td>Entrée de fonds publics dans le pool. Toujours vers soi</td></tr>
+    <tr><td class="mono cyan">4</td><td class="mono">UseNote</td><td>Consomme une note, écrit son nullifier</td></tr>
+    <tr><td class="mono cyan">5</td><td class="mono">CreateEncNote / CreateOpenNote</td><td>Crée les notes de sortie</td></tr>
+    <tr><td class="mono cyan">6</td><td class="mono">Withdraw</td><td>Sortie de fonds vers une adresse publique</td></tr>
+    <tr><td class="mono cyan">7</td><td class="mono">InvokeExternal</td><td>Appel d'un contrat anonymizer. Au plus une fois par tx</td></tr>
+  </table>
+  <span class="src">packages/privacy/src/actions.cairo:275-316 &mdash; assert(action_phase &gt;= curr_phase, errors::ACTIONS_OUT_OF_ORDER)</span>
+
+  <h3>Traduction depuis ton vocabulaire</h3>
+  <div class="grid-3">
+    <div class="card">
+      <div class="mono xs cyan">SHIELD</div>
+      <p class="xs muted" style="margin:4px 0 0;">Deposit + CreateEncNote vers soi</p>
+    </div>
+    <div class="card">
+      <div class="mono xs cyan">TRANSFER</div>
+      <p class="xs muted" style="margin:4px 0 0;">UseNote + CreateEncNote(destinataire) + CreateEncNote(monnaie rendue)</p>
+    </div>
+    <div class="card">
+      <div class="mono xs cyan">UNSHIELD</div>
+      <p class="xs muted" style="margin:4px 0 0;">UseNote + Withdraw</p>
+    </div>
+  </div>
+
+  <div class="card card-cyan no-break">
+    <h3 style="margin-top:0; color:var(--cyan);">La conservation de la valeur n'est pas une contrainte de circuit</h3>
+    <p class="small" style="margin-bottom:6px;">
+      C'est un registre de balance temporaire par token, à l'intérieur d'une transaction. Deposit et UseNote ajoutent,
+      CreateNote et Withdraw retranchent. La balance ne peut jamais devenir négative, et chaque token doit finir exactement à zéro.
+    </p>
+    <div class="code-block" style="margin-bottom:4px;">fn subtract_balance(...) {
+    let new_value = current_balance.checked_sub(amount)
+        .expect(errors::NEGATIVE_INTERMEDIATE_BALANCE);
+}
+fn assert_valid(self: SquashedTokenBalances) {
+    for (_token, _, balance) in self.into_entries() {
+        assert(balance.is_zero(), errors::FINAL_BALANCE_MUST_BE_ZERO);
+    }
+}</div>
+    <span class="src">packages/privacy/src/objects.cairo:9-27</span>
+    <p class="small muted" style="margin:0;">
+      Point de comparaison direct : eux résolvent la conservation par une machine à états on-chain, toi par la dénomination du pool.
+      <span class="bold">Ni l'un ni l'autre ne le met dans une AIR.</span> C'est un bon terrain de discussion entre pairs.
+    </p>
+  </div>
+
+  <div class="card">
+    <h4 style="margin-top:0;">Notes ouvertes &mdash; l'échappatoire DeFi assumée</h4>
+    <p class="xs muted" style="margin:0;">
+      <span class="mono">salt = OPEN_NOTE_SALT (=1)</span> : le token et le montant sont en clair, et le montant est écrit
+      après génération de la preuve par un contrat anonymizer. Les notes chiffrées ont toujours <span class="mono">salt &ge; 2</span> ;
+      <span class="mono">salt = 0</span> signifie que la note n'existe pas. « Open notes trade amount privacy for that late binding. »
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>7 / 24</span></div>
+</div>
+
+<!-- ==================== 8 : STRK20 — OÙ LA PREUVE EST VÉRIFIÉE ==================== -->
+<div class="page">
+  <span class="secnum">01</span>
+  <h2 style="margin-top:0;">STRK20 &middot; OÙ LA PREUVE EST VÉRIFIÉE</h2>
+  <p class="lead">Le chemin exact, souvent mal décrit. C'est l'axe où l'écart architectural avec Protocol 01 est le plus grand.</p>
+
+  <table>
+    <tr><th style="width:8%;">#</th><th>Étape</th></tr>
+    <tr><td class="mono cyan">1</td><td>Le SDK compile les actions et les envoie à un <span class="bold">proving service opéré par un tiers</span></td></tr>
+    <tr><td class="mono cyan">2</td><td>Le service exécute dans un <span class="bold">bloc Starknet virtuel</span> (Virtual SNOS), un OS modifié à fonctionnalité réduite. Les builtins <span class="mono">add_mod</span>, <span class="mono">mul_mod</span> et Keccak sont exclus des claims prouvés en phase 1</td></tr>
+    <tr><td class="mono cyan">3</td><td>La preuve Stwo voyage dans les champs <span class="bold">optionnels</span> <span class="mono">proof</span> (uint32[]) et <span class="mono">proof_facts</span> (felt252[]) d'une Invoke V3 &mdash; <span class="bold">pas dans le calldata</span></td></tr>
+    <tr><td class="mono cyan">4</td><td>Un <span class="bold">vérificateur S-two en Rust embarqué dans le gateway / séquenceur</span> vérifie. Pas un contrat Cairo. Pas de récursion dans la preuve d'état L2 en phase 1</td></tr>
+    <tr><td class="mono cyan">5</td><td>Le contrat de pool lit seulement les petits <span class="mono">proof_facts</span> via un syscall dédié, et valide la variante de programme, le bloc de base, la fenêtre de validité et le hash de message</td></tr>
+  </table>
+  <span class="src">SNIP-36 &mdash; community.starknet.io/t/snip-36-in-protocol-proof-verification/116123</span>
+
+  <div class="card card-red no-break">
+    <h3 style="margin-top:0; color:var(--red);">Deux aveux qu'ils écrivent noir sur blanc</h3>
+    <div class="quote" style="border-left-color:var(--red); margin-bottom:6px;">
+      « applications built with this feature will have <span class="bold">degraded security</span> compared to native
+      Starknet applications » &mdash; à corriger dans une release ultérieure.
+    </div>
+    <div class="quote" style="border-left-color:var(--red); margin-bottom:6px;">
+      « The protocol is <span class="bold">not zero-knowledge by default</span> ; proofs reveal no execution data
+      beyond declared public input. »
+    </div>
+    <p class="small muted" style="margin:0;">
+      En phase 1 les preuves sont vérifiées par le consensus mais pas par le SNOS, ne sont pas dans les blocs, ne sont pas
+      récupérables au feeder gateway, et ne sont conservées que quelques semaines. Les full nodes ne re-vérifient pas.
+      La confidentialité v0.14.2 est décrite comme « de facto », le vrai ZK est reporté en phase 2.
+    </p>
+  </div>
+
+  <div class="card card-yellow no-break">
+    <h3 style="margin-top:0; color:var(--yellow);">Pourquoi SNIP-36 existe &mdash; et pourquoi c'est ton meilleur angle</h3>
+    <div class="quote" style="border-left-color:var(--yellow); margin-bottom:6px;">
+      « Including the full proof (often tens of thousands of felts) in calldata exceeds the present transaction limit (5K felts). »
+    </div>
+    <p class="small" style="margin:0;">
+      La vérification dans un contrat Cairo a bien été tentée &mdash; Integrity, de Herodotus, déployé sur Starknet &mdash; et a dû
+      être découpée en plusieurs contrats et plusieurs transactions à cause des limites de classhash, de calldata et de pas Cairo
+      (3M pas par transaction). Autrement dit :
+      <span class="yellow bold">ils ont rencontré exactement ton problème, et l'ont résolu en changeant le protocole de la L2
+      plutôt qu'en optimisant le vérificateur.</span> Cette option ne t'est pas offerte sur Solana.
+    </p>
+  </div>
+
+  <div class="card">
+    <h4 style="margin-top:0;">Fenêtre de validité de preuve &mdash; leur analogue de tes racines historiques</h4>
+    <p class="xs muted" style="margin:0;">
+      Le contrat rejette les preuves plus vieilles que <span class="mono">proof_validity_blocks</span> (450 blocs, ~15 min à 2 s/bloc).
+      Convention du SDK : prouver à <span class="mono">currentBlock - 10</span>. Tout état on-chain lu par la preuve
+      (clé de vue du compte, balance du déposant, set de nullifiers) doit avoir été écrit au moins 10 blocs avant le bloc de base.
+      Ce n'est pas le même mécanisme que le tien : le tien résout la concurrence sur l'état de l'arbre, le leur la fraîcheur
+      de l'exécution virtuelle.
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>8 / 24</span></div>
+</div>
+
+<!-- ==================== 9 : STRK20 — STWO / CIRCLE STARK ==================== -->
+<div class="page">
+  <span class="secnum">01</span>
+  <h2 style="margin-top:0;">STRK20 &middot; LE SYSTÈME DE PREUVE</h2>
+  <p class="lead">Stwo, Circle STARK sur M31. Et le point architectural qui explique tout le reste : Cairo est une AIR de CPU fixe.</p>
+
+  <div class="grid-2">
+    <div class="card card-cyan">
+      <h4 style="margin-top:0;">Le corps : M31, p = 2<sup>31</sup> &minus; 1</h4>
+      <p class="xs muted" style="margin:0;">
+        Tour M31 &rarr; CM31 (ext. quadratique) &rarr; QM31 (ext. quartique, utilisée pour Fiat-Shamir et les aléas DEEP/FRI).
+      </p>
+    </div>
+    <div class="card card-pink">
+      <h4 style="margin-top:0; color:var(--pink);">Pourquoi pas un corps 64 bits</h4>
+      <p class="xs muted" style="margin:0;">
+        M31 a une 2-adicité de <span class="bold">1</span> (p&minus;1 = 2&middot;(2<sup>30</sup>&minus;1)) : aucun sous-groupe
+        lisse en 2<sup>k</sup> pour une FFT radix-2.
+      </p>
+    </div>
+  </div>
+
+  <p class="small">
+    Le Circle STARK contourne ça via la courbe circulaire <span class="mono">x&sup2; + y&sup2; = 1</span>, dont le groupe de points
+    a un ordre de <span class="cyan bold">p+1 = 2<sup>31</sup></span>, exactement une puissance de deux. La CFFT garde la même
+    structure de papillon radix-2, sur des polynômes bivariés restreints au cercle. Papier : Haböck, Levit, Papini, ePrint 2024/278,
+    annonçant 1,4&times; de gain sur un STARK BabyBear.
+  </p>
+  <p class="small">
+    Le vrai argument est la densité SIMD : la réduction mod 2<sup>31</sup>&minus;1 est un décalage cyclique, pas une division,
+    et l'arithmétique tient dans des lanes 32 bits AVX2 / AVX-512 / NEON / WASM-SIMD.
+  </p>
+
+  <div class="kv card" style="padding:11px 13px;">
+    <div class="k">Hash de commitment</div><div>Blake2s-256 par défaut ; Poseidon252 en option pour règlement Ethereum</div>
+    <div class="k">Arbre de Merkle</div><div>« lifté » : le hash d'un n&oelig;ud dépend des enfants <span class="bold">et</span> des colonnes injectées à cette couche &mdash; colonnes de hauteurs différentes sans padding</div>
+    <div class="k">Paramètres par défaut</div><div>log_blowup = 1 (blowup 2), 70 requêtes, 26 bits de grinding, plus un PoW de phase d'interaction</div>
+    <div class="k">Soundness cible</div><div><span class="yellow bold">96 bits conjecturés</span> (régime list-decoding), pas prouvés sous borne de Johnson</div>
+    <div class="k">Trusted setup</div><div>aucun &mdash; « fully transparent, no toxic waste, no MPC ceremony »</div>
+  </div>
+
+  <div class="card card-yellow no-break">
+    <h3 style="margin-top:0; color:var(--yellow);">Le point architectural décisif</h3>
+    <p class="small" style="margin-bottom:6px;">
+      Cairo est <span class="bold">une AIR de CPU fixe</span>. Un unique jeu immuable de contraintes polynomiales prouve
+      l'exécution valide de la machine Cairo ; le programme applicatif n'est pas compilé en contraintes, il est
+      <span class="yellow bold">de la donnée</span> placée en mémoire publique et consommée comme trace.
+    </p>
+    <div class="quote" style="border-left-color:var(--yellow); margin-bottom:6px;">
+      « We describe a single set of polynomial equations for the statement that the execution of a program on this architecture
+      is valid. Given a statement one wishes to prove, Cairo allows writing a program that describes that statement, instead of
+      writing a set of polynomial equations. » &mdash; Cairo paper, ePrint 2021/1063
+    </div>
+    <p class="small muted" style="margin:0;">
+      En pratique stwo-cairo décompose ça en 69+ composants (un par opcode, un par builtin) reliés par des arguments de lookup
+      LogUp. Les builtins sont des périphériques mappés en mémoire qui remplacent un calcul coûteux dans la VM par un composant
+      d'AIR dédié. C'est ça, « le circuit et le contrat sont le même code » : pas de DSL de circuit, pas d'AIR par application,
+      pas de vérificateur déployé par application.
+    </p>
+  </div>
+
+  <div class="card">
+    <h4 style="margin-top:0;">Benchmark officiel S-two &mdash; 48 c&oelig;urs EPYC, CPU seul</h4>
+    <table class="tight" style="margin:5px 0 0;">
+      <tr><th>Charge</th><th>Preuve</th><th>Taille</th><th>Vérif.</th></tr>
+      <tr><td>Fibonacci n = 2<sup>20</sup></td><td>18,61 s</td><td class="yellow">808 KB</td><td>414 ms</td></tr>
+      <tr><td>SHA-256 n = 2<sup>18</sup> octets</td><td>121 s</td><td class="yellow">1315 KB</td><td>83 ms</td></tr>
+    </table>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>9 / 24</span></div>
+</div>
+
+<!-- ==================== 10 : STRK20 — COMPLIANCE ==================== -->
+<div class="page">
+  <span class="secnum">01</span>
+  <h2 style="margin-top:0;">STRK20 &middot; COMPLIANCE</h2>
+  <p class="lead">L'axe où l'écart avec Protocol 01 est maximal, dans les deux sens : ils ont une couche complète, et c'est leur surface la plus exposée.</p>
+
+  <div class="kv card" style="padding:11px 13px;">
+    <div class="k">Clé d'auditeur</div><div><span class="bold">une seule</span> <span class="mono">auditor_public_key: felt252</span> en stockage, posée au déploiement, modifiable par le rôle <span class="mono">security_governor</span>. Les docs parlent de clés à seuil ; le contrat n'en a pas trace</div>
+    <div class="k">Chiffrement de la clé</div><div>ECDH éphémère sur courbe STARK + masque Poseidon, on-chain, immuable (WriteOnce), avec un événement public <span class="mono">ViewingKeySet</span></div>
+    <div class="k">Portée de divulgation</div><div>historique <span class="bold">bidirectionnel complet</span> : canaux entrants et sortants, chaque montant, appariement nullifier&harr;note, traçage avant et arrière</div>
+    <div class="k">Pouvoir de l'auditeur</div><div>voir, jamais dépenser &mdash; la dépense exige une signature de compte vérifiée dans la preuve</div>
+    <div class="k">Vérification formelle</div><div>~60 fichiers Lean 4 : notes, canaux, sous-canaux, no-replay, spendability, compliance, traçage</div>
+  </div>
+
+  <div class="card card-red no-break">
+    <h3 style="margin-top:0; color:var(--red);">Screening de dépôt appliqué on-chain</h3>
+    <p class="small" style="margin-bottom:5px;">
+      Depuis v0.14.3, chaque dépôt porte une attestation SNIP-12 <span class="mono">DepositorValidation { depositor, issued_at }</span>
+      signée par un screener off-chain dont la clé publique STARK est en stockage. Le pool vérifie l'ECDSA. Expiration 300 s,
+      tolérance de dérive future 60 s.
+    </p>
+    <p class="small" style="margin:0;">
+      <span class="red bold">Faire tourner son propre prover ne contourne pas ça.</span>
+      Divergence non expliquée : les docs nomment « FPI » comme screener, le code appelle l'API d'Elliptic via un proxy GCP
+      <span class="mono">elliptic-proxy</span>. Avec en plus des listes opérateur <span class="mono">blockOverrideAddresses</span>
+      et <span class="mono">additionalBlockedAddresses</span>.
+    </p>
+  </div>
+
+  <h3>Deux constats de confiance</h3>
+  <p class="small muted" style="margin-bottom:7px;">Ce ne sont pas des accusations : c'est ce que disent leur code et leurs specs. En phase 1 ce sont des choix d'architecture explicites.</p>
+
+  <div class="card card-yellow no-break">
+    <h4 style="margin-top:0; color:var(--yellow);">La clé de vue privée part en clair au proving service</h4>
+    <div class="code-block" style="border-left-color:var(--yellow); margin-bottom:4px;">const executeViewCalldata = callDataCompiler.compile("compile_actions", [
+  userAddress, user.viewingKey, cairoActions
+]);</div>
+    <span class="src">sdk/src/internal/proof-invocation-factory.ts:128-140</span>
+    <p class="xs muted" style="margin:0;">Un prover hébergé apprend donc la clé qui déchiffre l'historique entier de l'utilisateur.</p>
+  </div>
+
+  <div class="card card-yellow no-break">
+    <h4 style="margin-top:0; color:var(--yellow);">Le discovery service reçoit des clés et renvoie du déchiffré</h4>
+    <div class="quote" style="border-left-color:var(--yellow); margin-bottom:5px; font-size:8pt;">
+      « The service decrypts and returns decrypted channels and unspent notes. Decryption keys must be provided per request. »<br>
+      « The operator can observe : which recipients are active and when. How many channels, subchannels, and notes each recipient
+      has. Token addresses used per channel. Timing of sync activity. »
+    </div>
+    <span class="src">crates/discovery-service/specs/05-security-considerations.md</span>
+    <p class="xs muted" style="margin:0;">La mitigation est OHTTP (basé X25519, relais optionnel), et elle ne couvre que la corrélation d'IP.</p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>10 / 24</span></div>
+</div>
+
+<!-- ==================== 11 : STRK20 — SURFACE DÉVELOPPEUR ==================== -->
+<div class="page">
+  <span class="secnum">01</span>
+  <h2 style="margin-top:0;">STRK20 &middot; SURFACE DÉVELOPPEUR</h2>
+  <p class="lead">Privacy Wallet API = Starknet Wallet API v0.10.3, publiée en types TypeScript. Exactement trois méthodes. Aucune ne s'appelle shield, unshield ou claim.</p>
+
+  <div class="code-block">wallet_strk20InvokeTransaction  // { actions: STRK20_ACTION[] }  -&gt; { transaction_hash }
+wallet_strk20PrepareInvoke      // { actions, simulate? }        -&gt; STRK20_CALL_AND_PROOF
+wallet_strk20Balances           // { tokens: Address[] }         -&gt; STRK20_BALANCE_ENTRY[]</div>
+  <span class="src">@starknet-io/types-js@0.10.3 &mdash; dist/types/wallet-api/methods.d.ts:135,157,174</span>
+
+  <div class="grid-2">
+    <div class="card">
+      <h4 style="margin-top:0;">Les 4 variantes d'action</h4>
+      <p class="xs muted" style="margin:0;">
+        <span class="mono cyan">deposit</span> (toujours vers soi, pas de champ recipient),
+        <span class="mono cyan">withdraw</span>, <span class="mono cyan">transfer</span>
+        (accepte le littéral <span class="mono">"OPEN"</span> comme montant),
+        <span class="mono cyan">invoke</span>.
+      </p>
+    </div>
+    <div class="card card-red">
+      <h4 style="margin-top:0; color:var(--red);">Pas de scan de notes dans la Wallet API</h4>
+      <p class="xs muted" style="margin:0;">
+        Une dapp ne lit que des balances agrégées par token. Le scan n'existe que dans le SDK bas niveau
+        (<span class="mono">discoverNotes</span>, <span class="mono">discoverChannels</span>), qui exige la clé de vue.
+        Délibéré : « A normal dapp should not receive the user's viewing key. »
+      </p>
+    </div>
+  </div>
+
+  <h3>Le SDK bas niveau &mdash; builder fluide</h3>
+  <div class="code-block">await transfers.build(opts)
+  .with(TOKEN, t =&gt; t.inputs(note).transfer({ recipient, amount }).withdraw({ amount }))
+  .surplusTo(self)
+  .execute({ provingBlockId });</div>
+  <p class="small muted">Verbes : <span class="mono">register</span>, <span class="mono">deposit</span>, <span class="mono">transfer</span>, <span class="mono">withdraw</span>, <span class="mono">setup</span>, <span class="mono">invoke</span>.</p>
+
+  <div class="card card-yellow no-break">
+    <h4 style="margin-top:0; color:var(--yellow);">Trois pièges de soumission qui mordront toute intégration</h4>
+    <ul class="xs muted" style="margin:4px 0 0; padding-left:14px;">
+      <li><span class="mono">proofFacts: []</span> doit être <span class="bold">omis entièrement</span> (spread conditionnel), sinon starknet.js sérialise une v3 invalide</li>
+      <li><span class="mono">tip: 0n</span> est obligatoire, sinon <span class="mono">Cannot mix BigInt and other types</span></li>
+      <li>Appeler <span class="mono">invalidateProofNonceCache()</span> après tout échec de soumission, sinon <span class="mono">INVALID_NONCE</span></li>
+    </ul>
+  </div>
+
+  <div class="kv card" style="padding:11px 13px;">
+    <div class="k">Côté dapp</div><div>starknet.js &ge; 10.4.0 et la classe <span class="mono">WalletAccountV6</span>. Attention : le tag npm <span class="mono">latest</span> est 10.0.2, les versions capables STRK20 sont sur <span class="mono">next</span> (10.5.1). À épingler</div>
+    <div class="k">Où tourne le prover</div><div><span class="bold">côté serveur</span>, ni dans le wallet ni dans la dapp. Auto-hébergement possible via image container, mais c'est une charge ops et StarkWare dit les proving services auto-hébergés en phase 1</div>
+    <div class="k">Temps de preuve</div><div><span class="yellow">chiffres contradictoires non réconciliés</span> : ~29 s (12 c&oelig;urs / 46 GiB) dans le diagramme de pipeline, ~4 s dans le README du SDK, « few-seconds area » selon l'auteur de SNIP-36</div>
+    <div class="k">Wallets</div><div>Ready live côté dapp ; Xverse a le privacy in-wallet mais son support Wallet API côté dapp est en cours. Détecter les capacités à l'exécution</div>
+    <div class="k">Frais</div><div>fixe par transaction, 4 STRK annoncés &mdash; « closer to a gas fee than a toll »</div>
+  </div>
+
+  <div class="card card-cyan">
+    <h4 style="margin-top:0;">Composabilité DeFi &mdash; les contrats anonymizer</h4>
+    <p class="xs muted" style="margin:0;">
+      Un helper expose une entrée obligatoire unique <span class="mono">privacy_invoke</span>, qui assère que l'appelant est le pool.
+      Le pool retire les tokens vers le helper, l'appelle, et le helper renvoie des instructions
+      <span class="mono">OpenNoteDeposit { note_id, token, amount }</span> pour ce qui doit être recrédité en notes privées.
+      L'événement <span class="mono">ExternalContractInvoked</span> expose l'adresse cible et le sélecteur, mais pas le calldata.
+      Packages de référence : Ekubo swap, Vesu lending.
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>11 / 24</span></div>
+</div>
+
+<!-- ==================== 12 : P01 — CORRECTIONS FICHE ==================== -->
+<div class="page">
+  <span class="secnum">02</span>
+  <h2 style="margin-top:0;">PROTOCOL 01 &middot; CORRECTIONS</h2>
+  <p class="lead">Cette section corrige la fiche technique du brief là où le code dit autre chose. C'est plus important que de la confirmer.</p>
+
+  <table>
+    <tr><th style="width:26%;">Élément</th><th style="width:24%;">Brief PDF</th><th style="width:34%;">Code</th><th style="width:16%;">Verdict</th></tr>
+    <tr><td>Hash Merkle / Fiat-Shamir</td><td class="dim">Blake3-256</td><td class="cyan bold">SHA-256</td><td class="red">à corriger</td></tr>
+    <tr><td>Requêtes</td><td class="dim">32</td><td class="cyan bold">27</td><td class="red">à corriger</td></tr>
+    <tr><td>Grinding</td><td class="dim">aucun</td><td class="cyan bold">16 bits</td><td class="red">à corriger</td></tr>
+    <tr><td>Folding FRI</td><td class="dim">8</td><td class="cyan bold">2</td><td class="red">à corriger</td></tr>
+    <tr><td>Soundness</td><td class="dim">128 bits</td><td class="cyan bold">124 bits (27q) / 104 bits (22q)</td><td class="red">à corriger</td></tr>
+    <tr><td>Taille de preuve</td><td class="dim">60&ndash;120 KB</td><td class="cyan bold">80 KB (C0) à 144 KB (C4)</td><td class="yellow">à élargir</td></tr>
+    <tr><td>Vérification ~1,1M CU</td><td class="dim">&mdash;</td><td class="yellow bold">aucune mesure committée</td><td class="yellow">à nuancer</td></tr>
+    <tr><td>Blowup</td><td>16</td><td>16</td><td class="cyan">OK</td></tr>
+    <tr><td>Corps Goldilocks</td><td>2<sup>64</sup>&minus;2<sup>32</sup>+1</td><td>confirmé des deux côtés</td><td class="cyan">OK</td></tr>
+    <tr><td>Trusted setup</td><td>aucun</td><td>aucun, grep exhaustif</td><td class="cyan">OK</td></tr>
+    <tr><td>Deux phases FRI puis DEEP-ALI</td><td>oui</td><td>oui</td><td class="cyan">OK</td></tr>
+    <tr><td>145 chunks pour un shield</td><td>oui</td><td>145 tx de 1000 B</td><td class="cyan">OK</td></tr>
+  </table>
+
+  <div class="card card-red no-break">
+    <h3 style="margin-top:0; color:var(--red);">Pourquoi les paramètres du brief sont ceux d'un fichier mort</h3>
+    <p class="small" style="margin-bottom:6px;">
+      <span class="mono">stark/src/prover.rs:45-54</span> construit bien un
+      <span class="mono xs">ProofOptions::new(32, 16, 0, FieldExtension::None, 8, 31)</span> avec un commentaire « 128-bit security ».
+      Mais <span class="red bold">rien dans le pipeline on-chain ne lit ce fichier.</span> Le format réellement vérifié sur Solana
+      est un protocole écrit à la main dans <span class="mono">stark/src/compact.rs</span>, qui n'importe de winterfell que
+      <span class="mono">BaseElement</span> et <span class="mono">FieldElement</span>. Le programme on-chain n'a
+      <span class="bold">aucune</span> dépendance winterfell.
+    </p>
+    <div class="code-block" style="border-left-color:var(--red); margin-bottom:4px;">const BLOWUP: usize = 16;
+// Soundness: NUM_QUERIES × log2(BLOWUP) + grinding ≈ bits of security.
+// 27 × 4 + 16 = 124 bits &gt; 100-bit target. Classical soundness.
+const NUM_QUERIES: usize = 27;
+const GRINDING_BITS: u32 = 16;</div>
+    <span class="src">stark/src/compact.rs:29-38 &mdash; C3, C5 et C6 utilisent 22 requêtes, soit 104 bits</span>
+  </div>
+
+  <div class="card card-yellow">
+    <h4 style="margin-top:0; color:var(--yellow);">Pourquoi SHA-256 et pas Blake3</h4>
+    <p class="xs muted" style="margin:0;">
+      Documenté dans <span class="mono">stark/Cargo.toml</span> : le syscall <span class="mono">sol_blake3</span> est derrière
+      un feature runtime inactif sur devnet et mainnet, donc un Blake3 logiciel coûtait ~15k CU par hash et faisait exploser
+      le budget. <span class="mono">sol_sha256</span> coûte ~85 CU par appel. Blake3 n'apparaît plus que dans le chemin legacy mort.
+      Trois commentaires périmés dans <span class="mono">compact.rs</span> et <span class="mono">merkle.rs</span> disent encore
+      Blake3 alors que le code appelle sha256.
+    </p>
+  </div>
+
+  <div class="card">
+    <h4 style="margin-top:0;">Nuance à assumer si on te pousse</h4>
+    <p class="xs muted" style="margin:0;">
+      La formule <span class="mono">queries × log2(blowup) + grinding</span> est l'heuristique naïve, sans décote de proximity gaps.
+      Et le point OOD <span class="mono">z</span> est échantillonné dans le <span class="bold">corps de base</span> (~2<sup>64</sup>),
+      pas dans une extension : le terme Schwartz-Zippel est donc bien en dessous de 124 bits. Le code ne distingue nulle part
+      soundness conjecturée et prouvée. Eux le font explicitement (« 96 bits of <span class="bold">conjectured</span> soundness »).
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>12 / 24</span></div>
+</div>
+
+<!-- ==================== 13 : P01 — LES 7 CIRCUITS ==================== -->
+<div class="page">
+  <span class="secnum">02</span>
+  <h2 style="margin-top:0;">PROTOCOL 01 &middot; LES 7 CIRCUITS</h2>
+  <p class="lead">Source : <span class="mono" style="font-size:9pt;">compact_proof.rs:50-166</span>, la structure <span class="mono" style="font-size:9pt;">CircuitConfig</span> que le parseur on-chain utilise comme autorité.</p>
+
+  <table class="tight">
+    <tr><th>id</th><th>Nom</th><th>Larg.</th><th>Long.</th><th>LDE</th><th>Prof.</th><th>Req.</th><th>Contr.</th><th>Taille preuve</th></tr>
+    <tr><td class="mono cyan">0</td><td>subscriber_ownership</td><td>3</td><td>32</td><td>512</td><td>9</td><td>27</td><td>3</td><td class="mono">79 993 B</td></tr>
+    <tr><td class="mono cyan">1</td><td>denominated_pool</td><td>3</td><td>128</td><td>2048</td><td>11</td><td>27</td><td>4</td><td class="mono">120 665 B</td></tr>
+    <tr><td class="mono cyan">2</td><td>balance_proof</td><td>4</td><td>128</td><td>2048</td><td>11</td><td>27</td><td>7</td><td class="mono">121 113 B</td></tr>
+    <tr><td class="mono cyan">3</td><td>merkle_path</td><td>6</td><td>512</td><td>8192</td><td>13</td><td>22</td><td>11</td><td class="mono">138 293 B</td></tr>
+    <tr><td class="mono cyan">4</td><td>confidential_balance</td><td>4</td><td>256</td><td>4096</td><td>12</td><td>27</td><td>10</td><td class="mono yellow">144 041 B</td></tr>
+    <tr><td class="mono cyan">5</td><td>transfer</td><td class="pink bold">7</td><td>512</td><td>8192</td><td>13</td><td>22</td><td class="pink bold">28</td><td class="mono">138 661 B</td></tr>
+    <tr><td class="mono cyan">6</td><td>merkle_update</td><td>10</td><td>512</td><td>8192</td><td>13</td><td>22</td><td>19</td><td class="mono">139 765 B</td></tr>
+  </table>
+
+  <div class="card card-red">
+    <h4 style="margin-top:0; color:var(--red);">Correction trouvée dans le code lui-même</h4>
+    <p class="xs muted" style="margin:0;">
+      <span class="mono">lib.rs:229</span> dit « 10-23 contraintes selon le circuit », et le test dit « C5, width=6, 23 contraintes ».
+      Les deux sont faux. C5 fait <span class="red bold">28 contraintes et une largeur de 7</span> &mdash; la colonne d'accumulateur
+      de conservation de valeur a été ajoutée. Les tableaux RLC du vérificateur le confirment : <span class="mono">[Felt::ZERO; 28]</span>.
+    </p>
+  </div>
+
+  <h3>Ce que chaque circuit prouve</h3>
+  <table class="tight">
+    <tr><th style="width:8%;">id</th><th>Énoncé</th></tr>
+    <tr><td class="mono cyan">C0</td><td>Poseidon(secret) == commitment</td></tr>
+    <tr><td class="mono cyan">C1</td><td>nullifier = Poseidon(np, secret) ; epoch_hash = Poseidon(epoch, mint) ; commitment = Poseidon(nullifier, epoch_hash)</td></tr>
+    <tr><td class="mono cyan">C2</td><td>chaîne de 4 Poseidon pour un commitment de balance. <span class="yellow">Le range check n'est PAS dans l'AIR</span>, il est fait on-chain</td></tr>
+    <tr><td class="mono cyan">C3</td><td>inclusion Merkle par Poseidon hash2 par niveau, profondeur canonique 15</td></tr>
+    <tr><td class="mono cyan">C4</td><td>mise à jour de balance confidentielle, 7 Poseidon chaînés. <span class="yellow">Conservation appliquée on-chain, pas dans l'AIR</span></td></tr>
+    <tr><td class="mono cyan">C5</td><td>transfert shielded 2-in-2-out, 14 Poseidon chaînés + colonne d'accumulateur de conservation</td></tr>
+    <tr><td class="mono cyan">C6</td><td>remplacement de feuille old_root &rarr; new_root avec témoins de chemin partagés</td></tr>
+  </table>
+
+  <div class="card card-yellow no-break">
+    <h3 style="margin-top:0; color:var(--yellow);">Compute units : ce qu'on peut réellement affirmer</h3>
+    <p class="small" style="margin-bottom:6px;">
+      Il n'y a <span class="yellow bold">aucune mesure de CU committée</span> dans le dépôt. Les seules assertions sont
+      <span class="mono xs">expect(cu).to.be.lessThan(1_400_000)</span> sur les deux phases de C5, avec les valeurs réelles
+      imprimées à l'exécution et jamais enregistrées. Tout chiffre du type « 1,1M CU » vient d'une note de mémoire, pas du code.
+    </p>
+    <p class="small" style="margin-bottom:6px;">
+      Ce qui est solidement démontrable en revanche : deux signatures devnet sont citées <span class="bold">dans le code</span>
+      comme ayant consommé le budget complet de 1,4M à l'étape 4, ce qui a forcé le découpage en deux phases.
+    </p>
+    <p class="small muted" style="margin:0;">
+      <span class="bold">Formulation sûre :</span> « les deux phases passent sous le plafond de 1,4M, c'est asserté en test ;
+      le chiffre exact n'est pas figé dans le dépôt et je ne vais pas l'inventer ».
+    </p>
+  </div>
+
+  <div class="card">
+    <h4 style="margin-top:0;">Nomenclature à corriger</h4>
+    <p class="xs muted" style="margin:0;">
+      Le dépôt appelle partout 1,4M le « plafond par instruction ». Sur Solana, 1 400 000 est
+      <span class="mono">MAX_COMPUTE_UNIT_LIMIT</span>, un plafond <span class="cyan bold">par transaction</span>.
+      Le découpage marche parce qu'il met les deux appels lourds dans <span class="bold">deux transactions séparées</span>,
+      et c'est exactement ce que fait le code mobile.
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>13 / 24</span></div>
+</div>
+
+<!-- ==================== 14 : P01 — POOL & SPECTER ==================== -->
+<div class="page">
+  <span class="secnum">02</span>
+  <h2 style="margin-top:0;">PROTOCOL 01 &middot; POOL &amp; SPECTER</h2>
+
+  <h3>Le pool</h3>
+  <div class="kv card" style="padding:11px 13px;">
+    <div class="k">Seed PDA</div><div><span class="mono cyan">denominated_pool_v4</span></div>
+    <div class="k">Profondeur d'arbre</div><div>15 &mdash; 2<sup>15</sup> = 32 768 notes par pool, doit égaler <span class="mono">CANONICAL_DEPTH</span> du circuit C6</div>
+    <div class="k">Racines historiques</div><div>100</div>
+    <div class="k">Dénominations</div><div>SOL : 0.1, 1, 10, 100, 500, 1000 &nbsp;&middot;&nbsp; USDC : 1, 10, 100, 1000, 10k, 20k, 50k</div>
+    <div class="k">Commitment</div><div><span class="mono xs">Poseidon(nullifier, epoch_hash)</span>, avec <span class="mono xs">nullifier = Poseidon(np, secret)</span> et <span class="mono xs">epoch_hash = Poseidon(epoch, mint)</span></div>
+    <div class="k">Hash de l'arbre</div><div>Poseidon Goldilocks t=3, 30 rounds pleins, S-box x<sup>7</sup>, MDS circulante [[3,1,1],[1,3,1],[1,1,3]] &mdash; <span class="bold">différent</span> du SHA-256 des commitments de la preuve, distinction correcte et voulue</div>
+    <div class="k">Vérificateur</div><div><span class="mono xs">DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs</span></div>
+  </div>
+
+  <div class="card card-red no-break">
+    <h3 style="margin-top:0; color:var(--red);">La correction de pitch la plus importante</h3>
+    <p class="small" style="margin-bottom:6px;">
+      <span class="red bold">« Aucune courbe elliptique dans la découverte du destinataire » est faux.</span>
+      Une multiplication scalaire X25519 s'exécute des <span class="bold">deux côtés de chaque opération</span> de découverte.
+    </p>
+    <div class="code-block" style="border-left-color:var(--red); margin-bottom:4px;">export function deriveSharedSecret(privateKey, publicKey) {
+  return nacl.scalarMult(privateKey, publicKey);   // X25519
+}</div>
+    <span class="src">utils/crypto.ts:41-46 &mdash; appelée en derive.ts:49-52, 142, 195 et scan.ts:124</span>
+    <p class="small" style="margin-bottom:6px;">
+      Ce qui est vrai et défendable, c'est que le combineur est <span class="cyan bold">OR-sûr</span> :
+      la confidentialité de la découverte survit à une casse totale de X25519.
+      Le code le dit : « Security holds if EITHER the classical or post-quantum scheme is secure. »
+    </p>
+    <div class="quote" style="border-left-color:var(--cyan); margin:0;">
+      Formulation de remplacement : la découverte du destinataire est résistante au quantique. Le secret partagé ne peut pas
+      être reconstitué sans la clé secrète ML-KEM-768, même par un adversaire qui casse X25519.
+    </div>
+  </div>
+
+  <h3>Le protocole exact, côté émetteur</h3>
+  <div class="code-block">r         = keypair X25519 éphémère
+s_c       = X25519(r, V)
+(ct, s_q) = ML-KEM-768.Encaps(K)
+s         = HKDF-SHA256(ikm = s_c||s_q, info = "p01-hybrid-stealth-v2" || SHA256(R||ct), L=32)
+viewTag   = SHA256(s)[0]
+seed      = HKDF-SHA256(ikm = s, salt = spendingPubKey, info = "p01-stealth-seed", L=32)
+stealth   = Ed25519_keygen_from_seed(seed)</div>
+
+  <div class="card card-cyan">
+    <h4 style="margin-top:0;">Ce qui te distingue d'ERC-5564 et de Monero</h4>
+    <p class="xs muted" style="margin:0;">
+      Il n'y a <span class="bold">aucune addition de points de courbe</span> dans la dérivation. L'adresse furtive est une clé
+      Ed25519 fraîche issue d'un seed HKDF ; la clé de dépense publique du destinataire ne sert que de sel HKDF.
+      Conséquence à assumer : la clé de dépense n'est pas requise pour dépenser &mdash; clé de vue + secret KEM suffisent
+      à reconstruire la clé privée.
+    </p>
+  </div>
+
+  <div class="kv card" style="padding:11px 13px;">
+    <div class="k">Primitives</div><div>ML-KEM-768 de <span class="mono">@noble/post-quantum</span> ^0.6.1 &mdash; pk 1184 B, sk 2400 B, ct 1088 B, secret 32 B</div>
+    <div class="k">Meta-adresse v2</div><div>1249 octets bruts en base58, ~1700 caractères &mdash; contrainte UX réelle, pas de forme courte dans le code</div>
+    <div class="k">Transport</div><div>PDA <span class="mono">StealthAccountV2</span>, 1220 B, <span class="mono">KEM_CHUNK_SIZE = 544</span> donc 1088 = exactement 2 chunks, soit <span class="bold">3 transactions</span> par envoi</div>
+    <div class="k">Programme</div><div><span class="mono xs">FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL</span></div>
+    <div class="k">SDK</div><div><span class="mono">@protocol-01/specter-sdk@0.4.1</span>, npm public, publié le 17/07/2026 à 12:17 UTC, 3 min après le commit du transport chunké</div>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>14 / 24</span></div>
+</div>
+
+<!-- ==================== 15 : P01 — FAIBLESSES SPECTER ==================== -->
+<div class="page">
+  <span class="secnum">02</span>
+  <h2 style="margin-top:0;">PROTOCOL 01 &middot; FAIBLESSES CONNUES</h2>
+  <p class="lead">Les dire avant qu'on te les demande, c'est ce qui crédibilise le plus. Liste réelle, établie sur le code.</p>
+
+  <div class="card card-red no-break">
+    <h3 style="margin-top:0; color:var(--red);">Le view tag ne filtre rien</h3>
+    <p class="small" style="margin-bottom:5px;">
+      <span class="mono">checkViewTag</span> calcule le tag depuis le secret <span class="bold">hybride</span>, donc il exécute une
+      décapsulation ML-KEM-768 complète plus un scalarmult X25519 <span class="bold">avant</span> de pouvoir rejeter.
+    </p>
+    <p class="xs muted" style="margin:0;">
+      Le commentaire on-chain qui dit que le tag « évite la décapsulation coûteuse » (<span class="mono">state/stealth.rs:134-137</span>,
+      avec un taux de rejet annoncé de 99,6 %) contredit directement l'implémentation cliente <span class="mono">scan.ts:124-138</span>.
+    </p>
+  </div>
+
+  <div class="grid-2">
+    <div class="card card-yellow">
+      <h4 style="margin-top:0; color:var(--yellow);">Travail fait deux fois</h4>
+      <p class="xs muted" style="margin:0;">
+        Après le passage du view tag, <span class="mono">verifyStealthOwnership</span> refait à l'identique le scalarmult,
+        la décapsulation et le HKDF. Rien n'est mémoïsé.
+      </p>
+    </div>
+    <div class="card card-yellow">
+      <h4 style="margin-top:0; color:var(--yellow);">Bande passante non bornée</h4>
+      <p class="xs muted" style="margin:0;">
+        <span class="mono">fetchAnnouncements</span> ignore son intervalle de slots (paramètres <span class="mono">_fromSlot</span>,
+        <span class="mono">_toSlot</span>) et <span class="mono">getProgramAccounts</span> télécharge <span class="bold">toutes</span>
+        les annonces de 1220 B jamais créées, puis tronque côté client. Pas de <span class="mono">dataSlice</span>, pas de pagination.
+      </p>
+    </div>
+    <div class="card card-red">
+      <h4 style="margin-top:0; color:var(--red);">Pas de flag de complétude</h4>
+      <p class="xs muted" style="margin:0;">
+        <span class="mono">init_stealth_v2</span> remplit le ciphertext de zéros et rien n'impose que les deux chunks soient écrits.
+        Un PDA à moitié écrit est indistinguable pour le scanner.
+      </p>
+    </div>
+    <div class="card card-red">
+      <h4 style="margin-top:0; color:var(--red);">3 transactions non atomiques</h4>
+      <p class="xs muted" style="margin:0;">
+        tx1 crée le PDA <span class="bold">et</span> transfère les fonds, avant l'écriture des chunks. Si un chunk échoue,
+        l'argent est à une adresse furtive dont le ciphertext est incomplet, donc introuvable par le destinataire.
+      </p>
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0;">Émetteur identifiable</h4>
+      <p class="xs muted" style="margin:0;">
+        Le PDA est dérivé de la vraie pubkey de l'émetteur (<span class="mono xs">seeds = ["stealth_v2", sender, stealthAddress]</span>),
+        donc chaque annonce lui est publiquement attribuable, indépendamment du signataire de la transaction.
+      </p>
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0;">Dépense non PQ</h4>
+      <p class="xs muted" style="margin:0;">
+        L'adresse furtive est Ed25519, donc dépensable par une signature classique. La découverte est PQ, la dépense ne l'est pas.
+        Le SDK le documente honnêtement et livre un module WOTS+, mais le vérificateur on-chain qui imposerait la seconde
+        signature <span class="bold">n'existe pas</span>.
+      </p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4 style="margin-top:0;">Le reste, en bref</h4>
+    <ul class="xs muted" style="margin:4px 0 0; padding-left:14px;">
+      <li><span class="mono">announcement-v2.ts</span> a zéro test et n'est pas exporté de l'API publique</li>
+      <li>Le chemin SPL-token est mort en v2 : <span class="mono">sendSingleTransfer</span> lève dès qu'un <span class="mono">tokenMint</span> est fourni. Toute la couche PQ est <span class="bold">native-SOL uniquement</span></li>
+      <li><span class="mono">constants.ts</span> annonce un program id mainnet-beta qui n'est pas le <span class="mono">declare_id</span> du programme actuel</li>
+      <li>Les discriminateurs Anchor sont recalculés côté client depuis <span class="mono">sha256('global:&lt;name&gt;')</span> plutôt que lus d'un IDL &mdash; casse silencieuse si un nom d'instruction change</li>
+      <li>Aucun test de parité entre <span class="mono">boundary_assertions_for_circuit</span> (prover) et <span class="mono">get_boundary_assertions</span> (vérificateur), contrairement aux constantes périodiques qui, elles, sont couvertes par 7 tests</li>
+      <li>Marge de <span class="bold">959 octets seulement</span> entre C4 (144 041 B) et <span class="mono">UNIFORM_PROOF_SIZE</span> (145 000 B)</li>
+    </ul>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>15 / 24</span></div>
+</div>
+
+<!-- ==================== 16 : DIFF 1 ==================== -->
+<div class="page">
+  <span class="secnum">03</span>
+  <h2 style="margin-top:0;">DIFF &middot; PREUVE ET CONTRAINTES</h2>
+
+  <h3>3.1 Système de preuve et corps</h3>
+  <table class="tight">
+    <tr><th style="width:26%;"></th><th style="width:37%;">STRK20</th><th style="width:37%;">Protocol 01</th></tr>
+    <tr><td class="muted">Système</td><td>Stwo, Circle STARK</td><td>Winterfell 0.10.3 comme lib de corps + protocole compact écrit main</td></tr>
+    <tr><td class="muted">Corps</td><td>M31, p = 2<sup>31</sup>&minus;1, tour CM31/QM31</td><td>Goldilocks, p = 2<sup>64</sup>&minus;2<sup>32</sup>+1, <span class="yellow">pas d'extension</span></td></tr>
+    <tr><td class="muted">Astuce structurelle</td><td>courbe circulaire, ordre p+1 = 2<sup>31</sup></td><td>sous-groupe lisse natif</td></tr>
+    <tr><td class="muted">Hash de commitment</td><td>Blake2s-256 (défaut), Poseidon252 (option L1)</td><td>SHA-256 (contrainte de syscall Solana)</td></tr>
+    <tr><td class="muted">Merkle</td><td>« lifté » (n&oelig;ud = enfants + colonnes)</td><td>standard</td></tr>
+    <tr><td class="muted">Blowup</td><td>2</td><td>16</td></tr>
+    <tr><td class="muted">Requêtes</td><td>70</td><td>27 ou 22</td></tr>
+    <tr><td class="muted">Grinding</td><td>26 bits + PoW d'interaction</td><td>16 bits</td></tr>
+    <tr><td class="muted">Soundness annoncée</td><td class="yellow">96 bits conjecturés</td><td class="yellow">124 / 104 bits, classique, formule naïve</td></tr>
+    <tr><td class="muted">Point OOD</td><td>QM31 (extension quartique)</td><td class="yellow">corps de base ~2<sup>64</sup></td></tr>
+    <tr><td class="muted">Trusted setup</td><td class="cyan">aucun</td><td class="cyan">aucun</td></tr>
+    <tr><td class="muted">Zero-knowledge</td><td class="red">pas ZK par défaut</td><td class="red">pas de masquage ZK non plus</td></tr>
+  </table>
+
+  <div class="card card-yellow">
+    <h4 style="margin-top:0; color:var(--yellow);">Honnêteté dans les deux sens</h4>
+    <p class="xs muted" style="margin:0;">
+      Eux ont un blowup de 2 avec 70 requêtes, ce qui n'atteint 96 bits que sous l'hypothèse conjecturale de list-decoding.
+      Toi tu as un blowup de 16, plus conservateur par requête, mais tu échantillonnes le point OOD dans le corps de base au lieu
+      d'une extension, ce qui plafonne le terme Schwartz-Zippel bien plus bas que ta figure annoncée.
+      <span class="yellow bold">Aucun des deux ne devrait clamer un chiffre nu sans dire quel régime.</span>
+    </p>
+  </div>
+
+  <h3>3.2 Modèle d'écriture des contraintes</h3>
+  <p class="small">
+    C'est la différence structurante. Eux : une AIR de CPU fixe, le programme est de la donnée, écrire une fonctionnalité privacy
+    = écrire du Cairo. Toi : une AIR par circuit, écrite à la main. <span class="bold">Et le brief sous-estime le coût.</span>
+  </p>
+
+  <div class="card card-red no-break">
+    <h4 style="margin-top:0; color:var(--red);">Changer UNE contrainte de transition = 4 sites manuels + 1 table générée</h4>
+    <ol class="small" style="margin:5px 0 0; padding-left:16px;">
+      <li>l'AIR &mdash; <span class="mono xs">evaluate_&lt;circuit&gt;_transition</span>, plus la liste <span class="mono xs">TransitionConstraintDegree</span> et les colonnes périodiques</li>
+      <li>le quotient prover &mdash; <span class="mono xs">compute_quotient_lde_circuit_N</span> dans <span class="mono xs">compact.rs</span></li>
+      <li>l'évaluateur OOD du vérificateur &mdash; <span class="mono xs">evaluate_transition_at_ood_circuit_N</span></li>
+      <li><span class="red bold">la re-vérification par requête</span> &mdash; <span class="mono xs">verify_constraints_&lt;circuit&gt;</span>, copie manuelle séparée de la même logique</li>
+      <li>les coefficients périodiques <span class="mono xs">CN_*_COEFFS</span> dans <span class="mono xs">periodic_consts.rs</span> (666 KB générés)</li>
+    </ol>
+    <p class="xs muted" style="margin:6px 0 0;">
+      Une contrainte de <span class="bold">boundary</span> ajoute encore deux sites miroir, <span class="red bold">sans aucun test
+      de cohérence croisée</span>. Le seul garde-fou automatisé existant porte sur les constantes périodiques : 7 tests
+      <span class="mono xs">circuit_N_periodic_coeffs_match_verifier_constants</span>.
+    </p>
+  </div>
+
+  <div class="quote">
+    Formulation juste devant un ingénieur StarkWare : chez moi une contrainte vit dans quatre implémentations manuelles
+    synchronisées, dont deux ne sont couvertes par aucun test de parité. C'est ma dette principale, et c'est exactement
+    ce que le modèle Cairo supprime.
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>16 / 24</span></div>
+</div>
+
+<!-- ==================== 17 : DIFF 2 ==================== -->
+<div class="page">
+  <span class="secnum">03</span>
+  <h2 style="margin-top:0;">DIFF &middot; VÉRIFICATION ET TRANSPORT</h2>
+
+  <h3>3.3 Lieu et coût de vérification</h3>
+  <table class="tight">
+    <tr><th style="width:22%;"></th><th style="width:39%;">STRK20</th><th style="width:39%;">Protocol 01</th></tr>
+    <tr><td class="muted">Vérificateur</td><td>S-two en Rust dans le gateway / séquenceur</td><td>programme Solana on-chain</td></tr>
+    <tr><td class="muted">Plafond de calcul</td><td>aucun ; contrainte <span class="bold">économique</span> (125 L2gas/octet + 5 de stockage + 10M de buffer)</td><td class="yellow"><span class="bold">1,4M CU par transaction</span>, dur</td></tr>
+    <tr><td class="muted">Découpage</td><td>aucun</td><td>deux transactions (phase 1 puis DEEP-ALI)</td></tr>
+    <tr><td class="muted">Sécurité héritée</td><td class="red">dégradée : vérifié par le consensus, pas par le SNOS</td><td class="cyan">Solana pleine, tous les validateurs</td></tr>
+    <tr><td class="muted">Rôle du contrat</td><td>lit seulement <span class="mono">proof_facts</span> via syscall</td><td>parse la preuve entière</td></tr>
+  </table>
+
+  <div class="card card-cyan no-break">
+    <h4 style="margin-top:0;">L'arbitrage, et pourquoi tu n'es pas en position de faiblesse</h4>
+    <p class="small" style="margin-bottom:6px;">
+      Eux n'ont pas de plafond de calcul <span class="bold">parce qu'ils ont sorti la vérification de la couche contrat</span>,
+      et StarkWare écrit que ça dégrade la sécurité en phase 1. Toi tu paies 1,4M CU
+      <span class="bold">parce que ta preuve est vérifiée par la chaîne elle-même</span>, sans confiance additionnelle.
+    </p>
+    <div class="quote" style="border-left-color:var(--cyan); margin:0;">
+      À dire tel quel si on te compare : chez eux la preuve est vérifiée par le séquenceur, pas par le contrat, et ils documentent
+      que la sécurité est dégradée en phase 1 en attendant la récursion dans le SNOS. Chez moi elle est vérifiée on-chain par tous
+      les validateurs, et je paie ça en compute units. Ce sont deux positions différentes sur le même arbitrage, pas une supériorité.
+    </div>
+  </div>
+
+  <h3>3.4 Transport de la preuve</h3>
+  <table class="tight">
+    <tr><th style="width:22%;"></th><th style="width:39%;">STRK20</th><th style="width:39%;">Protocol 01</th></tr>
+    <tr><td class="muted">Taille</td><td>non publiée pour STRK20 ; S-two 808 KB à 1315 KB ; modèle de prix SNIP-36 sur 500 KB</td><td class="cyan">80 KB à 144 KB, paddée à 145 000 B uniformes</td></tr>
+    <tr><td class="muted">Chemin</td><td>champs <span class="mono">proof</span> / <span class="mono">proof_facts</span> d'Invoke V3, hors calldata</td><td>145 tx de chunk de 1000 B dans un PDA, après 14 tx de resize de 10 240 B</td></tr>
+    <tr><td class="muted">Persistance</td><td>pas dans les blocs, pas au feeder gateway, gardée quelques semaines</td><td>PDA, rent immobilisé, fermé après usage</td></tr>
+    <tr><td class="muted">Rent</td><td>aucun</td><td>~0,87 SOL de float transitoire</td></tr>
+  </table>
+
+  <div class="card card-cyan">
+    <h4 style="margin-top:0;">Un point que le brief n'exploite pas</h4>
+    <p class="small" style="margin:0;">
+      <span class="cyan bold">Ta preuve est 5 à 10 fois plus petite que la leur.</span> Goldilocks avec blowup 16 et 22&ndash;27
+      requêtes produit une preuve nettement plus compacte que M31 avec blowup 2 et 70 requêtes. Leur coût de transport est absorbé
+      par le protocole, le tien par 159 transactions. C'est un vrai avantage technique, à condition de dire les deux moitiés.
+    </p>
+  </div>
+
+  <div class="card">
+    <h4 style="margin-top:0;">Pourquoi 145 000 octets uniformes</h4>
+    <p class="xs muted" style="margin:0;">
+      <span class="mono">UNIFORM_PROOF_SIZE</span> est défini <span class="bold">côté client</span> dans le service STARK mobile,
+      pas en Rust. Il ferme deux fuites : L14 (fingerprint par taille de preuve) et, couplé au PDA à nonce
+      d'<span class="mono">init_proof_buffer_v2</span>, L13 (circuit_id). Marge réelle au-dessus de C4 : 959 octets.
+      C'est tendu, et il faut le savoir avant qu'on te le demande.
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>17 / 24</span></div>
+</div>
+
+<!-- ==================== 18 : DIFF 3 ==================== -->
+<div class="page">
+  <span class="secnum">03</span>
+  <h2 style="margin-top:0;">DIFF &middot; NOTES, ARBRE, NULLIFIERS</h2>
+
+  <h3>3.5 Modèle de note</h3>
+  <table class="tight">
+    <tr><th style="width:20%;"></th><th style="width:40%;">STRK20</th><th style="width:40%;">Protocol 01</th></tr>
+    <tr><td class="muted">Structure</td><td><span class="mono xs">{ packed_value: felt252, token: ContractAddress }</span></td><td>commitment Poseidon</td></tr>
+    <tr><td class="muted">Identité</td><td class="bold">adresse de stockage</td><td class="bold">feuille dans un arbre de Merkle</td></tr>
+    <tr><td class="muted">Montant</td><td>masqué par hash-and-add, salt 120 bits</td><td>la dénomination du pool, pas une entrée de circuit</td></tr>
+    <tr><td class="muted">Anonymat</td><td>pseudo-aléatoire des slots</td><td>ensemble d'anonymat de l'arbre</td></tr>
+    <tr><td class="muted">Multi-actifs</td><td class="cyan">un pool pour tous les ERC-20</td><td class="yellow">un pool par (token, dénomination) &mdash; 6 SOL + 7 USDC</td></tr>
+    <tr><td class="muted">Conservation</td><td>registre de balance temporaire on-chain</td><td>dénomination + accumulateur C5</td></tr>
+  </table>
+
+  <div class="card card-pink no-break">
+    <h4 style="margin-top:0; color:var(--pink);">Le c&oelig;ur de la conversation technique</h4>
+    <p class="small" style="margin-bottom:6px;">
+      Tes pools dénommés sont sûrs par construction sur la valeur, mais fragmentent l'ensemble d'anonymat en 13 pools.
+      Eux ont un ensemble unifié, mais <span class="bold">remplacent l'anonymat d'ensemble par du pseudo-aléatoire d'adresse</span> :
+      la confidentialité tient tant que le <span class="mono">channel_key</span> reste secret, et la clé de vue qui le régénère
+      est chiffrée on-chain avec de l'ECDH sur courbe.
+    </p>
+    <p class="small" style="margin:0;">
+      <span class="pink bold">C'est exactement là que ton argument PQ mord, et c'est plus fort que sur un modèle à Merkle :
+      chez eux, casser la courbe ne révèle pas seulement qui a reçu, ça révèle où sont les notes</span>, parce que l'adressage
+      lui-même dérive du secret.
+    </p>
+  </div>
+
+  <h3>3.6 Accumulateur</h3>
+  <div class="grid-2">
+    <div class="card">
+      <div class="mono xs cyan">STRK20</div>
+      <p class="xs muted" style="margin:4px 0 0;">
+        Aucun. L'équivalent fonctionnel de ta fenêtre de racines historiques est la fenêtre de validité de preuve
+        (450 blocs, ~15 min) ancrée à un bloc de base, plus la maturation de 10 blocs.
+      </p>
+    </div>
+    <div class="card">
+      <div class="mono xs cyan">PROTOCOL 01</div>
+      <p class="xs muted" style="margin:4px 0 0;">
+        Arbre de Merkle Poseidon-Goldilocks de profondeur 15 (32 768 notes par pool), 100 racines historiques,
+        maintien des sous-arbres on-chain via C6.
+      </p>
+    </div>
+  </div>
+  <p class="xs muted">
+    Ce n'est pas le même mécanisme : le tien résout la concurrence sur l'état de l'arbre, le leur la fraîcheur de l'exécution virtuelle.
+  </p>
+
+  <h3>3.7 Nullifiers</h3>
+  <table class="tight">
+    <tr><th style="width:20%;"></th><th style="width:40%;">STRK20</th><th style="width:40%;">Protocol 01</th></tr>
+    <tr><td class="muted">Formule</td><td><span class="mono xs">Poseidon(NULLIFIER_TAG, channel_key, token, index, 0, owner_private_key)</span></td><td><span class="mono xs">Poseidon(nullifier_preimage, secret)</span></td></tr>
+    <tr><td class="muted">Stockage</td><td><span class="mono">Map&lt;felt252, bool&gt;</span> WriteOnce</td><td>PDA</td></tr>
+    <tr><td class="muted">Propriété notable</td><td class="cyan">l'émetteur ne peut pas le calculer, donc ne peut pas surveiller la dépense</td><td class="dim">&mdash;</td></tr>
+  </table>
+
+  <div class="card card-cyan">
+    <h4 style="margin-top:0;">Un point où ils sont devant, à concéder</h4>
+    <p class="xs muted" style="margin:0;">
+      Leur asymétrie émetteur / destinataire est élégante et tu ne l'as pas. Le concéder spontanément vaut mieux que
+      de se le faire pointer.
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>18 / 24</span></div>
+</div>
+
+<!-- ==================== 19 : DIFF 4 — DÉCOUVERTE ==================== -->
+<div class="page">
+  <span class="secnum">03</span>
+  <h2 style="margin-top:0;">DIFF &middot; DÉCOUVERTE DU DESTINATAIRE</h2>
+  <p class="lead">L'axe central. C'est là que se joue le projet, et le résultat est bidirectionnel.</p>
+
+  <table>
+    <tr><th style="width:20%;"></th><th style="width:40%;">STRK20</th><th style="width:40%;">Protocol 01 (Specter)</th></tr>
+    <tr><td class="muted">Mécanisme</td><td>seau par destinataire, indexé par <span class="bold">adresse Starknet en clair</span></td><td><span class="bold">adresse furtive</span> dérivée, annonce publique</td></tr>
+    <tr><td class="muted">Pré-requis</td><td class="red">destinataire enregistré on-chain avec clé de vue publique</td><td class="cyan">aucun &mdash; le destinataire n'a rien à faire avant</td></tr>
+    <tr><td class="muted">Coût de scan</td><td class="cyan">proportionnel à ta propre activité</td><td class="red">proportionnel au volume total du pool</td></tr>
+    <tr><td class="muted">Filtre rapide</td><td>pas nécessaire (seau déjà filtré)</td><td class="yellow">view tag 1 octet, mais il ne filtre rien</td></tr>
+    <tr><td class="muted">Crypto</td><td>ECDH courbe STARK + Poseidon</td><td class="cyan">hybride X25519 + ML-KEM-768, OR-sûr</td></tr>
+    <tr><td class="muted">Résistance quantique</td><td class="red">non</td><td class="cyan">oui pour la découverte, non pour la dépense</td></tr>
+    <tr><td class="muted">Fuite</td><td>adresse du destinataire visible à l'ouverture de canal</td><td>émetteur identifiable via les seeds du PDA</td></tr>
+    <tr><td class="muted">Ciphertext</td><td>felt252 dans le stockage</td><td>1088 B en 2 chunks dans un PDA</td></tr>
+  </table>
+
+  <div class="card card-yellow no-break">
+    <h3 style="margin-top:0; color:var(--yellow);">Lecture honnête</h3>
+    <p class="small" style="margin:0;">
+      <span class="yellow bold">Ils gagnent sur la scalabilité du scan. Tu gagnes sur la résistance quantique et sur le fait
+      qu'un destinataire non enregistré peut recevoir.</span><br><br>
+      Leur modèle a un défaut structurel que le tien n'a pas : il faut connaître et publier l'adresse du destinataire,
+      et l'ouverture de canal la révèle. Le tien a un défaut qu'ils n'ont pas : tu télécharges tout le pool à chaque scan.
+    </p>
+  </div>
+
+  <div class="card card-cyan no-break">
+    <h3 style="margin-top:0; color:var(--cyan);">Le vrai insight du croisement</h3>
+    <div class="quote" style="border-left-color:var(--cyan); font-style:normal; color:var(--text); margin-bottom:6px;">
+      Ton architecture d'adresse furtive résout leur problème de liaison à l'ouverture de canal, et leur architecture de seau
+      résout ton problème de coût de scan.
+    </div>
+    <p class="small muted" style="margin:0;">
+      C'est la conversation la plus intéressante que tu puisses avoir aujourd'hui, et elle est bidirectionnelle, pas vendeuse.
+      Un ingénieur StarkWare qui entend ça comprend immédiatement que tu as lu leur code, et la discussion change de registre.
+    </p>
+  </div>
+
+  <div class="card">
+    <h4 style="margin-top:0;">Chiffres de scan, côté Protocol 01</h4>
+    <p class="xs muted" style="margin:0;">
+      Par annonce : 1 scalarmult X25519 + 1 décapsulation ML-KEM-768 + 2 SHA-256 (doublés à 2 + 2 sur un hit de tag),
+      plus 1220 octets de téléchargement RPC sans pagination. <span class="yellow">Aucun benchmark n'existe dans le dépôt</span> :
+      le coût wall-clock pour 1000 annonces sur téléphone n'est pas mesuré. Ne pas avancer de chiffre.
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>19 / 24</span></div>
+</div>
+
+<!-- ==================== 20 : DIFF 5 ==================== -->
+<div class="page">
+  <span class="secnum">03</span>
+  <h2 style="margin-top:0;">DIFF &middot; CHIFFREMENT, COMPTES, MATURITÉ</h2>
+
+  <h3>3.9 Chiffrement des notes</h3>
+  <table class="tight">
+    <tr><th style="width:20%;"></th><th style="width:40%;">STRK20</th><th style="width:40%;">Protocol 01</th></tr>
+    <tr><td class="muted">Schéma</td><td>ECDH courbe STARK, KDF Poseidon, masque additif</td><td>X25519 + ML-KEM-768, HKDF-SHA256</td></tr>
+    <tr><td class="muted">Extensible</td><td class="red">non &mdash; figé dans le contrat, aucun champ de version</td><td class="cyan">oui côté SDK</td></tr>
+    <tr><td class="muted">Versionnage</td><td>suffixe <span class="mono">:V1</span> dans 17 tags Poseidon</td><td>version explicite dans le format d'annonce (1 octet)</td></tr>
+    <tr><td class="muted">Migration</td><td class="red">non documentée ; clés de vue immuables (WriteOnce)</td><td>v1 rejeté par défaut, opt-in pour scan historique</td></tr>
+  </table>
+
+  <h3>3.10 Viewing keys et compliance</h3>
+  <table class="tight">
+    <tr><th style="width:20%;"></th><th style="width:40%;">STRK20</th><th style="width:40%;">Protocol 01</th></tr>
+    <tr><td class="muted">Existence</td><td class="cyan">native, obligatoire pour utiliser le pool</td><td class="red">aucune</td></tr>
+    <tr><td class="muted">Chiffrement de la clé</td><td>ECDH éphémère courbe STARK + masque Poseidon, on-chain, immuable</td><td class="dim">&mdash;</td></tr>
+    <tr><td class="muted">Auditeur</td><td>une seule clé publique ; « seuil » en doc, pas dans le contrat</td><td class="dim">&mdash;</td></tr>
+    <tr><td class="muted">Portée</td><td>historique bidirectionnel complet, traçage avant et arrière</td><td class="dim">&mdash;</td></tr>
+    <tr><td class="muted">Screening</td><td class="cyan">on-chain, signature SNIP-12, non contournable</td><td class="red">aucun</td></tr>
+  </table>
+  <h3>3.11 Modèle de compte</h3>
+  <table class="tight">
+    <tr><th style="width:20%;"></th><th style="width:40%;">STRK20</th><th style="width:40%;">Protocol 01</th></tr>
+    <tr><td class="muted">Base</td><td>abstraction de compte native ; <span class="mono">is_valid_signature</span> réutilisé pour la dépense</td><td>Ed25519 / PDA Solana</td></tr>
+    <tr><td class="muted">Bénéfice</td><td class="cyan">multisig, hardware, smart accounts sans changement de protocole</td><td class="dim">&mdash;</td></tr>
+    <tr><td class="muted">Coût</td><td class="red">compte déployé et finalisé ~10 blocs avant de pouvoir s'enregistrer</td><td class="dim">&mdash;</td></tr>
+    <tr><td class="muted">Adresse dérivée</td><td class="red">ne peut pas recevoir sans enregistrement préalable</td><td class="cyan">adresse furtive reçoit directement</td></tr>
+    <tr><td class="muted">Chemin PQ signature</td><td class="cyan">AA permet déjà un signer PQ &mdash; Falcon-512 démontré à ~9,5M L2 gas</td><td class="red">WOTS+ côté client, vérificateur on-chain absent</td></tr>
+  </table>
+
+  <div class="card card-red">
+    <h4 style="margin-top:0; color:var(--red);">Point d'honnêteté sur les signatures PQ</h4>
+    <p class="xs muted" style="margin:0;">
+      Ne pas dire « on ne se disperse pas parce que Falcon est déjà sur leur roadmap ». Leur AA permet déjà un wallet Falcon-512
+      déployé sur mainnet par un tiers, à ~9,5M L2 gas. <span class="red bold">Sur cet axe ils sont devant toi.</span>
+      Ta valeur est sur le KEM &mdash; et c'est vrai précisément parce qu'ils ont bien couvert la signature et pas du tout le KEM.
+    </p>
+  </div>
+
+  <h3>3.12 Composabilité et maturité</h3>
+  <table class="tight">
+    <tr><th style="width:20%;"></th><th style="width:40%;">STRK20</th><th style="width:40%;">Protocol 01</th></tr>
+    <tr><td class="muted">DeFi</td><td class="cyan">swaps privés AVNU + Ekubo live ; anonymizers</td><td>à construire</td></tr>
+    <tr><td class="muted">Wallets</td><td>Ready live, Xverse en cours</td><td>app mobile maison</td></tr>
+    <tr><td class="muted">Statut</td><td class="cyan">mainnet depuis avril&ndash;mai 2026</td><td class="yellow">devnet uniquement</td></tr>
+    <tr><td class="muted">Audit</td><td>OpenZeppelin + ~60 fichiers Lean 4</td><td>audit de soundness interne</td></tr>
+    <tr><td class="muted">Open source</td><td>Apache 2.0 depuis le 8 juillet 2026</td><td>SDK npm public, monorepo privé</td></tr>
+    <tr><td class="muted" style="border-top:1px solid var(--border);">À dire en premier</td><td colspan="2" class="yellow bold" style="border-top:1px solid var(--border);">Ne pas survendre la maturité. Devnet, pas mainnet.</td></tr>
+  </table>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>20 / 24</span></div>
+</div>
+
+<!-- ==================== 21 : LE TROU PQ ==================== -->
+<div class="page">
+  <span class="secnum">04</span>
+  <h2 style="margin-top:0;">LE TROU PQ, PRÉCISÉMENT OÙ</h2>
+
+  <div class="card card-red no-break">
+    <h3 style="margin-top:0; color:var(--red);">Deux formulations à ne pas employer</h3>
+    <p class="small" style="margin:0;">
+      Le brief dit déjà de ne pas dire « STRK20 n'est pas post-quantique ». La vérification adversariale en a trouvé une
+      <span class="bold">deuxième</span>, également fausse et qui te ferait corriger sur place :
+      <span class="red bold">ne dis pas non plus « la confidentialité est hors périmètre »</span>. STRK20
+      <span class="bold">est</span> leur produit de confidentialité, livré deux mois avant la roadmap.
+    </p>
+  </div>
+
+  <div class="card card-cyan no-break">
+    <h4 style="margin-top:0;">Formulation vérifiée, à utiliser telle quelle</h4>
+    <div class="quote" style="border-left-color:var(--cyan); font-style:normal; color:var(--text); margin:5px 0 0; font-size:8.5pt;">
+      La roadmap post-quantique de StarkWare du 30 juin couvre le hachage et les commitments : Pedersen remplacé par BLAKE2
+      sur le state commitment, la dérivation d'adresse de contrat et le hash de config de l'OS, plus la migration des contrats
+      existants et les dépendances Ethereum. Elle ne dit pas comment la couche de chiffrement qu'ils ont déjà livrée dans STRK20
+      sera migrée : les balances chiffrées, et la clé de vue chiffrée on-chain qu'un auditeur désigné peut déchiffrer.
+      C'est une asymétrie qui mérite une question, pas une accusation. Le système de preuve est basé sur des hashes et tient.
+      La couche de confidentialité a été livrée deux mois avant la roadmap et n'y figure pas.
+    </div>
+  </div>
+
+  <div class="kv card" style="padding:11px 13px;">
+    <div class="k">Les 3 phases</div><div>1 &mdash; migrations de hash (state commitment, dérivation d'adresse, config OS) Pedersen&rarr;BLAKE2, ~2 mois. 2 &mdash; stockage des contrats existants. 3 &mdash; dépendances Ethereum (secp256k1/r1, blobs KZG), bloquées sur Ethereum</div>
+    <div class="k">Falcon-512</div><div>cité <span class="bold">pour le consensus seulement</span>, comme exemple non contraignant (« such as »). Pas un engagement sur la signature des comptes. <span class="bold">Aucun SNIP</span> pour Falcon ni les signatures PQ de compte &mdash; vérifié de façon adversariale</div>
+    <div class="k">Comptes</div><div>couverts indirectement : « Starknet users can deploy a PQ wallet today », sans changement de protocole</div>
+  </div>
+
+  <h3>Les deux cibles concrètes</h3>
+
+  <div class="card card-pink no-break">
+    <span class="badge badge-pink">Cible A &mdash; la plus forte</span>
+    <h4 style="margin-top:6px; color:var(--pink);">La séquestre de clé de vue (<span class="mono">EncPrivateKey</span>)</h4>
+    <div class="code-block" style="border-left-color:var(--pink); margin:5px 0 4px;">enc_private_key = h(ENC_PRIVATE_KEY_TAG, rK.x) + private_key</div>
+    <ul class="xs muted" style="margin:0; padding-left:14px;">
+      <li>ça protège <span class="bold">l'historique bidirectionnel entier</span> d'un utilisateur, pas une transaction</li>
+      <li>permanent et immuable par conception : l'exposition ne décroît jamais</li>
+      <li>une seule clé d'auditeur cassée expose <span class="bold">tous les utilisateurs à la fois</span>, et désanonymise rétroactivement tout le pool depuis mai 2026</li>
+    </ul>
+  </div>
+
+  <div class="card card-pink no-break">
+    <span class="badge badge-pink">Cible B</span>
+    <h4 style="margin-top:6px; color:var(--pink);">L'ouverture de canal (<span class="mono">EncChannelInfo</span>)</h4>
+    <div class="code-block" style="border-left-color:var(--pink); margin:5px 0 4px;">enc_channel_key = h(CHANNEL_KEY_TAG, rK.x) + channel_key
+enc_sender_addr = h(SENDER_ADDR_TAG, rK.x) + sender_addr</div>
+    <div class="quote" style="border-left-color:var(--pink); font-style:normal; color:var(--text); margin:0; font-size:8.5pt;">
+      Chez eux, l'adressage des notes dérive du secret de canal. Casser la courbe ne révèle pas seulement qui a reçu combien,
+      ça révèle où toutes les notes sont stockées. La confidentialité et l'adressage reposent sur la même clé, et cette clé
+      est chiffrée on-chain avec de l'ECDH sur courbe elliptique, pour toujours.
+    </div>
+  </div>
+
+  <div class="card card-cyan">
+    <h4 style="margin-top:0;">Ce qui les protège déjà, à reconnaître d'emblée</h4>
+    <p class="xs muted" style="margin:0;">
+      Stwo est basé sur des hashes et survit à Shor &mdash; à dire en premier. Blake2s est déjà partiellement déployé, l'AA permet
+      un signer PQ dès aujourd'hui. Et surtout : un chiffrement additif dans un corps premier n'a pas de structure exploitable par
+      Shor <span class="bold">en lui-même</span> ; la vulnérabilité est entièrement dans l'ECDH qui produit
+      <span class="mono">rK.x</span>. C'est le seul composant qu'un KEM remplace.
+      <span class="cyan bold">Le changement est chirurgical</span> &mdash; c'est ton meilleur argument.
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>21 / 24</span></div>
+</div>
+
+<!-- ==================== 22 : BRANCHEMENT ==================== -->
+<div class="page">
+  <span class="secnum">05</span>
+  <h2 style="margin-top:0;">POINT DE BRANCHEMENT RÉVISÉ</h2>
+
+  <div class="card card-red">
+    <h4 style="margin-top:0; color:var(--red);">Ce qui tombe</h4>
+    <p class="small" style="margin:0;">
+      L'architecture cible de la roadmap (émetteur dérive une adresse furtive, STRK20 transfère dessus) ne peut pas être
+      implémentée. Ne pas essayer de la forcer. Ne pas proposer de reconstruire un système de notes non plus &mdash;
+      le piège n&deg;4 du brief tient toujours.
+    </p>
+  </div>
+
+  <div class="card card-cyan no-break">
+    <h3 style="margin-top:0; color:var(--cyan);">Ce qui devient le projet</h3>
+    <div class="quote" style="border-left-color:var(--cyan); font-style:normal; color:var(--text); margin-bottom:8px;">
+      Remplacer l'ECDH sur courbe STARK par un KEM hybride dans les deux structures chiffrées de STRK20,
+      sans toucher au reste du protocole.
+    </div>
+    <p class="small bold" style="margin-bottom:4px;">Ce qui rend ça défendable en 12 heures :</p>
+    <ul class="small" style="margin:0; padding-left:16px;">
+      <li>Le périmètre est <span class="bold">exactement deux fonctions</span>. <span class="mono xs">_compute_shared_x</span>
+      produit <span class="mono">rK.x</span>, et tout le reste du système consomme un <span class="mono">felt252</span> de matière clé.
+      Si <span class="mono">rK.x</span> est remplacé par un secret issu d'une décapsulation ML-KEM réduit dans le corps,
+      <span class="cyan bold">rien d'autre ne change</span> : ni la structure des notes, ni les nullifiers, ni la discovery, ni les phases.</li>
+      <li>Le combineur OR-sûr de Specter existe déjà et est testé :
+      <span class="mono xs">HKDF(classic || pq, info = transcript)</span>. Il se transpose directement, en substituant Poseidon
+      à SHA-256 pour rester dans leur domaine de hash.</li>
+      <li>L'argument « on ne fait pas de mixer maison, on se branche au-dessus » devient
+      <span class="bold">littéralement vrai au niveau de la ligne de code</span>.</li>
+    </ul>
+  </div>
+
+  <div class="card card-yellow">
+    <h4 style="margin-top:0; color:var(--yellow);">Détail qui compte : stockage, pas events</h4>
+    <p class="xs muted" style="margin:0;">
+      STRK20 ne met <span class="bold">aucun</span> payload chiffré dans les events &mdash; toute la discovery lit du stockage.
+      Un <span class="mono">pq_announcer</span> qui émettrait des events divergerait de leur architecture et se ferait remarquer.
+      Packing : 1088 octets à 31 octets par felt = <span class="bold">36 felts</span>. En stockage plutôt qu'en events, ce qui évite
+      aussi le coût de 5 120 L2gas par felt de données d'event (184 320 L2 gas, soit 4,6 L1-gas-équivalent : pas prohibitif, mais inutile).
+    </p>
+  </div>
+
+  <h3>Effort de portage, mesuré fichier par fichier</h3>
+  <table class="tight">
+    <tr><th style="width:34%;">Module</th><th>web3</th><th>PublicKey</th><th>Connection</th><th style="width:32%;">Verdict</th></tr>
+    <tr><td class="mono"><span class="cyan">quantum/*</span> (4 fichiers)</td><td>0</td><td>0</td><td>0</td><td class="cyan bold">déjà portable</td></tr>
+    <tr><td class="mono">stealth/index.ts</td><td>0</td><td>0</td><td>0</td><td class="cyan">déjà portable</td></tr>
+    <tr><td class="mono">stealth/quantum.ts</td><td>1</td><td>5</td><td>0</td><td>~5 lignes</td></tr>
+    <tr><td class="mono">stealth/derive.ts</td><td>1</td><td>6</td><td>0</td><td>cosmétique</td></tr>
+    <tr><td class="mono">stealth/generate.ts</td><td>1</td><td>8</td><td>0</td><td>cosmétique</td></tr>
+    <tr><td class="mono">stealth/scan.ts</td><td>1</td><td>12</td><td>6</td><td class="yellow bold">à remplacer par un adapteur</td></tr>
+    <tr><td class="mono">stealth/announcement-v2.ts</td><td>1</td><td>20</td><td>2</td><td class="yellow bold">à remplacer par un adapteur</td></tr>
+  </table>
+
+  <div class="card">
+    <p class="small" style="margin:0;">
+      Bonne nouvelle par rapport à l'estimation de la roadmap (117 références sur 8 fichiers, 3&ndash;5 h de refactor).
+      La réalité : <span class="mono">PublicKey</span> est un wrapper de 32 octets et <span class="mono">Keypair</span> ne sert qu'à
+      <span class="mono">.publicKey.toBytes()</span>. Le vrai travail est concentré sur <span class="bold">deux fichiers</span>,
+      et ce sont précisément les deux qui doivent être réécrits de toute façon. Et pour la cible retenue, tu n'as même pas besoin
+      de <span class="mono">stealth/</span> : il te faut <span class="mono">quantum/</span> et
+      <span class="mono xs">kemEncapsulate / kemDecapsulate / deriveHybridSharedSecret</span>, qui n'ont aucune dépendance chaîne.
+    </p>
+  </div>
+
+  <div class="card card-cyan no-break">
+    <h3 style="margin-top:0; color:var(--cyan);">Règle de coupe révisée</h3>
+    <p class="small" style="margin-bottom:6px;">
+      <span class="bold">MVP défendable :</span> un handshake ML-KEM-768 dont le secret partagé est réduit dans le corps STARK,
+      utilisé pour masquer un <span class="mono">channel_key</span> selon leur formule exacte
+      <span class="mono">h(TAG, secret) + value</span>, avec le ciphertext stocké dans un contrat Cairo sur Sepolia,
+      et une démonstration que l'émetteur et le destinataire dérivent le même <span class="mono">channel_key</span>.
+    </p>
+    <p class="small" style="margin-bottom:6px;">
+      Ça prouve la substituabilité au niveau exact où elle compte, <span class="bold">sans dépendre du proving service,
+      sans dépendre du screening de dépôt, sans dépendre de l'accès au pool</span> &mdash; les trois choses qui peuvent te bloquer
+      et dont aucune n'est sous ton contrôle.
+    </p>
+    <p class="small muted" style="margin:0;">
+      Stretch : un vrai transfert STRK20 entre deux comptes enregistrés, avec côte à côte le canal ouvert par leur ECDH et
+      le même canal ouvert par le KEM. <span class="yellow bold">Ne jamais sacrifier la vidéo de secours de 17h30.</span>
+    </p>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>22 / 24</span></div>
+</div>
+
+<!-- ==================== 23 : QUESTIONS ==================== -->
+<div class="page">
+  <span class="secnum">06</span>
+  <h2 style="margin-top:0;">QUESTIONS RÉVISÉES</h2>
+
+  <div class="card card-red">
+    <h4 style="margin-top:0; color:var(--red);">Devenues inutiles &mdash; déjà répondues par le code</h4>
+    <table class="tight" style="margin:5px 0 0;">
+      <tr><td style="width:10%;" class="mono dim">Q1</td><td>adressage du destinataire &rarr; seau par adresse en clair, pas de tag, scan de son propre seau</td></tr>
+      <tr><td class="mono dim">Q2</td><td>chiffrement extensible &rarr; <span class="red">non</span>, figé dans le contrat, aucun champ de version</td></tr>
+      <tr><td class="mono dim">Q3</td><td>schéma des viewing keys &rarr; ECDH éphémère courbe STARK + masque Poseidon, immuable. <span class="cyan">Garde-la, mais pose-la en affirmant : ça montre que tu as lu leur code</span></td></tr>
+      <tr><td class="mono dim">Q5</td><td>transfert vers adresse dérivée &rarr; <span class="red">non</span>, destinataire enregistré obligatoire</td></tr>
+      <tr><td class="mono dim">Q6</td><td>SDK gated ou public &rarr; open source Apache 2.0</td></tr>
+      <tr><td class="mono dim">Q8</td><td>coût des events Cairo &rarr; 5 120 L2gas/felt de données, mais STRK20 n'utilise pas d'events pour les payloads</td></tr>
+    </table>
+  </div>
+
+  <div class="card card-cyan no-break">
+    <h3 style="margin-top:0; color:var(--cyan);">Les vraies bloquantes &mdash; première heure</h3>
+    <ol class="small" style="margin:5px 0 0; padding-left:16px;">
+      <li><span class="bold">URL du proving service Sepolia.</span> Aucune valeur publique nulle part ; tous les exemples utilisent
+      <span class="mono xs">process.env.PROVING_SERVICE_URL</span> sans défaut, et la demo tombe sur un mock si non défini.
+      Endpoint hébergé par StarkWare ? Credentials ? Rate limits ?</li>
+      <li><span class="bold">URL de l'indexer de discovery.</span> Même problème (<span class="mono xs">process.env.INDEXER_URL</span>).
+      Endpoint hébergé, ou faut-il faire tourner le container ?</li>
+      <li><span class="bold">Adresse du pool sur Sepolia.</span> Le mainnet est publié, Sepolia est confirmé supporté mais l'adresse
+      n'est publiée nulle part &mdash; elle est résolue par le wallet à l'exécution.</li>
+      <li><span class="bold">Accès npm au SDK.</span> <span class="mono xs">@starkware-libs/starknet-privacy-sdk</span> renvoie 404
+      sur le registre public ; c'est sur GitHub Packages. Token nécessaire, ou install git ?</li>
+    </ol>
+  </div>
+
+  <div class="card card-pink no-break">
+    <h3 style="margin-top:0; color:var(--pink);">Les techniques qui valent le détour</h3>
+    <ol start="5" class="small" style="margin:5px 0 0; padding-left:16px;">
+      <li><span class="bold">Migration du format chiffré.</span> Aucun champ de version sur <span class="mono">Note</span> ni
+      <span class="mono">EncChannelInfo</span>, et clés de vue WriteOnce. Si vous passez le chiffrement en post-quantique,
+      comment migrent les canaux existants et les clés déjà séquestrées ?
+      <span class="pink bold">La meilleure question du lot</span> : concrète, issue du code, sans réponse documentée.</li>
+      <li><span class="bold">Qui porte la couche chiffrement dans la roadmap PQ ?</span> Oubli, séquencement, ou chantier ouvert non publié ?</li>
+      <li><span class="bold">La clé de vue privée en clair vers le prover.</span> Modèle de confiance, attestation TEE prévue,
+      politique de rétention ? À poser sans agressivité : c'est un choix d'architecture explicite en phase 1, pas une négligence.</li>
+      <li><span class="bold">Auditeur à seuil.</span> Les docs le disent supporté, le contrat stocke un seul <span class="mono">felt252</span>.
+      Déployé aujourd'hui ? Porteurs de parts ? Process de requête ?</li>
+      <li><span class="bold">FPI vs Elliptic.</span> Qui signe, qui fournit la donnée, qui contrôle <span class="mono xs">blockOverrideAddresses</span> ?</li>
+      <li><span class="bold">Le <span class="mono">r</span> éphémère réutilisable.</span> Corrigé dans la classe déployée, ou assumé côté client ?</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">Entre pairs</h3>
+    <ol start="11" class="small" style="margin:5px 0 0; padding-left:16px;">
+      <li><span class="bold">M31 contre Goldilocks.</span> Quelles contraintes le choix du corps met-il sur les décompositions en bits
+      et les range checks dans leurs circuits privacy ? Tu as un vrai vécu : tu as différé les range checks sur
+      <span class="mono">confidential_balance</span> et <span class="mono">transfer</span> précisément parce que la décomposition
+      en bits faisait exploser le budget CU.</li>
+      <li><span class="bold">Circuits sous-contraints en Cairo.</span> Avec une AIR de CPU fixe, le risque se déplace du circuit vers
+      la logique Cairo. Ils ont ~60 fichiers Lean 4 : demande ce que Lean couvre et ce qu'il ne couvre pas.</li>
+      <li><span class="bold">SNIP-36 phase 2.</span> Récursion dans le SNOS et vrai ZK différés sans calendrier. Quel horizon, qu'est-ce qui débloque ?</li>
+    </ol>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>23 / 24</span></div>
+</div>
+
+<!-- ==================== 24 : RETRAITS & SOURCES ==================== -->
+<div class="page">
+  <span class="secnum">07</span>
+  <h2 style="margin-top:0;">À RETIRER &middot; SOURCES</h2>
+
+  <table class="tight">
+    <tr><th style="width:44%;">À ne plus dire</th><th style="width:56%;">À dire</th></tr>
+    <tr><td class="red">« Aucune courbe elliptique dans la découverte du destinataire »</td><td>« La découverte est résistante au quantique : le secret ne se reconstitue pas sans la clé ML-KEM-768, même si X25519 tombe »</td></tr>
+    <tr><td class="red">« STRK20 n'est pas post-quantique »</td><td>« Le système de preuve tient. La couche de chiffrement livrée en avril n'est pas dans la roadmap PQ de juin »</td></tr>
+    <tr><td class="red">« La confidentialité est hors périmètre de leur roadmap »</td><td>« La roadmap est silencieuse sur la migration PQ d'une couche de chiffrement qu'ils ont déjà livrée »</td></tr>
+    <tr><td class="red">« Blake3-256, 32 requêtes, folding 8, pas de grinding, 128 bits »</td><td>« SHA-256, 27 ou 22 requêtes, folding 2, grinding 16 bits, 124 ou 104 bits en soundness classique »</td></tr>
+    <tr><td class="red">« 1,1M CU sur 1,4M »</td><td>« Les deux phases passent sous 1,4M, c'est asserté en test ; le chiffre exact n'est pas committé »</td></tr>
+    <tr><td class="red">« Preuve de 60 à 120 KB »</td><td>« 80 à 144 KB selon le circuit, paddée à 145 000 octets pour ne pas fuiter le circuit »</td></tr>
+    <tr><td class="red">« Plafond de 1,4M CU par instruction »</td><td>« par transaction &mdash; c'est pour ça que le split est en deux transactions »</td></tr>
+    <tr><td class="red">« ANSSI recommande ML-KEM plus FrodoKEM »</td><td><span class="bold">Retirer entièrement.</span> L'hybridation ANSSI est PQ + classique, pas PQ + PQ. Les deux sont des alternatives listées séparément, et ANSSI dit ne pas publier de liste fermée d'algorithmes recommandés</td></tr>
+    <tr><td class="red">« Les régulateurs visent 2030 »</td><td>Vrai mais à sourcer : ANSSI phase 3 « probablement pas avant 2030 » ; UE, trois jalons 31/12/2026, 31/12/2030, 31/12/2035</td></tr>
+    <tr><td class="red">« Le SDK est gated »</td><td>« Le SDK est open source Apache 2.0 depuis le 8 juillet. Ce qui est gated, c'est le proving service et l'indexer »</td></tr>
+  </table>
+
+  <h3>Sources</h3>
+  <div class="grid-2">
+    <div class="card">
+      <h4 style="margin-top:0;">STRK20 / Starknet, primaires</h4>
+      <ul class="xs muted" style="margin:4px 0 0; padding-left:14px;">
+        <li><span class="mono">github.com/starkware-libs/starknet-privacy</span> &mdash; contrat Cairo, discovery Rust, SDK TS, preuves Lean. Apache 2.0</li>
+        <li><span class="mono">community.starknet.io</span> &mdash; SNIP-36, vérification in-protocol</li>
+        <li><span class="mono">starkware.co/blog</span> &mdash; roadmap PQ du 30 juin 2026</li>
+        <li><span class="mono">github.com/starkware-libs/stwo</span> et <span class="mono">stwo-cairo</span></li>
+        <li>ePrint 2024/278 (Circle STARKs), ePrint 2021/1063 (Cairo)</li>
+        <li><span class="mono">docs.starknet.io</span> &mdash; fees, S-two book</li>
+        <li><span class="mono">@starknet-io/types-js@0.10.3</span> &mdash; Wallet API v0.10.3</li>
+        <li><span class="mono">openzeppelin.com/news/privacy-contracts-audit</span></li>
+        <li><span class="mono">strk20-by-example.org</span> &mdash; communautaire, pas officiel, mais cite le source Cairo verbatim</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0;">Protocol 01, internes</h4>
+      <ul class="xs muted" style="margin:4px 0 0; padding-left:14px;">
+        <li><span class="mono">stark/src/compact.rs</span> &mdash; protocole réellement vérifié</li>
+        <li><span class="mono">stark/src/prover.rs</span> &mdash; chemin legacy mort</li>
+        <li><span class="mono">programs/p01_stark_verifier/src/*</span></li>
+        <li><span class="mono">programs/zk_shielded/src/state/*</span></li>
+        <li><span class="mono">packages/specter-sdk/src/*</span>, <span class="mono">programs/specter/src/</span></li>
+        <li><span class="mono">apps/mobile/services/stark/index.ts</span></li>
+        <li><span class="mono">apps/mobile/services/denominatedPool/index.ts</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card card-yellow">
+    <h4 style="margin-top:0; color:var(--yellow);">Réserves de vérification &mdash; à lever soi-même</h4>
+    <ul class="xs muted" style="margin:4px 0 0; padding-left:14px;">
+      <li>L'absence de termes liés au chiffrement dans la roadmap PQ a été établie via un outil qui résume, pas un grep brut.
+      <span class="yellow bold">Ouvrir la page et faire Ctrl-F avant tout usage public</span> &mdash; c'est la vérification manuelle la plus rentable</li>
+      <li>Les compute units de Protocol 01 ne sont mesurés nulle part dans le dépôt</li>
+      <li>L'affirmation ANSSI ML-KEM+FrodoKEM a été réfutée sur source primaire et doit être retirée</li>
+      <li>Le temps de preuve STRK20 a deux valeurs contradictoires publiées (~29 s et ~4 s), non réconciliées par les sources</li>
+    </ul>
+  </div>
+
+  <div style="position:absolute; bottom:20mm; left:18mm; right:18mm; text-align:center;">
+    <div style="width:50px; height:2px; background:linear-gradient(90deg,var(--cyan),var(--pink)); margin:0 auto 10px;"></div>
+    <div class="mono xs dim">PROTOCOL 01 &middot; VOLTA TEAM &middot; 22 JUILLET 2026</div>
+  </div>
+
+  <div class="page-footer"><span>PROTOCOL 01 &middot; CONFIDENTIEL</span><span>24 / 24</span></div>
+</div>
+
+</body>
+</html>
