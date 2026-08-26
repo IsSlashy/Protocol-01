@@ -41,9 +41,18 @@
 //!
 //! # What this file does NOT claim
 //!
-//! It measures the seven circuits AS THEY EXIST. It does not build a unified
-//! AIR and it does not build a dummy leg, so it cannot prove what those would
-//! do. It establishes whether the MECHANISM is live in this prover. A negative
+//! It measures SIX circuits, C1 through C6, as they exist. It does not build a
+//! unified AIR and it does not build a dummy leg, so it cannot prove what those
+//! would do.
+//!
+//! ⛔ AND IT DOES NOT MEASURE THE SPEND CIRCUIT. `CASES` is six wide and stops at
+//! C6; the sentence above said "seven" until 2026-08-26 and was wrong in both
+//! directions. C0's absence is explained below and is a different measurement.
+//! The spend circuit's absence has no reason written anywhere, and it is the one
+//! that would matter most: its 128 CSPRNG-drawn mask rows and the
+//! underdetermination argument built on them are exactly what a constant-column
+//! probe bears on. Recorded as a hole in `c7_pin_coverage.rs` rather than left
+//! silent — that entry is meant to be deleted, not kept. It establishes whether the MECHANISM is live in this prover. A negative
 //! result here weakens both worries; a positive result kills proposal 1
 //! outright and puts proposal 2 on notice.
 //!

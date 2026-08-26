@@ -263,7 +263,7 @@ jobs:
           for pin in periodic_stride b4_pair_leaf wire_parity honest_liveness cross_circuit_confusion c7_binding \
                      a4_probe b1_deep_binding b2_bits_measured b2_segment_binding b7_coset_shift_pairing \
                      c5_conservation_probe c6_padding_rows liveness_fix_attack merkle_domain_sep \
-                     ood_column_probe route_c_trace_pair phase_binding_seam; do
+                     ood_column_probe route_c_trace_pair phase_binding_seam c7_pin_coverage; do
             if printf '%s\n' "$targets" | grep -qx "$pin"; then
               echo "::group::pin $pin"
               cargo test -p p01_stark_verifier --release --test "$pin"

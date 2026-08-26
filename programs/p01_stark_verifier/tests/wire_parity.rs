@@ -104,10 +104,14 @@ fn fixture_c7() -> Vec<u8> {
 /// `(circuit_id, label, build)`.
 type Circuit = (u8, &'static str, fn() -> Vec<u8>);
 
-/// The six GENERIC circuits. C0 is on the legacy parser and is handled
-/// separately everywhere below, because it is a different function with a
-/// different signature — lumping the two is how a legacy-only defect gets a
+/// The seven GENERIC circuits, C1 through C7. C0 is on the legacy parser and is
+/// handled separately everywhere below, because it is a different function with
+/// a different signature — lumping the two is how a legacy-only defect gets a
 /// green from a generic-only sweep.
+///
+/// (Said "six" until 2026-08-26. The array grew to seven when C7 landed and the
+/// sentence above it did not, which is the smallest possible version of the
+/// thing `c7_pin_coverage.rs` exists to catch.)
 const GENERIC: [Circuit; 7] = [
     (1, "C1 pool_commitment", fixture_c1),
     (2, "C2 balance_proof", fixture_c2),

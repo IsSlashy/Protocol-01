@@ -128,8 +128,21 @@ fn recorded_proof_sizes_hold() {
 
     // Pairwise distinct — a necessary condition for length to discriminate at
     // all. (It is NOT sufficient: see `parser_length_check_is_a_minimum`.)
-    for i in 0..7 {
-        for j in (i + 1)..7 {
+    //
+    // 🚨 8, NOT 7, AND THIS LOOP WAS THE ONE C7 SLIPPED THROUGH. `0b7d12c0` was
+    // titled "the parse matrix swept 7x7 — C7 was the row and column it
+    // skipped" and widened every other sweep in this file (79, 227, 326, 371,
+    // 613, 756, 1018, 1027, 1059). This one kept `0..7`, so `measured[7]` was
+    // asserted equal to `RECORDED[7]` two lines above and then compared against
+    // nothing. The file warns about exactly this shape at the `0..=7` loop
+    // below — "this loop and the one below were HALF updated" — which is how a
+    // second half-update went unnoticed in the same file, in the same commit.
+    //
+    // Widening is safe and was checked before it was written: 77,965 is
+    // distinct from all seven others, and `assert_eq!(measured, RECORDED)`
+    // above proves 77,965 is what the real C7 proof measures.
+    for i in 0..8 {
+        for j in (i + 1)..8 {
             assert_ne!(measured[i], measured[j], "C{i} and C{j} have the same length");
         }
     }
