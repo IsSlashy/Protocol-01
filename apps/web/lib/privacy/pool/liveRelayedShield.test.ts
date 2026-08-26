@@ -59,11 +59,18 @@ import { findPoolV3 } from './denominatedPool';
 /*
  * ⚠️ COPIED FROM `liveDevnetShield.test.ts`, DELIBERATELY NOT EXTRACTED.
  *
- * That file is the harness the frozen Castle DAO demo was proven with, and its
- * copy on `demo/castle-dao-2026-09-04` is tagged. Refactoring a shared module
- * out of it would edit the one artefact whose whole value is that it has not
- * moved since the run it attests to. Thirty duplicated lines are cheaper than
- * that risk; extract them the week after 2026-09-04, not before.
+ * That file is the harness the frozen Castle DAO demo was proven with.
+ * Refactoring a shared module out of it would edit the one artefact whose whole
+ * value is that it has not moved since the run it attests to. Thirty duplicated
+ * lines are cheaper than that risk; extract them the week after 2026-09-04, not
+ * before.
+ *
+ * 🚨 THIS PARAGRAPH USED TO SAY THE COPY ON `demo/castle-dao-2026-09-04` WAS
+ * TAGGED. MEASURED 2026-08-26: no such branch and no such tag exists — `git
+ * tag --list` holds 27 tags, all `v*`, and no remote branch matches `demo/*`.
+ * So the safety net the freeze leaned on was never there, and "do not edit this
+ * file" was the only thing actually protecting the artefact. If the demo state
+ * is worth freezing, tag it; until then this comment is the whole mechanism.
  */
 /**
  * `Worker` does not exist in Node, and `starkProver` needs one.
@@ -71,15 +78,20 @@ import { findPoolV3 } from './denominatedPool';
  * ⛔ NOT A STUBBED PROVER. A fake proof would make this harness worthless: the
  * transaction would be rejected on chain and the failure would look like a
  * shield bug. This runs the REAL `starkProver.worker` module in-process, over
- * the same WASM bytes, by giving it the two browser globals it actually uses --
- * `self.onmessage` to receive and `self.postMessage` to reply. Everything the
- * proof depends on is unchanged; only the thread boundary is removed.
+ * the same WASM bytes, by giving it the browser globals it actually uses --
+ * `self.onmessage` to receive, `self.postMessage` to reply, and `self.crypto`
+ * for the CSPRNG. Everything the proof depends on is unchanged; only the thread
+ * boundary is removed.
  */
 class InProcessStarkWorker {
   onmessage: ((e: { data: unknown }) => void) | null = null;
   onerror: ((e: unknown) => void) | null = null;
   private inbox: unknown[] = [];
-  private shim: { onmessage: ((e: { data: unknown }) => void) | null; postMessage: (m: unknown) => void };
+  private shim: {
+    onmessage: ((e: { data: unknown }) => void) | null;
+    postMessage: (m: unknown) => void;
+    crypto: Crypto;
+  };
 
   constructor() {
     const outer = this;
@@ -88,6 +100,22 @@ class InProcessStarkWorker {
       postMessage(m: unknown) {
         outer.onmessage?.({ data: m });
       },
+      // 🚨 `crypto` IS NOT OPTIONAL, and leaving it out already cost a live run.
+      //
+      // In a real Web Worker `self` IS the global, so `self.crypto` is the Web
+      // Crypto API. The line below REPLACES `self` with this bare object, and
+      // the wasm-bindgen glue resolves the CSPRNG through `self.crypto`. Drop
+      // this property and any circuit that draws a mask dies with:
+      //
+      //   {"error":"no CSPRNG available, refusing to build a C7 proof:
+      //   Web Crypto API is unavailable"}            -- stark/src/lib.rs:432
+      //
+      // THIS FILE IS SAFE TODAY ONLY BY ACCIDENT OF SCOPE: the relayed shield
+      // proves C6, which draws no randomness at all, so an impoverished `self`
+      // is invisible here. Point this harness at a masked circuit (C7 draws a
+      // 1,280-element mask) and the trap reproduces immediately — which is
+      // exactly how it was found in liveDevnetUnshieldV4.test.ts.
+      crypto: globalThis.crypto,
     };
     (globalThis as unknown as { self: unknown }).self = this.shim;
     // Messages sent before the module finishes importing are queued, not lost:

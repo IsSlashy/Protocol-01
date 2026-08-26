@@ -938,6 +938,34 @@ function generationsAreCompatible(observed, claimed) {
   return observed === claimed;
 }
 
+/**
+ * Values `--measure` can print into `proof_format_generation` that are NOT
+ * claims — they are the scan saying it could not decide. None of them may enter
+ * the record. See the validation of `*.proof_format_generation` below.
+ *
+ * 🚨 THIS EXISTS BECAUSE `--measure` OUTPUT IS MECHANICALLY PASTEABLE AND ONE
+ * FIELD IN IT IS NOT PASTE-READY. `--measure` prints a JSON block whose stated
+ * purpose is to be copied into the record wholesale. Every other field in it is
+ * a measurement; this one can be an admission of ignorance wearing the same
+ * shape. Pasted in verbatim it reaches THE INTERLOCK, which compares with a
+ * strict `!==` and so reports `FriFoldCheckFailed` — "EVERY PROOF THIS CLIENT
+ * GENERATES WILL BE REJECTED" — against a deployment that is perfectly healthy.
+ * That has cost one debugging session. The interlock's strictness is correct and
+ * is not the bug; an undecidable value being ALLOWED INTO THE RECORD is.
+ *
+ *   'b1+'            classifyElf, when B1 markers are present. B2 added no msg!
+ *                    literal to the verifier, so a byte scan cannot separate b1
+ *                    from b2 — see ELF_MARKERS_B2. Means "B1 or newer".
+ *   'UNCLASSIFIABLE' the `?? 'UNCLASSIFIABLE'` on the --measure emission, used
+ *                    when the controls are missing entirely. That path exits 1,
+ *                    but it PRINTS THE BLOCK FIRST, so the string is just as
+ *                    copyable as the rest.
+ *
+ * Anything new `classifyElf` learns to say that means "cannot decide" belongs in
+ * this list on the same day it is added.
+ */
+const UNDECIDABLE_GENERATIONS = ['b1+', 'UNCLASSIFIABLE'];
+
 // [MERGE 2026-08-03] `classifyBlobStrings` stood here — the other lot's version
 // of the same three-rung ladder `classifyBlob` above implements. It is deleted
 // rather than kept beside it: two classifiers over the same markers, one called
@@ -1340,6 +1368,41 @@ for (const [path, value] of [
   if (typeof value !== 'string' || value.length === 0) {
     fail(`${RECORD_REL} is missing ${path}`, ['Every field above is required for the interlock to mean anything.']);
   }
+}
+
+// Non-empty was never the bar for a GENERATION field. `b1+` is a non-empty
+// string and it is not a generation — it is the scan declining to answer, and
+// until now nothing stopped it being pasted in from `--measure` output. See
+// UNDECIDABLE_GENERATIONS.
+for (const [path, value] of [
+  ['deployed.proof_format_generation', deployed.proof_format_generation],
+  ['client_blob.proof_format_generation', clientRec.proof_format_generation],
+]) {
+  if (!UNDECIDABLE_GENERATIONS.includes(value)) continue;
+  fail(`${RECORD_REL} records ${path} as \`${value}\`, which is not a generation`, [
+    `\`${value}\` is what the SCAN prints when it cannot decide, not something anybody measured.`,
+    '`b1+` means "B1 or newer, and this method cannot say which"; `UNCLASSIFIABLE` means the ELF',
+    'controls were missing altogether. Neither is a claim, and this field is only ever read as one.',
+    '',
+    'WHY THIS IS REFUSED HERE RATHER THAN TOLERATED DOWNSTREAM: the interlock compares this field',
+    'against the client generation with a strict `!==`, so `b1+` against a b2 blob reports',
+    'FriFoldCheckFailed — "EVERY PROOF THIS CLIENT GENERATES WILL BE REJECTED" — for a deployment',
+    'that is entirely healthy. That strictness is correct and is not being loosened. The defect is',
+    'that a value nobody can prove was allowed into the record at all, and `--measure` prints its',
+    'block in exactly the shape that invites the paste.',
+    '',
+    'THE FIELD MUST RECORD A GENERATION SOMEONE CAN PROVE. The scan cannot give you one: B2 added no',
+    'msg! literal to the verifier (see ELF_MARKERS_B2), so a byte scan cannot separate b1 from b2 and',
+    'never will until a B2-only literal exists or KNOWN_ELF_GENERATIONS carries a hand measurement.',
+    '',
+    'The direct evidence behind the current claim, and the shape of the evidence you need for a new',
+    'one, is an accepted proof: a b2-generation client\'s circuit-7 proof was accepted by this program',
+    'in transaction',
+    '  4yKg4gGmaDobC9xdBSKoxKwA6knEarNX4zhLUkdMc2KCGYUGvY4e5tMwHHA2pii3MvEPhtoy6A3mMssqyWjEoLkb',
+    'on devnet at slot 487960436. Write the generation THAT establishes, and record how you know it in',
+    'deployed.generation_evidence. If you have not got such a transaction, you have not got a',
+    'generation, and pasting the scan\'s shrug in does not give you one.',
+  ]);
 }
 
 // ---------------------------------------------------------------------------
