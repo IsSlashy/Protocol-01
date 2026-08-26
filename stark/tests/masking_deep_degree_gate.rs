@@ -2,10 +2,24 @@
 //!
 //! Companion to `zk_feasibility.rs` (same self-contained Goldilocks arithmetic,
 //! same "measure, don't assume" contract). That file answered the hiding half:
-//! blinding with r ≥ 46 free coefficients defeats Lagrange recovery. THIS file
-//! answers the completeness half against the verifier that is actually on
-//! devnet, and the answer is that two pinned constants reject every honestly
-//! masked proof:
+//! blinding with r ≥ 46 free coefficients defeats Lagrange recovery.
+//!
+//! ⚠️ `stark/tests/zk_feasibility.rs` NO LONGER EXISTS. It was deleted in
+//! `dc9dd515` because it was calibrated to master's superseded
+//! two-row-per-query wire; on the reconciled four-row coset wire both of its
+//! assertions (`free_row_budget_from_the_wire`,
+//! `positive_control_secret_recovered_from_published_bytes`) are wrong and
+//! fail. Its documented successors live in the VERIFIER crate, not here:
+//! `programs/p01_stark_verifier/tests/wire_parity.rs` and
+//! `programs/p01_stark_verifier/tests/ood_column_probe.rs`. Neither of those
+//! reproduces the `r ≥ 46` figure above — that count came off the two-row wire
+//! — so do not re-quote it without re-measuring. Every mention of
+//! `zk_feasibility.rs` below refers to that deleted file, kept because it is
+//! where this file's arithmetic idiom and constant-pinning style came from.
+//!
+//! THIS file answers the completeness half against the verifier that is
+//! actually on devnet, and the answer is that two pinned constants reject
+//! every honestly masked proof:
 //!
 //!   * `CircuitConfig.fri_final_poly_degree_bound = 1` on all seven circuits
 //!     (branch `b7-drop-aligned-checks`, compact_proof.rs — "[B2] MEASURED
@@ -36,7 +50,8 @@
 //! Run: `cargo test -p p01-stark --release --test masking_deep_degree_gate -- --nocapture`
 
 // ---------------------------------------------------------------------------
-// Goldilocks field, u128-backed. Identical idiom to zk_feasibility.rs.
+// Goldilocks field, u128-backed. Identical idiom to the DELETED zk_feasibility.rs
+// (dc9dd515) -- see the header note.
 // ---------------------------------------------------------------------------
 
 const P: u128 = 0xFFFF_FFFF_0000_0001;
@@ -71,7 +86,8 @@ fn finv(a: u64) -> u64 {
 // ---------------------------------------------------------------------------
 // The deployed constants this file measures AGAINST. They live on the
 // b7-drop-aligned-checks branch, not in this tree — imported by value with
-// their source pinned, exactly like zk_feasibility.rs pins GEN_512.
+// their source pinned, exactly like the DELETED zk_feasibility.rs (dc9dd515)
+// pinned GEN_512.
 // ---------------------------------------------------------------------------
 
 /// Trace length of the C3/C5/C6/C7-envelope circuits.

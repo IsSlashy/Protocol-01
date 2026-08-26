@@ -1,9 +1,12 @@
 /**
  * Claims lexicon guard for the marketing site.
  *
- * WHY THIS EXISTS. `stark/tests/zk_feasibility.rs` recovers a private witness
- * from published proof bytes by Lagrange interpolation in under a second: the
- * prover is not zero-knowledge, and anyone with a cargo command can prove it.
+ * WHY THIS EXISTS. A private witness has been recovered from published proof
+ * bytes — four C1 witnesses, the spend secret among them, in 5 ms — and probe
+ * `P3b` of `verify/p01-verify.mjs` carries that measurement, pinned FAIL by
+ * construction: the prover is not zero-knowledge. (The cargo-runnable control
+ * this used to cite, `stark/tests/zk_feasibility.rs`, was deleted in `dc9dd515`
+ * as calibrated to a superseded two-row wire. Nothing executable replaced it.)
  * This repo has a documented history of the opposite claim returning through
  * one-line dictionary edits (46 false claims on record, the Arcium strings, the
  * "124-bit" figure). Sibling guard: `__tests__/lib/i18n-parity.test.ts`.
@@ -61,11 +64,11 @@ const ZK_DENIAL =
 const ZK_ALLOWED = new Map<string, string>([
   [
     'docs.sections.zkProofs.desc',
-    'Names the property to deny it: trace values are recoverable from the published proof bytes (stark/tests/zk_feasibility.rs), masking not landed.',
+    'Names the property to deny it: trace values are recoverable from the published proof bytes (verify/p01-verify.mjs, probe P3b), masking not landed.',
   ],
   [
     'docs.guaranteeZk',
-    'The guarantees card states the property is NOT held and names the witness recovery that proves it. Flips only when zk_feasibility.rs stops recovering.',
+    'The guarantees card states the property is NOT held and names the witness recovery that proves it. Flips only when a positive control shows the recovery failing; verify/p01-verify.mjs probe P3b is pinned FAIL by construction.',
   ],
 ]);
 

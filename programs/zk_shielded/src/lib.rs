@@ -388,7 +388,10 @@ pub mod zk_shielded {
     ///     (`sha256(recipient_pubkey)` is four of the six public inputs), not
     ///     just by the payer signature.
     ///   * One `ProofBuffer` rent instead of two, on a 77,965-byte wire
-    ///     instead of 258,958.
+    ///     instead of 147,038 — a 1.9x cut, not the 3.3x this comment used to
+    ///     claim. 147,038 is MEASURED, not derived: a live scan of a real
+    ///     C1+C3 upload read 148 chunks / 147,038 bytes (verify/p01-verify.mjs,
+    ///     probe P3/P3b). 258,958 is the pre-B4 pair-leaf figure.
     ///
     /// ⛔ `subtree_root` is a DEPTH-12 root, not the pool root. The handler
     /// walks the remaining `tree_depth - 12` levels against `siblings` /

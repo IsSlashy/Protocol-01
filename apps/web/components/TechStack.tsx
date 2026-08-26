@@ -174,9 +174,13 @@ export default function TechStack() {
             {/* This component has no importer today, so nothing renders it.
                 The sentence is corrected anyway: a false claim parked in dead
                 code is a landmine for whoever wires it back in. The proofs are
-                hash-based STARKs and they are not zero-knowledge, which
-                stark/tests/zk_feasibility.rs demonstrates by recovering a
-                private witness from published proof bytes. */}
+                hash-based STARKs and they are not zero-knowledge: four C1
+                witnesses, the spend secret among them, were recovered from
+                published proof bytes in 5 ms, and probe P3b of
+                verify/p01-verify.mjs carries that measurement, pinned FAIL by
+                construction. (This used to cite stark/tests/zk_feasibility.rs,
+                deleted in dc9dd515 as calibrated to a superseded two-row
+                wire.) */}
             <p>We combine hash-based STARK proofs, stealth addressing, and privacy-preserving protocols on Solana.</p>
           </div>
         </motion.div>

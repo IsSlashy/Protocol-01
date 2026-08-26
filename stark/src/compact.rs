@@ -5102,9 +5102,14 @@ mod tests {
         );
 
         // The wire size, measured 2026-08-24. C1 + C3 -- the two proofs C7
-        // replaces -- are 258,958 B together, so this is 3.3x less to upload and
-        // one whole ProofBuffer rent that is never paid. A regression here is
-        // either a geometry change or a serialisation change; both matter.
+        // replaces -- are 147,038 B together, so this is 1.9x less to upload and
+        // one whole ProofBuffer rent that is never paid. That 147,038 is
+        // MEASURED, not derived: a live scan of a real C1+C3 upload read 148
+        // chunks / 147,038 bytes (verify/p01-verify.mjs, probe P3/P3b; the same
+        // run is frozen in verify/README.md). This comment used to say 258,958
+        // and 3.3x -- 258,958 is the PRE-B4 pair-leaf figure and overstates the
+        // gain. A regression here is either a geometry change or a
+        // serialisation change; both matter.
         assert_eq!(
             b.len(), 77_965,
             "C7 wire size moved. Measured 77,965 B on 2026-08-24 at ffps 32 / 22 queries / \

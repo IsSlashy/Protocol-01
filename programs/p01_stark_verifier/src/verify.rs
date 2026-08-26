@@ -1608,12 +1608,21 @@ fn check_final_poly_degree_bound(
             //
             // 🚨 The note also cited `ELF_B1_MARKERS` in
             // `packages/stark-prover/scripts/deployed-verifier-check.mjs` as the
-            // cost of deleting this line. MEASURED 2026-08-25: that file does
-            // not exist on this branch, on master, or anywhere in this
-            // repository — it lives only on `b7-drop-aligned-checks` and
-            // `fix-adversary`. So that half of the justification is describing a
-            // gate this tree does not have, exactly like the CI-shape guards in
-            // `cu_budget.rs` that were reanchored the same day.
+            // cost of deleting this line, and a 2026-08-25 measurement recorded
+            // here that the file did not exist on this branch, on master, or
+            // anywhere in this repository. THAT MEASUREMENT IS NOW STALE:
+            // commit `ce45f47d` recovered the script from
+            // `b7-drop-aligned-checks`, and it is present in this tree today.
+            // `ELF_B1_MARKERS` is defined in it (~line 353) as exactly two
+            // literals — `"[verify] final poly coeff "` and
+            // `" non-zero, bound is "` — which are the two halves of the `msg!`
+            // at the bottom of this block. The script scans the DEPLOYED
+            // verifier's ELF for them, and finding both is the only signal it
+            // has that the deployment is `b1+` rather than `pre-b1`. So this
+            // half of the justification is live again, not describing an absent
+            // gate: deleting this `msg!` blinds that cross-language interlock,
+            // and the script's own header says not to widen the marker list to
+            // clear a red there.
             //
             // WHAT ACTUALLY JUSTIFIES LEAVING IT, and it is sufficient on its
             // own: this is an ERROR path. It runs only on the

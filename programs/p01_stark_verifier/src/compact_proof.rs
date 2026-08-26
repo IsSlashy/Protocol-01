@@ -260,7 +260,11 @@ pub const CONFIG_MERKLE_UPDATE: CircuitConfig = CircuitConfig {
 /// and be checked against C6's constraints. 32 separates them twice over: the
 /// field itself, and `num_fri_layers`, which is `log2(8192/32) - 1 = 7` against
 /// C6's 8. It also drops one committed FRI layer, which is why a C7 proof is
-/// 77,965 bytes against the 258,958 of the C1 + C3 pair it replaces.
+/// 77,965 bytes against the 147,038 of the C1 + C3 pair it replaces -- a 1.9x
+/// cut, and 147,038 is MEASURED, not derived: a live scan of a real C1+C3
+/// upload read 148 chunks / 147,038 bytes (verify/p01-verify.mjs, probe
+/// P3/P3b). The 258,958 once quoted here is the PRE-B4 pair-leaf figure, which
+/// inflates the cut to a 3.3x that was never true of the shipped pair.
 ///
 /// 🚨 `fri_final_poly_degree_bound: 2`, NOT 1. MEASURED, not chosen: the
 /// terminal polynomial's last non-zero coefficient sits at index 1, because
