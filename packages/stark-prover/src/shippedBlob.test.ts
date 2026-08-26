@@ -75,7 +75,7 @@ const BLOB = join(here, '..', 'wasm', 'p01_stark_bg.wasm');
  *
  * Reproduce with `npx tsx packages/stark-prover/scripts/c7-live-proof.ts`.
  *
- * The eight circuits the old blob carried all still produce byte-identical
+ * The seven circuits the old blob carried all still produce byte-identical
  * proofs under this one — same lengths, same digests in `wireFormat.test.ts`.
  * The reship ADDED circuit 7 and moved nothing else.
  */

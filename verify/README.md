@@ -301,7 +301,12 @@ Four things worth stating plainly, because all four cut against expectations:
 - Public devnet throttles. The tool backs off and retries, and reports how much
   of the payer's history it actually walked. A capped scan is reported
   INCONCLUSIVE, never PASS — that distinction is the whole discipline here.
-- Add `unshield_denominated_stark_v4` pools to `POOLS` (with their tree PDAs)
-  when v4 ships, then record a **real** v4 spend with `--record` and check its
-  probes; `fixtures/v4-synthetic` only proves the tool can say "clean", never
-  that anything real is.
+- ~~Add `unshield_denominated_stark_v4` pools to `POOLS` (with their tree PDAs)
+  when v4 ships, then record a **real** v4 spend with `--record`~~ — **DONE
+  2026-08-26**. v4 shipped on 2026-08-25 and `fixtures/v4-live` is that
+  recording: the first C7 spend that ever landed, `22psv1tF…`, frozen with its
+  two halves. No `POOLS` entry was needed after all — that map is keyed per
+  POOL, not per instruction, and v4 spends the same pool v3 does.
+  `fixtures/v4-synthetic` still only proves the tool can say "clean", never that
+  anything real is; `fixtures/v4-live` is the half that speaks about reality,
+  and it pins P11 FAIL alongside the three greens.

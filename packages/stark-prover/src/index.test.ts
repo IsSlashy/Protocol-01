@@ -93,7 +93,8 @@ describe('@protocol-01/stark-prover', () => {
    * THE C7 TRIPWIRE, FIRED AND TURNED AROUND (2026-08-25).
    *
    * It used to assert `generate_spend_stark_proof` was UNBOUND, because the
-   * shipped blob (229,640 B / 51a947e3) had eight proof exports and the
+   * shipped blob (229,640 B / 51a947e3) had seven proof exports plus
+   * compute_stark_commitment, eight in all, and the
    * circuit-7 build has nine. It went red on the reship, exactly as designed,
    * and named its own three conditions. All three were met before it was
    * flipped:

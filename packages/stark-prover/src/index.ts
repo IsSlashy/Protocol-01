@@ -378,7 +378,7 @@ export function generateProofBytes(
       if (!exports.generate_spend_stark_proof) {
         throw new Error(
           'Circuit 7 (SPEND) is not exported by the bundled WASM. The pre-C7 blob '
-          + '(229,640 B / 51a947e3) has eight proof exports; the C7 build has nine. '
+          + '(229,640 B / 51a947e3) exports seven proof functions and compute_stark_commitment, eight in all; the C7 build has nine. '
           + 'See packages/stark-prover/README.md for the rebuild command.',
         );
       }
