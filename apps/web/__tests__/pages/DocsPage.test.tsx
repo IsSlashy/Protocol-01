@@ -168,9 +168,14 @@ describe('DocsPage -- Privacy technologies documentation', () => {
   });
 
   // The topic was titled "Zero-Knowledge Proofs (STARK)". The prover is not
-  // zero-knowledge: stark/tests/zk_feasibility.rs recovers a private witness
-  // from published proof bytes by Lagrange interpolation, so the title now
-  // names the proof system instead of the property it does not hold.
+  // zero-knowledge: four witnesses of circuit 1, the spend secret among them,
+  // were recovered from published proof bytes by Lagrange interpolation in
+  // 5 ms, so the title now names the proof system instead of the property it
+  // does not hold. The measurement is carried by probe P3b of
+  // verify/p01-verify.mjs, pinned FAIL on every committed fixture.
+  // (It used to cite stark/tests/zk_feasibility.rs, deleted in dc9dd515 --
+  // calibrated to a superseded two-row wire, and nothing executable replaced
+  // it, so there is no test anyone can run today to flip this.)
   describe('Core Technologies - STARK Proofs', () => {
     it('documents STARK Proofs (Goldilocks) without titling them zero-knowledge', () => {
       openTopic('STARK Proofs (Goldilocks)');
@@ -450,11 +455,18 @@ describe('DocsPage -- Privacy technologies documentation', () => {
 
     /**
      * WAS: an exact assertion on "Zero-knowledge: Proofs reveal nothing beyond
-     * validity". That claim is refuted by the repo's own test suite:
-     * stark/tests/zk_feasibility.rs recovers a private witness from the
-     * published proof bytes by Lagrange interpolation in under a second. The
-     * guarantee line now states the limitation and names the measurement, and
-     * flips back only when that recovery stops working.
+     * validity". That claim is refuted by a measurement this repository owns:
+     * four witnesses of circuit 1, the spend secret among them, recovered from
+     * the published proof bytes by Lagrange interpolation in 5 ms. The
+     * guarantee line now states the limitation and names the measurement.
+     *
+     * ⚠️ It used to say it "flips back when that recovery stops working", and
+     * pointed at stark/tests/zk_feasibility.rs. That file was deleted in
+     * dc9dd515 and NOTHING executable replaced it, so that trigger cannot be
+     * pulled by anyone today. The claim's live statement is probe P3b of
+     * verify/p01-verify.mjs, which is pinned FAIL by construction. Flipping
+     * this back requires a positive control that runs and fails -- building
+     * one is the work, not finding one.
      */
     it('states the proofs are not zero-knowledge, naming the witness recovery', () => {
       openTopic('Security Model');

@@ -17,10 +17,13 @@ describe('TechStack -- Cryptography and infrastructure showcase', () => {
       expect(screen.getByText(/cutting-edge cryptography/)).toBeInTheDocument();
     });
 
-    // Was: pinned "zero-knowledge proofs". The prover applies no trace
-    // blinding and stark/tests/zk_feasibility.rs recovers a private witness
-    // from published proof bytes, so the component was corrected and this
-    // assertion moves with it rather than being deleted. The second half is
+    // Was: pinned "zero-knowledge proofs". Seven of the eight circuits apply
+    // no trace blinding at all, the eighth buys underdetermination rather than
+    // secrecy, and four witnesses of circuit 1 were recovered from published
+    // proof bytes in 5 ms -- so the component was corrected and this assertion
+    // moves with it rather than being deleted. The measurement lives in probe
+    // P3b of verify/p01-verify.mjs (it used to cite
+    // stark/tests/zk_feasibility.rs, deleted in dc9dd515). The second half is
     // the part that matters: the old wording must not come back.
     it('names the proof system as hash-based STARKs, not zero-knowledge', () => {
       expect(screen.getByText(/hash-based STARK proofs/)).toBeInTheDocument();
