@@ -111,7 +111,21 @@ jobs:
   rust-programs-build:
     name: Rust — Programs cargo check
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 🚨 WAS 30, AND THE PIN LOOP BELOW COULD NOT FIT IN IT. MEASURED 2026-08-26
+    # on a 6c/12t laptop, --release: `honest_liveness` alone is 2,208s — 37
+    # minutes, over the whole old budget by itself — and the eighteen pins total
+    # ~51 minutes. A hosted runner has fewer cores, so it is slower, not faster.
+    # This job was being killed by its own timeout, which reads in the UI as a
+    # flaky infrastructure failure rather than as "the gate never ran".
+    #
+    # 90 rather than 60: the cache can miss, and a gate that is sometimes killed
+    # teaches people to re-run it rather than read it.
+    #
+    # If this becomes painful, the fix is to SPLIT — fast pins on push, the two
+    # slow ones (`honest_liveness` 2,208s, `c6_padding_rows` 308s) in their own
+    # job — not to drop a pin. `CI_UNRUN_TEST_TARGETS` in cu_budget.rs is where
+    # a dropped one would have to be written down, with its reason.
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
@@ -253,12 +267,33 @@ jobs:
           # here; the three that are not are recorded in CI_UNRUN_TEST_TARGETS
           # with the measured reason, including one that is RED on a real defect.
           #
-          # Measured wall-clock on a 6c/12t laptop, --release: b1_deep_binding
-          # 44s, b2_bits_measured 104s, b2_segment_binding 89s,
-          # c5_conservation_probe 116s, c6_padding_rows 425s, liveness_fix_attack
-          # 64s, ood_column_probe 30s, route_c_trace_pair 18s, a4_probe 1s,
-          # merkle_domain_sep 0s. About 15 minutes total, and c6_padding_rows is
-          # nearly half of it.
+          # ⚠️ THE OLD ESTIMATE HERE SAID "about 15 minutes total" AND WAS WRONG BY
+          # 3.4x, because it timed ten of the eighteen pins and `honest_liveness`
+          # was not among them. Re-measured 2026-08-26, whole loop, 6c/12t
+          # laptop, --release:
+          #
+          #   honest_liveness       2208s   <- 37 min, ALONE over the old 30-min
+          #                                    job timeout, which is why that
+          #                                    timeout is now 90
+          #   c6_padding_rows        308s
+          #   b2_bits_measured       106s
+          #   c5_conservation_probe   98s
+          #   b2_segment_binding      87s
+          #   liveness_fix_attack     62s
+          #   cross_circuit_confusion 50s
+          #   b1_deep_binding         49s
+          #   ood_column_probe        34s
+          #   route_c_trace_pair      26s
+          #   wire_parity 15s · c7_binding 15s · b4_pair_leaf 14s
+          #   periodic_stride 1s · a4_probe 2s · phase_binding_seam 2s
+          #   merkle_domain_sep 0s · b7_coset_shift_pairing 0s
+          #   c7_pin_coverage 0s
+          #   ------------------------------------------------------------
+          #   ~3,080s = 51 minutes, plus `--lib` (207s) and the build.
+          #
+          # `honest_liveness` is 72% of it on its own. A stale time estimate is
+          # not cosmetic: this one said the job was cheap while the job was
+          # being killed for running long.
           missing=""
           for pin in periodic_stride b4_pair_leaf wire_parity honest_liveness cross_circuit_confusion c7_binding \
                      a4_probe b1_deep_binding b2_bits_measured b2_segment_binding b7_coset_shift_pairing \
