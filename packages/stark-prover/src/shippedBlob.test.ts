@@ -94,6 +94,30 @@ const PRE_C7_BYTES = 229_640;
 const REJECTED_SHA256 = '4ace8913067d';
 const REJECTED_BYTES = 192_732;
 
+/**
+ * Versions ALREADY ON npm that carry a blob other than the one in `wasm/`.
+ *
+ * A version string is a promise about bytes. `0.1.3` was published on
+ * 2026-08-11 carrying the pre-C7 blob; the blob in this repository changed on
+ * 2026-08-25 and the version did not, so for two weeks
+ * `@protocol-01/stark-prover@0.1.3` meant two different artifacts depending on
+ * where you got it. A consumer resolving it from the registry gets a build with
+ * no `generate_spend_stark_proof` and hits the C7 guard in `index.ts` — while
+ * every workspace consumer resolves `workspace:*` and sees circuit 7 fine, so
+ * nothing here would have shown it.
+ *
+ * This repository has paid for exactly this twice: `stark-prover@0.1.2` shipped
+ * the pre-coset blob that the deployed verifier REJECTS, and the same wave took
+ * the web build and the APK with it.
+ *
+ * Add a row whenever a published version's blob is superseded. Never remove
+ * one: npm does not forget, so neither does this table.
+ */
+const PUBLISHED_CARRYING_ANOTHER_BLOB: Readonly<Record<string, string>> = Object.freeze({
+  '0.1.2': 'the pre-coset blob (4ace8913067d), which the deployed verifier REJECTS',
+  '0.1.3': `the pre-C7 blob (${PRE_C7_SHA256} / ${PRE_C7_BYTES} B), which has no circuit 7`,
+});
+
 function sha12(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex').slice(0, 12);
 }
@@ -140,5 +164,38 @@ describe('the shipped STARK prover blob', () => {
       'the pre-C7 blob is back; spends would silently return to the linkable v3 path',
     ).not.toBe(PRE_C7_SHA256);
     expect(statSync(BLOB).size).not.toBe(PRE_C7_BYTES);
+  });
+
+  it('does not reuse a version number npm already gave to another blob', () => {
+    // The four assertions above all check the BYTES. This one checks the NAME
+    // for those bytes, which nothing else in this repository does, and which is
+    // the half that actually reaches a consumer.
+    //
+    // Every workspace consumer resolves `workspace:*`, so the local blob is
+    // what apps/web, apps/extension, apps/mobile and the four SDKs all see. A
+    // stale version number is therefore invisible from inside: the whole suite
+    // is green, the demo works, and only somebody installing from the registry
+    // gets the wrong artifact under the right name.
+    const version = JSON.parse(
+      readFileSync(join(here, '..', 'package.json'), 'utf8'),
+    ).version as string;
+
+    const clash = PUBLISHED_CARRYING_ANOTHER_BLOB[version];
+    expect(
+      clash,
+      `package.json still says ${version}, but npm already published ${version} carrying
+` +
+        `  ${clash}
+
+` +
+        `  The blob in wasm/ is now ${SHIPPED_SHA256} (${SHIPPED_BYTES} B). Publishing under
+` +
+        `  the same version is impossible, and leaving it means one version string names two
+` +
+        `  different artifacts depending on where you resolve it from.
+
+` +
+        `  Bump the version. Do NOT delete the row above to go green — npm does not forget.`,
+    ).toBeUndefined();
   });
 });
