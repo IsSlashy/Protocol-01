@@ -390,3 +390,14 @@ jobs:
       # regression; this step is the only one that catches it.
       - name: Regression pin — errored payer history must not break P3 completeness
         run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-synthetic-errored
+
+      # The three above are constructed: two hand-built and one chosen because
+      # it leaks. This one is the first circuit-7 spend that ever landed, frozen
+      # as it measured. It pins BOTH halves of the real result — P1/P2/P4 PASS
+      # because the v4 instruction carries no commitment argument at all, and
+      # P11 FAILS because the fee payer is the upgrade authority of the pool and
+      # the verifier and is printed in README.md. A fixture that pinned only the
+      # green half would teach a future reader the opposite of what was
+      # measured. See verify/fixtures/v4-live/README.md.
+      - name: Reality pin — the first real v4 spend, green and red exactly as measured
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-live

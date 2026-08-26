@@ -126,8 +126,8 @@
  *                   the precise failure mode this tool exists to refuse.
  *
  * `--self-test --replay <dir>` asserts the outcome of EVERY probe matches the
- * manifest pin, in both directions. Three committed fixtures: a control pair,
- * plus one regression pin:
+ * manifest pin, in both directions. Four committed fixtures: a control pair,
+ * one regression pin, and one recording of the real thing:
  *
  *   fixtures/v3-subscribe  RECORDED from devnet. v3 leaks by design, so
  *                          P1/P2/P4 are pinned FAIL. If the tool stops seeing
@@ -147,11 +147,21 @@
  *                          stays PASS when errored entries are skipped. Both
  *                          controls have zero errored entries, so only this
  *                          one catches that regression. (regression pin)
+ *   fixtures/v4-live       RECORDED from devnet: the first circuit-7 spend that
+ *                          ever landed. P1/P2/P4 PASS -- the instruction carries
+ *                          no commitment argument at all -- and P11 FAILS,
+ *                          because the fee payer is the upgrade authority of the
+ *                          pool and the verifier and is printed in README.md.
+ *                          Pinning both halves is the point: a commitment-free
+ *                          instruction is not an anonymous transaction, and a
+ *                          fixture showing only the green half would teach the
+ *                          opposite. (reality pin -- see its README)
  *
  * USAGE
  *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v3-subscribe
  *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-synthetic
  *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-synthetic-errored
+ *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-live
  *   node verify/p01-verify.mjs --self-test [--rpc URL]
  *   node verify/p01-verify.mjs --spend <signature> [--rpc URL] [--record DIR]
  *   node verify/p01-verify.mjs --pool <poolPDA> [--limit N] [--rpc URL]
@@ -466,15 +476,37 @@ function trimForFixture(method, result) {
   return result;
 }
 
-/** Record wrapper: pass calls through to the live rpc, keep the trimmed pairs. */
+/**
+ * Record wrapper: pass calls through to the live rpc, keep the trimmed pairs.
+ *
+ * A REPEATED CALL IS ANSWERED FROM THE STORE, NOT FROM THE CHAIN, and that is
+ * the whole correctness argument for this function. It used to store the first
+ * response for a key and return the LIVE one every time, which is fine only
+ * while the chain holds still. It does not: the fee payer of a v4 spend is
+ * also a relayer node, and `p01_relayer` writes a `Heartbeat` from it once a
+ * minute, forever. So `getSignaturesForAddress(payer, {limit: 201})` answered
+ * one list at the start of a run and a list shifted by one heartbeat later in
+ * the same run. The walk followed the SECOND list and fetched its members; the
+ * fixture kept the FIRST. Replaying then asked for the one signature only the
+ * first list held and hard-stopped on a miss — a fixture that could not
+ * replay, written with no complaint, and only discovered on the next
+ * `--self-test`. MEASURED on the 2026-08-26 recording of the first real v4
+ * spend: 201 signatures pinned, 200 transactions fetched, the oldest of the
+ * frozen list never read.
+ *
+ * Serving repeats from the store makes the recording traverse exactly the data
+ * the replay will traverse, so a fixture that records is a fixture that
+ * replays, by construction rather than by luck. It also means a probe that
+ * needs a field `trimForFixture` drops now fails during the recording, where
+ * it is cheap to see, instead of surviving as a fixture nobody can rerun.
+ */
 function wrapRecorder(rpc, store) {
   const wrapped = async (method, params) => {
-    const trimmed = trimForFixture(method, await rpc(method, params));
     const key = callKey(method, params);
-    if (!store.seen.has(key)) {
-      store.seen.add(key);
-      store.calls.push({ method, params, result: trimmed });
-    }
+    if (store.seen.has(key)) return structuredClone(store.seen.get(key));
+    const trimmed = trimForFixture(method, await rpc(method, params));
+    store.seen.set(key, trimmed);
+    store.calls.push({ method, params, result: trimmed });
     return structuredClone(trimmed);
   };
   wrapped.calls = rpc.calls;
@@ -3323,7 +3355,7 @@ async function main() {
   } else {
     rpc = makeRpc(arg('--rpc', DEFAULT_RPC));
     if (recordDir) {
-      store = { seen: new Set(), calls: [] };
+      store = { seen: new Map(), calls: [] };
       rpc = wrapRecorder(rpc, store);
     }
     const spendSig = arg('--spend', null);
