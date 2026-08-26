@@ -8,6 +8,15 @@
     clippy::doc_lazy_continuation,
     clippy::doc_overindented_list_items,
     clippy::empty_line_after_doc_comments,
+    // Its sibling, and it fires where the other one does not: a `///` block
+    // left standing above a DISABLED instruction (the v2 shield and unshield
+    // registrations, kept commented rather than deleted) documents nothing, and
+    // rust 1.95 reports that as an outer-attribute problem rather than a doc one.
+    // MEASURED 2026-08-26: without this, `cargo clippy -p zk_shielded -- -D
+    // warnings` -- a CI gate -- exits 101. The doc lines stay as they are: the
+    // block is disabled, not deleted, and re-enabling it should restore what it
+    // said about itself.
+    clippy::empty_line_after_outer_attr,
     clippy::get_first,
     clippy::if_same_then_else,
     clippy::int_plus_one,

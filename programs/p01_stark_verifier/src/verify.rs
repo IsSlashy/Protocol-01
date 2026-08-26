@@ -2450,6 +2450,19 @@ fn poseidon_round(state: &[Felt; 3], rc: &[Felt; 3]) -> [Felt; 3] {
 /// For each query that lands on a trace-aligned position corresponding to
 /// a boundary assertion row, verify the trace value matches the expected
 /// public input value.
+/// ⚠️ THE WHOLE BODY IS DEAD, AND THE ALLOWS BELONG ON THE FUNCTION.
+///
+/// The `#[allow(unreachable_code)]` inside the body scopes to the inner block
+/// only, so rustc still warned about the statement AND about every parameter
+/// the disabled body stopped reading. `cargo clippy -p p01_stark_verifier --
+/// -D warnings` is a CI gate (.github/workflows/ci.yml), and MEASURED
+/// 2026-08-26 it failed with exit 101 on six errors from exactly these two
+/// functions -- two `unreachable statement`, four `unused variable`.
+///
+/// The parameters are kept rather than underscored on purpose: this arm is
+/// disabled, not deleted, and re-enabling it means restoring the body, not
+/// rediscovering what it took.
+#[allow(unreachable_code, unused_variables)]
 fn verify_boundary_constraints(
     proof: &GenericCompactProof,
     circuit_id: u8,
@@ -2493,6 +2506,19 @@ fn verify_boundary_constraints(
 }
 
 /// [C6] Legacy boundary constraint verification for circuit 0.
+/// ⚠️ THE WHOLE BODY IS DEAD, AND THE ALLOWS BELONG ON THE FUNCTION.
+///
+/// The `#[allow(unreachable_code)]` inside the body scopes to the inner block
+/// only, so rustc still warned about the statement AND about every parameter
+/// the disabled body stopped reading. `cargo clippy -p p01_stark_verifier --
+/// -D warnings` is a CI gate (.github/workflows/ci.yml), and MEASURED
+/// 2026-08-26 it failed with exit 101 on six errors from exactly these two
+/// functions -- two `unreachable statement`, four `unused variable`.
+///
+/// The parameters are kept rather than underscored on purpose: this arm is
+/// disabled, not deleted, and re-enabling it means restoring the body, not
+/// rediscovering what it took.
+#[allow(unreachable_code, unused_variables)]
 fn verify_boundary_constraints_legacy(
     proof: &CompactStarkProof,
     commitment: Felt,
