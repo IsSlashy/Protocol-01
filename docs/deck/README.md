@@ -121,8 +121,12 @@ et la liste complète avec ses preuves est dans `three-minute-script.md` :
 - « notre commission est de 1 % » : 1 % opérateur **plus** 0,3 % de frais de
   shield on-chain, soit 1,3 % aujourd'hui sur un dépôt relayé de 1 SOL.
 - « un ensemble d'anonymat de 47 » : 47 est un **plafond**. L'ensemble effectif
-  est de **un**, parce que chaque dépense déployée republie l'engagement que son
-  dépôt avait déjà publié.
+  reste de **un** partout où la dépense republie l'engagement que son dépôt avait
+  déjà publié — l'abonnement, le transfert, la division, et le retrait v3 que le
+  téléphone utilise encore. Depuis le 26 août le retrait C7 ne le republie plus, et
+  la web app comme l'extension y routent : par ce canal-là, l'ensemble n'est plus
+  ramené à un. ⚠️ Il l'est encore par le payeur des frais, qui reste à un saut d'un
+  portefeuille — P6 et P11 rouges sur la même mesure.
 - « dix programmes vivants » sans le dénominateur : toujours **10 sur 14**.
 - toute phrase contenant *annuler* ou *renouveler* : aucune des deux instructions
   n'existe, et A9 le dit.
