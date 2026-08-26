@@ -36,8 +36,18 @@
  * withdrawal and the deposit leaf; the funding edge, the sender's identity and
  * the anonymity-set size are separate work and are not delivered here.
  *
- * Run:
- *   P01_LIVE_DEVNET=1 P01_LIVE_KEYPAIR=~/.config/solana/id.json \
+ * 🚨 AND THE FEE PAYER IS ITS OWN LEAK, ON THE WITHDRAWAL SIDE. The paragraph
+ * above is about the deposit. The withdrawal carries a separate one: whoever
+ * pays for it is `accountKeys[0]`, signed in permanently and returned by every
+ * `getTransaction`. The first real v4 withdrawal was paid by the Solana CLI
+ * default key, which is this project's upgrade authority and is printed in
+ * README.md — so it publishes no field of the deposit and is STILL
+ * attributable to the operator in one RPC call. `loadKeypair()` now refuses
+ * that key unless `P01_LIVE_ACK_PUBLIC_PAYER=1` says the attribution is
+ * wanted. Read the note there before overriding it.
+ *
+ * Run (with a payer this repository has never named):
+ *   P01_LIVE_DEVNET=1 P01_LIVE_KEYPAIR=~/.config/solana/fresh-payer.json \
  *     npx vitest run --config vitest.pool.config.mts lib/privacy/pool/liveDevnetUnshieldV4.test.ts
  */
 
@@ -58,6 +68,7 @@ import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { describe, expect, it } from 'vitest';
 
 import { buildDerivationMessage } from '../message';
+import { assertPayerNotPubliclyNamed } from './publicPayer';
 import {
   configurePoolHandlers,
   handlePoolRequest,
@@ -135,9 +146,24 @@ function expandHome(p: string): string {
   return p.startsWith('~') ? p.replace(/^~/, homedir()) : p;
 }
 
+/**
+ * ⛔ REFUSES A PAYER THIS REPOSITORY HAS ALREADY NAMED IN PUBLIC.
+ *
+ * The default path here is the Solana CLI default key, which is the most
+ * convenient thing to reach for and the worst thing to pay with. C7 removes the
+ * commitment linkage between a withdrawal and its deposit leaf — it does not
+ * remove the fee payer, which every `getTransaction` returns as
+ * `accountKeys[0]` and which is signed into the transaction permanently.
+ *
+ * The reasoning, the measurement and the address list live in `publicPayer.ts`
+ * so all three live harnesses share one answer and one test.
+ */
 function loadKeypair(): Keypair {
   const path = expandHome(process.env.P01_LIVE_KEYPAIR ?? `${homedir()}/.config/solana/id.json`);
-  return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(path, 'utf8'))));
+  const kp = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(path, 'utf8'))));
+
+  assertPayerNotPubliclyNamed(kp.publicKey.toBase58(), 'a live v4 withdrawal');
+  return kp;
 }
 
 /** A `WalletSigner` over a raw Keypair — the harness has no browser wallet. */
