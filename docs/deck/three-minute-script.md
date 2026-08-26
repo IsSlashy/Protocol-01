@@ -74,9 +74,9 @@ which is deliberate: the demo plate is the one place a live run can stall.
 Written, measured against the repo, cut. Each one fails in the first question:
 
 - **"a test in CI asserts the buyer is absent"** — the assertion exists, but its suite is `describe.skipIf(!LIVE)` behind `P01_LIVE_RELAY=1`, which CI never sets.
-- **"77,965 bytes against 258,958"** — 258,958 is the C1+C3 pair from *before* the B4 pair-leaf change of 28 July. Measured today: C1 68,881 + C3 78,157 = **147,038**, confirmed by a live scan of a real upload (`verify/README.md:261`). The cut is 1.9x, not 3.3x. Three comments in this repo still carry the stale figure.
+- **"77,965 bytes against 258,958"** — 258,958 is the C1+C3 pair from *before* the B4 pair-leaf change of 28 July. Measured today: C1 68,881 + C3 78,157 = **147,038**, confirmed by a live scan of a real upload (`verify/README.md:261`). The cut is 1.9x, not 3.3x. ~~Three comments in this repo still carry the stale figure.~~ All three were corrected on 26 August, along with a fourth in `docs/C7_SPEND_CIRCUIT_PLAN.md` that this note had missed.
 - **"purchase to running subscription in 167.76 seconds"** — the run happened; the branch and tag named for that freeze are absent from this repo, so it is not reproducible.
-- **"one proof now does the work of two"** — C7 is measured, not deployed.
+- **"one proof now does the work of two"** — still cut, but the reason changed on 25 August and the new one is sharper. C7 **is** deployed and one real withdrawal landed on it (`22psv1tF…`, no commitment on the wire). What is not true is that anything *uses* it: web, extension and mobile all still call the v3 pair, pinned at `apps/web/lib/privacy/pool/spendRouting.test.ts`. And C7 covers the **withdrawal only** — there is no C7 subscription, so the flow this deck is about still republishes the commitment. Say it and the first question is "on which spend?".
 - **"our fee is 1%"** — 1% operator plus 0.3% on-chain shield is 1.3% today on a 1 SOL relayed deposit.
 - **"an anonymity set of 47"** — 47 is a ceiling. The effective set today is one, and plate 06 volunteers it out loud before a judge finds it.
 - **"ten programs live"** without the denominator — always 10 of 14, and A3 names the four that resolve to null.
