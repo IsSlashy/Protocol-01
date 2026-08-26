@@ -407,6 +407,33 @@ pub fn handler(
             recipient_token_account.mint == pool.token_mint,
             ZkShieldedError::InvalidTokenMint
         );
+        // 🚨 THE PROOF BINDS A WALLET; THE SPL LEG PAYS A TOKEN ACCOUNT. Without
+        // this line those are two different things, and the whole "trustlessly
+        // relayable" property of circuit 7 is false on this branch.
+        //
+        // The header of this file says a relayer "that re-points the payout
+        // invalidates the proof it is relaying". MEASURED 2026-08-26: true on the
+        // SOL leg, where `recipient_account.key() == recipient` is checked before
+        // any lamport moves, and FALSE here — the mint was checked and the OWNER
+        // was not, so whoever submits the transaction could pass any token
+        // account of the right mint, including their own, and the money would
+        // follow the account rather than the proof.
+        //
+        // Not reachable at the time it was found: both live pools carry
+        // `token_mint = 11111111111111111111111111111111`, native SOL, read off
+        // chain at offset 40. So this was a latent defect and not a live drain —
+        // it becomes live the day an SPL pool opens, which is exactly when
+        // nobody would be looking for it.
+        //
+        // ⛔ `unshield_denominated_stark_v3.rs` has the SAME gap, at its own
+        // `recipient_token_account.mint` check. It is NOT fixed here: v3 binds no
+        // recipient in its proof at all, so there is no bound identity to compare
+        // against — closing it there means deciding what v3's payee even is, and
+        // that is a different change.
+        require!(
+            recipient_token_account.owner == Pubkey::new_from_array(recipient),
+            ZkShieldedError::InvalidTokenOwner
+        );
 
         let transfer_ctx = CpiContext::new_with_signer(
             token_program.to_account_info(),
@@ -623,6 +650,29 @@ mod membership_guard {
             assert!(at > ring, "{payout} can run before is_valid_root");
             assert!(at > mismatch, "{payout} can run before the derived/named root check");
         }
+    }
+
+    /// 🚨 THE SPL LEG MUST PAY THE ACCOUNT THE PROOF BINDS, NOT MERELY THE RIGHT
+    /// MINT. The SOL leg compares `recipient_account.key()` against the bound
+    /// `recipient`; the SPL leg pays a token ACCOUNT, so it has to compare that
+    /// account's OWNER against the same value or the binding buys nothing here.
+    ///
+    /// Matched as the REQUIRE it has to be, for the reason the guard below this
+    /// one records: `recipient_token_account.owner` also appears in ordinary
+    /// reads, so searching for the name alone would stay green with the check
+    /// deleted — which is precisely how the deep-ALI guard was hollow.
+    #[test]
+    fn the_spl_payout_goes_to_the_account_the_proof_binds() {
+        let code = code();
+        let needle = "require!(
+            recipient_token_account.owner == Pubkey::new_from_array(recipient),";
+        assert!(
+            code.contains(needle),
+            "the SPL destination is no longer bound to the recipient the proof names;              a relayer can re-point an SPL payout to any token account of the right mint",
+        );
+        let bind = code.find("recipient_token_account.owner").expect("owner binding is gone");
+        let at = code.find("token::transfer(").expect("token::transfer is gone");
+        assert!(at > bind, "token::transfer can run before the destination owner is bound");
     }
 
     /// The proof itself must be checked before the money moves, phase 2
