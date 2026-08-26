@@ -333,6 +333,27 @@ jobs:
           cargo test -p zk_shielded --test unshield_c5_membership -- \
             --skip the_built_program_cannot_dispatch
 
+      # 🚨 THE PROVER'S OWN TESTS EXECUTED NOWHERE. `cargo check --workspace
+      # --all-targets` above COMPILES `p01-stark` and never runs it, and no step
+      # in this file names the package — the only mention of `p01-stark` in the
+      # whole workflow is a comment saying it is a dev-dependency.
+      #
+      # MEASURED 2026-08-26: 171 tests, all green, none of them ever run here.
+      # 166 are unit tests inside the crate, 67 in `compact.rs` alone, which is
+      # the prover. So the artifact every client ships was checked by nothing on
+      # any push, while the VERIFIER next to it had eighteen pins.
+      #
+      # `cu_budget.rs`'s coverage scanner did not catch this: it reads
+      # `programs/p01_stark_verifier/tests/` and has no opinion about other
+      # crates. A scanner is only as wide as its directory.
+      #
+      # Three expensive probes carry `#[ignore]` with their measured runtimes
+      # written into the attribute (~5s, ~25s, ~25s) and stay skipped by
+      # default, which is why this costs ~35s of test time rather than minutes.
+      # Run them locally with `-- --ignored` when touching depth or leaf width.
+      - name: cargo test (prover — 171 tests that ran in no CI job at all)
+        run: cargo test --release -p p01-stark
+
       # `continue-on-error: true` was on this step, which made it advisory: a real
       # failure still passed the job, so `-D warnings` pinned nothing. Removed.
       # zk_shielded's three warnings (an unused import and two constants orphaned
