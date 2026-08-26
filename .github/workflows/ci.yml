@@ -378,6 +378,14 @@ jobs:
         run: |
           cargo test -p zk_shielded --lib
           cargo test -p zk_shielded --test landed_invariants
+          # 🚨 ADDED 2026-08-26, and it must never be dropped for being cheap.
+          # It pins the canonical VALUE bound on the nullifier across every
+          # live STARK-backed spend. Without that bound n and n + p are two
+          # nullifier PDAs for one field element — one witness, two honest
+          # proofs, the note paid twice, grindable at deposit in ~2^32 hashes.
+          # The bound shipped in QvJqCsnw…; this is what stops it being
+          # deleted by a refactor that reads as tidying.
+          cargo test -p zk_shielded --test nullifier_canonical_bound
           # 🚨 ADDED 2026-08-22. Ten assertions guarding the drain that was LIVE
           # on devnet on 2026-08-18 — the deployed binary still routed
           # `unshield`, class FUND LOSS, measured on the program dump rather
