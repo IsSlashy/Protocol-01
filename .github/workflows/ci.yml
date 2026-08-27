@@ -229,6 +229,27 @@ jobs:
       #
       # `--lib` and `fri_end_to_end` are NOT guarded: they exist on every
       # branch, and a missing one is a genuine regression that must stay red.
+      # ⛔ CLIPPY RUNS BEFORE THE LONG TESTS, AND THAT ORDER IS THE POINT.
+      #
+      # It used to be last. MEASURED on run 33075… : the verifier test step
+      # alone held the runner for 57 of the job's 90-minute budget, and three
+      # more test steps sat between it and clippy — so the job TIMED OUT before
+      # ever reaching the question it was being asked. A gate that cannot be
+      # read is not a gate.
+      #
+      # Clippy takes seconds and needs nothing the tests produce. Moving it
+      # ahead costs the long tests nothing and turns "we never found out" into
+      # a verdict in about two minutes.
+      #
+      # ⚠️ It still runs with -D warnings, and that is what protects these
+      # programs. The ORDER changed, not the strictness.
+      - name: cargo clippy (warnings as errors on hot programs)
+        run: |
+          cargo clippy -p zk_shielded -- -D warnings
+          cargo clippy -p p01_stark_verifier -- -D warnings
+          cargo clippy -p p01_relayer -- -D warnings
+
+
       - name: cargo test (verifier — the periodic-column, field and pair-leaf pins)
         run: |
           set -euo pipefail
@@ -450,12 +471,6 @@ jobs:
       # zk_shielded's three warnings (an unused import and two constants orphaned
       # by the Groth16 removal) were cleared to make this a gate rather than a
       # permanently-red step someone would eventually re-silence.
-      - name: cargo clippy (warnings as errors on hot programs)
-        run: |
-          cargo clippy -p zk_shielded -- -D warnings
-          cargo clippy -p p01_stark_verifier -- -D warnings
-          cargo clippy -p p01_relayer -- -D warnings
-
   verify-unlinkability-controls:
     name: Verify — unlinkability probe controls (offline replay)
     runs-on: ubuntu-latest
