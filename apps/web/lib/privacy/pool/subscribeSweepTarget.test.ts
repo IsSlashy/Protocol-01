@@ -35,8 +35,17 @@ vi.mock('./subscribePrivateStark', async (importOriginal) => ({
   subscribePrivateStark: vi.fn(),
 }));
 
+// The v4 twin, stubbed the same way and for the same reason. `prepareSubscribeV4`
+// is left REAL by the spread: only the sender is replaced, so nothing here can
+// accidentally start depending on a stubbed prepare.
+vi.mock('./subscribePrivateStarkV4', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./subscribePrivateStarkV4')>()),
+  subscribePrivateStarkV4: vi.fn(),
+}));
+
 import { subscribePrivateStark } from './subscribePrivateStark';
-import { executeSubscribe } from './subscribeEphemeral';
+import { subscribePrivateStarkV4 } from './subscribePrivateStarkV4';
+import { executeSubscribe, executeSubscribeV4 } from './subscribeEphemeral';
 
 const OWNER = new PublicKey('7gWpzSZAqUiN6uZ9NkfB1gZ5gYtvUvQyFAUhZTjJ6Trh');
 const FUNDER = new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB');
@@ -80,6 +89,36 @@ function ctx() {
   } as never;
 }
 
+/**
+ * The v4 job carries its TERMS, which the v3 one does not — they are inside the
+ * circuit-7 digest, so `executeSubscribeV4` takes none of them on the message.
+ * Nothing here is about the terms; they are present because the function
+ * destructures them.
+ */
+function ctxV4(overrides: Record<string, unknown> = {}) {
+  return {
+    ephemeral,
+    requiredLamports: REQUIRED_LAMPORTS,
+    poolConfig: {},
+    prepared: {},
+    receipt: {},
+    binding: {
+      vault: VAULT,
+      rate: 30_000_000n,
+      intervalSlots: 6_480_000n,
+      vkHashSubscriber: new Uint8Array(32),
+    },
+    retailer: RETAILER,
+    subscriberCommitment: 1n,
+    ...overrides,
+  } as never;
+}
+
+/** `executeSubscribeV4` reads only these two off the message. */
+function paramsV4(overrides: Record<string, unknown> = {}) {
+  return { ownerPubkey: OWNER, ...overrides } as never;
+}
+
 function params(overrides: Record<string, unknown> = {}) {
   return {
     ownerPubkey: OWNER,
@@ -117,6 +156,7 @@ beforeEach(() => {
   sent = [];
   ephemeral = Keypair.generate();
   vi.mocked(subscribePrivateStark).mockResolvedValue({ txSig: 'TXSIG', vaultPDA: VAULT });
+  vi.mocked(subscribePrivateStarkV4).mockResolvedValue({ txSig: 'TXSIG_V4', vaultPDA: VAULT });
 });
 
 describe('the sweep goes to whoever paid', () => {
@@ -158,6 +198,67 @@ describe('the sweep goes to whoever paid', () => {
       executeSubscribe(ctx(), fakeConnection(), params({ sweepTo: FUNDER, intervalSlots: 0n })),
     ).rejects.toThrow(/interval/i);
     expect(subscribePrivateStark).not.toHaveBeenCalled();
+    expect(decodeSweep().to).toBe(FUNDER.toBase58());
+  });
+});
+
+/**
+ * ⛔ THE SAME QUESTION, ON THE CIRCUIT-7 PATH — and it was NOT carried over when
+ * that path was written.
+ *
+ * MEASURED 2026-08-27: forcing `const sweepTo = params.ownerPubkey` at
+ * `subscribeEphemeral.ts:574` — the v4 `finally` — left the whole pool suite
+ * green at 655/655, while the identical mutation on the v3 twin at line 279
+ * turns the block above red. One `finally` was guarded and its copy was not.
+ *
+ * It matters MORE here, not less. A v4 subscription publishes no note
+ * commitment, so the ephemeral's two public `SystemProgram::transfer`s are what
+ * is LEFT for probe P6 to read: fund in, sweep out. Sweeping home after a third
+ * party pre-funded writes the user's wallet into the newest transaction of that
+ * ephemeral's life and hands the linkage straight back — having spent someone
+ * else's ~0.55 SOL to remove it. Circuit 7 does not repair a sweep.
+ */
+describe('the v4 sweep goes to whoever paid', () => {
+  it('sweeps home when the wallet funded the job', async () => {
+    await executeSubscribeV4(ctxV4(), fakeConnection(), paramsV4());
+    const sweep = decodeSweep();
+    expect(sweep.to).toBe(OWNER.toBase58());
+    expect(sweep.from).toBe(ephemeral.publicKey.toBase58());
+    expect(sweep.lamports).toBe(EPHEMERAL_BALANCE - SWEEP_FEE);
+  });
+
+  it('sweeps to the funder when a third party funded the job', async () => {
+    await executeSubscribeV4(ctxV4(), fakeConnection(), paramsV4({ sweepTo: FUNDER }));
+    const sweep = decodeSweep();
+    expect(sweep.to).toBe(FUNDER.toBase58());
+    // The negative half, stated separately: this is THE regression, and it is
+    // the one the v4 path shipped without.
+    expect(sweep.to).not.toBe(OWNER.toBase58());
+  });
+
+  it('still sweeps to the funder when the v4 send itself fails', async () => {
+    // The sweep lives in a `finally` here too, and the failure path is the one
+    // that matters most: the funder's pre-fund is sitting on that key and the
+    // job just threw. A funder repaid only on success is a funder nobody runs.
+    vi.mocked(subscribePrivateStarkV4).mockRejectedValue(new Error('chunk upload died'));
+    await expect(
+      executeSubscribeV4(ctxV4(), fakeConnection(), paramsV4({ sweepTo: FUNDER })),
+    ).rejects.toThrow('chunk upload died');
+    expect(decodeSweep().to).toBe(FUNDER.toBase58());
+  });
+
+  it('refuses an underfunded signer and still returns the money to the funder', async () => {
+    // The v4 path's only in-`try` refusal. It sits INSIDE the try deliberately:
+    // a merely-lagging RPC read would otherwise strand the funder's whole
+    // pre-fund on an ephemeral rather than returning it.
+    await expect(
+      executeSubscribeV4(
+        ctxV4({ requiredLamports: EPHEMERAL_BALANCE + 1 }),
+        fakeConnection(),
+        paramsV4({ sweepTo: FUNDER }),
+      ),
+    ).rejects.toThrow(/underfunded/);
+    expect(subscribePrivateStarkV4).not.toHaveBeenCalled();
     expect(decodeSweep().to).toBe(FUNDER.toBase58());
   });
 });

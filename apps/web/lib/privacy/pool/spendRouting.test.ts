@@ -48,10 +48,10 @@ function codeOf(rel: string): string {
 const ROUTERS: Array<{ surface: string; rel: string; routesV4: boolean }> = [
   // Wired 2026-08-26 through `prepareUnshieldJobV4` / `executeUnshieldV4`,
   // added as SIBLINGS of the v3 pair rather than replacing it:
-  // `prepareUnshieldJob` is reused verbatim by subscribeEphemeral.ts:115 and by
-  // subscribePrivateStark.ts, and `programs/zk_shielded/src/lib.rs` exposes
-  // exactly one v4 — the withdrawal. Switching the shared function would have
-  // broken the subscription silently.
+  // `prepareUnshieldJob` is reused verbatim by subscribeEphemeral.ts and by
+  // subscribePrivateStark.ts, and a note whose blinding is unknown can be spent
+  // nowhere else. Switching the shared function would have broken the
+  // subscription silently.
   { surface: 'apps/web', rel: 'apps/web/lib/privacy/pool/unshieldEphemeral.ts', routesV4: true },
   // Wired 2026-08-26, and its fallback is proven differently from web's. The
   // extension has no worker boundary on this path, so it does not route on a
@@ -161,20 +161,50 @@ describe('the withdrawal path each client routes to', () => {
   });
 
   /**
-   * ⛔ THE SUBSCRIPTION MUST NOT FOLLOW THE WITHDRAWAL. There is no
-   * `subscribe_private_stark_v4` on chain, so the subscribe path needs the
-   * C1 + C3 pair and would break outright on a circuit-7 proof. It reuses
-   * `prepareUnshieldJob` verbatim, which is exactly why the v4 work was added
-   * as a sibling function rather than by changing that one.
+   * ⛔ THE SUBSCRIPTION MUST NOT FOLLOW THE WITHDRAWAL — AND THE REASON CHANGED
+   * ON 2026-08-27 WITHOUT THE CONCLUSION CHANGING.
+   *
+   * This used to read "there is no `subscribe_private_stark_v4` on chain, so the
+   * subscribe path needs the C1 + C3 pair". THERE NOW IS
+   * (`programs/zk_shielded/src/lib.rs:549`), and the subscribe IS wired to
+   * circuit 7 — through its OWN `prepareSubscribeJobV4`, never the withdrawal's.
+   *
+   * The reason it must keep its own is stronger than the old one: the two v4
+   * instructions bind DIFFERENT digests. `prepareUnshieldJobV4` binds
+   * `sha256(recipient)`; `subscribe_private_stark_v4` rebuilds a 132-byte
+   * `"P01:C7:SUBSCRIBE:v1" || vault || rate || interval_slots || vk_hash ||
+   * license` composite, because `rate` and `interval_slots` are half the
+   * economic statement and `claim_period` is permissionless. A buffer minted by
+   * the withdrawal's prepare fails the subscribe handler's public-inputs-hash
+   * check at the END of a ~78-chunk upload.
+   *
+   * So this checks THREE things now, in both directions: the shared v3 prepare
+   * is still reached, the withdrawal's v4 prepare is still NOT, and the
+   * subscribe's own v4 prepare IS. A one-directional check would let a silent
+   * REMOVAL through, which is the same shape as the bug this file exists to
+   * catch, pointing the other way.
    */
-  it('leaves the subscription on the v3 prepare it shares with the withdrawal', () => {
+  it('keeps the subscription on its OWN v4 prepare, and on the shared v3 one', () => {
     const sub = codeOf('apps/web/lib/privacy/pool/subscribeEphemeral.ts');
     expect(sub, 'subscribeEphemeral no longer reuses prepareUnshieldJob').toMatch(
       /\bprepareUnshieldJob\b/,
     );
     expect(
       /\bprepareUnshieldJobV4\b/.test(sub),
-      'subscribeEphemeral now prepares a circuit-7 proof, and there is no subscribe_private_stark_v4 to spend it on',
+      "subscribeEphemeral reached for the WITHDRAWAL's circuit-7 prepare, which binds " +
+        'sha256(recipient) — the subscribe handler rebuilds a domain-tagged composite and ' +
+        'would refuse that proof only after the whole upload was paid for',
     ).toBe(false);
+    // ⛔ THE CALL STATEMENT, NOT THE NAME. MEASURED 2026-08-27: this was first
+    // written as `.toMatch(/\bprepareSubscribeV4\b/)` and it was HOLLOW —
+    // renaming the CALL to `prepareSubscribeV4NOPE(` left it GREEN, because the
+    // identifier still appears in the import list at the top of the file and
+    // `codeOf` strips comments but not imports. This repo has shipped three
+    // hollow guards of exactly that shape.
+    expect(
+      sub,
+      'subscribeEphemeral lost its own circuit-7 route, so every subscription now ' +
+        "republishes the note's commitment through the C1 + C3 pair",
+    ).toContain('const prepared = await prepareSubscribeV4(');
   });
 });

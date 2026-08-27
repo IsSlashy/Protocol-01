@@ -14,9 +14,13 @@ copy, kept here so nobody reinstates them:
   - "one proof NOW does two"   -> C7 is measured, not deployed. Say measured.
   - "our fee is 1%"            -> 1% operator + 0.3% on-chain shield = 1.3%
     today on a 1 SOL relayed deposit.
-  - "anonymity set of 47"      -> 47 is a ceiling. README.md:191-195 puts the
-    effective set at one, because every deployed spend republishes the
-    commitment its deposit already published.
+  - "anonymity set of 47"      -> 47 is a ceiling. The effective set is one,
+    because four of the five spends republish the commitment their deposit
+    already published. Since 25 August the C7 withdrawal no longer does, so
+    "every deployed spend republishes" is now FALSE: do not reinstate it.
+  - "the pool is private"      -> the pool is a CROWD. The guarantee is
+    k-anonymity, worth log2(k) bits, which is ZERO at k=1. Name k or say
+    nothing. And k is set by the coarsest side channel, not by the leaf count.
   - "ten programs live"        -> always with the denominator, 10 of 14.
   - "cancelling ends the..."   -> our subscription has no cancel instruction.
   - "no customer record anywhere" -> true of the merchant, false of the chain:
@@ -123,11 +127,11 @@ THIS PROVES ENTITLEMENT, NOT PRIVACY &nbsp;&middot;&nbsp; DEVNET MOVES: READ THE
     dict(
         no='06', clock='0:25', seconds=25, cap=20, band=True, role='what a merchant gets',
         spoken=(
-            "What a merchant does today: one npm install, and we take one percent plus three "
-            "tenths on chain. Behind it: ten of our fourteen declared programs live on devnet, "
-            "four thousand two hundred and sixteen tests green. And one caveat before you find "
-            "it: the anonymity set today is effectively one, because every deployed spend "
-            "republishes its deposit's commitment."
+            "Today: one npm install, and we take one percent plus three tenths on chain. "
+            "Behind it: ten of our fourteen declared programs live on devnet, four thousand "
+            "two hundred and sixteen tests green. The caveat: four of our five spends still "
+            "republish their deposit's commitment, so the crowd is one. C7 closed the "
+            "withdrawal. Privacy is a crowd that grows."
         ),
         body='''
 <p class="eyebrow">Today</p>
@@ -276,6 +280,27 @@ APPENDIX = [
     Why the pool is shared and not per merchant: the crowd is the product, and it is the only
     asset that grows for free when a merchant joins. One pool per merchant destroys the thesis.
     The honest half of that sentence is in A8.
+  </p>
+  <p>
+    <strong>What kind of guarantee that is, stated precisely.</strong> We do not encrypt the
+    withdrawal. We make it indistinguishable from the others in the pool, so the guarantee is
+    k&#8209;anonymity and it is worth log<sub>2</sub>(k) bits &mdash; zero at k&nbsp;=&nbsp;1.
+    That is an information&#8209;theoretic property, not a computational one: there is no key an
+    adversary could later find, and nothing here is broken by a quantum computer. It is also the
+    only privacy property we know of that <em>improves for free</em> as the product is used. The
+    cost is that it is worthless on day one and has to be bootstrapped.
+  </p>
+  <p>
+    <strong>Two consequences we designed around.</strong> First, a set does not add across
+    denominations, it splits &mdash; hence one denomination, 1&nbsp;SOL, founder decision
+    21&nbsp;August (<span class="hash">denominatedPool.ts:215</span>). The measured cost of
+    getting that wrong is on this page already: the closed 0.1&nbsp;SOL pool holds 53 unspent
+    notes and the open 1&nbsp;SOL pool holds 47, and those are two crowds of 53 and 47, never one
+    of 100. Second, k is set by the <em>coarsest side channel</em>, not by the leaf count: any
+    channel that partitions the pool &mdash; the fee payer, the deposit funder, timing &mdash;
+    divides k, and one open channel pins it to 1 no matter how many notes are in the tree. That
+    is why the number on the plate is one and not 47, and why A8 lists the channels rather than
+    the leaves.
   </p>
 </div>
 '''),

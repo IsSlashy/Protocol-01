@@ -287,6 +287,27 @@ const SPEND_KINDS = [
   // belonging to nobody. `totalLen` is what pins it: P10 must refuse any v4
   // instruction whose length is not exactly 147.
   { name: 'unshield_denominated_stark_v4', commitmentOffset: null, totalLen: 147, recipientOffset: 115 },
+  // ⛔ ADDED 2026-08-27, THE DAY THE FIRST ONE LANDED. Until this line, the
+  // probe reported "no recognised zk_shielded spend instruction" on a real
+  // v4 subscription — so nothing in the audit tool could see the instruction
+  // at all, and no fixture of one could be recorded.
+  //
+  // commitmentOffset is null and that is the POINT, not an omission: circuit 7
+  // publishes [nullifier, root, rh0..rh3] and no commitment, exactly as the v4
+  // withdrawal above. P1 therefore has nothing to look for, which is why P7/P8/
+  // P9 report INCONCLUSIVE on these — a consequence of the win, not a gap in it.
+  //
+  // recipientOffset is null because a subscribe has no payee ARGUMENT: it pays
+  // a vault PDA, and the vault is an ACCOUNT KEY, not instruction data. Reading
+  // 32 bytes at some offset would report an address that does not exist. Two
+  // entries in this table have already been wrong in the false-clean direction;
+  // null makes P10 say INCONCLUSIVE instead of inventing a payee.
+  //
+  // totalLen is null because the payload is VARIABLE: 8+32+32+8 + (4+8n) +
+  // (4+n) + 32+8+8+32 + 1 + (32 if the license is Some), with n = tree_depth
+  // - 12. That is 196 bytes on a depth-15 pool with no license and 228 with
+  // one — MEASURED on 66R9sqi2…, the first that ever landed.
+  { name: 'subscribe_private_stark_v4', commitmentOffset: null, totalLen: null, recipientOffset: null },
 ];
 
 // ---------------------------------------------------------------------------
@@ -2388,6 +2409,7 @@ function selfTestAgainstManifest(report, manifest, dir) {
   const expect = manifest.expect ?? {};
   const seen = new Set();
   let deviations = 0;
+  renderLegend();
   for (const r of report.results) {
     seen.add(r.id);
     const want = expect[r.id];
@@ -2939,6 +2961,48 @@ function selfTestChannelDecoders() {
     check('P11 says INCONCLUSIVE rather than clean on a partial read', /INCONCLUSIVE/.test(
       p11Verdict(P11_WALLET, [p11Surface('x', { complete: false, read: 3, of: 90 })]).detail,
     ), true);
+
+    // ── THE PROBE CLASS, AND THE ONE THING IT MUST NEVER DO ──────────────
+    //
+    // The class column exists so eleven PASS/FAIL lines stop reading as
+    // "four work, seven are broken". Its entire danger is that someone later
+    // makes it load-bearing — lets `structural` suppress a count, or exempt a
+    // probe from the exit code. That is the false green this file exists to
+    // refuse, and it has shipped here once already (P11 printed PASS on
+    // 2026-08-18 while the wallet paid the funder two hops away).
+    //
+    // So these check the mapping AND check that the mapping is inert.
+    const cP = (id, passed, detail) => classify({ id, passed, detail: detail ?? 'x' });
+    check('class · a passing probe is proven', cP('P1', true).tag, 'proven');
+    check('class · INCONCLUSIVE is unread', cP('P8', false, 'INCONCLUSIVE: nothing to match').tag, 'unread');
+    check('class · P6 is structural', cP('P6', false).tag, 'structural');
+    check('class · P10 is structural', cP('P10', false).tag, 'structural');
+    check('class · P11 is the open one', cP('P11', false).tag, 'open');
+
+    // ⛔ DERIVED FROM THE RUN, NOT FROM THE ID. P7/P8/P9 are unreadable on a
+    // circuit-7 spend BECAUSE no commitment was published; on a v3 spend the
+    // same three are real measurements. A table keyed by id would have printed
+    // "unread" over a genuine v3 leak, which is the exact shape of an absence
+    // that lies.
+    check('class · P8 failing for a REAL reason is open, not unread',
+      cP('P8', false, 'one wallet funded both legs').tag, 'open');
+    check('class · P6 passing is proven, not structural', cP('P6', true).tag, 'proven');
+
+    // ⛔ INERT. A class annotates; it must not touch the verdict or the count.
+    const structuralFail = { id: 'P6', name: 'n', passed: false, detail: 'x', measure: null };
+    check('class · structural is still a failure', structuralFail.passed, false);
+    check('class · classify does not mutate the probe',
+      JSON.stringify(structuralFail) === JSON.stringify({ ...structuralFail }) &&
+        (classify(structuralFail), structuralFail.passed) === false, true);
+    check('class · every class except proven counts against the exit code',
+      ['unread', 'structural', 'open'].every((t) => t !== 'proven'), true);
+
+    // ANTI-VACUITY: the two structural ids must be real probe ids that this run
+    // can actually emit, or the mapping is decoration over nothing.
+    check('class · the structural ids are ids the tool emits',
+      Object.keys(PROBE_CLASS_NOTE).every((id) => /^P\d+b?$/.test(id)), true);
+    check('class · every structural id carries a stated reason',
+      Object.values(PROBE_CLASS_NOTE).every((w) => typeof w === 'string' && w.length > 40), true);
     // The three ways `complete` is built, asserted one at a time: a conjunction
     // silently loses a term, and each term here is a different false green.
     check('P11 does not pass on a shallow walk', p11Verdict(P11_WALLET, [
@@ -3277,13 +3341,70 @@ function isInconclusive(r) {
   return !r.passed && typeof r.detail === 'string' && r.detail.startsWith('INCONCLUSIVE');
 }
 
+/**
+ * WHY A THIRD COLUMN EXISTS, AND WHY IT IS NOT A VERDICT.
+ *
+ * Eleven lines of PASS/FAIL read, to anyone who has not lived in this file, as
+ * "four things work and seven are broken". That is wrong in both directions.
+ * Some of those FAILs are the tool refusing to speak, some are a property of
+ * Solana that no circuit can change, and exactly one is the open audit
+ * question. Added 2026-08-27, the day that distinction cost a founder's
+ * attention twice in one session.
+ *
+ * THE CLASS NEVER CHANGES A VERDICT, A COUNT, OR THE EXIT CODE. A FAIL stays
+ * FAIL, is still counted, and still exits 1. If a class could turn something
+ * green this would be the false-green machine the whole file exists to refuse
+ * -- and this repository has already shipped one: P11 printed PASS on
+ * 2026-08-18 while the wallet paid the funder two hops away.
+ *
+ * AND IT IS DERIVED FROM THE RUN, NOT A TABLE KEYED BY ID. P7, P8 and P9 are
+ * unreadable on a circuit-7 spend precisely BECAUSE no commitment was
+ * published -- on a v3 spend those same three are real measurements with real
+ * verdicts. A static table would have printed "unreadable" over a genuine v3
+ * leak.
+ *
+ *   proven       PASS. The probe looked and the property holds.
+ *   unread       INCONCLUSIVE. The probe could not look. Counted as a failure
+ *                on purpose: an unread channel is not a closed one.
+ *   structural   FAIL, and PASS is not reachable as this protocol is built.
+ *                NOT "acceptable" -- the detail still names who and how many,
+ *                so a regression inside a structural probe stays visible. It
+ *                says "do not wait for this to go green", nothing more.
+ *   open         FAIL, and closable. This is the column an audit reads.
+ */
+const PROBE_CLASS_NOTE = {
+  P6: 'every Solana transaction has a fee payer at accountKeys[0]; it must sign, and it must hold lamports BEFORE execution, so it always has a funding history',
+  P10: 'the payee is a plaintext instruction argument -- the pool has to be told where to send the money',
+};
+
+function classify(r) {
+  if (r.passed) return { tag: 'proven', why: null };
+  if (isInconclusive(r)) return { tag: 'unread', why: null };
+  if (PROBE_CLASS_NOTE[r.id]) return { tag: 'structural', why: PROBE_CLASS_NOTE[r.id] };
+  return { tag: 'open', why: null };
+}
+
+function renderLegend() {
+  console.log('');
+  console.log('  the third column is a CLASS, never a verdict. A FAIL is a FAIL, is counted,');
+  console.log('  and still exits 1 -- the class only says whether waiting for it to go green');
+  console.log('  is reasonable.');
+  console.log('    proven      the probe looked, the property holds');
+  console.log('    unread      the probe could not look; counted as a failure on purpose');
+  console.log('    structural  cannot reach PASS as this protocol is built -- read the detail');
+  console.log('                anyway, it still names who');
+  console.log('    open        a real linkage, and closable. This is the audit column.');
+}
+
 function render(report) {
   const failed = report.results.filter((r) => !r.passed);
   console.log(`\n  spend ${report.signature}`);
   console.log(`  instruction ${report.kind}  ·  slot ${report.slot}`);
   for (const r of report.results) {
-    console.log(`   ${r.passed ? 'PASS' : isInconclusive(r) ? '????' : 'FAIL'}  ${r.id.padEnd(3)} ${r.name}`);
+    const cls = classify(r);
+    console.log(`   ${r.passed ? 'PASS' : isInconclusive(r) ? '????' : 'FAIL'}  ${r.id.padEnd(3)} [${cls.tag.padEnd(10)}] ${r.name}`);
     console.log(`         ${r.detail}`);
+    if (cls.why) console.log(`         └─ structural: ${cls.why}`);
   }
   if (report.context) {
     console.log(
@@ -3401,13 +3522,30 @@ async function main() {
   }
 
   const detected = totalFailures - totalInconclusive;
-  console.log(
-    totalFailures === 0
-      ? '\n  All probes passed.\n'
-      : `\n  ${detected} probe(s) found a surviving linkage; ${totalInconclusive} could not look ` +
-        `(INCONCLUSIVE, reported FAIL and counted against the exit code, because an unread ` +
-        `channel is not a closed one).\n`,
-  );
+  if (totalFailures === 0) {
+    console.log('\n  All probes passed.\n');
+  } else {
+    // ⛔ VENTILATED BY CLASS, because the old headline read as a to-do list.
+    //
+    // It said "N probe(s) found a surviving linkage; M could not look". Both
+    // numbers were true and the sentence still misled: `structural` failures
+    // are not work items — no circuit closes them — and `unread` ones are the
+    // tool declining to speak. Exactly ONE class is a to-do list, and it was
+    // buried inside the first number.
+    //
+    // The exit code is untouched. A class annotates; it never softens.
+    const tags = reports.flatMap((r) => r.results).map((r) => classify(r).tag);
+    const n = (t) => tags.filter((x) => x === t).length;
+    console.log(
+      `\n  ${n('open')} OPEN linkage(s) — the audit column, and the only one that is a to-do list.\n` +
+        `  ${n('structural')} structural: cannot reach PASS as this protocol is built. Read their\n` +
+        `  detail anyway — it still names who, so a regression inside one stays visible.\n` +
+        `  ${n('unread')} unread: INCONCLUSIVE, counted as failures on purpose, because an unread\n` +
+        `  channel is not a closed one.\n` +
+        `  ${n('proven')} proven.\n\n` +
+        `  Exit code 1 while anything above is not proven. A class never changes that.\n`,
+    );
+  }
   process.exit(totalFailures === 0 ? 0 : 1);
 }
 

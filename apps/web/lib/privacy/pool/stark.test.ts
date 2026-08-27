@@ -25,6 +25,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Keypair, PublicKey, Transaction, type Connection } from '@solana/web3.js';
 import { Buffer } from 'buffer';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   submitStarkProof,
   submitAndVerifyStarkProof,
@@ -33,6 +35,7 @@ import {
   PROOF_DATA_OFFSET,
   MAX_CHUNK_SIZE,
   STARK_VERIFIER_PROGRAM_ID,
+  CIRCUIT_SPEND,
   type WalletSigner,
   type GenericStarkProof,
   type CompactStarkProof,
@@ -85,6 +88,14 @@ class FakeConn {
   drops = new Map<number, DropRule>();
   verifySigs: string[] = [];
   deepAliSigs: string[] = [];
+  /** Public inputs decoded off each phase-1 / phase-2 instruction, in send
+   *  order. The deployed program re-hashes them in phase 2 and refuses a
+   *  mismatch (`public_inputs_hash == buffer.public_inputs_hash`), so "phase 2
+   *  ran" and "phase 2 ran on the same statement" are two different facts. */
+  verifyInputs: bigint[][] = [];
+  deepAliInputs: bigint[][] = [];
+  /** Every verifier instruction this connection saw, in send order. */
+  ixOrder: string[] = [];
   getAccountInfoCalls = 0;
   /** bytesWritten snapshot at each getAccountInfo call, in call order. */
   bytesWrittenAtReadback: number[] = [];
@@ -114,8 +125,10 @@ class FakeConn {
       const disc = d.subarray(0, 8);
       if (disc.equals(DISC.init)) {
         this.exists = true;
+        this.ixOrder.push('init');
         this.confirmedSigs.add(sig);
       } else if (disc.equals(DISC.write)) {
+        this.ixOrder.push('write');
         const offset = d.readUInt32LE(8);
         const len = d.readUInt32LE(12);
         this.writesByOffset.set(offset, (this.writesByOffset.get(offset) ?? 0) + 1);
@@ -131,10 +144,14 @@ class FakeConn {
           this.confirmedSigs.add(sig);
         }
       } else if (disc.equals(DISC.verify) || disc.equals(DISC.verifyV2)) {
+        this.ixOrder.push('verify');
         this.verifySigs.push(sig);
+        if (disc.equals(DISC.verifyV2)) this.verifyInputs.push(decodePublicInputs(d));
         this.confirmedSigs.add(sig);
       } else if (disc.equals(DISC.deepAli)) {
+        this.ixOrder.push('deepAli');
         this.deepAliSigs.push(sig);
+        this.deepAliInputs.push(decodePublicInputs(d));
         this.confirmedSigs.add(sig);
       } else {
         // close / resize — always land.
@@ -180,11 +197,25 @@ function makeSigner(): WalletSigner {
   };
 }
 
-function makeGenericProof(): GenericStarkProof {
+/**
+ * `Vec<u64>` Borsh payload of `verify_stark_proof_v2` / `verify_deep_ali_phase2`:
+ * 8-byte discriminator, u32 length, then that many little-endian u64s.
+ */
+function decodePublicInputs(d: Buffer): bigint[] {
+  const n = d.readUInt32LE(8);
+  const out: bigint[] = [];
+  for (let i = 0; i < n; i++) out.push(d.readBigUInt64LE(12 + i * 8));
+  return out;
+}
+
+function makeGenericProof(
+  circuitId = 1,
+  publicInputs: bigint[] = [1n, 2n],
+): GenericStarkProof {
   return {
     proofBytes: PROOF_BYTES,
-    circuitId: 1,
-    publicInputs: [1n, 2n],
+    circuitId,
+    publicInputs,
     proofSize: PROOF_SIZE,
   };
 }
@@ -402,4 +433,219 @@ describe('submitStarkProof (circuit 0) — shares the resume path', () => {
     expect(result.txSignature).toBe(conn.verifySigs[0]);
     expect(findBufferHoles(PROOF_BYTES, conn.account)).toEqual([]);
   });
+});
+
+// ---------------------------------------------------------------------------
+// 🚨 THE PHASE-2 (DEEP-ALI) GATE — stark.ts, inside submitAndVerifyStarkProof
+// ---------------------------------------------------------------------------
+//
+// WHAT PHASE 2 IS, because a guard that pins the wrong thing is worse than none.
+//
+// Phase 1 (`verify_stark_proof_v2`) checks Merkle openings, FRI, and the AIR
+// transitions at the QUERY positions. Phase 2 (`verify_deep_ali_phase2`) is the
+// DEEP-ALI identity at an out-of-domain point z: it binds the whole AIR —
+// transitions AND the circuit's boundary assertions — to the opened OOD trace by
+// Schwartz-Zippel. They are two transactions only because the sum exceeds
+// Solana's 1.4M CU per-instruction cap.
+//
+// The two phases are NOT redundant, and for circuit 7 they are not even
+// comparable:
+//
+//   * only ~24% of blowup-16 query positions land on trace-aligned rows, so
+//     without the OOD check a prover may fabricate transitions on the other 76%
+//     (`lib.rs`, the doc comment on `verify_deep_ali_phase2`);
+//   * and C7 in particular has a VACUOUS per-query arm with no step 5, so phase
+//     1 alone marks the buffer `verified = true` with C7's six boundary
+//     assertions never checked against the trace at all. `lib.rs` says exactly
+//     that on the `7 =>` dispatch arm.
+//
+// So on circuit 7 the phase-2 transaction is not "extra rigour". It is the
+// entire binding between the published `[nullifier, root, rh0..rh3]` and the
+// trace that supposedly produced them — and every C7 spend this app makes goes
+// through this branch.
+//
+// ⛔ WHAT WENT UNCAUGHT. `proof.circuitId <= 7` was changed to `<= 6`. The
+// client then uploads, runs phase 1, skips phase 2, and RETURNS SUCCESS. All 655
+// pool tests stayed green, because the only assertion on `deepAliSigs` in this
+// file rode on `makeGenericProof()`, whose circuit id is 1 — inside the mutated
+// range, so it never moved.
+//
+// The tests below therefore (a) drive circuit 7 specifically, and (b) derive the
+// admissible set from the DEPLOYED PROGRAM'S OWN GATE rather than restating it,
+// so narrowing the client below the program and widening it past the program are
+// both red.
+// ---------------------------------------------------------------------------
+
+const REPO = join(__dirname, '../../../../..');
+const VERIFIER_LIB = 'programs/p01_stark_verifier/src/lib.rs';
+
+/** The body of `verify_deep_ali_phase2`, as text. */
+function phase2Source(): string {
+  const src = readFileSync(join(REPO, VERIFIER_LIB), 'utf8');
+  const start = src.indexOf('pub fn verify_deep_ali_phase2');
+  expect(start, `${VERIFIER_LIB} no longer declares verify_deep_ali_phase2`).toBeGreaterThan(-1);
+  // Up to the next top-level `pub fn`, so the dispatch `match` is included and
+  // the next instruction's is not.
+  const rest = src.slice(start + 1);
+  const end = rest.indexOf('\n    pub fn ');
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
+/**
+ * The circuit ids the DEPLOYED program will run phase 2 for, read off its own
+ * `require!(matches!(circuit_id, ...))`.
+ *
+ * ⛔ Deliberately parsed rather than written out here. A list retyped in this
+ * file would agree with the client by construction, which is precisely the
+ * failure being guarded: the client and the program have to be compared against
+ * each other, not against one author's memory of both.
+ */
+function circuitsTheProgramRunsPhase2For(): number[] {
+  const m = phase2Source().match(/matches!\(\s*circuit_id\s*,([^)]*)\)/);
+  expect(
+    m,
+    'the `matches!(circuit_id, ...)` gate in verify_deep_ali_phase2 was restructured',
+  ).not.toBeNull();
+  const ids = m![1]
+    .split('|')
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .map((t) => Number(t));
+  for (const id of ids) {
+    expect(Number.isInteger(id), `unparsed arm in the gate: ${m![1]}`).toBe(true);
+  }
+  return ids.sort((a, b) => a - b);
+}
+
+/** The circuit ids THIS CLIENT sends a phase-2 transaction for — observed, not read. */
+async function circuitsTheClientRunsPhase2For(range: number[]): Promise<number[]> {
+  const sent: number[] = [];
+  for (const circuitId of range) {
+    const conn = new FakeConn(PROOF_SIZE);
+    await drive(
+      submitAndVerifyStarkProof(makeGenericProof(circuitId), makeSigner(), conn.asConnection()),
+    );
+    if (conn.deepAliSigs.length > 0) sent.push(circuitId);
+  }
+  return sent;
+}
+
+describe('🚨 DEEP-ALI phase 2 is sent for circuit 7', () => {
+  // The real shape: C7 publishes six inputs and no commitment.
+  const C7_PUBLIC_INPUTS = [
+    0x0123_4567_89ab_cdefn, // nullifier
+    0x0fed_cba9_8765_4321n, // subtree root
+    1n,
+    2n,
+    3n,
+    4n, // rh0..rh3 — the binding digest limbs
+  ];
+
+  it('POSITIVE CONTROL: a C7 spend that skipped phase 2 would report SUCCESS anyway', async () => {
+    // Nothing in the client's return value can distinguish a two-phase C7 verify
+    // from a one-phase one — `{ proofBuffer, authority, txSignature }` is the
+    // PHASE 1 signature either way. That is why the branch has to be observed on
+    // the wire, and why a caller cannot be made to notice this on its own.
+    const conn = new FakeConn(PROOF_SIZE);
+    const result = await drive(
+      submitAndVerifyStarkProof(
+        makeGenericProof(CIRCUIT_SPEND, C7_PUBLIC_INPUTS),
+        makeSigner(),
+        conn.asConnection(),
+      ),
+    );
+    expect(result.txSignature).toBe(conn.verifySigs[0]);
+    expect(conn.deepAliSigs[0]).not.toBe(result.txSignature);
+  });
+
+  it('sends the phase-2 transaction, which is where ALL of C7 binding lives', async () => {
+    const conn = new FakeConn(PROOF_SIZE);
+    await drive(
+      submitAndVerifyStarkProof(
+        makeGenericProof(CIRCUIT_SPEND, C7_PUBLIC_INPUTS),
+        makeSigner(),
+        conn.asConnection(),
+      ),
+    );
+
+    expect(
+      conn.deepAliSigs,
+      'the client uploaded a circuit-7 spend, ran phase 1, and returned SUCCESS without ever ' +
+        'sending verify_deep_ali_phase2. C7 per-query checking is vacuous and it has no step 5, ' +
+        'so its six boundary assertions were never checked against the trace — the buffer is ' +
+        'marked verified on an unbound proof. Check the circuit-id range in ' +
+        'submitAndVerifyStarkProof.',
+    ).toHaveLength(1);
+  });
+
+  it('sends it AFTER phase 1 and in its own transaction, which is the only reason it is split', async () => {
+    // Ordering is a program requirement, not a preference: phase 2 opens with
+    // `require!(buffer.verified)`. And they cannot be merged — the two together
+    // exceed the 1.4M CU per-instruction cap, which is the whole reason a second
+    // transaction exists.
+    const conn = new FakeConn(PROOF_SIZE);
+    await drive(
+      submitAndVerifyStarkProof(
+        makeGenericProof(CIRCUIT_SPEND, C7_PUBLIC_INPUTS),
+        makeSigner(),
+        conn.asConnection(),
+      ),
+    );
+    expect(conn.ixOrder.filter((k) => k === 'verify' || k === 'deepAli')).toEqual([
+      'verify',
+      'deepAli',
+    ]);
+    expect(conn.deepAliSigs[0]).not.toBe(conn.verifySigs[0]);
+  });
+
+  it('carries the SAME public inputs to both phases, or the program refuses phase 2', async () => {
+    // Phase 1 stores `hash_public_inputs(inputs)`; phase 2 re-hashes what it is
+    // given and requires equality. Sending a phase-2 transaction with different
+    // inputs is indistinguishable, from this side, from sending none: the
+    // instruction fails and the buffer keeps `deep_ali_verified = false`.
+    const conn = new FakeConn(PROOF_SIZE);
+    await drive(
+      submitAndVerifyStarkProof(
+        makeGenericProof(CIRCUIT_SPEND, C7_PUBLIC_INPUTS),
+        makeSigner(),
+        conn.asConnection(),
+      ),
+    );
+    expect(conn.verifyInputs[0]).toEqual(C7_PUBLIC_INPUTS);
+    expect(conn.deepAliInputs[0]).toEqual(C7_PUBLIC_INPUTS);
+  });
+});
+
+describe('⛔ the client phase-2 range IS the deployed program range', () => {
+  it('is actually reading the program, not an empty parse', () => {
+    const body = phase2Source();
+    expect(body.length).toBeGreaterThan(500);
+    expect(body).toMatch(/require!\(\s*[\s\S]{0,40}matches!\(\s*circuit_id/);
+    // Anti-vacuity on the parse itself.
+    const ids = circuitsTheProgramRunsPhase2For();
+    expect(ids.length).toBeGreaterThan(0);
+    // C0 runs DEEP-ALI inside phase 1 and must never appear here.
+    expect(ids).not.toContain(0);
+  });
+
+  it('the program admits circuit 7 AND has an arm to run for it', () => {
+    expect(circuitsTheProgramRunsPhase2For()).toContain(CIRCUIT_SPEND);
+    // A gate that admits an id with no dispatch arm is the shape `lib.rs` calls
+    // out on its `_ =>` catch-all. If this ever fails, the client sending phase 2
+    // is not the bug — the program is.
+    expect(phase2Source()).toMatch(/7\s*=>\s*verify::verify_deep_ali_circuit_7/);
+  });
+
+  it('sends phase 2 for exactly those circuits — not fewer, not more', async () => {
+    const accepted = circuitsTheProgramRunsPhase2For();
+    // 0 through 8: one below the program's lowest arm and one above its highest,
+    // so a range that is narrowed OR widened both show up as a set difference.
+    const observed = await circuitsTheClientRunsPhase2For([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(
+      observed,
+      `the client sends DEEP-ALI phase 2 for circuits [${observed}] while ${VERIFIER_LIB} runs it ` +
+        `for [${accepted}]. A circuit the client skips is verified on phase 1 alone; a circuit it ` +
+        'adds fails UnsupportedCircuit after the whole upload is paid for.',
+    ).toEqual(accepted);
+  }, 60_000);
 });

@@ -27,6 +27,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 
 import {
   buildMerkleProofFromLeavesV3,
+  bytesEqual,
   fetchPoolCommitments,
   findPoolV3,
   getPoolsForTokenV3,
@@ -83,8 +84,11 @@ import {
 } from '../pool/shieldEphemeral';
 import {
   executeSubscribe,
+  executeSubscribeV4,
   prepareSubscribeJob,
+  prepareSubscribeJobV4,
   type PreparedSubscribe,
+  type PreparedSubscribeV4,
 } from '../pool/subscribeEphemeral';
 import {
   recoverSubscriptionVaults,
@@ -203,10 +207,22 @@ export interface PoolUnshieldPrepareRequest {
    *
    * ⛔ THE SUBSCRIBE PATH SENDS NEITHER, and that is load-bearing rather than
    * incidental: `poolSubscribePrepare` is a different request kind entirely, and
-   * `handlePoolSubscribePrepare` calls `prepareSubscribeJob`, which reuses
-   * `prepareUnshieldJob` verbatim (subscribeEphemeral.ts:115). There is no
-   * `subscribe_private_stark_v4` on chain, so a subscription that reached the
-   * branch below would prove on a circuit the program cannot verify.
+   * it carries its OWN circuit-7 fields — `retailer`, `rate`, `intervalSlots` —
+   * which this handler never reads.
+   *
+   * 🚨 UPDATED 2026-08-27. This used to say "there is no
+   * `subscribe_private_stark_v4` on chain". THERE NOW IS: it is registered at
+   * `programs/zk_shielded/src/lib.rs:549` and reached through
+   * `prepareSubscribeJobV4`. The conclusion is unchanged and the REASON is now
+   * stronger, so do not restore the old sentence as though it still argued
+   * anything. A subscription must not reach the v4 branch below because the two
+   * v4 instructions bind DIFFERENT digests: the withdrawal binds
+   * `sha256(recipient)`, while subscribe rebuilds a 132-byte
+   * `"P01:C7:SUBSCRIBE:v1" || vault || rate || interval_slots || vk_hash ||
+   * license` composite. A buffer minted here would fail the subscribe handler's
+   * public-inputs-hash check at the END of a ~78-chunk upload. The domain tag is
+   * that separation by construction, rather than by the accident that two
+   * hashes are unlikely to collide.
    *
    * 🚨 EXACTLY ONE OF THE TWO IS REFUSED, and it did NOT used to be. It fell
    * through to the C1 + C3 pair silently, which republishes this note's
@@ -274,6 +290,37 @@ export interface PoolSubscribePrepareRequest {
   leafIndex: number;
   /** Note blobs stored at shield time; see `PoolUnshieldPrepareRequest`. */
   encryptedNotes?: string[];
+
+  // -------------------------------------------------------------------------
+  // THE TERMS. Present = prove on circuit 7; absent = prove on the C1 + C3 pair.
+  //
+  // 🚨 THEY ARE ON THE PREPARE BECAUSE THEY ARE PROOF INPUTS, NOT BECAUSE IT IS
+  // TIDIER. `subscribe_private_stark_v4` binds
+  // `sha256("P01:C7:SUBSCRIBE:v1" || vault || rate || interval_slots ||
+  // vk_hash_subscriber || license)` into four of circuit 7's six public inputs.
+  // A proof cannot exist before they are known, and one built against different
+  // values is discovered wrong only as `InvalidProof`, after a ~78-chunk upload.
+  //
+  // They REMAIN on `PoolSubscribeExecuteRequest`, where the v3 path still reads
+  // them and the v4 path only CHECKS them. Dropping them there would break the
+  // C1 + C3 subscription, which names none of them until send time.
+  // -------------------------------------------------------------------------
+
+  /** Merchant who can claim each period. A vault seed, so it is in the digest. */
+  retailer?: string;
+  /** u64 decimal strings — the worker boundary carries JSON-safe primitives. */
+  rate?: string;
+  intervalSlots?: string;
+  /**
+   * Registry `serviceId` the license key is scoped to, exactly as on the execute
+   * message. It reaches the digest INDIRECTLY: it selects the service tag, the
+   * tag derives the license secret from the note secret, and `blake3` of that is
+   * the 33-byte license slot. So it must be identical on both messages or the
+   * digest moves.
+   */
+  serviceId?: string | null;
+  /** 32 bytes of inert vault metadata. Defaults to zeros, as the extension does. */
+  vkHashSubscriber?: number[];
 }
 
 /**
@@ -1032,6 +1079,13 @@ export interface PoolSubscribePrepareResponse {
   depositFunder: string | null;
   /** The deposit's signature, so a caller can show or verify the claim. */
   depositSignature: string | null;
+  /**
+   * Which circuit the prepared job proved on. REPORTED, never guessed: a caller
+   * that asked for circuit 7 can be answered with the C1 + C3 pair when the
+   * rebuild could not place the note, and it must be able to say so on screen
+   * rather than claim a privacy property the transaction does not have.
+   */
+  version: 'v3' | 'v4';
 }
 
 export interface PoolSubscribeExecuteResponse {
@@ -1204,11 +1258,48 @@ const preparedUnshields = new Map<string, PreparedUnshieldJob>();
  * `subscriberCommitment` is carried here rather than recomputed at execute time:
  * it is a wasm call, and a wasm failure must land in PREPARE, before the wallet
  * has moved the float, not after ~150 chunk uploads.
+ *
+ * A DISCRIMINATED UNION, not a widened record, for the same reason
+ * `preparedUnshields` is one. The two contexts are not interchangeable: a
+ * `PreparedSubscribeV4` carries the TERMS circuit 7 was proved against, and a
+ * `PreparedSubscribe` carries none of them — so the execute handler must know
+ * which it holds before it can decide whether the caller is allowed to name any.
+ * Tagging it here rather than sniffing `'binding' in ctx` at execute time is
+ * deliberate: a structural test would answer "v4" for any future v3 context that
+ * happens to grow the field.
+ *
+ * 💰 THE v4 KEY IS QUALIFIED BY THE VAULT, AND THAT IS A FUND-LOSS FIX.
+ * `prepareSubscribeJobV4` returns `subscribe-v4:<pool>:<leaf>:<vault>` while the
+ * v3 job returns `subscribe:<pool>:<leaf>`, which names no terms at all. Two v4
+ * prepares of the same note for two different retailers would otherwise collide
+ * on one key and the second would replace the first — and the ephemeral is
+ * deterministic in (seed, pool, leaf), so the first caller's pre-fund would sit
+ * on exactly the signer the second caller's proof spends from. Executing the
+ * first job id would open the second caller's vault, with no error anywhere.
+ * This is the same shape already paid for once on the v4 withdrawal.
+ *
+ * The v3 key is left alone: a v3 prepare does not know a vault, and qualifying
+ * it would key the map on `undefined` and make every v3 job collide with every
+ * other one.
+ *
+ * `licenseSecret` is carried on the v4 side because the license commitment is
+ * INSIDE the digest, so it has to be derived at prepare — and the same bytes
+ * must reach the encoder at send time. The v3 side derives it at execute, which
+ * is still correct there because nothing binds it.
  */
-const preparedSubscribes = new Map<
-  string,
-  { ctx: PreparedSubscribe; meta: string; subscriberCommitment: bigint }
->();
+type PreparedSubscribeJob =
+  | { version: 'v3'; ctx: PreparedSubscribe; meta: string; subscriberCommitment: bigint }
+  | {
+      version: 'v4';
+      ctx: PreparedSubscribeV4;
+      meta: string;
+      subscriberCommitment: bigint;
+      /** The 16-byte HKDF leg. Never leaves this worker; only its encoding does. */
+      licenseSecret: Uint8Array;
+      serviceTag: string;
+    };
+
+const preparedSubscribes = new Map<string, PreparedSubscribeJob>();
 
 export function configurePoolHandlers(rpcUrl: string): void {
   // Paced transport: a shield is ~150 chunk uploads plus polling, which public
@@ -1839,6 +1930,16 @@ export async function locateOwnedNote(
  * pinned there by an anti-vacuity assertion in `poolHandlersUnshieldV4.test.ts`:
  * reword one and the fallback silently stops firing, and every behavioural test
  * would still pass, because they inject the message themselves.
+ *
+ * ⛔ FOUR PRODUCERS NOW, NOT TWO, and this predicate is deliberately shared
+ * between the withdrawal and the subscription rather than copied. The circuit-7
+ * SUBSCRIBE path emits the identical two needles from
+ * `prepareSubscribeV4` (the root pre-flight and the depth check, in
+ * subscribePrivateStarkV4.ts) and from `prepareSubscribeJobV4`'s
+ * epoch-blinding refusal (subscribeEphemeral.ts). One list is what keeps the two
+ * fallbacks from drifting apart; a second copy would go stale on the first
+ * reword and the note would stop being spendable on the surface that missed it.
+ * Both are pinned by anti-vacuity assertions in `subscribeV4Job.test.ts`.
  */
 const V4_REBUILD_FAILURES = ['PRE-FLIGHT FAIL', 'circuit 7 needs at least'] as const;
 
@@ -2647,6 +2748,49 @@ export async function resolveFunderOfPayer(
   return null;
 }
 
+/**
+ * The circuit-0 (`subscriber_ownership`) commitment over the note secret, as the
+ * Goldilocks felt the vault PDA is seeded on.
+ *
+ * ⚠️ THE LAST SILENT STRETCH ON THIS PATH, AND IT IS NOT A SHORT ONE. Importing
+ * the prover pulls its whole bundle and `start()` boots a nested worker; only
+ * then does the commitment get computed. The main thread re-arms its 180s
+ * request watchdog on every progress message, so this stretch either finishes
+ * inside 180s or the job is killed for being quiet while it is working.
+ *
+ * That failure mode has already been paid for twice on this path, in
+ * `locateOwnedNote`: same watchdog, same cause, same useless "worker timed out"
+ * shown to someone whose run had not failed at anything. The heartbeat is the
+ * fix that stuck. Counting elapsed seconds is honest — it is the only number
+ * this step exposes from outside.
+ *
+ * Shared by both routes so there is ONE copy: on the v4 route it must run BEFORE
+ * proving (the vault PDA is seeded on it and the vault is in the circuit-7
+ * digest), and on the v3 route it runs after, exactly where it always did.
+ */
+async function computeSubscriberCommitment(
+  noteSecret: bigint,
+  onProgress?: (step: string) => void,
+): Promise<bigint> {
+  onProgress?.('Computing your subscriber commitment...');
+  const startedAt = Date.now();
+  const heartbeat = setInterval(() => {
+    const seconds = Math.round((Date.now() - startedAt) / 1000);
+    onProgress?.(`Computing your subscriber commitment — ${seconds}s so far...`);
+  }, 10_000);
+  try {
+    const { starkProver } = await import('../pool/starkProver');
+    await starkProver.start();
+    // `compute_stark_commitment` returns the Goldilocks felt as a DECIMAL string
+    // (stark/src/lib.rs:129-135). `goldilocksU64To32` then puts it in bytes 0..8
+    // with 24 zeroes above, which is the exact 32 bytes the vault PDA is seeded
+    // on.
+    return BigInt(await starkProver.computeCommitment(noteSecret.toString()));
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
+
 async function handlePoolSubscribePrepare(
   req: PoolSubscribePrepareRequest,
   onProgress?: (step: string) => void,
@@ -2689,6 +2833,131 @@ async function handlePoolSubscribePrepare(
     ? await resolveFunderOfPayer(conn, origin.depositPayer)
     : null;
 
+  // ── Circuit 7, when the caller supplied the terms it needs ────────────────
+  //
+  // ALL THREE, OR NONE. Checked here rather than treated as "as much as you
+  // gave me": every one of them is a circuit-7 digest input, so a request
+  // carrying two of the three is not a smaller request — it is a caller that
+  // meant circuit 7 and dropped a field. Answering it with the C1 + C3 pair
+  // republishes this note's commitment in cleartext and reports nothing, which
+  // is the exact failure the pair exists to remove. Same shape, same reason, as
+  // `handlePoolUnshieldPrepare`'s recipient/ownerPubkey check.
+  const termsPresent = [req.retailer, req.rate, req.intervalSlots].filter(
+    (v) => v !== undefined,
+  ).length;
+  if (termsPresent !== 0 && termsPresent !== 3) {
+    throw new Error(
+      'A circuit-7 subscription needs `retailer`, `rate` and `intervalSlots` all on the ' +
+        'prepare, because all three are inside the proof digest. Send all three to prove on ' +
+        'circuit 7, or none to prove on the C1 + C3 pair. A half-specified request must not ' +
+        "fall through to C1 + C3 silently: that republishes this note's commitment.",
+    );
+  }
+
+  if (req.retailer !== undefined && req.rate !== undefined && req.intervalSlots !== undefined) {
+    const retailer = new PublicKey(req.retailer);
+
+    // Ordered so the wasm call happens BEFORE proving: the vault PDA is seeded
+    // on this commitment and the vault is the first 32 bytes of the digest after
+    // the domain tag, so the proof cannot be built without it.
+    const subscriberCommitmentV4 = await computeSubscriberCommitment(
+      note.receipt.secret,
+      onProgress,
+    );
+
+    // 🚨 THE LICENSE COMMITMENT MOVES TO PREPARE ON THIS ROUTE, AND IT MUST.
+    // It is the 33-byte license slot of the digest, so it has to be known before
+    // the proof exists — the v3 route derives it at execute, which is still
+    // correct there because nothing binds it. The SECRET stays in this worker on
+    // both routes; only the encoded key ever leaves.
+    const serviceTag = licenseServiceTag(req.serviceId, retailer.toBase58());
+    const licenseSecret = deriveLicenseSecret(note.receipt.secret, serviceTag);
+    const licenseCommitmentBytes = licenseCommitment(licenseSecret);
+
+    // Inert on-chain metadata; zeros unless the caller has something to put
+    // there. Inside the digest all the same, which is why the execute handler
+    // re-derives it the identical way and refuses a mismatch.
+    const vkHashSubscriber =
+      req.vkHashSubscriber && req.vkHashSubscriber.length === 32
+        ? Uint8Array.from(req.vkHashSubscriber)
+        : new Uint8Array(32);
+
+    let v4: PreparedSubscribeV4 | null = null;
+    try {
+      v4 = await prepareSubscribeJobV4(
+        note.receipt,
+        pool,
+        conn,
+        candidate.seed,
+        {
+          retailer,
+          subscriberCommitment: subscriberCommitmentV4,
+          rate: BigInt(req.rate),
+          intervalSlots: BigInt(req.intervalSlots),
+          vkHashSubscriber,
+          licenseCommitment: licenseCommitmentBytes,
+        },
+        onProgress,
+      );
+    } catch (err) {
+      // ⛔ FALL BACK, OR THIS NOTE CANNOT BE SUBSCRIBED FROM THE WEB APP AT ALL.
+      // The asymmetry between the two prepares is real and runs one way:
+      // `prepareSubscribeJob` inherits `prepareUnshieldJob`'s stored-Merkle-path
+      // shortcut, while `prepareSubscribeV4` has no such route and always
+      // rebuilds from history. A note whose root aged out of the 100-root ring,
+      // or one that predates commitment blinding, has only the C1 + C3 pair.
+      //
+      // Nothing has been spent at this point, which is what makes the retry
+      // free: `prepareSubscribeV4` refuses before it proves and long before it
+      // uploads. The allow-list fails CLOSED — a prover that cannot produce a
+      // circuit-7 trace, or a caller that named a vault the seeds do not derive,
+      // is a bug to surface, not to route around.
+      if (!isV4RebuildFailure(err)) throw err;
+      console.warn(
+        '[pool/subscribe] circuit 7 could not prove this note; falling back to the C1 + C3 ' +
+          'pair, which publishes the note commitment:',
+        err instanceof Error ? err.message : String(err),
+      );
+      onProgress?.('Circuit 7 cannot prove this note — falling back to the C1 + C3 pair...');
+    }
+
+    if (v4) {
+      // Already qualified by the vault PDA inside `prepareSubscribeJobV4` — see
+      // the note on `preparedSubscribes` for the fund-loss that qualification
+      // prevents. Nothing is appended here.
+      preparedSubscribes.set(v4.jobId, {
+        version: 'v4',
+        ctx: v4,
+        meta: req.meta,
+        subscriberCommitment: subscriberCommitmentV4,
+        licenseSecret,
+        serviceTag,
+      });
+
+      return {
+        kind: 'poolSubscribePrepare',
+        jobId: v4.jobId,
+        ephemeralPubkey: v4.ephemeral.publicKey.toBase58(),
+        // Materially smaller than the v3 figure, and that is the circuit rather
+        // than a saving: C1 and C3 are held open together so the v3 float is
+        // their sum, and circuit 7 has nothing to pair with. Reported, never
+        // assumed — `prepareSubscribeJobV4` prices its one buffer and the
+        // vault's rent against the RPC.
+        requiredLamports: v4.requiredLamports,
+        denomination: pool.denomination,
+        derivation: candidate.derivation,
+        depositPayer: origin?.depositPayer ?? null,
+        depositFunder,
+        depositSignature: origin?.signature ?? null,
+        version: 'v4',
+      };
+    }
+  }
+
+  // ── The v3 path. Byte for byte what it was before circuit 7 existed, except
+  // for the `version` tag the caller is now told instead of guessing — and it is
+  // reached two ways now: a request that named no terms at all, and a circuit-7
+  // request whose rebuild could not produce a usable Merkle path.
   const ctx = await prepareSubscribeJob(
     note.receipt, pool, conn, candidate.seed, onProgress, storedPath,
   );
@@ -2710,24 +2979,14 @@ async function handlePoolSubscribePrepare(
   // there is the fix that stuck, so use it here rather than discover it a third
   // time. Counting elapsed seconds is honest: it is the only number this step
   // exposes from outside.
-  onProgress?.('Computing your subscriber commitment...');
-  const commitmentStartedAt = Date.now();
-  const commitmentHeartbeat = setInterval(() => {
-    const seconds = Math.round((Date.now() - commitmentStartedAt) / 1000);
-    onProgress?.(`Computing your subscriber commitment — ${seconds}s so far...`);
-  }, 10_000);
-  let subscriberCommitment: bigint;
-  try {
-    const { starkProver } = await import('../pool/starkProver');
-    await starkProver.start();
-    subscriberCommitment = BigInt(
-      await starkProver.computeCommitment(note.receipt.secret.toString()),
-    );
-  } finally {
-    clearInterval(commitmentHeartbeat);
-  }
+  const subscriberCommitment = await computeSubscriberCommitment(note.receipt.secret, onProgress);
 
-  preparedSubscribes.set(ctx.jobId, { ctx, meta: req.meta, subscriberCommitment });
+  preparedSubscribes.set(ctx.jobId, {
+    version: 'v3',
+    ctx,
+    meta: req.meta,
+    subscriberCommitment,
+  });
 
   return {
     kind: 'poolSubscribePrepare',
@@ -2739,6 +2998,7 @@ async function handlePoolSubscribePrepare(
     depositPayer: origin?.depositPayer ?? null,
     depositFunder,
     depositSignature: origin?.signature ?? null,
+    version: 'v3',
   };
 }
 
@@ -2754,6 +3014,83 @@ async function handlePoolSubscribeExecute(
 
   try {
     const retailer = new PublicKey(req.retailer);
+
+    if (job.version === 'v4') {
+      // ⛔ THE TERMS ARE CHECK-ONLY HERE. They already went into the proof at
+      // prepare, so this branch may not APPLY anything the caller sends — it may
+      // only refuse a disagreement. A stale-terms split is otherwise silent
+      // until the very end: the digest moves, the buffer's `public_inputs_hash`
+      // stops matching, and the failure lands after a ~78-chunk upload with only
+      // `InvalidProof` to read.
+      //
+      // Refusing here rather than letting `subscribePrivateStarkV4` catch it is
+      // not redundancy — that check runs after the pre-fund has been spent and
+      // the ephemeral is holding the float. This one runs before anything moves.
+      if (!job.ctx.retailer.equals(retailer)) {
+        throw new Error(
+          `This subscription was proved for retailer ${job.ctx.retailer.toBase58()} and cannot ` +
+            `open a vault for ${retailer.toBase58()}. The retailer is a vault seed and the vault ` +
+            'is inside the circuit-7 digest, so prepare it again for the new retailer.',
+        );
+      }
+      if (job.ctx.binding.rate !== BigInt(req.rate)) {
+        throw new Error(
+          `This subscription was proved at a rate of ${job.ctx.binding.rate} and cannot be sent ` +
+            `at ${req.rate}. The terms are inside the circuit-7 digest precisely so they cannot ` +
+            'be changed after the proof exists.',
+        );
+      }
+      if (job.ctx.binding.intervalSlots !== BigInt(req.intervalSlots)) {
+        throw new Error(
+          `This subscription was proved at an interval of ${job.ctx.binding.intervalSlots} slots ` +
+            `and cannot be sent at ${req.intervalSlots}.`,
+        );
+      }
+      // Re-derived the identical way the prepare derived it, then compared —
+      // rather than trusted — because a caller that changes `serviceId` between
+      // the two messages moves the license secret, and the license commitment is
+      // 33 of the digest's 132 bytes.
+      const executeTag = licenseServiceTag(req.serviceId, retailer.toBase58());
+      if (executeTag !== job.serviceTag) {
+        throw new Error(
+          `This subscription's licence key was proved against service tag "${job.serviceTag}" ` +
+            `and cannot be sent against "${executeTag}": the licence commitment is inside the ` +
+            'circuit-7 digest.',
+        );
+      }
+      const executeVk =
+        req.vkHashSubscriber && req.vkHashSubscriber.length === 32
+          ? Uint8Array.from(req.vkHashSubscriber)
+          : new Uint8Array(32);
+      if (!bytesEqual(executeVk, job.ctx.binding.vkHashSubscriber)) {
+        throw new Error(
+          'This subscription was proved against a different vkHashSubscriber. It is inert on ' +
+            'chain but it is inside the circuit-7 digest, so it cannot change after the proof.',
+        );
+      }
+
+      const { txSig, vaultPDA } = await executeSubscribeV4(
+        job.ctx,
+        conn,
+        {
+          ownerPubkey: new PublicKey(req.ownerPubkey),
+          sweepTo: req.sweepTo ? new PublicKey(req.sweepTo) : undefined,
+        },
+        onProgress,
+      );
+
+      return {
+        kind: 'poolSubscribeExecute',
+        txSig,
+        vaultPDA: vaultPDA.toBase58(),
+        // Encoded from the secret derived at PREPARE, so the key the user is
+        // handed is the one whose blake3 is actually on chain.
+        licenseKey: encodeLicenseKey(job.licenseSecret),
+        serviceTag: job.serviceTag,
+        denomination: job.ctx.poolConfig.denomination,
+      };
+    }
+
     const serviceTag = licenseServiceTag(req.serviceId, retailer.toBase58());
 
     // Derived from the SAME master note secret the vault's subscriber_commitment

@@ -754,10 +754,17 @@ describe('a v3 job still requires the payee at execute, because its proof names 
 // ===========================================================================
 
 /**
- * There is no `subscribe_private_stark_v4` on chain — `programs/zk_shielded/
- * src/lib.rs` exposes exactly one v4, the withdrawal. A subscription proved on
- * circuit 7 would fail at the END of a ~150-transaction upload, in the flow the
- * 2026-09-04 demo is entirely about.
+ * 🚨 UPDATED 2026-08-27. This block used to open "There is no
+ * `subscribe_private_stark_v4` on chain". THERE NOW IS
+ * (`programs/zk_shielded/src/lib.rs:549`), and the subscribe path is wired to it
+ * through `prepareSubscribeJobV4` / `executeSubscribeV4`. Everything below still
+ * holds, and the reason it matters is now STRONGER rather than gone: the two v4
+ * instructions bind DIFFERENT digests — the withdrawal `sha256(recipient)`, the
+ * subscribe a 132-byte `"P01:C7:SUBSCRIBE:v1" || vault || rate ||
+ * interval_slots || vk_hash || license` composite. A subscription that reached
+ * the WITHDRAWAL's circuit-7 branch would build a proof the subscribe handler
+ * refuses at the END of a ~78-chunk upload, in the flow the 2026-09-04 demo is
+ * entirely about.
  *
  * TWO independent reasons it cannot happen, checked below by two different
  * methods. It was written as THREE, and the third was measured false:

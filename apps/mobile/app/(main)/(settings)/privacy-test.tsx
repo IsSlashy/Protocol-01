@@ -48,6 +48,8 @@ import {
   PRIVACY_LEVELS,
 } from '../../../services/solana/decoyTransactions';
 import { useStarkProver } from '../../../providers/StarkProverProvider';
+import { runC7Bench, describeC7Headroom } from '../../../services/stark/c7Bench';
+import { C7_EXPECTED_PROOF_SIZE } from '../../../services/stark/spendWitness';
 
 interface LogEntry {
   timestamp: string;
@@ -55,13 +57,13 @@ interface LogEntry {
   type: 'info' | 'success' | 'error' | 'warning';
 }
 
-type TestId = 'amount' | 'timing' | 'stealth' | 'decoy' | 'stark';
+type TestId = 'amount' | 'timing' | 'stealth' | 'decoy' | 'stark' | 'c7';
 
 export default function PrivacyTestScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { publicKey, balance, refreshBalance } = useWalletStore();
-  const { isReady: starkReady, generateProof: starkGenerateProof } = useStarkProver();
+  const { isReady: starkReady, generateProof: starkGenerateProof, generateSpendProof } = useStarkProver();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [currentTest, setCurrentTest] = useState<string | null>(null);
@@ -373,6 +375,66 @@ export default function PrivacyTestScreen() {
   };
 
   // ============================================
+  // TEST 6: CIRCUIT 7 SPEND PROOF — THE TIMING MEASUREMENT
+  // ============================================
+  //
+  // 🎯 THIS IS THE NUMBER THAT DECIDES WHETHER MOBILE MAY ROUTE TO v4.
+  //
+  // `StarkProverProvider` gives every proof 180 000 ms. The tree records one
+  // reason to fear that ceiling — memory/measured-on-device-proving-exceeds-180s
+  // — and that note retracts itself in its own §"SECTION 1 IS WRONG": the 180 s
+  // was a WebView HANG, not proving latency. The one real device datapoint in
+  // the repository is the line it ends on, `circuit=3 prover=1482 ms`.
+  //
+  // Nothing here touches the chain. No RPC, no SOL, no note, no pool: circuit 7
+  // DERIVES its subtree root from the path instead of checking it against a
+  // fixed value, so a self-consistent synthetic path yields a valid proof. The
+  // witness is copied felt for felt from
+  // packages/stark-prover/scripts/c7-live-proof.ts, which is what makes the
+  // number comparable to the desktop one. The proof is generated and discarded.
+  //
+  // ⚠️ FIVE RUNS, AND READ THE MEDIAN. C7's timings spread more than 2x across
+  // samples in Node on this project's own hardware. One run is not a
+  // measurement.
+  const testC7SpendProof = async () => {
+    setCurrentTest('c7');
+    setIsLoading(true);
+    addLog('=== TEST CIRCUIT 7 (SPEND) — ON-DEVICE TIMING ===', 'info');
+
+    try {
+      if (!starkReady) {
+        addLog('STARK WASM prover not ready', 'error');
+        return;
+      }
+      addLog('Synthetic witness, no pool and no chain. Nothing is submitted.', 'info');
+      addLog('Five proofs — this may take a while. Do not background the app.', 'warning');
+
+      const result = await runC7Bench(
+        async (w) => generateSpendProof(
+          w.nullifierPreimage, w.secret, w.blinding, w.tokenMint,
+          w.pathElements, w.pathIndices, w.recipientHash,
+        ),
+        5,
+        (line) => { console.log(line); addLog(line, 'info'); },
+      );
+
+      addLog('', 'info');
+      addLog(describeC7Headroom(result, 'device'), 'success');
+      addLog(`Proof size: ${result.proofSize} bytes = ${Math.ceil(result.proofSize / 1000)} upload chunks, 1 buffer`, 'info');
+      addLog('v3 spends the same note on a C1+C3 pair: 147,038 bytes, 148 chunks, 2 buffers.', 'info');
+      if (!result.sizeAsExpected) {
+        addLog(`⛔ Expected ${C7_EXPECTED_PROOF_SIZE} bytes. The wire format moved — this number compares to nothing.`, 'error');
+      }
+      addLog('=== CIRCUIT 7 TEST COMPLETE ===', 'success');
+    } catch (error: any) {
+      addLog(`Error: ${error.message}`, 'error');
+    } finally {
+      setIsLoading(false);
+      setCurrentTest(null);
+    }
+  };
+
+  // ============================================
   // FULL PRIVACY TEST (Amount + Timing + Stealth simulation)
   // ============================================
   const runAllTests = async () => {
@@ -417,6 +479,14 @@ export default function PrivacyTestScreen() {
       note: starkReady ? 'Offline, post-quantum' : 'Loading the WASM prover',
       icon: 'hardware-chip-outline',
       run: testStarkProof,
+      disabled: !starkReady,
+    },
+    {
+      id: 'c7',
+      label: 'Circuit 7 spend proof',
+      note: starkReady ? 'Offline, 5 runs, slow' : 'Loading the WASM prover',
+      icon: 'stopwatch-outline',
+      run: testC7SpendProof,
       disabled: !starkReady,
     },
   ];

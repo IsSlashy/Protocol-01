@@ -53,6 +53,11 @@ export interface StarkProverHandle {
   generateConfidentialBalanceProof(id: string, spendingKey: string, oldBalance: string, oldSalt: string, newBalance: string, newSalt: string, amount: string, amountSalt: string, tokenMint: string): void;
   generateTransferProof(id: string, spendingKey: string, tokenMint: string, inAmount1: string, inRand1: string, inAmount2: string, inRand2: string, outAmount1: string, outRand1: string, outRecipient1: string, outAmount2: string, outRand2: string, outRecipient2: string, publicAmount: string): void;
   generateMerkleUpdateProof(id: string, oldLeaf: string, newLeaf: string, pathElements: string[], pathIndices: number[]): void;
+  /** [C7] The spend proof. `pathElements`/`pathIndices` must be exactly 12
+   *  long (C7's subtree depth, NOT the pool's 15) and `recipientHash` exactly
+   *  4 limbs — the WebView refuses anything else rather than let the Rust
+   *  silently drop what it cannot parse. */
+  generateSpendProof(id: string, nullifierPreimage: string, secret: string, blinding: string, tokenMint: string, pathElements: string[], pathIndices: number[], recipientHash: string[]): void;
   isMounted(): boolean;
 }
 
@@ -153,6 +158,9 @@ const STARK_HTML = `<!DOCTYPE html>
         break;
       case 'generateMerkleUpdateProof':
         generateMerkleUpdateProofFn(data.id, data.oldLeaf, data.newLeaf, data.pathElements, data.pathIndices);
+        break;
+      case 'generateSpendProof':
+        generateSpendProofFn(data.id, data);
         break;
     }
   }
@@ -369,6 +377,77 @@ const STARK_HTML = `<!DOCTYPE html>
     }
   }
 
+  // [C7] The spend proof: C1's pool commitment and C3's Merkle path in ONE
+  // trace. Ported from apps/extension/src/shared/workers/starkProver.worker.ts
+  // (generateSpendProof) -- same guards, same public-input order, same
+  // durationMs -- rewritten as ES5 because this runs as a template string
+  // inside a WebView <script> with no module system at all.
+  //
+  // THE COMMITMENT IS NOT AMONG THE PUBLIC INPUTS AND THAT IS THE POINT. v3
+  // spent on a C1 + C3 pair tied together by stark_commitment, published in
+  // the clear, so a withdrawal named the leaf it spent and anyone reading the
+  // tree walked back to the deposit that funded it.
+  //
+  // THE SIX PUBLIC INPUTS ARE ORDER-SENSITIVE: [nullifier, root, rh0..rh3].
+  // unshield_denominated_stark_v4 rebuilds the same 48 bytes to compare
+  // against the buffer's public_inputs_hash. Sorting or reordering them breaks
+  // that hash, and the failure lands AFTER the whole ~78-chunk upload rather
+  // than early.
+  //
+  // The mask is drawn INSIDE the wasm from a real CSPRNG -- which is why this
+  // WebView needs the full 25-import wasm-bindgen surface the bundled glue
+  // provides, and why the hand-rolled one-import shim this file used to carry
+  // could not have loaded the C7 blob at all. There is deliberately no way to
+  // pass a mask in.
+  function generateSpendProofFn(id, data) {
+    try {
+      if (!glue) throw new Error('WASM not initialized');
+      if (typeof glue.generate_spend_stark_proof !== 'function') {
+        post({ type: 'error', id: id, error: 'Circuit 7 (SPEND) is not exported by the bundled WASM. '
+          + 'The pre-C7 blob (229,640 B / 51a947e3) exports eight functions; the C7 build has nine.' });
+        return;
+      }
+      // Checked here rather than left to the Rust: it parses the CSV with
+      // filter_map(.. .ok()), which SILENTLY DROPS entries it cannot read, so
+      // a truncated path and a malformed one are indistinguishable by the time
+      // it sees them -- and an 11-deep proof is a valid proof of a tree nobody
+      // uses. It would upload, verify, and settle nothing.
+      if (data.pathElements.length !== 12 || data.pathIndices.length !== 12) {
+        post({ type: 'error', id: id, error: 'Circuit 7 needs exactly 12 path elements and 12 indices '
+          + '(its subtree depth is 12, NOT the pool 15). Got '
+          + data.pathElements.length + ' and ' + data.pathIndices.length + '.' });
+        return;
+      }
+      if (data.recipientHash.length !== 4) {
+        post({ type: 'error', id: id, error: 'Circuit 7 needs 4 recipientHash limbs, got '
+          + data.recipientHash.length + '.' });
+        return;
+      }
+      var startTime = performance.now();
+      var jsonStr = glue.generate_spend_stark_proof(
+        BigInt(data.nullifierPreimage), BigInt(data.secret),
+        BigInt(data.blinding), BigInt(data.tokenMint),
+        data.pathElements.join(','), data.pathIndices.join(','), data.recipientHash.join(',')
+      );
+      var elapsed = Math.round(performance.now() - startTime);
+      var result = JSON.parse(jsonStr);
+      if (result.error) {
+        post({ type: 'error', id: id, error: 'Circuit 7 prover refused: ' + result.error });
+        return;
+      }
+      post({
+        type: 'proof', id: id,
+        circuitId: result.circuit_id,
+        publicInputs: [result.nullifier, result.root].concat(result.recipient_hash),
+        proofHex: result.proof_hex,
+        proofSize: result.proof_size,
+        durationMs: elapsed
+      });
+    } catch(e) {
+      post({ type: 'error', id: id, error: e.message || 'Spend proof failed' });
+    }
+  }
+
   post({ type: 'ready' });
 })();
 </script>
@@ -482,6 +561,15 @@ export const StarkProver = forwardRef<StarkProverHandle, StarkProverProps>(
         inject(JSON.stringify({
           type: 'generateMerkleUpdateProof', id,
           oldLeaf, newLeaf, pathElements, pathIndices,
+        }));
+      },
+
+      generateSpendProof(id: string, nullifierPreimage: string, secret: string, blinding: string, tokenMint: string, pathElements: string[], pathIndices: number[], recipientHash: string[]) {
+        if (!webViewRef.current) return;
+        inject(JSON.stringify({
+          type: 'generateSpendProof', id,
+          nullifierPreimage, secret, blinding, tokenMint,
+          pathElements, pathIndices, recipientHash,
         }));
       },
 

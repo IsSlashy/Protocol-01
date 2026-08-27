@@ -2956,15 +2956,74 @@ function buildShieldDenominatedV3Ix(
 //     C1 and C3 itself and passes the results down. Cutting that over puts
 //     unexercised code on a fund path in a shipping app.
 //
-//   - and it is blocked on a measurement nobody has taken. On-device proving
-//     already exceeds 180 s for the LIGHTER v3 pair (C1 68,881 B + C3 78,157 B,
-//     two traces). C7 is ONE trace of 77,965 B, so it may well be faster —
-//     "may well be" is not a measurement, and the whole point of this file is
-//     not to ship claims of that shape.
+//   - and it is blocked on a measurement nobody has taken. NOT THE ONE THIS
+//     COMMENT USED TO NAME. It said on-device proving "already exceeds 180 s
+//     for the LIGHTER v3 pair". That figure was RETRACTED the evening it was
+//     written: memory/measured-on-device-proving-exceeds-180s-2026-08-03.md
+//     opens with "SECTION 1 BELOW IS WRONG" and records the real device
+//     number - C3 = 1,482 ms on 0019235AU004508, bridge 64 ms. The 180 s was a
+//     WebView HANG, not latency, and a hang and a slowdown are fixed in
+//     OPPOSITE directions. The retraction lived only in memory, so this
+//     comment kept re-teaching the wrong number to everyone who read it.
+//
+//     What is genuinely unmeasured, measured 2026-08-27 in Node: C7's proving
+//     time is HIGH VARIANCE - 1,881 / 3,708 / 10,359 ms across three
+//     consecutive runs on an IDENTICAL witness, a 5.5x spread, because the
+//     STARK's proof-of-work grind is geometrically distributed. A single
+//     timing proves nothing in either direction; the honest number is a median
+//     over many runs, published with its spread.
+//
+//     THE BLOCKER THAT SAT UPSTREAM OF THE TIMING IS CLOSED (2026-08-27).
+//     mobile's WebView bridge had no spend entry point at any of its three
+//     layers, so the device could not produce a circuit-7 proof to time at
+//     all. All three now exist: the 'generateSpendProof' case in
+//     services/stark/StarkProver.tsx's switch, the method on
+//     StarkProverHandle, and the wrapper in providers/StarkProverProvider.tsx.
+//     The blob and the glue were never the problem - wasmData.ts decodes to
+//     the same 267,610 bytes, sha256 72a8c700c466a296, as the package's blob.
+//
+//     VERIFIED BY EXECUTION, not by inspection: services/stark/webviewSpend.test.ts
+//     extracts the WebView's own ES5 string out of StarkProver.tsx and runs it
+//     against that blob in a vm. It returns a real 77,965-byte circuit-7 proof
+//     whose six public inputs match c7-live-proof.ts felt for felt (nullifier
+//     8223017349269710682, root 5529976937288699293). That string is a
+//     template literal: tsc does not parse it and ESLint does not lint it, so
+//     executing it is the only check that means anything.
+//
+//     What does NOT need re-measuring, because it is deterministic: C7 uploads
+//     78 chunks against the pair's 148, one buffer instead of two. On a phone
+//     that is the number that matters.
 //
 // 🚨 SO MOBILE STILL SPENDS ON v3 AND STILL PUBLISHES THE COMMITMENT. That is
-// the current state, not an oversight. Measure C7 on a device, then cut the
-// store over.
+// the current state, not an oversight. The prover is reachable now; the STORE
+// is deliberately untouched.
+//
+// WHAT IS STILL MISSING IS ONE NUMBER: how long circuit 7 takes ON A PHONE.
+// Everything measured so far is Node on a desktop and THE CORRECTION FACTOR IS
+// UNKNOWN - the single device datapoint in this repository (C3 = 1,482 ms on
+// 0019235AU004508) happens to be FASTER than the same circuit in Node here,
+// but one datapoint on one circuit on one device, carrying the pre-coset blob
+// the verifier now rejects, is an anecdote and not a factor.
+//
+// To take it, with no RPC and no SOL:
+//   Settings -> About -> tap the version seven times -> Privacy tech tests
+//   -> "Circuit 7 spend proof". Five runs over a synthetic witness; the proof
+//   is generated and discarded. Read the median off
+//   'adb logcat -s ReactNativeJS' - every circuit now emits
+//   '[P01PERF] circuit=<n> prover=<n> ms bridge=<n> ms proofSize=<n>' from
+//   StarkProverProvider's sendRequestRaw, in the same format as the 2026-08-03
+//   capture, so a logcat line and a desktop line compare without translation.
+//   Build with JDK 17, NOT 21 (memory/feedback_jdk21_temurin_jit_crash).
+//
+// THEN cut the store over. And when cutting over, the routing must be:
+// whyCircuit7Cannot(receipt) synchronously FIRST; then try prepareUnshieldV4;
+// catch falls back to the pair ONLY on 'err instanceof V4Unprovable' and
+// rethrows everything else - an ALLOW-LIST, because a broken prover answered by
+// republishing the commitment is the exact failure the pair exists to remove.
+// NOTHING after the prepare may fall back: once the proof is uploaded and the
+// nullifier PDA initialised, a v3 retry pays rent twice and dies on the
+// double-spend guard with the note already spent. Both callers route -
+// denominated-unshield.tsx AND denominated-unshield-batch.tsx.
 // ---------------------------------------------------------------------------
 
 /** C7's subtree depth. NOT the pool tree's 15. See `air/spend.rs`. */

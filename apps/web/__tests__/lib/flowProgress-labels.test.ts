@@ -136,6 +136,19 @@ const HANDLERS_SRC = [
   // the history route. Two minutes is long enough to convince anyone the app
   // has died.
   'lib/privacy/pool/denominatedPool.ts',
+  // The FIFTH and SIXTH, added with the circuit-7 SUBSCRIBE wiring on
+  // 2026-08-27. `subscribePrivateStarkV4.ts` speaks through the whole v4
+  // subscribe — the leaf scan, the root pre-flight, the ~5.5s of proving, the
+  // upload and the send — and `subscribeEphemeral.ts` speaks around it. Neither
+  // was swept by anything before, so every one of those sentences would have
+  // reached a waiting user with no phase to land in.
+  //
+  // Caught exactly four misses when first added: 'proving ownership and
+  // membership in one trace', 'submitting the circuit-7 spend proof on-chain',
+  // 'sending the V4 subscription' and 'V4 subscription confirmed'. All four are
+  // now in SUBSCRIBE_PHASES.
+  'lib/privacy/pool/subscribePrivateStarkV4.ts',
+  'lib/privacy/pool/subscribeEphemeral.ts',
 ]
   .map((rel) => readFileSync(join(__dirname, '../../', rel), 'utf8'))
   .join('\n');

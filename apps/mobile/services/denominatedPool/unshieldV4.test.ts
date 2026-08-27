@@ -5,8 +5,17 @@
  * the pure pieces are ported: the instruction layout and the recipient-hash
  * limbs. `stores/denominatedPoolStore.ts` still drives a C1 + C3 spend, which
  * PUBLISHES the note commitment. The cutover is blocked on a measurement nobody
- * has taken — on-device proving already exceeds 180 s for the lighter v3 pair,
- * and C7 has never been timed on a device.
+ * has taken. NOT the one this header used to name: "on-device proving already
+ * exceeds 180 s for the lighter v3 pair" was RETRACTED the evening it was
+ * written (memory/measured-on-device-proving-exceeds-180s-2026-08-03.md, whose
+ * first section is titled "SECTION 1 BELOW IS WRONG"). The real device figure
+ * is C3 = 1,482 ms. The 180 s was a WebView HANG.
+ *
+ * The blocker is upstream of any timing: mobile's WebView bridge has no spend
+ * entry point, so the device cannot produce a circuit-7 proof at all. And C7's
+ * proving time is high variance anyway - 1,881 / 3,708 / 10,359 ms on an
+ * identical witness (PoW grind), so it must be reported as a median with its
+ * spread, never as a single number.
  *
  * Pinning the builder now is still worth it: when the store does cut over, the
  * wire format it will use is already fixed and already checked against the
