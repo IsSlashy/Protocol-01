@@ -250,151 +250,64 @@ jobs:
           cargo clippy -p p01_relayer -- -D warnings
 
 
-      - name: cargo test (verifier — the periodic-column, field and pair-leaf pins)
+      # ⛔ ONE CANONICAL PIN LIST, FILTERED BY EACH JOB. Do not fork it.
+      #
+      # These eighteen pins used to run in ONE step, and that step held the
+      # runner for 68 of the job's 90 minutes on 2026-08-27 while two further
+      # test steps waited behind it. The job timed out without reaching them —
+      # twice — which reads in the UI as flaky infrastructure rather than as
+      # "the gate never ran". `honest_liveness` alone is 2,208s on a 6c/12t
+      # laptop in --release; a hosted runner has fewer cores.
+      #
+      # So the two slow pins moved to `rust-slow-pins`, their own job with its
+      # own budget. THE LIST DID NOT MOVE WITH THEM.
+      #
+      # 🚨 WHY THE LIST STAYS WHOLE HERE. The loop below does two things: it
+      # RUNS some pins, and it asserts that EVERY pin in ALL_PINS still exists
+      # as a cargo target. Splitting the list in two would split that assertion
+      # too, and a pin deleted from the tree would then be missing from a list
+      # nobody checks — the exact "dropped pin" this step's own error message
+      # was written to prevent. Each job therefore checks ALL of them and runs
+      # its half.
+      #
+      # If a pin is ever genuinely retired, `CI_UNRUN_TEST_TARGETS` in
+      # cu_budget.rs is where it has to be written down, with its reason.
+      - name: cargo test (verifier — the fast soundness pins)
+        env:
+          ALL_PINS: >-
+            periodic_stride b4_pair_leaf wire_parity honest_liveness
+            cross_circuit_confusion c7_binding a4_probe b1_deep_binding
+            b2_bits_measured b2_segment_binding b7_coset_shift_pairing
+            c5_conservation_probe c6_padding_rows liveness_fix_attack
+            merkle_domain_sep ood_column_probe route_c_trace_pair
+            phase_binding_seam c7_pin_coverage
+          SLOW_PINS: honest_liveness c6_padding_rows
         run: |
           set -euo pipefail
-
           cargo test -p p01_stark_verifier --lib
           cargo test -p p01_stark_verifier --release --test fri_end_to_end
 
           targets="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "p01_stark_verifier") | .targets[] | select(.kind[] == "test") | .name')"
 
-          # 🚨 AN ABSENT PIN IS AN ERROR, NOT A WARNING. MEASURED 2026-08-22.
-          #
-          # This loop was written to enforce the pins "the moment one lands, with
-          # no further edit". What it actually did was print two `::warning::`
-          # lines into a GREEN job, every run, for weeks — and a warning inside a
-          # passing job is read by nobody. Both pins were absent the whole time:
-          #
-          #   periodic_stride  needs p01_stark_verifier::periodic_ext_consts
-          #   b4_pair_leaf     needs p01_stark::compact::PairIndexing,
-          #                    generate_*_with_pair_indexing, and
-          #                    CircuitConfig::quotient_segments
-          #
-          # ⛔ NONE of those exist on master. They live on
-          # `b7-drop-aligned-checks`, so this is not "a test somebody forgot to
-          # write": the CODE the pins guard is not on this branch either.
-          # Copying the two files over from b7 does not compile — tried, 1 and 10
-          # errors respectively.
-          #
-          # So the job fails, and it names why. A red CI that states "the
-          # pair-leaf guard lives on b7 and master cannot run it" is worth more
-          # than a green one that whispers it. To make this pass, land the b7
-          # verifier work on master — not by deleting this loop.
-          # [C7 2026-08-24] Three targets appended. All three now carry C7
-          # coverage that exists NOWHERE ELSE in CI:
-          #   wire_parity              -- C7's ten CircuitConfig fields
-          #   honest_liveness          -- an honest C7 proof clears BOTH phases.
-          #                               Its dispatch used to fall through to
-          #                               `_ => Ok(())`, so a circuit added to
-          #                               the fixtures and forgotten there passed
-          #                               phase 2 VACUOUSLY.
-          #   cross_circuit_confusion  -- the 8x8 parse matrix. C7 shares C6's
-          #                               width, length, blowup, merkle depth and
-          #                               query count; only fri_final_poly_size
-          #                               separates them, and this is the only
-          #                               test that would notice if it stopped.
-          #
-          # ⛔ `cu_budget` stays OUT and that is deliberate, not an oversight: it
-          # needs `cargo-build-sbf`, which this job does not have. Its C7 ceiling
-          # row is a LOCAL acceptance check. Nobody should read the C7 CU number
-          # as a CI gate. The exclusion is recorded a second time, with the same
-          # reason, in `CI_UNRUN_TEST_TARGETS` inside cu_budget.rs — the scan
-          # there treats an unnamed target as a coverage hole unless it is
-          # excused in writing.
-          #
-          # [C7 2026-08-25] `c7_binding` appended. It is the only place forgeries
-          # 6, 7 and 9 of the spend plan are exercised — recipient malleability,
-          # public-input arity, and the tampered-OOD quartet — against the real
-          # `verify_deep_ali_circuit_7` rather than against the quotient. It
-          # needs no toolchain: `p01-stark` is a dev-dependency and the proofs
-          # are generated natively, so unlike `cu_budget` it belongs here.
-          #
-          # [2026-08-25] Ten more targets appended. They were not "forgotten":
-          # the scan in cu_budget.rs that is supposed to notice an unnamed target
-          # had been blind to this very loop — it looked for a literal
-          # `--test <name>` and this step passes `--test "$pin"` — so it reported
-          # zero coverage everywhere and was read as a broken scanner. With the
-          # parser fixed it named thirteen targets that executed nowhere. Ten are
-          # here; the three that are not are recorded in CI_UNRUN_TEST_TARGETS
-          # with the measured reason, including one that is RED on a real defect.
-          #
-          # ⚠️ THE OLD ESTIMATE HERE SAID "about 15 minutes total" AND WAS WRONG BY
-          # 3.4x, because it timed ten of the eighteen pins and `honest_liveness`
-          # was not among them. Re-measured 2026-08-26, whole loop, 6c/12t
-          # laptop, --release:
-          #
-          #   honest_liveness       2208s   <- 37 min, ALONE over the old 30-min
-          #                                    job timeout, which is why that
-          #                                    timeout is now 90
-          #   c6_padding_rows        308s
-          #   b2_bits_measured       106s
-          #   c5_conservation_probe   98s
-          #   b2_segment_binding      87s
-          #   liveness_fix_attack     62s
-          #   cross_circuit_confusion 50s
-          #   b1_deep_binding         49s
-          #   ood_column_probe        34s
-          #   route_c_trace_pair      26s
-          #   wire_parity 15s · c7_binding 15s · b4_pair_leaf 14s
-          #   periodic_stride 1s · a4_probe 2s · phase_binding_seam 2s
-          #   merkle_domain_sep 0s · b7_coset_shift_pairing 0s
-          #   c7_pin_coverage 0s
-          #   ------------------------------------------------------------
-          #   ~3,080s = 51 minutes, plus `--lib` (207s) and the build.
-          #
-          # `honest_liveness` is 72% of it on its own. A stale time estimate is
-          # not cosmetic: this one said the job was cheap while the job was
-          # being killed for running long.
+          # Existence is checked over the WHOLE list, in both jobs. Running is
+          # split; asserting is not.
           missing=""
-          for pin in periodic_stride b4_pair_leaf wire_parity honest_liveness cross_circuit_confusion c7_binding \
-                     a4_probe b1_deep_binding b2_bits_measured b2_segment_binding b7_coset_shift_pairing \
-                     c5_conservation_probe c6_padding_rows liveness_fix_attack merkle_domain_sep \
-                     ood_column_probe route_c_trace_pair phase_binding_seam c7_pin_coverage; do
-            if printf '%s\n' "$targets" | grep -qx "$pin"; then
-              echo "::group::pin $pin"
-              cargo test -p p01_stark_verifier --release --test "$pin"
-              echo "::endgroup::"
-            else
-              missing="$missing $pin"
-            fi
+          for pin in $ALL_PINS; do
+            printf '%s\n' "$targets" | grep -qx "$pin" || missing="$missing $pin"
           done
           if [ -n "$missing" ]; then
-            echo "::error title=Soundness pin absent::Les gardes suivantes ne sont exercees NULLE PART:$missing. Une porte absente est une ERREUR, pas un avertissement — ce fichier a imprime des ::warning:: dans un job VERT pendant des semaines pour exactement ca. Ne pas supprimer la boucle pour repasser au vert."
+            echo "::error title=Soundness pin absent::Les gardes suivantes ne sont exercees NULLE PART:$missing. Une epingle retiree doit etre inscrite dans CI_UNRUN_TEST_TARGETS (cu_budget.rs) avec sa raison."
             exit 1
           fi
 
-      # The subscription state machine — `claimable_periods` and the funding
-      # clamp — decides how much money a merchant is owed, and until this step
-      # existed NOTHING in CI executed it. The step above runs `cargo check
-      # --all-targets`, which COMPILES the eight tests in
-      # `src/state/subscription_vault.rs` and never runs them: renaming or
-      # deleting `claimable_periods` went red, while silently changing what it
-      # RETURNS stayed green. Verified locally 2026-08-04, first execution in the
-      # project's history: 9 passed.
-      #
-      # `--lib` only, deliberately. `tests/subscription_lifecycle.rs` executes the
-      # real `target/deploy/zk_shielded.so` in litesvm, and this job has no
-      # `cargo-build-sbf` — the same reason `cu_budget.rs` is absent above. That
-      # harness fails closed rather than skipping when the `.so` is missing, so
-      # adding it here without a toolchain step would fail the job for a reason
-      # that has nothing to do with the code. Run it locally:
-      #   cargo test -p zk_shielded --test subscription_lifecycle
-      # after building the artifact with the absolute 3.1.9 cargo-build-sbf path
-      # named in that file's header. It is the acceptance criterion for the
-      # no-cancel landing: the same file, unchanged, on HEAD and on the branch.
-      # `--lib` and `--test landed_invariants` are BOTH needed, and the second is
-      # not redundant. MEASURED 2026-08-04: resolving `claim_period.rs` to the
-      # pre-landing version — the shape the STARK/B7 line still carries — compiles
-      # cleanly, and `--lib` goes from 30 tests to 23 with every one of them
-      # PASSING. The lot's own `mod plumbing_guards` lives inside
-      # `claim_period.rs`, so a resolution that deletes the behaviour deletes the
-      # guards in the same stroke and nothing turns red.
-      #
-      # `tests/landed_invariants.rs` sits outside that file and fired 4 failures
-      # on the same mutation, each naming the property lost. It reads source text,
-      # so it needs no `.so` and runs here.
+          for pin in $ALL_PINS; do
+            case " $SLOW_PINS " in *" $pin "*) continue;; esac
+            echo "::group::pin $pin"
+            cargo test -p p01_stark_verifier --release --test "$pin"
+            echo "::endgroup::"
+          done
+
       - name: cargo test (zk_shielded — the subscription state machine + the merge guard)
         run: |
           cargo test -p zk_shielded --lib
@@ -471,6 +384,87 @@ jobs:
       # zk_shielded's three warnings (an unused import and two constants orphaned
       # by the Groth16 removal) were cleared to make this a gate rather than a
       # permanently-red step someone would eventually re-silence.
+  # ⛔ THE TWO SLOW PINS, IN THEIR OWN JOB. Split on 2026-08-27, not dropped.
+  #
+  # They lived in `rust-programs-build` and held it for 68 of its 90 minutes
+  # while two further test steps waited behind them. That job timed out twice
+  # without reaching them, which reads as flaky infrastructure rather than as
+  # "the gate never ran" — and the second time it was hiding a clippy verdict
+  # someone was waiting on.
+  #
+  # `honest_liveness` is 2,208s on a 6c/12t laptop in --release; a hosted
+  # runner has fewer cores, so it is slower. `c6_padding_rows` is 308s. Neither
+  # is negotiable: honest_liveness is what proves an honest C7 proof clears
+  # BOTH verifier phases, and its dispatch used to fall through to `_ => Ok(())`
+  # so a circuit added to the fixtures and forgotten there passed phase 2
+  # VACUOUSLY.
+  #
+  # ⚠️ THE PIN LIST IS NOT DUPLICATED HERE — the same ALL_PINS is asserted in
+  # both jobs and each runs its half. Splitting the assertion would let a pin
+  # deleted from the tree go missing from a list nobody checks.
+  rust-slow-pins:
+    name: Rust — the two slow soundness pins
+    runs-on: ubuntu-latest
+    # Master and pre-merge only, like the job it was split out of.
+    if: github.ref == 'refs/heads/master' || github.event_name == 'pull_request'
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-slowpins-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-slowpins-
+
+      - name: cargo test (the two slow pins)
+        env:
+          ALL_PINS: >-
+            periodic_stride b4_pair_leaf wire_parity honest_liveness
+            cross_circuit_confusion c7_binding a4_probe b1_deep_binding
+            b2_bits_measured b2_segment_binding b7_coset_shift_pairing
+            c5_conservation_probe c6_padding_rows liveness_fix_attack
+            merkle_domain_sep ood_column_probe route_c_trace_pair
+            phase_binding_seam c7_pin_coverage
+          SLOW_PINS: honest_liveness c6_padding_rows
+        run: |
+          set -euo pipefail
+          targets="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "p01_stark_verifier") | .targets[] | select(.kind[] == "test") | .name')"
+
+          # Same whole-list assertion as the fast job. Both check everything;
+          # only the running is split.
+          missing=""
+          for pin in $ALL_PINS; do
+            printf '%s\n' "$targets" | grep -qx "$pin" || missing="$missing $pin"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error title=Soundness pin absent::Les gardes suivantes ne sont exercees NULLE PART:$missing. Une epingle retiree doit etre inscrite dans CI_UNRUN_TEST_TARGETS (cu_budget.rs) avec sa raison."
+            exit 1
+          fi
+
+          for pin in $SLOW_PINS; do
+            echo "::group::pin $pin"
+            cargo test -p p01_stark_verifier --release --test "$pin"
+            echo "::endgroup::"
+          done
+
   verify-unlinkability-controls:
     name: Verify — unlinkability probe controls (offline replay)
     runs-on: ubuntu-latest
