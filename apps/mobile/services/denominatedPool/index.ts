@@ -2956,11 +2956,32 @@ function buildShieldDenominatedV3Ix(
 //     C1 and C3 itself and passes the results down. Cutting that over puts
 //     unexercised code on a fund path in a shipping app.
 //
-//   - and it is blocked on a measurement nobody has taken. On-device proving
-//     already exceeds 180 s for the LIGHTER v3 pair (C1 68,881 B + C3 78,157 B,
-//     two traces). C7 is ONE trace of 77,965 B, so it may well be faster —
-//     "may well be" is not a measurement, and the whole point of this file is
-//     not to ship claims of that shape.
+//   - and it is blocked on a measurement nobody has taken. NOT THE ONE THIS
+//     COMMENT USED TO NAME. It said on-device proving "already exceeds 180 s
+//     for the LIGHTER v3 pair". That figure was RETRACTED the evening it was
+//     written: memory/measured-on-device-proving-exceeds-180s-2026-08-03.md
+//     opens with "SECTION 1 BELOW IS WRONG" and records the real device
+//     number - C3 = 1,482 ms on 0019235AU004508, bridge 64 ms. The 180 s was a
+//     WebView HANG, not latency, and a hang and a slowdown are fixed in
+//     OPPOSITE directions. The retraction lived only in memory, so this
+//     comment kept re-teaching the wrong number to everyone who read it.
+//
+//     What is genuinely unmeasured, measured 2026-08-27 in Node: C7's proving
+//     time is HIGH VARIANCE - 1,881 / 3,708 / 10,359 ms across three
+//     consecutive runs on an IDENTICAL witness, a 5.5x spread, because the
+//     STARK's proof-of-work grind is geometrically distributed. A single
+//     timing proves nothing in either direction; the honest number is a median
+//     over many runs, published with its spread.
+//
+//     AND THE REAL BLOCKER SITS UPSTREAM OF THE TIMING: mobile's WebView
+//     bridge has no spend entry point at all, so the device cannot produce a
+//     circuit-7 proof to time. The blob and the glue are fine - wasmData.ts
+//     decodes to the same 267,610 bytes, sha256 72a8c700c466a296, as the
+//     package's blob.
+//
+//     What does NOT need re-measuring, because it is deterministic: C7 uploads
+//     78 chunks against the pair's 148, one buffer instead of two. On a phone
+//     that is the number that matters.
 //
 // 🚨 SO MOBILE STILL SPENDS ON v3 AND STILL PUBLISHES THE COMMITMENT. That is
 // the current state, not an oversight. Measure C7 on a device, then cut the
