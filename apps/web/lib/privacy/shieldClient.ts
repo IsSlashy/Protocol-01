@@ -329,14 +329,16 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
   // NEITHER present leaves the C1 + C3 job unchanged, and exactly one is
   // REFUSED rather than quietly answered with C1 + C3 — a half-specified
   // request means a caller that meant circuit 7 and dropped a field, and
-  // answering it republishes the note's commitment with nothing raised. That is
-  // what lets the
-  // SUBSCRIBE leg keep the shared v3 prepare — `programs/zk_shielded/src/lib.rs`
-  // exposes exactly one v4, the withdrawal, so there is no
-  // `subscribe_private_stark_v4` to spend a circuit-7 proof on, and a blanket
-  // switch would have broken the subscription silently in the flow the
-  // 2026-09-04 deck is about. `subscribeFromPool` below sends NEITHER field and
-  // must keep sending neither.
+  // answering it republishes the note's commitment with nothing raised.
+  //
+  // 🚨 UPDATED 2026-08-27. This used to add "and there is no
+  // `subscribe_private_stark_v4` to spend a circuit-7 proof on". THERE NOW IS
+  // (`programs/zk_shielded/src/lib.rs:549`), and `subscribeFromPool` below does
+  // route to it — by sending `retailer`, `rate` and `intervalSlots` on ITS
+  // prepare, not these two fields. It still sends NEITHER `recipient` nor
+  // `ownerPubkey`, and must keep sending neither: the two v4 instructions bind
+  // DIFFERENT digests, so a proof built for one is refused by the other at the
+  // end of a ~78-chunk upload. Per-caller routing, still not a migration.
   //
   // ⚠️ `ownerPubkey` IS IDENTITY HERE, exactly as it is at execute — it means
   // the user's wallet and nothing else. It is sent so the payee refusal
@@ -574,6 +576,22 @@ export interface SubscribeOutcome {
    * truth.
    */
   reachableViaSpendFunder: boolean;
+  /**
+   * Which circuit actually carried this subscription.
+   *
+   * 🚨 `'v3'` MEANS THE NOTE COMMITMENT IS ON THE WIRE. The C1 + C3 pair
+   * publishes `stark_commitment` as a cleartext instruction argument, and the
+   * deposit emitted that identical value in its `LeafInserted` event — one hop
+   * from the subscription to the deposit and its payer, so the effective
+   * anonymity set is ONE. `'v4'` means circuit 7 proved ownership and membership
+   * in one trace and published no commitment at all.
+   *
+   * A caller that sent the terms asked for `'v4'` and can still be answered
+   * `'v3'`, because the circuit-7 rebuild has no stored-path shortcut and a note
+   * whose root has aged out of the pool's 100-root ring cannot take it. So this
+   * is a RESULT, and any screen that says "private" must read it first.
+   */
+  version: 'v3' | 'v4';
 }
 
 /**
@@ -669,6 +687,18 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     owner, connection, signOne, onProgress,
   } = params;
 
+  // 🚨 THE TERMS TRAVEL ON THE PREPARE, AND THAT IS WHAT MAKES CIRCUIT 7
+  // REACHABLE AT ALL. `subscribe_private_stark_v4` binds
+  // `sha256("P01:C7:SUBSCRIBE:v1" || vault || rate || interval_slots ||
+  // vk_hash_subscriber || license)` into four of its six public inputs, so the
+  // proof cannot be built before they are known. They are sent AGAIN on the
+  // execute below, where the v3 path still reads them and the v4 path only
+  // CHECKS them and refuses a disagreement — a stale-terms split is otherwise
+  // silent until the very end of a ~78-chunk upload.
+  //
+  // The worker decides the route: all three present means it tries circuit 7 and
+  // falls back to the C1 + C3 pair when the rebuild cannot place the note, and
+  // it reports which one it used as `prep.version`. This client never guesses.
   const prep = await poolRequest(
     {
       kind: 'poolSubscribePrepare',
@@ -677,6 +707,11 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
       denomination,
       leafIndex,
       encryptedNotes: params.encryptedNotes,
+      retailer: retailer.toBase58(),
+      // u64 decimal strings — the worker boundary carries JSON-safe primitives.
+      rate: rate.toString(),
+      intervalSlots: intervalSlots.toString(),
+      serviceId: params.serviceId ?? null,
     },
     onProgress,
   );
@@ -849,6 +884,11 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     depositPayer: prep.depositFunder ?? prep.depositPayer,
     reachableViaDeposit: selfDeposited,
     reachableViaSpendFunder,
+    // 🚨 REPORTED, NEVER ASSUMED. A caller that sent the terms asked for circuit
+    // 7 and can still be answered with the C1 + C3 pair, which republishes this
+    // note's commitment in cleartext. A screen that renders "private" without
+    // reading this tells the buyer a property the transaction does not have.
+    version: prep.version,
   };
 }
 

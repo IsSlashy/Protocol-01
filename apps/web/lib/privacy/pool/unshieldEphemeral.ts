@@ -82,11 +82,20 @@ import {
 /** Domain separator — deliberately NOT the shield's. See file header. */
 const UNSHIELD_EPHEMERAL_INFO = utf8ToBytes('p01:web:unshield-ephemeral:v1');
 
-/** NullifierRecord init (~0.0009 SOL) plus margin. */
-const NULLIFIER_RENT = 2_000_000;
+/**
+ * NullifierRecord rent and the chunk-upload fee budget.
+ *
+ * ⛔ MOVED, NOT COPIED, on 2026-08-27. Both now live in `subscribeFloat.ts`
+ * and are re-exported here unchanged, so every existing caller is untouched.
+ * They moved because the SubscribePanel cost disclosure has to price the same
+ * float this file transfers, and a panel cannot import this module without
+ * dragging the whole pool stack into the page bundle. A second declaration over
+ * there is exactly how the disclosed figure and the transferred figure drift
+ * apart in silence — which is the defect being repaired.
+ */
+import { E_TX_FEE_BUDGET, NULLIFIER_RENT } from './subscribeFloat';
 
-/** Fee headroom for ~2 proofs' worth of chunk uploads plus the inner tx. */
-const E_TX_FEE_BUDGET = 4_000_000;
+export { E_TX_FEE_BUDGET, NULLIFIER_RENT };
 
 /**
  * See shieldEphemeral.ts for the full reasoning: exactly the sweep tx's own fee,
@@ -364,12 +373,19 @@ export interface PreparedUnshieldV4 {
  * Prove the spend on ONE circuit-7 trace instead of the C1 + C3 pair.
  *
  * ⛔ THIS IS A SIBLING, NOT A REPLACEMENT, AND THAT IS DELIBERATE.
- * `prepareUnshieldJob` is reused VERBATIM by `subscribeEphemeral.ts:115` and by
- * `subscribePrivateStark.ts`. There is no `subscribe_private_stark_v4` on chain
- * — `programs/zk_shielded/src/lib.rs` exposes exactly one v4, the withdrawal —
- * so switching the shared function to circuit 7 would have broken the
- * subscription silently, in the flow the 2026-09-04 deck is entirely about.
- * Routing is per CALLER. It is not a migration.
+ * `prepareUnshieldJob` is reused VERBATIM by `subscribeEphemeral.ts` and by
+ * `subscribePrivateStark.ts`, and a note whose blinding is unknown — the unspent
+ * leaf 30 among them — can be spent nowhere else. Routing is per CALLER. It is
+ * not a migration.
+ *
+ * 🚨 UPDATED 2026-08-27. The reason originally given here was "there is no
+ * `subscribe_private_stark_v4` on chain". THERE NOW IS
+ * (`programs/zk_shielded/src/lib.rs:549`), and the subscribe path is wired to it
+ * through its OWN sibling pair, `prepareSubscribeJobV4` / `executeSubscribeV4`.
+ * That does not make this function shareable, and the real reason is stronger:
+ * the two v4 instructions bind DIFFERENT digests — this one `sha256(recipient)`,
+ * the subscribe a 132-byte domain-tagged composite over the vault and the
+ * billing terms — so a proof built here can never satisfy that handler.
  *
  * Three real differences from the v3 job, all consequences of the circuit
  * rather than choices:

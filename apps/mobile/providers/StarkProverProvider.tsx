@@ -22,6 +22,7 @@ import {
   type StarkProverMessage,
 } from '../services/stark/StarkProver';
 import { getZkService } from '../services/zk';
+import { assertSpendWitness, CIRCUIT_SPEND } from '../services/stark/spendWitness';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,6 +60,19 @@ interface StarkProverContextType {
   /** V3 — circuit 3 (merkle_path). Proves `leaf` is at `root` via the supplied
    *  path. Used by `unshield_denominated_stark_v3` stacked on top of C1. */
   generateMerklePathProof: (leaf: string, pathElements: string[], pathIndices: number[]) => Promise<GenericStarkProofResult>;
+  /**
+   * [C7] The spend proof — C1's pool commitment and C3's Merkle path in ONE
+   * trace, so `unshield_denominated_stark_v4` can settle a withdrawal without
+   * the note commitment ever appearing on the wire.
+   *
+   * ⛔ `recipientHash` means the proof CANNOT be built without knowing who is
+   * being paid: sha256(recipient) is in the transcript, so a proof made for A
+   * cannot be replayed to pay B. It is also why the recipient has to be known
+   * at PREPARE time, not only at execution.
+   *
+   * publicInputs layout is ORDER-SENSITIVE: [nullifier, root, rh0, rh1, rh2, rh3].
+   */
+  generateSpendProof: (nullifierPreimage: string, secret: string, blinding: string, tokenMint: string, pathElements: string[], pathIndices: number[], recipientHash: string[]) => Promise<GenericStarkProofResult>;
   error: string | null;
 }
 
@@ -127,6 +141,35 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
 
         const id = `stark_${++requestCounter.current}`;
 
+        // ⛔ DO NOT PUT A `[P01PERF]` LINE (or any other per-proof log) HERE.
+        //
+        // This function is the single funnel for EVERY generate*Proof wrapper
+        // below — C1, C2, C3, C4, C5, C6 and C7 all come through it. A line
+        // emitted from this resolve is therefore not a benchmark: it fires on a
+        // real user's spend, on the device, in production. `babel.config.js`
+        // has `transform-remove-console` COMMENTED OUT (line 51) and nothing
+        // else noops console in release, so such a line reaches a shipped APK
+        // and anyone holding the phone reads it with
+        // `adb logcat -s ReactNativeJS`.
+        //
+        // It leaks no proof, witness, nullifier or commitment — but it does
+        // timestamp the act: "this handset produced a circuit-7 spend proof at
+        // T". Correlated against the v4 withdrawals on chain around T, that is
+        // exactly the payer<->note edge the whole C7 design exists to remove.
+        // The timing is metadata, and metadata is the linkage.
+        //
+        // The benchmark owns this measurement instead, and already emits the
+        // identical string, byte for byte, in the recorded 2026-08-03 device
+        // format:
+        //   services/stark/c7Bench.ts:101   (per proof, + a median line)
+        // driven on device from
+        //   app/(main)/(settings)/privacy-test.tsx  (Privacy tech tests -> C7)
+        // and in Node from
+        //   scripts/c7-bench-node.ts
+        // `runC7Bench` takes its sink as a parameter, so the caller decides
+        // where the line goes. That is what "opt-in" has to mean here: the
+        // measurement is reachable only by someone who deliberately started a
+        // benchmark, never as a side effect of paying.
         const timer = setTimeout(() => {
           if (pendingRequests.current.has(id)) {
             pendingRequests.current.delete(id);
@@ -303,6 +346,42 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
     [sendRequestRaw],
   );
 
+  /**
+   * [C7] See the doc comment on `StarkProverContextType.generateSpendProof`.
+   *
+   * The arity guard runs HERE, synchronously, before anything is injected into
+   * the WebView — `stark/src/air/spend.rs` parses the CSV with
+   * `filter_map(.. .ok())` and silently drops what it cannot read, so a short
+   * path yields a perfectly valid proof of a tree nobody uses. The WebView
+   * repeats the check because it is the last boundary before the wasm; this one
+   * exists because it can be unit-tested in Node and that one cannot.
+   */
+  const generateSpendProof = useCallback(
+    async (
+      nullifierPreimage: string, secret: string, blinding: string, tokenMint: string,
+      pathElements: string[], pathIndices: number[], recipientHash: string[],
+    ): Promise<GenericStarkProofResult> => {
+      assertSpendWitness({
+        nullifierPreimage, secret, blinding, tokenMint,
+        pathElements, pathIndices, recipientHash,
+      });
+      const msg = await sendRequestRaw<StarkProverMessage>((id) => {
+        proverRef.current!.generateSpendProof(
+          id, nullifierPreimage, secret, blinding, tokenMint,
+          pathElements, pathIndices, recipientHash,
+        );
+      });
+      return {
+        circuitId: msg.circuitId ?? CIRCUIT_SPEND,
+        publicInputs: msg.publicInputs ?? [],
+        proofHex: msg.proofHex!,
+        proofSize: msg.proofSize!,
+        durationMs: msg.durationMs!,
+      };
+    },
+    [sendRequestRaw],
+  );
+
   // Register this prover with the privacy-router autonomous runner so
   // unshield/split hops can generate real STARK proofs while the app is
   // foregrounded. Cleared on unmount so background ticks fall back to the
@@ -397,6 +476,7 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
     generateTransferProof,
     generateMerkleUpdateProof,
     generateMerklePathProof,
+    generateSpendProof,
     error,
   };
 
@@ -426,6 +506,7 @@ export function useStarkProver(): StarkProverContextType {
       generateTransferProof: notAvailable as any,
       generateMerkleUpdateProof: notAvailable as any,
       generateMerklePathProof: notAvailable as any,
+      generateSpendProof: notAvailable as any,
       error: 'StarkProverProvider not in component tree',
     };
   }

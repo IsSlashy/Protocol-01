@@ -123,7 +123,7 @@ export function deriveFeeEscrowPDA(poolPDA: PublicKey): [PublicKey, number] {
  * Compute budget instructions. Mirrors mobile buildComputeBudgetIxs lines
  * 93-108.
  */
-function buildComputeBudgetIxs(
+export function buildComputeBudgetIxs(
   cuLimit = 300_000,
   cuPriceMicroLamports = 1000,
 ): TransactionInstruction[] {
@@ -1571,7 +1571,7 @@ export async function prepareShieldInsert(
 // Hex helper
 // ---------------------------------------------------------------------------
 
-function hexToBytes(hex: string): Uint8Array {
+export function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
   const bytes = new Uint8Array(clean.length / 2);
   for (let i = 0; i < bytes.length; i++) {
@@ -1698,7 +1698,7 @@ function leBytes32ToBigint(buf: Uint8Array, offset: number): bigint {
   return n;
 }
 
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
@@ -1718,7 +1718,7 @@ interface ParsedPoolV3 {
   isActive: boolean;
 }
 
-function parsePoolV3Account(data: Uint8Array): ParsedPoolV3 | null {
+export function parsePoolV3Account(data: Uint8Array): ParsedPoolV3 | null {
   // Offsets from mobile parsePool.ts lines 50-63 (identical for V3):
   // 0:8   disc | 8:40 authority | 40:72 tokenMint | 72:80 denomination
   // 80:88 epochDelay | 88:120 merkle_root | 120 treeDepth | 121:129 nextLeafIdx

@@ -34,14 +34,28 @@
  *                                     has already landed.
  *
  * ⛔ AND THE ONE THAT WOULD BREAK THE DEMO. `subscribeFromPool` must send
- * NEITHER field. `handlePoolSubscribePrepare` reaches `prepareUnshieldJob`
- * verbatim (subscribeEphemeral.ts:115) and `programs/zk_shielded/src/lib.rs`
- * exposes exactly one v4 — the withdrawal. A subscription proved on circuit 7
- * would die at the END of a ~150-transaction upload, in the flow the 2026-09-04
- * deck is entirely about. Asserted on the ACTUAL request object rather than on
- * the type, because the type only stops a subscribe request that names the
- * fields — it says nothing about a future refactor routing a subscribe through
- * the withdrawal request kind.
+ * NEITHER field.
+ *
+ * 🚨 UPDATED 2026-08-27. This used to reason "`handlePoolSubscribePrepare`
+ * reaches `prepareUnshieldJob` verbatim and `programs/zk_shielded/src/lib.rs`
+ * exposes exactly one v4". Both halves have moved: `subscribe_private_stark_v4`
+ * is registered (lib.rs:549), and the subscribe prepare now routes to circuit 7
+ * through `prepareSubscribeJobV4`, falling back to `prepareSubscribeJob` — and
+ * so to `prepareUnshieldJob` — only when the rebuild cannot place the note.
+ *
+ * The requirement is unchanged and its reason is STRONGER. `recipient` and
+ * `ownerPubkey` are the WITHDRAWAL's circuit-7 inputs, and the two v4
+ * instructions bind DIFFERENT digests: `sha256(recipient)` there, a 132-byte
+ * `"P01:C7:SUBSCRIBE:v1" || vault || rate || interval_slots || vk_hash ||
+ * license` composite here. A subscription carrying the withdrawal's fields would
+ * ask for a proof its own handler refuses at the END of a ~78-chunk upload, in
+ * the flow the 2026-09-04 deck is entirely about. The subscribe sends its OWN
+ * three fields instead, and the test below asserts both directions.
+ *
+ * Asserted on the ACTUAL request object rather than on the type, because the
+ * type only stops a subscribe request that names the fields — it says nothing
+ * about a future refactor routing a subscribe through the withdrawal request
+ * kind.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -317,12 +331,26 @@ describe('⛔ the subscription must not follow the withdrawal onto circuit 7', (
     });
 
     const prep = requestOfKind('poolSubscribePrepare');
+    // 🚨 UPDATED 2026-08-27. The old message here said "there is no
+    // subscribe_private_stark_v4 on chain to spend that proof on". THERE NOW IS,
+    // and the subscribe routes to it — through its OWN fields. These two must
+    // still be absent, for a REASON THAT IS NOW STRONGER: `recipient` and
+    // `ownerPubkey` are the WITHDRAWAL's circuit-7 inputs, and the two v4
+    // instructions bind different digests. A subscribe prepare carrying them
+    // would ask for a proof over `sha256(recipient)`, which the subscribe
+    // handler rejects after a ~78-chunk upload.
     expect(
       'recipient' in prep,
-      'a subscribe prepare carrying a recipient asks for circuit 7, and there is no ' +
-        'subscribe_private_stark_v4 on chain to spend that proof on',
+      "a subscribe prepare must not carry the WITHDRAWAL's circuit-7 payee: subscribe binds a " +
+        '132-byte domain-tagged composite, not sha256(recipient)',
     ).toBe(false);
     expect('ownerPubkey' in prep, 'same field pair, same consequence').toBe(false);
+    // And it DOES carry its own, so this is not merely asserting an empty
+    // message. A subscribe that stopped sending these silently drops to the
+    // C1 + C3 pair, which republishes the note commitment.
+    expect('retailer' in prep, 'the subscribe prepare no longer asks for circuit 7').toBe(true);
+    expect('rate' in prep).toBe(true);
+    expect('intervalSlots' in prep).toBe(true);
 
     // And it went through the SUBSCRIBE request kinds, not the withdrawal ones.
     // Without this the two assertions above would also pass if the subscribe

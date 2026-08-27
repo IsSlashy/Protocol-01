@@ -39,6 +39,7 @@ import * as shieldClient from '@/lib/privacy/shieldClient';
 import { licenseServiceTag } from '@/lib/privacy/license';
 import { fetchFunderPubkey, funderConfigured } from '@/lib/privacy/pool/ephemeralFunder';
 import type { PoolToken } from '@/lib/privacy/pool/denominatedPool';
+import { SUBSCRIBE_FLOAT_SOL } from '@/lib/privacy/pool/subscribeFloat';
 import type { PoolNoteView } from '@/lib/privacy/worker/poolHandlers';
 import {
   NATIVE_SOL_SENTINEL_MINT,
@@ -248,12 +249,37 @@ function CostDisclosure() {
             call that caution. A disclosure that overstates the cost is not
             "safe": it teaches the reader that this panel's numbers are
             approximate, and the two sentences above it are not. */}
+        {/* 🚨 THE FIGURE IS NOT TYPED HERE, AND THAT IS THE FIX.
+
+            This said "roughly 1 SOL is locked to hold space for the two proofs
+            — the same pair a withdrawal needs", and both halves were wrong on
+            the route this app takes. Circuit 7 rents ONE buffer, so the float
+            is a little over half what the sentence promised, and the pair it
+            named stopped being what a withdrawal uses on
+            2026-08-26. A literal in JSX has nothing to disagree with, which is
+            why it went stale silently while `subscribeEphemeral.ts` priced the
+            real thing correctly all along.
+
+            ⛔ Overstating a cost is NOT the safe direction. It teaches the
+            reader that this panel's numbers are approximate, and the two
+            sentences above it — the whole note is spent, there is no refund —
+            are not.
+
+            `SUBSCRIBE_FLOAT_SOL` is `subscribeFloorLamports(...)`, the same
+            function `prepareSubscribeJobV4` prices its transfer with. Pinned by
+            `lib/privacy/pool/subscribeFloat.test.ts` (the arithmetic against the
+            job's own execution) and `__tests__/pages/PayAppCopy.test.tsx` (that
+            this paragraph interpolates it instead of carrying digits). */}
         <li>
-          On top of the note, roughly 1 SOL is locked to hold space for the two proofs — the same
-          pair a withdrawal needs. It comes back when they close, minus about 0.006 SOL of fees
-          that does not. Who fronts it is decided when you click: this deployment&apos;s funder if
-          it is available, and then your wallet signs nothing and is repaid nothing; your own
-          wallet if it is not. The screen after the purchase names which happened.
+          On top of the note, proof-buffer rent is locked while the upload runs, and how much
+          depends on which spend your note can be proved on: about {SUBSCRIBE_FLOAT_SOL.c7} SOL on
+          circuit 7, which rents ONE buffer and is what this app tries first, and about{' '}
+          {SUBSCRIBE_FLOAT_SOL.pair} SOL when it falls back to the C1 + C3 pair, which rents two.
+          A note deposited before we randomised the blinding always takes the pair. It comes back
+          when the buffers close, minus about 0.006 SOL of fees that does not. Who fronts it is
+          decided when you click: this deployment&apos;s funder if it is available, and then your
+          wallet signs nothing and is repaid nothing; your own wallet if it is not.
+          The screen after the purchase names which happened.
         </li>
         <li>
           The subscription hides your wallet only as well as the pool does, which today is not at
@@ -931,8 +957,8 @@ const ISSUANCE_UI = true;
       // Subscribing SPENDS the note: its nullifier is now on chain and the
       // whole denomination is locked in the vault. Record it exactly as a
       // withdrawal does, or every list keeps offering it until the pool scan
-      // catches up, which takes minutes: another ~1 SOL of buffer rent and
-      // ~150 uploads to reach a nullifier collision.
+      // catches up, which takes minutes: a second float of buffer rent and a
+      // second upload to reach a nullifier collision.
       await shieldClient.recordSpentNote(meta, owner.toBase58(), noteKey(note_));
       setSpentHere((prev) => new Set(prev).add(noteKey(note_)));
       // Remember the vault locally so the Subscriptions view can list it
@@ -1407,16 +1433,25 @@ const ISSUANCE_UI = true;
           )}
         </button>
 
-        {/* The longest flow in the product: two proofs, two uploads, ~150
-          transactions. The bar moves on the worker's real steps; the raw step
-          string stays visible underneath as the second-plane detail. */}
+        {/* The longest flow in the product: ~78 chunk uploads on circuit 7, and
+          ~150 across two proofs when the note falls back to the C1 + C3 pair.
+          The bar moves on the worker's real steps; the raw step string stays
+          visible underneath as the second-plane detail.
+
+          🚨 The `note` below said "About 1 SOL" as a literal — the same stale
+          figure as the disclosure above, in a second place, which is how one
+          correction leaves the other wrong. It reads from the same constant. */}
         {submitting && (
           <>
             <FlowProgress
               phases={SUBSCRIBE_PHASES}
               step={step}
               running={submitting}
-              note="About 1 SOL sits in a refundable deposit while this runs; it is returned when the proof buffers close."
+              note={
+                `About ${SUBSCRIBE_FLOAT_SOL.c7} SOL sits in a refundable deposit while this ` +
+                `runs, or about ${SUBSCRIBE_FLOAT_SOL.pair} if this note falls back to the ` +
+                `C1 + C3 pair; it is returned when the proof buffers close.`
+              }
             />
             {step && <p className="text-center font-mono text-[11px] text-p01-text-dim">{step}</p>}
           </>
