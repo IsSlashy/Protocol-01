@@ -15,7 +15,7 @@ copy, kept here so nobody reinstates them:
   - "our fee is 1%"            -> 1% operator + 0.3% on-chain shield = 1.3%
     today on a 1 SOL relayed deposit.
   - "anonymity set of 47"      -> 47 is a ceiling. The effective set is one,
-    because four of the five spends republish the commitment their deposit
+    because four of the six spends republish the commitment their deposit
     already published. Since 25 August the C7 withdrawal no longer does, so
     "every deployed spend republishes" is now FALSE: do not reinstate it.
   - "the pool is private"      -> the pool is a CROWD. The guarantee is
@@ -127,11 +127,11 @@ THIS PROVES ENTITLEMENT, NOT PRIVACY &nbsp;&middot;&nbsp; DEVNET MOVES: READ THE
     dict(
         no='06', clock='0:25', seconds=25, cap=20, band=True, role='what a merchant gets',
         spoken=(
-            "Today: one npm install, and we take one percent plus three tenths on chain. "
-            "Behind it: ten of our fourteen declared programs live on devnet, four thousand "
-            "two hundred and sixteen tests green. The caveat: four of our five spends still "
-            "republish their deposit's commitment, so the crowd is one. C7 closed the "
-            "withdrawal. Privacy is a crowd that grows."
+            "Today: one npm install, one percent plus three tenths on chain. Behind it: "
+            "ten of fourteen programs live on devnet, four thousand two hundred and "
+            "sixteen tests green. The caveat: four of our six spends still republish their "
+            "commitment, so the crowd is one. C7 closed the withdrawal and the "
+            "subscription. Privacy is a crowd that grows."
         ),
         body='''
 <p class="eyebrow">Today</p>
@@ -353,7 +353,7 @@ APPENDIX = [
 <ul class="none">
   <li><strong>Devnet only.</strong> No mainnet deployment. Test value assets only, on Solana devnet and Starknet Sepolia.</li>
   <li><strong>Not audited.</strong> No external security audit has been performed.</li>
-  <li><strong>Deposit to withdraw linkage is possible on four of the five spends.</strong> The v3 withdrawal, the subscription, the transfer and the split all republish the commitment their deposit already published &mdash; at instruction byte 80, 160, 80 and 80 respectively &mdash; so matching the two is trivial for an observer. The crowd of 47 unspent notes is a ceiling; the effective size today is one. C7 closes it for the <em>withdrawal</em> only &mdash; deployed 25 August, one real spend landed, no commitment on the wire &mdash; and there is no C7 subscription. Two of the three clients route to it as of 26 August &mdash; this web app, proven end to end on devnet, and the extension. The phone still calls the v3 path, held there by an on-device proving time nobody has measured.</li>
+  <li><strong>Deposit to withdraw linkage is possible on four of the six spends.</strong> The v3 withdrawal, the v3 subscription, the transfer and the split all republish the commitment their deposit already published &mdash; at instruction byte 80, 160, 80 and 80 respectively &mdash; so matching the two is trivial for an observer. The crowd of 47 unspent notes is a ceiling; the effective size today is one. C7 closes it for the withdrawal AND, since 27 August, for the subscription &mdash; both proven end to end on devnet, both publishing no commitment on the wire. Two of the three clients route to them: this web app and the extension. The phone still calls the v3 path, and the reason is not the one this plate used to give: the &ldquo;180&nbsp;s on-device proving&rdquo; figure was retracted the evening it was recorded (the real device number is C3 = 1,482&nbsp;ms; the 180&nbsp;s was a WebView hang). The actual blocker was upstream &mdash; the phone&rsquo;s WebView bridge had no spend entry point at all until 27 August, so it could not produce a circuit-7 proof to time.</li>
   <li><strong>A spend can be walked back to a wallet.</strong> An ephemeral key cannot pay a fee from nothing, so an ordinary transfer funds it and another sweeps the residue. Both are public.</li>
   <li><strong>The proof is not a hiding object.</strong> Circuit C0's witness can be recovered from a single proof. Treat a proof as public data. This is why the word "zero-knowledge" is not on any plate.</li>
   <li><strong>A merchant's subscribers are publicly enumerable.</strong> One filtered <span class="hash">getProgramAccounts</span> returns every vault with its retailer, deposit, rate and schedule. What the design buys is narrower: no address can be re-derived to ask whether a given wallet subscribes. And two of the twenty-eight live vaults are legacy normal-mode: they name the subscriber's wallet in the clear, so for those two even that narrower claim does not hold. Re-counted on chain 26 August &mdash; 28 <span class="hash">SubscriptionVault</span> accounts, 2 with a <span class="hash">subscriber_pubkey</span> present; one of those two is the deployment wallet itself.</li>
