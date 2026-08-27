@@ -30,7 +30,24 @@ concurrency:
 env:
   SOLANA_VERSION: 2.2.14
   ANCHOR_VERSION: 0.32.1
-  RUST_VERSION: 1.84.1
+  # ⛔ 1.84.1 IS WHY THIS WORKFLOW WAS RED FOR MONTHS. Do not pin it back.
+  #
+  # Cargo.lock resolves enum-ordinalize 4.4.1, whose manifest declares
+  # edition2024 — a feature no rustc before 1.85 can parse. `anchor build`
+  # died inside `cargo metadata`, before compiling a single line:
+  #   error: failed to parse manifest ... feature `edition2024` is required
+  #
+  # The Rust job in ci.yml uses dtolnay/rust-toolchain@stable with NO version
+  # and builds this same workspace fine, and so does the machine that produced
+  # the .so deployed as QvJqCsnw... (rustc 1.95.0). This pin was the only
+  # difference between them.
+  #
+  # WARNING - Cargo.lock deliberately NOT touched. Pinning enum-ordinalize
+  # down would also have cleared the error, and would have changed the
+  # dependency graph the DEPLOYED program was built from, so the source would
+  # no longer reproduce it. Moving a CI toolchain is the right lever; editing
+  # a lockfile that sits behind a live deployment is not.
+  RUST_VERSION: stable
 
 jobs:
   anchor-test:
