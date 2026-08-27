@@ -152,7 +152,7 @@ services/stark/c7Bench.ts instead. Found: ${calls.join(', ')}`).toEqual([]);
   const ALLOWED_CONSOLE = [
     { line: "console.log('[StarkProver] WASM loaded", why: 'boot, no witness in scope' },
     { line: "console.error('[StarkProver] WASM error:'", why: 'boot failure, error object only' },
-    { line: "console.log('[StarkProver/WebView]'", why: 'DORMANT but unfiltered — see the warning above' },
+    { line: "console.log('[StarkProver/WebView]'", why: 'unfiltered, but __DEV__-gated since 2026-08-27 — pinned below' },
     { line: "console.error('[StarkProver] WebView error:'", why: 'transport failure, error object only' },
     { line: "console.log('[StarkProver] merkle_update + transfer provers wired", why: 'wiring, constant string' },
     { line: "console.warn('[StarkProver] Failed to wire into ZkService:'", why: 'wiring failure, error object only' },
@@ -176,6 +176,34 @@ cannot carry witness material. Expected ${ALLOWED_CONSOLE.length}, found ${found
       expect(src, `ALLOWED_CONSOLE lists a call this file no longer makes: ${line}`).toContain(line);
     }
   });
+
+  it('keeps the unfiltered WebView log receiver behind __DEV__', () => {
+    // The one console call on this inventory that prints CONTENT it did not
+    // author. Its emitter is a plain ES5 string injected into the WebView —
+    // not type-checked, not linted — so the day someone adds `log(secret)`
+    // there, this line decides whether a nullifier preimage reaches logcat on
+    // a shipped device.
+    //
+    // Gated rather than redacted: a debug channel that hides what it was asked
+    // to show is a channel nobody uses, and dev builds do not ship.
+    //
+    // Two independent defences, because one was measured insufficient on
+    // 2026-08-27: this gate, and transform-remove-console re-enabled in
+    // babel.config.js with only error and warn excluded. Either alone would do;
+    // both means neither being reverted quietly reopens it.
+    const src = stripComments(read('StarkProverProvider.tsx'));
+    const line = src
+      .split('\n')
+      .find((l) => l.includes('[StarkProver/WebView]'));
+    expect(line, 'the WebView log receiver is gone — drop this guard with it').toBeDefined();
+    expect(
+      line!,
+      'the WebView log receiver lost its __DEV__ gate. It prints whatever the injected ' +
+        'script sends, verbatim, and that script is not type-checked. Restore the gate, ' +
+        'or delete the receiver.',
+    ).toContain('__DEV__');
+  });
+
 
   it('never interpolates witness material into a console call', () => {
     // The narrower, sharper half: even a call that IS on the inventory must not

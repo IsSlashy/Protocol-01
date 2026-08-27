@@ -106,7 +106,25 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
     }
 
     if (msg.type === 'log') {
-      console.log('[StarkProver/WebView]', msg.message);
+      // ⛔ __DEV__-GATED BECAUSE THIS RECEIVER IS UNFILTERED AND THE EMITTER IS
+      // NOT TYPE-CHECKED.
+      //
+      // It prints whatever the WebView sends on the `log` channel, verbatim.
+      // The channel is DORMANT — services/stark/StarkProver.tsx:89 declares
+      // `log()` and nothing calls it — but the receiver is live, and the thing
+      // that would call it is a plain ES5 string injected into the WebView:
+      // not type-checked, not linted, shipped verbatim. One `log(secret)` in
+      // that string and this line puts a nullifier preimage in logcat.
+      //
+      // Two independent defences now, because one was measured insufficient
+      // on 2026-08-27: this gate, and transform-remove-console re-enabled in
+      // babel.config.js with only error and warn excluded. Either alone would
+      // do; keeping both means neither being reverted silently reopens it.
+      //
+      // The content is KEPT rather than redacted: a debug channel that hides
+      // what it was asked to show is a channel nobody uses, and dev builds do
+      // not ship.
+      if (__DEV__) console.log('[StarkProver/WebView]', msg.message);
     }
 
     if ((msg.type === 'proof' || msg.type === 'error') && msg.id) {

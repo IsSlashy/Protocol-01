@@ -44,11 +44,38 @@ module.exports = function (api) {
     env: {
       production: {
         plugins: [
-          // TEMP — diagnostic build for sub-renewal investigation 2026-05-08.
-          // transform-remove-console is disabled so that [Sub:*] structured
-          // logs survive in a release-signed standalone APK. Revert before
-          // shipping any release intended for users.
-          // ['transform-remove-console', { exclude: [] }],
+          // ⛔ RE-ENABLED 2026-08-27, WITH error AND warn EXCLUDED.
+          //
+          // It was commented out on 2026-05-08 as a diagnostic, so that [Sub:*]
+          // logs would survive in a release-signed APK, above a note reading
+          // "Revert before shipping any release intended for users". That note
+          // was 3.5 months stale and the build it described shipped.
+          //
+          // What it cost: a builder put a per-proof timing line on the SHARED
+          // proof funnel, and it reached production devices. It carried no
+          // secret, and it was still a linkage — it timestamps "this handset
+          // produced a circuit-7 spend proof at T", and v4 withdrawals on chain
+          // around T are public. That is the payer<->note edge circuit 7 exists
+          // to cut, rebuilt from a log line.
+          //
+          // MEASURED before choosing the shape, because "~2,900 calls" was a
+          // figure repeated without checking. In app/ providers/ services/
+          // utils/ components/ stores/ hooks/:
+          //     console.log    372      stripped
+          //     console.debug    3      stripped
+          //     console.warn   201      KEPT
+          //     console.error  216      KEPT
+          //
+          // So this is not "silence everything or nothing". The paths people
+          // debug against are warn and error; the exposure is in log. Excluding
+          // the two keeps every failure visible in logcat while removing the
+          // 375 lines that narrate what the app is doing.
+          //
+          // ⚠️ [Sub:*] renewal logs ARE console.log and they go with this. If a
+          // renewal investigation needs them again, exclude 'log' for that build
+          // rather than deleting this line — and put it back afterwards, which
+          // is what did not happen last time.
+          ['transform-remove-console', { exclude: ['error', 'warn'] }],
         ],
       },
     },
