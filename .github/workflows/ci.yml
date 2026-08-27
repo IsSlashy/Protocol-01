@@ -557,6 +557,18 @@ jobs:
       - name: Reality pin — the first v4 spend through the app, not past it
         run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-wired
 
+      # 🚨 THE ONLY FIXTURE RECORDED AGAINST THE BINARY THAT IS DEPLOYED.
+      # v4-live and v4-wired both froze the program as it existed BEFORE
+      # QvJqCsnw… — before the canonical nullifier bound that closed a double
+      # spend, before subscribe_private_stark_v4, before the SPL destination
+      # binding. They stay because they are the historical record; this one is
+      # the one to cite as current. Its measures are identical to v4-wired
+      # (P6:11, P10:1, P11:1), which is the point: a soundness fix must not
+      # move privacy, and a fixture showing otherwise would mean something
+      # changed by accident.
+      - name: Reality pin — the first v4 spend against the redeployed program
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-redeployed
+
       # NOT about unlinkability, and it lives here for a mechanical reason: it
       # imports only node: builtins and two sibling .mjs files, so this is the
       # one job that can run it without an install.
