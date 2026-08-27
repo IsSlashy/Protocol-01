@@ -1,3 +1,23 @@
+// ⛔ `chunks_exact_to_as_chunks` IS ALLOWED HERE, AND NOT BECAUSE THE LINT IS
+// WRONG. It is a style lint that landed in a recent Rust stable, and because
+// this job installs dtolnay/rust-toolchain@stable with no pin, CI turned red on
+// 2026-08-27 with NO source change on either side — the same 19 call sites had
+// been green the day before.
+//
+// 🚨 THIS CRATE IS THE DEPLOYED VERIFIER. Its source has to keep reproducing the
+// .so at EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z, which is what
+// `deployed-verifier-check.mjs` exists to assert and what CI runs offline on
+// every push. Rewriting 19 `chunks_exact(8)` call sites into `as_chunks::<8>()`
+// changes codegen in the hottest parse path in the program, for a readability
+// preference, in a crate where a byte of drift invalidates that check and every
+// proof already accepted on chain.
+//
+// So the lint is silenced HERE, narrowly, with the reason attached — not
+// repo-wide, and not by dropping -D warnings, which is what actually protects
+// this program. Revisit at the next verifier redeploy, when the artifact is
+// being rebuilt anyway and drift costs nothing.
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
 /// Compact STARK proof format for on-chain verification.
 ///
 /// Supports multiple circuits with different trace dimensions.
