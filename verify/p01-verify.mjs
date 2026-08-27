@@ -287,6 +287,27 @@ const SPEND_KINDS = [
   // belonging to nobody. `totalLen` is what pins it: P10 must refuse any v4
   // instruction whose length is not exactly 147.
   { name: 'unshield_denominated_stark_v4', commitmentOffset: null, totalLen: 147, recipientOffset: 115 },
+  // ⛔ ADDED 2026-08-27, THE DAY THE FIRST ONE LANDED. Until this line, the
+  // probe reported "no recognised zk_shielded spend instruction" on a real
+  // v4 subscription — so nothing in the audit tool could see the instruction
+  // at all, and no fixture of one could be recorded.
+  //
+  // commitmentOffset is null and that is the POINT, not an omission: circuit 7
+  // publishes [nullifier, root, rh0..rh3] and no commitment, exactly as the v4
+  // withdrawal above. P1 therefore has nothing to look for, which is why P7/P8/
+  // P9 report INCONCLUSIVE on these — a consequence of the win, not a gap in it.
+  //
+  // recipientOffset is null because a subscribe has no payee ARGUMENT: it pays
+  // a vault PDA, and the vault is an ACCOUNT KEY, not instruction data. Reading
+  // 32 bytes at some offset would report an address that does not exist. Two
+  // entries in this table have already been wrong in the false-clean direction;
+  // null makes P10 say INCONCLUSIVE instead of inventing a payee.
+  //
+  // totalLen is null because the payload is VARIABLE: 8+32+32+8 + (4+8n) +
+  // (4+n) + 32+8+8+32 + 1 + (32 if the license is Some), with n = tree_depth
+  // - 12. That is 196 bytes on a depth-15 pool with no license and 228 with
+  // one — MEASURED on 66R9sqi2…, the first that ever landed.
+  { name: 'subscribe_private_stark_v4', commitmentOffset: null, totalLen: null, recipientOffset: null },
 ];
 
 // ---------------------------------------------------------------------------

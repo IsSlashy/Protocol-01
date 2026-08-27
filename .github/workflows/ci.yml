@@ -569,6 +569,16 @@ jobs:
       - name: Reality pin — the first v4 spend against the redeployed program
         run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-redeployed
 
+      # 🚨 THE FIRST SUBSCRIPTION EVER PROVED ON CIRCUIT 7.
+      # subscribe_private_stark_v4 shipped in QvJqCsnw… and nothing called it
+      # for a day; 687 offline tests were green the whole time. This pins the
+      # transaction that finally did. Note P10 reads `unread` here and
+      # `structural` on a withdrawal — a subscribe has no payee ARGUMENT, it
+      # pays a vault PDA — which is why the probe class is derived from the run
+      # and not from a table keyed by probe id.
+      - name: Reality pin — the first circuit-7 subscription
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-subscribe
+
       # NOT about unlinkability, and it lives here for a mechanical reason: it
       # imports only node: builtins and two sibling .mjs files, so this is the
       # one job that can run it without an install.
