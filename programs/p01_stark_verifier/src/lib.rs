@@ -1,5 +1,26 @@
 #![allow(unknown_lints, dead_code, unused_imports)]
 #![allow(
+    // ⛔ A STYLE LINT, ALLOWED BECAUSE THIS CRATE IS THE DEPLOYED VERIFIER.
+    //
+    // `chunks_exact_to_as_chunks` arrived in a recent Rust stable. This job
+    // installs dtolnay/rust-toolchain@stable with no pin, so CI turned red on
+    // 2026-08-27 with no source change on either side: 30 untouched call sites
+    // across compact_proof.rs (22), verify.rs (6) and merkle.rs (2).
+    //
+    // 🚨 This crate's source has to keep reproducing the .so at
+    // EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z, which
+    // `deployed-verifier-check.mjs` asserts on every push. Rewriting 30
+    // `chunks_exact(8)` sites into `as_chunks::<8>()` changes codegen in the
+    // hottest parse path in the program, for a readability preference, in a
+    // crate where a byte of drift invalidates that check and every proof
+    // already accepted on chain. Revisit at the next verifier redeploy, when
+    // the artifact is rebuilt anyway and drift costs nothing.
+    //
+    // ⚠️ MY FIRST FIX PUT THIS IN compact_proof.rs AS A MODULE-SCOPED
+    // `#![allow]`, which covered 22 of the 30 sites and left verify.rs and
+    // merkle.rs red. CI said so in two minutes — but only because clippy had
+    // just been moved ahead of an hour of tests it does not depend on.
+    clippy::chunks_exact_to_as_chunks,
     clippy::collapsible_if,
     clippy::derivable_impls,
     clippy::doc_lazy_continuation,
