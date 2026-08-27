@@ -113,6 +113,21 @@ describe.skipIf(!LIVE)('a v4 subscription that actually opens on devnet', () => 
         { kind: 'poolShieldPrepare', meta, token: 'SOL', denomination: DENOMINATION },
         (st: string) => log('  shield-prepare:', st),
       );
+      // The shield ephemeral must be funded before it can sign. The withdrawal
+      // harness does this too; leaving it out cost a 177-second run that died
+      // with "The shield signer is underfunded (0 of 1,620,000,000)" — the
+      // pool's own guard, firing correctly, on a harness that had not paid.
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(SystemProgram.transfer({
+          fromPubkey: wallet.publicKey,
+          toPubkey: new PublicKey(prep.ephemeralPubkey),
+          lamports: prep.requiredLamports,
+        })),
+        [wallet],
+        { commitment: 'confirmed' },
+      );
+      log(`  funded shield signer ${prep.ephemeralPubkey} with ${prep.requiredLamports}`);
       const shielded = await handlePoolRequest(
         { kind: 'poolShieldExecute', jobId: prep.jobId, ownerPubkey: wallet.publicKey.toBase58() },
         (st: string) => log('  shield-execute:', st),
