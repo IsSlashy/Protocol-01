@@ -442,6 +442,27 @@ THIS PROVES ENTITLEMENT, NOT PRIVACY &nbsp;&middot;&nbsp; DEVNET MOVES: READ THE
     asset that grows for free when a merchant joins. One pool per merchant destroys the thesis.
     The honest half of that sentence is in A8.
   </p>
+  <p>
+    <strong>What kind of guarantee that is, stated precisely.</strong> We do not encrypt the
+    withdrawal. We make it indistinguishable from the others in the pool, so the guarantee is
+    k&#8209;anonymity and it is worth log<sub>2</sub>(k) bits &mdash; zero at k&nbsp;=&nbsp;1.
+    That is an information&#8209;theoretic property, not a computational one: there is no key an
+    adversary could later find, and nothing here is broken by a quantum computer. It is also the
+    only privacy property we know of that <em>improves for free</em> as the product is used. The
+    cost is that it is worthless on day one and has to be bootstrapped.
+  </p>
+  <p>
+    <strong>Two consequences we designed around.</strong> First, a set does not add across
+    denominations, it splits &mdash; hence one denomination, 1&nbsp;SOL, founder decision
+    21&nbsp;August (<span class="hash">denominatedPool.ts:215</span>). The measured cost of
+    getting that wrong is on this page already: the closed 0.1&nbsp;SOL pool holds 53 unspent
+    notes and the open 1&nbsp;SOL pool holds 47, and those are two crowds of 53 and 47, never one
+    of 100. Second, k is set by the <em>coarsest side channel</em>, not by the leaf count: any
+    channel that partitions the pool &mdash; the fee payer, the deposit funder, timing &mdash;
+    divides k, and one open channel pins it to 1 no matter how many notes are in the tree. That
+    is why the number on the plate is one and not 47, and why A8 lists the channels rather than
+    the leaves.
+  </p>
 </div>
   </section>
 
