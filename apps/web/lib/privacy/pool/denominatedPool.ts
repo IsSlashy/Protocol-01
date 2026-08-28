@@ -2829,6 +2829,33 @@ const RELAY_POLL_MAX_NETWORK_ERRORS = 10;
 export const RELAYER_REWARD_LAMPORTS = 2_500_000n;
 
 /**
+ * Can a note of this size pay a relayer at all?
+ *
+ * 🚨 THE SMALL POOL CANNOT, AND IT FAILS CLOSED ON CHAIN. The reward comes out
+ * of the protocol fee, never the payee's share, and the fee on a 0.1 SOL note is
+ * 500,000 lamports against a 2,500,000 reward. `fee_to_escrow` is a `checked_sub`,
+ * so the program returns `RelayerRewardExceedsNote` rather than quietly shorting
+ * the merchant.
+ *
+ * ⚠️ Offering the button anyway and letting the chain refuse would cost the user
+ * a full proving run — minutes — before telling them. This is the same check,
+ * asked before the work instead of after it.
+ */
+export function relayedWithdrawalAffordability(denominationSol: number): {
+  affordable: boolean;
+  feeLamports: bigint;
+  rewardLamports: bigint;
+} {
+  const lamports = BigInt(Math.round(denominationSol * 1e9));
+  const feeLamports = (lamports * UNSHIELD_FEE_BPS) / 10_000n;
+  return {
+    affordable: feeLamports >= RELAYER_REWARD_LAMPORTS,
+    feeLamports,
+    rewardLamports: RELAYER_REWARD_LAMPORTS,
+  };
+}
+
+/**
  * Build every transaction a relayed spend needs, unsigned, in the relayer's
  * name. Nothing here touches a wallet: the buyer produces bytes.
  */

@@ -31,6 +31,7 @@ import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@sol
 import bs58 from 'bs58';
 import { getStore, rateLimitExceeded, rateLimitRemaining } from '@/lib/waitlist/store';
 import { namesBoth } from '@/lib/privacy/coNaming';
+import { P11_FUNDER_WALK_LIMIT, funderHistoryVerdict } from '@/lib/privacy/funderHistory';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -458,13 +459,31 @@ export async function GET(request: NextRequest) {
   }
 
   let funderLamports: number | null = null;
+  // 🚨 The float is the account P11's green verdict rests on, and it only grows.
+  // Past the walk limit the probe returns INCONCLUSIVE — not red — so the
+  // verdict would stop being a verdict without anything changing colour. One
+  // extra call makes the headroom readable before it runs out.
+  let funderHistoryLength: number | null = null;
   if (funder) {
     try {
       const rpc = process.env.P01_FUNDER_RPC ?? 'https://api.devnet.solana.com';
-      funderLamports = await new Connection(rpc, 'confirmed').getBalance(
-        funder.publicKey,
-        'confirmed',
-      );
+      const connection = new Connection(rpc, 'confirmed');
+      funderLamports = await connection.getBalance(funder.publicKey, 'confirmed');
+
+      // 🚨 ITS OWN try. The balance is load-bearing — a client refuses BEFORE
+      // the buyer pays on the strength of it — and folding the history read in
+      // beside it made one failing call null BOTH. Caught by
+      // `relay-to-buyer.test.ts`, which mocks getBalance and nothing else, so
+      // the added call threw and the balance came back null. A reading must
+      // never be lost to the failure of a reading it does not depend on.
+      try {
+        const history = await connection.getSignaturesForAddress(funder.publicKey, {
+          limit: P11_FUNDER_WALK_LIMIT,
+        });
+        funderHistoryLength = history.length;
+      } catch {
+        funderHistoryLength = null;
+      }
     } catch {
       funderLamports = null;
     }
@@ -529,6 +548,11 @@ export async function GET(request: NextRequest) {
     // `null` = could not establish. Reported so a reader can tell "clean" from
     // "unread", which is the distinction this whole file is built around.
     sinkFundedFloat,
+    // ⛔ DELIBERATELY OUTSIDE `reasons`, and therefore outside `ready`. A long
+    // float history does not stop a deposit being relayed; it stops P11 being
+    // provable. Folding it in would make readiness mean two different things —
+    // the same mistake this file already refuses for the float balance.
+    funderHistory: funderHistoryVerdict(funderHistoryLength),
     ready: reasons.length === 0,
     reasons,
   });

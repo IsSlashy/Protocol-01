@@ -11,6 +11,7 @@ import {
   Loader2,
   RefreshCw,
   TriangleAlert,
+  Shuffle,
 } from "lucide-react";
 import {
   buildPoolPayoutMessage,
@@ -49,6 +50,7 @@ import {
   shieldValueLamports,
   type DepositBlock,
   type PoolToken,
+  relayedWithdrawalAffordability,
 } from "@/lib/privacy/pool/denominatedPool";
 import { operatorFeeAtomic } from "@/lib/privacy/pool/ephemeralFunder";
 import { SHIELD_PHASES, WITHDRAW_PHASES } from "@/lib/pay/flowProgress";
@@ -704,7 +706,19 @@ export default function PoolPanel({
     }
   }
 
-  async function handleUnshield(note: PoolNoteView) {
+  // ── The relayed withdrawal ────────────────────────────────────────────
+  //
+  // 🚨 This is the path that closes P11, and until now it had no button: the
+  // worker could route it and the UI never offered it, so the only way to reach
+  // it was the test harness. A leak closed only in a harness is closed for
+  // nobody.
+  //
+  // ⚠️ Absent config = absent button, never a broken one. There is no default
+  // URL: a hardcoded relayer would send this deployment's withdrawals to a node
+  // its operator never chose.
+  const relayerUrl = process.env.NEXT_PUBLIC_P01_SPEND_RELAYER_URL?.trim() || null;
+
+  async function handleUnshield(note: PoolNoteView, opts?: { relayed?: boolean }) {
     if (!signOne) {
       setError("This wallet cannot sign transactions.");
       return;
@@ -734,6 +748,9 @@ export default function PoolPanel({
         connection,
         signOne,
         onProgress: setStep,
+        // Present = the relayer pays and signs; the buyer's wallet appears in no
+        // account key of the withdrawal. Absent = today's path, untouched.
+        relayerUrl: opts?.relayed ? (relayerUrl ?? undefined) : undefined,
       });
       await recordPayout(meta, ownerKey, {
         pool: note.pool,
@@ -1680,6 +1697,38 @@ export default function PoolPanel({
                     )}
                     Withdraw
                   </button>
+                  {/* The relayed withdrawal.
+
+                      Offered only when this deployment names a relayer AND the
+                      note's fee can cover the reward — 50 bps of 0.1 SOL is
+                      500,000 lamports against a 2,500,000 reward, and the chain
+                      answers RelayerRewardExceedsNote. Showing it anyway would
+                      spend minutes of proving before refusing.
+
+                      ⚠️ The label says what changes and what does not. The payee
+                      receives the same 0.995 SOL on both paths (measured, both
+                      directions); what changes is that no transaction names the
+                      wallet. Anything warmer than that would be the "private"
+                      claim this project refuses to make. */}
+                  {relayerUrl && relayedWithdrawalAffordability(n.denomination).affordable && (
+                    <button
+                      onClick={() => handleUnshield(n, { relayed: true })}
+                      disabled={!!busyNote || shielding || !signOne || !signMessage}
+                      title={
+                        "A relayer sends and pays for this withdrawal, so your wallet is in none " +
+                        "of its transactions. It takes the same fee you already pay and the payout " +
+                        "is unchanged. Slower to start: the relayer is asked, then polled."
+                      }
+                      className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
+                    >
+                      {busyNote === `${n.pool}:${n.leafIndex}` ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Shuffle className="h-3.5 w-3.5" />
+                      )}
+                      Withdraw via relayer
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
