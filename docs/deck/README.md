@@ -55,8 +55,19 @@ choses : les deux decks ne peuvent pas diverger, et la police n'est stockée
 qu'une fois dans le dépôt. `deck-head.html` est donc un fichier **dérivé**, non
 versionné, que `make-head.py` régénère en une seconde.
 
-`three-minute-script.md` est lui aussi **généré**, depuis `plates.py`, donc le
-script parlé ne peut pas diverger des planches.
+`three-minute-script.md` est lui aussi **généré**, depuis `plates.py` :
+
+```bash
+python docs/deck/src/build-script.py docs/deck/src docs/deck/three-minute-script.md
+```
+
+🚨 **Cette phrase était fausse jusqu'au 28-08.** Le README affirmait qu'il était
+généré « donc il ne peut pas diverger », et **rien ne le générait**. Mesuré ce
+jour-là : le fichier commité disait encore *« every deployed spend republishes
+its deposit's commitment »*, une phrase que `plates.py` nomme dans son en-tête et
+interdit de réintroduire, devenue fausse le 25 août. Un fichier généré ne reste
+greffé à sa source que tant que quelque chose le régénère ; `build-script.py` est
+ce quelque chose. **Régénérer après toute édition de `plates.py`.**
 
 ## Ce que la planche 03 montre, et pourquoi
 

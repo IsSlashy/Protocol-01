@@ -14,10 +14,13 @@ copy, kept here so nobody reinstates them:
   - "one proof NOW does two"   -> C7 is measured, not deployed. Say measured.
   - "our fee is 1%"            -> 1% operator + 0.3% on-chain shield = 1.3%
     today on a 1 SOL relayed deposit.
-  - "anonymity set of 47"      -> 47 is a ceiling. The effective set is one,
-    because four of the six spends republish the commitment their deposit
+  - "anonymity set of 45"      -> 45 is a ceiling. The effective set is one,
+    because four of the SEVEN spends republish the commitment their deposit
     already published. Since 25 August the C7 withdrawal no longer does, so
     "every deployed spend republishes" is now FALSE: do not reinstate it.
+    28 August: a seventh spend shipped, unshield_denominated_stark_v4_relayed,
+    and it does not republish either. Re-count before quoting -- this number has
+    moved three times in four days.
   - "the pool is private"      -> the pool is a CROWD. The guarantee is
     k-anonymity, worth log2(k) bits, which is ZERO at k=1. Name k or say
     nothing. And k is set by the coarsest side channel, not by the leaf count.
@@ -129,7 +132,7 @@ THIS PROVES ENTITLEMENT, NOT PRIVACY &nbsp;&middot;&nbsp; DEVNET MOVES: READ THE
         spoken=(
             "Today: one npm install, one percent plus three tenths on chain. Behind it: "
             "ten of fourteen programs live on devnet, four thousand two hundred and "
-            "sixteen tests green. The caveat: four of our six spends still republish their "
+            "sixteen tests green. The caveat: four of our seven spends still republish their "
             "commitment, so the crowd is one. C7 closed the withdrawal and the "
             "subscription. Privacy is a crowd that grows."
         ),
@@ -228,7 +231,7 @@ APPENDIX = [
   <tr><td class="k">Three test suites, not one</td><td>test, test:pool, test:ui</td><td>CI invokes all three explicitly, since 22 August. A bare <span class="hash">turbo run test</span> green proves only the first.</td></tr>
   <tr><td class="k">C5 drain</td><td>10 tests, CI runs 8</td><td>Closed 18 August, in CI since 22 August. The 2 skipped read the built <span class="hash">.so</span> and the CI job has no SBF toolchain, so CI proves a source property, not the binary's.</td></tr>
   <tr><td class="k">Shipped prover</td><td>229,640 bytes, sha <span class="hash">51a947e3</span></td><td>Pinned by <span class="hash">shippedBlob.test.ts</span>, which also refuses the 192,732-byte pre-coset build (sha <span class="hash">4ace8913</span>) that the chain rejects. Pinned 22 August.</td></tr>
-  <tr><td class="k">Pool</td><td>75 deposited, 28 spent, 47 unspent</td><td>1 SOL pool, read 26 August at slot 488&thinsp;399&thinsp;246. The closed 0.1 SOL pool holds 82 leaves and 53 unspent &mdash; more notes than the open one. The 41/12 printed here before was read mid-campaign on 21 August and never refreshed.</td></tr>
+  <tr><td class="k">Pool</td><td>79 deposited, 34 spent, 45 unspent</td><td>1 SOL pool, re-read 28 August. The closed 0.1 SOL pool holds 82 leaves and 53 unspent &mdash; more notes than the open one. The 41/12 printed here before was read mid-campaign on 21 August and never refreshed.</td></tr>
   <tr><td class="k">Cost of the relayed journey</td><td>0.000485 SOL</td><td>Net network fees on the leaf 72 journey, 22 August. No on-disk log reproduces this one. The buyer's total that day was 1.013 SOL: 1.000 note, 0.003 on-chain shield fee, 0.010 operator fee.</td></tr>
   <tr><td class="k">Purchase to running subscription</td><td>167.76 s</td><td>One recorded run, leaf 33, SubscribePrivateStark at 36,127 of 200,000 CU. <strong>Not reproducible from a tag:</strong> the branch and tag named for that freeze are absent from this repo.</td></tr>
 </table>
@@ -295,8 +298,8 @@ APPENDIX = [
     denominations, it splits &mdash; hence one denomination, 1&nbsp;SOL, founder decision
     21&nbsp;August (<span class="hash">denominatedPool.ts:215</span>). The measured cost of
     getting that wrong is on this page already: the closed 0.1&nbsp;SOL pool holds 53 unspent
-    notes and the open 1&nbsp;SOL pool holds 47, and those are two crowds of 53 and 47, never one
-    of 100. Second, k is set by the <em>coarsest side channel</em>, not by the leaf count: any
+    notes and the open 1&nbsp;SOL pool holds 45, and those are two crowds of 53 and 45, never one
+    of 98. Second, k is set by the <em>coarsest side channel</em>, not by the leaf count: any
     channel that partitions the pool &mdash; the fee payer, the deposit funder, timing &mdash;
     divides k, and one open channel pins it to 1 no matter how many notes are in the tree. That
     is why the number on the plate is one and not 47, and why A8 lists the channels rather than
@@ -353,8 +356,8 @@ APPENDIX = [
 <ul class="none">
   <li><strong>Devnet only.</strong> No mainnet deployment. Test value assets only, on Solana devnet and Starknet Sepolia.</li>
   <li><strong>Not audited.</strong> No external security audit has been performed.</li>
-  <li><strong>Deposit to withdraw linkage is possible on four of the six spends.</strong> The v3 withdrawal, the v3 subscription, the transfer and the split all republish the commitment their deposit already published &mdash; at instruction byte 80, 160, 80 and 80 respectively &mdash; so matching the two is trivial for an observer. The crowd of 47 unspent notes is a ceiling; the effective size today is one. C7 closes it for the withdrawal AND, since 27 August, for the subscription &mdash; both proven end to end on devnet, both publishing no commitment on the wire. Two of the three clients route to them: this web app and the extension. The phone still calls the v3 path, and the reason is not the one this plate used to give: the &ldquo;180&nbsp;s on-device proving&rdquo; figure was retracted the evening it was recorded (the real device number is C3 = 1,482&nbsp;ms; the 180&nbsp;s was a WebView hang). The actual blocker was upstream &mdash; the phone&rsquo;s WebView bridge had no spend entry point at all until 27 August, so it could not produce a circuit-7 proof to time.</li>
-  <li><strong>A spend can be walked back to a wallet.</strong> An ephemeral key cannot pay a fee from nothing, so an ordinary transfer funds it and another sweeps the residue. Both are public.</li>
+  <li><strong>Deposit to withdraw linkage is possible on four of the seven spends.</strong> The v3 withdrawal, the v3 subscription, the transfer and the split all republish the commitment their deposit already published &mdash; at instruction byte 80, 160, 80 and 80 respectively &mdash; so matching the two is trivial for an observer. The crowd of 45 unspent notes is a ceiling; the effective size today is one. C7 closes it for the withdrawal AND, since 27 August, for the subscription &mdash; both proven end to end on devnet, both publishing no commitment on the wire. Two of the three clients route to them: this web app and the extension. The phone still calls the v3 path, and the reason is not the one this plate used to give: the &ldquo;180&nbsp;s on-device proving&rdquo; figure was retracted the evening it was recorded (the real device number is C3 = 1,482&nbsp;ms; the 180&nbsp;s was a WebView hang). The actual blocker was upstream &mdash; the phone&rsquo;s WebView bridge had no spend entry point at all until 27 August, so it could not produce a circuit-7 proof to time.</li>
+  <li><strong>A spend can be walked back to a wallet &mdash; on every path but one.</strong> An ephemeral key cannot pay a fee from nothing, so on the ordinary path a transfer funds it and another sweeps the residue, and both are public. <strong>Measured 28 August, that stopped being true of one instruction.</strong> <span class="hash">unshield_denominated_stark_v4_relayed</span> pays its submitter out of the protocol fee the pool already charges, so a stranger can afford to send the transaction and no lamport travels from the buyer to them. On spend <span class="hash">4KHpG7ka&hellip;</span> the buyer&rsquo;s address appears in the account keys of NONE of the 94 transactions the probe read across three surfaces, each read in full &mdash; probe P11, PASS, frozen as <span class="hash">verify/fixtures/v4-relayed</span> and replayed in CI. &#9888; Read the limits with it: this is one spend on devnet, not a product path &mdash; there is no button for it in the app, the relaying node is not hosted, and the fee payer of every OTHER spend still has a funding history. The payee also stays written in the clear at instruction byte 115, permanently, so it re-links the moment those funds move.</li>
   <li><strong>The proof is not a hiding object.</strong> Circuit C0's witness can be recovered from a single proof. Treat a proof as public data. This is why the word "zero-knowledge" is not on any plate.</li>
   <li><strong>A merchant's subscribers are publicly enumerable.</strong> One filtered <span class="hash">getProgramAccounts</span> returns every vault with its retailer, deposit, rate and schedule. What the design buys is narrower: no address can be re-derived to ask whether a given wallet subscribes. And two of the twenty-eight live vaults are legacy normal-mode: they name the subscriber's wallet in the clear, so for those two even that narrower claim does not hold. Re-counted on chain 26 August &mdash; 28 <span class="hash">SubscriptionVault</span> accounts, 2 with a <span class="hash">subscriber_pubkey</span> present; one of those two is the deployment wallet itself.</li>
   <li><strong>Client surfaces are proven by hash, not by execution.</strong> No proof has ever been produced from the extension or the phone against the deployed verifier.</li>
