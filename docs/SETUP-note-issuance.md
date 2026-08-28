@@ -30,9 +30,19 @@ party and probe P8 reports exactly that. Check with
 
 ## 1. Deposit the notes (once, by hand)
 
-Connect **wallet A** to `/app` and shield into the **0.1 SOL** pool — the
-cheapest one that works, and the default the Subscribe tab asks for. Deposit as
+Connect **wallet A** to `/app` and shield into the **1 SOL** pool. Deposit as
 many as you want issuable; each one is real money you are giving away.
+
+> ⛔ **This step used to say 0.1 SOL, and following it was impossible.** That pool
+> has carried `deposits: 'closed'` since the founder decision of 21 August
+> (`denominatedPool.ts`), so a restock attempt is refused before it starts —
+> and the instruction survived a week because nobody restocked in that week.
+> One denomination is open, and it is the one the demo spends from. Splitting the
+> crowd across two denominations is the thing that decision exists to prevent:
+> 53 notes and 45 notes are two crowds, never one of 98.
+>
+> ⚠️ It also makes each issuable note cost **1 SOL instead of 0.1**. That is the
+> real price of this path, and it is why the inventory is small.
 
 When the deposit screen asks *"What is this deposit for?"*, answer **"To hand to
 someone else"**. That is what these notes are.

@@ -38,6 +38,28 @@ which is also what a real buyer looks like: nobody is funded by their relayer's 
 
 Re-recording this fixture without that topology will not reproduce it.
 
+## The float is the load-bearing account, and nothing enforces its shape
+
+P11 walks the deposit payer's funder — the float `H8WtBx3Qap…` — and reads that
+account's whole history. MEASURED 2026-08-28, all 54 of its transactions read:
+
+```
+float history          54 transactions
+  naming the treasury   1
+  naming the buyer      0   <- this is why P11 passes
+```
+
+The verdict rests on that last line and on nothing else. Two ways it stops being
+true, neither of which any test prevents:
+
+- **A buyer pays the float directly** instead of the till. The whole point of the
+  R != F split (gate 4, 21 August) is that the account receiving buyer money is
+  not the account funding ephemerals. Collapse them and P11 fails on the deposit
+  surface, which is the shape of the 18 August false green.
+- **The float's history outgrows the walk.** P11 refuses to argue absence from a
+  truncated history, so a float with thousands of transactions turns this
+  INCONCLUSIVE — not green. 54 is comfortable; it will not stay 54 forever.
+
 ## ⚠️ Two verdicts that must not be read as wins
 
 **`P10 = PASS` is a statement about time, not privacy**, and the probe says so itself:
