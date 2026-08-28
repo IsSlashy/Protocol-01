@@ -578,6 +578,28 @@ jobs:
       - name: Reality pin — the first v4 spend against the redeployed program
         run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-redeployed
 
+      # 🏆 THE FIRST SPEND THAT DID NOT NAME ITS BUYER, and the record that P11 —
+      # the only [open] probe the protocol had — closed.
+      #
+      # It pins PASS on P11 with measure 0: the buyer appears in the account keys of
+      # NONE of the 94 transactions read across 3 surfaces, EACH READ IN FULL. That
+      # last clause is the whole difference from the false green of 2026-08-18,
+      # where the walk was truncated and the absence was reported anyway.
+      #
+      # ⚠️ Two verdicts here must not be read as wins. P10 reads PASS only because
+      # the payee has sent nothing onward yet — the probe's own words are "a
+      # statement about time, not privacy" — and v4-wired pins the same probe FAIL
+      # for a payee that was swept. P6 stays FAIL and always will; what its detail
+      # shows is that the buyer is NOT among the spend payer's 10 counterparty edges
+      # over 91 transactions read.
+      #
+      # 🚨 Re-recording this needs the same funding topology: the treasury carries
+      # >3000 transactions, and P11 walks a funder's history exhaustively, so any
+      # account it funds directly turns this INCONCLUSIVE rather than green. See
+      # verify/fixtures/v4-relayed/README.md.
+      - name: Reality pin — the first spend that did not name its buyer
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-relayed
+
       # 🚨 THE FIRST SUBSCRIPTION EVER PROVED ON CIRCUIT 7.
       # subscribe_private_stark_v4 shipped in QvJqCsnw… and nothing called it
       # for a day; 687 offline tests were green the whole time. This pins the

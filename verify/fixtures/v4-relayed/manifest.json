@@ -1,0 +1,29 @@
+{
+  "note": "Recorded live from devnet on 2026-08-28. Review `expect` against the run that produced it before committing.",
+  "spend": "4KHpG7kakxBRJJqXHJbcM9XbN4JT6RbYBR7QvQ6XKEo7yfpbHJRsswddLCgmAEgjPCMW3ougu4gyzoGLRLNvgmoV",
+  "kind": "unshield_denominated_stark_v4_relayed",
+  "flags": {
+    "maxChunkTx": 200,
+    "depositLimit": 400,
+    "wallet": "Aq9mbCnezwVxSyQixnXCEJTzDu1UJadTSm3ez72yyPnB",
+    "exhaustiveWalk": true
+  },
+  "expect": {
+    "P1": "PASS",
+    "P2": "PASS",
+    "P3": "PASS",
+    "P3b": "FAIL",
+    "P4": "PASS",
+    "P6": "FAIL",
+    "P7": "FAIL",
+    "P8": "FAIL",
+    "P9": "FAIL",
+    "P10": "PASS",
+    "P11": "PASS"
+  },
+  "measure": {
+    "P6": 10,
+    "P10": 0,
+    "P11": 0
+  }
+}
