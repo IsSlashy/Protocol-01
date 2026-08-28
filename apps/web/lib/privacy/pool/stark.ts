@@ -774,6 +774,87 @@ export async function closeStarkProofBuffer(
 }
 
 // ---------------------------------------------------------------------------
+// Build-only assembly, for the relayed path
+// ---------------------------------------------------------------------------
+
+/**
+ * A blockhash is required to serialise a transaction, and the relayer replaces
+ * it before signing — it is the sole signer, so it may, and it must, because
+ * ~79 sequential transactions outlive the ~60 s any blockhash chosen here would
+ * have. This placeholder exists so `serialize()` does not throw.
+ */
+export const RELAY_PLACEHOLDER_BLOCKHASH = '11111111111111111111111111111111';
+
+/**
+ * The same sequence `submitAndVerifyStarkProof` sends, built and NOT sent, with
+ * somebody else as `authority` and fee payer.
+ *
+ * 🚨 `authority` is the relayer, not the buyer. The proof buffer is a PDA seeded
+ * on `[b"stark_proof", authority, circuit_id]`, and `unshield_denominated_stark_v4`
+ * requires `c7_authority == payer`, so the whole upload has to be in the
+ * relayer's name for the spend to be relayable at all.
+ *
+ * ⚠️ Kept next to `submitAndVerifyStarkProof` on purpose: these two are the same
+ * sequence and they must stay the same sequence. A resize count computed
+ * differently in the two places is a buffer too small and a chunk write that
+ * aborts with ProgramFailedToComplete at the end of the upload.
+ */
+export function buildStarkProofUploadBatch(
+  proof: GenericStarkProof,
+  authority: PublicKey,
+  opts: { closeStaleBufferFirst?: boolean } = {},
+): { transactions: Transaction[]; proofBuffer: PublicKey } {
+  const [proofBuffer] = getProofBufferPDA(authority, proof.circuitId);
+  const transactions: Transaction[] = [];
+
+  const push = (...ixs: TransactionInstruction[]) => {
+    const tx = new Transaction();
+    tx.feePayer = authority;
+    tx.recentBlockhash = RELAY_PLACEHOLDER_BLOCKHASH;
+    tx.add(...ixs);
+    transactions.push(tx);
+  };
+
+  // The buffer PDA is derived from the RELAYER's key, so a stale one is the
+  // relayer's own leftover — from a batch that died between upload and close.
+  // The caller checks `getAccountInfo(proofBuffer)` and asks for this.
+  if (opts.closeStaleBufferFirst) {
+    push(buildCloseProofBufferIx(proofBuffer, authority));
+  }
+
+  push(buildInitProofBufferIx(proof.proofSize, proof.circuitId, proofBuffer, authority));
+
+  const resizeTarget = proof.proofSize + PROOF_DATA_OFFSET;
+  if (resizeTarget > MAX_INIT_SIZE) {
+    const resizesNeeded = Math.ceil((resizeTarget - MAX_INIT_SIZE) / MAX_REALLOC_STEP);
+    for (let r = 0; r < resizesNeeded; r++) {
+      push(buildResizeProofBufferIx(proofBuffer, authority));
+    }
+  }
+
+  for (const chunk of splitProofIntoChunks(proof.proofBytes)) {
+    push(buildWriteProofChunkIx(chunk.offset, chunk.bytes, proofBuffer, authority));
+  }
+
+  push(
+    ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
+    buildVerifyStarkProofV2Ix(proof.publicInputs, proofBuffer, authority),
+  );
+
+  // Same range as submitAndVerifyStarkProof: circuit 7 splits phase 1 / phase 2
+  // like 1..6, and phase 2 is where ALL of its binding lives. Skipping it
+  // reports success on a proof whose boundary assertions were never checked.
+  if (proof.circuitId >= 1 && proof.circuitId <= 7) {
+    push(
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
+      buildVerifyDeepAliPhase2Ix(proof.publicInputs, proofBuffer, authority),
+    );
+  }
+
+  return { transactions, proofBuffer };
+}
+
+// ---------------------------------------------------------------------------
 // Re-exports
 // ---------------------------------------------------------------------------
 

@@ -59,6 +59,10 @@ import {
 import {
   submitAndVerifyStarkProof,
   closeStarkProofBuffer,
+  buildStarkProofUploadBatch,
+  buildCloseProofBufferIx,
+  getProofBufferPDA,
+  RELAY_PLACEHOLDER_BLOCKHASH,
   CIRCUIT_MERKLE_UPDATE,
   CIRCUIT_POOL_COMMITMENT,
   CIRCUIT_SPEND,
@@ -2742,6 +2746,148 @@ export async function unshieldDenominatedStarkV4(
       }
     }
   }
+}
+
+// ===========================================================================
+// THE RELAYED WITHDRAWAL — the buyer signs nothing
+//
+// P11 is the last [open] probe in verify/p01-verify.mjs: the spend's fee payer
+// can be traced to a funding wallet, and that payer is the buyer. C7 closed the
+// commitment channel and left this one.
+//
+// The close is not cryptography, it is arithmetic. `unshield_denominated_stark_v4_relayed`
+// pays its submitter a fixed reward OUT OF THE NOTE, so a stranger can afford
+// to send the transaction and no lamport ever travels from the buyer to them.
+// The v3 relayer was paid by a transfer FROM the buyer's wallet, which moved
+// the payer one hop and left the edge exactly where it was.
+//
+// 🚨 SAFE ONLY BECAUSE CIRCUIT 7 BINDS THE RECIPIENT. `prepared` names the payee
+// inside `public_inputs_hash`; a relayer that re-points the payout invalidates
+// the proof it is relaying. Handing a v3 proof to a stranger was handing them
+// the money.
+//
+// ⚠️ What this does NOT close: P6 stays FAIL forever (a fee payer always has a
+// funding history — it is the relayer's now, not the buyer's), the deposit side
+// (P8/P9) is untouched, and one buyer through one relayer is a crowd of one.
+// ===========================================================================
+
+/**
+ * Build every transaction a relayed spend needs, unsigned, in the relayer's
+ * name. Nothing here touches a wallet: the buyer produces bytes.
+ */
+export async function buildRelayedUnshieldV4Batch(
+  poolConfig: PoolConfig,
+  recipient: PublicKey,
+  prepared: PrepareUnshieldV4Result,
+  relayer: PublicKey,
+  connection: Connection,
+): Promise<{ transactions: Transaction[]; proofBuffer: PublicKey }> {
+  if (!prepared.recipient.equals(recipient)) {
+    throw new Error(
+      `This proof was prepared for ${prepared.recipient.toBase58()} and cannot pay ` +
+      `${recipient.toBase58()}. Circuit 7 binds sha256(recipient) into its transcript.`,
+    );
+  }
+  if (!poolConfig.tokenMint.equals(SystemProgram.programId)) {
+    // The reward leaves in lamports and an SPL note is denominated in tokens.
+    // The program fails closed on this; say so here rather than after 78 chunks.
+    throw new Error(
+      'The relayed path is native-SOL only: the relayer reward is paid in ' +
+      'lamports out of a note this pool denominates in tokens.',
+    );
+  }
+
+  const proof: GenericStarkProof = {
+    proofBytes: prepared.c7ProofResult.proofBytes,
+    circuitId: CIRCUIT_SPEND,
+    publicInputs: prepared.c7ProofResult.publicInputs,
+    proofSize: prepared.c7ProofResult.proofSize,
+  };
+
+  // The buffer PDA is seeded on the RELAYER's key, so a leftover is theirs —
+  // from a batch that died between upload and close. Checked here because the
+  // node signs what it is handed and does not go looking.
+  const [proofBuffer] = getProofBufferPDA(relayer, CIRCUIT_SPEND);
+  const stale = await connection.getAccountInfo(proofBuffer);
+
+  const { transactions } = buildStarkProofUploadBatch(proof, relayer, {
+    closeStaleBufferFirst: stale !== null,
+  });
+
+  const nullifierBytes = goldilocksToLeBytes32(prepared.nullifierGoldilocks);
+  const merkleRootBytes = goldilocksToLeBytes32(prepared.merkleRoot);
+  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+  const spend = new Transaction();
+  spend.feePayer = relayer;
+  spend.recentBlockhash = RELAY_PLACEHOLDER_BLOCKHASH;
+  spend.add(...buildComputeBudgetIxs(400_000));
+  spend.add(
+    buildUnshieldDenominatedStarkV4Ix(
+      relayer,
+      recipient,
+      poolConfig.poolPDA,
+      poolConfig.treePDA,
+      nullifierPDA,
+      proofBuffer,
+      nullifierBytes,
+      merkleRootBytes,
+      prepared.subtreeRoot,
+      prepared.siblings,
+      prepared.directions,
+      undefined,
+      undefined,
+      undefined,
+      true, // the sibling instruction — this is what pays the relayer
+    ),
+  );
+  transactions.push(spend);
+
+  // The relayer fronted 0.544105 SOL of rent for the buffer and gets it back
+  // here. Leaving this off would make the reward a rounding error against the
+  // capital it locks up, and the relayer would stop relaying.
+  const close = new Transaction();
+  close.feePayer = relayer;
+  close.recentBlockhash = RELAY_PLACEHOLDER_BLOCKHASH;
+  close.add(buildCloseProofBufferIx(proofBuffer, relayer));
+  transactions.push(close);
+
+  return { transactions, proofBuffer };
+}
+
+/** Serialise a built batch for POST /spend. Unsigned, by construction. */
+export function serialiseRelayBatch(transactions: Transaction[]): string[] {
+  return transactions.map((tx) =>
+    tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+  );
+}
+
+/**
+ * Hand the batch to a relayer and wait for the spend.
+ *
+ * ⚠️ NO FALLBACK TO DIRECT SUBMISSION. The v3 relayer fell back on any error,
+ * which meant its privacy guarantee held only when the infrastructure felt
+ * well — and the buyer was never told which of the two had happened. If this
+ * throws, the withdrawal did not happen, and the caller decides whether to
+ * spend publicly instead. Failing closed is the whole point.
+ */
+export async function relayUnshieldV4(
+  relayerUrl: string,
+  transactions: Transaction[],
+  onProgress?: (step: string) => void,
+): Promise<{ spendSignature: string; signatures: string[] }> {
+  onProgress?.(`Handing ${transactions.length} transactions to the relayer...`);
+  const res = await fetch(`${relayerUrl.replace(/\/$/, '')}/spend`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ transactions: serialiseRelayBatch(transactions) }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body?.ok) {
+    throw new Error(`Relayer refused or failed: ${body?.error ?? `HTTP ${res.status}`}`);
+  }
+  onProgress?.('Relayed spend confirmed.');
+  return { spendSignature: body.spendSignature, signatures: body.signatures };
 }
 
 // ===========================================================================

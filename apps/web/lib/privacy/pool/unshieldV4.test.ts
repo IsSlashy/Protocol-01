@@ -26,15 +26,17 @@
  * program. Do not read this suite as a gate on the proof.
  */
 
-import { PublicKey, SystemProgram } from '@solana/web3.js';
+import { Connection, PublicKey, SystemProgram } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildRelayedUnshieldV4Batch,
   buildUnshieldDenominatedStarkV4Ix,
   recipientHashLimbs,
   C7_SUBTREE_DEPTH,
 } from './denominatedPool';
+import { CIRCUIT_SPEND, getProofBufferPDA } from './stark';
 
 const PAYER = new PublicKey('7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU');
 const RECIPIENT = new PublicKey('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
@@ -298,5 +300,115 @@ describe('recipientHashLimbs', () => {
       const limbs = recipientHashLimbs(key);
       for (let j = 0; j < 4; j++) expect(limbs[j]).toBe(digest.readBigUInt64LE(j * 8));
     }
+  });
+});
+
+describe('the relayed batch — the buyer signs nothing', () => {
+  const RELAYER = new PublicKey('4u893dzrXq29q8t5wWaXHmmcUMub8kRdf94tzip3tUww');
+  const POOL = new PublicKey('6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS');
+  const TREE_PDA = new PublicKey('GGJQwEigkoSk3pzg6eiLtt1cu2kYfCtV5JewNJsMkNdi');
+
+  const prepared = {
+    // 2,600 bytes is enough to force resizes and three chunks without making
+    // the test slow; the real proof is ~78,000.
+    c7ProofResult: {
+      proofBytes: new Uint8Array(2600).fill(7),
+      publicInputs: [1n, 2n, 3n, 4n, 5n, 6n],
+      proofSize: 2600,
+    },
+    merkleRoot: 0x99aabbccddeeff00n,
+    subtreeRoot: 0x0123456789abcdefn,
+    nullifierGoldilocks: 0x1122334455667788n,
+    siblings: [0xaaaaaaaaaaaaaaaan, 0xbbbbbbbbbbbbbbbbn, 0xccccccccccccccccn],
+    directions: [1, 0, 1],
+    recipient: RECIPIENT,
+  };
+
+  const poolConfig = {
+    poolPDA: POOL,
+    treePDA: TREE_PDA,
+    tokenMint: SystemProgram.programId,
+    denomination: 1_000_000_000,
+  } as unknown as Parameters<typeof buildRelayedUnshieldV4Batch>[0];
+
+  /** No stale buffer on chain. */
+  const connection = { getAccountInfo: async () => null } as unknown as Connection;
+
+  async function build() {
+    return buildRelayedUnshieldV4Batch(poolConfig, RECIPIENT, prepared as never, RELAYER, connection);
+  }
+
+  it('🚨 asks for no signature but the relayer’s, anywhere in the batch', () => {
+    // This is the property that closes P11. If the buyer's key appears as a
+    // signer even once, the buyer is back on chain and the whole path is
+    // theatre.
+    return build().then(({ transactions }) => {
+      expect(transactions.length).toBeGreaterThan(3);
+      for (const tx of transactions) {
+        expect(tx.feePayer!.equals(RELAYER)).toBe(true);
+        for (const key of tx.instructions.flatMap((ix) => ix.keys)) {
+          if (key.isSigner) expect(key.pubkey.equals(RELAYER)).toBe(true);
+        }
+      }
+    });
+  });
+
+  it('carries exactly one relayed spend, and it is the relayed discriminator', async () => {
+    const { transactions } = await build();
+    const relayedDisc = Buffer.from(
+      sha256(new TextEncoder().encode('global:unshield_denominated_stark_v4_relayed')).slice(0, 8),
+    );
+    const spends = transactions.flatMap((tx) =>
+      tx.instructions.filter(
+        (ix) => ix.data.length >= 8 && Buffer.from(ix.data.subarray(0, 8)).equals(relayedDisc),
+      ),
+    );
+    expect(spends).toHaveLength(1);
+  });
+
+  it('derives the proof buffer from the RELAYER, because the program demands it', async () => {
+    // `c7_authority == payer` in unshield_denominated_stark_v4.rs:308. A buffer
+    // seeded on the buyer would make the spend unrelayable.
+    const { proofBuffer } = await build();
+    const [expected] = getProofBufferPDA(RELAYER, CIRCUIT_SPEND);
+    expect(proofBuffer.equals(expected)).toBe(true);
+  });
+
+  it('ends by closing the buffer, which is the relayer’s 0.544 SOL', async () => {
+    const { transactions } = await build();
+    const closeDisc = Buffer.from(
+      sha256(new TextEncoder().encode('global:close_proof_buffer')).slice(0, 8),
+    );
+    const last = transactions[transactions.length - 1];
+    expect(
+      last.instructions.some((ix) => Buffer.from(ix.data.subarray(0, 8)).equals(closeDisc)),
+    ).toBe(true);
+  });
+
+  it('refuses an SPL pool instead of discovering it after 78 chunks', async () => {
+    const spl = { ...poolConfig, tokenMint: new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v') };
+    await expect(
+      buildRelayedUnshieldV4Batch(spl as never, RECIPIENT, prepared as never, RELAYER, connection),
+    ).rejects.toThrow(/native-SOL only/);
+  });
+
+  it('refuses a proof prepared for a different payee', async () => {
+    const other = new PublicKey('7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU');
+    await expect(
+      buildRelayedUnshieldV4Batch(poolConfig, other, prepared as never, RELAYER, connection),
+    ).rejects.toThrow(/binds sha256\(recipient\)/);
+  });
+
+  it('closes a stale buffer first when the relayer left one behind', async () => {
+    const withStale = { getAccountInfo: async () => ({ lamports: 1 }) } as unknown as Connection;
+    const { transactions } = await buildRelayedUnshieldV4Batch(
+      poolConfig, RECIPIENT, prepared as never, RELAYER, withStale,
+    );
+    const closeDisc = Buffer.from(
+      sha256(new TextEncoder().encode('global:close_proof_buffer')).slice(0, 8),
+    );
+    expect(
+      transactions[0].instructions.some((ix) => Buffer.from(ix.data.subarray(0, 8)).equals(closeDisc)),
+    ).toBe(true);
   });
 });
