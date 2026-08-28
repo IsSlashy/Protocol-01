@@ -176,6 +176,27 @@ describe.skipIf(!LIVE)('buying a note that was deposited before you arrived', ()
       say(`   the note's deposit is older than this payment by construction:`);
       say(`   it had to clear a 9,000-slot (~1 h) maturity gate to be issued at all.`);
       expect(leafSig.length).toBeGreaterThan(0);
+
+      // ── 7. AND IT IS ACTUALLY SPENDABLE ───────────────────────────────────
+      //
+      // 🚨 RECEIVING A NOTE AND OWNING ONE ARE NOT THE SAME CLAIM, and the gap
+      // between them is where a sealed blob with one wrong field hides: it
+      // arrives, it decrypts, it looks like money, and it cannot be spent. So
+      // the round trip is not proven by a 200 — it is proven by importing the
+      // blob and having the client recognise a spendable note at that leaf.
+      const imported = (await handlePoolRequest({
+        kind: 'poolImportNote',
+        meta,
+        sealedNote: issued.sealedNote,
+      } as never)) as { note: { leafIndex: number; denomination: number }; merklePath?: string };
+      say(`5. OPENED leaf ${imported.note.leafIndex}  ${imported.note.denomination} SOL  path ${imported.merklePath ?? '?'}`);
+      expect(imported.note.leafIndex).toBe(issued.leafIndex);
+      expect(imported.note.denomination).toBe(1);
+      // A stored path means the eventual spend needs no history rebuild — the
+      // difference between a subscription that proves in seconds and one that
+      // walks the pool first.
+      say(`
+   the buyer now holds a note THEY never deposited.`);
       expect(typeof issued.sealedNote).toBe('string');
       expect(issued.sealedNote.length).toBeGreaterThan(64);
     },
