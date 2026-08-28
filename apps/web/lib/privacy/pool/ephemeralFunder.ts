@@ -1076,40 +1076,79 @@ export async function fundEphemeralForJob(
       paySig = prior.signature;
     } else {
       req.onProgress?.('Paying the deployment, which will fund the deposit (your wallet stays off the pool)...');
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
-      const payTx = new Transaction()
-        .add(
-          SystemProgram.transfer({
-            fromPubkey: owner,
-            // ⛔ THE TILL, NEVER THE FLOAT. The address the buyer pays must be the
-            // one the relay measures — it reads `received` from this account's
-            // balance delta — and it must never be the address that funds the
-            // ephemeral, or the buyer is one transaction from their own spend.
-            toPubkey: new PublicKey(terms.till),
-            // ⚠️ THE VALUE, NOT THE WHOLE PRE-FUND, AND NOT THE VALUE PLUS THE
-            // FEE. The rest is refundable proof rent the float fronts, so the
-            // residue that comes back is the float's own and sweeping it there
-            // owes the user nothing. Adding the fee here would put it inside the
-            // note, and the note must be EXACTLY the denomination or it stops
-            // being indistinguishable from every other note in the pool.
-            lamports: valueLamports,
-          }),
-        )
-        .add(
-          SystemProgram.transfer({
-            fromPubkey: owner,
-            // The operator's cut, in the SAME transaction the buyer already
-            // signs: no second popup, and — the reason that matters — no way to
-            // approve the deposit and drop the fee, which two transactions would
-            // hand every buyer for free.
-            toPubkey: new PublicKey(terms.feeWallet),
-            lamports: feeLamports,
-          }),
-        );
-      payTx.recentBlockhash = blockhash;
-      payTx.feePayer = owner;
-      const signedPay = await signOne(payTx);
-      const sent = await connection.sendRawTransaction(signedPay.serialize());
+      // ⚠️ `confirmed`, NOT `finalized`, AND THE REASON IS THE CLOCK.
+      //
+      // A blockhash lives ~150 slots, about 60-90 s. A FINALIZED one is already
+      // ~32 slots old when it reaches you, so it arrives having spent a fifth of
+      // its life. What comes next is a WALLET PROMPT — human-paced and
+      // unbounded. MEASURED in production 2026-08-28: a shield died on
+      // "Transaction simulation failed: Blockhash not found" because the popup
+      // sat waiting for a click.
+      //
+      // Nothing here needs finality: this is a plain transfer, and it is
+      // confirmed below anyway. Trading fork-safety we do not need for the
+      // window we do need is the right way round.
+      function buildPayTx(hash: string): Transaction {
+        const payTx = new Transaction()
+          .add(
+            SystemProgram.transfer({
+              fromPubkey: owner,
+              // ⛔ THE TILL, NEVER THE FLOAT. The address the buyer pays must be the
+              // one the relay measures — it reads `received` from this account's
+              // balance delta — and it must never be the address that funds the
+              // ephemeral, or the buyer is one transaction from their own spend.
+              toPubkey: new PublicKey(terms.till),
+              // ⚠️ THE VALUE, NOT THE WHOLE PRE-FUND, AND NOT THE VALUE PLUS THE
+              // FEE. The rest is refundable proof rent the float fronts, so the
+              // residue that comes back is the float's own and sweeping it there
+              // owes the user nothing. Adding the fee here would put it inside the
+              // note, and the note must be EXACTLY the denomination or it stops
+              // being indistinguishable from every other note in the pool.
+              lamports: valueLamports,
+            }),
+          )
+          .add(
+            SystemProgram.transfer({
+              fromPubkey: owner,
+              // The operator's cut, in the SAME transaction the buyer already
+              // signs: no second popup, and — the reason that matters — no way to
+              // approve the deposit and drop the fee, which two transactions would
+              // hand every buyer for free.
+              toPubkey: new PublicKey(terms.feeWallet),
+              lamports: feeLamports,
+            }),
+          );
+        payTx.recentBlockhash = hash;
+        payTx.feePayer = owner;
+        return payTx;
+      }
+
+      let blockhash: string;
+      let lastValidBlockHeight: number;
+      let signedPay: Transaction;
+      let sent: string;
+      // ⛔ ONE RETRY, AND ONLY ON EXPIRY. The retry is safe ONLY because a
+      // preflight failure means the transaction was never forwarded — nothing
+      // landed, so re-signing cannot pay twice. Any other error falls straight
+      // through: retrying a send that may have reached the network is how a
+      // buyer pays the till twice for one note.
+      for (let attempt = 0; ; attempt += 1) {
+        ({ blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed'));
+        const payTx = buildPayTx(blockhash);
+        try {
+          signedPay = await signOne(payTx);
+          sent = await connection.sendRawTransaction(signedPay.serialize());
+          break;
+        } catch (e) {
+          const msg = (e as Error)?.message ?? String(e);
+          const expired = /blockhash not found|block height exceeded|BlockhashNotFound/i.test(msg);
+          if (!expired || attempt >= 1) throw e;
+          req.onProgress?.(
+            'That took long enough for Solana to move on, so nothing was sent. Asking you to ' +
+              'approve once more — please confirm straight away this time.',
+          );
+        }
+      }
 
       // ⛔ WRITTEN BEFORE THE CONFIRMATION, NOT AFTER. `sendRawTransaction` has
       // returned a signature, so the transfer is on the wire and may land whether

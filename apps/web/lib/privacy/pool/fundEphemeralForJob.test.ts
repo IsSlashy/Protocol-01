@@ -336,6 +336,8 @@ describe('an ephemeral that already holds money', () => {
  */
 import * as funderModule from './ephemeralFunder';
 import { SystemInstruction } from '@solana/web3.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 /** R, the till: collects from buyers, funds nothing. */
 const TILL = 'BQWLmnLmQPzQvJVGrJyBRA6RPBEqMhMQZ5oXQKmDMhcE';
@@ -855,7 +857,34 @@ describe('nothing irreversible happens before the relay has agreed to serve', ()
     // And before the blockhash too. Fetching one commits nothing, but building
     // the transaction before the terms are known is how a refusal ends up after
     // the wallet popup instead of before it.
-    expect(terms).toBeLessThan(calls.indexOf('getLatestBlockhash:finalized'));
+    //
+    // ⚠️ Matched by PREFIX, not by commitment. This assertion is about ORDER; it
+    // pinned `getLatestBlockhash:finalized` and so broke when the commitment
+    // changed for an unrelated and correct reason — a test that fails for a
+    // reason it is not about teaches nothing.
+    const blockhashAt = calls.findIndex((c) => c.startsWith('getLatestBlockhash:'));
+    expect(blockhashAt).toBeGreaterThan(-1);
+    expect(terms).toBeLessThan(blockhashAt);
+  });
+
+  it('🚨 takes a CONFIRMED blockhash, because a wallet prompt comes next', () => {
+    // A finalized blockhash arrives ~32 slots old, entering the prompt with a
+    // fifth of its ~90s life already spent, and what follows is human-paced and
+    // unbounded. MEASURED in production 2026-08-28: a shield died on
+    // "Transaction simulation failed: Blockhash not found" while the popup
+    // waited for a click. Nothing here needs finality — it is a plain transfer,
+    // confirmed a few lines later anyway.
+    //
+    // ⚠️ Scoped to the RELAYED payment block. The file has a second blockhash on
+    // the treasury path, and asserting over the whole file made this fail for a
+    // line it is not about.
+    const src = readFileSync(join(import.meta.dirname, 'ephemeralFunder.ts'), 'utf8');
+    const pay = src.slice(
+      src.indexOf("req.onProgress?.('Paying the deployment"),
+      src.indexOf('rememberRelayPayment({'),
+    );
+    expect(pay).toContain("getLatestBlockhash('confirmed')");
+    expect(pay).not.toContain("getLatestBlockhash('finalized')");
   });
 
   it('signs nothing when the deployment cannot be asked at all', async () => {

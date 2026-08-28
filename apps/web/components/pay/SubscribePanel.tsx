@@ -1381,7 +1381,34 @@ const ISSUANCE_UI = true;
             path are all untouched behind this: a stocked deployment can still
             serve a buyer who holds nothing, and re-showing this input is one
             boolean. */}
-        {ISSUANCE_UI && !result && !holdsNote && !!issuableNote && (
+        {/* The same warning for the buyer who ALREADY holds a note and is
+            swapping it. Their trade is different from the one above and the
+            sentence has to say so: they are giving up a note whose deposit is
+            joined to their own payment, and taking one that is joined to
+            nobody — at the price of the deployment knowing both halves. */}
+        {ISSUANCE_UI && !result && holdsNote && !!issuableNote && (
+          <p className="flex items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
+            <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
+            <span>
+              <strong className="text-p01-text">Swapping your note for one of ours.</strong>{' '}
+              Your own deposit is joined to the moment you paid — measured at under a minute, and
+              permanent. The note you get back was deposited long before you arrived, so nothing
+              on chain ties it to you. It does{' '}
+              <strong className="text-p01-text">not</strong> hide you from this deployment: we
+              hold the seed, so we can recognise every subscription bought with it.
+            </span>
+          </p>
+        )}
+        {/* 🚨 `!holdsNote` WAS HERE AND IT KILLED THE SWAP PATH.
+            MEASURED 2026-08-28: `swapForIssuedNote` sends `claimCode.trim()`,
+            but this input only rendered for a buyer holding NOTHING — so on
+            the swap the field never existed, the code was always the empty
+            string, and the issuer answered 402 'a paid claim code is
+            required'. The whole point of the swap is that a buyer who HOLDS a
+            note exchanges it for a mature one, so gating the field on holding
+            none made the feature unreachable by construction.
+            ⚠️ The gate that belongs here is inventory, not possession. */}
+        {ISSUANCE_UI && !result && !!issuableNote && (
           <div className="space-y-1">
             <input
               value={claimCode}
