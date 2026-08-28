@@ -445,7 +445,27 @@ export async function POST(request: NextRequest) {
   let tooYoung = 0;
   /** How long the closest of those still has to wait, in slots. */
   let shortestWait = Number.POSITIVE_INFINITY;
-  for (const leafIndex of leaves) {
+  // 🚨 SERVED IN RANDOM ORDER, AND IT WAS SERVED IN LIST ORDER.
+  //
+  // The loop used to walk `leaves` as configured, so the first buyer always
+  // got the first leaf, the second the second, and so on. An analyst watching
+  // the inventory be spent sees them go in order, infers the rule, and can then
+  // map the Nth payment at the till to the Nth leaf — which hands back exactly
+  // the buyer-to-note link this whole route exists to break.
+  //
+  // A shuffle costs nothing and removes that. It does NOT hide which leaves are
+  // inventory, and it is not meant to: what it removes is the ORDER, which is
+  // the part correlated with the buyer's clock.
+  //
+  // ⚠️ Math.random is right here and a CSPRNG would be theatre: this picks
+  // between notes the operator already knows all of, and it protects against a
+  // chain analyst reading public order, not against someone predicting a draw.
+  const served = [...leaves];
+  for (let i = served.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [served[i], served[j]] = [served[j], served[i]];
+  }
+  for (const leafIndex of served) {
     // 🚨 EVERY REASON TO SKIP THIS LEAF IS DECIDED BEFORE THE CLAIM IS
     // TAKEN, AND THAT ORDER IS LOAD-BEARING.
     //

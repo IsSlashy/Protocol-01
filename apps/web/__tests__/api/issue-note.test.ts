@@ -152,6 +152,37 @@ beforeEach(() => {
   mockRateLimitExceeded.mockResolvedValue(false);
 });
 
+describe('which note comes out of stock', () => {
+  it('🚨 is not the configured order, so purchase order cannot be mapped to a leaf', async () => {
+    // MEASURED shape of the bug: the loop walked `P01_TREASURY_NOTE_LEAVES` as
+    // written, so the first buyer always got the first leaf. An analyst
+    // watching the inventory be spent sees them go in order, infers the rule,
+    // and maps the Nth payment at the till to the Nth leaf — handing back the
+    // buyer-to-note link this route exists to break.
+    //
+    // The signal used here is the KV claim key, which carries the leaf index:
+    // whichever leaf the route TRIED first is the one it incremented first,
+    // whether or not the request went on to succeed.
+    const firstTried: string[] = [];
+    for (let run = 0; run < 25; run += 1) {
+      vi.unstubAllEnvs();
+      vi.stubEnv('P01_TREASURY_POOL_SEED', SEED);
+      vi.stubEnv('P01_TREASURY_NOTE_LEAVES', '83,84,85,86,87,88,89,90,91,92');
+      vi.stubEnv('P01_FUNDER_TICKET', TICKET);
+      counters = new Map();
+      mintedClaims = new Set([CLAIM]);
+      mockGetStore.mockReturnValue(fakeKv());
+      await POST(req(goodBody()));
+      const claimed = [...counters.keys()].filter((k) => k.startsWith('p01:note:issued:'));
+      if (claimed.length > 0) firstTried.push(claimed[0]);
+    }
+    expect(firstTried.length, 'no leaf was ever claimed; the harness is wrong').toBeGreaterThan(0);
+    // 25 runs over 10 leaves: seeing one value throughout would be a 1-in-10^24
+    // coincidence, so this is a real signal rather than a flaky one.
+    expect(new Set(firstTried).size).toBeGreaterThan(1);
+  });
+});
+
 describe('the payment gate', () => {
   it('refuses with 402 when no claim code is supplied', async () => {
     // The ticket alone must never be enough: it ships in the browser bundle by
