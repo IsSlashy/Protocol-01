@@ -32,6 +32,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildRelayedUnshieldV4Batch,
+  findPoolV3,
   buildUnshieldDenominatedStarkV4Ix,
   recipientHashLimbs,
   C7_SUBTREE_DEPTH,
@@ -324,12 +325,12 @@ describe('the relayed batch — the buyer signs nothing', () => {
     recipient: RECIPIENT,
   };
 
-  const poolConfig = {
-    poolPDA: POOL,
-    treePDA: TREE_PDA,
-    tokenMint: SystemProgram.programId,
-    denomination: 1_000_000_000,
-  } as unknown as Parameters<typeof buildRelayedUnshieldV4Batch>[0];
+  // 🚨 THE REAL REGISTRY ENTRY, not an object typed by hand. The hand-made one
+  // carried `denomination: 1_000_000_000` — lamports — which is the same wrong
+  // unit the guard under test had, so the pair agreed with each other and with
+  // nothing else. A fixture that shares the implementation's assumption cannot
+  // falsify it, and this is the third time that shape has cost this session.
+  const poolConfig = findPoolV3('SOL', 1)!;
 
   /** No stale buffer on chain. */
   const connection = { getAccountInfo: async () => null } as unknown as Connection;
@@ -425,7 +426,7 @@ describe('the relayed batch — the buyer signs nothing', () => {
   it('refuses a pool whose protocol fee cannot cover the reward', async () => {
     // The 0.1 SOL pool charges 500,000 lamports against a 2,500,000 reward.
     // The program refuses it; refusing here saves 78 chunk uploads first.
-    const small = { ...poolConfig, denomination: 100_000_000 };
+    const small = findPoolV3('SOL', 0.1)!;
     await expect(
       buildRelayedUnshieldV4Batch(small as never, RECIPIENT, prepared as never, RELAYER, connection),
     ).rejects.toThrow(/cannot pay a relayer/);

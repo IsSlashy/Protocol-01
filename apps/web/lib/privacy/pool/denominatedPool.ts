@@ -2847,7 +2847,12 @@ export async function buildRelayedUnshieldV4Batch(
   // pool charges 5,000,000 lamports and covers it; the 0.1 SOL pool charges
   // 500,000 and does not. The program refuses this too; refusing here saves 78
   // chunk uploads and the buffer rent that pays for them.
-  const protocolFee = (BigInt(poolConfig.denomination) * BigInt(UNSHIELD_FEE_BPS)) / 10_000n;
+  // 🚨 `denominationAtomic`, NEVER `denomination`. The latter is the HUMAN
+  // number — 1, or 0.1 — so computing a fee from it gave `1 * 50 / 10000 = 0`
+  // and this guard refused every relayed withdrawal on every pool. Found by
+  // round-tripping a real batch before the first live run; the unit tests had
+  // missed it because their fixture carried the same wrong unit as the code.
+  const protocolFee = (poolConfig.denominationAtomic * UNSHIELD_FEE_BPS) / 10_000n;
   if (protocolFee < RELAYER_REWARD_LAMPORTS) {
     throw new Error(
       `This pool cannot pay a relayer: its protocol fee is ${protocolFee} lamports ` +
