@@ -44,6 +44,33 @@ const REQUEST_TIMEOUT_MS = 120_000;
  */
 const POOL_SILENCE_TIMEOUT_MS = 180_000;
 
+/**
+ * Jobs that can have already MOVED MONEY by the time the watchdog fires.
+ *
+ * 🚨 THE WATCHDOG DOES NOT STOP THE WORKER. `fire()` deletes the pending entry
+ * and rejects; the worker keeps running and its transactions keep landing. So
+ * the old message — "The private-payment worker timed out. Please retry." —
+ * told the user the one thing that can cost them: retry. On a withdrawal that
+ * was silently mid-flight, the retry fails on a nullifier the FIRST attempt
+ * spent, which reads as a second failure while the note is gone.
+ *
+ * That is the same shape as the relayer ECONNRESET closed on 2026-08-28 — "it
+ * worked and you cannot know" — rebuilt one layer up, in the sentence.
+ *
+ * ⛔ TERMINATING THE WORKER IS NOT THE FIX. The watchdog fires on SILENCE, not
+ * on failure; the job is often still working. Killing it mid-upload abandons a
+ * proof buffer holding ~0.565 SOL of rent, which is how 46 of them came to hold
+ * 20.6 SOL that nobody can close. The honest fix is the sentence, not the kill.
+ *
+ * Read-only jobs are not listed: a scan or an export moves nothing, so for those
+ * "retry" is exactly right.
+ */
+const KINDS_THAT_CAN_HAVE_SPENT: ReadonlySet<string> = new Set([
+  'poolShieldExecute',
+  'poolUnshieldExecute',
+  'poolSubscribeExecute',
+]);
+
 let worker: Worker | null = null;
 let lastCfg: SolanaWorkerConfig | null = null;
 let nextId = 1;
@@ -116,9 +143,20 @@ function post<T>(
   const id = nextId++;
   const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
   return new Promise<T>((resolve, reject) => {
+    const kind = (msg as { kind?: string }).kind ?? '';
     const fire = () => {
       pending.delete(id);
-      reject(new Error('The private-payment worker timed out. Please retry.'));
+      reject(
+        new Error(
+          KINDS_THAT_CAN_HAVE_SPENT.has(kind)
+            ? 'The private-payment worker went quiet, so this page stopped waiting — but the ' +
+              'job may still be running and may already have landed on chain. Do NOT retry ' +
+              'until you have checked: reload and rescan, or look up your wallet on the ' +
+              'explorer. Retrying a withdrawal that already succeeded cannot spend the note ' +
+              'twice, but it will look like a second failure.'
+            : 'The private-payment worker timed out. Nothing was submitted, so it is safe to retry.',
+        ),
+      );
     };
     const entry: Pending = {
       resolve: resolve as Pending['resolve'],
