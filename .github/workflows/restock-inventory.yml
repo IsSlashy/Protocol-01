@@ -1,0 +1,101 @@
+# The tick that keeps the note inventory stocked.
+#
+# WHY A CLOCK AND NOT A TRIGGER
+# ─────────────────────────────
+# MEASURED 2026-08-28: a relayed deposit follows its buyer's payment to the till
+# by a FIXED 48-50 seconds, on 4 deposits out of 4. That gap is what lets an
+# analyst say which deposit belongs to whom, it is written at deposit time, and
+# no later delay takes it back off.
+#
+# ⛔ SO THIS MUST NEVER FIRE BECAUSE SOMEONE BOUGHT. Re-depositing in reaction to
+# a sale rebuilds exactly that gap one layer up: every restock would timestamp a
+# purchase, and the pre-deposited inventory would stop being worth building. The
+# schedule is the mechanism, not the convenience.
+#
+# The job also waits a random spell before its first deposit. A cron at :41 makes
+# "the deposits near :41" a recognisable class, and an anonymity set an observer
+# can partition is smaller than its count claims.
+#
+# WHY GITHUB AND NOT vercel.json
+# ──────────────────────────────
+# Same reason as `settle-till.yml`: Hobby allows two cron jobs, daily, and the
+# waitlist holds both. It is also far past a Vercel function's limit — one
+# deposit is a ~2 minute proof plus ~96 transactions, so a run is tens of
+# minutes by design.
+#
+# ⚠️ GitHub disables scheduled workflows in a repository with no activity for 60
+# days and emails the owner. An inventory nobody notices has stopped refilling
+# is a deployment that answers 503 to paying customers, so treat that mail as an
+# alarm rather than noise.
+
+name: restock-inventory
+
+on:
+  schedule:
+    # Every four hours at :41. Off the hour for the same reason settle-till is:
+    # the top of the hour is GitHub's busiest slot, so it runs late there.
+    - cron: '41 */4 * * *'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'How many notes the pot should hold'
+        required: false
+        default: '10'
+
+# ⛔ ONE TICK AT A TIME, and this one is not advisory. Two runs shielding at once
+# would race for the pool's Merkle root: `shield_denominated_v3` binds the C6
+# proof to `merkle_tree.root` as it is at execution, so the loser fails
+# `InvalidProof` after its payer has already paid.
+concurrency:
+  group: restock-inventory
+  cancel-in-progress: false
+
+jobs:
+  restock:
+    name: Restock the note inventory
+    runs-on: ubuntu-latest
+    # Generous: the job deliberately sleeps a random spell before it starts, and
+    # each deposit is a ~2 minute proof plus ~96 transactions.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Write the treasury keypair
+        # ⚠️ The file, never an env var read by the app: the harness loads a
+        # keypair path, and a key that only exists for this step is a key that
+        # does not leak into a later one.
+        env:
+          TREASURY_KEYPAIR_JSON: ${{ secrets.P01_TREASURY_KEYPAIR_JSON }}
+        run: |
+          test -n "$TREASURY_KEYPAIR_JSON" || { echo "::error::P01_TREASURY_KEYPAIR_JSON is unset"; exit 1; }
+          printf '%s' "$TREASURY_KEYPAIR_JSON" > "$RUNNER_TEMP/treasury.json"
+
+      - name: Restock
+        working-directory: apps/web
+        env:
+          P01_RESTOCK: '1'
+          P01_LIVE_KEYPAIR: ${{ runner.temp }}/treasury.json
+          P01_LIVE_RPC: ${{ secrets.P01_FUNDER_RPC }}
+          P01_TREASURY_NOTE_LEAVES: ${{ secrets.P01_TREASURY_NOTE_LEAVES }}
+          P01_TREASURY_TARGET: ${{ github.event.inputs.target || '10' }}
+          P01_TREASURY_LOW_WATER: '7'
+          P01_TREASURY_MAX_PER_RUN: '3'
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          npx vitest run --config vitest.pool.config.mts \
+            lib/privacy/pool/restockInventory.test.ts
+
+      - name: Shred the key
+        if: always()
+        run: shred -u "$RUNNER_TEMP/treasury.json" 2>/dev/null || rm -f "$RUNNER_TEMP/treasury.json"
