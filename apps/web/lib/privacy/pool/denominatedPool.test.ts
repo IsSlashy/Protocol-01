@@ -42,6 +42,9 @@ import {
   importNote,
   secureRandomU64,
   SOL_POOLS_V3,
+  getPoolsToScanByDefault,
+  getPoolsForTokenV3,
+  findPoolV3,
   ZK_SHIELDED_PROGRAM_ID,
   type ShareableNote,
   type ShieldReceipt,
@@ -989,5 +992,33 @@ describe('blinded-only fast pass (progressive scan)', () => {
       onlyLeaf: 999,
     });
     expect(atUnserved).toEqual([]);
+  });
+});
+
+describe('what a scan sweeps when no denomination is named', () => {
+  it('reads the 1 SOL pool and no other', () => {
+    const pools = getPoolsToScanByDefault('SOL');
+    expect(pools.map((p) => p.denomination)).toEqual([1]);
+  });
+
+  it('🚨 leaves the 0.1 pool REACHABLE by name, which is the whole design', () => {
+    // Its 12 unspent notes (measured 2026-08-21, 41 leaves) drop out of a
+    // default scan and out of nothing else. `handlePoolScan` honours an explicit
+    // denomination unchanged, so a holder who asks for 0.1 still finds them.
+    // Closing an entrance is not closing an exit, and neither is narrowing a
+    // default — but only if this stays true.
+    const byName = findPoolV3('SOL', 0.1);
+    expect(byName, 'the 0.1 pool disappeared from the registry').toBeTruthy();
+    expect(getPoolsForTokenV3('SOL').map((p) => p.denomination)).toContain(0.1);
+  });
+
+  it('narrows, never invents: every default pool is a real registered one', () => {
+    for (const p of getPoolsToScanByDefault('SOL')) {
+      expect(getPoolsForTokenV3('SOL')).toContain(p);
+    }
+  });
+
+  it('has no USDC pool to sweep, and says so rather than guessing', () => {
+    expect(getPoolsToScanByDefault('USDC')).toEqual([]);
   });
 });

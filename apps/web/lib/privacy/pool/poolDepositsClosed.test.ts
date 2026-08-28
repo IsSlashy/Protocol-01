@@ -259,8 +259,8 @@ describe('the deposit engine refuses a closed pool', () => {
 // 2. Read side: the scan still enumerates closed pools
 // ---------------------------------------------------------------------------
 
-describe('closing the entrance does not close the exit', () => {
-  it('marks a pool closed and still scans it', async () => {
+describe('closing the entrance narrows the default exit, and only the default', () => {
+  it('scans ONLY 1 SOL by default, and the omitted notes are real', async () => {
     const pool = findPoolV3('SOL', 10)!;
     expect(isClosed(pool), 'the 10 SOL pool must be closed to deposits').toBe(true);
     // And 1 SOL must be the ONLY open one, asserted here so a change that opens
@@ -271,15 +271,29 @@ describe('closing the entrance does not close the exit', () => {
 
     await handlePoolRequest({ kind: 'poolScan', meta: META, token: 'SOL' });
 
-    // Every SOL pool, closed ones included. A closed pool may hold unspent
-    // notes — the 0.1 pool held 10 of them while it was closed — so a scan that
-    // skipped closed pools would report live money as gone.
-    for (const p of SOL_POOLS_V3) {
-      expect(seen.scanned, `${p.denomination} SOL must still be scanned`).toContain(
-        p.poolPDA.toBase58(),
-      );
-    }
-    expect(seen.scanned).toContain(POOL_0_1);
+    // 🚨 THIS TEST USED TO ASSERT THE OPPOSITE, and the reason it gave was
+    // right: a closed pool may hold unspent notes, so a scan that skips it
+    // reports live money as gone. MEASURED 2026-08-28, the 0.1 pool holds 53
+    // unspent notes against the 1 SOL pool's 46 — MORE live notes than the
+    // denomination the demo spends from.
+    //
+    // Narrowed anyway, as a founder decision taken with that number in front
+    // of it: a default scan costs a pool's RPC plus ~41 s of legacy hashing per
+    // derivation, and one denomination is live. The test is rewritten to record
+    // the policy rather than deleted to get out of its way.
+    // Deduplicated: the recorder fires once per DERIVATION, not once per pool,
+    // and the assertion is about which pools were reached.
+    expect(
+      [...new Set(seen.scanned)],
+      'the default scan reached a pool it should not',
+    ).toEqual([POOL_1]);
+
+    // ⛔ AND THE NARROWING MUST STAY A NARROWING. The moment the omitted pools
+    // stop being reachable by name, 53 notes are not slow to find — they are
+    // gone, and that is a different decision than the one taken here.
+    seen.scanned.length = 0;
+    await handlePoolRequest({ kind: 'poolScan', meta: META, token: 'SOL', denomination: 0.1 });
+    expect([...new Set(seen.scanned)], '0.1 must still be scannable by name').toEqual([POOL_0_1]);
   });
 
   it('scans a closed pool when it is asked for by denomination', async () => {

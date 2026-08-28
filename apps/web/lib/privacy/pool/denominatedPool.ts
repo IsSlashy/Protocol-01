@@ -407,6 +407,41 @@ export function getPoolsForTokenV3(token: 'SOL' | 'USDC'): PoolConfig[] {
   return token === 'SOL' ? SOL_POOLS_V3 : USDC_POOLS_V3;
 }
 
+/**
+ * Which pools a scan sweeps when the caller names no denomination.
+ *
+ * ⚠️ READ-SIDE, and deliberately NOT one of the deposit-side exports below —
+ * do not substitute it for either. A scan is an EXIT, and the block below is
+ * about entrances.
+ *
+ * A default scan reads every pool it is given, and each one costs a floor of
+ * roughly a minute of RPC (measured 2026-08-12 on Helius). One denomination is
+ * live — 1 SOL, the founder decision of 2026-08-21 and the one the demo spends
+ * from — so sweeping the other buys a minute per scan for notes almost nobody
+ * holds.
+ *
+ * 🚨 WHAT THIS COSTS, MEASURED 2026-08-28 AND NOT GUESSED: the 0.1 SOL pool
+ * holds 53 unspent notes against the 1 SOL pool's 46 — MORE live notes than the
+ * denomination the demo spends from. After this they no longer appear in a scan
+ * that names no denomination, so a holder sees a balance that does not mention
+ * them. Founder decision, taken with that number in front of it.
+ *
+ * ⛔ THEY ARE NOT UNREACHABLE, and that distinction is the whole design. An
+ * explicit `denomination: 0.1` request still resolves through `findPoolV3` and
+ * scans, spends, subscribes and sweeps exactly as before. Closing an entrance
+ * is not closing an exit, and neither is narrowing a default.
+ */
+export const DEFAULT_SCAN_DENOMINATIONS: Readonly<Record<string, number[]>> = {
+  SOL: [1],
+  USDC: [],
+};
+
+/** The pools a denomination-less scan should read. See the note above. */
+export function getPoolsToScanByDefault(token: 'SOL' | 'USDC'): PoolConfig[] {
+  const wanted = DEFAULT_SCAN_DENOMINATIONS[token] ?? [];
+  return getPoolsForTokenV3(token).filter((p) => wanted.includes(p.denomination));
+}
+
 /** Mirror mobile findPoolV3 line 2846. */
 export function findPoolV3(token: 'SOL' | 'USDC', denomination: number): PoolConfig | undefined {
   return ALL_POOLS_V3.find(p => p.token === token && p.denomination === denomination);

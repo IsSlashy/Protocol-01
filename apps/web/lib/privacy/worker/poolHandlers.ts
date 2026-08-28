@@ -31,6 +31,7 @@ import {
   fetchPoolCommitments,
   findPoolV3,
   getPoolsForTokenV3,
+  getPoolsToScanByDefault,
   type OnChainCommitment,
   type PoolConfig,
   fetchSpentNullifierSet,
@@ -1497,9 +1498,13 @@ async function handlePoolScan(
 ): Promise<PoolScanResponse> {
   const conn = requireConnection();
   const candidates = seedsInSearchOrder(requireSeeds(req.meta));
+  // A named denomination is honoured exactly as before — 0.1 included, which is
+  // closed to deposits and stays fully readable that way. Only the DEFAULT
+  // narrows. ⚠️ That default now omits 53 unspent notes; see
+  // DEFAULT_SCAN_DENOMINATIONS for the measurement and the decision behind it.
   const pools = req.denomination !== undefined
     ? [requirePool(req.token, req.denomination)]
-    : getPoolsForTokenV3(req.token);
+    : getPoolsToScanByDefault(req.token);
 
   const notes: PoolNoteView[] = [];
   const poolSizes: PoolSizeView[] = [];

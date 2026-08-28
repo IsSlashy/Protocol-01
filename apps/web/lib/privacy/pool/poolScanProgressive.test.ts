@@ -119,6 +119,17 @@ vi.mock('./denominatedPool', async (importOriginal) => {
     fetchPoolCommitments: async () => new Map(),
     fetchSpentNullifierSet: async () => new Set<string>(),
     readPoolUnspentCount: async () => 7,
+    // ⚠️ The default scan was narrowed to 1 SOL on 2026-08-28, and this file
+    // measures a property that needs MORE THAN ONE pool to exist: that the
+    // first paint lands after ONE pool's blinded pass, and that no legacy
+    // search starts before the last blinded one. Left alone, every multi-pool
+    // test here would go green while proving nothing — which its own
+    // `expect(pools.length).toBeGreaterThan(1)` says out loud.
+    //
+    // So the SELECTOR is widened here, never the loop under test. Which pools
+    // the policy actually picks is pinned in poolDepositsClosed.test.ts; this
+    // file is about the order the loop walks them in.
+    getPoolsToScanByDefault: (token: 'SOL' | 'USDC') => actual.getPoolsForTokenV3(token),
   };
 });
 
