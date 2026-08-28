@@ -264,6 +264,24 @@ export interface UnshieldParams {
    * being demonstrated is how a demo passes and a user does not.
    */
   neverExposeWallet?: boolean;
+  /**
+   * Hand the whole withdrawal to a relayer instead of paying for it.
+   *
+   * 🚨 THE PRE-FUND IS SKIPPED ENTIRELY when this is set, and that is the point:
+   * on this path the wallet signs nothing and pays nothing. The relayer uploads
+   * the proof, submits `unshield_denominated_stark_v4_relayed` and is reimbursed
+   * out of the protocol fee the pool already charges, so no lamport travels from
+   * the buyer to the submitter and there is no edge to walk back.
+   *
+   * ⚠️ v4 ONLY. The worker refuses a v3 job outright: a C1+C3 proof binds no
+   * payee, so a stranger holding it could re-point the payout.
+   *
+   * ⚠️ NO FALLBACK. If the relayer refuses or is unreachable this throws and the
+   * withdrawal did not happen — the caller decides whether to spend publicly
+   * instead. Falling back silently is what made the v3 relayer's guarantee hold
+   * only when the infrastructure felt well.
+   */
+  relayerUrl?: string;
 }
 
 /**
@@ -367,7 +385,14 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
   // (`unshieldEphemeral.ts`), with no denomination term — the note's value comes
   // out of the POOL. That is what makes this leg fundable at all, and it is
   // exactly what the deposit leg is not.
-  const funding = await fundEphemeralForJob({
+  // ⛔ NOTHING IS PRE-FUNDED ON THE RELAYED PATH, and that omission IS the
+  // mechanism. `prep.requiredLamports` stays computed and stays correct for the
+  // direct path; it simply does not apply when somebody else pays, and sending
+  // it would put a transfer from this wallet on chain — the exact edge this
+  // route exists to remove.
+  const funding = params.relayerUrl
+    ? { sweepTo: undefined, fundedBy: 'wallet' as const, operatorFeeLamports: 0, funderFallbackReason: undefined }
+    : await fundEphemeralForJob({
     ephemeralPubkey: prep.ephemeralPubkey,
     requiredLamports: prep.requiredLamports,
     valueLamports: 0,
@@ -376,7 +401,7 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
     signOne,
     onProgress,
     neverExposeWallet: params.neverExposeWallet,
-  });
+      });
 
   // 🚨 THE PAYEE IS SENT AT EXECUTE ON BOTH CIRCUITS, AND ON v4 IT IS A CHECK
   // RATHER THAN AN INSTRUCTION.
@@ -410,6 +435,7 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
       // Identity, not money. The worker refuses `recipient === ownerPubkey`.
       ownerPubkey: owner.toBase58(),
       sweepTo: funding.sweepTo,
+      relayerUrl: params.relayerUrl,
     },
     onProgress,
   );
