@@ -2426,13 +2426,26 @@ export function buildUnshieldDenominatedStarkV4Ix(
   tokenProgram?: PublicKey,
   poolVault?: PublicKey,
   recipientTokenAccount?: PublicKey,
+  /**
+   * Route to `unshield_denominated_stark_v4_relayed`, which pays `payer` a
+   * fixed reward OUT OF THE NOTE (fee.rs RELAYER_REWARD_LAMPORTS). Only the
+   * discriminator differs — same accounts, same args, same order — because the
+   * two are the same handler with one literal changed.
+   *
+   * Set this ONLY when somebody other than the beneficiary is paying, i.e.
+   * from the relayer. Setting it on a self-submitted withdrawal just moves a
+   * million lamports from the note into your own ephemeral payer.
+   */
+  relayed = false,
 ): TransactionInstruction {
   if (siblings.length !== directions.length) {
     throw new Error(
       `siblings (${siblings.length}) and directions (${directions.length}) must be the same length`,
     );
   }
-  const disc = getDiscriminator('unshield_denominated_stark_v4');
+  const disc = getDiscriminator(
+    relayed ? 'unshield_denominated_stark_v4_relayed' : 'unshield_denominated_stark_v4',
+  );
   const data = Buffer.alloc(
     8 + 32 + 32 + 8 + (4 + siblings.length * 8) + (4 + directions.length) + 32,
   );
@@ -2632,6 +2645,18 @@ export async function unshieldDenominatedStarkV4(
   signer: WalletSigner,
   connection: Connection,
   onProgress?: (step: string) => void,
+  /**
+   * `relayed` routes to the sibling instruction that pays `signer` a reward
+   * out of the note. It is what a RELAYER passes: the caller here is not the
+   * beneficiary, it is a stranger who uploaded somebody else's proof and wants
+   * its 78 chunk fees back.
+   *
+   * 🚨 Safe only because circuit 7 binds the recipient. `prepared` names the
+   * payee inside `public_inputs_hash`, so a relayer that re-points the payout
+   * invalidates the very proof it is relaying. That was NOT true in v3, which
+   * is why v3 relaying needed a trusted operator and this does not.
+   */
+  relayed = false,
 ): Promise<string> {
   if (!prepared.recipient.equals(recipient)) {
     throw new Error(
@@ -2684,6 +2709,7 @@ export async function unshieldDenominatedStarkV4(
       tokenProgram,
       poolVault,
       recipientTokenAccount,
+      relayed,
     );
 
     const tx = new Transaction();

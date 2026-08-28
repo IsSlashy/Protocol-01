@@ -418,7 +418,46 @@ pub mod zk_shielded {
         recipient: [u8; 32],
     ) -> Result<()> {
         instructions::unshield_denominated_stark_v4::handler(
-            ctx, nullifier, merkle_root, subtree_root, siblings, directions, recipient,
+            ctx, nullifier, merkle_root, subtree_root, siblings, directions, recipient, false,
+        )
+    }
+
+    /// The same spend, submitted by somebody else, paid for out of the note.
+    ///
+    /// Same accounts, same arguments, same handler — only the last literal
+    /// differs. It is a SIBLING instruction and not a flag on the existing one
+    /// because a flag is a field a caller controls, and because the demo path
+    /// must stay byte-identical: `unshield_denominated_stark_v4` still calls
+    /// the handler with `false` and cannot be talked into paying anybody.
+    ///
+    /// # What this buys, and what it does not
+    ///
+    /// It closes P11 — the last `[open]` probe in verify/p01-verify.mjs — by
+    /// making the fee payer somebody with no funding edge to the buyer. It is
+    /// only safe to hand a proof to a stranger because circuit 7 binds the
+    /// recipient: substituting it changes `public_inputs_hash` and the spend is
+    /// refused. v3 had no such binding, which is why its relayer could only
+    /// ever be trusted infrastructure.
+    ///
+    /// ⚠️ P6 stays FAIL and always will: every Solana transaction has a fee
+    /// payer with a funding history. What changes is WHO it is, never that one
+    /// exists. The deposit side (P8/P9) is untouched by this instruction.
+    ///
+    /// 🚨 A relayer only hides a crowd. One user routing through one relayer
+    /// partitions the anonymity set back to one, and the relayer operator key
+    /// must not itself be a public name — the retired nodes signed with
+    /// `TREASURY_AUTHORITY`, which made the whole exercise self-defeating.
+    pub fn unshield_denominated_stark_v4_relayed(
+        ctx: Context<UnshieldDenominatedStarkV4>,
+        nullifier: [u8; 32],
+        merkle_root: [u8; 32],
+        subtree_root: u64,
+        siblings: Vec<u64>,
+        directions: Vec<u8>,
+        recipient: [u8; 32],
+    ) -> Result<()> {
+        instructions::unshield_denominated_stark_v4::handler(
+            ctx, nullifier, merkle_root, subtree_root, siblings, directions, recipient, true,
         )
     }
 

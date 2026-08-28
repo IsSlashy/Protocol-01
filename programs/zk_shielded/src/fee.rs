@@ -45,6 +45,35 @@ pub const SHIELD_FEE_BPS: u64 = 30;
 /// Unshield fee: 50 basis points (0.5%)
 pub const UNSHIELD_FEE_BPS: u64 = 50;
 
+/// Relayer reward, in lamports, taken OUT OF THE NOTE on the relayed spend
+/// path (`unshield_denominated_stark_v4_relayed`). Zero on every other path.
+///
+/// # Why this is a constant and not an instruction argument
+///
+/// Circuit 7 binds the RECIPIENT in `public_inputs_hash`, so a relayer cannot
+/// re-point the payout. It does NOT bind the amount — the split is computed
+/// here, on chain. A caller-supplied reward would therefore let whoever
+/// submits the transaction skim the note down to dust while the proof still
+/// verified: the exact shape of defect v4 just closed on the recipient, moved
+/// one field over. It is a constant so that the worst a hostile submitter can
+/// take is this number.
+///
+/// # Why this number
+///
+/// MEASURED on devnet 2026-08-28, not estimated: a circuit-7 spend is 78
+/// chunk transactions at 5,000 lamports = 390,000 lamports of signature fees,
+/// plus init, verify, the spend itself and `close_proof_buffer` — call it
+/// ~410,000. The proof buffer rent is 544,105 lamports and comes BACK on
+/// close, so it is working capital, not cost. 1,000,000 leaves roughly 2.4x
+/// over the burn for priority fees and failed retries.
+///
+/// ⚠️ Flat, not basis points, because the cost is flat — 78 chunks is 78
+/// chunks whatever the note is worth. On the 1 SOL pool that is 0.1% of the
+/// note, next to the 0.5% protocol fee. On the 0.1 SOL pool it is 1%, i.e.
+/// twice the protocol fee. That is the honest price of not naming the payer
+/// on a small note, and it is stated rather than hidden in a rate.
+pub const RELAYER_REWARD_LAMPORTS: u64 = 1_000_000;
+
 /// Basis points denominator
 pub const BPS_DENOMINATOR: u64 = 10_000;
 

@@ -255,6 +255,12 @@ pub fn handler(
     siblings: Vec<u64>,
     directions: Vec<u8>,
     recipient: [u8; 32],
+    // Set ONLY by `unshield_denominated_stark_v4_relayed`. The original
+    // instruction passes a literal `false`, so its behaviour cannot drift from
+    // what it was before this parameter existed — the two paths are the same
+    // code, and "unchanged when nobody relays" is true by construction rather
+    // than by a test that could rot.
+    relayed: bool,
 ) -> Result<()> {
     let recipient_account = ctx
         .remaining_accounts
@@ -396,9 +402,33 @@ pub fn handler(
     );
 
     // -----------------------------------------------------------------------
-    // Transfer funds with protocol fee (0.5%) — identical to v3.
+    // Transfer funds with protocol fee (0.5%), and — on the relayed path only
+    // — a relayer reward taken from the SAME note.
+    //
+    // 🚨 THIS IS THE POINT OF THE RELAYED PATH. A relayer paid by a transfer
+    // FROM the buyer's wallet does not remove the payer, it moves it one hop:
+    // that is what the v3 relay path did (the wallet pre-funded the relay-job
+    // ephemeral) and it is why P11 kept failing while the code looked right.
+    // Paying the relayer out of the note means no lamport ever travels from
+    // the buyer to the submitter, so there is no edge to walk back.
+    //
+    // The three terms sum to `amount` exactly, so the pool debit below is
+    // unchanged and the lamport arithmetic still balances.
     // -----------------------------------------------------------------------
-    let (unshield_fee, recipient_amount) = fee::calculate_fee(amount, fee::UNSHIELD_FEE_BPS);
+    require!(
+        is_native_sol || !relayed,
+        ZkShieldedError::RelayerRewardUnsupportedForSpl
+    );
+
+    let (unshield_fee, after_fee) = fee::calculate_fee(amount, fee::UNSHIELD_FEE_BPS);
+    let relayer_reward = if relayed { fee::RELAYER_REWARD_LAMPORTS } else { 0 };
+    require!(
+        after_fee > relayer_reward,
+        ZkShieldedError::RelayerRewardExceedsNote
+    );
+    let recipient_amount = after_fee
+        .checked_sub(relayer_reward)
+        .ok_or(ZkShieldedError::ArithmeticOverflow)?;
 
     let token_mint = pool.token_mint;
     let denomination_bytes = pool.denomination.to_le_bytes();
@@ -421,6 +451,13 @@ pub fn handler(
         );
         **pool.to_account_info().try_borrow_mut_lamports()? -= amount;
         **recipient_account.try_borrow_mut_lamports()? += recipient_amount;
+        if relayer_reward > 0 {
+            // Paid to `payer`, which line ~308 has already pinned to be the
+            // authority of the circuit-7 proof buffer. So the reward can only
+            // reach whoever actually uploaded and paid for the proof, and the
+            // relayed path needs no new account and no new argument.
+            **ctx.accounts.payer.to_account_info().try_borrow_mut_lamports()? += relayer_reward;
+        }
         if unshield_fee > 0 {
             **ctx.accounts.fee_escrow.to_account_info().try_borrow_mut_lamports()? += unshield_fee;
         }
@@ -634,6 +671,11 @@ mod tests {
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod membership_guard {
+    // The split arithmetic below is real code, not a source scan, so it needs
+    // the constants themselves. `use super::*` does not carry the parent's
+    // imports.
+    use crate::fee;
+
     const SRC: &str = include_str!("unshield_denominated_stark_v4.rs");
 
     /// Instruction code only: everything above the first test module, comments
@@ -875,4 +917,149 @@ mod membership_guard {
         // One definition, one call site.
         assert_eq!(calls, 2, "expected the definition and a single call site");
     }
+    // ---------------------------------------------------------------------
+    // The relayed path — paying the submitter out of the note.
+    // ---------------------------------------------------------------------
+
+    /// The split reproduces the note exactly. If these three ever fail to sum
+    /// to `amount`, the pool debit above (`-= amount`) either strands lamports
+    /// in the pool or overdraws it.
+    #[test]
+    fn the_three_terms_sum_to_the_note() {
+        for amount in [100_000_000u64, 1_000_000_000, 5_000_000_000] {
+            let (protocol_fee, after_fee) = fee::calculate_fee(amount, fee::UNSHIELD_FEE_BPS);
+            for reward in [0u64, fee::RELAYER_REWARD_LAMPORTS] {
+                let to_recipient = after_fee - reward;
+                assert_eq!(
+                    to_recipient + reward + protocol_fee,
+                    amount,
+                    "split leaks at amount={amount} reward={reward}",
+                );
+            }
+        }
+    }
+
+    /// 🚨 The direct path must pay what it paid before this parameter existed.
+    /// The guarantee is structural — `unshield_denominated_stark_v4` passes a
+    /// literal `false`, so the reward term is a literal zero — and this pins the
+    /// arithmetic that rests on it.
+    #[test]
+    fn the_direct_path_pays_the_recipient_exactly_what_it_did_before() {
+        for amount in [100_000_000u64, 1_000_000_000] {
+            let (_fee, after_fee) = fee::calculate_fee(amount, fee::UNSHIELD_FEE_BPS);
+            let reward: u64 = 0; // what `relayed == false` produces
+            assert_eq!(after_fee - reward, after_fee);
+        }
+    }
+
+    /// 🚨 THE SKIM GUARD. The recipient is bound by the proof; the AMOUNT is
+    /// not. If the reward were ever read from an instruction argument, whoever
+    /// submits could take the note down to dust and the proof would still
+    /// verify — the defect this file closed on the recipient, moved one field
+    /// over. The only reward value in the code must be the constant.
+    #[test]
+    fn the_reward_is_a_constant_and_never_an_argument() {
+        let code = code();
+        assert!(
+            code.contains("fee::RELAYER_REWARD_LAMPORTS"),
+            "the reward stopped coming from the constant",
+        );
+        for smell in ["reward: u64", "reward_lamports: u64", "relayer_fee: u64"] {
+            assert!(
+                !code.contains(smell),
+                "`{smell}` looks like a caller-supplied reward",
+            );
+        }
+        // `relayed` is the ONLY thing the two entry points may vary, and it is a
+        // bool, so its worst value costs exactly the constant.
+        assert!(code.contains("relayed: bool"));
+    }
+
+    /// The reward leaves in lamports. On an SPL pool the note is tokens, so
+    /// there is nothing to pay it from without inventing an exchange rate.
+    #[test]
+    fn the_relayed_path_refuses_an_spl_pool() {
+        let code = code();
+        let guard = code
+            .find("RelayerRewardUnsupportedForSpl")
+            .expect("the SPL guard is gone");
+        for payout in PAYOUTS {
+            for at in every_index_of(&code, payout) {
+                assert!(at > guard, "{payout} can run before the SPL guard");
+            }
+        }
+    }
+
+    /// A denomination smaller than the reward would underflow the recipient
+    /// amount. No live pool is that small — 0.1 SOL is the floor — but the guard
+    /// is what makes that a fact about pools rather than about luck.
+    #[test]
+    fn a_note_too_small_to_carry_the_reward_is_refused() {
+        let tiny = fee::RELAYER_REWARD_LAMPORTS; // exactly the reward, before fee
+        let (_fee, after_fee) = fee::calculate_fee(tiny, fee::UNSHIELD_FEE_BPS);
+        assert!(
+            after_fee <= fee::RELAYER_REWARD_LAMPORTS,
+            "this denomination should trip the guard",
+        );
+        assert!(code().contains("RelayerRewardExceedsNote"));
+    }
+
+    /// The reward is paid to `payer`, and `payer` is already pinned to the proof
+    /// buffer authority. Losing either half means the reward could go to
+    /// somebody who did not upload the proof.
+    #[test]
+    fn the_reward_goes_to_the_account_that_owns_the_proof() {
+        let code = code();
+        assert!(code.contains("c7_authority == ctx.accounts.payer.key()"));
+        let reward_payout = code
+            .find("+= relayer_reward")
+            .expect("the reward payout line is gone");
+        assert!(
+            code[..reward_payout].rfind("ctx.accounts.payer").is_some(),
+            "the reward no longer names payer as its destination",
+        );
+    }
+    /// 🚨 THE DEMO GUARD, and the only test here that reads a different file.
+    ///
+    /// Everything above rests on `unshield_denominated_stark_v4` passing a
+    /// literal `false`. That literal lives in lib.rs, so nothing in this file
+    /// would notice if it changed to `true` — and the failure mode is silent:
+    /// every direct withdrawal would start paying its own submitter a million
+    /// lamports, the arithmetic would still balance, and no test above would go
+    /// red.
+    #[test]
+    fn the_two_entry_points_differ_by_exactly_one_literal() {
+        const LIB: &str = include_str!("../lib.rs");
+
+        let direct = LIB
+            .find("pub fn unshield_denominated_stark_v4(")
+            .expect("the direct entry point is gone");
+        let relayed = LIB
+            .find("pub fn unshield_denominated_stark_v4_relayed(")
+            .expect("the relayed entry point is gone");
+        assert!(direct < relayed, "the scan windows below assume this order");
+
+        // Each window runs from its own signature to the next `pub fn`.
+        let direct_body = &LIB[direct..relayed];
+        let after = &LIB[relayed..];
+        let relayed_body = &after[..after[1..]
+            .find("    pub fn ")
+            .map(|at| at + 1)
+            .unwrap_or(after.len())];
+
+        assert!(
+            direct_body.contains("recipient, false,"),
+            "the direct withdrawal no longer passes `false` — it is paying a relayer reward",
+        );
+        assert!(
+            !direct_body.contains("recipient, true,"),
+            "the direct withdrawal passes `true`",
+        );
+        assert!(
+            relayed_body.contains("recipient, true,"),
+            "the relayed entry point stopped asking for the reward",
+        );
+    }
 }
+
+

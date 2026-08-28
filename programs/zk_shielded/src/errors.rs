@@ -210,4 +210,16 @@ pub enum ZkShieldedError {
     // is well-formed but the pool never published it.
     #[msg("Derived pool root does not match the named merkle_root")]
     SpendRootMismatch,
+
+    // The relayed spend path pays its relayer in lamports out of the note. On
+    // an SPL pool the note is denominated in tokens, so there is nothing to
+    // pay it FROM without inventing an exchange rate. Fails closed instead.
+    #[msg("The relayed spend path is native-SOL only; this pool is SPL")]
+    RelayerRewardUnsupportedForSpl,
+
+    // The note is worth less than the relayer reward it would have to pay.
+    // Only reachable on a denomination smaller than RELAYER_REWARD_LAMPORTS,
+    // which no live pool uses, but a future pool could.
+    #[msg("Note is too small to carry the relayer reward")]
+    RelayerRewardExceedsNote,
 }

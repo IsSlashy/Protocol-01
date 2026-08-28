@@ -117,6 +117,67 @@ describe('unshield_denominated_stark_v4 — the wire', () => {
   });
 });
 
+describe('unshield_denominated_stark_v4_relayed — the sibling', () => {
+  const direct = buildIx();
+  const relayed = buildUnshieldDenominatedStarkV4Ix(
+    PAYER, RECIPIENT, POOL, TREE, NULLIFIER_PDA, BUFFER,
+    le32(NULLIFIER), le32(POOL_ROOT),
+    SUBTREE_ROOT, SIBLINGS, DIRECTIONS,
+    undefined, undefined, undefined,
+    true,
+  );
+
+  it('changes the discriminator and NOTHING else', () => {
+    // Same accounts, same order, same flags, same args — the two entry points
+    // are the same handler with one literal changed, so anything else differing
+    // here means the client drifted from the program.
+    expect(relayed.data.length).toBe(direct.data.length);
+    expect(Buffer.from(relayed.data.subarray(8)).equals(Buffer.from(direct.data.subarray(8)))).toBe(true);
+    expect(relayed.keys.map((k) => k.pubkey.toBase58())).toEqual(direct.keys.map((k) => k.pubkey.toBase58()));
+    expect(relayed.keys.map((k) => [k.isSigner, k.isWritable])).toEqual(
+      direct.keys.map((k) => [k.isSigner, k.isWritable]),
+    );
+  });
+
+  it('uses the anchor discriminator of the relayed fn name', () => {
+    const expected = Buffer.from(
+      sha256(new TextEncoder().encode('global:unshield_denominated_stark_v4_relayed')).slice(0, 8),
+    );
+    expect(Buffer.from(relayed.data.subarray(0, 8)).equals(expected)).toBe(true);
+    // Locked value. Confirmed to DISPATCH against the built artifact by
+    // programs/zk_shielded/tests/unshield_c5_membership.rs
+    // (`every_still_registered_instruction_still_dispatches`, 25 of 25), which
+    // computes the same sha256("global:<fn>")[..8] rule on the Rust side.
+    expect(Array.from(relayed.data.subarray(0, 8))).toEqual([148, 87, 153, 164, 152, 83, 72, 109]);
+  });
+
+  it('🚨 defaults to the DIRECT path, so a caller cannot pay a relayer by accident', () => {
+    // The whole demo withdrawal rests on this default. A relayed spend takes
+    // RELAYER_REWARD_LAMPORTS out of the note; getting it by forgetting an
+    // argument would be a silent, permanent 0.001 SOL leak per withdrawal.
+    const expectedDirect = Buffer.from(
+      sha256(new TextEncoder().encode('global:unshield_denominated_stark_v4')).slice(0, 8),
+    );
+    expect(Buffer.from(direct.data.subarray(0, 8)).equals(expectedDirect)).toBe(true);
+    expect(Buffer.from(direct.data.subarray(0, 8)).equals(Buffer.from(relayed.data.subarray(0, 8)))).toBe(false);
+  });
+
+  it('still publishes nothing that names the deposit', () => {
+    // The leak test above, re-run on the sibling. A new instruction is a new
+    // wire, and "v4 does not leak" is a claim about bytes, not about a name.
+    const hay = Buffer.from(relayed.data);
+    for (const secret of [NOTE_COMMITMENT, NOTE_BLINDING]) {
+      const needle = Buffer.from(le32(secret).slice(0, 8));
+      let found = false;
+      for (let i = 0; i + 8 <= hay.length; i++) {
+        if (hay.subarray(i, i + 8).equals(needle)) { found = true; break; }
+      }
+      expect(found).toBe(false);
+    }
+  });
+});
+
+
 describe('unshield_denominated_stark_v4 — the property', () => {
   it('THE LEAK TEST: no 8-byte window holds the commitment or the blinding', () => {
     const data = buildIx().data;
