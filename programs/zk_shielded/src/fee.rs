@@ -65,9 +65,9 @@ pub const UNSHIELD_FEE_BPS: u64 = 50;
 ///
 /// | | |
 /// |---|---|
-/// | `NullifierRecord` rent (41 B) | **1,176,240 lamports, PERMANENT** |
+/// | `NullifierRecord` rent (41 B) | **1,176,240 lamports (0.00118 SOL), PERMANENT** |
 /// | ~84 signatures at 5,000 | 420,000 lamports |
-/// | proof buffer rent (78 KB) | 544,105 — **returned** by `close_proof_buffer` |
+/// | proof buffer rent (78 KB) | 544,104,960 (0.5441 SOL) — **returned** on close |
 ///
 /// 🚨 THE NULLIFIER RENT NEVER COMES BACK. `NullifierRecord` is created with
 /// `init, payer = payer` and nothing closes it — it has to outlive the spend
@@ -76,7 +76,8 @@ pub const UNSHIELD_FEE_BPS: u64 = 50;
 /// the reward has to reimburse it or every relay is a guaranteed loss.
 ///
 /// The first value here was 1,000,000, costed against the proof buffer rent —
-/// which is working capital and returns — while missing the 1,176,240 that
+/// which is working capital and returns, and was ALSO written a thousand times
+/// too small in lamports — while missing the 1,176,240 that
 /// does not. That made each relay lose 596,240 lamports. Found by review
 /// before deployment, not by a relayer going broke.
 ///
