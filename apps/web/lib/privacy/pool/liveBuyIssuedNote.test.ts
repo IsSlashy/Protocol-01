@@ -126,7 +126,7 @@ describe.skipIf(!LIVE)('buying a note that was deposited before you arrived', ()
       //
       // The secret never travels in the clear: the client asks its own worker
       // for a `p01pq:` receive address and the server seals to it.
-      const meta = 'live-buy';
+      const meta = process.env.P01_BUY_META ?? 'live-buy';
       const message = buildDerivationMessage({
         walletPubkey: wallet.publicKey.toBase58(),
         origin: BASE,
