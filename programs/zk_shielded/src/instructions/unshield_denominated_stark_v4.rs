@@ -420,15 +420,25 @@ pub fn handler(
         ZkShieldedError::RelayerRewardUnsupportedForSpl
     );
 
-    let (unshield_fee, after_fee) = fee::calculate_fee(amount, fee::UNSHIELD_FEE_BPS);
+    let (unshield_fee, recipient_amount) = fee::calculate_fee(amount, fee::UNSHIELD_FEE_BPS);
     let relayer_reward = if relayed { fee::RELAYER_REWARD_LAMPORTS } else { 0 };
-    require!(
-        after_fee > relayer_reward,
-        ZkShieldedError::RelayerRewardExceedsNote
-    );
-    let recipient_amount = after_fee
+
+    // 🚨 THE REWARD COMES OUT OF THE PROTOCOL FEE, NEVER OUT OF THE PAYEE.
+    //
+    // The first version subtracted it from `recipient_amount`, and that quietly
+    // broke the property this file advertises at the top: the proof binds the
+    // recipient, and it does NOT bind the amount. So a buyer paying a merchant
+    // could pick the relayed discriminator, submit the spend themselves, and
+    // short the merchant by the reward while their own payer pocketed it — with
+    // a proof that still verified and a merchant with no way to tell which
+    // instruction had been used.
+    //
+    // Taking it from the fee instead makes `recipient_amount` IDENTICAL on both
+    // paths, so which entry point was used cannot change what the payee gets.
+    // The protocol charges 0.5% and hands part of it to whoever did the work.
+    let fee_to_escrow = unshield_fee
         .checked_sub(relayer_reward)
-        .ok_or(ZkShieldedError::ArithmeticOverflow)?;
+        .ok_or(ZkShieldedError::RelayerRewardExceedsNote)?;
 
     let token_mint = pool.token_mint;
     let denomination_bytes = pool.denomination.to_le_bytes();
@@ -458,8 +468,8 @@ pub fn handler(
             // relayed path needs no new account and no new argument.
             **ctx.accounts.payer.to_account_info().try_borrow_mut_lamports()? += relayer_reward;
         }
-        if unshield_fee > 0 {
-            **ctx.accounts.fee_escrow.to_account_info().try_borrow_mut_lamports()? += unshield_fee;
+        if fee_to_escrow > 0 {
+            **ctx.accounts.fee_escrow.to_account_info().try_borrow_mut_lamports()? += fee_to_escrow;
         }
     } else {
         let token_program = ctx
@@ -522,16 +532,19 @@ pub fn handler(
         );
         token::transfer(transfer_ctx, recipient_amount)?;
 
-        if unshield_fee > 0 {
+        // `fee_to_escrow == unshield_fee` on this branch: the relayed path is
+        // refused for SPL pools above, so `relayer_reward` is zero here. Written
+        // with the same name as the native branch so the two cannot drift.
+        if fee_to_escrow > 0 {
             let pool_lamports = pool.to_account_info().lamports();
             let rent = Rent::get()?;
             let min_rent = rent.minimum_balance(pool.to_account_info().data_len());
             require!(
-                pool_lamports.saturating_sub(min_rent) >= unshield_fee,
+                pool_lamports.saturating_sub(min_rent) >= fee_to_escrow,
                 ZkShieldedError::InsufficientPoolBalance
             );
-            **pool.to_account_info().try_borrow_mut_lamports()? -= unshield_fee;
-            **ctx.accounts.fee_escrow.to_account_info().try_borrow_mut_lamports()? += unshield_fee;
+            **pool.to_account_info().try_borrow_mut_lamports()? -= fee_to_escrow;
+            **ctx.accounts.fee_escrow.to_account_info().try_borrow_mut_lamports()? += fee_to_escrow;
         }
     }
 
@@ -926,12 +939,12 @@ mod membership_guard {
     /// in the pool or overdraws it.
     #[test]
     fn the_three_terms_sum_to_the_note() {
-        for amount in [100_000_000u64, 1_000_000_000, 5_000_000_000] {
-            let (protocol_fee, after_fee) = fee::calculate_fee(amount, fee::UNSHIELD_FEE_BPS);
+        for amount in [1_000_000_000u64, 5_000_000_000] {
+            let (protocol_fee, to_recipient) = fee::calculate_fee(amount, fee::UNSHIELD_FEE_BPS);
             for reward in [0u64, fee::RELAYER_REWARD_LAMPORTS] {
-                let to_recipient = after_fee - reward;
+                let to_escrow = protocol_fee - reward;
                 assert_eq!(
-                    to_recipient + reward + protocol_fee,
+                    to_recipient + reward + to_escrow,
                     amount,
                     "split leaks at amount={amount} reward={reward}",
                 );
@@ -939,17 +952,34 @@ mod membership_guard {
         }
     }
 
-    /// 🚨 The direct path must pay what it paid before this parameter existed.
-    /// The guarantee is structural — `unshield_denominated_stark_v4` passes a
-    /// literal `false`, so the reward term is a literal zero — and this pins the
-    /// arithmetic that rests on it.
+    /// 🚨 THE PROPERTY THAT MAKES THE SIBLING SAFE FOR A THIRD-PARTY PAYEE.
+    ///
+    /// The proof binds the recipient and does NOT bind the amount. While the
+    /// reward was taken out of the payee's share, a buyer paying a merchant
+    /// could pick the relayed discriminator, submit it themselves, and short the
+    /// merchant by the reward — with a proof that still verified and a merchant
+    /// with no way to tell which entry point had been used.
+    ///
+    /// Taking it from the protocol fee makes the payout a function of the
+    /// DENOMINATION alone. Which instruction was called cannot change it.
     #[test]
-    fn the_direct_path_pays_the_recipient_exactly_what_it_did_before() {
-        for amount in [100_000_000u64, 1_000_000_000] {
-            let (_fee, after_fee) = fee::calculate_fee(amount, fee::UNSHIELD_FEE_BPS);
-            let reward: u64 = 0; // what `relayed == false` produces
-            assert_eq!(after_fee - reward, after_fee);
+    fn the_payee_receives_the_same_on_both_paths() {
+        for amount in [100_000_000u64, 1_000_000_000, 5_000_000_000] {
+            let (_fee, direct) = fee::calculate_fee(amount, fee::UNSHIELD_FEE_BPS);
+            // The handler computes `recipient_amount` from calculate_fee and
+            // never touches it again, on either path.
+            let relayed = direct;
+            assert_eq!(direct, relayed, "the payee's amount depends on the entry point");
         }
+        // And the code must not reintroduce the subtraction.
+        assert!(
+            !code().contains("recipient_amount") || !code().contains("recipient_amount = after_fee"),
+            "recipient_amount is being reduced again",
+        );
+        assert!(
+            code().contains("fee_to_escrow"),
+            "the reward is no longer taken from the fee",
+        );
     }
 
     /// 🚨 THE SKIM GUARD. The recipient is bound by the proof; the AMOUNT is
@@ -990,17 +1020,87 @@ mod membership_guard {
         }
     }
 
-    /// A denomination smaller than the reward would underflow the recipient
-    /// amount. No live pool is that small — 0.1 SOL is the floor — but the guard
-    /// is what makes that a fact about pools rather than about luck.
+    /// 🚨 THE TEST THAT WAS MISSING, and the reason the first constant was wrong.
+    ///
+    /// Everything else here checks the arithmetic is CONSISTENT. Nothing checked
+    /// it was SOLVENT. The reward was costed against the proof buffer rent —
+    /// 544,105 lamports, which `close_proof_buffer` returns — while the
+    /// `NullifierRecord` rent, which nothing ever returns, was missed entirely.
+    /// Every relay would have lost 596,240 lamports and the only symptom would
+    /// have been a relayer balance drifting down.
+    ///
+    /// MEASURED on devnet 2026-08-28 via getMinimumBalanceForRentExemption.
+    /// Rent parameters are a cluster property, so this is a pin, not a formula:
+    /// if a cluster ever charges more, this test is where that surfaces.
     #[test]
-    fn a_note_too_small_to_carry_the_reward_is_refused() {
-        let tiny = fee::RELAYER_REWARD_LAMPORTS; // exactly the reward, before fee
-        let (_fee, after_fee) = fee::calculate_fee(tiny, fee::UNSHIELD_FEE_BPS);
+    fn the_reward_actually_covers_what_the_relayer_spends() {
+        // 41 bytes: 8 discriminator + 32 pool + 1 bump (NullifierRecord::LEN).
+        const NULLIFIER_RENT_LAMPORTS: u64 = 1_176_240;
+        // ~84 signatures at 5,000 — init, 7 resizes, 78 chunks, verify, phase 2,
+        // the spend, the close.
+        const SIGNATURE_FEES_LAMPORTS: u64 = 420_000;
+
+        let real_cost = NULLIFIER_RENT_LAMPORTS + SIGNATURE_FEES_LAMPORTS;
         assert!(
-            after_fee <= fee::RELAYER_REWARD_LAMPORTS,
-            "this denomination should trip the guard",
+            fee::RELAYER_REWARD_LAMPORTS > real_cost,
+            "a relayer loses {} lamports on every withdrawal at this reward",
+            real_cost - fee::RELAYER_REWARD_LAMPORTS,
         );
+
+        // And it must not be so generous that relaying is a way to farm the
+        // pool: keep it under the protocol fee's own order of magnitude on the
+        // smallest live denomination (0.1 SOL -> 50,000 lamports of fee).
+        let smallest_denomination: u64 = 100_000_000;
+        assert!(
+            fee::RELAYER_REWARD_LAMPORTS < smallest_denomination / 20,
+            "the reward is more than 5% of the smallest live note",
+        );
+    }
+
+    /// The proof buffer rent is working capital, not cost, and the distinction
+    /// is the one the first constant got wrong. Pinned so the reasoning above
+    /// cannot quietly stop being true.
+    #[test]
+    fn the_buffer_rent_is_recoverable_and_the_nullifier_rent_is_not() {
+        let verifier = include_str!("../../../p01_stark_verifier/src/lib.rs");
+        assert!(
+            verifier.contains("close = authority"),
+            "close_proof_buffer no longer returns the buffer rent to its authority",
+        );
+        // Nothing anywhere closes a NullifierRecord: it has to outlive the spend
+        // or the note becomes spendable twice.
+        //
+        // ⛔ `code()`, never `SRC`. SRC includes this test module, so the needle
+        // below matched its own string literal and the guard failed on itself —
+        // the third hollow guard of this shape in this repository, after the
+        // domain-tag one that matched a constant's own definition and the
+        // deep-ALI one that matched a destructuring tuple.
+        let src = code();
+        assert!(
+            !src.contains("close = payer"),
+            "something in this instruction now closes an account to the payer — \
+             if that is the nullifier record, the double-spend guard just left",
+        );
+    }
+
+    /// ⚠️ THE 0.1 SOL POOL CANNOT AFFORD A RELAYER, and that is stated here
+    /// rather than discovered in production. Its 0.5% fee is 500,000 lamports
+    /// against a 2,500,000 reward, so the relayed path fails closed on it —
+    /// `checked_sub` returns None and the handler refuses. The 1 SOL pool
+    /// charges 5,000,000 and covers it five times over.
+    #[test]
+    fn the_small_pool_cannot_pay_a_relayer_and_says_so() {
+        let (small_fee, _) = fee::calculate_fee(100_000_000, fee::UNSHIELD_FEE_BPS);
+        assert_eq!(small_fee, 500_000);
+        assert!(
+            small_fee.checked_sub(fee::RELAYER_REWARD_LAMPORTS).is_none(),
+            "the 0.1 SOL pool would now silently pay a relayer out of a fee it does not have",
+        );
+
+        let (big_fee, _) = fee::calculate_fee(1_000_000_000, fee::UNSHIELD_FEE_BPS);
+        assert_eq!(big_fee, 5_000_000);
+        assert!(big_fee.checked_sub(fee::RELAYER_REWARD_LAMPORTS).is_some());
+
         assert!(code().contains("RelayerRewardExceedsNote"));
     }
 

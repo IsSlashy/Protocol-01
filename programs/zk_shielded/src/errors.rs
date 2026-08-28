@@ -217,9 +217,12 @@ pub enum ZkShieldedError {
     #[msg("The relayed spend path is native-SOL only; this pool is SPL")]
     RelayerRewardUnsupportedForSpl,
 
-    // The note is worth less than the relayer reward it would have to pay.
-    // Only reachable on a denomination smaller than RELAYER_REWARD_LAMPORTS,
-    // which no live pool uses, but a future pool could.
-    #[msg("Note is too small to carry the relayer reward")]
+    // The relayer reward comes OUT OF THE PROTOCOL FEE so that the payee gets
+    // the same amount on both paths. On a denomination whose 0.5% fee is
+    // smaller than the reward, the relayed path simply cannot pay for itself
+    // and fails closed rather than reaching into the payee's share.
+    // MEASURED: the 1 SOL pool charges 5,000,000 and covers it; the 0.1 SOL
+    // pool charges 500,000 and does not.
+    #[msg("This pool's protocol fee is smaller than the relayer reward")]
     RelayerRewardExceedsNote,
 }

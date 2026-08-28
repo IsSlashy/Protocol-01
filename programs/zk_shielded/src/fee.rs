@@ -60,19 +60,35 @@ pub const UNSHIELD_FEE_BPS: u64 = 50;
 ///
 /// # Why this number
 ///
-/// MEASURED on devnet 2026-08-28, not estimated: a circuit-7 spend is 78
-/// chunk transactions at 5,000 lamports = 390,000 lamports of signature fees,
-/// plus init, verify, the spend itself and `close_proof_buffer` — call it
-/// ~410,000. The proof buffer rent is 544,105 lamports and comes BACK on
-/// close, so it is working capital, not cost. 1,000,000 leaves roughly 2.4x
-/// over the burn for priority fees and failed retries.
+/// MEASURED on devnet 2026-08-28. Two costs, and the first version of this
+/// constant counted only the cheap one:
 ///
-/// ⚠️ Flat, not basis points, because the cost is flat — 78 chunks is 78
-/// chunks whatever the note is worth. On the 1 SOL pool that is 0.1% of the
-/// note, next to the 0.5% protocol fee. On the 0.1 SOL pool it is 1%, i.e.
-/// twice the protocol fee. That is the honest price of not naming the payer
-/// on a small note, and it is stated rather than hidden in a rate.
-pub const RELAYER_REWARD_LAMPORTS: u64 = 1_000_000;
+/// | | |
+/// |---|---|
+/// | `NullifierRecord` rent (41 B) | **1,176,240 lamports, PERMANENT** |
+/// | ~84 signatures at 5,000 | 420,000 lamports |
+/// | proof buffer rent (78 KB) | 544,105 — **returned** by `close_proof_buffer` |
+///
+/// 🚨 THE NULLIFIER RENT NEVER COMES BACK. `NullifierRecord` is created with
+/// `init, payer = payer` and nothing closes it — it has to outlive the spend
+/// forever or the note is spendable twice. On the direct path the buyer's
+/// ephemeral pays it and eats it; on the relayed path the RELAYER pays it, so
+/// the reward has to reimburse it or every relay is a guaranteed loss.
+///
+/// The first value here was 1,000,000, costed against the proof buffer rent —
+/// which is working capital and returns — while missing the 1,176,240 that
+/// does not. That made each relay lose 596,240 lamports. Found by review
+/// before deployment, not by a relayer going broke.
+///
+/// Real cost is therefore 1,596,240. This is ~1.57x that, which covers
+/// priority fees and the occasional retry.
+///
+/// ⚠️ Flat, not basis points, because the cost is flat — a nullifier record is
+/// 41 bytes whatever the note is worth. On the 1 SOL pool that is 0.25% of the
+/// note, alongside the 0.5% protocol fee. On the 0.1 SOL pool it is 2.5%, and
+/// that is stated here rather than hidden inside a rate: not naming the payer
+/// costs more, proportionally, on a small note.
+pub const RELAYER_REWARD_LAMPORTS: u64 = 2_500_000;
 
 /// Basis points denominator
 pub const BPS_DENOMINATOR: u64 = 10_000;

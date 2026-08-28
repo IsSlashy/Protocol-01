@@ -401,7 +401,12 @@ describe('the relayed batch — the buyer signs nothing', () => {
     ).rejects.toThrow(/binds sha256\(recipient\)/);
   });
 
-  it('closes a stale buffer first when the relayer left one behind', async () => {
+  it('🚨 never asks the node to close a buffer, even when one is stale', async () => {
+    // The buffer PDA is seeded on [b"stark_proof", relayer, circuit], so it is
+    // ONE account shared by every buyer of that node. The first version checked
+    // `getAccountInfo` and prepended a close when it saw one — which, run while
+    // another buyer was 40 chunks into their upload, asks the node to destroy a
+    // live proof. Buffer lifecycle belongs to whoever owns the key.
     const withStale = { getAccountInfo: async () => ({ lamports: 1 }) } as unknown as Connection;
     const { transactions } = await buildRelayedUnshieldV4Batch(
       poolConfig, RECIPIENT, prepared as never, RELAYER, withStale,
@@ -409,8 +414,20 @@ describe('the relayed batch — the buyer signs nothing', () => {
     const closeDisc = Buffer.from(
       sha256(new TextEncoder().encode('global:close_proof_buffer')).slice(0, 8),
     );
-    expect(
-      transactions[0].instructions.some((ix) => Buffer.from(ix.data.subarray(0, 8)).equals(closeDisc)),
-    ).toBe(true);
+    const closes = transactions.filter((tx) =>
+      tx.instructions.some((ix) => Buffer.from(ix.data.subarray(0, 8)).equals(closeDisc)),
+    );
+    // Exactly one: the LAST one, which returns the rent after the spend.
+    expect(closes).toHaveLength(1);
+    expect(closes[0]).toBe(transactions[transactions.length - 1]);
+  });
+
+  it('refuses a pool whose protocol fee cannot cover the reward', async () => {
+    // The 0.1 SOL pool charges 500,000 lamports against a 2,500,000 reward.
+    // The program refuses it; refusing here saves 78 chunk uploads first.
+    const small = { ...poolConfig, denomination: 100_000_000 };
+    await expect(
+      buildRelayedUnshieldV4Batch(small as never, RECIPIENT, prepared as never, RELAYER, connection),
+    ).rejects.toThrow(/cannot pay a relayer/);
   });
 });

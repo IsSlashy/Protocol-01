@@ -287,6 +287,20 @@ const SPEND_KINDS = [
   // belonging to nobody. `totalLen` is what pins it: P10 must refuse any v4
   // instruction whose length is not exactly 147.
   { name: 'unshield_denominated_stark_v4', commitmentOffset: null, totalLen: 147, recipientOffset: 115 },
+  // ⛔ ADDED 2026-08-28, BEFORE THE FIRST ONE LANDS, because the last two
+  // entries in this table were added the day after and the probe was blind in
+  // between. Without this line `node verify/p01-verify.mjs` reports "no
+  // recognised zk_shielded spend instruction" on a relayed withdrawal — on the
+  // very instruction built to close P11, which is the probe this tool exists
+  // to answer.
+  //
+  // Same three numbers as the row above and that is not a copy: the two entry
+  // points are the SAME handler with one literal changed, take the same
+  // arguments in the same order, and differ only in the eight discriminator
+  // bytes. `unshieldV4.test.ts` pins that the serialised data past byte 8 is
+  // byte-identical between them, so if this row ever needs to differ from the
+  // one above, that test goes red first.
+  { name: 'unshield_denominated_stark_v4_relayed', commitmentOffset: null, totalLen: 147, recipientOffset: 115 },
   // ⛔ ADDED 2026-08-27, THE DAY THE FIRST ONE LANDED. Until this line, the
   // probe reported "no recognised zk_shielded spend instruction" on a real
   // v4 subscription — so nothing in the audit tool could see the instruction
@@ -2558,6 +2572,13 @@ const SPEND_LAYOUTS = {
   // they partition the anonymity set by 8. That is a bigger unlinkability
   // question than anything this table measures, and no probe here asks it yet.
   unshield_denominated_stark_v4: [
+    ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['subtree_root', 8],
+    ['siblings_len', 4], ['siblings', 24], ['directions_len', 4], ['directions', 3],
+    ['recipient', 32],
+  ],
+  // The relayed sibling: identical layout, different discriminator. See the
+  // note beside its row in the instruction table above.
+  unshield_denominated_stark_v4_relayed: [
     ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['subtree_root', 8],
     ['siblings_len', 4], ['siblings', 24], ['directions_len', 4], ['directions', 3],
     ['recipient', 32],

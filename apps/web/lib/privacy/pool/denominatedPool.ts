@@ -2432,7 +2432,7 @@ export function buildUnshieldDenominatedStarkV4Ix(
   recipientTokenAccount?: PublicKey,
   /**
    * Route to `unshield_denominated_stark_v4_relayed`, which pays `payer` a
-   * fixed reward OUT OF THE NOTE (fee.rs RELAYER_REWARD_LAMPORTS). Only the
+   * fixed reward out of the PROTOCOL FEE (fee.rs RELAYER_REWARD_LAMPORTS), so
    * discriminator differs — same accounts, same args, same order — because the
    * two are the same handler with one literal changed.
    *
@@ -2772,6 +2772,14 @@ export async function unshieldDenominatedStarkV4(
 // ===========================================================================
 
 /**
+ * Mirrors `fee.rs`: UNSHIELD_FEE_BPS and RELAYER_REWARD_LAMPORTS. Duplicated
+ * rather than imported because the program is Rust and this is the client; the
+ * guard below exists to fail EARLY, and the program is still the authority.
+ */
+export const UNSHIELD_FEE_BPS = 50n;
+export const RELAYER_REWARD_LAMPORTS = 2_500_000n;
+
+/**
  * Build every transaction a relayed spend needs, unsigned, in the relayer's
  * name. Nothing here touches a wallet: the buyer produces bytes.
  */
@@ -2797,6 +2805,22 @@ export async function buildRelayedUnshieldV4Batch(
     );
   }
 
+  // ⚠️ AND THE POOL HAS TO BE ABLE TO AFFORD IT. The reward is taken from the
+  // protocol fee — never from the payee, so that the amount the recipient gets
+  // cannot depend on which entry point was used — and a pool whose 0.5% is
+  // smaller than the reward simply cannot pay a relayer. MEASURED: the 1 SOL
+  // pool charges 5,000,000 lamports and covers it; the 0.1 SOL pool charges
+  // 500,000 and does not. The program refuses this too; refusing here saves 78
+  // chunk uploads and the buffer rent that pays for them.
+  const protocolFee = (BigInt(poolConfig.denomination) * BigInt(UNSHIELD_FEE_BPS)) / 10_000n;
+  if (protocolFee < RELAYER_REWARD_LAMPORTS) {
+    throw new Error(
+      `This pool cannot pay a relayer: its protocol fee is ${protocolFee} lamports ` +
+      `and the reward is ${RELAYER_REWARD_LAMPORTS}. Withdraw directly, or use a ` +
+      `larger denomination.`,
+    );
+  }
+
   const proof: GenericStarkProof = {
     proofBytes: prepared.c7ProofResult.proofBytes,
     circuitId: CIRCUIT_SPEND,
@@ -2804,15 +2828,19 @@ export async function buildRelayedUnshieldV4Batch(
     proofSize: prepared.c7ProofResult.proofSize,
   };
 
-  // The buffer PDA is seeded on the RELAYER's key, so a leftover is theirs —
-  // from a batch that died between upload and close. Checked here because the
-  // node signs what it is handed and does not go looking.
+  // 🚨 THE CLIENT DOES NOT TOUCH THE RELAYER'S BUFFER. It used to prepend a
+  // `close_proof_buffer` when it saw a stale one, which is a race with teeth:
+  // the buffer PDA is seeded on `[b"stark_proof", relayer, circuit]`, so it is
+  // ONE account shared by every buyer using that node. A second buyer checking
+  // "is there a stale buffer?" while the first is 40 chunks in sees `not null`
+  // and asks the node to destroy a live upload.
+  //
+  // The node runs one job at a time and closes its own leftovers. Buffer
+  // lifecycle belongs to whoever owns the key.
   const [proofBuffer] = getProofBufferPDA(relayer, CIRCUIT_SPEND);
-  const stale = await connection.getAccountInfo(proofBuffer);
+  void connection; // the stale check moved to the node
 
-  const { transactions } = buildStarkProofUploadBatch(proof, relayer, {
-    closeStaleBufferFirst: stale !== null,
-  });
+  const { transactions } = buildStarkProofUploadBatch(proof, relayer);
 
   const nullifierBytes = goldilocksToLeBytes32(prepared.nullifierGoldilocks);
   const merkleRootBytes = goldilocksToLeBytes32(prepared.merkleRoot);
