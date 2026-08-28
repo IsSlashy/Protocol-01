@@ -432,8 +432,12 @@ pub mod zk_shielded {
     ///
     /// # What this buys, and what it does not
     ///
-    /// It closes P11 — the last `[open]` probe in verify/p01-verify.mjs — by
-    /// making the fee payer somebody with no funding edge to the buyer. It is
+    /// It is BUILT to close P11 — the last `[open]` probe in
+    /// verify/p01-verify.mjs — by making the fee payer somebody with no funding
+    /// edge to the buyer. ⚠️ As of writing that is intent, not measurement: no
+    /// relayed spend has landed on chain and P11 has not been re-run against
+    /// one. Do not repeat "P11 is closed" anywhere until this instruction has
+    /// executed on devnet and the probe says PASS on that signature. It is
     /// only safe to hand a proof to a stranger because circuit 7 binds the
     /// recipient: substituting it changes `public_inputs_hash` and the spend is
     /// refused. v3 had no such binding, which is why its relayer could only

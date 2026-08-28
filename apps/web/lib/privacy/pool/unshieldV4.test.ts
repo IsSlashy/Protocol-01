@@ -339,7 +339,9 @@ describe('the relayed batch — the buyer signs nothing', () => {
   }
 
   it('🚨 asks for no signature but the relayer’s, anywhere in the batch', () => {
-    // This is the property that closes P11. If the buyer's key appears as a
+    // This is the property P11 asks about. Holding it here is necessary and
+    // NOT sufficient: the probe reads a real transaction, and none exists yet.
+    // If the buyer's key appears as a
     // signer even once, the buyer is back on chain and the whole path is
     // theatre.
     return build().then(({ transactions }) => {
