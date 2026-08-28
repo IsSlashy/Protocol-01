@@ -508,7 +508,7 @@ const en = {
       },
       onChainRelayer: {
         title: 'On-Chain Relayer + Quantum Vault',
-        desc: 'On-chain relay program with a quantum vault: WOTS+ signatures, hash timelock, and commit-then-reveal withdrawals. Two hosted relayers are running as the submitting nodes, so the transaction reaches the RPC from a relayer rather than from the user device.',
+        desc: 'On-chain relay program with a quantum vault: WOTS+ signatures, hash timelock, and commit-then-reveal withdrawals. The two hosted relayer nodes were retired on 28 August 2026 — ten relay jobs in forty-five days between them — so the transaction now reaches the RPC from the submitting client. The program itself is unchanged and still on chain.',
       },
       paymentStreams: {
         title: 'Payment Streams',
@@ -532,7 +532,7 @@ const en = {
       },
       onChainContracts: {
         title: 'On-Chain Smart Contracts',
-        desc: 'Anchor programs deployed to Solana devnet, not audited and not on mainnet. Trustless, permissionless privacy on the core path: anyone can submit the instructions directly, and the two hosted relayers are an optional hop rather than a dependency.',
+        desc: 'Anchor programs deployed to Solana devnet, not audited and not on mainnet. Trustless, permissionless privacy on the core path: anyone can submit the instructions directly, which is what everyone does since the two hosted relayer nodes were retired on 28 August 2026.',
       },
       advancedPrivacy: {
         title: 'Amount and Timing Noise',
@@ -684,7 +684,7 @@ const en = {
         desc: 'Subscribing mints a copy-pasteable license key derived from the on-chain subscription identity (the ZK subscriber commitment or a hashed classic identity, never the raw wallet). Merchants re-derive and match from on-chain state, no PII, no central database. Privacy modes simplified to Standard and ZK Private.',
       },
       relayerHealth: {
-        title: 'Multi-Relayer Health & Self-Healing',
+        title: 'Multi-Relayer Health & Self-Healing (retired 28 Aug 2026)',
         desc: 'Two privacy relayers (Railway + Fly Frankfurt) with auto connection-recreate on the Helius devnet bad-slot wedge, plus a live traffic-light health indicator in the app and on the marketing site. Any relayer error falls back to a direct on-chain submit so withdrawals never stall.',
       },
       v102Release: {

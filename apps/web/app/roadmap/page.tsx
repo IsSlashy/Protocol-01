@@ -157,7 +157,11 @@ const itemStem = (titleKey: string): string => titleKey.split(".")[2] ?? "";
  *   txOpacityEvents ...... names indexing firms and asserts what they cannot see
  *   uniformStarkProofs ... "fingerprinting eliminated"; the size channel is one
  *                          of six, and closing it alone buys nothing
- *   relayerHealth ........ "withdrawals never stall"; the keeper retry bug is open
+ *   relayerHealth ........ "withdrawals never stall"; the keeper retry bug is open,
+ *                          and MEASURED 2026-08-28 both hosted relayers were
+ *                          retired after 10 relay jobs in 45 days. The title now
+ *                          carries the date; the entry stays because deleting a
+ *                          shipped item is rewriting history, not correcting it.
  */
 const WITHHELD_DESC = new Set<string>([
   "onChainRelayer",

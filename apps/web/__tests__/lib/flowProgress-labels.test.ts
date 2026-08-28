@@ -118,6 +118,13 @@ describe('the resume steps specifically, since they are why this file exists', (
  */
 const HANDLERS_SRC = [
   'lib/privacy/worker/poolHandlers.ts',
+  // ⚠️ THE FOURTH FILE, added 2026-08-28. The relayed withdrawal speaks from
+  // `unshieldEphemeral.ts` — `asking the relayer who it is` and `building the
+  // withdrawal in the relayer's name` — and this sweep could not see them. Two
+  // of its four sentences were caught only because they live in
+  // `denominatedPool.ts`, which IS swept; the other two would have frozen the
+  // bar in front of a user with nothing to explain it.
+  'lib/privacy/pool/unshieldEphemeral.ts',
   // ⚠️ THE THIRD FILE, and the one that speaks FIRST.
   //
   // Sweeping stark.ts and poolHandlers.ts still left `shieldClient.ts` unread,

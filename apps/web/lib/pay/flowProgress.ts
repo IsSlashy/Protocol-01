@@ -118,8 +118,21 @@ export const WITHDRAW_PHASES: FlowPhase[] = [
   // `submitting the circuit-7 spend proof on-chain` announces the upload rather
   // than the verification: it is emitted immediately before
   // `submitAndVerifyStarkProof`, whose own per-chunk sentences land here too.
-  { id: 'upload', label: 'Uploading the proof', weight: 0.35, match: /uploading|confirming chunk|resending|readback|checking uploaded|submitting the circuit-7 spend proof/i },
-  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|building v3 unshield|sending v3 unshield|v3 unshield confirmed|building v4 unshield|sending v4 unshield|v4 unshield confirmed|submitting c1|closing/i },
+  // ⚠️ THE SEVENTH MISS, and the first one this file caught BEFORE a user saw
+  // it. The relayed withdrawal (2026-08-28) speaks four new sentences and none
+  // matched anything: `asking the relayer who it is`, `building the withdrawal
+  // in the relayer's name`, `handing N transactions to the relayer` and
+  // `relayed spend confirmed`. The first three land here.
+  //
+  // "Uploading the proof" stays TRUE on this path even though the app uploads
+  // nothing itself: from the moment the batch is handed over, the proof is
+  // being put on chain by somebody, and that is what the user is waiting for.
+  // The handoff sentence is emitted ONCE and covers ~2 minutes of the node's
+  // work, so the bar rests here for the length of the relay. That is not a
+  // stall — nothing observable happens in between, and inventing intermediate
+  // motion would be the lie this file exists to refuse.
+  { id: 'upload', label: 'Uploading the proof', weight: 0.35, match: /uploading|confirming chunk|resending|readback|checking uploaded|submitting the circuit-7 spend proof|asking the relayer|building the withdrawal in the relayer|handing \d+ transactions to the relayer|handing[^.]*to the relayer/i },
+  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|building v3 unshield|sending v3 unshield|v3 unshield confirmed|building v4 unshield|sending v4 unshield|v4 unshield confirmed|relayed spend confirmed|submitting c1|closing/i },
 ];
 
 export const SUBSCRIBE_PHASES: FlowPhase[] = [

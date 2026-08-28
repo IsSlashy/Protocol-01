@@ -509,7 +509,7 @@ const fr: Translations = {
       },
       onChainRelayer: {
         title: 'Relayeur on-chain + Coffre quantique',
-        desc: 'Programme de relais on-chain avec coffre quantique : signatures WOTS+, verrouillage temporel par hachage et retraits en commit-then-reveal. Deux relayeurs h\u00e9berg\u00e9s servent de n\u0153uds de soumission : la transaction atteint le RPC depuis un relayeur et non depuis l\u2019appareil de l\u2019utilisateur.',
+        desc: 'Programme de relais on-chain avec coffre quantique : signatures WOTS+, verrouillage temporel par hachage et retraits en commit-then-reveal. Les deux n\u0153uds relayeurs h\u00e9berg\u00e9s ont \u00e9t\u00e9 retir\u00e9s le 28 ao\u00fbt 2026 \u2014 dix travaux de relais en quarante-cinq jours \u00e0 eux deux \u2014 donc la transaction atteint d\u00e9sormais le RPC depuis le client qui soumet. Le programme, lui, est inchang\u00e9 et toujours en cha\u00eene.',
       },
       paymentStreams: {
         title: 'Flux de paiement',
@@ -533,7 +533,7 @@ const fr: Translations = {
       },
       onChainContracts: {
         title: 'Smart contracts on-chain',
-        desc: 'Programmes Anchor d\u00e9ploy\u00e9s sur le devnet Solana, non audit\u00e9s et absents du mainnet. Confidentialit\u00e9 sans permission et sans tiers de confiance sur le chemin principal : n\u2019importe qui peut soumettre les instructions directement, et les deux relayeurs h\u00e9berg\u00e9s sont un saut optionnel, pas une d\u00e9pendance.',
+        desc: 'Programmes Anchor d\u00e9ploy\u00e9s sur le devnet Solana, non audit\u00e9s et absents du mainnet. Confidentialit\u00e9 sans permission et sans tiers de confiance sur le chemin principal : n\u2019importe qui peut soumettre les instructions directement, ce que tout le monde fait depuis le retrait des deux n\u0153uds relayeurs h\u00e9berg\u00e9s, le 28 ao\u00fbt 2026.',
       },
       advancedPrivacy: {
         title: 'Bruit sur les montants et bruit temporel',
@@ -680,7 +680,7 @@ const fr: Translations = {
         desc: 'S\'abonner genere une license key copiable derivee de l\'identite d\'abonnement on-chain (le subscriber commitment ZK ou une identite classique hachee, jamais le wallet brut). Les marchands re-derivent et matchent depuis l\'etat on-chain, pas de PII, pas de base centrale. Modes de confidentialite simplifies a Standard et ZK Private.',
       },
       relayerHealth: {
-        title: 'Sante multi-relayer & auto-reparation',
+        title: 'Sante multi-relayer & auto-reparation (retire le 28 aout 2026)',
         desc: 'Deux relayers de confidentialite (Railway + Fly Frankfurt) avec recreation auto de connexion sur le blocage bad-slot du devnet Helius, plus un indicateur de sante en feu tricolore dans l\'app et sur le site. Toute erreur relayer bascule sur un envoi direct on-chain pour que les retraits ne bloquent jamais.',
       },
       v102Release: {
