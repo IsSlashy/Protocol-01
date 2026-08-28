@@ -67,7 +67,6 @@ const fr: Translations = {
         "Bas\u00e9 sur le hachage, post-quantique, sans trusted setup ni courbes elliptiques. Chaque op\u00e9ration est v\u00e9rifi\u00e9e on-chain par l'un d'eux.",
     },
     net: {
-      relayer: 'Relayer',
       snapshot: 'Snapshot',
       program: 'Programme shield\u00e9',
     },

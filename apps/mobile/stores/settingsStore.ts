@@ -63,7 +63,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   initialized: false,
   shieldedWalletEnabled: false,
   confidentialBalanceEnabled: false,
-  relayerV3Enabled: true,
+  // OFF since 2026-08-28: both hosted p01_relayer nodes were retired (10 relay
+  // jobs in 45 days, and their own /health reported lastPollCount 0 the whole
+  // time). With no node registered, `signAndSendViaRelayer` can only fail — and
+  // `relayerStrictMode` below defaults to ON, so it would fail CLOSED and take
+  // the v3 withdrawal down with it. Default OFF submits directly.
+  // ⚠️ Direct submission re-opens the submitter-IP (L19) and outer-fee-payer
+  // (L17) leaks. That is a real regression, and it is the state v4/C7 is in
+  // anyway: C7 closed the commitment channel, never the payer channel (P11).
+  // The toggle and the whole relayer path stay wired — flip this to `true`
+  // once a node is registered again.
+  relayerV3Enabled: false,
   relayerStrictMode: true,
 
   initialize: async () => {
@@ -81,7 +91,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           const toggles = JSON.parse(togglesRaw);
           updates.shieldedWalletEnabled = toggles.shieldedWalletEnabled ?? false;
           updates.confidentialBalanceEnabled = toggles.confidentialBalanceEnabled ?? false;
-          updates.relayerV3Enabled = toggles.relayerV3Enabled ?? true;
+          // Deliberately NOT read back from storage while no node is registered
+          // on chain. Every install that ran before 2026-08-28 has `true`
+          // persisted here, and with strict mode on that value fails the v3
+          // withdrawal closed against a relayer that no longer exists. Restore
+          // `toggles.relayerV3Enabled ?? false` when a node is registered again.
+          updates.relayerV3Enabled = false;
           updates.relayerStrictMode = toggles.relayerStrictMode ?? true;
         } catch {}
       }

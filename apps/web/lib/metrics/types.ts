@@ -50,8 +50,6 @@ export interface NetworkMetrics {
   pools: PoolMetric[];
   /** The verifier's circuits. */
   circuits: CircuitInfo[];
-  /** Relayer rollup status (from /api/relayer-health), or null if not probed. */
-  relayer: 'green' | 'orange' | 'red' | null;
   /** Optional diagnostics — how the snapshot was produced (no secrets). */
   debug?: {
     rpcHost: string;

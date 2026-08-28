@@ -176,7 +176,6 @@ function empty(live: boolean): NetworkMetrics {
     activePools: 0,
     pools: [],
     circuits: STARK_CIRCUIT_LIST,
-    relayer: null,
   };
 }
 
@@ -226,7 +225,6 @@ export async function readNetworkMetrics(): Promise<NetworkMetrics> {
       activePools: pools.length,
       pools,
       circuits: STARK_CIRCUIT_LIST,
-      relayer: null,
       debug: { rpcHost, scanned: accounts.length, denomPools, withNotes: pools.length },
     };
   } catch (e) {

@@ -34,7 +34,13 @@ async function persist(state: Pick<SettingsState, 'shieldedWalletEnabled' | 'con
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   shieldedWalletEnabled: false,
   confidentialBalanceEnabled: false,
-  relayerEnabled: true,
+  // OFF since 2026-08-28 — both hosted p01_relayer nodes were retired (10 relay
+  // jobs in 45 days, lastPollCount 0 throughout). The extension falls back to
+  // direct submission on any relayer error, so leaving this on would only cost
+  // a failed round-trip per withdrawal. ⚠️ Direct submission re-opens the
+  // submitter-IP (L19) + outer-fee-payer (L17) leaks; the relayer path stays
+  // wired, flip back to `true` once a node is registered again.
+  relayerEnabled: false,
   initialized: false,
 
   initialize: async () => {
@@ -45,7 +51,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         set({
           shieldedWalletEnabled: data.shieldedWalletEnabled ?? false,
           confidentialBalanceEnabled: data.confidentialBalanceEnabled ?? false,
-          relayerEnabled: data.relayerEnabled ?? true,
+          // Not read back from storage while no node is registered on chain —
+          // every profile from before 2026-08-28 has `true` here, which would
+          // buy one failed relayer round-trip per withdrawal and nothing else.
+          // Restore `data.relayerEnabled ?? false` when a node comes back.
+          relayerEnabled: false,
           initialized: true,
         });
       } else {

@@ -191,9 +191,10 @@ export default function PitchDeck() {
 
         {/* Controls */}
         <div className="fixed bottom-4 left-4 right-4 z-40 flex items-center justify-between gap-4">
-          {/* The root layout renders RelayerHealthBadge fixed at the bottom-left
-              (x 14, w 75, z 50) on every page and that file is not ours to
-              touch, so the deck's own label starts clear of it. */}
+          {/* The root layout used to render RelayerHealthBadge fixed at the
+              bottom-left (x 14, w 75, z 50), so the deck's own label was
+              indented clear of it. That badge was removed on 2026-08-28 with
+              the relayer nodes; the padding below is now only a margin. */}
           <div className="flex items-center gap-4" style={{ paddingLeft: "6rem" }}>
             <span className="styx-overline">Styx Protocol // Pitch</span>
             <span className="styx-overline" style={{ opacity: 0.7 }}>
@@ -438,7 +439,7 @@ function Slide3Stack() {
     {
       title: "Solana programs",
       icon: <Shield size={15} />,
-      items: ["denominated_pool_v4", "p01_relayer keeper", "p01_stark_verifier"],
+      items: ["denominated_pool_v4", "p01_stark_verifier", "subscription"],
     },
   ];
   return (
@@ -719,9 +720,9 @@ function Slide7Hardening() {
     {
       id: "A",
       label: "Relayer wired",
-      note: "Unshield goes through the on-chain p01_relayer.",
-      state: "Shipped",
-      done: true,
+      note: "Shipped, then retired 28 Aug: 10 relay jobs in 45 days. It moved the fee payer one hop — the user's own wallet funded the ephemeral — so it never removed the payer.",
+      state: "Retired",
+      done: false,
     },
     {
       id: "B",
@@ -747,8 +748,8 @@ function Slide7Hardening() {
     {
       id: "E",
       label: "Multi-relayer rotation",
-      note: "Failover and a liveness filter exist. The relayer is running degraded and the keeper retry bug is open.",
-      state: "Shipped, degraded",
+      note: "Both hosted nodes retired 28 Aug. The refund keeper they ran targets an instruction that no longer exists on chain.",
+      state: "Retired",
       done: false,
     },
     {

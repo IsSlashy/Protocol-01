@@ -65,7 +65,6 @@ const en = {
         'Hash-based, post-quantum, no trusted setup, no elliptic curves. Each operation is verified on-chain by one of these.',
     },
     net: {
-      relayer: 'Relayer',
       snapshot: 'Snapshot',
       program: 'Shielded program',
     },

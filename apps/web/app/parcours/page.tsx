@@ -16,8 +16,7 @@
  * section 08 est le seul composant client de cette page, et elle ne charge
  * three.js qu'une fois défilée dans le viewport. Le gabarit racine, hors du
  * contrôle de cette page, monte ses propres composants clients sur toutes les
- * routes (SmoothScroll, DepthBackground, CorruptionOverlay, RelayerHealthBadge,
- * I18nProvider) ; le pied de page le dit désormais au lieu de prétendre que la
+ * routes (SmoothScroll, DepthBackground, CorruptionOverlay, I18nProvider) ; le pied de page le dit désormais au lieu de prétendre que la
  * visionneuse est le seul client de la route. C'est pour garder l'arbre de cette
  * page côté serveur qu'elle fournit son propre cadre (StyxShell en
  * chrome={false}) au lieu de l'en-tête partagé, qui est un composant client.

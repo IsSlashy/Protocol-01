@@ -172,7 +172,6 @@ function PoolCrowd({ count, max = 64 }: { count: number; max?: number }) {
 export default function ExplorerPage() {
   const t = useT();
   const [m, setM] = useState<NetworkMetrics | null>(null);
-  const [relayer, setRelayer] = useState<"green" | "orange" | "red" | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -185,21 +184,8 @@ export default function ExplorerPage() {
         /* keep last snapshot */
       }
     };
-    const loadRelayer = async () => {
-      try {
-        const res = await fetch("/api/relayer-health", { cache: "no-store" });
-        const data = await res.json();
-        if (alive) setRelayer(data?.status ?? null);
-      } catch {
-        /* ignore */
-      }
-    };
     load();
-    loadRelayer();
-    const id = setInterval(() => {
-      load();
-      loadRelayer();
-    }, 30_000);
+    const id = setInterval(load, 30_000);
     return () => {
       alive = false;
       clearInterval(id);
@@ -210,17 +196,6 @@ export default function ExplorerPage() {
   const notes = m?.totalNotes ?? 0;
   const pools = m?.activePools ?? 0;
   const live = m?.live ?? false;
-  /* Same branches as before, mapped onto the two tokens styx.css defines. There
-     is no failure/alert token, so orange and red both borrow the amber one; the
-     status word beside the dot is what still tells them apart. Reported upward. */
-  const relayerColor =
-    relayer === "green"
-      ? "var(--styx-accent)"
-      : relayer === "orange"
-        ? "var(--styx-warn)"
-        : relayer === "red"
-          ? "var(--styx-warn)"
-          : "var(--styx-faint)";
 
   return (
     <StyxShell>
@@ -465,27 +440,9 @@ export default function ExplorerPage() {
         <div className="styx-container">
           <div className="styx-panel">
             <div className="styx-panel-body">
-              <div className="styx-row">
-                <span className="styx-row-key">
-                  {t("explorer.net.relayer")}
-                </span>
-                <span className="styx-row-leader" aria-hidden="true" />
-                <span
-                  className="styx-row-value"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.5rem",
-                  }}
-                >
-                  <span
-                    className="styx-dot"
-                    aria-hidden="true"
-                    style={{ background: relayerColor }}
-                  />
-                  {relayer ?? "n/a"}
-                </span>
-              </div>
+              {/* The relayer traffic-light lived here until 2026-08-28. Both
+                  hosted p01_relayer nodes were retired that day — 10 relay jobs
+                  in 45 days — so the row could only ever report red. */}
               <div className="styx-row">
                 <span className="styx-row-key">
                   {t("explorer.net.snapshot")}

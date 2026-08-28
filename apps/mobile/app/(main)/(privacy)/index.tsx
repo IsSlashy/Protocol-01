@@ -52,7 +52,6 @@ import {
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { RelayerHealthDot } from '@/components/RelayerHealthDot';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -200,7 +199,9 @@ export default function PrivacyDashboard() {
           {t('privacy.shield')}
         </Text>
         <View style={s.headerRight}>
-          <RelayerHealthDot />
+          {/* The relayer traffic-light dot sat here until 2026-08-28, when both
+              hosted p01_relayer nodes were retired — 10 relay jobs in 45 days,
+              lastPollCount 0 throughout. Nothing left for it to report. */}
           <TouchableOpacity
             style={s.headerBtn}
             onPress={() => router.push('/(main)/(settings)')}
