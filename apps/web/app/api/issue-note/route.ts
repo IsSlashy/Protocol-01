@@ -173,20 +173,53 @@ function inventoryDenomination(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : 0.1;
 }
 
+/**
+ * ⚠️ A RANGE IS AUTHORISATION, NOT DISCOVERY, and the distinction is the whole
+ * reason this is not a scan.
+ *
+ * `83-200` means "I deposited into this range and I am willing to give those
+ * away". It is still a bound an operator typed and can be asked about; what it
+ * removes is the config change after every restock, which is the step that
+ * would otherwise be forgotten and leave a stocked pool reporting empty.
+ *
+ * ⛔ It is NOT a licence to hand out anything in the range. Every leaf still has
+ * to reproduce from the seed, exist on the tree at that index, be unspent, and
+ * clear the maturity gate — so a wrong pool or a reused seed still fails loudly
+ * rather than quietly giving notes away.
+ *
+ * The 512 cap is a typo guard: `0-99999999` would otherwise build an array big
+ * enough to take the route down, and the failure would be a timeout rather than
+ * a message.
+ */
+const MAX_INVENTORY_LEAVES = 512;
+
 function inventoryLeaves(): number[] {
-  return (process.env.P01_TREASURY_NOTE_LEAVES ?? '')
-    .split(',')
-    .map((s) => s.trim())
+  const out: number[] = [];
+  for (const piece of (process.env.P01_TREASURY_NOTE_LEAVES ?? '').split(',')) {
+    const s = piece.trim();
     // 🚨 THE EMPTY-STRING FILTER IS LOAD-BEARING, and it was missing.
-    // `''.split(',')` is `['']`, and `Number('')` is 0 — which is an integer
-    // and is >= 0. So an UNSET variable produced an inventory of exactly one
-    // leaf, index 0, and the readiness check reported it as configured. Found
-    // by curling the built route rather than by any test, which is the argument
-    // for curling the built route.
-    .filter((s) => s.length > 0)
-    .map((s) => Number(s))
-    .filter((n) => Number.isInteger(n) && n >= 0);
+    // `''.split(',')` is `['']`, and `Number('')` is 0 — an integer, and >= 0.
+    // So an UNSET variable produced an inventory of exactly one leaf, index 0,
+    // and the readiness check reported it as configured. Found by curling the
+    // built route rather than by any test, which is the argument for curling
+    // the built route.
+    if (s.length === 0) continue;
+    const range = /^(\d+)\s*-\s*(\d+)$/.exec(s);
+    if (range) {
+      const lo = Number(range[1]);
+      const hi = Number(range[2]);
+      if (!Number.isInteger(lo) || !Number.isInteger(hi) || hi < lo) continue;
+      for (let i = lo; i <= hi && out.length < MAX_INVENTORY_LEAVES; i += 1) out.push(i);
+      continue;
+    }
+    const n = Number(s);
+    if (Number.isInteger(n) && n >= 0 && out.length < MAX_INVENTORY_LEAVES) out.push(n);
+  }
+  // A leaf listed twice would be tried twice and could be reported as two
+  // slots of stock that are one note.
+  return [...new Set(out)];
 }
+
 
 export async function GET() {
   // Readiness, in the shape /api/fund-ephemeral uses: every way this is switched
@@ -438,6 +471,13 @@ export async function POST(request: NextRequest) {
    * levels while the real cause was a reloaded page presenting a fresh note
    * address, and it cost a single-use claim code to find out.
    */
+  // The highest leaf the tree actually holds. Needed to tell a leaf that is
+  // NOT DEPOSITED YET from one whose commitment does not match — see the gate
+  // inside the loop. Computed once: the map is already in memory.
+  let maxLeafOnTree = -1;
+  for (const e of commitments.values()) if (e.leafIndex > maxLeafOnTree) maxLeafOnTree = e.leafIndex;
+  /** Authorised leaves the treasury has not deposited into yet. */
+  let notYetDeposited = 0;
   let heldByOthers = 0;
   /** Configured leaves whose note has already been spent on chain. */
   let spentLeaves = 0;
@@ -503,6 +543,32 @@ export async function POST(request: NextRequest) {
     // Looked up once, here: the age gate below needs it and so does the
     // configuration check further down.
     const onChain = commitments.get(commitment.toString());
+    // 🚨 NOT DEPOSITED YET IS NOT A MISCONFIGURATION, and telling them apart is
+    // what makes a RANGE authorisation usable at all.
+    //
+    // `P01_TREASURY_NOTE_LEAVES=83-200` says "I will give away anything I
+    // deposit in here". Leaves past the end of the tree are simply future
+    // stock. Falling through to the check below would answer 500 'the
+    // configured inventory does not match the chain' AND mark the leaf issued —
+    // burning a slot that would have been perfectly good once deposited.
+    //
+    // ⛔ This must run BEFORE the claim is taken, beside the age and spent
+    // gates, for exactly the reason recorded there: a leaf skipped after the
+    // claim is consumed anyway.
+    //
+    // A leaf INSIDE the tree whose commitment still does not match is a real
+    // configuration error and keeps its 500. That is the property the explicit
+    // list was written to protect and it is untouched.
+    // ⛔ `maxLeafOnTree >= 0` IS THE SAFETY HALF. An EMPTY commitment map is not
+    // an empty tree — it is far more likely an RPC that answered with nothing.
+    // Without this clause every leaf would look like future stock and the route
+    // would report a calm 'inventory is empty' for what is actually a broken
+    // read: a loud failure turned quiet, which is the trade this repository
+    // keeps paying for.
+    if (!onChain && maxLeafOnTree >= 0 && leafIndex > maxLeafOnTree) {
+      notYetDeposited += 1;
+      continue;
+    }
     // 🚨 AGE, BEFORE ANYTHING IS SEALED. See DEFAULT_MIN_AGE_SLOTS: a note
     // young enough to have been minted for this caller carries their clock, and
     // no amount of crowd or later delay takes it back off. Skip to the next

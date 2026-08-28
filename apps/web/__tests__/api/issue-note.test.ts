@@ -152,6 +152,76 @@ beforeEach(() => {
   mockRateLimitExceeded.mockResolvedValue(false);
 });
 
+describe('a leaf the treasury has not deposited into yet', () => {
+  it('is skipped WITHOUT consuming its claim slot, so it works once deposited', async () => {
+    // The point of a range: `83-200` authorises future stock. A leaf past the
+    // end of the tree must not answer 500 'does not match the chain' and mark
+    // itself issued — that burns a slot which would have been good.
+    const { fetchPoolCommitments } = await import('@/lib/privacy/pool/denominatedPool');
+    // A tree that holds leaf 5 and nothing above it.
+    vi.mocked(fetchPoolCommitments).mockResolvedValueOnce({
+      get: () => undefined,
+      values: () => [{ leafIndex: 5, commitment: 1n }],
+    } as never);
+    vi.stubEnv('P01_TREASURY_NOTE_LEAVES', '90-92');
+    const res = await POST(req(goodBody()));
+    // Empty stock, NOT a configuration error — and no leaf was claimed.
+    expect(res.status).toBe(503);
+    const claimed = [...counters.keys()].filter((k) => k.startsWith('p01:note:issued:'));
+    expect(claimed, 'a future leaf must not consume its slot').toHaveLength(0);
+  });
+
+  it('⛔ an EMPTY commitment map still fails LOUD, because that is an RPC, not a tree', async () => {
+    // Treating an unreadable pool as 'all future stock' would answer a calm
+    // 'inventory is empty' for a broken read — a loud failure turned quiet.
+    vi.stubEnv('P01_TREASURY_NOTE_LEAVES', '23');
+    const res = await POST(req(goodBody()));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/does not match the chain/);
+  });
+});
+
+describe('how the inventory is authorised', () => {
+  // A range is AUTHORISATION, not discovery: it removes the config change after
+  // every restock — the step that would otherwise be forgotten and leave a
+  // stocked pool reporting empty — without turning the route into a scan.
+  it('accepts a range, and it means every leaf inside it', async () => {
+    vi.stubEnv('P01_TREASURY_NOTE_LEAVES', '83-92');
+    const { GET } = await import('@/app/api/issue-note/route');
+    const body = await (await GET()).json();
+    expect(body.inventorySize).toBe(10);
+  });
+
+  it('mixes ranges and single leaves, and never counts one twice', async () => {
+    vi.stubEnv('P01_TREASURY_NOTE_LEAVES', '83-85,84,90');
+    const { GET } = await import('@/app/api/issue-note/route');
+    expect((await (await GET()).json()).inventorySize).toBe(4); // 83,84,85,90
+  });
+
+  it('⛔ a typo cannot build an inventory big enough to take the route down', async () => {
+    vi.stubEnv('P01_TREASURY_NOTE_LEAVES', '0-99999999');
+    const { GET } = await import('@/app/api/issue-note/route');
+    expect((await (await GET()).json()).inventorySize).toBe(512);
+  });
+
+  it('an unset variable is still EMPTY, not leaf zero', async () => {
+    // `''.split(',')` is `['']` and `Number('')` is 0, which is an integer and
+    // >= 0 — so this once reported one leaf of stock and called itself
+    // configured.
+    vi.stubEnv('P01_TREASURY_NOTE_LEAVES', '');
+    const { GET } = await import('@/app/api/issue-note/route');
+    const body = await (await GET()).json();
+    expect(body.inventorySize).toBe(0);
+    expect(body.configured).toBe(false);
+  });
+
+  it('a backwards or malformed range is ignored, not guessed at', async () => {
+    vi.stubEnv('P01_TREASURY_NOTE_LEAVES', '92-83,abc,,7');
+    const { GET } = await import('@/app/api/issue-note/route');
+    expect((await (await GET()).json()).inventorySize).toBe(1); // just 7
+  });
+});
+
 describe('which note comes out of stock', () => {
   it('🚨 is not the configured order, so purchase order cannot be mapped to a leaf', async () => {
     // MEASURED shape of the bug: the loop walked `P01_TREASURY_NOTE_LEAVES` as
