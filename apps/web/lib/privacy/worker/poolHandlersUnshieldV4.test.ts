@@ -104,6 +104,10 @@ const seen = {
   // observable at all: without it a test can only see that *a* v4 send happened,
   // which is precisely what a silent overwrite looks like from the outside.
   executeV4: [] as Array<{ jobId: string; boundPayee: string; ownerPubkey: string }>,
+  // The relayed path takes NO ownerPubkey and NO sweepTo — the buyer neither
+  // signs nor pays — so what is worth recording is the URL and the payee the
+  // stored context is bound to.
+  executeRelayed: [] as Array<{ jobId: string; boundPayee: string; relayerUrl: string }>,
   prepareSubscribe: [] as number[],
 };
 
@@ -233,6 +237,18 @@ vi.mock('../pool/unshieldEphemeral', () => ({
     });
     return { txSig: 'V4_TX' };
   },
+  executeUnshieldV4Relayed: async (
+    ctx: { jobId: string; recipient: PublicKey },
+    _conn: unknown,
+    relayerUrl: string,
+  ) => {
+    seen.executeRelayed.push({
+      jobId: ctx.jobId,
+      boundPayee: ctx.recipient.toBase58(),
+      relayerUrl,
+    });
+    return { txSig: 'RELAYED_TX' };
+  },
 }));
 
 vi.mock('../pool/denominatedPool', async (importOriginal) => {
@@ -275,6 +291,7 @@ beforeEach(() => {
   seen.prepareV4 = [];
   seen.executeV3 = [];
   seen.executeV4 = [];
+  seen.executeRelayed = [];
   seen.prepareSubscribe = [];
   v4PrepareFailure = null;
   configurePoolHandlers('http://localhost:8899');
@@ -838,5 +855,80 @@ describe('the subscribe path cannot reach the circuit-7 branch', () => {
     expect(bodyOf('handlePoolUnshieldPrepare')).toContain('prepareUnshieldJobV4');
     expect(bodyOf('handlePoolSubscribePrepare')).not.toContain('prepareUnshieldJobV4');
     expect(bodyOf('handlePoolSubscribePrepare')).toContain('prepareSubscribeJob');
+  });
+});
+
+describe('handing the withdrawal to a relayer', () => {
+  it('routes to the relayed path and never funds an ephemeral', async () => {
+    const prep = await handlePoolRequest(
+      prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }),
+    );
+    const done = await handlePoolRequest({
+      kind: 'poolUnshieldExecute',
+      jobId: prep.jobId,
+      recipient: RECIPIENT,
+      ownerPubkey: OWNER,
+      relayerUrl: 'https://relay.example',
+    });
+
+    expect(done.txSig).toBe('RELAYED_TX');
+    expect(seen.executeRelayed).toEqual([
+      { jobId: V4_JOB_ID, boundPayee: RECIPIENT, relayerUrl: 'https://relay.example' },
+    ]);
+    // 🚨 The direct path must not ALSO have run. Both firing would mean the note
+    // was spent once and paid for twice, and the nullifier makes the second one
+    // fail — after the buyer has already paid for an upload.
+    expect(seen.executeV4).toEqual([]);
+  });
+
+  it('leaves the direct path exactly as it was when no relayer is named', async () => {
+    const prep = await handlePoolRequest(
+      prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }),
+    );
+    const done = await handlePoolRequest({
+      kind: 'poolUnshieldExecute',
+      jobId: prep.jobId,
+      recipient: RECIPIENT,
+      ownerPubkey: OWNER,
+    });
+
+    expect(done.txSig).toBe('V4_TX');
+    expect(seen.executeRelayed).toEqual([]);
+  });
+
+  it('🚨 refuses to relay a v3 job, whose proof binds no payee', async () => {
+    // A C1+C3 pair names no recipient, so a stranger holding it can point the
+    // payout anywhere. Ignoring the field here would hand a relayer a proof it
+    // could rob, which is the defect v4 closed.
+    const prep = await handlePoolRequest(prepareReq());
+    const err = await handlePoolRequest({
+      kind: 'poolUnshieldExecute',
+      jobId: prep.jobId,
+      recipient: RECIPIENT,
+      ownerPubkey: OWNER,
+      relayerUrl: 'https://relay.example',
+    }).catch((e: Error) => e);
+
+    expect(String(err)).toContain('binds no payee');
+    expect(seen.executeRelayed).toEqual([]);
+    expect(seen.executeV3).toEqual([]);
+  });
+
+  it('still refuses a payee that differs from the one the proof is bound to', async () => {
+    // The relayed branch sits BEFORE the send and AFTER the payee comparison;
+    // routing through a relayer must not become a way around that check.
+    const prep = await handlePoolRequest(
+      prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }),
+    );
+    const err = await handlePoolRequest({
+      kind: 'poolUnshieldExecute',
+      jobId: prep.jobId,
+      recipient: OWNER, // not the bound payee
+      ownerPubkey: OWNER,
+      relayerUrl: 'https://relay.example',
+    }).catch((e: Error) => e);
+
+    expect(String(err)).toContain('cannot pay');
+    expect(seen.executeRelayed).toEqual([]);
   });
 });

@@ -72,6 +72,8 @@ import {
   prepareUnshieldV4,
   unshieldDenominatedStarkV3,
   unshieldDenominatedStarkV4,
+  buildRelayedUnshieldV4Batch,
+  relayUnshieldV4,
   type PoolConfig,
   type PrepareUnshieldResult,
   type PrepareUnshieldV4Result,
@@ -616,4 +618,65 @@ export async function executeUnshieldV4(
       );
     }
   }
+}
+
+/**
+ * The same withdrawal, submitted and paid for by a stranger.
+ *
+ * ⛔ SIBLING OF `executeUnshieldV4`, NOT A MODE OF IT. It shares no line with
+ * it, and that is the point: this path has NO ephemeral, NO pre-fund and NO
+ * sweep. The buyer signs nothing and pays nothing — the relayer is paid out of
+ * the protocol fee the pool already charges, so no lamport travels from the
+ * buyer to the submitter and there is no edge to walk back.
+ *
+ * 🧠 The same prepared context feeds both paths. Circuit 7 binds the RECIPIENT,
+ * not the payer, so a proof is submitter-agnostic; only the proof BUFFER is
+ * keyed to whoever uploads it, and that is created here rather than at prepare
+ * time. That is why `prepareUnshieldJobV4` needed no change at all.
+ *
+ * ⚠️ NO FALLBACK. If the relayer refuses or dies, this throws and the
+ * withdrawal did not happen. The v3 wrapper fell back to direct submission on
+ * any error, which is why its privacy guarantee held only when the
+ * infrastructure felt well and why the buyer was never told which of the two
+ * had occurred.
+ */
+export async function executeUnshieldV4Relayed(
+  ctx: PreparedUnshieldV4,
+  connection: Connection,
+  relayerUrl: string,
+  onProgress?: (step: string) => void,
+): Promise<{ txSig: string }> {
+  const { poolConfig, prepared, recipient } = ctx;
+
+  // 🚨 THE NODE SAYS WHO IT IS, rather than a third environment variable that
+  // can drift from the key actually running. Safe by construction: a hostile
+  // URL that names some other key cannot steal anything — the payee is bound by
+  // the proof and the reward comes out of the protocol fee, not the buyer's
+  // share — so the worst it buys is a wasted round trip.
+  onProgress?.('Asking the relayer who it is...');
+  const base = relayerUrl.replace(/\/$/, '');
+  let operator: PublicKey;
+  try {
+    const health = await fetch(`${base}/health`, { cache: 'no-store' });
+    const body = (await health.json()) as { operator?: string };
+    if (!body?.operator) throw new Error('no `operator` field');
+    operator = new PublicKey(body.operator);
+  } catch (e) {
+    throw new Error(
+      `Could not read the relayer's operator key from ${base}/health: ` +
+        `${e instanceof Error ? e.message : String(e)}. Nothing was sent.`,
+    );
+  }
+
+  onProgress?.('Building the withdrawal in the relayer’s name...');
+  const { transactions } = await buildRelayedUnshieldV4Batch(
+    poolConfig,
+    recipient,
+    prepared,
+    operator,
+    connection,
+  );
+
+  const { spendSignature } = await relayUnshieldV4(base, transactions, onProgress);
+  return { txSig: spendSignature };
 }

@@ -72,6 +72,7 @@ import {
   executeUnshieldV4,
   prepareUnshieldJob,
   prepareUnshieldJobV4,
+  executeUnshieldV4Relayed,
   type PreparedUnshield,
   type PreparedUnshieldV4,
 } from '../pool/unshieldEphemeral';
@@ -265,6 +266,24 @@ export interface PoolUnshieldExecuteRequest {
    *  `executeUnshield` refuses `recipient === ownerPubkey`, and that refusal is
    *  justified by this field meaning the wallet and nothing else. */
   ownerPubkey: string;
+  /**
+   * Hand the whole withdrawal to a relayer at this base URL instead of paying
+   * for it from a pre-funded ephemeral.
+   *
+   * 🚨 THIS IS THE ONLY FIELD THAT CHANGES WHO APPEARS ON CHAIN. Present, the
+   * buyer signs nothing and pays nothing: the relayer uploads the proof, submits
+   * `unshield_denominated_stark_v4_relayed` and is reimbursed out of the
+   * protocol fee the pool already charges. Absent, this is exactly the path it
+   * has always been.
+   *
+   * ⚠️ v4 ONLY. A C1+C3 proof binds no payee, so a stranger submitting it could
+   * re-point the payout — which is why v3 relaying needed a trusted operator and
+   * this does not. Sending it on a v3 job is refused rather than ignored.
+   *
+   * ⚠️ No pre-fund is needed on this path, so `requiredLamports` from prepare
+   * does not apply and nothing should be sent to the ephemeral.
+   */
+  relayerUrl?: string;
   /**
    * Base58 address that receives the residual rent, when it is not the wallet.
    *
@@ -2275,6 +2294,20 @@ async function handlePoolUnshieldExecute(
             'returns it.',
         );
       }
+      if (req.relayerUrl) {
+        const relayed = await executeUnshieldV4Relayed(
+          job.ctx,
+          conn,
+          req.relayerUrl,
+          onProgress,
+        );
+        return {
+          kind: 'poolUnshieldExecute',
+          txSig: relayed.txSig,
+          denomination: job.ctx.poolConfig.denomination,
+        };
+      }
+
       const { txSig } = await executeUnshieldV4(
         job.ctx,
         conn,
@@ -2287,6 +2320,18 @@ async function handlePoolUnshieldExecute(
         txSig,
         denomination: job.ctx.poolConfig.denomination,
       };
+    }
+
+    // ⛔ A v3 job cannot be relayed, and saying so beats ignoring the field.
+    // The C1+C3 pair binds no payee, so a stranger holding that proof can point
+    // the payout anywhere — the defect v4 closed and the reason v3 relaying
+    // required a trusted operator.
+    if (req.relayerUrl) {
+      throw new Error(
+        'This withdrawal was proved on the C1 + C3 pair, which binds no payee, so it ' +
+          'cannot be handed to a relayer — a stranger holding it could re-point the ' +
+          'payout. Prepare it on circuit 7 (send both `recipient` and `ownerPubkey`).',
+      );
     }
 
     // v3, unchanged: the payee exists nowhere but this message, so its absence
