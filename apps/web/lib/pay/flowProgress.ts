@@ -127,11 +127,14 @@ export const WITHDRAW_PHASES: FlowPhase[] = [
   // "Uploading the proof" stays TRUE on this path even though the app uploads
   // nothing itself: from the moment the batch is handed over, the proof is
   // being put on chain by somebody, and that is what the user is waiting for.
-  // The handoff sentence is emitted ONCE and covers ~2 minutes of the node's
-  // work, so the bar rests here for the length of the relay. That is not a
-  // stall — nothing observable happens in between, and inventing intermediate
-  // motion would be the lie this file exists to refuse.
-  { id: 'upload', label: 'Uploading the proof', weight: 0.35, match: /uploading|confirming chunk|resending|readback|checking uploaded|submitting the circuit-7 spend proof|asking the relayer|building the withdrawal in the relayer|handing \d+ transactions to the relayer|handing[^.]*to the relayer/i },
+  // The bar rests here for the length of the relay (~190 s measured). Since the
+  // client began POLLING the node rather than holding one request open, it also
+  // emits `relayer is working... Ns elapsed` every few seconds. That elapsed
+  // count is a real reading, not a fraction of an unknown total — the node
+  // reports running or done and nothing between. Deliberately no motion is
+  // invented from it: a bar that creeps toward an end nobody knows is the lie
+  // this file exists to refuse.
+  { id: 'upload', label: 'Uploading the proof', weight: 0.35, match: /uploading|confirming chunk|resending|readback|checking uploaded|submitting the circuit-7 spend proof|asking the relayer|building the withdrawal in the relayer|handing \d+ transactions to the relayer|handing[^.]*to the relayer|relayer is working/i },
   { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|building v3 unshield|sending v3 unshield|v3 unshield confirmed|building v4 unshield|sending v4 unshield|v4 unshield confirmed|relayed spend confirmed|submitting c1|closing/i },
 ];
 

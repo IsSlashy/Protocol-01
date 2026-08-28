@@ -2812,6 +2812,20 @@ export async function unshieldDenominatedStarkV4(
  * guard below exists to fail EARLY, and the program is still the authority.
  */
 export const UNSHIELD_FEE_BPS = 50n;
+/** How often to ask. Short enough to feel live, long enough not to hammer. */
+const RELAY_POLL_INTERVAL_MS = 3_000;
+
+/**
+ * ⚠️ A CEILING, NOT A VERDICT. Hitting it means the client stopped waiting —
+ * it never means the spend failed. MEASURED: a full relayed batch is ~190 s, so
+ * 10 minutes is generous by design; a job still running at that point is a
+ * question for the chain, and the error says so.
+ */
+const RELAY_POLL_DEADLINE_MS = 10 * 60 * 1000;
+
+/** Consecutive unreachable polls before giving up on asking. */
+const RELAY_POLL_MAX_NETWORK_ERRORS = 10;
+
 export const RELAYER_REWARD_LAMPORTS = 2_500_000n;
 
 /**
@@ -2939,13 +2953,28 @@ export function serialiseRelayBatch(transactions: Transaction[]): string[] {
  * throws, the withdrawal did not happen, and the caller decides whether to
  * spend publicly instead. Failing closed is the whole point.
  */
+/**
+ * Hand the batch over, then POLL. Never hold the answer in the request.
+ *
+ * 🚨 MEASURED 2026-08-28 against the hosted node: a single held-open POST died
+ * with `ECONNRESET` after 193 s while the node finished the job and the
+ * withdrawal LANDED (`43vWVvXGu6tvkNDKmcsu…`, payee +0.995 SOL). The buyer was
+ * shown `fetch failed` for a spend that had succeeded. Retrying then fails on
+ * the spent nullifier, which is safe and reads like a second failure — so the
+ * note is gone and every screen says otherwise.
+ *
+ * A ~2 minute request has to survive the client, the platform edge, and every
+ * hop between. Polling asks for nothing to stay open, so a dropped connection
+ * costs one retry instead of the answer.
+ */
 export async function relayUnshieldV4(
   relayerUrl: string,
   transactions: Transaction[],
   onProgress?: (step: string) => void,
 ): Promise<{ spendSignature: string; signatures: string[] }> {
+  const base = relayerUrl.replace(/\/$/, '');
   onProgress?.(`Handing ${transactions.length} transactions to the relayer...`);
-  const res = await fetch(`${relayerUrl.replace(/\/$/, '')}/spend`, {
+  const res = await fetch(`${base}/spend`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ transactions: serialiseRelayBatch(transactions) }),
@@ -2954,8 +2983,65 @@ export async function relayUnshieldV4(
   if (!res.ok || !body?.ok) {
     throw new Error(`Relayer refused or failed: ${body?.error ?? `HTTP ${res.status}`}`);
   }
-  onProgress?.('Relayed spend confirmed.');
-  return { spendSignature: body.spendSignature, signatures: body.signatures };
+
+  // A node that already answered with the signature is the pre-polling build.
+  // Kept so the client and the node can be deployed in either order.
+  if (body.spendSignature) {
+    onProgress?.('Relayed spend confirmed.');
+    return { spendSignature: body.spendSignature, signatures: body.signatures ?? [] };
+  }
+
+  const jobId = body.jobId;
+  if (typeof jobId !== 'string' || !jobId) {
+    throw new Error('Relayer accepted the batch but returned no job id');
+  }
+
+  const startedAt = Date.now();
+  let consecutiveNetworkErrors = 0;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, RELAY_POLL_INTERVAL_MS));
+    const elapsed = Math.round((Date.now() - startedAt) / 1000);
+    if (Date.now() - startedAt > RELAY_POLL_DEADLINE_MS) {
+      throw new Error(
+        `Relayer job ${jobId} still running after ${elapsed}s. It may still land — ` +
+          'check the chain before retrying, because a retry cannot spend a spent note.',
+      );
+    }
+    onProgress?.(`Relayer is working... ${elapsed}s elapsed`);
+
+    let poll: Response;
+    try {
+      poll = await fetch(`${base}/spend/${encodeURIComponent(jobId)}`);
+    } catch {
+      // ⚠️ A DROPPED POLL IS NOT A FAILED SPEND. This is the exact condition
+      // that produced the false failure; treating it as terminal would rebuild
+      // the bug one layer up. Keep asking until the deadline.
+      consecutiveNetworkErrors += 1;
+      if (consecutiveNetworkErrors >= RELAY_POLL_MAX_NETWORK_ERRORS) {
+        throw new Error(
+          `Lost contact with the relayer for ${consecutiveNetworkErrors} polls on job ${jobId}. ` +
+            'The spend may still have landed — read the chain before retrying.',
+        );
+      }
+      continue;
+    }
+    consecutiveNetworkErrors = 0;
+
+    if (poll.status === 404) {
+      // Unknown and forgotten are the same answer, and neither means "failed".
+      throw new Error(
+        `Relayer no longer knows job ${jobId}. Read the chain: the spend may have landed.`,
+      );
+    }
+    const state = await poll.json().catch(() => ({}));
+    if (state?.state === 'done') {
+      onProgress?.('Relayed spend confirmed.');
+      return { spendSignature: state.spendSignature, signatures: state.signatures ?? [] };
+    }
+    if (state?.state === 'failed') {
+      throw new Error(`Relayer failed: ${state.error ?? 'no reason given'}`);
+    }
+  }
 }
 
 // ===========================================================================
