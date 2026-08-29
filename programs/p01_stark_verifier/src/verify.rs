@@ -3251,7 +3251,7 @@ fn derive_rlc_alpha(trace_root: &[u8; 32], pub_input_bytes: &[u8]) -> Felt {
 fn evaluate_transition_at_ood_circuit_6(
     ood_current: &[Felt],
     ood_next: &[Felt],
-    periodic_at_z: &[Felt; 7],
+    periodic_at_z: &[Felt; 9],
     alpha: Felt,
 ) -> Felt {
     let rc0 = periodic_at_z[0];
@@ -3261,10 +3261,18 @@ fn evaluate_transition_at_ood_circuit_6(
     let hash_start = periodic_at_z[4];
     let is_boundary = periodic_at_z[5];
     let is_interior = periodic_at_z[6];
+    let active = periodic_at_z[7];
+    let nba = periodic_at_z[8]; // not_boundary_active
 
     let one = Felt::ONE;
     let three = Felt::new(3);
-    let not_boundary = one.sub(is_boundary);
+    // [C6-D12]  REPLACES ; it is not multiplied by it. As
+    // functions on the trace domain the two agree everywhere except rows
+    // 383..511; as POLYNOMIALS a product would add a THIRD periodic factor to
+    // the degree-7 Poseidon constraints and take ce_blowup 8 -> 16.
+    let hash_start_a = hash_start.mul(active);
+    let is_boundary_a = is_boundary.mul(active);
+    let is_interior_a = is_interior.mul(active);
 
     // ── OLD Poseidon round (cols 0-2) ──
     let o0 = ood_current[0].add(rc0);
@@ -3278,13 +3286,13 @@ fn evaluate_transition_at_ood_circuit_6(
     let oro2 = o0_7.add(o1_7).add(three.mul(o2_7));
 
     let mut cs = [Felt::ZERO; 19];
-    cs[0] = not_boundary.mul(
+    cs[0] = nba.mul(
         ood_next[0].sub(ood_current[0]).sub(round_active.mul(oro0.sub(ood_current[0])))
     );
-    cs[1] = not_boundary.mul(
+    cs[1] = nba.mul(
         ood_next[1].sub(ood_current[1]).sub(round_active.mul(oro1.sub(ood_current[1])))
     );
-    cs[2] = not_boundary.mul(
+    cs[2] = nba.mul(
         ood_next[2].sub(ood_current[2]).sub(round_active.mul(oro2.sub(ood_current[2])))
     );
 
@@ -3298,13 +3306,13 @@ fn evaluate_transition_at_ood_circuit_6(
     let nro0 = three.mul(n0_7).add(n1_7).add(n2_7);
     let nro1 = n0_7.add(three.mul(n1_7)).add(n2_7);
     let nro2 = n0_7.add(n1_7).add(three.mul(n2_7));
-    cs[3] = not_boundary.mul(
+    cs[3] = nba.mul(
         ood_next[3].sub(ood_current[3]).sub(round_active.mul(nro0.sub(ood_current[3])))
     );
-    cs[4] = not_boundary.mul(
+    cs[4] = nba.mul(
         ood_next[4].sub(ood_current[4]).sub(round_active.mul(nro1.sub(ood_current[4])))
     );
-    cs[5] = not_boundary.mul(
+    cs[5] = nba.mul(
         ood_next[5].sub(ood_current[5]).sub(round_active.mul(nro2.sub(ood_current[5])))
     );
 
@@ -3314,27 +3322,27 @@ fn evaluate_transition_at_ood_circuit_6(
     let old_carry = ood_current[8];
     let new_carry = ood_current[9];
 
-    cs[6]  = hash_start.mul(ood_current[0].sub(old_carry).sub(dir.mul(sib.sub(old_carry))));
-    cs[7]  = hash_start.mul(ood_current[1].sub(sib).sub(dir.mul(old_carry.sub(sib))));
-    cs[8]  = hash_start.mul(ood_current[3].sub(new_carry).sub(dir.mul(sib.sub(new_carry))));
-    cs[9]  = hash_start.mul(ood_current[4].sub(sib).sub(dir.mul(new_carry.sub(sib))));
-    cs[10] = hash_start.mul(ood_current[2]);
-    cs[11] = hash_start.mul(ood_current[5]);
+    cs[6]  = hash_start_a.mul(ood_current[0].sub(old_carry).sub(dir.mul(sib.sub(old_carry))));
+    cs[7]  = hash_start_a.mul(ood_current[1].sub(sib).sub(dir.mul(old_carry.sub(sib))));
+    cs[8]  = hash_start_a.mul(ood_current[3].sub(new_carry).sub(dir.mul(sib.sub(new_carry))));
+    cs[9]  = hash_start_a.mul(ood_current[4].sub(sib).sub(dir.mul(new_carry.sub(sib))));
+    cs[10] = hash_start_a.mul(ood_current[2]);
+    cs[11] = hash_start_a.mul(ood_current[5]);
 
     // ── Carry update at boundary ──
-    cs[12] = is_boundary.mul(ood_next[8].sub(ood_current[0]));
-    cs[13] = is_boundary.mul(ood_next[9].sub(ood_current[3]));
+    cs[12] = is_boundary_a.mul(ood_next[8].sub(ood_current[0]));
+    cs[13] = is_boundary_a.mul(ood_next[9].sub(ood_current[3]));
 
     // ── Carry continuity ──
-    cs[14] = not_boundary.mul(ood_next[8].sub(ood_current[8]));
-    cs[15] = not_boundary.mul(ood_next[9].sub(ood_current[9]));
+    cs[14] = nba.mul(ood_next[8].sub(ood_current[8]));
+    cs[15] = nba.mul(ood_next[9].sub(ood_current[9]));
 
     // ── Sibling / direction continuity within cycle ──
-    cs[16] = is_interior.mul(ood_next[6].sub(ood_current[6]));
-    cs[17] = is_interior.mul(ood_next[7].sub(ood_current[7]));
+    cs[16] = is_interior_a.mul(ood_next[6].sub(ood_current[6]));
+    cs[17] = is_interior_a.mul(ood_next[7].sub(ood_current[7]));
 
     // ── Direction binary ──
-    cs[18] = hash_start.mul(dir).mul(one.sub(dir));
+    cs[18] = hash_start_a.mul(dir).mul(one.sub(dir));
 
     // RLC: Σ α^i · cs[i]. Accumulated as a Horner-style walk keeps α_pow to a
     // single running multiplication per constraint (no array allocation).
@@ -3366,49 +3374,80 @@ pub fn verify_deep_ali_circuit_6(
     proof: &GenericCompactProof,
     public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
+    use crate::periodic_consts::{C7_ACTIVE_COEFFS, C7_NOT_BOUNDARY_ACTIVE_COEFFS};
     use crate::periodic_ext_consts::{
-        C6_HASH_START_PERIODIC16, C6_HASH_START_TAIL, C6_IS_BOUNDARY_PERIODIC16,
-        C6_IS_BOUNDARY_TAIL, C6_IS_INTERIOR_PERIODIC16, C6_IS_INTERIOR_TAIL,
-        C6_RC0_PERIODIC16, C6_RC0_TAIL, C6_RC1_PERIODIC16, C6_RC1_TAIL,
-        C6_RC2_PERIODIC16, C6_RC2_TAIL, C6_ROUND_ACTIVE_PERIODIC16,
-        C6_ROUND_ACTIVE_TAIL,
+        C6_HASH_START_PERIODIC16, C6_IS_BOUNDARY_PERIODIC16, C6_IS_INTERIOR_PERIODIC16,
+        C6_RC0_PERIODIC16, C6_RC1_PERIODIC16, C6_RC2_PERIODIC16,
+        C6_ROUND_ACTIVE_PERIODIC16,
     };
 
-    // Periodic polynomials are depth-dependent (active_rows = depth*32). They
-    // are baked for depth=15, the canonical production depth; any other depth
-    // silently yields wrong constraint evaluations, so reject up-front.
-    const CANONICAL_DEPTH: u64 = 15;
+    // [C6-D12] The periodic columns are baked for the DEPTH-12 MASKED geometry:
+    // cycles 0..11 carry the walk, rows 384..511 are the blinding region and
+    // take no check of any kind. `active` and `not_boundary_active` are what
+    // switch the constraints off there. A proof claiming any other depth is
+    // checked against gates that do not describe it, so reject up-front.
+    //
+    // 🚨 CHANGED 15 -> 12, AND THIS IS A HARD FORK OF THE C6 WIRE. Every
+    // depth-15 C6 proof is rejected the moment this lands, and every depth-12
+    // proof is rejected by the currently deployed verifier. Prover, verifier and
+    // the `zk_shielded` deposit leg move in ONE deploy or the deposit path is
+    // down.
+    //
+    // ⛔ AND THE CIRCUIT IS NOT SOUND ON ITS OWN UNTIL THE ON-CHAIN TOP-LEVEL
+    // WALK EXISTS. A depth-12 C6 proves an insertion into a depth-12 SUBTREE,
+    // not into the pool. The three remaining levels must be folded on chain
+    // against the POOL ACCOUNT's own `filled_subtrees` — NEVER the
+    // caller-supplied `new_subtrees`, which `verify_c6_proof_buffer` does not
+    // hash and which any depositor can fill with arbitrary bytes.
+    //
+    // ⚠️ `get_boundary_assertions(6, ..)` needs no change: it derives
+    // `output_row = (depth - 1) * 32 + 30` from `public_inputs[4]`, so the two
+    // root rows move 478 -> 382 on their own, and 382 < 384 keeps them clear of
+    // the blinding region by two rows.
+    const CANONICAL_DEPTH: u64 = 12;
     if public_inputs.len() != 5 || public_inputs[4] != CANONICAL_DEPTH {
         return Err(VerifyError::DeepAliFailed);
     }
 
     let z = proof.ood_z;
 
-    // [A4] Evaluate the 7 periodic columns from their 32-periodic extension
-    // plus one shared Lagrange correction over the truncated rows 480..=511,
-    // instead of 7 dense 512-coefficient Horners.
+    // [C6-D12] NINE columns, TWO evaluator classes, and NO Lagrange arm.
+    //
+    //   0-6  stride-16. Under the depth-12 layout these are 32-periodic on ALL
+    //        512 rows — the walk no longer truncates them — so the tail that
+    //        `eval_periodic_ext_at_z` corrected for is identically zero and the
+    //        seven `C6_*_TAIL` tables are dead. `y16 = z^16` is paid once.
+    //   7-8  genuinely dense. These are the row gates, and they are the entire
+    //        reason C6 can carry a mask at all.
+    //
+    // ⛔ RETURNING SEVEN INSTEAD OF NINE WOULD BE A SILENT PRIVACY REGRESSION.
+    // It is not a compile error waiting to happen and it rejects no honest
+    // proof: drop 7 and 8 and the verifier re-imposes the Poseidon rounds across
+    // rows 384..511, the 128 masked rows become 128 constrained ones, and
+    // `air_aware_recovery_c6.rs` recovers four of the ten columns again.
+    //
+    // ✅ THE TWO DENSE TABLES ARE C7's, NOT COPIES. Both gates are functions of
+    // `FIRST_FREE_ROW` and `HASH_CYCLE_LEN` alone, and depth-12 C6 has exactly
+    // C7's geometry, so the tables are bit-identical. Sharing them costs ZERO
+    // added rodata; `c6_and_c7_row_gates_are_the_same_two_columns` is what turns
+    // that identity into a signal rather than a coincidence.
+    //
+    // ⛔ NO `Result` HERE ANY MORE, AND THE ABSENCE IS THE POINT. The old path
+    // rejected any `z` landing on rows 480..=511 because the Lagrange correction
+    // divides by `(z - g^r)`. There is no division now, so there is nothing to
+    // guard: such a `z` is evaluated correctly instead of refused. That is a
+    // liveness gain with no soundness component.
     let y16 = z.exp(16);
-    let lagrange = match cycle15_lagrange_weights(z, y16) {
-        Some(l) => l,
-        // OOD landed on a truncated row: degenerate sampling, reject.
-        None => return Err(VerifyError::DeepAliFailed),
-    };
-    let periodic_at_z: [Felt; 7] = [
-        eval_periodic_ext_at_z(&C6_RC0_PERIODIC16, &C6_RC0_TAIL, y16, &lagrange),
-        eval_periodic_ext_at_z(&C6_RC1_PERIODIC16, &C6_RC1_TAIL, y16, &lagrange),
-        eval_periodic_ext_at_z(&C6_RC2_PERIODIC16, &C6_RC2_TAIL, y16, &lagrange),
-        eval_periodic_ext_at_z(
-            &C6_ROUND_ACTIVE_PERIODIC16, &C6_ROUND_ACTIVE_TAIL, y16, &lagrange,
-        ),
-        eval_periodic_ext_at_z(
-            &C6_HASH_START_PERIODIC16, &C6_HASH_START_TAIL, y16, &lagrange,
-        ),
-        eval_periodic_ext_at_z(
-            &C6_IS_BOUNDARY_PERIODIC16, &C6_IS_BOUNDARY_TAIL, y16, &lagrange,
-        ),
-        eval_periodic_ext_at_z(
-            &C6_IS_INTERIOR_PERIODIC16, &C6_IS_INTERIOR_TAIL, y16, &lagrange,
-        ),
+    let periodic_at_z: [Felt; 9] = [
+        eval_periodic_compressed32_at_z(&C6_RC0_PERIODIC16, y16),
+        eval_periodic_compressed32_at_z(&C6_RC1_PERIODIC16, y16),
+        eval_periodic_compressed32_at_z(&C6_RC2_PERIODIC16, y16),
+        eval_periodic_compressed32_at_z(&C6_ROUND_ACTIVE_PERIODIC16, y16),
+        eval_periodic_compressed32_at_z(&C6_HASH_START_PERIODIC16, y16),
+        eval_periodic_compressed32_at_z(&C6_IS_BOUNDARY_PERIODIC16, y16),
+        eval_periodic_compressed32_at_z(&C6_IS_INTERIOR_PERIODIC16, y16),
+        eval_periodic_at_z(&C7_ACTIVE_COEFFS, z),
+        eval_periodic_at_z(&C7_NOT_BOUNDARY_ACTIVE_COEFFS, z),
     ];
 
     // Collect OOD trace values. Circuit 6 is width-10.
@@ -5599,7 +5638,17 @@ fn verify_constraints_merkle_update(
             // Rows >= `active_rows` now fall through to the padding arm, which
             // demands identity on all 10 columns — a real constraint, not a
             // free pass.
-            const CANONICAL_DEPTH: usize = 15;
+            // [C6-D12] 12, not 15. This arm is RETIRED post-B7 and never runs; the
+            // constant is corrected anyway so the file does not carry two
+            // different depths for one circuit.
+            //
+            // ⛔ DO NOT REVIVE THIS ARM. Its `else` branch demands identity on
+            // all ten columns for rows at or past `active_rows` — right at
+            // depth 15, and now the single most destructive line that could be
+            // re-enabled. Rows 384..511 are the blinding region: any per-query
+            // check reaching them turns 128 free rows into 128 constrained ones
+            // and undoes this entire change.
+            const CANONICAL_DEPTH: usize = 12;
             let active_rows = CANONICAL_DEPTH * hash_cycle_len; // 480
 
             if trace_row < active_rows && pos_in_cycle < config.num_rounds {
