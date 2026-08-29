@@ -24,6 +24,71 @@
 //! Soundness note: since both paths use the same sibling+direction columns,
 //! a malicious prover cannot independently forge old and new paths — they are
 //! bound together by the same witness.
+//!
+//! ## ⛔ C6 IS NOT ZERO-KNOWLEDGE, MEASURED 2026-08-29
+//!
+//! Four of these ten columns are fully determined by the published proof bytes.
+//! `stark/tests/air_aware_recovery_c6.rs` recovers them and prints the numbers:
+//!
+//! ```text
+//!   col 6  sibling      the authentication path      15 unknowns vs R = 90
+//!   col 7  direction    the leaf index, in binary     15 unknowns
+//!   col 8  old_carry    old_leaf -> ... -> old_root   16 segments, 2 public
+//!   col 9  new_carry    new_leaf -> ... -> new_root   16 segments, 2 public
+//! ```
+//!
+//! The cause is in this file: the builder writes ONE value across all 32 rows of
+//! a cycle for those four columns (`:397-400`, `:445-448`, `:459-462`), so a
+//! 512-row column carries fifteen unknowns, not 512. Equalities are linear, so
+//! nobody has to invert Poseidon.
+//!
+//! ⚠️ The honest limit, because it is easy to overstate: `old_leaf`, `new_leaf`,
+//! `old_root` and `new_root` are all PUBLIC inputs, so an observer holding the
+//! tree could already walk it to the index and the siblings. This is not a new
+//! linkage. It is a proof that C6 is not zero-knowledge, and it SIZES the mask.
+//!
+//! ## THE FIX, AND WHY C6 IS CHEAPER THAN C3 AND C7
+//!
+//! `R = 4 * num_queries + 2 = 90` free rows are needed. At `CANONICAL_DEPTH = 15`
+//! the walk fills 480 of 512 rows and leaves 32 — short by 58. The tail is not
+//! even free today: with the periodic flags at zero the Poseidon constraints
+//! degenerate to `next[i] - current[i] = 0`, so the columns are PINNED constant,
+//! which is one degree of freedom per column rather than 32.
+//!
+//! ✅ Cutting the depth to 12 frees 128 rows on all ten columns, margin 38.
+//! `trace_length_for_depth(12) = next_pow2(384 + 1) = 512`, unchanged — so `n`,
+//! `deg(Q)`, `quotient_segments = 8` and `rho = 1/16` all stay put, and the wire
+//! does not grow by a byte. It is exactly the move C7 made (`air/spend.rs:317`).
+//!
+//! 🚨 **AND THE TOP-LEVEL WALK IS EASIER HERE THAN IT WAS FOR C7.** C7's plan
+//! rejects `filled_subtrees` as the source of the three top siblings
+//! (`air/spend.rs:153-161`) because it is an INSERTION FRONTIER: it holds one
+//! value per level on the CURRENT insertion path, so it cannot supply the
+//! siblings of an arbitrary historical leaf. That objection is right for C7, and
+//! for C3 — both prove membership of a leaf deposited long ago.
+//!
+//! It does NOT apply to C6. C6 proves an INSERTION, and an insertion is always
+//! at the frontier, which is what `filled_subtrees` IS. A depth-12 C6 folds both
+//! subtree roots up the remaining three levels against the POOL ACCOUNT's own
+//! stored frontier — no untrusted instruction data, no `is_valid_root` dance.
+//!
+//! ⛔ AND THE TRAP INSIDE THAT, WHICH IS A FUND-LOSS SHAPE. It must read the
+//! **pool account's** `filled_subtrees`, NEVER the caller-supplied
+//! `new_subtrees`. `verify_c6_proof_buffer` hashes exactly 40 bytes —
+//! `[old_leaf, new_leaf, old_root, new_root, depth]` — so `new_subtrees` is
+//! UNATTESTED and any depositor can write arbitrary bytes into it.
+//!
+//! ✅ The anonymity cost of this cut is ZERO, unlike C7's. C7 pays because a
+//! spend then names one of 8 buckets — and at a bucket boundary an individual's
+//! set can be 1 while the aggregate reports 0.001 bits (`air/spend.rs:196-202`).
+//! C6 pays nothing: a leaf's bucket follows from its INSERTION INDEX, not from
+//! this circuit's depth, so cutting the depth re-partitions nothing. And the
+//! deposit already names its author — `depositor: Signer` is in the transaction
+//! accounts, which `shield_denominated_v3.rs` states outright.
+//!
+//! ⚠️ The change is prover-AND-verifier lockstep and ends in a redeploy: gating
+//! rows 480..511 off prover-side while the deployed verifier still checks them
+//! is a disagreement, not a masking. See the plan's 30-item checklist.
 
 use winterfell::{
     Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
