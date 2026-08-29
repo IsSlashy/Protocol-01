@@ -46,7 +46,25 @@ fn main() {
             let elements: Vec<u64> = args[3].split(',').map(|s| s.trim().parse().unwrap()).collect();
             let indices: Vec<u8> = args[4].split(',').map(|s| s.trim().parse().unwrap()).collect();
 
-            let proof = p01_stark::compact::generate_merkle_path_compact_proof(leaf, &elements, &indices);
+            // The C3 blinding region. Same caveat as the C6 arm below: a
+            // deterministic xorshift is adequate for generating a proof to
+            // inspect and INADEQUATE for anything whose secrecy matters. The
+            // shipping path draws from getrandom inside the wasm entry.
+            let mask: Vec<u64> = {
+                let n = p01_stark::air::merkle_path::mask_len_for_depth(elements.len());
+                let mut z: u64 = 0x9E37_79B9_7F4A_7C15;
+                (0..n)
+                    .map(|_| {
+                        z ^= z << 13;
+                        z ^= z >> 7;
+                        z ^= z << 17;
+                        z % 0xFFFF_FFFF_0000_0001
+                    })
+                    .collect()
+            };
+            let proof = p01_stark::compact::generate_merkle_path_compact_proof(
+                leaf, &elements, &indices, &mask,
+            );
             println!("{{");
             println!("  \"circuit_id\": {},", proof.circuit_id);
             println!(

@@ -3,6 +3,7 @@ use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkShieldedError;
+use crate::state::spend_root;
 use crate::fee::{self, PROTOCOL_FEE_WALLET};
 use crate::state::{DenominatedPool, MerkleTreeState, NullifierRecord};
 
@@ -62,7 +63,10 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32], 
     merkle_root: [u8; 32],
     min_epoch: u64,
     stark_commitment: u64,
-    num_outputs: u8
+    num_outputs: u8,
+    subtree_root: u64,
+    siblings: Vec<u64>,
+    directions: Vec<u8>
 )]
 pub struct SplitNoteStark<'info> {
     /// Transaction submitter — must be the note owner (signs to bind output commitments).
@@ -79,7 +83,12 @@ pub struct SplitNoteStark<'info> {
         ],
         bump = source_pool.bump,
         constraint = source_pool.is_active @ ZkShieldedError::PoolNotActive,
-        constraint = source_pool.is_valid_root(&merkle_root) @ ZkShieldedError::InvalidMerkleRoot
+        // ⛔ NO `is_valid_root` CONSTRAINT HERE ANY MORE, AND ITS ABSENCE IS
+        // DELIBERATE. Since the C3 depth cut, `merkle_root` is the OUTPUT of the
+        // handler's Poseidon walk, not a value the caller names and the pool
+        // confirms. Checking it here would run BEFORE the walk, confirming a
+        // root the proof does not actually reach. The ring membership is still
+        // enforced, once, in the handler, right after the walk.
     )]
     pub source_pool: Box<Account<'info, DenominatedPool>>,
 
@@ -177,6 +186,13 @@ pub fn handler(
     num_outputs: u8,
     output_commitments: Vec<[u8; 32]>,
     new_roots: Vec<[u8; 32]>,
+    // [C3-D12] Not optional. The C3 proof attests membership in a depth-12
+    // SUBTREE, so the handler must walk the remaining levels to reach a pool
+    // root. None of the three is trusted: the walk's result must equal the
+    // named `merkle_root`, and that root must already be in the pool's ring.
+    subtree_root: u64,
+    siblings: Vec<u64>,
+    directions: Vec<u8>,
 ) -> Result<()> {
     let clock = Clock::get()?;
 
@@ -343,23 +359,69 @@ pub fn handler(
     // c3.leaf ↔ c1.commitment binding: both `pub_buf[..8]` here and the C1 hash
     // above are built from the SAME `stark_commitment` arg, so lying about
     // either fails one of the two hash checks.
-    // c3.root ↔ source pool binding: `merkle_root[..8]` is fed here, and the
-    // full 32-byte `merkle_root` is constrained to the source pool's historical
-    // ring by `source_pool.is_valid_root(&merkle_root)` on the account above.
-    let tree_depth = ctx.accounts.source_pool.tree_depth as u64;
-    require!(tree_depth == 15, ZkShieldedError::InvalidProof);
+    // 🚨 THE TWO VALUES IN THIS HASH BOTH CHANGED ON 2026-08-29.
+    //
+    // C3 was cut from depth 15 to depth 12 so rows 384..511 could become a
+    // blinding region. Two consequences land right here:
+    //
+    //   depth  is the CONSTANT 12, not the pool's tree depth. The pool tree is
+    //          still 15 deep; the CIRCUIT covers 12 of its levels. Feeding the
+    //          pool depth builds a hash no honest proof can match.
+    //   root   is `subtree_root`, the root of the depth-12 subtree the leaf sits
+    //          in — C3's public input 1 is what `compute_merkle_root` returns
+    //          over the twelve path elements it was given.
+    //
+    // ⛔ NEITHER IS TRUSTED by this block. The walk below is what ties
+    // `subtree_root` to this pool, and it must not be separated from it.
+    let circuit_depth = spend_root::SPEND_SUBTREE_DEPTH as u64;
     {
-        let mut pub_buf = [0u8; 24]; // 3 × u64 LE: leaf, root, depth
+        let mut pub_buf = [0u8; 24]; // 3 x u64 LE: leaf, subtree_root, depth
         pub_buf[..8].copy_from_slice(&stark_commitment.to_le_bytes());
-        pub_buf[8..16].copy_from_slice(&merkle_root[..8]);
-        pub_buf[16..24].copy_from_slice(&tree_depth.to_le_bytes());
+        pub_buf[8..16].copy_from_slice(&subtree_root.to_le_bytes());
+        pub_buf[16..24].copy_from_slice(&circuit_depth.to_le_bytes());
         let expected_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
-        require!(
-            c3_inputs_hash == expected_hash,
-            ZkShieldedError::InvalidProof
-        );
+        require!(c3_inputs_hash == expected_hash, ZkShieldedError::InvalidProof);
     }
     drop(c3_data);
+
+    // -----------------------------------------------------------------------
+    // [C3-D12] Walk the top levels, then tie the result to the pool's ring.
+    //
+    // The proof above says "this leaf is in a 12-level tree rooted at
+    // `subtree_root`". It says nothing about whose tree that is — anyone can
+    // build a 12-level tree containing any leaf they like. These three steps are
+    // what turn it into a statement about THIS pool:
+    //
+    //   1. the walk derives a pool root from the subtree root and the siblings;
+    //   2. that derived root must equal the `merkle_root` the caller named;
+    //   3. that named root must be one the pool actually published.
+    //
+    // ✅ CALLER-SUPPLIED SIBLINGS ARE SAFE HERE. C3 READS: a forged sibling
+    // produces a root that is in no history, so step 3 refuses it. ⛔ C6 WRITES,
+    // where the root is new by definition and there is no history to check
+    // against — which is why the deposit path uses
+    // `insert_root::fold_insertion` against the pool's own `filled_subtrees`.
+    // The two are not interchangeable.
+    // -----------------------------------------------------------------------
+    require!(
+        ctx.accounts.source_pool.tree_depth == ctx.accounts.source_merkle_tree.depth,
+        ZkShieldedError::InvalidMerkleRoot
+    );
+    let derived_root = spend_root::resolve_pool_root(
+        subtree_root,
+        &siblings,
+        &directions,
+        ctx.accounts.source_pool.tree_depth,
+    )
+    .map_err(crate::instructions::unshield_denominated_stark_v4::spend_root_error)?;
+    require!(
+        merkle_root[..8] == derived_root.to_le_bytes(),
+        ZkShieldedError::SpendRootMismatch
+    );
+    require!(
+        ctx.accounts.source_pool.is_valid_root(&merkle_root),
+        ZkShieldedError::InvalidMerkleRoot
+    );
 
     // -----------------------------------------------------------------------
     // 6. Transfer funds: source pool -> target pool (SOL or SPL)

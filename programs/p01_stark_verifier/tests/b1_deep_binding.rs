@@ -145,9 +145,9 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
             {
                 // Canonical depth 15 — CONFIG_MERKLE_PATH pins trace_length 512,
                 // which only a depth-15 witness produces. Same args cu_budget uses.
-                let pe: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
-                let pi: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
-                p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi)
+                let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
+                let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+                p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()))
             },
         ),
         (
@@ -926,23 +926,21 @@ fn t1_t2_t3_c2_coordinated_forgery() {
 #[test]
 fn t1_t2_t3_c3_coordinated_forgery() {
     let config = &CONFIG_MERKLE_PATH;
-    let pe: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
-    let pi: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
-    let honest = p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi);
+    let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
+    let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+    let honest = p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()));
     let forged = p01_stark::compact::generate_merkle_path_compact_proof_with_forgery(
         777,
         &pe,
-        &pi,
+        &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::Honest,
-    );
+        TerminalPoly::Honest);
     let aliased = p01_stark::compact::generate_merkle_path_compact_proof_with_forgery(
         777,
         &pe,
-        &pi,
+        &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::AliasedFold,
-    );
+        TerminalPoly::AliasedFold);
     run_generic_forgery_case("C3", config, &honest, &forged, &aliased);
 }
 
@@ -1876,8 +1874,22 @@ const FIXTURE_C1_SHA256: &str =
 /// classify, because this tree rejects every proof it emits.
 const FIXTURE_C2_SHA256: &str =
     "c3961423c1573f04e4c62ea4b0cf7e15c6146507fa2b015cc7a5f473cfbb8a7c";
-const FIXTURE_C3_SHA256: &str =
-    "86a572a2dbe86446ac46457de930001d0aa620db8b70a42b2fdd6f8afb1f4aca";
+// ⛔ FIXTURE_C3_SHA256 IS GONE, AND IT MUST NOT COME BACK. Retired 2026-08-29,
+// for the same reason as C6's an hour earlier.
+//
+// C3 now draws a fresh CSPRNG blinding region for every proof
+// (`lib.rs::draw_blinding_mask`, which refuses to build without one), so its
+// bytes are not reproducible and a pinned digest cannot describe it.
+//
+// 🚨 THE DANGEROUS VERSION OF THIS IS A GREEN ONE. A digest pinned against
+// `c3_deterministic_probe_mask` would pass here forever while asserting
+// reproducibility of a prover that is not reproducible. What replaces it:
+//
+//   - the LENGTH pin below, which measured 78,157 both before and after the
+//     mask landed — that number is the evidence that a 128-row blinding region
+//     costs zero wire bytes, on C3 exactly as on C6 (81,037 either side);
+//   - `c3_proof_bytes_change_when_the_mask_changes`, which pins the property
+//     that matters and that no digest can express.
 /// [BIND-C2C4 2026-08-03] MOVED, same cause and same 🚨 as `FIXTURE_C2_SHA256`
 /// above: C4's boundary fold changes its committed quotient. 81,457 bytes
 /// unchanged.
@@ -1924,9 +1936,9 @@ fn fixture_c2() -> Vec<u8> {
 }
 
 fn fixture_c3() -> Vec<u8> {
-    let pe: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
-    let pi: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
-    p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi).proof_bytes
+    let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
+    let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+    p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len())).proof_bytes
 }
 
 fn fixture_c4() -> Vec<u8> {
@@ -1965,7 +1977,8 @@ const FIXTURES: [Fixture; 7] = [
     Fixture { label: "C0", len: 47_641, sha256: Some(FIXTURE_C0_SHA256), build: fixture_c0 },
     Fixture { label: "C1", len: 68_881, sha256: Some(FIXTURE_C1_SHA256), build: fixture_c1 },
     Fixture { label: "C2", len: 69_761, sha256: Some(FIXTURE_C2_SHA256), build: fixture_c2 },
-    Fixture { label: "C3", len: 78_157, sha256: Some(FIXTURE_C3_SHA256), build: fixture_c3 },
+    // [C3-D12] Length pinned, digest deliberately absent. See the note above.
+    Fixture { label: "C3", len: 78_157, sha256: None, build: fixture_c3 },
     Fixture { label: "C4", len: 81_457, sha256: Some(FIXTURE_C4_SHA256), build: fixture_c4 },
     Fixture { label: "C5", len: 78_877, sha256: Some(FIXTURE_C5_SHA256), build: fixture_c5 },
     // [C6-D12] Length pinned, digest deliberately absent. See the note above.
@@ -2026,6 +2039,43 @@ fn c6_proof_bytes_change_when_the_mask_changes() {
     assert_eq!(
         a.public_inputs, b.public_inputs,
         "the mask must not touch the public inputs — same insertion, same statement",
+    );
+}
+
+/// [C3-D12] Two masks, two different proofs. The property a digest cannot pin.
+///
+/// The twin of `c6_proof_bytes_change_when_the_mask_changes`, and it tests the
+/// thing `FIXTURE_C3_SHA256` never did: that the blinding region REACHES THE
+/// PUBLISHED BYTES. A mask dropped on the floor — written into the trace and
+/// then overwritten, or gated out of the committed columns — would leave two
+/// proofs identical here while every other C3 test in this repository stayed
+/// green.
+#[test]
+fn c3_proof_bytes_change_when_the_mask_changes() {
+    let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
+    let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+
+    let m1 = p01_stark::compact::c3_deterministic_probe_mask(pe.len());
+    let mut m2 = m1.clone();
+    // ONE element, by ONE. The weakest possible perturbation: a bigger change
+    // might show up by accident even if the mask were only partly committed.
+    m2[0] = (m2[0] + 1) % 0xFFFF_FFFF_0000_0001;
+
+    let a = p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &m1);
+    let b = p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &m2);
+
+    assert_eq!(
+        a.proof_bytes.len(), b.proof_bytes.len(),
+        "the mask must not change the wire LENGTH — that would be a format change, not blinding",
+    );
+    assert_ne!(
+        a.proof_bytes, b.proof_bytes,
+        "a one-element mask change produced identical proof bytes: the blinding region is \
+         not reaching the committed trace, and C3 is publishing an unmasked proof",
+    );
+    assert_eq!(
+        a.public_inputs, b.public_inputs,
+        "the mask must not touch the public inputs — same leaf, same subtree root, same statement",
     );
 }
 

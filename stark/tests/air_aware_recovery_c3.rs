@@ -85,7 +85,7 @@ const BLOWUP: u64 = 16;
 const NUM_QUERIES: usize = 22;
 const QUOTIENT_SEGMENTS: usize = 8;
 const HASH_CYCLE_LEN: usize = 32;
-const DEPTH: usize = 15;
+const DEPTH: usize = 12;
 
 fn self_check_field() {
     assert_eq!(fpow(GEN_512, 512), 1, "GEN_512 is not a 512th root");
@@ -193,16 +193,69 @@ fn published_nodes(op: &Openings, col: usize) -> Vec<(u64, u64)> {
 // at all for cols 3 and 4, because the builder writes a literal zero there.
 // ---------------------------------------------------------------------------
 
-/// `held_tail` = true for col 5, whose padding block carries the final carry
-/// (an unknown), false for cols 3 and 4, whose padding is a known zero.
+/// The attacker's best model of the trace, as a partition into cells that must
+/// hold the same value.
+///
+/// 🚨 THE `held_tail` FLAG IS NOW THE WHOLE EXPERIMENT, and its meaning has
+/// inverted. It used to mean "col 5's padding block carries the final carry, so
+/// model it as ONE unknown". Since 2026-08-29 no column has a held tail: rows
+/// 384..511 are the blinding region and every row there is an INDEPENDENT
+/// uniform value.
+///
+///   `held_tail = false` -> the honest model. 12 held cycles plus 128 free rows
+///                          = 140 unknowns against ~90 equations. Cannot close.
+///   `held_tail = true`  -> the PRE-MASK model, kept only as the counterfactual
+///                          below. 13 unknowns against ~90. Closes immediately.
+///
+/// Keeping both is what makes the failure meaningful. A solver that returns
+/// `None` proves nothing on its own -- it could be a broken parser, a wrong
+/// generator, an off-by-one in the abscissae. The counterfactual runs the SAME
+/// solver over the SAME published bytes and closes, so the only difference left
+/// is the mask.
 fn segments(held_tail: bool) -> Vec<Vec<usize>> {
     let mut segs: Vec<Vec<usize>> = (0..DEPTH)
         .map(|c| (c * HASH_CYCLE_LEN..(c + 1) * HASH_CYCLE_LEN).collect())
         .collect();
     if held_tail {
+        // The pinned tail as it stood before the depth cut: one value repeated.
         segs.push((DEPTH * HASH_CYCLE_LEN..TRACE_LEN).collect());
+    } else {
+        for row in (DEPTH * HASH_CYCLE_LEN)..TRACE_LEN {
+            segs.push(vec![row]);
+        }
     }
     segs
+}
+
+/// `MASK_ROWS * TRACE_WIDTH`, the arity the prover now demands.
+fn mask_len() -> usize {
+    (TRACE_LEN - DEPTH * HASH_CYCLE_LEN) * 6
+}
+
+/// A deterministic mask. Adequate for a RANK measurement -- the rank does not
+/// care how the values were drawn, only that the rows are independent unknowns
+/// -- and inadequate for a secrecy claim, which is why the shipping path draws
+/// from getrandom and refuses to build without it.
+fn test_mask(seed: u64) -> Vec<u64> {
+    let mut z = seed | 1;
+    (0..mask_len())
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z % 0xFFFF_FFFF_0000_0001
+        })
+        .collect()
+}
+
+/// One honest C3 proof, masked, at the canonical depth.
+fn masked_proof() -> p01_stark::compact::GenericCompactProofData {
+    generate_merkle_path_compact_proof(
+        LEAF,
+        &path_elements(),
+        &DIRECTIONS.to_vec(),
+        &test_mask(0xC3_5EED_0001),
+    )
 }
 
 fn system(nodes: &[(u64, u64)], segs: &[Vec<usize>]) -> Vec<Vec<u64>> {
@@ -258,7 +311,7 @@ fn solve(mut rows: Vec<Vec<u64>>, n: usize) -> Option<Vec<u64>> {
 const LEAF: u64 = 0x0DEC_0DED_0000_0777;
 /// Deliberately not alternating: a pattern would be guessable without any
 /// recovery at all, and this file would prove nothing about the proof bytes.
-const DIRECTIONS: [u8; DEPTH] = [1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0];
+const DIRECTIONS: [u8; DEPTH] = [1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1];
 
 fn path_elements() -> Vec<u64> {
     (0..DEPTH as u64).map(|i| 0xBEEF_0000 + i * 7919).collect()
@@ -268,53 +321,67 @@ fn path_elements() -> Vec<u64> {
 // 1. THE ARTEFACT — the Merkle path and the leaf index, from the bytes.
 // ===========================================================================
 
+/// INVERTED 2026-08-29. This test used to be named
+/// `c3_held_columns_are_recovered_from_published_bytes` and it PASSED: it read
+/// the authentication path and the leaf index straight out of one honest
+/// proof's published bytes.
+///
+/// It could, because C3's tail was a pinned copy of the last state. Each held
+/// column contributed DEPTH + 1 unknowns across the whole 512-row trace, and the
+/// wire publishes `R = 4 * 22 + 2 = 90` openings per column. 16 against 90 is
+/// wildly over-determined, and Gaussian elimination did the rest -- no Poseidon
+/// inversion required, because the AIR itself supplies the linear equalities.
+///
+/// The depth cut replaced that tail with 128 rows of fresh CSPRNG output. Each
+/// is now its own unknown, so the count runs the other way: 12 + 128 = 140
+/// against 90. The system is under-determined and there is nothing to solve.
+///
+/// ⛔ WHAT THIS DOES NOT SAY. It does not say C3 is zero-knowledge. It says the
+/// held columns are no longer recoverable from the published TRACE openings.
+/// The FRI salt, the vector commitment and the quotient decomposition are
+/// untouched and carry no simulation argument -- see `stark/src/air/spend.rs`.
 #[test]
-fn c3_held_columns_are_recovered_from_published_bytes() {
+fn the_mask_closes_the_two_columns_that_used_to_fall() {
     self_check_field();
 
-    let pe = path_elements();
-    let pi: Vec<u8> = DIRECTIONS.to_vec();
-    let proof = generate_merkle_path_compact_proof(LEAF, &pe, &pi);
-    let op = parse_generic(&proof.proof_bytes);
+    let op = parse_generic(&masked_proof().proof_bytes);
     assert_eq!(op.num_queries, NUM_QUERIES, "C3 ships {NUM_QUERIES} queries");
 
-    // col 4 — the direction bit of each level, i.e. the leaf index in binary.
+    let unknowns = segments(false).len();
     let dir_nodes = published_nodes(&op, 4);
-    let dirs = solve(system(&dir_nodes, &segments(false)), DEPTH)
-        .expect("col 4 must solve: 15 unknowns against ~90 equations");
-
-    // col 3 — the authentication path.
     let sib_nodes = published_nodes(&op, 3);
-    let sibs = solve(system(&sib_nodes, &segments(false)), DEPTH)
-        .expect("col 3 must solve");
 
     println!("published equations per column : {}", dir_nodes.len());
-    println!("unknowns per held column       : {DEPTH}");
-    println!("over-determined by             : {}", dir_nodes.len() as i64 - DEPTH as i64);
-    println!();
-    println!("direction bits expected : {:?}", DIRECTIONS);
-    println!("direction bits recovered: {:?}", dirs);
-    println!("sibling[0]  expected  {:#018x}", pe[0]);
-    println!("sibling[0]  recovered {:#018x}", sibs[0]);
-    println!("sibling[14] expected  {:#018x}", pe[14]);
-    println!("sibling[14] recovered {:#018x}", sibs[14]);
+    println!("unknowns per column, masked    : {unknowns}  ({DEPTH} held cycles + {} free rows)",
+             TRACE_LEN - DEPTH * HASH_CYCLE_LEN);
+    println!("under-determined by            : {}", unknowns as i64 - dir_nodes.len() as i64);
 
-    for (level, &want) in DIRECTIONS.iter().enumerate() {
-        assert_eq!(
-            dirs[level], want as u64,
-            "direction bit of level {level} not recovered",
-        );
+    // The two columns that used to fall: col 4 is the leaf index in binary, col
+    // 3 is the authentication path.
+    let mut solved = 0;
+    for (name, nodes) in [("direction bits (col 4)", &dir_nodes), ("siblings (col 3)", &sib_nodes)] {
+        if solve(system(nodes, &segments(false)), unknowns).is_some() {
+            println!("  {name}: STILL SOLVES");
+            solved += 1;
+        } else {
+            println!("  {name}: under-determined, no solution");
+        }
     }
-    for (level, &want) in pe.iter().enumerate() {
-        assert_eq!(sibs[level], want, "sibling of level {level} not recovered");
-    }
+    assert_eq!(
+        solved, 0,
+        "{solved} of C3's held columns are still recoverable from the published bytes",
+    );
 
-    // The leaf index, spelled out. It is the witness the statement never names.
-    let index: u64 = DIRECTIONS.iter().enumerate().fold(0u64, |acc, (i, &b)| acc | ((b as u64) << i));
-    let recovered_index: u64 = dirs.iter().enumerate().fold(0u64, |acc, (i, &b)| acc | (b << i));
-    println!("\nleaf index expected  {index}");
-    println!("leaf index recovered {recovered_index}");
-    assert_eq!(recovered_index, index, "the leaf index is the direction bits read as binary");
+    // ⚠️ ANTI-VACUITY. A `None` from the solver is only evidence if the SAME
+    // solver over the SAME bytes closes under the pre-mask model. Otherwise this
+    // test would pass just as well with a broken parser or a wrong generator.
+    assert!(
+        solve(system(&dir_nodes, &segments(true)), DEPTH + 1).is_some(),
+        "the PRE-MASK model must still close, or this test is measuring a broken \
+         solver rather than the mask",
+    );
+    println!("\ncounterfactual (pinned tail, the pre-cut model): SOLVES");
+    println!("so the difference is the mask, not the arithmetic");
 }
 
 // ===========================================================================
@@ -325,8 +392,7 @@ fn c3_held_columns_are_recovered_from_published_bytes() {
 fn the_held_columns_are_what_make_it_solvable() {
     self_check_field();
 
-    let proof = generate_merkle_path_compact_proof(LEAF, &path_elements(), &DIRECTIONS.to_vec());
-    let op = parse_generic(&proof.proof_bytes);
+    let op = parse_generic(&masked_proof().proof_bytes);
     let nodes = published_nodes(&op, 4);
 
     // Without the AIR: 512 free cells against ~90 equations. Must not close.
@@ -340,14 +406,23 @@ fn the_held_columns_are_what_make_it_solvable() {
         "the openings alone must not pin 512 free cells",
     );
 
-    // With it: 15 unknowns, pinned.
+    // With the AIR but WITHOUT the mask -- the pre-cut model: 13 unknowns,
+    // pinned. This is the line that says the AIR was the cause.
     assert!(
-        solve(system(&nodes, &segments(false)), DEPTH).is_some(),
-        "the held-cycle model must close",
+        solve(system(&nodes, &segments(true)), DEPTH + 1).is_some(),
+        "the pre-mask held-cycle model must close",
     );
 
-    println!("512 free cells : under-determined");
-    println!("{DEPTH} held cycles : solved");
+    // With the AIR AND the mask: 140 unknowns, not pinned. The mask is the only
+    // thing that changed between the two lines above and below.
+    assert!(
+        solve(system(&nodes, &segments(false)), segments(false).len()).is_none(),
+        "the masked model must NOT close",
+    );
+
+    println!("512 free cells        : under-determined");
+    println!("{DEPTH} held cycles + pinned tail : SOLVED   (the pre-cut state)");
+    println!("{DEPTH} held cycles + 128 free    : under-determined (today)");
 }
 
 // ===========================================================================
@@ -355,29 +430,31 @@ fn the_held_columns_are_what_make_it_solvable() {
 // ===========================================================================
 
 #[test]
-fn c3_has_the_widest_margin_measured_so_far() {
+fn c3_now_sits_with_c6_and_c7_on_the_under_determined_side() {
     self_check_field();
 
-    let proof = generate_merkle_path_compact_proof(LEAF, &path_elements(), &DIRECTIONS.to_vec());
-    let op = parse_generic(&proof.proof_bytes);
+    let op = parse_generic(&masked_proof().proof_bytes);
     let published = published_nodes(&op, 4).len();
+    let unknowns = segments(false).len();
 
-    println!("             unknowns  equations  over-determined by");
-    println!("  C0 (32)          32        110                  72");
-    println!("  C1 (128)         93        110                  11");
-    println!("  C3 held cols     {DEPTH:>2}   {published:>8}   {:>17}", published as i64 - DEPTH as i64);
-    println!("  C7 (512)        138         90     under by 48 -> no solve");
+    println!("             unknowns  equations  verdict");
+    println!("  C0 (32)          32        110  SOLVES — no model, geometry must change");
+    println!("  C1 (128)         93        110  SOLVES — n must go 128 -> 256");
+    println!("  C3 masked     {unknowns:>4}   {published:>8}  under by {:<3} -> no solve",
+             unknowns as i64 - published as i64);
+    println!("  C6 masked        140         90  under by 50  -> no solve");
+    println!("  C7 (512)         138         90  under by 48  -> no solve");
 
+    // The margin, stated as the thing it actually is: the number of unknowns the
+    // mask adds beyond what the wire can pin.
     assert!(
-        published > DEPTH,
-        "C3's held columns must be over-determined, measured {published} vs {DEPTH}",
+        unknowns as i64 - published as i64 > 40,
+        "C3's masked margin is only {}; the cut left too little room",
+        unknowns as i64 - published as i64,
     );
-    // ⚠️ Not "C3 leaks more than C1 does harm". The leaf is a PUBLIC input of
-    // C3, so its index and siblings follow from public data anyway. What the
-    // margin sizes is the MASK C3 would need, not a new linkage.
-    assert!(
-        published as i64 - DEPTH as i64 > 60,
-        "the margin is what sizes the mask; measured {}",
-        published as i64 - DEPTH as i64,
-    );
+
+    // ⚠️ AND THE CAVEAT THAT WAS ALREADY TRUE STAYS TRUE. The leaf is a PUBLIC
+    // input of C3, so its index and siblings follow from public data anyway for
+    // anyone holding the tree. What the mask removes is the ability to read them
+    // out of the PROOF alone, by someone who holds no tree at all.
 }

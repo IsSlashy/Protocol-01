@@ -72,20 +72,28 @@ use p01_stark::BaseElement;
 /// the C6 padding rows (480..=509) stayed invisible for as long as they did.
 pub const WITNESSES: usize = 160;
 
-/// C3's Merkle depth. `verify.rs` rejects any other value in phase 2, because
-/// the periodic polynomials are baked for `active_rows = depth * 32 = 480`.
+/// C3's Merkle depth, sourced from the AIR rather than typed.
 ///
-/// 🚨 THIS IS C3's DEPTH ALONE SINCE 2026-08-29. It used to be shared with C6,
-/// and that sharing is exactly what would have made the C6 cut invisible here:
-/// one constant, two circuits, one of which moved.
-pub const CANONICAL_DEPTH: usize = 15;
+/// ⚠️ CORRECTED TWICE ON 2026-08-29, AND THE SECOND CORRECTION IS THE LESSON.
+/// This was 15 and shared by C3 and C6. When C6 was cut to 12 I split it in two
+/// and wrote "THIS IS C3's DEPTH ALONE" — which was true for about an hour,
+/// until C3 took the same cut. A constant that names a circuit and carries a
+/// literal will keep going stale; one that reads the AIR cannot.
+///
+/// Both are 12 today, and they are still two constants on purpose: nothing
+/// requires the two circuits to move together, and a single shared constant is
+/// what would make the next divergence invisible.
+pub const CANONICAL_DEPTH: usize = p01_stark::air::merkle_path::CANONICAL_DEPTH;
 
-/// C6's Merkle depth, which is NOT C3's any more.
+/// C6's Merkle depth.
 ///
 /// Sourced from the AIR rather than typed, so it cannot drift from the geometry
 /// the prover actually builds. At 12 the walk occupies rows 0..383 and rows
 /// 384..511 are the blinding region -- 128 free rows against `R = 4*22 + 2 = 90`
 /// published openings per column, which is the whole reason the cut happened.
+///
+/// Equal to `CANONICAL_DEPTH` above today. Kept separate so that when one
+/// circuit's geometry moves and the other's does not, the tests say which.
 pub const C6_CANONICAL_DEPTH: usize = p01_stark::air::merkle_update::CANONICAL_DEPTH;
 
 fn f(x: u64) -> BaseElement {
@@ -278,7 +286,8 @@ pub fn w6(i: usize) -> W6 {
     W6 {
         old_leaf: 111 + s,
         new_leaf: 222 + s * 3,
-        // [C6-D12] 12, not 15. `w3` above stays at 15: C3 did not take the cut.
+        // [C6-D12] 12, not 15. `w3` above is also 12 now — C3 took the same cut
+        // later the same day.
         path_elements: (0..12u64).map(|j| 100 + j * 13 + s * 37).collect(),
         path_indices: (0..12u8).map(|j| ((j as usize + i) % 2) as u8).collect(),
     }
@@ -306,8 +315,7 @@ pub fn prove2(w: &W2) -> p01_stark::compact::GenericCompactProofData {
 
 pub fn prove3(w: &W3) -> p01_stark::compact::GenericCompactProofData {
     p01_stark::compact::generate_merkle_path_compact_proof(
-        w.leaf, &w.path_elements, &w.path_indices,
-    )
+        w.leaf, &w.path_elements, &w.path_indices, &p01_stark::compact::c3_deterministic_probe_mask(w.path_elements.len()))
 }
 
 pub fn prove4(w: &W4) -> p01_stark::compact::GenericCompactProofData {
@@ -483,7 +491,10 @@ pub fn check_semantics_2(w: &W2, data: &p01_stark::compact::GenericCompactProofD
 }
 
 pub fn check_semantics_3(w: &W3, data: &p01_stark::compact::GenericCompactProofData) {
-    assert_eq!(w.path_elements.len(), CANONICAL_DEPTH, "C3: depth must be the canonical 15");
+    assert_eq!(
+        w.path_elements.len(), CANONICAL_DEPTH,
+        "C3: depth must be the canonical 12 — 15 since 2026-08-29 is a pre-cut witness",
+    );
     assert_eq!(w.path_indices.len(), CANONICAL_DEPTH, "C3: index count must match the path");
 
     let leaf = f(w.leaf);
@@ -495,12 +506,33 @@ pub fn check_semantics_3(w: &W3, data: &p01_stark::compact::GenericCompactProofD
     assert_eq!(f(data.public_inputs[1]), root, "C3: root is not the real fold of the leaf up the path");
     assert_eq!(
         data.public_inputs[2], CANONICAL_DEPTH as u64,
-        "C3: depth public input must be 15 — verify.rs rejects anything else in phase 2",
+        "C3: depth public input must be 12 — verify.rs rejects anything else in phase 2",
     );
 
-    let trace = merkle_path::build_merkle_trace(leaf, &elems, &w.path_indices);
+    // Deterministic on purpose: this function re-derives the trace and compares
+    // it against the proof's own public inputs, so prover and checker must draw
+    // the same blinding region or every assertion below compares two different
+    // traces. ⛔ It proves nothing about secrecy — only about SHAPE.
+    let mask: Vec<BaseElement> =
+        p01_stark::compact::c3_deterministic_probe_mask(w.path_elements.len())
+            .into_iter()
+            .map(f)
+            .collect();
+    let trace = merkle_path::build_merkle_trace(leaf, &elems, &w.path_indices, &mask);
     assert_eq!(trace[5][0], leaf, "C3: carry at row 0 must be the leaf");
-    assert_eq!(trace[0][478], root, "C3: boundary row 478 (root)");
+
+    // 🚨 382, NOT 478. `(depth - 1) * 32 + 30` moved with the cut, and 478 now
+    // sits INSIDE the blinding region — a masked row holding a fresh random
+    // value. Left at 478 this would have compared the root against noise and
+    // failed loudly, which is the good case; the bad case is the reader who
+    // "fixes" it by deleting the assertion.
+    const C3_ROW_ROOT: usize = (p01_stark::air::merkle_path::CANONICAL_DEPTH - 1) * 32 + 30;
+    assert_eq!(C3_ROW_ROOT, 382);
+    assert!(
+        C3_ROW_ROOT < p01_stark::air::merkle_path::FIRST_FREE_ROW,
+        "the root row must stay OUT of the blinding region",
+    );
+    assert_eq!(trace[0][C3_ROW_ROOT], root, "C3: boundary row 382 (root)");
     sweep_transitions(
         "C3",
         &trace,

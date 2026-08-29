@@ -155,7 +155,9 @@ fn phase2(
 // ============================================================================
 
 fn merkle_witness() -> (Vec<u64>, Vec<u8>) {
-    ((0..15u64).map(|i| 1000 + i).collect(), (0..15u8).map(|i| i % 2).collect())
+    // [C3-D12] 12, not 15. C3 took the depth cut on 2026-08-29, the same day as
+    // C6 (`merkle_update_witness` below).
+    ((0..12u64).map(|i| 1000 + i).collect(), (0..12u8).map(|i| i % 2).collect())
 }
 
 fn merkle_update_witness() -> (Vec<u64>, Vec<u8>) {
@@ -175,7 +177,7 @@ fn generic_case(
         2 => c::generate_balance_compact_proof_with_forgery(42, 1000, 777, 999, ood, term),
         3 => {
             let (pe, pi) = merkle_witness();
-            c::generate_merkle_path_compact_proof_with_forgery(777, &pe, &pi, ood, term)
+            c::generate_merkle_path_compact_proof_with_forgery(777, &pe, &pi, &c::c3_deterministic_probe_mask(pe.len()), ood, term)
         }
         4 => c::generate_confidential_balance_compact_proof_with_forgery(
             42, 1000, 111, 800, 222, 200, 333, 999, ood, term,
@@ -565,7 +567,7 @@ fn honest_variant(id: u8, seed: u64) -> p01_stark::compact::GenericCompactProofD
         3 => {
             let (mut pe, pi) = merkle_witness();
             pe[0] += seed;
-            c::generate_merkle_path_compact_proof(777, &pe, &pi)
+            c::generate_merkle_path_compact_proof(777, &pe, &pi, &c::c3_deterministic_probe_mask(pe.len()))
         }
         4 => c::generate_confidential_balance_compact_proof(
             42 + seed,

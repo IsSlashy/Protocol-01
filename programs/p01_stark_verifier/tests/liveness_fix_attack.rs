@@ -178,17 +178,26 @@ fn c6_tampered_openings_are_all_rejected() {
 
 /// The C6 fix reads a CONSTANT depth, never the public input — so a prover
 /// cannot relabel active rows as padding. This pins that: phase 2 refuses any
-/// depth other than 15, so there is no proof in existence whose padding
+/// depth other than 12, so there is no proof in existence whose padding
 /// boundary differs from the one phase 1 hardcodes.
+///
+/// ⚠️ 15 -> 12 on 2026-08-29. Rows 384..511 are no longer "padding" in any
+/// sense: they are the blinding region, and relabelling them is now a privacy
+/// attack rather than only a liveness one.
 #[test]
 fn c6_padding_boundary_is_not_prover_controlled() {
     let d = honest_c6(5);
     let config = get_circuit_config(6).unwrap();
     let p = GenericCompactProof::from_bytes(&d.proof_bytes, config).unwrap();
     assert_eq!(d.public_inputs.len(), 5, "C6 publishes [old,new,oldroot,newroot,depth]");
-    assert_eq!(d.public_inputs[4], 15, "canonical C6 depth");
+    assert_eq!(d.public_inputs[4], 12, "canonical C6 depth — 12 since 2026-08-29, not 15");
 
-    for claimed_depth in [0u64, 1, 7, 8, 14, 16, 31, u64::MAX] {
+    // 🚨 15 IS IN THIS LIST NOW, AND IT IS THE MOST IMPORTANT ENTRY. It was the
+    // canonical depth until 2026-08-29, so every C6 proof built before the cut
+    // claims it. Phase 2 must refuse them: a depth-15 proof has no blinding
+    // region, and accepting one would let a prover opt out of the mask by simply
+    // using an older prover.
+    for claimed_depth in [0u64, 1, 7, 8, 11, 13, 14, 15, 16, 31, u64::MAX] {
         let mut pi = d.public_inputs.clone();
         pi[4] = claimed_depth;
         let r = verify_deep_ali_circuit_6(&p, &pi);

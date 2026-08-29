@@ -3056,7 +3056,7 @@ mod tests {
         let leaf = 42u64;
         let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
         let path_indices = vec![0u8, 1, 0];
-        let proof = generate_merkle_path_compact_proof(leaf, &path_elements, &path_indices);
+        let proof = generate_merkle_path_compact_proof(leaf, &path_elements, &path_indices, &c3_deterministic_probe_mask(path_elements.len()));
         assert!(!proof.proof_bytes.is_empty());
         assert!(proof.proof_bytes.len() < 500_000, "Merkle proof too large: {}", proof.proof_bytes.len());
         println!("Merkle path (depth 3) proof size: {} bytes", proof.proof_bytes.len());
@@ -3298,20 +3298,31 @@ mod tests {
         assert_eq!(is_boundary[127], 0x20001FFFE0000000);
     }
 
-    /// [P2.2d-C3] Parity check for circuit 3 (merkle_path) periodic columns.
-    /// The 7 coefficient arrays baked into `periodic_consts.rs` must exactly
-    /// match what `inverse_ntt(build_merkle_path_periodic_columns(...))`
-    /// produces, otherwise the on-chain verifier rejects honest proofs.
+    /// [P2.2d-C3] THE C3 LOCK-STEP MARKER.
+    ///
+    /// The nine periodic columns the prover builds must be exactly what the
+    /// on-chain verifier evaluates. A prover committing to nine and a verifier
+    /// checking seven do not disagree loudly -- they disagree by silently
+    /// re-imposing the Poseidon rounds over the blinding region, which is the
+    /// exact condition the mask exists to remove.
+    ///
+    /// RE-PINNED 2026-08-29 for the depth-12 masked geometry.
     #[test]
     fn circuit_3_periodic_coeffs_match_verifier_constants() {
         use crate::air::merkle_path::{
-            build_merkle_path_periodic_columns, CANONICAL_DEPTH, TRACE_LENGTH as MP_TRACE_LENGTH,
+            build_merkle_path_periodic_columns, CANONICAL_DEPTH, MERKLE_PATH_NUM_PERIODIC,
+            TRACE_LENGTH as MP_TRACE_LENGTH,
         };
 
         let trace_length = MP_TRACE_LENGTH; // 512
-        let depth = CANONICAL_DEPTH; // 15
+        let depth = CANONICAL_DEPTH; // 12
         let trace_g = get_domain_generator_generic(trace_length);
         let periodic = build_merkle_path_periodic_columns(depth, trace_length);
+        assert_eq!(
+            periodic.len(),
+            MERKLE_PATH_NUM_PERIODIC,
+            "nine columns since the depth-12 cut",
+        );
 
         let rc0: Vec<u64> = inverse_ntt(&periodic[0], trace_g).iter().map(|f| f.as_int()).collect();
         let rc1: Vec<u64> = inverse_ntt(&periodic[1], trace_g).iter().map(|f| f.as_int()).collect();
@@ -3321,20 +3332,66 @@ mod tests {
         let is_boundary: Vec<u64> = inverse_ntt(&periodic[5], trace_g).iter().map(|f| f.as_int()).collect();
         let is_interior: Vec<u64> = inverse_ntt(&periodic[6], trace_g).iter().map(|f| f.as_int()).collect();
 
-        assert_eq!(rc0[0], 0x558F5C5694E81D40);
-        assert_eq!(rc0[511], 0x0AB02BE02E19C660);
-        assert_eq!(rc1[0], 0x1230EF570AB0C5A3);
-        assert_eq!(rc1[511], 0x6C569A22D587E645);
-        assert_eq!(rc2[0], 0x0197B1AA9C1A574D);
-        assert_eq!(rc2[511], 0x0DD93E6880FF9479);
-        assert_eq!(round_active[0], 0x1EFFFFFFE1000001);
-        assert_eq!(round_active[511], 0xAC5B6AFDF33F4359);
-        assert_eq!(hash_start[0], 0xF87FFFFF07800001);
-        assert_eq!(hash_start[511], 0xFFFFFFFEF8000001);
-        assert_eq!(is_boundary[0], 0xF87FFFFF07800001);
-        assert_eq!(is_boundary[511], 0x39E10F3192185B4B);
-        assert_eq!(is_interior[0], 0x1EFFFFFFE1000001);
-        assert_eq!(is_interior[511], 0x044CB98D1B6CF0E1);
+        // 🚨 THE SHAPE ASSERTION, AND IT IS STRONGER THAN ANY TYPED VALUE.
+        //
+        // At depth 15 the walk TRUNCATED these seven columns, so their
+        // interpolants were dense and the verifier paid a 32-entry Lagrange
+        // correction over rows 480..=511. At depth 12 they tile all 512 rows, so
+        // every coefficient at a non-multiple of 16 is ZERO -- checked here per
+        // column, per coefficient. That is what makes the seven `C3_*_TAIL`
+        // tables identically zero and dead, and what takes
+        // `cycle15_lagrange_weights` off the C3 path entirely.
+        //
+        // A typed pin catches a value moving. This catches the SHAPE moving,
+        // which is what would silently make the verifier evaluate a different
+        // polynomial from the prover.
+        for (name, col) in [
+            ("rc0", &rc0), ("rc1", &rc1), ("rc2", &rc2),
+            ("round_active", &round_active), ("hash_start", &hash_start),
+            ("is_boundary", &is_boundary), ("is_interior", &is_interior),
+        ] {
+            for (k, c) in col.iter().enumerate() {
+                if k % 16 != 0 {
+                    assert_eq!(*c, 0, "C3 {name} lost its stride-16 sparsity at coefficient {k}");
+                }
+            }
+        }
+
+        // ✅ AND C3's SEVEN ARE C6's SEVEN. Both circuits now emit fully
+        // 32-periodic flags over an identical 512-row trace, so the columns are
+        // equal value for value -- which is why the verifier ships ONE table set
+        // for both and C3's depth cut adds zero rodata.
+        //
+        // Measured here rather than assumed: the two AIRs are separate files and
+        // nothing but this line stops them diverging.
+        {
+            use crate::air::merkle_update::{
+                build_merkle_update_periodic_columns, CANONICAL_DEPTH as C6_DEPTH,
+                CANONICAL_TRACE_LENGTH as C6_LEN,
+            };
+            let c6 = build_merkle_update_periodic_columns(C6_DEPTH, C6_LEN);
+            assert_eq!(c6.len(), periodic.len(), "C3 and C6 periodic counts diverged");
+            for i in 0..periodic.len() {
+                assert_eq!(
+                    periodic[i], c6[i],
+                    "C3 periodic column {i} diverged from C6's; they can no longer share a table",
+                );
+            }
+        }
+
+        // The two gates are DENSE, which is the other half of the shape:
+        // emitting either as stride-16 would be a different polynomial and would
+        // silently re-arm the 128 masked rows.
+        let active: Vec<u64> = inverse_ntt(&periodic[7], trace_g).iter().map(|f| f.as_int()).collect();
+        let nba: Vec<u64> = inverse_ntt(&periodic[8], trace_g).iter().map(|f| f.as_int()).collect();
+        assert!(
+            active.iter().enumerate().any(|(k, c)| k % 16 != 0 && *c != 0),
+            "`active` must be DENSE; a sparse one is not the gate the verifier bakes",
+        );
+        assert!(
+            nba.iter().enumerate().any(|(k, c)| k % 16 != 0 && *c != 0),
+            "`not_boundary_active` must be DENSE",
+        );
     }
 
     /// [P2.2d-C4] Circuit 4 parity: re-emitting periodic coefficients via
@@ -3845,7 +3902,7 @@ mod tests {
         {
             let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
             rows.push(("C3 merkle_path", 6, GENERIC_QUOTIENT_SEGMENTS,
-                       generate_merkle_path_compact_proof(42, &path_elements, &[0u8, 1, 0]).proof_bytes));
+                       generate_merkle_path_compact_proof(42, &path_elements, &[0u8, 1, 0], &c3_deterministic_probe_mask(path_elements.len())).proof_bytes));
         }
         rows.push(("C4 confidential_balance", 4, GENERIC_QUOTIENT_SEGMENTS,
                    generate_confidential_balance_compact_proof(42, 1000, 111, 800, 222, 200, 333, 999)
@@ -4043,7 +4100,7 @@ mod tests {
         };
 
         let trace_length = MP_TRACE_LENGTH; // 512
-        let depth = CANONICAL_DEPTH; // 15
+        let depth = CANONICAL_DEPTH; // 12 since 2026-08-29
         let trace_g = get_domain_generator_generic(trace_length);
         let periodic = build_merkle_path_periodic_columns(depth, trace_length);
         let names = [
@@ -4054,7 +4111,12 @@ mod tests {
             "C3_HASH_START_COEFFS",
             "C3_IS_BOUNDARY_COEFFS",
             "C3_IS_INTERIOR_COEFFS",
+            "C3_ACTIVE_COEFFS",
+            "C3_NOT_BOUNDARY_ACTIVE_COEFFS",
         ];
+        // Tied to the AIR rather than to a literal, so the emitter cannot fall
+        // behind a column the AIR grew without failing here first.
+        assert_eq!(names.len(), crate::air::merkle_path::MERKLE_PATH_NUM_PERIODIC);
         for (i, col) in periodic.iter().enumerate() {
             let poly = inverse_ntt(col, trace_g);
             println!("pub const {}: [u64; {}] = [", names[i], trace_length);
@@ -4806,7 +4868,7 @@ mod tests {
             (0..depth).map(|i| (i % 2) as u8).collect();
 
         let proof =
-            generate_merkle_path_compact_proof(leaf, &path_elements, &path_indices);
+            generate_merkle_path_compact_proof(leaf, &path_elements, &path_indices, &c3_deterministic_probe_mask(path_elements.len()));
         assert_eq!(proof.circuit_id, CIRCUIT_MERKLE_PATH);
         assert_eq!(proof.public_inputs.len(), 3);
 
@@ -9009,12 +9071,44 @@ fn generate_balance_compact_proof_with_claim(
 ///
 /// Proves: leaf is in a Merkle tree with root `root` at the given path.
 /// Public inputs: leaf, root
+/// A DETERMINISTIC, PUBLICLY REPRODUCIBLE C3 mask. Test scaffolding only.
+///
+/// ⛔ THIS MASK HIDES NOTHING. Every value is a pure function of `depth`, so an
+/// observer who reads this file reconstructs the whole blinding region and the
+/// 128 free rows stop being free. It is adequate for the two things tests need
+/// -- the trace SHAPE, and the RANK of a recovered system, which depends only on
+/// the rows being independent unknowns and not on how they were drawn.
+///
+/// ✅ IT CANNOT REACH A SHIPPED BINARY, by construction rather than discipline:
+/// `test-probes` is off in `default`, so calling it from a production path is a
+/// COMPILE ERROR in the shipping configuration. The twin for C6 is
+/// `c6_deterministic_probe_mask`.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c3_deterministic_probe_mask(depth: usize) -> Vec<u64> {
+    let mut z: u64 = 0xC3_5EED_0000 ^ ((depth as u64) << 8) | 1;
+    (0..crate::air::merkle_path::mask_len_for_depth(depth))
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z % 0xFFFF_FFFF_0000_0001
+        })
+        .collect()
+}
+
 pub fn generate_merkle_path_compact_proof(
     leaf: u64,
     path_elements: &[u64],
     path_indices: &[u8],
+    mask: &[u64],
 ) -> GenericCompactProofData {
-    generate_merkle_path_compact_proof_inner(leaf, path_elements, path_indices, DeepProbe::HONEST)
+    generate_merkle_path_compact_proof_inner(
+        leaf,
+        path_elements,
+        path_indices,
+        mask,
+        DeepProbe::HONEST,
+    )
 }
 
 /// [B1 fails-closed probe] `generate_merkle_path_compact_proof` (C3) with the
@@ -9030,6 +9124,7 @@ pub fn generate_merkle_path_compact_proof_with_forgery(
     leaf: u64,
     path_elements: &[u64],
     path_indices: &[u8],
+    mask: &[u64],
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
@@ -9037,6 +9132,7 @@ pub fn generate_merkle_path_compact_proof_with_forgery(
         leaf,
         path_elements,
         path_indices,
+        mask,
         DeepProbe { ood_forgery, terminal_poly },
     )
 }
@@ -9045,12 +9141,15 @@ fn generate_merkle_path_compact_proof_inner(
     leaf: u64,
     path_elements: &[u64],
     path_indices: &[u8],
+    mask: &[u64],
     probe: DeepProbe,
 ) -> GenericCompactProofData {
     let leaf_felt = BaseElement::new(leaf);
     let elems: Vec<BaseElement> = path_elements.iter().map(|&v| BaseElement::new(v)).collect();
+    let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
 
-    let trace = crate::air::merkle_path::build_merkle_trace(leaf_felt, &elems, path_indices);
+    let trace =
+        crate::air::merkle_path::build_merkle_trace(leaf_felt, &elems, path_indices, &mask_felts);
     let root = crate::air::merkle_path::compute_merkle_root(leaf_felt, &elems, path_indices);
 
     let root_u64 = root.as_int();

@@ -35,20 +35,80 @@ use crate::poseidon;
 pub const TRACE_WIDTH: usize = 6;
 pub const HASH_CYCLE_LEN: usize = 32;
 pub const NUM_ROUNDS: usize = 30;
-/// Canonical Merkle depth used for the on-chain DEEP-ALI verifier
-/// (matches CONFIG_MERKLE_PATH in p01_stark_verifier).
-pub const CANONICAL_DEPTH: usize = 15;
-/// Canonical trace length for C3 (15 * 32 = 480, next power of 2 = 512).
+
+/// The depth C3 proves in-circuit.
+///
+/// CHANGED 15 -> 12 on 2026-08-29, for the same reason C6 and C7 were cut: the
+/// blinding region needs more free rows than the wire publishes openings, and at
+/// depth 15 there were 32 free rows against `R = 4*22 + 2 = 90`.
+///
+/// The pool tree is STILL depth 15. C3 proves membership in a 12-level SUBTREE
+/// and the spending instruction walks the remaining levels.
+///
+/// ✅ AND FOR C3 THAT WALK ALREADY EXISTS. `state::spend_root::resolve_pool_root`
+/// was written for C7, which has exactly this shape: it takes the subtree root,
+/// walks caller-supplied siblings, and the caller then requires the result to be
+/// a root the pool ALREADY KNOWS. Caller-supplied siblings are safe here because
+/// C3 READS -- a forged sibling yields a root in no history and the spend fails.
+///
+/// ⛔ DO NOT REACH FOR `state::insert_root::fold_insertion` INSTEAD. That one is
+/// the write-side twin, built for C6, and it reads the pool's own
+/// `filled_subtrees` because an insertion produces a root no history can check.
+/// The two are not interchangeable in either direction.
+pub const CANONICAL_DEPTH: usize = 12;
+
+/// Canonical trace length for C3.
+///
+/// `trace_length_for_depth(12) = next_pow2(384) = 512`, IDENTICAL to what depth
+/// 15 gave (`next_pow2(480) = 512`). So `n`, `deg(Q)`, `quotient_segments` and
+/// rho all stay put and the wire does not grow by one byte -- the same free
+/// trade C6 measured at 81,037 bytes before and after.
 pub const TRACE_LENGTH: usize = 512;
+
+/// First cycle carrying no witness, existing only to be blinded.
+pub const FIRST_FREE_CYCLE: usize = CANONICAL_DEPTH; // 12
+
+/// First trace row free on every one of the six columns.
+pub const FIRST_FREE_ROW: usize = FIRST_FREE_CYCLE * HASH_CYCLE_LEN; // 384
+
+/// Blinding positions per column.
+///
+/// ```text
+///   MASK_ROWS = 512 - 384 = 128
+///   R         = 4 * MERKLE_PATH_NUM_QUERIES + 2 = 4*22 + 2 = 90
+///   128 > 90, margin 38.
+///
+///   depth 15 -> 32  < 90   <- before this change: NOT zero-knowledge
+///   depth 13 -> 96  > 90   margin 6, one query bump kills it
+///   depth 12 -> 128 > 90   margin 38   <- chosen
+/// ```
+///
+/// 🚨 THE OLD TAIL WAS NOT FREE, IT WAS FORCED, and that is why the depth had to
+/// move at all. With the periodic flags at zero the Poseidon constraints
+/// degenerate to `next[i] - current[i] = 0`, which PINS each column constant
+/// across the tail: one degree of freedom per column, not 32. That is what
+/// `stark/tests/air_aware_recovery_c3.rs` exploits to recover the path and the
+/// leaf index from 90 published openings.
+pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 128
+
 /// Number of transition constraints in C3 (merkle_path).
 pub const MERKLE_PATH_NUM_CONSTRAINTS: usize = 11;
-/// Number of periodic columns in C3 (merkle_path).
-pub const MERKLE_PATH_NUM_PERIODIC: usize = 7;
+
+/// 7 -> 9 on 2026-08-29. Appended: [7] `active`, [8] `not_boundary_active`.
+/// ORDER IS FROZEN - the RLC uses `alpha^i` and the coefficient emitter indexes
+/// positionally. Append only, never insert.
+pub const MERKLE_PATH_NUM_PERIODIC: usize = 9;
 
 /// Compute trace length for a given Merkle depth.
 pub fn trace_length_for_depth(depth: usize) -> usize {
     let active = depth * HASH_CYCLE_LEN;
     active.next_power_of_two()
+}
+
+/// Mask elements `build_merkle_trace` requires at `depth`. Kept depth-generic so
+/// the shallow-depth tests in this file keep compiling.
+pub fn mask_len_for_depth(depth: usize) -> usize {
+    (trace_length_for_depth(depth) - depth * HASH_CYCLE_LEN) * TRACE_WIDTH
 }
 
 // ============================================================================
@@ -173,51 +233,115 @@ fn pow7<E: FieldElement>(x: E) -> E {
 
 /// Build the 7 periodic columns for merkle_path at a given depth + trace length.
 /// Layout: [rc0, rc1, rc2, round_active, hash_start, is_boundary, is_interior].
+/// Build the 9 periodic column value vectors for a circuit-3 trace.
+///
+/// Layout, FROZEN:
+/// ```text
+///   0 rc0                  32-periodic
+///   1 rc1                  32-periodic
+///   2 rc2                  32-periodic
+///   3 round_active         32-periodic  (1 on pos 0..=29)
+///   4 hash_start           32-periodic  (1 on pos 0)
+///   5 is_boundary          32-periodic  (1 on pos 31)
+///   6 is_interior          32-periodic  (1 on pos 1..=30)
+///   7 active               DENSE, 1 on rows 0..=first_free_row-2   APPENDED
+///   8 not_boundary_active  DENSE, active AND not_boundary          APPENDED
+/// ```
+///
+/// COLUMNS 0-6 ARE NO LONGER DEPTH-BOUNDED. They tile the whole trace, and rows
+/// at or past `first_free_row` are switched off by [7]/[8] instead.
+///
+/// ✅ THAT CHANGE IS WHAT MAKES THE RODATA COST ZERO, and it is not cosmetic. A
+/// depth-bounded `rc0` at depth 12 is zero across four truncated cycles, so its
+/// interpolant is DENSE: 4,096 bytes of on-chain rodata per column, seven times
+/// over. Fully periodic they interpolate to stride-16 polynomials that are
+/// byte-identical to C6's and C7's, so the verifier shares one table set and C3
+/// adds none. C6 measured this: its phase 1 got 3,857 CU CHEAPER, because the
+/// Lagrange correction over the truncated tail disappeared with the truncation.
+///
+/// On rows `0..first_free_row` the new construction equals the old one value for
+/// value, so no witness row changes meaning.
 pub fn build_merkle_path_periodic_columns(
     depth: usize,
     trace_length: usize,
 ) -> Vec<Vec<BaseElement>> {
-    let active_rows = depth * HASH_CYCLE_LEN;
+    let tl = trace_length;
+    let first_free_row = depth * HASH_CYCLE_LEN;
+    assert!(
+        first_free_row < tl,
+        "C3 depth {depth} leaves no free row in a {tl}-row trace",
+    );
 
     let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
-    let mut rc0 = vec![BaseElement::ZERO; trace_length];
-    let mut rc1 = vec![BaseElement::ZERO; trace_length];
-    let mut rc2 = vec![BaseElement::ZERO; trace_length];
-    for row in 0..active_rows {
-        let pos_in_cycle = row % HASH_CYCLE_LEN;
-        if pos_in_cycle < NUM_ROUNDS {
-            rc0[row] = rc[pos_in_cycle * 3];
-            rc1[row] = rc[pos_in_cycle * 3 + 1];
-            rc2[row] = rc[pos_in_cycle * 3 + 2];
-        }
-    }
+    let mut rc0 = vec![BaseElement::ZERO; tl];
+    let mut rc1 = vec![BaseElement::ZERO; tl];
+    let mut rc2 = vec![BaseElement::ZERO; tl];
+    let mut round_active = vec![BaseElement::ZERO; tl];
+    let mut hash_start = vec![BaseElement::ZERO; tl];
+    let mut is_boundary = vec![BaseElement::ZERO; tl];
+    let mut is_interior = vec![BaseElement::ZERO; tl];
 
-    let mut round_active = vec![BaseElement::ZERO; trace_length];
-    for row in 0..active_rows {
-        if row % HASH_CYCLE_LEN < NUM_ROUNDS {
+    for row in 0..tl {
+        let pos = row % HASH_CYCLE_LEN;
+        if pos < NUM_ROUNDS {
+            rc0[row] = rc[pos * 3];
+            rc1[row] = rc[pos * 3 + 1];
+            rc2[row] = rc[pos * 3 + 2];
             round_active[row] = BaseElement::ONE;
         }
-    }
-
-    let mut hash_start = vec![BaseElement::ZERO; trace_length];
-    for cycle in 0..depth {
-        hash_start[cycle * HASH_CYCLE_LEN] = BaseElement::ONE;
-    }
-
-    let mut is_boundary = vec![BaseElement::ZERO; trace_length];
-    for cycle in 0..depth {
-        is_boundary[cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1] = BaseElement::ONE;
-    }
-
-    let mut is_interior = vec![BaseElement::ZERO; trace_length];
-    for row in 0..active_rows {
-        let pos = row % HASH_CYCLE_LEN;
+        if pos == 0 {
+            hash_start[row] = BaseElement::ONE;
+        }
+        // pos 31 includes row 511: that transition is exempt (the single
+        // transition exemption) and killed by the (x - g^{n-1}) factor in the
+        // quotient. Including it is what keeps this column 32-periodic, which is
+        // the whole point.
+        if pos == HASH_CYCLE_LEN - 1 {
+            is_boundary[row] = BaseElement::ONE;
+        }
         if pos >= 1 && pos <= NUM_ROUNDS {
             is_interior[row] = BaseElement::ONE;
         }
     }
 
-    vec![rc0, rc1, rc2, round_active, hash_start, is_boundary, is_interior]
+    // -- APPENDED 2026-08-29: the two gates that make C3 zero-knowledge --
+    //
+    // `not_boundary_active` is `active` pre-multiplied with `not_boundary`. It
+    // is a SEPARATE COLUMN rather than a product formed in the constraint body
+    // ON PURPOSE: the degree-7 Poseidon constraints may carry exactly TWO
+    // periodic factors. A third makes degree_bound = 7 + 3 - 1 = 9, whose
+    // next_power_of_two is 16, so ce_blowup_factor goes 8 -> 16 and the whole
+    // proof structure changes with it.
+    //
+    // THE BOUND IS `first_free_row - 1`, NOT `first_free_row`.
+    //
+    // These are TRANSITION constraints: the one at row i reads row i+1. Row 383
+    // is a cycle boundary (11*32+31), so is_boundary[383] = 1 and the carry
+    // update `result[6] = is_boundary * (next[5] - current[0])` fires there --
+    // demanding that a masked row equal the running hash, which is
+    // unsatisfiable with fresh randomness, and which would republish that hash
+    // inside the blinding region if it were satisfied. Stopping one row early
+    // makes the 383 -> 384 transition entirely free.
+    let mut active = vec![BaseElement::ZERO; tl];
+    let mut not_boundary_active = vec![BaseElement::ZERO; tl];
+    for row in 0..(first_free_row - 1) {
+        active[row] = BaseElement::ONE;
+        if row % HASH_CYCLE_LEN != HASH_CYCLE_LEN - 1 {
+            not_boundary_active[row] = BaseElement::ONE;
+        }
+    }
+
+    vec![
+        rc0,                 // 0
+        rc1,                 // 1
+        rc2,                 // 2
+        round_active,        // 3
+        hash_start,          // 4
+        is_boundary,         // 5
+        is_interior,         // 6
+        active,              // 7  APPENDED
+        not_boundary_active, // 8  APPENDED
+    ]
 }
 
 /// Evaluate the 11 transition constraints for merkle_path at `current/next`.
@@ -243,6 +367,27 @@ pub fn evaluate_merkle_path_transition<E: FieldElement>(
     let hash_start = periodic[4];
     let is_boundary = periodic[5];
     let is_interior = periodic[6];
+    let active = periodic[7];
+    let nba = periodic[8];
+
+    // Every gate below is pre-multiplied by `active` exactly once, and the
+    // Poseidon rows use `nba` rather than `1 - is_boundary`.
+    //
+    // 🚨 `not_boundary` IS GONE FROM THIS FUNCTION, AND `E::ONE - is_boundary`
+    // MUST NOT COME BACK ANYWHERE BELOW. The two agree on every row of the walk
+    // and differ only across rows 384..511 -- so the substitution rejects NO
+    // honest proof, passes every existing test, and silently re-imposes the
+    // Poseidon rounds on the 128 blinding rows. That is the exact state
+    // `stark/tests/air_aware_recovery_c3.rs` recovers the path and the leaf
+    // index from.
+    //
+    // ⚠️ COUNT THE PERIODIC FACTORS BEFORE EDITING. Each line carries AT MOST
+    // TWO. `result[0..3]` spend theirs on `nba` and `round_active` over a
+    // degree-7 body; a third factor takes ce_blowup_factor from 8 to 16 and
+    // changes the proof structure.
+    let hash_start_a = hash_start * active;
+    let is_boundary_a = is_boundary * active;
+    let is_interior_a = is_interior * active;
 
     // ── Poseidon round ──
     let s0 = current[0] + rc0;
@@ -256,31 +401,30 @@ pub fn evaluate_merkle_path_transition<E: FieldElement>(
     let ro1 = s0_7 + three * s1_7 + s2_7;
     let ro2 = s0_7 + s1_7 + three * s2_7;
 
-    let not_boundary = E::ONE - is_boundary;
-    result[0] = not_boundary * (next[0] - current[0] - round_active * (ro0 - current[0]));
-    result[1] = not_boundary * (next[1] - current[1] - round_active * (ro1 - current[1]));
-    result[2] = not_boundary * (next[2] - current[2] - round_active * (ro2 - current[2]));
+    result[0] = nba * (next[0] - current[0] - round_active * (ro0 - current[0]));
+    result[1] = nba * (next[1] - current[1] - round_active * (ro1 - current[1]));
+    result[2] = nba * (next[2] - current[2] - round_active * (ro2 - current[2]));
 
     // ── Hash start: state = mux(direction, carry, sibling) ──
     let dir = current[4];
     let sib = current[3];
     let carry = current[5];
-    result[3] = hash_start * (current[0] - carry - dir * (sib - carry));
-    result[4] = hash_start * (current[1] - sib - dir * (carry - sib));
-    result[5] = hash_start * current[2];
+    result[3] = hash_start_a * (current[0] - carry - dir * (sib - carry));
+    result[4] = hash_start_a * (current[1] - sib - dir * (carry - sib));
+    result[5] = hash_start_a * current[2];
 
     // ── Carry update at boundary ──
-    result[6] = is_boundary * (next[5] - current[0]);
+    result[6] = is_boundary_a * (next[5] - current[0]);
 
     // ── Carry continuity ──
-    result[7] = (E::ONE - is_boundary) * (next[5] - current[5]);
+    result[7] = nba * (next[5] - current[5]);
 
     // ── Sibling/direction continuity within cycle ──
-    result[8] = is_interior * (next[3] - current[3]);
-    result[9] = is_interior * (next[4] - current[4]);
+    result[8] = is_interior_a * (next[3] - current[3]);
+    result[9] = is_interior_a * (next[4] - current[4]);
 
     // ── Direction binary ──
-    result[10] = hash_start * dir * (E::ONE - dir);
+    result[10] = hash_start_a * dir * (E::ONE - dir);
 }
 
 // ============================================================================
@@ -288,16 +432,38 @@ pub fn evaluate_merkle_path_transition<E: FieldElement>(
 // ============================================================================
 
 /// Build the execution trace for a Merkle path proof.
+///
+/// `mask` supplies the blinding region: `mask_len_for_depth(depth)` elements
+/// laid out ROW-MAJOR as `i * TRACE_WIDTH + col`. At the canonical depth that is
+/// `MASK_ROWS * TRACE_WIDTH = 128 * 6 = 768`.
+///
+/// ⛔ IT IS A REQUIRED ARGUMENT AND NOT AN `Option` ON PURPOSE. A default would
+/// be a zero-filled or witness-derived mask, which is exactly the failure this
+/// design exists to prevent, and a caller who has not thought about randomness
+/// should not compile.
+///
+/// It MUST be fresh CSPRNG output, redrawn for every proof. Two C3 proofs over
+/// the same path with the same mask publish the same bytes, which re-links
+/// precisely what the mask exists to unlink.
 pub fn build_merkle_trace(
     leaf: BaseElement,
     path_elements: &[BaseElement],
     path_indices: &[u8],
+    mask: &[BaseElement],
 ) -> Vec<Vec<BaseElement>> {
     let depth = path_elements.len();
     assert_eq!(depth, path_indices.len());
     assert!(depth > 0);
 
     let trace_length = trace_length_for_depth(depth);
+    assert_eq!(
+        mask.len(),
+        mask_len_for_depth(depth),
+        "C3 at depth {depth} needs {} blinding elements ({} rows x {TRACE_WIDTH} columns), got {}",
+        mask_len_for_depth(depth),
+        trace_length - depth * HASH_CYCLE_LEN,
+        mask.len(),
+    );
     let mut trace = vec![vec![BaseElement::ZERO; trace_length]; TRACE_WIDTH];
 
     let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
@@ -375,23 +541,28 @@ pub fn build_merkle_trace(
         carry = state[0];
     }
 
-    // Fill padding rows beyond active hash cycles
+    // -- THE BLINDING REGION, 2026-08-29 --
+    //
+    // 🚨 WHAT THIS REPLACES IS THE ENTIRE DEFECT. The old body copied the last
+    // Poseidon state across every padding row and held `carry` constant. Those
+    // rows looked free and were not: they were a FUNCTION of the witness, and
+    // each column contributed ONE unknown across the whole tail instead of one
+    // per row. `air_aware_recovery_c3.rs` turns exactly that into a linear
+    // system with 15 unknowns against 90 published openings and solves it for
+    // the path and the leaf index.
+    //
+    // Fresh uniform values make each of the 128 rows its own unknown, so the
+    // count goes the other way: 128 * 6 unknowns against 90 openings per column.
     let last_active = depth * HASH_CYCLE_LEN;
-    if last_active < trace_length {
-        let last_state = [
-            trace[0][last_active - 1],
-            trace[1][last_active - 1],
-            trace[2][last_active - 1],
-        ];
-        for row in last_active..trace_length {
-            trace[0][row] = last_state[0];
-            trace[1][row] = last_state[1];
-            trace[2][row] = last_state[2];
-            trace[3][row] = BaseElement::ZERO;
-            trace[4][row] = BaseElement::ZERO;
-            trace[5][row] = carry;
+    for row in last_active..trace_length {
+        let base = (row - last_active) * TRACE_WIDTH;
+        for col in 0..TRACE_WIDTH {
+            trace[col][row] = mask[base + col];
         }
     }
+
+    // `carry` is consumed by the walk above; the tail no longer holds it.
+    let _ = carry;
 
     trace
 }
@@ -417,6 +588,26 @@ pub fn compute_merkle_root(
 // ============================================================================
 // Tests
 // ============================================================================
+
+
+/// A deterministic mask for the tests in this file.
+///
+/// Adequate for exercising the TRACE SHAPE, and inadequate for any secrecy
+/// claim: the blinding region only hides if its values are unpredictable. The
+/// shipping path draws from `getrandom` inside the wasm entry and refuses to
+/// build without a CSPRNG.
+#[cfg(test)]
+fn deterministic_test_mask(depth: usize) -> Vec<BaseElement> {
+    let mut z: u64 = 0xC3_5EED_0000 ^ ((depth as u64) << 32) | 1;
+    (0..mask_len_for_depth(depth))
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            BaseElement::new(z % 0xFFFF_FFFF_0000_0001)
+        })
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -455,7 +646,7 @@ mod tests {
     #[test]
     fn test_build_trace_output_matches_root() {
         let (leaf, elems, indices, root) = make_test_tree(15);
-        let trace = build_merkle_trace(leaf, &elems, &indices);
+        let trace = build_merkle_trace(leaf, &elems, &indices, &deterministic_test_mask(elems.len()));
 
         // Hash output of last cycle
         let output_row = 14 * HASH_CYCLE_LEN + NUM_ROUNDS; // row 478
@@ -465,7 +656,7 @@ mod tests {
     #[test]
     fn test_build_trace_carry_column() {
         let (leaf, elems, indices, _root) = make_test_tree(3);
-        let trace = build_merkle_trace(leaf, &elems, &indices);
+        let trace = build_merkle_trace(leaf, &elems, &indices, &deterministic_test_mask(elems.len()));
 
         // Carry at row 0 = leaf
         assert_eq!(trace[5][0], leaf);
@@ -482,7 +673,7 @@ mod tests {
     #[test]
     fn test_build_trace_direction_column() {
         let (leaf, elems, indices, _root) = make_test_tree(3);
-        let trace = build_merkle_trace(leaf, &elems, &indices);
+        let trace = build_merkle_trace(leaf, &elems, &indices, &deterministic_test_mask(elems.len()));
 
         for cycle in 0..3 {
             let start = cycle * HASH_CYCLE_LEN;
@@ -501,7 +692,7 @@ mod tests {
     #[test]
     fn test_build_trace_hash_start_state() {
         let (leaf, elems, indices, _root) = make_test_tree(3);
-        let trace = build_merkle_trace(leaf, &elems, &indices);
+        let trace = build_merkle_trace(leaf, &elems, &indices, &deterministic_test_mask(elems.len()));
 
         // Cycle 0: state = mux(dir, leaf, sibling)
         let dir0 = indices[0];
@@ -515,18 +706,51 @@ mod tests {
         assert_eq!(trace[2][0], BaseElement::ZERO);
     }
 
+    /// INVERTED 2026-08-29. It used to demand `trace[0][row] == trace[0][row+1]`
+    /// across the tail and it passed, which is what the defect looked like from
+    /// the inside.
+    ///
+    /// Identity transitions are exactly what made the tail recoverable. Each
+    /// column contributed ONE unknown across all 128 rows instead of one per
+    /// row, so `air_aware_recovery_c3.rs` could close a linear system with 15
+    /// unknowns against 90 published openings and read the path and the leaf
+    /// index straight out of it.
+    ///
+    /// The rows must now be INDEPENDENT. This asserts the thing the old test
+    /// forbade.
     #[test]
-    fn test_trace_padding_rows() {
+    fn the_tail_is_no_longer_identity_because_identity_was_the_leak() {
         let (leaf, elems, indices, _root) = make_test_tree(3);
-        let trace = build_merkle_trace(leaf, &elems, &indices);
+        let mask = deterministic_test_mask(elems.len());
+        let trace = build_merkle_trace(leaf, &elems, &indices, &mask);
 
         let trace_length = trace[0].len();
         let active_rows = 3 * HASH_CYCLE_LEN; // 96
+        assert!(active_rows < trace_length, "this witness must leave a tail");
 
-        // Padding rows should have identity transitions
-        for row in active_rows..trace_length - 1 {
-            assert_eq!(trace[0][row], trace[0][row + 1], "padding not identity at row {}", row);
+        // Every masked cell is the mask, laid out row-major. Written as an
+        // equality against `mask` rather than a "not equal to the neighbour"
+        // check: the latter would pass on any garbage, including a mask that
+        // was dropped and replaced by a counter.
+        for row in active_rows..trace_length {
+            let base = (row - active_rows) * TRACE_WIDTH;
+            for col in 0..TRACE_WIDTH {
+                assert_eq!(
+                    trace[col][row], mask[base + col],
+                    "blinding cell ({row}, {col}) is not the mask element it was handed",
+                );
+            }
         }
+
+        // And the identity the old test demanded must NOT hold, or the mask is
+        // constant and hides nothing.
+        let identical = (active_rows..trace_length - 1)
+            .filter(|&row| trace[0][row] == trace[0][row + 1])
+            .count();
+        assert_eq!(
+            identical, 0,
+            "{identical} tail rows still repeat their predecessor: that is the pinned tail the              depth cut was supposed to remove",
+        );
     }
 
     #[test]
@@ -544,7 +768,7 @@ mod tests {
         use crate::prover::{prove_generic, verify_generic};
 
         let (leaf, elems, indices, root) = make_test_tree(3);
-        let trace = build_merkle_trace(leaf, &elems, &indices);
+        let trace = build_merkle_trace(leaf, &elems, &indices, &deterministic_test_mask(elems.len()));
 
         let pub_inputs = MerklePathPublicInputs { leaf, root, depth: 3 };
 
@@ -560,7 +784,7 @@ mod tests {
         use crate::prover::{prove_generic, verify_generic};
 
         let (leaf, elems, indices, root) = make_test_tree(15);
-        let trace = build_merkle_trace(leaf, &elems, &indices);
+        let trace = build_merkle_trace(leaf, &elems, &indices, &deterministic_test_mask(elems.len()));
 
         let pub_inputs = MerklePathPublicInputs { leaf, root, depth: 15 };
 

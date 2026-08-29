@@ -3,6 +3,7 @@ use anchor_lang::system_program;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer as TokenTransfer};
 
 use crate::errors::ZkShieldedError;
+use crate::state::spend_root;
 use crate::fee::{self, FEE_ESCROW_SEED_PREFIX};
 use crate::state::NullifierRecord;
 use crate::state::pool_v3::DenominatedPoolV3;
@@ -79,7 +80,10 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, [u8; 32], 
     merkle_root: [u8; 32],
     min_epoch: u64,
     stark_commitment: u64,
-    recipient: [u8; 32]
+    recipient: [u8; 32],
+    subtree_root: u64,
+    siblings: Vec<u64>,
+    directions: Vec<u8>
 )]
 pub struct UnshieldDenominatedStarkV3<'info> {
     #[account(mut)]
@@ -107,7 +111,16 @@ pub struct UnshieldDenominatedStarkV3<'info> {
         ],
         bump = denominated_pool.bump,
         constraint = denominated_pool.is_active @ ZkShieldedError::PoolNotActive,
-        constraint = denominated_pool.is_valid_root(&merkle_root) @ ZkShieldedError::InvalidMerkleRoot
+        // ⛔ NO `is_valid_root` CONSTRAINT HERE ANY MORE, AND ITS ABSENCE IS
+        // DELIBERATE. Since the C3 depth cut, `merkle_root` is no longer a value
+        // the caller names and the pool confirms -- it is the OUTPUT of the
+        // three-level Poseidon walk in the handler. Checking it here would run
+        // BEFORE the walk, so it would confirm a root the proof does not
+        // actually reach, and the check that matters would look redundant.
+        //
+        // The ring membership is still enforced, once, in the handler, right
+        // after the walk. `unshield_denominated_stark_v4` does exactly this and
+        // says so at the same place.
     )]
     pub denominated_pool: Account<'info, DenominatedPoolV3>,
 
@@ -173,6 +186,9 @@ pub fn handler(
     min_epoch: u64,
     stark_commitment: u64,
     recipient: [u8; 32],
+    subtree_root: u64,
+    siblings: Vec<u64>,
+    directions: Vec<u8>,
 ) -> Result<()> {
     // Resolve recipient from remaining_accounts[0] and verify it matches the
     // `recipient` instruction arg. This prevents a malicious relayer from
@@ -295,15 +311,29 @@ pub fn handler(
     // `concat(u64.to_le_bytes() for each input)` = 24 bytes. The V3 leaf
     // format packs the Goldilocks felt into bytes 0..8 of the 32-byte buffer,
     // so we extract the low 8 bytes for the root.
-    let tree_depth = pool.tree_depth as u64;
-    // The pool's canonical tree depth must be the depth the C3 periodic
-    // columns + verifier guard are baked for (15). Reject otherwise.
-    require!(tree_depth == 15, ZkShieldedError::InvalidProof);
+    // 🚨 THE TWO VALUES IN THIS HASH BOTH CHANGED ON 2026-08-29.
+    //
+    // C3 was cut from depth 15 to depth 12 so that trace rows 384..511 could
+    // become a blinding region. Two consequences land right here:
+    //
+    //   depth  is now the CONSTANT 12, not `pool.tree_depth`. The pool tree is
+    //          still 15 deep; the CIRCUIT covers 12 of its levels. Feeding the
+    //          pool depth would build a hash no honest proof can match.
+    //   root   is now `subtree_root`, the root of the depth-12 SUBTREE the leaf
+    //          sits in — C3's public input 1 is what `compute_merkle_root`
+    //          returns over the twelve path elements it was given, and that is
+    //          a subtree root, not the pool root.
+    //
+    // ⛔ NEITHER IS TRUSTED. `subtree_root` is a caller-supplied u64 and the
+    // hash check alone only ties it to the proof, not to this pool. The walk
+    // below is what ties it to the pool, and it must not be separated from
+    // this block.
+    let circuit_depth = spend_root::SPEND_SUBTREE_DEPTH as u64;
     {
-        let mut pub_buf = [0u8; 24]; // 3 × u64 LE: leaf, root, depth
+        let mut pub_buf = [0u8; 24]; // 3 × u64 LE: leaf, subtree_root, depth
         pub_buf[..8].copy_from_slice(&stark_commitment.to_le_bytes());
-        pub_buf[8..16].copy_from_slice(&merkle_root[..8]);
-        pub_buf[16..24].copy_from_slice(&tree_depth.to_le_bytes());
+        pub_buf[8..16].copy_from_slice(&subtree_root.to_le_bytes());
+        pub_buf[16..24].copy_from_slice(&circuit_depth.to_le_bytes());
         let expected_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
         require!(
             c3_inputs_hash == expected_hash,
@@ -312,11 +342,53 @@ pub fn handler(
     }
     drop(c3_data);
 
-    // Tie c3.root ↔ pool ring is enforced by the `is_valid_root` constraint
-    // on the `denominated_pool` account above (line `constraint = ...
-    // is_valid_root(&merkle_root)`). Tying c3.leaf ↔ c1.commitment is
-    // implicit because both reconstruct hashes from the same `stark_commitment`
-    // arg — if the caller lies about either, one of the two hash checks fails.
+    // -----------------------------------------------------------------------
+    // [C3-D12] Walk the top levels, then tie the result to the pool's ring.
+    //
+    // The proof above says "this leaf is in a 12-level tree rooted at
+    // `subtree_root`". It says nothing about whose tree that is — anyone can
+    // build a 12-level tree containing any leaf they like. These three lines
+    // are what turn it into a statement about THIS pool:
+    //
+    //   1. the walk derives a pool root from the subtree root and the caller's
+    //      siblings;
+    //   2. that derived root must equal the `merkle_root` the caller named;
+    //   3. that named root must be one the pool actually published.
+    //
+    // ✅ CALLER-SUPPLIED SIBLINGS ARE SAFE HERE, and this is the one place the
+    // distinction matters. C3 READS: a forged sibling produces a root that is
+    // in no history, so step 3 refuses it. C6 WRITES, where the root is new by
+    // definition and there is no history to check against — which is why the
+    // deposit path uses `insert_root::fold_insertion` against the pool's own
+    // `filled_subtrees` instead. ⛔ The two are not interchangeable.
+    //
+    // The depth agreement is checked first: the walk length is
+    // `tree_depth - 12`, so a pool and tree that disagree would walk the wrong
+    // number of levels.
+    // -----------------------------------------------------------------------
+    require!(
+        pool.tree_depth == ctx.accounts.merkle_tree.depth,
+        ZkShieldedError::InvalidMerkleRoot
+    );
+    let derived_root = spend_root::resolve_pool_root(
+        subtree_root,
+        &siblings,
+        &directions,
+        pool.tree_depth,
+    )
+    .map_err(crate::instructions::unshield_denominated_stark_v4::spend_root_error)?;
+    require!(
+        merkle_root[..8] == derived_root.to_le_bytes(),
+        ZkShieldedError::SpendRootMismatch
+    );
+    require!(
+        pool.is_valid_root(&merkle_root),
+        ZkShieldedError::InvalidMerkleRoot
+    );
+
+    // Tying c3.leaf ↔ c1.commitment is implicit because both reconstruct hashes
+    // from the same `stark_commitment` arg — if the caller lies about either,
+    // one of the two hash checks fails.
 
     // -----------------------------------------------------------------------
     // Transfer funds with protocol fee (0.5%)

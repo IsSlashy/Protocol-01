@@ -174,9 +174,9 @@ fn forged_proof_bytes(id: u8) -> Vec<u8> {
         2 => p01_stark::compact::generate_balance_compact_proof_with_forgery(42, 1000, 777, 999, f, t)
             .proof_bytes,
         3 => {
-            let pe: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
-            let pi: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
-            p01_stark::compact::generate_merkle_path_compact_proof_with_forgery(777, &pe, &pi, f, t)
+            let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
+            let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+            p01_stark::compact::generate_merkle_path_compact_proof_with_forgery(777, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()), f, t)
                 .proof_bytes
         }
         4 => p01_stark::compact::generate_confidential_balance_compact_proof_with_forgery(
@@ -211,9 +211,9 @@ fn honest_query_positions(id: u8, s: u64) -> Vec<u32> {
                 1 => p01_stark::compact::generate_pool_commitment_proof(s, s + 1, s + 2, s + 3),
                 2 => p01_stark::compact::generate_balance_compact_proof(s, 1000 + s, 777, 999 + s),
                 3 => {
-                    let pe: Vec<u64> = (0..15u64).map(|i| 1000 + i + s).collect();
-                    let pi: Vec<u8> = (0..15u8).map(|i| ((i as u64 + s) % 2) as u8).collect();
-                    p01_stark::compact::generate_merkle_path_compact_proof(777 + s, &pe, &pi)
+                    let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i + s).collect();
+                    let pi: Vec<u8> = (0..12u8).map(|i| ((i as u64 + s) % 2) as u8).collect();
+                    p01_stark::compact::generate_merkle_path_compact_proof(777 + s, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()))
                 }
                 4 => p01_stark::compact::generate_confidential_balance_compact_proof(
                     42 + s,

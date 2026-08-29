@@ -1,6 +1,8 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::ZkShieldedError;
+use crate::state::spend_root;
+use crate::state::insert_root;
 use crate::state::NullifierRecord;
 use crate::state::pool_v3::DenominatedPoolV3;
 use crate::state::merkle_tree_v3::MerkleTreeStateV3;
@@ -76,8 +78,12 @@ fn parse_stark_proof_buffer(data: &[u8]) -> Result<(Pubkey, u8, bool, bool, [u8;
     min_epoch: u64,
     stark_commitment: u64,
     new_commitment: [u8; 32],
-    new_root: [u8; 32],
-    new_subtrees: Vec<[u8; 32]>
+    c6_old_subtree_root: u64,
+    c6_new_subtree_root: u64,
+    new_subtrees: Vec<[u8; 32]>,
+    subtree_root: u64,
+    siblings: Vec<u64>,
+    directions: Vec<u8>
 )]
 pub struct TransferDenominatedStarkV3<'info> {
     /// Transaction submitter — must be the note owner (signs to bind new_commitment).
@@ -94,7 +100,12 @@ pub struct TransferDenominatedStarkV3<'info> {
         ],
         bump = denominated_pool.bump,
         constraint = denominated_pool.is_active @ ZkShieldedError::PoolNotActive,
-        constraint = denominated_pool.is_valid_root(&merkle_root) @ ZkShieldedError::InvalidMerkleRoot
+        // ⛔ NO `is_valid_root` CONSTRAINT HERE ANY MORE, AND ITS ABSENCE IS
+        // DELIBERATE. Since the C3 depth cut, `merkle_root` is the OUTPUT of the
+        // handler's Poseidon walk, not a value the caller names and the pool
+        // confirms. Checking it here would run BEFORE the walk, confirming a
+        // root the proof does not actually reach. The ring membership is still
+        // enforced, once, in the handler, right after the walk.
     )]
     pub denominated_pool: Account<'info, DenominatedPoolV3>,
 
@@ -150,8 +161,20 @@ pub fn handler(
     min_epoch: u64,
     stark_commitment: u64,
     new_commitment: [u8; 32],
-    new_root: [u8; 32],
+    // [C6-D12] The two SUBTREE roots, replacing the caller-supplied `new_root`.
+    // The program now COMPUTES the pool root by folding the top levels against
+    // the pool account's own `filled_subtrees`; a caller-supplied pool root is
+    // exactly what that fold exists to refuse.
+    c6_old_subtree_root: u64,
+    c6_new_subtree_root: u64,
     new_subtrees: Vec<[u8; 32]>,
+    // [C3-D12] Not optional. The C3 proof attests membership in a depth-12
+    // SUBTREE, so the handler must walk the remaining levels to reach a pool
+    // root. None of the three is trusted: the walk's result must equal the
+    // named `merkle_root`, and that root must already be in the pool's ring.
+    subtree_root: u64,
+    siblings: Vec<u64>,
+    directions: Vec<u8>,
 ) -> Result<()> {
     let clock = Clock::get()?;
     let pool = &mut ctx.accounts.denominated_pool;
@@ -253,18 +276,71 @@ pub fn handler(
         // Circuit 3 ships phase-2 DEEP-ALI from the client; require it.
         require!(c3_deep, ZkShieldedError::InvalidProof);
 
-        // The pool's canonical tree depth must match the depth the C3 periodic
-        // columns + verifier guard are baked for (15).
-        let tree_depth = pool.tree_depth as u64;
-        require!(tree_depth == 15, ZkShieldedError::InvalidProof);
-
-        let mut pub_buf = [0u8; 24];
-        pub_buf[..8].copy_from_slice(&stark_commitment.to_le_bytes());
-        pub_buf[8..16].copy_from_slice(&_merkle_root[..8]);
-        pub_buf[16..24].copy_from_slice(&tree_depth.to_le_bytes());
-        let expected = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
-        require!(c3_inputs_hash == expected, ZkShieldedError::InvalidProof);
+        // 🚨 THE TWO VALUES IN THIS HASH BOTH CHANGED ON 2026-08-29.
+        //
+        // C3 was cut from depth 15 to depth 12 so rows 384..511 could become a
+        // blinding region. Two consequences land right here:
+        //
+        //   depth  is the CONSTANT 12, not the pool's tree depth. The pool tree is
+        //          still 15 deep; the CIRCUIT covers 12 of its levels. Feeding the
+        //          pool depth builds a hash no honest proof can match.
+        //   root   is `subtree_root`, the root of the depth-12 subtree the leaf sits
+        //          in — C3's public input 1 is what `compute_merkle_root` returns
+        //          over the twelve path elements it was given.
+        //
+        // ⛔ NEITHER IS TRUSTED by this block. The walk below is what ties
+        // `subtree_root` to this pool, and it must not be separated from it.
+        let circuit_depth = spend_root::SPEND_SUBTREE_DEPTH as u64;
+        {
+            let mut pub_buf = [0u8; 24]; // 3 x u64 LE: leaf, subtree_root, depth
+            pub_buf[..8].copy_from_slice(&stark_commitment.to_le_bytes());
+            pub_buf[8..16].copy_from_slice(&subtree_root.to_le_bytes());
+            pub_buf[16..24].copy_from_slice(&circuit_depth.to_le_bytes());
+            let expected_hash = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
+            require!(c3_inputs_hash == expected_hash, ZkShieldedError::InvalidProof);
+        }
     }
+
+    // -----------------------------------------------------------------------
+    // [C3-D12] Walk the top levels, then tie the result to the pool's ring.
+    //
+    // The proof above says "this leaf is in a 12-level tree rooted at
+    // `subtree_root`". It says nothing about whose tree that is — anyone can
+    // build a 12-level tree containing any leaf they like. These three steps are
+    // what turn it into a statement about THIS pool:
+    //
+    //   1. the walk derives a pool root from the subtree root and the siblings;
+    //   2. that derived root must equal the `merkle_root` the caller named;
+    //   3. that named root must be one the pool actually published.
+    //
+    // ✅ CALLER-SUPPLIED SIBLINGS ARE SAFE HERE. C3 READS: a forged sibling
+    // produces a root that is in no history, so step 3 refuses it. ⛔ C6 WRITES,
+    // where the root is new by definition and there is no history to check
+    // against — which is why the deposit path uses
+    // `insert_root::fold_insertion` against the pool's own `filled_subtrees`.
+    // The two are not interchangeable.
+    // -----------------------------------------------------------------------
+    // `merkle_tree` is already mutably borrowed above for the C6 insertion, so
+    // the depth is read through that binding rather than a second borrow.
+    require!(
+        pool.tree_depth == merkle_tree.depth,
+        ZkShieldedError::InvalidMerkleRoot
+    );
+    let derived_root = spend_root::resolve_pool_root(
+        subtree_root,
+        &siblings,
+        &directions,
+        pool.tree_depth,
+    )
+    .map_err(crate::instructions::unshield_denominated_stark_v4::spend_root_error)?;
+    require!(
+        _merkle_root[..8] == derived_root.to_le_bytes(),
+        ZkShieldedError::SpendRootMismatch
+    );
+    require!(
+        pool.is_valid_root(&_merkle_root),
+        ZkShieldedError::InvalidMerkleRoot
+    );
 
     // -----------------------------------------------------------------------
     // C6 (merkle_update) verification — proves new_commitment + new_root +
@@ -288,21 +364,80 @@ pub fn handler(
         require!(c6_verified, ZkShieldedError::InvalidProof);
         require!(c6_deep_ali, ZkShieldedError::InvalidProof);
 
+        // 🚨 SUBTREE ROOTS AND THE CONSTANT 12, NOT `merkle_tree.root` AND
+        // `merkle_tree.depth`. C6 was cut to depth 12 on 2026-08-29, so what it
+        // attests is a SUBTREE transition. Feeding the pool root or the pool
+        // depth here builds a hash no honest proof can match.
+        //
+        // ⛔ AND NEITHER ROOT IS TRUSTED BY THIS BLOCK. The fold below is what
+        // ties them to this pool. This is the same shape as
+        // `shield_denominated_v3`, and for the same reason.
         let old_leaf_u64: u64 = 0; // insertion ⇒ replacing ZEROS[0]
         let new_leaf_u64 = u64::from_le_bytes(new_commitment[..8].try_into().unwrap());
-        let old_root_u64 = u64::from_le_bytes(merkle_tree.root[..8].try_into().unwrap());
-        let new_root_u64 = u64::from_le_bytes(new_root[..8].try_into().unwrap());
-        let depth_u64 = merkle_tree.depth as u64;
+        let depth_u64 = insert_root::INSERT_SUBTREE_DEPTH as u64;
 
         let mut pub_buf = [0u8; 40];
         pub_buf[0..8].copy_from_slice(&old_leaf_u64.to_le_bytes());
         pub_buf[8..16].copy_from_slice(&new_leaf_u64.to_le_bytes());
-        pub_buf[16..24].copy_from_slice(&old_root_u64.to_le_bytes());
-        pub_buf[24..32].copy_from_slice(&new_root_u64.to_le_bytes());
+        pub_buf[16..24].copy_from_slice(&c6_old_subtree_root.to_le_bytes());
+        pub_buf[24..32].copy_from_slice(&c6_new_subtree_root.to_le_bytes());
         pub_buf[32..40].copy_from_slice(&depth_u64.to_le_bytes());
         let expected = solana_sha256_hasher::hashv(&[&pub_buf]).to_bytes();
         require!(c6_inputs_hash == expected, ZkShieldedError::InvalidProof);
     }
+
+    // -----------------------------------------------------------------------
+    // [C6-D12] Fold the top levels, and let the OLD fold prove the subtree
+    // belongs to this pool.
+    //
+    // ⛔ THIS IS THE WRITE SIDE, so `insert_root::fold_insertion` and NOT
+    // `spend_root::resolve_pool_root` -- the siblings come from the pool
+    // account's own `filled_subtrees`, never from `new_subtrees`, which the
+    // caller supplies and the C6 hash does not cover. The C3 walk twenty lines
+    // above is the read side and correctly takes caller-supplied siblings,
+    // because its result is checked against a root the pool already published.
+    // A new root has no such history, which is the whole distinction.
+    // -----------------------------------------------------------------------
+    let insert_at = merkle_tree.leaf_count;
+    let filled: Vec<u64> = merkle_tree
+        .filled_subtrees
+        .iter()
+        .map(|b| {
+            require!(b[8..].iter().all(|x| *x == 0), ZkShieldedError::InvalidMerkleRoot);
+            let v = u64::from_le_bytes(b[..8].try_into().unwrap());
+            require!(v < crate::state::poseidon_gl::MODULUS, ZkShieldedError::InvalidMerkleRoot);
+            Ok(v)
+        })
+        .collect::<Result<Vec<u64>>>()?;
+
+    let folded = insert_root::fold_insertion(
+        c6_old_subtree_root,
+        c6_new_subtree_root,
+        insert_at,
+        &filled,
+        merkle_tree.depth,
+    )
+    .map_err(|_| error!(ZkShieldedError::InvalidMerkleRoot))?;
+
+    // 🚨 THIS EQUALITY IS THE WHOLE BINDING. Drop it and every other check in
+    // this handler still passes while a caller writes an arbitrary pool root.
+    let current_root_felt = {
+        let b = merkle_tree.root;
+        require!(b[8..].iter().all(|x| *x == 0), ZkShieldedError::InvalidMerkleRoot);
+        let v = u64::from_le_bytes(b[..8].try_into().unwrap());
+        require!(v < crate::state::poseidon_gl::MODULUS, ZkShieldedError::InvalidMerkleRoot);
+        v
+    };
+    require!(
+        folded.old_pool_root == current_root_felt,
+        ZkShieldedError::InvalidMerkleRoot
+    );
+
+    let new_root = {
+        let mut out = [0u8; 32];
+        out[..8].copy_from_slice(&folded.new_pool_root.to_le_bytes());
+        out
+    };
 
     // -----------------------------------------------------------------------
     // Insert new commitment into the V3 Merkle tree (emits LeafInserted)
@@ -313,6 +448,18 @@ pub fn handler(
         &new_subtrees,
         true, // c6_verified — see C6 block above
     )?;
+
+    // The top-level subtree entries are DERIVED from the fold that just
+    // reproduced the pool root, so they overwrite whatever `new_subtrees` said
+    // there. Levels below 12 remain the client's hint, unchanged and unbound.
+    for (level, value) in folded.updated_subtrees() {
+        let l = *level as usize;
+        if l < merkle_tree.filled_subtrees.len() {
+            let mut out = [0u8; 32];
+            out[..8].copy_from_slice(&value.to_le_bytes());
+            merkle_tree.filled_subtrees[l] = out;
+        }
+    }
 
     // Update pool root and leaf index (pushes old root onto historical ring)
     pool.update_root(new_root);

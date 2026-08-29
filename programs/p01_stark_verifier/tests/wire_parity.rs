@@ -55,9 +55,9 @@ fn fixture_c2() -> Vec<u8> {
     p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999).proof_bytes
 }
 fn fixture_c3() -> Vec<u8> {
-    let pe: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
-    let pi: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
-    p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi).proof_bytes
+    let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
+    let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+    p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len())).proof_bytes
 }
 fn fixture_c4() -> Vec<u8> {
     p01_stark::compact::generate_confidential_balance_compact_proof(

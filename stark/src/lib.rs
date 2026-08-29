@@ -243,8 +243,27 @@ mod wasm_api {
             .filter_map(|s| s.trim().parse().ok())
             .collect();
 
+        // [C3-D12] The blinding region, drawn fresh for THIS proof.
+        //
+        // ⛔ REFUSES RATHER THAN FALLING BACK, for the reason C7 states and C6
+        // repeats: no proof fails loudly, a weak mask succeeds and leaks. A
+        // zero-filled or witness-derived default would leave rows 384..511
+        // predictable and `air_aware_recovery_c3.rs` would go back to recovering
+        // the path and the leaf index from the published bytes.
+        let mask = match draw_blinding_mask(
+            crate::air::merkle_path::mask_len_for_depth(path_elements.len()),
+        ) {
+            Ok(m) => m,
+            Err(e) => {
+                return format!(
+                    r#"{{"error":"no CSPRNG available, refusing to build a C3 proof: {}"}}"#,
+                    e,
+                );
+            }
+        };
+
         let proof_data = generate_merkle_path_compact_proof(
-            leaf, &path_elements, &path_indices,
+            leaf, &path_elements, &path_indices, &mask,
         );
         let proof_hex = proof_data.proof_bytes.iter()
             .map(|b| format!("{:02x}", b))

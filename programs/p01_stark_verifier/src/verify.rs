@@ -3555,7 +3555,8 @@ fn evaluate_transition_at_ood_circuit_6(
 ///
 /// Computes:
 ///   1. α from the Fiat-Shamir transcript (`trace_root || pub_inputs`).
-///   2. The 7 periodic polynomials evaluated at z via Horner.
+///   2. The 9 periodic polynomials evaluated at z: seven from their 32-entry
+///      stride tables, two dense row gates shared with C7.
 ///   3. The 19 transition constraints evaluated on the opened OOD trace and
 ///      RLC-combined with α to produce `C(z)`.
 ///   4. `Z_T(z) = (z^n - 1) / (z - g^(n-1))` with `n = trace_length = 512`.
@@ -4111,7 +4112,7 @@ pub fn verify_deep_ali_circuit_2(
 fn evaluate_transition_at_ood_circuit_3(
     ood_current: &[Felt; 6],
     ood_next: &[Felt; 6],
-    periodic_at_z: &[Felt; 7],
+    periodic_at_z: &[Felt; 9],
     alpha: Felt,
 ) -> Felt {
     let rc0 = periodic_at_z[0];
@@ -4121,10 +4122,29 @@ fn evaluate_transition_at_ood_circuit_3(
     let hash_start = periodic_at_z[4];
     let is_boundary = periodic_at_z[5];
     let is_interior = periodic_at_z[6];
+    let active = periodic_at_z[7];
+    let nba = periodic_at_z[8];
 
     let one = Felt::ONE;
     let three = Felt::new(3);
-    let not_boundary = one.sub(is_boundary);
+
+    // [C3-D12] Every gate is pre-multiplied by `active` exactly once, and the
+    // Poseidon rows use `nba` instead of `1 - is_boundary`.
+    //
+    // 🚨 `let not_boundary = one.sub(is_boundary)` USED TO STAND HERE AND MUST
+    // NOT COME BACK. It and `nba` agree on every row of the walk and differ only
+    // across rows 384..511, so the substitution rejects NO honest proof, passes
+    // every existing test, and quietly re-imposes the Poseidon rounds on the 128
+    // blinding rows. `c3_ood_evaluator_matches_the_air_on_random_frames` is what
+    // catches it -- a frame with a nonzero `is_boundary` and a zero `nba`
+    // separates the two, and no honest-proof test can.
+    //
+    // ⚠️ AT MOST TWO PERIODIC FACTORS PER LINE. `cs[0..3]` spend theirs on `nba`
+    // and `round_active` over a degree-7 body; a third takes ce_blowup_factor
+    // from 8 to 16 and changes the proof structure.
+    let hash_start_a = hash_start.mul(active);
+    let is_boundary_a = is_boundary.mul(active);
+    let is_interior_a = is_interior.mul(active);
 
     // ── Poseidon round on cols 0-2 (MDS = circulant [[3,1,1],[1,3,1],[1,1,3]]) ──
     let s0 = ood_current[0].add(rc0);
@@ -4141,13 +4161,13 @@ fn evaluate_transition_at_ood_circuit_3(
     // When round_active=1 → next=ro_i (active round); when round_active=0 → next=current (padding);
     // when is_boundary=1 → unconstrained (hash_start mux + carry update take over).
     let mut cs = [Felt::ZERO; 11];
-    cs[0] = not_boundary.mul(
+    cs[0] = nba.mul(
         ood_next[0].sub(ood_current[0]).sub(round_active.mul(ro0.sub(ood_current[0])))
     );
-    cs[1] = not_boundary.mul(
+    cs[1] = nba.mul(
         ood_next[1].sub(ood_current[1]).sub(round_active.mul(ro1.sub(ood_current[1])))
     );
-    cs[2] = not_boundary.mul(
+    cs[2] = nba.mul(
         ood_next[2].sub(ood_current[2]).sub(round_active.mul(ro2.sub(ood_current[2])))
     );
 
@@ -4162,32 +4182,31 @@ fn evaluate_transition_at_ood_circuit_3(
     let dir = ood_current[4];
     let carry = ood_current[5];
     let sib_minus_carry = sib.sub(carry);
-    cs[3] = hash_start.mul(
+    cs[3] = hash_start_a.mul(
         ood_current[0].sub(carry).sub(dir.mul(sib_minus_carry))
     );
-    cs[4] = hash_start.mul(
+    cs[4] = hash_start_a.mul(
         ood_current[1].sub(sib).add(dir.mul(sib_minus_carry))
     );
 
     // [c5] Hash-start capacity: state[2] (capacity) = 0 at every cycle start.
-    cs[5] = hash_start.mul(ood_current[2]);
+    cs[5] = hash_start_a.mul(ood_current[2]);
 
     // [c6] Carry update at cycle boundary (row 31, 63, ...): next[5] = current[0]
     // (propagate hash output into next level's carry).
-    cs[6] = is_boundary.mul(ood_next[5].sub(ood_current[0]));
+    cs[6] = is_boundary_a.mul(ood_next[5].sub(ood_current[0]));
 
     // [c7] Carry continuity between boundaries: next[5] = current[5]
     // (carry doesn't change mid-cycle).
-    let not_boundary2 = one.sub(is_boundary);
-    cs[7] = not_boundary2.mul(ood_next[5].sub(ood_current[5]));
+    cs[7] = nba.mul(ood_next[5].sub(ood_current[5]));
 
     // [c8-c9] Sibling/direction continuity inside a cycle (is_interior=1):
     // both must be constant within a cycle; can only change at a boundary.
-    cs[8] = is_interior.mul(ood_next[3].sub(ood_current[3]));
-    cs[9] = is_interior.mul(ood_next[4].sub(ood_current[4]));
+    cs[8] = is_interior_a.mul(ood_next[3].sub(ood_current[3]));
+    cs[9] = is_interior_a.mul(ood_next[4].sub(ood_current[4]));
 
     // [c10] Direction binary at every hash start: dir · (1 − dir) = 0.
-    cs[10] = hash_start.mul(dir.mul(one.sub(dir)));
+    cs[10] = hash_start_a.mul(dir.mul(one.sub(dir)));
 
     // Horner-style RLC: Σ α^i · cs[i].
     let mut combined = Felt::ZERO;
@@ -4207,7 +4226,8 @@ fn evaluate_transition_at_ood_circuit_3(
 ///   2. The 7 periodic polynomials evaluated at z via Horner.
 ///   3. The 11 transition constraints on the opened OOD trace (width 6),
 ///      RLC-combined with α to produce `C(z)`.
-///   4. `Z_T(z) = (z^n - 1) / (z - g^(n-1))` with `n = 512` (canonical depth=15).
+///   4. `Z_T(z) = (z^n - 1) / (z - g^(n-1))` with `n = 512` (canonical depth=12;
+///      `next_pow2(12*32) == next_pow2(15*32) == 512`, so `n` did not move).
 ///   5. The identity `C(z) == Q(z) · Z_T(z)`.
 ///
 /// Circuit 3 proves a Merkle path from leaf to root. Without DEEP-ALI on the
@@ -4221,50 +4241,86 @@ pub fn verify_deep_ali_circuit_3(
     proof: &GenericCompactProof,
     public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
+    use crate::periodic_consts::{C7_ACTIVE_COEFFS, C7_NOT_BOUNDARY_ACTIVE_COEFFS};
     use crate::periodic_ext_consts::{
-        C3_HASH_START_PERIODIC16, C3_HASH_START_TAIL, C3_IS_BOUNDARY_PERIODIC16,
-        C3_IS_BOUNDARY_TAIL, C3_IS_INTERIOR_PERIODIC16, C3_IS_INTERIOR_TAIL,
-        C3_RC0_PERIODIC16, C3_RC0_TAIL, C3_RC1_PERIODIC16, C3_RC1_TAIL,
-        C3_RC2_PERIODIC16, C3_RC2_TAIL, C3_ROUND_ACTIVE_PERIODIC16,
-        C3_ROUND_ACTIVE_TAIL,
+        C3_HASH_START_PERIODIC16, C3_IS_BOUNDARY_PERIODIC16, C3_IS_INTERIOR_PERIODIC16,
+        C3_RC0_PERIODIC16, C3_RC1_PERIODIC16, C3_RC2_PERIODIC16,
+        C3_ROUND_ACTIVE_PERIODIC16,
     };
 
-    // [C3 depth binding] Periodic polynomials are depth-dependent
-    // (active_rows = depth*32) and baked for depth=15, the canonical production
-    // depth. depth is the 3rd public input; any other value silently desyncs
-    // the constraint system, so reject up-front. Mirrors verify_deep_ali_circuit_6.
-    const CANONICAL_DEPTH: u64 = 15;
+    // [C3-D12] The periodic columns are baked for the DEPTH-12 MASKED geometry:
+    // cycles 0..11 carry the walk, rows 384..511 are the blinding region and
+    // take no check of any kind. `active` and `not_boundary_active` are what
+    // switch the constraints off there. A proof claiming any other depth is
+    // checked against gates that do not describe it, so reject up-front.
+    //
+    // 🚨 CHANGED 15 -> 12, AND THIS IS A HARD FORK OF THE C3 WIRE, in both
+    // directions: the deployed verifier rejects every depth-12 proof, and this
+    // one rejects every depth-15 proof. C3 has FIVE on-chain consumers
+    // (`split_note_stark`, `subscribe_private_stark`,
+    // `transfer_denominated_stark_v3`, `unshield_denominated_stark_v3`) so the
+    // blast radius is wider than C6's, and prover, verifier and every one of
+    // those instructions move in ONE deploy.
+    //
+    // ⛔ AND THE CIRCUIT IS NOT SOUND ON ITS OWN UNTIL EACH CONSUMER WALKS THE
+    // TOP LEVELS. A depth-12 C3 proves membership in a 12-level SUBTREE, which
+    // anyone satisfies with a subtree they built themselves.
+    //
+    // ✅ THE WALK ALREADY EXISTS AND IS THE RIGHT ONE.
+    // `zk_shielded::state::spend_root::resolve_pool_root` was written for C7 and
+    // has exactly this shape: caller-supplied siblings, result required to be a
+    // root the pool ALREADY KNOWS. That is safe because C3 READS -- a forged
+    // sibling produces a root in no history and the spend fails.
+    //
+    // ⛔ DO NOT REACH FOR `state::insert_root::fold_insertion`. That is the
+    // write-side twin, built for C6's insertion, and it reads the pool's own
+    // `filled_subtrees` because an insertion produces a root no history can
+    // check. Swapping the two is wrong in both directions.
+    const CANONICAL_DEPTH: u64 = 12;
     if public_inputs.len() != 3 || public_inputs[2] != CANONICAL_DEPTH {
         return Err(VerifyError::DeepAliFailed);
     }
 
     let z = proof.ood_z;
 
-    // [A4] Evaluate the 7 periodic columns from their 32-periodic extension
-    // plus one shared Lagrange correction over the truncated rows 480..=511,
-    // instead of 7 dense 512-coefficient Horners.
+    // [C3-D12] NINE columns, TWO evaluator classes, and NO Lagrange arm.
+    //
+    //   0-6  stride-16. Under the depth-12 layout these are 32-periodic on ALL
+    //        512 rows -- the walk no longer truncates them -- so the tail that
+    //        `eval_periodic_ext_at_z` corrected for is identically zero and the
+    //        seven `C3_*_TAIL` tables are dead. `y16 = z^16` is paid once.
+    //   7-8  genuinely dense. These are the row gates, and they are the entire
+    //        reason C3 can carry a mask at all.
+    //
+    // ⛔ RETURNING SEVEN INSTEAD OF NINE WOULD BE A SILENT PRIVACY REGRESSION.
+    // It rejects no honest proof: drop 7 and 8 and the verifier re-imposes the
+    // Poseidon rounds across rows 384..511, the 128 masked rows become 128
+    // constrained ones, and `air_aware_recovery_c3.rs` recovers the path and the
+    // leaf index again.
+    //
+    // ✅ THE TABLES ARE SHARED, NOT COPIED, AND C3 ADDS ZERO RODATA. The seven
+    // stride tables were already byte-identical across C3, C6 and C7 --
+    // `c7_stride_tables_equal_the_c3_and_c6_periodic_extensions` measured all 32
+    // values of all seven on 2026-08-24. The two dense gates are functions of
+    // `FIRST_FREE_ROW` and `HASH_CYCLE_LEN` alone, and depth-12 C3 has C7's
+    // geometry exactly, so they are C7's tables too.
+    //
+    // ⛔ NO `Result` HERE ANY MORE, AND THE ABSENCE IS THE POINT. The old path
+    // rejected any `z` landing on rows 480..=511 because the Lagrange correction
+    // divides by `(z - g^r)`. There is no division now, so there is nothing to
+    // guard: such a `z` is evaluated correctly instead of refused. A liveness
+    // gain with no soundness component.
     let y16 = z.exp(16);
-    let lagrange = match cycle15_lagrange_weights(z, y16) {
-        Some(l) => l,
-        // OOD landed on a truncated row: degenerate sampling, reject.
-        None => return Err(VerifyError::DeepAliFailed),
-    };
-    let periodic_at_z: [Felt; 7] = [
-        eval_periodic_ext_at_z(&C3_RC0_PERIODIC16, &C3_RC0_TAIL, y16, &lagrange),
-        eval_periodic_ext_at_z(&C3_RC1_PERIODIC16, &C3_RC1_TAIL, y16, &lagrange),
-        eval_periodic_ext_at_z(&C3_RC2_PERIODIC16, &C3_RC2_TAIL, y16, &lagrange),
-        eval_periodic_ext_at_z(
-            &C3_ROUND_ACTIVE_PERIODIC16, &C3_ROUND_ACTIVE_TAIL, y16, &lagrange,
-        ),
-        eval_periodic_ext_at_z(
-            &C3_HASH_START_PERIODIC16, &C3_HASH_START_TAIL, y16, &lagrange,
-        ),
-        eval_periodic_ext_at_z(
-            &C3_IS_BOUNDARY_PERIODIC16, &C3_IS_BOUNDARY_TAIL, y16, &lagrange,
-        ),
-        eval_periodic_ext_at_z(
-            &C3_IS_INTERIOR_PERIODIC16, &C3_IS_INTERIOR_TAIL, y16, &lagrange,
-        ),
+    let periodic_at_z: [Felt; 9] = [
+        eval_periodic_compressed32_at_z(&C3_RC0_PERIODIC16, y16),
+        eval_periodic_compressed32_at_z(&C3_RC1_PERIODIC16, y16),
+        eval_periodic_compressed32_at_z(&C3_RC2_PERIODIC16, y16),
+        eval_periodic_compressed32_at_z(&C3_ROUND_ACTIVE_PERIODIC16, y16),
+        eval_periodic_compressed32_at_z(&C3_HASH_START_PERIODIC16, y16),
+        eval_periodic_compressed32_at_z(&C3_IS_BOUNDARY_PERIODIC16, y16),
+        eval_periodic_compressed32_at_z(&C3_IS_INTERIOR_PERIODIC16, y16),
+        eval_periodic_at_z(&C7_ACTIVE_COEFFS, z),
+        eval_periodic_at_z(&C7_NOT_BOUNDARY_ACTIVE_COEFFS, z),
     ];
 
     // Collect OOD trace values. Circuit 3 is width-6.
@@ -5504,7 +5560,17 @@ fn verify_constraints_merkle_path(
             // had next==current → TransitionConstraintFailed → InvalidProof,
             // deterministically per note (query positions derive from the
             // trace via Fiat-Shamir). Mirrors C1's `cycle < 3` bound.
-            let active_rows = 15 * hash_cycle_len; // CANONICAL_DEPTH * HASH_CYCLE_LEN = 480
+            // [C3-D12] 12, not 15. This arm is RETIRED and never runs; the
+            // constant is corrected anyway so the file does not carry two
+            // different depths for one circuit.
+            //
+            // ⛔ DO NOT REVIVE THIS ARM. Rows 384..511 are now the BLINDING
+            // REGION, not "frozen padding" as the comment above still describes
+            // them. Any per-query check reaching them turns 128 free rows into
+            // 128 constrained ones and undoes the whole depth cut -- and the
+            // `trace_row < active_rows` bound below would no longer save it,
+            // because the rows between 384 and 480 are inside the old bound.
+            let active_rows = 12 * hash_cycle_len; // CANONICAL_DEPTH * HASH_CYCLE_LEN = 384
 
             if trace_row < active_rows && pos_in_cycle < config.num_rounds {
                 let current = [query.trace_value(0), query.trace_value(1), query.trace_value(2)];
@@ -6717,11 +6783,10 @@ mod merkle_update_e2e {
     fn c3_sample_proof(
         leaf: u64,
     ) -> p01_stark::compact::GenericCompactProofData {
-        let path_elements: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
-        let path_indices: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
+        let path_elements: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
+        let path_indices: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
         p01_stark::compact::generate_merkle_path_compact_proof(
-            leaf, &path_elements, &path_indices,
-        )
+            leaf, &path_elements, &path_indices, &p01_stark::compact::c3_deterministic_probe_mask(path_elements.len()))
     }
 
     /// [P2.2d-C3] Positive: `verify_generic` accepts an honest merkle-path
@@ -6833,8 +6898,14 @@ mod merkle_update_e2e {
     }
 
     /// [C3 depth binding] Negative: the depth guard must reject any depth !=
-    /// CANONICAL_DEPTH (15) and any public-input vector that is not exactly 3
-    /// elements, since the C3 periodic columns are baked for depth=15.
+    /// CANONICAL_DEPTH (12) and any public-input vector that is not exactly 3
+    /// elements, since the C3 periodic columns are baked for depth=12.
+    ///
+    /// ⚠️ 15 -> 12 on 2026-08-29. Rows 384..511 are the BLINDING REGION now, not
+    /// padding, so a proof claiming 15 is not merely mis-shaped: it is a proof
+    /// with no blinding region at all. Accepting one would let a prover opt out
+    /// of the mask by using an older prover, which is why 15 is now the first
+    /// value in the rejection sweep below.
     #[test]
     fn merkle_path_deep_ali_rejects_non_canonical_depth() {
         use crate::compact_proof::get_circuit_config;
@@ -6845,17 +6916,21 @@ mod merkle_update_e2e {
             &proof_data.proof_bytes, config,
         ).expect("deserialize");
 
-        // Honest proof is depth-15 with 3 public inputs.
+        // Honest proof is depth-12 with 3 public inputs.
         assert_eq!(proof_data.public_inputs.len(), 3);
-        assert_eq!(proof_data.public_inputs[2], 15);
+        assert_eq!(proof_data.public_inputs[2], 12);
 
-        // Wrong depth value.
-        let mut wrong_depth = proof_data.public_inputs.clone();
-        wrong_depth[2] = 14;
-        assert!(
-            matches!(verify_deep_ali_circuit_3(&parsed, &wrong_depth), Err(VerifyError::DeepAliFailed)),
-            "depth guard must reject depth != 15"
-        );
+        // 🚨 15 FIRST. It was the canonical depth until 2026-08-29, so every C3
+        // proof built before the cut claims it, and every one of them must now
+        // be refused.
+        for wrong in [15u64, 14, 13, 11, 0, u64::MAX] {
+            let mut pi = proof_data.public_inputs.clone();
+            pi[2] = wrong;
+            assert!(
+                matches!(verify_deep_ali_circuit_3(&parsed, &pi), Err(VerifyError::DeepAliFailed)),
+                "depth guard accepted depth {wrong}; only 12 is canonical",
+            );
+        }
 
         // Wrong length (legacy 2-element vector) must also be rejected up-front.
         let two_elem = vec![proof_data.public_inputs[0], proof_data.public_inputs[1]];

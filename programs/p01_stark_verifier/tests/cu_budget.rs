@@ -3861,10 +3861,10 @@ fn all_cases() -> Vec<ProofCase> {
 
     // --- C3 merkle_path -----------------------------------------------------
     // Args from `verify.rs::c3_sample_proof` (canonical depth 15).
-    let path_elements: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
-    let path_indices: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
+    let path_elements: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
+    let path_indices: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
     let (p3, ms) = timed(|| {
-        p01_stark::compact::generate_merkle_path_compact_proof(777, &path_elements, &path_indices)
+        p01_stark::compact::generate_merkle_path_compact_proof(777, &path_elements, &path_indices, &p01_stark::compact::c3_deterministic_probe_mask(path_elements.len()))
     });
     cases.push(generic_case(3, "C3 merkle_path", p3, ms));
 
@@ -4248,7 +4248,7 @@ fn cu_budget_verify_uniform_path() {
     let (so, so_len, so_hash) = load_verifier_or_fail(&mut rig, &program);
 
     let path_elements: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
-    let path_indices: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
+    let path_indices: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
     // [C6-D12] `pe`/`pi` feed C6 ONLY; C3 in the same array uses
     // `path_elements`/`path_indices` and stays at 15.
     let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
@@ -4260,7 +4260,7 @@ fn cu_budget_verify_uniform_path() {
         (
             "C3 merkle_path",
             3,
-            p01_stark::compact::generate_merkle_path_compact_proof(777, &path_elements, &path_indices),
+            p01_stark::compact::generate_merkle_path_compact_proof(777, &path_elements, &path_indices, &p01_stark::compact::c3_deterministic_probe_mask(path_elements.len())),
         ),
         (
             "C5 transfer",
@@ -4744,8 +4744,7 @@ fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCom
             p01_stark::compact::generate_merkle_path_compact_proof(
                 777,
                 &path_elements,
-                &path_indices,
-            ),
+                &path_indices, &p01_stark::compact::c3_deterministic_probe_mask(path_elements.len())),
         ),
         (
             "C5 transfer",

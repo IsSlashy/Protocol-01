@@ -100,13 +100,12 @@ fn c2() -> Vec<Vec<u8>> {
 fn c3() -> Vec<Vec<u8>> {
     (0..WITNESSES)
         .map(|w| {
-            let pe: Vec<u64> = (0..15u64).map(|i| 1000 + i + (w as u64) * 97).collect();
-            let pi: Vec<u8> = (0..15u8).map(|i| ((i as usize + w) % 2) as u8).collect();
+            let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i + (w as u64) * 97).collect();
+            let pi: Vec<u8> = (0..12u8).map(|i| ((i as usize + w) % 2) as u8).collect();
             p01_stark::compact::generate_merkle_path_compact_proof(
                 777 + (w as u64) * 31,
                 &pe,
-                &pi,
-            )
+                &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()))
             .proof_bytes
         })
         .collect()

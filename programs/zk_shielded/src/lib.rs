@@ -379,6 +379,14 @@ pub mod zk_shielded {
     ///   - C3 (merkle_path): proves the commitment is at the supplied
     ///     merkle root (closes the v2 trust gap where membership was
     ///     never proven on-chain).
+    /// ⛔ `subtree_root`, `siblings` and `directions` ARE NOT OPTIONAL, and they
+    /// are not a convenience. Since 2026-08-29 the C3 proof attests membership
+    /// in a depth-12 SUBTREE, so the handler must walk the remaining levels to
+    /// reach a pool root. Without them a C3 proof means "this leaf is in SOME
+    /// tree", which anyone satisfies with a tree they built themselves.
+    ///
+    /// None of the three is trusted: the walk's result must equal the named
+    /// `merkle_root`, and that root must already be in the pool's ring.
     pub fn unshield_denominated_stark_v3(
         ctx: Context<UnshieldDenominatedStarkV3>,
         nullifier: [u8; 32],
@@ -386,9 +394,13 @@ pub mod zk_shielded {
         min_epoch: u64,
         stark_commitment: u64,
         recipient: [u8; 32],
+        subtree_root: u64,
+        siblings: Vec<u64>,
+        directions: Vec<u8>,
     ) -> Result<()> {
         instructions::unshield_denominated_stark_v3::handler(
             ctx, nullifier, merkle_root, min_epoch, stark_commitment, recipient,
+            subtree_root, siblings, directions,
         )
     }
 
@@ -544,8 +556,15 @@ pub mod zk_shielded {
         vk_hash_subscriber: [u8; 32],
         stark_commitment: u64,
         license_commitment: Option<[u8; 32]>,
+        subtree_root: u64,
+        siblings: Vec<u64>,
+        directions: Vec<u8>,
     ) -> Result<()> {
-        instructions::subscribe_private_stark::handler(ctx, nullifier, merkle_root, min_epoch, subscriber_commitment, rate, interval_slots, vk_hash_subscriber, stark_commitment, license_commitment)
+        instructions::subscribe_private_stark::handler(
+            ctx, nullifier, merkle_root, min_epoch, subscriber_commitment, rate,
+            interval_slots, vk_hash_subscriber, stark_commitment, license_commitment,
+            subtree_root, siblings, directions,
+        )
     }
 
     /// [C7] Open a private subscription vault on ONE circuit-7 proof.
@@ -699,8 +718,12 @@ pub mod zk_shielded {
         min_epoch: u64,
         stark_commitment: u64,
         new_commitment: [u8; 32],
-        new_root: [u8; 32],
+        c6_old_subtree_root: u64,
+        c6_new_subtree_root: u64,
         new_subtrees: Vec<[u8; 32]>,
+        subtree_root: u64,
+        siblings: Vec<u64>,
+        directions: Vec<u8>,
     ) -> Result<()> {
         instructions::transfer_denominated_stark_v3::handler(
             ctx,
@@ -709,8 +732,12 @@ pub mod zk_shielded {
             min_epoch,
             stark_commitment,
             new_commitment,
-            new_root,
+            c6_old_subtree_root,
+            c6_new_subtree_root,
             new_subtrees,
+            subtree_root,
+            siblings,
+            directions,
         )
     }
 
@@ -726,6 +753,9 @@ pub mod zk_shielded {
         num_outputs: u8,
         output_commitments: Vec<[u8; 32]>,
         new_roots: Vec<[u8; 32]>,
+        subtree_root: u64,
+        siblings: Vec<u64>,
+        directions: Vec<u8>,
     ) -> Result<()> {
         instructions::split_note_stark::handler(
             ctx,
@@ -736,6 +766,9 @@ pub mod zk_shielded {
             num_outputs,
             output_commitments,
             new_roots,
+            subtree_root,
+            siblings,
+            directions,
         )
     }
 
