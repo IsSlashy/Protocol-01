@@ -90,6 +90,13 @@ function buildIx(licenseCommitment?: Uint8Array) {
     vkHashSubscriber: VK_HASH,
     starkCommitment: STARK_COMMITMENT,
     licenseCommitment,
+    // [C3-D12] The walk arguments. Three levels: the depth-15 pool minus the
+    // depth-12 circuit. They are appended AFTER the license, so every absolute
+    // offset this file decodes at is unchanged — which is the property the
+    // decoder below actually pins.
+    subtreeRoot: 0x0fedcba987654321n,
+    siblings: [111n, 222n, 333n],
+    directions: [0, 1, 0],
   });
 }
 
@@ -111,14 +118,30 @@ function assertSubscribeLayout(data: Buffer, opts: { withLicense: boolean }): vo
   expect(data.subarray(128, 160)).toEqual(Buffer.from(VK_HASH));
   expect(data.readBigUInt64LE(160)).toBe(STARK_COMMITMENT);
 
+  // [C3-D12] The three walk arguments are appended after the license:
+  //   subtree_root u64            8
+  //   Vec<u64> siblings           4 + 3*8
+  //   Vec<u8>  directions         4 + 3
+  // Every absolute offset asserted above is BEFORE them and is unchanged, which
+  // is the whole point of putting them last.
+  const WALK_BYTES = 8 + (4 + 3 * 8) + (4 + 3);
+
   if (opts.withLicense) {
     expect(data.readUInt8(168)).toBe(1);
     expect(data.subarray(169, 201)).toEqual(Buffer.from(LICENSE_COMMITMENT));
-    expect(data.length).toBe(201);
+    expect(data.length).toBe(201 + WALK_BYTES);
   } else {
     expect(data.readUInt8(168)).toBe(0);
-    expect(data.length).toBe(169);
+    expect(data.length).toBe(169 + WALK_BYTES);
   }
+
+  // And the walk itself decodes where it should, in both shapes.
+  const walkAt = opts.withLicense ? 201 : 169;
+  expect(data.readBigUInt64LE(walkAt)).toBe(0x0fedcba987654321n);
+  expect(data.readUInt32LE(walkAt + 8)).toBe(3);
+  expect(data.readBigUInt64LE(walkAt + 12)).toBe(111n);
+  expect(data.readUInt32LE(walkAt + 12 + 24)).toBe(3);
+  expect(Array.from(data.subarray(walkAt + 40, walkAt + 43))).toEqual([0, 1, 0]);
 }
 
 // ---------------------------------------------------------------------------
@@ -160,8 +183,23 @@ describe('subscribe_private_stark instruction layout', () => {
   it('emits a 1-byte None tag and nothing more when there is no license', async () => {
     const ix = await buildIx(undefined);
     assertSubscribeLayout(ix.data, { withLicense: false });
-    // "Nothing more" stated as bytes, not as a length: byte 168 is the last one.
-    expect(ix.data.length - SUBSCRIBE_ARG_OFFSETS.licenseTag).toBe(1);
+
+    // ⚠️ RESTATED 2026-08-29, SAME PROPERTY. This used to read "byte 168 is the
+    // last one" and assert `length - licenseTag === 1`. The C3 walk arguments
+    // now follow the license, so the instruction does not end there any more —
+    // but the property being pinned was never "the data ends"; it was that a
+    // None license costs ONE byte rather than thirty-three.
+    //
+    // Stated as the distance from the tag to the next field, which is what the
+    // deployed program actually reads.
+    const WALK_BYTES = 8 + (4 + 3 * 8) + (4 + 3);
+    expect(ix.data.length - SUBSCRIBE_ARG_OFFSETS.licenseTag - WALK_BYTES).toBe(1);
+
+    // And the same thing said the other way: with a license it would be 33.
+    const withLicense = await buildIx(new Uint8Array(32).fill(0xab));
+    expect(
+      withLicense.data.length - SUBSCRIBE_ARG_OFFSETS.licenseTag - WALK_BYTES,
+    ).toBe(33);
   });
 
   it('treats a wrong-length license commitment as absent rather than encoding it', async () => {

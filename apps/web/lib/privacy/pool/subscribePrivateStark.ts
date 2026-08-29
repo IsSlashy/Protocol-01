@@ -39,6 +39,7 @@ import {
 import { sendWithFreshBlockhash } from './sendTx';
 import {
   ZK_SHIELDED_PROGRAM_ID,
+  buildComputeBudgetIxs,
   deriveNullifierPDA,
   goldilocksToLeBytes32,
   type PoolConfig,
@@ -129,6 +130,12 @@ export interface SubscribeIxParams {
   intervalSlots: bigint;
   vkHashSubscriber: Uint8Array;
   starkCommitment: bigint;
+  /** C3 public input 1: the depth-12 subtree root the on-chain walk starts from. */
+  subtreeRoot: bigint;
+  /** Path elements above the circuit, bottom-up. */
+  siblings: bigint[];
+  /** Direction bits above the circuit, same order. */
+  directions: number[];
   /** blake3(licenseSecret). Stored verbatim, never verified on chain. */
   licenseCommitment?: Uint8Array;
   programId?: PublicKey;
@@ -156,7 +163,27 @@ export async function buildSubscribePrivateStarkIx(
   const disc = await discriminator('subscribe_private_stark');
 
   const hasLicense = !!p.licenseCommitment && p.licenseCommitment.length === 32;
-  const data = Buffer.alloc(SUBSCRIBE_ARG_OFFSETS.licenseTag + 1 + (hasLicense ? 32 : 0));
+
+  // [C3-D12] The walk arguments follow `license_commitment`, matching the Rust
+  // parameter order. They are the last three, so the offsets table above is
+  // untouched and every existing offset test keeps meaning what it meant.
+  //
+  // ⛔ NOT OPTIONAL. Since 2026-08-29 the C3 proof attests membership in a
+  // depth-12 SUBTREE; the handler walks the remaining levels to reach a pool
+  // root. Without them the proof means "this leaf is in SOME tree".
+  if (p.siblings.length !== p.directions.length) {
+    throw new Error(
+      `siblings (${p.siblings.length}) and directions (${p.directions.length}) must ` +
+      `have equal length — the on-chain walk refuses a mismatch with WrongSiblingCount.`,
+    );
+  }
+  if (p.directions.some((d) => d !== 0 && d !== 1)) {
+    throw new Error('direction bits must be 0 or 1 — NonBinaryDirection on chain.');
+  }
+  const walkBytes = 8 + (4 + p.siblings.length * 8) + (4 + p.directions.length);
+  const data = Buffer.alloc(
+    SUBSCRIBE_ARG_OFFSETS.licenseTag + 1 + (hasLicense ? 32 : 0) + walkBytes,
+  );
 
   disc.copy(data, SUBSCRIBE_ARG_OFFSETS.discriminator);
   Buffer.from(p.nullifierBytes).copy(data, SUBSCRIBE_ARG_OFFSETS.nullifier);
@@ -171,6 +198,13 @@ export async function buildSubscribePrivateStarkIx(
   if (hasLicense) {
     Buffer.from(p.licenseCommitment!).copy(data, SUBSCRIBE_ARG_OFFSETS.licenseValue);
   }
+
+  let walkOffset = SUBSCRIBE_ARG_OFFSETS.licenseTag + 1 + (hasLicense ? 32 : 0);
+  data.writeBigUInt64LE(p.subtreeRoot, walkOffset); walkOffset += 8;
+  data.writeUInt32LE(p.siblings.length, walkOffset); walkOffset += 4;
+  for (const sib of p.siblings) { data.writeBigUInt64LE(sib, walkOffset); walkOffset += 8; }
+  data.writeUInt32LE(p.directions.length, walkOffset); walkOffset += 4;
+  for (const dir of p.directions) { data.writeUInt8(dir, walkOffset); walkOffset += 1; }
 
   // Account order mirrors `SubscribePrivateStark<'info>`. The three trailing
   // Option accounts must be present even for a native-SOL pool — Anchor 0.32
@@ -286,12 +320,25 @@ export async function subscribePrivateStark(
       vkHashSubscriber: params.vkHashSubscriber,
       starkCommitment: prepared.starkCommitment,
       licenseCommitment: params.licenseCommitment,
+      subtreeRoot: prepared.subtreeRoot,
+      siblings: prepared.siblings,
+      directions: prepared.directions,
     });
 
     // ⚠️ This used to send a transaction whose `recentBlockhash` was never set
     // here, relying on the signer's fallback — which fetched a `confirmed` one.
     // Same defect as everywhere else, one level of indirection away.
-    const tx = new Transaction().add(ix);
+    // 🚨 THIS PATH HAD NO COMPUTE BUDGET AT ALL, so it ran on Solana's 200,000
+    // CU default. That was survivable before; it is not now. The handler walks
+    // three Poseidon levels, and one on-chain `hash2` measures ~34,469 CU
+    // (litesvm SBF VM, 2026-08-29,
+    // `subscribe_v4_adversarial::the_walk_is_what_the_new_instruction_pays_for`),
+    // so the walk alone adds ~103,400 on top of two proof-buffer verifications.
+    //
+    // 400,000 matches what every other v3/v4 path on this surface requests.
+    const tx = new Transaction();
+    tx.add(...buildComputeBudgetIxs(400_000));
+    tx.add(ix);
     const { signature: txSig, blockhash, lastValidBlockHeight } = await sendWithFreshBlockhash(
       connection,
       tx,

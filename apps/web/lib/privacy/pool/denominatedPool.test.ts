@@ -657,6 +657,11 @@ describe('buildUnshieldDenominatedStarkV3Ix — min_epoch pinned to 0', () => {
       nullifierBytes,
       merkleRootBytes,
       commitment,
+      // [C3-D12] The walk arguments. Three levels, matching the depth-15 pool
+      // minus the depth-12 circuit.
+      0x0fedcba987654321n,
+      [111n, 222n, 333n],
+      [0, 1, 0],
     );
   }
 
@@ -669,8 +674,11 @@ describe('buildUnshieldDenominatedStarkV3Ix — min_epoch pinned to 0', () => {
   for (const shape of ['non-emergency', 'emergency'] as const) {
     it(`writes 0 at bytes 72..80 (${shape} call shape)`, () => {
       const ix = build();
-      expect(ix.data.length).toBe(8 + 32 + 32 + 8 + 8 + 32);
-      expect(ix.data.length).toBe(120);
+      // [C3-D12] The layout grew by `subtree_root` (8) plus two Borsh vecs:
+      // siblings (4 + 3*8) and directions (4 + 3). The min_epoch offset at
+      // 72..80 is unchanged, which is the property this test actually pins.
+      expect(ix.data.length).toBe(8 + 32 + 32 + 8 + 8 + 32 + 8 + (4 + 3 * 8) + (4 + 3));
+      expect(ix.data.length).toBe(163);
       expect(readU64LE(ix.data, 72)).toBe(0n);
       expect(Array.from(ix.data.subarray(72, 80))).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
     });
@@ -697,7 +705,11 @@ describe('buildUnshieldDenominatedStarkV3Ix — min_epoch pinned to 0', () => {
   it('leaks the note blinding in NO 8-byte window of the instruction data', () => {
     const ix = build();
     const windows = allU64Windows(ix.data);
-    expect(windows.length).toBe(113); // 120 - 8 + 1
+    // DERIVED, not typed. The old literal was `113 // 120 - 8 + 1`, and it went
+    // stale the moment the C3 walk args grew the layout. What this test is
+    // actually about is that the note blinding appears in NONE of them, so the
+    // count should follow the data rather than pin a byte length twice.
+    expect(windows.length).toBe(ix.data.length - 8 + 1);
     expect(windows).not.toContain(noteBlinding);
 
     // Sanity: the scan is capable of finding a value that IS present, otherwise

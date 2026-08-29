@@ -2139,13 +2139,34 @@ export function buildUnshieldDenominatedStarkV3Ix(
   nullifierBytes: number[],
   merkleRootBytes: number[],
   starkCommitment: bigint,
+  subtreeRoot: bigint,
+  siblings: bigint[],
+  directions: number[],
   tokenProgram?: PublicKey,
   poolVault?: PublicKey,
   recipientTokenAccount?: PublicKey,
 ): TransactionInstruction {
   const disc = getDiscriminator('unshield_denominated_stark_v3');
-  // Args layout: nullifier[32] + merkle_root[32] + min_epoch u64 + stark_commitment u64 + recipient[32]
-  const data = Buffer.alloc(8 + 32 + 32 + 8 + 8 + 32);
+  // Args layout: nullifier[32] + merkle_root[32] + min_epoch u64
+  //            + stark_commitment u64 + recipient[32]
+  //            + subtree_root u64 + Vec<u64> siblings + Vec<u8> directions
+  //
+  // ⛔ THE LAST THREE ARE NOT OPTIONAL. Since 2026-08-29 the C3 proof attests
+  // membership in a depth-12 SUBTREE, so the handler walks the remaining levels
+  // to reach a pool root. Without them a C3 proof means "this leaf is in SOME
+  // tree", which anyone satisfies with a tree they built themselves.
+  if (siblings.length !== directions.length) {
+    throw new Error(
+      `siblings (${siblings.length}) and directions (${directions.length}) must have ` +
+      `equal length — the on-chain walk refuses a mismatch with WrongSiblingCount.`,
+    );
+  }
+  if (directions.some((d) => d !== 0 && d !== 1)) {
+    throw new Error('direction bits must be 0 or 1 — NonBinaryDirection on chain.');
+  }
+  const data = Buffer.alloc(
+    8 + 32 + 32 + 8 + 8 + 32 + 8 + (4 + siblings.length * 8) + (4 + directions.length),
+  );
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
@@ -2154,7 +2175,12 @@ export function buildUnshieldDenominatedStarkV3Ix(
   data.writeBigUInt64LE(UNSHIELD_MIN_EPOCH, offset); offset += 8;
   data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
   // recipient as 32-byte arg (matches `recipient: [u8; 32]` in Rust)
-  Buffer.from(recipient.toBytes()).copy(data, offset);
+  Buffer.from(recipient.toBytes()).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(subtreeRoot, offset); offset += 8;
+  data.writeUInt32LE(siblings.length, offset); offset += 4;
+  for (const sib of siblings) { data.writeBigUInt64LE(sib, offset); offset += 8; }
+  data.writeUInt32LE(directions.length, offset); offset += 4;
+  for (const dir of directions) { data.writeUInt8(dir, offset); offset += 1; }
 
   const [feeEscrowPDA] = deriveFeeEscrowPDA(poolPDA);
 
@@ -2195,7 +2221,14 @@ export function buildUnshieldDenominatedStarkV3Ix(
 export interface PrepareUnshieldResult {
   c1ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number };
   c3ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number };
+  /** The POOL root, from the client's own tree walk. NOT `c3PublicInputs[1]`. */
   merkleRoot: bigint;
+  /** C3 public input 1: the depth-12 subtree root the walk starts from. */
+  subtreeRoot: bigint;
+  /** Path elements above the circuit, bottom-up. Levels 12.. */
+  siblings: bigint[];
+  /** Direction bits above the circuit, same order. */
+  directions: number[];
   nullifierGoldilocks: bigint;
   starkCommitment: bigint;
 }
@@ -2298,14 +2331,26 @@ export async function prepareUnshield(
     );
 
   // --- Generate C3 (merkle_path) proof ---
-  // publicInputs layout: [leaf_u64, root_u64, depth] — depth bound on-chain.
-  // starkProver.generateMerklePathProof(leaf, pathElements, pathIndices)
+  //
+  // publicInputs layout: [leaf_u64, subtree_root_u64, depth].
+  //
+  // 🚨 PUBLIC INPUT 1 IS A SUBTREE ROOT SINCE 2026-08-29, NOT THE POOL ROOT.
+  // C3 was cut to depth 12 to free 128 trace rows for a blinding region, so it
+  // proves membership in the bottom twelve levels only. The instruction walks
+  // the remaining three on chain, against these siblings, and requires the
+  // result to be a root the pool already published.
     stage = 'Proving the note is in the pool';
     onProgress?.('Proving the note is in the pool...');
+    if (merkleResult.pathElements.length < C3_SUBTREE_DEPTH) {
+      throw new Error(
+        `Merkle path has ${merkleResult.pathElements.length} elements, need at least ` +
+        `${C3_SUBTREE_DEPTH} for the C3 circuit.`,
+      );
+    }
     c3Raw = await prover.generateMerklePathProof(
       receipt.commitment.toString(),
-      merkleResult.pathElements.map((e) => e.toString()),
-      merkleResult.pathIndices,
+      merkleResult.pathElements.slice(0, C3_SUBTREE_DEPTH).map((e) => e.toString()),
+      merkleResult.pathIndices.slice(0, C3_SUBTREE_DEPTH),
     );
   } finally {
     clearInterval(proofHeartbeat);
@@ -2319,13 +2364,35 @@ export async function prepareUnshield(
   // nullifier and commitment come from C1 public inputs.
   const nullifierGoldilocks = c1PublicInputs[0] ?? 0n;
   const starkCommitment = c1PublicInputs[1] ?? 0n;
-  // root comes from C3 public inputs (layout [leaf, root]).
-  const merkleRoot = c3PublicInputs[1] ?? merkleResult.root;
+  // ⛔ `merkleRoot` NO LONGER COMES FROM THE PROOF. `c3PublicInputs[1]` is the
+  // depth-12 SUBTREE root, and using it as the pool root — which this line did
+  // until 2026-08-29 — would name a root no pool has ever published, so the
+  // instruction's ring check would refuse every withdrawal.
+  //
+  // The pool root comes from the client's own tree walk; the subtree root comes
+  // from the proof; the on-chain walk is what ties one to the other.
+  const subtreeRoot = c3PublicInputs[1] ?? 0n;
+  const merkleRoot = merkleResult.root;
+  if (c3PublicInputs[2] !== BigInt(C3_SUBTREE_DEPTH)) {
+    throw new Error(
+      `C3 proved depth ${c3PublicInputs[2]}, expected ${C3_SUBTREE_DEPTH}. The shipped ` +
+      `wasm prover is stale — it predates the depth cut, and the on-chain verifier ` +
+      `rejects every proof it makes. Reship the blob.`,
+    );
+  }
+
+  // The three levels above the circuit. `pathIndices` is bottom-up, so the tail
+  // is the top of the tree, which is the order `resolve_pool_root` walks in.
+  const siblings = merkleResult.pathElements.slice(C3_SUBTREE_DEPTH);
+  const directions = merkleResult.pathIndices.slice(C3_SUBTREE_DEPTH);
 
   return {
     c1ProofResult: { proofBytes: c1ProofBytes, publicInputs: c1PublicInputs, proofSize: c1Raw.proofSize },
     c3ProofResult: { proofBytes: c3ProofBytes, publicInputs: c3PublicInputs, proofSize: c3Raw.proofSize },
     merkleRoot,
+    subtreeRoot,
+    siblings,
+    directions,
     nullifierGoldilocks,
     starkCommitment,
   };
@@ -2363,7 +2430,12 @@ export async function unshieldDenominatedStarkV3(
   connection: Connection,
   onProgress?: (step: string) => void,
 ): Promise<string> {
-  const { c1ProofResult, c3ProofResult, merkleRoot, nullifierGoldilocks, starkCommitment } = preparedResult;
+  const {
+    c1ProofResult, c3ProofResult, merkleRoot, nullifierGoldilocks, starkCommitment,
+    // [C3-D12] The three values the on-chain walk needs. See
+    // `prepareUnshield` for why `merkleRoot` is NOT `c3PublicInputs[1]`.
+    subtreeRoot, siblings, directions,
+  } = preparedResult;
 
   const createdBuffers: PublicKey[] = [];
   let c1ProofBuffer: PublicKey | undefined;
@@ -2425,13 +2497,23 @@ export async function unshieldDenominatedStarkV3(
       nullifierBytes,
       merkleRootBytes,
       starkCommitment,
+      subtreeRoot,
+      siblings,
+      directions,
       tokenProgram,
       poolVault,
       recipientTokenAccount,
     );
 
     const tx = new Transaction();
-    tx.add(...buildComputeBudgetIxs(300_000));
+    // [C3-D12] 300,000 -> 400,000.
+    //
+    // The handler now walks three Poseidon levels on top of the v3 work. One
+    // on-chain `hash2` is ~34,469 CU (measured 2026-08-29 on the litesvm SBF VM
+    // by `subscribe_v4_adversarial::the_walk_is_what_the_new_instruction_pays_for`),
+    // so the walk adds ~103,400. 400,000 is what the v4 path already uses for
+    // the identical walk, which is the closest thing to a measured precedent.
+    tx.add(...buildComputeBudgetIxs(400_000));
     if (!isNativeSOL && recipientTokenAccount) {
       tx.add(
         createAssociatedTokenAccountIdempotentInstruction(
@@ -2502,6 +2584,17 @@ export async function unshieldDenominatedStarkV3(
 
 /** C7's subtree depth. NOT the pool tree's 15. See `air/spend.rs`. */
 export const C7_SUBTREE_DEPTH = 12;
+
+/**
+ * The depth circuit 3 proves, since 2026-08-29.
+ *
+ * Numerically equal to `C7_SUBTREE_DEPTH` and deliberately a SEPARATE constant:
+ * nothing requires the two circuits to move together, and one shared constant is
+ * what would make the next divergence invisible. The on-chain side keeps them
+ * separate for the same reason (`spend_root::SPEND_SUBTREE_DEPTH` vs
+ * `insert_root::INSERT_SUBTREE_DEPTH`).
+ */
+export const C3_SUBTREE_DEPTH = 12;
 
 /**
  * sha256(recipient) as the four little-endian u64 limbs circuit 7 takes.
