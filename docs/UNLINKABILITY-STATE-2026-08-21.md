@@ -72,11 +72,19 @@ inventée.
 Géométrie C7 délivrée (`stark/src/air/spend.rs:14`) :
 `width 10, length 512, blowup 16 → LDE 8192, merkle_depth 13, 22 queries, ffps 32`.
 
-Un STARK zero-knowledge a besoin de **2·queries + 1 = 2·22 + 1 = 45** lignes libres
+🚨 **CORRIGÉ 2026-08-29 : ce n'est pas 45, c'est 90.** Le `2·queries + 1` ci-dessous
+compte **deux** rangées de trace par requête. Le fil déployé en publie **quatre**
+(`row(pos) | row(pos^half) | row(next) | row(next^half)`, `compact_proof.rs:893-913`),
+donc le budget réel est `R = 4·queries + 2 = 4·22 + 2 = **90**`. C'est la même erreur,
+dans la même direction, que le `MASK_COEFFS_R = 46` corrigé le 29-08 dans
+`stark/tests/masking_deep_degree_gate.rs`, et que `spend.rs:1732` asserte à 90.
+
+~~Un STARK zero-knowledge a besoin de **2·queries + 1 = 2·22 + 1 = 45** lignes libres~~
+Un STARK zero-knowledge a besoin de **R = 4·queries + 2 = 90** lignes libres
 (lignes aléatoires que le prouveur peut sacrifier aux ouvertures sans révéler de trace).
 
 - Le pipeline Merkle occupe 15 niveaux × 32 lignes = **480**. Sur 512, il reste **32**.
-- 32 < 45. **Le masquage n'a pas la place.**
+- 32 < 90. **Le masquage n'a pas la place** — et le déficit est de 58, pas de 13.
 - Pire : l'AIR tel qu'écrit est plus strict que ce compte. `stark/src/air/spend.rs:44-45`
   dit textuellement « **there are no padding rows.** Every row 0..511 is an active
   Poseidon round on both pipelines » — les cycles 3-15 du pipeline commitment sont des
