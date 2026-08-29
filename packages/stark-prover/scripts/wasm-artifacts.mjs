@@ -1,7 +1,7 @@
 /**
  * wasm-artifacts.mjs — the ONE list of files that carry the STARK prover blob.
  *
- * There are five: the canonical `.wasm` plus four base64 twins inlined into
+ * There are five REGISTERED: the canonical `.wasm` plus four base64 twins inlined into
  * client source so the prover can ship inside a JS bundle (service worker,
  * WebView, Metro bundle). Two gates walk this list and they must walk the SAME
  * list, so it lives here instead of being duplicated:
@@ -39,6 +39,30 @@ export const TWIN_PATHS = [
   'apps/extension/src/shared/services/starkWasmData.ts',
   'apps/mobile/services/stark/wasmData.ts',
   'packages/react-native-zk/src/wasmData.ts',
+];
+
+/**
+ * Copies that SHIP but are invisible to git — the worst combination, and the
+ * reason this list exists at all.
+ *
+ * 🚨 `packages/specter-sdk/package.json` lists `"wasm"` in its `files` array, so
+ * `packages/specter-sdk/wasm/` is PUBLISHED TO NPM. And
+ * `packages/specter-sdk/.gitignore:3` ignores `wasm/`, so it never appears in a
+ * diff and no reviewer can see it drift. It is populated by no script this repo
+ * contains.
+ *
+ * A tracked-but-unchecked copy at least shows up in a review. This one does not:
+ * a reship updates the four registered twins, leaves this one a generation
+ * behind, and publishes it. Measured 2026-08-29: all three copies carry the
+ * canonical `72a8c700…`, so this is LATENT, not broken.
+ *
+ * ⚠️ Checked only WHEN PRESENT. They are build output and are legitimately
+ * absent on a fresh clone, so a missing file is reported and not failed — a gate
+ * that goes red for a normal reason is a gate someone disables.
+ */
+export const PUBLISHED_UNTRACKED_COPIES = [
+  'packages/specter-sdk/wasm/p01_stark_bg.wasm',
+  'packages/specter-sdk/dist/wasm/p01_stark_bg.wasm',
 ];
 
 /** The binding a twin module exports, and the only literal a client ever loads. */

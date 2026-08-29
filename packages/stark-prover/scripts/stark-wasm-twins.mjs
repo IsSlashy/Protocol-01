@@ -42,6 +42,7 @@ import {
   CANONICAL as CANONICAL_REL,
   GLUE as GLUE_REL,
   TWIN_PATHS,
+  PUBLISHED_UNTRACKED_COPIES,
   extractBase64,
 } from './wasm-artifacts.mjs';
 
@@ -249,6 +250,33 @@ if (mode === '--check') {
   } catch (e) {
     console.error(`[stark-wasm-twins] MISSING packages/stark-prover/wasm/p01_stark.js: ${e.message}`);
     failures += 1;
+  }
+}
+
+// 🚨 The copies that ship to npm but are gitignored, so no diff ever shows their
+// drift. specter-sdk lists "wasm" in package.json `files`, and its .gitignore
+// hides the same directory. Checked only WHEN PRESENT: they are build output,
+// legitimately absent on a fresh clone, and a gate that reddens for a normal
+// reason is a gate someone disables.
+if (mode === '--check') {
+  for (const rel of PUBLISHED_UNTRACKED_COPIES) {
+    let bytes;
+    try {
+      bytes = readFileSync(resolve(REPO, rel));
+    } catch {
+      console.log(`[stark-wasm-twins] absent ${rel} (build output — not a failure)`);
+      continue;
+    }
+    if (bytes.length === wasm.length && bytes.equals(wasm)) {
+      console.log(`[stark-wasm-twins] ok    ${rel} (${bytes.length.toLocaleString()} bytes, PUBLISHED to npm)`);
+    } else {
+      console.error(
+        `[stark-wasm-twins] DRIFT ${rel} — ${bytes.length.toLocaleString()} bytes against a canonical ` +
+          `${wasm.length.toLocaleString()}. This path is in specter-sdk's package.json "files", so it SHIPS, ` +
+          `and it is gitignored, so nothing else would have caught it.`,
+      );
+      failures += 1;
+    }
   }
 }
 
