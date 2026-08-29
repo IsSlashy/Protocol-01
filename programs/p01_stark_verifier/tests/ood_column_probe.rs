@@ -41,20 +41,19 @@
 //!
 //! # What this file does NOT claim
 //!
-//! It measures SIX circuits, C1 through C6, as they exist. It does not build a
+//! It measures SEVEN circuits, C1 through C7, as they exist. It does not build a
 //! unified AIR and it does not build a dummy leg, so it cannot prove what those
 //! would do. It establishes whether the MECHANISM is live in this prover. A
 //! negative result here weakens both worries; a positive result kills proposal 1
 //! outright and puts proposal 2 on notice.
 //!
-//! ⛔ AND IT DOES NOT MEASURE THE SPEND CIRCUIT. `CASES` is six wide and stops
-//! at C6; the sentence above said "seven" until 2026-08-26 and was wrong in both
-//! directions. C0's absence is explained below and is a different measurement.
-//! The spend circuit's absence has no reason written anywhere, and it is the one
-//! that would matter most: its 128 CSPRNG-drawn mask rows and the
-//! underdetermination argument built on them are exactly what a constant-column
-//! probe bears on. Recorded as a hole in `c7_pin_coverage.rs` rather than left
-//! silent — that entry is meant to be deleted, not kept.
+//! ✅ C7 IS NOW MEASURED. `CASES` is seven wide. The spend circuit used to be
+//! absent with no reason written anywhere, recorded as a hole in
+//! `c7_pin_coverage.rs` with the note that the entry was "meant to be deleted,
+//! not kept" — this is that deletion. It matters more than the other six: its
+//! 128 mask rows and the underdetermination argument built on them are exactly
+//! what a constant-column probe bears on, and an invariant opening there would
+//! mean a column the mask does not actually move.
 //!
 //! C0 is absent on purpose: it runs the legacy `CompactStarkProof` path with no
 //! `ood_current` accessor, so it is a different measurement, not a skipped one.
@@ -165,13 +164,63 @@ fn c6() -> Vec<Vec<u8>> {
         .collect()
 }
 
-const CASES: [Case; 6] = [
+/// C7, the spend circuit — the one the header used to record as an unexplained
+/// hole. It takes a mask argument no other circuit has, so its builder differs
+/// from the five above in exactly one way: each witness also gets its own mask.
+///
+/// 🚨 THE MASK MUST VARY WITH THE WITNESS, or this case measures nothing. A
+/// column held constant by a SHARED mask would read as witness-invariant and be
+/// reported as a public label, which is the opposite of the truth. Four
+/// witnesses, four masks.
+///
+/// ⚠️ The mask here is a deterministic xorshift, like `wire_parity.rs:82-105`.
+/// That is right for THIS probe — it asks whether an opening is invariant across
+/// witnesses, which does not depend on how the values were drawn — and it is not
+/// a secrecy claim. Real proofs draw from `draw_spend_mask` (`stark/src/lib.rs:357`),
+/// which rejection-samples `getrandom` and refuses to build without it.
+fn c7() -> Vec<Vec<u8>> {
+    (0..WITNESSES)
+        .map(|w| {
+            let mut z = 0xC7_5EED_0000u64 ^ (w as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let mut next = || {
+                z ^= z << 13;
+                z ^= z >> 7;
+                z ^= z << 17;
+                z % 0xFFFF_FFFF_0000_0001
+            };
+            // 128 mask rows x 10 columns, per `air::spend::{MASK_ROWS, TRACE_WIDTH}`.
+            let mask: Vec<u64> = (0..128 * 10).map(|_| next()).collect();
+            let pe: Vec<u64> = (0..12u64).map(|i| 0x51A7 + i * 7919 + (w as u64) * 131).collect();
+            let pi: Vec<u8> = (0..12u8).map(|i| ((i as usize + w) % 2) as u8).collect();
+            let rh = [
+                0x1111_1111 + w as u64,
+                0x2222_2222,
+                0x3333_3333,
+                0x4444_4444,
+            ];
+            p01_stark::compact::generate_spend_compact_proof(
+                0x0BAD_C0FF_EE00_1234 + (w as u64) * 37,
+                0x1DEA_D0D0_CAFE_5678 + (w as u64) * 41,
+                0x0000_0000_0001_E240 + (w as u64) * 43,
+                0x0000_0000_0000_002A,
+                &pe,
+                &pi,
+                &rh,
+                &mask,
+            )
+            .proof_bytes
+        })
+        .collect()
+}
+
+const CASES: [Case; 7] = [
     Case { label: "C1 pool_commitment", circuit_id: 1, build: c1 },
     Case { label: "C2 balance_proof", circuit_id: 2, build: c2 },
     Case { label: "C3 merkle_path", circuit_id: 3, build: c3 },
     Case { label: "C4 confidential_balance", circuit_id: 4, build: c4 },
     Case { label: "C5 transfer", circuit_id: 5, build: c5 },
     Case { label: "C6 merkle_update", circuit_id: 6, build: c6 },
+    Case { label: "C7 spend", circuit_id: 7, build: c7 },
 ];
 
 /// One circuit's measurement.
@@ -336,7 +385,7 @@ fn ood_openings_are_measured_for_witness_invariance() {
     println!("\n{}", "=".repeat(104));
     if total_invariant == 0 {
         println!(
-            "RESULT: NO witness-invariant OOD opening on any of the six circuits.\n\
+            "RESULT: NO witness-invariant OOD opening on any of the seven circuits.\n\
              The label mechanism is NOT live in this prover as it stands. That does not\n\
              license a unified AIR: a selector column added by such a design would be\n\
              constant BY CONSTRUCTION, which is exactly the case not represented here.\n\

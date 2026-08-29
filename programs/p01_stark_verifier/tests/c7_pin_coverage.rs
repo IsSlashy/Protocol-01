@@ -109,12 +109,18 @@ fn reaches_c7(src: &str) -> bool {
         // way the hand-written shape declares a circuit. Unquoted `C7` in a
         // comment still does not count, and a test below pins that.
         || src.contains("\"C7\"")
+        // 🚨 ADDED 2026-08-29 AFTER THIS GUARD PASSED ON A CLOSED HOLE.
+        // `ood_column_probe` grew a C7 case and none of the shapes above fired:
+        // its table is `[Case; 7]` (C1..C7, so seven and not eight) and its label
+        // is `"C7 spend"`, which does not contain `"C7"` WITH the closing quote.
+        // A struct-literal circuit id is the shape those tables actually use.
+        || src.contains("circuit_id: 7")
 }
 
 /// Pins that enumerate circuits and stop before C7, each with the reason.
 ///
 /// Deleting an entry is the goal. Adding one costs a written reason on purpose.
-const PINS_THAT_DO_NOT_REACH_C7: [(&str, &str); 6] = [
+const PINS_THAT_DO_NOT_REACH_C7: [(&str, &str); 5] = [
     (
         "honest_liveness",
         "🚨 THE WORST ONE, AND THE REASON THIS FILE'S DETECTOR GREW A THIRD SHAPE. It runs C0          through C6 with hand-written `run_generic(\"C1\", ..)` calls and never generates a C7          witness — its own summary prints `WITNESSES * 7`. Its dispatcher WAS taught C7          (`7 => verify_deep_ali_circuit_7`, added 2026-08-24 so a C7 proof could not clear          phase 2 vacuously), which makes the omission look deliberate and is not the same thing:          the arm exists and nothing ever calls it. So the one suite whose entire job is 'does          the verifier accept EVERY honest proof' says nothing about the circuit the product is          for, and the only evidence C7 liveness holds is the single proof that landed on devnet.          Closing this needs a C7 witness family in tests/common/mod.rs, measured, not adapted",
@@ -150,14 +156,6 @@ const PINS_THAT_DO_NOT_REACH_C7: [(&str, &str); 6] = [
          measures a delta against a PRE-Route-C baseline that C7 never had, since C7 was born \
          after Route C — but that reason is written nowhere in the file, and a plausible reason \
          nobody wrote down is indistinguishable from an oversight",
-    ),
-    (
-        "ood_column_probe",
-        "CASES: [Case; 6] covers C1 through C6. Its header excludes C0 explicitly and with a \
-         reason ('a different measurement, not a skipped one'), which is exactly the standard \
-         C7's absence fails to meet — the header still says it measures 'the seven circuits'. \
-         🚨 This is the one that bears on the live claim: C7's 128 mask rows and its \
-         underdetermination argument are precisely what a constant-column probe would test",
     ),
 ];
 
@@ -238,6 +236,18 @@ fn the_detectors_are_not_broken() {
     // And the excluded ones must NOT, or the first test is passing for the
     // wrong reason. Checked here as well as above so a broken predicate shows
     // up as a detector failure rather than as an exclusion-list failure.
+    // The shape that slipped through on 2026-08-29: a struct-literal table that
+    // stops at seven entries because it starts at C1, with a label that is not
+    // exactly "C7". Pinned here so the detector cannot lose it again.
+    assert!(
+        reaches_c7("Case { label: \"C7 spend\", circuit_id: 7, build: c7 }"),
+        "a struct-literal circuit_id: 7 must register as reaching C7",
+    );
+    assert!(
+        !reaches_c7("Case { label: \"C6 merkle_update\", circuit_id: 6, build: c6 }"),
+        "and circuit_id: 6 must not",
+    );
+
     assert!(
         !reaches_c7("for id in 0u8..=6 { let c = config_for(id); }"),
         "reaches_c7 is matching something it should not"
@@ -282,7 +292,9 @@ fn the_detectors_are_not_broken() {
 
     assert_eq!(
         PINS_THAT_DO_NOT_REACH_C7.len(),
-        6,
+        // 6 -> 5 on 2026-08-29: ood_column_probe now covers C7, so its entry was
+        // deleted. That is the deletion its own text asked for.
+        5,
         "the exclusion count changed — if a hole was closed, good, update this number \
          deliberately rather than letting the list drift"
     );
