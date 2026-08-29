@@ -532,6 +532,146 @@ mod domain_generator_tests {
         }
     }
 
+    /// [C3-D12] The nine values the verifier evaluates at `z` are the nine
+    /// columns the prover committed to.
+    ///
+    /// The differential below proves both sides COMBINE their inputs the same
+    /// way; it says nothing about whether they are handed the same inputs. A
+    /// rebaked table, a column in the wrong slot, or a compressed evaluator
+    /// pointed at a dense column all pass it. This is the other half.
+    ///
+    /// ✅ IT ALSO MEASURES THE SHARING. C3, C6 and C7 now have identical
+    /// geometry -- 512 rows, 384 constrained, 128 free -- so all three evaluate
+    /// ONE set of tables and C3's depth cut added zero rodata. That is asserted
+    /// here by evaluating C3's prover columns against the tables the verifier
+    /// actually reads, which are C3's stride tables and C7's two dense gates.
+    #[test]
+    fn c3_periodic_at_z_matches_the_prover_columns() {
+        use p01_stark::air::merkle_path::{
+            build_merkle_path_periodic_columns, CANONICAL_DEPTH, TRACE_LENGTH,
+        };
+        use p01_stark::{BaseElement, StarkField};
+        use crate::periodic_consts::{C7_ACTIVE_COEFFS, C7_NOT_BOUNDARY_ACTIVE_COEFFS};
+        use crate::periodic_ext_consts::{
+            C3_HASH_START_PERIODIC16, C3_IS_BOUNDARY_PERIODIC16, C3_IS_INTERIOR_PERIODIC16,
+            C3_RC0_PERIODIC16, C3_RC1_PERIODIC16, C3_RC2_PERIODIC16,
+            C3_ROUND_ACTIVE_PERIODIC16,
+        };
+
+        let cols = build_merkle_path_periodic_columns(CANONICAL_DEPTH, TRACE_LENGTH);
+        assert_eq!(cols.len(), 9, "nine periodic columns");
+        for (i, col) in cols.iter().enumerate() {
+            assert_eq!(
+                col.len(), TRACE_LENGTH,
+                "C3 periodic column {i} changed length; C3 emits all nine pre-tiled",
+            );
+        }
+
+        for z_seed in 0..8u64 {
+            let z_u = c7_stream(0xC3_D12 ^ z_seed, 1)[0];
+            let z = Felt::new(z_u);
+            let z_air = BaseElement::new(z_u);
+            let y16 = z.exp(16);
+
+            // Exactly what `verify_deep_ali_circuit_3` builds.
+            let got: [Felt; 9] = [
+                eval_periodic_compressed32_at_z(&C3_RC0_PERIODIC16, y16),
+                eval_periodic_compressed32_at_z(&C3_RC1_PERIODIC16, y16),
+                eval_periodic_compressed32_at_z(&C3_RC2_PERIODIC16, y16),
+                eval_periodic_compressed32_at_z(&C3_ROUND_ACTIVE_PERIODIC16, y16),
+                eval_periodic_compressed32_at_z(&C3_HASH_START_PERIODIC16, y16),
+                eval_periodic_compressed32_at_z(&C3_IS_BOUNDARY_PERIODIC16, y16),
+                eval_periodic_compressed32_at_z(&C3_IS_INTERIOR_PERIODIC16, y16),
+                eval_periodic_at_z(&C7_ACTIVE_COEFFS, z),
+                eval_periodic_at_z(&C7_NOT_BOUNDARY_ACTIVE_COEFFS, z),
+            ];
+
+            for i in 0..9 {
+                let poly = p01_stark::compact::inverse_ntt_probe(
+                    &cols[i],
+                    p01_stark::compact::domain_generator_probe(TRACE_LENGTH),
+                );
+                let want = p01_stark::compact::evaluate_poly_probe(&poly, z_air);
+                assert_eq!(
+                    got[i].as_u64(),
+                    want.as_int(),
+                    "C3 periodic slot {i} disagrees with the prover at z_seed {z_seed}",
+                );
+            }
+        }
+    }
+
+    /// [C3-D12] The C3 OOD evaluator agrees with the C3 AIR on random frames.
+    ///
+    /// The third of these differentials, and the reason there is one per masked
+    /// circuit rather than one shared: each AIR has its own constraint list and
+    /// its own gating, so a shared test would only prove the shared parts.
+    ///
+    /// 🚨 WHAT IT CATCHES IS A SUBSTITUTION THAT REJECTS NOTHING. Gating C3's
+    /// Poseidon rows with `1 - is_boundary` instead of `nba` leaves every honest
+    /// proof verifying and every other test green, while re-imposing the rounds
+    /// across rows 384..511. The 128 masked rows become 128 constrained ones and
+    /// `air_aware_recovery_c3.rs` reads the authentication path and the leaf
+    /// index back out of the published bytes. A random frame with a nonzero
+    /// `is_boundary` and a zero `nba` separates the two gates; no honest-proof
+    /// test can.
+    #[test]
+    fn c3_ood_evaluator_matches_the_air_on_random_frames() {
+        use p01_stark::air::merkle_path::{
+            evaluate_merkle_path_transition, MERKLE_PATH_NUM_CONSTRAINTS,
+            MERKLE_PATH_NUM_PERIODIC, TRACE_WIDTH,
+        };
+        use p01_stark::{BaseElement, FieldElement, StarkField};
+
+        assert_eq!(MERKLE_PATH_NUM_CONSTRAINTS, 11);
+        assert_eq!(MERKLE_PATH_NUM_PERIODIC, 9, "seven columns plus the two gates");
+        assert_eq!(TRACE_WIDTH, 6);
+
+        let w = TRACE_WIDTH;
+        let np = MERKLE_PATH_NUM_PERIODIC;
+        for seed in 0..64u64 {
+            let raw = c7_stream(0xC3_0000 ^ seed, w + w + np + 1);
+            let cur_air: Vec<BaseElement> =
+                raw[0..w].iter().map(|&v| BaseElement::new(v)).collect();
+            let nxt_air: Vec<BaseElement> =
+                raw[w..2 * w].iter().map(|&v| BaseElement::new(v)).collect();
+            let per_air: Vec<BaseElement> = raw[2 * w..2 * w + np]
+                .iter()
+                .map(|&v| BaseElement::new(v))
+                .collect();
+            let alpha_air = BaseElement::new(raw[2 * w + np]);
+
+            let mut air_out = vec![BaseElement::ZERO; MERKLE_PATH_NUM_CONSTRAINTS];
+            evaluate_merkle_path_transition(&cur_air, &nxt_air, &per_air, &mut air_out);
+            let mut want = BaseElement::ZERO;
+            let mut pw = BaseElement::ONE;
+            for v in air_out.iter() {
+                want += pw * *v;
+                pw *= alpha_air;
+            }
+
+            let mut cur_v = [Felt::ZERO; 6];
+            let mut nxt_v = [Felt::ZERO; 6];
+            let mut per_v = [Felt::ZERO; 9];
+            for i in 0..w {
+                cur_v[i] = Felt::new(raw[i]);
+                nxt_v[i] = Felt::new(raw[w + i]);
+            }
+            for i in 0..np {
+                per_v[i] = Felt::new(raw[2 * w + i]);
+            }
+            let got = evaluate_transition_at_ood_circuit_3(
+                &cur_v, &nxt_v, &per_v, Felt::new(raw[2 * w + np]),
+            );
+
+            assert_eq!(
+                got.as_u64(),
+                want.as_int(),
+                "C3 transition drift at seed {seed}: the verifier and the AIR disagree",
+            );
+        }
+    }
+
     /// [C6-D12] The C6 OOD evaluator agrees with the C6 AIR on random frames.
     ///
     /// The twin of `c7_ood_evaluator_matches_the_air_on_random_frames`, and C6
@@ -697,8 +837,20 @@ mod domain_generator_tests {
     /// test is the tripwire; the fix is to emit C6's own pair, not to relax it.
     #[test]
     fn c6_and_c7_row_gates_are_the_same_two_columns() {
+        use p01_stark::air::merkle_path as c3;
         use p01_stark::air::merkle_update as c6;
         use p01_stark::air::spend as c7;
+
+        // [C3-D12] C3 joined the sharing later the same day. It has no tables of
+        // its own at all — it evaluates C3's stride set plus C7's two dense
+        // gates — so the only thing standing between it and the wrong geometry
+        // is this equality.
+        assert_eq!(
+            c3::FIRST_FREE_ROW, c7::FIRST_FREE_ROW,
+            "C3 and C7 stopped agreeing on where the blinding region starts, and C3              evaluates C7's gate tables",
+        );
+        assert_eq!(c3::TRACE_LENGTH, 512);
+        assert_eq!(c3::MASK_ROWS, 128, "128 free rows against R = 4*22 + 2 = 90");
         use crate::periodic_consts::{
             C6_ACTIVE_COEFFS, C6_NOT_BOUNDARY_ACTIVE_COEFFS, C7_ACTIVE_COEFFS,
             C7_NOT_BOUNDARY_ACTIVE_COEFFS,

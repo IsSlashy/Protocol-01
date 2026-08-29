@@ -1360,7 +1360,31 @@ const CU_CEILINGS: [CuCeiling; 8] = [
     // question to answer first is what moved and why — never what number would
     // pass.
     CuCeiling { circuit_id: 2, phase1_measured: 818518, phase1_max: 835000, phase2_measured: Some(112042), phase2_max: Some(115000) },
-    CuCeiling { circuit_id: 3, phase1_measured: 868281, phase1_max: 886000, phase2_measured: Some(115904), phase2_max: Some(119000) },
+    // [C3-D12 2026-08-29] RE-RECORDED for the depth-12 masked geometry, and the
+    // two phases moved the same way C6's did an hour earlier -- but by very
+    // different amounts, and that difference is the interesting part.
+    //
+    // phase 2: 115,904 -> 168,132. DEARER BY 52,228. Two genuinely dense
+    // 512-coefficient Horner evaluations, `active` and `not_boundary_active`,
+    // plus the 11 constraints now carrying those factors. C6 paid 52,530 for
+    // the same two columns across 19 constraints, so the numbers agree to
+    // within half a percent -- which is the check that the cost is the columns
+    // and not something circuit-specific.
+    //
+    // phase 1: 868,281 -> 868,256. CHEAPER BY 25, i.e. essentially unchanged.
+    //
+    // 🚨 AND THAT NUMBER RETRACTS SOMETHING I WROTE ON C6's ROW. There I
+    // attributed C6's phase-1 drop of 3,857 CU to the retired Lagrange
+    // correction. That cannot be right: the periodic columns are evaluated in
+    // PHASE 2, so removing a correction to them cannot move phase 1 at all.
+    // C3 took the identical change and its phase 1 moved 25 CU, which is what
+    // "no phase-1 effect" looks like.
+    //
+    // ⛔ SO C6's 3,857 IS UNEXPLAINED, not explained. It is a drop, it is
+    // recorded, and the cause is not known without measuring. Leaving the wrong
+    // explanation in place would be worse than leaving none: the next person to
+    // change a periodic column would expect a phase-1 saving that is not there.
+    CuCeiling { circuit_id: 3, phase1_measured: 868256, phase1_max: 886000, phase2_measured: Some(168132), phase2_max: Some(172000) },
     // [BIND-C2C4 2026-08-03] see the note on C2 above — same cause, same band,
     // same recorded acceptance. C4 is the circuit that pays the most.
     CuCeiling { circuit_id: 4, phase1_measured: 924827, phase1_max: 944000, phase2_measured: Some(207605), phase2_max: Some(212000) },
@@ -1373,12 +1397,17 @@ const CU_CEILINGS: [CuCeiling; 8] = [
     // change in two numbers, so neither is worth flattening into "C6 got more
     // expensive".
     //
-    // phase 1: 892,107 -> 888,250. CHEAPER BY 3,857. At depth 15 the walk
-    // truncated the seven periodic columns, so the verifier evaluated them from
-    // a 32-entry stride table PLUS a shared Lagrange correction over rows
-    // 480..=511. At depth 12 they tile all 512 rows, the correction is
-    // identically zero, and `cycle15_lagrange_weights` left the C6 path
-    // entirely. The saving is the correction.
+    // phase 1: 892,107 -> 888,250. CHEAPER BY 3,857, CAUSE UNKNOWN.
+    //
+    // ⚠️ RETRACTED 2026-08-29, a few hours after it was written. This comment
+    // used to say the saving was the retired Lagrange correction. It is not:
+    // the periodic columns are evaluated in PHASE 2, so removing a correction
+    // to them cannot move phase 1. C3 took the identical change later the same
+    // day and its phase 1 moved 25 CU -- see the C3 row below, which is what
+    // the absence of a phase-1 effect actually looks like.
+    //
+    // The drop is real and recorded. Its cause is not known, and the honest
+    // form of that is to say so rather than keep a plausible story.
     //
     // phase 2: 122,739 -> 175,269. DEARER BY 52,530, and this is the price of
     // the mask, paid where it should be. Two genuinely dense 512-coefficient
@@ -1745,7 +1774,12 @@ const THIS_FILE: &str = include_str!("cu_budget.rs");
 /// with the number quoted back at you. Entries are checked in BOTH directions:
 /// an entry that no longer appears in the prose is itself a failure, so this
 /// cannot rot into a list of numbers nobody wrote.
-const PROSE_FIGURES: [(u64, &str); 45] = [
+const PROSE_FIGURES: [(u64, &str); 48] = [
+    (115_904, "the PRE-mask C3 phase-2 pin, quoted beside the 168,132 that replaced it"),
+    // [C3-D12 2026-08-29] The BEFORE values on C3's row; the AFTER values are the
+    // constants themselves.
+    (868_281, "the PRE-mask C3 phase-1 pin, quoted beside the 868,256 that replaced it"),
+    (52_228, "CU the mask COST in C3 phase 2 — the same two dense gate columns as C6"),
     // [C6-D12 2026-08-29] The depth cut moved BOTH C6 phases, in opposite
     // directions. The AFTER values are the constants in CU_CEILINGS; these four
     // are the BEFORE values and the two deltas, which no constant produces.
@@ -4247,7 +4281,8 @@ fn cu_budget_verify_uniform_path() {
     let program = Address::from_str(VERIFIER_ID).unwrap();
     let (so, so_len, so_hash) = load_verifier_or_fail(&mut rig, &program);
 
-    let path_elements: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
+    // [C3-D12] 12, not 15. C3 took the depth cut on 2026-08-29.
+    let path_elements: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
     let path_indices: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
     // [C6-D12] `pe`/`pi` feed C6 ONLY; C3 in the same array uses
     // `path_elements`/`path_indices` and stays at 15.
@@ -4726,8 +4761,8 @@ fn uniform_leak_probe(
 /// instruction at all (measured in `tests/wire_parity.rs`), so they are not in
 /// the anonymity set and including them would flatter the result.
 fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCompactProofData)> {
-    let path_elements: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
-    let path_indices: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
+    let path_elements: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
+    let path_indices: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
     // [C6-D12] `pe`/`pi` feed C6 ONLY; C3 in the same array uses
     // `path_elements`/`path_indices` and stays at 15.
     let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
