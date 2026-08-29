@@ -103,7 +103,7 @@ use crate::poseidon;
 // ============================================================================
 
 pub const TRACE_WIDTH: usize = 10;
-const HASH_CYCLE_LEN: usize = 32;
+pub const HASH_CYCLE_LEN: usize = 32;
 const NUM_ROUNDS: usize = 30;
 
 /// Compute trace length for a given Merkle depth.
@@ -113,6 +113,50 @@ const NUM_ROUNDS: usize = 30;
 pub fn trace_length_for_depth(depth: usize) -> usize {
     let active = depth * HASH_CYCLE_LEN;
     (active + 1).next_power_of_two()
+}
+
+/// The depth C6 proves in-circuit.
+///
+/// CHANGED 15 -> 12 on 2026-08-29. The pool tree is STILL depth 15; the
+/// remaining three levels are folded on chain by the deposit instruction
+/// against the POOL ACCOUNT's `filled_subtrees`. NEVER the caller-supplied
+/// `new_subtrees`: `verify_c6_proof_buffer` hashes exactly 40 bytes, so
+/// `new_subtrees` is UNATTESTED and any depositor can write into it. That read
+/// is a fund-loss shape, not a style choice.
+///
+/// Unlike C7 and C3, `filled_subtrees` IS the right source here: C6 proves an
+/// INSERTION, and an insertion is always at the frontier.
+pub const CANONICAL_DEPTH: usize = 12;
+
+/// `trace_length_for_depth(12) = next_pow2(384+1) = 512`, IDENTICAL to what
+/// depth 15 gave. So `n`, `deg(Q)`, `quotient_segments = 8` and rho all stay
+/// put, and the wire does not grow by one byte.
+pub const CANONICAL_TRACE_LENGTH: usize = 512;
+
+/// First cycle carrying no witness, existing only to be blinded.
+pub const FIRST_FREE_CYCLE: usize = CANONICAL_DEPTH; // 12
+
+/// First trace row free on every one of the ten columns.
+pub const FIRST_FREE_ROW: usize = FIRST_FREE_CYCLE * HASH_CYCLE_LEN; // 384
+
+/// Blinding positions per column.
+///
+/// ```text
+///   MASK_ROWS = 512 - 384 = 128
+///   R         = 4 * MERKLE_UPDATE_NUM_QUERIES + 2 = 4*22 + 2 = 90
+///   128 > 90, margin 38.
+///
+///   depth 15 -> 32  < 90   <- before this change: NOT zero-knowledge
+///   depth 14 -> 64  < 90
+///   depth 13 -> 96  > 90   margin 6, one query bump kills it
+///   depth 12 -> 128 > 90   margin 38   <- chosen
+/// ```
+pub const MASK_ROWS: usize = CANONICAL_TRACE_LENGTH - FIRST_FREE_ROW; // 128
+
+/// Mask elements `build_merkle_update_trace` requires at `depth`. Kept
+/// depth-generic so the shallow-depth tests in this file keep compiling.
+pub fn mask_len_for_depth(depth: usize) -> usize {
+    (trace_length_for_depth(depth) - depth * HASH_CYCLE_LEN) * TRACE_WIDTH
 }
 
 // ============================================================================
@@ -262,68 +306,130 @@ fn pow7<E: FieldElement>(x: E) -> E {
 }
 
 pub const MERKLE_UPDATE_NUM_CONSTRAINTS: usize = 19;
-pub const MERKLE_UPDATE_NUM_PERIODIC: usize = 7;
+/// 7 -> 9 on 2026-08-29. Appended: [7] `active`, [8] `not_boundary_active`.
+/// ORDER IS FROZEN - the RLC uses `alpha^i` and the coefficient emitter indexes
+/// positionally. Append only, never insert.
+pub const MERKLE_UPDATE_NUM_PERIODIC: usize = 9;
 
-/// Build the 7 periodic column value vectors for a circuit-6 trace.
+/// Build the 9 periodic column value vectors for a circuit-6 trace.
 ///
-/// Exposed so the prover can interpolate / inverse-NTT them for LDE and OOD
-/// evaluations outside the AIR.
+/// Layout, FROZEN:
+/// ```text
+///   0 rc0                  32-periodic
+///   1 rc1                  32-periodic
+///   2 rc2                  32-periodic
+///   3 round_active         32-periodic  (1 on pos 0..=29)
+///   4 hash_start           32-periodic  (1 on pos 0)
+///   5 is_boundary          32-periodic  (1 on pos 31)
+///   6 is_interior          32-periodic  (1 on pos 1..=30)
+///   7 active               DENSE, 1 on rows 0..=first_free_row-2   APPENDED
+///   8 not_boundary_active  DENSE, active AND not_boundary          APPENDED
+/// ```
+///
+/// COLUMNS 0-6 ARE NO LONGER DEPTH-BOUNDED. They tile the whole trace, and rows
+/// at or past `first_free_row` are switched off by [7]/[8] instead. Deliberate:
+/// a depth-bounded `rc0` at depth 12 is zero over FOUR truncated cycles and its
+/// interpolant is DENSE - 4,096 B of rodata per column, seven times over. Fully
+/// periodic they interpolate to stride-16 polynomials byte-identical to C7's,
+/// so the verifier shares one table set and C6's new rodata cost is ZERO.
+///
+/// On rows `0..first_free_row` the new construction equals the old one value
+/// for value, so no witness row changes meaning.
 pub fn build_merkle_update_periodic_columns(
     depth: usize,
     trace_length: usize,
 ) -> Vec<Vec<BaseElement>> {
     let tl = trace_length;
-    let active_rows = depth * HASH_CYCLE_LEN;
+    let first_free_row = depth * HASH_CYCLE_LEN;
+    assert!(
+        first_free_row < tl,
+        "C6 depth {depth} leaves no free row in a {tl}-row trace",
+    );
 
     let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
     let mut rc0 = vec![BaseElement::ZERO; tl];
     let mut rc1 = vec![BaseElement::ZERO; tl];
     let mut rc2 = vec![BaseElement::ZERO; tl];
-
-    for row in 0..active_rows {
-        let pos_in_cycle = row % HASH_CYCLE_LEN;
-        if pos_in_cycle < NUM_ROUNDS {
-            rc0[row] = rc[pos_in_cycle * 3];
-            rc1[row] = rc[pos_in_cycle * 3 + 1];
-            rc2[row] = rc[pos_in_cycle * 3 + 2];
-        }
-    }
-
     let mut round_active = vec![BaseElement::ZERO; tl];
-    for row in 0..active_rows {
-        if row % HASH_CYCLE_LEN < NUM_ROUNDS {
+    let mut hash_start = vec![BaseElement::ZERO; tl];
+    let mut is_boundary = vec![BaseElement::ZERO; tl];
+    let mut is_interior = vec![BaseElement::ZERO; tl];
+
+    for row in 0..tl {
+        let pos = row % HASH_CYCLE_LEN;
+        if pos < NUM_ROUNDS {
+            rc0[row] = rc[pos * 3];
+            rc1[row] = rc[pos * 3 + 1];
+            rc2[row] = rc[pos * 3 + 2];
             round_active[row] = BaseElement::ONE;
         }
-    }
-
-    let mut hash_start = vec![BaseElement::ZERO; tl];
-    for cycle in 0..depth {
-        hash_start[cycle * HASH_CYCLE_LEN] = BaseElement::ONE;
-    }
-
-    let mut is_boundary = vec![BaseElement::ZERO; tl];
-    for cycle in 0..depth {
-        is_boundary[cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1] = BaseElement::ONE;
-    }
-
-    let mut is_interior = vec![BaseElement::ZERO; tl];
-    for row in 0..active_rows {
-        let pos = row % HASH_CYCLE_LEN;
+        if pos == 0 {
+            hash_start[row] = BaseElement::ONE;
+        }
+        // pos 31 includes row 511: that transition is exempt (winterfell's
+        // single transition exemption) and killed by the (x - g^{n-1}) factor
+        // in compute_quotient_lde_circuit_6. Including it is what keeps this
+        // column 32-periodic, which is the whole point.
+        if pos == HASH_CYCLE_LEN - 1 {
+            is_boundary[row] = BaseElement::ONE;
+        }
         if pos >= 1 && pos <= NUM_ROUNDS {
             is_interior[row] = BaseElement::ONE;
         }
     }
 
-    vec![rc0, rc1, rc2, round_active, hash_start, is_boundary, is_interior]
+    // -- APPENDED 2026-08-29: the two gates that make C6 zero-knowledge --
+    //
+    // `not_boundary_active` is `active` pre-multiplied with `not_boundary`. It
+    // is a SEPARATE COLUMN rather than a product formed in the constraint body
+    // ON PURPOSE: the degree-7 Poseidon constraints may carry exactly TWO
+    // periodic factors. A third makes degree_bound = 7 + 3 - 1 = 9, whose
+    // next_power_of_two is 16, so ce_blowup_factor goes 8 -> 16 and the whole
+    // proof structure changes with it.
+    //
+    // THE BOUND IS `first_free_row - 1`, NOT `first_free_row`.
+    //
+    // These are TRANSITION constraints: the one at row i reads row i+1. Row 383
+    // is a cycle boundary (11*32+31), so is_boundary[383] = 1 and the carry
+    // updates fire there. Left on, they demand mask[384][8] == old_root and
+    // mask[384][9] == new_root - unsatisfiable with fresh randomness, and
+    // republishing both roots inside the blinding region if it were satisfied.
+    // Stopping one row early makes the 383 -> 384 transition entirely free.
+    let mut active = vec![BaseElement::ZERO; tl];
+    let mut not_boundary_active = vec![BaseElement::ZERO; tl];
+    for row in 0..(first_free_row - 1) {
+        active[row] = BaseElement::ONE;
+        if row % HASH_CYCLE_LEN != HASH_CYCLE_LEN - 1 {
+            not_boundary_active[row] = BaseElement::ONE;
+        }
+    }
+
+    vec![
+        rc0,                 // 0
+        rc1,                 // 1
+        rc2,                 // 2
+        round_active,        // 3
+        hash_start,          // 4
+        is_boundary,         // 5
+        is_interior,         // 6
+        active,              // 7  APPENDED
+        not_boundary_active, // 8  APPENDED
+    ]
 }
 
 /// Standalone evaluator for circuit 6 transition constraints.
 ///
 /// Mirrors `MerkleUpdateAir::evaluate_transition` so the prover can evaluate
 /// the same constraints at LDE and OOD points without instantiating the AIR.
-/// `current` / `next` must be length 10, `periodic` length 7, `result` length 19.
+/// `current` / `next` must be length 10, `periodic` length 9, `result` length 19.
 ///
-/// Periodic layout: `[rc0, rc1, rc2, round_active, hash_start, is_boundary, is_interior]`.
+/// Periodic layout, NINE names and the body reads all nine:
+/// `[rc0, rc1, rc2, round_active, hash_start, is_boundary, is_interior,
+///   active, not_boundary_active]`
+///
+/// `not_boundary` is GONE from this function. Every use is now `nba`.
+/// Reintroducing `E::ONE - is_boundary` anywhere below re-opens the tail
+/// pinning that `stark/tests/air_aware_recovery_c6.rs` measures.
 pub fn evaluate_merkle_update_transition<E: FieldElement>(
     current: &[E],
     next: &[E],
@@ -342,9 +448,17 @@ pub fn evaluate_merkle_update_transition<E: FieldElement>(
     let hash_start = periodic[4];
     let is_boundary = periodic[5];
     let is_interior = periodic[6];
+    let active = periodic[7];
+    let nba = periodic[8]; // not_boundary_active
 
     let three = E::from(3u32);
-    let not_boundary = E::ONE - is_boundary;
+
+    // Gated helpers. Each is TWO periodic factors on a base-1 or base-2
+    // constraint, so degree_bound stays 3 and next_pow2 stays 4 - well under
+    // the 8 that the degree-7 Poseidon constraints set.
+    let hash_start_a = hash_start * active;
+    let boundary_a = is_boundary * active;
+    let is_interior_a = is_interior * active;
 
     // ── OLD Poseidon round (cols 0-2) ──
     let o0 = current[0] + rc0;
@@ -356,9 +470,9 @@ pub fn evaluate_merkle_update_transition<E: FieldElement>(
     let oro0 = three * o0_7 + o1_7 + o2_7;
     let oro1 = o0_7 + three * o1_7 + o2_7;
     let oro2 = o0_7 + o1_7 + three * o2_7;
-    result[0] = not_boundary * (next[0] - current[0] - round_active * (oro0 - current[0]));
-    result[1] = not_boundary * (next[1] - current[1] - round_active * (oro1 - current[1]));
-    result[2] = not_boundary * (next[2] - current[2] - round_active * (oro2 - current[2]));
+    result[0] = nba * (next[0] - current[0] - round_active * (oro0 - current[0]));
+    result[1] = nba * (next[1] - current[1] - round_active * (oro1 - current[1]));
+    result[2] = nba * (next[2] - current[2] - round_active * (oro2 - current[2]));
 
     // ── NEW Poseidon round (cols 3-5) ──
     let n0 = current[3] + rc0;
@@ -370,9 +484,9 @@ pub fn evaluate_merkle_update_transition<E: FieldElement>(
     let nro0 = three * n0_7 + n1_7 + n2_7;
     let nro1 = n0_7 + three * n1_7 + n2_7;
     let nro2 = n0_7 + n1_7 + three * n2_7;
-    result[3] = not_boundary * (next[3] - current[3] - round_active * (nro0 - current[3]));
-    result[4] = not_boundary * (next[4] - current[4] - round_active * (nro1 - current[4]));
-    result[5] = not_boundary * (next[5] - current[5] - round_active * (nro2 - current[5]));
+    result[3] = nba * (next[3] - current[3] - round_active * (nro0 - current[3]));
+    result[4] = nba * (next[4] - current[4] - round_active * (nro1 - current[4]));
+    result[5] = nba * (next[5] - current[5] - round_active * (nro2 - current[5]));
 
     // ── Hash start mux: state = mux(direction, carry, sibling) ──
     let dir = current[7];
@@ -380,27 +494,33 @@ pub fn evaluate_merkle_update_transition<E: FieldElement>(
     let old_carry = current[8];
     let new_carry = current[9];
 
-    result[6] = hash_start * (current[0] - old_carry - dir * (sib - old_carry));
-    result[7] = hash_start * (current[1] - sib - dir * (old_carry - sib));
-    result[8] = hash_start * (current[3] - new_carry - dir * (sib - new_carry));
-    result[9] = hash_start * (current[4] - sib - dir * (new_carry - sib));
-    result[10] = hash_start * current[2];
-    result[11] = hash_start * current[5];
+    result[6] = hash_start_a * (current[0] - old_carry - dir * (sib - old_carry));
+    result[7] = hash_start_a * (current[1] - sib - dir * (old_carry - sib));
+    result[8] = hash_start_a * (current[3] - new_carry - dir * (sib - new_carry));
+    result[9] = hash_start_a * (current[4] - sib - dir * (new_carry - sib));
+    result[10] = hash_start_a * current[2];
+    result[11] = hash_start_a * current[5];
 
     // ── Carry update at boundary ──
-    result[12] = is_boundary * (next[8] - current[0]);
-    result[13] = is_boundary * (next[9] - current[3]);
+    // `active` is what makes row 383 free. is_boundary[383] = 1, so without it
+    // these two demand mask[384][8] == old_root and mask[384][9] == new_root,
+    // which republishes both roots inside the blinding region.
+    result[12] = boundary_a * (next[8] - current[0]);
+    result[13] = boundary_a * (next[9] - current[3]);
 
     // ── Carry continuity ──
-    result[14] = (E::ONE - is_boundary) * (next[8] - current[8]);
-    result[15] = (E::ONE - is_boundary) * (next[9] - current[9]);
+    // Was `(E::ONE - is_boundary) * ...`, which is 1 on every mask row and froze
+    // cols 8 and 9 flat across the tail - one of the four columns
+    // air_aware_recovery_c6.rs recovers.
+    result[14] = nba * (next[8] - current[8]);
+    result[15] = nba * (next[9] - current[9]);
 
     // ── Sibling/direction continuity within cycle ──
-    result[16] = is_interior * (next[6] - current[6]);
-    result[17] = is_interior * (next[7] - current[7]);
+    result[16] = is_interior_a * (next[6] - current[6]);
+    result[17] = is_interior_a * (next[7] - current[7]);
 
     // ── Direction binary ──
-    result[18] = hash_start * dir * (E::ONE - dir);
+    result[18] = hash_start_a * dir * (E::ONE - dir);
 }
 
 // ============================================================================
